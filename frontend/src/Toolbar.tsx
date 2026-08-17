@@ -51,6 +51,7 @@ import {
   SymbolChip,
   IntervalControls,
   ScaleControls,
+  HistoryControls,
   PanelToggles,
   MaximizeToggle,
   toolbarMaximizeDblClick,
@@ -400,6 +401,11 @@ export default function Toolbar({
       <span className="tb-div" aria-hidden="true" />
 
       <IntervalControls period={period} onPeriod={onPeriod} />
+
+      <span className="tb-div" aria-hidden="true" />
+
+      {/* Undo / redo for the focused cell (the same stacks Ctrl/Cmd+Z drives). */}
+      <HistoryControls controller={controller} />
 
       <span className="tb-div" aria-hidden="true" />
 

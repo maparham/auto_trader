@@ -112,11 +112,24 @@ export class HistoryManager {
   private undoStack: HistoryStep[] = [];
   private redoStack: HistoryStep[] = [];
   private applier: ((deltas: AppliedDelta[]) => void) | null = null;
+  // Toolbar buttons mirror canUndo/canRedo, so every stack mutation has to be
+  // observable. Same shape as lib/signals Signal.subscribe (useSyncExternalStore).
+  private listeners = new Set<() => void>();
 
   constructor(readonly scope: string) {}
 
   setApplier(fn: ((deltas: AppliedDelta[]) => void) | null): void {
     this.applier = fn;
+  }
+
+  /** Notified whenever canUndo/canRedo may have changed. Returns an unsubscribe. */
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private notify(): void {
+    this.listeners.forEach((l) => l());
   }
 
   get canUndo(): boolean {
@@ -127,7 +140,13 @@ export class HistoryManager {
   }
 
   push(key: string, before: unknown, after: unknown, now: number = Date.now()): void {
-    if (eq(before, after)) return;
+    if (this.pushDelta(key, before, after, now)) this.notify();
+  }
+
+  /** Returns whether the stacks actually changed (a no-op write must not
+   *  re-render the toolbar). */
+  private pushDelta(key: string, before: unknown, after: unknown, now: number): boolean {
+    if (eq(before, after)) return false;
     this.redoStack.length = 0;
     const top = this.undoStack[this.undoStack.length - 1];
     if (top && top.lastAt !== 0 && now - top.lastAt <= GROUP_MS) {
@@ -138,10 +157,11 @@ export class HistoryManager {
       // A gesture that ended exactly where it started (drag out and back) is
       // not an undo step at all.
       if (top.deltas.every((d) => eq(d.before, d.after))) this.undoStack.pop();
-      return;
+      return true;
     }
     this.undoStack.push({ deltas: [{ key, before, after }], lastAt: now });
     if (this.undoStack.length > CAP) this.undoStack.shift();
+    return true;
   }
 
   undo(): boolean {
@@ -152,8 +172,10 @@ export class HistoryManager {
   }
 
   clear(): void {
+    if (!this.undoStack.length && !this.redoStack.length) return;
     this.undoStack.length = 0;
     this.redoStack.length = 0;
+    this.notify();
   }
 
   private applyTop(from: HistoryStep[], to: HistoryStep[], field: "before" | "after"): boolean {
@@ -180,6 +202,7 @@ export class HistoryManager {
     if (survivor) survivor.lastAt = 0;
     const prefix = `${PREFIX}.${this.scope}.`;
     this.applier?.(step.deltas.map((d) => ({ suffix: d.key.slice(prefix.length), before: d.before, after: d.after })));
+    this.notify();
     return true;
   }
 }

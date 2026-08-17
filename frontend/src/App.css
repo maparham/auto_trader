@@ -3891,6 +3891,10 @@
 .toolbar .icon-btn { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); }
 .toolbar .icon-btn:hover { color: var(--text); }
 .toolbar .icon-btn svg { display: block; }
+/* Undo / redo pair: icon-only, so they sit tighter than the labelled icon buttons
+   and read as one control group. Disabled state comes from .anchor-btn:disabled. */
+.toolbar .hist-ctrls { display: inline-flex; align-items: center; gap: 2px; }
+.toolbar .hist-ctrls .icon-btn { padding: 5px 6px; }
 /* Magnet mode: icon toggle + a narrow caret button that read as one split control.
    The toggle owns the .on highlight; the caret is a slim secondary hit-area for the
    Weak/Strong menu. */

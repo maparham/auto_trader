@@ -181,6 +181,34 @@ describe("applier", () => {
   });
 });
 
+describe("subscribe", () => {
+  it("notifies on push, undo, redo and clear, and stops after unsubscribe", () => {
+    let n = 0;
+    const off = mgr.subscribe(() => n++);
+    mgr.push(KEY, ["a"], ["b"], 1000);
+    expect(n).toBe(1);
+    expect(mgr.canUndo).toBe(true);
+    mgr.undo();
+    expect(n).toBe(2);
+    mgr.redo();
+    expect(n).toBe(3);
+    mgr.clear();
+    expect(n).toBe(4);
+    off();
+    mgr.push(KEY, ["b"], ["c"], 2000);
+    expect(n).toBe(4);
+  });
+
+  it("does not notify when nothing changed (no-op push, empty undo)", () => {
+    let n = 0;
+    mgr.subscribe(() => n++);
+    mgr.push(KEY, ["a"], ["a"], 1000); // before === after
+    expect(mgr.undo()).toBe(false); // empty stack
+    expect(mgr.clear() as unknown).toBe(undefined);
+    expect(n).toBe(0);
+  });
+});
+
 describe("partitionHistorySuffixes", () => {
   it("classifies suffixes for the current epic", () => {
     expect(

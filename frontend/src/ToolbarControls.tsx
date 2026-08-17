@@ -301,6 +301,57 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
   );
 }
 
+// Undo / redo for the focused cell's chart content (drawings, indicators, AVWAP
+// anchors). The keyboard path lives in ChartCore; these buttons are the visible
+// affordance for the same per-cell stacks, so the shortcut is spelled out in the
+// tooltip. Disabled (not hidden) when a stack is empty, TradingView-style.
+const MAC = typeof navigator !== "undefined" && /Mac|iP(hone|ad|od)/.test(navigator.platform || "");
+const UNDO_KEYS = MAC ? "⌘Z" : "Ctrl+Z";
+const REDO_KEYS = MAC ? "⇧⌘Z" : "Ctrl+Y";
+
+export function HistoryControls({ controller }: { controller: ChartController | null }) {
+  const history = controller?.history ?? null;
+  const subscribe = useCallback(
+    (cb: () => void) => history?.subscribe(cb) ?? (() => {}),
+    [history],
+  );
+  const canUndo = useSyncExternalStore(subscribe, () => history?.canUndo ?? false);
+  const canRedo = useSyncExternalStore(subscribe, () => history?.canRedo ?? false);
+
+  return (
+    <div className="hist-ctrls">
+      <Tooltip content={`Undo (${UNDO_KEYS})`}>
+        <button
+          className="anchor-btn icon-btn"
+          aria-label="Undo"
+          disabled={!canUndo}
+          onClick={() => history?.undo()}
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+            strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="8 5 3 10 8 15" />
+            <path d="M3 10h9a5.5 5.5 0 0 1 0 11h-3" />
+          </svg>
+        </button>
+      </Tooltip>
+      <Tooltip content={`Redo (${REDO_KEYS})`}>
+        <button
+          className="anchor-btn icon-btn"
+          aria-label="Redo"
+          disabled={!canRedo}
+          onClick={() => history?.redo()}
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+            strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="16 5 21 10 16 15" />
+            <path d="M21 10h-9a5.5 5.5 0 0 0 0 11h3" />
+          </svg>
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
 // The app-level panel toggles (live trading / alerts / trading dock) — global
 // panels beside the chart, safe in every toolbar variant.
 export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
