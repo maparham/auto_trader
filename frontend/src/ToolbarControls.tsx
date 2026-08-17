@@ -296,7 +296,10 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
           A
         </button>
       </Tooltip>
-      <Tooltip content="Logarithmic scale">
+      {/* L and I are session-only, unlike the stretch toggle beside them, so each
+          carries the ⚠ note rather than leaving the difference to be discovered on
+          the next reload. */}
+      <Tooltip content="Logarithmic scale" note="Session only (resets on reload)" noteWarn>
         <button
           className={log ? "on" : ""}
           onClick={() => setScale(log ? "normal" : "logarithm")}
@@ -304,7 +307,7 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
           L
         </button>
       </Tooltip>
-      <Tooltip content="Invert scale (Option+I)">
+      <Tooltip content="Invert scale (Option+I)" note="Session only (resets on reload)" noteWarn>
         <button
           className={inverted ? "on" : ""}
           onClick={() => controller?.invertScale.set(!controller.invertScale.value)}
@@ -313,10 +316,8 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
         </button>
       </Tooltip>
       <Tooltip
-        content={[
-          "Stretch price scale (candles fill the pane)",
-          "Double-click the price axis to cycle",
-        ]}
+        content="Stretch price scale (candles fill the pane)"
+        note="Double-click the price axis to cycle"
       >
         <button
           className={stretched ? "on" : ""}

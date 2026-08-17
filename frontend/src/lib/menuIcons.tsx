@@ -27,6 +27,20 @@ export function BellIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// Warning triangle shared by the legend's amber ⚠ badge and Tooltip's caveat
+// note. Sized per caller; currentColor so each context sets the amber (or not).
+// The dot is filled rather than stroked so it stays a dot at 11-13px.
+export function WarnTriangleIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3.2 22 20.5H2L12 3.2z" />
+      <line x1="12" y1="10" x2="12" y2="15" />
+      <circle cx="12" cy="17.5" r="0.7" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 // Ruler glyph for the toolbar's Measure toggle. A tilted ruler with tick marks,
 // echoing TradingView's measure tool icon. currentColor so it inherits the button
 // state (accent when armed).

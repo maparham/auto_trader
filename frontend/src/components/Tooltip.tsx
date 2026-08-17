@@ -11,10 +11,19 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { computePlacement, type Placed, type Placement } from "./tooltipPosition";
+import { WarnTriangleIcon } from "../lib/menuIcons";
 
 interface TooltipProps {
   content: string | string[] | ReactNode;
   title?: string;
+  /**
+   * A trailing caveat or hint, set smaller and fainter than the description so
+   * it reads as secondary rather than as one more line of the explanation.
+   * `noteWarn` prefixes the shared amber ⚠ for a caveat ("this isn't saved");
+   * leave it off for a neutral hint ("double-click to cycle").
+   */
+  note?: string;
+  noteWarn?: boolean;
   placement?: Placement;
   delay?: number;
   disabled?: boolean;
@@ -38,6 +47,8 @@ function isEmpty(content: TooltipProps["content"]): boolean {
 export default function Tooltip({
   content,
   title,
+  note,
+  noteWarn,
   placement = "top",
   delay = 100,
   disabled,
@@ -170,6 +181,12 @@ export default function Tooltip({
               ) : (
                 <div key={i}>{line}</div>
               ),
+            )}
+            {note && (
+              <div className={`tooltip-note${noteWarn ? " warn" : ""}`}>
+                {noteWarn && <WarnTriangleIcon size={12} />}
+                <span>{note}</span>
+              </div>
             )}
           </div>,
           document.body,
