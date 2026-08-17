@@ -3997,6 +3997,10 @@
 }
 .scale button:hover { background: var(--hover); color: var(--text); }
 .scale button.on { background: var(--hover-strong); color: var(--text); }
+/* The stretch toggle draws an SVG instead of a letter: center it in the same
+   26px box (the lettered buttons rely on text centering, which an SVG child
+   does not inherit) and let it take the button's dim/lit color. */
+.scale button > svg { display: block; margin: 0 auto; }
 
 /* --- workspace layout manager (named layouts — split button) ---------------- */
 /* Container: the name button + caret button sit side by side, sharing a border. */

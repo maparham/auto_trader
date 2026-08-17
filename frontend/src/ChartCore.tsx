@@ -158,6 +158,12 @@ import type { ChartHandle, RangeReq, CenterReq } from "./chart/chartHandle";
 import { createChartDataFacade, type ChartDataFacade } from "./chart/chartDataFacade";
 import { applyFreeCrosshairX } from "./chart/freeCrosshair";
 import { applyScalePriceOnly } from "./chart/priceOnlyRange";
+import { applyCandleFit, isAutoFitted, nextFitMode } from "./chart/candleFit";
+import {
+  isOverPriceAxis,
+  isPriceAxisScaleWheel,
+  type PriceAxisGeometry,
+} from "./chart/priceAxisGesture";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
 import { classifyNoData, type NoDataKind } from "./chart/noDataPolicy";
 import { useRangeNavigation } from "./chart/useRangeNavigation";
@@ -281,6 +287,7 @@ export default function ChartCore({
     avwapAnchorMode,
     autoScale,
     invertScale,
+    priceFitMode,
     scalePriceOnly,
     logScale,
     measureArmed,
@@ -1084,14 +1091,22 @@ export default function ChartCore({
   // indicator or drawing copied earlier. Opened by a right-click that isn't on an
   // indicator curve.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number | null } | null>(null);
-  // TradingView-style right-click menu for the PRICE AXIS column — a single "Scale
-  // price chart only" toggle (see onContextMenu, which opens it over the axis strip).
+  // TradingView-style right-click menu for the PRICE AXIS column — the "Scale price
+  // chart only" and "Stretch to fill height" toggles (see onContextMenu, which opens
+  // it over the axis strip).
   const [axisMenu, setAxisMenu] = useState<{ x: number; y: number } | null>(null);
   // Reflect the persisted toggle so the menu's checkmark stays in sync across cells.
   const [scaleOnly, setScaleOnly] = useState(scalePriceOnly.value);
   // The value only changes via toggleScalePriceOnly (a user action after mount), so
   // the initial useState seed is authoritative — just subscribe to later flips.
   useEffect(() => scalePriceOnly.subscribe(setScaleOnly), [scalePriceOnly]);
+  // Same for the fit mode, whose checkmark the axis double-click and the toolbar
+  // button also drive — so the menu must track the signal, not a local bool.
+  const [stretched, setStretched] = useState(priceFitMode.value === "stretched");
+  useEffect(
+    () => priceFitMode.subscribe((mode) => setStretched(mode === "stretched")),
+    [priceFitMode],
+  );
   // Auto-save this cell's per-symbol template on real layout edits. layoutEvents
   // fires only for genuine edits (merge-applies are suppressed at the emitter, and
   // mount/symbol hydration doesn't persist), so this never fights hydration. The
@@ -1137,20 +1152,36 @@ export default function ChartCore({
       }),
     [invertScale],
   );
-  // Re-assert the scale-price-only createRange after a log/normal toggle. The
-  // log toggle passes a new axis `name`, which recreates the candle pane's y-axis
-  // from its template and drops our createRange override. The override itself is
+  // Follow klinecharts back into auto-scale when the instrument or timeframe
+  // changes. ChartImp.setSymbol / setPeriod call _resetYAxisAutoCalcTickFlag
+  // before handing the new data to the store, so a manual y-scale is discarded
+  // there and the axis fits again — but nothing told our mirror. Left alone, a
+  // hand-scaled axis followed by a symbol/timeframe switch leaves the toolbar "A"
+  // dark while the chart is demonstrably auto-fitting, and clicking "A" looks
+  // like a no-op that only lights the button. The facade value-guards both calls,
+  // so these deps change exactly when klinecharts actually resets. Only the flag
+  // is reset there (not the axis), so the fit gap and the price-only createRange
+  // both survive and need no re-apply.
+  useEffect(() => {
+    autoScale.set(true);
+  }, [autoScale, symbol.epic, period.resolution]);
+  // Re-assert the scale-price-only createRange AND the fit gap after a log/normal
+  // toggle. The log toggle passes a new axis `name`, which recreates the candle
+  // pane's y-axis from its template and drops both. The createRange override is
   // axis-type-aware (delegates the log10 transform to the live axis), so simply
   // re-installing it restores candles-only fitting on whichever axis kind is now
-  // active. (autoFit re-applies the SAME name, which merges and preserves the
-  // override, so no re-assert is needed there.)
+  // active; the gap would otherwise silently snap back to klinecharts' default
+  // margins, dropping the chart out of stretched mode. (Overrides that keep the
+  // SAME name merge and preserve both, so no re-assert is needed there.)
   useEffect(
     () =>
       logScale.subscribe(() => {
         const c = chartRef.current;
-        if (c) applyScalePriceOnly(c, scalePriceOnly.value);
+        if (!c) return;
+        applyScalePriceOnly(c, scalePriceOnly.value);
+        applyCandleFit(c, priceFitMode.value);
       }),
-    [logScale, scalePriceOnly],
+    [logScale, scalePriceOnly, priceFitMode],
   );
   // Flip "scale price chart only": persist it and swap the candle pane's
   // createRange override (candles-only vs the framework's default full-pane fit).
@@ -1511,6 +1542,9 @@ export default function ChartCore({
     // the axis across auto-fits (same-name overrideYAxis merges); only a log-scale
     // toggle recreates the axis and drops it, so we re-apply on logScale change.
     applyScalePriceOnly(chart, scalePriceOnly.value);
+    // Same for the stored price fit: a cell saved while stretched must come back
+    // stretched, and a fresh chart starts at klinecharts' default gap.
+    applyCandleFit(chart, priceFitMode.value);
     setChartReady(true);
     chart.setTimezone(timezone || browserTimezone());
     chart.setFormatter({ formatDate: makeFormatDate(clock, dateFormat, showWeekday) });
@@ -2300,31 +2334,51 @@ export default function ChartCore({
     // strip right of the candle pane) is a manual y-axis scale gesture, so it
     // exits auto mode and the toolbar "A" de-highlights. Re-enabled by clicking
     // "A" (Toolbar.autoFit). Capture phase so it sees the press before the chart.
+    // Live candle-pane geometry for the price-axis gesture tests (chart/priceAxisGesture).
+    const axisGeometry = (): PriceAxisGeometry => ({
+      left: el.getBoundingClientRect().left,
+      mainWidth: chartRef.current?.getSize("candle_pane", 'main')?.width ?? 0,
+    });
     // True when the pointer x is within the price-axis column (right of the
     // candle pane's main area). Shared by the press (exit auto) and double-click
     // (re-enter auto) handlers below.
-    const overPriceAxis = (e: MouseEvent): boolean => {
-      const c = chartRef.current;
-      const mainW = c?.getSize("candle_pane", 'main')?.width ?? 0;
-      if (!mainW) return false;
-      return e.clientX - el.getBoundingClientRect().left > mainW;
-    };
+    const overPriceAxis = (e: MouseEvent): boolean =>
+      isOverPriceAxis(e.clientX, axisGeometry());
     const onAxisDown = (e: MouseEvent) => {
       if (e.button !== 0 || !autoScale.value) return;
       if (measureArmed.value || overlays.isMeasureDrawing()) return; // measuring owns the press
       if (slopeArmed.value || overlays.isSlopeDrawing()) return; // slope placing owns the press
       if (overPriceAxis(e)) autoScale.set(false);
     };
+    // A WHEEL over the price-axis column scales it too (klinecharts routes it to
+    // _zoomYAxis, same manual y-range as a drag), and it is far easier to trigger
+    // by accident: two-finger scrolling is how you zoom the chart, and the axis is
+    // a ~50px strip on the right. Without this mirror the chart sticks at a
+    // squeezed scale while "A" still claims auto, hiding the fix (double-click the
+    // axis / press "A"). Passive: klinecharts' own handler owns preventDefault.
+    const onAxisWheel = (e: WheelEvent) => {
+      if (!autoScale.value) return;
+      if (isPriceAxisScaleWheel(e, axisGeometry())) autoScale.set(false);
+    };
     // Double-clicking the price-axis column resets to auto-scale (TV behaviour):
-    // re-fit the price axis and re-highlight the toolbar "A".
+    // re-fit the price axis and re-highlight the toolbar "A". Double-clicking
+    // again stretches the fit (candles fill the pane; see chart/candleFit.ts),
+    // and the two alternate from there. A manual scale in between restarts that
+    // sequence, so the double-click after a drag or an axis wheel always means
+    // "undo my scaling" rather than jumping to stretched.
+    //
+    // The "was it manually scaled" input is klinecharts' own auto-fit flag, NOT
+    // autoScale: this dblclick is preceded by two presses, and onAxisDown has
+    // already flipped autoScale off on the first of them.
     const onAxisDblClick = (e: MouseEvent) => {
       if (e.button !== 0 || !overPriceAxis(e)) return;
-      // Re-applying the current y-axis kind recomputes the fit, clearing any
-      // manual zoom (matches Toolbar.autoFit). v10: overrideYAxis resets the
-      // axis auto-calc flag; the kind is the y-axis `name`.
       const c = chartRef.current;
-      const name = c?.getYAxes({ paneId: "candle_pane" })[0]?.name ?? "normal";
-      c?.overrideYAxis({ paneId: "candle_pane", name });
+      if (!c) return;
+      const next = nextFitMode({ autoFitted: isAutoFitted(c), mode: priceFitMode.value });
+      // One override both writes the gap and clears the manual y-scale (it resets
+      // the axis auto-calc flag), so this is the re-fit too.
+      applyCandleFit(c, next);
+      controller.setPriceFit(next);
       autoScale.set(true);
     };
     // True when the pointer y is within the time-axis strip (below the candle
@@ -2492,6 +2546,7 @@ export default function ChartCore({
       // this init effect so they still register LAST among the capture-phase mousedowns.
       el.addEventListener("mousedown", onClonePress, true);
       el.addEventListener("mousedown", onAxisDown, true);
+      el.addEventListener("wheel", onAxisWheel, { capture: true, passive: true });
       el.addEventListener("dblclick", onAxisDblClick, true);
       el.addEventListener("dblclick", onTimeAxisDblClick, true);
       // The crosshair onMove/onLeave listeners (wrapRef mousemove+mouseleave and
@@ -2862,6 +2917,7 @@ export default function ChartCore({
       // anchor window listeners are all handled by useLineDrag's own effect cleanup.
       el.removeEventListener("mousedown", onClonePress, true);
       el.removeEventListener("mousedown", onAxisDown, true);
+      el.removeEventListener("wheel", onAxisWheel, true);
       el.removeEventListener("dblclick", onAxisDblClick, true);
       el.removeEventListener("dblclick", onTimeAxisDblClick, true);
       // The crosshair onMove/onLeave listeners are detached by
@@ -4088,6 +4144,11 @@ export default function ChartCore({
               label: "Scale price chart only",
               icon: scaleOnly ? MenuIcons.apply : undefined,
               onClick: toggleScalePriceOnly,
+            },
+            {
+              label: "Stretch to fill height",
+              icon: stretched ? MenuIcons.apply : undefined,
+              onClick: () => controller.toggleStretchFit(),
             },
           ]}
           onClose={() => setAxisMenu(null)}

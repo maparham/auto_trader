@@ -22,6 +22,7 @@ import {
   saveFavoriteResolutions,
 } from "./lib/persist";
 import type { ChartController } from "./lib/chartController";
+import { applyCandleFit } from "./chart/candleFit";
 import { BellIcon } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
 import Tooltip from "./components/Tooltip";
@@ -253,6 +254,17 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
     subscribeInvert,
     () => controller?.invertScale.value ?? false,
   );
+  // Stretched price fit (on = highlighted). This is the only always-visible cue
+  // for which fit the price axis is in — the double-click cycle that also sets it
+  // is invisible otherwise.
+  const subscribeFit = useCallback(
+    (cb: () => void) => controller?.priceFitMode.subscribe(cb) ?? (() => {}),
+    [controller],
+  );
+  const stretched = useSyncExternalStore(
+    subscribeFit,
+    () => (controller?.priceFitMode.value ?? "default") === "stretched",
+  );
 
   // v10: the y-axis kind (normal/logarithm/percentage) is a registered axis named
   // via overrideYAxis, not a style enum. Swapping the name re-fits the range.
@@ -262,10 +274,13 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
   }
 
   function autoFit() {
-    // klinecharts auto-fits the price axis to visible bars; re-applying the axis
-    // (overrideYAxis resets the auto-calc flag) recomputes the range, clearing any
-    // manual zoom ("fit to data"). Re-assert the current kind while doing so.
-    chart?.overrideYAxis({ paneId: "candle_pane", name: log ? "logarithm" : "normal" });
+    // klinecharts auto-fits the price axis to visible bars; overrideYAxis resets
+    // the auto-calc flag, so writing the default gap both recomputes the range
+    // (clearing any manual zoom, "fit to data") and lands on the default margins.
+    // "A" means the same thing the first price-axis double-click means — if it
+    // preserved the stretched fit the two would disagree about what auto is.
+    if (chart) applyCandleFit(chart, "default");
+    controller?.setPriceFit("default");
     // Re-enter auto mode (TV-style): stays highlighted until the user manually
     // scales the price axis again (ChartCore flips it back off).
     controller?.autoScale.set(true);
@@ -297,7 +312,38 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
           I
         </button>
       </Tooltip>
+      <Tooltip
+        content={[
+          "Stretch price scale (candles fill the pane)",
+          "Double-click the price axis to cycle",
+        ]}
+      >
+        <button
+          className={stretched ? "on" : ""}
+          aria-label="Stretch price scale"
+          onClick={() => controller?.toggleStretchFit()}
+        >
+          <StretchIcon />
+        </button>
+      </Tooltip>
     </div>
+  );
+}
+
+// Vertical expand glyph for the stretch toggle: a spine with an arrowhead at each
+// end. Inherits the button's dim/lit color through currentColor, so it tracks the
+// same .on highlight the lettered buttons use.
+function StretchIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24" width="13" height="13" fill="none"
+      stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 4v16" />
+      <path d="M8.5 7.5 12 4l3.5 3.5" />
+      <path d="M8.5 16.5 12 20l3.5-3.5" />
+    </svg>
   );
 }
 

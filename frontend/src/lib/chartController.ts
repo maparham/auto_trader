@@ -12,8 +12,9 @@ import type { Chart } from "klinecharts";
 import { OverlayManager } from "./overlays";
 import { Signal } from "./signals";
 import type { IndicatorInstance } from "./persist";
-import { loadScalePriceOnly, loadSnapshotMeta } from "./persist";
+import { loadScalePriceOnly, loadPriceStretched, savePriceStretched, loadSnapshotMeta } from "./persist";
 import { HistoryManager, registerHistory } from "./history";
+import { applyCandleFit, type PriceFitMode } from "../chart/candleFit";
 
 // The selected indicator (TradingView-style): clicking an indicator's curve or its
 // legend row selects it (hollow handles appear); clicking empty chart space
@@ -97,6 +98,13 @@ export class ChartController {
   // TradingView-style "invert scale" (Alt/Option+I + toolbar "I" button): flips
   // the candle-pane price axis via yAxis.reverse. Session-only — never persisted.
   readonly invertScale = new Signal<boolean>(false);
+  // Where the price-axis double-click cycle sits: the first double-click re-fits
+  // to klinecharts' default margins ("refit"), the second trims the y-axis gap so
+  // the visible candles fill most of the pane ("stretched"), and they alternate
+  // from there. See chart/candleFit.ts. Persisted per cell (stretched or not),
+  // hydrated in the constructor; write it through setPriceFit so the signal and
+  // storage can never disagree. The toolbar stretch button reflects it.
+  readonly priceFitMode = new Signal<PriceFitMode>("default");
   // Logarithmic price scale (toolbar "L" button). Session-only, per cell — lives
   // here (not toolbar-local state) so the button reflects THIS cell's axis after
   // focus switches and toolbar remounts (the Toolbar/SnapshotToolbar swap) instead
@@ -192,8 +200,38 @@ export class ChartController {
     this.overlays.setScope(scope);
     this.readOnly.set(loadSnapshotMeta(scope) != null);
     this.scalePriceOnly.set(loadScalePriceOnly(scope));
+    // Only the stretched/not distinction survives a reload — see setPriceFit.
+    this.priceFitMode.set(loadPriceStretched(scope) ? "stretched" : "default");
     this.history = new HistoryManager(scope);
     // Snapshot cells are frozen study copies: no mutations, no history.
     if (!this.readOnly.value) registerHistory(scope, this.history);
+  }
+
+  /**
+   * Move the price-axis fit cycle and persist where it landed. The three writers
+   * (the axis double-click, the toolbar stretch button, the toolbar "A") all go
+   * through here so no path can update the signal without the store, or vice
+   * versa. Storage keeps only stretched-or-not: "default" and "refit" render the
+   * same and differ only in what the next double-click does, which is a
+   * within-session distinction.
+   */
+  setPriceFit(mode: PriceFitMode): void {
+    this.priceFitMode.set(mode);
+    savePriceStretched(this.scope, mode === "stretched");
+  }
+
+  /**
+   * Flip between the stretched and default fits and push it to the live chart.
+   * Shared by the toolbar's stretch button and the price-axis context menu so the
+   * two can't drift; the axis double-click runs the fuller cycle (it also has a
+   * "re-fit" step) through nextFitMode. Off lands on "default" rather than
+   * "refit", so the next double-click still re-fits before it stretches.
+   */
+  toggleStretchFit(): void {
+    const next: PriceFitMode = this.priceFitMode.value === "stretched" ? "default" : "stretched";
+    if (this.chart) applyCandleFit(this.chart, next);
+    this.setPriceFit(next);
+    // Writing the gap resets the axis auto-calc flag, so this re-fits too.
+    this.autoScale.set(true);
   }
 }
