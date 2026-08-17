@@ -367,6 +367,68 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Fair Value Gaps",
     desc: "Marks 3-candle imbalances (a gap between the first bar's wick and the third bar's) as zones. A gap shrinks to its unfilled remainder as price trades back into it and disappears once price crosses its far edge, so only live imbalances stay on the chart. Bullish gaps tint green, bearish red. The nearest gap's edges on each side are available as rule operands. Gaps confirm on the third candle (no repaint).",
   },
+  // TRENDLINES. Two gates decide whether a line is MAJOR (readable by a rule):
+  // Min Touches and Min Span. Max Lines is not a third gate, but it is NOT
+  // operand-neutral either: the emit path reads the live pool, and that pool is
+  // capped at MAX_LIVE_MULT * maxLines per side by rank, so raising maxLines
+  // widens the candidate set. Measured on the DXY fixture, maxLines 2 vs 3
+  // changes the emitted value on 113 bars. The Max Lines tip must say that and
+  // must never claim the operands are unaffected.
+  TRENDLINES: {
+    inputs: [
+      {
+        ...num(0, "Pivot Length"),
+        tip: "Bars needed on each side of a swing before it counts as a turning point. Higher values keep only the bigger swings, but take longer to confirm them.",
+      },
+      {
+        ...num(1, "Pierce Tolerance (×ATR)", { min: 0, step: 0.05 }),
+        tip: "Room a wick gets past a line before the line counts as broken, measured in ATR(14). Zero means any poke through breaks it.",
+      },
+      {
+        ...num(2, "Touch Tolerance (×ATR)", { min: 0.05, step: 0.05 }),
+        tip: "Distance a swing can sit from a line and still count as touching it, measured in ATR(14).",
+      },
+      {
+        ...num(3, "Min Touches", { min: 2 }),
+        tip: "Touches a line needs before it counts as a real trendline. Two is just the pair of swings that drew it, so Min Span does most of the filtering.",
+      },
+      {
+        ...num(4, "Min Span (bars)"),
+        tip: "Bars a line has to span before it counts as a real trendline. This is what keeps short, meaningless lines off the chart.",
+      },
+      {
+        ...num(5, "Projection (bars)"),
+        tip: "Bars an unbroken line keeps running past its last touch before it retires. Once price breaks a line, Break Hold takes over instead.",
+      },
+      {
+        ...num(6, "Break Hold (bars)"),
+        tip: "Bars a broken line stays on the chart, dashed, after price cuts through it. Long enough to watch for price coming back to retest it.",
+      },
+      {
+        ...num(7, "Max Lines"),
+        tip: "Lines drawn per side, nearest to price first. Raising it also keeps more lines in play, which can change the support and resistance prices this indicator reports.",
+      },
+      {
+        key: "extend",
+        label: "Extend",
+        type: "select",
+        source: "extend",
+        field: "extend",
+        default: "ray",
+        options: [
+          { value: "ray", label: "→  Extend right" },
+          { value: "extended", label: "↔  Extended both ways" },
+          { value: "lastbar", label: "⇥  End at last bar" },
+          { value: "segment", label: "•–•  Segment, stops at last touch" },
+          { value: "apex", label: ">  Apex, stops at opposite line" },
+          { value: "cross", label: "×  Cross, stops at any line" },
+        ],
+        tip: "Affects drawing only. The prices this indicator reports stay the same whichever you pick.",
+      },
+    ],
+    title: "Trendlines",
+    desc: "Sloping support and resistance drawn from confirmed swing highs and lows, keeping only the lines no candle has cut through. The lines nearest price are drawn and tagged with how many times price touched them. A broken line turns dashed and marks where it broke, so you can watch for a retest. Swings confirm a few bars late, so nothing repaints.",
+  },
   SESSIONS: {
     inputs: [],
     title: "Trading Sessions",

@@ -118,6 +118,31 @@ def test_fvg(golden):
         assert_series_equal(fvg_series(cfg, output, candles, 1.0), expected, key)
 
 
+def test_trendlines(golden):
+    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
+
+    candles, _, series = golden
+    # Mirrors the generator config in indicatorParityGolden.test.ts VALUE FOR
+    # VALUE. If the two drift, this compares two different indicators and
+    # passes or fails for the wrong reason.
+    cfg = TrendlinesConfig(
+        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
+        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
+    )
+    for output, key in (
+        ("tl_support", "TL_SUPPORT"),
+        ("tl_resistance", "TL_RESISTANCE"),
+        ("tl_broken_support", "TL_BROKEN_SUPPORT"),
+        ("tl_broken_resistance", "TL_BROKEN_RESISTANCE"),
+    ):
+        expected = series[key]
+        # Guard against a vacuous golden: the synthetic walk must form lines,
+        # break them, and hold the broken ones. An all-None series would pass
+        # against a port that returns nothing.
+        assert any(v is not None for v in expected), f"{key}: golden is all-None"
+        assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
+
+
 def test_avwap(golden):
     candles, anchor_ms, series = golden
     assert_series_equal(avwap_series(candles, anchor_ms), series["AVWAP"], "AVWAP")

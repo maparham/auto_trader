@@ -27,6 +27,7 @@ import { computeRsi } from "./indicators/rsi";
 import { vwapFrom } from "./indicators/vwap";
 import { computeSrLevels } from "./indicators/srLevels";
 import { computeFvg } from "./indicators/fvg";
+import { computeTrendlines } from "./indicators/trendlines";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(HERE, "../../../backend/tests/fixtures/indicator_golden.json");
@@ -116,6 +117,19 @@ describe("indicator parity golden fixture", () => {
     // expiry, the per-side cap) is exercised rather than a handful of zones.
     const fvgPoints = computeFvg(candles, { minSize: 0.25, maxBars: 500, maxGaps: 10 }).points;
 
+    // TRENDLINES: config mirrored by test_indicator_parity.test_trendlines
+    // VALUE FOR VALUE. pivotLen 3 and minSpanBars 10 keep this walk producing
+    // lines on both sides rather than a handful, so the pierce gate, the touch
+    // band, the per-bar break path and the break-hold window all get exercised.
+    // maxProjBars 60 (vs the 250 default) is deliberately close to
+    // breakHoldBars 30 on a 500-bar walk: it makes unbroken lines actually
+    // reach their projection limit and expire, a branch a 250-bar window would
+    // barely touch here, while still leaving ~420 non-null bars per side.
+    const tlPoints = computeTrendlines(candles, {
+      pivotLen: 3, violMult: 0.25, touchMult: 0.75, minTouches: 2,
+      minSpanBars: 10, maxProjBars: 60, breakHoldBars: 30, maxLines: 3,
+    }).points;
+
     const series: Record<string, Array<number | null>> = {
       EMA_9: toNull(ema9Base),
       EMA_21: toNull(maSeries(candles, "ema", 21, {}).base),
@@ -136,6 +150,10 @@ describe("indicator parity golden fixture", () => {
       FVG_BULL_BOTTOM: toNull(fvgPoints.map((p) => p.bullBottom ?? null)),
       FVG_BEAR_TOP: toNull(fvgPoints.map((p) => p.bearTop ?? null)),
       FVG_BEAR_BOTTOM: toNull(fvgPoints.map((p) => p.bearBottom ?? null)),
+      TL_SUPPORT: toNull(tlPoints.map((p) => p.tl_support ?? null)),
+      TL_RESISTANCE: toNull(tlPoints.map((p) => p.tl_resistance ?? null)),
+      TL_BROKEN_SUPPORT: toNull(tlPoints.map((p) => p.tl_broken_support ?? null)),
+      TL_BROKEN_RESISTANCE: toNull(tlPoints.map((p) => p.tl_broken_resistance ?? null)),
     };
 
     const fixture = {

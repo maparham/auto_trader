@@ -40,6 +40,7 @@ import MarketInfoPopover from "./MarketInfoPopover";
 import Tooltip from "./components/Tooltip";
 import HeatmapControls from "./HeatmapControls";
 import { useProximityHeatmap } from "./chart/useProximityHeatmap";
+import { useTrendlinePins } from "./chart/useTrendlinePins";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
 import {
@@ -1413,6 +1414,9 @@ export default function ChartCore({
     priceSide,
     displayResolution: period.resolution,
   });
+  // Click a trendline's end handle to run it on to the pane edge (and again to
+  // release). Capture-phase, so it claims the press before the chart pans.
+  useTrendlinePins({ chartRef, containerRef, scope });
   // onZoomToRange runs from the once-mounted init effect, so it must read these
   // through live refs (updated every render), not its mount-time closure props.
   const onPeriodRef = useRef(onPeriod);
