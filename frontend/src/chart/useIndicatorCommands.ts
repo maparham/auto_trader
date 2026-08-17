@@ -17,8 +17,6 @@ import { type Indicator } from "klinecharts";
 import {
   removeIndicatorById,
   addIndicatorInstance,
-  applyIndicator,
-  applyIndicatorVisibility,
   isSubPaneIndicator,
   reorderSubPanes,
   subPaneOrder,
@@ -26,7 +24,6 @@ import {
   getIndicator,
   getIndicatorsByPane,
 } from "../lib/indicators";
-import { INSET_CAPABLE, isInsetInstance, withInset } from "../lib/indicators/inset";
 import { indTypeOf } from "../lib/customIndicators";
 import { saveIndicators, saveIndicatorVisible, type SavedIndicatorConfig } from "../lib/persist";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "../lib/visibility";
@@ -132,84 +129,33 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     handle.redrawRef.current();
   }, [paneIdOf, controller]);
 
-  // Snapshot an indicator's full live config (type + calcParams / visibility /
-  // per-line styles / extendData inputs). Shared by Copy (→ clipboard JSON) and
-  // Duplicate (→ straight back into addFromConfig). The config shape matches
-  // SavedIndicatorConfig so it round-trips through persisted storage.
-  const liveIndicatorConfig = useCallback(
-    (paneId: string, name: string): { type: string; config: SavedIndicatorConfig; label: string } | null => {
-      const c = chartRef.current;
-      if (!c) return null;
-      const ind = getIndicator(c, paneId, name) as Indicator | null;
-      if (!ind) return null;
-      return {
-        type: indTypeOf(ind), // the real type (EMA/MA/…), NOT the instance id
-        label: ind.shortName ?? indTypeOf(ind),
-        config: {
-          calcParams: ind.calcParams as number[] | undefined,
-          visible: ind.visible,
-          styles: ind.styles?.lines
-            ? { lines: ind.styles.lines.map((l) => ({ color: l.color, size: l.size })) }
-            : undefined,
-          extendData: ind.extendData as Record<string, unknown> | undefined,
-        } satisfies SavedIndicatorConfig,
-      };
-    },
-    [],
-  );
-
-  // Add a fresh instance of `type` carrying `config`, and do everything a new
-  // instance needs: honour the hide-all mask, un-collapse the sub-pane stack,
-  // publish + persist the new instance list, redraw. Shared by Paste and
-  // Duplicate so neither can drift out of the other's steps.
-  const addFromConfig = useCallback(
-    (type: string, config: SavedIndicatorConfig | undefined): boolean => {
-      const c = chartRef.current;
-      if (!c) return false;
-      const inst = addIndicatorInstance(c, scope, epicRef.current, type, {
-        config,
-        forceHidden: controller.indicatorsHidden.value,
-        resolution: period.resolution,
-      });
-      if (!inst) return false;
-      // Auto-expand collapsed sub-panes when adding one in (mirrors the toolbar add).
-      if (controller.subPanesHidden.value && isSubPaneIndicator(type))
-        controller.subPanesHidden.set(false);
-      const next = [...controller.indicators.value, inst];
-      controller.indicators.set(next);
-      saveIndicators(scope, next);
-      handle.redrawRef.current();
-      return true;
-    },
-    [controller, scope, period.resolution],
-  );
-
-  // Copy an indicator's live config to the clipboard as JSON. Paste creates a fresh
-  // instance of that type with this exact config (TradingView-style).
+  // Copy an indicator's full live config (type + calcParams / visibility / per-line
+  // styles / extendData inputs) to the clipboard as JSON. Paste creates a fresh
+  // instance of that type with this exact config (TradingView-style). The config
+  // shape matches SavedIndicatorConfig so it round-trips through persisted storage.
   const copyIndicator = useCallback((paneId: string, name: string) => {
-    const snap = liveIndicatorConfig(paneId, name);
-    if (!snap) return;
-    const payload = { __autoTraderIndicator: 1 as const, type: snap.type, config: snap.config };
+    const c = chartRef.current;
+    if (!c) return;
+    const ind = getIndicator(c, paneId, name) as Indicator | null;
+    if (!ind) return;
+    const payload = {
+      __autoTraderIndicator: 1 as const,
+      type: indTypeOf(ind), // the real type (EMA/MA/…), NOT the instance id
+      config: {
+        calcParams: ind.calcParams as number[] | undefined,
+        visible: ind.visible,
+        styles: ind.styles?.lines
+          ? { lines: ind.styles.lines.map((l) => ({ color: l.color, size: l.size })) }
+          : undefined,
+        extendData: ind.extendData as Record<string, unknown> | undefined,
+      } satisfies SavedIndicatorConfig,
+    };
     const json = JSON.stringify(payload, null, 2);
     navigator.clipboard?.writeText(json).then(
-      () => toast(`Copied ${snap.label} settings`),
+      () => toast(`Copied ${ind.shortName ?? indTypeOf(ind)} settings`),
       () => toast("Copy failed (clipboard blocked)"),
     );
-  }, [liveIndicatorConfig]);
-
-  // Duplicate: a second instance of this indicator with the SAME live settings,
-  // without going through the clipboard (so it neither needs clipboard permission
-  // nor clobbers what the user has copied). Same add path as Paste, so the copy
-  // lands with the hide-all mask, sub-pane un-collapse and persistence applied.
-  const duplicateIndicator = useCallback(
-    (paneId: string, name: string) => {
-      if (snapViewRef.current) return; // read-only snapshot view: no duplicate
-      const snap = liveIndicatorConfig(paneId, name);
-      if (!snap) return;
-      toast(addFromConfig(snap.type, snap.config) ? `Duplicated ${snap.label}` : `Can't duplicate ${snap.label}`);
-    },
-    [liveIndicatorConfig, addFromConfig],
-  );
+  }, []);
 
   // Paste: read the clipboard, and if it holds a copied indicator, ALWAYS add a
   // fresh instance of that type with the copied config (never dedupe — TradingView
@@ -236,12 +182,24 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       toast("Clipboard has no indicator to paste");
       return;
     }
-    if (!addFromConfig(parsed.type, parsed.config)) {
+    const inst = addIndicatorInstance(c, scope, epicRef.current, parsed.type, {
+      config: parsed.config,
+      forceHidden: controller.indicatorsHidden.value,
+      resolution: period.resolution,
+    });
+    if (!inst) {
       toast(`Can't paste ${parsed.type}`);
       return;
     }
+    // Auto-expand collapsed sub-panes when pasting one in (mirrors the toolbar add).
+    if (controller.subPanesHidden.value && isSubPaneIndicator(parsed.type))
+      controller.subPanesHidden.set(false);
+    const next = [...controller.indicators.value, inst];
+    controller.indicators.set(next);
+    saveIndicators(scope, next);
+    handle.redrawRef.current();
     toast(`Pasted ${parsed.type}`);
-  }, [addFromConfig]);
+  }, [controller, scope, period.resolution]);
 
   // Ctrl/Cmd+C: copy the SELECTED indicator (if any). Returns true when it acted, so
   // the key handler only swallows the event when there's a selection to copy (else
@@ -346,35 +304,14 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   const toggleVisibleOn = useCallback((paneId: string, name: string) => {
     const c = chartRef.current;
     if (!c) return;
-    const ind = getIndicator(c, paneId, name) as
-      | { visible?: boolean; extendData?: unknown }
-      | null;
+    const ind = getIndicator(c, paneId, name) as { visible?: boolean } | null;
     const next = !(ind?.visible ?? true);
-    // Write the SAME extendData.userVisible + isVisibleOnResolution pair the legend
-    // eye path writes (onLegendToggleVisible above). Writing only the live `visible`
-    // flag leaves a stale userVisible behind, and applyIndicatorVisibility computes
-    // intent as `ext.userVisible ?? ind.visible` — so the next visibility sweep
-    // re-hides an indicator the user just Showed from this menu. setIndicatorInset
-    // runs such a sweep, which made "toggle inset" silently undo a menu Show.
-    const ext = { ...((ind?.extendData as object) ?? {}), userVisible: next };
-    const vis = (ext as { visibility?: VisibilityModel }).visibility ?? defaultVisibility();
-    const visible = next && isVisibleOnResolution(vis, period.resolution);
-    c.overrideIndicator({ paneId, name, extendData: ext, visible });
-    // Persist for EVERY pane, matching the legend eye path above (which has always
-    // been pane-agnostic). Inset moves an instance between panes, so a candle-pane
-    // guard here would make the same indicator's Hide persist or not depending on
-    // which mode it happened to be in.
-    saveIndicatorVisible(scope, name, next);
+    c.overrideIndicator({ paneId, name, visible: next });
     // A Slope's accel companion follows its parent's visibility. No-ops if absent.
-    // mirrorAccelCompanion strips the inset marker itself (withoutInset), so the
-    // parent's ext can be forwarded as-is. Ordered after the persist so the whole
-    // body reads in the same sequence as onLegendToggleVisible.
-    mirrorAccelCompanion(c, name, { extendData: ext, visible });
+    mirrorAccelCompanion(c, name, { visible: next });
+    if (paneId === "candle_pane") saveIndicatorVisible(scope, name, next);
     handle.redrawRef.current();
-    // period.resolution is read above, so it has to be a dependency (the legend eye
-    // path lists it for the same reason); an empty array would freeze it at the
-    // first-render value and stale it on every timeframe switch.
-  }, [period.resolution]);
+  }, []);
   const removeOn = useCallback(
     (_paneId: string, name: string) => {
       const c = chartRef.current;
@@ -387,52 +324,6 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       handle.redrawRef.current();
     },
     [controller, scope, indicatorRemoved],
-  );
-
-  // Move an instance between its own sub-pane and the candle pane's inset band.
-  // klinecharts has no "change an indicator's pane" API, so this is a teardown +
-  // recreate, exactly like reorderSubPanes. chart.removeIndicator directly, NOT
-  // removeIndicatorById: that one also deletes the persisted config, which would
-  // throw away the instance's params and colors on every toggle.
-  const setIndicatorInset = useCallback(
-    (_paneId: string, name: string, on: boolean) => {
-      const c = chartRef.current;
-      if (!c) return;
-      const next = withInset(controller.indicators.value, name, on);
-      const inst = next.find((i) => i.id === name);
-      if (!inst) return;
-      // Resolve the pane LIVE rather than trusting the one captured when the menu
-      // opened (reorderPaneByName takes only `name` for the same reason). A tab
-      // sync, a template apply or a resolution change can recreate panes while a
-      // menu is open, and a stale id makes removeIndicator silently no-op — the
-      // applyIndicator below would then mint a SECOND live indicator under this
-      // name, breaking the uniqueness invariant mintInstanceId depends on.
-      const paneId = paneIdOf(name);
-      c.removeIndicator({ paneId, name });
-      controller.indicators.set(next);
-      saveIndicators(scope, next);
-      // Leaving inset materializes a sub-pane, so un-collapse if the master
-      // "hide sub-panes" switch is on — otherwise the recreated pane lands in a
-      // collapsed stack and the indicator reads as gone (same one-liner the
-      // toolbar add / paste / template-apply paths use for the same reason).
-      if (!on && controller.subPanesHidden.value) controller.subPanesHidden.set(false);
-      applyIndicator(c, scope, epicRef.current, inst, { rehydrate: true });
-      // A recreated instance comes back at its CONFIG's visibility, which knows
-      // nothing about the sidebar's hide-all mask or the per-resolution visibility
-      // model — both are view state that applyIndicatorVisibility computes and
-      // deliberately never persists. Without this sweep, toggling inset while
-      // "Hide indicators" is on brings the indicator back on screen under a switch
-      // that says hidden. syncIndicatorsFromStorage re-asserts it after its own
-      // teardown + rehydrate rebuild for exactly this reason.
-      applyIndicatorVisibility(c, period.resolution, controller.indicatorsHidden.value);
-      // A recreate mints a new paneId, so a selection pointing at this instance
-      // (or at a pane the recreate reshuffled) must be re-resolved — same reason
-      // reorderPaneByName does it below.
-      const sel = selectedIndicator.value;
-      if (sel) selectedIndicator.set({ paneId: paneIdOf(sel.name), name: sel.name });
-      handle.redrawRef.current();
-    },
-    [controller, scope, paneIdOf, selectedIndicator, period.resolution],
   );
 
   // Move a sub-pane to a new slot: rebuild panes, persist the new order, and re-resolve
@@ -525,11 +416,8 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   const indicatorMenuItems = useCallback(
     (paneId: string, name: string): MenuItem[] => {
       const c = chartRef.current;
-      const ind = c
-        ? (getIndicator(c, paneId, name) as { visible?: boolean; extendData?: unknown } | null)
-        : null;
+      const ind = c ? (getIndicator(c, paneId, name) as { visible?: boolean } | null) : null;
       const visible = ind?.visible ?? true;
-      const inset = isInsetInstance({ name, extendData: ind?.extendData });
       const order = paneId === "candle_pane" ? [] : subPaneOrder(chartRef.current!);
       const idx = order.indexOf(paneId);
       const moveItems: MenuItem[] =
@@ -550,26 +438,16 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
           onClick: () => indicatorSettingsRequest.set({ paneId, name }),
         },
         { label: "Copy", icon: MenuIcons.copy, onClick: () => copyIndicator(paneId, name) },
-        { label: "Duplicate", icon: MenuIcons.clone, onClick: () => duplicateIndicator(paneId, name) },
         {
           label: visible ? "Hide" : "Show",
           icon: visible ? MenuIcons.hide : MenuIcons.show,
           onClick: () => toggleVisibleOn(paneId, name),
         },
         ...moveItems,
-        ...(INSET_CAPABLE.has(indTypeOf({ name, extendData: ind?.extendData }))
-          ? [
-              {
-                label: inset ? "Show in own pane" : "Show as inset",
-                icon: MenuIcons.inset,
-                onClick: () => setIndicatorInset(paneId, name, !inset),
-              },
-            ]
-          : []),
         { label: "Remove", icon: MenuIcons.remove, danger: true, onClick: () => removeOn(paneId, name) },
       ];
     },
-    [copyIndicator, duplicateIndicator, toggleVisibleOn, removeOn, reorderPaneByName, setIndicatorInset],
+    [copyIndicator, toggleVisibleOn, removeOn, reorderPaneByName],
   );
 
   // The legend's ⋯ "more" button opens the menu (anchored below the button).
@@ -585,7 +463,6 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     onLegendRemove,
     onLegendSelectRow,
     copyIndicator,
-    duplicateIndicator,
     pasteIndicator,
     copySelectedIndicator,
     copySelectedDrawing,
@@ -593,7 +470,6 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     deleteSelectedDrawing,
     toggleVisibleOn,
     removeOn,
-    setIndicatorInset,
     reorderPaneByName,
     startPaneReorderDrag,
     indicatorMenuItems,

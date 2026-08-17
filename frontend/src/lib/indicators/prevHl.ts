@@ -13,6 +13,8 @@ import {
   type SmoothLineStyle,
 } from "klinecharts";
 import { fullLine } from "./shared";
+import { maskedSessionNow } from "../maskedReplay";
+import { maskedTimeLabel } from "../timeFormat";
 
 interface PrevHlPoint {
   rollingHigh?: number;
@@ -175,6 +177,34 @@ export function prevHlAnchorToInput(anchorTs: number, tz: string | undefined): s
   const m: Record<string, string> = {};
   for (const x of parts) m[x.type] = x.value;
   return `${m.year}-${m.month}-${m.day}T${m.hour}:${m.minute}`;
+}
+
+// The anchor date as USER-FACING text, for the two places that show it ON the
+// chart: the anchor curve's end label (compact, "since 03-02" / "since Day 3")
+// and the legend description (full, "since 2026-03-02 09:30" / "since Day 3
+// 09:30"). Both are painted inside the cell, so during a masked replay session
+// they would name the hidden period outright — and worse, the anchor curve only
+// draws from that instant forward, so the label bounds the hidden window
+// visually. `anchorTs` is seeded from persisted extendData, so no in-session
+// editing is needed for this to appear.
+//
+// Reads the registry directly rather than through useMaskedReplay: this module
+// is not a React component tree. Fails closed — armed means no real date, and
+// the day number comes from whichever masked session is running.
+export function prevHlAnchorLabel(
+  anchorTs: number,
+  tz: string | undefined,
+  compact: boolean,
+): string {
+  const masked = maskedSessionNow();
+  if (masked) {
+    const label = maskedTimeLabel(masked.startMs, anchorTs, masked.clock, masked.timezone);
+    // The compact form drops the clock time ("Day 3"), matching the shape of the
+    // unmasked compact form (month-day, no time).
+    return compact ? label.split(" ").slice(0, 2).join(" ") : label;
+  }
+  const iso = prevHlAnchorToInput(anchorTs, tz);
+  return compact ? iso.slice(5, 10) : iso.replace("T", " ");
 }
 
 // "YYYY-MM-DDTHH:mm" wall-clock (in the instance's zone) → epoch ms. Two offset
@@ -521,7 +551,7 @@ export function prevHlLegendSummary(ext: PrevHlExtend): string {
   if (on("weekHigh", "weekLow")) parts.push(plural(count("week"), "week"));
   if (on("anchorHigh", "anchorLow")) {
     const ts = Number(ext.anchorTs) || 0;
-    if (ts > 0) parts.push(`since ${prevHlAnchorToInput(ts, ext.tz).replace("T", " ")}`);
+    if (ts > 0) parts.push(`since ${prevHlAnchorLabel(ts, ext.tz, false)}`);
   }
   return parts.join(", ");
 }

@@ -29,7 +29,7 @@ import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import type { BaselineMetrics } from "./api";
 import { RESOLUTION_SECONDS } from "./lib/feed";
-import { formatExpiryShort } from "./lib/alertUi";
+import { useBarTimeLabel } from "./lib/useMaskedReplay";
 import BacktestAnalysisPanel from "./BacktestAnalysisPanel";
 import { formatDayWindow } from "./lib/backtestSchedule";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
@@ -568,6 +568,11 @@ function TradesTable({
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(0);
   const [rowH, setRowH] = useState(ROW_H_ESTIMATE);
+  // The Entry/Exit columns label the SAME bars the (now masked) cluster popovers
+  // describe, so during a masked replay session they print the exact date it
+  // hides. Task 14 will feed this panel the cursor-filtered result, which makes
+  // it more reachable during a session, not less.
+  const barTime = useBarTimeLabel();
 
   // Only surface the Financing column when the run actually charged it; a
   // no-financing run keeps the table visually unchanged. Individual cells stay
@@ -659,9 +664,9 @@ function TradesTable({
               <td className={row.leg === "long" ? "bt-panel-side-long" : "bt-panel-side-short"}>
                 {row.leg === "long" ? "Long" : "Short"}
               </td>
-              <td className="bt-panel-c-time">{formatExpiryShort(row.entryTime * 1000)}</td>
+              <td className="bt-panel-c-time">{barTime(row.entryTime * 1000)}</td>
               <td className="bt-panel-c-num">{fmtPrice(row.entryPrice)}</td>
-              <td className="bt-panel-c-time">{formatExpiryShort(row.exitTime * 1000)}</td>
+              <td className="bt-panel-c-time">{barTime(row.exitTime * 1000)}</td>
               <td className="bt-panel-c-num">{fmtPrice(row.exitPrice)}</td>
               <td className={`bt-panel-c-num ${toneOf(row.pnl)}`}>{fmtPnl(row.pnl)}</td>
               <td className={`bt-panel-c-num ${toneOf(row.pnlPct)}`}>{fmtPct(row.pnlPct)}</td>

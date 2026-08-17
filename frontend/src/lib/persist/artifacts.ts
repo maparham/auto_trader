@@ -164,37 +164,7 @@ export function clearSweepResultId(scope: string, epic: string): void {
 export interface IndicatorInstance {
   id: string;
   type: string;
-  // Inset display: this instance draws inside the candle pane's bottom band
-  // instead of opening its own sub-pane. Written only when true so existing
-  // saved payloads stay byte-identical (templateAutosave's sameTemplate compares them).
-  inset?: boolean;
 }
-
-// The ONE place an IndicatorInstance is (re)built for persistence. Three call
-// sites need this — loadIndicators below, withInset (lib/indicators/inset.ts) and
-// addTemplateIndicator (lib/templates.ts) — and each rebuilds field-by-field
-// rather than spreading, because saveIndicators serializes with JSON.stringify and
-// templateAutosave's sameTemplate compares the resulting BYTES: key order is part
-// of the payload, and `inset` must be absent (never false) so a non-inset instance
-// stays byte-identical to what earlier builds saved.
-//
-// Centralised because three independent copies of that rule is three places for a
-// future field to be silently dropped, with a green suite either way. The guard
-// below makes that a compile error instead.
-export function canonicalInstance(inst: IndicatorInstance): IndicatorInstance {
-  return { id: inst.id, type: inst.type, ...(inst.inset ? { inset: true as const } : {}) };
-}
-
-// Compile-time guard for canonicalInstance: every key of IndicatorInstance must
-// appear here, so ADDING a field to the interface fails typecheck until someone
-// decides how canonicalInstance should carry it. (A runtime test cannot catch this
-// — a dropped field just silently never round-trips.)
-const _INSTANCE_KEYS: Record<keyof IndicatorInstance, true> = {
-  id: true,
-  type: true,
-  inset: true,
-};
-void _INSTANCE_KEYS;
 
 const indicatorsKey = (scope: string) => ns(scope, "indicators");
 
@@ -206,7 +176,7 @@ const indicatorsKey = (scope: string) => ns(scope, "indicators");
 export function loadIndicators(scope: string): IndicatorInstance[] {
   const raw = load<Array<string | IndicatorInstance>>(indicatorsKey(scope), []);
   return raw.map((e) =>
-    typeof e === "string" ? { id: e, type: e } : canonicalInstance(e),
+    typeof e === "string" ? { id: e, type: e } : { id: e.id, type: e.type },
   );
 }
 export function saveIndicators(scope: string, list: IndicatorInstance[]): void {
@@ -227,22 +197,6 @@ export function loadScalePriceOnly(scope: string): boolean {
 }
 export function saveScalePriceOnly(scope: string, value: boolean): void {
   save(scalePriceOnlyKey(scope), value);
-}
-
-// --- price-axis stretched fit (per cell) --------------------------------------
-//
-// Whether the candle pane's price axis is trimmed to fill the pane (the second
-// price-axis double-click / the toolbar stretch button) instead of leaving
-// klinecharts' roomy default margins. Default false. Only the stretched flag is
-// stored, not the full PriceFitMode: the "refit" step exists to arm the NEXT
-// double-click within a session and is meaningless once reloaded.
-const priceStretchedKey = (scope: string) => ns(scope, "priceStretched");
-
-export function loadPriceStretched(scope: string): boolean {
-  return load<boolean>(priceStretchedKey(scope), false);
-}
-export function savePriceStretched(scope: string, value: boolean): void {
-  save(priceStretchedKey(scope), value);
 }
 
 // --- legend collapsed (per cell) ----------------------------------------------
@@ -270,23 +224,6 @@ export function loadCandleHidden(scope: string): boolean {
 }
 export function saveCandleHidden(scope: string, value: boolean): void {
   save(candleHiddenKey(scope), value);
-}
-
-// --- inset band height (per cell) ---------------------------------------------
-//
-// How tall the inset band is, as a fraction of the candle pane's main height, after
-// the user has dragged its top edge. A fraction rather than pixels so the band keeps
-// its proportion when the cell is resized. Stored on its own key, NOT inside the
-// indicator list: saveIndicators' bytes are what templateAutosave.sameTemplate
-// diffs, and a band drag is not a template change.
-const insetBandKey = (scope: string) => ns(scope, "insetBand");
-
-export function loadInsetBand(scope: string): number | null {
-  const v = load<number | null>(insetBandKey(scope), null);
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-export function saveInsetBand(scope: string, fraction: number): void {
-  save(insetBandKey(scope), fraction);
 }
 
 // --- favourite indicators (global preference) --------------------------------

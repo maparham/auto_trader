@@ -218,22 +218,6 @@ describe("sameInstanceConfig", () => {
       ),
     ).toBe(false);
   });
-  it("ignores the inset placement marker in either direction — same authored pane", () => {
-    // A live inset pane against a plain payload…
-    expect(
-      sameInstanceConfig(
-        { id: "SLOPE", type: "SLOPE", calcParams: [9, 21], extendData: { units: "pctBar", inset: true } },
-        payload,
-      ),
-    ).toBe(true);
-    // …and a plain live pane against an inset payload.
-    expect(
-      sameInstanceConfig(
-        { id: "SLOPE", type: "SLOPE", calcParams: [9, 21], extendData: { units: "pctBar" } },
-        { ...payload, extendData: { units: "pctBar", inset: true } },
-      ),
-    ).toBe(true);
-  });
   it("treats an absent mtf and a null pin as the same (chart timeframe)", () => {
     expect(
       sameInstanceConfig(

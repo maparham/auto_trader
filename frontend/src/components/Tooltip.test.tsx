@@ -40,34 +40,6 @@ describe("Tooltip", () => {
     expect(tip.querySelectorAll(".tooltip-desc").length).toBe(2);
   });
 
-  it("sets a note apart from the description, and only warns when asked", () => {
-    render(
-      <Tooltip content="Invert scale" note="Session only (resets on reload)" noteWarn>
-        <span>i</span>
-      </Tooltip>,
-    );
-    fireEvent.focus(screen.getByText("i").parentElement!);
-    const tip = screen.getByRole("tooltip");
-    const note = tip.querySelector(".tooltip-note");
-    // The note must NOT land among the description lines — its whole job is to
-    // read as secondary rather than as one more line of the explanation.
-    expect(tip.querySelectorAll(".tooltip-desc").length).toBe(1);
-    expect(note?.textContent).toBe("Session only (resets on reload)");
-    expect(note?.classList.contains("warn")).toBe(true);
-    expect(note?.querySelector("svg")).not.toBeNull();
-
-    cleanup();
-    render(
-      <Tooltip content="Stretch" note="Double-click the price axis to cycle">
-        <span>s</span>
-      </Tooltip>,
-    );
-    fireEvent.focus(screen.getByText("s").parentElement!);
-    const plain = screen.getByRole("tooltip").querySelector(".tooltip-note");
-    expect(plain?.classList.contains("warn")).toBe(false);
-    expect(plain?.querySelector("svg")).toBeNull();
-  });
-
   it("renders nothing and stays inert when content is empty", () => {
     render(<Tooltip content=""><button>bare</button></Tooltip>);
     fireEvent.focus(screen.getByText("bare").parentElement!);

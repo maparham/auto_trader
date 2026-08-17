@@ -73,7 +73,7 @@ function ChipContent({
         <span className="tab-closed-badge" title={closedTip} aria-label={closedTip}>
           {/* Solid crescent (currentColor) — keeps the chrome monochrome rather
               than the lone colored 🌙 emoji it replaced. */}
-          <svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true">
             <path fill="currentColor" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
           </svg>
         </span>
@@ -167,7 +167,6 @@ export default function TabBar({
   const [target, setTarget] = useState<DragTarget | null>(null);
   const [anim, setAnim] = useState(false);
   const barRef = useRef<HTMLDivElement | null>(null);
-  const searchBoxRef = useRef<HTMLDivElement | null>(null);
   const floatRef = useRef<HTMLDivElement | null>(null);
   const dragGeom = useRef<{
     rects: Rect[];
@@ -296,30 +295,18 @@ export default function TabBar({
     [onOpenSymbol, closeSearch],
   );
 
-  // Outside-click closes the search: anything that isn't the search control
-  // itself (input, magnifier, catalogue dropdown) dismisses it, a tab chip
-  // included. Deliberately on CLICK rather than the house mousedown idiom —
-  // closing swaps the input back to the narrow magnifier, which reflows the
-  // whole wrapping strip, so on mousedown the chips would shift out from under
-  // the cursor before mouseup and the chip the user pressed would never receive
-  // its click. On click its handler has already run. (The click that OPENS the
-  // search lands inside the control, so it can't immediately close it.)
+  // Outside-click closes the search — but a click anywhere INSIDE the tab bar
+  // (a tab chip, the input itself) keeps it open, so the user can hop between
+  // matching tabs. Closing on input blur would clear the query on mousedown,
+  // before the chip's click handler runs.
   useEffect(() => {
     if (!searchOpen) return;
-    const onClick = (e: MouseEvent) => {
-      const box = searchBoxRef.current;
-      const target = e.target as Node | null;
-      if (box == null || target == null) return;
-      // The opening click on the magnifier arrives here with its target ALREADY
-      // unmounted: React swaps in the input during the same dispatch (trusted
-      // clicks flush synchronously) and this effect attaches mid-propagation.
-      // A detached node fails box.contains() and would read as an outside
-      // click, shutting the search the instant it opened.
-      if (!target.isConnected) return;
-      if (!box.contains(target)) closeSearch();
+    const onDown = (e: MouseEvent) => {
+      const bar = barRef.current?.closest(".tab-bar");
+      if (bar != null && !bar.contains(e.target as Node)) closeSearch();
     };
-    document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
   }, [searchOpen, closeSearch]);
 
   // Ctrl/Cmd+F opens (or re-focuses) the search instead of the browser find.
@@ -597,7 +584,7 @@ export default function TabBar({
       </div>
       {/* Pinned outside .tab-bar-tabs so it never wraps to a second row with the
           scrolling/wrapping chip strip — it stays put at the strip's end. */}
-      <div className="tab-bar-search" ref={searchBoxRef}>
+      <div className="tab-bar-search">
         {searchOpen ? (
           <input
             ref={searchRef}
@@ -630,8 +617,8 @@ export default function TabBar({
               aria-label="Find open symbol"
               onClick={() => setSearchOpen(true)}
             >
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-                   stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                   stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <circle cx="11" cy="11" r="7" />
                 <path d="m20 20-3.5-3.5" />
               </svg>

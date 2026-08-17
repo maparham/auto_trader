@@ -40,13 +40,6 @@ import type { SavedOverlay } from "./persist";
 //  - pctSource      : ATR's legend ATR% price source (AtrExtend). It parametrizes
 //                     the legend-only atrPct readout, never the plotted ATR line
 //                     or any rule output — same category as hideLegendValue
-//  - inset          : the inset PLACEMENT marker applyIndicator stamps on a live
-//                     inset instance (lib/indicators/inset.ts) — derived display
-//                     state on the same footing as indType, telling us WHERE the
-//                     indicator draws (candle-pane band vs its own sub-pane), never
-//                     what it computes. Treated as identity it would hash an inset
-//                     RSI differently from a paned one, so Apply would miss the RSI
-//                     already on the chart and add a duplicate.
 //
 // NOT denylisted: RsiExtend.divergence (RsiDivergenceConfig, customIndicators.ts
 // L1143-1156) — `on` plus the lookback/range/kind fields directly parametrize
@@ -62,7 +55,6 @@ const NON_IDENTIFYING_EXTEND_KEYS = new Set([
   "lineHidden",
   "style",
   "pctSource",
-  "inset",
 ]);
 
 // The identity-relevant slice of extendData with deterministically-ordered keys.

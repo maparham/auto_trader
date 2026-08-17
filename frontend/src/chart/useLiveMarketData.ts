@@ -54,6 +54,11 @@ export interface LiveMarketDataDeps {
   period: Period;
   scope: string;
   effPrecision: number;
+  // Bumped by useReplay when the SERIES must be reloaded (replay start / exit).
+  // In the load effect's dep array, so entering or leaving replay re-runs the
+  // whole load path — rehydrate, indicator visibility, MTF refresh, template —
+  // instead of forking a second one.
+  replayEpoch: number;
   // State setters (identity-stable across renders).
   setStatus: (s: LiveStatus) => void;
   setLastPrice: (p: number | null) => void;
@@ -138,6 +143,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     period,
     scope,
     effPrecision,
+    replayEpoch,
     setStatus,
     setLastPrice,
     setHasData,
@@ -314,9 +320,14 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         COVER_PAGE_BARS * COVER_MAX_WINDOWS;
     if (tooDeep) {
       const day = new Date(wantCenterTs!).toLocaleDateString();
+      // Never while replaying: tooDeep measures distance from NOW, and a replay
+      // centre is old by construction, so a re-run inside a session can trip it
+      // and print the real date the session exists to hide. Only the COPY is
+      // suppressed — the parked intent below still stands, and the centring this
+      // feeds is already inert while replaying (the cursor owns the view).
       // Retry re-runs repeat on a 5-60s backoff — re-toasting the same notice
       // every cycle would spam; the parked intent below still survives.
-      if (!isRetryRun)
+      if (!isRetryRun && !(handle.replayRef.current?.isActive() ?? false))
         toast(`${day} is too far back for ${period.label}. Showing the latest candles instead.`);
       // Park the unreached center so the NEXT timeframe change can restore it
       // (cleared on gesture / epic change / a switch that lands — see the ref).
@@ -448,26 +459,41 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     setErrorOpen(false);
 
     (async () => {
-      // Tolerate a failed initial load (offline/DNS/refused/CORS make fetchRecent
-      // REJECT, not return []): fall back to no history and carry on. Crucially this
-      // still reaches rehydrate() below, which advances overlays.hydratedEpic — skip
-      // it and persist() stays gated on the stale epic forever, silently dropping
-      // every alert/drawing the user adds until they switch symbol again.
+      // A REPLAYING cell owns its own bars: it paints only what is closed at the
+      // cursor and never streams. Branching HERE — before the recent-history
+      // fetch — is load-bearing: handing off at the tail would paint live bars
+      // (the future) for a frame, and in a masked session that is the one thing
+      // the feature exists to prevent.
+      const replay = handle.replayRef.current;
+      const replaying = replay?.isActive() ?? false;
       let bars: KLineData[];
       let degraded: string | null = null;
-      try {
-        const loaded = await fetchRecentWithStatus(symbol.epic, period.resolution, 500, priceSide, brokerId);
-        bars = loaded.bars;
-        degraded = loaded.degraded;
-      } catch (err) {
-        console.warn(`[chart] initial load failed for ${symbol.epic}; continuing with no history`, err);
-        bars = [];
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+      if (replaying) {
+        bars = await replay!.barsFor(period.resolution);
+      } else {
+        // Tolerate a failed initial load (offline/DNS/refused/CORS make fetchRecent
+        // REJECT, not return []): fall back to no history and carry on. Crucially this
+        // still reaches rehydrate() below, which advances overlays.hydratedEpic — skip
+        // it and persist() stays gated on the stale epic forever, silently dropping
+        // every alert/drawing the user adds until they switch symbol again.
+        try {
+          const loaded = await fetchRecentWithStatus(symbol.epic, period.resolution, 500, priceSide, brokerId);
+          bars = loaded.bars;
+          degraded = loaded.degraded;
+        } catch (err) {
+          console.warn(`[chart] initial load failed for ${symbol.epic}; continuing with no history`, err);
+          bars = [];
+          if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+        }
       }
       if (!cancelled) setDegraded(degraded);
       if (cancelled || !handle.chartRef.current) return;
       // This run owns the load — the saved-view restore is spent (see above).
-      didInitRef.current = true;
+      // A REPLAYING run does not consume it: it never uses restoreView (the
+      // cursor owns the view), so leaving the one-shot unspent keeps it
+      // available to the load that exiting the session triggers, which is the
+      // run that should land the user back where they left the chart.
+      if (!replaying) didInitRef.current = true;
       // Cover the preserved center BEFORE the first paint of the new timeframe.
       // The recent window above is only ~500 bars; a center further back than
       // that would otherwise paint a wrong view first (clamped to the window's
@@ -483,7 +509,9 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // 16-page sequential budget covered barely a year of hours and silently
       // clamped anything deeper. Past the cap, or where the broker's history
       // bottoms out, scrollTsToCenter clamps to the oldest loaded bar.
-      if (centerTargetTs != null && bars.length > 0 && centerTargetTs < bars[0].timestamp) {
+      // Replay positions itself at the cursor (right edge of its own slice), so
+      // the preserve-center cover would only fetch history it never uses.
+      if (!replaying && centerTargetTs != null && bars.length > 0 && centerTargetTs < bars[0].timestamp) {
         const resSec = RESOLUTION_SECONDS[period.resolution] ?? 60;
         // On a reload there's no prior view to size the pad from — assume a
         // typical viewport (the cover just fetches a window more than needed).
@@ -515,10 +543,19 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // that fails still clears below: the old series must not masquerade as
       // the new one. hasData stays false either way, so the banner + retry
       // still own recovery.
+      // ...but NEVER while replaying: entering replay re-runs this effect on the
+      // SAME series key, so an empty (degraded/failed) barsFor read would leave
+      // the LIVE bars painted under an active session — the future on screen,
+      // the exact leak this branch exists to prevent. Wiping them clears the
+      // paint only — the session mode, the bar store and the persisted record
+      // all stand — and the empty load re-arms the history backoff below, whose
+      // re-run calls barsFor again. (Enter-from-live also still has its store,
+      // populated by startAt, so stepping keeps working meanwhile; a resumed
+      // session has no store yet and depends entirely on that retry.)
       const keepPainted = shouldKeepPaintedBars(
         bars.length,
         handle.chartRef.current.getDataList().length,
-        sameSeriesRerun,
+        sameSeriesRerun && !replaying,
       );
       if (!keepPainted) {
         // Cursor starts at the oldest loaded bar; scroll-back requests older windows.
@@ -543,13 +580,22 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       setHasData(bars.length > 0);
       if (!shouldRetryHistory(bars.length, degraded)) {
         retryAttemptRef.current = 0;
-      } else if (!period.liveOnly && !cancelled) {
+      } else if (!period.liveOnly && !cancelled && (!replaying || bars.length === 0)) {
         // Live-only (seconds) intervals legitimately start empty (they fill from
         // the stream) — everything else with no bars is a failed/empty load, and
         // a DEGRADED load (cached bars served during a broker outage) is missing
         // its tail: schedule a re-run either way so the series heals when the
         // broker returns. The cleanup below clears the timer, so a series
         // switch or unmount can't leak a stale retry.
+        // A replaying cell owns its own bars and needs no history retry — UNLESS
+        // its load came back EMPTY, which is a failed read, not an empty series.
+        // That case re-arms this same backoff, and it is the ONLY way a resumed
+        // session heals: on the mount run useReplay's store is still empty, and
+        // nothing inside the hook can create one (refillIfNeeded early-returns on
+        // an empty store — a refill extends a store, it cannot create it — and
+        // stepForward can't advance without a loaded successor). The re-run calls
+        // barsFor again; the backoff delay is what paces it. A SUCCESSFUL replay
+        // load has bars and schedules nothing.
         const delay = nextHistoryRetryDelayMs(retryAttemptRef.current++);
         retryTimer = window.setTimeout(() => setRetryNonce((n) => n + 1), delay);
       }
@@ -567,7 +613,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // keepPainted: the bars (and therefore the user's view onto them) were
       // left untouched — repositioning would yank a view the user may be
       // reading to the live edge for a load that applied nothing.
-      if (!keepPainted) {
+      if (replaying) {
+        // The cursor bar IS the right edge of the replay slice.
+        handle.chartRef.current.scrollToRealTime();
+      } else if (!keepPainted) {
         if (restoreView && restoreView.barSpace > 0) {
           handle.chartRef.current.setBarSpace(restoreView.barSpace);
         }
@@ -817,7 +866,13 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
             // the walk's re-init signature; anywhere else means either the walk
             // applied nothing (still centered) or the user panned while it ran,
             // and yanking their view back would be worse than a stale center.
-            if (centerTargetTs != null && !handle.pendingRangeRef.current) {
+            // Never while replaying: the cursor owns the view (positioned at the
+            // right edge above), and centerTargetTs here is a LIVE center — a
+            // resumed session's saved reload view, or the pre-switch center of a
+            // timeframe change made mid-session. Re-asserting it would yank the
+            // view off the cursor once the walks settle, and captureViewPos would
+            // persist that yank.
+            if (centerTargetTs != null && !handle.pendingRangeRef.current && !replaying) {
               const data = handle.chartRef.current.getDataList();
               const vr = handle.chartRef.current.getVisibleRange();
               if (data.length > 0 && vr.to >= data.length - 1) {
@@ -835,8 +890,29 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         void snapshotWalk.then(positionSnapshotRange).catch(() => {});
       }
 
-      // Live updates for the current bar.
+      // Live updates for the current bar. A replaying cell gets NONE: beyond the
+      // future candles, the callback publishes setLivePrice to the positions dock
+      // and drives the price/bid/ask axis tags. Closing the previous socket still
+      // happens — entering replay must kill the stream this cell had.
       handle.wsRef.current?.close();
+      handle.wsRef.current = null;
+      if (replaying) {
+        // Stale spread sides would keep painting bid/ask lines from live prices.
+        handle.bidRef.current = null;
+        handle.askRef.current = null;
+        // The price-axis tag renders `(lastPrice ?? priceTag.price)` — leaving the
+        // last streamed price in place would pin TODAY's price to the axis of a
+        // session replaying months ago. Nulling it falls back to priceTag.price,
+        // which is the cursor bar's close (the chart holds only revealed bars).
+        setLastPrice(null);
+        // Repaint NOW: the refs above are only read by redraw (the bid/ask axis
+        // tags and their dashed lines), and this effect's own redraw call ran
+        // ~190 lines earlier, off the still-live values. Without this the last
+        // streamed bid/ask would sit on the axis of a session replaying months
+        // ago until some unrelated pan/zoom/crosshair happened to repaint.
+        handle.redrawRef.current();
+        return;
+      }
       setStatus("connecting");
       setLastPrice(null);
       handle.wsRef.current = openLive(
@@ -896,7 +972,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       handle.wsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol.epic, period.resolution, priceSide, brokerId, retryNonce]);
+  }, [symbol.epic, period.resolution, priceSide, brokerId, retryNonce, replayEpoch]);
 
   // Persist the view position (centered bar time + zoom) on every user
   // pan/zoom, debounced, so a page reload can reopen the chart where the user
@@ -915,15 +991,53 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     if (!chart || !dom) return;
     let timer: number | null = null;
     let dragging = false;
+    // The centre as of the most recent gesture event, refreshed while the LIVE
+    // bars are still on screen (the read sits behind gesture's replay guard, so
+    // it can never hold a session-era value). Only ever consulted when a
+    // window's 400ms happens to elapse INSIDE a replay session (see save): by
+    // then the chart is showing the session's bars, so re-reading would persist
+    // a replay-era centre, while merely re-arming until the session ended would
+    // persist the centre the exit restore had already put back — both silently
+    // losing the pan the user actually made. The live path ignores this and
+    // re-reads, so ordinary persistence is unchanged.
+    let armedCenterTs: number | null = null;
     const save = () => {
       timer = null;
       const c = handle.chartRef.current;
-      if (c) captureViewPos(c, scope, symbol.epic, period.resolution);
+      if (!c) return;
+      // A timer armed just BEFORE a session started. Skip the READ, not the
+      // write: persist what was captured live, so the pan survives to the exit
+      // restore that consumes this saved view.
+      if (handle.replayRef.current?.isActive()) {
+        if (armedCenterTs == null) return;
+        captureViewPos(c, scope, symbol.epic, period.resolution, armedCenterTs);
+        armedCenterTs = null;
+        return;
+      }
+      captureViewPos(c, scope, symbol.epic, period.resolution);
+      armedCenterTs = null;
     };
     const gesture = () => {
+      // Panning a REPLAYING cell says nothing about where its LIVE view belongs.
+      // Persisting the replay centre would poison the saved view that exit
+      // itself consumes (the session leaves didInitRef false, so the load effect
+      // re-runs on exit with restoreView live), dropping the cell back into the
+      // past and burning a cover walk paging history down to it. Returning
+      // before the line below also keeps the parked too-deep intent alive, which
+      // the load effect deliberately preserves across a session.
+      if (handle.replayRef.current?.isActive()) return;
       // A real pan/zoom gesture: the user owns the position now — drop any
       // parked too-deep intended center (see intendedCenterRef).
       intendedCenterRef.current = null;
+      // Refresh on EVERY gesture event, not just the one that arms the timer: a
+      // pan that completes inside a single debounce window would otherwise leave
+      // this holding the position the pan STARTED from, and the mid-session
+      // flush below would persist that — restoring the pre-pan centre on exit,
+      // the very thing the flush exists to prevent. Refreshing leaves a residual
+      // lag of one move-step. The read is unreachable while replaying (the early
+      // return above), so this can only ever hold a live-bar centre.
+      const c = handle.chartRef.current;
+      armedCenterTs = c ? readCenterBarTs(c) : null;
       if (timer == null) timer = window.setTimeout(save, 400);
     };
     const onWheel = () => gesture();

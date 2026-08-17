@@ -10,7 +10,7 @@
 import { useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { backtestClusterHoverSignal } from "./lib/signals";
-import { formatExpiryShort } from "./lib/alertUi";
+import { useBarTimeLabel } from "./lib/useMaskedReplay";
 
 const subscribe = (cb: () => void) => backtestClusterHoverSignal.subscribe(cb);
 
@@ -24,6 +24,9 @@ const MAX_ROWS = 12;
 
 export default function BacktestClusterPopover() {
   const hover = useSyncExternalStore(subscribe, () => backtestClusterHoverSignal.value);
+  // These rows label bars that are ON SCREEN, so during a masked replay session
+  // they would print the exact date it hides (before the early return: hooks).
+  const barTime = useBarTimeLabel();
   if (!hover) return null;
   const { trades, x, y } = hover;
   const shown = trades.slice(0, MAX_ROWS);
@@ -49,7 +52,7 @@ export default function BacktestClusterPopover() {
               <td className={t.leg === "long" ? "bt-panel-side-long" : "bt-panel-side-short"}>
                 {t.leg === "long" ? "Long" : "Short"}
               </td>
-              <td className="bt-cluster-pop-time">{formatExpiryShort(t.entry_time * 1000)}</td>
+              <td className="bt-cluster-pop-time">{barTime(t.entry_time * 1000)}</td>
               <td className="bt-cluster-pop-num">
                 {fmtPrice(t.entry_price)} → {fmtPrice(t.exit_price)}
               </td>

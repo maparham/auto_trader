@@ -23,6 +23,8 @@ import { type VisibilityModel, defaultVisibility } from "./lib/visibility";
 import { toast } from "./lib/notify";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
+import { useMaskedReplay } from "./lib/useMaskedReplay";
+import { maskedTimeLabel } from "./lib/timeFormat";
 import { type FibConfig, asFibConfig } from "./lib/fibConfig";
 import {
   loadDrawingDefault,
@@ -146,6 +148,15 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
       }),
     [],
   );
+  // A drawing placed during a masked replay session is anchored to REPLAYED bars,
+  // so its coordinates ARE the hidden period's dates. Relabel them the way that
+  // cell's own axis does ("Day 3 09:30"); drawing stays fully usable, only the
+  // read-only date label changes.
+  const maskedReplay = useMaskedReplay();
+  const coordTime = (ts: number) =>
+    maskedReplay
+      ? maskedTimeLabel(maskedReplay.startMs, ts, maskedReplay.clock, maskedReplay.timezone)
+      : dateFmt.format(ts);
 
   function applyStyle(next: Partial<{ color: string; size: number; style: LineType }>) {
     const merged = { color, size, style, ...next };
@@ -645,7 +656,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                       onChange={(e) => applyPointValue(i, Number(e.target.value))}
                     />
                     {p.timestamp != null && (
-                      <span className="ind-coord-date">{dateFmt.format(p.timestamp)}</span>
+                      <span className="ind-coord-date">{coordTime(p.timestamp)}</span>
                     )}
                   </div>
                 </div>

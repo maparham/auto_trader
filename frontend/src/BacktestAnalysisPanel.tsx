@@ -407,7 +407,7 @@ function DurationHistogram({
         Trades by hold duration
         <InfoTip
           title="Trades by hold duration"
-          text="Winning (green) and losing (red) trade counts per span of time held. When both directions traded, each span splits into long (L) and short (S). Bucket width comes from the longest hold."
+          text="How many winning (green) and losing (red) trades were held for each span of time. When both directions traded, each span shows a long (L) and short (S) group. Bucket width is set automatically from the longest hold."
         />
       </div>
       <div className="bt-dur-hist-plot" style={{ height: DUR_HIST_MAX_PX + 18 }}>

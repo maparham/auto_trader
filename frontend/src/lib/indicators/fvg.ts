@@ -241,11 +241,6 @@ export interface FvgExtend {
   // Draw a dashed line through each zone's midpoint (the drawn remainder's 50%,
   // ICT's "consequent encroachment"). Default off — the band alone reads cleaner.
   showMidline?: boolean;
-  // Continue each zone past the last bar to the right edge of the pane. Default
-  // off: zones stop at the last bar, so empty future space stays empty. Purely a
-  // draw choice (calcParams stay [minSize, maxBars, maxGaps], mirrored by
-  // backend fvg.py), so it never touches an operand.
-  extendRight?: boolean;
   // Zone colors / fill opacity (Style tab); partial, resolved over defaults.
   zoneStyle?: Partial<FvgZoneStyle>;
   // Multi-timeframe: series + gaps computed on a higher timeframe and aligned
@@ -289,12 +284,6 @@ function drawFvg(params: IndicatorDrawParams<FvgCalcPoint, unknown, unknown>): b
   const ext = indicator.extendData as FvgExtend | undefined;
   const showMidline = ext?.showMidline === true;
   const style = fvgZoneStyleOf(ext);
-  // Right edge shared by every zone (and its midline). Extending stops at the
-  // pane edge either way, so while the user is scrolled back far enough that the
-  // last bar is off-screen to the right, both modes render identically.
-  const barPx = xAxis.convertToPixel(1) - xAxis.convertToPixel(0);
-  const lastBarX = xAxis.convertToPixel(result.length - 1) + (Number.isFinite(barPx) ? barPx / 2 : 0);
-  const xEnd = ext?.extendRight === true ? bounding.width : Math.min(bounding.width, lastBarX);
 
   ctx.save();
   for (const g of last.gaps) {
@@ -302,7 +291,7 @@ function drawFvg(params: IndicatorDrawParams<FvgCalcPoint, unknown, unknown>): b
     const x0 = Math.max(0, xAxis.convertToPixel(g.createdIdx));
     const yTop = yAxis.convertToPixel(g.top);
     const yBot = yAxis.convertToPixel(g.bottom);
-    const w = xEnd - x0;
+    const w = bounding.width - x0;
     if (w <= 0) continue;
     ctx.fillStyle = hexWithAlpha(color, style.opacity);
     ctx.fillRect(x0, yTop, w, Math.max(1, yBot - yTop));
@@ -313,7 +302,7 @@ function drawFvg(params: IndicatorDrawParams<FvgCalcPoint, unknown, unknown>): b
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
       ctx.moveTo(x0, yMid);
-      ctx.lineTo(xEnd, yMid);
+      ctx.lineTo(bounding.width, yMid);
       ctx.stroke();
       ctx.setLineDash([]);
     }

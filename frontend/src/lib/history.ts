@@ -108,44 +108,6 @@ export function partitionHistorySuffixes(
   return out;
 }
 
-/** Which indicator instance ids need a live rebuild after a step is applied:
- *  ids whose config changed, plus ids whose POSITION, TYPE or INSET placement
- *  changed in an id-set-equal `indicators` delta (membership adds/removes are
- *  handled by the sync itself, which diffs stored vs live ids).
- *
- *  Three mutable dimensions, all of which must appear on BOTH sides of the
- *  comparison key: reorderSubPanes changes the index, a settings edit can change
- *  the type, and the inset toggle changes neither while still moving the instance
- *  between its own sub-pane and the candle pane's band. Leaving inset out lands
- *  the id in the sync's "keep" bucket, so undo flips storage while the chart keeps
- *  drawing in the old placement until the next reload. `inset` is written as true
- *  or absent (never false), so normalize both spellings to 0/1. */
-export function rebuildIdsForDeltas(
-  deltas: readonly AppliedDelta[],
-): Set<string> {
-  const rebuild = new Set<string>();
-  const key = (i: number, x: { type: string; inset?: boolean }) =>
-    `${i}:${x.type}:${x.inset ? 1 : 0}`;
-  for (const d of deltas) {
-    if (d.suffix === "indicatorConfig") {
-      const a = (d.before ?? {}) as Record<string, unknown>;
-      const b = (d.after ?? {}) as Record<string, unknown>;
-      for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
-        if (JSON.stringify(a[id]) !== JSON.stringify(b[id])) rebuild.add(id);
-      }
-    } else if (d.suffix === "indicators") {
-      const a = (d.before ?? []) as Array<{ id: string; type: string; inset?: boolean }>;
-      const b = (d.after ?? []) as Array<{ id: string; type: string; inset?: boolean }>;
-      const posA = new Map(a.map((x, i) => [x.id, key(i, x)]));
-      for (const [i, x] of b.entries()) {
-        const pa = posA.get(x.id);
-        if (pa !== undefined && pa !== key(i, x)) rebuild.add(x.id);
-      }
-    }
-  }
-  return rebuild;
-}
-
 export class HistoryManager {
   private undoStack: HistoryStep[] = [];
   private redoStack: HistoryStep[] = [];

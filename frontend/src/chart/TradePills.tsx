@@ -3,6 +3,8 @@ import { formatExpiryLong, formatExpiryShort } from "../lib/alertUi";
 import { toast } from "../lib/notify";
 import { requestConfirm, setTradeSelected, discardPendingEdit, discardPendingField, type PendingEdit, type TradeLineField } from "../lib/signals";
 import { tradeLabel, mergeTradeLevels, applyEditedLevels, closePosition, cancelWorkingOrder, refreshTrades, getTradesAccount, type TradeView, type OrderSide } from "../lib/trading";
+import { useMaskedReplayFor, type MaskedReplay } from "../lib/useMaskedReplay";
+import { maskedTimeLabel } from "../lib/timeFormat";
 import Tooltip from "../components/Tooltip";
 
 export interface TradePillItem {
@@ -22,6 +24,10 @@ export interface TradePillItem {
 }
 
 interface TradePillsProps {
+  /** Which chart cell these pills belong to. Only used to look up THIS cell's
+   * masked-replay session (a pill belongs to exactly one cell, so a live sibling
+   * keeps its real dates and the day number counts from its own anchor). */
+  cellId: string;
   pills: TradePillItem[];
   precisionRef: MutableRefObject<number>;
   tradesRef: MutableRefObject<TradeView[]>;
@@ -33,11 +39,31 @@ interface TradePillsProps {
   // selected style, tying the spine/bracket to its pills when neighbours overlap.
   selectedTradeId: string | null;
   tradePillLeft: number;
+  /** Where Apply / Close / Cancel go. Defaults to the account's HTTP dealing
+   * calls; a replaying cell passes ledger-backed implementations instead. */
+  actions?: {
+    apply(t: TradeView, merged: { price: number | null; stop: number | null; takeProfit: number | null }): Promise<void>;
+    close(t: TradeView): Promise<void>;
+    cancel(t: TradeView): Promise<void>;
+  };
 }
 
 const cash = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
 const fmtDateTime = (ms: number) => new Date(ms).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+
+// A trade's timestamps are BAR timestamps once its cell is replaying, so during a
+// masked session printing them here would hand back the exact date the session
+// exists to hide — the one number the whole feature rests on. Route every
+// time-bearing label through the cell's own session when it has one.
+//
+// Per-cell, never the any-cell read: these pills belong to one chart, so a live
+// sibling cell must keep its real dates, and the day number has to count from
+// THIS cell's anchor rather than a neighbour's.
+function timeLabelFor(masked: MaskedReplay): (ms: number) => string {
+  if (!masked) return fmtDateTime;
+  return (ms: number) => maskedTimeLabel(masked.startMs, ms, masked.clock, masked.timezone);
+}
 
 interface DetailRow {
   label: string;
@@ -48,7 +74,7 @@ interface DetailRow {
 // Every detail of the position / order behind a pill, in the reading order the dock
 // uses. Conditioned by kind: uPnL is a position's alone, the expiry an order's; the
 // price the order pill dropped from its face resurfaces here in full.
-function tradeDetailRows(t: TradeView, prec: number): DetailRow[] {
+function tradeDetailRows(t: TradeView, prec: number, fmtTime: (ms: number) => string): DetailRow[] {
   const px = (n: number) => n.toFixed(prec);
   const rows: DetailRow[] = [];
   rows.push({ label: "Quantity", value: String(t.quantity) });
@@ -60,9 +86,9 @@ function tradeDetailRows(t: TradeView, prec: number): DetailRow[] {
   if (t.leverage != null) rows.push({ label: "Leverage", value: `${t.leverage}:1` });
   if (t.margin != null) rows.push({ label: "Margin", value: cash(t.margin) });
   if (t.openedAt != null)
-    rows.push({ label: t.kind === "order" ? "Placed" : "Opened", value: fmtDateTime(t.openedAt) });
+    rows.push({ label: t.kind === "order" ? "Placed" : "Opened", value: fmtTime(t.openedAt) });
   if (t.kind === "order")
-    rows.push({ label: "Expires", value: t.expiresAt != null ? fmtDateTime(t.expiresAt) : "GTC" });
+    rows.push({ label: "Expires", value: t.expiresAt != null ? fmtTime(t.expiresAt) : "GTC" });
   if (t.source === "strategy") rows.push({ label: "Source", value: "Strategy" });
   return rows;
 }
@@ -70,10 +96,10 @@ function tradeDetailRows(t: TradeView, prec: number): DetailRow[] {
 // The details grid the pill's ⓘ tooltip shows — the same shared-tooltip idiom as
 // every other ⓘ in the app, so the card only appears when the icon is hovered
 // instead of ambushing the whole pill.
-function detailsContent(trade: TradeView, prec: number) {
+function detailsContent(trade: TradeView, prec: number, fmtTime: (ms: number) => string) {
   return (
     <dl className="pill-tip-grid">
-      {tradeDetailRows(trade, prec).map((r) => (
+      {tradeDetailRows(trade, prec, fmtTime).map((r) => (
         <div className="pill-tip-row" key={r.label}>
           <dt>{r.label}</dt>
           <dd className={r.tone ? `pill-tip-${r.tone}` : undefined}>{r.value}</dd>
@@ -92,6 +118,7 @@ function detailsContent(trade: TradeView, prec: number) {
  * Pure props-in — all mutable trade state stays in ChartCore via refs.
  */
 export default function TradePills({
+  cellId,
   pills,
   precisionRef,
   tradesRef,
@@ -101,7 +128,37 @@ export default function TradePills({
   focusedPillKey,
   selectedTradeId,
   tradePillLeft,
+  actions,
 }: TradePillsProps) {
+  // Dealing defaulted ONCE, so the three call sites below read the same object
+  // whether the trade lives in the account or in a replay ledger. The default
+  // branch keeps the refreshTrades that follows each account write; the replay
+  // branch has nothing to refresh (its book publishes itself).
+  const act = actions ?? {
+    apply: async (t: TradeView, merged: { price: number | null; stop: number | null; takeProfit: number | null }) => {
+      await applyEditedLevels(t, merged, getTradesAccount());
+      refreshTrades();
+    },
+    close: async (t: TradeView) => {
+      await closePosition(t.id, getTradesAccount());
+      refreshTrades();
+    },
+    cancel: async (t: TradeView) => {
+      await cancelWorkingOrder(t.id, getTradesAccount());
+      refreshTrades();
+    },
+  };
+  // This cell's blind session, if it has one — every timestamp the pills render
+  // goes through it (see timeLabelFor). The expiry labels get the same treatment
+  // rather than their alert-UI formatters: a resting order's good-till-date is a
+  // real calendar date like any other. Today they can only ever carry an account
+  // order's expiry (a replay view's expiresAt is always null), but the mask fails
+  // CLOSED here on purpose — over-masking costs a label, under-masking costs the
+  // session.
+  const masked = useMaskedReplayFor(cellId);
+  const fmtTime = timeLabelFor(masked);
+  const fmtExpiry = (ms: number, long: boolean) =>
+    masked ? fmtTime(ms) : long ? formatExpiryLong(ms) : formatExpiryShort(ms);
   // The trades whose WHOLE pill group rises above resting pills: the focused trade
   // (selection wins in focusedPillKey upstream) and the hovered pill's trade — so
   // hovering an SL/TP raises its entry sibling too. Keys are "tradeId:field"; the
@@ -214,7 +271,7 @@ export default function TradePills({
         // point a clock at). Positions and the SL/TP pills keep their level readout.
         const isOrderEntry = isEntry && p.kind === "order";
         const priceText = p.level.toFixed(prec);
-        const expiryText = p.expiresAt != null ? formatExpiryShort(p.expiresAt) : "";
+        const expiryText = p.expiresAt != null ? fmtExpiry(p.expiresAt, false) : "";
         const bodyPnl = isEntry && p.pl != null ? sign(p.pl) : null;
         // Remove this SL/TP line: commit the level cleared right away (an explicit
         // action, like delete), then focus the entry pill since this line is gone.
@@ -225,9 +282,8 @@ export default function TradePills({
           if (p.field === "stop") merged.stop = null;
           else merged.takeProfit = null;
           try {
-            await applyEditedLevels(t, merged, getTradesAccount());
+            await act.apply(t, merged);
             discardPendingEdit(t.id);
-            refreshTrades();
             setTradeSelected(t.id, "price");
           } catch (err) {
             toast(err instanceof Error ? err.message : "Remove failed");
@@ -265,7 +321,7 @@ export default function TradePills({
             {isEntry && <span className="tp-qty">{p.qty}</span>}
             {isOrderEntry ? (
               p.expiresAt != null ? (
-                <span className="tp-expiry" title={`Order expires ${formatExpiryLong(p.expiresAt)}`}>
+                <span className="tp-expiry" title={`Order expires ${fmtExpiry(p.expiresAt, true)}`}>
                   <svg className="tp-exp-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <circle cx="12" cy="12" r="9" />
                     <polyline points="12 7 12 12 15 14" />
@@ -299,7 +355,7 @@ export default function TradePills({
             {(() => {
               const t = tradesRef.current.find((x) => x.id === p.tradeId);
               return t ? (
-                <Tooltip title={`${tradeLabel(t.kind, t.side)} · ${t.epic}`} content={detailsContent(t, prec)}>
+                <Tooltip title={`${tradeLabel(t.kind, t.side)} · ${t.epic}`} content={detailsContent(t, prec, fmtTime)}>
                   <button
                     type="button"
                     className="tp-btn tp-info"
@@ -327,9 +383,8 @@ export default function TradePills({
                     if (!t) return;
                     const merged = mergeTradeLevels(t, pendingRef.current[t.id] ?? {});
                     try {
-                      await applyEditedLevels(t, merged, getTradesAccount());
+                      await act.apply(t, merged);
                       discardPendingEdit(t.id); // committed → clear the staged copy
-                      refreshTrades();
                     } catch (err) {
                       toast(err instanceof Error ? err.message : "Apply failed");
                     }
@@ -393,10 +448,9 @@ export default function TradePills({
                     details,
                     onConfirm: async () => {
                       try {
-                        if (isOrder) await cancelWorkingOrder(t.id, getTradesAccount());
-                        else await closePosition(t.id, getTradesAccount());
+                        if (isOrder) await act.cancel(t);
+                        else await act.close(t);
                         setTradeSelected(null);
-                        refreshTrades();
                       } catch (err) {
                         toast(err instanceof Error ? err.message : "Action failed");
                       }

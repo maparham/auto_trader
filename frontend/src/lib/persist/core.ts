@@ -146,6 +146,7 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   `${PREFIX}.sweepTarget`,
   `${PREFIX}.lastDrawTools`,
   `${PREFIX}.viewPos`,
+  `${PREFIX}.replaySessions`,
   `${PREFIX}.holdout`,
   `${PREFIX}.alertUnseen`,
 ]);

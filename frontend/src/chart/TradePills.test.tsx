@@ -1,9 +1,36 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import TradePills, { type TradePillItem } from "./TradePills";
 import type { TradeView } from "../lib/trading";
 import type { PendingEdit } from "../lib/signals";
+import { armMaskedReplay, disarmMaskedReplay, maskedReplaySignal } from "../lib/maskedReplay";
+
+// The dealing calls are the thing the replay tests must prove are NOT reached:
+// a replay session trades a local ledger, so a single HTTP dealing call would be
+// an order placed on the user's real account. Spread the real module — the pills
+// need tradeLabel / mergeTradeLevels to render and to stage an edit at all.
+const dealing = vi.hoisted(() => ({
+  applyEditedLevels: vi.fn(async () => {}),
+  closePosition: vi.fn(async () => {}),
+  cancelWorkingOrder: vi.fn(async () => {}),
+  refreshTrades: vi.fn(),
+}));
+vi.mock("../lib/trading", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/trading")>()),
+  ...dealing,
+}));
+
+// The entry pill's ✕ does not deal directly: it raises a confirm and hands the
+// action over as `onConfirm`. No modal is mounted in this suite, so capture the
+// request and run its callback the way the modal would.
+const confirms = vi.hoisted(() => ({
+  requestConfirm: vi.fn<(req: { onConfirm: () => Promise<void> | void }) => void>(),
+}));
+vi.mock("../lib/signals", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/signals")>()),
+  ...confirms,
+}));
 
 // Two trades, each with an entry + TP pill, so overlap z-order (the "raised"
 // trade-group class) can be asserted per pill.
@@ -30,6 +57,7 @@ const PILLS: TradePillItem[] = [
 function renderPills(over: Partial<Parameters<typeof TradePills>[0]> = {}) {
   const { container } = render(
     <TradePills
+      cellId="cell-1"
       pills={PILLS}
       precisionRef={{ current: 4 }}
       tradesRef={{ current: [] as TradeView[] }}
@@ -94,6 +122,7 @@ describe("TradePills trade-group raising", () => {
     const pills = [pill("deal:1", "price"), pill("deal:1", "tp")];
     const { container } = render(
       <TradePills
+        cellId="cell-1"
         pills={pills}
         precisionRef={{ current: 4 }}
         tradesRef={{ current: [] as TradeView[] }}
@@ -115,6 +144,7 @@ describe("TradePills overlap vertical spread", () => {
   const cascadeRender = (pills: TradePillItem[], over: Partial<Parameters<typeof TradePills>[0]> = {}) =>
     render(
       <TradePills
+        cellId="cell-1"
         pills={pills}
         precisionRef={{ current: 4 }}
         tradesRef={{ current: [] as TradeView[] }}
@@ -198,5 +228,180 @@ describe("TradePills overlap vertical spread", () => {
     ]);
     const tops = Array.from(container.querySelectorAll<HTMLElement>(".trade-pill")).map((n) => n.style.top);
     expect(tops).toEqual(["11px", "35px"]);
+  });
+});
+
+// --- replay wiring -----------------------------------------------------------
+
+const OPENED_MS = Date.UTC(2021, 4, 17, 9, 30); // real date: 17 May 2021, 09:30 UTC
+const DAY_MS = 86_400_000;
+
+const tradeView = (over: Partial<TradeView> = {}): TradeView => ({
+  kind: "position",
+  id: "A",
+  epic: "US100",
+  side: "buy",
+  quantity: 1,
+  priceLevel: 1.2,
+  stop: 1.1,
+  takeProfit: 1.3,
+  upnl: 0,
+  openedAt: OPENED_MS,
+  expiresAt: null,
+  leverage: null,
+  margin: null,
+  source: "manual",
+  ...over,
+});
+
+type MergedLevels = { price: number | null; stop: number | null; takeProfit: number | null };
+
+// Typed signatures rather than bare vi.fn(): the assertions index into
+// mock.calls, which is a never-tuple without them.
+const replayActions = () => ({
+  apply: vi.fn<(t: TradeView, merged: MergedLevels) => Promise<void>>(async () => {}),
+  close: vi.fn<(t: TradeView) => Promise<void>>(async () => {}),
+  cancel: vi.fn<(t: TradeView) => Promise<void>>(async () => {}),
+});
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  // maskedReplaySignal is module-global: an armed entry left behind would mask
+  // every later test in this file.
+  maskedReplaySignal.set(disarmMaskedReplay(maskedReplaySignal.value, "cell-1"));
+});
+
+describe("TradePills actions override (replay)", () => {
+  it("routes Apply through the injected action and makes NO dealing call", async () => {
+    const actions = replayActions();
+    const trade = tradeView();
+    const { container } = renderPills({
+      pills: [{ ...pill("A", "price"), changed: true }],
+      tradesRef: { current: [trade] },
+      actions,
+    });
+    fireEvent.click(container.querySelector<HTMLElement>(".tp-apply")!);
+    await vi.waitFor(() => expect(actions.apply).toHaveBeenCalledTimes(1));
+    expect(actions.apply.mock.calls[0][0]).toBe(trade);
+    // The whole point: a replay edit never reaches the account.
+    expect(dealing.applyEditedLevels).not.toHaveBeenCalled();
+    expect(dealing.refreshTrades).not.toHaveBeenCalled();
+  });
+
+  it("routes an SL/TP remove through the injected action and makes NO dealing call", async () => {
+    const actions = replayActions();
+    const { container } = renderPills({
+      pills: [pill("A", "stop")],
+      tradesRef: { current: [tradeView()] },
+      actions,
+    });
+    fireEvent.click(container.querySelector<HTMLElement>(".tp-remove")!);
+    await vi.waitFor(() => expect(actions.apply).toHaveBeenCalledTimes(1));
+    expect(actions.apply.mock.calls[0][1].stop).toBeNull(); // the cleared level
+    expect(dealing.applyEditedLevels).not.toHaveBeenCalled();
+    expect(dealing.refreshTrades).not.toHaveBeenCalled();
+  });
+
+  it("routes a position Close through the injected action and makes NO dealing call", async () => {
+    const actions = replayActions();
+    const trade = tradeView();
+    const { container } = renderPills({
+      pills: [pill("A", "price")],
+      tradesRef: { current: [trade] },
+      actions,
+    });
+    fireEvent.click(container.querySelector<HTMLElement>(".tp-close")!);
+    // The ✕ raises a confirm; run its callback the way the modal would.
+    await confirms.requestConfirm.mock.calls[0][0].onConfirm();
+    expect(actions.close).toHaveBeenCalledWith(trade);
+    expect(actions.cancel).not.toHaveBeenCalled();
+    expect(dealing.closePosition).not.toHaveBeenCalled();
+    expect(dealing.refreshTrades).not.toHaveBeenCalled();
+  });
+
+  it("routes an order Cancel through the injected action and makes NO dealing call", async () => {
+    const actions = replayActions();
+    const trade = tradeView({ kind: "order" });
+    const { container } = renderPills({
+      pills: [{ ...pill("A", "price"), kind: "order" }],
+      tradesRef: { current: [trade] },
+      actions,
+    });
+    fireEvent.click(container.querySelector<HTMLElement>(".tp-close")!);
+    await confirms.requestConfirm.mock.calls[0][0].onConfirm();
+    expect(actions.cancel).toHaveBeenCalledWith(trade);
+    expect(actions.close).not.toHaveBeenCalled();
+    expect(dealing.cancelWorkingOrder).not.toHaveBeenCalled();
+    expect(dealing.refreshTrades).not.toHaveBeenCalled();
+  });
+
+  it("still deals against the account when no actions are supplied", async () => {
+    const { container } = renderPills({
+      pills: [{ ...pill("A", "price"), changed: true }],
+      tradesRef: { current: [tradeView()] },
+    });
+    fireEvent.click(container.querySelector<HTMLElement>(".tp-apply")!);
+    await vi.waitFor(() => expect(dealing.applyEditedLevels).toHaveBeenCalledTimes(1));
+    expect(dealing.refreshTrades).toHaveBeenCalled();
+  });
+});
+
+describe("TradePills date masking", () => {
+  // The details card is a shared Tooltip: keyboard focus shows it instantly
+  // (no delay, no grace window to wait out).
+  const openDetails = () => {
+    fireEvent.focus(screen.getByLabelText("Trade details").parentElement!);
+    return screen.getByRole("tooltip").textContent ?? "";
+  };
+
+  const arm = (cellId: string) =>
+    maskedReplaySignal.set(
+      armMaskedReplay(maskedReplaySignal.value, {
+        cellId,
+        startMs: OPENED_MS - 2 * DAY_MS, // the trade opens on Day 3
+        clock: "24h",
+        timezone: "UTC",
+      }),
+    );
+
+  it("renders the Opened row as a masked day number while this cell is masked", () => {
+    arm("cell-1");
+    renderPills({ pills: [pill("A", "price")], tradesRef: { current: [tradeView()] } });
+    const text = openDetails();
+    expect(text).toContain("Day 3 09:30");
+    // The leak this exists to close: no real calendar date anywhere on the card.
+    expect(text).not.toMatch(/2021/);
+    expect(text).not.toMatch(/May/);
+  });
+
+  it("renders the real date when NO session is masked", () => {
+    renderPills({ pills: [pill("A", "price")], tradesRef: { current: [tradeView()] } });
+    const text = openDetails();
+    expect(text).toMatch(/2021/);
+    expect(text).not.toContain("Day 3");
+  });
+
+  it("keeps a LIVE sibling cell's real dates when another cell is masked", () => {
+    arm("other-cell"); // a different cell holds the masked session
+    renderPills({ pills: [pill("A", "price")], tradesRef: { current: [tradeView()] } });
+    const text = openDetails();
+    expect(text).toMatch(/2021/);
+    expect(text).not.toContain("Day 3");
+    maskedReplaySignal.set(disarmMaskedReplay(maskedReplaySignal.value, "other-cell"));
+  });
+
+  it("masks a resting order's Placed and Expires rows too", () => {
+    arm("cell-1");
+    renderPills({
+      pills: [{ ...pill("A", "price"), kind: "order" }],
+      tradesRef: {
+        current: [tradeView({ kind: "order", expiresAt: OPENED_MS + DAY_MS })],
+      },
+    });
+    const text = openDetails();
+    expect(text).toContain("Day 3 09:30"); // Placed
+    expect(text).toContain("Day 4 09:30"); // Expires
+    expect(text).not.toMatch(/2021/);
   });
 });

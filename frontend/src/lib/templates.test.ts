@@ -20,7 +20,6 @@ vi.mock("./indicators", () => {
     effectiveCalcParams: vi.fn((_type: string, saved?: number[]) => saved),
     removeIndicatorById: vi.fn(),
     isSubPaneIndicator: vi.fn(() => false),
-    isSubPaneInstance: vi.fn(() => false),
   };
 });
 
@@ -60,9 +59,6 @@ beforeEach(() => {
   // Restore the passthrough default; individual tests below override this to
   // simulate indicators.ts's real normalization for the type(s) they exercise.
   vi.mocked(I.effectiveCalcParams).mockImplementation((_type, saved) => saved);
-  // Default "nothing opens a sub-pane"; the auto-expand test below installs the
-  // real predicate and must not leak it into the tests that follow.
-  vi.mocked(I.isSubPaneInstance).mockReturnValue(false);
 });
 
 // A stub chart/controller is enough to exercise the storage-level behavior; the
@@ -293,61 +289,6 @@ describe("applySymbolTemplate merge (additive, existing wins)", () => {
     }));
 
     expect(P.loadIndicators(SCOPE).filter((i) => i.type === "EMA")).toHaveLength(2);
-  });
-
-  it("carries an inset instance's placement flag across the re-id (apply arg + persisted list)", () => {
-    vi.mocked(I.applyIndicator).mockClear();
-    T.applySymbolTemplate(stubChart, controller, SCOPE, EPIC, template({
-      indicators: [
-        { id: "RSI", type: "RSI", inset: true },
-        { id: "ATR", type: "ATR" },
-      ],
-    }));
-
-    // The live add must be told it is inset, or applyIndicator registers the
-    // sub-pane template and the indicator silently opens its own pane.
-    const args = vi.mocked(I.applyIndicator).mock.calls.map((c) => c[3]);
-    expect(args.find((a) => a.type === "RSI")!.inset).toBe(true);
-    // Never written false: a non-inset payload stays byte-identical to older saves.
-    expect("inset" in args.find((a) => a.type === "ATR")!).toBe(false);
-
-    // And the persisted list keeps it, so a reload restores the inset placement.
-    const after = P.loadIndicators(SCOPE);
-    const rsi = after.find((i) => i.type === "RSI")!;
-    expect(rsi.inset).toBe(true);
-    expect(rsi.id).not.toBe("RSI"); // freshly minted id, flag survived the re-id
-    // Key ORDER is part of the JSON bytes templateAutosave's sameTemplate compares.
-    expect(Object.keys(rsi)).toEqual(["id", "type", "inset"]);
-    expect("inset" in after.find((i) => i.type === "ATR")!).toBe(false);
-    // controller.indicators.set got the same shape (isSubPaneInstance reads it).
-    expect(applied.find((i) => i.type === "RSI")).toEqual(rsi);
-  });
-
-  it("auto-expands collapsed sub-panes for a pane indicator, but not for an inset one", () => {
-    // The real predicate: sub-pane by type, unless the instance is inset.
-    vi.mocked(I.isSubPaneInstance).mockImplementation(
-      (inst) => inst.type === "RSI" && inst.inset !== true,
-    );
-    const expand = vi.fn();
-    const collapsed = {
-      indicators: { value: [], set: () => {} },
-      indicatorsHidden: { value: false },
-      subPanesHidden: { value: true, set: expand },
-      overlays: { rehydrate: () => {} },
-    } as unknown as import("./chartController").ChartController;
-
-    // An inset RSI draws in the candle pane, so the collapsed sub-pane area stays shut.
-    T.applySymbolTemplate(stubChart, collapsed, SCOPE, EPIC, template({
-      indicators: [{ id: "RSI", type: "RSI", inset: true }],
-    }));
-    expect(expand).not.toHaveBeenCalled();
-
-    // A plain RSI opens its own pane, so the area must expand or the add lands unseen.
-    localStorage.clear();
-    T.applySymbolTemplate(stubChart, collapsed, SCOPE, EPIC, template({
-      indicators: [{ id: "RSI", type: "RSI" }],
-    }));
-    expect(expand).toHaveBeenCalledWith(false);
   });
 
   it("unions drawings by geometry and never removes existing ones", () => {

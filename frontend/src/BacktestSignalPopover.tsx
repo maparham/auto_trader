@@ -12,7 +12,7 @@ import { useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { backtestSignalHoverSignal } from "./lib/signals";
 import { signalHeader, termLabel, opSymbol } from "./lib/signalGlyphs";
-import { formatExpiryShort } from "./lib/alertUi";
+import { useBarTimeLabel } from "./lib/useMaskedReplay";
 
 const subscribe = (cb: () => void) => backtestSignalHoverSignal.subscribe(cb);
 
@@ -24,6 +24,9 @@ const fmt = (n: number | null): string =>
 
 export default function BacktestSignalPopover() {
   const hover = useSyncExternalStore(subscribe, () => backtestSignalHoverSignal.value);
+  // The header labels a bar that is ON SCREEN, so during a masked replay session
+  // it would print the exact date the session hides (before the early return).
+  const barTime = useBarTimeLabel();
   if (!hover) return null;
   const { glyph, x, y } = hover;
 
@@ -39,7 +42,7 @@ export default function BacktestSignalPopover() {
   return createPortal(
     <div className="bt-cluster-pop bt-signal-pop" style={style}>
       <div className="bt-signal-pop-head">
-        {signalHeader(glyph, formatExpiryShort(glyph.signalTime * 1000))}
+        {signalHeader(glyph, barTime(glyph.signalTime * 1000))}
       </div>
       <table className="bt-cluster-pop-table">
         <tbody>

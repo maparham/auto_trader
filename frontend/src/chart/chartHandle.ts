@@ -6,7 +6,7 @@
 // Kept as an interface (not `ReturnType<>`) so each hook file can import the
 // type without importing ChartCore itself. ChartCore annotates its handle
 // useMemo with `ChartHandle`, so TS verifies the object matches this shape.
-import type { Chart } from "klinecharts";
+import type { Chart, KLineData } from "klinecharts";
 import type { ChartDataFacade } from "./chartDataFacade";
 import type { ChartController } from "../lib/chartController";
 import type { OverlayManager } from "../lib/overlays";
@@ -42,6 +42,21 @@ export type CenterReq = {
   bandStartTs: number;
   bandEndTs: number;
 };
+
+/** What the OTHER hooks need from the replaying cell. The load effect asks for
+ * the bars to paint; the MTF coordinator asks for the cursor so a higher-
+ * timeframe series cannot look ahead. Null when this cell has never replayed. */
+export interface ReplayHandle {
+  isActive(): boolean;
+  masked(): boolean;
+  /** "Known through" instant (see lib/replayBars). 0 when not replaying. */
+  cursorMs(): number;
+  /** Session start cursor — the masking anchor. 0 when not replaying. */
+  startMs(): number;
+  /** Bars to paint for `resolution` at the current cursor: fetches the window
+   * (context + forward buffer) and returns only the closed ones. */
+  barsFor(resolution: string): Promise<KLineData[]>;
+}
 
 export interface ChartHandle {
   controller: ChartController;
@@ -81,6 +96,10 @@ export interface ChartHandle {
   pendingTradeRestoreRef: React.MutableRefObject<number | null>;
   snapMarkerIdRef: React.MutableRefObject<string | null>;
   tradeMarkersDrawRef: React.MutableRefObject<() => void>;
+  // Replay (null until the cell first enters replay; see chart/useReplay.ts).
+  // Assigned during RENDER, not in an effect, so useLiveMarketData's load effect
+  // — which runs after this hook's — always sees a current handle.
+  replayRef: React.MutableRefObject<ReplayHandle | null>;
   // Cross-boundary call bridges to useRangeNavigation.
   ensureCoverageAndFitRef: React.MutableRefObject<(token: RangeReq) => Promise<void>>;
   ensureAnchorCoverageRef: React.MutableRefObject<() => Promise<void>>;

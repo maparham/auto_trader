@@ -10,7 +10,6 @@ const {
   clearHistoryForKey,
   withHistorySuppressed,
   partitionHistorySuffixes,
-  rebuildIdsForDeltas,
 } = await import("./history");
 
 const SCOPE = "tab.T.cell.c";
@@ -223,58 +222,5 @@ describe("partitionHistorySuffixes", () => {
       indicators: false,
       avwapIds: [],
     });
-  });
-});
-
-describe("rebuildIdsForDeltas", () => {
-  const d = (suffix: string, before: unknown, after: unknown) => ({ suffix, before, after });
-
-  it("rebuilds ids whose stored config changed", () => {
-    expect(
-      rebuildIdsForDeltas([d("indicatorConfig", { a: { p: 1 }, b: { q: 2 } }, { a: { p: 9 }, b: { q: 2 } })]),
-    ).toEqual(new Set(["a"]));
-  });
-
-  it("rebuilds an id whose position changed (sub-pane reorder)", () => {
-    expect(
-      rebuildIdsForDeltas([
-        d("indicators", [{ id: "a", type: "RSI" }, { id: "b", type: "ATR" }], [{ id: "b", type: "ATR" }, { id: "a", type: "RSI" }]),
-      ]),
-    ).toEqual(new Set(["a", "b"]));
-  });
-
-  it("rebuilds an id whose type changed at the same position", () => {
-    expect(
-      rebuildIdsForDeltas([d("indicators", [{ id: "a", type: "RSI" }], [{ id: "a", type: "ATR" }])]),
-    ).toEqual(new Set(["a"]));
-  });
-
-  // The inset toggle changes neither the index nor the type, so a key built from
-  // those two alone would drop the id into the sync's "keep" bucket and undo would
-  // leave the chart drawing in the old placement.
-  it("rebuilds an id whose ONLY change is the inset flag, both directions", () => {
-    expect(
-      rebuildIdsForDeltas([
-        d("indicators", [{ id: "a", type: "RSI" }], [{ id: "a", type: "RSI", inset: true }]),
-      ]),
-    ).toEqual(new Set(["a"]));
-    expect(
-      rebuildIdsForDeltas([
-        d("indicators", [{ id: "a", type: "RSI", inset: true }], [{ id: "a", type: "RSI" }]),
-      ]),
-    ).toEqual(new Set(["a"]));
-  });
-
-  it("leaves an unchanged list alone, and ignores membership adds (the sync handles those)", () => {
-    expect(
-      rebuildIdsForDeltas([
-        d("indicators", [{ id: "a", type: "RSI", inset: true }], [{ id: "a", type: "RSI", inset: true }, { id: "b", type: "ATR" }]),
-      ]),
-    ).toEqual(new Set());
-  });
-
-  it("ignores unrelated suffixes and absent before/after", () => {
-    expect(rebuildIdsForDeltas([d("drawings.US100", [], [{ id: "x" }])])).toEqual(new Set());
-    expect(rebuildIdsForDeltas([d("indicators", undefined, [{ id: "a", type: "RSI" }])])).toEqual(new Set());
   });
 });

@@ -57,26 +57,13 @@ export function distToSegment(px: number, py: number, ax: number, ay: number, bx
   return Math.hypot(px - cx, py - cy);
 }
 
-// Indicators whose `type:"line"` figures exist ONLY to name the legend rows and
-// the rule operands: their draw() is a cover that paints ZONES, so there is no
-// curve on screen anywhere near those values. Caching them hung selection
-// handles, crossing arrows and a hit-test target on lines nobody can see —
-// hovering an FVG sprayed dots across the pane and selecting it filled the
-// chart with crossing arrows against every other curve.
-//
-// NOT the same as Slope or Pivots High/Low, which also cover-draw but paint the
-// curve themselves at exactly the figure values: their handles land where the
-// user sees a line, so they stay in the cache.
-const ZONE_ONLY_TYPES = new Set(["FVG", "SR_LEVELS"]);
-
 // Resolve every visible indicator line across ALL panes to pixel coordinates.
-// Skips hidden indicators, ZONE_ONLY_TYPES (above), non-line figures
-// (bars/histograms — TV puts handles on plotted lines, not on the MACD
-// histogram), and warmup/unplaced gaps (null result values; our indicators have
-// no mid-series holes so adjacent valid points never bridge a real gap).
-// Coordinates are container-absolute (convertToPixel absolute:true adds each
-// pane's top offset), so a single full-height overlay canvas aligns sub-pane
-// dots (RSI/MACD) too.
+// Skips hidden indicators, non-line figures (bars/histograms — TV puts handles
+// on plotted lines, not on the MACD histogram), and warmup/unplaced gaps (null
+// result values; our indicators have no mid-series holes so adjacent valid
+// points never bridge a real gap). Coordinates are container-absolute
+// (convertToPixel absolute:true adds each pane's top offset), so a single
+// full-height overlay canvas aligns sub-pane dots (RSI/MACD) too.
 export function buildLineCache(chart: Chart): LineCache[] {
   const panes = getIndicatorsByPane(chart);
   if (!panes) return [];
@@ -89,7 +76,6 @@ export function buildLineCache(chart: Chart): LineCache[] {
       if (ind.visible === false) continue;
       const result = ind.result as Array<Record<string, number | undefined>>;
       const indType = indTypeOf(ind);
-      if (ZONE_ONLY_TYPES.has(indType)) continue;
       let lineIdx = 0;
       for (const fig of ind.figures) {
         if (fig.type !== "line") continue;

@@ -389,29 +389,26 @@
 /* Pill/card tabs: each tab is a self-contained rounded chip with its own
    surface + border, separated by the .tab-bar-tabs gap, so adjacent tabs read
    as clearly distinct (rather than one flush strip). */
-/* Tight by design: padding and gaps are sized to the content only. Nothing in
-   the chip reserves width for a control that isn't showing — see .tab-close. */
 .tab {
-  position: relative; /* anchors the closed-market badge + close x */
-  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
-  min-height: 26px; padding: 0 7px; cursor: pointer; user-select: none;
+  position: relative; /* anchors the closed-market badge to the corner */
+  display: flex; align-items: center; gap: 7px; flex-shrink: 0;
+  min-height: 26px; padding: 0 10px; cursor: pointer; user-select: none;
   color: var(--text-dim); font-size: 12px; white-space: nowrap;
   background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 7px;
 }
-/* Crescent-moon badge in the top-RIGHT corner when the lead cell's market is
-   closed. Flush to the top edge and sized to 8px so it sits entirely ABOVE the
-   chip's vertically-centred text (whose ink starts 8.6px down) — the old
-   top-left slot landed on the symbol icon. Non-interactive; fades out on hover with the rest of the trailing
-   content so the close x owns that corner. */
+/* Crescent-moon badge in the top-LEFT corner when the lead cell's market is
+   closed. Top-left keeps it clear of the close button in the top-right. Small
+   and non-interactive — it rides above the tab content. */
 .tab-closed-badge {
-  position: absolute; top: -1px; right: 2px;
+  position: absolute; top: 1px; left: 2px;
   line-height: 0; pointer-events: none; color: var(--text-dim);
 }
-/* Mirrored on X (which is the source moon rotated 180deg, then flipped
-   vertically): the convex edge sits low-right against the chip's corner while
-   the concave opening faces up and inward, away from the border. */
-.tab-closed-badge svg { display: block; transform: scaleX(-1); }
+.tab-closed-badge svg { display: block; }
+/* Bell badge in the top-RIGHT corner (the crescent owns the top-left): an alert
+   fired for this tab's epic while it was in the background. Amber so it reads
+   as "attention" against the monochrome chrome; non-interactive. The close ×
+   fades in on hover in the same corner, so the bell yields to it then. */
 /* Inline amber bell in the chip (flex child, after the period/count) — inline
    so it can never be clipped by the bar edge or collide with the close ×.
    Hoverable (shared Tooltip); clicks fall through to the chip via bubbling. */
@@ -480,25 +477,12 @@
   padding: 1px 4px; border-radius: 7px;
   background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border);
 }
-/* The close x is OUT OF FLOW (pinned to the chip's right edge) so it costs zero
-   width on the ~20 chips that aren't hovered. In flow it reserved a button plus
-   a gap on every single chip for a control only the hovered/active one ever
-   showed - the blank tail that made every chip too wide. On hover it fades in
-   while the trailing period/count/bell fade out on the same 0.1s, so the two
-   read as a swap rather than a collision. (Hence no .tab.on rule: a permanent x
-   on the active chip would permanently hide that chip's interval label.) */
 .tab-close {
-  position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
   background: none; border: none; color: var(--text-faint); cursor: pointer;
-  padding: 0; width: 14px; height: 14px; line-height: 1; border-radius: 3px;
-  font-size: 13px; opacity: 0; transition: opacity 0.1s;
+  padding: 0; width: 16px; height: 16px; line-height: 1; border-radius: 3px;
+  font-size: 14px; opacity: 0; transition: opacity 0.1s;
 }
-.tab-period, .tab-count, .tab-alert-badge, .tab-closed-badge { transition: opacity 0.1s; }
-.tab:hover .tab-close { opacity: 1; }
-.tab:hover .tab-period,
-.tab:hover .tab-count,
-.tab:hover .tab-alert-badge,
-.tab:hover .tab-closed-badge { opacity: 0; }
+.tab:hover .tab-close, .tab.on .tab-close { opacity: 1; }
 .tab-close:hover { background: var(--border); color: var(--text); }
 .tab-add {
   background: none; border: none; color: var(--text-dim); cursor: pointer;
@@ -508,27 +492,17 @@
 
 /* Find-open-symbol search: collapsed magnifier at the end of the tab strip,
    expanding into an inline input. Matching chips get .search-hit below. */
-/* Given the same card grammar as a tab chip (surface + border + 7px radius) so
-   it reads as a control sitting at the end of the strip, not a faint glyph that
-   disappears into the bar. */
 .tab-search {
   display: flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; flex: none;
-  border: 1px solid var(--border); border-radius: 7px;
-  background: var(--surface-2);
-  color: var(--text); cursor: pointer;
+  width: 24px; height: 24px; flex: none;
+  border: none; border-radius: 4px; background: none;
+  color: var(--text-faint); cursor: pointer;
 }
-.tab-search:hover {
-  color: var(--accent); border-color: var(--accent);
-  background: linear-gradient(var(--hover), var(--hover)), var(--surface-2);
-}
+.tab-search:hover { color: var(--text); background: var(--hover); }
 .tab-search-input {
   font: inherit; font-size: 12px; color: var(--text);
   background: var(--surface-2); border: 1px solid var(--accent);
-  /* Sized to its own placeholder ("Find symbol…" is 78px at 12px) plus the
-     8px side padding and border, so it holds no dead space. Typed symbols are
-     shorter than the placeholder - the longest epic is ~67px. */
-  border-radius: 4px; padding: 3px 8px; width: 100px; flex: none;
+  border-radius: 4px; padding: 3px 8px; width: 140px; flex: none;
   outline: none;
 }
 .tab-search-input::placeholder { color: var(--text-faint); }
@@ -2390,95 +2364,29 @@
 .ind-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 120px; }
 .ind-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .ind-row > label { color: var(--text-dim); }
-/* Labels never wrap to a second line. They used to refuse to SHRINK either, so
-   a long label plus a fixed-width control simply overflowed the modal's right
-   edge (TRENDLINES' "Min Swing Reach (bars)" did). The control is the one thing
-   that must stay fully visible and clickable, so the label yields first, with
-   an ellipsis; the tooltip carries the full wording anyway. */
-.ind-row > label { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.ind-row-head label, .ind-row-head > span { white-space: nowrap; flex-shrink: 0; }
+/* Labels never wrap to a second line — the row's controls absorb the squeeze. */
+.ind-row > label, .ind-row-head label, .ind-row-head > span { white-space: nowrap; flex-shrink: 0; }
 .ind-row-head { flex-shrink: 0; }
 .ind-row input[type="number"], .ind-row input[type="text"], .ind-row select,
 .ind-row input[type="datetime-local"] {
   width: 130px; background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px;
 }
-/* Numbers are short (a count, a bar total, a multiplier), so the 130px default
-   is mostly empty. This is the minimum that still shows a four-digit value with
-   room for the spinner. Fixed, not shrinking: the label absorbs the squeeze. */
-.ind-row input[type="number"] { width: 64px; flex: 0 0 auto; }
-/* A control with its unit beside it (indicatorMeta's `suffix`). The unit sits
-   with the number it applies to, not inside the label. */
-.ind-control-row { display: inline-flex; align-items: center; gap: 6px; }
-.ind-control-row > .ind-suffix { color: var(--text-dim); white-space: nowrap; }
-/* A solo row (number, checkbox, select) laid out on the SAME two columns as
-   .ind-pair2 below, so its control starts where a paired row's right-hand
-   control starts instead of at the modal's right edge. Without it the Inputs
-   tab zig-zags: numbers at the middle, checkboxes out at the edge. The one
-   opt-out is a `wide` select, which needs more than half a row. */
-.ind-row.ind-row-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: center; }
-.ind-row.ind-row-cols > :last-child { justify-self: start; }
-/* The ⓘ sits after the control on these rows, not beside the label: half a row
-   does not hold "Min Back Clearance" plus a tip, and clipping the icon (which
-   .ind-row-head's flex-shrink: 0 on the label made it do) looked broken. */
-.ind-cols-control { display: inline-flex; align-items: center; gap: 8px; }
-/* FULL STRENGTH, like the paired labels beside them. `.ind-row > label` dims
-   every label-left row, and it never used to reach these: labelFor wraps a
-   tipped label in .ind-row-head, so the label was a grandchild and the child
-   selector missed it. Rendering the label bare (the tip moved to the end of the
-   row) let the dim through, and a column of labels half of which are dimmer
-   than the rest reads as an accident. */
-.ind-row.ind-row-cols > label { color: var(--text); }
-
-/* A related PAIR of inputs on one row, each label stacked above its own
-   control (indicatorMeta's `group`). The column is half a row wide, so a
-   paired label has to be short; the ⓘ tip carries the full wording. */
-.ind-pair2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: end; }
-.ind-pair2 > .ind-field { display: flex; flex-direction: column; align-items: stretch; gap: 5px; min-width: 0; }
-.ind-pair2 > .ind-field > .ind-row-head { flex-shrink: 1; min-width: 0; overflow: hidden; }
-.ind-pair2 > .ind-field > .ind-row-head > label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* Selects fill their column; numbers stay at their own minimal width and sit
-   under the left edge of their label, rather than stretching to half the row. */
-.ind-pair2 > .ind-field select { width: 100%; }
-.ind-pair2 > .ind-field input[type="number"] { width: 64px; }
-/* A select whose options are sentences rather than words (TRENDLINES' Extend):
-   it takes the whole row rather than truncating inside a fixed width. */
-.ind-row select.ind-select-fill, .ind-row .sel-trigger.ind-select-fill { width: auto; flex: 1 1 auto; min-width: 0; }
-
-/* SelectMenu: a select that opens BELOW its field instead of over it. The
-   trigger is styled to match the native selects it replaces; the list is
-   portaled to <body> and positioned fixed (see the component). */
-.sel-trigger {
-  display: inline-flex; align-items: center; justify-content: space-between; gap: 6px;
-  width: 130px; background: var(--input-bg); color: var(--text); text-align: left;
-  border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px;
-  font: inherit; cursor: pointer;
-}
-.sel-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
-.sel-trigger.on { border-color: var(--accent); }
-.sel-trigger > .sel-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sel-trigger > .sel-caret { flex: 0 0 auto; color: var(--text-dim); line-height: 1; }
-.ind-pair2 > .ind-field .sel-trigger { width: 100%; }
-/* Above .floating-modal (1500): the settings modal is the main place this is
-   used, and the list is portaled to <body>, so it does not inherit the modal's
-   stacking context. */
-/* Compound selector, like .dropdown.bt-session-dropdown above: .dropdown's own
-   z-index rule sits LATER in this file at equal specificity, so a bare
-   .sel-dropdown loses to it and the list renders behind the modal. */
-.dropdown.sel-dropdown { position: fixed; z-index: 1600; padding: 4px; overflow-y: auto; }
-.dropdown.sel-dropdown > .sel-option {
-  display: block; width: 100%; text-align: left; white-space: nowrap;
-  background: none; border: 0; border-radius: 3px; color: var(--text);
-  padding: 5px 8px; font: inherit; cursor: pointer;
-}
-/* --hover, not --hover-bg: the latter is not a token this app defines (only a
-   couple of rules reference it, each with a literal fallback), so the hover
-   silently did nothing. */
-.dropdown.sel-dropdown > .sel-option:hover { background: var(--hover); }
-.dropdown.sel-dropdown > .sel-option.on:hover { background: var(--accent); }
-.dropdown.sel-dropdown > .sel-option.on { background: var(--accent); color: #fff; }
 /* The anchor date-time needs more room than the 130px default. */
 .ind-row input[type="datetime-local"].ind-anchor-input { width: 190px; }
+/* Masked-replay stand-in for the anchor date input: a date field cannot render
+   "Day 3 09:30", so a blind session shows the relative label read-only instead. */
+.ind-row .ind-anchor-masked {
+  width: 190px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text);
+  opacity: 0.75;
+  font-size: 12px;
+  box-sizing: border-box;
+}
 /* Selects whose longest option doesn't fit the 130px default (e.g. AVWAP's
    "Standard Deviation"). Stays within the 360px modal's right column. */
 .ind-row select.ind-wide-select { width: 160px; }
@@ -3260,25 +3168,6 @@
    stacked in their own column to its right (so the grip sits beside "RSI(14)", not
    on a line above it). */
 .sub-pane-legend { top: 0; padding-top: 2px; flex-direction: row; align-items: center; }
-
-/* The inset band's resize handle: a transparent strip straddling the band's top
-   edge, positioned inline by ChartCore from the band geometry. Invisible at rest
-   (the band already draws its own hairline lid there) and tinted on hover/drag so
-   the grab target is discoverable, like a pane separator. z 12 puts it just above
-   the sub-pane legend cards (11) and well below the candle legend (50). */
-.inset-band-resizer {
-  position: absolute;
-  height: 7px;
-  z-index: 12;
-  cursor: ns-resize;
-  background: transparent;
-  touch-action: none;
-}
-.inset-band-resizer:hover,
-.inset-band-resizer:active {
-  background: color-mix(in srgb, var(--accent) 45%, transparent);
-}
-
 .sp-rows { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
 
 .sp-drag-handle {
@@ -3708,15 +3597,6 @@
 .tooltip-title { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
 .tooltip-desc  { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
 .tooltip-desc + .tooltip-desc { margin-top: 6px; }
-/* Trailing caveat/hint line: smaller and fainter than the description so it reads
-   as secondary. `.warn` tints its ⚠ the same amber the legend badge uses; the text
-   stays faint either way so the icon carries the emphasis. */
-.tooltip-note {
-  display: flex; align-items: flex-start; gap: 5px; margin-top: 6px;
-  font-size: 11px; line-height: 1.4; color: var(--text-faint);
-}
-.tooltip-note svg { flex: 0 0 auto; margin-top: 1px; }
-.tooltip-note.warn svg { color: #e0a000; }
 .tooltip-weights {
   list-style: none;
   margin: 6px 0 0;
@@ -4130,10 +4010,6 @@
 }
 .scale button:hover { background: var(--hover); color: var(--text); }
 .scale button.on { background: var(--hover-strong); color: var(--text); }
-/* The stretch toggle draws an SVG instead of a letter: center it in the same
-   26px box (the lettered buttons rely on text centering, which an SVG child
-   does not inherit) and let it take the button's dim/lit color. */
-.scale button > svg { display: block; margin: 0 auto; }
 
 /* --- workspace layout manager (named layouts — split button) ---------------- */
 /* Container: the name button + caret button sit side by side, sharing a border. */
@@ -5707,3 +5583,200 @@ span.bt-leg-short { color: var(--neg); }
 /* Back-link to the ranking list, sits above a reopened archive's results. */
 .wfo-arch-back { padding: 0 2px; }
 .wfo-arch-back-btn { font-size: 12px; padding: 2px 8px; }
+
+/* --- chart replay ---------------------------------------------------------- */
+/* Entry button: sits left of the heatmap toggle in the cell's top-right stack. */
+.replay-ctl { position: absolute; top: 8px; right: 148px; z-index: 6; }
+.replay-toggle {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+.replay-toggle:hover { border-color: var(--accent); }
+
+/* Opaque curtain over everything right of the pointer while picking a start.
+   Opaque, never dimmed: a dimmed future is still readable, and this feature
+   exists to make the future unreadable.
+
+   Z-INDEX CONSTRAINT (do not lower): the curtain must outrank EVERY DOM overlay
+   inside .chart-wrap, not just the canvases. The cell's axis chrome lives at
+   right: 0 in the same stacking context and would otherwise paint the LIVE PRICE
+   on top of the curtain — exactly the lookahead this hides: .ba-tag 44,
+   .alert-tag 45/48, .alert-pill + .tp-leader 46, .price-tag 47, .trade-pill
+   47/48/49, .axis-plus 49, and .chart-legend 50, which is the highest. 55 clears
+   50; .replay-start-panel then has to clear 55 (it is at 60) or the panel
+   vanishes under the curtain whenever the pointer sits left of centre. */
+.replay-curtain {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 55;
+  background: var(--bg);
+  border-left: 1px dashed var(--accent);
+  pointer-events: none;
+}
+
+.replay-start-panel {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 60;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 260px;
+  font-size: 12px; color: var(--text);
+}
+.rsp-title { font-weight: 600; display: flex; align-items: center; gap: 4px; }
+.rsp-hint { opacity: 0.75; }
+.rsp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rsp-label { opacity: 0.85; }
+.rsp-select, .rsp-input {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+}
+.rsp-input { width: 72px; }
+.rsp-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.rsp-actions { display: flex; align-items: center; gap: 6px; }
+.rsp-jump {
+  background: var(--accent); color: var(--accent-text); border: 1px solid var(--accent);
+  border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer;
+}
+.rsp-jump:disabled { opacity: 0.6; cursor: default; }
+.rsp-reroll, .rsp-cancel {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px;
+  font-size: 12px; cursor: pointer;
+}
+.rsp-error { color: var(--danger); }
+
+/* Replay controls: TV puts them bottom-center over the chart. Always visible
+   while a session is active (unlike the hover-revealed quick-range bar, which is
+   hidden entirely during replay).
+
+   Z-INDEX (51, not the 12 the brief sketched): these are the only controls a
+   running session has, so they must stay clickable over EVERY overlay that can
+   reach the bottom of the cell. Inside .chart-wrap the in-cell chrome runs up to
+   .chart-legend at 50, with .trade-pill 47/48/49 and .alert-pill 46 free to sit
+   at the bottom of the price range right where this pill floats; .chart-nodata
+   is a full-cell inset:0 overlay at 12, which would TIE with 12 and win on DOM
+   order. 51 is the lowest number above all of them, and still below the picking
+   layer Task 6 established (.replay-curtain 55, .replay-start-panel 60), so that
+   ordering is untouched. */
+.replay-pill {
+  position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 51;
+  /* Wraps rather than overflowing: with an error string at its 220px cap the row
+     is wider than a cell in a 3- or 4-way split. */
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px;
+  max-width: calc(100% - 16px);
+  padding: 4px 8px; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  font-size: 12px; color: var(--text);
+}
+.rp-btn {
+  appearance: none; border: none; background: transparent; color: var(--text);
+  padding: 2px 7px; border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1.4;
+}
+.rp-btn:hover { background: var(--hover); }
+/* Frozen behind the session report card. Every control goes at once, so the pill
+   reads as one dead unit rather than a mix the user has to probe. */
+.rp-btn:disabled, .rp-speed:disabled { opacity: 0.4; cursor: default; }
+.rp-btn:disabled:hover { background: transparent; }
+.rp-play { font-size: 14px; }
+.rp-speed {
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font-size: 11px;
+}
+.rp-readout { font-variant-numeric: tabular-nums; opacity: 0.9; padding: 0 4px; }
+.rp-readout.masked { color: var(--accent); }
+.rp-rewound, .rp-atend { font-size: 11px; opacity: 0.8; }
+.rp-error { font-size: 11px; color: var(--danger); max-width: 220px; }
+.rp-exit:hover { background: color-mix(in srgb, var(--danger) 24%, transparent); }
+
+/* A replaying cell carries a subtle accent edge so the mode is obvious in a
+   split layout even when the pill is idle. A pseudo-element rather than the
+   inset box-shadow the brief sketched: box-shadow paints under the element's
+   CHILDREN, and klinecharts' opaque canvases (z-index 2) fill the cell, so that
+   ring would have been invisible. z-index 3 is all it needs (just above those
+   canvases): raising it into the chrome tier would only make the ring overpaint
+   the outermost pixel of .price-tag and the trade pills at right: 0.
+   pointer-events:none so the edge never eats a click, and no z-index on
+   .chart-wrap itself, so no new stacking context. */
+.chart-wrap.replaying::after {
+  content: ""; position: absolute; inset: 0; z-index: 3;
+  border: 1px solid var(--accent);
+  pointer-events: none;
+}
+
+/* The replay order ticket (ReplayTicket.tsx). Anchored bottom-right so it clears
+   the centred .replay-pill, and stacked at 52 rather than the 42 the plan
+   sketched: the price-axis furniture that shares that corner sits at 44-49
+   (.price-tag, .alert-tag, .trade-pill and their selected/raised variants), so a
+   42 would leave a live form with text inputs UNDER a floating tag, which eats
+   the click as well as the pixels. 52 is one above .replay-pill (51) - the
+   ticket is the interactive surface of the two - and still below the picking
+   layer (.replay-curtain 55, .replay-start-panel 60), so that ordering stands. */
+.replay-ticket {
+  position: absolute; right: 12px; bottom: 52px; z-index: 52;
+  width: 210px; padding: 10px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text);
+}
+.rt-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+.rt-close { background: none; border: none; color: var(--text); cursor: pointer; }
+.rt-locked {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 6px; padding: 6px; line-height: 1.35;
+}
+.rt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rt-label { opacity: 0.85; }
+.rt-input {
+  width: 92px; background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+}
+.rt-mark { font-variant-numeric: tabular-nums; }
+.rt-seg { font-size: 11px; }
+.rt-actions { display: flex; gap: 6px; }
+.rt-buy, .rt-sell {
+  flex: 1; padding: 5px 0; border-radius: 6px; border: none; cursor: pointer;
+  color: #fff; font-weight: 600;
+}
+.rt-buy { background: var(--pos); }
+.rt-sell { background: var(--neg); }
+.rt-buy:disabled, .rt-sell:disabled { opacity: 0.45; cursor: default; }
+
+/* The pill's Trade toggle is a word, not a glyph like its siblings, and reads as
+   pressed while the ticket is open. */
+.rp-trade { font-size: 11px; }
+.rp-trade.on { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+
+/* A field holding something that is not a plain number. Blocks the submit rather
+   than letting Number() flatten it to NaN (see ReplayTicket.tsx). */
+.rt-input.rt-bad { border-color: var(--neg); }
+.rt-invalid { color: var(--neg); line-height: 1.35; }
+
+/* The session report card (ReplayReportCard.tsx): the exit reveal.
+
+   Z-INDEX 60, above the pill (51) and the ticket (52), so the card the user must
+   acknowledge is never behind the controls it has just made inert. It ties with
+   .replay-start-panel, which is harmless: the card only ever renders on an
+   ACTIVE session and that panel only on a PICKING one, so the two never coexist.
+   Centred rather than corner-anchored — unlike every other replay surface — for
+   the same reason it carries a shadow: this is the one modal moment in the
+   feature, and it must not read as another piece of floating chrome. */
+.replay-report {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 60;
+  min-width: 280px; padding: 16px 18px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 10px; color: var(--text);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.rr-title { font-size: 14px; font-weight: 600; }
+.rr-reveal { display: flex; flex-direction: column; gap: 2px; }
+.rr-reveal-label { font-size: 11px; opacity: 0.7; }
+.rr-reveal-range { font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.rr-stats { display: flex; flex-direction: column; gap: 4px; }
+.rr-stat { display: flex; justify-content: space-between; font-size: 12px; }
+.rr-k { opacity: 0.8; }
+.rr-v { font-variant-numeric: tabular-nums; }
+.rr-v.pos { color: var(--pos); }
+.rr-v.neg { color: var(--neg); }
+.rr-note { font-size: 11px; opacity: 0.7; line-height: 1.4; }
+.rr-done {
+  align-self: flex-end; background: var(--accent); color: var(--accent-text);
+  border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; cursor: pointer;
+}

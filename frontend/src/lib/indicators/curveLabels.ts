@@ -8,7 +8,7 @@
 // the generic `curveLabels` key. Enabled by default.
 import {
   PREV_HL_PERIODS,
-  prevHlAnchorToInput,
+  prevHlAnchorLabel,
   type PeriodKind,
   type PrevHlExtend,
   type PrevHlRollingUnit,
@@ -225,7 +225,8 @@ function prevHlCurveLabel(figKey: string, ext: PrevHlExtend): string | null {
       const ts = Number(ext.anchorTs) || 0;
       if (ts <= 0) return null;
       // Month-day of the anchor (the curve runs from that date); keep it compact.
-      base = `since ${prevHlAnchorToInput(ts, ext.tz).slice(5, 10)}`;
+      // Masked during a blind replay session — see prevHlAnchorLabel.
+      base = `since ${prevHlAnchorLabel(ts, ext.tz, true)}`;
       break;
     }
     default:

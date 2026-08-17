@@ -3,7 +3,7 @@
 // 2026-08-12-tab-search-catalogue-fallback): when the query matches no OPEN
 // tab, a dropdown lists full-catalogue symbols and picking one opens a new tab.
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 
 vi.mock("./lib/feed", async () => {
   const actual = await vi.importActual<typeof import("./lib/feed")>("./lib/feed");
@@ -100,42 +100,6 @@ describe("TabBar search catalogue fallback", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onOpenSymbol).toHaveBeenCalledTimes(1);
     expect(onOpenSymbol.mock.calls[0][0].epic).toBe("BTCEUR");
-  });
-
-  // The closer runs on click, not mousedown, precisely so this works: closing
-  // reflows the strip, which on mousedown would move the chip out from under
-  // the cursor before its own click landed.
-  it("clicking a tab chip selects it AND closes the search", async () => {
-    const { props } = await openSearchWithQuery("eur");
-    fireEvent.click(screen.getByText("EURUSD"));
-    expect(props.onSelect).toHaveBeenCalledWith("t1");
-    expect(props.onSearchQuery).toHaveBeenCalledWith("");
-    expect(screen.queryByPlaceholderText("Find symbol…")).toBeNull();
-  });
-
-  // Regression: a trusted click on the magnifier reaches the document-level
-  // closer with its target ALREADY unmounted (React swaps in the input during
-  // the same dispatch, and the effect attaches the listener mid-propagation),
-  // so a plain box.contains(target) test read it as an outside click and shut
-  // the search the instant it opened.
-  it("a click that unmounts its own target doesn't close the search", async () => {
-    await openSearchWithQuery("eur");
-    const box = document.querySelector(".tab-bar-search");
-    const ghost = document.createElement("span");
-    box?.appendChild(ghost);
-    ghost.addEventListener("click", () => ghost.remove());
-    ghost.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    // The closer's setState lands outside React's own event, so it only
-    // flushes on the next tick — assert after that, or the stale input passes.
-    await act(async () => {});
-    expect(screen.queryByPlaceholderText("Find symbol…")).not.toBeNull();
-  });
-
-  it("clicking inside the search control leaves it open", async () => {
-    await openSearchWithQuery("eur");
-    fireEvent.click(screen.getByPlaceholderText("Find symbol…"));
-    await act(async () => {});
-    expect(screen.queryByPlaceholderText("Find symbol…")).not.toBeNull();
   });
 
   it("shows an empty state when the catalogue has no match either", async () => {

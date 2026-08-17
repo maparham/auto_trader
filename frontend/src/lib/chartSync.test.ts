@@ -11,7 +11,8 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-const { applyVisibleRange, readVisibleRange } = await import("./chartSync");
+const { applyVisibleRange, readVisibleRange, setCellReplaying, isCellReplaying } =
+  await import("./chartSync");
 
 // Minimal stand-in for klinecharts' TimeScaleStore geometry (v9 dist), enough to
 // exercise the date-range math against the library's real coordinate semantics:
@@ -208,5 +209,31 @@ describe("applyVisibleRange", () => {
     const c = new FakeChart({ data, barSpace: 25 });
     applyVisibleRange(c.asChart(), lastTs + 24 * HOUR, lastTs + 48 * HOUR);
     expect(c.rightDiff).toBe(c.maxRightDiff());
+  });
+});
+
+// The replay registry gates the range broadcasts App.tsx makes on a cell's behalf
+// (enabling the date-range link / lock). Its one real failure mode is a stale
+// entry: a cell that never cleared itself would mute a later cell reusing the id.
+describe("replaying-cell registry", () => {
+  it("reports a cell as replaying only between set(true) and set(false)", () => {
+    expect(isCellReplaying("cell-a")).toBe(false);
+    setCellReplaying("cell-a", true);
+    expect(isCellReplaying("cell-a")).toBe(true);
+    expect(isCellReplaying("cell-b")).toBe(false); // per cell, not global
+    setCellReplaying("cell-a", false);
+    expect(isCellReplaying("cell-a")).toBe(false);
+  });
+
+  it("clears an id that was never marked, so an unmount cleanup is always safe", () => {
+    setCellReplaying("cell-c", false);
+    expect(isCellReplaying("cell-c")).toBe(false);
+  });
+
+  it("is idempotent: a cell marked twice still clears in one call", () => {
+    setCellReplaying("cell-d", true);
+    setCellReplaying("cell-d", true);
+    setCellReplaying("cell-d", false);
+    expect(isCellReplaying("cell-d")).toBe(false);
   });
 });

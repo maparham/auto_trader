@@ -8,9 +8,12 @@
 import type { Chart, Indicator } from "klinecharts";
 import { getIndicator } from "../lib/indicators";
 import InfoTip from "../components/InfoTip";
+import Tooltip from "../components/Tooltip";
 import ColorLineStylePicker from "../ColorLineStylePicker";
 import { TIMEZONES, offsetLabel } from "../lib/timezones";
 import { prevHlAnchorToInput, prevHlInputToAnchor, type PrevHlAgg } from "../lib/customIndicators";
+import { useMaskedReplay } from "../lib/useMaskedReplay";
+import { maskedTimeLabel } from "../lib/timeFormat";
 import {
   PREV_HL_LENGTH_FIELDS,
   PREV_HL_AGG_OPTIONS,
@@ -202,6 +205,12 @@ export function PrevHlInputsPanel({
   setPrevHlAgg: (kind: PrevHlKind, fn: PrevHlAgg) => void;
   setPrevHlAnchorInput: (input: string) => void;
 }) {
+  // An anchor placed during a masked replay session sits on a REPLAYED bar, so
+  // the datetime-local below would show the hidden period's date outright. A
+  // date input cannot render "Day 3 09:30", so while masked the field is
+  // replaced by the read-only masked label (and editing the anchor waits until
+  // the session ends — a session is temporary, a broken blind test is not).
+  const maskedReplay = useMaskedReplay();
   // One row renderer shared by both groups. Checkbox toggles the
   // boundary's H/L lines; greyed + disabled when off. The rolling row
   // also shows a unit selector (bars/minutes/hours/days/weeks).
@@ -304,13 +313,28 @@ export function PrevHlInputsPanel({
           />
           <span>Anchor</span>
         </label>
-        <input
-          type="datetime-local"
-          className="ind-anchor-input"
-          disabled={!on}
-          value={prevHlAnchorToInput(prevHlAnchorTs, prevHlTz === "chart" ? undefined : prevHlTz)}
-          onChange={(e) => setPrevHlAnchorInput(e.target.value)}
-        />
+        {maskedReplay ? (
+          <Tooltip content="Dates are hidden for this replay session. Exit replay to edit the anchor.">
+            <span className="ind-anchor-input ind-anchor-masked">
+              {prevHlAnchorTs > 0
+                ? maskedTimeLabel(
+                    maskedReplay.startMs,
+                    prevHlAnchorTs,
+                    maskedReplay.clock,
+                    maskedReplay.timezone,
+                  )
+                : "Not set"}
+            </span>
+          </Tooltip>
+        ) : (
+          <input
+            type="datetime-local"
+            className="ind-anchor-input"
+            disabled={!on}
+            value={prevHlAnchorToInput(prevHlAnchorTs, prevHlTz === "chart" ? undefined : prevHlTz)}
+            onChange={(e) => setPrevHlAnchorInput(e.target.value)}
+          />
+        )}
       </div>
     </>
   );
@@ -336,7 +360,7 @@ export function PrevHlCalculationRows({
           <label>Rolling span</label>
           <InfoTip
             title="Rolling span"
-            text="Gap handling for the Range window. Trading time skips closed-market gaps; Wall-clock counts them. Affects time units only, not bars."
+            text="How the Range window handles market gaps. Trading time skips them; Wall-clock counts them. Only affects time units, not bars."
           />
         </span>
         <select

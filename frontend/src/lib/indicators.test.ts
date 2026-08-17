@@ -6,11 +6,7 @@ import type { Chart } from "klinecharts";
 // at module load (AVWAP line style table); stub klinecharts' runtime surface like
 // overlays.test.ts / backtestSeries.test.ts do.
 vi.mock("klinecharts", () => ({
-  // A spy, not a no-op: registerInstanceTemplate's choice of BASE vs INSET template
-  // is observable ONLY here (what lands on the chart is klinecharts' own copy), and
-  // that choice carries the two properties the inset design is built on — an empty
-  // figure list and a neutral precision.
-  registerIndicator: vi.fn(),
+  registerIndicator: () => {},
   registerOverlay: () => {},
   registerYAxis: () => {},
   getSupportedIndicators: () => [],
@@ -31,8 +27,6 @@ const {
   mintInstanceId,
   isMintedInstanceId,
   applyIndicator,
-  isSubPaneInstance,
-  mirrorAccelCompanion,
 } = await import("./indicators");
 
 // In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
@@ -361,55 +355,6 @@ describe("addIndicatorInstance persists an explicit config (Paste)", () => {
   });
 });
 
-describe("a type's default preset survives a recreate", () => {
-  // "Save as default" seeds every NEW instance of a type (applyIndicator's third
-  // config source). Nothing wrote that seed under the instance's own id, so the
-  // first teardown+recreate — Move up, the inset toggle, or a plain reload, all of
-  // which rehydrate and so deliberately skip the type default — brought the
-  // indicator back at the bare template's params: a Slope(2,9,50,100,200) came
-  // back as Slope(9).
-  function recordingChart(created: Array<{ name?: string; calcParams?: number[] }>) {
-    let seq = 0;
-    return {
-      getIndicators: () => [],
-      createIndicator: (value: { name?: string; calcParams?: number[] }) => {
-        created.push(value);
-        return `pane_${++seq}`;
-      },
-      overrideIndicator: () => {},
-      setPaneOptions: () => {},
-      overrideYAxis: () => {},
-    } as unknown as Chart;
-  }
-
-  it("recreates a defaults-seeded SLOPE at its own params, not the template's", () => {
-    localStorage.clear();
-    const scope = "tab.default";
-    const calcParams = [2, 9, 50, 100, 200];
-    persist.saveIndicatorDefault("SLOPE", { calcParams });
-    const created: Array<{ name?: string; calcParams?: number[] }> = [];
-    const chart = recordingChart(created);
-
-    // Fresh add: the type default seeds it.
-    applyIndicator(chart, scope, "US100", { id: "SLOPE", type: "SLOPE" });
-    expect(created[0].calcParams).toEqual(calcParams);
-
-    // Recreate (inset toggle / Move up / reload) — rehydrate skips the type default
-    // on purpose, so the instance's own saved config is the ONLY thing that can
-    // carry these params through.
-    applyIndicator(chart, scope, "US100", { id: "SLOPE", type: "SLOPE" }, { rehydrate: true });
-    expect(created[1].calcParams).toEqual(calcParams);
-  });
-
-  it("leaves an add with no default preset writing nothing, as before", () => {
-    localStorage.clear();
-    const scope = "tab.nodefault";
-    const created: Array<{ name?: string; calcParams?: number[] }> = [];
-    applyIndicator(recordingChart(created), scope, "US100", { id: "SLOPE", type: "SLOPE" });
-    expect(persist.loadIndicatorConfigs(scope).SLOPE).toBeUndefined();
-  });
-});
-
 describe("isInternalIndicator", () => {
   it("matches the fixed equity pane", () => {
     expect(isInternalIndicator("EQUITY")).toBe(true);
@@ -679,186 +624,5 @@ describe("isMintedInstanceId (keeps per-instance names out of the indicator menu
 
   it("still flags legacy '#'-suffixed ids from earlier builds", () => {
     expect(isMintedInstanceId("EMA#a1b2c3")).toBe(true);
-  });
-});
-
-describe("inset placement", () => {
-  function recordingChart() {
-    const created: Array<Record<string, unknown>> = [];
-    const paneOptions: Array<Record<string, unknown>> = [];
-    let seq = 0;
-    const chart = {
-      getIndicators: () => [],
-      createIndicator: (value: unknown) => {
-        const v = value as Record<string, unknown>;
-        created.push(v);
-        return (v.paneId as string) ?? `pane_${++seq}`;
-      },
-      overrideIndicator: () => {},
-      setPaneOptions: (o: unknown) => paneOptions.push(o as Record<string, unknown>),
-      overrideYAxis: () => {},
-    } as unknown as Chart;
-    return { chart, created, paneOptions };
-  }
-
-  // The template registered under `name`, as klinecharts saw it. registerIndicator is
-  // the ONLY observation point for the inset-vs-base template choice: createIndicator
-  // just names a template, so the created value carries neither figures nor precision.
-  async function registeredTemplate(name: string) {
-    const { registerIndicator } = await import("klinecharts");
-    const calls = vi.mocked(registerIndicator).mock.calls;
-    const hit = [...calls].reverse().find(([t]) => (t as { name?: string })?.name === name);
-    return hit?.[0] as unknown as
-      | { name: string; figures?: unknown[]; precision?: number }
-      | undefined;
-  }
-
-  it("registers the INSET template: no figures for the price axis, neutral precision", async () => {
-    // The two properties the whole design rests on. Without them an inset RSI lands on
-    // candle_pane still feeding rsi values into the pane's range math, and reporting
-    // precision 2 — which becomes the pane MIN and rounds a 5-decimal price axis.
-    const { chart } = recordingChart();
-    applyIndicator(chart, "tab.inset7", "US100", { id: "RSI", type: "RSI", inset: true });
-    const tmpl = await registeredTemplate("RSI");
-    expect(tmpl).toBeDefined();
-    expect(tmpl!.figures).toEqual([]);
-    expect(tmpl!.precision).toBe(8);
-  });
-
-  it("registers the BASE template without the flag, so the assertion above pins the branch", async () => {
-    const { chart } = recordingChart();
-    applyIndicator(chart, "tab.inset8", "US100", { id: "RSI", type: "RSI" });
-    const tmpl = await registeredTemplate("RSI");
-    expect(tmpl).toBeDefined();
-    expect(tmpl!.figures).not.toEqual([]);
-    expect(tmpl!.precision).toBe(2);
-  });
-
-  it("puts an inset instance on the candle pane and sizes no sub-pane", () => {
-    const { chart, created, paneOptions } = recordingChart();
-    const paneId = applyIndicator(chart, "tab.inset", "US100", { id: "RSI", type: "RSI", inset: true });
-    expect(paneId).toBe("candle_pane");
-    expect(created[0].paneId).toBe("candle_pane");
-    expect(paneOptions).toEqual([]);
-  });
-
-  it("marks the live instance so the draw and the legend can recognise it", () => {
-    const { chart, created } = recordingChart();
-    applyIndicator(chart, "tab.inset", "US100", { id: "RSI", type: "RSI", inset: true });
-    expect((created[0].extendData as { inset?: boolean }).inset).toBe(true);
-  });
-
-  it("opens a normal sub-pane without the flag, and leaves extendData clean", () => {
-    const { chart, created, paneOptions } = recordingChart();
-    applyIndicator(chart, "tab.inset2", "US100", { id: "RSI", type: "RSI" });
-    expect(created[0].paneId).toBeUndefined();
-    expect(paneOptions.length).toBe(1);
-    expect(
-      Object.prototype.hasOwnProperty.call(created[0].extendData as object, "inset"),
-    ).toBe(false);
-  });
-
-  it("ignores a stale inset in a saved config, deriving the mode from the instance", () => {
-    // A template or pasted payload can carry a stale extendData.inset; the
-    // instance list is the source of truth.
-    const { chart, created } = recordingChart();
-    applyIndicator(chart, "tab.inset3", "US100", { id: "RSI", type: "RSI" }, {
-      config: { extendData: { inset: true } } as never,
-    });
-    expect(
-      Object.prototype.hasOwnProperty.call(created[0].extendData as object, "inset"),
-    ).toBe(false);
-  });
-
-  it("drops a trendline pin from a saved config: pins are session-only", () => {
-    // A pre-change snapshot (or a template copied from one) can still carry
-    // extendData.pinned. Restoring it would re-extend lines the user pinned in
-    // some earlier session and cannot remember.
-    const { chart, created } = recordingChart();
-    applyIndicator(chart, "tab.pin1", "US100", { id: "TRENDLINES", type: "TRENDLINES" }, {
-      config: { extendData: { pinned: ["a"], extend: "segment" } } as never,
-    });
-    const ext = created[0].extendData as Record<string, unknown>;
-    expect(Object.prototype.hasOwnProperty.call(ext, "pinned")).toBe(false);
-    expect(ext.extend).toBe("segment");
-  });
-
-  it("refuses inset for a type that is not inset-capable, without blocking creation", () => {
-    // SESSIONS is one of ours but is not in INSET_CAPABLE, so a stale flag on it
-    // must be inert AND must not stop the indicator from opening its own pane.
-    // (A klinecharts built-in like MACD cannot be used for this assertion: this
-    // file mocks getSupportedIndicators to [], so a built-in never registers here.)
-    const { chart, created, paneOptions } = recordingChart();
-    applyIndicator(chart, "tab.inset4", "US100", { id: "SESSIONS", type: "SESSIONS", inset: true });
-    expect(created).toHaveLength(1);
-    expect(created[0].paneId).toBeUndefined();
-    expect(paneOptions).toHaveLength(1);
-    expect(
-      Object.prototype.hasOwnProperty.call(created[0].extendData as object, "inset"),
-    ).toBe(false);
-  });
-});
-
-describe("isSubPaneInstance", () => {
-  it("is true for a plain pane indicator", () => {
-    expect(isSubPaneInstance({ id: "RSI", type: "RSI" })).toBe(true);
-  });
-  it("is false once that instance is inset", () => {
-    expect(isSubPaneInstance({ id: "RSI", type: "RSI", inset: true })).toBe(false);
-  });
-  it("is false for a candle-pane overlay", () => {
-    expect(isSubPaneInstance({ id: "EMA", type: "EMA" })).toBe(false);
-  });
-});
-
-describe("inset marker does not leak onto a Slope's accel companion", () => {
-  // The companion is DERIVED from its parent by spreading the parent's extendData,
-  // but `inset` is a per-instance PLACEMENT marker and the companion always draws
-  // in its own sub-pane. Copying it would make isInsetInstance (and the legend
-  // helpers that branch on it) treat a sub-pane indicator as inset.
-  function slopeChart() {
-    const created: Array<Record<string, unknown>> = [];
-    let seq = 0;
-    const chart = {
-      getIndicators: () =>
-        created.map((v) => ({ ...v, paneId: (v.paneId as string) ?? "pane_1" })),
-      createIndicator: (value: unknown) => {
-        const v = value as Record<string, unknown>;
-        created.push(v);
-        return (v.paneId as string) ?? `pane_${++seq}`;
-      },
-      removeIndicator: () => {},
-      overrideIndicator: (o: unknown) => overrides.push(o as Record<string, unknown>),
-      setPaneOptions: () => {},
-      overrideYAxis: () => {},
-    } as unknown as Chart;
-    const overrides: Array<Record<string, unknown>> = [];
-    return { chart, created, overrides };
-  }
-
-  it("spawns the companion clean when the parent is inset", () => {
-    const { chart, created } = slopeChart();
-    applyIndicator(chart, "tab.inset5", "US100", { id: "SLOPE", type: "SLOPE", inset: true }, {
-      config: { extendData: { showAccel: true } } as never,
-    });
-    const companion = created.find((v) => v.name === accelCompanionId("SLOPE"));
-    expect(companion).toBeDefined();
-    expect((companion!.extendData as { indType?: string }).indType).toBe("SLOPE_ACCEL");
-    expect(
-      Object.prototype.hasOwnProperty.call(companion!.extendData as object, "inset"),
-    ).toBe(false);
-  });
-
-  it("strips it from a mirrored patch too (the settings-modal path)", () => {
-    const { chart, overrides } = slopeChart();
-    applyIndicator(chart, "tab.inset6", "US100", { id: "SLOPE", type: "SLOPE", inset: true }, {
-      config: { extendData: { showAccel: true } } as never,
-    });
-    mirrorAccelCompanion(chart, "SLOPE", { extendData: { showAccel: true, inset: true } });
-    const patch = overrides.find((o) => o.name === accelCompanionId("SLOPE") && o.extendData);
-    expect(patch).toBeDefined();
-    expect(
-      Object.prototype.hasOwnProperty.call(patch!.extendData as object, "inset"),
-    ).toBe(false);
   });
 });

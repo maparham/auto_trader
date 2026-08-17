@@ -26,18 +26,7 @@ import {
 // card — the user must not be able to remove/edit them via a card. Shared with the
 // reorder engine so the legend's card index and the engine's reorderable order stay
 // in lockstep (see isInternalIndicator in ./lib/indicators).
-import { WarnTriangleIcon } from "./lib/menuIcons";
 import { isInternalIndicator, getIndicatorsByPane } from "./lib/indicators";
-// An inset instance carries an empty `figures` and a neutralised `precision` on
-// purpose (that is what keeps its values out of the price axis and its tick
-// precision), so both legend reads go through these helpers, which fall back to
-// the base template.
-import {
-  insetBandBox,
-  isInsetInstance,
-  legendFiguresOf,
-  legendPrecisionOf,
-} from "./lib/indicators/inset";
 import { periodByResolution } from "./lib/feed";
 
 const UP = "#26a69a";
@@ -115,11 +104,6 @@ export interface Props {
   // Rendered here (not in ChartCore) so they share this component's figureValuesRef
   // and hover signal — their values fill on the same imperative crosshair/tick path.
   subPanes: SubPaneLegendData[];
-  // The inset band's card: the same card as a sub-pane's, positioned at the band's
-  // top edge inside the candle pane. Its own prop rather than one more entry in
-  // `subPanes` because the band is not a pane — putting it in that array would feed
-  // a fake paneId to the reorder engine, which indexes real panes by position.
-  insetLegend: SubPaneLegendData | null;
   // Name of the selected indicator (drives the blue row highlight) — its name is
   // unique across panes, so one prop covers the candle legend AND the sub-panes.
   // A prop, not the signal, so React re-renders the highlight on selection change.
@@ -200,7 +184,6 @@ export default function ChartLegend({
   candleHidden,
   onToggleCandle,
   subPanes,
-  insetLegend,
   selectedName,
   highlightedName,
   onToggleVisible,
@@ -272,7 +255,7 @@ export default function ChartLegend({
       for (const [name, ind] of inds) {
         const result = ind.result as Array<Record<string, number | undefined>> | undefined;
         const row = result?.[idx];
-        for (const fig of legendFiguresOf(ind)) {
+        for (const fig of ind.figures) {
           const span = figureValuesRef.current.get(`${name}|${fig.key}`);
           if (!span) continue;
           const v = row?.[fig.key];
@@ -280,7 +263,7 @@ export default function ChartLegend({
           const suffix = (fig as { suffix?: string }).suffix ?? "";
           span.textContent =
             typeof v === "number" && Number.isFinite(v)
-              ? fmtNum(v, legendPrecisionOf(ind) ?? prec) + suffix
+              ? fmtNum(v, ind.precision ?? prec) + suffix
               : "n/a";
         }
       }
@@ -294,7 +277,7 @@ export default function ChartLegend({
   useEffect(() => {
     updateValues(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, subPanes, insetLegend, ctx.symbol, ctx.precision, collapsed]);
+  }, [rows, subPanes, ctx.symbol, ctx.precision, collapsed]);
 
   // Hovering a row drives BOTH the gray border + icon reveal (CSS, via this
   // signal) so they appear together on the exact row (matches the old behavior).
@@ -461,29 +444,12 @@ export default function ChartLegend({
         at the top-left of each pane. Outside the candle-legend strip so each can
         sit at its own `top`; they share figureValuesRef/setRowHover so values fill
         on the same imperative path and hovering reveals the same gray card. */}
-    {insetLegend && (
-      /* The inset band's card. No grip and no move arrows: the band is a region of
-         the candle pane, so there is nothing above or below it to swap with. */
-      <SubPaneLegend
-        key={insetLegend.paneId}
-        data={insetLegend}
-        selectedName={selectedName}
-        highlightedName={highlightedName}
-        figureValuesRef={figureValuesRef}
-        setRowHover={setRowHover}
-        onSelectRow={onSelectRow}
-        onToggleVisible={onToggleVisible}
-        onOpenSettings={onOpenSettings}
-        onRemove={onRemove}
-        onOpenMenu={onOpenMenu}
-      />
-    )}
-
     {subPanes.map((sp, i) => (
       <SubPaneLegend
         key={sp.paneId}
         data={sp}
-        reorder={{ index: i, count: subPanes.length, onMove, onStartReorder }}
+        index={i}
+        count={subPanes.length}
         selectedName={selectedName}
         highlightedName={highlightedName}
         figureValuesRef={figureValuesRef}
@@ -493,6 +459,8 @@ export default function ChartLegend({
         onOpenSettings={onOpenSettings}
         onRemove={onRemove}
         onOpenMenu={onOpenMenu}
+        onMove={onMove}
+        onStartReorder={onStartReorder}
       />
     ))}
     </>
@@ -549,7 +517,11 @@ function IndicatorRow({
       </span>
       {row.warn && (
         <InfoTip text={row.warn} className="cl-warn">
-          <WarnTriangleIcon />
+          <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+            <path d="M12 3.2 22 20.5H2L12 3.2z" />
+            <line x1="12" y1="10" x2="12" y2="15" />
+            <circle cx="12" cy="17.5" r="0.7" fill="currentColor" stroke="none" />
+          </svg>
         </InfoTip>
       )}
       {row.summary && <span className="cl-summary">{row.summary}</span>}
@@ -674,7 +646,8 @@ function IndicatorRow({
 // crosshair/tick with no extra wiring. selectedName drives the same blue highlight.
 function SubPaneLegend({
   data,
-  reorder,
+  index,
+  count,
   selectedName,
   highlightedName,
   figureValuesRef,
@@ -684,17 +657,12 @@ function SubPaneLegend({
   onOpenSettings,
   onRemove,
   onOpenMenu,
+  onMove,
+  onStartReorder,
 }: {
   data: SubPaneLegendData;
-  // Where this card sits in the reorderable sub-pane list, and how to move it.
-  // Absent for the inset band's card: it is a region of the candle pane, not a pane
-  // in the order, so it gets neither the grip nor the move arrows.
-  reorder?: {
-    index: number; // this pane's position within the reorderable sub-pane list
-    count: number; // total reorderable sub-panes
-    onMove: (name: string, targetIndex: number) => void;
-    onStartReorder: (paneId: string, name: string) => void;
-  };
+  index: number; // this pane's position within the reorderable sub-pane list
+  count: number; // total reorderable sub-panes
   selectedName: string | null;
   highlightedName: string | null;
   figureValuesRef: RefObject<Map<string, HTMLSpanElement>>;
@@ -704,10 +672,11 @@ function SubPaneLegend({
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
   onOpenMenu: (name: string, x: number, y: number) => void;
+  onMove: (name: string, targetIndex: number) => void;
+  onStartReorder: (paneId: string, name: string) => void;
 }) {
   return (
     <div className="chart-legend sub-pane-legend" style={{ top: data.top }}>
-      {reorder && (
       <Tooltip content="Drag to reorder">
         <button
           className="sp-drag-handle"
@@ -716,7 +685,7 @@ function SubPaneLegend({
             if (e.button !== 0) return; // primary button only — no right-click drags
             e.stopPropagation();
             e.preventDefault();
-            reorder.onStartReorder(data.paneId, data.rows[0]?.name ?? "");
+            onStartReorder(data.paneId, data.rows[0]?.name ?? "");
           }}
         >
           <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
@@ -726,7 +695,6 @@ function SubPaneLegend({
           </svg>
         </button>
       </Tooltip>
-      )}
       {/* Rows in their own column so the grip sits to their LEFT (the card lays out
           as a row: [grip | rows]), not stacked above the first row. */}
       <div className="sp-rows">
@@ -743,16 +711,8 @@ function SubPaneLegend({
             onOpenSettings={onOpenSettings}
             onRemove={onRemove}
             onOpenMenu={onOpenMenu}
-            onMoveUp={
-              reorder && reorder.index > 0
-                ? () => reorder.onMove(row.name, reorder.index - 1)
-                : undefined
-            }
-            onMoveDown={
-              reorder && reorder.index < reorder.count - 1
-                ? () => reorder.onMove(row.name, reorder.index + 1)
-                : undefined
-            }
+            onMoveUp={index > 0 ? () => onMove(row.name, index - 1) : undefined}
+            onMoveDown={index < count - 1 ? () => onMove(row.name, index + 1) : undefined}
           />
         ))}
       </div>
@@ -774,25 +734,22 @@ function rowsForPane(
   for (const [name, ind] of inds ?? []) {
     const hideValue =
       (ind.extendData as { hideLegendValue?: boolean } | undefined)?.hideLegendValue ?? false;
-    // Indicators pinned to a timeframe (the chart's own or higher) show its short
-    // label after the params (TV-style "EMA(50,1D)"), so the legend says which bars
-    // the values are from.
+    // MTF indicators computed on a higher timeframe show its short label after the
+    // params (TV-style "EMA(50,1D)"), so the legend says which TF the values are from.
     const mtfRes = (ind.extendData as { mtf?: { timeframe?: string | null } } | undefined)?.mtf
       ?.timeframe;
     const mtfTf = mtfRes && mtfRes !== "chart" ? periodByResolution(mtfRes)?.label ?? mtfRes : "";
-    // A pinned timeframe is not a param: it says which bars the values are FROM,
-    // so it survives where the params don't (the toggle below drops them on a
-    // figure-less pane). AVWAP has no Timeframe control, so it never has one.
-    const mtfOnlyText = mtfTf ? `(${mtfTf})` : "";
-    const paramsText =
+    const calcParamsText =
       indTypeOf(ind) === "AVWAP"
         ? ""
         : ind.calcParams?.length
           ? `(${[...ind.calcParams, ...(mtfTf ? [mtfTf] : [])].join(",")})`
-          : mtfOnlyText;
+          : mtfTf
+            ? `(${mtfTf})`
+            : "";
     let lineIdx = 0;
     const figures: LegendFigure[] = [];
-    for (const fig of legendFiguresOf(ind)) {
+    for (const fig of ind.figures) {
       const isLine = fig.type === "line";
       const color = isLine
         ? ind.styles?.lines?.[lineIdx]?.color ??
@@ -803,15 +760,6 @@ function rowsForPane(
       if (typeof fig.title !== "string" || fig.title === "") continue;
       figures.push({ key: fig.key, title: fig.title, color });
     }
-    // "Show value in legend" hides the figure READOUTS. A pane with no figures
-    // has none to hide (TRENDLINES declares `figures: []` and paints its own
-    // canvas), so the toggle did nothing at all there and read as broken. For
-    // those panes it hides the PARAMS instead, which is the only thing the
-    // legend carries past the name — and on TRENDLINES that is sixteen numbers.
-    //
-    // Not for a pane that HAS figures: there "EMA(50)" is the setting and
-    // "433.36" is the value, and hiding the setting is not what was asked for.
-    const calcParamsText = hideValue && figures.length === 0 ? mtfOnlyText : paramsText;
     // PREV_HL: warn when an active boundary draws nothing at this timeframe (its
     // window is shorter than one bar). The fix is the same for any boundary — make
     // the lookback at least one bar — so the message states that minimum.
@@ -860,57 +808,11 @@ function rowsSig(rows: LegendRow[]): string {
 // Build the candle-pane LegendRow list + its signature. ChartCore calls this on the
 // 1s tick / indicatorRemoved and only setState's when the signature changes.
 export function buildLegendRows(chart: Chart, tfLabel?: string): { rows: LegendRow[]; sig: string } {
-  // Inset instances live on candle_pane but read as their own pane on screen, so
-  // their rows belong to the band's card (buildInsetLegend), not to this strip —
-  // exactly as a sub-pane's rows are not in the candle legend.
-  const panes = candlePaneOwn(chart);
+  const panes = getIndicatorsByPane(chart).get("candle_pane");
   const lineStyles = chart.getStyles().indicator.lines;
   const legendTextColor = chart.getStyles().indicator.tooltip.legend.color;
   const rows = rowsForPane(panes, lineStyles, legendTextColor, chart.getDataList(), tfLabel);
   return { rows, sig: rowsSig(rows) };
-}
-
-/** candle_pane's indicators split into the ones that draw on the candles and the
- *  ones that draw in the inset band. */
-function candlePaneSplit(chart: Chart): {
-  own: Map<string, Indicator>;
-  inset: Map<string, Indicator>;
-} {
-  const own = new Map<string, Indicator>();
-  const inset = new Map<string, Indicator>();
-  for (const [name, ind] of getIndicatorsByPane(chart).get("candle_pane") ?? []) {
-    (isInsetInstance(ind) ? inset : own).set(name, ind);
-  }
-  return { own, inset };
-}
-
-function candlePaneOwn(chart: Chart): Map<string, Indicator> {
-  return candlePaneSplit(chart).own;
-}
-
-// The inset band's card is addressed by a paneId that no pane has, so a stray
-// lookup fails loudly instead of silently landing on the candle pane.
-const INSET_LEGEND_PANE_ID = "candle_pane:inset";
-
-/** The inset band's legend card: the same card a sub-pane gets, positioned at the
- *  band's top edge. Null when this chart has no inset instance (or the band has been
- *  dragged down to a sliver, mirroring the collapsed-sub-pane rule).
- *
- *  HIDDEN inset instances keep their row, dimmed, the way a sub-pane's do — the eye
- *  icon on that row is the only way back, and the band itself paints nothing while
- *  its only occupant is hidden. */
-export function buildInsetLegend(chart: Chart): { data: SubPaneLegendData | null; sig: string } {
-  const { inset } = candlePaneSplit(chart);
-  const box = inset.size ? insetBandBox(chart) : null;
-  if (!box || box.height <= COLLAPSED_SUBPANE_MAX_H) return { data: null, sig: "" };
-  const lineStyles = chart.getStyles().indicator.lines;
-  const legendTextColor = chart.getStyles().indicator.tooltip.legend.color;
-  const rows = rowsForPane(inset, lineStyles, legendTextColor).filter(
-    (r) => !isInternalIndicator(r.name),
-  );
-  if (!rows.length) return { data: null, sig: "" };
-  const data: SubPaneLegendData = { paneId: INSET_LEGEND_PANE_ID, top: box.top, rows };
-  return { data, sig: `${box.top}#${rowsSig(rows)}` };
 }
 
 // A sub-pane at/below this height (px) has been collapsed by the double-click

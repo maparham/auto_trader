@@ -35,8 +35,7 @@ import {
   buildPivotDeltaLabels,
   pivotDeltaLabelAt,
 } from "./chartGeometry";
-import { buildLegendRows, buildSubPaneLegends, buildInsetLegend, type LegendRow, type SubPaneLegendData, type ChartLegendHandle } from "../ChartLegend";
-import { insetBandBox, type InsetBandBox } from "../lib/indicators/inset";
+import { buildLegendRows, buildSubPaneLegends, type LegendRow, type SubPaneLegendData, type ChartLegendHandle } from "../ChartLegend";
 import { slopeMaLines } from "../lib/indicators/slope";
 import { getIndicatorsByPane } from "../lib/indicators";
 import { indTypeOf } from "../lib/customIndicators";
@@ -110,10 +109,6 @@ export interface ChartPaintDeps {
   setTradePills: React.Dispatch<React.SetStateAction<TradePill[]>>;
   setLegendRows: React.Dispatch<React.SetStateAction<LegendRow[]>>;
   setSubPaneLegends: React.Dispatch<React.SetStateAction<SubPaneLegendData[]>>;
-  // The inset band's legend card and its geometry (the card's position, and where
-  // the resize handle sits). Both move together, so one signature gates both.
-  setInsetLegend: React.Dispatch<React.SetStateAction<SubPaneLegendData | null>>;
-  setInsetBand: React.Dispatch<React.SetStateAction<InsetBandBox | null>>;
   // Props / value the painters read (fmtSeparatorLabel/paintSeparator dep on these).
   timezone: string;
   theme: Theme;
@@ -133,6 +128,10 @@ export interface ChartPaintDeps {
   draggingTradeRef: React.MutableRefObject<string | null>;
   hoveredFieldRef: React.MutableRefObject<TradeLineField | null>;
   marketClosedRef: React.MutableRefObject<boolean>;
+  // The cell's replay handle (null when it has never replayed). Read live: a
+  // replaying cell has no stream, so the bar countdown and the bid/ask pills
+  // would otherwise paint from stale live state.
+  replayRef: React.MutableRefObject<import("./chartHandle").ReplayHandle | null>;
   statusRef: React.MutableRefObject<LiveStatus>;
   bidAskRef: React.MutableRefObject<import("../theme").BidAsk>;
   bidAskStyleRef: React.MutableRefObject<BidAskStyle>;
@@ -153,7 +152,6 @@ export interface ChartPaintDeps {
   curveLabelsRef: React.RefObject<CurveLabelsHandle | null>;
   legendRowsSigRef: React.MutableRefObject<string>;
   subPaneLegendsSigRef: React.MutableRefObject<string>;
-  insetLegendSigRef: React.MutableRefObject<string>;
   legendHandleRef: React.RefObject<ChartLegendHandle | null>;
   legendBarIdxRef: React.MutableRefObject<() => number | null>;
   exitClustersRef: React.MutableRefObject<ExitCluster[]>;
@@ -173,8 +171,6 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     setTradePills,
     setLegendRows,
     setSubPaneLegends,
-    setInsetLegend,
-    setInsetBand,
     timezone,
     theme,
     containerRef,
@@ -188,6 +184,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     draggingTradeRef,
     hoveredFieldRef,
     marketClosedRef,
+    replayRef,
     statusRef,
     bidAskRef,
     bidAskStyleRef,
@@ -205,7 +202,6 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     curveLabelsRef,
     legendRowsSigRef,
     subPaneLegendsSigRef,
-    insetLegendSigRef,
     legendHandleRef,
     legendBarIdxRef,
     exitClustersRef,
@@ -512,6 +508,12 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    // A replaying cell never paints the period-start pill: it carries a real
+    // calendar date ("1 Jun 00:00"), which a masked session exists to hide.
+    // Structural, not a one-time clear — the quick-range bar is hidden during a
+    // session but useRangeNavigation still owns separatorTsRef, so gating the
+    // PAINT is the only guard a future re-arm cannot slip past.
+    if (replayRef.current?.isActive()) return;
     const ts = separatorTsRef.current;
     if (ts == null || !chart) return;
     // Don't draw a boundary the loaded history doesn't actually reach: klinecharts
@@ -587,6 +589,11 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
 
   const redraw = useCallback(() => {
     const chart = chartRef.current;
+    // Read live (never a value snapshot, so this callback's dep array stays
+    // correct): a replaying cell has no stream, so every piece of live-only
+    // chrome below — the next-bar countdown, the bid/ask axis pills and their
+    // dashed lines — must stay off however stale live state happens to look.
+    const replaying = replayRef.current?.isActive() ?? false;
     if (!chart) {
       setPriceTag(null);
       setAlertTags([]);
@@ -625,7 +632,11 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         setPriceTag(null);
       } else {
         let countdown: string | null = null;
-        if (marketClosedRef.current) {
+        if (replaying) {
+          // No stream, no next-bar clock: a countdown here would tick against
+          // real time while the chart sits in the past.
+          countdown = null;
+        } else if (marketClosedRef.current) {
           // Closed market: the WS still connects (status "live"), so the timer
           // would otherwise tick to 0:00 and freeze. Show "closed" in its place.
           countdown = "closed";
@@ -652,7 +663,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
 
     // Live bid & ask axis pills. Shown only when enabled, the feed is live, and the
     // side is known (the lines themselves are painted on the overlay canvas below).
-    const showBidAsk = bidAskRef.current !== "off" && statusRef.current === "live";
+    const showBidAsk = bidAskRef.current !== "off" && statusRef.current === "live" && !replaying;
     const bidV = bidRef.current;
     const askV = askRef.current;
     if (showBidAsk && (bidV != null || askV != null)) {
@@ -824,7 +835,17 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // Crosshair link: a vertical time guide AND its x-axis time label at a
         // sibling cell's hovered bar — so every linked chart shows the matching
         // timestamp pill, TradingView-style, not just the chart under the cursor.
-        const syncTs = syncCrosshairRef.current ? syncedTsRef.current : null;
+        // Never while replaying: this cell sits at a different moment in time, so
+        // a sibling's timestamp is meaningless here — and under a masked session
+        // it is worse than meaningless. makeMaskedFormatDate is unclamped and
+        // signed, so a live timestamp (a guide stranded by the session's start)
+        // labels as "Day 1832 14:30", the day count from the hidden start to
+        // today; the pill is then clamped back into the plot below, parking that
+        // disclosure at the cell's right edge. Structural, like the period-start
+        // pill above: gating the PAINT is the guard no future path that manages
+        // to set syncedTsRef can slip past. ChartCore also clears the ref on the
+        // transition, so the pill goes at once rather than on the next repaint.
+        const syncTs = syncCrosshairRef.current && !replaying ? syncedTsRef.current : null;
         if (syncTs != null) {
           const cs = chart.getStyles().crosshair;
           if (cs.show !== false && cs.vertical.show !== false) {
@@ -899,7 +920,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // Bid & ask price lines (TradingView style): dashed horizontals across the
         // main pane at the live bid (blue) and ask (red). Labels are DOM pills; this
         // draws only the lines, and only in "lines" mode while the feed is live.
-        if (bidAskRef.current === "lines" && statusRef.current === "live") {
+        if (bidAskRef.current === "lines" && statusRef.current === "live" && !replaying) {
           const mainW = chart.getSize("candle_pane", 'main')?.width ?? w;
           const st = bidAskStyleRef.current;
           // opacity + dash apply to the lines (the labels stay opaque). hexToRgba
@@ -1029,17 +1050,6 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     if (sub.sig !== subPaneLegendsSigRef.current) {
       subPaneLegendsSigRef.current = sub.sig;
       setSubPaneLegends(sub.subPanes);
-    }
-    // The inset band's card + resize handle. The band is part of the candle pane, so
-    // nothing in klinecharts moves it: it follows a band drag, a pane resize and the
-    // arrival/removal of an inset instance through this same redraw.
-    const insetBox = insetBandBox(chart);
-    const insetLeg = buildInsetLegend(chart);
-    const insetSig = `${insetBox ? `${insetBox.top}/${insetBox.left}/${insetBox.width}/${insetBox.height}` : "-"}|${insetLeg.sig}`;
-    if (insetSig !== insetLegendSigRef.current) {
-      insetLegendSigRef.current = insetSig;
-      setInsetBand(insetBox);
-      setInsetLegend(insetLeg.data);
     }
     legendHandleRef.current?.updateValues(legendBarIdxRef.current());
     // Higher-timeframe backtest markers: project each aggregate cluster's bar-high

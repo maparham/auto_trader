@@ -7,7 +7,7 @@ import SnapshotToolbar from "./SnapshotToolbar";
 import DrawSidebar from "./DrawSidebar";
 import LayoutPicker from "./LayoutPicker";
 import BrokerSelector from "./BrokerSelector";
-import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor } from "./lib/chartSync";
+import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor, isCellReplaying } from "./lib/chartSync";
 import AppearanceMenu from "./AppearanceMenu";
 import SettingsModal from "./Settings";
 import BacktestSettingsModal from "./BacktestSettingsModal";
@@ -1366,7 +1366,11 @@ export default function App() {
         const src = readyRef.current.get(focusedCell.id);
         // A focused cell panned into right-edge whitespace reports an extrapolated
         // window, so siblings snap to the same view, whitespace included.
-        const r = src ? readVisibleRange(src.chart) : null;
+        // ...unless it is REPLAYING: its window is a hidden moment in the past,
+        // and siblings would render those timestamps on their own unmasked time
+        // axes. The link still turns on; the siblings just keep their view until
+        // the next broadcast (which the replaying cell also withholds).
+        const r = src && !isCellReplaying(focusedCell.id) ? readVisibleRange(src.chart) : null;
         if (r) rangeSync.publish(active.id, { sourceCellId: focusedCell.id, ...r });
       }
       setTabs((ts) => ts.map((t) => (t.id === active.id ? { ...t, syncTime: turningOn } : t)));
@@ -1410,6 +1414,11 @@ export default function App() {
     const tabId = active.id;
     const masterId = focusedCell.id;
     const broadcastMasterWindow = () => {
+      // A replaying master broadcasts nothing: its window (and the align anchor
+      // it would carry) are timestamps the session deliberately hides, and a
+      // sibling renders them unmasked. Gated INSIDE this closure so the deferred
+      // re-broadcast below is covered too.
+      if (isCellReplaying(masterId)) return;
       const src = readyRef.current.get(masterId);
       const r = src ? readVisibleRange(src.chart) : null;
       // Carry the exact-mode anchor so siblings mirror the master's window pixel-for-

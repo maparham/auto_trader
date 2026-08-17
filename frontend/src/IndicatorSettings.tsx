@@ -11,21 +11,13 @@
 //
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import type { Chart, Indicator } from "klinecharts";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
-import {
-  resolveInputs,
-  groupInputs,
-  isMovingAverage,
-  SMOOTHING_TYPES,
-  type IndicatorInputDef,
-} from "./lib/indicatorMeta";
-import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe } from "./lib/mtfCoordinator";
-import { parseTrendlinesConfig } from "./lib/indicators/trendlinesOutputs";
-import { declutterMode, type TrendlinesExtend } from "./lib/indicators/trendlines";
+import { resolveInputs, isMovingAverage, SMOOTHING_TYPES } from "./lib/indicatorMeta";
+import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe } from "./lib/mtfCoordinator";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -80,7 +72,6 @@ import {
   PIVOT_CONNECTOR_DEFAULTS,
   resolvePivotConnector,
 } from "./lib/customIndicators";
-import { overrideExtend } from "./lib/overrideExtend";
 import { periodByResolution, pinnableTimeframes, pinBelowChart } from "./lib/feed";
 import {
   saveIndicatorConfig,
@@ -89,10 +80,8 @@ import {
 } from "./lib/persist";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
-import SelectMenu from "./components/SelectMenu";
 import { requestIndicatorOverlayRepaint } from "./lib/signals";
 import { mirrorAccelCompanion, syncAccelCompanion, getIndicator } from "./lib/indicators";
-import { legendFiguresOf } from "./lib/indicators/inset";
 import ColorLineStylePicker from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
 import { cloneStyles } from "./lib/overlays";
@@ -196,9 +185,6 @@ export default function IndicatorSettings({
   // colours + opacity in the Style tab, and its four figure lines are
   // draw-suppressed, so the generic line rows are hidden.
   const isFvg = type === "FVG";
-  // Trendlines: same MTF shape as S/R Levels — the pin is on the Inputs tab and
-  // the detector runs on the pinned timeframe's own bars, lines and all.
-  const isTrendlines = type === "TRENDLINES";
   // Candle Patterns: figure-less main-pane overlay, no numeric calcParams. Its
   // whole config (pattern toggles, show-labels, colours) is a small extendData
   // object edited on the Inputs tab (colours included, unlike EMA/MA).
@@ -504,33 +490,8 @@ export default function IndicatorSettings({
         init[inp.field] = genExt0[inp.field] ?? inp.default;
       }
     }
-    // Trendlines' Declutter select replaced an "Only lines near price"
-    // checkbox, so a pane saved with that box UNTICKED must open on "Off"
-    // rather than on the select's default. declutterMode is the one reader the
-    // chart uses too, which is what stops the modal from showing a rule the
-    // pane is not drawing.
-    if (isTrendlines && genExt0.declutter === undefined)
-      init.declutter = declutterMode(genExt0 as TrendlinesExtend);
-    // Same story one row down: "Merge similar lines" was a checkbox beside the
-    // tolerance, and the tolerance IS the switch (0 merges nothing). A pane
-    // saved with that box UNTICKED opens on 0, which is what it draws.
-    if (isTrendlines && genExt0.dedupe === false) init.dedupeAtr = 0;
     return init;
   });
-  // ...and the stale flag has to leave the LIVE instance too, or it keeps
-  // forcing the tolerance to 0 (that is how the chart reads it, for panes that
-  // never open this modal) and a number typed above would draw nothing until
-  // the next reload. The saved snapshot loses the key on its own: the modal
-  // rebuilds extendData from the declared inputs, and `dedupe` is no longer
-  // one of them.
-  const dedupeMigrated = useRef(false);
-  useEffect(() => {
-    if (!isTrendlines || dedupeMigrated.current) return;
-    if (genExt0.dedupe === false) {
-      dedupeMigrated.current = true;
-      overrideExtend(chart, paneId, name, { dedupe: true });
-    }
-  }, [isTrendlines, genExt0.dedupe, chart, paneId, name]);
   function setExtendInput(field: string, value: unknown) {
     const next = { ...genExtend, [field]: value };
     setGenExtend(next);
@@ -550,119 +511,6 @@ export default function IndicatorSettings({
     }
     const live = getIndicator(chart, paneId, name) as Indicator | null;
     chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), ...next } });
-  }
-
-  // Conditional visibility: an input whose showWhen guard is not met by the
-  // current (extend-stored) value of the controlling field is not rendered.
-  // Filtered BEFORE grouping, so a hidden half of a pair leaves the other half
-  // as a normal full-width row rather than an empty grid cell.
-  function visibleInput(inp: IndicatorInputDef): boolean {
-    if (!inp.showWhen) return true;
-    const ctrl = inputs.find(
-      (d) => d.source === "extend" && d.field === inp.showWhen!.field,
-    );
-    const cur = genExtend[inp.showWhen.field] ?? ctrl?.default;
-    return inp.showWhen.equals.includes(cur as string | number);
-  }
-
-  // The label, with an optional ⓘ info tip beside it (matches the hand-built
-  // panels like PREV_HL). Plain <label> when there is no tip.
-  function labelFor(inp: IndicatorInputDef) {
-    return inp.tip ? (
-      <span className="ind-row-head">
-        <label>{inp.label}</label>
-        <InfoTip title={inp.label} text={inp.tip} />
-      </span>
-    ) : (
-      <label>{inp.label}</label>
-    );
-  }
-
-  // Wraps a control with its unit, so the unit reads as part of the field
-  // rather than as part of the label.
-  function withSuffix(inp: IndicatorInputDef, control: React.ReactNode) {
-    if (!inp.suffix) return control;
-    return (
-      <span className="ind-control-row">
-        {control}
-        <span className="ind-suffix">{inp.suffix}</span>
-      </span>
-    );
-  }
-
-  function controlFor(inp: IndicatorInputDef) {
-    if (inp.source === "calcParam" && inp.index != null) {
-      return withSuffix(
-        inp,
-        <input
-          type="number"
-          // The visible label is a sibling, not a <label for>, so the control
-          // is unnamed to a screen reader (and to a test) without this.
-          aria-label={inp.label}
-          min={inp.min}
-          max={inp.max}
-          step={inp.step ?? 1}
-          // A slot the saved instance predates reads undefined, which would
-          // render an EMPTY box for a param that does have a default (a chart
-          // created before the param existed keeps its shorter list). Show the
-          // meta's default there; editing writes the slot and the array grows
-          // to the new length.
-          value={
-            Number.isFinite(calcParams[inp.index])
-              ? calcParams[inp.index]
-              : ((inp.default as number | undefined) ?? "")
-          }
-          onChange={(e) => setParam(inp.index!, Number(e.target.value))}
-        />,
-      );
-    }
-    if (inp.source === "extend" && inp.field && inp.type === "select") {
-      return (
-        <SelectMenu
-          className={inp.wide ? "ind-select-fill" : undefined}
-          ariaLabel={inp.label}
-          value={String(genExtend[inp.field] ?? inp.default ?? "")}
-          options={(inp.options ?? []).map((o) => ({
-            value: String(o.value),
-            label: o.label,
-          }))}
-          onChange={(v) => setExtendInput(inp.field!, v)}
-        />
-      );
-    }
-    // A NUMBER on extendData, which is not the same branch as a calcParam one:
-    // render-only settings (Merge Tolerance) live there because they must not
-    // be able to move an emitted value. Without this the row drew its label and
-    // nothing else.
-    if (inp.source === "extend" && inp.field && inp.type === "number") {
-      return withSuffix(
-        inp,
-        <input
-          type="number"
-          aria-label={inp.label}
-          min={inp.min}
-          max={inp.max}
-          step={inp.step ?? 1}
-          value={
-            Number.isFinite(genExtend[inp.field] as number)
-              ? (genExtend[inp.field] as number)
-              : ((inp.default as number | undefined) ?? "")
-          }
-          onChange={(e) => setExtendInput(inp.field!, Number(e.target.value))}
-        />,
-      );
-    }
-    if (inp.source === "extend" && inp.field && inp.type === "boolean") {
-      return (
-        <input
-          type="checkbox"
-          aria-label={inp.label}
-          checked={(genExtend[inp.field] ?? inp.default ?? false) as boolean}
-          onChange={(e) => setExtendInput(inp.field!, e.target.checked)}
-        />
-      );
-    }
-    return null;
   }
 
   // --- SESSIONS: editable per-session list (extendData.sessions) ---
@@ -747,13 +595,7 @@ export default function IndicatorSettings({
   // Line-type figures, paired with their effective default colors so the Style
   // tab shows the colors actually on screen even when nothing's been overridden.
   const lineDefs = useMemo<LineDraft[]>(() => {
-    // Through legendFiguresOf, not ind.figures: an inset instance is registered with
-    // an empty figure list (that is what keeps its values out of the price axis), so
-    // reading it directly would leave the Style tab with NO line-color rows and make
-    // an inset indicator unrecolorable. The helper falls back to the base template,
-    // whose line order is exactly the order `styles.lines` (and the band draw's own
-    // paintInsetLines loop) index by.
-    const figures = (ind ? legendFiguresOf(ind) : []).filter((f) => f.type === "line");
+    const figures = (ind?.figures ?? []).filter((f) => f.type === "line");
     const globalLines = chart.getStyles().indicator?.lines ?? [];
     const overrides = ind?.styles?.lines ?? [];
     // Friendly Style-tab labels for AVWAP's otherwise-untitled band figures
@@ -845,9 +687,6 @@ export default function IndicatorSettings({
     if (isSrLevels && timeframe !== "chart") extendData.mtf = { timeframe };
     // FVG: same MTF persistence contract as S/R Levels.
     if (isFvg && timeframe !== "chart") extendData.mtf = { timeframe };
-    // Trendlines persists only the chosen timeframe; the HTF lines and series
-    // are re-detected by the coordinator on load, exactly as S/R Levels does.
-    if (isTrendlines && timeframe !== "chart") extendData.mtf = { timeframe };
     if (isSlope) {
       // slopePeriod/smoothing/colorByDirection don't ride genExtend (they're not
       // meta-declared selects) — persist them explicitly so they survive reload.
@@ -1015,23 +854,6 @@ export default function IndicatorSettings({
       name,
       paneId,
       parseFvgConfig(nextCp ?? calcParams),
-      tf === "chart" ? null : tf,
-      brokerId,
-    );
-  }
-
-  // Push a Trendlines config (chart-TF or MTF) through the coordinator, which
-  // re-detects the lines on the higher timeframe's native bars when one is set
-  // (mirrors applySrLevels above). Params come from the explicit override so a
-  // calcParam change never races setState.
-  function applyTrendlines(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
-    const tf = next.timeframe ?? timeframe;
-    void applyTrendlinesTimeframe(
-      chart,
-      epic,
-      name,
-      paneId,
-      parseTrendlinesConfig(nextCp ?? calcParams),
       tf === "chart" ? null : tf,
       brokerId,
     );
@@ -1213,11 +1035,6 @@ export default function IndicatorSettings({
       // must recompute the stashed HTF levels, not just re-align them.
       apply({ calcParams: nextCp });
       applySrLevels({}, nextCp);
-    } else if (isTrendlines && timeframe !== "chart") {
-      // Same contract again: every trendline param feeds the DETECTOR, so under
-      // an active timeframe the HTF lines must be found again, not re-aligned.
-      apply({ calcParams: nextCp });
-      applyTrendlines({}, nextCp);
       // isSlope has no calcParam-sourced input left (MA Lengths is the dedicated
       // editor below, which writes calcParams + calls applySlope directly), so
       // this generic setParam path is never reached for SLOPE.
@@ -1645,81 +1462,73 @@ export default function IndicatorSettings({
                   </Tooltip>
                 </div>
               )}
-              {groupInputs(inputs.filter(visibleInput)).map((chunk) => (
-                <Fragment key={chunk[0].key}>
-                  {/* A heading before the input that opens a section, so a tab
-                      mixing what the indicator COMPUTES with how it is DRAWN
-                      says which is which. Same .ind-group the MA panel uses for
-                      Smoothing and Calculation. */}
-                  {chunk[0].section && (
-                    <div className="ind-group">{chunk[0].section}</div>
-                  )}
-                  {chunk.length > 1 ? (
-                    // Related pair: two to a row, each label stacked above its
-                    // own control. Halves the width a label gets, which is why
-                    // only inputs with short labels carry a `group`.
-                    <div className="ind-pair2">
-                      {chunk.map((inp) => (
-                        <div className="ind-field" key={inp.key}>
-                          {labelFor(inp)}
-                          {controlFor(inp)}
-                        </div>
-                      ))}
+              {inputs.map((inp) => {
+                // Conditional visibility: skip an input whose showWhen guard isn't
+                // met by the current (extend-stored) value of the controlling field.
+                if (inp.showWhen) {
+                  const ctrl = inputs.find(
+                    (d) => d.source === "extend" && d.field === inp.showWhen!.field,
+                  );
+                  const cur = genExtend[inp.showWhen.field] ?? ctrl?.default;
+                  if (!inp.showWhen.equals.includes(cur as string | number)) return null;
+                }
+                // Label, with an optional ⓘ info tip beside it (matches the
+                // hand-built panels like PREV_HL). Plain <label> when no tip.
+                const labelEl = inp.tip ? (
+                  <span className="ind-row-head">
+                    <label>{inp.label}</label>
+                    <InfoTip title={inp.label} text={inp.tip} />
+                  </span>
+                ) : (
+                  <label>{inp.label}</label>
+                );
+                if (inp.source === "calcParam" && inp.index != null) {
+                  return (
+                    <div className="ind-row" key={inp.key}>
+                      {labelEl}
+                      <input
+                        type="number"
+                        min={inp.min}
+                        max={inp.max}
+                        step={inp.step ?? 1}
+                        value={Number.isFinite(calcParams[inp.index]) ? calcParams[inp.index] : ""}
+                        onChange={(e) => setParam(inp.index!, Number(e.target.value))}
+                      />
                     </div>
-                  ) : chunk[0].type === "number" ? (
-                    // A solo NUMBER lines its control up with the right column
-                    // of the paired rows rather than pushing it to the modal's
-                    // edge, so a column of numbers reads as a column. Selects
-                    // and checkboxes keep the label-left/control-right row
-                    // below: a sentence-long select needs the width, and a
-                    // checkbox at the half-way mark reads as unattached to
-                    // either side.
-                    //
-                    // The ⓘ MOVES TO THE END of the row here, rather than
-                    // riding next to the label as it does everywhere else.
-                    // Half a row is not enough for "Min Back Clearance" plus a
-                    // tip, and something has to give: an ellipsised label reads
-                    // as a bug, where a tip at the end of the row reads as a
-                    // layout.
-                    //
-                    // A `wide` number is the exception: its label is a phrase
-                    // the control completes ("Merge Lines within 1 ATR"), which
-                    // reads as one line only with the ⓘ between the two, so it
-                    // takes the label column whole and keeps its tip beside the
-                    // label. Same two columns either way, so the controls stay
-                    // in one line down the tab.
-                    <div className="ind-row ind-row-cols">
-                      {chunk[0].wide ? (
-                        <>
-                          {labelFor(chunk[0])}
-                          {controlFor(chunk[0])}
-                        </>
-                      ) : (
-                        <>
-                          <label>{chunk[0].label}</label>
-                          <span className="ind-cols-control">
-                            {controlFor(chunk[0])}
-                            {chunk[0].tip && (
-                              <InfoTip title={chunk[0].label} text={chunk[0].tip} />
-                            )}
-                          </span>
-                        </>
-                      )}
+                  );
+                }
+                if (inp.source === "extend" && inp.field && inp.type === "select") {
+                  return (
+                    <div className="ind-row" key={inp.key}>
+                      {labelEl}
+                      <select
+                        value={String(genExtend[inp.field] ?? inp.default ?? "")}
+                        onChange={(e) => setExtendInput(inp.field!, e.target.value)}
+                      >
+                        {(inp.options ?? []).map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                  ) : (
-                    // Checkboxes and selects share the numbers' two columns, so
-                    // the tab reads as ONE column of controls instead of numbers
-                    // at the middle and checkboxes out at the modal's edge. A
-                    // `wide` select is the exception: a sentence-long option
-                    // needs more than half a row, so it keeps the label-left /
-                    // control-right row.
-                    <div className={chunk[0].wide ? "ind-row" : "ind-row ind-row-cols"}>
-                      {labelFor(chunk[0])}
-                      {controlFor(chunk[0])}
+                  );
+                }
+                if (inp.source === "extend" && inp.field && inp.type === "boolean") {
+                  const checked = (genExtend[inp.field] ?? inp.default ?? false) as boolean;
+                  return (
+                    <div className="ind-row" key={inp.key}>
+                      {labelEl}
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setExtendInput(inp.field!, e.target.checked)}
+                      />
                     </div>
-                  )}
-                </Fragment>
-              ))}
+                  );
+                }
+                return null;
+              })}
               {isSlope && (
                 <>
                   <div className="ind-row">
@@ -2105,7 +1914,7 @@ export default function IndicatorSettings({
                 <>
                   {/* Higher-timeframe swings aligned onto the chart bars (no
                       lookahead), same as EMA/MA. */}
-                  <div className="ind-row ind-row-cols">
+                  <div className="ind-row">
                     <label>Timeframe</label>
                     <select
                       value={timeframe}
@@ -2136,7 +1945,7 @@ export default function IndicatorSettings({
                 <>
                   {/* Higher-timeframe slope computed on native HTF bars, aligned
                       onto the chart bars (no lookahead), same as EMA/MA. */}
-                  <div className="ind-row ind-row-cols">
+                  <div className="ind-row">
                     <span className="ind-row-head">
                       <label>Timeframe</label>
                       <InfoTip
@@ -2173,7 +1982,7 @@ export default function IndicatorSettings({
                 <>
                   {/* Higher-timeframe levels clustered on native HTF bars, aligned
                       onto the chart bars (no lookahead), same as Pivot Bands. */}
-                  <div className="ind-row ind-row-cols">
+                  <div className="ind-row">
                     <span className="ind-row-head">
                       <label>Timeframe</label>
                       <InfoTip
@@ -2210,7 +2019,7 @@ export default function IndicatorSettings({
                 <>
                   {/* Higher-timeframe gaps detected on native HTF bars, aligned
                       onto the chart bars (no lookahead), same as S/R Levels. */}
-                  <div className="ind-row ind-row-cols">
+                  <div className="ind-row">
                     <span className="ind-row-head">
                       <label>Timeframe</label>
                       <InfoTip
@@ -2243,48 +2052,11 @@ export default function IndicatorSettings({
                     />
                   </span>
                 </>
-              ) : isTrendlines ? (
-                <>
-                  {/* Higher-timeframe lines detected on native HTF bars, aligned
-                      onto the chart bars (no lookahead), same as S/R Levels. */}
-                  <div className="ind-row ind-row-cols">
-                    <span className="ind-row-head">
-                      <label>Timeframe</label>
-                      <InfoTip
-                        title="Timeframe"
-                        text="Detect the lines on this timeframe instead of the chart's. A higher timeframe gives fewer, longer trends (e.g. daily lines on a 15m chart)."
-                      />
-                    </span>
-                    <select
-                      value={timeframe}
-                      onChange={(e) => {
-                        setTimeframe(e.target.value);
-                        applyTrendlines({ timeframe: e.target.value });
-                      }}
-                    >
-                      {timeframeOptions.map((p) => (
-                        <option key={p.resolution} value={p.resolution}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="ind-row-head">
-                    <label className="ind-check">
-                      <input type="checkbox" checked disabled readOnly />
-                      <span>Wait for timeframe closes</span>
-                    </label>
-                    <InfoTip
-                      title="Wait for timeframe closes"
-                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
-                    />
-                  </span>
-                </>
               ) : (
-                <div className="ind-row ind-row-cols">
+                <div className="ind-row">
                   <span className="ind-row-head">
                     <label>Timeframe</label>
-                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, S/R Levels, FVG and Trendlines." />
+                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, S/R Levels, and FVG." />
                   </span>
                   <select value="chart" disabled>
                     <option value="chart">{chartOptionLabel}</option>

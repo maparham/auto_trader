@@ -27,23 +27,6 @@ export interface IndicatorInputDef {
   options?: Array<{ value: string | number; label: string }>;
   // Optional ⓘ info tip shown beside the input's label in the settings modal.
   tip?: string;
-  // Optional pairing: CONSECUTIVE inputs sharing a group are laid out two to a
-  // row with their labels stacked above them, instead of one label-left,
-  // control-right row each. Halves the width a label gets, so pair only inputs
-  // whose labels are short and whose meanings are related.
-  group?: string;
-  // Render this control at the row's full remaining width rather than the fixed
-  // 130px. For a select whose options are sentences, not words.
-  wide?: boolean;
-  // A unit shown to the RIGHT of the control instead of inside the label. Keeps
-  // the label to the thing being set and the unit next to the number it applies
-  // to, which is also what makes a paired label short enough to fit.
-  suffix?: string;
-  // Optional section heading rendered ABOVE this input, opening a run of
-  // related controls (e.g. "Drawing" over the render-only options). The heading
-  // belongs to the input that starts the section, so reordering the list moves
-  // it with them.
-  section?: string;
   // Optional conditional visibility: only render this input when another input's
   // (extend-stored) value is one of `equals`. Used e.g. to hide Pivot Bands'
   // "Window (K)" unless Mode is "avg". Honored by the generic Inputs renderer.
@@ -56,25 +39,6 @@ interface IndicatorMetaDef {
   // info tooltip. Optional: indicators without these fall back to the raw code.
   title?: string;
   desc?: string;
-}
-
-/** Chunk inputs for the settings modal: CONSECUTIVE inputs sharing a non-empty
- * `group` come out together (max two to a row), everything else alone.
- *
- * Consecutive, not "all with this group", so a group cannot silently reorder
- * the panel. A group left with one member after showWhen filtering renders as
- * an ordinary full-width row. */
-export function groupInputs(
-  inputs: IndicatorInputDef[],
-): IndicatorInputDef[][] {
-  const out: IndicatorInputDef[][] = [];
-  for (const inp of inputs) {
-    const last = out[out.length - 1];
-    if (inp.group && last && last.length === 1 && last[0].group === inp.group)
-      last.push(inp);
-    else out.push([inp]);
-  }
-  return out;
 }
 
 // Helper: a labeled numeric calcParam input.
@@ -164,12 +128,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     desc: "A weighted moving average that distributes a configurable weight across the window.",
   },
   BBI: {
-    inputs: [
-      num(0, "Period 1"),
-      num(1, "Period 2"),
-      num(2, "Period 3"),
-      num(3, "Period 4"),
-    ],
+    inputs: [num(0, "Period 1"), num(1, "Period 2"), num(2, "Period 3"), num(3, "Period 4")],
     title: "Bull and Bear Index",
     desc: "The average of four moving averages of different lengths, used as a single trend line.",
   },
@@ -179,11 +138,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     desc: "A moving average with bands set a number of standard deviations away, tracking volatility.",
   },
   MACD: {
-    inputs: [
-      num(0, "Fast Length"),
-      num(1, "Slow Length"),
-      num(2, "Signal Smoothing"),
-    ],
+    inputs: [num(0, "Fast Length"), num(1, "Slow Length"), num(2, "Signal Smoothing")],
     title: "Moving Average Convergence Divergence",
     desc: "The gap between a fast and slow EMA plus a signal line and histogram, for momentum.",
   },
@@ -235,7 +190,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   VWAP: {
     inputs: [],
     title: "Volume Weighted Average Price",
-    desc: "The session's average price weighted by volume: a common intraday fair-value benchmark.",
+    desc: "The session's average price weighted by volume — a common intraday fair-value benchmark.",
   },
   AVWAP: {
     inputs: [],
@@ -246,12 +201,8 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     inputs: [
       num(0, "Length"),
       {
-        key: "smoothing",
-        label: "Smoothing",
-        type: "select",
-        source: "extend",
-        field: "smoothing",
-        default: "rma",
+        key: "smoothing", label: "Smoothing", type: "select",
+        source: "extend", field: "smoothing", default: "rma",
         tip: "Moving average applied to the true range. RMA (Wilder) is TradingView's default; SMA/EMA/WMA match Pine's ta.sma/ta.ema/ta.wma.",
         options: [
           { value: "rma", label: "RMA" },
@@ -261,18 +212,14 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        key: "pctSource",
-        label: "% Source",
-        type: "select",
-        source: "extend",
-        field: "pctSource",
-        default: "close",
+        key: "pctSource", label: "% Source", type: "select",
+        source: "extend", field: "pctSource", default: "close",
         tip: "Bar price the legend's ATR% readout is measured against (ATR ÷ price × 100).",
         options: PRICE_SOURCES,
       },
     ],
     title: "Average True Range",
-    desc: "Average of the true range over the window: volatility in price units. Referenceable in backtest rules as an instance (e.g. ATR1.14).",
+    desc: "Average of the true range over the window — volatility in price units. Referenceable in backtest rules as an instance (e.g. ATR1.14).",
   },
   // Linear Regression Channel (TV "LR"): window Length + channel Deviations
   // (calcParams), and a price Source dropdown stored on extendData.
@@ -305,7 +252,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     inputs: [
       {
         ...num(0, "Strength"),
-        tip: "Bars required on each side of a swing. Higher value filters out less prominent (weaker) pivots.",
+        tip: "Bars required each side of a swing. Higher value filters out less prominent (weaker) pivots.",
       },
       {
         key: "mode",
@@ -337,13 +284,13 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     title: "Pivot Bands",
-    desc: "Two step-lines tracking confirmed fractal swing highs and lows separately (a dynamic support/resistance channel). Strength sets the bars required on each side of a pivot. Mode carries either the last pivot or the average of the last K pivots forward; the line only steps when a new pivot confirms (N bars late, no repaint).",
+    desc: "Two step-lines tracking confirmed fractal swing highs and lows separately — a dynamic support/resistance channel. Strength sets the bars required on each side of a pivot. Mode carries either the last pivot or the average of the last K pivots forward; the line only steps when a new pivot confirms (N bars late, no repaint).",
   },
   PIVOT_ANALYSIS: {
     inputs: [
       {
         ...num(0, "Length"),
-        tip: "Bars required on each side of a swing. Higher value marks only the more prominent pivots (and confirms them later).",
+        tip: "Bars required each side of a swing. Higher value marks only the more prominent pivots (and confirms them later).",
       },
       {
         key: "showLevels",
@@ -356,13 +303,13 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     title: "Pivots High/Low [LuxAlgo]",
-    desc: "Marks each confirmed fractal swing high/low, connects it to the previous same-type pivot with a Δ% / Δt label, and (optionally) carries the latest pivot high/low forward as a level line. Length sets the bars required on each side of a swing; pivots confirm that many bars late (no repaint). Pivot high/low, Δ% and Δt are available as rule operands.",
+    desc: "Marks each confirmed fractal swing high/low, connects it to the previous same-type pivot with a Δ% / Δt label, and (optionally) carries the latest pivot high/low forward as a level line. Length sets the bars required each side of a swing; pivots confirm that many bars late (no repaint). Pivot high/low, Δ% and Δt are available as rule operands.",
   },
   SR_LEVELS: {
     inputs: [
       {
         ...num(0, "Pivot Length"),
-        tip: "Bars required on each side of a swing before it counts as a pivot. Higher value uses only the more prominent swings (and confirms them later).",
+        tip: "Bars required each side of a swing before it counts as a pivot. Higher value uses only the more prominent swings (and confirms them later).",
       },
       {
         ...num(1, "Zone Width (×ATR)", { min: 0.05, step: 0.05 }),
@@ -416,231 +363,9 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         default: false,
         tip: "Draw a dashed line through each zone's midpoint (the 50% level, ICT's consequent encroachment).",
       },
-      {
-        key: "extendRight",
-        label: "Extend to Right",
-        type: "boolean",
-        source: "extend",
-        field: "extendRight",
-        default: false,
-        tip: "Continues each zone to the right edge of the chart. Off: zones stop at the last bar.",
-      },
     ],
     title: "Fair Value Gaps",
     desc: "Marks 3-candle imbalances (a gap between the first bar's wick and the third bar's) as zones. A gap shrinks to its unfilled remainder as price trades back into it and disappears once price crosses its far edge, so only live imbalances stay on the chart. Bullish gaps tint green, bearish red. The nearest gap's edges on each side are available as rule operands. Gaps confirm on the third candle (no repaint).",
-  },
-  // TRENDLINES. Two gates decide whether a line is MAJOR (readable by a rule):
-  // Min Touches and Min Span. Max Lines is not a third gate, but it is NOT
-  // operand-neutral either: the emit path reads the live pool, and that pool is
-  // capped at MAX_LIVE_MULT * maxLines per side by rank, so raising maxLines
-  // widens the candidate set. Measured on the DXY fixture, maxLines 2 vs 3
-  // changes the emitted value on 87 bars. The Max Lines tip must say that and
-  // must never claim the operands are unaffected.
-  //
-  // Min Swing Size gates HARDER than any of them: it decides what counts as a
-  // swing at all, so a rejected bar seeds no line and joins no pool. Default 0
-  // (off), so nothing already saved moves. Measured on the same DXY fixture at
-  // otherwise-default config, of 51 pivots it keeps 49 at 0.5, 40 at 0.75, 25
-  // at 1.0 and 9 at 1.5, changing an emitted value on 19, 218, 337 and 442 of
-  // 490 bars. 1.5 already starves the pane (it emits on 133 bars where the
-  // others all emit on 442), so the useful band is 0.5 to 1.0.
-  //
-  // Min Back Clearance is the only gate here that ships ON (10 bars), because
-  // it fixes a hole rather than adding taste: seeding validates a candidate
-  // over (i1, i] and never looks BEFORE i1, so a pair whose angle has nothing
-  // to do with the trend passes as long as its wrong side is in the past.
-  // Saved charts DO move under it. It does not merely delete: the freed pairing
-  // slots refill, so the detector picks a better first anchor for the same
-  // trend. Measured on the DXY monthly fixture at otherwise-default config, the
-  // live set goes 22 -> 23 lines while the worst clearance goes 5 bars -> 10,
-  // and an emitted value moves on 239 of 490 bars.
-  //
-  // Min Swing Reach is the same gate on the TIME axis: a swing can be deep and
-  // brief (a spike) or long and shallow (a drift), and one setting rejects
-  // each. It reads LEFT reach only, because right reach keeps growing after
-  // the pivot confirms and gating on it would repaint. Also default 0, and a
-  // no-op at anything <= Pivot Length.
-  TRENDLINES: {
-    inputs: [
-      {
-        ...num(7, "Max Trendlines"),
-        tip: "Max number of lines drawn per side, nearest to price first, counted after merging. Raising it also keeps more lines in play, which can change the prices this indicator reports.",
-      },
-      {
-        ...num(15, "Min Back Clearance"),
-        default: 10,
-        suffix: "bars",
-        tip: "Bars before a line's first anchor that price must leave clear, on the line's own side. Zero accepts any pair, which lets a line start at a pivot the trend had already left behind.",
-      },
-      {
-        ...num(0, "Min Pivot Length"),
-        group: "pivot",
-        suffix: "bars",
-        tip: "Min number of bars a pivot must beat on each side before it counts as a turning point. Higher values keep fewer pivots and confirm them later.",
-      },
-      {
-        ...num(10, "Max Pivot Pairs"),
-        group: "pivot",
-        suffix: "pairs",
-        default: 20,
-        tip: "Max number of earlier pivots a new pivot tries to draw a line with. Counted in pivots, not bars, so filtering pivots out lets the same slots reach further back.",
-      },
-      {
-        ...num(1, "Max Pierce", { min: 0, step: 0.05 }),
-        group: "tol",
-        suffix: "ATR",
-        tip: "The furthest a wick may poke past a line without breaking it, in ATR(14). Zero means any poke through breaks it.",
-      },
-      {
-        ...num(2, "Max Touch Gap", { min: 0.05, step: 0.05 }),
-        group: "tol",
-        suffix: "ATR",
-        tip: "The furthest a pivot may sit from a line and still count as touching it, in ATR(14).",
-      },
-      {
-        ...num(3, "Min Touches", { min: 2 }),
-        group: "major",
-        suffix: "pivots",
-        tip: "Min number of pivots that must touch a line before it counts as a real trendline. Two is just the pair that drew it, so Min Span does most of the filtering.",
-      },
-      {
-        ...num(11, "Max Touches", { min: 0 }),
-        group: "major",
-        default: 0,
-        suffix: "pivots",
-        tip: "Max number of pivots that may touch a line before it stops counting as a trendline. Zero means no limit. A line that keeps collecting touches is usually a flat shelf half the swings in a range graze.",
-      },
-      {
-        ...num(4, "Min Span"),
-        group: "span",
-        suffix: "bars",
-        tip: "Min number of bars a line must span before it counts as a real trendline. It keeps short, meaningless lines off the chart.",
-      },
-      {
-        ...num(12, "Max Span", { min: 0 }),
-        group: "span",
-        default: 0,
-        suffix: "bars",
-        tip: "Max number of bars a line may span before it stops counting as a trendline. Zero means no limit. Useful when only the recent structure matters and a line reaching back years is noise.",
-      },
-      {
-        ...num(5, "Max Projection"),
-        group: "life",
-        suffix: "bars",
-        tip: "Max number of bars an unbroken line keeps running past its last touch before it retires. Once price breaks a line, Max Break Hold takes over.",
-      },
-      {
-        ...num(6, "Max Break Hold"),
-        group: "life",
-        suffix: "bars",
-        tip: "Max number of bars a broken line stays on the chart, dashed, after price cuts through it. Long enough to watch for a retest.",
-      },
-      {
-        ...num(8, "Min Pivot Size", { min: 0, step: 0.1 }),
-        group: "size",
-        suffix: "ATR",
-        // Charts created before this param existed store only eight
-        // calcParams, so the slot reads undefined and the box would render
-        // empty. Same 0 parseTrendlinesConfig already substitutes.
-        default: 0,
-        tip: "Min size of the leg from a pivot back to the last pivot on the other side, in ATR(14). Zero accepts every turn, and raising it drops the small wobbles.",
-      },
-      {
-        ...num(9, "Min Pivot Reach", { min: 0 }),
-        group: "size",
-        suffix: "bars",
-        default: 0,
-        tip: "Min number of bars a pivot must beat to its left before it counts as a turning point. Set it above Min Pivot Length to have any effect, since a pivot already beats that many.",
-      },
-      {
-        ...num(14, "Min Slope", { min: 0, step: 0.01 }),
-        group: "slope",
-        default: 0,
-        suffix: "ATR/bar",
-        tip: "Min steepness a line must have, in ATR(14) of price per bar. Zero means no floor. A line flat enough to be a horizontal shelf is not a trendline, and the S/R Levels indicator draws those properly.",
-      },
-      {
-        ...num(13, "Max Slope", { min: 0, step: 0.01 }),
-        group: "slope",
-        default: 0,
-        suffix: "ATR/bar",
-        tip: "Max steepness a line may have, in ATR(14) of price per bar. Zero means no limit. A steep line outruns price and is never touched again, which is what a fan off one sharp pivot keeps producing.",
-      },
-      {
-        key: "extend",
-        label: "Extend",
-        // Everything from here down is render-only: nothing a rule reads can
-        // move. The heading is what lets the four tips stop saying so. Extend
-        // leads the section: it is the one drawing option that changes every
-        // line on the pane, where the three below it choose which lines show.
-        section: "Drawing",
-        type: "select",
-        source: "extend",
-        field: "extend",
-        default: "ray",
-        wide: true,
-        options: [
-          { value: "ray", label: "→  Extend right" },
-          { value: "extended", label: "↔  Extended both ways" },
-          { value: "lastbar", label: "⇥  End at last bar" },
-          { value: "segment", label: "•–•  Segment, stops at last touch" },
-          { value: "apex", label: ">  Apex, stops at opposite line" },
-          { value: "cross", label: "×  Cross, stops at any line" },
-        ],
-        tip: "Where a line stops on the right, and whether it runs back before its first anchor.",
-      },
-      {
-        key: "declutter",
-        label: "Declutter",
-        type: "select",
-        source: "extend",
-        field: "declutter",
-        default: "near",
-        wide: true,
-        options: [
-          { value: "off", label: "Off" },
-          { value: "near", label: "Only lines near price" },
-          { value: "pivot", label: "One line per pivot" },
-        ],
-        tip: "Near price removes distant lines. One per pivot shows only the nearest line where several pass through the same swing.",
-      },
-      {
-        key: "hideBroken",
-        label: "Hide broken lines",
-        type: "boolean",
-        source: "extend",
-        field: "hideBroken",
-        default: false,
-        tip: "Hides the dashed lines price has already cut through.",
-      },
-      {
-        key: "dedupeAtr",
-        label: "Merge Lines within",
-        // The label runs to a phrase the number completes ("Merge Lines
-        // within 1 ATR"), so `wide` keeps its ⓘ beside the label rather than at
-        // the end of the row (see controlFor's number branch). The control
-        // still sits in the same column as every other one.
-        wide: true,
-        // The tolerance IS the switch: 0 merges nothing, which is why the
-        // "Merge similar lines" checkbox that used to sit beside this box is
-        // gone (it wrote the same off state twice).
-        //
-        // "One line per pivot" IS this pass with no tolerance at all, so under
-        // it the box is inert: hidden rather than left there doing nothing. It
-        // comes back with the other two choices.
-        showWhen: { field: "declutter", equals: ["off", "near"] },
-        type: "number",
-        source: "extend",
-        field: "dedupeAtr",
-        default: 1,
-        min: 0,
-        step: 0.25,
-        suffix: "ATR",
-        tip: "One pivot often starts several lines almost on top of each other; this keeps the closest and frees the slots for lines with a different shape. The distance is measured at the last bar, and 0 merges nothing.",
-      },
-    ],
-    title: "Trendlines",
-    desc: "Sloping support and resistance drawn from confirmed pivot highs and lows, keeping only the lines no candle has cut through. The lines nearest price are drawn and tagged with how many times price touched them. A broken line turns dashed and marks where it broke, so you can watch for a retest. Pivots confirm a few bars late, so nothing repaints.",
   },
   SESSIONS: {
     inputs: [],
@@ -659,12 +384,8 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     // IndicatorSettings.tsx instead. Only the plain selects stay here.
     inputs: [
       {
-        key: "maType",
-        label: "MA Type",
-        type: "select",
-        source: "extend",
-        field: "maType",
-        default: "ema",
+        key: "maType", label: "MA Type", type: "select",
+        source: "extend", field: "maType", default: "ema",
         tip: "EMA reacts faster to recent price; SMA weights every bar equally. VWMA and EVWMA weight bars by traded volume (EVWMA is LazyBear's elastic version).",
         options: [
           { value: "ema", label: "EMA" },
@@ -674,22 +395,14 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        key: "units",
-        label: "Units",
-        type: "select",
-        source: "extend",
-        field: "units",
-        default: "pctHr",
+        key: "units", label: "Units", type: "select",
+        source: "extend", field: "units", default: "pctHr",
         tip: "Slope scale. % / hour is time-normalized and comparable across timeframes; % / bar and price / bar are per bar.",
         options: SLOPE_UNIT_OPTIONS,
       },
       {
-        key: "source",
-        label: "Source",
-        type: "select",
-        source: "extend",
-        field: "source",
-        default: "close",
+        key: "source", label: "Source", type: "select",
+        source: "extend", field: "source", default: "close",
         tip: "Price the moving average is built from (close, HL2, …).",
         options: PRICE_SOURCES,
       },
@@ -788,7 +501,5 @@ export function resolveInputs(
   const meta = INDICATOR_META[name];
   if (meta) return meta.inputs;
   const params = liveCalcParams ?? [];
-  return params.map((_, i) =>
-    num(i, params.length > 1 ? `Param ${i + 1}` : "Length"),
-  );
+  return params.map((_, i) => num(i, params.length > 1 ? `Param ${i + 1}` : "Length"));
 }

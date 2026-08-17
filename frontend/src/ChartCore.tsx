@@ -39,8 +39,11 @@ import { isInvertShortcut } from "./lib/invertShortcut";
 import MarketInfoPopover from "./MarketInfoPopover";
 import Tooltip from "./components/Tooltip";
 import HeatmapControls from "./HeatmapControls";
+import ReplayStartPanel from "./ReplayStartPanel";
+import ReplayPill from "./ReplayPill";
+import ReplayTicket from "./ReplayTicket";
+import ReplayReportCard from "./ReplayReportCard";
 import { useProximityHeatmap } from "./chart/useProximityHeatmap";
-import { useTrendlinePins } from "./chart/useTrendlinePins";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
 import {
@@ -87,13 +90,12 @@ import {
   saveLegendCollapsed,
   loadCandleHidden,
   saveCandleHidden,
-  loadInsetBand,
-  saveInsetBand,
   CONDITION_LABELS,
   loadSnapshotMeta,
   deleteSnapshotMeta,
   loadFavoriteResolutions,
   loadAvwapAnchor,
+  type IndicatorInstance,
   type SnapshotMeta,
   type AlertCondition,
   type AlertTrigger,
@@ -110,11 +112,8 @@ import {
   registerHistory,
   unregisterHistory,
   partitionHistorySuffixes,
-  rebuildIdsForDeltas,
   withHistorySuppressed,
 } from "./lib/history";
-import { setInsetBandFraction, type InsetBandBox } from "./lib/indicators/inset";
-import InsetBandResizer from "./InsetBandResizer";
 import { onLayoutChanged } from "./lib/persist/layoutEvents";
 import { scheduleAutoSave, cancelAutoSave } from "./lib/templateAutosave";
 import {
@@ -130,7 +129,7 @@ import {
   browserTimezone,
   first,
 } from "./chart/chartPainters";
-import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, scrollTsToCenter } from "./lib/chartSync";
+import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, restingLineEndX } from "./lib/positionLines";
 import {
@@ -150,26 +149,29 @@ import {
   type OrderSide,
 } from "./lib/trading";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
+import { limitOrderItems } from "./lib/chartOrderMenu";
 import { MenuIcons } from "./lib/menuIcons";
 import { hitSlopeHandle, type SlopeGrab } from "./lib/slopeHandles";
 import { snapSlopeEndpoint } from "./lib/slopeMagnet";
 import { effectiveMagnetMode } from "./lib/magnet";
 import { loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
 import { hexToRgba } from "./lib/lineStyle";
-import { makeFormatDate } from "./lib/timeFormat";
+import { makeFormatDate, makeMaskedFormatDate } from "./lib/timeFormat";
+import { makeReplayFormatters } from "./lib/replayFormat";
+import {
+  armMaskedReplay,
+  disarmMaskedReplay,
+  maskedReplayFor,
+  maskedReplaySignal,
+} from "./lib/maskedReplay";
 import { formatRemaining, resolveExpiry } from "./lib/alertUi";
 import { isSynthetic } from "./lib/syntheticRegistry";
-import type { ChartHandle, RangeReq, CenterReq } from "./chart/chartHandle";
+import type { ChartHandle, RangeReq, CenterReq, ReplayHandle } from "./chart/chartHandle";
 import { createChartDataFacade, type ChartDataFacade } from "./chart/chartDataFacade";
 import { applyFreeCrosshairX } from "./chart/freeCrosshair";
 import { applyScalePriceOnly } from "./chart/priceOnlyRange";
-import { applyCandleFit, isAutoFitted, nextFitMode } from "./chart/candleFit";
-import {
-  isOverPriceAxis,
-  isPriceAxisScaleWheel,
-  type PriceAxisGeometry,
-} from "./chart/priceAxisGesture";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
+import { useReplay } from "./chart/useReplay";
 import { classifyNoData, type NoDataKind } from "./chart/noDataPolicy";
 import { useRangeNavigation } from "./chart/useRangeNavigation";
 import { useChartPaint } from "./chart/useChartPaint";
@@ -292,7 +294,6 @@ export default function ChartCore({
     avwapAnchorMode,
     autoScale,
     invertScale,
-    priceFitMode,
     scalePriceOnly,
     logScale,
     measureArmed,
@@ -338,6 +339,10 @@ export default function ChartCore({
   // the shared selection signal is already nulled by then, so re-capturing from
   // it would lose the trade. Cleared once a restore is attempted or on epic change.
   const pendingTradeRestoreRef = useRef<number | null>(null);
+  // Replay handle for this cell (assigned during render by useReplay; null
+  // until the hook first runs). Read by useLiveMarketData's load branch and the
+  // MTF coordinator's no-lookahead clamp.
+  const replayRef = useRef<ReplayHandle | null>(null);
   // The current snapshot-moment marker overlay's id, so the data-load effect
   // can remove it before recreating on a symbol/TF switch (see renderSnapshotMarker).
   const snapMarkerIdRef = useRef<string | null>(null);
@@ -794,11 +799,6 @@ export default function ChartCore({
   // reposition when a separator is dragged (geometry, not just membership, changed).
   const [subPaneLegends, setSubPaneLegends] = useState<SubPaneLegendData[]>([]);
   const subPaneLegendsSigRef = useRef("");
-  // The inset band's legend card (the same card a sub-pane gets, positioned at the
-  // band's top edge) and the band's own geometry, which the resize handle sits on.
-  const [insetLegend, setInsetLegend] = useState<SubPaneLegendData | null>(null);
-  const [insetBand, setInsetBand] = useState<InsetBandBox | null>(null);
-  const insetLegendSigRef = useRef("");
   // Drop-indicator line's y-offset (relative to chart root) during a sub-pane drag;
   // null when no drag is in progress.
   const [paneDropTop, setPaneDropTop] = useState<number | null>(null);
@@ -1101,22 +1101,14 @@ export default function ChartCore({
   // indicator or drawing copied earlier. Opened by a right-click that isn't on an
   // indicator curve.
   const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number | null } | null>(null);
-  // TradingView-style right-click menu for the PRICE AXIS column — the "Scale price
-  // chart only" and "Stretch to fill height" toggles (see onContextMenu, which opens
-  // it over the axis strip).
+  // TradingView-style right-click menu for the PRICE AXIS column — a single "Scale
+  // price chart only" toggle (see onContextMenu, which opens it over the axis strip).
   const [axisMenu, setAxisMenu] = useState<{ x: number; y: number } | null>(null);
   // Reflect the persisted toggle so the menu's checkmark stays in sync across cells.
   const [scaleOnly, setScaleOnly] = useState(scalePriceOnly.value);
   // The value only changes via toggleScalePriceOnly (a user action after mount), so
   // the initial useState seed is authoritative — just subscribe to later flips.
   useEffect(() => scalePriceOnly.subscribe(setScaleOnly), [scalePriceOnly]);
-  // Same for the fit mode, whose checkmark the axis double-click and the toolbar
-  // button also drive — so the menu must track the signal, not a local bool.
-  const [stretched, setStretched] = useState(priceFitMode.value === "stretched");
-  useEffect(
-    () => priceFitMode.subscribe((mode) => setStretched(mode === "stretched")),
-    [priceFitMode],
-  );
   // Auto-save this cell's per-symbol template on real layout edits. layoutEvents
   // fires only for genuine edits (merge-applies are suppressed at the emitter, and
   // mount/symbol hydration doesn't persist), so this never fights hydration. The
@@ -1162,36 +1154,20 @@ export default function ChartCore({
       }),
     [invertScale],
   );
-  // Follow klinecharts back into auto-scale when the instrument or timeframe
-  // changes. ChartImp.setSymbol / setPeriod call _resetYAxisAutoCalcTickFlag
-  // before handing the new data to the store, so a manual y-scale is discarded
-  // there and the axis fits again — but nothing told our mirror. Left alone, a
-  // hand-scaled axis followed by a symbol/timeframe switch leaves the toolbar "A"
-  // dark while the chart is demonstrably auto-fitting, and clicking "A" looks
-  // like a no-op that only lights the button. The facade value-guards both calls,
-  // so these deps change exactly when klinecharts actually resets. Only the flag
-  // is reset there (not the axis), so the fit gap and the price-only createRange
-  // both survive and need no re-apply.
-  useEffect(() => {
-    autoScale.set(true);
-  }, [autoScale, symbol.epic, period.resolution]);
-  // Re-assert the scale-price-only createRange AND the fit gap after a log/normal
-  // toggle. The log toggle passes a new axis `name`, which recreates the candle
-  // pane's y-axis from its template and drops both. The createRange override is
+  // Re-assert the scale-price-only createRange after a log/normal toggle. The
+  // log toggle passes a new axis `name`, which recreates the candle pane's y-axis
+  // from its template and drops our createRange override. The override itself is
   // axis-type-aware (delegates the log10 transform to the live axis), so simply
   // re-installing it restores candles-only fitting on whichever axis kind is now
-  // active; the gap would otherwise silently snap back to klinecharts' default
-  // margins, dropping the chart out of stretched mode. (Overrides that keep the
-  // SAME name merge and preserve both, so no re-assert is needed there.)
+  // active. (autoFit re-applies the SAME name, which merges and preserves the
+  // override, so no re-assert is needed there.)
   useEffect(
     () =>
       logScale.subscribe(() => {
         const c = chartRef.current;
-        if (!c) return;
-        applyScalePriceOnly(c, scalePriceOnly.value);
-        applyCandleFit(c, priceFitMode.value);
+        if (c) applyScalePriceOnly(c, scalePriceOnly.value);
       }),
-    [logScale, scalePriceOnly, priceFitMode],
+    [logScale, scalePriceOnly],
   );
   // Flip "scale price chart only": persist it and swap the candle pane's
   // createRange override (candles-only vs the framework's default full-pane fit).
@@ -1365,9 +1341,27 @@ export default function ChartCore({
         deltas.map((d) => d.suffix),
         epic,
       );
-      // Which indicator instances need a live rebuild (index, type AND inset
-      // placement all count as changes — see rebuildIdsForDeltas).
-      const rebuild = rebuildIdsForDeltas(deltas);
+      // Which indicator instances need a live rebuild: ids whose config changed,
+      // plus ids whose position or type changed in an id-set-equal list delta
+      // (membership adds/removes are handled by the sync itself).
+      const rebuild = new Set<string>();
+      for (const d of deltas) {
+        if (d.suffix === "indicatorConfig") {
+          const a = (d.before ?? {}) as Record<string, unknown>;
+          const b = (d.after ?? {}) as Record<string, unknown>;
+          for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
+            if (JSON.stringify(a[id]) !== JSON.stringify(b[id])) rebuild.add(id);
+          }
+        } else if (d.suffix === "indicators") {
+          const a = (d.before ?? []) as IndicatorInstance[];
+          const b = (d.after ?? []) as IndicatorInstance[];
+          const posA = new Map(a.map((x, i) => [x.id, `${i}:${x.type}`]));
+          for (const [i, x] of b.entries()) {
+            const pa = posA.get(x.id);
+            if (pa !== undefined && pa !== `${i}:${x.type}`) rebuild.add(x.id);
+          }
+        }
+      }
       withHistorySuppressed(() => {
         if (drawings) {
           overlays.rehydrate();
@@ -1405,9 +1399,6 @@ export default function ChartCore({
     priceSide,
     displayResolution: period.resolution,
   });
-  // Click a trendline's end handle to run it on to the pane edge (and again to
-  // release). Capture-phase, so it claims the press before the chart pans.
-  useTrendlinePins({ chartRef, containerRef });
   // onZoomToRange runs from the once-mounted init effect, so it must read these
   // through live refs (updated every render), not its mount-time closure props.
   const onPeriodRef = useRef(onPeriod);
@@ -1483,6 +1474,7 @@ export default function ChartCore({
       separatorTsRef,
       programmaticMoveRef,
       pendingTradeRestoreRef,
+      replayRef,
       snapMarkerIdRef,
       tradeMarkersDrawRef,
       // Cross-boundary call bridges to useRangeNavigation (assigned there in Step 7).
@@ -1522,11 +1514,6 @@ export default function ChartCore({
     const chart = init(el);
     if (!chart) return;
     chartRef.current = chart;
-    // The band height the user last dragged this cell to. Seeded before the first
-    // indicator is created, so an inset instance restored from storage paints at the
-    // right height on its first frame rather than snapping after it.
-    const savedBand = loadInsetBand(scope);
-    if (savedBand != null) setInsetBandFraction(chart, savedBand);
     // v10 data pipeline: the facade owns setDataLoader and replays our
     // push-based data (setBars/pushBar) as pull-based getBars/subscribeBar.
     const dataFacade = createChartDataFacade();
@@ -1542,9 +1529,6 @@ export default function ChartCore({
     // the axis across auto-fits (same-name overrideYAxis merges); only a log-scale
     // toggle recreates the axis and drops it, so we re-apply on logScale change.
     applyScalePriceOnly(chart, scalePriceOnly.value);
-    // Same for the stored price fit: a cell saved while stretched must come back
-    // stretched, and a fresh chart starts at klinecharts' default gap.
-    applyCandleFit(chart, priceFitMode.value);
     setChartReady(true);
     chart.setTimezone(timezone || browserTimezone());
     chart.setFormatter({ formatDate: makeFormatDate(clock, dateFormat, showWeekday) });
@@ -2334,51 +2318,31 @@ export default function ChartCore({
     // strip right of the candle pane) is a manual y-axis scale gesture, so it
     // exits auto mode and the toolbar "A" de-highlights. Re-enabled by clicking
     // "A" (Toolbar.autoFit). Capture phase so it sees the press before the chart.
-    // Live candle-pane geometry for the price-axis gesture tests (chart/priceAxisGesture).
-    const axisGeometry = (): PriceAxisGeometry => ({
-      left: el.getBoundingClientRect().left,
-      mainWidth: chartRef.current?.getSize("candle_pane", 'main')?.width ?? 0,
-    });
     // True when the pointer x is within the price-axis column (right of the
     // candle pane's main area). Shared by the press (exit auto) and double-click
     // (re-enter auto) handlers below.
-    const overPriceAxis = (e: MouseEvent): boolean =>
-      isOverPriceAxis(e.clientX, axisGeometry());
+    const overPriceAxis = (e: MouseEvent): boolean => {
+      const c = chartRef.current;
+      const mainW = c?.getSize("candle_pane", 'main')?.width ?? 0;
+      if (!mainW) return false;
+      return e.clientX - el.getBoundingClientRect().left > mainW;
+    };
     const onAxisDown = (e: MouseEvent) => {
       if (e.button !== 0 || !autoScale.value) return;
       if (measureArmed.value || overlays.isMeasureDrawing()) return; // measuring owns the press
       if (slopeArmed.value || overlays.isSlopeDrawing()) return; // slope placing owns the press
       if (overPriceAxis(e)) autoScale.set(false);
     };
-    // A WHEEL over the price-axis column scales it too (klinecharts routes it to
-    // _zoomYAxis, same manual y-range as a drag), and it is far easier to trigger
-    // by accident: two-finger scrolling is how you zoom the chart, and the axis is
-    // a ~50px strip on the right. Without this mirror the chart sticks at a
-    // squeezed scale while "A" still claims auto, hiding the fix (double-click the
-    // axis / press "A"). Passive: klinecharts' own handler owns preventDefault.
-    const onAxisWheel = (e: WheelEvent) => {
-      if (!autoScale.value) return;
-      if (isPriceAxisScaleWheel(e, axisGeometry())) autoScale.set(false);
-    };
     // Double-clicking the price-axis column resets to auto-scale (TV behaviour):
-    // re-fit the price axis and re-highlight the toolbar "A". Double-clicking
-    // again stretches the fit (candles fill the pane; see chart/candleFit.ts),
-    // and the two alternate from there. A manual scale in between restarts that
-    // sequence, so the double-click after a drag or an axis wheel always means
-    // "undo my scaling" rather than jumping to stretched.
-    //
-    // The "was it manually scaled" input is klinecharts' own auto-fit flag, NOT
-    // autoScale: this dblclick is preceded by two presses, and onAxisDown has
-    // already flipped autoScale off on the first of them.
+    // re-fit the price axis and re-highlight the toolbar "A".
     const onAxisDblClick = (e: MouseEvent) => {
       if (e.button !== 0 || !overPriceAxis(e)) return;
+      // Re-applying the current y-axis kind recomputes the fit, clearing any
+      // manual zoom (matches Toolbar.autoFit). v10: overrideYAxis resets the
+      // axis auto-calc flag; the kind is the y-axis `name`.
       const c = chartRef.current;
-      if (!c) return;
-      const next = nextFitMode({ autoFitted: isAutoFitted(c), mode: priceFitMode.value });
-      // One override both writes the gap and clears the manual y-scale (it resets
-      // the axis auto-calc flag), so this is the re-fit too.
-      applyCandleFit(c, next);
-      controller.setPriceFit(next);
+      const name = c?.getYAxes({ paneId: "candle_pane" })[0]?.name ?? "normal";
+      c?.overrideYAxis({ paneId: "candle_pane", name });
       autoScale.set(true);
     };
     // True when the pointer y is within the time-axis strip (below the candle
@@ -2546,7 +2510,6 @@ export default function ChartCore({
       // this init effect so they still register LAST among the capture-phase mousedowns.
       el.addEventListener("mousedown", onClonePress, true);
       el.addEventListener("mousedown", onAxisDown, true);
-      el.addEventListener("wheel", onAxisWheel, { capture: true, passive: true });
       el.addEventListener("dblclick", onAxisDblClick, true);
       el.addEventListener("dblclick", onTimeAxisDblClick, true);
       // The crosshair onMove/onLeave listeners (wrapRef mousemove+mouseleave and
@@ -2753,6 +2716,16 @@ export default function ChartCore({
       };
       tradeMarkersDrawRef.current = drawTradeMarkers;
       const unsubTrades = subscribeTrades((t) => {
+        // A replaying cell's book is the replay ledger, not the account's. The
+        // account's real positions belong to real time and must not draw here.
+        // Read through the replay HANDLE rather than a captured flag: this
+        // subscription is bound once in the init effect, so a boolean would be
+        // frozen at "off" forever. Same idiom (and same reasoning) as the
+        // crosshair/date-range sync effects below — useReplay assigns that
+        // handle during render off its own render-assigned `latest`, so it is
+        // exactly as live as a mirror ref would be, with nothing extra to keep
+        // in step.
+        if (handle.replayRef.current?.isActive() ?? false) return;
         tradesRef.current = t;
         drawPositions();
         drawTradeMarkers();
@@ -2917,7 +2890,6 @@ export default function ChartCore({
       // anchor window listeners are all handled by useLineDrag's own effect cleanup.
       el.removeEventListener("mousedown", onClonePress, true);
       el.removeEventListener("mousedown", onAxisDown, true);
-      el.removeEventListener("wheel", onAxisWheel, true);
       el.removeEventListener("dblclick", onAxisDblClick, true);
       el.removeEventListener("dblclick", onTimeAxisDblClick, true);
       // The crosshair onMove/onLeave listeners are detached by
@@ -3136,13 +3108,77 @@ export default function ChartCore({
     }
   }, [timezone]);
 
+  // Chart replay for this cell. Declared BEFORE useLiveMarketData so its render-
+  // time handle assignment is in place when that hook's load effect runs, and so
+  // replayEpoch is available to pass down.
+  const replay = useReplay(handle, {
+    epic: symbol.epic,
+    resolution: period.resolution,
+    priceSide,
+    brokerId,
+    scope,
+  });
+  // The replay order ticket. Only ever mounted inside an active session (so it
+  // disappears with one), but the flag itself is deliberately NOT reset on exit:
+  // a user who trades their replays wants the ticket up in the next one too, and
+  // resetting it would mean a setState inside the mode effect below.
+  const [replayTicketOpen, setReplayTicketOpen] = useState(false);
+
+  // "Is this cell replaying?" for the crosshair/date-range sync effects below:
+  // they are keyed on [cellId] so they can't close over replay state, and
+  // re-subscribing them on every cursor step would be wasteful. They read
+  // `handle.replayRef.current?.isActive()` instead of a dedicated mirror ref —
+  // useReplay assigns that handle DURING RENDER (off its own render-assigned
+  // `latest`), so it is exactly as live as the syncCrosshairRef / lockedRef
+  // mirrors near the top of this component, needs no second copy to keep in
+  // step, and `handle` is a useMemo([]) so the effects' closures stay valid.
+  // Same idiom chart/useLiveMarketData.ts already uses across that boundary.
+  //
+  // The same fact also goes into a module-level registry, for the range broadcasts
+  // App.tsx makes on this cell's behalf (enabling the date-range link or lock
+  // reads the focused/master cell's window and publishes it — see
+  // isCellReplaying). Effect-timed, which is fine: those are user-gesture
+  // driven, long after the render that entered the session committed. Cleared
+  // on unmount so a dead cell id can't stay muted.
+  useEffect(() => {
+    const active = replay.state.mode === "active";
+    setCellReplaying(cellId, active);
+    // Entering a session STRANDS any guide a sibling's crosshair had already
+    // painted here: the receive gate below drops every later message, including
+    // the null one that would have cleared it. A stranded guide is not cosmetic
+    // — its x-axis pill renders through the MASKED formatter, and
+    // makeMaskedFormatDate is unclamped and signed, so a sibling's live
+    // timestamp (~now) prints as "Day 1832 14:30": the day count from the hidden
+    // start to today, from which the real start date follows by subtraction.
+    // The paint gate in useChartPaint is the structural half of this fix; this
+    // clear is what makes the pill vanish at the transition instead of at the
+    // user's next hover.
+    if (active && syncedTsRef.current != null) {
+      syncedTsRef.current = null;
+      redrawRef.current();
+    }
+    return () => setCellReplaying(cellId, false);
+  }, [cellId, replay.state.mode]);
+
   // Time-axis format changes -> re-register the formatter. setFormatter doesn't
   // force a repaint on its own, so nudge one via setStyles (same trick the
   // font-load path uses) to reformat the axis ticks + crosshair label at once.
+  //
+  // Declared AFTER useReplay (it reads replay.state in its deps) but still
+  // BEFORE useLiveMarketData, so on the render that enters a session the
+  // formatter is swapped before the load effect fetches the session's bars —
+  // no frame can paint a real date onto a masked axis.
   useEffect(() => {
     const c = chartRef.current;
     if (!c) return;
-    const fmt = makeFormatDate(clock, dateFormat, showWeekday);
+    // A masked session reads "Day N" everywhere the chart prints a time. One
+    // swap covers all three surfaces klinecharts routes through formatDate —
+    // the axis ticks, the crosshair time label and the OHLC tooltip — plus
+    // crosshairLabelFmtRef (the synced-crosshair label) built from `fmt` below.
+    const masked = replay.state.mode === "active" && replay.state.masked;
+    const fmt = masked
+      ? makeMaskedFormatDate(replay.state.startMs, clock)
+      : makeFormatDate(clock, dateFormat, showWeekday);
     c.setFormatter({ formatDate: fmt });
     c.setStyles(klineStyles(themeRef.current, legendHovered.value, crosshairRef.current, candleHiddenRef.current));
     // The full base-style re-apply un-hides the last-price line; if an alert is
@@ -3172,7 +3208,71 @@ export default function ChartCore({
       ? (ts: number) =>
           fmt({ dateTimeFormat: dtf!, timestamp: ts, template: "YYYY-MM-DD HH:mm", type: "crosshair" })
       : () => "";
-  }, [clock, dateFormat, showWeekday, timezone]);
+  }, [
+    clock,
+    dateFormat,
+    showWeekday,
+    timezone,
+    replay.state.mode,
+    replay.state.masked,
+    replay.state.startMs,
+  ]);
+
+  // Publish this cell's masked session to app-level chrome (drawing coordinates,
+  // indicator anchors, the aggregate-marker popovers) — see maskedReplaySignal.
+  // Those panels render BAR timestamps and live outside the cell, so they cannot
+  // read replay state any other way. Not gated on focus: hovering a marker on an
+  // unfocused masked cell does not focus it, which is exactly where a focus-gated
+  // mask would leak. Cleared on exit and on unmount, and only ever clears an
+  // entry this cell owns (a sibling's session must survive this cell's teardown).
+  useEffect(() => {
+    const disarm = () =>
+      maskedReplaySignal.set(disarmMaskedReplay(maskedReplaySignal.value, cellId));
+    if (replay.state.mode !== "active" || !replay.state.masked) {
+      disarm();
+      return;
+    }
+    // Publish only on a real change. Consumers read this through
+    // useSyncExternalStore, whose snapshot must keep its identity between
+    // changes or React throws "getSnapshot should be cached"; re-arming with an
+    // equal object literal would mint a new identity. `startMs` is fixed at
+    // session start today (the play loop advances cursorMs, not the anchor), so
+    // this cannot fire per step — the guard is what keeps that true if the
+    // anchor ever becomes movable.
+    const prev = maskedReplayFor(maskedReplaySignal.value, cellId);
+    const same =
+      prev != null &&
+      prev.startMs === replay.state.startMs &&
+      prev.clock === clock &&
+      prev.timezone === timezone;
+    // Guarded, not early-returned: the cleanup below must be registered on every
+    // run, or a re-run that changed nothing would leave this cell's entry behind
+    // on unmount.
+    if (!same) {
+      maskedReplaySignal.set(
+        armMaskedReplay(maskedReplaySignal.value, {
+          cellId,
+          startMs: replay.state.startMs,
+          clock,
+          timezone,
+        }),
+      );
+    }
+    return disarm;
+  }, [replay.state.mode, replay.state.masked, replay.state.startMs, cellId, clock, timezone]);
+
+  // Entering replay drops the period-start separator: its pill carries a real
+  // calendar date. The pill can no longer PAINT while a session runs (gated in
+  // useChartPaint), so this is the cache clear that keeps exit clean.
+  // activeRange (the quick-range bar's highlight) is deliberately LEFT: the bar
+  // is unmounted for the whole of replay, and exit restores the pre-replay view,
+  // so the highlight it comes back with still describes the window on screen.
+  useEffect(() => {
+    if (replay.state.mode === "off") return;
+    separatorTsRef.current = null;
+    sepCacheRef.current = null;
+    redrawRef.current();
+  }, [replay.state.mode]);
 
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
   // Extracted to chart/useLiveMarketData.ts; every value it read from this
@@ -3184,6 +3284,7 @@ export default function ChartCore({
     period,
     scope,
     effPrecision,
+    replayEpoch: replay.replayEpoch,
     setStatus,
     setLastPrice,
     setHasData,
@@ -3201,6 +3302,145 @@ export default function ChartCore({
     coverBacktestTradeTo,
   });
 
+  // Cursor readout for the pill: masked sessions get the same relative label the
+  // axis shows, so the pill can never be the thing that leaks the date. (Task 8
+  // owns swapping the CHART's own formatter; this is the pill's label only.)
+  // Depends on the four fields it READS, not on the whole state object: playing /
+  // loading / error / atEnd churn every step, which at 10x would rebuild an
+  // Intl.DateTimeFormat ten times a second for a label that had not changed.
+  // (`replayMode` below is the curtain's; these carry a distinct prefix to avoid
+  // shadowing it.)
+  const {
+    mode: readoutMode,
+    cursorMs: readoutCursorMs,
+    startMs: readoutStartMs,
+    masked: readoutMasked,
+  } = replay.state;
+  // The FORMATTERS are what is memoised, not the rendered strings: three replay
+  // labels ride them (the pill's cursor, the ticket's high-water "return to",
+  // and the report card's date reveal), and applying one to a timestamp is a
+  // couple of string ops, so the cursor drops out of the deps entirely.
+  //
+  // Both come from ONE factory (lib/replayFormat.ts) rather than being built
+  // side by side here. `cursor` masks whenever the session does — the ticket's
+  // locked-state note must not print the real date of the bar the cursor has to
+  // come back to, which is exactly the leak the note lives inside — while `real`
+  // never masks, because unmasking is the whole point of the card. Pairing them
+  // in one module is what stops the two from drifting apart, and what makes the
+  // reveal testable without a ChartCore test (see replayFormat.test.ts: hand the
+  // card `cursor` by mistake and it renders "Day 4 09:00 to Day 4 15:30" with
+  // every other test in the repo still green).
+  const replayFmt = useMemo(
+    () =>
+      makeReplayFormatters({
+        clock,
+        dateFormat,
+        showWeekday,
+        timezone,
+        // Only a running MASKED session hides dates. `picking` and `off` carry
+        // zeroed timestamps anyway, so this is about intent, not arithmetic.
+        maskAnchorMs: readoutMode === "active" && readoutMasked ? readoutStartMs : null,
+      }),
+    [clock, dateFormat, showWeekday, timezone, readoutMode, readoutMasked, readoutStartMs],
+  );
+
+  const replayReadout =
+    readoutMode === "active" && readoutCursorMs ? replayFmt.cursor(readoutCursorMs) : "";
+  // Where a rewound cursor has to get back to before trading reopens.
+  const replayReturnTo =
+    readoutMode === "active" && replay.state.highWaterMs
+      ? replayFmt.cursor(replay.state.highWaterMs)
+      : "";
+
+  // "This cell is running a BLIND session." The two instrument panels reachable
+  // from the legend both spill the present — the cache-stats modal prints its
+  // cached range as ISO dates, and the instrument-details popover shows today's
+  // bid plus a raw broker dump carrying expiry / lastDealingDate / updateTime —
+  // so both are withdrawn for the duration. Gated on MASKED rather than on
+  // replay: with dates on screen anyway they leak nothing, and they are genuinely
+  // useful reference while studying a session.
+  const sessionMasked = readoutMode === "active" && readoutMasked;
+
+  // Picking-mode curtain: container-relative x of the pointer, so everything to
+  // its right can be covered (opaque, not dimmed — a dimmed future is still
+  // readable, and hiding the future is the whole point).
+  const [curtainX, setCurtainX] = useState<number | null>(null);
+  // Masking choice armed in the start panel; BOTH start paths read it (the
+  // curtain click here, Jump inside the panel). Default ON: blind-by-default is
+  // the point of replay, and one checkbox cannot honestly carry the spec's two
+  // different defaults. Lives here, not in the panel, so a cancel-and-re-enter
+  // shows the same choice the user last made.
+  const [pickMasked, setPickMasked] = useState(true);
+  // Mirrored into a ref (synced in its own effect, never written during render)
+  // so toggling the checkbox never re-binds the pick listeners below.
+  const pickMaskedRef = useRef(pickMasked);
+  useEffect(() => {
+    pickMaskedRef.current = pickMasked;
+  }, [pickMasked]);
+
+  // Curtain tracking + start pick. Only mounted while picking, so it adds no
+  // listener cost to a normal cell. Read off `replay` here rather than in the
+  // effect: the API object is a fresh literal every render (and setCurtainX
+  // re-renders on every pointermove), so depending on it would tear down and
+  // re-add both listeners on every mouse move. `startAt` is a stable useCallback.
+  const replayMode = replay.state.mode;
+  const replayStartAt = replay.startAt;
+  useEffect(() => {
+    if (replayMode !== "picking") return;
+    const el = containerRef.current;
+    if (!el) return;
+    // A pan drag ends in a `click` on the container just like a tap does, so a
+    // scroll-back to find a spot would otherwise set a start. A moved FLAG raised
+    // during the drag, not a distance measured at release: an out-and-back pan
+    // releases near its origin x, and a price-axis scale drag is vertical (dx ~ 0)
+    // — both would slip past a release-time comparison. Same idiom as
+    // rangePickMoved / zoomMoved above, extended to y for the axis drag.
+    let downX: number | null = null;
+    let downY = 0;
+    let moved = false;
+    const onDown = (e: PointerEvent) => {
+      downX = e.clientX;
+      downY = e.clientY;
+      moved = false;
+    };
+    const onMove = (e: PointerEvent) => {
+      setCurtainX(e.clientX - el.getBoundingClientRect().left);
+      if (downX == null) return; // no button held: a plain hover can't be a drag
+      if (Math.abs(e.clientX - downX) > 4 || Math.abs(e.clientY - downY) > 4) moved = true;
+    };
+    const onClick = (e: MouseEvent) => {
+      const dragged = moved;
+      // Disarm before the next gesture: a press that never produced a click (drag
+      // released outside the cell) must not leave the flag set for a later click.
+      downX = null;
+      moved = false;
+      if (dragged) return;
+      const c = chartRef.current;
+      if (!c) return;
+      // "absolute" convert coords are chart-container-relative, not viewport
+      // (same convention as the range-pick tool).
+      const x = e.clientX - el.getBoundingClientRect().left;
+      const r = c.convertFromPixel([{ x }], { paneId: "candle_pane", absolute: true });
+      const p = Array.isArray(r) ? r[0] : r;
+      // Only ever reached in `picking` mode: startAt must never run against an
+      // ACTIVE session (enterPicking ends one first, so a jumped store can't be
+      // merged with a stale window). Do not add a path around this.
+      if (p && typeof p.timestamp === "number") {
+        replayStartAt(p.timestamp, { masked: pickMaskedRef.current });
+      }
+    };
+    el.addEventListener("pointerdown", onDown, true);
+    el.addEventListener("pointermove", onMove, true);
+    el.addEventListener("click", onClick, true);
+    return () => {
+      el.removeEventListener("pointerdown", onDown, true);
+      el.removeEventListener("pointermove", onMove, true);
+      el.removeEventListener("click", onClick, true);
+      // Leaving picking drops the tracked x, so re-entering never flashes the
+      // curtain at the previous session's pointer position.
+      setCurtainX(null);
+    };
+  }, [replayMode, replayStartAt]);
 
   // Two independent hide gestures, each with its own live effect:
   //  • Sidebar eye menu "Hide indicators" — masks every indicator's curve IN PLACE
@@ -3314,8 +3554,6 @@ export default function ChartCore({
     setTradePills,
     setLegendRows,
     setSubPaneLegends,
-    setInsetLegend,
-    setInsetBand,
     timezone,
     theme,
     containerRef,
@@ -3329,6 +3567,7 @@ export default function ChartCore({
     draggingTradeRef,
     hoveredFieldRef,
     marketClosedRef,
+    replayRef,
     statusRef,
     bidAskRef,
     bidAskStyleRef,
@@ -3346,7 +3585,6 @@ export default function ChartCore({
     curveLabelsRef,
     legendRowsSigRef,
     subPaneLegendsSigRef,
-    insetLegendSigRef,
     legendHandleRef,
     legendBarIdxRef,
     exitClustersRef,
@@ -3473,7 +3711,10 @@ export default function ChartCore({
       // null when the cursor leaves this chart, so their guides clear).
       const dl = chart?.getDataList();
       const ts = idx != null && dl && dl[idx] ? dl[idx].timestamp : null;
-      if (syncCrosshairRef.current) {
+      // Never while replaying: `ts` is the hovered bar's REAL timestamp, and a
+      // sibling paints it through its own unmasked formatter (legend + guide),
+      // which would hand over the date this session exists to hide.
+      if (syncCrosshairRef.current && !(handle.replayRef.current?.isActive() ?? false)) {
         chartSync.publish(tabIdRef.current, { sourceCellId: cellId, timestamp: ts });
       }
       // Lock: the alignment anchor FOLLOWS THE CURSOR. Hovering a bar makes it the
@@ -3481,7 +3722,11 @@ export default function ChartCore({
       // hovered bar changes. On cursor-leave (ts null) the anchor stays put (sticky),
       // so a later pan/zoom keeps the last-hovered candle aligned. Skipped mid-drawing
       // so placing a drawing's points doesn't yank the other charts around.
-      if (lockedRef.current && !overlays.isDrawing()) {
+      // Replay is excluded from the WHOLE branch, not just the publish below:
+      // setAlignAnchor writes the hovered bar's real timestamp into a tab-global
+      // map that App.tsx reads back (getAlignAnchor) and broadcasts as anchorTs
+      // when lock is toggled, so gating only the publish would still leak it.
+      if (lockedRef.current && !overlays.isDrawing() && !(handle.replayRef.current?.isActive() ?? false)) {
         if (ts == null) {
           lastHoverAnchorTsRef.current = null; // re-assert on the next hover
         } else if (ts !== lastHoverAnchorTsRef.current && chart) {
@@ -3505,6 +3750,7 @@ export default function ChartCore({
   useEffect(() => {
     const unsub = chartSync.subscribe(tabId, (m) => {
       if (m.sourceCellId === cellId) return; // ignore our own broadcasts
+      if (handle.replayRef.current?.isActive()) return; // replaying: not on the siblings' timeline
       // A sibling broadcasting means the cursor is over THAT cell, so any crosshair
       // index we still hold is stale (crossing straight off this chart doesn't
       // reliably fire its "cursor left" event) — drop it or it would keep beating
@@ -3560,7 +3806,12 @@ export default function ChartCore({
       // by this cell's panel width and back again. Programmatic moves that ARE
       // navigation (a quick-range pick) deliberately fall through and publish.
       if (layoutMoveRef.current) return;
-      if (!syncTimeRef.current || !isGestureCell(cellId)) return;
+      // A replaying cell sits at a different — and hidden — moment in time;
+      // broadcasting its window would drag every sibling into the past and show
+      // those dates on the siblings' own unmasked time axes. Gated here rather
+      // than at the top of the handler so a replay-time pan still drops the
+      // quick-range pill above, exactly as a live pan does.
+      if (!syncTimeRef.current || !isGestureCell(cellId) || (handle.replayRef.current?.isActive() ?? false)) return;
       // A window edge in whitespace past the last bar is extrapolated (not bailed on),
       // so panning into right-edge whitespace keeps driving the followers — they reveal
       // their own newest candles, then mirror the whitespace.
@@ -3598,6 +3849,10 @@ export default function ChartCore({
       // at a dead cell and a freshly-mounted cell's first scroll isn't suppressed.
       releaseGestureCell(cellId);
     };
+    // handle.replayRef (the replay gate above) is a stable ref object — handle is
+    // a useMemo([]) — so it is deliberately NOT a dependency: listing it would
+    // only re-subscribe this effect for nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cellId]);
 
   // Date-range link — RECEIVE. Match a sibling cell's broadcast window onto this
@@ -3607,6 +3862,7 @@ export default function ChartCore({
   useEffect(() => {
     const unsub = rangeSync.subscribe(tabId, (m) => {
       if (m.sourceCellId === cellId) return; // ignore our own broadcasts
+      if (handle.replayRef.current?.isActive()) return; // replaying: not on the siblings' timeline
       const chart = chartRef.current;
       if (!chart) return;
       // Exact anchor present = "lock charts" mode (siblings share the interval):
@@ -3619,6 +3875,8 @@ export default function ChartCore({
       }
     });
     return unsub;
+    // handle.replayRef: stable ref object, see the broadcast effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, cellId]);
 
   const precision = effPrecision;
@@ -3743,16 +4001,18 @@ export default function ChartCore({
             });
           },
         },
-        {
-          label: `Buy limit at ${label}`,
-          icon: MenuIcons.chevronUp,
-          onClick: () => stageChartOrder({ epic: symbol.epic, side: "buy", price: level }),
-        },
-        {
-          label: `Sell limit at ${label}`,
-          icon: MenuIcons.chevronDown,
-          onClick: () => stageChartOrder({ epic: symbol.epic, side: "sell", price: level }),
-        },
+        // Where these two GO depends on whether this cell is replaying: a level
+        // read off a replayed bar must never become a real broker draft. The
+        // decision is in lib/chartOrderMenu so it can be tested; both callers of
+        // priceActionItems inherit it.
+        ...limitOrderItems({
+          level,
+          label,
+          replay: { active: replay.state.mode === "active", canTrade: replay.canTrade },
+          stage: (a) => stageChartOrder({ epic: symbol.epic, side: a.side, price: a.price }),
+          place: replay.place,
+          icons: { buy: MenuIcons.chevronUp, sell: MenuIcons.chevronDown },
+        }),
         {
           label: `Draw line at ${label}`,
           icon: MenuIcons.horizontalLine,
@@ -3760,14 +4020,16 @@ export default function ChartCore({
         },
       ];
     },
-    [precision, symbol.epic, overlays],
+    // The menus are built during render, never held in an effect, so a fresh
+    // callback whenever the session's trading gate flips costs nothing.
+    [precision, symbol.epic, overlays, replay.state.mode, replay.canTrade, replay.place],
   );
 
 
   return (
     <div
       ref={wrapRef}
-      className={`chart-wrap${alertHovered ? " alert-hover" : ""}${cursorMode ? " " + cursorMode : ""}`}
+      className={`chart-wrap${alertHovered ? " alert-hover" : ""}${cursorMode ? " " + cursorMode : ""}${replay.state.mode === "active" ? " replaying" : ""}`}
       style={{ width: "100%", height: "100%", position: "relative", outline: "none" }}
       // tabIndex makes the cell focusable so Ctrl/Cmd+C/V are scoped to it (only the
       // focused cell responds — no global listener cross-talk between split cells).
@@ -3871,12 +4133,65 @@ export default function ChartCore({
       {paneDropTop != null && (
         <div className="pane-drop-indicator" style={{ top: paneDropTop }} />
       )}
-      <ChartRangeBar
-        activeKey={activeRange}
-        disabled={!chartReady}
-        onPick={onRangePick}
-        onGoToDate={onGoToDate}
-      />
+      {/* Hidden for the whole of replay, picking included ("off" and not merely
+          "not active"): the bar's quick ranges navigate to now, and its Go-to-date
+          field would both break a running session and reveal the date a masked one
+          hides. */}
+      {replay.state.mode === "off" && (
+        <ChartRangeBar
+          activeKey={activeRange}
+          disabled={!chartReady}
+          onPick={onRangePick}
+          onGoToDate={onGoToDate}
+        />
+      )}
+      {replay.state.mode === "active" && (
+        <ReplayPill
+          state={replay.state}
+          readout={replayReadout}
+          onStepBack={replay.stepBack}
+          onPlayPause={replay.togglePlay}
+          onStepForward={replay.stepForward}
+          onSpeed={replay.setSpeed}
+          // BOTH ways out of a session go through the report card (requestExit /
+          // requestNewStart), never exit or enterPicking directly: the user is
+          // owed the reveal on their way out either way, and the ⟲ path differs
+          // only in where dismissing the card lands them (picking, not off). A
+          // session with nothing to reveal skips the card inside the hook.
+          onNewStart={replay.requestNewStart}
+          onExit={replay.requestExit}
+          ticketOpen={replayTicketOpen}
+          onToggleTicket={() => setReplayTicketOpen((v) => !v)}
+          // The card has no scrim, so the pill stays clickable underneath it.
+          // The hook refuses the actions either way; this is what makes the pill
+          // LOOK as dead as it is (and stops a ✕-opened card being turned into a
+          // ⟲ one by a click that lands through it).
+          reportPending={replay.pendingReport !== null}
+        />
+      )}
+      {/* The exit reveal. Rendered on `pendingReport` alone: the session is still
+          `active` underneath it, which is what lets the hook gate stepping,
+          playback and fills for as long as it is up. Its labels are the UNMASKED
+          ones - the card is the one surface allowed to print them. */}
+      {replay.pendingReport && (
+        <ReplayReportCard
+          summary={replay.pendingReport.summary}
+          startLabel={replayFmt.real(replay.pendingReport.startMs)}
+          endLabel={replayFmt.real(replay.pendingReport.cursorMs)}
+          masked={replay.pendingReport.masked}
+          onDone={replay.dismissReport}
+        />
+      )}
+      {replay.state.mode === "active" && replayTicketOpen && (
+        <ReplayTicket
+          mark={replay.markPrice}
+          precision={effPrecision}
+          canTrade={replay.canTrade}
+          returnTo={replayReturnTo}
+          onPlace={replay.place}
+          onClose={() => setReplayTicketOpen(false)}
+        />
+      )}
       {/* Indicator-selection overlay: hollow selection handles + the AVWAP anchor
           grab handle + the self-drawn "+" crosshair, painted in redraw(). z-index 10
           puts it above klinecharts' own canvases (z-index 2) so the rings sit on top
@@ -4044,8 +4359,11 @@ export default function ChartCore({
           // through a market close — gate the dot on the market being open too.
           // A stale (silently-wedged) feed shows the amber dot instead of green;
           // the two are mutually exclusive.
-          live: status === "live" && !marketClosed && !streamStale,
-          stale: streamStale && !marketClosed && status === "live",
+          // A replaying cell has no stream: neither the green live dot nor the
+          // amber stale dot means anything, and both would claim the bars on
+          // screen are current.
+          live: replay.state.mode === "off" && status === "live" && !marketClosed && !streamStale,
+          stale: replay.state.mode === "off" && streamStale && !marketClosed && status === "live",
           broker: brokerLabel(brokerId),
         }}
         rows={legendRows}
@@ -4054,7 +4372,6 @@ export default function ChartCore({
         candleHidden={candleHidden}
         onToggleCandle={toggleCandleHidden}
         subPanes={subPaneLegends}
-        insetLegend={insetLegend}
         selectedName={selectedName}
         highlightedName={curveHoverNameState}
         handleRef={legendHandleRef}
@@ -4065,26 +4382,20 @@ export default function ChartCore({
         onOpenMenu={onLegendOpenMenu}
         onMove={reorderPaneByName}
         onStartReorder={startPaneReorderDrag}
-        onOpenDetails={(x, y) => setDetailsAnchor({ x, y })}
-        cacheBadge={cacheBadge}
+        // Both entry points are withdrawn for a masked session (see sessionMasked);
+        // the panels themselves are also render-gated below, so a session that
+        // starts with one already open closes it rather than leaving it leaking.
+        onOpenDetails={(x, y) => {
+          if (sessionMasked) return;
+          setDetailsAnchor({ x, y });
+        }}
+        cacheBadge={sessionMasked ? null : cacheBadge}
         onOpenCacheStats={() => setCacheStatsOpen(true)}
         // Clicking the symbol name swaps the instrument (TradingView-style). The
         // wrap's onPointerDownCapture has already focused this cell, so the shared
         // symbol-search modal targets this cell's symbol.
         onChangeSymbol={requestSymbolSearch}
       />
-
-      {/* The inset band's resize handle, along its top edge. Rendered beside the
-          legend (same absolute coordinate basis as the cards) and only while a band
-          exists. */}
-      {insetBand && (
-        <InsetBandResizer
-          box={insetBand}
-          getChart={getChart}
-          onRepaint={() => handle.redrawRef.current()}
-          onCommit={(fraction) => saveInsetBand(scope, fraction)}
-        />
-      )}
 
       <HeatmapControls
         on={heatmap.on}
@@ -4094,7 +4405,45 @@ export default function ChartCore({
         belowBase={heatmap.belowBase}
       />
 
-      {detailsAnchor && (
+      {/* Replay entry. Gated on !period.liveOnly PERMANENTLY, not as a deferral:
+          sub-minute timeframes are built live from the tick stream and have no
+          history to replay. Also gated on !snapView — a read-only snapshot cell is
+          a frozen study copy, not a chart you can play forward. */}
+      {!period.liveOnly && !snapView && replay.state.mode === "off" && (
+        <div className="replay-ctl">
+          <Tooltip content="Bar replay: play the chart forward from a point in the past">
+            <button type="button" className="replay-toggle" onClick={replay.enterPicking}>
+              ⟲ Replay
+            </button>
+          </Tooltip>
+        </div>
+      )}
+
+      {replay.state.mode === "picking" && (
+        <>
+          {/* Mounted the instant picking starts, parked at the container's right
+              edge (left: 100% = present, covering nothing) until the first
+              pointermove gives it an x. The ⟲ button is a sibling of the chart
+              container, not a descendant, so no pointermove fires until the
+              cursor travels onto the chart: without this the curtain would be
+              absent for that whole stretch and entering the mode would look like
+              nothing happened. */}
+          <div
+            className="replay-curtain"
+            style={{ left: curtainX == null ? "100%" : Math.max(0, curtainX) }}
+          />
+          <ReplayStartPanel
+            loading={replay.state.loading}
+            error={replay.state.error}
+            masked={pickMasked}
+            onMaskedChange={setPickMasked}
+            onJump={(ms, masked) => replay.randomJump(ms, masked)}
+            onCancel={replay.cancelPicking}
+          />
+        </>
+      )}
+
+      {detailsAnchor && !sessionMasked && (
         <MarketInfoPopover
           epic={symbol.epic}
           brokerId={brokerId}
@@ -4104,7 +4453,7 @@ export default function ChartCore({
         />
       )}
 
-      {cacheStatsOpen && (
+      {cacheStatsOpen && !sessionMasked && (
         <CandleCacheStatsModal
           epic={symbol.epic}
           resolution={period.resolution}
@@ -4160,11 +4509,6 @@ export default function ChartCore({
               label: "Scale price chart only",
               icon: scaleOnly ? MenuIcons.apply : undefined,
               onClick: toggleScalePriceOnly,
-            },
-            {
-              label: "Stretch to fill height",
-              icon: stretched ? MenuIcons.apply : undefined,
-              onClick: () => controller.toggleStretchFit(),
             },
           ]}
           onClose={() => setAxisMenu(null)}
@@ -4308,6 +4652,7 @@ export default function ChartCore({
           that level would realise if hit + remove. ANY pill shows Apply/Discard when
           ITS OWN line has a staged drag. Anchored at the line's y, frozen x. */}
       <TradePills
+        cellId={cellId}
         pills={tradePills}
         precisionRef={precisionRef}
         tradesRef={tradesRef}
@@ -4317,6 +4662,24 @@ export default function ChartCore({
         focusedPillKey={focusedPillKey}
         selectedTradeId={selectedTradeId}
         tradePillLeft={TRADE_PILL_LEFT}
+        // While replaying, the pills act on the cell's ledger instead of the
+        // account: dragging a stop and applying it must move a line in a local
+        // book, never send a dealing request for a position that exists only here.
+        actions={
+          replay.state.mode === "active"
+            ? {
+                apply: async (t, merged) => {
+                  replay.edit(t.id, {
+                    price: merged.price,
+                    stop: merged.stop,
+                    takeProfit: merged.takeProfit,
+                  });
+                },
+                close: async (t) => replay.closeTrade(t.id),
+                cancel: async (t) => replay.cancel(t.id),
+              }
+            : undefined
+        }
       />
       </div>
 

@@ -17,7 +17,6 @@
 import type { Chart } from "klinecharts";
 import type { ChartController } from "./chartController";
 import {
-  canonicalInstance,
   loadIndicators,
   saveIndicators,
   loadIndicatorConfigs,
@@ -37,7 +36,7 @@ import {
   applyIndicator,
   mintInstanceId,
   effectiveCalcParams,
-  isSubPaneInstance,
+  isSubPaneIndicator,
   removeIndicatorById,
 } from "./indicators";
 import {
@@ -109,14 +108,7 @@ function addTemplateIndicator(
   const anchor = t.avwapAnchors[inst.id];
   if (anchor) saveAvwapAnchor(scope, epic, id, anchor);
   const cfg = t.indicatorConfigs[inst.id];
-  // The template's instance carries everything but the freshly minted id: the inset
-  // PLACEMENT flag lives on the instance rather than in its config, so dropping it
-  // here would silently un-inset a templated RSI/ATR/SLOPE back into its own
-  // sub-pane. canonicalInstance re-normalises after the re-id (key order, and
-  // `inset` absent rather than false) because saveIndicators serializes with
-  // JSON.stringify and templateAutosave's sameTemplate compares the bytes.
-  const placed = canonicalInstance({ ...inst, id });
-  const ok = applyIndicator(chart, scope, epic, placed, {
+  const ok = applyIndicator(chart, scope, epic, { id, type: inst.type }, {
     rehydrate: true,
     config: cfg,
     // Honor the cell's master "Hide indicators" switch — a template applied
@@ -128,10 +120,7 @@ function addTemplateIndicator(
     return null;
   }
   if (cfg) saveIndicatorConfig(scope, id, cfg);
-  // The same instance both apply paths hand to saveIndicators (so a reload restores
-  // the inset placement) and to isSubPaneInstance (so an inset add does not expand
-  // the collapsed sub-pane area).
-  return placed;
+  return { id, type: inst.type };
 }
 
 // Apply a template onto a cell — ADDITIVE MERGE, existing wins (see
@@ -186,7 +175,7 @@ export function applySymbolTemplate(
       controller.indicators.set(full);
       // A template that brings in any sub-pane indicator auto-expands collapsed bottom
       // panes (mirrors a manual add) so the applied layout is actually visible.
-      if (controller.subPanesHidden.value && added.some((a) => isSubPaneInstance(a)))
+      if (controller.subPanesHidden.value && added.some((a) => isSubPaneIndicator(a.type)))
         controller.subPanesHidden.set(false);
     }
 
@@ -267,7 +256,7 @@ export function replaceSymbolTemplate(
       const full = [...kept, ...added];
       saveIndicators(scope, full);
       controller.indicators.set(full);
-      if (controller.subPanesHidden.value && added.some((a) => isSubPaneInstance(a)))
+      if (controller.subPanesHidden.value && added.some((a) => isSubPaneIndicator(a.type)))
         controller.subPanesHidden.set(false);
 
       // --- drawings: the epic's set becomes exactly the template's -------------

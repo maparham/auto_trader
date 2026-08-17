@@ -158,6 +158,10 @@ export const highlightTradeSignal = new Signal<number | null>(null);
 // risk/reward zone overlay on the chart. Reset to null on a new run / clearBacktest.
 export const selectedTradeSignal = new Signal<number | null>(null);
 
+// Masked (blind) chart-replay sessions live in their own module —
+// lib/maskedReplay.ts — so lib/indicators can import the registry without
+// pulling in this file's persist/trading/backtest graph.
+
 // The aggregate-marker popover on a higher timeframe: the trades bucketed into
 // one bar (a pill the cursor is over) plus the cursor's page position. Set by an
 // aggregate pill's onMouseEnter (backtest.ts), cleared on leave / teardown; App

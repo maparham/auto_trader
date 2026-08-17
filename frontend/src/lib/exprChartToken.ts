@@ -9,8 +9,7 @@
 //      INDICATORS): EMA / SMA / RSI / VOLMA / VOL. The token restates the
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
-//      rule — SLOPE, ATR, FVG and TRENDLINES (the EXPR_INSTANCE_TYPES set; keep
-//      a case here for every member), as "<instanceId>.<output>" (e.g. "SLOPE.50",
+//      rule — SLOPE and ATR, as "<instanceId>.<output>" (e.g. "SLOPE.50",
 //      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
 //      the single source of truth for MA type, units and smoothing, so retuning
 //      any of those leaves every rule that references it correct with no edit.
@@ -33,7 +32,6 @@
 import { slopeLengths, slopeOutputs } from "./indicators/slopeOutputs";
 import { atrOutputs } from "./atr";
 import { FVG_OUTPUTS } from "./indicators/fvgOutputs";
-import { TRENDLINES_OUTPUTS } from "./indicators/trendlinesOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -146,23 +144,6 @@ export function chartIndicatorToExprToken(
       const output = (FVG_OUTPUTS as readonly string[]).includes(key ?? "")
         ? (key as string)
         : FVG_OUTPUTS[0];
-      return `${id}.${output}`;
-    }
-    // TRENDLINES reads exactly like FVG: four FIXED output names, so no retune
-    // can invalidate a ref (the params reshape the same four series). It has no
-    // chart figures at all — the pane declares `figures: []` and paints its own
-    // canvas — so in practice every click arrives without a figureKey and takes
-    // TRENDLINES_OUTPUTS[0], tl_support. The key is still honoured when one is
-    // passed, so a future legend that names the outputs needs no change here.
-    // Falling through to `default` instead would toast "no expression
-    // equivalent" on a pane that exposes four operands.
-    case "TRENDLINES": {
-      const id = opts?.instanceId;
-      if (!id) return null;
-      const key = opts?.figureKey;
-      const output = (TRENDLINES_OUTPUTS as readonly string[]).includes(key ?? "")
-        ? (key as string)
-        : TRENDLINES_OUTPUTS[0];
       return `${id}.${output}`;
     }
     default:
