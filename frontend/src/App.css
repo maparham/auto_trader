@@ -3597,6 +3597,15 @@
 .tooltip-title { font-weight: 600; font-size: 12px; margin-bottom: 3px; }
 .tooltip-desc  { font-size: 12px; color: var(--text-dim); line-height: 1.45; }
 .tooltip-desc + .tooltip-desc { margin-top: 6px; }
+/* Trailing caveat/hint line: smaller and fainter than the description so it reads
+   as secondary. `.warn` tints its ⚠ the same amber the legend badge uses; the text
+   stays faint either way so the icon carries the emphasis. */
+.tooltip-note {
+  display: flex; align-items: flex-start; gap: 5px; margin-top: 6px;
+  font-size: 11px; line-height: 1.4; color: var(--text-faint);
+}
+.tooltip-note svg { flex: 0 0 auto; margin-top: 1px; }
+.tooltip-note.warn svg { color: #e0a000; }
 .tooltip-weights {
   list-style: none;
   margin: 6px 0 0;
@@ -4010,6 +4019,10 @@
 }
 .scale button:hover { background: var(--hover); color: var(--text); }
 .scale button.on { background: var(--hover-strong); color: var(--text); }
+/* The stretch toggle draws an SVG instead of a letter: center it in the same
+   26px box (the lettered buttons rely on text centering, which an SVG child
+   does not inherit) and let it take the button's dim/lit color. */
+.scale button > svg { display: block; margin: 0 auto; }
 
 /* --- workspace layout manager (named layouts — split button) ---------------- */
 /* Container: the name button + caret button sit side by side, sharing a border. */

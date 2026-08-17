@@ -199,6 +199,22 @@ export function saveScalePriceOnly(scope: string, value: boolean): void {
   save(scalePriceOnlyKey(scope), value);
 }
 
+// --- price-axis stretched fit (per cell) --------------------------------------
+//
+// Whether the candle pane's price axis is trimmed to fill the pane (the second
+// price-axis double-click / the toolbar stretch button) instead of leaving
+// klinecharts' roomy default margins. Default false. Only the stretched flag is
+// stored, not the full PriceFitMode: the "refit" step exists to arm the NEXT
+// double-click within a session and is meaningless once reloaded.
+const priceStretchedKey = (scope: string) => ns(scope, "priceStretched");
+
+export function loadPriceStretched(scope: string): boolean {
+  return load<boolean>(priceStretchedKey(scope), false);
+}
+export function savePriceStretched(scope: string, value: boolean): void {
+  save(priceStretchedKey(scope), value);
+}
+
 // --- legend collapsed (per cell) ----------------------------------------------
 //
 // TradingView-style legend chevron: when true, the candle-pane legend hides its

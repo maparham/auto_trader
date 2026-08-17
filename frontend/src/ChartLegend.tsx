@@ -26,6 +26,7 @@ import {
 // card — the user must not be able to remove/edit them via a card. Shared with the
 // reorder engine so the legend's card index and the engine's reorderable order stay
 // in lockstep (see isInternalIndicator in ./lib/indicators).
+import { WarnTriangleIcon } from "./lib/menuIcons";
 import { isInternalIndicator, getIndicatorsByPane } from "./lib/indicators";
 import { periodByResolution } from "./lib/feed";
 
@@ -517,11 +518,7 @@ function IndicatorRow({
       </span>
       {row.warn && (
         <InfoTip text={row.warn} className="cl-warn">
-          <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
-            <path d="M12 3.2 22 20.5H2L12 3.2z" />
-            <line x1="12" y1="10" x2="12" y2="15" />
-            <circle cx="12" cy="17.5" r="0.7" fill="currentColor" stroke="none" />
-          </svg>
+          <WarnTriangleIcon />
         </InfoTip>
       )}
       {row.summary && <span className="cl-summary">{row.summary}</span>}
