@@ -205,6 +205,24 @@ export function registerBacktestPager(
   else pagerByChart.delete(chart);
 }
 
+// Which charts are inside a chart-replay session. Registered by chart/useReplay
+// for the whole life of a cell (the reader answers false while the cell is not
+// replaying), and read by the panel-publishing decisions below.
+//
+// Chart-keyed rather than taken from the ChartHandle, because not every caller
+// has one: App's cross-tab/cross-device push handler holds only `{ chart,
+// controller }` for a cell it does not own, and it is a genuine second mouth on
+// the same leak — a backtest finishing in ANOTHER tab, on the same scope+epic,
+// would otherwise rehydrate the whole run onto the shared panel mid-session.
+const replayingByChart = new WeakMap<Chart, () => boolean>();
+export function registerReplayingChart(chart: Chart, read: (() => boolean) | null): void {
+  if (read) replayingByChart.set(chart, read);
+  else replayingByChart.delete(chart);
+}
+export function isChartReplaying(chart: Chart): boolean {
+  return replayingByChart.get(chart)?.() ?? false;
+}
+
 /** Page history back to `fromTs` via the chart's registered backtest pager
  * (ChartCore's coverBacktestTradeTo — bounded walk, stops as soon as coverage
  * reaches the target, reanchors the markers after). Used by a fresh run to
@@ -1297,7 +1315,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
     // that map to a trade also emphasize/scroll the trades panel row on hover
     // (chart -> row half of the two-way sync; the row -> chart half is the
     // highlightTradeSignal subscription in renderArtifacts). The gating on
-    // `backtestResultSignal.value === result` (identity) keeps a not-currently-
+    // `backtestResultSignal.value === artifacts.result` (identity) keeps a not-currently-
     // shown cell's markers inert instead of cross-talking into another chart's
     // trade indices — a backtest can be rendered in more than one cell at once.
     ensureMarkerOverlayRegistered();
@@ -1320,7 +1338,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       // to it. Clicking the already-selected trade toggles it back off. One
       // definition so the two glyphs of the same trade can't drift apart.
       const toggleTradeSelect = () => {
-        if (backtestResultSignal.value === result && idx !== undefined) {
+        if (backtestResultSignal.value === artifacts.result && idx !== undefined) {
           // The user clicked the trade ON the chart — they're already looking
           // at it, so the selection subscription must not pan/zoom the view.
           // Signal.set notifies synchronously; the subscription reads-and-
@@ -1354,14 +1372,14 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
         ...(idx !== undefined
           ? {
               onMouseEnter: () => {
-                if (backtestResultSignal.value === result) {
+                if (backtestResultSignal.value === artifacts.result) {
                   highlightTradeSignal.set(idx);
                   setMarkerHoverCursor(chart, true);
                 }
                 return false;
               },
               onMouseLeave: () => {
-                if (backtestResultSignal.value === result) {
+                if (backtestResultSignal.value === artifacts.result) {
                   highlightTradeSignal.set(null);
                   setMarkerHoverCursor(chart, false);
                 }
@@ -1409,7 +1427,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
             return false;
           },
           onMouseEnter: (e) => {
-            if (backtestResultSignal.value === result) {
+            if (backtestResultSignal.value === artifacts.result) {
               backtestSignalHoverSignal.set({ glyph, x: e.pageX ?? 0, y: e.pageY ?? 0 });
               if (idx !== undefined) highlightTradeSignal.set(idx);
               setMarkerHoverCursor(chart, true);
@@ -1417,7 +1435,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
             return false;
           },
           onMouseLeave: () => {
-            if (backtestResultSignal.value === result) {
+            if (backtestResultSignal.value === artifacts.result) {
               backtestSignalHoverSignal.set(null);
               if (idx !== undefined) highlightTradeSignal.set(null);
               setMarkerHoverCursor(chart, false);
@@ -1703,7 +1721,7 @@ export function renderArtifacts(
       chart.removeOverlay({ id: artifacts.highlightOverlayId });
       artifacts.highlightOverlayId = null;
     }
-    if (i == null || backtestResultSignal.value !== result) return;
+    if (i == null || backtestResultSignal.value !== artifacts.result) return;
     const t = artifacts.trades[i];
     if (!t) return;
     const id = chart.createOverlay({
@@ -1740,7 +1758,7 @@ export function renderArtifacts(
     removeSelectionOverlays(chart, artifacts);
     // A fresh selection supersedes any prior "can't reach this trade" notice.
     backtestSelectNoticeSignal.set(null);
-    if (i == null || backtestResultSignal.value !== result) return;
+    if (i == null || backtestResultSignal.value !== artifacts.result) return;
     const t = artifacts.trades[i];
     if (!t) return;
     const entryTs = t.entry_time * 1000;
@@ -1750,7 +1768,11 @@ export function renderArtifacts(
     // this trade loads it too — otherwise the page-back lands exactly on the
     // entry bar, leaving the signal bar just outside the window, and drawMarkers
     // draws the arrow but skips the caret (the leftmost-entry "missing caret" bug).
-    const entryMarker = result.markers.find(
+    // Read through `artifacts`, not the closure: updateShownResult can advance
+    // the shown result in place (the replay reveal does, once per bar), and a
+    // subscription still consulting the object it was installed with would go
+    // looking for this trade's caret in a stale marker list.
+    const entryMarker = (artifacts.result?.markers ?? []).find(
       (m) => m.time === t.entry_time && m.leg === t.leg && isEntryFill(m.side, m.leg),
     );
     const signalTs = entryMarker?.signal_time != null ? entryMarker.signal_time * 1000 : entryTs;
@@ -1781,7 +1803,7 @@ export function renderArtifacts(
       // for the "too far back" notice when the walk can't reach the trade.
       backtestSelectNoticeSignal.set("Loading history for this trade…");
       void pager(lo).then((reached) => {
-        if (selectedTradeSignal.value !== i || backtestResultSignal.value !== result) return;
+        if (selectedTradeSignal.value !== i || backtestResultSignal.value !== artifacts.result) return;
         backtestSelectNoticeSignal.set(null);
         if (reached) drawSelectionZone(chart, artifacts, t);
         else
@@ -1840,7 +1862,18 @@ export function wfoFoldBandPoints(scheme: WfoScheme): Array<{ from: number; to: 
  * wfoBandsShownSignal) — mirroring renderArtifacts' equity add/remove +
  * subscription idiom so the Results-row toggles show/hide/swap live without a
  * re-run. */
-export function renderWfoArtifacts(chart: Chart, scheme: WfoScheme): void {
+export function renderWfoArtifacts(chart: Chart, scheme: WfoScheme): boolean {
+  // Not onto a REPLAYING chart. A walk-forward scheme is fold bands and a
+  // stitched out-of-sample equity curve over real calendar dates, and the first
+  // thing this function does is teardownArtifacts — which would drop the
+  // progressive reveal the session is drawing and replace it with the run's full
+  // future. Both callers live in BacktestButton (the results panel's scheme
+  // picker, and the render that follows a completed run), so the gate belongs
+  // here rather than on either of them.
+  //
+  // Returns whether it rendered, so the picker can SAY that it refused instead
+  // of looking like a control that did nothing.
+  if (isChartReplaying(chart)) return false;
   teardownArtifacts(chart);
   const artifacts = artifactsFor(chart);
 
@@ -1902,6 +1935,7 @@ export function renderWfoArtifacts(chart: Chart, scheme: WfoScheme): void {
     unsubCompounded();
     unsubBands();
   };
+  return true;
 }
 
 /** Remove this chart's WFO artifacts (equity pane + fold bands) and detach their
@@ -2064,6 +2098,138 @@ export function teardownArtifacts(chart: Chart): void {
 export function releaseBacktestPanel(chart: Chart): void {
   const a = artifactsByChart.get(chart);
   if (a && backtestResultSignal.value === a.result) backtestResultSignal.set(null);
+}
+
+/** Does THIS chart currently back the shared panel? The ownership test the
+ * module gates every panel-clearing decision on, exported because two callers
+ * outside this file have to ask it BEFORE tearing anything down —
+ * teardownArtifacts nulls `artifacts.result`, and after that the question can no
+ * longer be answered. */
+export function ownsBacktestPanel(chart: Chart): boolean {
+  const a = artifactsByChart.get(chart);
+  return !!a && backtestResultSignal.value === a.result;
+}
+
+/** What a SERIES-LOAD path should do with the shared backtest panel.
+ *
+ * A cell's saved backtest is normally (re)published whenever its series loads
+ * (`rehydrateBacktest`). While that cell is REPLAYING it must not be: the whole
+ * run would go onto the panel — every trade the strategy is about to take with
+ * its P&L, the run's final net P&L, and `period` as a real calendar range
+ * straight through a masked session. A replaying cell's backtest belongs to the
+ * progressive reveal (chart/useReplay + lib/replayReveal), which publishes only
+ * the slice that has already happened.
+ *
+ * "clear" rather than "leave" when this chart owned the panel: the load path
+ * tears its artifacts down BEFORE the bars land, so what the signal still holds
+ * is a result nothing on this chart is drawing any more. Leaving it would keep
+ * the pre-session run visible behind the session. Callers must therefore capture
+ * `stalePanelOwner` with `ownsBacktestPanel` before that teardown.
+ *
+ * A caller that has torn nothing down (the cross-tab push handler in App) passes
+ * `stalePanelOwner: false`: whatever this chart owns there is the reveal's own
+ * live slice, and clearing it would blank a session mid-flight. */
+export type BacktestPanelAction = "rehydrate" | "clear" | "leave";
+export function backtestPanelActionForReplay(args: {
+  replaying: boolean;
+  stalePanelOwner: boolean;
+}): BacktestPanelAction {
+  if (!args.replaying) return "rehydrate";
+  return args.stalePanelOwner ? "clear" : "leave";
+}
+
+/** Why the backtest panel must refuse an action on a REPLAYING cell, or null
+ * when it may go ahead. The reason is USER-FACING copy: the same string
+ * disables the control (so nothing looks live that isn't) and explains a
+ * refusal that got as far as the run, which is why it lives here rather than
+ * being written out twice at two call sites.
+ *
+ * A SIBLING of backtestPanelActionForReplay above, not an extension of it: that
+ * one answers "what should a load or a cross-tab push do with a result that
+ * already exists", which has three outcomes and a panel-ownership input. This
+ * answers "may the user start something", which has two outcomes and neither
+ * input. Folding them together would mean one function with a mode flag and
+ * two disjoint halves.
+ *
+ * The two actions:
+ *
+ * - "run" — a backtest, sweep or walk-forward started from this tab. All three
+ *   enter through BacktestButton's run(), so one guard there covers them (and
+ *   the agent bridge, which reaches the same request signal). A run publishes
+ *   its whole fresh result including `period` as a real calendar range — the
+ *   exact field lib/replayReveal drops, because BacktestPanel renders it
+ *   unmasked — and then pages real post-cursor history into the chart and fits
+ *   the view to the full traded span. This is the third mouth on that leak; the
+ *   load effect (chart/useLiveMarketData) and the cross-tab push (App) are the
+ *   two already closed, both via backtestPanelActionForReplay.
+ *
+ * - "render-wfo" — the walk-forward results panel's scheme picker, whose render
+ *   tears down the progressive reveal and repaints the chart with fold bands
+ *   over real calendar dates. The refusal is only spoken (a toast): the picker
+ *   is a row in a results table, not a button with a disabled state, and the
+ *   gate itself lives in renderWfoArtifacts so both of its callers get it.
+ *
+ * - "pick-range" — the chart range picker. Dragging across a replaying chart
+ *   converts pixels back to the BAR's real epoch and drops it into two
+ *   datetime-local inputs, printing the exact real date and time of the bars
+ *   under the cursor with the session still running and resumable. The chart's
+ *   own axis reads "Day 3 09:30"; the picker would read the truth. */
+export type BacktestReplayAction = "run" | "pick-range" | "render-wfo";
+export function backtestActionBlockedByReplay(args: {
+  replaying: boolean;
+  action: BacktestReplayAction;
+}): string | null {
+  if (!args.replaying) return null;
+  switch (args.action) {
+    case "run":
+      return "Chart replay is running: exit the session to run a backtest, sweep or walk-forward.";
+    case "render-wfo":
+      return "Chart replay is running: exit the session to show walk-forward folds on the chart.";
+    case "pick-range":
+      return "Chart replay is running: the chart's dates are hidden, so a range cannot be picked from it.";
+  }
+}
+
+/** Advance the SHOWN result in place, without re-drawing anything that has not
+ * changed. The replay reveal's per-step path.
+ *
+ * The alternative — teardownArtifacts + renderArtifacts on every cursor step —
+ * is wrong twice over. It rebuilds every marker overlay, ten times a second at
+ * 10x playback; and teardownArtifacts nulls `selectedTradeSignal` /
+ * `highlightTradeSignal`, so a trade the user clicked to study disappears within
+ * a tenth of a second, permanently, in the one mode where they are watching it
+ * play out. Both are pure cost when the only thing that actually changed is the
+ * equity curve growing by a point.
+ *
+ * So this swaps the result the artifacts and the panel are bound to, and pushes
+ * the new equity series into the existing indicator instead of recreating it.
+ * The marker overlays keep their baked-in trade indices, which stays correct
+ * because the caller only takes this path when the trade list is UNCHANGED (a
+ * progressive filter yields a growing prefix, so the indices of everything
+ * already drawn are stable).
+ *
+ * Owner-gated: a chart that is not backing the panel must not publish onto it.
+ * Returns whether it did anything, so a caller can fall back to a full render.
+ */
+export function updateShownResult(chart: Chart, result: StoredBacktestResult): boolean {
+  const artifacts = artifactsByChart.get(chart);
+  if (!artifacts || backtestResultSignal.value !== artifacts.result) return false;
+  artifacts.result = result;
+  artifacts.trades = result.trades;
+  if (artifacts.equityIndicatorId) {
+    // `name` is required by IndicatorCreate; `id` is what actually targets THIS
+    // pane's instance (createIndicator returned it — see equityIndicatorId).
+    chart.overrideIndicator({
+      id: artifacts.equityIndicatorId,
+      name: EQUITY_INDICATOR,
+      extendData: result.equity.map((p) => [p.time * 1000, p.value] as [number, number]),
+    });
+  }
+  // Published LAST, and with this exact object: every identity gate in this
+  // module now reads `artifacts.result`, so the two must be swapped together or
+  // the hover/selection sync goes inert for a frame.
+  backtestResultSignal.set(result);
+  return true;
 }
 
 /** User-initiated clear (toolbar ✕): drop the live artifacts AND delete the

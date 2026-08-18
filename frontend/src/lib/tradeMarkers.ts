@@ -23,6 +23,7 @@
 import type { Chart } from "klinecharts";
 import { tradeLabel, type TradeView } from "./trading";
 import type { JournalTrade } from "./liveJournal";
+import { isReplayTradeId } from "./replayLedger";
 import {
   MARKER_OVERLAY,
   ensureMarkerOverlayRegistered,
@@ -58,6 +59,15 @@ export interface TradeMarkerSpecOpts {
   // left-edge bar into a pile (the same off-window cull the backtest markers use).
   // Paging history back to reach an older bar is deferred (see the spec).
   oldestLoadedMs: number | null;
+  // Is the cell these markers belong to inside a chart-replay session? REQUIRED
+  // and undefaulted, like SpecBuildOpts.replaying in lib/positionLines, so a
+  // caller that forgets to answer fails to compile rather than fails open.
+  //
+  // It decides two things, both below: the account JOURNAL contributes no exit
+  // markers at all (it is the user's own real closed trades, and recognising one
+  // on a blind chart tells you when the window is), and the entry markers are
+  // filtered to the replay ledger's own ids.
+  replaying: boolean;
 }
 
 /** Stable key for a journal exit. JournalTrade carries no id, so mint a
@@ -79,6 +89,11 @@ export function entryMarkerSpecs(o: TradeMarkerSpecOpts): TradeMarkerSpec[] {
   const specs: TradeMarkerSpec[] = [];
   for (const t of o.trades) {
     if (t.epic !== o.epic || t.kind !== "position") continue;
+    // A replaying cell marks up its own ledger and nothing else. Fail closed on
+    // the id for the same reason lib/positionLines does: an account position
+    // that reached here is a bug in a gate upstream, and its entry sits at
+    // today's price on a chart built to hide today.
+    if (o.replaying && !isReplayTradeId(t.id)) continue;
     if (t.openedAt == null || !drawableAt(t.openedAt, o.oldestLoadedMs)) continue;
     specs.push({
       key: `entry:${t.id}`,
@@ -98,6 +113,12 @@ export function entryMarkerSpecs(o: TradeMarkerSpecOpts): TradeMarkerSpec[] {
  * instead (see aggregateExitsByBar). `ts` is unix SECONDS. Pure + exported. */
 export function exitMarkerSpecs(o: TradeMarkerSpecOpts): TradeMarkerSpec[] {
   const specs: TradeMarkerSpec[] = [];
+  // The journal is the ACCOUNT's closed trades and has no replay counterpart
+  // (the ledger's closes go to the report card, never to journalSignal), so a
+  // replaying cell shows none of it. Note this is not reachable only through a
+  // journal UPDATE: ChartCore seeds its journal ref at mount and redraws the
+  // markers after every load, replay loads included.
+  if (o.replaying) return specs;
   for (const j of o.journal) {
     if (j.epic !== o.epic) continue;
     const ms = j.ts * 1000;
@@ -143,7 +164,13 @@ export function aggregateExitsByBar(
   journal: JournalTrade[],
   epic: string,
   bars: { timestamp: number; high: number }[],
+  // REQUIRED, for the reason on TradeMarkerSpecOpts.replaying: this is the OTHER
+  // route the account journal takes onto the chart (the DOM pill layer rather
+  // than the arrow overlays), so gating exitMarkerSpecs alone would leave the
+  // coarse view leaking.
+  replaying: boolean,
 ): ExitCluster[] {
+  if (replaying) return [];
   if (bars.length === 0) return [];
   const barTimes = bars.map((b) => b.timestamp);
   const oldest = barTimes[0];

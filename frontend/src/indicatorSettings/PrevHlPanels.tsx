@@ -12,7 +12,7 @@ import Tooltip from "../components/Tooltip";
 import ColorLineStylePicker from "../ColorLineStylePicker";
 import { TIMEZONES, offsetLabel } from "../lib/timezones";
 import { prevHlAnchorToInput, prevHlInputToAnchor, type PrevHlAgg } from "../lib/customIndicators";
-import { useMaskedReplay } from "../lib/useMaskedReplay";
+import { useMaskedReplayFor } from "../lib/useMaskedReplay";
 import { maskedTimeLabel } from "../lib/timeFormat";
 import {
   PREV_HL_LENGTH_FIELDS,
@@ -181,6 +181,7 @@ export function boundaryActive(lines: LineDraft[], kind: PrevHlKind): boolean {
 
 // --- Inputs tab: boundary rows (Rolling range / Previous period / Anchored) ---
 export function PrevHlInputsPanel({
+  cellId,
   lines,
   prevHlLengths,
   prevHlAggs,
@@ -193,6 +194,9 @@ export function PrevHlInputsPanel({
   setPrevHlAgg,
   setPrevHlAnchorInput,
 }: {
+  /** The cell this panel is editing — IndicatorSettings is routed to the focused
+   * cell. Used ONLY to ask whether that cell is running a masked session. */
+  cellId: string;
   lines: LineDraft[];
   prevHlLengths: Record<PrevHlKind, number>;
   prevHlAggs: Record<PrevHlKind, PrevHlAgg>;
@@ -210,7 +214,15 @@ export function PrevHlInputsPanel({
   // date input cannot render "Day 3 09:30", so while masked the field is
   // replaced by the read-only masked label (and editing the anchor waits until
   // the session ends — a session is temporary, a broken blind test is not).
-  const maskedReplay = useMaskedReplay();
+  //
+  // THIS cell's session, not any cell's. Over-masking is the right default for a
+  // LABEL (lib/maskedReplay explains why the registry is read fail-closed), but
+  // this is not a label: it swaps a working editor for a read-only field and a
+  // "exit replay to edit" tooltip. Reading any-cell meant a masked session on
+  // one chart locked the anchor editor on a sibling that was not replaying at
+  // all, with no session to exit. IndicatorSettings is routed to the focused
+  // cell, so the per-cell read is available and is the honest one.
+  const maskedReplay = useMaskedReplayFor(cellId);
   // One row renderer shared by both groups. Checkbox toggles the
   // boundary's H/L lines; greyed + disabled when off. The rolling row
   // also shows a unit selector (bars/minutes/hours/days/weeks).

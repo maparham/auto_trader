@@ -52,6 +52,18 @@ import {
   saveReplaySession,
 } from "../lib/replaySession";
 import { mtfBucketMs, refreshMtfIndicators, setHtfCursorClamp } from "../lib/mtfCoordinator";
+import {
+  backtestRenderFlags,
+  ownsBacktestPanel,
+  registerReplayingChart,
+  rehydrateBacktest,
+  renderArtifacts,
+  teardownArtifacts,
+  updateShownResult,
+} from "../lib/backtest";
+import { filterResultToCursor } from "../lib/replayReveal";
+import { loadBacktestResult } from "../lib/persist";
+import { backtestResultSignal } from "../lib/signals";
 import { toast } from "../lib/notify";
 import type { ChartHandle, ReplayHandle } from "./chartHandle";
 
@@ -61,6 +73,12 @@ const CONTEXT_BARS = 300;
 const FORWARD_BARS = 200;
 // Refill when the cursor comes within this many unrevealed bars of the store's end.
 const REFILL_MARGIN = 50;
+
+// Longest the session record may go unwritten while something keeps changing.
+// One second is ten steps at 10x: enough for the debounce to still coalesce a
+// burst, short enough that a tab closed mid-playback loses about a second of
+// replay rather than the entire run. See the persistence effect.
+const SAVE_MAX_GAP_MS = 1000;
 
 // A degraded read means the broker/backend path is unreachable and the backend
 // served whatever short cached page it had. Replay REFUSES such a page rather
@@ -90,6 +108,17 @@ export interface ReplayUiState {
   atEnd: boolean;
   loading: boolean;
   error: string | null;
+  /** Bumped every time a SERIES load establishes the bar store (barsFor). The
+   * one dependency that reliably says "the chart has just been repainted from
+   * scratch and anything drawn on top of it is gone".
+   *
+   * `loading` cannot do that job: it is a true→false pair, and when both land in
+   * the same React batch (a cached or same-tick read) no effect ever observes the
+   * `true`, so nothing keyed on it re-runs. That is exactly how the strategy
+   * reveal came to publish once at session start and then stay dead — the load
+   * effect tore its artifacts down and cleared the panel underneath it, and no
+   * dependency changed to tell it. A monotonic counter cannot be missed. */
+  storeSeq: number;
 }
 
 export interface ReplayApi {
@@ -150,6 +179,15 @@ export interface ReplayApi {
   /** Close of the newest revealed bar: what a market order fills at. Null before
    * any bar is revealed (a resumed session before its store loads). */
   markPrice: number | null;
+
+  // --- the progressive strategy reveal (lib/replayReveal) -------------------
+  /** True while the cell's saved backtest is being revealed at the cursor. */
+  showStrategy: boolean;
+  /** False when this cell has no saved backtest to reveal: the pill disables the
+   * button and says to run one first. Re-read whenever the mode changes, so a
+   * backtest run before the session starts is picked up. */
+  hasStrategy: boolean;
+  toggleStrategy(): void;
 }
 
 export interface ReplayDeps {
@@ -171,6 +209,7 @@ const OFF: ReplayUiState = {
   atEnd: false,
   loading: false,
   error: null,
+  storeSeq: 0,
 };
 
 export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
@@ -223,6 +262,96 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
   });
   const ledgerRef = useRef(ledger);
   ledgerRef.current = ledger;
+
+  // --- the progressive strategy reveal --------------------------------------
+  //
+  // The cell's SAVED backtest, redrawn at every cursor as the slice that has
+  // already happened (lib/replayReveal). Deliberately narrower than "run the
+  // strategy live": building a run request means reproducing several hundred
+  // lines of BacktestButton's config-to-request logic, and the saved result is
+  // the same artifact a rehydrate draws. The button is disabled with an
+  // explanatory tooltip when the cell has none.
+  //
+  // Restored from the persisted record on the same terms as the cursor and the
+  // book above (a record for another instrument is not this session's), so a
+  // reload lands back on the toggle the user left it at — with the slice redrawn
+  // at the restored cursor by the effect below.
+  const [showStrategy, setShowStrategy] = useState<boolean>(() => {
+    const saved = loadReplaySession(scope);
+    return saved?.epic === epic ? !!saved.showStrategy : false;
+  });
+  // Read at CALL time by the toggle and by endSession, for the same stale-closure
+  // reason `latest` exists — and because the restore below is a side effect that
+  // must not live inside a setState updater (StrictMode invokes those twice).
+  const showStrategyRef = useRef(showStrategy);
+  showStrategyRef.current = showStrategy;
+  const [hasStrategy, setHasStrategy] = useState<boolean>(() => loadBacktestResult(scope, epic) != null);
+  // What the last reveal DREW — the overlay-bearing parts only, so a step that
+  // merely grows the equity curve takes the cheap in-place path instead of a
+  // teardown + rebuild (see the effect for why that distinction is the whole
+  // point). Carries the display resolution as well as the counts: a timeframe
+  // switch changes the marker mode (backtestRenderFlags) without changing any
+  // count, and the load effect has torn the artifacts down by then.
+  const revealSigRef = useRef("");
+
+  /** Take the revealed slice back off the chart, leaving the cell exactly as a
+   * session that never turned the reveal on: no markers, no equity pane, an
+   * empty panel.
+   *
+   * This — NOT a rehydrate — is what switching the toggle off during a LIVE
+   * session must do. Restoring the saved backtest there paints the whole run on
+   * a blind chart: every marker of the run, including the fills in the session's
+   * own future, plus its final net P&L on the panel. One click and the user has
+   * seen the answer to the exercise they are sitting in the middle of. It is the
+   * same publish already gated on the load path (backtestPanelActionForReplay)
+   * and on the cross-tab push; this was the third way in.
+   *
+   * Ownership is read BEFORE the teardown, because teardownArtifacts nulls
+   * `artifacts.result` and after that the question cannot be answered — and only
+   * an owner may blank the shared panel, or a split-layout sibling's result goes
+   * with it. */
+  const clearRevealedBacktest = useCallback(() => {
+    revealSigRef.current = "";
+    const chart = handle.chartRef.current;
+    if (!chart) return;
+    const owned = ownsBacktestPanel(chart);
+    teardownArtifacts(chart);
+    if (owned) backtestResultSignal.set(null);
+  }, [handle]);
+
+  /** Put the cell's OWN saved backtest back on the chart and in the panel.
+   *
+   * Only ever on the way OUT of a session — the report card's Done, the pill's
+   * ⟲, the symbol-change exit — which all funnel through `endSession`. Those end
+   * the session, so the full run is no longer lookahead; without this the cell
+   * would be stranded showing a slice frozen at the last cursor, a truncated
+   * trade list and a partial P&L presented as the real backtest.
+   *
+   * Dropping the dedup signature is half the job, and it is the half that bites:
+   * what is on the chart after this is the FULL result, so a reveal turned back
+   * on at the same cursor would match the signature the last one recorded, skip
+   * its redraw, and leave the whole run on the panel under a button reading ON.
+   * Cleared ABOVE the chart guard, so a cell whose chart is not mounted yet still
+   * forgets what it drew. */
+  const restoreSavedBacktest = useCallback(() => {
+    revealSigRef.current = "";
+    const chart = handle.chartRef.current;
+    if (!chart) return;
+    const cur = latest.current;
+    rehydrateBacktest(chart, cur.scope, cur.epic, cur.resolution);
+  }, [handle]);
+
+  /** The side effect lives OUT here rather than inside the setState updater:
+   * React invokes updaters twice under StrictMode, and doing this twice would
+   * tear the artifacts down and rebuild them for nothing. */
+  const toggleStrategy = useCallback(() => {
+    const next = !showStrategyRef.current;
+    showStrategyRef.current = next;
+    // Off: take the slice down now rather than waiting for the next load. NOT a
+    // restore — the session is still running. See clearRevealedBacktest.
+    if (!next) clearRevealedBacktest();
+    setShowStrategy(next);
+  }, [clearRevealedBacktest]);
 
   // --- the exit reveal ------------------------------------------------------
   //
@@ -317,6 +446,20 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           setState((s) => ({ ...s, loading: false, error: OUTAGE_MSG }));
           return [];
         }
+        // The session may have ENDED while this read was in flight. The
+        // symbol-change guard is the only path that flips `mode` from inside an
+        // effect, so for one flush the load effect for the NEW epic still saw
+        // `mode === "active"` and called this. `reqSeq` does not cover it:
+        // endSession bumped the counter to N and this call then took N+1, so the
+        // check above passes and nothing bumps afterwards.
+        //
+        // Publishing here would write the just-EMPTIED ledger into
+        // handle.tradesRef, after endSession's refreshTrades() had already
+        // refilled it from the account — and the user's REAL open positions would
+        // silently lose their lines, pills and bracket until the next trade event,
+        // possibly for the rest of the day. Returning [] also keeps a dead
+        // session's slice off a chart that now belongs to another instrument.
+        if (latest.current.state.mode !== "active") return [];
         barsRef.current = bars;
         storeResRef.current = res;
         // The store is now established at this cursor, so the book can be marked
@@ -325,7 +468,11 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
         // while replaying (the global feed is gated off), so without it a
         // reloaded session would show no position lines at all.
         publishLedger(ledgerRef.current, cursorMs);
-        setState((s) => ({ ...s, loading: false }));
+        // storeSeq, not just `loading: false`: see its note on ReplayUiState. The
+        // chart is about to be repainted from this store, so everything drawn on
+        // top of it (the strategy reveal's markers and equity pane) has to know
+        // to rebuild, and a true→false `loading` pair can be batched away.
+        setState((s) => ({ ...s, loading: false, storeSeq: s.storeSeq + 1 }));
         return revealedBars(bars, cursorMs, nominalMs(res));
       } catch (err) {
         if (seq !== reqSeq.current) return [];
@@ -640,6 +787,16 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     // would blink every real position line out and back across a round-trip, and
     // fire a needless fetch, for a user who has merely opened the picker.
     if (latest.current.state.mode !== "active") return;
+    // Hand the BACKTEST layer back before the trade layer. Every teardown lands
+    // here — the report card's Done (via exit / enterPicking), the pill's ⟲, and
+    // the symbol-change exit — so this is the one place that guarantees a session
+    // ended with the reveal still ON leaves the cell showing its real saved
+    // result rather than the slice frozen at the last cursor. Gated on the ref so
+    // a cell that never revealed anything is untouched: its backtest is already
+    // whatever the load effect drew, and a needless rehydrate would blink the
+    // panel. The toggle itself stays as the user left it (like `speedMs`), so the
+    // next session on this cell reveals again if they had it on.
+    if (showStrategyRef.current) restoreSavedBacktest();
     // The book dies with the session — including on "pick new start", which
     // begins a fresh one and must not inherit the last one's positions. The ref
     // is cleared alongside the state because callers act synchronously after
@@ -652,7 +809,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     // until the next trade event — possibly for the rest of the day.
     handle.tradesRef.current = [];
     refreshTrades();
-  }, [handle]);
+  }, [handle, restoreSavedBacktest]);
 
   // Opening the picker from an ACTIVE session ENDS that session (Task 7 wires the
   // pill's "pick new start" here). Anything less would leave replay bars on the
@@ -841,16 +998,140 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     return () => window.clearInterval(id);
   }, [state.mode, state.playing, state.speedMs, stepForward, pendingReport]);
 
+  // --- the strategy reveal, redrawn at the cursor ---------------------------
+  //
+  // Is there anything to reveal? Re-read on every MODE change rather than once
+  // per mount, so a backtest the user runs on this cell just before starting a
+  // session enables the button (and one they clear disables it). Cheap: a single
+  // localStorage read at a transition the user drove, and React bails out of the
+  // re-render when the boolean is unchanged.
+  useEffect(() => {
+    setHasStrategy(loadBacktestResult(scope, epic) != null);
+  }, [scope, epic, state.mode]);
+
+  // Re-render the revealed slice whenever the cursor moves (coalesced to a frame:
+  // 10x playback steps every 100ms and renderArtifacts rebuilds overlays).
+  useEffect(() => {
+    const chart = handle.chartRef.current;
+    if (!chart) return;
+    if (state.mode !== "active" || !showStrategy) return;
+    // A series (re)load is in flight — a session start, a timeframe switch, or a
+    // resumed session's first store read. The load effect has already torn this
+    // cell's artifacts down synchronously and is about to replace the bars under
+    // them, possibly at another resolution. Drawing against the outgoing bars
+    // would anchor markers to candles that are about to be discarded, so skip the
+    // frame and DROP the signature: the redraw that follows the settled load must
+    // not be dismissed as "unchanged".
+    if (state.loading) {
+      revealSigRef.current = "";
+      return;
+    }
+    const saved = loadBacktestResult(scope, epic);
+    if (!saved) return;
+    const raf = requestAnimationFrame(() => {
+      const cur = latest.current;
+      // Re-read the gate at FIRE time rather than trusting the render this frame
+      // was scheduled in — the same reason stepForward reads `reportOpenRef` and
+      // `place` re-calls `tradingOpen` instead of the flag their button rendered
+      // with. A SYMBOL CHANGE is where it bites: this effect is declared before
+      // the symbol-change guard, so on the epic's commit it runs first (mode
+      // still `active`) and schedules a frame; the guard then calls exit(), whose
+      // endSession restores the real result synchronously. Nothing but React's
+      // scheduling promises the cancel wins that race, and a frame that landed
+      // late would republish a truncated slice on top of the restore — filtered
+      // at the OLD cursor, for the NEW instrument.
+      if (cur.state.mode !== "active" || !showStrategyRef.current) return;
+      // No bars painted yet (a resumed session between mount and its first store
+      // read): nothing for a marker to anchor to, and no signature recorded, so
+      // the load that follows still draws.
+      if (!(chart.getDataList()?.length ?? 0)) return;
+      const shown = filterResultToCursor(saved, cur.state.cursorMs);
+      // What actually needs DRAWING, as opposed to what merely changed. The
+      // equity curve grows by a point on every single step (the engine emits one
+      // point per bar), so a signature that included it would never dedup
+      // anything — and the redraw it gated is the destructive one: a full
+      // teardown + render rebuilds every marker overlay ten times a second at
+      // 10x, and teardownArtifacts nulls selectedTradeSignal /
+      // highlightTradeSignal, so a trade row the user clicked to study vanishes
+      // within a tenth of a second, permanently, in the exact mode where they
+      // are watching it play out.
+      //
+      // So the two are split. This signature covers only what a full render is
+      // needed for: the overlays (markers, and the regions/period bands drawn
+      // beside them) and the marker MODE, which follows the display resolution
+      // even when no count moved. `regions` earns its place here rather than
+      // riding along with equity: once downsampleEquity makes the curve sparse,
+      // the equity length stops moving every step and a newly-closed region
+      // would otherwise never get drawn.
+      const sig = [
+        cur.resolution,
+        shown.markers.length,
+        shown.trades.length,
+        shown.regions?.length ?? 0,
+      ].join(":");
+      // Nothing new to draw: advance the curve and the panel's running numbers
+      // in place, leaving the overlays and the user's selection alone.
+      //
+      // The `&&` is load-bearing, and its absence is what made the whole feature
+      // inoperative in the browser while this file's unit tests were green.
+      // updateShownResult refuses (returns false) whenever this chart no longer
+      // backs the panel — which is routine, because the load effect tears these
+      // artifacts down and clears the panel on every replayEpoch bump, AFTER the
+      // reveal has already drawn. Discarding that `false` left the reveal
+      // convinced its signature was still on screen when nothing was, and it
+      // never drew again for the rest of the session. Falling through to the
+      // full render makes the reveal self-healing: whoever wiped it, and
+      // whenever, the next fire rebuilds.
+      if (revealSigRef.current === sig && updateShownResult(chart, shown)) return;
+      revealSigRef.current = sig;
+      teardownArtifacts(chart);
+      const flags = backtestRenderFlags(cur.resolution, saved.resolution);
+      renderArtifacts(chart, shown, { markerMode: flags.markerMode, canEquity: flags.drawEquity });
+      // Published with THIS exact object, the way rehydrateBacktest does: the
+      // hover/selection sync renderArtifacts installs is identity-gated on it,
+      // and teardownArtifacts' ownership check reads the same identity.
+      backtestResultSignal.set(shown);
+    });
+    return () => cancelAnimationFrame(raf);
+    // `state.storeSeq` is what re-runs this after a series load has repainted the
+    // chart and taken the reveal's artifacts with it (see its note on
+    // ReplayUiState). Without it the reveal draws once at session start and is
+    // then dead for the rest of the session, because the load effect's teardown
+    // and panel clear land afterwards and change none of the other deps.
+  }, [
+    state.mode,
+    state.cursorMs,
+    state.loading,
+    state.storeSeq,
+    showStrategy,
+    scope,
+    epic,
+    resolution,
+    handle,
+  ]);
+
   // --- persistence ----------------------------------------------------------
   //
   // Debounced: play at 10x fires a step every 100ms, and each write serializes
   // the whole record. Device-local (saveReplaySession → saveLocal).
+  //
+  // Debounced, but with a CEILING on how long the debounce may starve the write.
+  // A pure 400ms trailing debounce is silently broken at speed: this effect
+  // re-runs on every step (both `state.cursorMs` and `ledger` change, the latter
+  // a fresh object out of every publishLedger), and its cleanup clears the timer
+  // — so at 5x (200ms) and 10x (100ms) the timer is re-armed before it can ever
+  // fire and NOTHING is written for the whole run. Reload or close the tab
+  // mid-playback and the session came back at the cursor from before you pressed
+  // play, with every fill booked during the run gone. 1x and 2x are slower than
+  // the debounce, which is why it looked fine.
+  const lastSaveMsRef = useRef(0);
   useEffect(() => {
     // A session under the report card is over in every sense but its mode, and
     // finishSession has already cleared its record. Re-running the effect on
     // `pendingReport` is what cancels a write a recent step had queued.
     if (state.mode !== "active" || pendingReport) return;
-    const id = window.setTimeout(() => {
+    const write = () => {
+      lastSaveMsRef.current = Date.now();
       saveReplaySession(scope, {
         epic,
         resolution,
@@ -858,13 +1139,21 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
         cursorMs: state.cursorMs,
         highWaterMs: state.highWaterMs,
         masked: state.masked,
-        showStrategy: false,
+        showStrategy,
         ledger: ledgerRef.current,
         savedAt: Date.now(),
       });
-    }, 400);
+    };
+    // Past the ceiling: write NOW rather than arming a timer this run's next step
+    // would cancel. Bounds worst-case loss to one SAVE_MAX_GAP_MS window instead
+    // of the whole playback run, while a burst still coalesces to one write.
+    if (Date.now() - lastSaveMsRef.current >= SAVE_MAX_GAP_MS) {
+      write();
+      return;
+    }
+    const id = window.setTimeout(write, 400);
     return () => window.clearTimeout(id);
-  }, [state.mode, state.startMs, state.cursorMs, state.highWaterMs, state.masked, ledger, epic, resolution, scope, pendingReport]);
+  }, [state.mode, state.startMs, state.cursorMs, state.highWaterMs, state.masked, showStrategy, ledger, epic, resolution, scope, pendingReport]);
 
   // Entering a session hands the trade-line layer over to the book. The
   // subscribeTrades guard in ChartCore only stops LATER account updates; whatever
@@ -903,7 +1192,16 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     setHtfCursorClamp(chart, () =>
       latest.current.state.mode === "active" ? latest.current.state.cursorMs : 0,
     );
-    return () => setHtfCursorClamp(chart, null);
+    // Same registration, same lifetime, for the panel-publishing decisions in
+    // lib/backtest: App's cross-tab push handler reaches a chart without its
+    // ChartHandle, so it cannot ask `replayRef` and needs a chart-keyed answer.
+    // Derived from the same `latest` the handle's isActive() reads, so the two
+    // cannot disagree about whether this cell is replaying.
+    registerReplayingChart(chart, () => latest.current.state.mode === "active");
+    return () => {
+      setHtfCursorClamp(chart, null);
+      registerReplayingChart(chart, null);
+    };
   }, [handle]);
 
   // The cursor crossing a higher-timeframe bar close makes previously-illegal HTF
@@ -998,5 +1296,8 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     // Computed during RENDER, where `latest` is fresh, so this is the mark for
     // the cursor currently on screen.
     markPrice: markPriceNow(),
+    showStrategy,
+    hasStrategy,
+    toggleStrategy,
   };
 }

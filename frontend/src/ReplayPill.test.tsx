@@ -25,6 +25,7 @@ const STATE: ReplayUiState = {
   atEnd: false,
   loading: false,
   error: null,
+  storeSeq: 0,
 };
 
 const CONTROLS = [
@@ -32,11 +33,12 @@ const CONTROLS = [
   "Play",
   "Step forward",
   "Replay order ticket",
+  "Reveal strategy",
   "Pick new start",
   "Exit replay",
 ] as const;
 
-function renderPill(reportPending: boolean) {
+function renderPill(reportPending: boolean, opts: { hasStrategy?: boolean; showStrategy?: boolean } = {}) {
   const on = {
     onStepBack: vi.fn(),
     onPlayPause: vi.fn(),
@@ -45,9 +47,18 @@ function renderPill(reportPending: boolean) {
     onNewStart: vi.fn(),
     onExit: vi.fn(),
     onToggleTicket: vi.fn(),
+    onToggleStrategy: vi.fn(),
   };
   render(
-    <ReplayPill state={STATE} readout="Day 4 09:30" ticketOpen={false} reportPending={reportPending} {...on} />,
+    <ReplayPill
+      state={STATE}
+      readout="Day 4 09:30"
+      ticketOpen={false}
+      hasStrategy={opts.hasStrategy ?? true}
+      showStrategy={opts.showStrategy ?? false}
+      reportPending={reportPending}
+      {...on}
+    />,
   );
   const btn = (label: string) => screen.getByLabelText(label) as HTMLButtonElement;
   return { ...on, btn };
@@ -78,5 +89,34 @@ describe("ReplayPill while a session report is pending", () => {
     expect(p.onExit).not.toHaveBeenCalled();
     expect(p.onStepForward).not.toHaveBeenCalled();
     expect(p.onPlayPause).not.toHaveBeenCalled();
+  });
+});
+
+// The reveal's own gate, independent of the card: a cell with nothing saved has
+// nothing to reveal, and the button says so instead of doing nothing.
+describe("ReplayPill's Strategy toggle", () => {
+  it("is disabled, and never looks ON, on a cell with no saved backtest", () => {
+    // showStrategy deliberately true: the hook keeps the toggle sticky across
+    // sessions, so a cell whose backtest was cleared can arrive here with the
+    // preference still set. It must not paint a dead button as active.
+    const p = renderPill(false, { hasStrategy: false, showStrategy: true });
+    const b = p.btn("Reveal strategy");
+    expect(b.disabled).toBe(true);
+    expect(b.className).not.toContain("rp-on");
+    expect(b.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(b);
+    expect(p.onToggleStrategy).not.toHaveBeenCalled();
+  });
+
+  it("toggles, and reads as pressed while revealing", () => {
+    const off = renderPill(false, { hasStrategy: true, showStrategy: false });
+    expect(off.btn("Reveal strategy").className).not.toContain("rp-on");
+    fireEvent.click(off.btn("Reveal strategy"));
+    expect(off.onToggleStrategy).toHaveBeenCalledTimes(1);
+    cleanup();
+    const on = renderPill(false, { hasStrategy: true, showStrategy: true });
+    const b = on.btn("Reveal strategy");
+    expect(b.className).toContain("rp-on");
+    expect(b.getAttribute("aria-pressed")).toBe("true");
   });
 });

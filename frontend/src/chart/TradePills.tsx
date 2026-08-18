@@ -3,6 +3,8 @@ import { formatExpiryLong, formatExpiryShort } from "../lib/alertUi";
 import { toast } from "../lib/notify";
 import { requestConfirm, setTradeSelected, discardPendingEdit, discardPendingField, type PendingEdit, type TradeLineField } from "../lib/signals";
 import { tradeLabel, mergeTradeLevels, applyEditedLevels, closePosition, cancelWorkingOrder, refreshTrades, getTradesAccount, type TradeView, type OrderSide } from "../lib/trading";
+import { isCellReplaying } from "../lib/chartSync";
+import { cellTradeBook } from "../lib/replayLedger";
 import { useMaskedReplayFor, type MaskedReplay } from "../lib/useMaskedReplay";
 import { maskedTimeLabel } from "../lib/timeFormat";
 import Tooltip from "../components/Tooltip";
@@ -130,20 +132,48 @@ export default function TradePills({
   tradePillLeft,
   actions,
 }: TradePillsProps) {
+  // Is THIS cell replaying? Asked at CLICK time (a Set lookup), not captured at
+  // render: the two questions below are about what a button press may do, and the
+  // answer must be the one that holds when it is pressed.
+  const replaying = () => isCellReplaying(cellId);
+  // Whether a chart-side selection may open the app's real OrderTicket. It may
+  // not while this cell is replaying: a pill there belongs to the cell's local
+  // ledger, that id is in no account book, and the ticket therefore falls back to
+  // its LIVE new-order form — a real-money submit one click from a practice
+  // trade, on today's quote, inside a session whose whole point is not knowing
+  // where price ended up. Selecting still happens (the pills ARE the replay
+  // trade UI: drag to move a level, then Apply / Close / Cancel); only the panel
+  // is withheld, which is exactly what a single click on the line already does.
+  const opensTicket = () => !replaying();
   // Dealing defaulted ONCE, so the three call sites below read the same object
   // whether the trade lives in the account or in a replay ledger. The default
   // branch keeps the refreshTrades that follows each account write; the replay
   // branch has nothing to refresh (its book publishes itself).
+  //
+  // The default FAILS CLOSED. A replaying cell is supposed to pass `actions`
+  // (ChartCore does), but that is one ternary at one call site with nothing in
+  // the type system holding it there: lose it and every pill on a practice trade
+  // would deal against the user's real account. So when the cell is replaying and
+  // no ledger actions arrived, refuse and say so rather than reach for the
+  // broker.
+  const mayDealOnAccount = () => {
+    if (cellTradeBook(replaying()).dealing === "account") return true;
+    toast("Replay session: practice trades are not sent to your account.");
+    return false;
+  };
   const act = actions ?? {
     apply: async (t: TradeView, merged: { price: number | null; stop: number | null; takeProfit: number | null }) => {
+      if (!mayDealOnAccount()) return;
       await applyEditedLevels(t, merged, getTradesAccount());
       refreshTrades();
     },
     close: async (t: TradeView) => {
+      if (!mayDealOnAccount()) return;
       await closePosition(t.id, getTradesAccount());
       refreshTrades();
     },
     cancel: async (t: TradeView) => {
+      if (!mayDealOnAccount()) return;
       await cancelWorkingOrder(t.id, getTradesAccount());
       refreshTrades();
     },
@@ -284,7 +314,7 @@ export default function TradePills({
           try {
             await act.apply(t, merged);
             discardPendingEdit(t.id);
-            setTradeSelected(t.id, "price");
+            setTradeSelected(t.id, "price", opensTicket());
           } catch (err) {
             toast(err instanceof Error ? err.message : "Remove failed");
           }
@@ -361,8 +391,9 @@ export default function TradePills({
                     className="tp-btn tp-info"
                     aria-label="Trade details"
                     // The rest of the pill selects on click (canvas hit-test); the ⓘ is
-                    // its own DOM target, so mirror that instead of swallowing the click.
-                    onClick={() => setTradeSelected(p.tradeId, p.field)}
+                    // its own DOM target, so mirror that instead of swallowing the click
+                    // — including the canvas path's replay gate on opening the ticket.
+                    onClick={() => setTradeSelected(p.tradeId, p.field, opensTicket())}
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <circle cx="12" cy="12" r="9" />

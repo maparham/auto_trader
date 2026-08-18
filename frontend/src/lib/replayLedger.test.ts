@@ -4,6 +4,8 @@ import {
   advanceBar,
   canPlaceAt,
   cancelOrder,
+  cellTradeBook,
+  isReplayTradeId,
   closeAt,
   editLevels,
   emptyLedger,
@@ -185,5 +187,34 @@ describe("toTradeViews / summarize", () => {
     const s = placeMarket(emptyLedger(), { side: "buy", quantity: 1, price: 100, stop: null, takeProfit: null, atMs: T });
     expect(s.positions[0].id).toBe("rp1");
     expect(s.seq).toBe(1);
+  });
+});
+
+describe("cellTradeBook", () => {
+  it("keeps a live cell on the account book", () => {
+    expect(cellTradeBook(false)).toEqual({ acceptAccountTrades: true, dealing: "account" });
+  });
+
+  it("cuts a REPLAYING cell off from the account, in both directions at once", () => {
+    // Reading: the account poll must not write the cell's drawn book (its real
+    // positions sit at today's levels, on a chart that hides today).
+    // Writing: the pills must deal into the ledger, never the broker.
+    expect(cellTradeBook(true)).toEqual({ acceptAccountTrades: false, dealing: "ledger" });
+  });
+});
+
+describe("isReplayTradeId", () => {
+  it("recognises the ids placeMarket / placeLimit mint", () => {
+    const pos = placeMarket(emptyLedger(), { side: "buy", quantity: 1, price: 100, stop: null, takeProfit: null, atMs: T });
+    expect(isReplayTradeId(pos.positions[0].id)).toBe(true);
+    const ord = placeLimit(emptyLedger(), { side: "buy", quantity: 1, limit: 99, stop: null, takeProfit: null, atMs: T });
+    expect(isReplayTradeId(ord.orders[0].id)).toBe(true);
+  });
+
+  it("rejects a broker deal id", () => {
+    expect(isReplayTradeId("DIAAAAAB1234567")).toBe(false);
+    expect(isReplayTradeId("006ab3f2-...")).toBe(false);
+    expect(isReplayTradeId("rp")).toBe(false);
+    expect(isReplayTradeId("rp1x")).toBe(false);
   });
 });

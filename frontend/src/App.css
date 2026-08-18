@@ -4217,6 +4217,12 @@
 /* order ticket — TradingView-style */
 .ot { display: flex; flex-direction: column; gap: 11px; padding: 12px; }
 
+/* The ticket refuses to be a ticket while the focused cell replays (see
+   OrderTicket.tsx): an explanation in place of the quote strip and the form. */
+.ot-replay-off { gap: 8px; }
+.ot-replay-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.ot-replay-body { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+
 /* Sell / Buy quote strip (selects side) */
 .ot-strip {
   display: flex; align-items: stretch; position: relative;
@@ -5756,6 +5762,11 @@ span.bt-leg-short { color: var(--neg); }
    pressed while the ticket is open. */
 .rp-trade { font-size: 11px; }
 .rp-trade.on { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+
+/* The pill's Strategy toggle: a word like Trade, but its ON state is solid
+   rather than tinted — a session revealing the saved backtest is no longer a
+   blind one, and that deserves to be unmistakable at a glance. */
+.rp-btn.rp-on { background: var(--accent); color: var(--accent-text); }
 
 /* A field holding something that is not a plain number. Blocks the submit rather
    than letting Number() flatten it to NaN (see ReplayTicket.tsx). */

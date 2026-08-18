@@ -18,6 +18,7 @@ import type {
   OverlayEvent,
 } from "klinecharts";
 import { tradeLabel, isBreakeven, isBreakevenTarget, type TradeView } from "./trading";
+import { isReplayTradeId } from "./replayLedger";
 import type { PendingEdit, DraftOrder } from "./signals";
 import { barIndexForTs } from "./backtest";
 
@@ -97,6 +98,11 @@ export interface SpecBuildOpts {
   // A new order being staged on this epic. Its lines are always draggable and
   // report under the id "draft".
   draft?: DraftOrder | null;
+  // Is the cell these lines belong to inside a chart-replay session? REQUIRED,
+  // and deliberately not defaulted: it decides whether a real broker draft may
+  // be drawn and dragged over replayed bars (see the draft block below), and a
+  // caller that forgets to answer should fail to compile rather than fail open.
+  replaying: boolean;
   // Blank every position/order line's canvas label (the entry/SL/TP text pill), leaving
   // just the line — used when the always-on DOM pills render those labels instead, so
   // the two don't double up. Draft labels are unaffected (the draft has no DOM pill).
@@ -119,6 +125,13 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
   const fmt = (n: number) => n.toFixed(o.precision);
   for (const t of o.trades) {
     if (t.epic !== o.epic) continue;
+    // A REPLAYING cell draws its ledger and nothing else. ChartCore already
+    // withholds the account trades poll from such a cell (cellTradeBook), but
+    // that is a single inline check inside a subscription no test can mount, so
+    // this is what makes losing it harmless rather than expensive: a real
+    // position drawn here would show today's levels on a chart that hides today
+    // and hand them pills that deal against the account.
+    if (o.replaying && !isReplayTradeId(t.id)) continue;
     const selected = o.selected === t.id;
     const highlight = o.hovered === t.id;
     // Any of hover / click-select / active-drag fully reveals this trade's lines.
@@ -206,7 +219,18 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
   }
   // Draft (new, un-submitted) order lines — always draggable. A market draft has
   // no entry line (fills at market); a limit draft does.
-  const d = o.draft;
+  //
+  // Never on a REPLAYING cell. The draft is a real broker order waiting on
+  // Submit, and these specs carry onDragEnd — the same specs the pixel pass
+  // behind the drag hit-test is built from — so drawing it there would let a
+  // user set a live order's entry/SL/TP by dragging them onto bars from years
+  // ago, then submit at those levels. That is the failure lib/chartOrderMenu.ts
+  // was lifted out of ChartCore to prevent for the axis menu; the menu got the
+  // gate and the drawn lines did not. Gated HERE rather than at the two
+  // ChartCore call sites because both of them (drawing and hit-testing) go
+  // through this function, and `replaying` is REQUIRED so neither can silently
+  // stop asking.
+  const d = o.replaying ? null : o.draft;
   if (d && d.epic === o.epic) {
     const verb = d.side === "buy" ? "Buy" : "Sell";
     if (d.type === "limit" && d.price != null) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import type { Chart } from "klinecharts";
 import ChartGrid from "./ChartGrid";
 import { flushPendingAutoSaves } from "./lib/templateAutosave";
@@ -33,8 +33,14 @@ import PositionsPanel from "./PositionsPanel";
 import SnapshotGallery from "./SnapshotGallery";
 import { writeSnapshotToScope } from "./lib/snapshots";
 import { saveSnapshotOfChart } from "./lib/snapshotSave";
+import { toast } from "./lib/notify";
 import { registerCustomIndicators } from "./lib/customIndicators";
-import { registerBacktestIndicators, rehydrateBacktest } from "./lib/backtest";
+import {
+  backtestPanelActionForReplay,
+  isChartReplaying,
+  registerBacktestIndicators,
+  rehydrateBacktest,
+} from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
 import { installMagnetModifierKeys } from "./lib/magnet";
 import { matchingCellIds } from "./lib/tabSearch";
@@ -717,7 +723,23 @@ export default function App() {
       const cell = activeTab?.cells.find((c) => c.scope === bt.scope);
       const ready = cell ? readyRef.current.get(cell.id) : undefined;
       if (cell && ready && cell.symbol.epic === bt.epic) {
-        rehydrateBacktest(ready.chart, bt.scope, bt.epic, cell.period.resolution);
+        // ...unless that cell is REPLAYING. A backtest finishing in another tab
+        // (or on another device) would otherwise publish the whole saved run
+        // onto the shared panel mid-session — every trade the strategy is about
+        // to take with its P&L, the run's final net P&L, and `period` as a real
+        // calendar range straight through a masked session — and clobber the
+        // progressive reveal's slice while it was at it. `stalePanelOwner: false`
+        // is the honest input here: nothing has been torn down on this path, so
+        // anything this chart owns is the reveal's own live slice and must stay.
+        // The reveal re-reads the saved result on its next redraw, so a run that
+        // lands mid-session is picked up rather than lost.
+        const action = backtestPanelActionForReplay({
+          replaying: isChartReplaying(ready.chart),
+          stalePanelOwner: false,
+        });
+        if (action === "rehydrate") {
+          rehydrateBacktest(ready.chart, bt.scope, bt.epic, cell.period.resolution);
+        }
       }
       return;
     }
@@ -1574,6 +1596,13 @@ export default function App() {
   // modal; the gallery refreshes itself so the new card on top is the feedback.
   const saveCurrentSnapshot = async (): Promise<ChartSnapshot | null> => {
     if (!focused || !focusedCell) return null;
+    // A snapshot of a replaying chart stores the REAL epoch range of the hidden
+    // slice, and restoring it prints those dates on a cell that is not replaying.
+    // saveSnapshotOfChart refuses anyway; this is the half that can say why.
+    if (isChartReplaying(focused.chart)) {
+      toast("Chart replay is running: exit the session to snapshot this chart.");
+      return null;
+    }
     return saveSnapshotOfChart(
       focused.chart,
       focusedCell.scope,
@@ -1892,6 +1921,21 @@ export default function App() {
     ? focusedController.readOnly.value
     : focusedCell != null && loadSnapshotMeta(focusedCell.scope) != null;
 
+  // Whether the FOCUSED cell is inside a chart-replay session. Subscribed rather
+  // than read during render like readOnly above, because nothing else re-renders
+  // App when a session starts or ends and the order ticket below has to stop
+  // being the live one the moment it does. useSyncExternalStore (not the
+  // useEffect + useState idiom next door) so the very first render already has
+  // the right answer: focus can land on a cell that is ALREADY replaying, and a
+  // frame of the live ticket beside a blind session is the whole defect.
+  const focusedReplaying = useSyncExternalStore(
+    useCallback(
+      (onChange: () => void) => focusedController?.replaying.subscribe(onChange) ?? (() => {}),
+      [focusedController],
+    ),
+    () => focusedController?.replaying.value ?? false,
+  );
+
   // Per-epic price precision for the whole-book trading dock: its rows span every
   // symbol that has an open position/order, not just the focused chart, so each row
   // formats prices with its own symbol's precision (gleaned from any open cell on
@@ -2124,6 +2168,7 @@ export default function App() {
               instrumentType={symbol.type}
               trading={settings.trading}
               accountSummary={accountSummary}
+              replaying={focusedReplaying}
             />
           </aside>
         )}
@@ -2289,6 +2334,7 @@ export default function App() {
         <IndicatorSettings
           chart={focused.chart}
           scope={focusedCell.scope}
+          cellId={focusedCell.id}
           epic={symbol.epic}
           brokerId={brokerId}
           chartResolution={period.resolution}

@@ -23,9 +23,12 @@ import { periodFromTf } from "./chartDataFacade";
 import {
   teardownArtifacts,
   rehydrateBacktest,
+  backtestPanelActionForReplay,
+  ownsBacktestPanel,
   selectedTradeForChart,
   restoreTradeSelection,
 } from "../lib/backtest";
+import { backtestResultSignal } from "../lib/signals";
 import { toast } from "../lib/notify";
 import { loadAvwapAnchor, loadViewPos, saveViewPos } from "../lib/persist";
 import { loadSnapshotMeta, saveSnapshotMeta, type SnapshotMeta } from "../lib/persist";
@@ -368,6 +371,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // switch. Fall back to a restore a superseded run never got to attempt, so
     // rapid TF switches don't drop the selection.
     const capturedSelectedTrade = selectedTradeForChart(chart) ?? handle.pendingTradeRestoreRef.current;
+    // Captured for the same reason, and it MUST be read here: teardownArtifacts
+    // nulls `artifacts.result`, and after that "did this chart back the shared
+    // panel?" can no longer be answered. The replaying branch at the tail of this
+    // effect needs the answer (see backtestPanelActionForReplay).
+    const ownedPanelBeforeTeardown = ownsBacktestPanel(chart);
     teardownArtifacts(chart);
     // Reset scroll-back state for the new series.
     handle.loadingRef.current = false;
@@ -695,7 +703,21 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // trades panel + summary chip come back.
       // (Re-selecting the previously-studied trade waits until the coverage
       // walks below settle — see the anchor-coverage chain.)
-      rehydrateBacktest(handle.chartRef.current, scope, symbol.epic, period.resolution);
+      //
+      // NEVER while replaying — the rule, and the reasons, live on
+      // backtestPanelActionForReplay. "clear" needs the ownership captured
+      // BEFORE the teardown at the top of this effect: by here `artifacts.result`
+      // is null, so an owner check made now would answer no and quietly leave the
+      // pre-session run on the panel behind the session.
+      const panelAction = backtestPanelActionForReplay({
+        replaying: handle.replayRef.current?.isActive() ?? false,
+        stalePanelOwner: ownedPanelBeforeTeardown,
+      });
+      if (panelAction === "rehydrate") {
+        rehydrateBacktest(handle.chartRef.current, scope, symbol.epic, period.resolution);
+      } else if (panelAction === "clear") {
+        backtestResultSignal.set(null);
+      }
       // Redraw position lines for the (possibly new) epic at the current precision.
       handle.posLinesRef.current?.setPrecision(effPrecision);
       handle.posDrawRef.current();

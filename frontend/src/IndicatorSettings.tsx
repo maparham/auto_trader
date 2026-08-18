@@ -139,6 +139,11 @@ interface Props {
   chart: Chart;
   // The focused cell's storage scope — per-indicator config is stored per cell.
   scope: string;
+  // The focused cell's id. Only the PREV_HL anchor field needs it, and only to
+  // ask whether THIS cell is running a masked session: the any-cell read made a
+  // session on one chart lock the anchor editor on a sibling that was not
+  // replaying at all.
+  cellId: string;
   epic: string;
   // Active data broker id — MTF (higher-timeframe) data is fetched against it.
   brokerId: string;
@@ -153,6 +158,7 @@ type Tab = "inputs" | "divergence" | "style" | "visibility";
 export default function IndicatorSettings({
   chart,
   scope,
+  cellId,
   epic,
   brokerId,
   chartResolution,
@@ -1887,6 +1893,7 @@ export default function IndicatorSettings({
               )}
               {type === "PREV_HL" && (
                 <PrevHlInputsPanel
+                  cellId={cellId}
                   lines={lines}
                   prevHlLengths={prevHlLengths}
                   prevHlAggs={prevHlAggs}

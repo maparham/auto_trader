@@ -75,6 +75,10 @@ export function RunBar(props: {
   runClusterLead?: ReactNode;
   runLabel?: string;
   runDisabled?: boolean;
+  /** Why the run is unavailable, when there is something worth saying. Shown as
+   *  the button's tooltip so a disabled Run explains itself instead of just
+   *  going grey (the panel's own disabledReason idiom). */
+  runDisabledReason?: string | null;
   onRun?: () => void;
 }): JSX.Element {
   const {
@@ -83,6 +87,7 @@ export function RunBar(props: {
     runClusterLead,
     runLabel,
     runDisabled,
+    runDisabledReason,
     onRun,
   } = props;
 
@@ -98,9 +103,11 @@ export function RunBar(props: {
       <div className="bt-run-cluster">
         {runClusterLead}
         {onRun && (
-          <button className="bt-run-btn" onClick={onRun} disabled={runDisabled}>
-            {runLabel}
-          </button>
+          <Tooltip content={runDisabledReason ?? undefined}>
+            <button className="bt-run-btn" onClick={onRun} disabled={runDisabled}>
+              {runLabel}
+            </button>
+          </Tooltip>
         )}
       </div>
     </>

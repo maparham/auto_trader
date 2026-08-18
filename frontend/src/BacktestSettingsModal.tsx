@@ -14,6 +14,7 @@ import RuleExpressionInput from "./components/RuleExpressionInput";
 import RulePalette from "./components/RulePalette";
 import Tooltip from "./components/Tooltip";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
+import { backtestActionBlockedByReplay } from "./lib/backtest";
 import {
   requestGoLive,
   requestConfirm,
@@ -441,6 +442,16 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     const unsubArmed = controller.rangePickArmed.subscribe(setPickingRange);
     const unsubResult = controller.rangePickResult.subscribe((res) => {
       if (!res) return;
+      // Never from a REPLAYING cell. A picked range is the real epoch of the
+      // bars under the cursor, and these two fields print it as a local date and
+      // time next to an axis reading "Day 3 09:30" — the one number the session
+      // exists to hide, handed back with the session still running (and then
+      // persisted by saveBacktestLastUsed). The button below is disabled, so this
+      // is the belt for a result already in flight when the session started.
+      if (controller.replaying.value) {
+        controller.rangePickResult.set(null);
+        return;
+      }
       setCfg((c) => ({ ...c, range: { ...c.range, mode: "custom", fromMs: res.fromMs, toMs: res.toMs } }));
       controller.rangePickResult.set(null); // consume one-shot
     });
@@ -1116,6 +1127,17 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // already a no-op mid-run, but the button looked active.
   const [runInFlight, setRunInFlight] = useState(backtestRunningSignal.value);
   useEffect(() => backtestRunningSignal.subscribe(setRunInFlight), []);
+  // Is the cell this panel is pointed at inside a chart-replay session? This
+  // panel is app-level and survives entering one, so both of its chart-acting
+  // controls (Pick Range, Run) have to know. Re-subscribed when the focused cell
+  // changes, like the rangePick wiring above.
+  const [replayingCell, setReplayingCell] = useState(controller?.replaying.value ?? false);
+  useEffect(() => {
+    setReplayingCell(controller?.replaying.value ?? false);
+    return controller?.replaying.subscribe(setReplayingCell);
+  }, [controller]);
+  const pickBlocked = backtestActionBlockedByReplay({ replaying: replayingCell, action: "pick-range" });
+  const runBlocked = backtestActionBlockedByReplay({ replaying: replayingCell, action: "run" });
   // Last completed run's wall-clock duration, per mode (footer readout).
   const [btDurationMs, setBtDurationMs] = useState(backtestDurationSignal.value);
   useEffect(() => backtestDurationSignal.subscribe(setBtDurationMs), []);
@@ -2043,6 +2065,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         ? "Run sweep"
         : "Run backtest";
   const runDisabled =
+    !!runBlocked ||
     runInFlight ||
     (btMode === "sweep" && activeSweepAxes.length === 0) ||
     (btMode === "walkforward" &&
@@ -2141,18 +2164,23 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         content={
           !controller
             ? "Focus a chart to pick a range"
-            : pickingRange
-              ? "Picking… drag across the chart's time axis, or click a start then an end. Esc cancels."
-              : "Pick the range on the chart: drag across the time axis, or click a start then an end"
+            : pickBlocked
+              ? pickBlocked
+              : pickingRange
+                ? "Picking… drag across the chart's time axis, or click a start then an end. Esc cancels."
+                : "Pick the range on the chart: drag across the time axis, or click a start then an end"
         }
       >
         <button
           type="button"
           className={`bt-pick-range${pickingRange ? " on" : ""}`}
-          disabled={!controller}
+          disabled={!controller || !!pickBlocked}
           aria-label="Pick range on chart"
           onClick={() => {
-            if (!controller) return;
+            // pickBlocked is the same decision the disabled state above reads;
+            // re-asserted here so a click that arrives anyway (a keyboard
+            // activation racing the session start) cannot arm the chart.
+            if (!controller || pickBlocked) return;
             if (controller.rangePickArmed.value) {
               controller.rangePickArmed.set(false);
             } else {
@@ -2208,6 +2236,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             runClusterLead={runClusterLead}
             runLabel={runLabel}
             runDisabled={runDisabled}
+            runDisabledReason={runBlocked}
             onRun={runFromFooter}
           />
         </div>
@@ -2354,18 +2383,20 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                             content={
                               !controller
                                 ? "Focus a chart to pick a range"
-                                : pickingRange
-                                  ? "Picking… drag across the chart's time axis, or click a start then an end. Esc cancels."
-                                  : "Pick the range on the chart: drag across the time axis, or click a start then an end"
+                                : pickBlocked
+                                  ? pickBlocked
+                                  : pickingRange
+                                    ? "Picking… drag across the chart's time axis, or click a start then an end. Esc cancels."
+                                    : "Pick the range on the chart: drag across the time axis, or click a start then an end"
                             }
                           >
                             <button
                               type="button"
                               className={`bt-pick-range${pickingRange ? " on" : ""}`}
-                              disabled={!controller}
+                              disabled={!controller || !!pickBlocked}
                               aria-label="Pick range on chart"
                               onClick={() => {
-                                if (!controller) return;
+                                if (!controller || pickBlocked) return; // see above
                                 if (controller.rangePickArmed.value) {
                                   controller.rangePickArmed.set(false);
                                 } else {
@@ -3324,6 +3355,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             runClusterLead={sideBySide ? null : runClusterLead}
             runLabel={runLabel}
             runDisabled={runDisabled}
+            runDisabledReason={runBlocked}
             onRun={sideBySide ? undefined : runFromFooter}
           />
         </div>

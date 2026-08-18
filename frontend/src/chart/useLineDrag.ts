@@ -326,6 +326,10 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
         // server trade — route it there and bail. The backend validates levels on submit,
         // so no client-side clamp here (matches the draft's old native-drag behaviour).
         if (hit.id === DRAFT_ID) {
+          // Not from a replaying cell: that draft is a real order and this axis
+          // is a hidden past. Unreachable while positionLines draws no draft
+          // there (grabbableTradeLine walks those same specs), kept as the belt.
+          if (handle.replayRef.current?.isActive() ?? false) return;
           const d = draftOrderSignal.value;
           if (d) {
             const key = hit.field === "tp" ? "takeProfit" : hit.field; // price|stop|takeProfit

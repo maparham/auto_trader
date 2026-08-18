@@ -55,6 +55,24 @@ interface Props {
   // (null for paper). When present, the Margin line shows the broker's true
   // figures instead of the configured paper balance.
   accountSummary?: AccountSummary | null;
+  // True while the FOCUSED chart cell is inside a chart-replay session. This
+  // ticket is the terminus of every chart-side "edit this trade" gesture (see
+  // lib/signals setTradeSelected -> tradePanelOpen), and both of the things it
+  // does are wrong during a session:
+  //
+  //  - a replay ledger id is in no account book, so `editTrade` resolves null and
+  //    what renders is the LIVE new-order form: a real-money submit one click
+  //    from a trade the user placed for practice, at prices with no relationship
+  //    to the bars on screen (the same failure lib/chartOrderMenu.ts was lifted
+  //    out of ChartCore to prevent for the axis menu), and
+  //  - the quote strip polls the broker and prints today's bid/ask for the very
+  //    instrument being replayed, which is where price actually ended up.
+  //
+  // The chart-side gates stop the panel being OPENED by a practice trade; this
+  // one is why it cannot show a live quote or a submit button even when the user
+  // opens it themselves from the toolbar. Fail closed: a session in progress is
+  // worth more than a ticket.
+  replaying?: boolean;
 }
 
 // Real-money accounts are the live env (key "{broker}:live"); the backend enforces
@@ -72,6 +90,7 @@ export default function OrderTicket({
   instrumentType,
   trading,
   accountSummary,
+  replaying = false,
 }: Props) {
   // A chart-staged draft (the price-axis "+" menu's Buy/Sell limit items) is placed
   // on draftOrderSignal BEFORE this ticket mounts; seed local state from it (same-epic
@@ -125,7 +144,13 @@ export default function OrderTicket({
     if (seededDraft) draftOrderSignal.set(seededDraft);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(() => subscribeTrades(setPositions), []);
+  // The account book, for the edit lookup below. Not subscribed while replaying:
+  // the ticket renders none of it then, and the vanish guard further down would
+  // read a ledger id as a trade that disappeared.
+  useEffect(() => {
+    if (replaying) return;
+    return subscribeTrades(setPositions);
+  }, [replaying]);
   useEffect(() => editTradeSignal.subscribe(setEditId), []);
   // Clear the staged draft AND any open edit when the ticket unmounts (panel closed).
   useEffect(
@@ -149,11 +174,18 @@ export default function OrderTicket({
   // form rather than render against stale data. Guard on a NON-EMPTY book: when the
   // panel first opens from a chart selection its trades haven't loaded yet (empty
   // list), and firing this then would instantly clear the just-made selection.
+  // Never while REPLAYING. A replay ledger id is in no account book by
+  // definition, so this guard would read every practice trade as one that
+  // vanished and drop the selection the user just made on the chart — taking its
+  // pill, which IS the replay trade UI, with it. (The sidebar can be open from
+  // the toolbar independently of the chart selection, so this fires even though
+  // nothing of the account is rendered.)
   useEffect(() => {
+    if (replaying) return;
     if (editId && positions.length > 0 && !positions.some((t) => t.id === editId)) {
       setTradeSelected(null);
     }
-  }, [editId, positions]);
+  }, [editId, positions, replaying]);
 
   // Entering edit mode clears the new-order draft so its lines disappear; leaving
   // edit re-seeds a fresh draft via the maintenance effect below.
@@ -164,6 +196,10 @@ export default function OrderTicket({
   useEffect(() => {
     let alive = true;
     setQuote(null);
+    // A blind session must not have today's price fetched on its behalf, let
+    // alone shown: the poll stays stopped for as long as one is running, and the
+    // null it leaves behind is what the render below falls back on.
+    if (replaying) return;
     const tick = () =>
       fetchQuote(epic, account)
         .then((q) => alive && setQuote(q))
@@ -174,7 +210,7 @@ export default function OrderTicket({
       alive = false;
       clearInterval(id);
     };
-  }, [epic, account]);
+  }, [epic, account, replaying]);
 
   useEffect(() => {
     if (!msg) return;
@@ -336,6 +372,30 @@ export default function OrderTicket({
   const actionDetail = isLimit
     ? `${quantity} ${epic} @ ${fmt(entryPrice)} LIMIT`
     : `${quantity} ${epic} MARKET`;
+
+  // Replay session on the focused cell: no live quote, no dealing form, and an
+  // explanation instead. Refusing outright rather than rendering a disabled
+  // ticket, because a greyed-out copy of a real-money form beside a practice
+  // chart is exactly the ambiguity that made this a bug in the first place; the
+  // session has its own ticket on the chart, and an existing practice trade is
+  // edited from its pill. Placed after every hook (rules of hooks) but before
+  // BOTH real returns, so neither the edit form nor the new-order form can render.
+  if (replaying) {
+    return (
+      <div className="ot ot-replay-off">
+        <p className="ot-replay-title">Replay session running</p>
+        <p className="ot-replay-body">
+          Live dealing is off while this chart replays past bars, and the live price is
+          hidden so the session stays blind.
+        </p>
+        <p className="ot-replay-body">
+          Use the replay ticket on the chart (the session pill's Trade button) to place
+          practice orders, and a trade's own pill to move or close it. Exit the session to
+          deal on your account again.
+        </p>
+      </div>
+    );
+  }
 
   if (editTrade) {
     // Keyed by id so switching rows remounts (re-seeds the edit state cleanly).

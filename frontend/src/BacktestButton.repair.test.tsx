@@ -65,6 +65,12 @@ vi.mock("./lib/backtest", () => ({
   coverBacktestHistory: vi.fn(async () => null),
   oldestBacktestAnchorMs: () => null,
   renderWfoArtifacts: vi.fn(),
+  // The replay gate on run(). Real behaviour, spelled out rather than imported,
+  // because this factory replaces the module wholesale: this cell is not
+  // replaying, so nothing is blocked. (BacktestButton.replay.test.tsx is where
+  // the blocked side is exercised, against the real module.)
+  isChartReplaying: () => false,
+  backtestActionBlockedByReplay: () => null,
 }));
 
 vi.mock("./lib/feed", async (orig) => ({

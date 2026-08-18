@@ -311,6 +311,44 @@ export function toTradeViews(
   ];
 }
 
+/** What a chart cell's trade book does while it is (or is not) replaying — the
+ * ONE fact behind two gates that were previously two unrelated inline checks in
+ * ChartCore, either of which could be deleted without the other noticing:
+ *
+ *  - the account trades poll must not write a replaying cell's drawn book (its
+ *    book is the ledger; real positions belong to real time, and their levels
+ *    print today's market on a chart that exists to hide it), and
+ *  - the pills' Apply / Close / Cancel must go to the ledger, never the broker.
+ *
+ * Trivial to compute and deliberately so: the value is that both readers name
+ * the same decision, and that TradePills can fail CLOSED on `dealing` when it
+ * was handed no ledger actions instead of quietly dealing for real. */
+export interface CellTradeBook {
+  /** May an ACCOUNT trades update write this cell's drawn book? */
+  acceptAccountTrades: boolean;
+  /** Where a pill's Apply / Close / Cancel must land. */
+  dealing: "account" | "ledger";
+}
+/** Does this trade id come out of a replay ledger? The ids are minted only here
+ * (`rp{seq}` for a position, `ro{seq}` for a resting order — see placeMarket /
+ * placeLimit, which use a monotonic counter precisely so they stay predictable),
+ * so the shape is a reliable "this trade exists only inside a session".
+ *
+ * Used to fail CLOSED where a replaying cell's drawn book is built: an ACCOUNT
+ * trade appearing there is a bug in the gate upstream, and drawing it would put
+ * a real position's levels (today's market) on a chart that hides today, with
+ * pills on them. A real broker id that happened to match this shape would be
+ * dropped too, but only while replaying, where it had to be dropped anyway. */
+export function isReplayTradeId(id: string): boolean {
+  return /^r[po]\d+$/.test(id);
+}
+
+export function cellTradeBook(replaying: boolean): CellTradeBook {
+  return replaying
+    ? { acceptAccountTrades: false, dealing: "ledger" }
+    : { acceptAccountTrades: true, dealing: "account" };
+}
+
 export interface ReplaySummary {
   trades: number;
   wins: number;

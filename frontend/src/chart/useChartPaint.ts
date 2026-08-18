@@ -245,7 +245,10 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // trade, else the hovered trade. Selection paints in the side colour with the focused
     // handle filled; a mere hover paints grey with just the hovered handle outlined.
     const epic = epicRef.current;
-    const draft = draftRef.current;
+    // No REAL draft bracket on a replaying cell — and note what the market-draft
+    // branch below anchors on: getLivePrice(epic), i.e. today's price, painted
+    // across a chart whose whole purpose is that the user cannot see it.
+    const draft = (handle.replayRef.current?.isActive() ?? false) ? null : draftRef.current;
     let entry: number | null = null, stop: number | null = null, tp: number | null = null;
     let selectMode = false; // neutral-coloured (selected/draft) vs grey (hover)
     let activeField: TradeLineField | null = null; // filled (select) / outlined (hover) handle

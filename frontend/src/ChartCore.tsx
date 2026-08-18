@@ -158,6 +158,7 @@ import { loadSettings, type BidAsk, type BidAskStyle, type Clock, type Crosshair
 import { hexToRgba } from "./lib/lineStyle";
 import { makeFormatDate, makeMaskedFormatDate } from "./lib/timeFormat";
 import { makeReplayFormatters } from "./lib/replayFormat";
+import { cellTradeBook } from "./lib/replayLedger";
 import {
   armMaskedReplay,
   disarmMaskedReplay,
@@ -1743,6 +1744,9 @@ export default function ChartCore({
         levelsDraggable: true,
         onDrag: () => {},
         draft: draftRef.current,
+        // Must match the drawing pass below, or the hit-test would offer a grab
+        // handle on a draft line that is not on screen.
+        replaying: handle.replayRef.current?.isActive() ?? false,
         hidden: new Set(tradeUiRef.current.hidden),
         hovered: tradeUiRef.current.hovered,
         selected: tradeUiRef.current.selected,
@@ -1824,9 +1828,21 @@ export default function ChartCore({
       // toggled the selection on/off through the marker's own onClick, hence the
       // force-set openTradeEditor). Any marker dblclick returns here so it can't
       // fall through to the empty-space collapse of the bottom sub-panes.
+      // ...unless this cell is REPLAYING. Its trades live in the local ledger, so
+      // the app's real OrderTicket has no such id to edit and falls back to its
+      // LIVE new-order form: a real-money submit, priced off today's quote, one
+      // gesture from a practice trade in a session that exists to hide where
+      // price ended up. The replay equivalent of "edit this trade" is the pill
+      // already under the cursor (drag a level, then Apply / Close / Cancel), so
+      // the dblclick still SELECTS — it just withholds the panel, exactly as the
+      // single-click path above always has.
+      const opensTicket = !(handle.replayRef.current?.isActive() ?? false);
       const hoverMarker = tradeMarkerHoverSignal.value;
       if (hoverMarker) {
-        if (hoverMarker.tradeId) openTradeEditor(hoverMarker.tradeId, "price");
+        if (hoverMarker.tradeId) {
+          if (opensTicket) openTradeEditor(hoverMarker.tradeId, "price");
+          else setTradeSelected(hoverMarker.tradeId, "price", false);
+        }
         return;
       }
       // Double-click a trade line -> force the edit ticket open. Using openTradeEditor
@@ -1838,7 +1854,8 @@ export default function ChartCore({
       // hit too instead of falling through to the empty-space sub-pane collapse.
       const tradeHit = tradePillHitTest(e.clientX, e.clientY) ?? tradeLineHitTest(x, y);
       if (tradeHit) {
-        openTradeEditor(tradeHit.id, tradeHit.field);
+        if (opensTicket) openTradeEditor(tradeHit.id, tradeHit.field);
+        else setTradeSelected(tradeHit.id, tradeHit.field, false); // replay: see above
         return;
       }
       const id = alertHitTest(x, y);
@@ -2160,7 +2177,14 @@ export default function ChartCore({
     const rangePickFinalize = (endTs: number | null) => {
       if (endTs != null) overlays.updateRangePick(endTs);
       const res = overlays.finishRangePick(); // null if no real range (start === end)
-      if (res) rangePickResult.set(res);
+      // A picked range is the REAL epoch of the bars under the cursor, straight
+      // out of convertFromPixel. Publishing it from a replaying cell hands the
+      // backtest panel two datetime-local fields showing the exact date and time
+      // the session is hiding, beside an axis reading "Day 3 09:30". The panel
+      // disables its Pick Range buttons while this cell replays and drops a
+      // result anyway; this is the source-side half of the same gate, for a
+      // gesture already in flight when the session started.
+      if (res && !(handle.replayRef.current?.isActive() ?? false)) rangePickResult.set(res);
       rangePickDragCleanup?.();
       rangePickDragCleanup = null;
       rangePickPhase = "idle";
@@ -2682,7 +2706,11 @@ export default function ChartCore({
         // a line fires no onDrag, so click-to-select still works.
         justDraggedRef.current = true;
         if (id === DRAFT_ID) {
-          // Dragging a draft line just sets that value (Submit commits it).
+          // Dragging a draft line just sets that value (Submit commits it) —
+          // never from a replaying cell, whose y axis is a hidden moment in the
+          // past. No draft line is drawn there (positionLines gates it), so this
+          // is unreachable today and is here to stay unreachable.
+          if (handle.replayRef.current?.isActive() ?? false) return;
           const d = draftOrderSignal.value;
           if (d) draftOrderSignal.set({ ...d, [field]: level });
           return;
@@ -2714,6 +2742,8 @@ export default function ChartCore({
                 levelsDraggable: true,
                 onDrag,
                 draft: draftRef.current,
+                // A replaying cell draws no REAL draft order (positionLines).
+                replaying: handle.replayRef.current?.isActive() ?? false,
                 hidden: new Set(tradeUiRef.current.hidden),
                 hovered: tradeUiRef.current.hovered,
                 selected: tradeUiRef.current.selected,
@@ -2743,12 +2773,17 @@ export default function ChartCore({
         }
         const bars = chart.getDataList() ?? [];
         const oldestLoadedMs = bars[0]?.timestamp ?? null;
+        // Read live, not captured: this closure is built once in the init effect
+        // but runs on every trades/journal update AND after every data load
+        // (useLiveMarketData calls tradeMarkersDrawRef), sessions included.
+        const replaying = handle.replayRef.current?.isActive() ?? false;
         const opts = {
           trades: tradesRef.current,
           journal: journalRef.current,
           epic: epicRef.current,
           precision: precisionRef.current,
           oldestLoadedMs,
+          replaying,
         };
         // The entry arrow is always native (one netted position per epic can't
         // collide). Exits collide on a coarse view — bucket them per bar and, if
@@ -2760,6 +2795,7 @@ export default function ChartCore({
           journalRef.current,
           epicRef.current,
           bars.map((k) => ({ timestamp: k.timestamp, high: k.high })),
+          replaying,
         );
         if (exitsCollide(clusters)) {
           tradeMarkers.render(entry); // exits go to the DOM pill layer, not arrows
@@ -2780,7 +2816,10 @@ export default function ChartCore({
         // handle during render off its own render-assigned `latest`, so it is
         // exactly as live as a mirror ref would be, with nothing extra to keep
         // in step.
-        if (handle.replayRef.current?.isActive() ?? false) return;
+        //
+        // Routed through cellTradeBook so this and the pills' dealing target are
+        // one named decision rather than two unrelated inline checks (lib/replayLedger).
+        if (!cellTradeBook(handle.replayRef.current?.isActive() ?? false).acceptAccountTrades) return;
         tradesRef.current = t;
         drawPositions();
         drawTradeMarkers();
@@ -3199,6 +3238,9 @@ export default function ChartCore({
   useEffect(() => {
     const active = replay.state.mode === "active";
     setCellReplaying(cellId, active);
+    // Same fact, reactive, for app-level chrome that must RE-RENDER on it rather
+    // than ask at click time (see ChartController.replaying).
+    controller.replaying.set(active);
     // Entering a session STRANDS any guide a sibling's crosshair had already
     // painted here: the receive gate below drops every later message, including
     // the null one that would have cleared it. A stranded guide is not cosmetic
@@ -3213,8 +3255,18 @@ export default function ChartCore({
       syncedTsRef.current = null;
       redrawRef.current();
     }
-    return () => setCellReplaying(cellId, false);
-  }, [cellId, replay.state.mode]);
+    // A Pick Range armed BEFORE the session started would otherwise survive into
+    // it: the band still paints, scroll/zoom stays disabled, and the drag would
+    // now be swallowed by the publish gate in rangePickFinalize with nothing
+    // said. The panel's button is disabled by then, so the user could not even
+    // disarm it. Disarm here instead, which restores the chart and puts the
+    // explanation on the (now disabled) button.
+    if (active) controller.rangePickArmed.set(false);
+    return () => {
+      setCellReplaying(cellId, false);
+      controller.replaying.set(false);
+    };
+  }, [cellId, controller, replay.state.mode]);
 
   // Time-axis format changes -> re-register the formatter. setFormatter doesn't
   // force a repaint on its own, so nudge one via setStyles (same trick the
@@ -4218,6 +4270,12 @@ export default function ChartCore({
           onExit={replay.requestExit}
           ticketOpen={replayTicketOpen}
           onToggleTicket={() => setReplayTicketOpen((v) => !v)}
+          // The progressive reveal of this cell's SAVED backtest. All three come
+          // from the hook: it owns the redraw at every cursor, and it is the only
+          // thing that publishes a backtest while a session runs.
+          showStrategy={replay.showStrategy}
+          hasStrategy={replay.hasStrategy}
+          onToggleStrategy={replay.toggleStrategy}
           // The card has no scrim, so the pill stays clickable underneath it.
           // The hook refuses the actions either way; this is what makes the pill
           // LOOK as dead as it is (and stops a ✕-opened card being turned into a

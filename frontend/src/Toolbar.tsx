@@ -12,7 +12,7 @@ import { getSupportedIndicators } from "klinecharts";
 import { type Instrument, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
 import { ensureNotifyPermission, primeSound, toast } from "./lib/notify";
-import { EQUITY_INDICATOR } from "./lib/backtest";
+import { EQUITY_INDICATOR, isChartReplaying } from "./lib/backtest";
 import {
   alertModalRequest,
   symbolSearchRequest,
@@ -312,6 +312,13 @@ export default function Toolbar({
   // confirms and offers "View" (opens the gallery).
   const saveSnapshot_ = async () => {
     if (!chart || !controller || !symbol || !period) return;
+    // Asked before the save so the refusal can say WHICH refusal it is; the
+    // guard itself lives in saveSnapshotOfChart, where neither entry point can
+    // route around it.
+    if (isChartReplaying(chart)) {
+      toast("Chart replay is running: exit the session to snapshot this chart.");
+      return;
+    }
     const snap = await saveSnapshotOfChart(chart, controller.scope, symbol, period);
     if (!snap) {
       toast("Chart not ready — nothing to snapshot");

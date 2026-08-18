@@ -17,6 +17,12 @@ interface Props {
   /** Open/close the replay order ticket. */
   onToggleTicket(): void;
   ticketOpen: boolean;
+  /** Reveal the cell's saved backtest bar by bar as the cursor passes each fill. */
+  onToggleStrategy(): void;
+  showStrategy: boolean;
+  /** False when this cell has no saved backtest: the button is disabled and the
+   * tooltip says what to do about it. */
+  hasStrategy: boolean;
   /** True while the session report card is up. The session is technically still
    * active behind it (that is what lets the card report on it), so the pill is
    * still mounted — but the card is a one-way door and every control here is
@@ -36,6 +42,9 @@ export default function ReplayPill({
   onExit,
   onToggleTicket,
   ticketOpen,
+  onToggleStrategy,
+  showStrategy,
+  hasStrategy,
   reportPending,
 }: Props) {
   // Rewound = the cursor sits behind the furthest bar this session ever revealed.
@@ -138,6 +147,31 @@ export default function ReplayPill({
           disabled={reportPending}
         >
           Trade
+        </button>
+      </Tooltip>
+
+      {/* The saved backtest, revealed at the cursor rather than all at once.
+          Two independent gates: no saved result to reveal (the tooltip says to
+          run one), and the report card, which freezes every control here. The
+          "on" styling reads off hasStrategy too, so a sticky toggle carried over
+          from a cell that HAD a backtest never paints a disabled button as
+          active. */}
+      <Tooltip
+        content={tip(
+          hasStrategy
+            ? "Reveal the saved backtest as the cursor passes each trade"
+            : "Run a backtest on this chart first",
+        )}
+      >
+        <button
+          type="button"
+          className={`rp-btn${hasStrategy && showStrategy ? " rp-on" : ""}`}
+          aria-label="Reveal strategy"
+          aria-pressed={hasStrategy && showStrategy}
+          onClick={onToggleStrategy}
+          disabled={!hasStrategy || reportPending}
+        >
+          Strategy
         </button>
       </Tooltip>
 

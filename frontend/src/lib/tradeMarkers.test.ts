@@ -37,7 +37,7 @@ function journal(over: Partial<JournalTrade> = {}): JournalTrade {
   };
 }
 
-const base = { epic: "OIL", precision: 2, oldestLoadedMs: 0 };
+const base = { epic: "OIL", precision: 2, oldestLoadedMs: 0, replaying: false };
 
 describe("tradeMarkerSpecs — entry markers", () => {
   it("open long → one entry spec below, neutral (win null), labeled word/qty/price", () => {
@@ -162,6 +162,7 @@ describe("aggregateExitsByBar — coarse-timeframe bucketing", () => {
       ],
       "OIL",
       bars,
+      false,
     );
     expect(clusters).toHaveLength(2);
     expect(clusters[0]).toMatchObject({ barTs: 1_000_000, high: 71, net: 3 });
@@ -179,6 +180,7 @@ describe("aggregateExitsByBar — coarse-timeframe bucketing", () => {
       ],
       "OIL",
       bars,
+      false,
     );
     expect(clusters).toHaveLength(1);
     expect(clusters[0].exits).toHaveLength(1);
@@ -186,7 +188,7 @@ describe("aggregateExitsByBar — coarse-timeframe bucketing", () => {
   });
 
   it("returns nothing with no loaded bars", () => {
-    expect(aggregateExitsByBar([journal()], "OIL", [])).toEqual([]);
+    expect(aggregateExitsByBar([journal()], "OIL", [], false)).toEqual([]);
   });
 });
 
@@ -194,7 +196,7 @@ describe("exitsCollide — native vs aggregate gate", () => {
   const bars = [{ timestamp: 1_000_000, high: 71 }];
 
   it("is false when every bar holds at most one exit (native arrows)", () => {
-    const clusters = aggregateExitsByBar([journal({ ts: 1_500 })], "OIL", bars);
+    const clusters = aggregateExitsByBar([journal({ ts: 1_500 })], "OIL", bars, false);
     expect(exitsCollide(clusters)).toBe(false);
   });
 
@@ -203,7 +205,62 @@ describe("exitsCollide — native vs aggregate gate", () => {
       [journal({ ts: 1_500 }), journal({ ts: 1_800, exit: 70.9 })],
       "OIL",
       bars,
+      false,
     );
     expect(exitsCollide(clusters)).toBe(true);
+  });
+});
+
+// --- replay ------------------------------------------------------------------
+//
+// The SECOND feed onto a masked chart, and the one the position-lines gate does
+// not reach. `journal` is the account's own closed trades, held in a ref that is
+// seeded at MOUNT (ChartCore) and redrawn after every load, replay loads
+// included — so it leaks with no journal update at all, and gating the
+// subscription alone would not have closed it. A real trade of the user's that
+// falls inside the revealed window draws its exit arrow, or its aggregate pill.
+// The popover's time is masked, but you recognise your own trade, so you know
+// when the window is. Inferential, and still a leak.
+//
+// There is no replay equivalent to withhold in favour of: the replay ledger
+// never writes journalSignal (its closes go to the report card). So the journal
+// contributes nothing at all while a cell replays.
+describe("tradeMarkerSpecs — replay", () => {
+  it("draws no exit marker from the account journal while replaying", () => {
+    const live = tradeMarkerSpecs({ ...base, trades: [], journal: [journal()] });
+    expect(live).toHaveLength(1); // control: it draws normally off-session
+    const specs = tradeMarkerSpecs({ ...base, trades: [], journal: [journal()], replaying: true });
+    expect(specs).toEqual([]);
+  });
+
+  it("draws entry markers for the replay ledger's own positions, and only those", () => {
+    // Same fail-closed shape tradeLineSpecs uses: an ACCOUNT position reaching a
+    // replaying cell's marker layer is a bug upstream, and drawing it would put
+    // a real entry at today's level on a chart that hides today.
+    const specs = tradeMarkerSpecs({
+      ...base,
+      trades: [position({ id: "rp1" }), position({ id: "DIAAAAAB1234567" })],
+      journal: [],
+      replaying: true,
+    });
+    expect(specs.map((s) => s.tradeId)).toEqual(["rp1"]);
+  });
+
+  it("still draws the account's own markers when NOT replaying", () => {
+    const specs = tradeMarkerSpecs({
+      ...base,
+      trades: [position({ id: "DIAAAAAB1234567" })],
+      journal: [journal()],
+    });
+    expect(specs).toHaveLength(2);
+  });
+});
+
+describe("aggregateExitsByBar — replay", () => {
+  const bars = [{ timestamp: 1_000_000, high: 71 }];
+
+  it("buckets nothing while replaying (the DOM pill layer is the other exit route)", () => {
+    expect(aggregateExitsByBar([journal({ ts: 1_500 })], "OIL", bars, false)).toHaveLength(1);
+    expect(aggregateExitsByBar([journal({ ts: 1_500 })], "OIL", bars, true)).toEqual([]);
   });
 });

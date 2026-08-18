@@ -49,6 +49,17 @@ export class ChartController {
   // cleared by Unlock (which deletes the scope's snapshotMeta).
   readonly readOnly = new Signal<boolean>(false);
 
+  // True while THIS cell is inside a chart-replay session. The REACTIVE half of
+  // the replay-gating idioms: `handle.replayRef.current?.isActive()` answers
+  // inside ChartCore, `isChartReplaying(chart)` answers for module code holding a
+  // chart, and `isCellReplaying(cellId)` answers for module code holding a cell
+  // id — but all three are imperative reads, so app-level CHROME that has to
+  // re-render when a session starts or ends (the order ticket it must stop
+  // mounting, the backtest panel's Pick Range and Run buttons it must disable)
+  // has nothing to subscribe to. Written by ChartCore's replay-mode effect, in
+  // the same commit as setCellReplaying, so the two cannot disagree.
+  readonly replaying = new Signal<boolean>(false);
+
   // --- per-cell UI signals (were module globals in signals.ts) ----------------
   // The AVWAP INSTANCE id the user is currently placing ("click a bar to anchor"),
   // or null when not in anchor mode. Carries the id (not just a bool) so multiple

@@ -12,6 +12,8 @@ import {
   coverBacktestHistory,
   oldestBacktestAnchorMs,
   renderWfoArtifacts,
+  backtestActionBlockedByReplay,
+  isChartReplaying,
 } from "./lib/backtest";
 import type { ChartController } from "./lib/chartController";
 import Tooltip from "./components/Tooltip";
@@ -143,7 +145,14 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // reopen all set wfoStateSignal.value.result. A ref that only the direct-run
       // path writes would leave the scheme picker stale (or empty) on resumed runs.
       const scheme = wfoStateSignal.value?.result?.schemes[req.schemeIndex];
-      if (chart && scheme) renderWfoArtifacts(chart, scheme);
+      if (!chart || !scheme) return;
+      // renderWfoArtifacts refuses on a replaying chart (it would tear the
+      // reveal down and paint real-calendar fold bands). Say so: this is a
+      // click on a scheme in the results panel, and a picker that silently
+      // does nothing is the pattern this feature rejected once already.
+      if (!renderWfoArtifacts(chart, scheme)) {
+        toast(backtestActionBlockedByReplay({ replaying: true, action: "render-wfo" })!);
+      }
     }),
   );
 
@@ -165,6 +174,55 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     const evaluatingHoldout = holdoutEvalSignal.value;
     holdoutEvalSignal.set(false);
     if (!chart || !epic || !period || running) return;
+    // ...and not while this cell is REPLAYING. Placed after the holdout consume
+    // above (which is deliberately ahead of every early return) and before any
+    // work, because a run does three things a blind session cannot survive: it
+    // publishes `period` as a real calendar range onto the shared panel, it
+    // renders every trade the strategy is about to take, and it then pages real
+    // post-cursor history in and fits the view to the whole traded span. One
+    // guard here covers Backtest, Sweep and Walk-forward (all three enter
+    // through this function) and the agent bridge with them, which is why there
+    // is no second copy in the sweep/WFO branches below.
+    //
+    // isChartReplaying, not controller.replaying: the signal is effect-timed for
+    // chrome that has to re-render, this is the render-fresh read, and when they
+    // could ever disagree the refusal must win.
+    const replayBlock = backtestActionBlockedByReplay({
+      replaying: isChartReplaying(chart),
+      action: "run",
+    });
+    if (replayBlock) {
+      // Surfaced, not swallowed: the results pane renders this. A Run button that
+      // quietly does nothing is the pattern this feature already rejected once.
+      setError(replayBlock);
+      // ...and surfaced to the AGENT BRIDGE, which is the other caller of this
+      // entrance and has its own protocol (agent/actions/backtest.ts): it only
+      // attributes an error to the run it requested once `running` has gone
+      // true, and it settles on `running` going false. A refusal that touched
+      // neither would leave ui_invoke("backtest.run") waiting out the bridge's
+      // 5s start timeout and then reporting "run did not start (is a chart with
+      // a symbol open and focused?)", which is the wrong reason. Flip the pair
+      // around an IMPERATIVE publish of the same string so the bridge rejects
+      // immediately, with this message. React batches the two flips into one
+      // commit, so nothing flickers; the effect on `error` re-publishes the
+      // identical value harmlessly.
+      backtestRunningSignal.set(true);
+      backtestMessagesSignal.set({ error: replayBlock });
+      // A SWEEP has a THIRD channel, watched by neither of the above: both the
+      // panel's sweep view and agent/actions/sweep.ts read sweepStateSignal, and
+      // that bridge settles on a terminal state carrying an `error` even before
+      // its run started. Without this, ui_invoke("sweep.start") waited out its
+      // own 5s START_TIMEOUT_MS and then rejected with "sweep did not start (is
+      // a chart with a symbol open and focused?)" — the wrong reason, late, with
+      // the axes pinned for the whole window. sweepCatchState (not a hand-built
+      // state) so a refusal looks exactly like any other failed sweep and keeps
+      // the rows a previous sweep put on screen.
+      if (sweepAxesSignal.value.length > 0) {
+        sweepStateSignal.set(sweepCatchState(sweepStateSignal.value, false, new Error(replayBlock)));
+      }
+      backtestRunningSignal.set(false);
+      return;
+    }
     setRunning(true);
     // Wall-clock start for the footer's "Took Ns" readout. Captured before any
     // fetching so the displayed duration covers the whole run, not just the

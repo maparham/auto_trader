@@ -134,6 +134,7 @@ describe("tradeLineSpecs", () => {
     precision: 2,
     levelsDraggable: true,
     onDrag: () => {},
+    replaying: false,
   };
 
   it("emits a price line per trade, plus SL/TP only when set", () => {
@@ -213,6 +214,82 @@ describe("tradeLineSpecs", () => {
     expect(specs.map((s) => s.key)).toEqual(["draft:price", "draft:stop", "draft:tp"]);
     expect(specs.every((s) => s.draggable)).toBe(true);
     expect(specs[0].label).toBe("Buy limit 1 @ 99.00");
+  });
+
+  // A staged draft is a REAL broker order waiting on Submit. Drawn on a
+  // replaying chart it is also DRAGGABLE (the specs carry onDragEnd, and the
+  // pixel pass that feeds the drag hit-test builds from this same function), so
+  // a user could set a live order's entry/SL/TP by dragging them onto candles
+  // from years ago and submit at those levels. lib/chartOrderMenu closed the menu
+  // route to the same failure; this closes the drawn one, at the single place
+  // both the drawing pass and the hit-test pass go through.
+  it("draws NO draft lines while the cell is replaying", () => {
+    const draft = {
+      epic: "EURUSD",
+      side: "buy" as const,
+      quantity: 1,
+      type: "limit" as const,
+      price: 99,
+      stop: 98,
+      takeProfit: 101,
+      expiresAt: null,
+    };
+    const live = tradeLineSpecs({ ...base, trades: [], draft });
+    expect(live.map((s) => s.key)).toEqual(["draft:price", "draft:stop", "draft:tp"]);
+    const replaying = tradeLineSpecs({ ...base, trades: [], draft, replaying: true });
+    expect(replaying).toEqual([]);
+  });
+
+  it("keeps drawing the cell's OWN trades while replaying (only the draft goes)", () => {
+    // The replay ledger's positions render through this same path, so the gate
+    // must be draft-only: dropping the trades would blank the practice book.
+    const specs = tradeLineSpecs({
+      ...base,
+      // A ledger id: while replaying, that is what the cell's book holds (see
+      // the account-trades test below).
+      trades: [trade({ id: "rp1", stop: 95, takeProfit: 105 })],
+      draft: {
+        epic: "EURUSD",
+        side: "buy" as const,
+        quantity: 1,
+        type: "limit" as const,
+        price: 99,
+        stop: 98,
+        takeProfit: 101,
+        expiresAt: null,
+      },
+      replaying: true,
+    });
+    expect(specs.some((s) => s.key.startsWith("draft:"))).toBe(false);
+    expect(specs.length).toBeGreaterThan(0);
+  });
+
+  // What pins the account-trades gate on ChartCore's subscribeTrades. That gate
+  // is one inline check in a subscription no test can mount, so instead of
+  // proving it is there, make its removal harmless: a replaying cell's drawn
+  // book takes ONLY ledger ids. An account position drawn there would put its
+  // real levels (today's market) on a chart that exists to hide today, and give
+  // them pills that deal for real.
+  it("draws only the replay ledger's own trades while replaying", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [
+        trade({ id: "rp1", stop: 95, takeProfit: 105 }), // the practice position
+        trade({ id: "DIAAAAAB1234567", stop: 95, takeProfit: 105 }), // a real account deal id
+      ],
+      replaying: true,
+    });
+    expect(specs.every((s) => s.key.startsWith("rp1:"))).toBe(true);
+    expect(specs.length).toBeGreaterThan(0);
+  });
+
+  it("draws the account's trades normally when NOT replaying", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ id: "DIAAAAAB1234567" })],
+      replaying: false,
+    });
+    expect(specs.length).toBeGreaterThan(0);
   });
 
   it("anchors draft pills right of the bracket spine (badges own the left column)", () => {

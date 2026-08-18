@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import TradePills, { type TradePillItem } from "./TradePills";
 import type { TradeView } from "../lib/trading";
-import type { PendingEdit } from "../lib/signals";
+import { setTradeSelected, tradePanelOpen, editTradeSignal, type PendingEdit } from "../lib/signals";
 import { armMaskedReplay, disarmMaskedReplay, maskedReplaySignal } from "../lib/maskedReplay";
+import { setCellReplaying } from "../lib/chartSync";
 
 // The dealing calls are the thing the replay tests must prove are NOT reached:
 // a replay session trades a local ledger, so a single HTTP dealing call would be
@@ -30,6 +31,14 @@ const confirms = vi.hoisted(() => ({
 vi.mock("../lib/signals", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/signals")>()),
   ...confirms,
+}));
+
+// The fail-closed path tells the user why nothing happened rather than silently
+// dropping the click, so the toast is part of what these tests assert.
+const toasts = vi.hoisted(() => ({ toast: vi.fn() }));
+vi.mock("../lib/notify", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/notify")>()),
+  ...toasts,
 }));
 
 // Two trades, each with an entry + TP pill, so overlap z-order (the "raised"
@@ -270,6 +279,9 @@ afterEach(() => {
   // maskedReplaySignal is module-global: an armed entry left behind would mask
   // every later test in this file.
   maskedReplaySignal.set(disarmMaskedReplay(maskedReplaySignal.value, "cell-1"));
+  // Same for the replaying-cells registry and the app-wide trade selection.
+  setCellReplaying("cell-1", false);
+  setTradeSelected(null);
 });
 
 describe("TradePills actions override (replay)", () => {
@@ -344,6 +356,80 @@ describe("TradePills actions override (replay)", () => {
     fireEvent.click(container.querySelector<HTMLElement>(".tp-apply")!);
     await vi.waitFor(() => expect(dealing.applyEditedLevels).toHaveBeenCalledTimes(1));
     expect(dealing.refreshTrades).toHaveBeenCalled();
+  });
+});
+
+// What pins the `actions` override at ChartCore's call site. Deleting that
+// ternary leaves the suite above green — every replay pill would then Apply /
+// Close / Cancel straight to the broker — so the component itself refuses the
+// account when its cell is replaying, and these tests are what would fail.
+describe("TradePills fails CLOSED when a replaying cell supplies no actions", () => {
+  it("makes no dealing call on Apply, and says why", async () => {
+    setCellReplaying("cell-1", true);
+    const { container } = renderPills({
+      pills: [{ ...pill("A", "price"), changed: true }],
+      tradesRef: { current: [tradeView()] },
+    });
+    fireEvent.click(container.querySelector<HTMLElement>(".tp-apply")!);
+    await vi.waitFor(() => expect(toasts.toast).toHaveBeenCalled());
+    expect(dealing.applyEditedLevels).not.toHaveBeenCalled();
+    expect(dealing.refreshTrades).not.toHaveBeenCalled();
+  });
+
+  it("makes no dealing call on Close", async () => {
+    setCellReplaying("cell-1", true);
+    const { container } = renderPills({
+      pills: [pill("A", "price")],
+      tradesRef: { current: [tradeView()] },
+    });
+    fireEvent.click(container.querySelector<HTMLElement>(".tp-close")!);
+    await confirms.requestConfirm.mock.calls[0][0].onConfirm();
+    expect(dealing.closePosition).not.toHaveBeenCalled();
+    expect(dealing.refreshTrades).not.toHaveBeenCalled();
+  });
+
+  it("makes no dealing call on an order Cancel", async () => {
+    setCellReplaying("cell-1", true);
+    const { container } = renderPills({
+      pills: [{ ...pill("A", "price"), kind: "order" }],
+      tradesRef: { current: [tradeView({ kind: "order" })] },
+    });
+    fireEvent.click(container.querySelector<HTMLElement>(".tp-close")!);
+    await confirms.requestConfirm.mock.calls[0][0].onConfirm();
+    expect(dealing.cancelWorkingOrder).not.toHaveBeenCalled();
+    expect(dealing.refreshTrades).not.toHaveBeenCalled();
+  });
+});
+
+// The real order ticket is a REAL-MONEY form on a live quote. A pill belonging to
+// a replay ledger must never be the thing that opens it (see lib/signals
+// setTradeSelected -> tradePanelOpen, and App's trade sidebar).
+describe("TradePills never opens the real order ticket for a replaying cell", () => {
+  it("selects the trade on the details click but leaves the ticket closed", () => {
+    setCellReplaying("cell-1", true);
+    renderPills({ pills: [pill("rp1", "price")], tradesRef: { current: [tradeView({ id: "rp1" })] } });
+    fireEvent.click(screen.getByLabelText("Trade details"));
+    expect(editTradeSignal.value).toBe("rp1"); // still selects: the pills are its UI
+    expect(tradePanelOpen.value).toBe(false); // but no real ticket
+  });
+
+  it("still opens the ticket on a live cell", () => {
+    renderPills({ pills: [pill("A", "price")], tradesRef: { current: [tradeView()] } });
+    fireEvent.click(screen.getByLabelText("Trade details"));
+    expect(tradePanelOpen.value).toBe(true);
+  });
+
+  it("does not open the ticket when removing a replay SL", async () => {
+    setCellReplaying("cell-1", true);
+    const actions = replayActions();
+    const { container } = renderPills({
+      pills: [pill("rp1", "stop")],
+      tradesRef: { current: [tradeView({ id: "rp1" })] },
+      actions,
+    });
+    fireEvent.click(container.querySelector<HTMLElement>(".tp-remove")!);
+    await vi.waitFor(() => expect(actions.apply).toHaveBeenCalledTimes(1));
+    expect(tradePanelOpen.value).toBe(false);
   });
 });
 
