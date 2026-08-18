@@ -2,23 +2,38 @@ import type { KLineData } from "klinecharts";
 import { describe, expect, it } from "vitest";
 import {
   computeTrendlines,
+  dropTrendlineHandles,
   getTrendlineHandles,
   hitAnyTrendlineHandle,
   hitHandle,
   inTouchBand,
+  withinSlope,
+  aboveSlope,
+  hasBackClearance,
+  hasSwingReach,
+  isSignificantSwing,
   lineExtent,
   lineKey,
   meetsAt,
   pierces,
   TL_HANDLE_HIT,
+  TL_HANDLE_RADIUS,
+  TL_HANDLE_STROKE,
+  TL_TOUCH_RADIUS,
   projectAt,
   rankLines,
+  dedupeTolerance,
   selectDrawnLines,
+  TL_DEDUPE_ATR,
+  TL_NEAR_PRICE_ATR,
   TRENDLINES_TEMPLATE,
   type TrendlinesCalcPoint,
   type TrendLine,
 } from "./trendlines";
-import { TRENDLINES_DEFAULTS, type TrendlinesConfig } from "./trendlinesOutputs";
+import {
+  TRENDLINES_DEFAULTS,
+  type TrendlinesConfig,
+} from "./trendlinesOutputs";
 
 // A resistance line falling 1.0 per bar from 100 at bar 0 to 90 at bar 10.
 const res: TrendLine = {
@@ -28,6 +43,10 @@ const res: TrendLine = {
   i2: 10,
   p2: 90,
   touches: 2,
+  // The two anchors, which is what a freshly seeded line carries. Fixtures that
+  // move their anchors and mean to exercise the shared-BAR half of sharesPivot
+  // override this; the rest match on anchors, as they did before it existed.
+  touchIdxs: [0, 10],
   lastTouchIdx: 10,
   brokenIdx: null,
 };
@@ -192,9 +211,14 @@ describe("meetsAt", () => {
 describe("rankLines", () => {
   const base: TrendLine = { ...res };
   it("prefers more touches, then longer span", () => {
-    expect(rankLines({ ...base, touches: 3 }, { ...base, touches: 2 })).toBeLessThan(0);
     expect(
-      rankLines({ ...base, i1: 0, lastTouchIdx: 50 }, { ...base, i1: 10, lastTouchIdx: 50 }),
+      rankLines({ ...base, touches: 3 }, { ...base, touches: 2 }),
+    ).toBeLessThan(0);
+    expect(
+      rankLines(
+        { ...base, i1: 0, lastTouchIdx: 50 },
+        { ...base, i1: 10, lastTouchIdx: 50 },
+      ),
     ).toBeLessThan(0);
   });
 
@@ -220,11 +244,200 @@ function flat(n: number, from = 0): KLineData[] {
   return Array.from({ length: n }, (_, k) => bar(from + k, 99.5, 100.5));
 }
 
+// minBackBars 0, unlike the shipped default of 10: these fixtures are short
+// synthetic corridors whose first anchor sits within a few bars of the series
+// start, where the clearance gate rejects by design. Every test that is about
+// the gate itself sets it explicitly.
 const cfg = (over: Partial<TrendlinesConfig> = {}): TrendlinesConfig => ({
   ...TRENDLINES_DEFAULTS,
   pivotLen: 2,
   minSpanBars: 5,
+  minBackBars: 0,
   ...over,
+});
+
+describe("isSignificantSwing", () => {
+  //        0   1   2   3   4
+  const highs = [10, 14, 10, 10, 12];
+  const lows = [10, 10, 10, 6, 10];
+
+  it("passes everything at zero, without reading a bar", () => {
+    // Off is a short circuit, not a comparison that happens to come out true:
+    // an EMPTY pool would otherwise reject.
+    expect(isSignificantSwing([], [], [], 0, "support", 1, 0)).toBe(true);
+  });
+
+  it("measures a low against the most recent HIGH pivot before it", () => {
+    // Leg = highs[1] - lows[3] = 14 - 6 = 8.
+    const at = (mult: number) =>
+      isSignificantSwing(highs, lows, [1], 3, "support", 1, mult);
+    expect(at(8)).toBe(true);
+    expect(at(8.01)).toBe(false);
+  });
+
+  it("measures a high against the most recent LOW pivot before it", () => {
+    // Leg = highs[4] - lows[3] = 12 - 6 = 6.
+    const at = (mult: number) =>
+      isSignificantSwing(highs, lows, [3], 4, "resistance", 1, mult);
+    expect(at(6)).toBe(true);
+    expect(at(6.01)).toBe(false);
+  });
+
+  it("takes the LAST opposite pivot, not the first", () => {
+    // Pool [0, 1]: bar 1's high of 14 is the leg, not bar 0's 10.
+    expect(isSignificantSwing(highs, lows, [0, 1], 3, "support", 1, 8)).toBe(
+      true,
+    );
+    expect(isSignificantSwing(highs, lows, [0], 3, "support", 1, 8)).toBe(false);
+  });
+
+  it("ignores an opposite pivot at or after the bar itself", () => {
+    // Strictly before: one bar can be both a strict high and a strict low
+    // pivot, and the resistance pool fills first within a confirm bar. With 3
+    // and 4 skipped, bar 1 is the leg; with only 3 and 4 there is nothing.
+    expect(isSignificantSwing(highs, lows, [1, 3, 4], 3, "support", 1, 8)).toBe(
+      true,
+    );
+    expect(isSignificantSwing(highs, lows, [3, 4], 3, "support", 1, 0.1)).toBe(
+      false,
+    );
+  });
+
+  it("rejects when no opposite pivot exists yet", () => {
+    // Unmeasurable is not the same as big.
+    expect(isSignificantSwing(highs, lows, [], 3, "support", 1, 0.1)).toBe(
+      false,
+    );
+  });
+
+  it("scales the threshold with ATR", () => {
+    expect(isSignificantSwing(highs, lows, [1], 3, "support", 2, 4)).toBe(true);
+    expect(isSignificantSwing(highs, lows, [1], 3, "support", 2, 4.01)).toBe(
+      false,
+    );
+  });
+
+  it("does NOT depend on pivotLen, which is the whole point", () => {
+    // The old window-average measure grew with pivotLen, so a stricter pivot
+    // setting could ADD lines. There is no pivotLen argument left to pass.
+    expect(isSignificantSwing.length).toBe(7);
+  });
+});
+
+describe("withinSlope", () => {
+  // Rise 10 over span 10 = 1.0 per bar; at ATR 2 that is 0.5 ATR per bar.
+  const line: TrendLine = { ...sup, p1: 100, p2: 110 };
+
+  it("passes everything at zero", () => {
+    expect(withinSlope(line, 2, 0)).toBe(true);
+  });
+
+  it("compares steepness in ATR per bar", () => {
+    expect(withinSlope(line, 2, 0.5)).toBe(true);
+    expect(withinSlope(line, 2, 0.49)).toBe(false);
+  });
+
+  it("ignores direction, only steepness", () => {
+    const down = { ...line, p2: 90 };
+    expect(withinSlope(down, 2, 0.5)).toBe(true);
+    expect(withinSlope(down, 2, 0.49)).toBe(false);
+  });
+});
+
+describe("aboveSlope", () => {
+  const line: TrendLine = { ...sup, p1: 100, p2: 110 };
+
+  it("passes everything at zero", () => {
+    expect(aboveSlope(line, 2, 0)).toBe(true);
+  });
+
+  it("is the mirror of withinSlope at the same threshold", () => {
+    // Both true exactly at the boundary, so a band of [x, x] admits only a
+    // line at exactly that steepness rather than nothing at all.
+    expect(aboveSlope(line, 2, 0.5)).toBe(true);
+    expect(withinSlope(line, 2, 0.5)).toBe(true);
+    expect(aboveSlope(line, 2, 0.51)).toBe(false);
+  });
+
+  it("ignores direction, only steepness", () => {
+    const down = { ...line, p2: 90 };
+    expect(aboveSlope(down, 2, 0.5)).toBe(true);
+    expect(aboveSlope(down, 2, 0.51)).toBe(false);
+  });
+});
+
+describe("hasSwingReach", () => {
+  // A low of 6 with 10s to its left: it beats every one of them.
+  const lows = [10, 10, 10, 10, 6];
+  const highs = [10, 10, 10, 10, 14];
+
+  it("passes everything at zero, without reading a bar", () => {
+    expect(hasSwingReach([], 0, "support", 0)).toBe(true);
+  });
+
+  it("counts only the bars to the LEFT", () => {
+    // Nothing to the right of index 4 exists, and asking for 4 still passes:
+    // right reach is deliberately not part of this.
+    expect(hasSwingReach(lows, 4, "support", 4)).toBe(true);
+    expect(hasSwingReach(highs, 4, "resistance", 4)).toBe(true);
+  });
+
+  it("rejects rather than truncating when it runs off the start", () => {
+    // Same as isPivotAt: a window that does not fit is not a smaller window.
+    expect(hasSwingReach(lows, 4, "support", 5)).toBe(false);
+  });
+
+  it("stops at the first bar that is not beyond the pivot", () => {
+    expect(hasSwingReach([10, 5, 10, 10, 6], 4, "support", 2)).toBe(true);
+    expect(hasSwingReach([10, 5, 10, 10, 6], 4, "support", 3)).toBe(false);
+  });
+
+  it("treats an equal bar as not beaten", () => {
+    // Strict, matching isPivotAt's strict mode: a flat stretch is not reach.
+    expect(hasSwingReach([10, 10, 10, 6, 6], 4, "support", 1)).toBe(false);
+  });
+});
+
+describe("hasBackClearance", () => {
+  // A flat corridor at 100 with a low at bar 4: a support line anchored there
+  // has bars 0..3 well above it, so none of them can pierce it.
+  const vals = Array.from({ length: 20 }, () => 100);
+  vals[4] = 90;
+  vals[12] = 95;
+  const atr: Array<number | null> = Array.from({ length: 20 }, () => 1);
+  const line: TrendLine = { ...sup, i1: 4, p1: 90, i2: 12, p2: 95 };
+
+  it("passes everything at zero", () => {
+    expect(hasBackClearance(line, vals, atr, 0.25, 0)).toBe(true);
+  });
+
+  it("reads only the bars before the FIRST anchor", () => {
+    expect(hasBackClearance(line, vals, atr, 0.25, 4)).toBe(true);
+  });
+
+  it("rejects rather than truncating when it runs off the start", () => {
+    // Same as isPivotAt and hasSwingReach: a window that does not fit is not a
+    // smaller window, and the gate must not go weakest where the sample is
+    // thinnest.
+    expect(hasBackClearance(line, vals, atr, 0.25, 5)).toBe(false);
+  });
+
+  it("stops at the first bar that pierces the back-projection", () => {
+    const pierced = [...vals];
+    pierced[2] = 80;
+    expect(hasBackClearance(line, pierced, atr, 0.25, 1)).toBe(true);
+    expect(hasBackClearance(line, pierced, atr, 0.25, 2)).toBe(false);
+  });
+
+  it("counts an untestable bar as surviving", () => {
+    // An unwarmed ATR gives no tolerance to test against, which is exactly what
+    // the forward validation pass does with the same bar.
+    const pierced = [...vals];
+    pierced[2] = 80;
+    const cold = [...atr];
+    cold[2] = null;
+    expect(hasBackClearance(line, pierced, cold, 0.25, 4)).toBe(true);
+  });
 });
 
 describe("computeTrendlines", () => {
@@ -243,6 +456,192 @@ describe("computeTrendlines", () => {
     const { lines } = computeTrendlines(bars, cfg());
     const sup = lines.filter((l) => l.side === "support");
     expect(sup.some((l) => l.i1 === 20 && l.i2 === 40)).toBe(true);
+  });
+
+  // Min Pivot Size measures the LEG (this pivot to the last opposite pivot), so
+  // these fixtures need BOTH sides, and the first pivot has to confirm after
+  // ATR(14) has warmed: a confirm bar inside warm-up is skipped entirely, and
+  // the missing turn silently starves every later leg.
+  const wide = (n: number) =>
+    Array.from({ length: n }, (_, k) => bar(k, 95, 105));
+  // Highs poking above the corridor at 20 and 40, lows below it at 30 and 50.
+  // The corridor's range of 10 settles ATR at ~10, so a leg of 11 is small and
+  // one of ~20 is large against the same threshold.
+  const legged = (lo30: number, lo50: number) => {
+    const bars = wide(80);
+    bars[20] = bar(20, 95, 105.5);
+    bars[30] = bar(30, lo30, 105);
+    bars[40] = bar(40, 95, 105.5);
+    bars[50] = bar(50, lo50, 105);
+    return bars;
+  };
+  const hasPair = (bars: KLineData[], c: TrendlinesConfig) =>
+    computeTrendlines(bars, c).lines.some(
+      (l) => l.side === "support" && l.i1 === 30 && l.i2 === 50,
+    );
+
+  it("drops a shallow swing once Min Pivot Size is on", () => {
+    const bars = legged(94.5, 94.5); // legs of 11, about 1.05 ATR
+    expect(hasPair(bars, cfg())).toBe(true);
+    expect(hasPair(bars, cfg({ minSwingAtr: 1.5 }))).toBe(false);
+  });
+
+  it("keeps a deep swing at the same setting", () => {
+    // Legs of 20.5 and 18.5: the gate rejects by SIZE, not everything.
+    expect(hasPair(legged(85, 87), cfg({ minSwingAtr: 1.5 }))).toBe(true);
+  });
+
+  // Min Pivot Size no longer moves with Min Pivot Length. The measure it
+  // replaced averaged the fractal window, so widening that window inflated
+  // every pivot's size and a STRICTER pivot setting could ADD lines (measured
+  // on the DXY fixture: 11 of 123 pivots passed at length 2, 25 of 51 at
+  // length 5, and the drawn count went 3 to 12).
+  it("gives the same verdict at every Pivot Length", () => {
+    const shallow = legged(94.5, 94.5);
+    const deep = legged(85, 87);
+    for (const pivotLen of [2, 3, 4, 5]) {
+      const c = { ...cfg({ minSwingAtr: 1.5 }), pivotLen };
+      expect(hasPair(shallow, c), `shallow at ${pivotLen}`).toBe(false);
+      expect(hasPair(deep, c), `deep at ${pivotLen}`).toBe(true);
+    }
+  });
+
+  it("drops a swing with too little reach once Min Swing Reach is on", () => {
+    // A rising pair, with a shallower low at bar 32 that sits ABOVE the line
+    // (so it does not pierce the candidate) but below bar 40's low, which caps
+    // bar 40's left reach at 7.
+    const bars = flat(60);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 94, 100.5);
+    bars[32] = bar(32, 93.5, 100.5);
+    const pair = (c: TrendlinesConfig) =>
+      computeTrendlines(bars, c).lines.some(
+        (l) => l.side === "support" && l.i1 === 20 && l.i2 === 40,
+      );
+    expect(pair(cfg({ minSwingReach: 5 }))).toBe(true);
+    expect(pair(cfg({ minSwingReach: 10 }))).toBe(false);
+  });
+
+  it("reaches further back as Pair Lookback widens", () => {
+    // Three lows far apart. With a window of 1, bar 60 only pairs with bar 40,
+    // so the 20-to-60 line cannot exist; at 2 it reaches past bar 40 to bar 20.
+    // This is why a STRICTER pivot setting can ADD lines: dropping pivots frees
+    // the same slots to cover more bars.
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 92, 100.5);
+    bars[60] = bar(60, 94, 100.5);
+    const pair = (c: TrendlinesConfig) =>
+      computeTrendlines(bars, c).lines.some(
+        (l) => l.side === "support" && l.i1 === 20 && l.i2 === 60,
+      );
+    expect(pair(cfg({ pairPivots: 1 }))).toBe(false);
+    expect(pair(cfg({ pairPivots: 2 }))).toBe(true);
+  });
+
+  it("never seeds a line flatter than Min Slope", () => {
+    const barsFor = (lo60: number) => {
+      const b = flat(80);
+      b[20] = bar(20, 90, 100.5);
+      b[60] = bar(60, lo60, 100.5);
+      return b;
+    };
+    const pair = (b: KLineData[], c: TrendlinesConfig) =>
+      computeTrendlines(b, c).lines.some((l) => l.i1 === 20 && l.i2 === 60);
+    const flatPair = barsFor(90.2);
+    const steep = barsFor(98);
+    expect(pair(flatPair, cfg())).toBe(true);
+    expect(pair(flatPair, cfg({ minSlopeAtr: 0.1 }))).toBe(false);
+    expect(pair(steep, cfg({ minSlopeAtr: 0.1 }))).toBe(true);
+  });
+
+  it("never seeds a line steeper than Max Slope", () => {
+    // Two dips 40 bars apart. The steep pair climbs 8 over 40 bars (0.2 per
+    // bar, about 0.2 ATR); the shallow pair climbs 1.
+    const barsFor = (lo60: number) => {
+      const b = flat(80);
+      b[20] = bar(20, 90, 100.5);
+      b[60] = bar(60, lo60, 100.5);
+      return b;
+    };
+    const pair = (b: KLineData[], c: TrendlinesConfig) =>
+      computeTrendlines(b, c).lines.some((l) => l.i1 === 20 && l.i2 === 60);
+    const steep = barsFor(98);
+    const shallow = barsFor(91);
+    expect(pair(steep, cfg())).toBe(true);
+    expect(pair(steep, cfg({ maxSlopeAtr: 0.1 }))).toBe(false);
+    expect(pair(shallow, cfg({ maxSlopeAtr: 0.1 }))).toBe(true);
+  });
+
+  it("never seeds a pair whose wrong side is in the past", () => {
+    // A support pair at bars 30 and 50 with bar 20 far BELOW its
+    // back-projection: valid over (i1, i], and nonsense before it. Bar 20, not
+    // an earlier one, so ATR(14) has warmed up there.
+    const bars = flat(80);
+    bars[20] = bar(20, 80, 100.5);
+    bars[30] = bar(30, 90, 100.5);
+    bars[50] = bar(50, 94, 100.5);
+    const seeds = (c: TrendlinesConfig) =>
+      computeTrendlines(bars, c).lines.some((l) => l.i1 === 30 && l.i2 === 50);
+    expect(seeds(cfg())).toBe(true);
+    expect(seeds(cfg({ minBackBars: 9 }))).toBe(true);
+    expect(seeds(cfg({ minBackBars: 10 }))).toBe(false);
+  });
+
+  it("silences a line past Max Span without destroying it", () => {
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[60] = bar(60, 94, 100.5);
+    const emits = (c: TrendlinesConfig) =>
+      computeTrendlines(bars, c).points.some((p) => p.tl_support !== undefined);
+    expect(emits(cfg())).toBe(true);
+    expect(emits(cfg({ maxSpanBars: 40 }))).toBe(true);
+    expect(emits(cfg({ maxSpanBars: 39 }))).toBe(false);
+    const { lines } = computeTrendlines(bars, cfg({ maxSpanBars: 39 }));
+    expect(lines.some((l) => l.lastTouchIdx - l.i1 >= 40)).toBe(true);
+  });
+
+  it("silences a line past Max Touches without destroying it", () => {
+    // Three dips on one rising line: the pair plus a third pivot touching it.
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 92, 100.5);
+    bars[60] = bar(60, 94, 100.5);
+    const emits = (c: TrendlinesConfig) =>
+      computeTrendlines(bars, c).points.some((p) => p.tl_support !== undefined);
+    expect(emits(cfg({ minTouches: 3 }))).toBe(true);
+    expect(emits(cfg({ minTouches: 3, maxTouches: 3 }))).toBe(true);
+    expect(emits(cfg({ minTouches: 3, maxTouches: 2 }))).toBe(false);
+    // Silenced, not deleted: it is still in live state doing pierce and touch
+    // work for the lines around it.
+    const { lines } = computeTrendlines(
+      bars,
+      cfg({ minTouches: 3, maxTouches: 2 }),
+    );
+    expect(lines.some((l) => l.touches >= 3)).toBe(true);
+  });
+
+  // THE INVARIANT: one recorded index per touch, anchors included, so the ×N
+  // tag and the rings the chart paints can never disagree.
+  it("records the bar of every touch, the anchors among them", () => {
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 92, 100.5);
+    bars[60] = bar(60, 94, 100.5);
+    const { lines } = computeTrendlines(bars, cfg());
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) {
+      expect(l.touchIdxs).toHaveLength(l.touches);
+      expect(l.touchIdxs).toContain(l.i1);
+      expect(l.touchIdxs).toContain(l.i2);
+      expect(Math.max(...l.touchIdxs)).toBe(l.lastTouchIdx);
+      expect(Math.min(...l.touchIdxs)).toBe(l.i1);
+    }
+    // Non-triviality: this fixture really does produce a line with a touch
+    // beyond its two anchors, so the assertions above are not all vacuous.
+    const three = lines.find((l) => l.touches > 2);
+    expect(three, "no line collected a third touch").toBeDefined();
+    expect(three!.touchIdxs).toContain(40);
   });
 
   it("rejects a candidate that a bar between the anchors pierces", () => {
@@ -310,11 +709,17 @@ describe("computeTrendlines", () => {
     bars[20] = bar(20, 90, 100.5);
     bars[40] = bar(40, 94, 100.5);
     bars[60] = bar(60, 80, 100.5);
-    const { points } = computeTrendlines(bars, cfg({ maxProjBars: 20, breakHoldBars: 10 }));
+    const { points } = computeTrendlines(
+      bars,
+      cfg({ maxProjBars: 20, breakHoldBars: 10 }),
+    );
     // The unbroken horizon ends at lastTouchIdx(40) + maxProjBars(20) = 60,
     // exactly the break bar, so every hold-window bar lies beyond it.
     for (let i = 61; i <= 70; i++) {
-      expect({ bar: i, held: points[i].tl_broken_support !== undefined }).toEqual({
+      expect({
+        bar: i,
+        held: points[i].tl_broken_support !== undefined,
+      }).toEqual({
         bar: i,
         held: true,
       });
@@ -333,7 +738,9 @@ describe("computeTrendlines", () => {
     const full = computeTrendlines(bars, cfg()).points;
     // Non-triviality guard: a prefix/full comparison over an all-empty series
     // would pass while proving nothing, so assert the fixture really emits.
-    expect(full.filter((p) => p.tl_support !== undefined).length).toBeGreaterThan(10);
+    expect(
+      full.filter((p) => p.tl_support !== undefined).length,
+    ).toBeGreaterThan(10);
     expect(full.some((p) => p.tl_broken_support !== undefined)).toBe(true);
     for (let i = 0; i < bars.length; i++) {
       const prefix = computeTrendlines(bars.slice(0, i + 1), cfg()).points;
@@ -344,17 +751,62 @@ describe("computeTrendlines", () => {
 
 describe("selectDrawnLines", () => {
   // Flat lines at assorted distances from a close of 100 read at bar 100.
-  const near: TrendLine = { ...sup, i1: 0, p1: 99, i2: 10, p2: 99, lastTouchIdx: 10 };
-  const mid: TrendLine = { ...sup, i1: 0, p1: 90, i2: 10, p2: 90, lastTouchIdx: 10 };
-  const far: TrendLine = { ...sup, i1: 0, p1: 10, i2: 10, p2: 10, lastTouchIdx: 10 };
-  const resNear: TrendLine = { ...res, i1: 0, p1: 101, i2: 10, p2: 101, lastTouchIdx: 10 };
-  const resFar: TrendLine = { ...res, i1: 0, p1: 400, i2: 10, p2: 400, lastTouchIdx: 10 };
+  const near: TrendLine = {
+    ...sup,
+    i1: 0,
+    p1: 99,
+    i2: 10,
+    p2: 99,
+    lastTouchIdx: 10,
+  };
+  const mid: TrendLine = {
+    ...sup,
+    i1: 0,
+    p1: 90,
+    i2: 10,
+    p2: 90,
+    lastTouchIdx: 10,
+  };
+  const far: TrendLine = {
+    ...sup,
+    i1: 0,
+    p1: 10,
+    i2: 10,
+    p2: 10,
+    lastTouchIdx: 10,
+  };
+  const resNear: TrendLine = {
+    ...res,
+    i1: 0,
+    p1: 101,
+    i2: 10,
+    p2: 101,
+    lastTouchIdx: 10,
+  };
+  const resFar: TrendLine = {
+    ...res,
+    i1: 0,
+    p1: 400,
+    i2: 10,
+    p2: 400,
+    lastTouchIdx: 10,
+  };
 
   it("keeps the maxLines per side nearest the close, each side capped alone", () => {
-    const out = selectDrawnLines([far, mid, near, resFar, resNear], 100, 100, 2, {});
+    const out = selectDrawnLines(
+      [far, mid, near, resFar, resNear],
+      100,
+      100,
+      2,
+      {},
+      null,
+    );
     expect(out).toHaveLength(4);
     expect(out.filter((l) => l.side === "support")).toEqual([near, mid]);
-    expect(out.filter((l) => l.side === "resistance")).toEqual([resNear, resFar]);
+    expect(out.filter((l) => l.side === "resistance")).toEqual([
+      resNear,
+      resFar,
+    ]);
   });
 
   it("drops the far line even when it outranks the near one", () => {
@@ -362,23 +814,53 @@ describe("selectDrawnLines", () => {
     // line actually in play. The drawn set is proximity-first so it does not.
     const strongFar = { ...far, touches: 9 };
     expect(rankLines(strongFar, near)).toBeLessThan(0);
-    expect(selectDrawnLines([strongFar, near], 100, 100, 1, {})).toEqual([near]);
+    expect(selectDrawnLines([strongFar, near], 100, 100, 1, {}, null)).toEqual([
+      near,
+    ]);
   });
 
   it("measures proximity by projection, not by anchor price", () => {
     // Anchored far below price but sloping through it: 50 at bar 0, 60 at bar
     // 10, so bar 100 projects to 150 (50 away) while the flat 90 is 10 away.
-    const sloping: TrendLine = { ...sup, i1: 0, p1: 50, i2: 10, p2: 60, lastTouchIdx: 10 };
+    const sloping: TrendLine = {
+      ...sup,
+      i1: 0,
+      p1: 50,
+      i2: 10,
+      p2: 60,
+      lastTouchIdx: 10,
+    };
     expect(projectAt(sloping, 100)).toBeCloseTo(150, 10);
-    expect(selectDrawnLines([sloping, mid], 100, 100, 1, {})).toEqual([mid]);
+    expect(selectDrawnLines([sloping, mid], 100, 100, 1, {}, null)).toEqual([
+      mid,
+    ]);
   });
 
   it("breaks an exact proximity tie by rank, not by list order", () => {
     // Both exactly 1.0 from the close, one either side of it.
-    const above: TrendLine = { ...sup, i1: 0, p1: 101, i2: 10, p2: 101, lastTouchIdx: 10 };
-    const below: TrendLine = { ...sup, i1: 0, p1: 99, i2: 10, p2: 99, touches: 5, lastTouchIdx: 10 };
-    expect(selectDrawnLines([above, below], 100, 100, 1, {})).toEqual([below]);
-    expect(selectDrawnLines([below, above], 100, 100, 1, {})).toEqual([below]);
+    const above: TrendLine = {
+      ...sup,
+      i1: 0,
+      p1: 101,
+      i2: 10,
+      p2: 101,
+      lastTouchIdx: 10,
+    };
+    const below: TrendLine = {
+      ...sup,
+      i1: 0,
+      p1: 99,
+      i2: 10,
+      p2: 99,
+      touches: 5,
+      lastTouchIdx: 10,
+    };
+    expect(selectDrawnLines([above, below], 100, 100, 1, {}, null)).toEqual([
+      below,
+    ]);
+    expect(selectDrawnLines([below, above], 100, 100, 1, {}, null)).toEqual([
+      below,
+    ]);
   });
 
   // THE UNION. maxLines is a floor for drawing, not a cap: a line an operand is
@@ -390,7 +872,9 @@ describe("selectDrawnLines", () => {
   it("keeps an emitting line that falls outside maxLines", () => {
     // `far` is third by proximity, so maxLines 1 would drop it, but tl_support
     // is reading it.
-    expect(selectDrawnLines([far, mid, near], 100, 100, 1, { tl_support: 10 })).toEqual([near, far]);
+    expect(
+      selectDrawnLines([far, mid, near], 100, 100, 1, { tl_support: 10 }, null),
+    ).toEqual([near, far]);
   });
 
   it("matches the emitted value by side and by broken state", () => {
@@ -398,28 +882,324 @@ describe("selectDrawnLines", () => {
     // tl_broken_support reaches the broken line; the unbroken `mid` at the same
     // price is not pulled in with it, and a resistance operand at that price
     // does not reach across sides either.
-    expect(selectDrawnLines([near, mid, brokenMid], 100, 100, 1, { tl_broken_support: 90 })).toEqual(
-      [near, brokenMid],
-    );
-    expect(selectDrawnLines([near, mid], 100, 100, 1, { tl_support: 90 })).toEqual([near, mid]);
-    expect(selectDrawnLines([near, mid], 100, 100, 1, { tl_resistance: 90 })).toEqual([near]);
+    expect(
+      selectDrawnLines(
+        [near, mid, brokenMid],
+        100,
+        100,
+        1,
+        { tl_broken_support: 90 },
+        null,
+      ),
+    ).toEqual([near, brokenMid]);
+    expect(
+      selectDrawnLines([near, mid], 100, 100, 1, { tl_support: 90 }, null),
+    ).toEqual([near, mid]);
+    expect(
+      selectDrawnLines([near, mid], 100, 100, 1, { tl_resistance: 90 }, null),
+    ).toEqual([near]);
   });
 
   it("ignores an emitted value no line projects to", () => {
     // Exact equality, not proximity: the emitted number IS projectAt's result,
     // so a value 1e-9 away belongs to some other line and must not stand in.
-    expect(selectDrawnLines([near, mid], 100, 100, 1, { tl_support: 90.000000001 })).toEqual([near]);
+    expect(
+      selectDrawnLines(
+        [near, mid],
+        100,
+        100,
+        1,
+        { tl_support: 90.000000001 },
+        null,
+      ),
+    ).toEqual([near]);
   });
 
   it("returns everything when maxLines exceeds the live set", () => {
-    expect(selectDrawnLines([near, mid], 100, 100, 9, {})).toHaveLength(2);
-    expect(selectDrawnLines([], 100, 100, 3, {})).toEqual([]);
+    expect(selectDrawnLines([near, mid], 100, 100, 9, {}, null)).toHaveLength(
+      2,
+    );
+    expect(selectDrawnLines([], 100, 100, 3, {}, null)).toEqual([]);
+  });
+
+  // THE NEAR-PRICE FILTER, which is a DISTANCE cut and so does something
+  // maxLines cannot: the budget keeps a fixed count per side however far away
+  // they all are. `near` projects to 99 and `mid` to 80 against a close of 100,
+  // so a tolerance of 5 admits one and rejects the other with the budget wide
+  // open at 9.
+  it("drops lines further than nearTol from the close", () => {
+    expect(selectDrawnLines([near, mid], 100, 100, 9, {}, null, 5)).toEqual([
+      near,
+    ]);
+    // 0 is off, not "everything is far".
+    expect(
+      selectDrawnLines([near, mid], 100, 100, 9, {}, null, 0),
+    ).toHaveLength(2);
+  });
+
+  it("always keeps the nearest line on a side, however far it is", () => {
+    // Every line miles away: a plain distance cut would leave the pane blank,
+    // which reads as a broken indicator rather than as an answer.
+    expect(selectDrawnLines([far, mid], 100, 100, 9, {}, null, 1)).toEqual([
+      mid,
+    ]);
+    // Per SIDE, not one for the whole chart.
+    const out = selectDrawnLines([far, resFar], 100, 100, 9, {}, null, 1);
+    expect(out).toHaveLength(2);
+  });
+
+  it("keeps a far line the emit path is reading, or a pinned one", () => {
+    // The chart is the only surface an operand can be audited on, so the
+    // near-price cut gets the same exemptions merging does.
+    expect(
+      selectDrawnLines([near, mid, far], 100, 100, 9, { tl_support: 10 }, null, 1),
+    ).toEqual([near, far]);
+    expect(
+      selectDrawnLines([near, mid, far], 100, 100, 9, {}, { tol: 0, keep: new Set([far]) }, 1),
+    ).toEqual([near, far]);
+  });
+});
+
+describe("selectDrawnLines dedup", () => {
+  const NONE: ReadonlySet<TrendLine> = new Set();
+  // A fan out of one pivot: both start at bar 0 / price 90, which is what a
+  // swing pairing with two later swings produces. Read at bar 100.
+  const fanA: TrendLine = {
+    ...sup,
+    i1: 0,
+    p1: 90,
+    i2: 50,
+    p2: 94,
+    touchIdxs: [0, 50],
+    lastTouchIdx: 50,
+  };
+  const fanB: TrendLine = {
+    ...sup,
+    i1: 0,
+    p1: 90,
+    i2: 40,
+    p2: 93.3,
+    touchIdxs: [0, 40],
+    lastTouchIdx: 40,
+  };
+
+  it("merges two lines out of the same pivot that land together", () => {
+    expect(projectAt(fanA, 100)).toBeCloseTo(98, 6);
+    expect(projectAt(fanB, 100)).toBeCloseTo(98.25, 6);
+    expect(
+      selectDrawnLines([fanA, fanB], 100, 100, 3, {}, { tol: 1, keep: NONE }),
+    ).toEqual([fanB]);
+  });
+
+  it("merges a fan that closes onto a shared second pivot", () => {
+    // Different starts, same end: they meet at bar 50 and separate again after
+    // it. Same clutter, so the same treatment.
+    const a: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 94, touchIdxs: [0, 50] };
+    const b: TrendLine = { ...sup, i1: 20, p1: 92, i2: 50, p2: 94, touchIdxs: [20, 50] };
+    expect(
+      selectDrawnLines([a, b], 100, 100, 3, {}, { tol: 1, keep: NONE }),
+    ).toHaveLength(1);
+  });
+
+  it("merges a chain, where one line's end is the other's start", () => {
+    const a: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 94, touchIdxs: [0, 50] };
+    const b: TrendLine = { ...sup, i1: 50, p1: 94, i2: 70, p2: 95.6, touchIdxs: [50, 70] };
+    expect(projectAt(a, 100)).toBeCloseTo(98, 6);
+    expect(projectAt(b, 100)).toBeCloseTo(98, 6);
+    expect(
+      selectDrawnLines([a, b], 100, 100, 3, {}, { tol: 1, keep: NONE }),
+    ).toHaveLength(1);
+  });
+
+  it("leaves two lines alone when they share no pivot, however close", () => {
+    // Identical projection at the last bar, but grown from different swings.
+    // Merging on closeness alone would swallow unrelated levels.
+    const other: TrendLine = { ...sup, i1: 20, p1: 70, i2: 60, p2: 84, touchIdxs: [20, 60] };
+    expect(projectAt(other, 100)).toBeCloseTo(98, 6);
+    expect(
+      selectDrawnLines([fanA, other], 100, 100, 3, {}, { tol: 1, keep: NONE }),
+    ).toHaveLength(2);
+  });
+
+  // The BAR decides it, and a differing recorded price does not save a line
+  // from merging. Two same-side lines cannot honestly touch one bar at two
+  // prices: a bar has one high and one low, and a touch is recorded only
+  // within a tolerance of it. This fixture is therefore impossible in
+  // production, and the rule that merges it is the same one that catches the
+  // real case, where a swing anchors one line and is a mid-line touch of the
+  // rest.
+  it("treats the same bar as shared even at a different recorded price", () => {
+    const sameBar: TrendLine = {
+      ...sup,
+      i1: 0,
+      p1: 70,
+      i2: 50,
+      p2: 84,
+      touchIdxs: [0, 50],
+    };
+    expect(projectAt(sameBar, 100)).toBeCloseTo(98, 6);
+    expect(
+      selectDrawnLines(
+        [fanA, sameBar],
+        100,
+        100,
+        3,
+        {},
+        { tol: 1, keep: NONE },
+      ),
+    ).toHaveLength(1);
+  });
+
+  // The real shape this pass was missing: neither line is anchored where the
+  // other one is, they only both TOUCH the same swing.
+  it("merges two lines that only touch the same pivot, neither anchored on it", () => {
+    const a: TrendLine = {
+      ...sup,
+      i1: 0,
+      p1: 90,
+      i2: 50,
+      p2: 94,
+      touches: 3,
+      touchIdxs: [0, 30, 50],
+      lastTouchIdx: 50,
+    };
+    const b: TrendLine = {
+      ...sup,
+      i1: 10,
+      p1: 90.9,
+      i2: 60,
+      p2: 94.9,
+      touches: 3,
+      touchIdxs: [10, 30, 60],
+      lastTouchIdx: 60,
+    };
+    // No anchor in common: the old test would have left both.
+    expect(a.i1 === b.i1 || a.i2 === b.i2 || a.i1 === b.i2 || a.i2 === b.i1).toBe(
+      false,
+    );
+    expect(Math.abs(projectAt(a, 100) - projectAt(b, 100))).toBeLessThan(1);
+    expect(
+      selectDrawnLines([a, b], 100, 100, 3, {}, { tol: 1, keep: NONE }),
+    ).toHaveLength(1);
+  });
+
+  it("stops merging once the two ends are further apart than tol", () => {
+    const wide: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 95, touchIdxs: [0, 50] };
+    expect(projectAt(wide, 100)).toBeCloseTo(100, 6);
+    expect(
+      selectDrawnLines([fanA, wide], 100, 100, 3, {}, { tol: 1, keep: NONE }),
+    ).toHaveLength(2);
+  });
+
+  it("frees the merged line's budget slot for a different line", () => {
+    const other: TrendLine = {
+      ...sup,
+      i1: 5,
+      p1: 60,
+      i2: 55,
+      p2: 60,
+      lastTouchIdx: 55,
+    };
+    // Without merging the two fan lines fill maxLines 2 and `other` never
+    // draws; with it, the freed slot goes to the line with a different shape.
+    expect(
+      selectDrawnLines([fanA, fanB, other], 100, 100, 2, {}, null),
+    ).toEqual([fanB, fanA]);
+    expect(
+      selectDrawnLines(
+        [fanA, fanB, other],
+        100,
+        100,
+        2,
+        {},
+        { tol: 1, keep: NONE },
+      ),
+    ).toEqual([fanB, other]);
+  });
+
+  it("never merges away a line an operand is reading", () => {
+    // fanA is the emitter here, so the exact-value guarantee outranks merging
+    // and both survive.
+    expect(
+      selectDrawnLines(
+        [fanA, fanB],
+        100,
+        100,
+        3,
+        { tl_support: projectAt(fanA, 100) },
+        { tol: 1, keep: NONE },
+      ),
+    ).toEqual([fanB, fanA]);
+  });
+
+  it("never merges away a pinned line, which owns the only handle to undo it", () => {
+    expect(
+      selectDrawnLines(
+        [fanA, fanB],
+        100,
+        100,
+        3,
+        {},
+        { tol: 1, keep: new Set([fanA]) },
+      ),
+    ).toEqual([fanB, fanA]);
+  });
+
+  it("is off at tol 0, so an unwarmed ATR cannot silently thin the chart", () => {
+    expect(
+      selectDrawnLines([fanA, fanB], 100, 100, 3, {}, { tol: 0, keep: NONE }),
+    ).toHaveLength(2);
+    expect(dedupeTolerance(undefined, true)).toBe(0);
+    expect(dedupeTolerance(NaN, true)).toBe(0);
+    expect(dedupeTolerance(4, false)).toBe(0);
+    expect(dedupeTolerance(4, true)).toBe(4 * TL_DEDUPE_ATR);
+  });
+
+  // THE FIELD. An explicit 0 is honoured (it means off, like the switch), but
+  // anything that is not a finite number >= 0 falls back to the default rather
+  // than turning merging off by accident: a chart saved before the field
+  // existed has no key at all, and undefined * atr is NaN, which no comparison
+  // is ever <= so nothing would merge.
+  it("takes the tolerance from the panel, and falls back rather than breaking", () => {
+    expect(dedupeTolerance(4, true, 2)).toBe(8);
+    expect(dedupeTolerance(4, true, 0)).toBe(0);
+    expect(dedupeTolerance(4, true, undefined)).toBe(4 * TL_DEDUPE_ATR);
+    expect(dedupeTolerance(4, true, NaN)).toBe(4 * TL_DEDUPE_ATR);
+    expect(dedupeTolerance(4, true, -1)).toBe(4 * TL_DEDUPE_ATR);
+    // The switch still wins: off is off whatever the number says.
+    expect(dedupeTolerance(4, false, 2)).toBe(0);
+  });
+
+  // THE DEFAULT, pinned with the ceiling that bounds it. It was raised to 2.5
+  // on a measurement that could only ever go up: it counted the near-twins
+  // LEFT at each tolerance and took the value that left fewest, with nothing
+  // counting the distinct lines swallowed. Measured the other way on a live
+  // US100 daily pane, not one merge at any tolerance from 0.25 to 3 was a fan
+  // off a shared origin; every one joined lines beginning months apart that
+  // converge on a later pivot, and 1 -> 2.5 nearly doubled how many of those
+  // collapsed. The value is a field now, and this is only where it starts.
+  //
+  // Above half of TL_NEAR_PRICE_ATR a line at the close could merge with one at
+  // the far edge of the band that is drawn at all, so that is a ceiling on the
+  // default rather than a preference.
+  it("defaults to 1 ATR, never more than half the near-price band", () => {
+    expect(TL_DEDUPE_ATR).toBe(1);
+    expect(TL_DEDUPE_ATR).toBeLessThanOrEqual(TL_NEAR_PRICE_ATR / 2);
+  });
+
+  it("does not merge across sides", () => {
+    const mirror: TrendLine = { ...fanA, side: "resistance" };
+    expect(
+      selectDrawnLines([fanA, mirror], 100, 100, 3, {}, { tol: 1, keep: NONE }),
+    ).toHaveLength(2);
   });
 });
 
 describe("TRENDLINES_TEMPLATE", () => {
-  it("declares the eight calcParams in spec order", () => {
-    expect(TRENDLINES_TEMPLATE.calcParams).toEqual([5, 0.25, 0.75, 2, 20, 250, 30, 3]);
+  it("declares the sixteen calcParams in spec order", () => {
+    expect(TRENDLINES_TEMPLATE.calcParams).toEqual([
+      5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10,
+    ]);
   });
 
   it("is a price-series overlay on the candle pane", () => {
@@ -459,7 +1239,9 @@ describe("TRENDLINES_TEMPLATE", () => {
     const ray = run("ray");
     // Non-triviality: an all-empty series would compare equal while proving
     // nothing.
-    expect(ray.filter((p) => p.tl_support !== undefined).length).toBeGreaterThan(10);
+    expect(
+      ray.filter((p) => p.tl_support !== undefined).length,
+    ).toBeGreaterThan(10);
     expect(run("segment")).toEqual(ray);
     expect(run("extended")).toEqual(ray);
     expect(run("apex")).toEqual(ray);
@@ -500,6 +1282,9 @@ interface Painted {
   segments: Segment[];
   tags: Tag[];
   marks: Mark[];
+  touchMarks: Mark[];
+  /** Handle strokes (chevron arms, or the pinned end bar). */
+  handleStrokes: Segment[];
 }
 
 interface View {
@@ -554,12 +1339,35 @@ function record(
   extend?: string,
   view: View = IDENTITY_VIEW,
   pinned?: string[],
+  // OFF by default here, unlike the app: nearly every draw test below counts
+  // segments, and merging would quietly change those counts into assertions
+  // about the dedup pass instead of about what they were written to check.
+  // "default" omits the key entirely, which is the only way to exercise the
+  // draw path's own fallback.
+  dedupe: boolean | "default" = false,
+  // OFF here, unlike the app, for the same reason dedupe is: the tests below
+  // count segments, and a distance cut would turn those counts into assertions
+  // about the near-price filter. "default" omits the key, which is the only way
+  // to exercise the draw path's own fallback.
+  nearPrice: boolean | "default" = false,
+  // Matches the app's own default, so an omitted argument and an omitted key
+  // mean the same thing and there is no third state to test.
+  hideBroken = false,
 ): Painted {
   const segments: Segment[] = [];
   const tags: Tag[] = [];
   // Break dots are recorded APART from segments: several tests assert exact
   // segment counts, and a marker landing in that array would break them.
   const marks: Mark[] = [];
+  // Touch rings, apart from break dots for the same reason: the tests that
+  // count break marks would otherwise be counting touches too. The RADIUS is
+  // the discriminator, and like the handle's heavier stroke it is a real
+  // visual difference, not a test-only flag.
+  const touchMarks: Mark[] = [];
+  // Same reason for the handle glyphs, which are strokes rather than arcs now.
+  // lineWidth is the discriminator, and it is not a test-only flag: the handle
+  // really is drawn heavier than the line it caps.
+  const handleStrokes: Segment[] = [];
   let cur = { x: 0, y: 0 };
   let dashed = false;
   const ctx = {
@@ -581,29 +1389,47 @@ function record(
       cur = { x, y };
     },
     lineTo: (x: number, y: number) => {
-      segments.push({ x0: cur.x, y0: cur.y, x1: x, y1: y, dashed });
+      const seg = { x0: cur.x, y0: cur.y, x1: x, y1: y, dashed };
+      if (ctx.lineWidth === TL_HANDLE_STROKE) handleStrokes.push(seg);
+      else segments.push(seg);
+      cur = { x, y };
     },
     measureText: (t: string) => ({ width: t.length * 6 }),
     fillText: (text: string, x: number, y: number) => {
       tags.push({ text, x, y });
     },
     arc: (x: number, y: number, r: number) => {
-      marks.push({ x, y, r, alpha: ctx.globalAlpha });
+      const m = { x, y, r, alpha: ctx.globalAlpha };
+      if (r === TL_TOUCH_RADIUS) touchMarks.push(m);
+      else marks.push(m);
     },
     fill: () => {},
   };
   // One object per record() call, and the handle registry is keyed on it, so
   // these tests exercise the same per-chart isolation the app relies on.
-  const chartStub = { getDataList: () => bars, getSize: () => ({ width: view.axis }) };
+  const chartStub = {
+    getDataList: () => bars,
+    getSize: () => ({ width: view.axis }),
+  };
   lastChart = chartStub;
-  const result = TRENDLINES_TEMPLATE.calc!(bars, { calcParams, extendData: { extend } } as never);
+  const ext = {
+    extend,
+    pinned,
+    ...(dedupe === "default" ? {} : { dedupe }),
+    ...(nearPrice === "default" ? {} : { nearPrice }),
+    hideBroken,
+  };
+  const result = TRENDLINES_TEMPLATE.calc!(bars, {
+    calcParams,
+    extendData: ext,
+  } as never);
   const drew = TRENDLINES_TEMPLATE.draw!({
     ctx,
     chart: chartStub,
     indicator: {
       result,
       calcParams,
-      extendData: { extend, pinned },
+      extendData: ext,
       paneId: "candle_pane",
       name: "TRENDLINES",
     },
@@ -614,7 +1440,7 @@ function record(
   // isCover: klinecharts must skip its own figure loop, or the empty `figures`
   // list is not the whole story.
   expect(drew).toBe(true);
-  return { segments, tags, marks };
+  return { segments, tags, marks, touchMarks, handleStrokes };
 }
 
 describe("TRENDLINES_TEMPLATE.draw", () => {
@@ -625,7 +1451,147 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     out[60] = bar(60, 96, 100.5);
     return out;
   };
-  const params = (maxLines: number): number[] => [2, 0.25, 0.75, 2, 5, 250, 30, maxLines];
+  const params = (maxLines: number): number[] => [
+    2,
+    0.25,
+    0.75,
+    2,
+    5,
+    250,
+    30,
+    maxLines,
+  ];
+
+  // ONE GATE FOR BOTH SURFACES. A setting that means "real trendline" to a rule
+  // and nothing to the chart is a setting the user cannot trust: measured on a
+  // live US100 daily pane at Min Touches 7, all 15 drawn lines were under it
+  // (the best had 3) and 0 qualified.
+  it("draws only what an operand could read", () => {
+    const b = flat(80);
+    b[20] = bar(20, 90, 100.5);
+    b[40] = bar(40, 92, 100.5);
+    b[60] = bar(60, 94, 100.5);
+    const withFloor = (minTouches: number, minSpanBars: number): number[] => [
+      2, 0.25, 0.75, minTouches, minSpanBars, 250, 30, 5,
+    ];
+    // The 20->40->60 line collects three touches over a 40-bar span.
+    expect(record(b, withFloor(3, 5)).segments.length).toBeGreaterThan(0);
+    // One touch more than any line here has, and one bar more than the longest
+    // span: each floor alone empties the pane.
+    expect(record(b, withFloor(4, 5)).segments).toHaveLength(0);
+    expect(record(b, withFloor(2, 41)).segments).toHaveLength(0);
+  });
+
+  // The ceilings thin the CHART, not only the operand path. Both tips call the
+  // lines they reject noise, so leaving them painted reads as the setting
+  // doing nothing. The FLOORS deliberately still draw: a line under Min Touches
+  // or Min Span is geometry in play, and showing it is the pane's job.
+  it("stops drawing a line past Max Span", () => {
+    const b = flat(80);
+    b[20] = bar(20, 90, 100.5);
+    b[60] = bar(60, 94, 100.5);
+    const withCeiling = (maxSpanBars: number): number[] => [
+      2, 0.25, 0.75, 2, 5, 250, 30, 5, 0, 0, 20, 0, maxSpanBars,
+    ];
+    const wide = record(b, withCeiling(0)).segments.length;
+    expect(wide).toBeGreaterThan(0);
+    // 39 is one bar under the 20->60 span, the same boundary the emit-path
+    // test above uses.
+    expect(record(b, withCeiling(39)).segments).toHaveLength(0);
+    expect(record(b, withCeiling(40)).segments).toHaveLength(wide);
+  });
+
+  it("rings every touch, on the line and not at the candle's own extreme", () => {
+    const b = bars();
+    const { lines } = computeTrendlines(b, cfg());
+    const line = lines.find((l) => l.touches > 2);
+    expect(line, "fixture must produce a multi-touch line").toBeDefined();
+    const { touchMarks } = record(b, params(1), "lastbar");
+    // maxLines 1 plus the operands' lines, so more than one line can draw;
+    // what must hold is that each drawn line contributed one ring per touch.
+    expect(touchMarks.length).toBeGreaterThanOrEqual(line!.touches);
+    for (const idx of line!.touchIdxs) {
+      const at = touchMarks.filter((m) => m.x === idx);
+      expect(at.length, `no ring at touch bar ${idx}`).toBeGreaterThan(0);
+      // ON THE LINE: the y is the line's own projection, not bars[idx].low,
+      // which sits up to a touch tolerance away.
+      expect(
+        at.some((m) => Math.abs(m.y - IDENTITY_VIEW.toY(projectAt(line!, idx))) < 1e-6),
+      ).toBe(true);
+    }
+  });
+
+  // The DRAW PATH's own default, which is what makes the filter reach a user:
+  // selectDrawnLines takes the tolerance as an argument and defaults it to OFF,
+  // so an untouched chart getting the filter is a fact about this path alone.
+  // What the cut does with the lines it is given is covered precisely by the
+  // selectDrawnLines tests above; this one is about the default.
+  it("hides the far lines by default, and stops when switched off", () => {
+    const b = flat(80);
+    b[20] = bar(20, 90, 100.5);
+    b[40] = bar(40, 91, 100.5);
+    b[62] = bar(62, 99, 100.5);
+    b[70] = bar(70, 99.2, 100.5);
+    // Four support lines, projecting 7.05, 5.18, 1.66 and 0.58 from the close
+    // against a 5-ATR tolerance of 5.42: the fixture straddles the cut rather
+    // than sitting all on one side of it.
+    const cp = params(8);
+    const off = record(b, cp, undefined, undefined, undefined, false, false);
+    expect(off.segments).toHaveLength(4);
+    // A segment starts at its line's first anchor, so bar 20 identifies the
+    // far one, and it is the one that goes.
+    expect(off.segments.some((s) => s.x0 === 20)).toBe(true);
+    const on = record(b, cp, undefined, undefined, undefined, false, true);
+    expect(on.segments).toHaveLength(3);
+    expect(on.segments.some((s) => s.x0 === 20)).toBe(false);
+    // With the key absent, which is what an untouched chart sends, the filter
+    // is ON. That fallback lives in the draw path and nowhere else.
+    const fallback = record(
+      b,
+      cp,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      "default",
+    );
+    expect(fallback.segments).toHaveLength(on.segments.length);
+  });
+
+  it("merges a fan on the draw path, and does it by default", () => {
+    const b = bars();
+    const live = computeTrendlines(b, cfg()).lines;
+    // Bars 20/40/60 are all pivot lows, so bar 20 anchors a fan: this fixture
+    // is exactly the shape the dedup pass exists for.
+    const all = record(
+      b,
+      params(live.length),
+      undefined,
+      undefined,
+      undefined,
+      false,
+    );
+    const merged = record(
+      b,
+      params(live.length),
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(all.segments.length).toBeGreaterThan(merged.segments.length);
+    // With the key absent, which is what an untouched chart sends, merging is
+    // on. That fallback lives in the draw path and nowhere else.
+    const fallback = record(
+      b,
+      params(live.length),
+      undefined,
+      undefined,
+      undefined,
+      "default",
+    );
+    expect(fallback.segments).toHaveLength(merged.segments.length);
+  });
 
   // maxLines is the drawn set's FLOOR per side, not a hard cap: the budgeted
   // lines are chosen by proximity and then whatever an operand is reading joins
@@ -649,21 +1615,23 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     const lastIdx = b.length - 1;
     const close = b[lastIdx].close;
     const point = one.points[lastIdx];
-    expect(selectDrawnLines(one.lines, lastIdx, close, 1, {})).toHaveLength(1);
+    expect(
+      selectDrawnLines(one.lines, lastIdx, close, 1, {}, null),
+    ).toHaveLength(1);
     // That one budgeted slot goes to tl_support's line, so asserting on
     // tl_support here would pass with the union removed. tl_broken_support is
     // the operand the budget really would have hidden: it joins only through
     // the union, so it is the assertion that can fail.
     expect(point.tl_broken_support).toBeDefined();
-    const budgeted = selectDrawnLines(one.lines, lastIdx, close, 1, {});
-    expect(budgeted.some((l) => projectAt(l, lastIdx) === point.tl_broken_support)).toBe(
-      false,
-    );
-    const drawn = selectDrawnLines(one.lines, lastIdx, close, 1, point);
+    const budgeted = selectDrawnLines(one.lines, lastIdx, close, 1, {}, null);
+    expect(
+      budgeted.some((l) => projectAt(l, lastIdx) === point.tl_broken_support),
+    ).toBe(false);
+    const drawn = selectDrawnLines(one.lines, lastIdx, close, 1, point, null);
     expect(drawn).toHaveLength(2);
-    expect(drawn.some((l) => projectAt(l, lastIdx) === point.tl_broken_support)).toBe(
-      true,
-    );
+    expect(
+      drawn.some((l) => projectAt(l, lastIdx) === point.tl_broken_support),
+    ).toBe(true);
     expect(record(b, params(1)).segments).toHaveLength(2);
   });
 
@@ -677,6 +1645,7 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
       b[b.length - 1].close,
       1,
       res.points[b.length - 1],
+      null,
     )[0];
     expect(seg.x0).toBe(drawn.i1);
     expect(seg.x1).toBe(drawn.lastTouchIdx + 250);
@@ -701,11 +1670,15 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
       b[b.length - 1].close,
       3,
       res.points[b.length - 1],
+      null,
     );
     expect(drawnLines.some((l) => l.brokenIdx !== null)).toBe(true);
     ray.forEach((r, i) => {
       const l = drawnLines[i];
-      const end = l.brokenIdx !== null ? Math.max(l.lastTouchIdx, l.brokenIdx) : l.lastTouchIdx;
+      const end =
+        l.brokenIdx !== null
+          ? Math.max(l.lastTouchIdx, l.brokenIdx)
+          : l.lastTouchIdx;
       // Same left anchor as the ray, stopping at that end instead of the horizon.
       expect(segment[i].x0).toBe(r.x0);
       expect(segment[i].x1).toBe(end);
@@ -725,8 +1698,38 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     expect(segs.some((s) => !s.dashed)).toBe(true);
   });
 
+  it("hides the broken lines when asked, and shows them by default", () => {
+    const b = flat(80);
+    b[20] = bar(20, 90, 100.5);
+    b[40] = bar(40, 94, 100.5);
+    b[60] = bar(60, 80, 100.5); // pierces the 20->40 support
+    const shown = record(b, params(3)).segments;
+    expect(shown.some((s) => s.dashed)).toBe(true);
+    const hidden = record(
+      b,
+      params(3),
+      undefined,
+      undefined,
+      undefined,
+      false,
+      false,
+      true,
+    ).segments;
+    expect(hidden.some((s) => s.dashed)).toBe(false);
+    // The unbroken ones are untouched, so this is a filter and not an off
+    // switch for the whole overlay.
+    expect(hidden.length).toBe(shown.filter((s) => !s.dashed).length);
+    expect(hidden.length).toBeGreaterThan(0);
+  });
+
   it("paints nothing when there are no lines", () => {
-    expect(record(flat(30), params(3))).toEqual({ segments: [], tags: [], marks: [] });
+    expect(record(flat(30), params(3))).toEqual({
+      segments: [],
+      tags: [],
+      marks: [],
+      touchMarks: [],
+      handleStrokes: [],
+    });
   });
 
   // THE TAG MUST SIT ON ITS LINE. The x is clamped inside the pane, and on a
@@ -778,13 +1781,23 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
       b[b.length - 1].close,
       3,
       res.points[b.length - 1],
+      null,
     );
     expect(tags.map((t) => t.text)).toEqual(drawn.map((l) => `×${l.touches}`));
   });
 });
 
 describe("TRENDLINES_TEMPLATE.draw break marker and meeting modes", () => {
-  const params = (maxLines: number): number[] => [2, 0.25, 0.75, 2, 5, 250, 30, maxLines];
+  const params = (maxLines: number): number[] => [
+    2,
+    0.25,
+    0.75,
+    2,
+    5,
+    250,
+    30,
+    maxLines,
+  ];
 
   /** Rising lows and falling highs: one support, one resistance, converging.
    * Support runs 90@20 -> 94@50 (slope 4/30), resistance 110@30 -> 106@60
@@ -810,7 +1823,9 @@ describe("TRENDLINES_TEMPLATE.draw break marker and meeting modes", () => {
   it("puts a dot where the line broke, and only on broken lines", () => {
     const b = dips();
     const { marks, segments } = record(b, params(3));
-    const broken = computeTrendlines(b, cfg()).lines.filter((l) => l.brokenIdx !== null);
+    const broken = computeTrendlines(b, cfg()).lines.filter(
+      (l) => l.brokenIdx !== null,
+    );
     expect(broken).toHaveLength(1);
     expect(marks).toHaveLength(1);
     // Non-triviality: more lines are drawn than are broken, so a marker per
@@ -826,13 +1841,17 @@ describe("TRENDLINES_TEMPLATE.draw break marker and meeting modes", () => {
 
   it("draws a broken line as far as its break, even stopping at the last touch", () => {
     const b = dips();
-    const broken = computeTrendlines(b, cfg()).lines.find((l) => l.brokenIdx !== null);
+    const broken = computeTrendlines(b, cfg()).lines.find(
+      (l) => l.brokenIdx !== null,
+    );
     expect(broken).toBeDefined();
     const line = broken as TrendLine;
     // The premise: the break lands AFTER the last touch, so ending at the last
     // touch would stop short of it.
     expect(line.brokenIdx as number).toBeGreaterThan(line.lastTouchIdx);
-    const dashed = record(b, params(3), "segment").segments.filter((s) => s.dashed);
+    const dashed = record(b, params(3), "segment").segments.filter(
+      (s) => s.dashed,
+    );
     expect(dashed).toHaveLength(1);
     expect(dashed[0].x1).toBe(line.brokenIdx);
   });
@@ -842,7 +1861,9 @@ describe("TRENDLINES_TEMPLATE.draw break marker and meeting modes", () => {
     const lines = computeTrendlines(b, cfg()).lines;
     // The fixture must really carry both sides, or "opposite side only" proves
     // nothing here.
-    expect(new Set(lines.map((l) => l.side))).toEqual(new Set(["support", "resistance"]));
+    expect(new Set(lines.map((l) => l.side))).toEqual(
+      new Set(["support", "resistance"]),
+    );
     const apex = record(b, params(3), "apex").segments;
     const ray = record(b, params(3), "ray").segments;
     expect(apex).toHaveLength(2);
@@ -889,7 +1910,9 @@ describe("lineKey", () => {
   const bars = flat(50);
   it("identifies a line by its anchors' TIMESTAMPS, not their indices", () => {
     const line: TrendLine = { ...sup, i1: 10, i2: 30 };
-    expect(lineKey(line, bars)).toBe(`support:${bars[10].timestamp}:${bars[30].timestamp}`);
+    expect(lineKey(line, bars)).toBe(
+      `support:${bars[10].timestamp}:${bars[30].timestamp}`,
+    );
     // The same line after 5 older bars load: indices shift by 5, the key does not.
     const shifted = [...flat(5, -5), ...bars];
     const moved: TrendLine = { ...line, i1: 15, i2: 35 };
@@ -904,11 +1927,25 @@ describe("lineKey", () => {
 });
 
 describe("lineExtent", () => {
-  const line: TrendLine = { ...sup, i1: 0, i2: 10, lastTouchIdx: 10, brokenIdx: null };
-  const c = (over: Partial<TrendlinesConfig> = {}): TrendlinesConfig => cfg(over);
+  const line: TrendLine = {
+    ...sup,
+    i1: 0,
+    i2: 10,
+    lastTouchIdx: 10,
+    brokenIdx: null,
+  };
+  const c = (over: Partial<TrendlinesConfig> = {}): TrendlinesConfig =>
+    cfg(over);
 
   it("lets a pin outrun whatever the mode says", () => {
-    for (const mode of ["ray", "segment", "extended", "lastbar", "apex", "cross"] as const) {
+    for (const mode of [
+      "ray",
+      "segment",
+      "extended",
+      "lastbar",
+      "apex",
+      "cross",
+    ] as const) {
       expect(lineExtent(line, mode, c(), [line], 40, 500).jRight).toBe(500);
     }
   });
@@ -919,7 +1956,9 @@ describe("lineExtent", () => {
   });
 
   it("keeps the left edge under the mode even when pinned", () => {
-    expect(lineExtent(line, "extended", c(), [line], 40, 500).jLeft).toBe(0 - 250);
+    expect(lineExtent(line, "extended", c(), [line], 40, 500).jLeft).toBe(
+      0 - 250,
+    );
     expect(lineExtent(line, "ray", c(), [line], 40, 500).jLeft).toBe(0);
   });
 });
@@ -946,7 +1985,16 @@ describe("hitHandle", () => {
 });
 
 describe("TRENDLINES draw handles", () => {
-  const params = (maxLines: number): number[] => [2, 0.25, 0.75, 2, 5, 250, 30, maxLines];
+  const params = (maxLines: number): number[] => [
+    2,
+    0.25,
+    0.75,
+    2,
+    5,
+    250,
+    30,
+    maxLines,
+  ];
   const dips = (): KLineData[] => {
     const out = flat(80);
     out[20] = bar(20, 90, 100.5);
@@ -965,13 +2013,24 @@ describe("TRENDLINES draw handles", () => {
     // One per drawn line whose end is actually on the pane. Even at the newest
     // bar a steep line can project above the top, and that handle is dropped
     // rather than drawn into a neighbouring pane.
-    const onPane = segments.filter((s) => s.y1 >= 0 && s.y1 <= IDENTITY_VIEW.height);
+    const onPane = segments.filter(
+      (s) => s.y1 >= 0 && s.y1 <= IDENTITY_VIEW.height,
+    );
     expect(onPane.length).toBeGreaterThan(0);
     expect(handles).toHaveLength(onPane.length);
-    // Each handle sits exactly on its segment's right end, which is what makes
-    // a click land where the dot is drawn.
+    // Each handle sits JUST PAST its segment's right end, along the segment's
+    // own direction: the ring is tangent to the tip rather than centred on it,
+    // and the hit test has to follow the ring or a click lands off the dot.
+    const OUT = TL_HANDLE_RADIUS + 0.5;
     for (const seg of onPane) {
-      expect(handles.some((h) => Math.abs(h.x - seg.x1) < 1e-6 && Math.abs(h.y - seg.y1) < 1e-6)).toBe(true);
+      const len = Math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0);
+      const ex = seg.x1 + ((seg.x1 - seg.x0) * OUT) / len;
+      const ey = seg.y1 + ((seg.y1 - seg.y0) * OUT) / len;
+      expect(
+        handles.some(
+          (h) => Math.abs(h.x - ex) < 1e-6 && Math.abs(h.y - ey) < 1e-6,
+        ),
+      ).toBe(true);
     }
   });
 
@@ -983,14 +2042,23 @@ describe("TRENDLINES draw handles", () => {
     for (const mode of ["ray", "extended"] as const) {
       const { segments } = record(b, params(3), mode);
       expect(segments.length).toBeGreaterThan(0);
-      expect(getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES")).toHaveLength(0);
+      expect(
+        getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES"),
+      ).toHaveLength(0);
     }
   });
 
   it("ignores a stored pin in those modes rather than extending with no undo", () => {
     const b = dips();
     const res = computeTrendlines(b, cfg());
-    const drawn = selectDrawnLines(res.lines, b.length - 1, b[b.length - 1].close, 3, res.points[b.length - 1]);
+    const drawn = selectDrawnLines(
+      res.lines,
+      b.length - 1,
+      b[b.length - 1].close,
+      3,
+      res.points[b.length - 1],
+      null,
+    );
     const key = lineKey(drawn[0], b);
     const free = record(b, params(3), "ray").segments;
     const held = record(b, params(3), "ray", IDENTITY_VIEW, [key]).segments;
@@ -999,15 +2067,28 @@ describe("TRENDLINES draw handles", () => {
 
   it("clears the handles when nothing is drawn", () => {
     record(dips(), params(3), "lastbar");
-    expect(getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES").length).toBeGreaterThan(0);
+    expect(
+      getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES").length,
+    ).toBeGreaterThan(0);
     // A flat corridor forms no lines at all.
     record(flat(30), params(3));
-    expect(getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES")).toHaveLength(0);
+    expect(
+      getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES"),
+    ).toHaveLength(0);
   });
 });
 
 describe("TRENDLINES pinning", () => {
-  const params = (maxLines: number): number[] => [2, 0.25, 0.75, 2, 5, 250, 30, maxLines];
+  const params = (maxLines: number): number[] => [
+    2,
+    0.25,
+    0.75,
+    2,
+    5,
+    250,
+    30,
+    maxLines,
+  ];
   const dips = (): KLineData[] => {
     const out = flat(80);
     out[20] = bar(20, 90, 100.5);
@@ -1019,7 +2100,14 @@ describe("TRENDLINES pinning", () => {
   /** The key of the drawn line whose end is on the pane in lastbar mode. */
   const firstDrawnKey = (b: KLineData[]): string => {
     const res = computeTrendlines(b, cfg());
-    const drawn = selectDrawnLines(res.lines, b.length - 1, b[b.length - 1].close, 3, res.points[b.length - 1]);
+    const drawn = selectDrawnLines(
+      res.lines,
+      b.length - 1,
+      b[b.length - 1].close,
+      3,
+      res.points[b.length - 1],
+      null,
+    );
     return lineKey(drawn[0], b);
   };
 
@@ -1041,7 +2129,11 @@ describe("TRENDLINES pinning", () => {
     const b = dips();
     const key = firstDrawnKey(b);
     record(b, params(3), "lastbar");
-    const free = getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES").map((h) => ({ ...h }));
+    const free = getTrendlineHandles(
+      lastChart,
+      "candle_pane",
+      "TRENDLINES",
+    ).map((h) => ({ ...h }));
     record(b, params(3), "lastbar", IDENTITY_VIEW, [key]);
     const held = getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES");
     expect(held).toHaveLength(free.length);
@@ -1057,13 +2149,24 @@ describe("TRENDLINES pinning", () => {
   it("ignores a pin key that matches no drawn line", () => {
     const b = dips();
     const free = record(b, params(3), "lastbar").segments;
-    const held = record(b, params(3), "lastbar", IDENTITY_VIEW, ["support:1:2"]).segments;
+    const held = record(b, params(3), "lastbar", IDENTITY_VIEW, [
+      "support:1:2",
+    ]).segments;
     expect(held).toEqual(free);
   });
 });
 
 describe("hitAnyTrendlineHandle", () => {
-  const params = (maxLines: number): number[] => [2, 0.25, 0.75, 2, 5, 250, 30, maxLines];
+  const params = (maxLines: number): number[] => [
+    2,
+    0.25,
+    0.75,
+    2,
+    5,
+    250,
+    30,
+    maxLines,
+  ];
   const dips = (): KLineData[] => {
     const out = flat(80);
     out[20] = bar(20, 90, 100.5);
@@ -1087,5 +2190,22 @@ describe("hitAnyTrendlineHandle", () => {
   it("misses a point away from every handle", () => {
     record(dips(), params(3), "lastbar");
     expect(hitAnyTrendlineHandle(lastChart, -500, -500)).toBe(false);
+  });
+
+  // A removed pane never draws again, and the draw is the only thing that
+  // clears the registry, so its last handles would answer the cursor test for
+  // the life of the chart: a pointer cursor over dots that are gone.
+  it("forgets an instance's handles when it is removed", () => {
+    record(dips(), params(3), "lastbar");
+    const drew = lastChart;
+    const h = getTrendlineHandles(drew, "candle_pane", "TRENDLINES")[0];
+    expect(h).toBeDefined();
+    dropTrendlineHandles(drew, "TRENDLINES2");
+    expect(hitAnyTrendlineHandle(drew, h.x, h.y)).toBe(true);
+    dropTrendlineHandles(drew, "TRENDLINES");
+    expect(getTrendlineHandles(drew, "candle_pane", "TRENDLINES")).toHaveLength(
+      0,
+    );
+    expect(hitAnyTrendlineHandle(drew, h.x, h.y)).toBe(false);
   });
 });

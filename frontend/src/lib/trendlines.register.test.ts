@@ -12,7 +12,7 @@ vi.mock("klinecharts", () => ({
 const { BASE_TEMPLATES, OVERLAY_INDICATORS } = await import("./customIndicators");
 // INDICATOR_META is module-local; indicatorInfo and resolveInputs are the
 // exported surface.
-const { indicatorInfo, resolveInputs } = await import("./indicatorMeta");
+const { indicatorInfo, resolveInputs, groupInputs } = await import("./indicatorMeta");
 const { EXPR_INSTANCE_TYPES, exprInstancesFor, exprWarmupByRef } = await import("./exprInstances");
 const { TRENDLINES_OUTPUTS } = await import("./indicators/trendlinesOutputs");
 
@@ -32,13 +32,50 @@ describe("TRENDLINES registration", () => {
     expect(OVERLAY_INDICATORS.has("TRENDLINES")).toBe(true);
   });
 
-  it("has settings metadata for all eight params plus the extend select", () => {
+  it("has settings metadata for all sixteen params, the merge tolerance and the extend select", () => {
     const inputs = resolveInputs("TRENDLINES", undefined);
-    expect(inputs.filter((i) => i.type === "number")).toHaveLength(8);
+    // Sixteen calcParams plus Merge Tolerance, which is a number on extendData
+    // rather than a calcParam because merging never moves an emitted value.
+    expect(inputs.filter((i) => i.type === "number")).toHaveLength(17);
+    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(16);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
     // metadata, so assert the named title too or this test passes on a miss.
     expect(indicatorInfo("TRENDLINES").title).toBe("Trendlines");
+  });
+
+  it("pairs the related inputs two to a row", () => {
+    // groupInputs only pairs CONSECUTIVE inputs sharing a group, so this also
+    // pins the panel's order: reordering the meta list silently unpairs them.
+    const chunks = groupInputs(resolveInputs("TRENDLINES", undefined));
+    expect(chunks.map((c) => c.map((i) => i.label))).toEqual([
+      ["Max Trendlines"],
+      ["Min Back Clearance"],
+      ["Min Pivot Length", "Max Pivot Pairs"],
+      ["Max Pierce", "Max Touch Gap"],
+      ["Min Touches", "Max Touches"],
+      ["Min Span", "Max Span"],
+      ["Max Projection", "Max Break Hold"],
+      ["Min Pivot Size", "Min Pivot Reach"],
+      ["Min Slope", "Max Slope"],
+      ["Only lines near price"],
+      ["Hide broken lines"],
+      ["Merge similar lines", "Merge Tolerance"],
+      ["Extend"],
+    ]);
+  });
+
+  it("gives Pivot Size a default, since older charts have no slot 8", () => {
+    // Instances created before the param existed store eight calcParams, so
+    // calcParams[8] is undefined and the modal renders inp.default rather than
+    // an empty box. Same 0 parseTrendlinesConfig substitutes, so what is shown
+    // is what the indicator is actually doing.
+    const swing = resolveInputs("TRENDLINES", undefined).find(
+      (i) => i.index === 8,
+    );
+    expect(swing?.label).toBe("Min Pivot Size");
+    expect(swing?.suffix).toBe("ATR");
+    expect(swing?.default).toBe(0);
   });
 
   it("is a referenceable expression instance exposing four outputs", () => {

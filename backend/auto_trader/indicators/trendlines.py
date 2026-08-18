@@ -31,8 +31,13 @@ from auto_trader.indicators.core import atr_series  # NOT .atr — sr_levels.py 
 
 TL_ATR_LEN = 14
 
-# How many earlier same-side pivots a new pivot pairs with (frontend
-# MAX_PAIR_PIVOTS): bounds the run at O(P * 20) instead of O(P^2).
+# DEFAULT for how many earlier same-side pivots a new pivot pairs with (frontend
+# MAX_PAIR_PIVOTS); the live value is cfg.pair_pivots. Bounds the run at
+# O(P * n) instead of O(P^2), and bounds how far back a line can reach.
+#
+# COUNTED IN PIVOTS, NOT BARS: anything that removes pivots (a higher pivot_len,
+# min_swing_atr, min_swing_reach) makes these slots reach FURTHER BACK in time,
+# so NEW lines can appear from a stricter setting.
 MAX_PAIR_PIVOTS = 20
 
 # Live state keeps this multiple of max_lines per side, so a line that is
@@ -49,8 +54,11 @@ TRENDLINES_OUTPUTS: tuple[str, ...] = (
 )
 
 # [pivot_len, viol_mult, touch_mult, min_touches, min_span_bars, max_proj_bars,
-#  break_hold_bars, max_lines] — TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.25, 0.75, 2, 20, 250, 30, 3)
+#  break_hold_bars, max_lines, min_swing_atr, min_swing_reach, pair_pivots,
+#  max_touches, max_span_bars, max_slope_atr, min_slope_atr, min_back_bars] —
+#  TRENDLINES_DEFAULTS in
+#  trendlinesOutputs.ts.
+_DEFAULTS = (5, 0.25, 0.75, 2, 20, 250, 30, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 10)
 
 Side = Literal["support", "resistance"]
 
@@ -71,12 +79,33 @@ class TrendlinesConfig:
     max_proj_bars: int  # how far past its last touch an unbroken line stays live
     break_hold_bars: int  # how long a broken line keeps emitting
     max_lines: int  # sizes live state (x MAX_LIVE_MULT), per side
+    # How far a pivot must stand out from the AVERAGE of its own window, as a
+    # multiple of ATR(14), before it counts as a swing at all. 0 = off.
+    min_swing_atr: float
+    # Bars a pivot must dominate to its LEFT, on top of the fractal window.
+    # 0 = off, and so is anything <= pivot_len. LEFT ONLY: right reach keeps
+    # growing after the pivot confirms, so gating on it would repaint.
+    min_swing_reach: int
+    pair_pivots: int  # earlier same-side pivots a new pivot pairs with
+    max_touches: int  # upper bound on touches; 0 = no limit
+    max_span_bars: int  # upper bound on span; 0 = no limit
+    max_slope_atr: float  # ceiling on steepness, ATR(14) per bar; 0 = no limit
+    min_slope_atr: float  # floor on steepness, same units; 0 = no floor
+    # Bars before the FIRST anchor that must sit on the line's own side of it,
+    # within the Max Pierce tolerance. 0 = off, and the only gate here whose
+    # DEFAULT is not off. See _has_back_clearance.
+    min_back_bars: int
 
 
 @dataclass(slots=True)
 class TrendLine:
     """Two anchor pivots; the line NEVER rotates once defined. Later touches
-    move last_touch_idx (extending coverage) but never i2/p2."""
+    move last_touch_idx (extending coverage) but never i2/p2.
+
+    NO touch_idxs HERE, deliberately, though the TS carries one. It records the
+    bars that touched so the chart can ring them, no gate reads it, and it
+    cannot move an emitted value — draw-time state, like lineKey and
+    selectDrawnLines, which this port has no counterpart for either."""
 
     side: Side
     i1: int  # first anchor bar index
@@ -143,6 +172,25 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         max_proj_bars=int_at(5, d[5]),
         break_hold_bars=int_at(6, d[6]),
         max_lines=int_at(7, d[7]),
+        # ZERO like viol_mult, and for the same reason spelled out in the TS:
+        # on a `> 0` rule a stored 0 would fall back to the default, so the
+        # gate could never be switched off.
+        min_swing_atr=num_at(8, d[8], True),
+        # Floored like the integer params but clamped to 0, not 1: int_at's
+        # floor of 1 would make the off state unreachable, and 1 is a no-op.
+        min_swing_reach=max(0, math.floor(num_at(9, d[9], True))),
+        pair_pivots=int_at(10, d[10]),
+        # Clamped to 0, not 1, like min_swing_reach: 0 is the off state and
+        # int_at would make it unreachable.
+        max_touches=max(0, math.floor(num_at(11, d[11], True))),
+        max_span_bars=max(0, math.floor(num_at(12, d[12], True))),
+        max_slope_atr=num_at(13, d[13], True),
+        min_slope_atr=num_at(14, d[14], True),
+        # Clamped to 0, not 1, like min_swing_reach: 0 is the off state and
+        # int_at would make it unreachable. Its DEFAULT is not the off state,
+        # so a chart saved before this param existed gets the gate at 10, which
+        # is intended.
+        min_back_bars=max(0, math.floor(num_at(15, d[15], True))),
     )
 
 
@@ -185,6 +233,38 @@ def in_touch_band(
     return lhs >= rhs - out and lhs <= rhs + inn
 
 
+
+def within_slope(line: TrendLine, atr_at: float, mult: float) -> bool:
+    """Mirrors TS withinSlope.
+
+    A line's slope is fixed the moment it is defined and never rotates, so this
+    is asked once at seed time: a candidate that fails can never come to pass,
+    and one that passes can never come to fail. That is why this gate DELETES
+    where the touch and span ceilings only silence.
+
+    No quotient: both sides multiply through by span, an exact positive integer,
+    rather than comparing abs(p2 - p1) / span against the threshold.
+    """
+    if mult <= 0:
+        return True
+    span = line.i2 - line.i1
+    rise = line.p2 - line.p1
+    return abs(rise) <= mult * atr_at * span
+
+
+def above_slope(line: TrendLine, atr_at: float, mult: float) -> bool:
+    """Mirrors TS aboveSlope: the floor to within_slope's ceiling.
+
+    A line flat enough to be a horizontal shelf is not a trendline; sr_levels
+    already draws those, properly, as levels. Same cross-multiplied form.
+    """
+    if mult <= 0:
+        return True
+    span = line.i2 - line.i1
+    rise = line.p2 - line.p1
+    return abs(rise) >= mult * atr_at * span
+
+
 def rank_key(line: TrendLine) -> tuple[int, int, int, int, float]:
     """Reproduces TS rankLines as a total-order sort key: strongest, then
     longest, then most recent, then oldest origin, then lowest anchor price. p1
@@ -218,12 +298,131 @@ def _is_pivot_at(values: Sequence[float], i: int, lb_l: int, lb_r: int, want: st
     return True
 
 
+
+def _is_significant_swing(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    opposite_pool: Sequence[int],
+    k: int,
+    side: str,
+    atr_k: float,
+    mult: float,
+) -> bool:
+    """Mirrors TS isSignificantSwing.
+
+    The fractal test only asks about SHAPE; this adds SIZE, measured as the LEG:
+    the distance from this pivot to the most recent pivot on the OTHER side.
+
+    NOT against the fractal window's average, which an earlier version used and
+    which coupled this setting to pivot_len (a wider window pulls the average
+    further from the pivot, so measured size grew with pivot_len and a stricter
+    pivot_len could ADD lines). The leg has no such coupling.
+
+    LEFT ONLY, and causal: that opposite pivot is at some h < k, so it confirmed
+    strictly before this pivot's confirm bar. No opposite pivot yet is a REJECT
+    (unmeasurable is not big), and a negative leg fails the same comparison
+    without a special case.
+    """
+    if mult <= 0:
+        return True
+    # Strictly before k: one bar can be both a strict high and a strict low
+    # pivot (a lone spike), and the resistance pool fills before the support one
+    # within a confirm bar.
+    h = -1
+    for q in range(len(opposite_pool) - 1, -1, -1):
+        if opposite_pool[q] < k:
+            h = opposite_pool[q]
+            break
+    if h < 0:
+        return False
+    leg = highs[k] - lows[h] if side == "resistance" else highs[h] - lows[k]
+    return leg >= mult * atr_k
+
+
+def _has_swing_reach(vals: Sequence[float], k: int, side: str, bars: int) -> bool:
+    """Mirrors TS hasSwingReach.
+
+    pivot_len thresholds strength and throws the measurement away: at length 5 a
+    bar that beats 40 bars each side and one that just wins its 5 register
+    identically. This asks for the reach itself, without lengthening the confirm
+    lag the way raising pivot_len would.
+
+    LEFT ONLY, not an approximation: right reach keeps growing after the pivot
+    confirms, so gating on it would change a line's strength under a bar already
+    emitted. Scans at most `bars` back, since the answer is a yes or no, and
+    rejects off the start of the series the way _is_pivot_at does."""
+    if bars <= 0:
+        return True
+    if k - bars < 0:
+        return False
+    for j in range(k - bars, k):
+        if (vals[j] >= vals[k]) if side == "resistance" else (vals[j] <= vals[k]):
+            return False
+    return True
+
+
+def _has_back_clearance(
+    line: TrendLine,
+    vals: Sequence[float],
+    atr: Sequence[float | None],
+    viol_mult: float,
+    bars: int,
+) -> bool:
+    """Mirrors TS hasBackClearance.
+
+    Seeding validates a candidate over (i1, i] and never looks BEFORE i1, so a
+    pair whose angle has nothing to do with the trend passes as long as its
+    wrong side is in the past. This is that same pierce test run backwards over
+    the `bars` bars before the first anchor, at the same Max Pierce tolerance.
+
+    It does not merely delete: the freed pairing slots refill, so the detector
+    picks a better FIRST anchor for the same trend.
+
+    A FLAT BAR COUNT, not a fraction of the span. Rejects off the start of the
+    series the way _is_pivot_at and _has_swing_reach do. A bar whose ATR has not
+    warmed up cannot be tested, so it counts as surviving, exactly as the
+    forward pass treats it. At most `bars` iterations, which is why it is asked
+    before the O(span) forward walk."""
+    if bars <= 0:
+        return True
+    if line.i1 - bars < 0:
+        return False
+    for j in range(line.i1 - 1, line.i1 - bars - 1, -1):
+        tol_j = atr[j]
+        if tol_j is None:
+            continue
+        if pierces(line, j, vals[j], viol_mult * tol_j):
+            return False
+    return True
+
+
 def is_live(line: TrendLine, i: int, cfg: TrendlinesConfig) -> bool:
     """Not aged out past its projection horizon, and if broken, still inside the
     hold window."""
     if line.broken_idx is not None:
         return i - line.broken_idx <= cfg.break_hold_bars
     return i - line.last_touch_idx <= cfg.max_proj_bars
+
+
+def over_ceilings(line: TrendLine, cfg: TrendlinesConfig) -> bool:
+    """Mirrors TS overCeilings: the line has grown past Max Touches or Max Span
+    (0 = no limit on either).
+
+    SILENCES, does not delete: touches and span only ever grow, so a line that
+    crossed a ceiling can never come back. is_major stops reading it and the
+    chart stops painting it, but it stays in live state for the pierce and touch
+    passes. Contrast the slope gates, which delete at seed time.
+
+    Also the live cap's FIRST sort key (step 3). Without that the ceilings
+    starve their own side: rank_key's first two components are touches and span,
+    exactly what these reject, so the rejects took the front of the
+    MAX_LIVE_MULT * max_lines slots and evicted the lines still able to emit.
+    """
+    if cfg.max_touches > 0 and line.touches > cfg.max_touches:
+        return True
+    if cfg.max_span_bars > 0 and line.last_touch_idx - line.i1 > cfg.max_span_bars:
+        return True
+    return False
 
 
 def is_major(line: TrendLine, i: int, cfg: TrendlinesConfig) -> bool:
@@ -238,7 +437,10 @@ def is_major(line: TrendLine, i: int, cfg: TrendlinesConfig) -> bool:
     defaults, or to nothing when max_proj_bars < break_hold_bars."""
     if line.touches < cfg.min_touches:
         return False
-    if line.last_touch_idx - line.i1 < cfg.min_span_bars:
+    if over_ceilings(line, cfg):
+        return False
+    span = line.last_touch_idx - line.i1
+    if span < cfg.min_span_bars:
         return False
     if line.broken_idx is not None:
         return i >= line.i1
@@ -259,6 +461,13 @@ def compute_trendlines(
     highs = [c.high for c in candles]
     lows = [c.low for c in candles]
     pools: dict[str, list[int]] = {"resistance": [], "support": []}
+    # EVERY confirmed fractal pivot, including the ones the size and reach gates
+    # reject. `pools` holds only survivors (what may seed a line); this holds the
+    # turning points, because the leg min_swing_atr measures runs to the previous
+    # turn whether or not that turn was big enough to trade. Using `pools` here
+    # DEADLOCKS the indicator: the first pivot has no opposite pivot, so it is
+    # rejected, so it never enters the pool, so the next has no opposite either.
+    turns: dict[str, list[int]] = {"resistance": [], "support": []}
     lines: list[TrendLine] = []
 
     def extreme_of(side: str, j: int) -> float:
@@ -291,6 +500,33 @@ def compute_trendlines(
                 want = "high" if side == "resistance" else "low"
                 if not _is_pivot_at(vals, k, cfg.pivot_len, cfg.pivot_len, want):
                     continue
+                turns[side].append(k)
+                # The size gate sits HERE, above everything else this bar does,
+                # so a rejected bar is not a pivot in any sense: no line seeded
+                # (2b), no touch counted (2a), and no pool entry, so no LATER
+                # pivot can pair with it either. touches is rank_key's primary
+                # key, so a smaller pool reorders the live cap and moves the
+                # emitted values — the point of the setting, not a leak.
+                #
+                # atr[k], not `a` = atr[i]: atr[i] can be warm while atr[k] is
+                # still None, for any k in the pivot_len bars before warm-up
+                # ends. WHOLE BLOCK behind min_swing_atr > 0 so that off means
+                # untouched — hoisting the None check out drops those early
+                # pivots even at 0, which the parity golden catches.
+                if cfg.min_swing_atr > 0:
+                    atr_k = atr[k]
+                    if atr_k is None:
+                        continue
+                    opposite = turns["support" if side == "resistance" else "resistance"]
+                    if not _is_significant_swing(
+                        highs, lows, opposite, k, side, atr_k, cfg.min_swing_atr
+                    ):
+                        continue
+                # Duration, after size. Two independent gates: a swing can be
+                # deep and brief (a spike) or long and shallow (a drift), and
+                # each setting rejects one of them.
+                if not _has_swing_reach(vals, k, side, cfg.min_swing_reach):
+                    continue
                 pool = pools[side]
                 price = vals[k]
 
@@ -318,16 +554,15 @@ def compute_trendlines(
                 #     i1 read here is strictly less than i2 = k: that is what
                 #     keeps span positive, and both geometry gates silently
                 #     invert if it ever stops being true.
-                frm = max(0, len(pool) - MAX_PAIR_PIVOTS)
+                frm = max(0, len(pool) - cfg.pair_pivots)
                 for q in range(frm, len(pool)):
                     i1 = pool[q]
-                    # UNREACHABLE BY CONSTRUCTION, kept as a guard rail: no
-                    # stored i2 can equal this k, and pool entries are distinct.
-                    if any(
-                        line.side == side and line.i1 == i1 and line.i2 == k
-                        for line in lines
-                    ):
-                        continue
+                    # NO DUPLICATE CHECK, and none is needed: every stored i2 is
+                    # an earlier confirm bar and this bar's pool entries are
+                    # distinct, so (side, i1, i2) cannot be built twice. The
+                    # defensive scan that used to sit here fired zero times and
+                    # cost a quarter of the run; the TS suite asserts the
+                    # invariant instead.
                     cand = TrendLine(
                         side=side,
                         i1=i1,
@@ -338,6 +573,25 @@ def compute_trendlines(
                         last_touch_idx=k,
                         broken_idx=None,
                     )
+                    # Slope first: one comparison, where the validation below
+                    # walks every bar back to i1. Seed time is the only time it
+                    # needs asking, since the line never rotates.
+                    if cfg.max_slope_atr > 0 or cfg.min_slope_atr > 0:
+                        atr_k = atr[k]
+                        if atr_k is None:
+                            continue
+                        if not within_slope(cand, atr_k, cfg.max_slope_atr):
+                            continue
+                        if not above_slope(cand, atr_k, cfg.min_slope_atr):
+                            continue
+                    # Then the backward clearance, still before the forward
+                    # walk: bounded by min_back_bars where the walk below is
+                    # O(span). Reads ONLY bars before i1, so it is fixed the
+                    # moment the line is defined and cannot repaint.
+                    if not _has_back_clearance(
+                        cand, vals, atr, cfg.viol_mult, cfg.min_back_bars
+                    ):
+                        continue
                     # Validate over (i1, c]: bars between the anchors AND the
                     # bars since the second anchor, which are real bars that
                     # could already have pierced it. Anchor bars are excluded.
@@ -354,11 +608,15 @@ def compute_trendlines(
                     if not ok:
                         continue
                     # Retro-count touches from pivots already in the pool
-                    # between the anchors (the WHOLE pool, not the sliced
-                    # window). Not lookahead: each confirmed before i.
-                    for pj in pool:
-                        if pj <= i1 or pj >= k:
-                            continue
+                    # between the anchors. Not lookahead: each confirmed before
+                    # i. The pool is in strictly increasing bar order and i1 IS
+                    # pool[q], so the window (i1, k) starts at q + 1 and ends at
+                    # the first entry reaching k; scanning the whole pool meant
+                    # a walk that grew with the series, per candidate.
+                    for q2 in range(q + 1, len(pool)):
+                        pj = pool[q2]
+                        if pj >= k:
+                            break
                         tol_p = atr[pj]
                         if tol_p is None:
                             continue
@@ -377,10 +635,23 @@ def compute_trendlines(
             #    Identity sets, not value sets: TrendLine is mutable and two
             #    lines can compare equal, exactly as the TS `new Set` keys on
             #    object identity.
-            lines = [line for line in lines if is_live(line, i, cfg)]
+            # Rebuilt only when something actually died: this runs at every
+            # confirm bar and the list is usually untouched.
+            if any(not is_live(line, i, cfg) for line in lines):
+                lines = [line for line in lines if is_live(line, i, cfg)]
+            cap = MAX_LIVE_MULT * cfg.max_lines
             for side in SIDES:
-                mine = sorted([line for line in lines if line.side == side], key=rank_key)
-                keep = {id(line) for line in mine[: MAX_LIVE_MULT * cfg.max_lines]}
+                # CEILING-FAILED LINES SORT LAST, ahead of every rank_key
+                # component: they can never re-qualify, so holding slots would
+                # evict lines that CAN still emit (see over_ceilings).
+                mine = [line for line in lines if line.side == side]
+                # Under the cap there is nothing to drop, so the sort cannot
+                # change which lines survive and is pure cost. On most bars
+                # this is the branch taken.
+                if len(mine) <= cap:
+                    continue
+                mine.sort(key=lambda line: (over_ceilings(line, cfg), rank_key(line)))
+                keep = {id(line) for line in mine[:cap]}
                 lines = [line for line in lines if line.side != side or id(line) in keep]
 
         # 4. Emit. Membership is gated (live + major); selection is nearest to
@@ -400,60 +671,68 @@ def compute_trendlines(
         close = candles[i].close
         point: dict[str, float] = {}
         for side in SIDES:
-            majors = sorted(
-                [
-                    line
-                    for line in lines
-                    if line.side == side and is_live(line, i, cfg) and is_major(line, i, cfg)
-                ],
-                key=rank_key,
-            )
-
+            # ONE PASS, NO SORT, and it is the same choice the sort expressed.
+            # This used to build a rank-sorted list of the majors and walk it
+            # taking the first STRICTLY nearer line, so the winner was the
+            # rank-minimum among the distance-minimums; tracking that pair
+            # directly says the same thing without a list and a sort on every
+            # bar. Ties resolve identically: rank_key is a total order, and a
+            # candidate that ranks equal does not displace the one held, which
+            # is what a stable sort plus first-wins gave.
+            #
             # The side test applies to UNBROKEN lines ONLY, and the two cases
             # must not be merged. An unbroken support sits at or below the close
-            # and an unbroken resistance above it — that is what "nearest
-            # support" means. A BROKEN line gets NO side test: once price has
-            # pierced a line it can sit on EITHER side of the close during the
-            # hold window (a wick break snaps back the next bar, leaving the
-            # broken support below the close again), and the hold window exists
-            # precisely to keep that level visible for a retest. Gating broken
-            # lines on side silently blanks tl_broken_* for whole windows.
-            def pick(want: str, majors: list[TrendLine] = majors, side: Side = side) -> float | None:
-                best: float | None = None
-                for line in majors:
-                    if (line.broken_idx is not None) if want == "unbroken" else (
-                        line.broken_idx is None
+            # and an unbroken resistance above it. A BROKEN line gets NO side
+            # test: once price has pierced a line it can sit on EITHER side of
+            # the close during the hold window (a wick break snaps back the next
+            # bar), and that window exists precisely to keep the level visible
+            # for a retest. Gating broken lines on side silently blanks
+            # tl_broken_* for whole windows.
+            u_line: TrendLine | None = None
+            u_val = 0.0
+            u_dist = 0.0
+            b_line: TrendLine | None = None
+            b_val = 0.0
+            b_dist = 0.0
+            for line in lines:
+                if line.side != side:
+                    continue
+                if not is_live(line, i, cfg) or not is_major(line, i, cfg):
+                    continue
+                v = project_at(line, i)
+                d = abs(v - close)
+                if line.broken_idx is not None:
+                    if b_line is None or d < b_dist or (
+                        d == b_dist and rank_key(line) < rank_key(b_line)
                     ):
-                        continue
-                    v = project_at(line, i)
-                    if want == "unbroken":
-                        # CROSS-MULTIPLIED, exactly as pierces does, because
-                        # this is a boolean that gates whether an output fires
-                        # at all. With s = i2 - i1 an exact positive integer,
-                        #   project_at(line, i) <= close
-                        # is the same inequality as
-                        #   (p2 - p1) * (i - i1) <= (close - p1) * s
-                        # with the quotient's rounding removed.
-                        s = line.i2 - line.i1
-                        below = (line.p2 - line.p1) * (i - line.i1) <= (close - line.p1) * s
-                        if below != (side == "support"):
-                            continue
-                    if best is None or abs(v - close) < abs(best - close):
-                        best = v
-                return best
+                        b_line, b_val, b_dist = line, v, d
+                    continue
+                # CROSS-MULTIPLIED, exactly as pierces does, because this is a
+                # boolean that gates whether an output fires at all. With
+                # s = i2 - i1 an exact positive integer,
+                #   project_at(line, i) <= close
+                # is the same inequality as
+                #   (p2 - p1) * (i - i1) <= (close - p1) * s
+                # with the quotient's rounding removed.
+                s_span = line.i2 - line.i1
+                below = (line.p2 - line.p1) * (i - line.i1) <= (close - line.p1) * s_span
+                if below != (side == "support"):
+                    continue
+                if u_line is None or d < u_dist or (
+                    d == u_dist and rank_key(line) < rank_key(u_line)
+                ):
+                    u_line, u_val, u_dist = line, v, d
 
-            unbroken = pick("unbroken")
-            broken = pick("broken")
             if side == "support":
-                if unbroken is not None:
-                    point["tl_support"] = unbroken
-                if broken is not None:
-                    point["tl_broken_support"] = broken
+                if u_line is not None:
+                    point["tl_support"] = u_val
+                if b_line is not None:
+                    point["tl_broken_support"] = b_val
             else:
-                if unbroken is not None:
-                    point["tl_resistance"] = unbroken
-                if broken is not None:
-                    point["tl_broken_resistance"] = broken
+                if u_line is not None:
+                    point["tl_resistance"] = u_val
+                if b_line is not None:
+                    point["tl_broken_resistance"] = b_val
         points[i] = point
 
     return points, lines
@@ -467,7 +746,14 @@ def trendlines_warmup(cfg: TrendlinesConfig, output: str) -> int:
     """ATR(14) warm-up, plus the two pivots that must confirm (pivot_len each),
     plus the span they must cover. Lines keep forming after that, so this is the
     floor. Every output shares it; an output this pane does not expose costs 0,
-    like fvg_warmup."""
+    like fvg_warmup.
+
+    LEFT-WINDOW GATES ARE LEFT OUT, and there are two of them now: min_swing_reach
+    and min_back_bars each require that many bars before the first anchor. Right
+    for each one alone (this floor is about the shape of the spec, not the
+    strictest reachable config), but it is a pattern rather than an exception
+    now: the floor is optimistic by their SUM, so a third such gate belongs on
+    this list too. Mirrors the TS trendlinesWarmup docstring."""
     if output not in TRENDLINES_OUTPUTS:
         return 0
     return TL_ATR_LEN + 2 * cfg.pivot_len + cfg.min_span_bars

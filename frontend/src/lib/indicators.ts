@@ -37,6 +37,7 @@ import { RESOLUTION_SECONDS } from "./feed";
 import type { SlopeExtend } from "./indicators/slope";
 import { INSET_CAPABLE, insetTemplate } from "./indicators/inset";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
+import { dropTrendlineHandles } from "./indicators/trendlines";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
 import {
   type VisibilityModel,
@@ -507,10 +508,15 @@ export function applyIndicator(
   //  3. the TYPE's global default preset — ONLY on a fresh add (not rehydrate), so
   //     it seeds new instances but never stomps an existing/rehydrated one whose
   //     config is simply absent (keeps existing charts byte-identical on reload).
-  const cfg =
-    opts?.config ??
-    loadIndicatorConfigs(scope)[id] ??
-    (opts?.rehydrate ? undefined : loadIndicatorDefault(type) ?? undefined);
+  const saved = opts?.config ?? loadIndicatorConfigs(scope)[id];
+  // A type default seeded this instance and nothing has stored it under this id.
+  // Remembered here (where the source is known) so the create below can persist it:
+  // rehydrate deliberately skips the type default, so without a per-instance copy
+  // the FIRST teardown+recreate — Move up, the inset toggle, a plain reload — drops
+  // back to the bare template. That is how a Slope(2,9,50,100,200) came back as
+  // Slope(9). Same save-after-apply addIndicatorInstance does for a pasted config.
+  const seeded = saved ? undefined : opts?.rehydrate ? undefined : loadIndicatorDefault(type) ?? undefined;
+  const cfg = saved ?? seeded;
   // Migrate stale saved calcParams to a new shorter default (e.g. an RSI saved
   // under the old three-length design → single length 14), so existing instances
   // pick up the TradingView shape on reload instead of redrawing three curves.
@@ -583,6 +589,10 @@ export function applyIndicator(
     stack,
   );
   if (!paneId) return null;
+  // The instance exists: give the type default it was seeded from a home of its own
+  // (see `seeded` above). After the create, never before — a failed create would
+  // otherwise leave a config a later instance of the same id would silently inherit.
+  if (seeded) saveIndicatorConfig(scope, id, seeded);
   // Only fresh sub-panes (not overlays, not a stack-into-existing) get pane sizing.
   if (!opts?.paneId && !isOverlay) {
     if (isFixedCompact(type)) {
@@ -1027,6 +1037,9 @@ export function removeIndicatorById(chart: Chart, scope: string, id: string): vo
       break;
     }
   }
+  // A removed pane never draws again, so its recorded TRENDLINES pin handles
+  // would stay clickable-looking (the cursor turns to a pointer) forever.
+  dropTrendlineHandles(chart, id);
   deleteIndicatorConfig(scope, id);
 }
 

@@ -361,6 +361,55 @@ describe("addIndicatorInstance persists an explicit config (Paste)", () => {
   });
 });
 
+describe("a type's default preset survives a recreate", () => {
+  // "Save as default" seeds every NEW instance of a type (applyIndicator's third
+  // config source). Nothing wrote that seed under the instance's own id, so the
+  // first teardown+recreate — Move up, the inset toggle, or a plain reload, all of
+  // which rehydrate and so deliberately skip the type default — brought the
+  // indicator back at the bare template's params: a Slope(2,9,50,100,200) came
+  // back as Slope(9).
+  function recordingChart(created: Array<{ name?: string; calcParams?: number[] }>) {
+    let seq = 0;
+    return {
+      getIndicators: () => [],
+      createIndicator: (value: { name?: string; calcParams?: number[] }) => {
+        created.push(value);
+        return `pane_${++seq}`;
+      },
+      overrideIndicator: () => {},
+      setPaneOptions: () => {},
+      overrideYAxis: () => {},
+    } as unknown as Chart;
+  }
+
+  it("recreates a defaults-seeded SLOPE at its own params, not the template's", () => {
+    localStorage.clear();
+    const scope = "tab.default";
+    const calcParams = [2, 9, 50, 100, 200];
+    persist.saveIndicatorDefault("SLOPE", { calcParams });
+    const created: Array<{ name?: string; calcParams?: number[] }> = [];
+    const chart = recordingChart(created);
+
+    // Fresh add: the type default seeds it.
+    applyIndicator(chart, scope, "US100", { id: "SLOPE", type: "SLOPE" });
+    expect(created[0].calcParams).toEqual(calcParams);
+
+    // Recreate (inset toggle / Move up / reload) — rehydrate skips the type default
+    // on purpose, so the instance's own saved config is the ONLY thing that can
+    // carry these params through.
+    applyIndicator(chart, scope, "US100", { id: "SLOPE", type: "SLOPE" }, { rehydrate: true });
+    expect(created[1].calcParams).toEqual(calcParams);
+  });
+
+  it("leaves an add with no default preset writing nothing, as before", () => {
+    localStorage.clear();
+    const scope = "tab.nodefault";
+    const created: Array<{ name?: string; calcParams?: number[] }> = [];
+    applyIndicator(recordingChart(created), scope, "US100", { id: "SLOPE", type: "SLOPE" });
+    expect(persist.loadIndicatorConfigs(scope).SLOPE).toBeUndefined();
+  });
+});
+
 describe("isInternalIndicator", () => {
   it("matches the fixed equity pane", () => {
     expect(isInternalIndicator("EQUITY")).toBe(true);

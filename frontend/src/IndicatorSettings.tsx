@@ -11,12 +11,18 @@
 //
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import type { Chart, Indicator } from "klinecharts";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "./lib/visibility";
-import { resolveInputs, isMovingAverage, SMOOTHING_TYPES } from "./lib/indicatorMeta";
+import {
+  resolveInputs,
+  groupInputs,
+  isMovingAverage,
+  SMOOTHING_TYPES,
+  type IndicatorInputDef,
+} from "./lib/indicatorMeta";
 import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe } from "./lib/mtfCoordinator";
 import {
   slopeLengths,
@@ -80,6 +86,7 @@ import {
 } from "./lib/persist";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
+import SelectMenu from "./components/SelectMenu";
 import { requestIndicatorOverlayRepaint } from "./lib/signals";
 import { mirrorAccelCompanion, syncAccelCompanion, getIndicator } from "./lib/indicators";
 import { legendFiguresOf } from "./lib/indicators/inset";
@@ -512,6 +519,119 @@ export default function IndicatorSettings({
     }
     const live = getIndicator(chart, paneId, name) as Indicator | null;
     chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), ...next } });
+  }
+
+  // Conditional visibility: an input whose showWhen guard is not met by the
+  // current (extend-stored) value of the controlling field is not rendered.
+  // Filtered BEFORE grouping, so a hidden half of a pair leaves the other half
+  // as a normal full-width row rather than an empty grid cell.
+  function visibleInput(inp: IndicatorInputDef): boolean {
+    if (!inp.showWhen) return true;
+    const ctrl = inputs.find(
+      (d) => d.source === "extend" && d.field === inp.showWhen!.field,
+    );
+    const cur = genExtend[inp.showWhen.field] ?? ctrl?.default;
+    return inp.showWhen.equals.includes(cur as string | number);
+  }
+
+  // The label, with an optional ⓘ info tip beside it (matches the hand-built
+  // panels like PREV_HL). Plain <label> when there is no tip.
+  function labelFor(inp: IndicatorInputDef) {
+    return inp.tip ? (
+      <span className="ind-row-head">
+        <label>{inp.label}</label>
+        <InfoTip title={inp.label} text={inp.tip} />
+      </span>
+    ) : (
+      <label>{inp.label}</label>
+    );
+  }
+
+  // Wraps a control with its unit, so the unit reads as part of the field
+  // rather than as part of the label.
+  function withSuffix(inp: IndicatorInputDef, control: React.ReactNode) {
+    if (!inp.suffix) return control;
+    return (
+      <span className="ind-control-row">
+        {control}
+        <span className="ind-suffix">{inp.suffix}</span>
+      </span>
+    );
+  }
+
+  function controlFor(inp: IndicatorInputDef) {
+    if (inp.source === "calcParam" && inp.index != null) {
+      return withSuffix(
+        inp,
+        <input
+          type="number"
+          // The visible label is a sibling, not a <label for>, so the control
+          // is unnamed to a screen reader (and to a test) without this.
+          aria-label={inp.label}
+          min={inp.min}
+          max={inp.max}
+          step={inp.step ?? 1}
+          // A slot the saved instance predates reads undefined, which would
+          // render an EMPTY box for a param that does have a default (a chart
+          // created before the param existed keeps its shorter list). Show the
+          // meta's default there; editing writes the slot and the array grows
+          // to the new length.
+          value={
+            Number.isFinite(calcParams[inp.index])
+              ? calcParams[inp.index]
+              : ((inp.default as number | undefined) ?? "")
+          }
+          onChange={(e) => setParam(inp.index!, Number(e.target.value))}
+        />,
+      );
+    }
+    if (inp.source === "extend" && inp.field && inp.type === "select") {
+      return (
+        <SelectMenu
+          className={inp.wide ? "ind-select-fill" : undefined}
+          ariaLabel={inp.label}
+          value={String(genExtend[inp.field] ?? inp.default ?? "")}
+          options={(inp.options ?? []).map((o) => ({
+            value: String(o.value),
+            label: o.label,
+          }))}
+          onChange={(v) => setExtendInput(inp.field!, v)}
+        />
+      );
+    }
+    // A NUMBER on extendData, which is not the same branch as a calcParam one:
+    // render-only settings (Merge Tolerance) live there because they must not
+    // be able to move an emitted value. Without this the row drew its label and
+    // nothing else.
+    if (inp.source === "extend" && inp.field && inp.type === "number") {
+      return withSuffix(
+        inp,
+        <input
+          type="number"
+          aria-label={inp.label}
+          min={inp.min}
+          max={inp.max}
+          step={inp.step ?? 1}
+          value={
+            Number.isFinite(genExtend[inp.field] as number)
+              ? (genExtend[inp.field] as number)
+              : ((inp.default as number | undefined) ?? "")
+          }
+          onChange={(e) => setExtendInput(inp.field!, Number(e.target.value))}
+        />,
+      );
+    }
+    if (inp.source === "extend" && inp.field && inp.type === "boolean") {
+      return (
+        <input
+          type="checkbox"
+          aria-label={inp.label}
+          checked={(genExtend[inp.field] ?? inp.default ?? false) as boolean}
+          onChange={(e) => setExtendInput(inp.field!, e.target.checked)}
+        />
+      );
+    }
+    return null;
   }
 
   // --- SESSIONS: editable per-session list (extendData.sessions) ---
@@ -1469,73 +1589,59 @@ export default function IndicatorSettings({
                   </Tooltip>
                 </div>
               )}
-              {inputs.map((inp) => {
-                // Conditional visibility: skip an input whose showWhen guard isn't
-                // met by the current (extend-stored) value of the controlling field.
-                if (inp.showWhen) {
-                  const ctrl = inputs.find(
-                    (d) => d.source === "extend" && d.field === inp.showWhen!.field,
-                  );
-                  const cur = genExtend[inp.showWhen.field] ?? ctrl?.default;
-                  if (!inp.showWhen.equals.includes(cur as string | number)) return null;
-                }
-                // Label, with an optional ⓘ info tip beside it (matches the
-                // hand-built panels like PREV_HL). Plain <label> when no tip.
-                const labelEl = inp.tip ? (
-                  <span className="ind-row-head">
-                    <label>{inp.label}</label>
-                    <InfoTip title={inp.label} text={inp.tip} />
-                  </span>
-                ) : (
-                  <label>{inp.label}</label>
-                );
-                if (inp.source === "calcParam" && inp.index != null) {
-                  return (
-                    <div className="ind-row" key={inp.key}>
-                      {labelEl}
-                      <input
-                        type="number"
-                        min={inp.min}
-                        max={inp.max}
-                        step={inp.step ?? 1}
-                        value={Number.isFinite(calcParams[inp.index]) ? calcParams[inp.index] : ""}
-                        onChange={(e) => setParam(inp.index!, Number(e.target.value))}
-                      />
+              {groupInputs(inputs.filter(visibleInput)).map((chunk) => (
+                <Fragment key={chunk[0].key}>
+                  {/* A heading before the input that opens a section, so a tab
+                      mixing what the indicator COMPUTES with how it is DRAWN
+                      says which is which. Same .ind-group the MA panel uses for
+                      Smoothing and Calculation. */}
+                  {chunk[0].section && (
+                    <div className="ind-group">{chunk[0].section}</div>
+                  )}
+                  {chunk.length > 1 ? (
+                    // Related pair: two to a row, each label stacked above its
+                    // own control. Halves the width a label gets, which is why
+                    // only inputs with short labels carry a `group`.
+                    <div className="ind-pair2">
+                      {chunk.map((inp) => (
+                        <div className="ind-field" key={inp.key}>
+                          {labelFor(inp)}
+                          {controlFor(inp)}
+                        </div>
+                      ))}
                     </div>
-                  );
-                }
-                if (inp.source === "extend" && inp.field && inp.type === "select") {
-                  return (
-                    <div className="ind-row" key={inp.key}>
-                      {labelEl}
-                      <select
-                        value={String(genExtend[inp.field] ?? inp.default ?? "")}
-                        onChange={(e) => setExtendInput(inp.field!, e.target.value)}
-                      >
-                        {(inp.options ?? []).map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
+                  ) : chunk[0].type === "number" ? (
+                    // A solo NUMBER lines its control up with the right column
+                    // of the paired rows rather than pushing it to the modal's
+                    // edge, so a column of numbers reads as a column. Selects
+                    // and checkboxes keep the label-left/control-right row
+                    // below: a sentence-long select needs the width, and a
+                    // checkbox at the half-way mark reads as unattached to
+                    // either side.
+                    //
+                    // The ⓘ MOVES TO THE END of the row here, rather than
+                    // riding next to the label as it does everywhere else.
+                    // Half a row is not enough for "Min Back Clearance" plus a
+                    // tip, and something has to give: an ellipsised label reads
+                    // as a bug, where a tip at the end of the row reads as a
+                    // layout.
+                    <div className="ind-row ind-row-cols">
+                      <label>{chunk[0].label}</label>
+                      <span className="ind-cols-control">
+                        {controlFor(chunk[0])}
+                        {chunk[0].tip && (
+                          <InfoTip title={chunk[0].label} text={chunk[0].tip} />
+                        )}
+                      </span>
                     </div>
-                  );
-                }
-                if (inp.source === "extend" && inp.field && inp.type === "boolean") {
-                  const checked = (genExtend[inp.field] ?? inp.default ?? false) as boolean;
-                  return (
-                    <div className="ind-row" key={inp.key}>
-                      {labelEl}
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => setExtendInput(inp.field!, e.target.checked)}
-                      />
+                  ) : (
+                    <div className="ind-row">
+                      {labelFor(chunk[0])}
+                      {controlFor(chunk[0])}
                     </div>
-                  );
-                }
-                return null;
-              })}
+                  )}
+                </Fragment>
+              ))}
               {isSlope && (
                 <>
                   <div className="ind-row">

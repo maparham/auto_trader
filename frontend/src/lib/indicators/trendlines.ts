@@ -26,12 +26,16 @@
 // backend/auto_trader/indicators/trendlines.py; keep the arithmetic order
 // identical (see core.py's parity contract).
 
-import type { Indicator, IndicatorDrawParams, IndicatorTemplate, KLineData } from "klinecharts";
+import type {
+  Indicator,
+  IndicatorDrawParams,
+  IndicatorTemplate,
+  KLineData,
+} from "klinecharts";
 import { isPivotAt } from "./pivots";
 import { atrSeries } from "../atr";
 import {
   MAX_LIVE_MULT,
-  MAX_PAIR_PIVOTS,
   parseTrendlinesConfig,
   TL_ATR_LEN,
   TRENDLINES_DEFAULTS,
@@ -51,6 +55,16 @@ export interface TrendLine {
   i2: number; // second anchor bar index (i2 > i1)
   p2: number;
   touches: number;
+  /** The bars that touched, INCLUDING the two anchors, so its length is always
+   * `touches` and the ×N tag counts the marks the chart paints. Not in bar
+   * order: the retro-count pass (2b) appends pivots that sit BETWEEN the
+   * anchors after the anchors are already in. Nothing reads the order.
+   *
+   * DRAW-ONLY. No gate consults it, so it cannot move an emitted value, and
+   * that is what keeps it out of the parity argument. Recorded rather than
+   * recomputed at draw time because the touch test needs each bar's own ATR,
+   * and only the detector has the series. */
+  touchIdxs: number[];
   lastTouchIdx: number; // seeded to i2, only ever moves forward
   brokenIdx: number | null; // bar that pierced it, once one has
 }
@@ -68,7 +82,12 @@ export function projectAt(line: TrendLine, j: number): number {
  * is the same inequality as comparing price against the projected value, with
  * one rounding source removed. Multiplying by a positive integer preserves the
  * direction of the inequality. */
-export function pierces(line: TrendLine, j: number, price: number, violTol: number): boolean {
+export function pierces(
+  line: TrendLine,
+  j: number,
+  price: number,
+  violTol: number,
+): boolean {
   const span = line.i2 - line.i1;
   const lhs = (price - line.p1) * span;
   const rhs = (line.p2 - line.p1) * (j - line.i1);
@@ -94,7 +113,9 @@ export function inTouchBand(
   const rhs = (line.p2 - line.p1) * (j - line.i1);
   const out = violTol * span;
   const inn = touchTol * span;
-  return line.side === "resistance" ? lhs >= rhs - inn && lhs <= rhs + out : lhs >= rhs - out && lhs <= rhs + inn;
+  return line.side === "resistance"
+    ? lhs >= rhs - inn && lhs <= rhs + out
+    : lhs >= rhs - out && lhs <= rhs + inn;
 }
 
 /** Full deterministic ordering (no stability reliance — Python sorts
@@ -127,6 +148,30 @@ function isLive(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
   return i - line.lastTouchIdx <= cfg.maxProjBars;
 }
 
+/** True when a line has grown past one of the user's ceilings (Max Touches,
+ * Max Span). 0 means no limit on either.
+ *
+ * SILENCES, it does not delete, and the two callers are why. touches and span
+ * only ever grow, so a line that crossed a ceiling can never come back: the
+ * operand path (isMajor) stops reading it and the draw path stops painting it,
+ * but it stays in live state so the pierce and touch passes still see it.
+ * Contrast the slope gates, which DELETE at seed time because a line's slope is
+ * fixed the moment it is defined.
+ *
+ * It is also the tie-break the live cap sorts on first (step 3). Without that,
+ * the ceilings starve their own side: rankLines' first two keys are touches and
+ * span descending, which is EXACTLY what these ceilings disqualify, so the
+ * rejects sorted to the front of the MAX_LIVE_MULT * maxLines slots and evicted
+ * the lines still eligible to emit. Measured on the DXY monthly fixture at
+ * maxTouches 2, tl_resistance fired on 246 bars at maxLines 3 against 442 at
+ * maxLines 12 — the setting silently blanked an operand a strategy reads. */
+export function overCeilings(line: TrendLine, cfg: TrendlinesConfig): boolean {
+  if (cfg.maxTouches > 0 && line.touches > cfg.maxTouches) return true;
+  if (cfg.maxSpanBars > 0 && line.lastTouchIdx - line.i1 > cfg.maxSpanBars)
+    return true;
+  return false;
+}
+
 /** Major means: enough touches, enough span, and covering this bar. This is now
  * the ONLY gate on the operand path: the caller used to also cap by rank, and
  * step 4 explains at length why that cap had to go for sloping geometry.
@@ -144,25 +189,213 @@ function isLive(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
  * all while still sitting in live state. Any break landing in the last
  * breakHoldBars of a line's horizon loses its window. Keep the branches split
  * in the Python port. */
-function isMajor(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
+export function isMajor(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
   if (line.touches < cfg.minTouches) return false;
-  if (line.lastTouchIdx - line.i1 < cfg.minSpanBars) return false;
+  if (overCeilings(line, cfg)) return false;
+  const span = line.lastTouchIdx - line.i1;
+  if (span < cfg.minSpanBars) return false;
   if (line.brokenIdx !== null) return i >= line.i1;
   return i >= line.i1 && i <= line.lastTouchIdx + cfg.maxProjBars;
+}
+
+/** True when the pivot at bar `k` sits far enough from the swing before it.
+ *
+ * The fractal test only asks about SHAPE: bar k is the extreme of its window.
+ * It says nothing about SIZE, so a one-tick wobble in a quiet stretch is as
+ * much a pivot as the top of a real leg. This adds the size condition.
+ *
+ * MEASURED AS THE LEG, not against the window Pivot Length defines. An earlier
+ * version compared the pivot to the AVERAGE of its own fractal window, which
+ * coupled the two settings in a way nobody could predict: widening the window
+ * pulls that average further from the pivot, so the measured size GROWS with
+ * Pivot Length and raising Pivot Length could ADD lines. Measured on the DXY
+ * fixture at 1 ATR, pivots passing went 11 of 123 at Pivot Length 2 to 25 of 51
+ * at Pivot Length 5, and the drawn count went 3 to 12. The leg has no such
+ * coupling: it is the distance from this pivot to the most recent pivot on the
+ * OTHER side, which is what a trader means by the size of a swing.
+ *
+ * LEFT ONLY, and causal: that opposite pivot is at some h < k, so it confirmed
+ * at h + pivotLen, strictly before this pivot's own confirm bar. A later
+ * opposite pivot has not happened yet.
+ *
+ * No opposite pivot yet (the start of the series) is a REJECT, not a pass:
+ * unmeasurable is not the same as big, and it only affects the first swing.
+ *
+ * A negative leg (the "high" sits below the earlier low, which a spike can do)
+ * fails on the same comparison, no special case needed.
+ *
+ * PARITY: a boolean that gates SET MEMBERSHIP, so it carries no quotient, and
+ * both operands are single stored prices. */
+export function isSignificantSwing(
+  highs: ReadonlyArray<number>,
+  lows: ReadonlyArray<number>,
+  oppositePool: ReadonlyArray<number>,
+  k: number,
+  side: TrendSide,
+  atrK: number,
+  mult: number,
+): boolean {
+  if (mult <= 0) return true;
+  // Most recent opposite pivot strictly before k. Strictly, because one bar can
+  // be both a strict high pivot and a strict low pivot (a lone spike), and the
+  // resistance pool is filled before the support pool within a confirm bar.
+  let h = -1;
+  for (let q = oppositePool.length - 1; q >= 0; q--) {
+    if (oppositePool[q] < k) {
+      h = oppositePool[q];
+      break;
+    }
+  }
+  if (h < 0) return false;
+  const leg = side === "resistance" ? highs[k] - lows[h] : highs[h] - lows[k];
+  return leg >= mult * atrK;
+}
+
+/** True when the pivot at bar `k` dominates at least `bars` bars to its LEFT.
+ *
+ * Pivot Length thresholds strength and then throws the measurement away: at
+ * length 5, a bar that beats 40 bars each side and one that just wins its 5
+ * register identically. This reads the reach itself, so a long swing can be
+ * asked for without also lengthening the confirm lag (which is what raising
+ * Pivot Length would cost).
+ *
+ * LEFT ONLY, and that is not an approximation. Right reach keeps growing for
+ * bars after the pivot confirms, so a line's strength would change under a bar
+ * already emitted: repainting, which this indicator does not do. Left reach is
+ * final the moment the pivot exists.
+ *
+ * Scans at most `bars` back rather than measuring the true reach, because the
+ * answer is a yes or no: it stops at the first violation or at the count. Runs
+ * off the start of the series the same way isPivotAt does, by rejecting.
+ *
+ * Anything <= pivotLen is a no-op: isPivotAt already proved those bars. */
+export function hasSwingReach(
+  vals: ReadonlyArray<number>,
+  k: number,
+  side: TrendSide,
+  bars: number,
+): boolean {
+  if (bars <= 0) return true;
+  if (k - bars < 0) return false;
+  for (let j = k - bars; j < k; j++) {
+    if (side === "resistance" ? vals[j] >= vals[k] : vals[j] <= vals[k])
+      return false;
+  }
+  return true;
+}
+
+/** True when the line is no steeper than `mult` ATRs of price per bar.
+ *
+ * A line's slope is fixed the moment it is defined and never rotates, so this
+ * is checked once at seed time rather than every bar: a candidate that fails
+ * can never come to pass the test later, and one that passes can never come to
+ * fail it. That is why this gate DELETES where the touch and span ceilings only
+ * silence.
+ *
+ * What it is for: a steep line outruns price and is never touched again. A fan
+ * off one sharp pivot throws off a whole family of them, each steeper than the
+ * last, and they crowd out the shallow lines price actually respects. Measured
+ * on a live US100 daily chart, the shallow fan members ran at 0.04 ATR per bar
+ * and the useless steep one at 0.16.
+ *
+ * PARITY: a boolean that gates SET MEMBERSHIP, so no quotient. Rather than
+ * comparing |p2 - p1| / span against the threshold, both sides multiply through
+ * by span, an exact positive integer, which is the same inequality with one
+ * rounding source removed. */
+export function withinSlope(
+  line: TrendLine,
+  atrAt: number,
+  mult: number,
+): boolean {
+  if (mult <= 0) return true;
+  const span = line.i2 - line.i1;
+  const rise = line.p2 - line.p1;
+  return Math.abs(rise) <= mult * atrAt * span;
+}
+
+/** True when the line is at least `mult` ATRs of price per bar steep.
+ *
+ * The mirror of withinSlope, and asked at the same moment for the same reason.
+ * A line flat enough to be a horizontal shelf is not a trendline: SR_LEVELS
+ * already draws those, properly, as levels. Same cross-multiplied form. */
+export function aboveSlope(
+  line: TrendLine,
+  atrAt: number,
+  mult: number,
+): boolean {
+  if (mult <= 0) return true;
+  const span = line.i2 - line.i1;
+  const rise = line.p2 - line.p1;
+  return Math.abs(rise) >= mult * atrAt * span;
+}
+
+/** True when the `bars` bars immediately before i1 all sit on the line's own
+ * side of it, within the same Max Pierce tolerance the forward pass uses.
+ *
+ * WHY IT EXISTS. Seeding validates a candidate over (i1, i]: no bar between the
+ * anchors or since may pierce it. Nothing ever looked BEFORE i1, so a pair
+ * whose angle has nothing to do with the trend passes as long as its wrong side
+ * is in the past. Measured on a live US100 weekly chart, the worst survivor was
+ * a resistance line spanning 572 bars on 2 touches whose angle was nowhere near
+ * the trend: zero bars of clearance behind its first anchor.
+ *
+ * It does not merely delete. The freed pairing slots refill, so the detector
+ * picks a BETTER FIRST ANCHOR for the same trend: on that chart the 572-bar
+ * line became a 2021-anchored line with 151 bars of clearance, ending at the
+ * same pivot.
+ *
+ * A FLAT BAR COUNT, not a fraction of the span. The ratio version rejected a
+ * 3-touch line with 14 bars of clearance purely for being long.
+ *
+ * Runs off the start of the series by REJECTING, the same way isPivotAt and
+ * hasSwingReach do: a line anchored fewer than `bars` from bar 0 has not
+ * demonstrated the clearance, and letting the short window pass would make the
+ * gate weakest exactly where the sample is thinnest.
+ *
+ * A bar whose ATR has not warmed up cannot be tested, so it counts as
+ * surviving, which is what the forward pass does with the same bar.
+ *
+ * Stops at the first pierce or at `bars`, since the answer is a yes or no: at
+ * most `bars` iterations, which is why this is asked BEFORE the forward
+ * validation walk (that one is O(span)). Reuses pierces(), so the whole gate
+ * inherits its cross-multiplied form. */
+export function hasBackClearance(
+  line: TrendLine,
+  vals: ReadonlyArray<number>,
+  atr: ReadonlyArray<number | null>,
+  violMult: number,
+  bars: number,
+): boolean {
+  if (bars <= 0) return true;
+  if (line.i1 - bars < 0) return false;
+  for (let j = line.i1 - 1; j >= line.i1 - bars; j--) {
+    const tolJ = atr[j];
+    if (tolJ === null) continue;
+    if (pierces(line, j, vals[j], violMult * tolJ)) return false;
+  }
+  return true;
 }
 
 export function computeTrendlines(
   dataList: KLineData[],
   cfg: TrendlinesConfig,
-): { points: TrendlinesPoint[]; lines: TrendLine[] } {
+): { points: TrendlinesPoint[]; lines: TrendLine[]; atr: number[] } {
   const n = dataList.length;
   const points: TrendlinesPoint[] = Array.from({ length: n }, () => ({}));
-  if (n === 0) return { points, lines: [] };
+  if (n === 0) return { points, lines: [], atr: [] };
 
   const atr = atrSeries(dataList, TL_ATR_LEN);
   const highs = dataList.map((d) => d.high);
   const lows = dataList.map((d) => d.low);
   const pools: Record<TrendSide, number[]> = { resistance: [], support: [] };
+  // EVERY confirmed fractal pivot, including the ones the size and reach gates
+  // reject. `pools` holds only survivors, because that is what may seed a line;
+  // this holds the turning points themselves, because the leg Min Pivot Size
+  // measures runs to the previous turn whether or not that turn was big enough
+  // to trade. Using `pools` here DEADLOCKS the indicator: the first pivot has no
+  // opposite pivot, so it is rejected, so it never enters the pool, so the next
+  // one has no opposite either, forever. Nothing is ever drawn.
+  const turns: Record<TrendSide, number[]> = { resistance: [], support: [] };
   let lines: TrendLine[] = [];
 
   const extremeOf = (side: TrendSide, j: number): number =>
@@ -183,7 +416,8 @@ export function computeTrendlines(
         // (i1, c] were validated at seed time. A Python port should mirror the
         // line but must not treat it as load-bearing logic.
         if (i <= line.i2) continue;
-        if (pierces(line, i, extremeOf(line.side, i), cfg.violMult * a)) line.brokenIdx = i;
+        if (pierces(line, i, extremeOf(line.side, i), cfg.violMult * a))
+          line.brokenIdx = i;
       }
     }
 
@@ -193,7 +427,51 @@ export function computeTrendlines(
       for (const side of SIDES) {
         const vals = side === "resistance" ? highs : lows;
         const want = side === "resistance" ? "high" : "low";
-        if (!isPivotAt(vals, k, cfg.pivotLen, cfg.pivotLen, want, true)) continue;
+        if (!isPivotAt(vals, k, cfg.pivotLen, cfg.pivotLen, want, true))
+          continue;
+        turns[side].push(k);
+        // The size gate sits HERE, above everything else this bar does, so a
+        // rejected bar is not a pivot in any sense: it seeds no line (2b), it
+        // counts as no touch (2a), and it never enters the pool, so no LATER
+        // pivot can pair with it either. Anything less than that would leave
+        // half the detector still treating the wobble as a swing.
+        //
+        // Consequence worth knowing: touches is rankLines' primary key, so a
+        // smaller pool reorders the live cap and moves the prices this
+        // indicator reports. That is the point of the setting, not a leak.
+        //
+        // atr[k], not atr[i]: the swing is measured against volatility where it
+        // happened. Those are NOT interchangeable here — atr[i] can be warm
+        // while atr[k] is still null, for any k in the pivotLen bars before
+        // warm-up ends, so a pivot there is unmeasurable and cannot pass a
+        // gate it cannot be tested against.
+        //
+        // WHOLE BLOCK behind minSwingAtr > 0, including that null check. Off
+        // has to mean untouched, and hoisting the check out would drop those
+        // few early pivots even at 0 — which it did, and the parity golden
+        // caught it: TL_RESISTANCE moved with the gate nominally off.
+        if (cfg.minSwingAtr > 0) {
+          const atrK = atr[k];
+          if (atrK === null) continue;
+          const opposite =
+            turns[side === "resistance" ? "support" : "resistance"];
+          if (
+            !isSignificantSwing(
+              highs,
+              lows,
+              opposite,
+              k,
+              side,
+              atrK,
+              cfg.minSwingAtr,
+            )
+          )
+            continue;
+        }
+        // Duration, after size. Two independent gates: a swing can be deep and
+        // brief (a spike) or long and shallow (a drift), and each setting
+        // rejects one of them.
+        if (!hasSwingReach(vals, k, side, cfg.minSwingReach)) continue;
         const pool = pools[side];
         const price = vals[k];
 
@@ -204,8 +482,17 @@ export function computeTrendlines(
           if (line.brokenIdx !== null) continue;
           const tolA = atr[k];
           if (tolA === null) continue;
-          if (inTouchBand(line, k, price, cfg.violMult * tolA, cfg.touchMult * tolA)) {
+          if (
+            inTouchBand(
+              line,
+              k,
+              price,
+              cfg.violMult * tolA,
+              cfg.touchMult * tolA,
+            )
+          ) {
             line.touches += 1;
+            line.touchIdxs.push(k);
             line.lastTouchIdx = k;
           }
         }
@@ -214,15 +501,21 @@ export function computeTrendlines(
         //     `pool.push(k)` happens AFTER this loop, so every i1 read here is
         //     strictly less than i2 = k: that is what keeps span positive, and
         //     both geometry gates silently invert if it ever stops being true.
-        const from = Math.max(0, pool.length - MAX_PAIR_PIVOTS);
+        const from = Math.max(0, pool.length - cfg.pairPivots);
         for (let q = from; q < pool.length; q++) {
           const i1 = pool[q];
-          // UNREACHABLE BY CONSTRUCTION, kept as a guard rail. Every existing
-          // line was created at an earlier confirm bar, whose k was strictly
-          // smaller, so no stored i2 can equal this k; and within this bar the
-          // pool entries are distinct, so no two candidates share an i1. As
-          // above: mirror it in the port, do not build on it.
-          if (lines.some((l) => l.side === side && l.i1 === i1 && l.i2 === k)) continue;
+          // NO DUPLICATE CHECK HERE, and none is needed. Every line already in
+          // the list was created at an earlier confirm bar, whose k was
+          // strictly smaller, so no stored i2 can equal this one; and the pool
+          // entries are distinct, so no two candidates of THIS bar share an
+          // i1. A line is therefore identified by (side, i1, i2) and cannot be
+          // built twice, which trendlines.test.ts asserts directly.
+          //
+          // There used to be a `lines.some(...)` scan here saying the same
+          // thing defensively. It fired zero times and cost 132ms of a 523ms
+          // run on 6333 bars: a linear scan of live state, per candidate, per
+          // pivot. A guard rail that expensive has to be an assertion in the
+          // suite instead, which is where it now lives.
           const cand: TrendLine = {
             side,
             i1,
@@ -230,9 +523,26 @@ export function computeTrendlines(
             i2: k,
             p2: price,
             touches: 2,
+            touchIdxs: [i1, k],
             lastTouchIdx: k,
             brokenIdx: null,
           };
+          // Slope first: it is one comparison, where the validation below walks
+          // every bar back to i1. Seed time is the only time it needs asking,
+          // since the line never rotates.
+          if (cfg.maxSlopeAtr > 0 || cfg.minSlopeAtr > 0) {
+            const atrK = atr[k];
+            if (atrK === null) continue;
+            if (!withinSlope(cand, atrK, cfg.maxSlopeAtr)) continue;
+            if (!aboveSlope(cand, atrK, cfg.minSlopeAtr)) continue;
+          }
+          // Then the backward clearance, still before the forward walk: it is
+          // bounded by minBackBars where the walk below is O(span). Seed time
+          // is the only time either needs asking, and this one reads ONLY bars
+          // before i1, so it is fixed the moment the line is defined and cannot
+          // repaint.
+          if (!hasBackClearance(cand, vals, atr, cfg.violMult, cfg.minBackBars))
+            continue;
           // Validate over (i1, c]: bars between the anchors AND the bars since
           // the second anchor, which are real bars that could already have
           // pierced it. Anchor bars themselves are excluded.
@@ -249,12 +559,27 @@ export function computeTrendlines(
           if (!ok) continue;
           // Retro-count touches from pivots already in the pool between the
           // anchors. Not lookahead: every one of them confirmed before i.
-          for (const pj of pool) {
-            if (pj <= i1 || pj >= k) continue;
+          // The pool is in strictly increasing bar order and i1 IS pool[q], so
+          // the window (i1, k) starts at q + 1 and ends at the first entry
+          // that reaches k. Walking the whole pool and skipping meant a scan
+          // that grew for the length of the series, on every candidate. Same
+          // entries, same order, same arithmetic.
+          for (let q2 = q + 1; q2 < pool.length; q2++) {
+            const pj = pool[q2];
+            if (pj >= k) break;
             const tolP = atr[pj];
             if (tolP === null) continue;
-            if (inTouchBand(cand, pj, vals[pj], cfg.violMult * tolP, cfg.touchMult * tolP)) {
+            if (
+              inTouchBand(
+                cand,
+                pj,
+                vals[pj],
+                cfg.violMult * tolP,
+                cfg.touchMult * tolP,
+              )
+            ) {
               cand.touches += 1;
+              cand.touchIdxs.push(pj);
             }
           }
           lines.push(cand);
@@ -270,10 +595,30 @@ export function computeTrendlines(
       // below, where it is the per-side FLOOR for the drawn set (a line an
       // operand is reading is drawn on top of that budget, never instead of
       // it). Ranking is right here and wrong there; that function says why.
-      lines = lines.filter((l) => isLive(l, i, cfg));
+      // Rebuilt only when something actually died: this runs at every confirm
+      // bar and the list is usually untouched, so the common case is one pass
+      // and no allocation instead of one pass and a new array.
+      if (lines.some((l) => !isLive(l, i, cfg)))
+        lines = lines.filter((l) => isLive(l, i, cfg));
+      const cap = MAX_LIVE_MULT * cfg.maxLines;
       for (const side of SIDES) {
-        const mine = lines.filter((l) => l.side === side).sort(rankLines);
-        const keep = new Set(mine.slice(0, MAX_LIVE_MULT * cfg.maxLines));
+        // CEILING-FAILED LINES SORT LAST, ahead of every rankLines key. They
+        // can never re-qualify (touches and span only grow), so letting them
+        // hold slots evicts lines that CAN still emit — and rankLines would
+        // hand them the front of the queue, since its first two keys are the
+        // very quantities the ceilings reject. They are kept rather than
+        // dropped so the pierce and touch passes still see them.
+        const mine = lines.filter((l) => l.side === side);
+        // Under the cap there is nothing to drop, so the sort cannot change
+        // which lines survive and is pure cost. It is the sort that dominates
+        // this block, and on most bars this is the branch taken.
+        if (mine.length <= cap) continue;
+        mine.sort(
+          (a, b) =>
+            Number(overCeilings(a, cfg)) - Number(overCeilings(b, cfg)) ||
+            rankLines(a, b),
+        );
+        const keep = new Set(mine.slice(0, cap));
         lines = lines.filter((l) => l.side !== side || keep.has(l));
       }
     }
@@ -300,9 +645,15 @@ export function computeTrendlines(
     const close = dataList[i].close;
     const point: TrendlinesPoint = {};
     for (const side of SIDES) {
-      const majors = lines
-        .filter((l) => l.side === side && isLive(l, i, cfg) && isMajor(l, i, cfg))
-        .sort(rankLines);
+      // ONE PASS, NO SORT, and it is the same choice the sort used to express.
+      // This used to build a rank-sorted array of the majors and walk it
+      // taking the first STRICTLY nearer line, so the winner was the
+      // rank-minimum among the distance-minimums; tracking that pair directly
+      // says the same thing without an array and a sort on every bar of the
+      // series. Ties resolve identically: rankLines is a total order, and a
+      // candidate that ranks equal does not displace the one already held,
+      // which is what a stable sort plus first-wins gave.
+      //
       // The side test applies to UNBROKEN lines ONLY, and the two cases must
       // not be merged. An unbroken support sits at or below the close and an
       // unbroken resistance above it — that is what "nearest support" means.
@@ -312,42 +663,55 @@ export function computeTrendlines(
       // again), and the hold window exists precisely to keep that level
       // visible for a retest. Requiring broken support to sit above the close
       // silently blanks tl_broken_support for whole windows.
-      const pick = (want: "unbroken" | "broken"): number | undefined => {
-        let best: number | undefined;
-        for (const line of majors) {
-          if (want === "unbroken" ? line.brokenIdx !== null : line.brokenIdx === null) continue;
-          const v = projectAt(line, i);
-          if (want === "unbroken") {
-            // CROSS-MULTIPLIED, exactly as pierces does, because this is a
-            // boolean that gates whether an output fires at all. With
-            // s = i2 - i1 an exact positive integer,
-            //   projectAt(line, i) <= close
-            // is the same inequality as
-            //   (p2 - p1) * (i - i1) <= (close - p1) * s
-            // with the quotient's rounding removed; multiplying through by a
-            // positive integer preserves the direction.
-            const s = line.i2 - line.i1;
-            const below = (line.p2 - line.p1) * (i - line.i1) <= (close - line.p1) * s;
-            if (below !== (side === "support")) continue;
+      let uLine: TrendLine | null = null;
+      let uVal = 0;
+      let uDist = 0;
+      let bLine: TrendLine | null = null;
+      let bVal = 0;
+      let bDist = 0;
+      for (const line of lines) {
+        if (line.side !== side) continue;
+        if (!isLive(line, i, cfg) || !isMajor(line, i, cfg)) continue;
+        const v = projectAt(line, i);
+        const d = Math.abs(v - close);
+        if (line.brokenIdx !== null) {
+          if (bLine === null || d < bDist || (d === bDist && rankLines(line, bLine) < 0)) {
+            bLine = line;
+            bVal = v;
+            bDist = d;
           }
-          if (best === undefined || Math.abs(v - close) < Math.abs(best - close)) best = v;
+          continue;
         }
-        return best;
-      };
-      const unbroken = pick("unbroken");
-      const broken = pick("broken");
+        // CROSS-MULTIPLIED, exactly as pierces does, because this is a
+        // boolean that gates whether an output fires at all. With
+        // s = i2 - i1 an exact positive integer,
+        //   projectAt(line, i) <= close
+        // is the same inequality as
+        //   (p2 - p1) * (i - i1) <= (close - p1) * s
+        // with the quotient's rounding removed; multiplying through by a
+        // positive integer preserves the direction.
+        const s = line.i2 - line.i1;
+        const below =
+          (line.p2 - line.p1) * (i - line.i1) <= (close - line.p1) * s;
+        if (below !== (side === "support")) continue;
+        if (uLine === null || d < uDist || (d === uDist && rankLines(line, uLine) < 0)) {
+          uLine = line;
+          uVal = v;
+          uDist = d;
+        }
+      }
       if (side === "support") {
-        if (unbroken !== undefined) point.tl_support = unbroken;
-        if (broken !== undefined) point.tl_broken_support = broken;
+        if (uLine !== null) point.tl_support = uVal;
+        if (bLine !== null) point.tl_broken_support = bVal;
       } else {
-        if (unbroken !== undefined) point.tl_resistance = unbroken;
-        if (broken !== undefined) point.tl_broken_resistance = broken;
+        if (uLine !== null) point.tl_resistance = uVal;
+        if (bLine !== null) point.tl_broken_resistance = bVal;
       }
     }
     points[i] = point;
   }
 
-  return { points, lines };
+  return { points, lines, atr };
 }
 
 /** Render-only options, on extendData rather than calcParams — the same seam
@@ -369,6 +733,48 @@ export interface TrendlinesExtend {
    * proximity order. That is fine here and only here: this is the draw path,
    * and no operand reads it. */
   extend?: "ray" | "segment" | "extended" | "apex" | "cross" | "lastbar";
+  /** Merge near-duplicate lines before the maxLines budget is applied, so a
+   * slot spent on a line's own shadow goes to a genuinely different line
+   * instead. Defaults to ON: a pivot seeds a FAN (it pairs with every later
+   * pivot that yields an unpierced line), and the members of a fan that share
+   * an anchor differ by a few points over the whole pane. See selectDrawnLines
+   * for what "near-duplicate" means and what is exempt. Render-only, like
+   * everything else here: merging never changes an emitted value, and the
+   * merged-away line stays live and can emit. */
+  dedupe?: boolean;
+  /** How far apart two lines through the same pivot may project at the last bar
+   * and still merge, in ATR(14). Absent takes TL_DEDUPE_ATR.
+   *
+   * A FIELD, after two rounds of arguing it should stay a constant. What
+   * settled it was the two charts disagreeing: the DXY monthly fixture wants a
+   * wider tolerance to collapse its fans, and a live US100 daily pane wants a
+   * narrower one, because there every merge is between lines that begin months
+   * apart and converge on one later pivot rather than a fan off a shared
+   * origin. One number cannot be right for both, which is the case a setting
+   * exists for. */
+  dedupeAtr?: number;
+  /** Draw only the lines projecting within TL_NEAR_PRICE_ATR of the close at
+   * the last bar (plus the nearest on each side, whatever its distance, and
+   * the lines an operand reads or a pin holds). Defaults to ON.
+   *
+   * The complaint this answers: a pivot seeds lines in every direction, and the
+   * ones that missed run away from price for as long as maxProjBars keeps them
+   * alive, filling the pane with geometry that has nothing to do with where
+   * price is. Render-only like the rest of this block: a line hidden here still
+   * emits, and selectDrawnLines draws it anyway if it does. */
+  nearPrice?: boolean;
+  /** Drop the broken lines from the chart entirely. Defaults to OFF, because a
+   * broken line is where a retest happens and the break-hold window exists to
+   * keep it visible for exactly that.
+   *
+   * NO EXEMPTION for the lines tl_broken_support and tl_broken_resistance are
+   * reading, unlike merging and the near-price cut. Those two hide a line as a
+   * side effect of tidying, so they must not hide one a rule is auditing; this
+   * option IS the request to hide them, and sparing the emitting ones would
+   * leave broken lines on a pane that was asked to have none. The cost is real
+   * and belongs to whoever ticks it: the broken outputs keep emitting with
+   * nothing drawn at them. */
+  hideBroken?: boolean;
   /** Lines the user pinned open by clicking their end handle, as lineKey()
    * strings. A pinned line ignores `extend` and runs to the right edge of the
    * pane, re-measured every render so it stays "indefinite" through scroll and
@@ -390,7 +796,190 @@ export function lineKey(line: TrendLine, dataList: KLineData[]): string {
 
 /** calc result row. The full line list rides on the LAST row only (draw reads
  * it there), exactly as SR_LEVELS carries its levels. */
-export type TrendlinesCalcPoint = TrendlinesPoint & { lines?: TrendLine[] };
+export type TrendlinesCalcPoint = TrendlinesPoint & {
+  lines?: TrendLine[];
+  atr?: number;
+};
+
+/** How far apart two lines THROUGH THE SAME PIVOT may project at the last bar
+ * and still count as one line, in ATR(14).
+ *
+ * WAS 1 ATR, on the reasoning that a gap smaller than a typical bar's range is
+ * not a level a trader can trade differently. True, and too tight: 1 ATR only
+ * ever caught the tail of a fan. On a US100 4H chart a sheaf through one swing
+ * high kept three members 1.1 to 2.1 ATR apart, which is the clutter this pass
+ * exists to remove. Measured on the DXY monthly fixture over every bar from 100
+ * on, the drawn near-twins (two drawn lines sharing a pivot and projecting
+ * within 2.5 ATR of each other) run at 2.02 per bar at 1 ATR, 1.17 at 2 and
+ * 0.76 at 2.5, and 3 and 4 ATR buy nothing further: what is left at 2.5 is only
+ * the pairs merging is FORBIDDEN to touch (a line an operand reads, or a pinned
+ * one). The knee is 2.5, so that is the value. It costs the drawn count almost
+ * nothing (5.72 lines per bar to 5.46) because the freed slots refill.
+ *
+ * As generous as it is only because the shared-pivot requirement carries the
+ * real weight (see dropDuplicates). A tolerance this wide applied to any two
+ * lines would swallow unrelated levels.
+ *
+ * THAT REQUIREMENT HAS ITSELF LOOSENED, so the two changes compound and the
+ * sentence above is a weaker guarantee than it was: sharing now counts a TOUCH
+ * bar, not only an anchor. Measured on the DXY monthly fixture at the last bar,
+ * of the 35 pairs close enough to merge, 27 share an anchor and 8 share only a
+ * touch, and only 2 of those 8 sit wider than the old 1 ATR. So two pairs on
+ * that chart exist purely because both changes landed, which is why neither is
+ * worth walking back. Anyone loosening either half again should re-measure this
+ * split rather than lean on the paragraph above.
+ *
+ * Half of TL_NEAR_PRICE_ATR is the ceiling this must not cross: at more than
+ * that, a line at the close and a line at the far edge of the band that is
+ * drawn at all could merge into each other.
+ *
+ * STILL A CONSTANT, not a panel field, and the new evidence does not touch that
+ * argument: it says the VALUE was wrong, not that the answer belongs to the
+ * user. Nor cfg.touchMult, though the argument for coupling them is a good one.
+ * Touch Tolerance already earns its keep deciding what counts as a touch;
+ * giving it a second, invisible job would mean loosening touches also quietly
+ * thins the chart, which is the kind of double duty this file has documented at
+ * length elsewhere (see maxLines) precisely because it keeps surprising people.
+ * Merging stays predictable instead. */
+export const TL_DEDUPE_ATR = 1;
+
+/** How far from the close a line may project at the last bar and still be
+ * drawn, in ATR(14), when the near-price filter is on.
+ *
+ * A CONSTANT, exactly like TL_DEDUPE_ATR and for the same reason: "near price"
+ * is a yes-or-no a user should not have to tune, and a second numeric field
+ * that quietly empties the pane when set wrong is worse than a fixed answer.
+ * Five ATR is roughly where a level stops being reachable inside the horizon a
+ * trader is looking at.
+ *
+ * Measured on a US100 daily chart at stock defaults, 20 drawn lines projected
+ * between 0.01 and 31 ATR from the close; five keeps the four a human would
+ * point at. */
+export const TL_NEAR_PRICE_ATR = 5;
+
+/** The dedup pass's inputs. `tol` is a price distance (0 or NaN turns merging
+ * off, which is what an unwarmed ATR gives on the first TL_ATR_LEN bars).
+ * `keep` names lines that must survive merging whatever their twins look
+ * like — the PINNED ones. A pin is stored by lineKey and its only control is
+ * the handle painted at the line's end, so merging a pinned line away would
+ * leave a pin with nothing to click, exactly the dead-state the `stops` gate
+ * exists to prevent. */
+export interface TrendlineDedupe {
+  tol: number;
+  keep: ReadonlySet<TrendLine>;
+}
+
+/** The dedup tolerance for a bar's ATR, or 0 when merging is off or the ATR
+ * has not warmed up yet. */
+export function dedupeTolerance(
+  atr: number | undefined,
+  on: boolean,
+  /** ATR multiple from the panel. Anything not a finite number >= 0 (an older
+   * chart with no such key, a hand-written payload) falls back to the default;
+   * an explicit 0 is honoured and turns merging off, the same as the switch. */
+  mult: number | undefined = TL_DEDUPE_ATR,
+): number {
+  const m =
+    typeof mult === "number" && Number.isFinite(mult) && mult >= 0
+      ? mult
+      : TL_DEDUPE_ATR;
+  return on && Number.isFinite(atr) ? (atr as number) * m : 0;
+}
+
+interface DrawEntry {
+  line: TrendLine;
+  proj: number;
+  dist: number;
+}
+
+/** Drops the near-duplicates from an already proximity-sorted side, keeping the
+ * first of each group.
+ *
+ * TWO LINES ARE ONE WHEN THEY RUN THROUGH THE SAME PIVOT and project within
+ * `tol` of each other at `atIdx`. Both halves are load-bearing:
+ *
+ * The shared pivot is what makes this a FAN test rather than a "these two
+ * levels look similar" test. A pivot is not consumed by the line that first
+ * used it: the detector pairs it with every other pivot that yields an
+ * unpierced line, so one strong swing emits a whole sheaf of lines through the
+ * same point. That sheaf is the clutter. Two levels that merely happen to sit
+ * close today came from different swings and are left alone, however close
+ * they are. Sharing counts in all four combinations, because a fan can open
+ * rightward from a common start, close leftward onto a common end, or chain
+ * (one line's end is the next one's start).
+ *
+ * ONE SAMPLE IS ENOUGH, and that is exact rather than approximate. Lines
+ * through the same pivot agree exactly there, and their difference is linear
+ * in the bar index, so |difference| grows monotonically away from that pivot
+ * and is maximised at the far end of the span: within tol at atIdx means
+ * within tol everywhere between. RIGHT of atIdx it keeps growing, so a merged
+ * pair does separate out in the projection — that is the deliberate trade, and
+ * it is what makes the last bar the right place to measure. Whether two lines
+ * are the same level is a question about where price is now, not about where
+ * they will be 250 bars from now.
+ *
+ * NEVER drops a line an operand is reading. The guarantee upstream is exact
+ * (the emitted number IS projectAt on that bar), and a near-duplicate is by
+ * definition not exact, so a merged-away emitter would break it. Never drops a
+ * PINNED line either: its handle is the only control that can release the pin.
+ *
+ * Sides never merge into each other — support and resistance are read as
+ * opposites even where they cross, and this runs per side anyway. */
+function sharesPivot(a: TrendLine, b: TrendLine): boolean {
+  // Bar AND price, though in practice the bar decides it: an anchor's price is
+  // that bar's high or low, so the same bar on the same side is the same
+  // price. The price check keeps a hand-built line from merging on a bar
+  // number alone.
+  if (
+    (a.i1 === b.i1 && a.p1 === b.p1) ||
+    (a.i2 === b.i2 && a.p2 === b.p2) ||
+    (a.i1 === b.i2 && a.p1 === b.p2) ||
+    (a.i2 === b.i1 && a.p2 === b.p1)
+  )
+    return true;
+  // A TOUCH COUNTS AS SHARING, not only an anchor, and this is most of what
+  // the pass catches on a real chart. A strong swing is the second anchor of
+  // one line and a mid-line touch of four others; anchors alone see none of
+  // that, so the five ran through the same pivot and none of them merged.
+  // Measured on a live US100 4H pane, five drawn dashed resistances passed
+  // through one 10/08 swing high and only one of them was anchored there.
+  //
+  // The bar is enough, with no price test. Both lines were within the touch
+  // band of that bar's own high or low to be recorded at all, so they are
+  // within two touch tolerances of each other there by construction — which is
+  // the same "they agree at the shared bar" the anchor case gets exactly, only
+  // to a tolerance rather than to the bit.
+  //
+  // The linearity argument survives that weakening. The difference between two
+  // straight lines is itself straight, so on the span between the shared bar
+  // and the bar this is measured at, its size is largest at one end or the
+  // other: bounded there, bounded throughout. LEFT of the shared bar they may
+  // still separate, which is what a fan does and is the same trade the
+  // right-hand side already makes.
+  return a.touchIdxs.some((i) => b.touchIdxs.includes(i));
+}
+
+function dropDuplicates(
+  entries: DrawEntry[],
+  dedupe: TrendlineDedupe,
+  wantUnbroken: number | undefined,
+  wantBroken: number | undefined,
+): DrawEntry[] {
+  const { tol, keep } = dedupe;
+  if (!(tol > 0)) return entries;
+  const out: DrawEntry[] = [];
+  for (const e of entries) {
+    const want = e.line.brokenIdx !== null ? wantBroken : wantUnbroken;
+    const exempt = (want !== undefined && e.proj === want) || keep.has(e.line);
+    const twin =
+      !exempt &&
+      out.some(
+        (k) => sharesPivot(k.line, e.line) && Math.abs(k.proj - e.proj) <= tol,
+      );
+    if (!twin) out.push(e);
+  }
+  return out;
+}
 
 /** The DRAWN set: the maxLines per side whose projection at `atIdx` sits
  * nearest to `close`, PLUS whichever lines the emit path is reading at that
@@ -451,23 +1040,71 @@ export function selectDrawnLines(
   close: number,
   maxLines: number,
   emitted: TrendlinesPoint,
+  dedupe: TrendlineDedupe | null,
+  /** Price distance beyond which a line is too far from the close to draw.
+   * 0 turns the filter off, which is also what an unwarmed ATR gives.
+   *
+   * Defaults to off, unlike `emitted`, which is required so the draw path
+   * cannot quietly stop passing it. The equivalent guard here is a draw test
+   * rather than an arity: the many selection tests below are about proximity
+   * ORDER and budget, and threading a tolerance through each of them would
+   * bury what they check. */
+  nearTol = 0,
 ): TrendLine[] {
   const out: TrendLine[] = [];
   for (const side of SIDES) {
-    const wantUnbroken = side === "support" ? emitted.tl_support : emitted.tl_resistance;
+    const wantUnbroken =
+      side === "support" ? emitted.tl_support : emitted.tl_resistance;
     const wantBroken =
-      side === "support" ? emitted.tl_broken_support : emitted.tl_broken_resistance;
+      side === "support"
+        ? emitted.tl_broken_support
+        : emitted.tl_broken_resistance;
     const mine = lines
       .filter((l) => l.side === side)
       .map((l) => {
         const proj = projectAt(l, atIdx);
         return { line: l, proj, dist: Math.abs(proj - close) };
       })
-      .sort((a, b) => (a.dist !== b.dist ? a.dist - b.dist : rankLines(a.line, b.line)));
+      .sort((a, b) =>
+        a.dist !== b.dist ? a.dist - b.dist : rankLines(a.line, b.line),
+      );
+    // Near-duplicates come out BEFORE the budget, never after. Skipping them
+    // inside the loop below would leave the index counting the lines it
+    // skipped, so no slot would be freed and the whole feature would be a
+    // no-op that still passed a "the twin is gone" test.
+    const kept = dedupe
+      ? dropDuplicates(mine, dedupe, wantUnbroken, wantBroken)
+      : mine;
+    // A DISTANCE cut, which maxLines is not: maxLines keeps a fixed COUNT per
+    // side however far away they all are, so a chart whose lines have all run
+    // off into the distance still draws its budget of them. This drops the ones
+    // that are simply nowhere near price.
+    //
+    // Runs after dedupe and before the budget, in the same slot and for the
+    // same reason: filtering inside the loop below would leave the index
+    // counting lines it skipped, so no slot would be freed.
+    //
+    // ALWAYS KEEPS THE NEAREST on each side (idx 0 of a distance-sorted list),
+    // so the pane can never go blank while the indicator is on. "The lines
+    // closest to price" with nothing at all in it reads as a broken indicator,
+    // not as an answer.
+    //
+    // Emitting and pinned lines are exempt, exactly as they are from merging:
+    // the chart is the only surface on which an operand can be audited, and a
+    // pin's own handle is the only control that releases it.
+    const near =
+      nearTol > 0
+        ? kept.filter((e, idx) => {
+            if (idx === 0 || e.dist <= nearTol) return true;
+            if (dedupe?.keep.has(e.line)) return true;
+            const want = e.line.brokenIdx !== null ? wantBroken : wantUnbroken;
+            return want !== undefined && e.proj === want;
+          })
+        : kept;
     // Proximity order throughout: the budgeted head, then any emitting line
     // that fell outside it, appended in the same order. Deterministic either
     // way, and the ×N tags keep pairing with the segments they label.
-    mine.forEach((e, idx) => {
+    near.forEach((e, idx) => {
       if (idx < maxLines) {
         out.push(e.line);
         return;
@@ -483,9 +1120,36 @@ export function selectDrawnLines(
 // these are the same green/red the S/R zones paint, and the two overlays are
 // read side by side.
 /** Drawn radius of the end handle. The click target is deliberately larger
- * (TL_HANDLE_HIT), because a 3px dot is not a mouse target. */
+ * (TL_HANDLE_HIT), because a 3px mark is not a mouse target. */
 export const TL_HANDLE_RADIUS = 3;
+/** The filled dot at a break, and the hollow ring at a touch. Different sizes
+ * as well as different fills, because the two say opposite things about the
+ * same line and are read at a glance: a touch is price respecting the line, a
+ * break is price ending it. */
+export const TL_BREAK_RADIUS = 2.5;
+export const TL_TOUCH_RADIUS = 2;
 export const TL_HANDLE_HIT = 8;
+/** Handles stroke heavier than the 1px line they cap, so a 3px mark reads at
+ * all. It is also what tells a handle stroke from a line stroke. */
+export const TL_HANDLE_STROKE = 1.5;
+
+/** Where to centre the end ring: pushed one radius past the line's tip, along
+ * the line's own direction, so the ring TOUCHES the tip instead of swallowing
+ * it. Degenerate (zero-length) segments keep the tip itself. */
+function ringCentre(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): [number, number] {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.hypot(dx, dy);
+  if (!(len > 0)) return [x1, y1];
+  const out = TL_HANDLE_RADIUS + 0.5;
+  return [x1 + (dx * out) / len, y1 + (dy * out) / len];
+}
+
 
 const TL_SUPPORT_COLOR = "#26a69a";
 const TL_RESISTANCE_COLOR = "#ef5350";
@@ -548,7 +1212,9 @@ export function lineExtent(
   // touch by construction. Ending at lastTouchIdx would stop the line short of
   // the event that killed it, hiding the break marker on the one mode that
   // draws a finite line. Every mode reaches its break.
-  const jEnd = broken ? Math.max(line.lastTouchIdx, line.brokenIdx as number) : line.lastTouchIdx;
+  const jEnd = broken
+    ? Math.max(line.lastTouchIdx, line.brokenIdx as number)
+    : line.lastTouchIdx;
   const horizon = line.lastTouchIdx + cfg.maxProjBars;
   // Pinned beats the mode: the user clicked THIS line open, so it runs to the
   // edge whatever the dropdown says.
@@ -567,7 +1233,10 @@ export function lineExtent(
     // horizon. A line with no apex would otherwise shoot 250 bars into empty
     // space beside neighbours that stopped within a few bars of the last
     // candle, which reads as a bug rather than as "this one never meets".
-    return { jLeft, jRight: meetsAt(line, others, jEnd, horizon) ?? Math.max(jEnd, lastIdx) };
+    return {
+      jLeft,
+      jRight: meetsAt(line, others, jEnd, horizon) ?? Math.max(jEnd, lastIdx),
+    };
   }
   return { jLeft, jRight: horizon };
 }
@@ -602,13 +1271,31 @@ export function getTrendlineHandles(
 /** Any handle on this chart under (px, py), across every pane and instance.
  * The cursor decision needs "is the pointer over one" without enumerating
  * indicators itself. */
-export function hitAnyTrendlineHandle(chart: object, px: number, py: number): boolean {
+export function hitAnyTrendlineHandle(
+  chart: object,
+  px: number,
+  py: number,
+): boolean {
   const byPane = HANDLES.get(chart);
   if (!byPane) return false;
   for (const handles of byPane.values()) {
     if (hitHandle(handles, px, py) !== null) return true;
   }
   return false;
+}
+
+/** Forget every pane's handles for one indicator instance, on removal.
+ *
+ * The draw path is the only thing that clears this map, and a removed
+ * indicator never draws again, so its last painted handles would sit here for
+ * the life of the chart: hitAnyTrendlineHandle kept flipping the cursor to a
+ * pointer over dots that are no longer on screen. (Clicks were already inert,
+ * since the pin hook walks live instances.) */
+export function dropTrendlineHandles(chart: object, name: string): void {
+  const byPane = HANDLES.get(chart);
+  if (!byPane) return;
+  for (const key of [...byPane.keys()])
+    if (key.slice(key.indexOf(":") + 1) === name) byPane.delete(key);
 }
 
 function setTrendlineHandles(
@@ -661,13 +1348,6 @@ function drawTrendlines(
   const mode = ext?.extend ?? "ray";
   const lastIdx = dataList.length - 1;
   const lastClose = dataList[lastIdx].close;
-  // `last` carries BOTH the line list and the last bar's emitted values, so the
-  // union that keeps every operand's line on screen needs no extra plumbing.
-  const drawn = selectDrawnLines(last.lines, lastIdx, lastClose, cfg.maxLines, last);
-  // bounding.width spans the whole pane INCLUDING the y-axis strip on the
-  // right; the ×N tags must stop before it or the axis overlay hides them.
-  const axisWidth = chart.getSize(indicator.paneId, "yAxis")?.width ?? 0;
-  const tagRight = bounding.width - axisWidth - 4;
   // A pin means "run past where you stopped", so it is only meaningful in the
   // modes that STOP a line. "ray" and "extended" already run to the horizon:
   // there is nothing to release, and their end sits ~maxProjBars into the
@@ -676,13 +1356,78 @@ function drawTrendlines(
   // extending a line with no control to undo it.
   const stops = mode !== "ray" && mode !== "extended";
   const pins = new Set(stops ? (ext?.pinned ?? []) : []);
+  // ONE GATE FOR BOTH SURFACES: the chart draws exactly what an operand could
+  // read. Every bound in the panel therefore means the same thing wherever the
+  // user meets it, which is what the tips promise ("counts as a real
+  // trendline") and what the settings did not do.
+  //
+  // The floors used to be draw-through, on the reasoning that a line under Min
+  // Touches or Min Span is still geometry in play. That reasoning collapses
+  // once maxLines is set high: with no drawing budget the floors are the only
+  // filter left, and they were inert, so a pane could carry 15 lines of which 0
+  // qualified. A user who asks for 7 touches and gets a 2-touch line has been
+  // told the setting does nothing.
+  //
+  // Safe for the "every emitted value has a line drawn at it" guarantee below:
+  // emission needs isLive && isMajor, so an emitting line passes this by
+  // construction. `lastIdx` is the bar the whole draw path measures at (the
+  // same one selectDrawnLines projects to), not a per-line bar.
+  // Broken lines go before anything else looks at the list, so the slots they
+  // were holding go to live ones rather than being spent and then skipped.
+  const hideBroken = ext?.hideBroken ?? false;
+  const eligible = last.lines.filter(
+    (l) =>
+      isMajor(l, lastIdx, cfg) && !(hideBroken && l.brokenIdx !== null),
+  );
+  if (!eligible.length) {
+    setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    return true;
+  }
+  // Resolved to line objects BEFORE selection, because the dedup pass has to
+  // know which lines are pinned in order to spare them.
+  const pinnedLines = new Set(
+    pins.size ? eligible.filter((l) => pins.has(lineKey(l, dataList))) : [],
+  );
+  // `last` carries BOTH the line list and the last bar's emitted values, so the
+  // union that keeps every operand's line on screen needs no extra plumbing.
+  const dedupeTol = dedupeTolerance(
+    last.atr,
+    ext?.dedupe ?? true,
+    ext?.dedupeAtr,
+  );
+  // Same shape as the dedup tolerance, and 0 on the same unwarmed-ATR path:
+  // with no ATR there is no scale to call anything near, and the filter is off
+  // rather than arbitrary.
+  const nearTol = Number.isFinite(last.atr)
+    ? (ext?.nearPrice ?? true)
+      ? (last.atr as number) * TL_NEAR_PRICE_ATR
+      : 0
+    : 0;
+  const drawn = selectDrawnLines(
+    eligible,
+    lastIdx,
+    lastClose,
+    cfg.maxLines,
+    last,
+    {
+      tol: dedupeTol,
+      keep: pinnedLines,
+    },
+    nearTol,
+  );
+  // bounding.width spans the whole pane INCLUDING the y-axis strip on the
+  // right; the ×N tags must stop before it or the axis overlay hides them.
+  const axisWidth = chart.getSize(indicator.paneId, "yAxis")?.width ?? 0;
+  const tagRight = bounding.width - axisWidth - 4;
   const handles: TrendlineHandle[] = [];
   // The bar index sitting at the pane's right edge, so a pinned line reaches it
   // at any zoom. The index-to-pixel map is linear (klinecharts multiplies by a
   // constant bar space), so one bar's width inverts it exactly.
   const barPx = xAxis.convertToPixel(1) - xAxis.convertToPixel(0);
   const edgeIdx =
-    barPx > 0 ? lastIdx + (tagRight - xAxis.convertToPixel(lastIdx)) / barPx : lastIdx;
+    barPx > 0
+      ? lastIdx + (tagRight - xAxis.convertToPixel(lastIdx)) / barPx
+      : lastIdx;
 
   ctx.save();
   ctx.font = "10px sans-serif";
@@ -704,7 +1449,8 @@ function drawTrendlines(
     if (x1 <= 0 || x0 >= bounding.width) continue;
     const y0 = yAxis.convertToPixel(projectAt(line, jLeft));
     const y1 = yAxis.convertToPixel(projectAt(line, jRight));
-    ctx.strokeStyle = line.side === "support" ? TL_SUPPORT_COLOR : TL_RESISTANCE_COLOR;
+    ctx.strokeStyle =
+      line.side === "support" ? TL_SUPPORT_COLOR : TL_RESISTANCE_COLOR;
     ctx.globalAlpha = broken ? 0.45 : 1;
     ctx.lineWidth = 1;
     ctx.setLineDash(broken ? [4, 3] : []);
@@ -726,10 +1472,33 @@ function drawTrendlines(
         ctx.globalAlpha = 1;
         ctx.fillStyle = ctx.strokeStyle;
         ctx.beginPath();
-        ctx.arc(xB, yB, 2.5, 0, Math.PI * 2);
+        ctx.arc(xB, yB, TL_BREAK_RADIUS, 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha = 0.45;
       }
+    }
+    // The touches themselves, one hollow ring each, so the ×N tag can be read
+    // back against the bars that earned it: which swings agreed on this line is
+    // the question the count only answers in aggregate.
+    //
+    // ON THE LINE, not at the candle's own extreme, exactly as the break dot
+    // is. A touch is a bar whose high or low came within tolerance of the line,
+    // so the two differ by up to that tolerance; drawing on the line keeps the
+    // marks reading as part of it rather than as a scatter beside it. The
+    // anchors are included, so the ring count always equals the tag.
+    //
+    // Every touch is inside the drawn span by construction (i1 <= idx <=
+    // lastTouchIdx <= jRight), so only the pane's own edges need guarding, the
+    // same both-axes clamp the break dot uses: this canvas is shared with the
+    // other panes and an unclamped y bleeds into them.
+    ctx.lineWidth = 1;
+    for (const idx of line.touchIdxs) {
+      const xT = xAxis.convertToPixel(idx);
+      const yT = yAxis.convertToPixel(projectAt(line, idx));
+      if (xT < 0 || xT > tagRight || yT < 0 || yT > bounding.height) continue;
+      ctx.beginPath();
+      ctx.arc(xT, yT, TL_TOUCH_RADIUS, 0, Math.PI * 2);
+      ctx.stroke();
     }
     // Touch count at the right end, the same ×N tag SR_LEVELS puts on a zone:
     // the drawn set is chosen by proximity, so this is how a user tells a
@@ -753,23 +1522,55 @@ function drawTrendlines(
     const xNat = xAxis.convertToPixel(natural.jRight);
     const yNat = yAxis.convertToPixel(projectAt(line, natural.jRight));
     const xHandle = Math.min(xNat, tagRight);
-    const yHandle = xNat === x0 ? yNat : y0 + ((yNat - y0) * (xHandle - x0)) / (xNat - x0);
-    if (stops && xHandle >= 0 && yHandle >= 0 && yHandle <= bounding.height) {
-      handles.push({ key: lineKey(line, dataList), x: xHandle, y: yHandle });
+    const yHandle =
+      xNat === x0 ? yNat : y0 + ((yNat - y0) * (xHandle - x0)) / (xNat - x0);
+    // The ring sits just BEYOND the end, tangent to it, rather than centred on
+    // it. Centred, a hollow ring has the line running through its middle, which
+    // reads as a bead threaded on the line instead of a cap at its tip. Pushed
+    // out by its own radius (plus half the 1px stroke) along the line's own
+    // direction, it touches the tip and nothing more. A pinned line runs on past
+    // it, so the offset dot still lands on the line there.
+    const [xRing, yRing] = ringCentre(x0, y0, xHandle, yHandle);
+    if (stops && xRing >= 0 && yRing >= 0 && yRing <= bounding.height) {
+      // Registered where it is DRAWN: the hit test and the ring must be the
+      // same object or the click target drifts off the dot.
+      handles.push({ key: lineKey(line, dataList), x: xRing, y: yRing });
+      // The two states are OPPOSITE ACTIONS, so they get opposite shapes rather
+      // than two shades of one dot. Free: a chevron pointing the way the line
+      // would run, "click to run me on". Pinned: a bar across the line, an end
+      // stop the line has already passed, "click to cut me back".
+      const ang = Math.atan2(yRing - y0, xRing - x0);
       ctx.globalAlpha = 1;
+      ctx.lineWidth = TL_HANDLE_STROKE;
       ctx.beginPath();
-      ctx.arc(xHandle, yHandle, TL_HANDLE_RADIUS, 0, Math.PI * 2);
       if (isPinned) {
-        ctx.fillStyle = ctx.strokeStyle;
-        ctx.fill();
+        const nx = Math.sin(ang);
+        const ny = -Math.cos(ang);
+        ctx.moveTo(xRing - nx * TL_HANDLE_RADIUS, yRing - ny * TL_HANDLE_RADIUS);
+        ctx.lineTo(xRing + nx * TL_HANDLE_RADIUS, yRing + ny * TL_HANDLE_RADIUS);
       } else {
-        ctx.stroke();
+        // Tip one radius ahead of centre, arms swept back 135 degrees, so the
+        // chevron's mouth faces the line and its point faces the extension.
+        const tx = xRing + Math.cos(ang) * TL_HANDLE_RADIUS;
+        const ty = yRing + Math.sin(ang) * TL_HANDLE_RADIUS;
+        const arm = TL_HANDLE_RADIUS * 1.6;
+        const a1 = ang + Math.PI * 0.75;
+        const a2 = ang - Math.PI * 0.75;
+        ctx.moveTo(tx + Math.cos(a1) * arm, ty + Math.sin(a1) * arm);
+        ctx.lineTo(tx, ty);
+        ctx.lineTo(tx + Math.cos(a2) * arm, ty + Math.sin(a2) * arm);
       }
+      ctx.stroke();
+      ctx.lineWidth = 1;
       ctx.globalAlpha = broken ? 0.45 : 1;
     }
     const label = `×${line.touches}`;
-    const xTag = Math.min(xHandle + TL_HANDLE_RADIUS + 5, tagRight - ctx.measureText(label).width);
-    const yTag = xNat === x0 ? yNat : y0 + ((yNat - y0) * (xTag - x0)) / (xNat - x0);
+    const xTag = Math.min(
+      xRing + TL_HANDLE_RADIUS + 5,
+      tagRight - ctx.measureText(label).width,
+    );
+    const yTag =
+      xNat === x0 ? yNat : y0 + ((yNat - y0) * (xTag - x0)) / (xNat - x0);
     ctx.fillStyle = ctx.strokeStyle;
     ctx.fillText(label, xTag, yTag);
   }
@@ -791,6 +1592,14 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     TRENDLINES_DEFAULTS.maxProjBars,
     TRENDLINES_DEFAULTS.breakHoldBars,
     TRENDLINES_DEFAULTS.maxLines,
+    TRENDLINES_DEFAULTS.minSwingAtr,
+    TRENDLINES_DEFAULTS.minSwingReach,
+    TRENDLINES_DEFAULTS.pairPivots,
+    TRENDLINES_DEFAULTS.maxTouches,
+    TRENDLINES_DEFAULTS.maxSpanBars,
+    TRENDLINES_DEFAULTS.maxSlopeAtr,
+    TRENDLINES_DEFAULTS.minSlopeAtr,
+    TRENDLINES_DEFAULTS.minBackBars,
   ],
   // Empty figures + a draw that returns true (isCover) is the established way
   // to run calc but paint nothing of klinecharts' own — the mechanism
@@ -801,11 +1610,21 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   // SR_LEVELS' calc does pass its extendData into compute, so this is the one
   // place the neighbouring pattern must not be copied.
   calc: (dataList: KLineData[], ind: Indicator) => {
-    const { points, lines } = computeTrendlines(dataList, parseTrendlinesConfig(ind.calcParams));
+    const { points, lines, atr } = computeTrendlines(
+      dataList,
+      parseTrendlinesConfig(ind.calcParams),
+    );
     const out = points.map((p) => ({ ...p })) as TrendlinesCalcPoint[];
-    if (out.length) out[out.length - 1] = { ...out[out.length - 1], lines };
+    if (out.length)
+      out[out.length - 1] = {
+        ...out[out.length - 1],
+        lines,
+        atr: atr[atr.length - 1],
+      };
     return out;
   },
   draw: (params) =>
-    drawTrendlines(params as IndicatorDrawParams<TrendlinesCalcPoint, unknown, unknown>),
+    drawTrendlines(
+      params as IndicatorDrawParams<TrendlinesCalcPoint, unknown, unknown>,
+    ),
 };

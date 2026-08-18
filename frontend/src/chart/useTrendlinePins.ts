@@ -27,7 +27,9 @@ interface Args {
 }
 
 /** Every TRENDLINES instance on the chart, with its pane. */
-function trendlineInstances(chart: Chart): Array<{ paneId: string; name: string }> {
+function trendlineInstances(
+  chart: Chart,
+): Array<{ paneId: string; name: string }> {
   const out: Array<{ paneId: string; name: string }> = [];
   const inds = chart.getIndicators({}) as unknown;
   const list: Indicator[] = Array.isArray(inds)
@@ -45,7 +47,43 @@ function trendlineInstances(chart: Chart): Array<{ paneId: string; name: string 
   return out;
 }
 
-export function useTrendlinePins({ chartRef, containerRef, scope }: Args): void {
+/** Write `pinned` onto a live indicator's extendData so that REMOVALS land.
+ *
+ * TWO CALLS, and the first one is not redundant. overrideIndicator MERGES
+ * extendData through klinecharts' own merge(), which treats an array as an
+ * object and recurses into it index by index. A shorter array therefore never
+ * shrinks the live one: index 2 of the old value survives because the new value
+ * simply has nothing to say about it. Unpinning saved correctly and never
+ * repainted, so a released line stayed extended until the next page load.
+ * Clearing the key first replaces it outright (merge assigns anything
+ * non-object wholesale), and the second call then writes the new list into an
+ * empty slot.
+ *
+ * Only `pinned` is sent, not the whole extendData: merge walks the keys it is
+ * given, so the neighbouring options (extend, dedupe, ...) are left alone.
+ *
+ * ANY array on ANY indicator's extendData has this hazard. It is fixed here
+ * rather than by reshaping `pinned` into something merge-proof, so what lands
+ * in storage stays the readable list of keys it has always been. */
+export function overridePinned(
+  chart: Chart,
+  paneId: string,
+  name: string,
+  next: string[],
+): void {
+  for (const pinned of [null, next])
+    chart.overrideIndicator({
+      paneId,
+      name,
+      extendData: { pinned } as unknown as Record<string, unknown>,
+    });
+}
+
+export function useTrendlinePins({
+  chartRef,
+  containerRef,
+  scope,
+}: Args): void {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -61,18 +99,15 @@ export function useTrendlinePins({ chartRef, containerRef, scope }: Args): void 
         const key = hitHandle(getTrendlineHandles(chart, paneId, name), px, py);
         if (!key) continue;
         const ind = chart.getIndicators({ paneId, name }) as unknown;
-        const live = (Array.isArray(ind) ? (ind[0] as Indicator) : null)?.extendData;
+        const live = (Array.isArray(ind) ? (ind[0] as Indicator) : null)
+          ?.extendData;
         const ext = (live ?? {}) as TrendlinesExtend;
         const pinned = new Set(ext.pinned ?? []);
         // Toggle: a second click on a pinned handle releases it.
         if (pinned.has(key)) pinned.delete(key);
         else pinned.add(key);
         const next = [...pinned];
-        chart.overrideIndicator({
-          paneId,
-          name,
-          extendData: { ...((live as object) ?? {}), pinned: next },
-        });
+        overridePinned(chart, paneId, name, next);
         patchIndicatorExtend(scope, name, { pinned: next });
         // Ours: do not let the press reach klinecharts' pan, or a pin toggle
         // also nudges the chart.

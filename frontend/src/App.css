@@ -2390,14 +2390,91 @@
 .ind-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 120px; }
 .ind-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .ind-row > label { color: var(--text-dim); }
-/* Labels never wrap to a second line — the row's controls absorb the squeeze. */
-.ind-row > label, .ind-row-head label, .ind-row-head > span { white-space: nowrap; flex-shrink: 0; }
+/* Labels never wrap to a second line. They used to refuse to SHRINK either, so
+   a long label plus a fixed-width control simply overflowed the modal's right
+   edge (TRENDLINES' "Min Swing Reach (bars)" did). The control is the one thing
+   that must stay fully visible and clickable, so the label yields first, with
+   an ellipsis; the tooltip carries the full wording anyway. */
+.ind-row > label { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ind-row-head label, .ind-row-head > span { white-space: nowrap; flex-shrink: 0; }
 .ind-row-head { flex-shrink: 0; }
 .ind-row input[type="number"], .ind-row input[type="text"], .ind-row select,
 .ind-row input[type="datetime-local"] {
   width: 130px; background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px;
 }
+/* Numbers are short (a count, a bar total, a multiplier), so the 130px default
+   is mostly empty. This is the minimum that still shows a four-digit value with
+   room for the spinner. Fixed, not shrinking: the label absorbs the squeeze. */
+.ind-row input[type="number"] { width: 64px; flex: 0 0 auto; }
+/* A control with its unit beside it (indicatorMeta's `suffix`). The unit sits
+   with the number it applies to, not inside the label. */
+.ind-control-row { display: inline-flex; align-items: center; gap: 6px; }
+.ind-control-row > .ind-suffix { color: var(--text-dim); white-space: nowrap; }
+/* A solo NUMBER row, laid out on the SAME two columns as .ind-pair2 below, so
+   its control starts where a paired row's right-hand control starts instead of
+   at the modal's right edge. Without it a column of numbers zig-zags. */
+.ind-row.ind-row-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: center; }
+.ind-row.ind-row-cols > :last-child { justify-self: start; }
+/* The ⓘ sits after the control on these rows, not beside the label: half a row
+   does not hold "Min Back Clearance" plus a tip, and clipping the icon (which
+   .ind-row-head's flex-shrink: 0 on the label made it do) looked broken. */
+.ind-cols-control { display: inline-flex; align-items: center; gap: 8px; }
+/* FULL STRENGTH, like the paired labels beside them. `.ind-row > label` dims
+   every label-left row, and it never used to reach these: labelFor wraps a
+   tipped label in .ind-row-head, so the label was a grandchild and the child
+   selector missed it. Rendering the label bare (the tip moved to the end of the
+   row) let the dim through, and a column of labels half of which are dimmer
+   than the rest reads as an accident. */
+.ind-row.ind-row-cols > label { color: var(--text); }
+
+/* A related PAIR of inputs on one row, each label stacked above its own
+   control (indicatorMeta's `group`). The column is half a row wide, so a
+   paired label has to be short; the ⓘ tip carries the full wording. */
+.ind-pair2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: end; }
+.ind-pair2 > .ind-field { display: flex; flex-direction: column; align-items: stretch; gap: 5px; min-width: 0; }
+.ind-pair2 > .ind-field > .ind-row-head { flex-shrink: 1; min-width: 0; overflow: hidden; }
+.ind-pair2 > .ind-field > .ind-row-head > label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Selects fill their column; numbers stay at their own minimal width and sit
+   under the left edge of their label, rather than stretching to half the row. */
+.ind-pair2 > .ind-field select { width: 100%; }
+.ind-pair2 > .ind-field input[type="number"] { width: 64px; }
+/* A select whose options are sentences rather than words (TRENDLINES' Extend):
+   it takes the whole row rather than truncating inside a fixed width. */
+.ind-row select.ind-select-fill, .ind-row .sel-trigger.ind-select-fill { width: auto; flex: 1 1 auto; min-width: 0; }
+
+/* SelectMenu: a select that opens BELOW its field instead of over it. The
+   trigger is styled to match the native selects it replaces; the list is
+   portaled to <body> and positioned fixed (see the component). */
+.sel-trigger {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 6px;
+  width: 130px; background: var(--input-bg); color: var(--text); text-align: left;
+  border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px;
+  font: inherit; cursor: pointer;
+}
+.sel-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+.sel-trigger.on { border-color: var(--accent); }
+.sel-trigger > .sel-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sel-trigger > .sel-caret { flex: 0 0 auto; color: var(--text-dim); line-height: 1; }
+.ind-pair2 > .ind-field .sel-trigger { width: 100%; }
+/* Above .floating-modal (1500): the settings modal is the main place this is
+   used, and the list is portaled to <body>, so it does not inherit the modal's
+   stacking context. */
+/* Compound selector, like .dropdown.bt-session-dropdown above: .dropdown's own
+   z-index rule sits LATER in this file at equal specificity, so a bare
+   .sel-dropdown loses to it and the list renders behind the modal. */
+.dropdown.sel-dropdown { position: fixed; z-index: 1600; padding: 4px; overflow-y: auto; }
+.dropdown.sel-dropdown > .sel-option {
+  display: block; width: 100%; text-align: left; white-space: nowrap;
+  background: none; border: 0; border-radius: 3px; color: var(--text);
+  padding: 5px 8px; font: inherit; cursor: pointer;
+}
+/* --hover, not --hover-bg: the latter is not a token this app defines (only a
+   couple of rules reference it, each with a literal fallback), so the hover
+   silently did nothing. */
+.dropdown.sel-dropdown > .sel-option:hover { background: var(--hover); }
+.dropdown.sel-dropdown > .sel-option.on:hover { background: var(--accent); }
+.dropdown.sel-dropdown > .sel-option.on { background: var(--accent); color: #fff; }
 /* The anchor date-time needs more room than the 130px default. */
 .ind-row input[type="datetime-local"].ind-anchor-input { width: 190px; }
 /* Selects whose longest option doesn't fit the 130px default (e.g. AVWAP's

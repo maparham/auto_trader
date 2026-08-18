@@ -202,7 +202,7 @@ describe("TRENDLINES on DXY monthly", () => {
     expect(nearestOf("resistance")).toBeCloseTo(106.616, 2); // line C, 2022-09 -> 2025-01
     expect(nearestOf("support")).toBeCloseTo(98.737, 2); // line B, broken 2025-07
     // The four far-off-screen support projections must all be gone.
-    for (const stale of [10.987, 13.277, 31.833, 57.364]) {
+    for (const stale of [15.777, 31.833, 57.364, 61.796]) {
       expect(lines.some((l) => Math.abs(projectAt(l, last) - stale) < 0.01)).toBe(true);
       expect(projections.some((p) => Math.abs(p - stale) < 0.01)).toBe(false);
     }
@@ -290,15 +290,64 @@ describe("TRENDLINES on DXY monthly", () => {
   // ...and the cap CHANGES WHAT A RULE READS, which is the claim the settings
   // copy and the MAX_LIVE_MULT comment both make. Pinned as the count the spec
   // quotes plus one named bar, so a drift is diagnosable rather than just red.
-  // At bar 171 the tighter setting drops tl_resistance entirely: a rule reading
+  // At bar 184 the tighter setting drops tl_resistance entirely: a rule reading
   // it stops firing, which is exactly why "maxLines does not affect operands"
   // must never be written in user-facing copy.
   it("changes an emitted value between maxLines 2 and 3", () => {
     const two = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 2 }).points;
     const three = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 3 }).points;
     const differing = two.filter((p, i) => JSON.stringify(p) !== JSON.stringify(three[i]));
-    expect(differing).toHaveLength(113);
-    expect(two[171].tl_resistance).toBeUndefined();
-    expect(three[171].tl_resistance).toBeCloseTo(134.604, 3);
+    expect(differing).toHaveLength(87);
+    expect(two[184].tl_resistance).toBeUndefined();
+    expect(three[184].tl_resistance).toBeCloseTo(119.53, 2);
+  });
+
+  // THE CEILINGS USED TO STARVE THEIR OWN SIDE. rankLines' first two keys are
+  // touches and span descending, which is exactly what Max Touches and Max Span
+  // disqualify, so the rejects took the front of the MAX_LIVE_MULT x maxLines
+  // slots and evicted the lines still able to emit. Measured on this fixture
+  // before the fix, tl_resistance fired on 246 bars at maxLines 3 against 442
+  // at maxLines 12; the setting silently blanked an operand a strategy reads.
+  //
+  // The invariant, stated so it cannot regress quietly: a ceiling's effect must
+  // not depend on maxLines, which is a DRAWING budget.
+  it.each([
+    { name: "Max Touches", patch: { maxTouches: 2 } },
+    { name: "Max Span", patch: { maxSpanBars: 40 } },
+  ])("keeps $name from starving the live cap", ({ patch }) => {
+    const fires = (maxLines: number) =>
+      computeTrendlines(bars, {
+        ...TRENDLINES_DEFAULTS,
+        ...patch,
+        maxLines,
+      }).points.filter((p) => p.tl_resistance !== undefined).length;
+    const tight = fires(3);
+    expect(tight).toBeGreaterThan(0);
+    expect(tight).toBe(fires(12));
+  });
+
+  // The invariant that lets the seed loop carry no duplicate check: a line is
+  // identified by (side, i1, i2) and cannot be built twice, because every
+  // stored i2 is an earlier confirm bar and this bar's pool entries are
+  // distinct. Asserted here rather than defended with a per-candidate scan of
+  // live state, which fired zero times and cost a quarter of the run.
+  it("never builds the same (side, i1, i2) line twice", () => {
+    const seen = new Set<string>();
+    const { lines } = computeTrendlines(bars, {
+      ...TRENDLINES_DEFAULTS,
+      pivotLen: 2,
+      pairPivots: 100,
+      // Nothing is ever pruned, so the final list is every line the detector
+      // built across the whole series, not just the survivors.
+      maxLines: 100_000,
+      maxProjBars: 100_000,
+      breakHoldBars: 100_000,
+    });
+    expect(lines.length).toBeGreaterThan(20);
+    for (const l of lines) {
+      const key = `${l.side}:${l.i1}:${l.i2}`;
+      expect(seen.has(key), `duplicate ${key}`).toBe(false);
+      seen.add(key);
+    }
   });
 });
