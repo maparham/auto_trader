@@ -389,26 +389,29 @@
 /* Pill/card tabs: each tab is a self-contained rounded chip with its own
    surface + border, separated by the .tab-bar-tabs gap, so adjacent tabs read
    as clearly distinct (rather than one flush strip). */
+/* Tight by design: padding and gaps are sized to the content only. Nothing in
+   the chip reserves width for a control that isn't showing — see .tab-close. */
 .tab {
-  position: relative; /* anchors the closed-market badge to the corner */
-  display: flex; align-items: center; gap: 7px; flex-shrink: 0;
-  min-height: 26px; padding: 0 10px; cursor: pointer; user-select: none;
+  position: relative; /* anchors the closed-market badge + close x */
+  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+  min-height: 26px; padding: 0 7px; cursor: pointer; user-select: none;
   color: var(--text-dim); font-size: 12px; white-space: nowrap;
   background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 7px;
 }
-/* Crescent-moon badge in the top-LEFT corner when the lead cell's market is
-   closed. Top-left keeps it clear of the close button in the top-right. Small
-   and non-interactive — it rides above the tab content. */
+/* Crescent-moon badge in the top-RIGHT corner when the lead cell's market is
+   closed. Flush to the top edge and sized to 8px so it sits entirely ABOVE the
+   chip's vertically-centred text (whose ink starts 8.6px down) — the old
+   top-left slot landed on the symbol icon. Non-interactive; fades out on hover with the rest of the trailing
+   content so the close x owns that corner. */
 .tab-closed-badge {
-  position: absolute; top: 1px; left: 2px;
+  position: absolute; top: -1px; right: 2px;
   line-height: 0; pointer-events: none; color: var(--text-dim);
 }
-.tab-closed-badge svg { display: block; }
-/* Bell badge in the top-RIGHT corner (the crescent owns the top-left): an alert
-   fired for this tab's epic while it was in the background. Amber so it reads
-   as "attention" against the monochrome chrome; non-interactive. The close ×
-   fades in on hover in the same corner, so the bell yields to it then. */
+/* Mirrored on X (which is the source moon rotated 180deg, then flipped
+   vertically): the convex edge sits low-right against the chip's corner while
+   the concave opening faces up and inward, away from the border. */
+.tab-closed-badge svg { display: block; transform: scaleX(-1); }
 /* Inline amber bell in the chip (flex child, after the period/count) — inline
    so it can never be clipped by the bar edge or collide with the close ×.
    Hoverable (shared Tooltip); clicks fall through to the chip via bubbling. */
@@ -477,12 +480,25 @@
   padding: 1px 4px; border-radius: 7px;
   background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border);
 }
+/* The close x is OUT OF FLOW (pinned to the chip's right edge) so it costs zero
+   width on the ~20 chips that aren't hovered. In flow it reserved a button plus
+   a gap on every single chip for a control only the hovered/active one ever
+   showed - the blank tail that made every chip too wide. On hover it fades in
+   while the trailing period/count/bell fade out on the same 0.1s, so the two
+   read as a swap rather than a collision. (Hence no .tab.on rule: a permanent x
+   on the active chip would permanently hide that chip's interval label.) */
 .tab-close {
+  position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
   background: none; border: none; color: var(--text-faint); cursor: pointer;
-  padding: 0; width: 16px; height: 16px; line-height: 1; border-radius: 3px;
-  font-size: 14px; opacity: 0; transition: opacity 0.1s;
+  padding: 0; width: 14px; height: 14px; line-height: 1; border-radius: 3px;
+  font-size: 13px; opacity: 0; transition: opacity 0.1s;
 }
-.tab:hover .tab-close, .tab.on .tab-close { opacity: 1; }
+.tab-period, .tab-count, .tab-alert-badge, .tab-closed-badge { transition: opacity 0.1s; }
+.tab:hover .tab-close { opacity: 1; }
+.tab:hover .tab-period,
+.tab:hover .tab-count,
+.tab:hover .tab-alert-badge,
+.tab:hover .tab-closed-badge { opacity: 0; }
 .tab-close:hover { background: var(--border); color: var(--text); }
 .tab-add {
   background: none; border: none; color: var(--text-dim); cursor: pointer;
@@ -492,17 +508,27 @@
 
 /* Find-open-symbol search: collapsed magnifier at the end of the tab strip,
    expanding into an inline input. Matching chips get .search-hit below. */
+/* Given the same card grammar as a tab chip (surface + border + 7px radius) so
+   it reads as a control sitting at the end of the strip, not a faint glyph that
+   disappears into the bar. */
 .tab-search {
   display: flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; flex: none;
-  border: none; border-radius: 4px; background: none;
-  color: var(--text-faint); cursor: pointer;
+  width: 26px; height: 26px; flex: none;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text); cursor: pointer;
 }
-.tab-search:hover { color: var(--text); background: var(--hover); }
+.tab-search:hover {
+  color: var(--accent); border-color: var(--accent);
+  background: linear-gradient(var(--hover), var(--hover)), var(--surface-2);
+}
 .tab-search-input {
   font: inherit; font-size: 12px; color: var(--text);
   background: var(--surface-2); border: 1px solid var(--accent);
-  border-radius: 4px; padding: 3px 8px; width: 140px; flex: none;
+  /* Sized to its own placeholder ("Find symbol…" is 78px at 12px) plus the
+     8px side padding and border, so it holds no dead space. Typed symbols are
+     shorter than the placeholder - the longest epic is ~67px. */
+  border-radius: 4px; padding: 3px 8px; width: 100px; flex: none;
   outline: none;
 }
 .tab-search-input::placeholder { color: var(--text-faint); }
