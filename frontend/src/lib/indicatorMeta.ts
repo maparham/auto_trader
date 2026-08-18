@@ -190,7 +190,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   VWAP: {
     inputs: [],
     title: "Volume Weighted Average Price",
-    desc: "The session's average price weighted by volume — a common intraday fair-value benchmark.",
+    desc: "The session's average price weighted by volume: a common intraday fair-value benchmark.",
   },
   AVWAP: {
     inputs: [],
@@ -219,7 +219,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     title: "Average True Range",
-    desc: "Average of the true range over the window — volatility in price units. Referenceable in backtest rules as an instance (e.g. ATR1.14).",
+    desc: "Average of the true range over the window: volatility in price units. Referenceable in backtest rules as an instance (e.g. ATR1.14).",
   },
   // Linear Regression Channel (TV "LR"): window Length + channel Deviations
   // (calcParams), and a price Source dropdown stored on extendData.
@@ -252,7 +252,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     inputs: [
       {
         ...num(0, "Strength"),
-        tip: "Bars required each side of a swing. Higher value filters out less prominent (weaker) pivots.",
+        tip: "Bars required on each side of a swing. Higher value filters out less prominent (weaker) pivots.",
       },
       {
         key: "mode",
@@ -284,13 +284,13 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     title: "Pivot Bands",
-    desc: "Two step-lines tracking confirmed fractal swing highs and lows separately — a dynamic support/resistance channel. Strength sets the bars required on each side of a pivot. Mode carries either the last pivot or the average of the last K pivots forward; the line only steps when a new pivot confirms (N bars late, no repaint).",
+    desc: "Two step-lines tracking confirmed fractal swing highs and lows separately (a dynamic support/resistance channel). Strength sets the bars required on each side of a pivot. Mode carries either the last pivot or the average of the last K pivots forward; the line only steps when a new pivot confirms (N bars late, no repaint).",
   },
   PIVOT_ANALYSIS: {
     inputs: [
       {
         ...num(0, "Length"),
-        tip: "Bars required each side of a swing. Higher value marks only the more prominent pivots (and confirms them later).",
+        tip: "Bars required on each side of a swing. Higher value marks only the more prominent pivots (and confirms them later).",
       },
       {
         key: "showLevels",
@@ -303,13 +303,13 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     title: "Pivots High/Low [LuxAlgo]",
-    desc: "Marks each confirmed fractal swing high/low, connects it to the previous same-type pivot with a Δ% / Δt label, and (optionally) carries the latest pivot high/low forward as a level line. Length sets the bars required each side of a swing; pivots confirm that many bars late (no repaint). Pivot high/low, Δ% and Δt are available as rule operands.",
+    desc: "Marks each confirmed fractal swing high/low, connects it to the previous same-type pivot with a Δ% / Δt label, and (optionally) carries the latest pivot high/low forward as a level line. Length sets the bars required on each side of a swing; pivots confirm that many bars late (no repaint). Pivot high/low, Δ% and Δt are available as rule operands.",
   },
   SR_LEVELS: {
     inputs: [
       {
         ...num(0, "Pivot Length"),
-        tip: "Bars required each side of a swing before it counts as a pivot. Higher value uses only the more prominent swings (and confirms them later).",
+        tip: "Bars required on each side of a swing before it counts as a pivot. Higher value uses only the more prominent swings (and confirms them later).",
       },
       {
         ...num(1, "Zone Width (×ATR)", { min: 0.05, step: 0.05 }),
