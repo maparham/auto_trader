@@ -2411,9 +2411,11 @@
    with the number it applies to, not inside the label. */
 .ind-control-row { display: inline-flex; align-items: center; gap: 6px; }
 .ind-control-row > .ind-suffix { color: var(--text-dim); white-space: nowrap; }
-/* A solo NUMBER row, laid out on the SAME two columns as .ind-pair2 below, so
-   its control starts where a paired row's right-hand control starts instead of
-   at the modal's right edge. Without it a column of numbers zig-zags. */
+/* A solo row (number, checkbox, select) laid out on the SAME two columns as
+   .ind-pair2 below, so its control starts where a paired row's right-hand
+   control starts instead of at the modal's right edge. Without it the Inputs
+   tab zig-zags: numbers at the middle, checkboxes out at the edge. The one
+   opt-out is a `wide` select, which needs more than half a row. */
 .ind-row.ind-row-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: center; }
 .ind-row.ind-row-cols > :last-child { justify-self: start; }
 /* The ⓘ sits after the control on these rows, not beside the label: half a row

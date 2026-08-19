@@ -1635,7 +1635,13 @@ export default function IndicatorSettings({
                       </span>
                     </div>
                   ) : (
-                    <div className="ind-row">
+                    // Checkboxes and selects share the numbers' two columns, so
+                    // the tab reads as ONE column of controls instead of numbers
+                    // at the middle and checkboxes out at the modal's edge. A
+                    // `wide` select is the exception: a sentence-long option
+                    // needs more than half a row, so it keeps the label-left /
+                    // control-right row.
+                    <div className={chunk[0].wide ? "ind-row" : "ind-row ind-row-cols"}>
                       {labelFor(chunk[0])}
                       {controlFor(chunk[0])}
                     </div>
@@ -2027,7 +2033,7 @@ export default function IndicatorSettings({
                 <>
                   {/* Higher-timeframe swings aligned onto the chart bars (no
                       lookahead), same as EMA/MA. */}
-                  <div className="ind-row">
+                  <div className="ind-row ind-row-cols">
                     <label>Timeframe</label>
                     <select
                       value={timeframe}
@@ -2058,7 +2064,7 @@ export default function IndicatorSettings({
                 <>
                   {/* Higher-timeframe slope computed on native HTF bars, aligned
                       onto the chart bars (no lookahead), same as EMA/MA. */}
-                  <div className="ind-row">
+                  <div className="ind-row ind-row-cols">
                     <span className="ind-row-head">
                       <label>Timeframe</label>
                       <InfoTip
@@ -2095,7 +2101,7 @@ export default function IndicatorSettings({
                 <>
                   {/* Higher-timeframe levels clustered on native HTF bars, aligned
                       onto the chart bars (no lookahead), same as Pivot Bands. */}
-                  <div className="ind-row">
+                  <div className="ind-row ind-row-cols">
                     <span className="ind-row-head">
                       <label>Timeframe</label>
                       <InfoTip
@@ -2132,7 +2138,7 @@ export default function IndicatorSettings({
                 <>
                   {/* Higher-timeframe gaps detected on native HTF bars, aligned
                       onto the chart bars (no lookahead), same as S/R Levels. */}
-                  <div className="ind-row">
+                  <div className="ind-row ind-row-cols">
                     <span className="ind-row-head">
                       <label>Timeframe</label>
                       <InfoTip
@@ -2166,7 +2172,7 @@ export default function IndicatorSettings({
                   </span>
                 </>
               ) : (
-                <div className="ind-row">
+                <div className="ind-row ind-row-cols">
                   <span className="ind-row-head">
                     <label>Timeframe</label>
                     <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, S/R Levels, and FVG." />
