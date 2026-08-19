@@ -132,33 +132,84 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     handle.redrawRef.current();
   }, [paneIdOf, controller]);
 
-  // Copy an indicator's full live config (type + calcParams / visibility / per-line
-  // styles / extendData inputs) to the clipboard as JSON. Paste creates a fresh
-  // instance of that type with this exact config (TradingView-style). The config
-  // shape matches SavedIndicatorConfig so it round-trips through persisted storage.
+  // Snapshot an indicator's full live config (type + calcParams / visibility /
+  // per-line styles / extendData inputs). Shared by Copy (→ clipboard JSON) and
+  // Duplicate (→ straight back into addFromConfig). The config shape matches
+  // SavedIndicatorConfig so it round-trips through persisted storage.
+  const liveIndicatorConfig = useCallback(
+    (paneId: string, name: string): { type: string; config: SavedIndicatorConfig; label: string } | null => {
+      const c = chartRef.current;
+      if (!c) return null;
+      const ind = getIndicator(c, paneId, name) as Indicator | null;
+      if (!ind) return null;
+      return {
+        type: indTypeOf(ind), // the real type (EMA/MA/…), NOT the instance id
+        label: ind.shortName ?? indTypeOf(ind),
+        config: {
+          calcParams: ind.calcParams as number[] | undefined,
+          visible: ind.visible,
+          styles: ind.styles?.lines
+            ? { lines: ind.styles.lines.map((l) => ({ color: l.color, size: l.size })) }
+            : undefined,
+          extendData: ind.extendData as Record<string, unknown> | undefined,
+        } satisfies SavedIndicatorConfig,
+      };
+    },
+    [],
+  );
+
+  // Add a fresh instance of `type` carrying `config`, and do everything a new
+  // instance needs: honour the hide-all mask, un-collapse the sub-pane stack,
+  // publish + persist the new instance list, redraw. Shared by Paste and
+  // Duplicate so neither can drift out of the other's steps.
+  const addFromConfig = useCallback(
+    (type: string, config: SavedIndicatorConfig | undefined): boolean => {
+      const c = chartRef.current;
+      if (!c) return false;
+      const inst = addIndicatorInstance(c, scope, epicRef.current, type, {
+        config,
+        forceHidden: controller.indicatorsHidden.value,
+        resolution: period.resolution,
+      });
+      if (!inst) return false;
+      // Auto-expand collapsed sub-panes when adding one in (mirrors the toolbar add).
+      if (controller.subPanesHidden.value && isSubPaneIndicator(type))
+        controller.subPanesHidden.set(false);
+      const next = [...controller.indicators.value, inst];
+      controller.indicators.set(next);
+      saveIndicators(scope, next);
+      handle.redrawRef.current();
+      return true;
+    },
+    [controller, scope, period.resolution],
+  );
+
+  // Copy an indicator's live config to the clipboard as JSON. Paste creates a fresh
+  // instance of that type with this exact config (TradingView-style).
   const copyIndicator = useCallback((paneId: string, name: string) => {
-    const c = chartRef.current;
-    if (!c) return;
-    const ind = getIndicator(c, paneId, name) as Indicator | null;
-    if (!ind) return;
-    const payload = {
-      __autoTraderIndicator: 1 as const,
-      type: indTypeOf(ind), // the real type (EMA/MA/…), NOT the instance id
-      config: {
-        calcParams: ind.calcParams as number[] | undefined,
-        visible: ind.visible,
-        styles: ind.styles?.lines
-          ? { lines: ind.styles.lines.map((l) => ({ color: l.color, size: l.size })) }
-          : undefined,
-        extendData: ind.extendData as Record<string, unknown> | undefined,
-      } satisfies SavedIndicatorConfig,
-    };
+    const snap = liveIndicatorConfig(paneId, name);
+    if (!snap) return;
+    const payload = { __autoTraderIndicator: 1 as const, type: snap.type, config: snap.config };
     const json = JSON.stringify(payload, null, 2);
     navigator.clipboard?.writeText(json).then(
-      () => toast(`Copied ${ind.shortName ?? indTypeOf(ind)} settings`),
+      () => toast(`Copied ${snap.label} settings`),
       () => toast("Copy failed (clipboard blocked)"),
     );
-  }, []);
+  }, [liveIndicatorConfig]);
+
+  // Duplicate: a second instance of this indicator with the SAME live settings,
+  // without going through the clipboard (so it neither needs clipboard permission
+  // nor clobbers what the user has copied). Same add path as Paste, so the copy
+  // lands with the hide-all mask, sub-pane un-collapse and persistence applied.
+  const duplicateIndicator = useCallback(
+    (paneId: string, name: string) => {
+      if (snapViewRef.current) return; // read-only snapshot view: no duplicate
+      const snap = liveIndicatorConfig(paneId, name);
+      if (!snap) return;
+      toast(addFromConfig(snap.type, snap.config) ? `Duplicated ${snap.label}` : `Can't duplicate ${snap.label}`);
+    },
+    [liveIndicatorConfig, addFromConfig],
+  );
 
   // Paste: read the clipboard, and if it holds a copied indicator, ALWAYS add a
   // fresh instance of that type with the copied config (never dedupe — TradingView
@@ -185,24 +236,12 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       toast("Clipboard has no indicator to paste");
       return;
     }
-    const inst = addIndicatorInstance(c, scope, epicRef.current, parsed.type, {
-      config: parsed.config,
-      forceHidden: controller.indicatorsHidden.value,
-      resolution: period.resolution,
-    });
-    if (!inst) {
+    if (!addFromConfig(parsed.type, parsed.config)) {
       toast(`Can't paste ${parsed.type}`);
       return;
     }
-    // Auto-expand collapsed sub-panes when pasting one in (mirrors the toolbar add).
-    if (controller.subPanesHidden.value && isSubPaneIndicator(parsed.type))
-      controller.subPanesHidden.set(false);
-    const next = [...controller.indicators.value, inst];
-    controller.indicators.set(next);
-    saveIndicators(scope, next);
-    handle.redrawRef.current();
     toast(`Pasted ${parsed.type}`);
-  }, [controller, scope, period.resolution]);
+  }, [addFromConfig]);
 
   // Ctrl/Cmd+C: copy the SELECTED indicator (if any). Returns true when it acted, so
   // the key handler only swallows the event when there's a selection to copy (else
@@ -511,6 +550,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
           onClick: () => indicatorSettingsRequest.set({ paneId, name }),
         },
         { label: "Copy", icon: MenuIcons.copy, onClick: () => copyIndicator(paneId, name) },
+        { label: "Duplicate", icon: MenuIcons.clone, onClick: () => duplicateIndicator(paneId, name) },
         {
           label: visible ? "Hide" : "Show",
           icon: visible ? MenuIcons.hide : MenuIcons.show,
@@ -529,7 +569,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
         { label: "Remove", icon: MenuIcons.remove, danger: true, onClick: () => removeOn(paneId, name) },
       ];
     },
-    [copyIndicator, toggleVisibleOn, removeOn, reorderPaneByName, setIndicatorInset],
+    [copyIndicator, duplicateIndicator, toggleVisibleOn, removeOn, reorderPaneByName, setIndicatorInset],
   );
 
   // The legend's ⋯ "more" button opens the menu (anchored below the button).
@@ -545,6 +585,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     onLegendRemove,
     onLegendSelectRow,
     copyIndicator,
+    duplicateIndicator,
     pasteIndicator,
     copySelectedIndicator,
     copySelectedDrawing,
