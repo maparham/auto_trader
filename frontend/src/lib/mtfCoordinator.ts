@@ -45,6 +45,7 @@ import {
   type SlopeSmoothing,
 } from "./indicators/slope";
 import { syncAccelCompanion, getIndicator, getIndicatorsByPane } from "./indicators";
+import { overrideExtend } from "./overrideExtend";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
 // so a wide loaded span needs several pages walked back — kept under the cap.
@@ -167,7 +168,7 @@ function mtfFetchTail(
   if (hasBars) return true;
   const mtf =
     prev?.timeframe === timeframe && prev.htfStarts?.length ? prev : { timeframe };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: { ...ext, mtf } });
+  overrideExtend(chart, paneId, name, { ...ext, mtf }, calcParams);
   return false;
 }
 
@@ -268,7 +269,7 @@ export async function applyMaTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams: [config.length], extendData: ext });
+    overrideExtend(chart, paneId, name, ext, [config.length]);
     return;
   }
 
@@ -302,7 +303,7 @@ export async function applyMaTimeframe(
     htfSeries: base,
     htfMs,
   };
-  chart.overrideIndicator({ paneId, name, calcParams: [config.length], extendData: ext });
+  overrideExtend(chart, paneId, name, ext, [config.length]);
 }
 
 interface PivotBandsConfig {
@@ -344,7 +345,7 @@ export async function applyPivotBandsTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    overrideExtend(chart, paneId, name, ext, calcParams);
     return;
   }
 
@@ -380,7 +381,7 @@ export async function applyPivotBandsTimeframe(
     htfLow: pts.map((p) => p.pivotLow),
     htfMs,
   };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+  overrideExtend(chart, paneId, name, ext, calcParams);
 }
 
 // S/R levels accumulate over the staleness window rather than converging like a
@@ -416,7 +417,7 @@ export async function applySrLevelsTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    overrideExtend(chart, paneId, name, ext, calcParams);
     return;
   }
 
@@ -458,7 +459,7 @@ export async function applySrLevelsTimeframe(
       lastTs: htf[lv.lastIdx].timestamp,
     })),
   };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+  overrideExtend(chart, paneId, name, ext, calcParams);
 }
 
 // Gaps persist over the staleness window rather than converging like a moving
@@ -494,7 +495,7 @@ export async function applyFvgTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    overrideExtend(chart, paneId, name, ext, calcParams);
     return;
   }
 
@@ -537,7 +538,7 @@ export async function applyFvgTimeframe(
       createdTs: htf[g.createdIdx].timestamp,
     })),
   };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+  overrideExtend(chart, paneId, name, ext, calcParams);
 }
 
 interface SlopeConfig {
@@ -584,7 +585,7 @@ export async function applySlopeTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    overrideExtend(chart, paneId, name, ext, calcParams);
     // The companion mirrors the parent's extendData (here: the cleared MTF stash).
     syncAccelCompanion(chart, name);
     return;
@@ -672,7 +673,7 @@ export async function applySlopeTimeframe(
     htfAccelByLine: accelByLine,
     htfMs,
   };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+  overrideExtend(chart, paneId, name, ext, calcParams);
   // The companion mirrors the parent's extendData (including the MTF stash).
   syncAccelCompanion(chart, name);
 }

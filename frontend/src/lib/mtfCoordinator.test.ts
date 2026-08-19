@@ -51,6 +51,13 @@ function fakeChart(extendData: object = {}) {
     // helper getIndicator picks [0]. The mock ignores the filter (one instance).
     getIndicators: () => (indicator ? [indicator] : []),
     overrideIndicator: (patch: Override["patch"]) => {
+      // overrideExtend sends a CLEARING call first (every object-valued key set
+      // to null), because klinecharts merges extendData index by index and a
+      // shorter array would otherwise never shrink. Those calls carry no value
+      // and are not what these assertions are about, so they are not recorded.
+      const ext = (patch.extendData ?? {}) as Record<string, unknown>;
+      const keys = Object.keys(ext);
+      if (keys.length > 0 && keys.every((k) => ext[k] === null)) return;
       overrides.push({ patch, paneId: patch.paneId ?? "" });
       if (indicator) indicator = { extendData: patch.extendData ?? {} };
     },

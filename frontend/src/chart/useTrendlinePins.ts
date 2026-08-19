@@ -19,6 +19,7 @@ import {
   type TrendlinesExtend,
 } from "../lib/indicators/trendlines";
 import { patchIndicatorExtend } from "../lib/persist";
+import { overrideExtend } from "../lib/overrideExtend";
 
 interface Args {
   chartRef: React.MutableRefObject<Chart | null>;
@@ -49,34 +50,21 @@ function trendlineInstances(
 
 /** Write `pinned` onto a live indicator's extendData so that REMOVALS land.
  *
- * TWO CALLS, and the first one is not redundant. overrideIndicator MERGES
- * extendData through klinecharts' own merge(), which treats an array as an
- * object and recurses into it index by index. A shorter array therefore never
- * shrinks the live one: index 2 of the old value survives because the new value
- * simply has nothing to say about it. Unpinning saved correctly and never
- * repainted, so a released line stayed extended until the next page load.
- * Clearing the key first replaces it outright (merge assigns anything
- * non-object wholesale), and the second call then writes the new list into an
- * empty slot.
+ * The hazard belongs to overrideExtend, which is where it is explained: a
+ * shorter array never shrinks the live one, because klinecharts merges
+ * extendData index by index. Unpinning saved correctly and never repainted, so
+ * a released line stayed extended until the next page load, and that was the
+ * first of five places with the same shape.
  *
  * Only `pinned` is sent, not the whole extendData: merge walks the keys it is
- * given, so the neighbouring options (extend, dedupe, ...) are left alone.
- *
- * ANY array on ANY indicator's extendData has this hazard. It is fixed here
- * rather than by reshaping `pinned` into something merge-proof, so what lands
- * in storage stays the readable list of keys it has always been. */
+ * given, so the neighbouring options (extend, dedupe, ...) are left alone. */
 export function overridePinned(
   chart: Chart,
   paneId: string,
   name: string,
   next: string[],
 ): void {
-  for (const pinned of [null, next])
-    chart.overrideIndicator({
-      paneId,
-      name,
-      extendData: { pinned } as unknown as Record<string, unknown>,
-    });
+  overrideExtend(chart, paneId, name, { pinned: next });
 }
 
 export function useTrendlinePins({

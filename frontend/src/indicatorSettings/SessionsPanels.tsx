@@ -7,6 +7,7 @@
 // LineDraft model — the whole config is the session list).
 import type { Chart, Indicator } from "klinecharts";
 import { getIndicator } from "../lib/indicators";
+import { overrideExtend } from "../lib/overrideExtend";
 import ColorLineStylePicker from "../ColorLineStylePicker";
 import { TIMEZONES } from "../lib/timezones";
 import { DEFAULT_SESSIONS, type SessionDef } from "../lib/customIndicators";
@@ -16,7 +17,10 @@ export function makeWriteSessions(chart: Chart, paneId: string, name: string, se
   return function writeSessions(next: SessionDef[]) {
     setSessions(next);
     const live = getIndicator(chart, paneId, name) as Indicator | null;
-    chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), sessions: next } });
+    // overrideExtend, not overrideIndicator: klinecharts merges extendData
+    // index by index, so a DELETED row would leave the old tail painted on a
+    // list that the modal and storage both show as shorter.
+    overrideExtend(chart, paneId, name, { ...((live?.extendData as object) ?? {}), sessions: next });
   };
 }
 

@@ -55,6 +55,7 @@ import {
   type SavedIndicatorConfig,
 } from "./persist";
 import type { ChartController } from "./chartController";
+export { overrideExtend } from "./overrideExtend";
 
 // v10 replaced v9's chart.getIndicatorByPaneId(paneId, name) with a flat
 // filter-based getIndicators({ paneId, name }). This helper restores the single
