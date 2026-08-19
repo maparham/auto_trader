@@ -779,7 +779,7 @@ function rowsForPane(
     const mtfRes = (ind.extendData as { mtf?: { timeframe?: string | null } } | undefined)?.mtf
       ?.timeframe;
     const mtfTf = mtfRes && mtfRes !== "chart" ? periodByResolution(mtfRes)?.label ?? mtfRes : "";
-    const calcParamsText =
+    const paramsText =
       indTypeOf(ind) === "AVWAP"
         ? ""
         : ind.calcParams?.length
@@ -800,6 +800,15 @@ function rowsForPane(
       if (typeof fig.title !== "string" || fig.title === "") continue;
       figures.push({ key: fig.key, title: fig.title, color });
     }
+    // "Show value in legend" hides the figure READOUTS. A pane with no figures
+    // has none to hide (TRENDLINES declares `figures: []` and paints its own
+    // canvas), so the toggle did nothing at all there and read as broken. For
+    // those panes it hides the PARAMS instead, which is the only thing the
+    // legend carries past the name — and on TRENDLINES that is sixteen numbers.
+    //
+    // Not for a pane that HAS figures: there "EMA(50)" is the setting and
+    // "433.36" is the value, and hiding the setting is not what was asked for.
+    const calcParamsText = hideValue && figures.length === 0 ? "" : paramsText;
     // PREV_HL: warn when an active boundary draws nothing at this timeframe (its
     // window is shorter than one bar). The fix is the same for any boundary — make
     // the lookback at least one bar — so the message states that minimum.
