@@ -22,7 +22,9 @@ vi.mock("./feed", () => ({
   nominalBarHours: (res: string) => (RES_SECONDS[res] ? RES_SECONDS[res] / 3600 : null),
 }));
 
-const { applyMaTimeframe, applySlopeTimeframe } = await import("./mtfCoordinator");
+const { applyMaTimeframe, applySlopeTimeframe, applyTrendlinesTimeframe, refreshMtfIndicators } =
+  await import("./mtfCoordinator");
+const { TRENDLINES_DEFAULTS } = await import("./indicators/trendlinesOutputs");
 const { slopeLineSeries } = await import("./indicators/slope");
 
 const HTF_MS = 900_000;
@@ -239,5 +241,91 @@ describe("applySlopeTimeframe bar width", () => {
       .filter(([a, b]) => a != null && b != null);
     expect(pairs.length).toBeGreaterThan(5);
     for (const [a, b] of pairs) expect(b! / a!).toBeCloseTo(720 / 672, 9);
+  });
+});
+
+describe("applyTrendlinesTimeframe", () => {
+  const apply = (chart: Chart, timeframe: string | null) =>
+    applyTrendlinesTimeframe(
+      chart, "EPIC", "tl1", "candle_pane", { ...TRENDLINES_DEFAULTS }, timeframe,
+    );
+
+  it("clears the stash and writes the params when the pin is released", async () => {
+    const { chart, overrides } = fakeChart({ mtf: { timeframe: "MINUTE_15", htfStarts: [1] } });
+    await apply(chart, null);
+    expect(overrides[0].patch.extendData?.mtf).toEqual({ timeframe: null });
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
+  });
+
+  it("stashes the HTF series and lines, from CLOSED bars only", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = fakeChart();
+    await apply(chart, "MINUTE_15");
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as {
+      timeframe: string;
+      htfStarts: number[];
+      htfMs: number;
+      htfResistance: unknown[];
+      htfBrokenSupport: unknown[];
+      htfLines: unknown[];
+    };
+    expect(mtf.timeframe).toBe("MINUTE_15");
+    expect(mtf.htfMs).toBe(HTF_MS);
+    expect(mtf.htfStarts.length).toBeGreaterThan(0);
+    // One value per HTF bar, on every one of the four operand series: calc
+    // aligns them by index against htfStarts.
+    expect(mtf.htfResistance).toHaveLength(mtf.htfStarts.length);
+    expect(mtf.htfBrokenSupport).toHaveLength(mtf.htfStarts.length);
+    // The forming HTF bar is never usable to an operand, so it must not seed or
+    // break a line either. The chart's newest bar is the cut.
+    const newest = chart.getDataList().at(-1)!.timestamp;
+    expect(Math.max(...mtf.htfStarts) + HTF_MS).toBeLessThanOrEqual(newest);
+    // Flat fixture bars: no pivots, so no lines — the shape is what is pinned.
+    expect(mtf.htfLines).toEqual([]);
+  });
+
+  it("is restored by the refresh pass, so the pin survives a reload", async () => {
+    // refreshMtfIndicators is what re-detects every pinned pane on load and on
+    // scroll-back; only `mtf.timeframe` is persisted, so a pane it skips comes
+    // back on the chart timeframe with no sign that anything was dropped. It
+    // branches on indTypeOf, NOT on the instance name, which is why the fixture
+    // carries the real `indType` an instance is created with.
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const ind = {
+      paneId: "candle_pane",
+      name: "TRENDLINES",
+      calcParams: [...Object.values(TRENDLINES_DEFAULTS)],
+      extendData: { indType: "TRENDLINES", mtf: { timeframe: "MINUTE_15" } },
+    };
+    const chart = {
+      getDataList: () => [bar(10_000_000_000), bar(10_000_300_000)],
+      getIndicators: () => [ind],
+      overrideIndicator: () => true,
+    } as unknown as Chart;
+    await refreshMtfIndicators(chart, "EPIC");
+    expect(fetchRangeStrict).toHaveBeenCalled();
+  });
+
+  it("reaches FURTHER back with Max Span off than with a span ceiling set", async () => {
+    // 0 means "no limit" on Max Span, so the off state is the one with no bound
+    // on how old a line's first anchor can be. Reading it as a zero-bar reach
+    // would fetch a short window and drop the oldest lines on scroll-back —
+    // which reads as an alignment bug, not as a fetch one.
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const from = async (maxSpanBars: number): Promise<number> => {
+      fetchRangeStrict.mockClear();
+      await applyTrendlinesTimeframe(
+        fakeChart().chart, "EPIC", "tl1", "candle_pane",
+        { ...TRENDLINES_DEFAULTS, maxSpanBars }, "MINUTE_15",
+      );
+      return fetchRangeStrict.mock.calls[0][2] as number;
+    };
+    expect(await from(0)).toBeLessThan(await from(5));
   });
 });

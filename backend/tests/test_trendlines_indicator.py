@@ -638,8 +638,23 @@ def test_registered_in_the_series_registry():
     c = spec.parse_config([5], {"extend": "segment"})
     assert spec.outputs(c) == TRENDLINES_OUTPUTS
     assert spec.warmup(c, "tl_support") == 44
-    assert spec.timeframe(c) is None  # v1 has no MTF
+    assert spec.timeframe(c) is None  # no pin: the chart's own timeframe
     assert spec.series(c, "tl_support", flat(20), 1.0) == [None] * 20
+
+
+def test_mtf_timeframe_pin():
+    # The settings pin rides extendData.mtf.timeframe (same as SR_LEVELS); the
+    # spec exposes it so the evaluator computes on that timeframe's candles and
+    # aligns the result onto the base bars. Nothing below the config changes:
+    # the detector runs on whatever candles it is handed.
+    cfg_ = parse_trendlines_config(None, {"mtf": {"timeframe": "HOUR_4"}})
+    assert cfg_.timeframe == "HOUR_4"
+    assert SERIES_INDICATORS["TRENDLINES"].timeframe(cfg_) == "HOUR_4"
+    # "chart" is the modal's word for "no pin", and so is a missing/garbage mtf.
+    assert parse_trendlines_config(None, {"mtf": {"timeframe": "chart"}}).timeframe is None
+    assert parse_trendlines_config(None, {"mtf": {"timeframe": None}}).timeframe is None
+    assert parse_trendlines_config(None, {"mtf": "junk"}).timeframe is None
+    assert parse_trendlines_config(None, {"extend": "segment"}).timeframe is None
 
 
 def test_resolves_through_the_request_path():

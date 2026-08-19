@@ -34,6 +34,7 @@ import type {
 } from "klinecharts";
 import { isPivotAt } from "./pivots";
 import { atrSeries } from "../atr";
+import { alignHtfToChart } from "../mtf";
 import {
   MAX_LIVE_MULT,
   parseTrendlinesConfig,
@@ -717,6 +718,31 @@ export function computeTrendlines(
 /** Render-only options, on extendData rather than calcParams — the same seam
  * SR_LEVELS uses for showMidline. Because none of this changes a value, it
  * needs no Python port and no parity test. */
+/** Everything the higher timeframe produced, written by the MTF coordinator
+ * (applyTrendlinesTimeframe) and read by calc. Only `timeframe` is persisted
+ * (see refreshMtfIndicators); the series are re-fetched per session.
+ *
+ * THE LINES ARE IN HTF BAR INDICES. Mapping them onto chart bars here would
+ * quietly break three things that read those indices as identities rather than
+ * as positions: sharesPivot's touch-index membership test (float equality on
+ * interpolated indices), lineKey (a pin would rebind on every reload), and the
+ * span ceilings (chart bars compared against an HTF-denominated setting). The
+ * conversion happens once, at the last step, where an index becomes a pixel. */
+export interface TrendlinesMtf {
+  timeframe: string | null;
+  htfStarts?: number[]; // HTF bar open timestamps (ms)
+  htfMs?: number; // HTF bar duration (ms)
+  htfSupport?: Array<number | undefined>; // per-HTF-bar operand values
+  htfResistance?: Array<number | undefined>;
+  htfBrokenSupport?: Array<number | undefined>;
+  htfBrokenResistance?: Array<number | undefined>;
+  htfLines?: TrendLine[]; // live lines at the last closed HTF bar
+  /** ATR(14) on the HTF bars. The merge and near-price tolerances are
+   * ATR-denominated, so the chart's own ATR would scale both by the ratio
+   * between the timeframes. */
+  htfAtr?: number;
+}
+
 export interface TrendlinesExtend {
   /** "ray" keeps going right (default), "segment" stops at the last touch,
    * "extended" also draws back before the first anchor. Backward extension is
@@ -780,6 +806,12 @@ export interface TrendlinesExtend {
    * pane, re-measured every render so it stays "indefinite" through scroll and
    * zoom instead of baking in a bar count. */
   pinned?: string[];
+  /** Multi-timeframe: lines and operand series detected on a higher timeframe
+   * and aligned onto the chart bars inside calc (no lookahead). THE ONE KEY ON
+   * THIS INTERFACE THAT CALC READS: everything else here is render-only, and a
+   * timeframe is not a drawing choice but a statement of which candles the
+   * indicator runs on, which is how the Python twin treats it too. */
+  mtf?: TrendlinesMtf;
 }
 
 /** Stable identity for a line across recomputes, for pinning.
@@ -788,9 +820,17 @@ export interface TrendlinesExtend {
  * older history loads, which would silently move every pin onto a different
  * line. Anchor TIMESTAMPS are immutable, so a pin survives history loads,
  * timeframe reloads and a page refresh. */
-export function lineKey(line: TrendLine, dataList: KLineData[]): string {
-  const t1 = dataList[line.i1]?.timestamp ?? line.i1;
-  const t2 = dataList[line.i2]?.timestamp ?? line.i2;
+export function lineKey(
+  line: TrendLine,
+  dataList: KLineData[],
+  /** Bar-open timestamps of the space the line's indices live in, when that is
+   * NOT the chart's own bars: under a timeframe pin i1/i2 are HTF indices, so
+   * reading them out of `dataList` would key the pin off whatever chart bar
+   * happens to sit at that index. */
+  starts?: number[],
+): string {
+  const t1 = (starts ? starts[line.i1] : dataList[line.i1]?.timestamp) ?? line.i1;
+  const t2 = (starts ? starts[line.i2] : dataList[line.i2]?.timestamp) ?? line.i2;
   return `${line.side}:${t1}:${t2}`;
 }
 
@@ -799,6 +839,12 @@ export function lineKey(line: TrendLine, dataList: KLineData[]): string {
 export type TrendlinesCalcPoint = TrendlinesPoint & {
   lines?: TrendLine[];
   atr?: number;
+  /** The bar index the last row's values were read at, IN THE LINES' OWN SPACE:
+   * the last chart bar normally, and under a timeframe pin the last HTF bar
+   * that had closed by then. The draw path measures everything at it, and its
+   * projections must equal the emitted values bit for bit (selectDrawnLines
+   * compares them with ===) or an operand's line loses its exemptions. */
+  lineIdx?: number;
 };
 
 /** How far apart two lines THROUGH THE SAME PIVOT may project at the last bar
@@ -1330,6 +1376,117 @@ export function hitHandle(
   return best?.key ?? null;
 }
 
+/**
+ * Multi-timeframe calc: the four operand series were computed on the HTF bars
+ * by the coordinator, so all that is left is to hand each chart bar the value
+ * of the most recent HTF bar that had CLOSED by then (waitClose, no lookahead:
+ * the whole point of the alignment, and the same rule SR_LEVELS and Pivot Bands
+ * follow).
+ *
+ * The line list rides the last row as usual, still in HTF bar indices — see
+ * TrendlinesMtf for why they are not converted.
+ */
+export function alignMtfTrendlines(
+  dataList: KLineData[],
+  mtf: TrendlinesMtf,
+): TrendlinesCalcPoint[] {
+  const ts = dataList.map((k) => k.timestamp);
+  const starts = mtf.htfStarts ?? [];
+  const htfMs = mtf.htfMs ?? 0;
+  const htfBars = starts.map((t) => ({ timestamp: t }) as KLineData);
+  const at = (v?: Array<number | undefined>): Array<number | undefined> =>
+    v ? alignHtfToChart(ts, htfBars, v, htfMs, true) : [];
+  const sup = at(mtf.htfSupport);
+  const res = at(mtf.htfResistance);
+  const bSup = at(mtf.htfBrokenSupport);
+  const bRes = at(mtf.htfBrokenResistance);
+  const out: TrendlinesCalcPoint[] = ts.map((_, i) => ({
+    tl_support: sup[i],
+    tl_resistance: res[i],
+    tl_broken_support: bSup[i],
+    tl_broken_resistance: bRes[i],
+  }));
+  if (!out.length) return out;
+  // The HTF bar the LAST chart bar reads, by the same rule alignHtfToChart
+  // used above. The draw path measures every line at it, and selectDrawnLines
+  // matches an emitted value with === against projectAt at that index, so this
+  // must be the index those values came from and not simply the newest bar.
+  let j = -1;
+  const t = ts[ts.length - 1];
+  while (j + 1 < starts.length && starts[j + 1] + htfMs <= t) j++;
+  out[out.length - 1] = {
+    ...out[out.length - 1],
+    lines: mtf.htfLines ?? [],
+    atr: mtf.htfAtr,
+    lineIdx: j,
+  };
+  return out;
+}
+
+/** The chart's own bar duration in ms: the MEDIAN of the last few gaps, so a
+ * weekend or a session break cannot stretch it. Used only to extrapolate off
+ * the ends of the loaded data, where there are no bars to interpolate between. */
+function chartBarMs(dataList: KLineData[]): number {
+  const diffs: number[] = [];
+  for (let i = Math.max(1, dataList.length - 20); i < dataList.length; i++)
+    diffs.push(dataList[i].timestamp - dataList[i - 1].timestamp);
+  if (!diffs.length) return 0;
+  diffs.sort((a, b) => a - b);
+  return diffs[diffs.length >> 1];
+}
+
+/** Fractional index of time `t` in a sorted array of bar-open timestamps,
+ * extrapolating linearly off both ends at `barMs` (so a ray projecting past the
+ * newest bar, or an anchor older than the loaded history, still lands
+ * somewhere real rather than being clamped onto the edge — clamping a SLOPED
+ * line would visibly rotate it). */
+function idxAtTime(starts: number[], t: number, barMs: number): number {
+  const n = starts.length;
+  if (!n) return 0;
+  if (t <= starts[0]) return barMs > 0 ? (t - starts[0]) / barMs : 0;
+  if (t >= starts[n - 1])
+    return n - 1 + (barMs > 0 ? (t - starts[n - 1]) / barMs : 0);
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (starts[mid] <= t) lo = mid;
+    else hi = mid;
+  }
+  const span = starts[hi] - starts[lo];
+  return span > 0 ? lo + (t - starts[lo]) / span : lo;
+}
+
+/** Time at a fractional index, the inverse of {@link idxAtTime}. */
+function timeAtIdx(starts: number[], j: number, barMs: number): number {
+  const n = starts.length;
+  if (!n) return 0;
+  if (j <= 0) return starts[0] + j * barMs;
+  if (j >= n - 1) return starts[n - 1] + (j - (n - 1)) * barMs;
+  const k = Math.floor(j);
+  return starts[k] + (j - k) * (starts[k + 1] - starts[k]);
+}
+
+/** The two index conversions the draw path needs when the lines were detected
+ * on another timeframe: HTF index -> chart index (for pixels) and back (for the
+ * pane's right edge, which is a pixel the pin logic needs as a bar). Identity
+ * on the chart timeframe, which is what keeps the draw path single-pathed. */
+function trendlineIdxMap(
+  dataList: KLineData[],
+  mtf: TrendlinesMtf | undefined,
+): { toChart: (j: number) => number; toLine: (j: number) => number } {
+  const starts = mtf?.htfStarts;
+  const htfMs = mtf?.htfMs ?? 0;
+  if (!starts?.length || !(htfMs > 0) || !dataList.length)
+    return { toChart: (j) => j, toLine: (j) => j };
+  const chartStarts = dataList.map((k) => k.timestamp);
+  const barMs = chartBarMs(dataList) || htfMs;
+  return {
+    toChart: (j) => idxAtTime(chartStarts, timeAtIdx(starts, j, htfMs), barMs),
+    toLine: (j) => idxAtTime(starts, timeAtIdx(chartStarts, j, barMs), htfMs),
+  };
+}
+
 function drawTrendlines(
   params: IndicatorDrawParams<TrendlinesCalcPoint, unknown, unknown>,
 ): boolean {
@@ -1346,8 +1503,28 @@ function drawTrendlines(
   const cfg = parseTrendlinesConfig(indicator.calcParams);
   const ext = indicator.extendData as TrendlinesExtend | undefined;
   const mode = ext?.extend ?? "ray";
-  const lastIdx = dataList.length - 1;
-  const lastClose = dataList[lastIdx].close;
+  // MULTI-TIMEFRAME: the lines carry HTF bar indices, so every bar-denominated
+  // measurement below (isMajor's spans, lineExtent's projection horizon, the
+  // touch rings) stays in THAT space and only the index-to-pixel step crosses
+  // over. `lastIdx` is therefore the last HTF bar the chart can see, not the
+  // last chart bar; calc recorded it, having applied the closed-bar rule.
+  const mtf =
+    ext?.mtf?.timeframe && ext.mtf.htfStarts?.length && ext.mtf.htfMs
+      ? ext.mtf
+      : undefined;
+  const starts = mtf?.htfStarts;
+  const { toChart, toLine } = trendlineIdxMap(dataList, mtf);
+  const lastIdx = mtf ? (last.lineIdx ?? -1) : dataList.length - 1;
+  // Under a pin, no HTF bar has closed inside the loaded window yet: there is
+  // nothing to measure the lines at, so draw none rather than measure at -1.
+  if (lastIdx < 0) {
+    setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    return true;
+  }
+  // The CHART's newest close either way: it is the current price, and the price
+  // is the price whatever timeframe the lines were found on.
+  const lastClose = dataList[dataList.length - 1].close;
+  const xAt = (j: number) => xAxis.convertToPixel(toChart(j));
   // A pin means "run past where you stopped", so it is only meaningful in the
   // modes that STOP a line. "ray" and "extended" already run to the horizon:
   // there is nothing to release, and their end sits ~maxProjBars into the
@@ -1386,7 +1563,7 @@ function drawTrendlines(
   // Resolved to line objects BEFORE selection, because the dedup pass has to
   // know which lines are pinned in order to spare them.
   const pinnedLines = new Set(
-    pins.size ? eligible.filter((l) => pins.has(lineKey(l, dataList))) : [],
+    pins.size ? eligible.filter((l) => pins.has(lineKey(l, dataList, starts))) : [],
   );
   // `last` carries BOTH the line list and the last bar's emitted values, so the
   // union that keeps every operand's line on screen needs no extra plumbing.
@@ -1424,10 +1601,14 @@ function drawTrendlines(
   // at any zoom. The index-to-pixel map is linear (klinecharts multiplies by a
   // constant bar space), so one bar's width inverts it exactly.
   const barPx = xAxis.convertToPixel(1) - xAxis.convertToPixel(0);
-  const edgeIdx =
+  const lastChartIdx = dataList.length - 1;
+  const edgeChartIdx =
     barPx > 0
-      ? lastIdx + (tagRight - xAxis.convertToPixel(lastIdx)) / barPx
-      : lastIdx;
+      ? lastChartIdx + (tagRight - xAxis.convertToPixel(lastChartIdx)) / barPx
+      : lastChartIdx;
+  // Back into the lines' own space: lineExtent runs the pinned line out to a
+  // BAR, and under a pin that bar is an HTF one.
+  const edgeIdx = toLine(edgeChartIdx);
 
   ctx.save();
   ctx.font = "10px sans-serif";
@@ -1435,7 +1616,7 @@ function drawTrendlines(
   ctx.textAlign = "left";
   for (const line of drawn) {
     const broken = line.brokenIdx !== null;
-    const isPinned = pins.has(lineKey(line, dataList));
+    const isPinned = pins.has(lineKey(line, dataList, starts));
     // The line's end under the MODE alone. The handle and the ×N tag ride here
     // whether or not the line is pinned: a pinned line runs to the pane edge,
     // and a handle that travelled with it would leave nothing to click to undo
@@ -1444,11 +1625,19 @@ function drawTrendlines(
     const { jLeft, jRight } = isPinned
       ? lineExtent(line, mode, cfg, drawn, lastIdx, edgeIdx)
       : natural;
-    const x0 = xAxis.convertToPixel(jLeft);
-    const x1 = xAxis.convertToPixel(jRight);
+    const x0 = xAt(jLeft);
+    const x1 = xAt(jRight);
     if (x1 <= 0 || x0 >= bounding.width) continue;
     const y0 = yAxis.convertToPixel(projectAt(line, jLeft));
     const y1 = yAxis.convertToPixel(projectAt(line, jRight));
+    // Marks (the break dot, the touch rings) ride the SEGMENT AS DRAWN rather
+    // than projecting themselves: under a timeframe pin the index map is only
+    // piecewise linear (a weekend compresses on the chart but not in time), so
+    // a mark placed by its own projection can sit a bar off the line it
+    // belongs to. Interpolating at its own x is the idiom the ×N tag already
+    // uses below, and on the chart timeframe it lands on the same pixel.
+    const onSegment = (x: number): number =>
+      x1 === x0 ? y0 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
     ctx.strokeStyle =
       line.side === "support" ? TL_SUPPORT_COLOR : TL_RESISTANCE_COLOR;
     ctx.globalAlpha = broken ? 0.45 : 1;
@@ -1466,8 +1655,8 @@ function drawTrendlines(
     // as the tag comment below records.
     if (broken) {
       const jBreak = line.brokenIdx as number;
-      const xB = xAxis.convertToPixel(jBreak);
-      const yB = yAxis.convertToPixel(projectAt(line, jBreak));
+      const xB = xAt(jBreak);
+      const yB = onSegment(xB);
       if (xB >= 0 && xB <= tagRight && yB >= 0 && yB <= bounding.height) {
         ctx.globalAlpha = 1;
         ctx.fillStyle = ctx.strokeStyle;
@@ -1493,8 +1682,8 @@ function drawTrendlines(
     // other panes and an unclamped y bleeds into them.
     ctx.lineWidth = 1;
     for (const idx of line.touchIdxs) {
-      const xT = xAxis.convertToPixel(idx);
-      const yT = yAxis.convertToPixel(projectAt(line, idx));
+      const xT = xAt(idx);
+      const yT = onSegment(xT);
       if (xT < 0 || xT > tagRight || yT < 0 || yT > bounding.height) continue;
       ctx.beginPath();
       ctx.arc(xT, yT, TL_TOUCH_RADIUS, 0, Math.PI * 2);
@@ -1519,7 +1708,7 @@ function drawTrendlines(
     // when free, filled when pinned, so the toggle's state is readable without
     // hovering. Clamped inside the pane like the tag, and its y interpolated at
     // the clamped x for the same reason the tag's is.
-    const xNat = xAxis.convertToPixel(natural.jRight);
+    const xNat = xAt(natural.jRight);
     const yNat = yAxis.convertToPixel(projectAt(line, natural.jRight));
     const xHandle = Math.min(xNat, tagRight);
     const yHandle =
@@ -1534,7 +1723,7 @@ function drawTrendlines(
     if (stops && xRing >= 0 && yRing >= 0 && yRing <= bounding.height) {
       // Registered where it is DRAWN: the hit test and the ring must be the
       // same object or the click target drifts off the dot.
-      handles.push({ key: lineKey(line, dataList), x: xRing, y: yRing });
+      handles.push({ key: lineKey(line, dataList, starts), x: xRing, y: yRing });
       // The two states are OPPOSITE ACTIONS, so they get opposite shapes rather
       // than two shades of one dot. Free: a chevron pointing the way the line
       // would run, "click to run me on". Pinned: a bar across the line, an end
@@ -1605,11 +1794,17 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   // to run calc but paint nothing of klinecharts' own — the mechanism
   // sessions.ts and proximityHeatmap.ts already use.
   figures: [],
-  // READS calcParams ONLY. extendData carries render-only options, and pulling
-  // any of them in here would make a chart setting change an emitted value.
-  // SR_LEVELS' calc does pass its extendData into compute, so this is the one
-  // place the neighbouring pattern must not be copied.
+  // READS calcParams AND extendData.mtf, NOTHING ELSE. Every other key on
+  // extendData is a drawing option, and pulling one in here would make a chart
+  // setting change an emitted value. `mtf` is not one of them: it says which
+  // CANDLES the indicator runs on, so it belongs to the calculation on both
+  // surfaces (parse_trendlines_config reads the same key), and the detector
+  // itself still never sees it — the higher timeframe is computed outside, by
+  // the coordinator, and only aligned here.
   calc: (dataList: KLineData[], ind: Indicator) => {
+    const mtf = (ind.extendData as TrendlinesExtend | undefined)?.mtf;
+    if (mtf?.timeframe && mtf.htfStarts?.length && mtf.htfMs)
+      return alignMtfTrendlines(dataList, mtf);
     const { points, lines, atr } = computeTrendlines(
       dataList,
       parseTrendlinesConfig(ind.calcParams),
@@ -1620,6 +1815,7 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
         ...out[out.length - 1],
         lines,
         atr: atr[atr.length - 1],
+        lineIdx: out.length - 1,
       };
     return out;
   },

@@ -45,6 +45,14 @@ const MTF_RUNTIME_KEYS = [
   "htfSeriesByLine",
   "htfMaBaseByLine",
   "htfAccelByLine",
+  // Trendlines: the four operand series, the detected line list and the HTF ATR
+  // the merge tolerances are measured in.
+  "htfSupport",
+  "htfResistance",
+  "htfBrokenSupport",
+  "htfBrokenResistance",
+  "htfLines",
+  "htfAtr",
 ] as const;
 
 /** extendData with runtime-derived state stripped — what the envelope ships. */

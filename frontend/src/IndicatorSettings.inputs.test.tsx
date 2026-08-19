@@ -110,3 +110,26 @@ describe("Inputs tab renders a control for every declared input", () => {
       expect(screen.getByLabelText(label), `${label} has no control`).toBeTruthy();
   });
 });
+
+describe("Calculation group", () => {
+  it("offers the timeframe pin rather than the disabled placeholder", () => {
+    // Every other pane type falls through to a single-option, disabled select
+    // whose tip lists who does support the pin. Trendlines now detects on the
+    // pinned timeframe's own bars, so it must get the real control.
+    open();
+    const tf = screen
+      .getAllByRole("combobox")
+      .find((s) => (s as HTMLSelectElement).value === "chart") as HTMLSelectElement;
+    expect(tf).toBeTruthy();
+    expect(tf.disabled).toBe(false);
+    expect(tf.options.length).toBeGreaterThan(1);
+  });
+
+  it("shows the saved pin", () => {
+    open({ mtf: { timeframe: "HOUR_4" } });
+    const tf = screen
+      .getAllByRole("combobox")
+      .find((s) => (s as HTMLSelectElement).value === "HOUR_4");
+    expect(tf).toBeTruthy();
+  });
+});

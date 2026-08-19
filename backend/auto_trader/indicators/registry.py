@@ -67,8 +67,7 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         outputs=_tl.trendlines_outputs,
         series=_tl.trendlines_series,
         warmup=_tl.trendlines_warmup,
-        # v1 is chart-timeframe only (no MTF pin), like ATR.
-        timeframe=lambda cfg: None,
+        timeframe=lambda cfg: cfg.timeframe,
     ),
 }
 

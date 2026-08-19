@@ -35,10 +35,13 @@ surface those three.
 
 ## Non-goals
 
-- **Multi-timeframe.** `SR_LEVELS` has it via `alignHtfToChart` and FVG runs
-  1D/4H/chart instances, so this is a real gap and is deferred deliberately.
-  Recorded here because retrofitting MTF means changing the compute signature
-  *after* the Python port exists.
+- ~~**Multi-timeframe.**~~ SHIPPED (2026-08-19), and the retrofit the deferral
+  feared never came due: the compute signature is untouched on both sides. The
+  detector runs on whatever candles it is handed, so the higher timeframe is a
+  question of WHICH candles, answered outside it — by the coordinator on the
+  chart (`applyTrendlinesTimeframe`) and by the evaluator's pinned-`IndicatorRef`
+  branch in a backtest. The lines stay in HTF bar indices right up to the pixel;
+  see `TrendlinesMtf` for the three things converting them earlier would break.
 - **Multi-scale in one instance.** One `pivotLen` per instance. Two scales means
   two instances, exactly as EMA and AVWAP already work.
 - **Channels.** Parallel lines off the opposite pivot pool are a separate

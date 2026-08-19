@@ -16,6 +16,7 @@ import type { SlopeExtend } from "./indicators/slope"; // erased at build; no ru
 import { atrOutputs, atrWarmup, normalizeAtrSmoothing, normalizeAtrPctSource, ATR_SMOOTHING_LABEL, type AtrExtend } from "./atr";
 import { FVG_OUTPUTS, fvgWarmup, parseFvgConfig } from "./indicators/fvgOutputs";
 import type { FvgExtend } from "./indicators/fvg"; // erased at build; no runtime edge
+import type { TrendlinesExtend } from "./indicators/trendlines"; // erased at build; no runtime edge
 import {
   TRENDLINES_OUTPUTS,
   parseTrendlinesConfig,
@@ -305,10 +306,11 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
     }
     if (inst.type === "TRENDLINES") {
       const cfg = parseTrendlinesConfig(inst.calcParams);
+      const ext = (inst.extendData ?? {}) as TrendlinesExtend;
       out.push({
         id: inst.id,
         outputs: [...TRENDLINES_OUTPUTS],
-        timeframe: null, // no MTF in v1 (see the design doc's non-goals)
+        timeframe: ext.mtf?.timeframe ?? null,
         // The output names say which side; what they cannot say is how
         // selective the pane is — the SLOPE/ATR detail convention. The three
         // shown are the pane's ONLY gates on what a rule can read: maxLines

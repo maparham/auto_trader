@@ -774,19 +774,22 @@ function rowsForPane(
   for (const [name, ind] of inds ?? []) {
     const hideValue =
       (ind.extendData as { hideLegendValue?: boolean } | undefined)?.hideLegendValue ?? false;
-    // MTF indicators computed on a higher timeframe show its short label after the
-    // params (TV-style "EMA(50,1D)"), so the legend says which TF the values are from.
+    // Indicators pinned to a timeframe (the chart's own or higher) show its short
+    // label after the params (TV-style "EMA(50,1D)"), so the legend says which bars
+    // the values are from.
     const mtfRes = (ind.extendData as { mtf?: { timeframe?: string | null } } | undefined)?.mtf
       ?.timeframe;
     const mtfTf = mtfRes && mtfRes !== "chart" ? periodByResolution(mtfRes)?.label ?? mtfRes : "";
+    // A pinned timeframe is not a param: it says which bars the values are FROM,
+    // so it survives where the params don't (the toggle below drops them on a
+    // figure-less pane). AVWAP has no Timeframe control, so it never has one.
+    const mtfOnlyText = mtfTf ? `(${mtfTf})` : "";
     const paramsText =
       indTypeOf(ind) === "AVWAP"
         ? ""
         : ind.calcParams?.length
           ? `(${[...ind.calcParams, ...(mtfTf ? [mtfTf] : [])].join(",")})`
-          : mtfTf
-            ? `(${mtfTf})`
-            : "";
+          : mtfOnlyText;
     let lineIdx = 0;
     const figures: LegendFigure[] = [];
     for (const fig of legendFiguresOf(ind)) {
@@ -808,7 +811,7 @@ function rowsForPane(
     //
     // Not for a pane that HAS figures: there "EMA(50)" is the setting and
     // "433.36" is the value, and hiding the setting is not what was asked for.
-    const calcParamsText = hideValue && figures.length === 0 ? "" : paramsText;
+    const calcParamsText = hideValue && figures.length === 0 ? mtfOnlyText : paramsText;
     // PREV_HL: warn when an active boundary draws nothing at this timeframe (its
     // window is shorter than one bar). The fix is the same for any boundary — make
     // the lookback at least one bar — so the message states that minimum.

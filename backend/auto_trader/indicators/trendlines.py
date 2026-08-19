@@ -16,7 +16,10 @@ pivot at bar i only exists at its confirm bar i + pivot_len, every line is
 seeded at a confirm bar, and break detection at bar i only tests lines whose
 anchors precede i.
 
-Chart-timeframe only (v1 has no MTF), so the registry pins timeframe to None.
+The math here is chart-agnostic: it runs on whatever candles it is given. A
+settings-pinned timeframe (extendData.mtf.timeframe) therefore needs no change
+below the config — the evaluator computes on that timeframe's own candles and
+aligns the result onto the base bars, exactly as it does for SR_LEVELS.
 """
 
 from __future__ import annotations
@@ -95,6 +98,10 @@ class TrendlinesConfig:
     # within the Max Pierce tolerance. 0 = off, and the only gate here whose
     # DEFAULT is not off. See _has_back_clearance.
     min_back_bars: int
+    # Settings-pinned timeframe (extendData.mtf.timeframe, like SR_LEVELS); the
+    # evaluator then feeds trendlines_series that timeframe's candles and aligns
+    # the result onto the base bars (evaluate.py's pinned-IndicatorRef branch).
+    timeframe: str | None = None
 
 
 @dataclass(slots=True)
@@ -120,11 +127,13 @@ class TrendLine:
 def parse_trendlines_config(calc_params: object, extend_data: object) -> TrendlinesConfig:
     """Mirrors TS parseTrendlinesConfig.
 
-    `extend_data` is UNUSED ON PURPOSE. The only extendData field TRENDLINES
-    carries is the render-only `extend` option, and collectExprInstances ships
-    it here unconditionally; the settings copy promises Extend is "drawing only"
-    and "cannot alter a strategy", which stays true only while nothing in this
-    function reads it. v1 also has no MTF, so there is no timeframe to pull.
+    `mtf.timeframe` is the ONE extendData key read here. Everything else on
+    extendData is render-only (`extend`, `dedupe`, `nearPrice`, `hideBroken`,
+    `pinned`), and collectExprInstances ships all of it unconditionally; the
+    settings copy promises Extend is "drawing only" and "cannot alter a
+    strategy", which stays true only while nothing in this function reads it.
+    The timeframe is different in kind: it says WHICH CANDLES to run on, so it
+    belongs to the calculation, not to the drawing.
 
     Number coercion diverges from the TS on null, "" and [] — Number() makes
     each 0 (which passes viol_mult's >= 0 rule) whereas float() raises and we
@@ -142,6 +151,9 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
     """
     p: list[Any] = list(calc_params) if isinstance(calc_params, (list, tuple)) else []
     d = _DEFAULTS
+    ext = extend_data if isinstance(extend_data, dict) else {}
+    mtf = ext.get("mtf") if isinstance(ext.get("mtf"), dict) else {}
+    tf = mtf.get("timeframe")
 
     def num_at(i: int, default: float, allow_zero: bool) -> float:
         try:
@@ -191,6 +203,7 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         # so a chart saved before this param existed gets the gate at 10, which
         # is intended.
         min_back_bars=max(0, math.floor(num_at(15, d[15], True))),
+        timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
 

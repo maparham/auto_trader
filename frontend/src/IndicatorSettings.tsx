@@ -23,7 +23,8 @@ import {
   SMOOTHING_TYPES,
   type IndicatorInputDef,
 } from "./lib/indicatorMeta";
-import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe } from "./lib/mtfCoordinator";
+import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe } from "./lib/mtfCoordinator";
+import { parseTrendlinesConfig } from "./lib/indicators/trendlinesOutputs";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -193,6 +194,9 @@ export default function IndicatorSettings({
   // colours + opacity in the Style tab, and its four figure lines are
   // draw-suppressed, so the generic line rows are hidden.
   const isFvg = type === "FVG";
+  // Trendlines: same MTF shape as S/R Levels — the pin is on the Inputs tab and
+  // the detector runs on the pinned timeframe's own bars, lines and all.
+  const isTrendlines = type === "TRENDLINES";
   // Candle Patterns: figure-less main-pane overlay, no numeric calcParams. Its
   // whole config (pattern toggles, show-labels, colours) is a small extendData
   // object edited on the Inputs tab (colours included, unlike EMA/MA).
@@ -814,6 +818,9 @@ export default function IndicatorSettings({
     if (isSrLevels && timeframe !== "chart") extendData.mtf = { timeframe };
     // FVG: same MTF persistence contract as S/R Levels.
     if (isFvg && timeframe !== "chart") extendData.mtf = { timeframe };
+    // Trendlines persists only the chosen timeframe; the HTF lines and series
+    // are re-detected by the coordinator on load, exactly as S/R Levels does.
+    if (isTrendlines && timeframe !== "chart") extendData.mtf = { timeframe };
     if (isSlope) {
       // slopePeriod/smoothing/colorByDirection don't ride genExtend (they're not
       // meta-declared selects) — persist them explicitly so they survive reload.
@@ -981,6 +988,23 @@ export default function IndicatorSettings({
       name,
       paneId,
       parseFvgConfig(nextCp ?? calcParams),
+      tf === "chart" ? null : tf,
+      brokerId,
+    );
+  }
+
+  // Push a Trendlines config (chart-TF or MTF) through the coordinator, which
+  // re-detects the lines on the higher timeframe's native bars when one is set
+  // (mirrors applySrLevels above). Params come from the explicit override so a
+  // calcParam change never races setState.
+  function applyTrendlines(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
+    const tf = next.timeframe ?? timeframe;
+    void applyTrendlinesTimeframe(
+      chart,
+      epic,
+      name,
+      paneId,
+      parseTrendlinesConfig(nextCp ?? calcParams),
       tf === "chart" ? null : tf,
       brokerId,
     );
@@ -1162,6 +1186,11 @@ export default function IndicatorSettings({
       // must recompute the stashed HTF levels, not just re-align them.
       apply({ calcParams: nextCp });
       applySrLevels({}, nextCp);
+    } else if (isTrendlines && timeframe !== "chart") {
+      // Same contract again: every trendline param feeds the DETECTOR, so under
+      // an active timeframe the HTF lines must be found again, not re-aligned.
+      apply({ calcParams: nextCp });
+      applyTrendlines({}, nextCp);
       // isSlope has no calcParam-sourced input left (MA Lengths is the dedicated
       // editor below, which writes calcParams + calls applySlope directly), so
       // this generic setParam path is never reached for SLOPE.
@@ -2171,11 +2200,48 @@ export default function IndicatorSettings({
                     />
                   </span>
                 </>
+              ) : isTrendlines ? (
+                <>
+                  {/* Higher-timeframe lines detected on native HTF bars, aligned
+                      onto the chart bars (no lookahead), same as S/R Levels. */}
+                  <div className="ind-row ind-row-cols">
+                    <span className="ind-row-head">
+                      <label>Timeframe</label>
+                      <InfoTip
+                        title="Timeframe"
+                        text="Detect the lines on this timeframe instead of the chart's. A higher timeframe gives fewer, longer trends (e.g. daily lines on a 15m chart)."
+                      />
+                    </span>
+                    <select
+                      value={timeframe}
+                      onChange={(e) => {
+                        setTimeframe(e.target.value);
+                        applyTrendlines({ timeframe: e.target.value });
+                      }}
+                    >
+                      {timeframeOptions.map((p) => (
+                        <option key={p.resolution} value={p.resolution}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input type="checkbox" checked disabled readOnly />
+                      <span>Wait for timeframe closes</span>
+                    </label>
+                    <InfoTip
+                      title="Wait for timeframe closes"
+                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                    />
+                  </span>
+                </>
               ) : (
                 <div className="ind-row ind-row-cols">
                   <span className="ind-row-head">
                     <label>Timeframe</label>
-                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, S/R Levels, and FVG." />
+                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, S/R Levels, FVG and Trendlines." />
                   </span>
                   <select value="chart" disabled>
                     <option value="chart">{chartOptionLabel}</option>

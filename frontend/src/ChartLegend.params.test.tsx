@@ -74,3 +74,26 @@ describe("show value in legend, on a pane with nothing to show", () => {
     expect(rowFor(ema(false)).calcParamsText).toBe("(50)");
   });
 });
+
+// A pinned (fixed) timeframe is not a param — it says which bars the values are
+// FROM. Both places that drop the params have to keep it, or a 1D Trendlines
+// pane reads exactly like a chart-timeframe one.
+describe("a pinned MTF timeframe always shows", () => {
+  const pinned = (ind: { extendData: Record<string, unknown> }) => ({
+    ...ind,
+    extendData: { ...ind.extendData, mtf: { timeframe: "DAY" } },
+  });
+  it("rides along with the params", () => {
+    expect(rowFor(pinned(trendlines(false))).calcParamsText).toBe(
+      "(7,0.25,1,2,20,250,30,20,1,0,20,0,0,0,0,44,1D)",
+    );
+  });
+
+  it("survives the toggle that hides the params on a figure-less pane", () => {
+    expect(rowFor(pinned(trendlines(true))).calcParamsText).toBe("(1D)");
+  });
+
+  it("stays absent on the chart timeframe", () => {
+    expect(rowFor(trendlines(true)).calcParamsText).toBe("");
+  });
+});

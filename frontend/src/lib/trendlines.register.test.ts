@@ -86,6 +86,16 @@ describe("TRENDLINES registration", () => {
     expect(inst.timeframe).toBeNull();
   });
 
+  it("reports its timeframe pin, so a rule reads the higher timeframe's lines", () => {
+    // The backend recomputes from this: evaluate.py's pinned-IndicatorRef branch
+    // runs the detector on the pinned timeframe's candles and aligns the result
+    // onto the base bars, which is what the chart draws too.
+    const live = [
+      { id: "tl1", type: "TRENDLINES", calcParams: [], extendData: { mtf: { timeframe: "HOUR_4" } } },
+    ];
+    expect(exprInstancesFor(live as never)[0].timeframe).toBe("HOUR_4");
+  });
+
   it("gives every output the same warm-up floor and unknown outputs zero", () => {
     const live = [{ id: "tl1", type: "TRENDLINES", calcParams: [], extendData: {} }];
     const warmup = exprWarmupByRef(live as never);
