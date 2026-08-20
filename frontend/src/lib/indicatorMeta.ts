@@ -582,7 +582,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
           { value: "near", label: "Only lines near price" },
           { value: "pivot", label: "One line per pivot" },
         ],
-        tip: "Near price hides the lines that have run far from where price is, keeping the nearest on each side. One per pivot keeps a single line where several run through one swing, the one closest to price.",
+        tip: "Near price removes distant lines. One per pivot shows only the nearest line where several pass through the same swing.",
       },
       {
         key: "hideBroken",
