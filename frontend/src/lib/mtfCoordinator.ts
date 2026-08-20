@@ -9,6 +9,7 @@
 
 import type { Chart, KLineData } from "klinecharts";
 import { fetchRangeStrict, RESOLUTION_SECONDS, nominalBarHours } from "./feed";
+import { loadSettings } from "../theme";
 import { maSeries, htfCoverageStartMs, normalizeMaKind, type MaKind, type MtfSeriesBase } from "./mtf";
 import { pageHistoryBack } from "./historyPaging";
 import { indTypeOf, templateMaKind, type MaExtend } from "./customIndicators";
@@ -230,7 +231,21 @@ async function fetchHtfBars(
       // walk); pages that already landed are kept and rendered.
       fetchOlder: async (fSec, tSec) => {
         try {
-          return await fetchRangeStrict(epic, timeframe, fSec, tSec, "mid", brokerId);
+          // THE PANE'S OWN PRICE SIDE, not a hardcoded "mid". Read here rather
+          // than threaded through every apply*/refresh signature, the same way
+          // useLiveMarketData's centre-pin reads it (App re-saves settings and
+          // fires at:settings-saved; a side change reloads the series, which
+          // refreshes the pins). One reader cannot drift from the chart's.
+          //
+          // It looked cosmetic while MTF meant moving averages: mid vs bid
+          // shifts a curve by half a spread. It is not. Trendlines decide
+          // BOOLEANS against these bars — measured on a DAL daily pane, a
+          // support line's break came to bid low 84.52 against a threshold of
+          // 85.11 while the mid low was 85.13, so the mid bars left the line
+          // unbroken, drawn solid, still emitting as live support on a chart
+          // whose own candles had gone through it.
+          const side = loadSettings().priceSide;
+          return await fetchRangeStrict(epic, timeframe, fSec, tSec, side, brokerId);
         } catch (e) {
           failed = true;
           throw e;

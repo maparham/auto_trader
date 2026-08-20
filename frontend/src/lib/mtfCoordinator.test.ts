@@ -10,6 +10,21 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
+// The pane's price side, which fetchHtfBars reads from the saved settings (the
+// imperative-reader idiom App documents). Node has no localStorage here, so the
+// setting is mocked at its reader rather than written to storage.
+const side = vi.hoisted(() => ({ value: "mid" }));
+vi.mock("../theme", async (importOriginal) => {
+  const real = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...real,
+    loadSettings: () => ({
+      ...(real.loadSettings as () => object)(),
+      priceSide: side.value,
+    }),
+  };
+});
+
 // Controlled HTF fetch: each test swaps the implementation.
 const fetchRangeStrict = vi.fn<(...args: unknown[]) => Promise<KLineData[]>>();
 const RES_SECONDS: Record<string, number> = { MINUTE_5: 300, MINUTE_15: 900, MONTH: 2_592_000 };
@@ -308,6 +323,20 @@ describe("applyTrendlinesTimeframe", () => {
     } as unknown as Chart;
     await refreshMtfIndicators(chart, "EPIC");
     expect(fetchRangeStrict).toHaveBeenCalled();
+  });
+
+  it("fetches the HTF candles on the PANE'S price side, not a hardcoded mid", async () => {
+    // A side is worth half a spread on a moving average and a BOOLEAN here: the
+    // break test compares a bar's low against the line, so detecting on mid bars
+    // while the pane shows bid ones leaves a line that the visible candles went
+    // through drawn solid, and still emitting as live support.
+    side.value = "bid";
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    await apply(fakeChart().chart, "MINUTE_15");
+    expect(fetchRangeStrict.mock.calls[0][4]).toBe("bid");
+    side.value = "mid";
   });
 
   it("reaches FURTHER back with Max Span off than with a span ceiling set", async () => {
