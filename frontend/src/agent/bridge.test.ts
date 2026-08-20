@@ -156,6 +156,7 @@ describe("bridge frame handling", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(vi.mocked(requestAgentConfirm)).toHaveBeenCalledWith({
       action: "approve_action", description: "d", args: {},
+      warning: null,
       signal: expect.any(AbortSignal),
     });
     expect(c.sent[1]).toEqual({ handle: "8", event: "done", payload: { approved: true } });
@@ -180,6 +181,7 @@ describe("bridge frame handling", () => {
     expect(vi.mocked(requestAgentConfirm)).toHaveBeenCalledWith({
       action: "ctx_action", description: "d",
       args: { epic: "US100", account: "capital:paper" },
+      warning: null,
       signal: expect.any(AbortSignal),
     });
     // ...but the handler receives only the validated args (an unknown key would
@@ -187,6 +189,34 @@ describe("bridge frame handling", () => {
     expect(seen).toEqual({ epic: "US100" });
     expect(c.sent[0]).toEqual({ id: "12", ok: true, handle: "12" });
     expect(c.sent[1]).toEqual({ handle: "12", event: "done", payload: { ok: 1 } });
+  });
+
+  // confirmWarning is the other half of confirmContext: a fact resolved at gate
+  // time that the DIALOG shows and the handler never sees. It exists for state
+  // that changes what approving means without changing the args at all — a real
+  // order requested while the user is watching a replay session.
+  it("confirm-kind action: confirmWarning reaches the dialog and not the handler", async () => {
+    const { requestAgentConfirm } = await import("./confirm");
+    vi.mocked(requestAgentConfirm).mockResolvedValue(true);
+
+    let seen: Record<string, unknown> | null = null;
+    registerAction({
+      name: "warn_action", description: "d", kind: "confirm",
+      params: { type: "object", properties: { epic: { type: "string" } }, required: ["epic"] },
+      confirmWarning: () => "this is REAL",
+      handler: async (args) => { seen = args; return { ok: 1 }; },
+    });
+    const c = collector();
+    await handleFrame({ id: "13", op: "invoke", action: "warn_action", args: { epic: "US100" } }, c.send);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(vi.mocked(requestAgentConfirm)).toHaveBeenCalledWith({
+      action: "warn_action", description: "d",
+      args: { epic: "US100" },
+      warning: "this is REAL",
+      signal: expect.any(AbortSignal),
+    });
+    expect(seen).toEqual({ epic: "US100" });
   });
 
   it("confirm-kind action: reject path does not run handler", async () => {

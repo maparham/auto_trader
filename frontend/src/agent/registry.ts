@@ -40,11 +40,21 @@ export interface AgentAction {
    *  doesn't pass but the user must see before approving — e.g. which trading
    *  account an order will hit. */
   confirmContext?: () => Record<string, unknown>;
+  /** Confirm-kind only: a sentence resolved at gate time and shown as a BANNER
+   *  above the args in the Approve dialog. For the case where the args look
+   *  ordinary but the surrounding state changes what approving means — a real
+   *  order placed while the user is watching a replay session, where every
+   *  other order they have placed in the last ten minutes was practice. Null
+   *  when there is nothing to warn about. */
+  confirmWarning?: () => string | null;
   handler(args: Record<string, unknown>, ctx: ActionContext): Promise<unknown>;
 }
 
 // Both stripped fields are functions: they'd serialize to nothing over the wire.
-export type ActionManifestEntry = Omit<AgentAction, "handler" | "confirmContext">;
+export type ActionManifestEntry = Omit<
+  AgentAction,
+  "handler" | "confirmContext" | "confirmWarning"
+>;
 
 export class ActionError extends Error {
   code: string;
@@ -70,7 +80,16 @@ export function getAction(name: string): AgentAction | undefined {
 }
 
 export function listActions(): ActionManifestEntry[] {
-  return [...registry.values()].map(({ handler: _h, confirmContext: _c, ...rest }) => rest);
+  // Delete rather than destructure-and-discard: every stripped field would
+  // otherwise need an unused binding, and the list grows each time a new
+  // gate-time hook is added.
+  return [...registry.values()].map((action) => {
+    const entry: Partial<AgentAction> = { ...action };
+    delete entry.handler;
+    delete entry.confirmContext;
+    delete entry.confirmWarning;
+    return entry as ActionManifestEntry;
+  });
 }
 
 /** Returns an error string, or null when args satisfy the schema. */

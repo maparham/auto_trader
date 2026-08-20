@@ -40,6 +40,14 @@ export interface MaskedReplaySession {
   timezone: string;
 }
 
+/** What a LABEL needs: the same fields, except the anchor may be missing when
+ *  the caller could not say which cell it is labelling and more than one is
+ *  masked (see anyMaskedReplay). A null anchor means "masked, day number
+ *  unknown", never "not masked". */
+export type MaskedReplayLabelSource = Omit<MaskedReplaySession, "startMs"> & {
+  startMs: number | null;
+};
+
 export type MaskedReplayRegistry = Readonly<Record<string, MaskedReplaySession>>;
 
 /** Empty = no masked session anywhere on screen. */
@@ -68,9 +76,39 @@ export function disarmMaskedReplay(
 // describing must fail closed on. Returns the STORED entry object (not a copy),
 // so repeated calls give a stable identity for useSyncExternalStore as long as
 // nothing actually changed.
-export function anyMaskedReplay(registry: MaskedReplayRegistry): MaskedReplaySession | null {
-  for (const key in registry) return registry[key];
-  return null;
+//
+// TWO OR MORE masked cells is the case worth reading carefully. Masking still
+// holds (any entry means no real date), but no anchor is CORRECT for a caller
+// that cannot say which cell it is describing: labelling B's bars from A's
+// anchor prints a confidently wrong day number, and a wrong number is worse than
+// an absent one — the user counts sessions in days and has no way to tell the
+// two apart. So the anchor is withheld instead: `startMs: null`, which
+// `maskedTimeLabel` renders as "Day ?" plus the clock time. Callers that KNOW
+// their cell (maskedReplayFor / useMaskedReplayFor) are unaffected and keep
+// their exact day number — this only degrades the read that was already
+// guessing.
+//
+// The ambiguous value is memoised on the registry's identity for the same
+// reason the single-entry path returns the stored object: useSyncExternalStore
+// throws "The result of getSnapshot should be cached" if a fresh object comes
+// back from every read.
+let ambiguousFrom: MaskedReplayRegistry | null = null;
+let ambiguousValue: MaskedReplayLabelSource | null = null;
+
+export function anyMaskedReplay(registry: MaskedReplayRegistry): MaskedReplayLabelSource | null {
+  let first: MaskedReplaySession | null = null;
+  let count = 0;
+  for (const key in registry) {
+    if (!first) first = registry[key];
+    if (++count > 1) break;
+  }
+  if (!first) return null;
+  if (count === 1) return first;
+  if (ambiguousFrom !== registry) {
+    ambiguousFrom = registry;
+    ambiguousValue = { ...first, startMs: null };
+  }
+  return ambiguousValue;
 }
 
 /** The entry for one specific cell, or null. Preferred when the caller knows
@@ -84,6 +122,6 @@ export function maskedReplayFor(
 }
 
 /** Non-React read for module-level code (lib/indicators label builders). */
-export function maskedSessionNow(): MaskedReplaySession | null {
+export function maskedSessionNow(): MaskedReplayLabelSource | null {
   return anyMaskedReplay(maskedReplaySignal.value);
 }

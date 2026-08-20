@@ -124,6 +124,15 @@ test("chart replay: jump, step, mask, persist, exit", async ({ page }) => {
   expect(await barCount()).toBe(barsBefore + 1);
   await expect.poll(async () => (await lastBarTs()) < (await cursorMs())).toBe(true);
 
+  // "Find similar" is withdrawn for the duration of a session. Two reasons, and
+  // the second one bites even with the dates on screen: its results panel stamps
+  // every match with a real calendar date, and clicking a row scrolls the chart
+  // to that match — bars the cursor has not reached. Asserted through the sidebar
+  // button because that is the only entry point; ChartCore has no unit harness
+  // (5k lines, a live klinecharts instance), so this is where the gate is pinned.
+  const findSimilar = page.locator(".pattern-range-toggle");
+  await expect(findSimilar).toBeDisabled();
+
   // The session is persisted device-locally, keyed by cell scope.
   const saved = () =>
     page.evaluate(() => {
@@ -160,6 +169,9 @@ test("chart replay: jump, step, mask, persist, exit", async ({ page }) => {
   await expect(page.locator(".replay-pill")).toHaveCount(0);
   await expect(page.locator(".chart-range-bar")).toHaveCount(1);
   await expect.poll(saved).toBe(0);
+  // ...and comes back with the cell. A gate that never lifts would pass the
+  // check above and quietly cost the user the tool.
+  await expect(findSimilar).toBeEnabled();
 
   expect(errors).toEqual([]);
 });

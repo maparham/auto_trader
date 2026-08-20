@@ -156,23 +156,26 @@ const MASK_DAY_MS = 86_400_000;
 // a timestamp through here whenever `signals.maskedReplaySignal` is armed, and
 // get back exactly what that cell's axis shows for the same bar: "Day N HH:mm".
 //
-// An invalid saved timezone makes the Intl constructor throw; degrade to the day
-// part alone rather than taking the panel down (same guard the chart's own
-// formatter effect uses). That branch has no Intl to resolve a calendar date
-// through, so it falls back to elapsed 24h blocks from the anchor — off by one
-// against the axis for part of each day when the session didn't start at local
-// midnight, but blind, monotone, and only reachable from a corrupt saved
-// timezone (in which case the chart's own axis is on the same fallback).
+// An invalid saved timezone makes the Intl constructor throw. Retry in the
+// SYSTEM zone rather than giving up on the calendar: the day number stays a
+// difference of real calendar dates, which is what the axis counts, instead of
+// elapsed 24h blocks from the anchor — those drift a day out of step for part of
+// every day whenever a session did not start at local midnight, and printing a
+// day number that disagrees with the axis beside it is its own small lie.
+// Nothing here is a blindness risk either way: both forms are relative.
+//
+// The second construction takes no timeZone at all, so it cannot throw for the
+// same reason the first did. If it somehow does, the day number is withheld
+// (UNKNOWN_DAY) rather than guessed — the panel stays up either way.
 export function maskedTimeLabel(
-  anchorMs: number,
+  anchorMs: number | null,
   timestamp: number,
   clock: Clock,
   timeZone?: string,
 ): string {
   const fmt = makeMaskedFormatDate(anchorMs, clock);
-  let dtf: Intl.DateTimeFormat;
-  try {
-    dtf = new Intl.DateTimeFormat("en", {
+  const build = (zone: string | undefined) =>
+    new Intl.DateTimeFormat("en", {
       hour12: false,
       year: "numeric",
       month: "2-digit",
@@ -180,10 +183,17 @@ export function maskedTimeLabel(
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
-      timeZone: timeZone || undefined,
+      timeZone: zone,
     });
+  let dtf: Intl.DateTimeFormat;
+  try {
+    dtf = build(timeZone || undefined);
   } catch {
-    return `Day ${Math.floor((timestamp - anchorMs) / MASK_DAY_MS) + 1}`;
+    try {
+      dtf = build(undefined);
+    } catch {
+      return UNKNOWN_DAY;
+    }
   }
   return fmt({
     dateTimeFormat: dtf,
@@ -193,7 +203,15 @@ export function maskedTimeLabel(
   });
 }
 
-export function makeMaskedFormatDate(anchorMs: number, clock: Clock) {
+// What a day number degrades to when the anchor is unknown: more than one cell
+// is masked and the caller could not say which one it is labelling (see
+// lib/maskedReplay's anyMaskedReplay). Deliberately keeps the "Day <token>"
+// SHAPE — the compact forms elsewhere take the first two space-separated words
+// to drop the clock time, and callers read the leading "Day " as the sign that a
+// label is masked at all.
+export const UNKNOWN_DAY = "Day ?";
+
+export function makeMaskedFormatDate(anchorMs: number | null, clock: Clock) {
   // Anchor's own calendar date, memoized on the dtf klinecharts hands us (one
   // instance per timezone/preference change, so this extracts once per session
   // rather than once per axis tick). Keying on identity rather than caching
@@ -207,6 +225,7 @@ export function makeMaskedFormatDate(anchorMs: number, clock: Clock) {
     const time = renderTime(p, template, clock);
     const wantsDate = template.includes("YYYY") || template.includes("MM") || template.includes("DD");
     if (!wantsDate) return time;
+    if (anchorMs == null) return time ? `${UNKNOWN_DAY} ${time}` : UNKNOWN_DAY;
     if (dateTimeFormat !== anchorDtf) {
       anchorDtf = dateTimeFormat;
       anchorDate = localDateAsUtc(extract(dateTimeFormat, anchorMs));

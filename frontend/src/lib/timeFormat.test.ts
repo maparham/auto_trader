@@ -147,9 +147,79 @@ describe("maskedTimeLabel", () => {
     expect(maskedTimeLabel(ANCHOR, ANCHOR - DAY, "24h", "UTC")).toBe("Day 0 09:30");
   });
 
-  it("degrades to the day part (never a real date) on an invalid timezone", () => {
+  // An invalid saved timezone falls back to the SYSTEM zone, so the label keeps
+  // both halves — it used to drop the clock time and count elapsed 24h blocks.
+  // The day number is left to the zone-independent tests below; what matters
+  // here is the shape and that no real DATE survives.
+  //
+  // The date check anchors on date-shaped forms, not on bare "03": the clock
+  // time is rendered in the RUNNER's zone, so a machine at UTC-6 prints
+  // "Day 4 03:30" for this input and a bare /03/ would fail there while nothing
+  // had leaked. (Reported by review, reproduced with TZ=America/Chicago.)
+  it("keeps a day number and a clock time (never a real date) on an invalid timezone", () => {
     const out = maskedTimeLabel(ANCHOR, ANCHOR + 3 * DAY, "24h", "Not/AZone");
-    expect(out).toBe("Day 4");
-    expect(out).not.toMatch(/2026|Mar|03/);
+    expect(out).toMatch(/^Day \d+ \d{2}:\d{2}$/);
+    expect(out).not.toMatch(/2026|Mar|03-|-03|03\/|\/03/);
+  });
+});
+
+// Two masked cells at once: lib/maskedReplay hands the any-cell readers a null
+// anchor rather than a neighbour's, and this is what that renders as. The shape
+// matters as much as the text — the compact forms elsewhere keep the first two
+// space-separated words, and every masked label starts "Day ".
+describe("masked label with no anchor", () => {
+  it("withholds the day number and keeps the clock time", () => {
+    expect(maskedTimeLabel(null, Date.UTC(2026, 6, 10, 9, 30), "24h", "UTC")).toBe("Day ? 09:30");
+  });
+
+  it("honours the 12h preference the same way", () => {
+    expect(maskedTimeLabel(null, Date.UTC(2026, 6, 10, 15, 5), "12h", "UTC")).toBe("Day ? 3:05 PM");
+  });
+
+  it("never prints a real date part", () => {
+    const label = maskedTimeLabel(null, Date.UTC(2026, 6, 10, 9, 30), "24h", "UTC");
+    expect(label).not.toMatch(/2026|07|10/);
+  });
+
+  // The degraded branch (a corrupt saved timezone makes the Intl constructor
+  // throw) has no anchor arithmetic to fall back on either. It still renders in
+  // the system zone, so the clock time survives; only the day number is absent.
+  it("keeps withholding the day number when the timezone is unusable", () => {
+    const label = maskedTimeLabel(null, Date.UTC(2026, 6, 10, 9, 30), "24h", "Not/AZone");
+    expect(label).toMatch(/^Day \?/);
+    expect(label).not.toMatch(/2026|Jul/);
+  });
+});
+
+// A saved timezone can be corrupt (hand-edited storage, a zone Intl dropped).
+// The label must stay up, stay blind, and — the part that regressed — keep
+// counting CALENDAR days, because the axis beside it does. Counting elapsed 24h
+// blocks from the anchor instead disagrees with the axis for part of every day
+// that a session did not start at local midnight.
+describe("masked label with an unusable timezone", () => {
+  const ANCHOR_UTC = Date.UTC(2026, 6, 10, 21, 30); // 21:30, deliberately not midnight
+
+  it("still renders a day number and a clock time", () => {
+    expect(maskedTimeLabel(ANCHOR_UTC, ANCHOR_UTC, "24h", "Not/AZone")).toMatch(/^Day \d+ \d{2}:\d{2}$/);
+  });
+
+  it("counts calendar days, not elapsed 24h blocks", () => {
+    // 4 hours past the anchor crosses local midnight but is inside the first 24h
+    // block. Calendar counting says the next day; block counting says the same
+    // day, which is the bug.
+    const fourHoursOn = ANCHOR_UTC + 4 * 60 * 60 * 1000;
+    const start = maskedTimeLabel(ANCHOR_UTC, ANCHOR_UTC, "24h", "Not/AZone");
+    const later = maskedTimeLabel(ANCHOR_UTC, fourHoursOn, "24h", "Not/AZone");
+    const dayOf = (s: string) => Number(s.split(" ")[1]);
+    // Whatever the machine's zone is, the two labels sit either side of ITS
+    // midnight iff the clock time went down; that is the only case this asserts,
+    // so the test is zone-independent rather than pinned to one CI locale.
+    const wrapped = later.split(" ")[2] < start.split(" ")[2];
+    expect(dayOf(later)).toBe(dayOf(start) + (wrapped ? 1 : 0));
+  });
+
+  it("never leaks a real date through the fallback", () => {
+    expect(maskedTimeLabel(ANCHOR_UTC, ANCHOR_UTC + 5 * 86_400_000, "24h", "Not/AZone"))
+      .not.toMatch(/2026|Jul|07-/);
   });
 });

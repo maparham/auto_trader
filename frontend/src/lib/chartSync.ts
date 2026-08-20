@@ -159,25 +159,10 @@ export function releaseGestureCell(id: string): void {
   if (gestureCellId === id) gestureCellId = null;
 }
 
-// Cells currently in a REPLAY session (chart/useReplay.ts), mirrored here by
-// ChartCore. A replaying cell sits at a different — and deliberately HIDDEN —
-// moment in time, so nothing may broadcast its window on this channel: a
-// sibling receiving it pans its own bars there and renders those timestamps
-// through its OWN, unmasked axis formatter, handing the user the very dates the
-// session exists to conceal. ChartCore gates its own publishes off a render-live
-// ref; this registry is for the publishes App.tsx makes ON a cell's behalf
-// (turning the date-range link or lock on reads the focused cell's window and
-// broadcasts it), where no such ref is in reach. Same queryable-global idiom as
-// gestureCellId above, and released on unmount for the same reason: a stale
-// entry for a dead cell id would silently mute a later cell reusing it.
-const replayingCells = new Set<string>();
-export function setCellReplaying(id: string, active: boolean): void {
-  if (active) replayingCells.add(id);
-  else replayingCells.delete(id);
-}
-export function isCellReplaying(id: string): boolean {
-  return replayingCells.has(id);
-}
+// Re-exported from lib/replayingCells (which chartSync's klinecharts import
+// would otherwise make unusable from a node-env module). Kept on this module's
+// surface so every existing caller stays put.
+export { setCellReplaying, isCellReplaying, anyCellReplaying } from "./replayingCells";
 
 // Sticky alignment anchor per tab (lock mode). Hovering a bar (cursor-driven, see
 // ChartCore's crosshair handler) sets the tab's anchor to that timestamp; from then

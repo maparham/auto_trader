@@ -70,6 +70,7 @@ export async function handleFrame(frame: InboundFrame, send: (f: object) => void
         action: name,
         description: action.description,
         args: { ...args, ...(action.confirmContext?.() ?? {}) },
+        warning: action.confirmWarning?.() ?? null,
         // Abort dismisses the dialog as rejected. Without this the agent's
         // invocation could be aborted (or the socket drop) while the dialog
         // stayed open, and a later Approve would still place the order.

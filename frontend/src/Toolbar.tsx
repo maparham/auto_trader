@@ -12,6 +12,7 @@ import { getSupportedIndicators } from "klinecharts";
 import { type Instrument, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
 import { ensureNotifyPermission, primeSound, toast } from "./lib/notify";
+import { refuseClipboardCopy } from "./lib/replayClipboard";
 import { EQUITY_INDICATOR, isChartReplaying } from "./lib/backtest";
 import {
   alertModalRequest,
@@ -330,7 +331,14 @@ export default function Toolbar({
   // Copy the right-clicked drawing to the system clipboard, in the same tagged
   // envelope ChartCore's Ctrl/Cmd+C uses, so menu-copy and keyboard-copy are
   // interchangeable (and a menu-copied drawing pastes with Ctrl/Cmd+V).
+  //
+  // Interchangeable includes REFUSING together: the payload's points are bar
+  // timestamps, so on a blind cell this writes the session's real dates onto the
+  // system clipboard. Same gate as the keyboard path, from one module, because
+  // "the other one is gated" is what made this a hole the first time.
   function copyDrawing(id: string) {
+    // No controller means no focused cell, so nothing can be masked either.
+    if (controller && refuseClipboardCopy(controller.cellId)) return;
     const d = overlays?.getDrawing(id);
     if (!d) return;
     const payload = {

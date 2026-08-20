@@ -8,6 +8,9 @@ export interface AgentConfirmState {
   action: string;
   description: string;
   args: Record<string, unknown>;
+  /** Shown as a banner above the args when the surrounding app state changes
+   *  what approving means (see AgentAction.confirmWarning). */
+  warning?: string | null;
 }
 
 export const agentConfirmSignal = new Signal<AgentConfirmState | null>(null);
@@ -27,6 +30,7 @@ export function requestAgentConfirm(req: {
   action: string;
   description: string;
   args: Record<string, unknown>;
+  warning?: string | null;
   timeoutMs?: number;
   /** Aborting dismisses the dialog as rejected: see the abort note below. */
   signal?: AbortSignal;
@@ -48,7 +52,12 @@ export function requestAgentConfirm(req: {
     };
     pending = entry;
     req.signal?.addEventListener("abort", onAbort);
-    agentConfirmSignal.set({ action: req.action, description: req.description, args: req.args });
+    agentConfirmSignal.set({
+      action: req.action,
+      description: req.description,
+      args: req.args,
+      warning: req.warning ?? null,
+    });
   });
 }
 

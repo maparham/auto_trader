@@ -3,7 +3,8 @@
 // browser-side assembly (window resolution, candle fetch, warm-up widening,
 // baselines) is reused untouched; this module only adapts start/finish/error
 // signals into a promise + progress stream for the bridge.
-import { registerAction } from "../registry";
+import { ActionError, registerAction } from "../registry";
+import { maskedSessionNow } from "../../lib/maskedReplay";
 import {
   backtestMessagesSignal, backtestProgressSignal, backtestResultSignal,
   backtestRunningSignal, requestBacktestCancel, requestBacktestRun,
@@ -156,10 +157,31 @@ export function registerBacktestActions(): void {
   registerAction({
     name: "backtest.result",
     description:
-      "The currently displayed backtest result (metrics, trades, analysis; no candles). Null when none.",
+      "The currently displayed backtest result (metrics, trades, analysis; no candles). Null when none. Refused while a BLIND chart replay session is running, because every trade carries its real entry and exit timestamps.",
     kind: "read",
     params: { type: "object", properties: {} },
-    handler: async () => backtestResultSignal.value,
+    // The one place the reveal leaks. On screen the trade table renders these
+    // timestamps through the masked formatter, but this hands back the stored
+    // result verbatim — real epochs, which is precisely the date a blind session
+    // exists to hide, delivered to an agent whose output the user then reads.
+    //
+    // Refused rather than masked: replacing the epochs with "Day 3 09:30" would
+    // change the field's TYPE for every agent that does arithmetic on it, and a
+    // partial answer (metrics only) invites the reader to assume the omission
+    // was incidental. Exiting the session is one action away and gives the
+    // caller everything.
+    //
+    // Gated on MASKED, not on replaying: an unmasked session has the real dates
+    // on the axis already, so there is nothing here to withhold.
+    handler: async () => {
+      if (maskedSessionNow()) {
+        throw new ActionError(
+          "BLOCKED_BY_REPLAY",
+          "a blind chart replay session is running: its trades carry the real dates the session hides. Exit the session to read the result.",
+        );
+      }
+      return backtestResultSignal.value;
+    },
   });
 
   registerAction({

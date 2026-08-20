@@ -18,6 +18,20 @@ import {
   cancelWorkingOrder, closePosition, getTradesAccount, placeOrder,
   type OrderRequest, type OrderSide,
 } from "../../lib/trading";
+import { anyCellReplaying } from "../../lib/replayingCells";
+
+// These actions are REAL dealing, always — a replay session is a per-cell study
+// mode with a local ledger, and it has no bearing on an account. That is exactly
+// why the warning exists rather than a block: blocking the account because one
+// chart is replaying would be wrong, but so is letting the approval dialog look
+// identical when the user has spent the last ten minutes placing practice
+// orders on a blind chart. The dialog says which account; this says which WORLD.
+//
+// Any cell, not the focused one: the session that primes the user to read an
+// order as practice does not have to be the cell they are looking at now.
+const REPLAY_WARNING =
+  "A chart replay session is running. This is a REAL order on the live account, not a replay trade.";
+const dealingWarning = (): string | null => (anyCellReplaying() ? REPLAY_WARNING : null);
 
 export function registerDealingActions(): void {
   registerAction({
@@ -26,6 +40,7 @@ export function registerDealingActions(): void {
       "Place an order on the currently selected trading account (requires in-browser approval; the approval dialog shows the target account)",
     kind: "confirm",
     confirmContext: () => ({ account: getTradesAccount() }),
+    confirmWarning: dealingWarning,
     params: {
       type: "object",
       properties: {
@@ -72,6 +87,7 @@ export function registerDealingActions(): void {
       "Close an open position on the currently selected trading account, fully or partially (requires in-browser approval; the approval dialog shows the target account)",
     kind: "confirm",
     confirmContext: () => ({ account: getTradesAccount() }),
+    confirmWarning: dealingWarning,
     params: {
       type: "object",
       properties: {
@@ -97,6 +113,7 @@ export function registerDealingActions(): void {
       "Cancel a resting working order on the currently selected trading account (requires in-browser approval; the approval dialog shows the target account)",
     kind: "confirm",
     confirmContext: () => ({ account: getTradesAccount() }),
+    confirmWarning: dealingWarning,
     params: {
       type: "object",
       properties: { orderId: { type: "string" } },

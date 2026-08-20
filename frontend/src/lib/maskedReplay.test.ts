@@ -84,6 +84,49 @@ describe("masked-replay registry", () => {
     expect(maskedReplayFor(reg, "cell-a")).toBe(moved);
   });
 
+  // Two masked cells at once. Masking still holds — what changes is the day
+  // NUMBER, which no any-cell read can get right: before this, B's bars were
+  // labelled from whichever anchor `for...in` reached first, so a session that
+  // started three days after its neighbour printed the neighbour's day count as
+  // fact. Withholding the anchor is the honest answer.
+  describe("two cells masked at once", () => {
+    it("withholds the anchor rather than guessing one", () => {
+      const reg = armMaskedReplay(armMaskedReplay(EMPTY, A), B);
+      const any = anyMaskedReplay(reg);
+      expect(any).not.toBeNull();
+      expect(any?.startMs).toBeNull();
+    });
+
+    it("still gives each cell its own exact anchor by id", () => {
+      const reg = armMaskedReplay(armMaskedReplay(EMPTY, A), B);
+      expect(maskedReplayFor(reg, "cell-a")).toBe(A);
+      expect(maskedReplayFor(reg, "cell-b")).toBe(B);
+    });
+
+    it("restores the exact anchor as soon as one of them leaves", () => {
+      let reg = armMaskedReplay(armMaskedReplay(EMPTY, A), B);
+      expect(anyMaskedReplay(reg)?.startMs).toBeNull();
+      reg = disarmMaskedReplay(reg, "cell-b");
+      expect(anyMaskedReplay(reg)).toBe(A);
+    });
+
+    // Same contract the single-entry path has: useSyncExternalStore throws on a
+    // snapshot whose identity changes every read, and the ambiguous value is
+    // DERIVED, so it has to be memoised on the registry it came from.
+    it("keeps a stable identity across reads", () => {
+      const reg = armMaskedReplay(armMaskedReplay(EMPTY, A), B);
+      expect(anyMaskedReplay(reg)).toBe(anyMaskedReplay(reg));
+    });
+
+    it("re-derives when the registry changes", () => {
+      const reg1 = armMaskedReplay(armMaskedReplay(EMPTY, A), B);
+      const reg2 = armMaskedReplay(reg1, session("cell-c", 4_000));
+      const first = anyMaskedReplay(reg1);
+      expect(anyMaskedReplay(reg2)).not.toBe(first);
+      expect(anyMaskedReplay(reg2)?.startMs).toBeNull();
+    });
+  });
+
   it("never mutates the registry it is given", () => {
     const reg = armMaskedReplay(EMPTY, A);
     armMaskedReplay(reg, B);

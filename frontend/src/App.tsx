@@ -8,6 +8,7 @@ import DrawSidebar from "./DrawSidebar";
 import LayoutPicker from "./LayoutPicker";
 import BrokerSelector from "./BrokerSelector";
 import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor, isCellReplaying } from "./lib/chartSync";
+import { cellsChangingSymbol, replayLossMessage } from "./lib/replaySymbolGuard";
 import AppearanceMenu from "./AppearanceMenu";
 import SettingsModal from "./Settings";
 import BacktestSettingsModal from "./BacktestSettingsModal";
@@ -1281,6 +1282,31 @@ export default function App() {
     saveActiveLayoutId(activeLayoutId); // device-local, not mirrored
   }, [activeLayoutId]);
 
+  // A replay cursor addresses ONE instrument's bars, so a symbol change ends any
+  // session on the cells it touches (chart/useReplay's symbol-change guard) and
+  // drops their persisted record with it: the practice book, the cursor, and on a
+  // blind session the only place the hidden dates were ever written down. The
+  // guard toasts AFTER the fact, which is no use to someone who has just lost an
+  // hour of a study session to a stray click on a symbol row.
+  //
+  // So ask first, and only when there is actually something to lose — a cell not
+  // replaying goes straight through, which is every ordinary symbol change.
+  // Takes the cells it is ABOUT to change, not the focused one: with symbol-sync
+  // on, the change lands on siblings that never had focus.
+  const confirmReplayLoss = (cellIds: string[], run: () => void) => {
+    const hit = cellIds.filter(isCellReplaying);
+    if (!hit.length) {
+      run();
+      return;
+    }
+    requestConfirm({
+      title: "End the replay session?",
+      message: replayLossMessage(hit.length),
+      confirmLabel: "End and switch",
+      onConfirm: run,
+    });
+  };
+
   // Update the focused cell's instrument / interval. With symbol-sync on, the
   // change broadcasts to every cell in the tab (TradingView's "link" control).
   const setSymbol = (s: Instrument) => {
@@ -1288,17 +1314,25 @@ export default function App() {
     // Lock keeps each cell's own symbol (effectiveSyncSymbol forces sync OFF), so
     // only the focused cell changes symbol even when syncSymbol was on underneath.
     const broadcast = effectiveSyncSymbol(active);
-    setTabs((ts) =>
-      ts.map((t) =>
-        t.id !== active.id
-          ? t
-          : {
-              ...t,
-              cells: t.cells.map((c) =>
-                broadcast || c.id === focusedCell.id ? { ...c, symbol: s } : c,
-              ),
-            },
-      ),
+    confirmReplayLoss(
+      cellsChangingSymbol(active.cells, {
+        focusedId: focusedCell.id,
+        broadcast,
+        nextEpic: s.epic,
+      }),
+      () =>
+        setTabs((ts) =>
+          ts.map((t) =>
+            t.id !== active.id
+              ? t
+              : {
+                  ...t,
+                  cells: t.cells.map((c) =>
+                    broadcast || c.id === focusedCell.id ? { ...c, symbol: s } : c,
+                  ),
+                },
+          ),
+        ),
     );
   };
   // Switch a SPECIFIC cell's interval. The quick-range bar uses this (it knows the
@@ -1396,6 +1430,33 @@ export default function App() {
         if (r) rangeSync.publish(active.id, { sourceCellId: focusedCell.id, ...r });
       }
       setTabs((ts) => ts.map((t) => (t.id === active.id ? { ...t, syncTime: turningOn } : t)));
+      return;
+    }
+    // Turning symbol-sync ON rewrites every sibling's instrument in one click,
+    // which ends any replay session they hold — the same loss as a symbol change,
+    // reached from a control that says nothing about symbols changing. Handled
+    // ahead of the shared setTabs (like the "time" branch above) so the ask can
+    // sit in front of it. Turning it OFF touches no symbol and needs no ask.
+    if (kind === "symbol" && !active.syncSymbol) {
+      confirmReplayLoss(
+        cellsChangingSymbol(active.cells, {
+          focusedId: focusedCell.id,
+          broadcast: true,
+          nextEpic: focusedCell.symbol.epic,
+        }),
+        () =>
+          setTabs((ts) =>
+            ts.map((t) =>
+              t.id !== active.id
+                ? t
+                : {
+                    ...t,
+                    syncSymbol: true,
+                    cells: t.cells.map((c) => ({ ...c, symbol: focusedCell.symbol })),
+                  },
+            ),
+          ),
+      );
       return;
     }
     setTabs((ts) =>

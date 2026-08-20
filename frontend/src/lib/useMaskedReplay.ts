@@ -19,17 +19,25 @@ import {
   anyMaskedReplay,
   maskedReplayFor,
   maskedReplaySignal,
+  type MaskedReplayLabelSource,
   type MaskedReplaySession,
 } from "./maskedReplay";
 import { maskedTimeLabel } from "./timeFormat";
 import { formatExpiryShort } from "./alertUi";
 
+/** One cell's own session — the anchor is always known, so the day number is
+ *  exact. What useMaskedReplayFor returns. */
 export type MaskedReplay = MaskedReplaySession | null;
 
-const subscribe = (onChange: () => void) => maskedReplaySignal.subscribe(onChange);
-const snapshot = (): MaskedReplay => anyMaskedReplay(maskedReplaySignal.value);
+/** The any-cell read. Same fields, but the anchor is null when two or more cells
+ *  are masked at once and nothing here can say which one the caller means (see
+ *  lib/maskedReplay). Still masked — just without a day number. */
+export type AnyMaskedReplay = MaskedReplayLabelSource | null;
 
-export function useMaskedReplay(): MaskedReplay {
+const subscribe = (onChange: () => void) => maskedReplaySignal.subscribe(onChange);
+const snapshot = (): AnyMaskedReplay => anyMaskedReplay(maskedReplaySignal.value);
+
+export function useMaskedReplay(): AnyMaskedReplay {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 

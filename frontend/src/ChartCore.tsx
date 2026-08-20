@@ -1511,39 +1511,13 @@ export default function ChartCore({
   // than the render-scope value (same reason as onZoomToRange's resRef).
   const patternSearchRef = useRef(patternSearch);
   patternSearchRef.current = patternSearch;
-  // Publish whether the tool applies to this cell at all, so the draw sidebar can
-  // disable its button (it has no epic/period/snapshot of its own). Synthetic
-  // epics have no stored history to search, sub-minute (liveOnly) resolutions
-  // aren't served by the endpoint, and a read-only snapshot is a frozen picture.
-  // In an effect, not render: setting a Signal during render would notify the
-  // sidebar's subscriber mid-render.
-  const patternAvailable = !isSynthetic(symbol.epic) && !period.liveOnly && !snapView;
-  useEffect(() => {
-    patternSearchAvailable.set(patternAvailable);
-    // A cell can become gated while the tool is armed (switch to a 10-second
-    // interval mid-gesture); don't leave a live gesture on a gated cell.
-    // Copy needs no endpoint, only candles, so only a SEARCH gesture is called
-    // off when the cell becomes gated.
-    if (!patternAvailable && patternRangeArmed.value && patternRangeMode.value === "search") {
-      patternRangeArmed.set(false);
-    }
-  }, [patternAvailable, patternSearchAvailable, patternRangeArmed, patternRangeMode]);
-  // Results belong to ONE series. The cell reloads in place on a symbol/broker/
-  // side/interval change, so without this the panel stays up rendering the NEW
-  // epic and resolution over the OLD series' matches, and a row click would page
-  // history for the wrong window. Same for a cell that just became gated. Read
-  // the ref (assigned above, this render) rather than adding result/loading/error
-  // to the deps: only the identity change should trigger a reset. Clearing the
-  // band is separate from dismiss(), exactly as in the panel's onDismiss — and is
-  // skipped when no panel is up, so the zoom tool's own band (which survives the
-  // timeframe drop it just performed) is left alone.
-  useEffect(() => {
-    const ps = patternSearchRef.current;
-    if (!ps.result && !ps.loading && !ps.error) return;
-    ps.dismiss();
-    overlays.clearZoomBand();
-    overlays.clearMatchBands();
-  }, [symbol.epic, brokerId, priceSide, period.resolution, patternAvailable, overlays]);
+  // Whether the tool applies to this cell at all. Synthetic epics have no stored
+  // history to search, sub-minute (liveOnly) resolutions aren't served by the
+  // endpoint, and a read-only snapshot is a frozen picture. CAPABILITY only: the
+  // replay gate is the other half and is applied further down (patternAvailable),
+  // where the session state exists, so that one value stays the single owner of
+  // the availability signal.
+  const patternCapable = !isSynthetic(symbol.epic) && !period.liveOnly && !snapView;
   // Click a trendline's end handle to run it on to the pane edge (and again to
   // release). Capture-phase, so it claims the press before the chart pans.
   useTrendlinePins({ chartRef, containerRef });
@@ -3762,6 +3736,50 @@ export default function ChartCore({
   // useful reference while studying a session.
   const sessionMasked = readoutMode === "active" && readoutMasked;
 
+  // "Find similar" is withdrawn for the WHOLE session, masked or not, and this is
+  // the stronger gate of the two above: the results panel stamps every match with
+  // its real calendar date, and clicking a row pages history and scrolls the chart
+  // to that match — so on a masked session it prints the dates the session hides,
+  // and on ANY session a jump lands bars the cursor has not reached. Gated on
+  // `readoutMode`, not on `sessionMasked`, because the hindsight half of that is
+  // true with the dates on screen too.
+  //
+  // Folded into one value rather than a second effect writing the same signal:
+  // patternSearchAvailable then has exactly one owner, and the reset effect below
+  // sees a session start as just another availability change — dismissing an open
+  // panel and clearing its bands through the path that already exists.
+  const patternAvailable = patternCapable && readoutMode === "off";
+  // Publish availability so the draw sidebar can disable its button (it has no
+  // epic/period/snapshot/session of its own). In an effect, not render: setting a
+  // Signal during render would notify the sidebar's subscriber mid-render.
+  useEffect(() => {
+    patternSearchAvailable.set(patternAvailable);
+    // A cell can become gated while the tool is armed (switch to a 10-second
+    // interval mid-gesture, or enter replay); don't leave a live gesture on a
+    // gated cell. Copy needs no endpoint, only candles, so only a SEARCH gesture
+    // is called off when the cell becomes gated.
+    if (!patternAvailable && patternRangeArmed.value && patternRangeMode.value === "search") {
+      patternRangeArmed.set(false);
+    }
+  }, [patternAvailable, patternSearchAvailable, patternRangeArmed, patternRangeMode]);
+  // Results belong to ONE series. The cell reloads in place on a symbol/broker/
+  // side/interval change, so without this the panel stays up rendering the NEW
+  // epic and resolution over the OLD series' matches, and a row click would page
+  // history for the wrong window. Same for a cell that just became gated — which
+  // now includes entering replay. Read the ref (assigned above, this render)
+  // rather than adding result/loading/error to the deps: only the identity change
+  // should trigger a reset. Clearing the band is separate from dismiss(), exactly
+  // as in the panel's onDismiss — and is skipped when no panel is up, so the zoom
+  // tool's own band (which survives the timeframe drop it just performed) is left
+  // alone.
+  useEffect(() => {
+    const ps = patternSearchRef.current;
+    if (!ps.result && !ps.loading && !ps.error) return;
+    ps.dismiss();
+    overlays.clearZoomBand();
+    overlays.clearMatchBands();
+  }, [symbol.epic, brokerId, priceSide, period.resolution, patternAvailable, overlays]);
+
   // Picking-mode curtain: container-relative x of the pointer, so everything to
   // its right can be covered (opaque, not dimmed — a dimmed future is still
   // readable, and hiding the future is the whole point).
@@ -4344,6 +4362,7 @@ export default function ChartCore({
     indicatorMenuItems,
     onLegendOpenMenu,
   } = useIndicatorCommands(handle, {
+    cellId,
     scope,
     period,
     snapViewRef,
@@ -4924,7 +4943,11 @@ export default function ChartCore({
 
       {/* "Find similar" results. The band stays painted underneath while the panel
           is up, so dismissing clears both. */}
-      {(patternSearch.result || patternSearch.loading || patternSearch.error) && (
+      {/* `readoutMode` as well as the state: the dismiss above runs in an effect,
+          so without this the panel would paint one frame of real match dates
+          between a session starting and that effect firing. */}
+      {readoutMode === "off" &&
+        (patternSearch.result || patternSearch.loading || patternSearch.error) && (
         <PatternMatchesPanel
           result={patternSearch.result}
           loading={patternSearch.loading}

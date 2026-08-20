@@ -11,6 +11,7 @@
 // staleness-proof ref-bridge pattern as redrawRef. Both read only refs/imports,
 // so the latest-render closure is equivalent to any captured one.
 import { type KLineData } from "klinecharts";
+import { maskedSessionNow } from "../lib/maskedReplay";
 import { fetchRangeStrict, RESOLUTION_SECONDS, PERIODS, type Period } from "../lib/feed";
 import { rangeWindow, goToDateTs, type RangeKey } from "../lib/rangeWindow";
 import {
@@ -92,6 +93,15 @@ export interface RangeNavigationDeps {
 // trades are inside its own run. Past it, the toast below says so rather than
 // the view landing quietly in the wrong place.
 const MATCH_JUMP_MAX_WINDOWS = 800;
+
+// Bar timestamps for the DEBUG log. The devtools console is a smaller audience
+// than the UI, but it is still a place a blind session's real dates can be read
+// off, and these two lines print bar times as ISO. Redacted whenever ANY cell is
+// masked — the any-cell read, deliberately: a debug line is not worth threading
+// a cellId for, and over-redacting a log costs nothing.
+function debugTs(ms: number): string {
+  return maskedSessionNow() ? "<hidden: replay>" : new Date(ms).toISOString();
+}
 
 export function buildRangeToken(args: {
   fromTs: number;
@@ -384,7 +394,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
         // hopeless set only ever grows toward newer anchors, never re-deepens.
         handle.cappedAnchorRef.current.set(cappedKey, { target: fromTs, reached: oldest.timestamp });
         console.debug(
-          `[chart] anchor coverage capped for ${epic}@${resolution}: oldest anchor ${new Date(fromTs).toISOString()} predates loaded history (won't retry until the anchor set or loaded depth changes)`,
+          `[chart] anchor coverage capped for ${epic}@${resolution}: oldest anchor ${debugTs(fromTs)} predates loaded history (won't retry until the anchor set or loaded depth changes)`,
         );
       } else if (oldest && oldest.timestamp <= fullFromTs) {
         // EVERY anchor (including previously-hopeless ones) is now covered —
@@ -533,7 +543,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
         if (fetchFailed) toast(FETCH_FAILED_MESSAGE, { key: FETCH_FAILED_TOAST_KEY });
         else toast(DEEP_HISTORY_MESSAGE, { key: DEEP_HISTORY_TOAST_KEY });
         console.debug(
-          `[chart] go-to-range covered only back to ${new Date(oldest.timestamp).toISOString()}, short of ${new Date(wantedMs).toISOString()}${fetchFailed ? " (a window fetch failed)" : ""}`,
+          `[chart] go-to-range covered only back to ${debugTs(oldest.timestamp)}, short of ${debugTs(wantedMs)}${fetchFailed ? " (a window fetch failed)" : ""}`,
         );
       }
     })();

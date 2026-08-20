@@ -13,6 +13,7 @@ import {
   backtestResultSignal, backtestRunningSignal, backtestRunRequest,
   backtestMessagesSignal, backtestProgressSignal,
 } from "../../lib/signals";
+import { armMaskedReplay, maskedReplaySignal } from "../../lib/maskedReplay";
 
 const CTX = () => ({ progress: vi.fn(), signal: new AbortController().signal });
 
@@ -23,6 +24,7 @@ beforeEach(() => {
   backtestRunningSignal.set(false);
   backtestMessagesSignal.set({ error: null });
   backtestProgressSignal.set(null);
+  maskedReplaySignal.set({});
   registerBacktestActions();
 });
 
@@ -137,6 +139,48 @@ describe("backtest actions", () => {
     backtestResultSignal.set({ summary: { pnl: 7 } } as any);
     const r = (await invokeAction("backtest.result", {}, CTX())) as any;
     expect(r.summary.pnl).toBe(7);
+  });
+
+  // A blind session hides the dates of the bars on screen; the stored result's
+  // trades carry those same bars' real epochs. The trade TABLE masks them, this
+  // path did not.
+  describe("backtest.result during a blind replay session", () => {
+    // The suite's older cases use `as any`; these stand up a result through one
+    // typed seam instead, so the new lines add nothing to the file's lint debt.
+    const seedResult = (r: object) =>
+      backtestResultSignal.set(r as unknown as NonNullable<typeof backtestResultSignal.value>);
+    const arm = () =>
+      maskedReplaySignal.set(
+        armMaskedReplay(maskedReplaySignal.value, {
+          cellId: "cell-a",
+          startMs: 1_700_000_000_000,
+          clock: "24h",
+          timezone: "UTC",
+        }),
+      );
+
+    it("refuses rather than handing back real timestamps", async () => {
+      seedResult({ trades: [{ entry_time: 1_700_000_123 }] });
+      arm();
+      await expect(invokeAction("backtest.result", {}, CTX())).rejects.toThrow(/replay/i);
+    });
+
+    it("carries a code the agent can branch on", async () => {
+      seedResult({ trades: [] });
+      arm();
+      await invokeAction("backtest.result", {}, CTX()).then(
+        () => expect.unreachable("should have refused"),
+        (e) => expect(e.code).toBe("BLOCKED_BY_REPLAY"),
+      );
+    });
+
+    it("reads normally again once the session ends", async () => {
+      seedResult({ summary: { pnl: 7 } });
+      arm();
+      maskedReplaySignal.set({});
+      const r = (await invokeAction("backtest.result", {}, CTX())) as { summary: { pnl: number } };
+      expect(r.summary.pnl).toBe(7);
+    });
   });
 
   it("backtest.progress reads the live progress", async () => {

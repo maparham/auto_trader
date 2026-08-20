@@ -26,6 +26,7 @@ import {
   getIndicator,
   getIndicatorsByPane,
 } from "../lib/indicators";
+import { refuseClipboardCopy } from "../lib/replayClipboard";
 import { INSET_CAPABLE, isInsetInstance, withInset } from "../lib/indicators/inset";
 import { indTypeOf } from "../lib/customIndicators";
 import { saveIndicators, saveIndicatorVisible, type SavedIndicatorConfig } from "../lib/persist";
@@ -38,6 +39,7 @@ import type { ChartHandle } from "./chartHandle";
 
 export interface IndicatorCommandsDeps {
   // Props / value the callbacks read.
+  cellId: string;
   scope: string;
   period: { resolution: string };
   // ChartCore-local refs the moved bodies read.
@@ -51,7 +53,7 @@ export interface IndicatorCommandsDeps {
 }
 
 export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommandsDeps) {
-  const { scope, period, snapViewRef, wrapRef, setPaneDropTop, setIndMenu } = deps;
+  const { cellId, scope, period, snapViewRef, wrapRef, setPaneDropTop, setIndMenu } = deps;
   const { chartRef, epicRef, overlays, controller } = handle;
   const { selectedIndicator, indicatorRemoved } = controller;
 
@@ -184,9 +186,15 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     [controller, scope, period.resolution],
   );
 
+  // Both clipboard copies below go through the shared gate in
+  // lib/replayClipboard — the drawing envelope is also written from the Toolbar's
+  // right-click menu, and the two must refuse together.
+  const refuseCopyWhileMasked = useCallback(() => refuseClipboardCopy(cellId), [cellId]);
+
   // Copy an indicator's live config to the clipboard as JSON. Paste creates a fresh
   // instance of that type with this exact config (TradingView-style).
   const copyIndicator = useCallback((paneId: string, name: string) => {
+    if (refuseCopyWhileMasked()) return;
     const snap = liveIndicatorConfig(paneId, name);
     if (!snap) return;
     const payload = { __autoTraderIndicator: 1 as const, type: snap.type, config: snap.config };
@@ -195,7 +203,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       () => toast(`Copied ${snap.label} settings`),
       () => toast("Copy failed (clipboard blocked)"),
     );
-  }, [liveIndicatorConfig]);
+  }, [liveIndicatorConfig, refuseCopyWhileMasked]);
 
   // Duplicate: a second instance of this indicator with the SAME live settings,
   // without going through the clipboard (so it neither needs clipboard permission
@@ -261,6 +269,10 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   const copySelectedDrawing = useCallback((): boolean => {
     const id = overlays.getSelectedDrawingId();
     if (!id) return false;
+    // Returns TRUE: the key press was for this drawing and must not fall through
+    // to the browser's own copy, which would put the page selection on the
+    // clipboard instead.
+    if (refuseCopyWhileMasked()) return true;
     const d = overlays.getDrawing(id);
     if (!d) return false;
     const payload = {
@@ -277,7 +289,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       () => toast("Copy failed (clipboard blocked)"),
     );
     return true;
-  }, [overlays]);
+  }, [overlays, refuseCopyWhileMasked]);
 
   // Ctrl/Cmd+V: if the clipboard holds a copied drawing, place a duplicate offset a
   // few bars right + a small price delta down so it's visibly distinct from the

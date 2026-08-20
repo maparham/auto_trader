@@ -2324,6 +2324,16 @@
 .confirm-modal { width: 360px; }
 .confirm-head { cursor: default; }
 .confirm-body { padding: 18px 16px; color: var(--text-dim); line-height: 1.45; }
+/* Agent approval dialog: the state-changes-what-this-means banner. Amber rather
+   than the negative red — this is not an error, it is a fact the user is very
+   likely to have wrong, and it sits above a request they may still want to
+   approve. Full text colour (not --text-dim like the body around it) so it
+   reads first. */
+.agent-confirm-warning {
+  margin: 0 0 10px; padding: 8px 10px; border-radius: 6px;
+  border: 1px solid #e0a000; background: rgba(224, 160, 0, 0.1);
+  color: var(--text); font-size: 13px;
+}
 .modal-foot .confirm-danger {
   background: var(--danger, #e5534b); border: 1px solid var(--danger, #e5534b); color: #fff;
 }
