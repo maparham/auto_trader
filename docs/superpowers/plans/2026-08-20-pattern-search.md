@@ -328,14 +328,14 @@ The distance ranks every offset; this turns that into the list a person reads. A
 - Consumes: `window_distances`, `prefix_sums` from Task 1.
 - Produces:
   - `@dataclass(frozen=True) class Match` with fields `start: int`, `distance: float`, `forward_len: int`.
-  - `scan(ohlc, s1, s2, ts, query, *, exclude, top_k, forward_bars) -> list[Match]` where `exclude: tuple[int, int] | None` is an inclusive index range and `ts: np.ndarray` is bar timestamps in unix seconds.
+  - `scan(ohlc, s1, s2, ts, query, *, exclude, top_k, forward_bars) -> tuple[list[Match], int]` where `exclude: tuple[int, int] | None` is an inclusive index range and `ts: np.ndarray` is bar timestamps in unix seconds. The int is how many candidate offsets survived the filters, which is the number the endpoint reports as `scanned`.
 
 - [ ] **Step 1: Write the failing test**
 
 Append to `backend/tests/test_pattern_scan.py`:
 
 ```python
-from auto_trader.core.pattern_scan import Match, scan
+from auto_trader.core.pattern_scan import scan
 
 
 def _motif_series(reps: int, gap: int, seed: int = 9) -> tuple[np.ndarray, np.ndarray]:
@@ -370,7 +370,7 @@ def _prep(ohlc):
 def test_scan_finds_the_repeated_motif():
     ohlc, ts = _motif_series(reps=4, gap=40)
     centred, s1, s2 = _prep(ohlc)
-    hits = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=5, forward_bars=10)
+    hits, _ = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=5, forward_bars=10)
     starts = sorted(h.start for h in hits[:3])
     assert starts == [46, 92, 138]
     assert all(h.distance < 0.05 for h in hits[:3])
@@ -383,7 +383,7 @@ def test_exclusion_blanks_every_window_overlapping_the_query():
     ohlc, ts = _motif_series(reps=6, gap=40)
     centred, s1, s2 = _prep(ohlc)
     q_start = 92
-    hits = scan(
+    hits, _ = scan(
         centred, s1, s2, ts, ohlc[q_start : q_start + 6],
         exclude=(q_start, q_start + 5), top_k=10, forward_bars=5,
     )
@@ -394,7 +394,7 @@ def test_overlap_suppression_separates_the_hits():
     """Without it, the top-k is one event shifted by one bar, k times."""
     ohlc, ts = _motif_series(reps=3, gap=40)
     centred, s1, s2 = _prep(ohlc)
-    hits = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=6, forward_bars=5)
+    hits, _ = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=6, forward_bars=5)
     starts = sorted(h.start for h in hits)
     assert all(b - a >= 6 for a, b in zip(starts, starts[1:]))
 
@@ -404,7 +404,7 @@ def test_span_rule_rejects_a_gap_straddling_window():
     centred, s1, s2 = _prep(ohlc)
     ts = ts.copy()
     ts[92:] += 3 * 86_400  # a weekend opens up right before the third motif
-    hits = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=6, forward_bars=5)
+    hits, _ = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=6, forward_bars=5)
     spans = {h.start for h in hits}
     assert 46 in spans           # the intact one survives
     assert not any(87 <= s <= 92 for s in spans)  # the straddlers are gone
@@ -417,7 +417,7 @@ def test_span_rule_is_one_directional():
     centred, s1, s2 = _prep(ohlc)
     ts = ts.copy()
     ts[3:] += 3 * 86_400  # the gap now falls inside the query itself
-    hits = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=6, forward_bars=5)
+    hits, _ = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=6, forward_bars=5)
     assert any(h.start == 46 for h in hits)
 
 
@@ -426,7 +426,7 @@ def test_forward_window_is_truncated_not_dropped_at_the_right_edge():
     centred, s1, s2 = _prep(ohlc)
     n = len(ohlc)
     q_start = n - 60
-    hits = scan(
+    hits, _ = scan(
         centred, s1, s2, ts, ohlc[q_start : q_start + 6],
         exclude=(q_start, q_start + 5), top_k=20, forward_bars=1000,
     )
@@ -439,9 +439,20 @@ def test_forward_window_is_truncated_not_dropped_at_the_right_edge():
 def test_scan_returns_matches_ranked_by_distance():
     ohlc, ts = _motif_series(reps=4, gap=40)
     centred, s1, s2 = _prep(ohlc)
-    hits = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=5, forward_bars=5)
+    hits, _ = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=5, forward_bars=5)
     assert isinstance(hits[0], Match)
     assert [h.distance for h in hits] == sorted(h.distance for h in hits)
+
+
+def test_scan_reports_how_many_candidates_survived_the_filters():
+    """The endpoint reports this as `scanned`, so it has to mean offsets actually
+    ranked, not offsets that exist."""
+    ohlc, ts = _motif_series(reps=3, gap=40)
+    centred, s1, s2 = _prep(ohlc)
+    _, everything = scan(centred, s1, s2, ts, ohlc[0:6], exclude=None, top_k=1, forward_bars=5)
+    _, fewer = scan(centred, s1, s2, ts, ohlc[0:6], exclude=(0, 5), top_k=1, forward_bars=5)
+    assert everything == len(ohlc) - 6 + 1
+    assert fewer == everything - 6
 
 
 def test_scan_with_no_exclusion_is_allowed():
@@ -449,7 +460,7 @@ def test_scan_with_no_exclusion_is_allowed():
     series, which is normal, not an error."""
     ohlc, ts = _motif_series(reps=3, gap=40)
     centred, s1, s2 = _prep(ohlc)
-    hits = scan(centred, s1, s2, ts, ohlc[0:6], exclude=None, top_k=3, forward_bars=5)
+    hits, _ = scan(centred, s1, s2, ts, ohlc[0:6], exclude=None, top_k=3, forward_bars=5)
     assert hits[0].start == 0
 ```
 
@@ -491,8 +502,9 @@ def scan(
     exclude: tuple[int, int] | None,
     top_k: int,
     forward_bars: int,
-) -> list[Match]:
-    """Rank every window against `query` and return the best `top_k`, separated.
+) -> tuple[list[Match], int]:
+    """Rank every window against `query` and return the best `top_k`, separated,
+    with the number of candidate offsets that survived the filters.
 
     Rules, in order: drop anything overlapping the query, drop windows with no
     defined shape, drop windows that straddle a gap the query does not, then
@@ -525,6 +537,9 @@ def scan(
     # Rule 4: greedy, blanking a query-length neighbourhood around each pick so
     # the list is distinct events rather than one event shifted by a bar.
     n = len(ohlc)
+    # Counted here: after the three filters, before the greedy pass starts
+    # blanking neighbourhoods. This is what the endpoint reports as `scanned`.
+    candidates = int(np.isfinite(d).sum())
     out: list[Match] = []
     for _ in range(top_k):
         i = int(np.argmin(d))
@@ -533,13 +548,13 @@ def scan(
         forward_len = min(forward_bars, n - (i + m))
         out.append(Match(start=i, distance=float(d[i]), forward_len=max(0, forward_len)))
         d[max(0, i - m + 1) : i + m] = np.inf
-    return out
+    return out, candidates
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd backend && python3 -m pytest tests/test_pattern_scan.py -v`
-Expected: PASS, 15 tests.
+Expected: PASS, 16 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -566,7 +581,7 @@ Loading is the expensive part (3.5 s SQLite + 1.0 s numpy on the largest series)
 - Consumes: `prefix_sums` from Task 1.
 - Produces:
   - `@dataclass(frozen=True) class Series` with `ts: np.ndarray`, `ohlc: np.ndarray` (centred), `s1: np.ndarray`, `s2: np.ndarray`, `newest_ts: int`, `oldest_ts: int`. Property `bars -> int`.
-  - `class PatternSeriesCache` with `async def get(self, broker: str, epic: str, resolution: str, side: str) -> Series | None` and `def clear(self) -> None`.
+  - `class PatternSeriesCache` with `async def get(self, broker: str, epic: str, resolution: str, side: str) -> Series | None`, `def is_cached(self, broker: str, epic: str, resolution: str, side: str) -> bool` and `def clear(self) -> None`.
   - Module-level `PATTERN_SERIES = PatternSeriesCache(...)` bound to the same db path `CANDLE_CACHE` uses.
 
 - [ ] **Step 1: Write the failing test**
@@ -634,6 +649,15 @@ async def test_loads_a_series_with_centred_ohlc_and_prefix_sums(tmp_path):
     assert float(s.ohlc[0][0] + s.offset) == pytest.approx(100.0, abs=1e-9)
     assert s.oldest_ts == 1_700_000_000
     assert s.newest_ts == 1_700_000_000 + 49 * 300
+
+
+async def test_is_cached_answers_before_the_first_load(tmp_path):
+    path = tmp_path / "c.db"
+    _db(path, _rows(20))
+    cache = PatternSeriesCache(str(path))
+    assert cache.is_cached("capital", "US100", "MINUTE_5", "bid") is False
+    await cache.get("capital", "US100", "MINUTE_5", "bid")
+    assert cache.is_cached("capital", "US100", "MINUTE_5", "bid") is True
 
 
 async def test_unknown_series_is_none_not_an_error(tmp_path):
@@ -786,6 +810,13 @@ class PatternSeriesCache:
     def clear(self) -> None:
         self._entries.clear()
 
+    def is_cached(self, broker: str, epic: str, resolution: str, side: str) -> bool:
+        """Whether a get() would be served without a multi-second load. Asked
+        BEFORE get(), since get() is what fills the cache. Stale-but-present
+        counts as cached: reloading a series that grew by a bar is not the
+        several seconds the caller is warning the user about."""
+        return (broker, epic, resolution, side) in self._entries
+
     def _key_lock(self, key: CandleKey) -> asyncio.Lock:
         lock = self._locks.get(key)
         if lock is None:
@@ -859,7 +890,7 @@ PATTERN_SERIES = PatternSeriesCache(settings.candle_db_path)
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd backend && python3 -m pytest tests/test_pattern_series.py -v`
-Expected: PASS, 6 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -882,7 +913,7 @@ so concurrent cold searches pay for one load between them."
 - Test: `backend/tests/test_api_patterns.py`
 
 **Interfaces:**
-- Consumes: `scan`, `Match` (Task 2), `PATTERN_SERIES`, `Series` (Task 3).
+- Consumes: `scan` (returns `(matches, candidates)`), `Match` (Task 2), `PATTERN_SERIES.get` / `.is_cached`, `Series.offset` (Task 3).
 - Produces: `POST /api/patterns/search`. Response keys exactly as in spec §5.3: `matches[]` (`ts`, `endTs`, `distance`, `bars[]`, `forward[]`, `forwardComplete`, `forwardPct`), `scanned`, `series` (`oldestTs`, `newestTs`, `bars`), `elapsedMs`, `cold`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1175,7 +1206,7 @@ async def search_patterns(
     if query.std() <= 1e-12:
         raise HTTPException(400, "the selection has no price movement to match on")
 
-    cold = (broker, req.epic, req.resolution, req.price_side) not in PATTERN_SERIES._entries
+    cold = not PATTERN_SERIES.is_cached(broker, req.epic, req.resolution, req.price_side)
     series = await PATTERN_SERIES.get(broker, req.epic, req.resolution, req.price_side)
     if series is None:
         raise HTTPException(
@@ -1195,7 +1226,7 @@ async def search_patterns(
     offset = series.offset
 
     exclude = _exclude(series, req.query_from_ts, req.query_to_ts)
-    hits: list[Match] = await asyncio.to_thread(
+    hits, candidates = await asyncio.to_thread(
         scan,
         series.ohlc,
         series.s1,
@@ -1226,12 +1257,11 @@ async def search_patterns(
             )
         )
 
-    scanned = series.bars - m + 1
-    if exclude is not None:
-        scanned -= min(scanned, exclude[1] - max(0, exclude[0] - m + 1) + 1)
     return PatternSearchResponse(
         matches=matches,
-        scanned=max(0, scanned),
+        # What scan actually ranked, after exclusion and the span and flat
+        # filters, so the number reconciles with its label.
+        scanned=candidates,
         series=PatternSeriesDTO(
             oldest_ts=series.oldest_ts, newest_ts=series.newest_ts, bars=series.bars
         ),
@@ -2094,7 +2124,7 @@ source and a thin result set both look thin rather than looking broken."
 The last task: arm from the sidebar, drag a band, search, click a result and land on it.
 
 **Files:**
-- Modify: `frontend/src/lib/chartController.ts`, `frontend/src/ChartCore.tsx`, `frontend/src/DrawSidebar.tsx`, `frontend/src/chart/useRangeNavigation.ts`
+- Modify: `frontend/src/lib/chartController.ts`, `frontend/src/ChartCore.tsx`, `frontend/src/DrawSidebar.tsx`, `frontend/src/lib/menuIcons.tsx`, `frontend/src/chart/useRangeNavigation.ts`
 - Test: `frontend/src/chart/useRangeNavigation.test.ts` (create if absent)
 
 **Interfaces:**
@@ -2356,18 +2386,44 @@ In `frontend/src/DrawSidebar.tsx`, mirror the `zoomRangeArmed` block exactly (th
   }, [controller]);
 ```
 
+First add the icon to `frontend/src/lib/menuIcons.tsx`, next to `ZoomRangeIcon` and in the same stroke style (three candles over a repeat wave):
+
 ```tsx
-        <Tooltip content="Similar sequences: drag across candles to find where this shape appeared before.">
-          <button
-            className={"ds-btn" + (findingSimilar ? " on" : "")}
-            disabled={!controller?.patternRangeArmed || readOnly || period.liveOnly || isSynthetic}
-            onClick={() => controller?.patternRangeArmed?.set(!controller.patternRangeArmed.value)}
-            aria-label="Find similar sequences"
-          >
-            {/* reuse the existing icon set in DrawIcons.tsx; add one there if none fits */}
-          </button>
-        </Tooltip>
+export function SimilarSequenceIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 2.5v13M11 3.5v11M17 2.5v13" />
+      <rect x="3.4" y="5" width="3.2" height="6.5" rx="0.6" />
+      <rect x="9.4" y="6.5" width="3.2" height="4.5" rx="0.6" />
+      <rect x="15.4" y="4.5" width="3.2" height="7" rx="0.6" />
+      <path d="M3 20c1.5-1.8 3-1.8 4.5 0s3 1.8 4.5 0 3-1.8 4.5 0 2.2.9 3.5.4" opacity="0.8" />
+    </svg>
+  );
+}
 ```
+
+Then the button, mirroring the Zoom to Range one (same two-line Tooltip shape, same class convention):
+
+```tsx
+      <Tooltip
+        content={[
+          "Similar sequences. Drag across the candles you want to match.",
+          "On release, finds where that shape appeared before.",
+        ]}
+      >
+        <button
+          className={"ds-btn pattern-range-toggle" + (findingSimilar ? " on" : "")}
+          disabled={!controller?.patternRangeArmed || readOnly || period.liveOnly || isSynthetic}
+          onClick={() => controller?.patternRangeArmed?.set(!controller.patternRangeArmed.value)}
+          aria-label="Find similar sequences"
+        >
+          <SimilarSequenceIcon />
+        </button>
+      </Tooltip>
+```
+
+Add `SimilarSequenceIcon` to the existing `menuIcons` import on `DrawSidebar.tsx:20`.
 
 The three gates (`readOnly`, `period.liveOnly`, `isSynthetic`) come from Global Constraint 12. Read how the neighbouring buttons obtain those values in this file and use the same sources; do not thread new props if they are already in scope.
 
@@ -2388,7 +2444,7 @@ Start the backend and `npm run dev`. On a US100 5m chart: arm the tool, drag acr
 - [ ] **Step 12: Commit**
 
 ```bash
-git add frontend/src/ChartCore.tsx frontend/src/DrawSidebar.tsx frontend/src/lib/chartController.ts frontend/src/chart/useRangeNavigation.ts frontend/src/chart/useRangeNavigation.test.ts
+git add frontend/src/ChartCore.tsx frontend/src/DrawSidebar.tsx frontend/src/lib/chartController.ts frontend/src/lib/menuIcons.tsx frontend/src/chart/useRangeNavigation.ts frontend/src/chart/useRangeNavigation.test.ts
 git commit -m "feat(patterns): Find similar, drag the candles you mean
 
 A fourth arm-and-drag range tool on the Zoom to Range gesture, plus goToRange
