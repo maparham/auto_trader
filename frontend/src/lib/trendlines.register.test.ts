@@ -58,11 +58,20 @@ describe("TRENDLINES registration", () => {
       ["Max Projection", "Max Break Hold"],
       ["Min Pivot Size", "Min Pivot Reach"],
       ["Min Slope", "Max Slope"],
-      ["Only lines near price"],
+      ["Declutter"],
       ["Hide broken lines"],
       ["Merge similar lines", "Merge Tolerance"],
       ["Extend"],
     ]);
+  });
+
+  it("offers the two decluttering rules as ONE choice, never both at once", () => {
+    const d = resolveInputs("TRENDLINES", undefined).find((i) => i.key === "declutter");
+    expect(d?.type).toBe("select");
+    expect(d?.options?.map((o) => o.value)).toEqual(["off", "near", "pivot"]);
+    // The near-price cut was the old checkbox's default, so it stays the
+    // select's: switching the control must not change what a pane draws.
+    expect(d?.default).toBe("near");
   });
 
   it("gives Pivot Size a default, since older charts have no slot 8", () => {

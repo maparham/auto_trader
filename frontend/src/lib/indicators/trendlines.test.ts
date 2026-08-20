@@ -991,6 +991,52 @@ describe("selectDrawnLines dedup", () => {
     ).toEqual([fanB]);
   });
 
+  it("with no tolerance at all, keeps one line per pivot: the nearest to price", () => {
+    // What "One line per pivot" runs: the three-through-one-swing case no
+    // tolerance a pane can afford would collapse. Read at bar 100 against a
+    // close of 100, these land 18 and 27 apart, so the fan survives any sane
+    // Merge Tolerance and dies here.
+    const near: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 95, touchIdxs: [0, 50] };
+    const mid: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 86, touchIdxs: [0, 50] };
+    const far: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 81, touchIdxs: [0, 50] };
+    expect(projectAt(near, 100)).toBeCloseTo(100, 6);
+    expect(projectAt(mid, 100)).toBeCloseTo(82, 6);
+    expect(projectAt(far, 100)).toBeCloseTo(72, 6);
+    expect(
+      selectDrawnLines([mid, far, near], 100, 100, 3, {}, { tol: Infinity, keep: NONE }),
+    ).toEqual([near]);
+  });
+
+  it("with no tolerance, still spares a line an operand is reading", () => {
+    // The exemptions are the whole reason this is the merge pass and not a new
+    // rule: the chart is the only surface an emitted value can be audited on.
+    const near: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 95, touchIdxs: [0, 50] };
+    const far: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 81, touchIdxs: [0, 50] };
+    expect(
+      selectDrawnLines(
+        [near, far], 100, 100, 3, { tl_support: projectAt(far, 100) },
+        { tol: Infinity, keep: NONE },
+      ),
+    ).toEqual([near, far]);
+  });
+
+  it("with no tolerance, still spares a pinned line", () => {
+    const near: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 95, touchIdxs: [0, 50] };
+    const far: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 81, touchIdxs: [0, 50] };
+    expect(
+      selectDrawnLines([near, far], 100, 100, 3, {}, { tol: Infinity, keep: new Set([far]) }),
+    ).toEqual([near, far]);
+  });
+
+  it("with no tolerance, leaves lines that share no pivot alone", () => {
+    // Not a distance cut: two unrelated levels both stay, however far apart.
+    const a: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 95, touchIdxs: [0, 50] };
+    const b: TrendLine = { ...sup, i1: 10, p1: 60, i2: 60, p2: 62, touchIdxs: [10, 60] };
+    expect(
+      selectDrawnLines([a, b], 100, 100, 3, {}, { tol: Infinity, keep: NONE }),
+    ).toEqual([a, b]);
+  });
+
   it("merges a fan that closes onto a shared second pivot", () => {
     // Different starts, same end: they meet at bar 50 and separate again after
     // it. Same clutter, so the same treatment.
@@ -1353,6 +1399,9 @@ function record(
   // Matches the app's own default, so an omitted argument and an omitted key
   // mean the same thing and there is no third state to test.
   hideBroken = false,
+  // The Declutter select. Absent leaves the key off entirely, which is how the
+  // tests above exercise the legacy `nearPrice` fallback the draw path keeps.
+  declutter?: "off" | "near" | "pivot",
 ): Painted {
   const segments: Segment[] = [];
   const tags: Tag[] = [];
@@ -1417,6 +1466,7 @@ function record(
     pinned,
     ...(dedupe === "default" ? {} : { dedupe }),
     ...(nearPrice === "default" ? {} : { nearPrice }),
+    ...(declutter ? { declutter } : {}),
     hideBroken,
   };
   const result = TRENDLINES_TEMPLATE.calc!(bars, {
@@ -1591,6 +1641,40 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
       "default",
     );
     expect(fallback.segments).toHaveLength(merged.segments.length);
+  });
+
+  it("collapses a fan to one line per pivot, with merging switched off", () => {
+    // Bar 20 anchors the fan. dedupe is FALSE in both runs, so the collapse can
+    // only come from the Declutter choice: picking it is the explicit
+    // instruction that ticking Merge similar lines only implies.
+    const b = bars();
+    const live = computeTrendlines(b, cfg()).lines;
+    const cp = params(live.length);
+    const off = record(b, cp, undefined, undefined, undefined, false, false, false, "off");
+    const perPivot = record(b, cp, undefined, undefined, undefined, false, false, false, "pivot");
+    expect(perPivot.segments.length).toBeLessThan(off.segments.length);
+  });
+
+  it("reads Declutter over the legacy near-price key", () => {
+    // The straddling fixture the near-price default test uses: four support
+    // lines, one of them outside the 5-ATR cut (the one anchored at bar 20).
+    const b = flat(80);
+    b[20] = bar(20, 90, 100.5);
+    b[40] = bar(40, 91, 100.5);
+    b[62] = bar(62, 99, 100.5);
+    b[70] = bar(70, 99.2, 100.5);
+    const cp = params(8);
+    // Legacy key alone: the cut runs, as it always did.
+    expect(record(b, cp, undefined, undefined, undefined, false, true).segments)
+      .toHaveLength(3);
+    // Select present: it decides, and the stale checkbox underneath it does
+    // not. Both rules cannot run at once, so "off" means off.
+    expect(
+      record(b, cp, undefined, undefined, undefined, false, true, false, "off").segments,
+    ).toHaveLength(4);
+    expect(
+      record(b, cp, undefined, undefined, undefined, false, false, false, "near").segments,
+    ).toHaveLength(3);
   });
 
   // maxLines is the drawn set's FLOOR per side, not a hard cap: the budgeted

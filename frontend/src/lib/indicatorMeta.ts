@@ -567,16 +567,22 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Max steepness a line may have, in ATR(14) of price per bar. Zero means no limit. A steep line outruns price and is never touched again, which is what a fan off one sharp pivot keeps producing.",
       },
       {
-        key: "nearPrice",
-        label: "Only lines near price",
+        key: "declutter",
+        label: "Declutter",
         // Everything from here down is render-only: nothing a rule reads can
         // move. The heading is what lets the four tips stop saying so.
         section: "Drawing",
-        type: "boolean",
+        type: "select",
         source: "extend",
-        field: "nearPrice",
-        default: true,
-        tip: "Hides lines that have run far from the current price. The nearest on each side always stays.",
+        field: "declutter",
+        default: "near",
+        wide: true,
+        options: [
+          { value: "off", label: "Off" },
+          { value: "near", label: "Only lines near price" },
+          { value: "pivot", label: "One line per pivot" },
+        ],
+        tip: "Near price hides the lines that have run far from where price is, keeping the nearest on each side. One per pivot keeps a single line where several run through one swing, the one closest to price.",
       },
       {
         key: "hideBroken",

@@ -104,7 +104,7 @@ describe("Inputs tab renders a control for every declared input", () => {
       "Min Back Clearance",
       "Merge Tolerance",
       "Merge similar lines",
-      "Only lines near price",
+      "Declutter",
       "Extend",
     ])
       expect(screen.getByLabelText(label), `${label} has no control`).toBeTruthy();
@@ -131,5 +131,30 @@ describe("Calculation group", () => {
       .getAllByRole("combobox")
       .find((s) => (s as HTMLSelectElement).value === "HOUR_4");
     expect(tf).toBeTruthy();
+  });
+});
+
+describe("Declutter select", () => {
+  // A SelectMenu (button + popover), not a native <select>, so what is asserted
+  // is the trigger's text: the label of the option in force.
+  it("opens on the near-price rule by default", () => {
+    open();
+    expect(screen.getByLabelText("Declutter").textContent).toContain(
+      "Only lines near price",
+    );
+  });
+
+  it("opens on Off for a pane saved before the select existed", () => {
+    // It was an "Only lines near price" checkbox; a pane that stored it
+    // UNTICKED must not silently regain the filter when the modal opens.
+    open({ nearPrice: false });
+    expect(screen.getByLabelText("Declutter").textContent).toContain("Off");
+  });
+
+  it("keeps a saved choice over both defaults", () => {
+    open({ declutter: "pivot", nearPrice: false });
+    expect(screen.getByLabelText("Declutter").textContent).toContain(
+      "One line per pivot",
+    );
   });
 });

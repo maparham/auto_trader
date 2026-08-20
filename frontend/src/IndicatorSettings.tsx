@@ -25,6 +25,7 @@ import {
 } from "./lib/indicatorMeta";
 import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe } from "./lib/mtfCoordinator";
 import { parseTrendlinesConfig } from "./lib/indicators/trendlinesOutputs";
+import { declutterMode, type TrendlinesExtend } from "./lib/indicators/trendlines";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -502,6 +503,13 @@ export default function IndicatorSettings({
         init[inp.field] = genExt0[inp.field] ?? inp.default;
       }
     }
+    // Trendlines' Declutter select replaced an "Only lines near price"
+    // checkbox, so a pane saved with that box UNTICKED must open on "Off"
+    // rather than on the select's default. declutterMode is the one reader the
+    // chart uses too, which is what stops the modal from showing a rule the
+    // pane is not drawing.
+    if (isTrendlines && genExt0.declutter === undefined)
+      init.declutter = declutterMode(genExt0 as TrendlinesExtend);
     return init;
   });
   function setExtendInput(field: string, value: unknown) {

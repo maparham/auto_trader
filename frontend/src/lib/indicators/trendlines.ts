@@ -779,15 +779,36 @@ export interface TrendlinesExtend {
    * origin. One number cannot be right for both, which is the case a setting
    * exists for. */
   dedupeAtr?: number;
-  /** Draw only the lines projecting within TL_NEAR_PRICE_ATR of the close at
-   * the last bar (plus the nearest on each side, whatever its distance, and
-   * the lines an operand reads or a pin holds). Defaults to ON.
+  /** Which decluttering rule the pane runs, AT MOST ONE at a time. Defaults to
+   * "near".
    *
-   * The complaint this answers: a pivot seeds lines in every direction, and the
-   * ones that missed run away from price for as long as maxProjBars keeps them
-   * alive, filling the pane with geometry that has nothing to do with where
-   * price is. Render-only like the rest of this block: a line hidden here still
-   * emits, and selectDrawnLines draws it anyway if it does. */
+   * "near": draw only the lines projecting within TL_NEAR_PRICE_ATR of the
+   * close at the last bar (plus the nearest on each side, whatever its
+   * distance, and the lines an operand reads or a pin holds). The complaint it
+   * answers: a pivot seeds lines in every direction, and the ones that missed
+   * run away from price for as long as maxProjBars keeps them alive, filling
+   * the pane with geometry that has nothing to do with where price is.
+   *
+   * "pivot": keep ONE line where several run through the same pivot, the one
+   * closest to price, however far apart they sit. This is the merge pass with
+   * its tolerance removed rather than a new rule, so the two exemptions still
+   * hold (a line an operand reads, a pinned line) — but unlike merging it does
+   * NOT wait on `dedupe`, because picking it here is the explicit instruction
+   * that ticking that checkbox only implies. What it answers is the fan no
+   * tolerance a pane can afford would collapse: three lines through one swing
+   * low, 18 and 27 points apart at the last bar, need ~8.5 ATR to merge and
+   * that number would swallow half the pane elsewhere. The cost belongs to
+   * whoever picks it: a shared pivot sometimes joins two genuinely different
+   * levels (a year-long support that happens to touch the same swing as a
+   * three-week one), and this always keeps the nearer.
+   *
+   * Render-only like the rest of this block: a line hidden here still emits,
+   * and selectDrawnLines draws it anyway if it does. */
+  declutter?: "off" | "near" | "pivot";
+  /** LEGACY spelling of `declutter`, from when near-price was a checkbox and
+   * the only rule. Read only when `declutter` is absent, so a pane that stored
+   * `false` opens and draws as "off" instead of silently regaining the filter.
+   * Never written. */
   nearPrice?: boolean;
   /** Drop the broken lines from the chart entirely. Defaults to OFF, because a
    * broken line is where a retest happens and the break-hold window exists to
@@ -917,6 +938,17 @@ export interface TrendlineDedupe {
 
 /** The dedup tolerance for a bar's ATR, or 0 when merging is off or the ATR
  * has not warmed up yet. */
+/** The pane's decluttering rule, with the legacy `nearPrice` checkbox folded
+ * in. ONE reader for the chart and the settings modal, so a pane that predates
+ * the select cannot open on one rule and draw another. */
+export function declutterMode(
+  ext: Pick<TrendlinesExtend, "declutter" | "nearPrice"> | undefined,
+): "off" | "near" | "pivot" {
+  const m = ext?.declutter;
+  if (m === "off" || m === "near" || m === "pivot") return m;
+  return (ext?.nearPrice ?? true) ? "near" : "off";
+}
+
 export function dedupeTolerance(
   atr: number | undefined,
   on: boolean,
@@ -1567,19 +1599,23 @@ function drawTrendlines(
   );
   // `last` carries BOTH the line list and the last bar's emitted values, so the
   // union that keeps every operand's line on screen needs no extra plumbing.
-  const dedupeTol = dedupeTolerance(
-    last.atr,
-    ext?.dedupe ?? true,
-    ext?.dedupeAtr,
-  );
+  // "One line per pivot" is the merge pass with no tolerance at all: sharing a
+  // pivot alone decides it. dropDuplicates walks nearest-price-first, so the
+  // survivor is the one closest to the close, and it needs no ATR to say so,
+  // which is why this branch does not go through dedupeTolerance and its
+  // unwarmed-ATR off switch.
+  const declutter = declutterMode(ext);
+  const dedupeTol =
+    declutter === "pivot"
+      ? Infinity
+      : dedupeTolerance(last.atr, ext?.dedupe ?? true, ext?.dedupeAtr);
   // Same shape as the dedup tolerance, and 0 on the same unwarmed-ATR path:
   // with no ATR there is no scale to call anything near, and the filter is off
   // rather than arbitrary.
-  const nearTol = Number.isFinite(last.atr)
-    ? (ext?.nearPrice ?? true)
+  const nearTol =
+    declutter === "near" && Number.isFinite(last.atr)
       ? (last.atr as number) * TL_NEAR_PRICE_ATR
-      : 0
-    : 0;
+      : 0;
   const drawn = selectDrawnLines(
     eligible,
     lastIdx,
