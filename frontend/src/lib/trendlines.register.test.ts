@@ -34,8 +34,10 @@ describe("TRENDLINES registration", () => {
 
   it("has settings metadata for all sixteen params, the merge tolerance and the extend select", () => {
     const inputs = resolveInputs("TRENDLINES", undefined);
-    // Sixteen calcParams plus Merge Tolerance, which is a number on extendData
-    // rather than a calcParam because merging never moves an emitted value.
+    // Sixteen calcParams plus the merge tolerance, which is a number on
+    // extendData rather than a calcParam because merging never moves an emitted
+    // value. It is also the merge switch: 0 merges nothing, which is why there
+    // is no checkbox beside it.
     expect(inputs.filter((i) => i.type === "number")).toHaveLength(17);
     expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(16);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
@@ -58,10 +60,10 @@ describe("TRENDLINES registration", () => {
       ["Max Projection", "Max Break Hold"],
       ["Min Pivot Size", "Min Pivot Reach"],
       ["Min Slope", "Max Slope"],
+      ["Extend"],
       ["Declutter"],
       ["Hide broken lines"],
-      ["Merge similar lines", "Merge Tolerance"],
-      ["Extend"],
+      ["Merge Lines within"],
     ]);
   });
 

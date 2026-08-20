@@ -759,17 +759,15 @@ export interface TrendlinesExtend {
    * proximity order. That is fine here and only here: this is the draw path,
    * and no operand reads it. */
   extend?: "ray" | "segment" | "extended" | "apex" | "cross" | "lastbar";
-  /** Merge near-duplicate lines before the maxLines budget is applied, so a
-   * slot spent on a line's own shadow goes to a genuinely different line
-   * instead. Defaults to ON: a pivot seeds a FAN (it pairs with every later
-   * pivot that yields an unpierced line), and the members of a fan that share
-   * an anchor differ by a few points over the whole pane. See selectDrawnLines
-   * for what "near-duplicate" means and what is exempt. Render-only, like
-   * everything else here: merging never changes an emitted value, and the
-   * merged-away line stays live and can emit. */
+  /** LEGACY off switch for the merge pass, read but no longer written: the
+   * panel dropped the checkbox once it was clear that `dedupeAtr: 0` says the
+   * same thing (dropDuplicates returns everything at tol 0). Kept as a reader
+   * so a pane saved with the box unticked stays unmerged; the settings modal
+   * opens such a pane on tolerance 0 and clears the flag. */
   dedupe?: boolean;
   /** How far apart two lines through the same pivot may project at the last bar
-   * and still merge, in ATR(14). Absent takes TL_DEDUPE_ATR.
+   * and still merge, in ATR(14). Absent takes TL_DEDUPE_ATR; 0 IS THE OFF
+   * SWITCH, and is the only one the panel offers.
    *
    * A FIELD, after two rounds of arguing it should stay a constant. What
    * settled it was the two charts disagreeing: the DXY monthly fixture wants a
@@ -793,8 +791,8 @@ export interface TrendlinesExtend {
    * closest to price, however far apart they sit. This is the merge pass with
    * its tolerance removed rather than a new rule, so the two exemptions still
    * hold (a line an operand reads, a pinned line) — but unlike merging it does
-   * NOT wait on `dedupe`, because picking it here is the explicit instruction
-   * that ticking that checkbox only implies. What it answers is the fan no
+   * NOT wait on a non-zero `dedupeAtr`, because picking it here is the explicit
+   * instruction that a tolerance only implies. What it answers is the fan no
    * tolerance a pane can afford would collapse: three lines through one swing
    * low, 18 and 27 points apart at the last bar, need ~8.5 ATR to merge and
    * that number would swallow half the pane elsewhere. The cost belongs to
@@ -952,10 +950,13 @@ export function declutterMode(
 
 export function dedupeTolerance(
   atr: number | undefined,
+  /** LEGACY `dedupe` flag — false only on a pane saved while the old checkbox
+   * existed, and equivalent to a 0 tolerance. Nothing writes it any more. */
   on: boolean,
-  /** ATR multiple from the panel. Anything not a finite number >= 0 (an older
-   * chart with no such key, a hand-written payload) falls back to the default;
-   * an explicit 0 is honoured and turns merging off, the same as the switch. */
+  /** ATR multiple from the panel, and the ONLY off switch it offers. Anything
+   * not a finite number >= 0 (an older chart with no such key, a hand-written
+   * payload) falls back to the default; an explicit 0 is honoured and turns
+   * merging off. */
   mult: number | undefined = TL_DEDUPE_ATR,
 ): number {
   const m =

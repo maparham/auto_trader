@@ -80,6 +80,7 @@ import {
   PIVOT_CONNECTOR_DEFAULTS,
   resolvePivotConnector,
 } from "./lib/customIndicators";
+import { overrideExtend } from "./lib/overrideExtend";
 import { periodByResolution, pinnableTimeframes, pinBelowChart } from "./lib/feed";
 import {
   saveIndicatorConfig,
@@ -510,8 +511,26 @@ export default function IndicatorSettings({
     // pane is not drawing.
     if (isTrendlines && genExt0.declutter === undefined)
       init.declutter = declutterMode(genExt0 as TrendlinesExtend);
+    // Same story one row down: "Merge similar lines" was a checkbox beside the
+    // tolerance, and the tolerance IS the switch (0 merges nothing). A pane
+    // saved with that box UNTICKED opens on 0, which is what it draws.
+    if (isTrendlines && genExt0.dedupe === false) init.dedupeAtr = 0;
     return init;
   });
+  // ...and the stale flag has to leave the LIVE instance too, or it keeps
+  // forcing the tolerance to 0 (that is how the chart reads it, for panes that
+  // never open this modal) and a number typed above would draw nothing until
+  // the next reload. The saved snapshot loses the key on its own: the modal
+  // rebuilds extendData from the declared inputs, and `dedupe` is no longer
+  // one of them.
+  const dedupeMigrated = useRef(false);
+  useEffect(() => {
+    if (!isTrendlines || dedupeMigrated.current) return;
+    if (genExt0.dedupe === false) {
+      dedupeMigrated.current = true;
+      overrideExtend(chart, paneId, name, { dedupe: true });
+    }
+  }, [isTrendlines, genExt0.dedupe, chart, paneId, name]);
   function setExtendInput(field: string, value: unknown) {
     const next = { ...genExtend, [field]: value };
     setGenExtend(next);
@@ -1662,14 +1681,30 @@ export default function IndicatorSettings({
                     // tip, and something has to give: an ellipsised label reads
                     // as a bug, where a tip at the end of the row reads as a
                     // layout.
+                    //
+                    // A `wide` number is the exception: its label is a phrase
+                    // the control completes ("Merge Lines within 1 ATR"), which
+                    // reads as one line only with the ⓘ between the two, so it
+                    // takes the label column whole and keeps its tip beside the
+                    // label. Same two columns either way, so the controls stay
+                    // in one line down the tab.
                     <div className="ind-row ind-row-cols">
-                      <label>{chunk[0].label}</label>
-                      <span className="ind-cols-control">
-                        {controlFor(chunk[0])}
-                        {chunk[0].tip && (
-                          <InfoTip title={chunk[0].label} text={chunk[0].tip} />
-                        )}
-                      </span>
+                      {chunk[0].wide ? (
+                        <>
+                          {labelFor(chunk[0])}
+                          {controlFor(chunk[0])}
+                        </>
+                      ) : (
+                        <>
+                          <label>{chunk[0].label}</label>
+                          <span className="ind-cols-control">
+                            {controlFor(chunk[0])}
+                            {chunk[0].tip && (
+                              <InfoTip title={chunk[0].label} text={chunk[0].tip} />
+                            )}
+                          </span>
+                        </>
+                      )}
                     </div>
                   ) : (
                     // Checkboxes and selects share the numbers' two columns, so

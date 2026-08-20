@@ -1212,7 +1212,9 @@ describe("selectDrawnLines dedup", () => {
     expect(dedupeTolerance(4, true, undefined)).toBe(4 * TL_DEDUPE_ATR);
     expect(dedupeTolerance(4, true, NaN)).toBe(4 * TL_DEDUPE_ATR);
     expect(dedupeTolerance(4, true, -1)).toBe(4 * TL_DEDUPE_ATR);
-    // The switch still wins: off is off whatever the number says.
+    // The LEGACY flag still wins, so a pane saved while the "Merge similar
+    // lines" checkbox existed and was unticked stays unmerged. Nothing writes
+    // it any more: 0 above is the switch the panel offers.
     expect(dedupeTolerance(4, false, 2)).toBe(0);
   });
 

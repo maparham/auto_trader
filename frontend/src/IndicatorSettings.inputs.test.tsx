@@ -26,6 +26,29 @@ function chartWith(extendData: object) {
   } as never;
 }
 
+// Same, but recording what the modal writes back onto the live instance.
+function chartRecording(extendData: object) {
+  const writes: Array<Record<string, unknown>> = [];
+  const ind = {
+    paneId: "candle_pane",
+    name: "TRENDLINES",
+    calcParams: [...Object.values(TRENDLINES_DEFAULTS)],
+    extendData: { indType: "TRENDLINES", ...extendData },
+    figures: [],
+    styles: {},
+  };
+  const chart = {
+    getIndicators: () => [ind],
+    overrideIndicator: (o: { extendData?: Record<string, unknown> }) => {
+      if (o.extendData) writes.push(o.extendData);
+      return true;
+    },
+    getStyles: () => ({ indicator: { lines: [] } }),
+    getDataList: () => [],
+  };
+  return { chart: chart as never, writes };
+}
+
 function open(extendData: object = {}) {
   render(
     <IndicatorSettings
@@ -43,11 +66,11 @@ function open(extendData: object = {}) {
 
 describe("Inputs tab renders a control for every declared input", () => {
   // THE BUG THIS PINS: controlFor had branches for a calcParam number, an
-  // extend select and an extend boolean, but not an extend NUMBER, so Merge
-  // Tolerance drew its label and nothing beside it.
-  it("gives Merge Tolerance a number box carrying its default", () => {
+  // extend select and an extend boolean, but not an extend NUMBER, so the merge
+  // tolerance drew its label and nothing beside it.
+  it("gives the merge tolerance a number box carrying its default", () => {
     open();
-    const box = screen.getByLabelText("Merge Tolerance");
+    const box = screen.getByLabelText("Merge Lines within");
     expect(box).toBeTruthy();
     expect((box as HTMLInputElement).type).toBe("number");
     expect((box as HTMLInputElement).value).toBe("1");
@@ -56,7 +79,7 @@ describe("Inputs tab renders a control for every declared input", () => {
   it("shows the saved value rather than the default when there is one", () => {
     open({ dedupeAtr: 0.5 });
     expect(
-      (screen.getByLabelText("Merge Tolerance") as HTMLInputElement).value,
+      (screen.getByLabelText("Merge Lines within") as HTMLInputElement).value,
     ).toBe("0.5");
   });
 
@@ -72,7 +95,7 @@ describe("Inputs tab renders a control for every declared input", () => {
     const rows = [...document.querySelectorAll(".ind-group, .ind-row, .ind-pair2")];
     const i = rows.indexOf(head);
     expect(i).toBeGreaterThan(0);
-    expect(rows[i + 1].textContent).toContain("Only lines near price");
+    expect(rows[i + 1].textContent).toContain("Extend right");
   });
 
   // The solo numbers used to push their control to the modal's right edge while
@@ -96,14 +119,57 @@ describe("Inputs tab renders a control for every declared input", () => {
     ).not.toContain("ind-row-cols");
   });
 
+  // A `wide` number keeps its ⓘ beside the label (the label is a phrase the
+  // control completes), unlike the half-width numbers above whose tip sits at
+  // the end of the row. Its control stays in the shared second column, so it
+  // lines up with the checkbox above it rather than running to the modal edge.
+  it("gives the merge tolerance its tip beside the label, control in column two", () => {
+    open();
+    const box = screen.getByLabelText("Merge Lines within");
+    const row = box.closest(".ind-row");
+    expect(row?.className).toContain("ind-row-cols");
+    const head = row!.querySelector(".ind-row-head");
+    expect(head).toBeTruthy();
+    expect(head!.querySelector(".ind-info")).toBeTruthy();
+    expect(row!.querySelector(".ind-cols-control")).toBeNull();
+  });
+
+  // The "Merge similar lines" checkbox that used to sit beside this box is gone
+  // (tolerance 0 says the same thing), so a pane saved with it UNTICKED has to
+  // land on 0 — anything else opens on a rule the pane is not drawing.
+  it("opens a legacy unticked merge switch on tolerance 0", () => {
+    open({ dedupe: false, dedupeAtr: 1 });
+    expect(
+      (screen.getByLabelText("Merge Lines within") as HTMLInputElement).value,
+    ).toBe("0");
+  });
+
+  // ...and the stale flag leaves the live instance, or it keeps forcing the
+  // tolerance to 0 and a number typed here would draw nothing until a reload.
+  it("clears the legacy flag off the live instance", () => {
+    const { chart, writes } = chartRecording({ dedupe: false });
+    render(
+      <IndicatorSettings
+        chart={chart}
+        scope="tab.test"
+        epic="US100"
+        brokerId="capital"
+        chartResolution="DAY"
+        paneId="candle_pane"
+        name="TRENDLINES"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(writes.some((w) => w.dedupe === true)).toBe(true);
+  });
+
   it("leaves no declared input without a control", () => {
     open();
     // Every label in the Inputs tab must have something focusable beside it.
     for (const label of [
       "Max Trendlines",
       "Min Back Clearance",
-      "Merge Tolerance",
-      "Merge similar lines",
+      "Merge Lines within",
       "Declutter",
       "Extend",
     ])
@@ -159,23 +225,21 @@ describe("Declutter select", () => {
   });
 });
 
-describe("merge controls under One line per pivot", () => {
-  it("hides them, because that choice runs the merge with no tolerance", () => {
+describe("the merge tolerance under One line per pivot", () => {
+  it("hides it, because that choice runs the merge with no tolerance", () => {
     open({ declutter: "pivot" });
-    expect(screen.queryByLabelText("Merge Tolerance")).toBeNull();
-    expect(screen.queryByLabelText("Merge similar lines")).toBeNull();
+    expect(screen.queryByLabelText("Merge Lines within")).toBeNull();
   });
 
-  it("brings them back on the other two choices", () => {
+  it("brings it back on the other two choices", () => {
     open({ declutter: "near" });
-    expect(screen.getByLabelText("Merge Tolerance")).toBeTruthy();
-    expect(screen.getByLabelText("Merge similar lines")).toBeTruthy();
+    expect(screen.getByLabelText("Merge Lines within")).toBeTruthy();
   });
 
-  it("shows them for a pane saved before the select existed", () => {
+  it("shows it for a pane saved before the select existed", () => {
     // The legacy fallback resolves to "off"/"near", never to "pivot", so a
-    // guard reading the raw stored value would blank both rows here.
+    // guard reading the raw stored value would blank the row here.
     open({ nearPrice: false });
-    expect(screen.getByLabelText("Merge Tolerance")).toBeTruthy();
+    expect(screen.getByLabelText("Merge Lines within")).toBeTruthy();
   });
 });

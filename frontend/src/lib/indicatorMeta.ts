@@ -567,11 +567,31 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Max steepness a line may have, in ATR(14) of price per bar. Zero means no limit. A steep line outruns price and is never touched again, which is what a fan off one sharp pivot keeps producing.",
       },
       {
+        key: "extend",
+        label: "Extend",
+        // Everything from here down is render-only: nothing a rule reads can
+        // move. The heading is what lets the four tips stop saying so. Extend
+        // leads the section: it is the one drawing option that changes every
+        // line on the pane, where the three below it choose which lines show.
+        section: "Drawing",
+        type: "select",
+        source: "extend",
+        field: "extend",
+        default: "ray",
+        wide: true,
+        options: [
+          { value: "ray", label: "→  Extend right" },
+          { value: "extended", label: "↔  Extended both ways" },
+          { value: "lastbar", label: "⇥  End at last bar" },
+          { value: "segment", label: "•–•  Segment, stops at last touch" },
+          { value: "apex", label: ">  Apex, stops at opposite line" },
+          { value: "cross", label: "×  Cross, stops at any line" },
+        ],
+        tip: "Where a line stops on the right, and whether it runs back before its first anchor.",
+      },
+      {
         key: "declutter",
         label: "Declutter",
-        // Everything from here down is render-only: nothing a rule reads can
-        // move. The heading is what lets the four tips stop saying so.
-        section: "Drawing",
         type: "select",
         source: "extend",
         field: "declutter",
@@ -594,23 +614,20 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Hides the dashed lines price has already cut through.",
       },
       {
-        key: "dedupe",
-        label: "Merge similar lines",
-        group: "merge",
-        // "One line per pivot" IS this pass with no tolerance, so under it both
-        // merge controls are inert: hidden rather than left there doing
-        // nothing. They come back with the other two choices.
-        showWhen: { field: "declutter", equals: ["off", "near"] },
-        type: "boolean",
-        source: "extend",
-        field: "dedupe",
-        default: true,
-        tip: "One pivot often starts several lines that sit almost on top of each other. This keeps the closest and gives the freed slots to lines with a different shape.",
-      },
-      {
         key: "dedupeAtr",
-        label: "Merge Tolerance",
-        group: "merge",
+        label: "Merge Lines within",
+        // The label runs to a phrase the number completes ("Merge Lines
+        // within 1 ATR"), so `wide` keeps its ⓘ beside the label rather than at
+        // the end of the row (see controlFor's number branch). The control
+        // still sits in the same column as every other one.
+        wide: true,
+        // The tolerance IS the switch: 0 merges nothing, which is why the
+        // "Merge similar lines" checkbox that used to sit beside this box is
+        // gone (it wrote the same off state twice).
+        //
+        // "One line per pivot" IS this pass with no tolerance at all, so under
+        // it the box is inert: hidden rather than left there doing nothing. It
+        // comes back with the other two choices.
         showWhen: { field: "declutter", equals: ["off", "near"] },
         type: "number",
         source: "extend",
@@ -619,25 +636,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         min: 0,
         step: 0.25,
         suffix: "ATR",
-        tip: "How far apart two lines through the same pivot may sit at the last bar and still count as one. Lower keeps more of them separate.",
-      },
-      {
-        key: "extend",
-        label: "Extend",
-        type: "select",
-        source: "extend",
-        field: "extend",
-        default: "ray",
-        wide: true,
-        options: [
-          { value: "ray", label: "→  Extend right" },
-          { value: "extended", label: "↔  Extended both ways" },
-          { value: "lastbar", label: "⇥  End at last bar" },
-          { value: "segment", label: "•–•  Segment, stops at last touch" },
-          { value: "apex", label: ">  Apex, stops at opposite line" },
-          { value: "cross", label: "×  Cross, stops at any line" },
-        ],
-        tip: "Where a line stops on the right, and whether it runs back before its first anchor.",
+        tip: "One pivot often starts several lines almost on top of each other; this keeps the closest and frees the slots for lines with a different shape. The distance is measured at the last bar, and 0 merges nothing.",
       },
     ],
     title: "Trendlines",
