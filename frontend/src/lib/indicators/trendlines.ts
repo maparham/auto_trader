@@ -825,7 +825,8 @@ export interface TrendlinesExtend {
   /** Lines the user pinned open by clicking their end handle, as lineKey()
    * strings. A pinned line ignores `extend` and runs to the right edge of the
    * pane, re-measured every render so it stays "indefinite" through scroll and
-   * zoom instead of baking in a bar count. */
+   * zoom instead of baking in a bar count. SESSION-ONLY: never persisted, and
+   * applyIndicator strips it off a saved snapshot / template / paste. */
   pinned?: string[];
   /** Multi-timeframe: lines and operand series detected on a higher timeframe
    * and aligned onto the chart bars inside calc (no lookahead). THE ONE KEY ON

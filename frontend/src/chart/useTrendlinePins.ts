@@ -3,10 +3,10 @@
 // releases it.
 //
 // The pin lives in the indicator's extendData (render-only, so nothing a
-// strategy reads can move) and is persisted with patchIndicatorExtend, the same
-// direct-manipulation seam the Slope threshold drag uses. The settings modal's
-// snapshot effect only runs while that modal is open, so a click on the chart
-// has to save itself.
+// strategy reads can move) and is SESSION-ONLY: it is never written to the saved
+// indicator config, and applyIndicator strips a `pinned` that rode in on an old
+// snapshot, a template or a paste. A pin is a transient "hold this one open while
+// I look at it" gesture, not a setting worth surviving a reload.
 //
 // Hit targets come from getTrendlineHandles, which the draw path fills with the
 // pixels it actually painted. Recomputing them here would be a second copy of
@@ -18,13 +18,11 @@ import {
   hitHandle,
   type TrendlinesExtend,
 } from "../lib/indicators/trendlines";
-import { patchIndicatorExtend } from "../lib/persist";
 import { overrideExtend } from "../lib/overrideExtend";
 
 interface Args {
   chartRef: React.MutableRefObject<Chart | null>;
   containerRef: React.RefObject<HTMLElement | null>;
-  scope: string;
 }
 
 /** Every TRENDLINES instance on the chart, with its pane. */
@@ -67,11 +65,7 @@ export function overridePinned(
   overrideExtend(chart, paneId, name, { pinned: next });
 }
 
-export function useTrendlinePins({
-  chartRef,
-  containerRef,
-  scope,
-}: Args): void {
+export function useTrendlinePins({ chartRef, containerRef }: Args): void {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -96,7 +90,6 @@ export function useTrendlinePins({
         else pinned.add(key);
         const next = [...pinned];
         overridePinned(chart, paneId, name, next);
-        patchIndicatorExtend(scope, name, { pinned: next });
         // Ours: do not let the press reach klinecharts' pan, or a pin toggle
         // also nudges the chart.
         e.preventDefault();
@@ -111,5 +104,5 @@ export function useTrendlinePins({
     // one cursorMode for every hit target, and calls hitAnyTrendlineHandle.
     el.addEventListener("mousedown", onDown, true);
     return () => el.removeEventListener("mousedown", onDown, true);
-  }, [chartRef, containerRef, scope]);
+  }, [chartRef, containerRef]);
 }

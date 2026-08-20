@@ -770,6 +770,19 @@ describe("inset placement", () => {
     ).toBe(false);
   });
 
+  it("drops a trendline pin from a saved config: pins are session-only", () => {
+    // A pre-change snapshot (or a template copied from one) can still carry
+    // extendData.pinned. Restoring it would re-extend lines the user pinned in
+    // some earlier session and cannot remember.
+    const { chart, created } = recordingChart();
+    applyIndicator(chart, "tab.pin1", "US100", { id: "TRENDLINES", type: "TRENDLINES" }, {
+      config: { extendData: { pinned: ["a"], extend: "segment" } } as never,
+    });
+    const ext = created[0].extendData as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(ext, "pinned")).toBe(false);
+    expect(ext.extend).toBe("segment");
+  });
+
   it("refuses inset for a type that is not inset-capable, without blocking creation", () => {
     // SESSIONS is one of ours but is not in INSET_CAPABLE, so a stale flag on it
     // must be inert AND must not stop the indicator from opening its own pane.

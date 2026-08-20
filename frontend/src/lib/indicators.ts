@@ -537,6 +537,12 @@ export function applyIndicator(
   // Deleted rather than set false so non-inset payloads stay byte-identical.
   if (inset) (extendData as { inset?: boolean }).inset = true;
   else delete (extendData as { inset?: boolean }).inset;
+  // Trendline pins are SESSION-ONLY: clicking an end handle holds that line open
+  // for as long as the chart lives, and no longer. Nothing writes `pinned` to the
+  // saved config any more, but an older snapshot (or a template / paste copied
+  // from one) can still carry it, so drop it here rather than resurrect pins the
+  // user cannot remember making.
+  delete (extendData as { pinned?: unknown }).pinned;
   if (opts?.forceHidden && extendData.userVisible === undefined) {
     extendData.userVisible = cfg?.visible !== false;
   }
