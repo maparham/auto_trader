@@ -158,3 +158,24 @@ describe("Declutter select", () => {
     );
   });
 });
+
+describe("merge controls under One line per pivot", () => {
+  it("hides them, because that choice runs the merge with no tolerance", () => {
+    open({ declutter: "pivot" });
+    expect(screen.queryByLabelText("Merge Tolerance")).toBeNull();
+    expect(screen.queryByLabelText("Merge similar lines")).toBeNull();
+  });
+
+  it("brings them back on the other two choices", () => {
+    open({ declutter: "near" });
+    expect(screen.getByLabelText("Merge Tolerance")).toBeTruthy();
+    expect(screen.getByLabelText("Merge similar lines")).toBeTruthy();
+  });
+
+  it("shows them for a pane saved before the select existed", () => {
+    // The legacy fallback resolves to "off"/"near", never to "pivot", so a
+    // guard reading the raw stored value would blank both rows here.
+    open({ nearPrice: false });
+    expect(screen.getByLabelText("Merge Tolerance")).toBeTruthy();
+  });
+});

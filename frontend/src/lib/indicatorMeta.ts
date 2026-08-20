@@ -597,6 +597,10 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         key: "dedupe",
         label: "Merge similar lines",
         group: "merge",
+        // "One line per pivot" IS this pass with no tolerance, so under it both
+        // merge controls are inert: hidden rather than left there doing
+        // nothing. They come back with the other two choices.
+        showWhen: { field: "declutter", equals: ["off", "near"] },
         type: "boolean",
         source: "extend",
         field: "dedupe",
@@ -607,6 +611,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         key: "dedupeAtr",
         label: "Merge Tolerance",
         group: "merge",
+        showWhen: { field: "declutter", equals: ["off", "near"] },
         type: "number",
         source: "extend",
         field: "dedupeAtr",

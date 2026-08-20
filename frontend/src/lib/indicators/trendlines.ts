@@ -1467,36 +1467,48 @@ function chartBarMs(dataList: KLineData[]): number {
   return diffs[diffs.length >> 1];
 }
 
-/** Fractional index of time `t` in a sorted array of bar-open timestamps,
- * extrapolating linearly off both ends at `barMs` (so a ray projecting past the
- * newest bar, or an anchor older than the loaded history, still lands
- * somewhere real rather than being clamped onto the edge — clamping a SLOPED
- * line would visibly rotate it). */
-function idxAtTime(starts: number[], t: number, barMs: number): number {
-  const n = starts.length;
-  if (!n) return 0;
-  if (t <= starts[0]) return barMs > 0 ? (t - starts[0]) / barMs : 0;
-  if (t >= starts[n - 1])
-    return n - 1 + (barMs > 0 ? (t - starts[n - 1]) / barMs : 0);
+/** Fractional index of time `t` among `len` ascending bar-open timestamps read
+ * through `at`, extrapolating linearly off both ends at `barMs` (so a ray
+ * projecting past the newest bar, or an anchor older than the loaded history,
+ * still lands somewhere real rather than being clamped onto the edge —
+ * clamping a SLOPED line would visibly rotate it).
+ *
+ * An ACCESSOR rather than an array, so the chart side needs no per-draw copy of
+ * its timestamps: draw runs on every crosshair move, and a pane holding
+ * thousands of bars would allocate that array thousands of times a minute for
+ * nothing. */
+function idxAtTime(
+  len: number,
+  at: (i: number) => number,
+  t: number,
+  barMs: number,
+): number {
+  if (!len) return 0;
+  if (t <= at(0)) return barMs > 0 ? (t - at(0)) / barMs : 0;
+  if (t >= at(len - 1)) return len - 1 + (barMs > 0 ? (t - at(len - 1)) / barMs : 0);
   let lo = 0;
-  let hi = n - 1;
+  let hi = len - 1;
   while (hi - lo > 1) {
     const mid = (lo + hi) >> 1;
-    if (starts[mid] <= t) lo = mid;
+    if (at(mid) <= t) lo = mid;
     else hi = mid;
   }
-  const span = starts[hi] - starts[lo];
-  return span > 0 ? lo + (t - starts[lo]) / span : lo;
+  const span = at(hi) - at(lo);
+  return span > 0 ? lo + (t - at(lo)) / span : lo;
 }
 
 /** Time at a fractional index, the inverse of {@link idxAtTime}. */
-function timeAtIdx(starts: number[], j: number, barMs: number): number {
-  const n = starts.length;
-  if (!n) return 0;
-  if (j <= 0) return starts[0] + j * barMs;
-  if (j >= n - 1) return starts[n - 1] + (j - (n - 1)) * barMs;
+function timeAtIdx(
+  len: number,
+  at: (i: number) => number,
+  j: number,
+  barMs: number,
+): number {
+  if (!len) return 0;
+  if (j <= 0) return at(0) + j * barMs;
+  if (j >= len - 1) return at(len - 1) + (j - (len - 1)) * barMs;
   const k = Math.floor(j);
-  return starts[k] + (j - k) * (starts[k + 1] - starts[k]);
+  return at(k) + (j - k) * (at(k + 1) - at(k));
 }
 
 /** The two index conversions the draw path needs when the lines were detected
@@ -1511,11 +1523,16 @@ function trendlineIdxMap(
   const htfMs = mtf?.htfMs ?? 0;
   if (!starts?.length || !(htfMs > 0) || !dataList.length)
     return { toChart: (j) => j, toLine: (j) => j };
-  const chartStarts = dataList.map((k) => k.timestamp);
   const barMs = chartBarMs(dataList) || htfMs;
+  const htfAt = (i: number) => starts[i];
+  const chartAt = (i: number) => dataList[i].timestamp;
+  const nHtf = starts.length;
+  const nChart = dataList.length;
   return {
-    toChart: (j) => idxAtTime(chartStarts, timeAtIdx(starts, j, htfMs), barMs),
-    toLine: (j) => idxAtTime(starts, timeAtIdx(chartStarts, j, barMs), htfMs),
+    toChart: (j) =>
+      idxAtTime(nChart, chartAt, timeAtIdx(nHtf, htfAt, j, htfMs), barMs),
+    toLine: (j) =>
+      idxAtTime(nHtf, htfAt, timeAtIdx(nChart, chartAt, j, barMs), htfMs),
   };
 }
 
