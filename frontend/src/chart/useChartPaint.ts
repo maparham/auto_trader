@@ -35,7 +35,8 @@ import {
   buildPivotDeltaLabels,
   pivotDeltaLabelAt,
 } from "./chartGeometry";
-import { buildLegendRows, buildSubPaneLegends, type LegendRow, type SubPaneLegendData, type ChartLegendHandle } from "../ChartLegend";
+import { buildLegendRows, buildSubPaneLegends, buildInsetLegend, type LegendRow, type SubPaneLegendData, type ChartLegendHandle } from "../ChartLegend";
+import { insetBandBox, type InsetBandBox } from "../lib/indicators/inset";
 import { slopeMaLines } from "../lib/indicators/slope";
 import { getIndicatorsByPane } from "../lib/indicators";
 import { indTypeOf } from "../lib/customIndicators";
@@ -109,6 +110,10 @@ export interface ChartPaintDeps {
   setTradePills: React.Dispatch<React.SetStateAction<TradePill[]>>;
   setLegendRows: React.Dispatch<React.SetStateAction<LegendRow[]>>;
   setSubPaneLegends: React.Dispatch<React.SetStateAction<SubPaneLegendData[]>>;
+  // The inset band's legend card and its geometry (the card's position, and where
+  // the resize handle sits). Both move together, so one signature gates both.
+  setInsetLegend: React.Dispatch<React.SetStateAction<SubPaneLegendData | null>>;
+  setInsetBand: React.Dispatch<React.SetStateAction<InsetBandBox | null>>;
   // Props / value the painters read (fmtSeparatorLabel/paintSeparator dep on these).
   timezone: string;
   theme: Theme;
@@ -152,6 +157,7 @@ export interface ChartPaintDeps {
   curveLabelsRef: React.RefObject<CurveLabelsHandle | null>;
   legendRowsSigRef: React.MutableRefObject<string>;
   subPaneLegendsSigRef: React.MutableRefObject<string>;
+  insetLegendSigRef: React.MutableRefObject<string>;
   legendHandleRef: React.RefObject<ChartLegendHandle | null>;
   legendBarIdxRef: React.MutableRefObject<() => number | null>;
   exitClustersRef: React.MutableRefObject<ExitCluster[]>;
@@ -171,6 +177,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     setTradePills,
     setLegendRows,
     setSubPaneLegends,
+    setInsetLegend,
+    setInsetBand,
     timezone,
     theme,
     containerRef,
@@ -202,6 +210,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     curveLabelsRef,
     legendRowsSigRef,
     subPaneLegendsSigRef,
+    insetLegendSigRef,
     legendHandleRef,
     legendBarIdxRef,
     exitClustersRef,
@@ -1053,6 +1062,17 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     if (sub.sig !== subPaneLegendsSigRef.current) {
       subPaneLegendsSigRef.current = sub.sig;
       setSubPaneLegends(sub.subPanes);
+    }
+    // The inset band's card + resize handle. The band is part of the candle pane, so
+    // nothing in klinecharts moves it: it follows a band drag, a pane resize and the
+    // arrival/removal of an inset instance through this same redraw.
+    const insetBox = insetBandBox(chart);
+    const insetLeg = buildInsetLegend(chart);
+    const insetSig = `${insetBox ? `${insetBox.top}/${insetBox.left}/${insetBox.width}/${insetBox.height}` : "-"}|${insetLeg.sig}`;
+    if (insetSig !== insetLegendSigRef.current) {
+      insetLegendSigRef.current = insetSig;
+      setInsetBand(insetBox);
+      setInsetLegend(insetLeg.data);
     }
     legendHandleRef.current?.updateValues(legendBarIdxRef.current());
     // Higher-timeframe backtest markers: project each aggregate cluster's bar-high

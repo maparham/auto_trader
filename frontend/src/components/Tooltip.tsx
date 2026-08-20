@@ -64,6 +64,21 @@ export default function Tooltip({
 
   const off = disabled || isEmpty(content);
 
+  // Going `disabled` (or losing its content) while the bubble is up takes it
+  // down, and leaves it down: the paint already gates on `off`, but a stale
+  // `open` would pop the bubble straight back the moment it is re-enabled, with
+  // the pointer never having moved. This is the adjust-state-during-render
+  // pattern (not an effect) so it costs one render, not a second pass.
+  const [wasOff, setWasOff] = useState(off);
+  if (off !== wasOff) {
+    setWasOff(off);
+    if (off && open) {
+      clearTimer();
+      setOpen(false);
+      setShown(false);
+    }
+  }
+
   function clearTimer() {
     if (timerRef.current != null) {
       clearTimeout(timerRef.current);

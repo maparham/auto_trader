@@ -138,7 +138,8 @@ export const MAX_PAIR_PIVOTS = 20;
 
 /** Live state keeps this multiple of maxLines per side, so a line that is
  * temporarily outranked is not destroyed and can return when it gains a touch.
- * maxLines itself governs only what draws and what feeds the operands. */
+ * maxLines itself sizes live state through this multiplier and governs the
+ * DRAWN set. It must NOT cap the operand path. */
 export const MAX_LIVE_MULT = 4;
 
 /** The rule-operand names, in pane order — the SAME strings as the backend's
@@ -293,15 +294,39 @@ describe("pierces", () => {
   // THE parity test. A bar exactly at line + violTol must not pierce, and one
   // ULP beyond must. This is precisely where a slope-and-project implementation
   // diverges between runtimes, so it is what earns the cross-product form.
+  //
+  // JavaScript has no Math.nextUp (that is Java/Python). Step to the adjacent
+  // double by incrementing the IEEE-754 bit pattern. Valid for positive finite
+  // x, which is all these tests use. Python's side uses math.nextafter.
+  const nextUp = (x: number): number => {
+    const view = new DataView(new ArrayBuffer(8));
+    view.setFloat64(0, x);
+    const hi = view.getUint32(0);
+    const lo = view.getUint32(4);
+    if (lo === 0xffffffff) {
+      view.setUint32(0, hi + 1);
+      view.setUint32(4, 0);
+    } else {
+      view.setUint32(4, lo + 1);
+    }
+    return view.getFloat64(0);
+  };
+
+  it("steps to the adjacent double", () => {
+    expect(nextUp(96)).toBeGreaterThan(96);
+    expect(nextUp(96) - 96).toBeLessThan(1e-10);
+  });
+
   it("is exact at the tolerance boundary", () => {
-    const atBoundary = 95 + 1;
+    // Line value at bar 5 is 95, so 95 + violTol(1) = 96 is exactly on the edge.
+    const atBoundary = 96;
     expect(pierces(res, 5, atBoundary, 1)).toBe(false);
-    expect(pierces(res, 5, Math.nextUp(atBoundary), 1)).toBe(true);
+    expect(pierces(res, 5, nextUp(atBoundary), 1)).toBe(true);
   });
 
   it("treats a zero tolerance as exact containment", () => {
     expect(pierces(res, 5, 95, 0)).toBe(false);
-    expect(pierces(res, 5, Math.nextUp(95), 0)).toBe(true);
+    expect(pierces(res, 5, nextUp(95), 0)).toBe(true);
   });
 });
 
@@ -623,18 +648,26 @@ export interface TrendlinesPoint {
 const SIDES: readonly TrendSide[] = ["resistance", "support"];
 
 /** Live means: not aged out past its projection horizon, and if broken, still
- * inside the hold window. */
+ * inside the hold window. The two clocks are INDEPENDENT — a broken line is
+ * governed by breakHoldBars alone, never also by maxProjBars, or a break
+ * landing near the end of a line's projection horizon silently loses its
+ * retest window. */
 function isLive(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
   if (line.brokenIdx !== null) return i - line.brokenIdx <= cfg.breakHoldBars;
   return i - line.lastTouchIdx <= cfg.maxProjBars;
 }
 
-/** Major means: enough touches, enough span, and covering this bar. The
- * top-maxLines cap is applied by the caller, which is what actually suppresses
- * noise — see the design doc. */
+/** Major means: enough touches, enough span, and covering this bar. There is NO
+ * maxLines cap on the operand path — see the emit step for why capping by rank
+ * before nearest-selection emits stale geometry. */
 function isMajor(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
   if (line.touches < cfg.minTouches) return false;
   if (line.lastTouchIdx - line.i1 < cfg.minSpanBars) return false;
+  // A BROKEN line's coverage is owned by isLive's breakHoldBars clock alone.
+  // Applying maxProjBars here too would intersect the two clocks and truncate
+  // (or erase) the hold window whenever a break lands within breakHoldBars of
+  // the projection horizon. That happens at stock defaults.
+  if (line.brokenIdx !== null) return i >= line.i1;
   return i >= line.i1 && i <= line.lastTouchIdx + cfg.maxProjBars;
 }
 
@@ -745,27 +778,51 @@ export function computeTrendlines(
       }
     }
 
-    // 4. Emit. Membership is gated (major + top maxLines by rank); selection is
-    //    nearest to the close, the same reading as SR_LEVELS.
+    // 4. Emit. Membership is gated by isLive + isMajor ONLY. Selection is
+    //    nearest-to-close among ALL of them.
+    //
+    //    Do NOT reinstate a `.slice(0, cfg.maxLines)` here. Capping by rank
+    //    before nearest-selection throws away the very line nearest-selection
+    //    would have picked: against the DXY fixture it emitted tl_resistance
+    //    121.187, a 2009-to-2017 artifact, while the live post-2022 line
+    //    projected 106.616. The pattern came from SR_LEVELS, where it is safe
+    //    because a HORIZONTAL level 500 bars old is still at the same price; a
+    //    SLOPING line projected 250 bars produces a number unrelated to price.
+    //    maxLines governs the DRAWN set instead.
     const close = dataList[i].close;
     const point: TrendlinesPoint = {};
     for (const side of SIDES) {
+      // .sort(rankLines) is kept (not the slice): pick() resolves an exact tie
+      // first-wins, so without the sort the tie-break silently demotes from the
+      // documented total order to array insertion order, which is the drift the
+      // parity golden exists to catch.
       const majors = lines
         .filter((l) => l.side === side && isLive(l, i, cfg) && isMajor(l, i, cfg))
-        .sort(rankLines)
-        .slice(0, cfg.maxLines);
+        .sort(rankLines);
       // An UNBROKEN support line sits at or below the close and an unbroken
-      // resistance above it. A BROKEN line is on the far side by definition:
-      // price fell through the support, so it now sits ABOVE the close. That
-      // inversion is why the side test cannot be shared between the two.
+      // resistance above it, so those gate on side.
+      //
+      // A BROKEN line gets NO side gate. It is tempting to reason that price
+      // fell through a support so the line now sits above the close, but that
+      // only holds while price stays through it: a wick break that snaps back
+      // leaves the broken level on EITHER side of the close. Gating broken
+      // lines on side suppresses them almost entirely — on both sides.
+      //
+      // `below` is cross-multiplied rather than compared against projectAt's
+      // quotient, because it gates set membership: which output fires. The
+      // nearest-of comparison below does use projected values, and so depends
+      // on projectAt being ported operation-for-operation; the parity golden
+      // covers that.
       const pick = (want: "unbroken" | "broken"): number | undefined => {
         let best: number | undefined;
         for (const line of majors) {
           if (want === "unbroken" ? line.brokenIdx !== null : line.brokenIdx === null) continue;
           const v = projectAt(line, i);
-          const below = v <= close;
-          const wantBelow = want === "unbroken" ? side === "support" : side === "resistance";
-          if (below !== wantBelow) continue;
+          if (want === "unbroken") {
+            const s = line.i2 - line.i1;
+            const below = (line.p2 - line.p1) * (i - line.i1) <= (close - line.p1) * s;
+            if (below !== (side === "support")) continue;
+          }
           if (best === undefined || Math.abs(v - close) < Math.abs(best - close)) best = v;
         }
         return best;

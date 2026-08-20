@@ -21,6 +21,7 @@ export * from "./indicators/pivotBands";
 export * from "./indicators/pivotAnalysis";
 export * from "./indicators/srLevels";
 export * from "./indicators/fvg";
+export * from "./indicators/trendlines";
 export * from "./indicators/curveLabels";
 export * from "./indicators/slope";
 export * from "./indicators/atr";
@@ -37,6 +38,7 @@ import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
 import { PIVOT_ANALYSIS_TEMPLATE } from "./indicators/pivotAnalysis";
 import { SR_LEVELS_TEMPLATE } from "./indicators/srLevels";
 import { FVG_TEMPLATE } from "./indicators/fvg";
+import { TRENDLINES_TEMPLATE } from "./indicators/trendlines";
 import { SLOPE_TEMPLATE, SLOPE_ACCEL_TEMPLATE } from "./indicators/slope";
 import { ATR_TEMPLATE } from "./indicators/atr";
 import { CANDLE_PATTERNS_TEMPLATE } from "./indicators/candlePatterns";
@@ -60,6 +62,7 @@ export type CustomIndicatorType =
   | "PIVOT_ANALYSIS"
   | "SR_LEVELS"
   | "FVG"
+  | "TRENDLINES"
   | "SLOPE"
   | "SLOPE_ACCEL"
   | "ATR"
@@ -79,6 +82,7 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   PIVOT_ANALYSIS: PIVOT_ANALYSIS_TEMPLATE,
   SR_LEVELS: SR_LEVELS_TEMPLATE,
   FVG: FVG_TEMPLATE,
+  TRENDLINES: TRENDLINES_TEMPLATE,
   SLOPE: SLOPE_TEMPLATE,
   SLOPE_ACCEL: SLOPE_ACCEL_TEMPLATE,
   ATR: ATR_TEMPLATE,
@@ -112,6 +116,11 @@ export const OVERLAY_INDICATORS = new Set([
   "PIVOT_ANALYSIS",
   "SR_LEVELS",
   "FVG",
+  // TRENDLINES draws through the candle pane's y-axis (projectAt prices), so it
+  // must overlay it. Off this list, isSubPaneIndicator() calls it a sub-pane
+  // indicator and applyIndicator opens it a bottom pane of its own, where a
+  // figure-less template gives klinecharts nothing to autoscale from.
+  "TRENDLINES",
   "TIME_HIGHLIGHT",
   "CANDLE_PATTERNS",
 ]);

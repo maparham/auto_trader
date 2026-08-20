@@ -846,3 +846,66 @@ class ExprLiteralsRequest(BaseModel):
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
+
+
+# --- pattern search -----------------------------------------------------------
+
+
+class PatternBarDTO(BaseModel):
+    """One candle in a pattern query or result. Short keys: a 64-bar query plus
+    20 matches of 6+20 bars each rides on every request and response."""
+
+    ts: int = 0
+    o: float
+    h: float
+    l: float  # noqa: E741
+    c: float
+
+
+class PatternSearchRequest(BaseModel):
+    epic: str
+    resolution: str
+    price_side: str = Field("bid", alias="priceSide", pattern="^(bid|mid|ask)$")
+    broker: str = ""  # empty = server default broker (deps.default_broker_id)
+    query: list[PatternBarDTO] = Field(min_length=3, max_length=64)
+    query_from_ts: int = Field(alias="queryFromTs")
+    query_to_ts: int = Field(alias="queryToTs")
+    top_k: int = Field(20, alias="topK", ge=1, le=100)
+    forward_bars: int = Field(20, alias="forwardBars", ge=0, le=500)
+    # What the distance is measured over: whole candles (open, high, low, close)
+    # or the close alone. Not a correctness knob: the two rank real history
+    # differently enough that the top 20 overlap by about half, and neither is
+    # the right answer for every question.
+    mode: Literal["ohlc", "close"] = "ohlc"
+
+    model_config = {"populate_by_name": True}
+
+
+class PatternMatchDTO(BaseModel):
+    ts: int
+    end_ts: int = Field(serialization_alias="endTs")
+    distance: float
+    bars: list[PatternBarDTO]
+    forward: list[PatternBarDTO]
+    forward_complete: bool = Field(serialization_alias="forwardComplete")
+    forward_pct: float | None = Field(serialization_alias="forwardPct")
+    # True on the one window that IS the user's selection. It is scanned like
+    # any other and comes back at distance ~0; the panel labels it so the row
+    # reads as the reference point rather than an uncanny coincidence.
+    is_selection: bool = Field(default=False, serialization_alias="isSelection")
+
+
+class PatternSeriesDTO(BaseModel):
+    oldest_ts: int = Field(serialization_alias="oldestTs")
+    newest_ts: int = Field(serialization_alias="newestTs")
+    bars: int
+
+
+class PatternSearchResponse(BaseModel):
+    matches: list[PatternMatchDTO]
+    scanned: int
+    series: PatternSeriesDTO
+    elapsed_ms: int = Field(serialization_alias="elapsedMs")
+    cold: bool
+
+    model_config = {"populate_by_name": True}

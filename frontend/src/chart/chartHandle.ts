@@ -14,6 +14,7 @@ import type { PositionLines } from "../lib/positionLines";
 import type { TradeView } from "../lib/trading";
 import type { PendingEdit, DraftOrder, TradeLineUi } from "../lib/signals";
 import type { LiveHandle } from "../lib/feed";
+import type { PageResult } from "../lib/historyPaging";
 import type { CrosshairStyle, PriceSide } from "../theme";
 import type { BacktestAggMarkersHandle } from "../BacktestAggMarkers";
 import type { TradeExitAggMarkersHandle } from "../TradeExitAggMarkers";
@@ -28,6 +29,18 @@ export type RangeReq = {
   epic: string;
   broker: string;
   side: PriceSide;
+  // Page budget for the coverage walk, when this request needs a deeper one than
+  // the quick-range default (see ensureCoverageAndFit). Optional so the tokens
+  // the quick-range picker builds keep the default. Reference identity is what
+  // pendingRangeRef/launchedTokenRef compare, so an extra field is inert there.
+  maxPages?: number;
+  // What the coverage walk does with the viewport once it settles. "range" (the
+  // default, and what every caller that omits this gets) fits [fromTs, toTs] to
+  // the viewport, which changes zoom. "center" keeps the user's current zoom and
+  // only scrolls, putting the range's midpoint in the middle of the pane — what
+  // a jump to a pattern match wants, since re-zooming on every row click makes
+  // the chart unreadable.
+  fit?: "range" | "center";
 };
 
 // A parked "drop one timeframe and center here" request from the zoom-to-range
@@ -101,6 +114,6 @@ export interface ChartHandle {
   // — which runs after this hook's — always sees a current handle.
   replayRef: React.MutableRefObject<ReplayHandle | null>;
   // Cross-boundary call bridges to useRangeNavigation.
-  ensureCoverageAndFitRef: React.MutableRefObject<(token: RangeReq) => Promise<void>>;
+  ensureCoverageAndFitRef: React.MutableRefObject<(token: RangeReq) => Promise<PageResult>>;
   ensureAnchorCoverageRef: React.MutableRefObject<() => Promise<void>>;
 }

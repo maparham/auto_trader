@@ -120,9 +120,21 @@ export const INSET_CAPABLE = new Set(["RSI", "ATR", "SLOPE"]);
 ```
 
 Only indicators whose templates we own can be inset. `SLOPE_ACCEL` is not
-listed: it is derived state owned by its parent (`syncAccelCompanion`), so the
+listed: it is derived state owned by its parent (`syncAccelCompanion`).
+
+**Amended during implementation.** An earlier draft of this paragraph said the
 companion inherits the parent's inset flag and draws into the same band as a
-second line.
+second line. That is not what shipped, because the companion is created by
+`chart.createIndicator` INSIDE `syncAccelCompanion` rather than through
+`applyIndicator`, so inheriting inset is not a flag: it would need its own
+registered inset template, creation on `candle_pane`, and a rework of the
+"companion sits directly below its parent" pane-ordering logic. What ships is
+the parent going inset while the companion stays a sub-pane, and
+`syncAccelCompanion` / `mirrorAccelCompanion` explicitly strip the marker off
+the companion's inherited `extendData` (a `withoutInset` helper) so it never
+draws band geometry inside a sub-pane. Consequence to know: an inset SLOPE with
+Show Accel enabled still shows one sub-pane, and that pane always takes the
+recreate branch rather than the in-place-update branch on every settings edit.
 
 `insetTemplate(base, type)` returns a clone of a `BASE_TEMPLATES` entry with:
 
@@ -299,7 +311,18 @@ indicator that is not inset, and an emptiness check would drag it into this path
 `indicatorMenuItems` (`chart/useIndicatorCommands.ts:416`) builds the shared
 TradingView-style menu used by both the legend row's ⋯ button and a
 right-click on the curve. It gains one item beside Move up / Move down, shown
-only when `INSET_CAPABLE.has(indTypeOf(name))`:
+only when `INSET_CAPABLE.has(indTypeOf(name))`.
+
+**Amended during implementation:** for an INSET instance only the legend row's ⋯
+button reaches this menu, not the right-click-on-curve path. `buildLineCache`
+(`chart/chartGeometry.ts`) iterates `ind.figures`, which is empty by
+construction for an inset instance, so an inset curve has no hit-test geometry:
+no curve right-click, no curve-click selection, no selection handles, and no
+curve labels. Routing that through `legendFiguresOf` would not fix it, because
+the cached pixels come from the pane's price axis while the band has its own
+mapping; band hit-testing needs its own math. Out of scope here.
+
+The item is:
 
 - label: `Show as inset` when the instance is in a sub-pane, `Show in own pane`
   when it is inset

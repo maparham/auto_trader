@@ -83,6 +83,28 @@ export class ChartController {
   // drops one timeframe lower centered on the range midpoint and the band stays
   // visible until a click-away. One-shot: disarms after a pick. Esc also disarms.
   readonly zoomRangeArmed = new Signal<boolean>(false);
+  // True while the "Find similar" tool is armed (sidebar button toggled on). The
+  // next press-drag on the candle pane marks the candles to match; on release the
+  // pattern search runs and the results panel opens. One-shot: disarms after a
+  // pick, like zoomRangeArmed. Esc disarms.
+  readonly patternRangeArmed = new Signal<boolean>(false);
+  // Whether "Find similar" applies to this cell at all: false for synthetic epics,
+  // sub-minute (liveOnly) resolutions and read-only snapshot views. Published by
+  // ChartCore (which owns the epic/period/snapshot facts) so the draw sidebar can
+  // disable the button without those being threaded through as props. Defaults
+  // false so a gated cell can't flash an enabled button before ChartCore's effect
+  // lands.
+  readonly patternSearchAvailable = new Signal<boolean>(false);
+  // What the armed range-drag DOES on release. "search" runs the pattern search
+  // (the historical behaviour); "copy" puts the selected candles on the pattern
+  // clipboard instead. One signal drives both because the gesture, the band and
+  // every guard that yields to it are identical — only the finalize differs.
+  // Reset to "search" after each pick, so an armed tool always means what the
+  // button that armed it said.
+  readonly patternRangeMode = new Signal<"search" | "copy">("search");
+  // True while "Paste pattern" is armed: the next click on the candle pane drops
+  // the clipboard's pattern there as a ghost overlay. One-shot; Esc disarms.
+  readonly patternPasteArmed = new Signal<boolean>(false);
   // True while the Time Range highlight tool is armed (from the draw sidebar). The
   // next press-drag places a persistent full-height band marking a time interval; a
   // click with no drag marks the single clicked candle. One-shot: disarms on place.

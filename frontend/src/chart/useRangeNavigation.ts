@@ -13,10 +13,18 @@
 import { type KLineData } from "klinecharts";
 import { fetchRangeStrict, RESOLUTION_SECONDS, PERIODS, type Period } from "../lib/feed";
 import { rangeWindow, goToDateTs, type RangeKey } from "../lib/rangeWindow";
-import { pageHistoryBack as pageHistoryBackImpl } from "../lib/historyPaging";
+import {
+  pageHistoryBack as pageHistoryBackImpl,
+  DEEP_HISTORY_MESSAGE,
+  DEEP_HISTORY_TOAST_KEY,
+  FETCH_FAILED_MESSAGE,
+  FETCH_FAILED_TOAST_KEY,
+  type PageResult,
+} from "../lib/historyPaging";
 import { loadDrawings } from "../lib/persist";
 import { getBacktestCoverageFromTs, reanchorBacktestMarkers } from "../lib/backtest";
-import { readVisibleRange } from "../lib/chartSync";
+import { toast } from "../lib/notify";
+import { readVisibleRange, scrollTsToCenter as scrollTsToCenterImpl } from "../lib/chartSync";
 import { browserTimezone } from "./chartPainters";
 import type { Instrument } from "../lib/feed";
 import type { PriceSide } from "../theme";
@@ -33,7 +41,17 @@ export interface RangeNavigationDeps {
   // coverBacktestTradeTo / the init scroll-back loader too) — passed in so the
   // walks here call the SAME instances.
   fitVisibleRange: (chart: Chart, fromTs: number, toTs: number) => void;
+  // Pan-only landing for a token asking for fit: "center". Identical to the
+  // module import; injectable for tests, like pageHistoryBack above.
+  scrollTsToCenter?: typeof scrollTsToCenterImpl;
   extendMtfCoverage: (explicitOldestMs?: number) => void;
+  // ChartCore's parallel cover to a KNOWN timestamp (coverBacktestTradeTo).
+  // goToRange lands on a match whose time is known up front, so it covers the
+  // whole gap in concurrent windows instead of walking it a page at a time.
+  coverHistoryTo: (
+    fromTs: number,
+    opts?: { owner?: RangeReq | null; maxWindows?: number; onWindowError?: () => void },
+  ) => Promise<boolean>;
   // Props / state the callbacks read.
   scope: string;
   symbol: Instrument;
@@ -47,12 +65,65 @@ export interface RangeNavigationDeps {
   setActiveRange: (k: RangeKey | null) => void;
 }
 
+/** A RangeReq centred on [fromTs, toTs] with room around it. The padding is a
+ *  COVERAGE target, not a viewport hint: the token asks to be centred, not
+ *  fitted, so the viewport keeps the user's zoom and the 6x window only says how
+ *  far back the walk must reach for the match's bars to land with context around
+ *  them already loaded on both sides. Padding symmetrically also keeps the
+ *  padded midpoint equal to the match's own, so centring on it centres the
+ *  match. Timestamps in, milliseconds out (RangeReq is ms). */
+// The token carries NO page budget any more. It used to ask for 40 sequential
+// pages (20,000 bars) because the walk was one broker request at a time and the
+// budget was really a bound on how long the chart froze — which meant a match
+// more than ~70 trading days back on 5m simply could not be reached, and the
+// panel had to mark those matches unreachable before the click.
+//
+// goToRange now covers the gap the way the backtest trades panel does: the
+// match's timestamp is known up front, so every window between it and the
+// loaded left edge is computed and fetched CONCURRENTLY (coverHistoryTo ->
+// coverHistoryRangeParallel). By the time this token's own walk runs, the bars
+// are already there and it does nothing but land the viewport, so the default
+// 16-page budget is ample.
+
+// Window cap for the match jump's parallel cover: 800 windows x 500 bars is
+// 400k bars, about nine years of 15m US100 bars (the deepest series the app
+// stores) and the same ceiling the timeframe-switch center restore uses. Wider
+// than jump-to-trade's 400 because a match can be from 2017 while a backtest's
+// trades are inside its own run. Past it, the toast below says so rather than
+// the view landing quietly in the wrong place.
+const MATCH_JUMP_MAX_WINDOWS = 800;
+
+export function buildRangeToken(args: {
+  fromTs: number;
+  toTs: number;
+  resolution: string;
+  epic: string;
+  broker: string;
+  side: PriceSide;
+}): RangeReq {
+  const fromMs = args.fromTs * 1000;
+  const toMs = args.toTs * 1000;
+  const mid = (fromMs + toMs) / 2;
+  const half = Math.max((toMs - fromMs) * 3, 60_000);
+  return {
+    resolution: args.resolution,
+    fromTs: Math.round(mid - half),
+    toTs: Math.round(mid + half),
+    epic: args.epic,
+    broker: args.broker,
+    side: args.side,
+    fit: "center",
+  };
+}
+
 export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDeps) {
   const {
     pageHistoryBack = pageHistoryBackImpl,
     pageBars: PAGE_BARS,
     fitVisibleRange,
+    scrollTsToCenter = scrollTsToCenterImpl,
     extendMtfCoverage,
+    coverHistoryTo,
     scope,
     symbol,
     brokerId,
@@ -79,10 +150,10 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
   // wait-out + identity guard, but a third consumer (chart replay) should collapse
   // both into one HistoryPager owner — see the "Known design debt" note in
   // docs/superpowers/plans/2026-06-30-visible-range-selector.md.
-  const ensureCoverageAndFit = async (token: RangeReq) => {
+  const ensureCoverageAndFit = async (token: RangeReq): Promise<PageResult> => {
     // Re-entry guard: the data-load effect can re-run (priceSide/broker change)
     // and call this again with the SAME pending token while a walk is in flight.
-    if (handle.launchedTokenRef.current === token) return;
+    if (handle.launchedTokenRef.current === token) return "aborted";
     handle.launchedTokenRef.current = token;
     const { resolution } = token;
     // Quick-range windows end at "now" (rangeWindow), which on a closed market sits
@@ -117,7 +188,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
     // us; once we hold the mutex, further scroll-back loads bail.)
     for (let i = 0; handle.loadingRef.current && i < 20; i++) {
       await new Promise((r) => setTimeout(r, 25));
-      if (isStale()) return;
+      if (isStale()) return "aborted";
     }
     handle.loadingRef.current = true;
     try {
@@ -126,7 +197,10 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
         toTs,
         resSec: RESOLUTION_SECONDS[resolution] ?? 60,
         pageBars: PAGE_BARS,
-        maxPages: 16,
+        // Default 16 pages (~8k bars) is the quick-range budget: those windows are
+        // days-to-months and start from a live-edge load. A token can ask for more
+        // (goToRange, landing on a match well behind the loaded window).
+        maxPages: token.maxPages ?? 16,
         maxEmpty: 4,
         isStale,
         getData: () => handle.chartRef.current?.getDataList(),
@@ -150,10 +224,33 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
         },
       });
       if (result !== "aborted" && handle.chartRef.current && handle.pendingRangeRef.current === token) {
-        fitVisibleRange(handle.chartRef.current, fromTs, toTs);
+        // Land the viewport. "center" preserves the user's zoom and only
+        // scrolls (a jump between matches must not re-zoom the chart on every
+        // click); the default fits the covered window, which is what the
+        // quick-range picker and the timeframe-switch park have always done.
+        //
+        // The two arms read DIFFERENT windows, deliberately. The fit reads the
+        // clamped fromTs/toTs, because you fit what you actually covered. The
+        // centre reads the token's UNCLAMPED range, because the clamp slides the
+        // window back to end at the last bar, and buildRangeToken pads by 3x the
+        // match span each side: for any match ending within 3x its span of the
+        // live edge that would drag the centre up to 3x the span earlier than
+        // the match (about 60 bars on a 20-bar match). Fitting hid that, since
+        // the match stayed inside the fitted window either way, but the zoom is
+        // now the user's own, so a tight viewport would show no match at all
+        // while the bands sat off screen. The padding is symmetric, so the
+        // unclamped midpoint IS the match's own midpoint. scrollTsToCenter
+        // clamps to the nearest edge bar itself if that midpoint is past the
+        // loaded data.
+        if (token.fit === "center") {
+          scrollTsToCenter(handle.chartRef.current, Math.round((token.fromTs + token.toTs) / 2));
+        } else {
+          fitVisibleRange(handle.chartRef.current, fromTs, toTs);
+        }
         handle.pendingRangeRef.current = null;
         extendMtfCoverage(); // history just grew — re-cover any HTF EMA/MA
       }
+      return result;
     } finally {
       // Release the mutex only if a newer pick hasn't taken ownership (it holds the
       // mutex for its own walk); the current owner — or a settled idle state —
@@ -366,5 +463,81 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
     fitVisibleRange(chart, dateMs - span / 2, dateMs + span / 2);
   };
 
-  return { onRangePick, onGoToDate };
+  // Land on an arbitrary historical window, paging older history in first if the
+  // chart has not loaded that far back. onGoToDate only fits what is already
+  // loaded, which is not enough for a match from years ago.
+  const goToRange = (fromTs: number, toTs: number) => {
+    const chart = handle.chartRef.current;
+    if (!chart) return;
+    onFocus?.(cellId);
+    const token = buildRangeToken({
+      fromTs,
+      toTs,
+      resolution: period.resolution,
+      epic: symbol.epic,
+      broker: brokerId,
+      side: priceSide,
+    });
+    setActiveRange(null);
+    handle.separatorTsRef.current = null;
+    // Park the token BEFORE the cover, not after: the token is what makes the
+    // cover preemptible. coverHistoryTo stands down for whoever owns
+    // pendingRangeRef, so clicking the next match down the list makes this
+    // cover stale instead of racing it — two several-hundred-window fetch
+    // storms at once, on a panel built for clicking through results.
+    handle.pendingRangeRef.current = token;
+    void (async () => {
+      // Cover to the token's PADDED left edge, not the match's own first bar:
+      // anything the parallel cover leaves uncovered, the sequential walk in
+      // ensureCoverageAndFit pages one broker request at a time.
+      // Did any window fetch fail? It decides which of the two dead ends the
+      // user is told about below.
+      let fetchFailed = false;
+      await coverHistoryTo(token.fromTs, {
+        owner: token,
+        maxWindows: MATCH_JUMP_MAX_WINDOWS,
+        onWindowError: () => {
+          fetchFailed = true;
+        },
+      });
+      if (handle.pendingRangeRef.current !== token) return; // a newer click owns the chart
+      const result = await ensureCoverageAndFit(token);
+      // "aborted" means a newer pick owns the chart; it lands its own view.
+      if (result === "aborted") return;
+      // Landing short is no longer a statement about a page budget: the cover
+      // asked for every window down to the target. Which of the two reasons it
+      // was depends on whether a window FAILED. All fetches fine and still
+      // short means the broker's series starts after the match (or the 400k-bar
+      // cap was hit, which in practice means the same), so the answer is a
+      // coarser timeframe — the same answer the backtest trades panel gives for
+      // a trade older than its timeframe's history. A failed window instead
+      // means a timeout or a 5xx on history that may well exist (a cold span
+      // the broker serves slower than the client's 10s deadline), and there the
+      // answer is to try again. Either way, say something: whitespace where the
+      // match should be reads as a broken jump.
+      //
+      // The target is the MATCH, not token.fromTs. buildRangeToken pads the
+      // window by 3x the match span each side, and that padding is context, not
+      // the destination: warning on it called a jump broken whenever the match
+      // sat within 3 spans of the oldest bar the broker will serve. Warn only
+      // when a bar of the match ITSELF is missing.
+      //
+      // `key` coalesces repeat clicks on unreachable matches into one toast
+      // with a xN badge instead of stacking against the 5-toast cap. Not
+      // sticky: it is informational. PatternMatchesPanel's error slot is
+      // deliberately NOT used — it is owned by usePatternSearch and would
+      // clobber the results the user is reading.
+      const oldest = handle.chartRef.current?.getDataList()[0];
+      const wantedMs = fromTs * 1000; // the match's own first bar (seconds in)
+      if (oldest && oldest.timestamp > wantedMs) {
+        if (fetchFailed) toast(FETCH_FAILED_MESSAGE, { key: FETCH_FAILED_TOAST_KEY });
+        else toast(DEEP_HISTORY_MESSAGE, { key: DEEP_HISTORY_TOAST_KEY });
+        console.debug(
+          `[chart] go-to-range covered only back to ${new Date(oldest.timestamp).toISOString()}, short of ${new Date(wantedMs).toISOString()}${fetchFailed ? " (a window fetch failed)" : ""}`,
+        );
+      }
+    })();
+  };
+
+  return { onRangePick, onGoToDate, goToRange };
 }

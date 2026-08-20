@@ -15,6 +15,7 @@ import {
 } from "../lib/heatmapController";
 import { collectExprInstances } from "../lib/exprInstances";
 import { liveExprInstances } from "../lib/indicators";
+import { overrideExtend } from "../lib/overrideExtend";
 import { backtestConfigLive } from "../lib/signals";
 import { defaultBacktestConfig, type BacktestConfig } from "../lib/backtestConfig";
 import { loadBacktestLastUsed } from "../lib/persist";
@@ -90,7 +91,7 @@ export function useProximityHeatmap({ chartRef, epic, broker, priceSide, display
     const cur = latest.current;
     if (!c || !cur.on) return;
     if (!heatmapVisible(cur.displayResolution, cur.view.baseResolution)) {
-      c.overrideIndicator({ paneId: PANE, name: HEATMAP_NAME, extendData: { values: [] } });
+      overrideExtend(c, PANE, HEATMAP_NAME, { values: [] });
       return;
     }
     const bars = c.getDataList();
@@ -105,7 +106,7 @@ export function useProximityHeatmap({ chartRef, epic, broker, priceSide, display
     });
     if (!req) {
       // No enabled rows on the active side: nothing to show.
-      c.overrideIndicator({ paneId: PANE, name: HEATMAP_NAME, extendData: { values: [] } });
+      overrideExtend(c, PANE, HEATMAP_NAME, { values: [] });
       return;
     }
     const seq = ++reqSeq.current;
@@ -125,10 +126,12 @@ export function useProximityHeatmap({ chartRef, epic, broker, priceSide, display
         if (req.epic !== now.epic || req.broker !== now.broker
           || req.priceSide !== now.priceSide || req.displayResolution !== now.displayResolution) return;
         const times = cc.getDataList().map((b) => Math.floor(b.timestamp / 1000));
-        cc.overrideIndicator({
-          paneId: PANE,
-          name: HEATMAP_NAME,
-          extendData: { values: alignValuesToBars(times, resp) },
+        // overrideExtend, not overrideIndicator: klinecharts merges
+        // extendData index by index, so a SHORTER values array (fewer bars
+        // after a timeframe switch) would keep the old tail painted past the
+        // end of the new data.
+        overrideExtend(cc, PANE, HEATMAP_NAME, {
+          values: alignValuesToBars(times, resp),
         });
       })
       .catch(() => { /* transient fetch error: keep the last paint */ });
@@ -139,7 +142,7 @@ export function useProximityHeatmap({ chartRef, epic, broker, priceSide, display
   useEffect(() => {
     const c = chartRef.current;
     if (!c || !on) return;
-    c.overrideIndicator({ paneId: PANE, name: HEATMAP_NAME, extendData: { values: [] } });
+    overrideExtend(c, PANE, HEATMAP_NAME, { values: [] });
   }, [chartRef, on, epic, displayResolution]);
 
   // Refetch on any input change, debounced so a burst of rule edits fires once.

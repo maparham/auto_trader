@@ -62,6 +62,20 @@ describe("indicatorSignature", () => {
     expect(a).not.toBe(b);
   });
 
+  it("ignores the inset placement marker (an inset RSI is the same indicator as a paned one)", () => {
+    // applyIndicator stamps extendData.inset on a live inset instance, and the
+    // settings modal can persist that live extendData into the saved config. If
+    // inset counted as identity, Apply would fail to recognise the RSI already on
+    // the chart and would ADD A DUPLICATE.
+    const a = indicatorSignature({
+      type: "RSI",
+      calcParams: [14],
+      extendData: { indType: "RSI", inset: true },
+    });
+    const b = indicatorSignature({ type: "RSI", calcParams: [14], extendData: { indType: "RSI" } });
+    expect(a).toBe(b);
+  });
+
   it("treats identifying extendData (e.g. MTF timeframe, source) as identity", () => {
     const a = indicatorSignature({ type: "EMA", calcParams: [20], extendData: { timeframe: "1h" } });
     const b = indicatorSignature({ type: "EMA", calcParams: [20], extendData: { timeframe: "4h" } });

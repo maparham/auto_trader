@@ -366,6 +366,17 @@ export default function Toolbar({
 
   const drawMenuItems = drawMenu
     ? [
+        // Only a ghost the user has placed by hand: re-aligning one that is
+        // already tracking the candles under it would do nothing visible.
+        ...(overlays?.isPinnedGhost(drawMenu.id)
+          ? [
+              {
+                label: "Re-align",
+                icon: MenuIcons.realign,
+                onClick: () => overlays?.realignGhost(drawMenu.id),
+              },
+            ]
+          : []),
         { label: "Settings", icon: MenuIcons.settings, onClick: () => drawingSettingsRequest.set({ id: drawMenu.id }) },
         { label: "Clone", icon: MenuIcons.clone, onClick: () => cloneDrawing(drawMenu.id) },
         { label: "Copy", icon: MenuIcons.copy, onClick: () => copyDrawing(drawMenu.id) },

@@ -35,10 +35,13 @@ surface those three.
 
 ## Non-goals
 
-- **Multi-timeframe.** `SR_LEVELS` has it via `alignHtfToChart` and FVG runs
-  1D/4H/chart instances, so this is a real gap and is deferred deliberately.
-  Recorded here because retrofitting MTF means changing the compute signature
-  *after* the Python port exists.
+- ~~**Multi-timeframe.**~~ SHIPPED (2026-08-19), and the retrofit the deferral
+  feared never came due: the compute signature is untouched on both sides. The
+  detector runs on whatever candles it is handed, so the higher timeframe is a
+  question of WHICH candles, answered outside it — by the coordinator on the
+  chart (`applyTrendlinesTimeframe`) and by the evaluator's pinned-`IndicatorRef`
+  branch in a backtest. The lines stay in HTF bar indices right up to the pixel;
+  see `TrendlinesMtf` for the three things converting them earlier would break.
 - **Multi-scale in one instance.** One `pivotLen` per instance. Two scales means
   two instances, exactly as EMA and AVWAP already work.
 - **Channels.** Parallel lines off the opposite pivot pool are a separate
@@ -111,9 +114,9 @@ A pivot at bar `k` confirms at bar `c = k + pivotLen` (shared `isPivotAt`,
 4. **Prune** lines whose `lastTouchIdx + maxProjBars < c`, and broken lines
    whose `brokenIdx + breakHoldBars < c`.
 5. **Rank and cap.** Live state retains `MAX_LIVE_MULT (4) * maxLines` lines per
-   side, by rank; the rest are dropped. `maxLines` itself governs only what
-   draws and what feeds the operands. The two differ so a line that is
-   temporarily outranked is not destroyed and can return when it gains a touch.
+   side, by rank; the rest are dropped. `maxLines` itself governs the DRAWN set.
+   The two differ so a line that is temporarily outranked is not destroyed and
+   can return when it gains a touch.
 
 Pairing against the last 20 pivots rather than all of them caps the run at
 `O(P * 20)` instead of `O(P^2)`.
@@ -162,20 +165,23 @@ of the "touch" zone would already be a violation.
 Membership is gated, selection is nearest:
 
 - A line is **major** when `touches >= minTouches` and
-  `span = lastTouchIdx - i1 >= minSpanBars`, and it is within the top `maxLines`
-  by rank on its side.
+  `span = lastTouchIdx - i1 >= minSpanBars`. There is deliberately **no
+  `maxLines` cap on the operand path** (see Risks).
 - Among live unbroken majors covering bar `i`, `tl_support` takes the line whose
   projected price is nearest **at or below** the bar's close, and
   `tl_resistance` the one nearest **above** it. Ties break by rank. Same
   semantics as `SR_LEVELS`' nearest support and resistance, which is the more
   actionable reading.
 
-**`maxLines` is what suppresses noise, not `minTouches`.** An incremental
-detector's newest line is always its shortest and freshest, and since the
-operand picks the *nearest* line rather than the best one, a scrap that gets in
-can win the operand outright. The cap is the defence: only the top `maxLines`
-per side are major at all, and rank sorts on touches first, so a two-anchor line
-can occupy a slot only when there is no better line to take it.
+**`minSpanBars` is what suppresses noise, not `minTouches` and not `maxLines`.**
+An incremental detector's newest line is always its shortest and freshest, and
+since the operand picks the *nearest* line rather than the best one, a scrap
+that gets in can win the operand outright. `minSpanBars` is the defence.
+
+This paragraph originally credited a top-`maxLines` rank cap with that job.
+Measured against the fixture, that cap was actively harmful (see Risks): it
+discarded the line nearest-selection would have chosen. `maxLines` now sizes
+live state via `MAX_LIVE_MULT` and governs the DRAWN set only.
 
 That is why `minTouches` defaults to **2**, i.e. the anchors alone, rather than
 demanding a third confirming touch. Requiring 3 systematically excludes
@@ -241,7 +247,7 @@ value — not a projected one — so ranking never depends on which bar it runs 
 | 4 | `minSpanBars` | 20 | Minimum span before a line is major. |
 | 5 | `maxProjBars` | 250 | How far past its last touch a line stays live. |
 | 6 | `breakHoldBars` | 30 | How long a broken line keeps drawing and emitting. |
-| 7 | `maxLines` | 3 | Strongest lines kept live, per side. |
+| 7 | `maxLines` | 3 | Lines DRAWN per side (and, via `MAX_LIVE_MULT`, how many are retained in live state). It does not *slice* the operand path, but it does *bound* it: see below. |
 
 All validate on `> 0` except `violMult`, which validates on `>= 0`. Zero is a
 meaningful setting there — exact containment, no pierce allowed at all — and it
@@ -356,12 +362,49 @@ Plus `trendlinesParityGolden.test.ts` and a JSON case file, mirroring
 
 ## Risks
 
-**The DXY fixture may not reproduce rank-for-rank.** The hand-drawn anchors for
-line A came from an upper convex hull computed over the whole series with
-hindsight; the causal detector meets the 2007-08 anchor only at its confirm bar.
-The anchors are expected to be identical, but if ranking differs, the assertion
-becomes "present among the top N majors" rather than "rank 1". Written down here
-rather than loosened quietly later.
+**RESOLVED DURING IMPLEMENTATION: line A is not an acceptance criterion.** This
+section originally required the detector to find all three hand-drawn lines.
+Measured against the real fixture that was wrong in two independent ways, and
+the acceptance test is what caught it.
+
+*Its stated anchors are not pivots.* The fixture reads 2002-01 120.51, 2002-02
+120.4, 2002-03 119.61, 2002-04 118.7 — a monotonic decline, so 2002-03 is not a
+local high at any lookback, strict or otherwise. The anchors came from an upper
+convex hull over BARS, which may anchor anywhere; the algorithm pairs fractal
+PIVOTS. Those are different sets and this spec never reconciled them. Any future
+work here starts from that distinction, not from the value of `pivotLen`.
+
+*And the trend itself is dead.* The classic pair a trader would draw, the
+2001-07 peak (121.02) to the 2005-11 high (92.63), are both pivots at every
+lookback tested, and that line is pierced by only 0.765 x ATR at 2002-02, so
+`violMult >= 0.77` would admit it geometrically against the 0.25 default. But
+price rose back through it in early 2009, so it is correctly marked broken and
+retires after `breakHoldBars`. It is a COMPLETED historical trend, which is
+exactly why it was drawn by hand as a segment rather than a ray. A live-lines
+list is right to omit it.
+
+The acceptance test therefore expects lines B and C, both found with exact
+anchors and prices, and separately pins the pivot arithmetic that puts line A
+out of reach, so the limitation is a tested fact rather than a silent gap.
+
+**Nearest-selection must not be preceded by a rank cap.** Taking the top
+`maxLines` by rank and then selecting nearest-to-close discards the very line
+nearest-selection would have chosen. Against the fixture that emitted
+`tl_resistance` 121.187, a 2009-to-2017 artifact, while the live post-2022 line
+projected 106.616. The pattern was borrowed from `SR_LEVELS`, where it is safe
+because a HORIZONTAL level 500 bars old is still at the same price; a SLOPING
+line projected 250 bars produces a number unrelated to price. `maxLines`
+therefore governs the DRAWN set.
+
+**But `maxLines` still bounds the operands indirectly, and the distinction is
+easy to overstate.** Removing the rank slice from the emit path does not make
+the parameter operand-neutral: live state is pruned to
+`MAX_LIVE_MULT * maxLines` per side by rank, and the emit path selects from that
+pruned array. Measured on the fixture at otherwise-default config, `maxLines` 2
+against 3 changes the emitted value on 113 bars, including bars where
+`tl_resistance` is undefined at 2 and 134.60 at 3, so a rule that fires stops
+firing. `maxLines` 6 against 3 differs on 158 bars. Any user-facing copy must say
+"does not slice", never "does not change".
 
 **Breaks are detected on wicks, so `tl_broken_*` can fire on a spike.** Validity
 and breakage share one predicate, which is what keeps the algorithm and the port
@@ -372,10 +415,6 @@ the anchors, closes after — is the obvious alternative and was rejected becaus
 it doubles the number of boolean gates that must agree across two runtimes,
 which is the exact failure mode this design is built to avoid.
 
-**Line A is not anchored at the all-time high.** A line from the 2001-07 peak
-(121.02) is violated by roughly 3 points in early 2002, so the containment rule
-correctly rejects it and anchors at 2002-03 (119.61) instead. Users who expect a
-line from the obvious peak will read this as a bug. The 2005-11 high (92.63)
-sits 1.6 under the chosen line, giving it a genuine third touch, which is the
-defence — and the indicator's description text should say that lines anchor
-where price actually held, not at the highest bar.
+**Lines anchor where price actually held, not at the highest bar.** A user who
+expects a line drawn from the obvious peak will otherwise read the containment
+rule as a bug. The indicator's description text says so explicitly.

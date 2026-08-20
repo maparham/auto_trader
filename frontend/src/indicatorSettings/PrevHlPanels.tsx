@@ -372,7 +372,7 @@ export function PrevHlCalculationRows({
           <label>Rolling span</label>
           <InfoTip
             title="Rolling span"
-            text="How the Range window handles market gaps. Trading time skips them; Wall-clock counts them. Only affects time units, not bars."
+            text="Gap handling for the Range window. Trading time skips closed-market gaps; Wall-clock counts them. Affects time units only, not bars."
           />
         </span>
         <select

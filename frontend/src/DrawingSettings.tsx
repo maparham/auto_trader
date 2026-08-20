@@ -5,6 +5,11 @@
 //   Style       — line color / width / style; Extend (trend lines only)
 //   Coordinates — each anchor point's price (+ timestamp, read-only date label)
 //   Visibility  — whether the drawing is drawn
+// The pattern overlay is the exception: its geometry comes from the copied
+// candles, so it gets its own Style tab (shape / colour / opacity / score) and
+// neither a Text nor a Coordinates tab — its anchor price is not something the
+// drawing reads back (it is fitted to the candles under it, or to the placement
+// a drag froze), so a price field there would be a control that does nothing.
 //
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 // The Text tab + middle-point / price-labels are a planned second pass (the
@@ -26,6 +31,7 @@ import Tooltip from "./components/Tooltip";
 import { useMaskedReplay } from "./lib/useMaskedReplay";
 import { maskedTimeLabel } from "./lib/timeFormat";
 import { type FibConfig, asFibConfig } from "./lib/fibConfig";
+import { asGhostStyle, type GhostStyle } from "./lib/patternGhost";
 import {
   loadDrawingDefault,
   saveDrawingDefault,
@@ -68,7 +74,12 @@ const TITLES: Record<string, string> = {
   priceLine: "Price line",
   priceChannelLine: "Parallel channel",
   fibonacciLine: "Fib retracement",
+  patternGhost: "Pattern overlay",
 };
+
+// The colour a ghost falls back to when the user switches it off the chart's
+// up/down colours: neutral, so one flat ghost reads apart from real candles.
+const GHOST_FLAT_COLOR = "#9598a1";
 
 export default function DrawingSettings({ overlays, id, onIdChange, onClose }: Props) {
   // Live id (changes if Extend recreates the overlay). All reads/writes use this;
@@ -86,6 +97,10 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const isTrend = TREND.has(name);
   const isRect = name === "rect";
   const isFib = name === "fibonacciLine";
+  // The pattern overlay derives its whole geometry from the copied candles, so
+  // none of the generic line/text controls apply to it: it gets its own Style
+  // tab (shape, colour, opacity, score) and no Text tab at all.
+  const isGhost = name === "patternGhost";
 
   const line = (live?.styles?.line ?? {}) as Partial<{ color: string; size: number; style: LineType }>;
   const poly = (live?.styles?.polygon ?? {}) as Partial<{ color: string; borderColor: string; borderSize: number }>;
@@ -112,6 +127,8 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const [vis, setVis] = useState<VisibilityModel>(extra0.visibility ?? defaultVisibility());
   // Fib retracement config (fibonacciLine only) — levels/extend/reverse/trend/labels.
   const [fib, setFib] = useState<FibConfig>(() => asFibConfig(extra0.fib));
+  // Pattern overlay look (patternGhost only).
+  const [ghostStyle, setGhostStyleState] = useState<GhostStyle>(() => asGhostStyle(extra0.ghostStyle));
 
   // "Defaults ▾" footer menu: this drawing type's default + named templates (global,
   // keyed by overlay name). Mirrors the indicator settings Defaults menu.
@@ -188,6 +205,12 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     overlays.setFibConfig(curId, next);
   }
 
+  function applyGhostStyle(next: Partial<GhostStyle>) {
+    const merged = { ...ghostStyle, ...next };
+    setGhostStyleState(merged);
+    overlays.setGhostStyle(curId, merged);
+  }
+
   function applyExtend(mode: "none" | "ray" | "both") {
     setExtend(mode);
     const newId = overlays.setExtend(curId, mode);
@@ -245,6 +268,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     if (cfg.polygon?.borderColor !== undefined) setBorderHex(cfg.polygon.borderColor);
     if (cfg.polygon?.borderSize !== undefined) setBorderSize(cfg.polygon.borderSize);
     if (cfg.fib !== undefined) setFib(cfg.fib);
+    if (cfg.ghostStyle !== undefined) setGhostStyleState(asGhostStyle(cfg.ghostStyle));
     if (cfg.showMiddle !== undefined) setShowMiddle(cfg.showMiddle);
     if (cfg.priceLabels !== undefined) setPriceLabels(cfg.priceLabels);
     if (cfg.visibility !== undefined) setVis(cfg.visibility);
@@ -308,6 +332,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
         overlays.setText(curId, oExtra.text ?? "");
         overlays.setShowMiddle(curId, oExtra.showMiddle ?? false);
         if (o.name === "fibonacciLine") overlays.setFibConfig(curId, asFibConfig(oExtra.fib));
+        if (o.name === "patternGhost") overlays.setGhostStyle(curId, asGhostStyle(oExtra.ghostStyle));
         overlays.setVisible(curId, o.visible);
       }
     }
@@ -405,7 +430,9 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
       footer={foot}
     >
         <div className="ind-tabs">
-          {(["style", "text", "coordinates", "visibility"] as Tab[]).map((t) => (
+          {((isGhost
+            ? ["style", "visibility"]
+            : ["style", "text", "coordinates", "visibility"]) as Tab[]).map((t) => (
             <button key={t} className={`ind-tab ${tab === t ? "on" : ""}`} onClick={() => setTab(t)}>
               {t === "style"
                 ? "Style"
@@ -421,7 +448,72 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
         <div className="ind-body">
           {tab === "style" && (
             <>
-              {isRect ? (
+              {isGhost ? (
+                <>
+                  <div className="ind-row">
+                    <label>Shape</label>
+                    <select
+                      value={ghostStyle.shape}
+                      onChange={(e) =>
+                        applyGhostStyle({ shape: e.target.value as GhostStyle["shape"] })
+                      }
+                    >
+                      <option value="candles">Candles</option>
+                      <option value="line">Close line</option>
+                    </select>
+                  </div>
+                  <div className="ind-row ind-style-row">
+                    <label>Color</label>
+                    <div className="ind-line-controls">
+                      <select
+                        value={ghostStyle.color === "direction" ? "direction" : "flat"}
+                        onChange={(e) =>
+                          applyGhostStyle({
+                            color: e.target.value === "direction" ? "direction" : GHOST_FLAT_COLOR,
+                          })
+                        }
+                      >
+                        <option value="direction">Up / down</option>
+                        <option value="flat">One color</option>
+                      </select>
+                      {ghostStyle.color !== "direction" && (
+                        <ColorLineStylePicker
+                          color={ghostStyle.color}
+                          onColor={(hex) => applyGhostStyle({ color: hex })}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <div className="ind-row ind-style-row">
+                    <label>Opacity</label>
+                    {/* Same slider the color popover uses elsewhere, lifted into
+                        the row: opacity is the control that matters most here, so
+                        it should not be a click deep. */}
+                    <div className="ind-line-controls clsp-opacity-row">
+                      <input
+                        className="clsp-opacity"
+                        type="range"
+                        min={15}
+                        max={100}
+                        step={5}
+                        value={Math.round(ghostStyle.opacity * 100)}
+                        onChange={(e) => applyGhostStyle({ opacity: Number(e.target.value) / 100 })}
+                      />
+                      <span className="clsp-opacity-val">
+                        {Math.round(ghostStyle.opacity * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                  <label className="ind-check">
+                    <input
+                      type="checkbox"
+                      checked={ghostStyle.score}
+                      onChange={(e) => applyGhostStyle({ score: e.target.checked })}
+                    />
+                    <span>Show match score</span>
+                  </label>
+                </>
+              ) : isRect ? (
                 <>
                   <div className="ind-row ind-style-row">
                     <label>Fill</label>
@@ -674,14 +766,18 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                 />
                 <span>Show on chart</span>
               </label>
-              <label className="ind-check">
-                <input
-                  type="checkbox"
-                  checked={priceLabels}
-                  onChange={(e) => applyPriceLabels(e.target.checked)}
-                />
-                <span>Show price label on axis</span>
-              </label>
+              {/* A ghost is fitted to the candles under it, so its anchor price
+                  is not a level worth tagging on the axis. */}
+              {!isGhost && (
+                <label className="ind-check">
+                  <input
+                    type="checkbox"
+                    checked={priceLabels}
+                    onChange={(e) => applyPriceLabels(e.target.checked)}
+                  />
+                  <span>Show price label on axis</span>
+                </label>
+              )}
 
               <VisibilityTab
                 model={vis}

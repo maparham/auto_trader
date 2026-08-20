@@ -17,7 +17,7 @@ vi.mock("klinecharts", () => ({
 }));
 
 import type { KLineData } from "klinecharts";
-import { computeFvg, parseFvgConfig, fvgWarmup, FVG_DEFAULTS, fvgZoneStyleOf } from "./fvg";
+import { computeFvg, parseFvgConfig, fvgWarmup, FVG_DEFAULTS, fvgZoneStyleOf, FVG_TEMPLATE } from "./fvg";
 
 /** Bar spanning [low, high]; open/close sit inside the range so a bar never
  * closes outside its own body extremes. */
@@ -282,5 +282,89 @@ describe("computeFvg MTF branch", () => {
     expect(gaps).toHaveLength(1);
     // createdTs is the HTF bar starting t0+4h → its first chart bar is index 4.
     expect(gaps[0]).toMatchObject({ side: "bull", top: 103, bottom: 100, createdIdx: 4 });
+  });
+});
+
+// Draw geometry. Only the right edge is under test: where a zone STOPS is the
+// one thing "Extend to Right" changes, and it must move the midline with it.
+describe("FVG_TEMPLATE.draw right edge", () => {
+  const BARS = [...BULL_BASE, ...filler(3, 23, 103.5, 104.5)]; // 26 bars, one bull gap
+  const BAR_PX = 10;
+  const PANE_W = 400; // room to spare past the last bar (index 25 -> x 250)
+  const LAST_BAR_RIGHT = 25 * BAR_PX + BAR_PX / 2;
+
+  function draw(extendData: Record<string, unknown>): { rects: number[]; dashEnds: number[] } {
+    const rects: number[] = [];
+    const dashEnds: number[] = [];
+    const ctx = {
+      save: () => {},
+      restore: () => {},
+      beginPath: () => {},
+      stroke: () => {},
+      setLineDash: () => {},
+      moveTo: () => {},
+      lineTo: (x: number) => dashEnds.push(x),
+      fillRect: (x: number, _y: number, w: number) => rects.push(x + w),
+      fillStyle: "",
+      strokeStyle: "",
+      lineWidth: 1,
+    };
+    const calcParams = [0, FVG_DEFAULTS.maxBars, FVG_DEFAULTS.maxGaps];
+    const result = FVG_TEMPLATE.calc!(BARS, { calcParams, extendData } as never);
+    const drew = FVG_TEMPLATE.draw!({
+      ctx,
+      indicator: { result, calcParams, extendData },
+      bounding: { width: PANE_W, height: 200 },
+      xAxis: { convertToPixel: (i: number) => i * BAR_PX },
+      yAxis: { convertToPixel: (p: number) => 200 - p },
+    } as never);
+    expect(drew).toBe(true);
+    expect(rects).toHaveLength(1);
+    return { rects, dashEnds };
+  }
+
+  it("stops at the last bar when the flag is off", () => {
+    expect(draw({ minSize: 0 }).rects[0]).toBe(LAST_BAR_RIGHT);
+  });
+
+  it("defaults to off with no extendData of its own", () => {
+    expect(draw({}).rects[0]).toBe(LAST_BAR_RIGHT);
+  });
+
+  it("runs to the pane edge when the flag is on", () => {
+    expect(draw({ extendRight: true }).rects[0]).toBe(PANE_W);
+  });
+
+  it("ends the midline where the zone ends", () => {
+    const off = draw({ showMidline: true });
+    expect(off.dashEnds).toEqual([LAST_BAR_RIGHT]);
+    const on = draw({ showMidline: true, extendRight: true });
+    expect(on.dashEnds).toEqual([PANE_W]);
+  });
+
+  it("never runs past the pane, with the last bar scrolled off to the right", () => {
+    // Pane cut at 240: the zone opens at bar 22 (x 220) but the last bar's right
+    // edge (255) is off-screen, so both modes must render identically.
+    const cut = (extendData: Record<string, unknown>): number => {
+      const rects: number[] = [];
+      const ctx = {
+        save: () => {}, restore: () => {}, beginPath: () => {}, stroke: () => {},
+        setLineDash: () => {}, moveTo: () => {}, lineTo: () => {},
+        fillRect: (x: number, _y: number, w: number) => rects.push(x + w),
+        fillStyle: "", strokeStyle: "", lineWidth: 1,
+      };
+      const calcParams = [0, FVG_DEFAULTS.maxBars, FVG_DEFAULTS.maxGaps];
+      const result = FVG_TEMPLATE.calc!(BARS, { calcParams, extendData } as never);
+      FVG_TEMPLATE.draw!({
+        ctx,
+        indicator: { result, calcParams, extendData },
+        bounding: { width: 240, height: 200 },
+        xAxis: { convertToPixel: (i: number) => i * BAR_PX },
+        yAxis: { convertToPixel: (p: number) => 200 - p },
+      } as never);
+      return rects[0];
+    };
+    expect(cut({})).toBe(240);
+    expect(cut({ extendRight: true })).toBe(240);
   });
 });

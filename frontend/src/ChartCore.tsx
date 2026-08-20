@@ -11,7 +11,6 @@ import {
   type KLineData,
 } from "klinecharts";
 import {
-  fetchRange,
   fetchRangeStrict,
   fetchMarketMeta,
   fetchCandleCacheStats,
@@ -27,7 +26,7 @@ import {
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
-import { pageHistoryBack, coverHistoryRangeParallel, scrollbackLoadOlder } from "./lib/historyPaging";
+import { pageHistoryBack, coverHistoryRangeParallel, scrollbackLoadOlder, PAGE_BARS, type PageResult } from "./lib/historyPaging";
 import { klineStyles } from "./lib/chartTheme";
 import ChartLegend, {
   type ChartLegendHandle,
@@ -44,6 +43,12 @@ import ReplayPill from "./ReplayPill";
 import ReplayTicket from "./ReplayTicket";
 import ReplayReportCard from "./ReplayReportCard";
 import { useProximityHeatmap } from "./chart/useProximityHeatmap";
+import PatternMatchesPanel from "./PatternMatchesPanel";
+import { usePatternSearch } from "./chart/usePatternSearch";
+import { barsInRange } from "./lib/patternSearch";
+import { toast } from "./lib/notify";
+import { capturePattern, MIN_GHOST_BARS } from "./lib/patternGhost";
+import { useTrendlinePins } from "./chart/useTrendlinePins";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
 import {
@@ -78,6 +83,7 @@ import {
   highlightTradeSignal,
   snapshotViewChanged,
   indicatorOverlayRepaint,
+  patternClipboard,
   type PendingEdit,
   type TradeLineField,
   type DraftOrder,
@@ -90,12 +96,13 @@ import {
   saveLegendCollapsed,
   loadCandleHidden,
   saveCandleHidden,
+  loadInsetBand,
+  saveInsetBand,
   CONDITION_LABELS,
   loadSnapshotMeta,
   deleteSnapshotMeta,
   loadFavoriteResolutions,
   loadAvwapAnchor,
-  type IndicatorInstance,
   type SnapshotMeta,
   type AlertCondition,
   type AlertTrigger,
@@ -112,8 +119,11 @@ import {
   registerHistory,
   unregisterHistory,
   partitionHistorySuffixes,
+  rebuildIdsForDeltas,
   withHistorySuppressed,
 } from "./lib/history";
+import { setInsetBandFraction, type InsetBandBox } from "./lib/indicators/inset";
+import InsetBandResizer from "./InsetBandResizer";
 import { onLayoutChanged } from "./lib/persist/layoutEvents";
 import { scheduleAutoSave, cancelAutoSave } from "./lib/templateAutosave";
 import {
@@ -129,6 +139,7 @@ import {
   browserTimezone,
   first,
 } from "./chart/chartPainters";
+import { readLiveEdge } from "./lib/liveEdge";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
 import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, restingLineEndX } from "./lib/positionLines";
@@ -255,7 +266,8 @@ interface Props {
   onPeriod?: (cellId: string, p: Period) => void;
 }
 
-const PAGE_BARS = 500; // older bars to request per scroll-back page
+// PAGE_BARS (older bars per scroll-back page) now lives in lib/historyPaging, so
+// the match-jump reach budget can be derived from it in one place.
 // Empty windows can be legitimate (weekend/overnight gaps), so step back a few
 // windows before declaring history exhausted instead of stopping at the first gap.
 const MAX_EMPTY_WINDOWS = 6;
@@ -309,6 +321,10 @@ export default function ChartCore({
     rangePickArmed,
     rangePickResult,
     zoomRangeArmed,
+    patternRangeArmed,
+    patternRangeMode,
+    patternPasteArmed,
+    patternSearchAvailable,
     timeRangeArmed,
     selectedIndicator,
     legendHovered,
@@ -328,6 +344,12 @@ export default function ChartCore({
   // Active quick-range button (null once the user manually zooms/scrolls or
   // changes interval). Transient — not persisted.
   const [activeRange, setActiveRange] = useState<RangeKey | null>(null);
+  // "Back to live" pill: how far the view sits behind the newest bar ("12d
+  // back") plus where to park it, or null while the newest bar is on screen
+  // (pill hidden). Derived from the visible range, never from scroll deltas —
+  // see the effect below. The offsets clear klinecharts' own axes, whose sizes
+  // move with the price precision and the sub-pane layout.
+  const [liveEdge, setLiveEdge] = useState<{ label: string; right: number; bottom: number } | null>(null);
   // The in-flight quick-range request (resolution + window + the series identity it
   // was issued for). Acts as an ownership token: ensureCoverageAndFit bails if a
   // newer pick replaces it OR the epic/broker/side drifts from what it captured.
@@ -339,7 +361,9 @@ export default function ChartCore({
   // moving to useRangeNavigation in Step 7). Assigned in render (before any effect
   // runs) so useLiveMarketData can call them across the extraction boundary via
   // handle.*.current() — staleness-proof, same pattern as redrawRef.
-  const ensureCoverageAndFitRef = useRef<(token: RangeReq) => Promise<void>>(async () => {});
+  const ensureCoverageAndFitRef = useRef<(token: RangeReq) => Promise<PageResult>>(
+    async () => "aborted", // replaced by useRangeNavigation in render, before any effect
+  );
   const ensureAnchorCoverageRef = useRef<() => Promise<void>>(async () => {});
   // Trade index to re-select after a timeframe switch's coverage walks settle
   // (see the data-load effect). A ref, not an effect local, so a SECOND switch
@@ -474,8 +498,9 @@ export default function ChartCore({
   // quadratically (measured 1.9s → 6.9s → 31.4s).
   const cappedAnchorRef = useRef(new Map<string, { target: number; reached: number }>());
 
-  // On-demand page-back so the backtest trades panel can scroll to a trade whose
-  // entry predates the loaded bars. ensureAnchorCoverage pages to the OLDEST anchor
+  // On-demand page-back to a KNOWN target timestamp: the backtest trades panel
+  // scrolling to a trade whose entry predates the loaded bars, a timeframe
+  // switch restoring a preserved center, a pattern-search match years back. ensureAnchorCoverage pages to the OLDEST anchor
   // with a small budget (enough for a just-finished run on the recent-only load);
   // this instead targets ONE trade's entry with a larger bounded budget, so an old
   // trade can be reached on demand. The bars come from the local candle cache, and
@@ -484,7 +509,10 @@ export default function ChartCore({
   // bar now reaches `fromTs` (false → older than reachable history: the caller
   // shows a notice rather than scrolling nowhere). Shares the loadingRef mutex +
   // stale guards with the other pagers; a quick-range pick still preempts it.
-  const coverBacktestTradeTo = async (fromTs: number): Promise<boolean> => {
+  const coverBacktestTradeTo = async (
+    fromTs: number,
+    opts?: { owner?: RangeReq | null; maxWindows?: number; onWindowError?: () => void },
+  ): Promise<boolean> => {
     const chart = chartRef.current;
     if (!chart) return false;
     const epic = epicRef.current;
@@ -494,10 +522,17 @@ export default function ChartCore({
     const first = chart.getDataList()[0];
     if (!first) return false;
     if (fromTs >= first.timestamp) return true; // already covered
-    if (pendingRangeRef.current) return false; // a quick-range pick owns paging
+    // `owner` is the pending range token this cover runs FOR, when it has one:
+    // goToRange parks its token before covering so a click on the next match
+    // preempts this walk (a bare `!== null` would make the walk stale against
+    // its own token, and no owner at all would let two 800-window fetch storms
+    // run side by side down a results list). Default null = the old rule: any
+    // quick-range pick owns paging and this cover stands down.
+    const owner = opts?.owner ?? null;
+    if (pendingRangeRef.current !== owner) return false; // someone else owns paging
     const isStale = () =>
       !chartRef.current ||
-      pendingRangeRef.current !== null ||
+      pendingRangeRef.current !== owner ||
       epicRef.current !== epic ||
       brokerIdRef.current !== broker ||
       priceSideRef.current !== side ||
@@ -519,17 +554,24 @@ export default function ChartCore({
       // target, so empty windows en route are interior closed-market gaps,
       // never the history edge. maxWindows is a safety cap sized to cover a
       // full year of 5m bars (~210 windows); deeper than that the caller shows
-      // the "open it on a higher timeframe" notice, as before.
+      // the "open it on a higher timeframe" notice, as before. A caller with a
+      // deeper target (a pattern match from 2018) raises the cap explicitly.
       await coverHistoryRangeParallel<KLineData>({
         fromTs,
         toTs: first.timestamp,
         resSec: RESOLUTION_SECONDS[resolution] ?? 60,
         pageBars: PAGE_BARS,
-        maxWindows: 400,
+        maxWindows: opts?.maxWindows ?? 400,
         concurrency: 6,
         isStale,
         getData: () => chartRef.current?.getDataList(),
-        fetchOlder: (fromSec, toSec) => fetchRange(epic, resolution, fromSec, toSec, side, broker),
+        // fetchRangeStrict, not fetchRange: coverHistoryRangeParallel marks a
+        // hole by a THROW, and fetchRange turns a 5xx into an empty page, which
+        // is indistinguishable from a closed-market window — the contiguity
+        // rule would then glue distant bars together instead of stopping at the
+        // gap.
+        fetchOlder: (fromSec, toSec) =>
+          fetchRangeStrict(epic, resolution, fromSec, toSec, side, broker),
         applyData: (merged) => overlays.applyOlderBars(merged),
         onCursor: (sec) => {
           cursorSecRef.current = sec;
@@ -537,6 +579,7 @@ export default function ChartCore({
         onProgress: () => {
           exhaustedRef.current = false;
         },
+        onWindowError: opts?.onWindowError,
       });
       // Redraw the markers/period bands against the now-extended history: the
       // recent-only load culled the fills this trade belongs to (same reason
@@ -548,8 +591,10 @@ export default function ChartCore({
       const oldest = chartRef.current?.getDataList()[0];
       return !!oldest && oldest.timestamp <= fromTs;
     } finally {
-      // Release only if a quick-range pick hasn't taken the mutex for its own walk.
-      if (pendingRangeRef.current === null) {
+      // Release only if a NEWER pick hasn't taken the mutex for its own walk
+      // (our own owner token still holding it means this walk is still the one
+      // that matters, and goToRange's fit runs next).
+      if (pendingRangeRef.current === owner) {
         loadingRef.current = false;
       }
     }
@@ -807,6 +852,11 @@ export default function ChartCore({
   // reposition when a separator is dragged (geometry, not just membership, changed).
   const [subPaneLegends, setSubPaneLegends] = useState<SubPaneLegendData[]>([]);
   const subPaneLegendsSigRef = useRef("");
+  // The inset band's legend card (the same card a sub-pane gets, positioned at the
+  // band's top edge) and the band's own geometry, which the resize handle sits on.
+  const [insetLegend, setInsetLegend] = useState<SubPaneLegendData | null>(null);
+  const [insetBand, setInsetBand] = useState<InsetBandBox | null>(null);
+  const insetLegendSigRef = useRef("");
   // Drop-indicator line's y-offset (relative to chart root) during a sub-pane drag;
   // null when no drag is in progress.
   const [paneDropTop, setPaneDropTop] = useState<number | null>(null);
@@ -896,6 +946,8 @@ export default function ChartCore({
   const [rangePickArmedUi, setRangePickArmedUi] = useState(false);
   // Same, for the Zoom-to-range tool while it's armed (press-drag to place).
   const [zoomArmedUi, setZoomArmedUi] = useState(false);
+  // Same, for the "Find similar" pattern tool while it's armed (press-drag to place).
+  const [patternArmedUi, setPatternArmedUi] = useState(false);
   // Same, for the Time Range highlight tool while it's armed (press-drag to place).
   const [timeRangeArmedUi, setTimeRangeArmedUi] = useState(false);
   // Cursor over the chart canvas: "cur-pointer" (hand) over a selectable indicator
@@ -1373,27 +1425,9 @@ export default function ChartCore({
         deltas.map((d) => d.suffix),
         epic,
       );
-      // Which indicator instances need a live rebuild: ids whose config changed,
-      // plus ids whose position or type changed in an id-set-equal list delta
-      // (membership adds/removes are handled by the sync itself).
-      const rebuild = new Set<string>();
-      for (const d of deltas) {
-        if (d.suffix === "indicatorConfig") {
-          const a = (d.before ?? {}) as Record<string, unknown>;
-          const b = (d.after ?? {}) as Record<string, unknown>;
-          for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
-            if (JSON.stringify(a[id]) !== JSON.stringify(b[id])) rebuild.add(id);
-          }
-        } else if (d.suffix === "indicators") {
-          const a = (d.before ?? []) as IndicatorInstance[];
-          const b = (d.after ?? []) as IndicatorInstance[];
-          const posA = new Map(a.map((x, i) => [x.id, `${i}:${x.type}`]));
-          for (const [i, x] of b.entries()) {
-            const pa = posA.get(x.id);
-            if (pa !== undefined && pa !== `${i}:${x.type}`) rebuild.add(x.id);
-          }
-        }
-      }
+      // Which indicator instances need a live rebuild (index, type AND inset
+      // placement all count as changes — see rebuildIdsForDeltas).
+      const rebuild = rebuildIdsForDeltas(deltas);
       withHistorySuppressed(() => {
         if (drawings) {
           overlays.rehydrate();
@@ -1431,6 +1465,88 @@ export default function ChartCore({
     priceSide,
     displayResolution: period.resolution,
   });
+  // "Find similar": the band the user dragged becomes a query, the matches come
+  // back ranked. State per cell; the results panel is rendered below.
+  const patternGetBars = useCallback(
+    () =>
+      (chartRef.current?.getDataList() ?? []).map((b) => ({
+        ts: Math.round(b.timestamp / 1000),
+        o: b.open,
+        h: b.high,
+        l: b.low,
+        c: b.close,
+      })),
+    [],
+  );
+  // "Copy pattern": the same drag, but the selected candles go on the global
+  // clipboard instead of to the search endpoint. Defined in render scope so it
+  // closes over this cell's live epic/resolution; the gesture reads the ref.
+  const copyPattern = useCallback(
+    (fromMs: number, toMs: number) => {
+      const selected = barsInRange(patternGetBars(), fromMs, toMs);
+      const captured = capturePattern(selected, { epic: symbol.epic, resolution: period.resolution });
+      if (!captured) {
+        toast(`select at least ${MIN_GHOST_BARS} candles to copy`);
+        return;
+      }
+      patternClipboard.set(captured);
+      toast(
+        captured.truncated
+          ? `copied the newest ${captured.bars.length} candles: paste them anywhere with the pattern tool`
+          : `copied ${captured.bars.length} candles: paste them anywhere with the pattern tool`,
+      );
+    },
+    [patternGetBars, symbol.epic, period.resolution],
+  );
+  const copyPatternRef = useRef(copyPattern);
+  copyPatternRef.current = copyPattern;
+  const patternSearch = usePatternSearch({
+    epic: symbol.epic,
+    broker: brokerId,
+    priceSide,
+    resolution: period.resolution,
+    getBars: patternGetBars,
+  });
+  // The gesture lives in the once-mounted init effect, so it reads a ref rather
+  // than the render-scope value (same reason as onZoomToRange's resRef).
+  const patternSearchRef = useRef(patternSearch);
+  patternSearchRef.current = patternSearch;
+  // Publish whether the tool applies to this cell at all, so the draw sidebar can
+  // disable its button (it has no epic/period/snapshot of its own). Synthetic
+  // epics have no stored history to search, sub-minute (liveOnly) resolutions
+  // aren't served by the endpoint, and a read-only snapshot is a frozen picture.
+  // In an effect, not render: setting a Signal during render would notify the
+  // sidebar's subscriber mid-render.
+  const patternAvailable = !isSynthetic(symbol.epic) && !period.liveOnly && !snapView;
+  useEffect(() => {
+    patternSearchAvailable.set(patternAvailable);
+    // A cell can become gated while the tool is armed (switch to a 10-second
+    // interval mid-gesture); don't leave a live gesture on a gated cell.
+    // Copy needs no endpoint, only candles, so only a SEARCH gesture is called
+    // off when the cell becomes gated.
+    if (!patternAvailable && patternRangeArmed.value && patternRangeMode.value === "search") {
+      patternRangeArmed.set(false);
+    }
+  }, [patternAvailable, patternSearchAvailable, patternRangeArmed, patternRangeMode]);
+  // Results belong to ONE series. The cell reloads in place on a symbol/broker/
+  // side/interval change, so without this the panel stays up rendering the NEW
+  // epic and resolution over the OLD series' matches, and a row click would page
+  // history for the wrong window. Same for a cell that just became gated. Read
+  // the ref (assigned above, this render) rather than adding result/loading/error
+  // to the deps: only the identity change should trigger a reset. Clearing the
+  // band is separate from dismiss(), exactly as in the panel's onDismiss — and is
+  // skipped when no panel is up, so the zoom tool's own band (which survives the
+  // timeframe drop it just performed) is left alone.
+  useEffect(() => {
+    const ps = patternSearchRef.current;
+    if (!ps.result && !ps.loading && !ps.error) return;
+    ps.dismiss();
+    overlays.clearZoomBand();
+    overlays.clearMatchBands();
+  }, [symbol.epic, brokerId, priceSide, period.resolution, patternAvailable, overlays]);
+  // Click a trendline's end handle to run it on to the pane edge (and again to
+  // release). Capture-phase, so it claims the press before the chart pans.
+  useTrendlinePins({ chartRef, containerRef });
   // onZoomToRange runs from the once-mounted init effect, so it must read these
   // through live refs (updated every render), not its mount-time closure props.
   const onPeriodRef = useRef(onPeriod);
@@ -1521,11 +1637,15 @@ export default function ChartCore({
   // the two coverage walks onto handle.ensureCoverageAndFitRef /
   // handle.ensureAnchorCoverageRef (in render, before any effect runs) so
   // useLiveMarketData + the init effect can call them across the boundary.
-  const { onRangePick, onGoToDate } = useRangeNavigation(handle, {
+  const { onRangePick, onGoToDate, goToRange } = useRangeNavigation(handle, {
     pageHistoryBack,
     pageBars: PAGE_BARS,
     fitVisibleRange,
     extendMtfCoverage,
+    // The parallel cover, shared with the backtest trades panel: a match jump
+    // knows its target time, so it covers the gap concurrently instead of
+    // walking it a page at a time.
+    coverHistoryTo: coverBacktestTradeTo,
     scope,
     symbol,
     brokerId,
@@ -1546,6 +1666,11 @@ export default function ChartCore({
     const chart = init(el);
     if (!chart) return;
     chartRef.current = chart;
+    // The band height the user last dragged this cell to. Seeded before the first
+    // indicator is created, so an inset instance restored from storage paints at the
+    // right height on its first frame rather than snapping after it.
+    const savedBand = loadInsetBand(scope);
+    if (savedBand != null) setInsetBandFraction(chart, savedBand);
     // v10 data pipeline: the facade owns setDataLoader and replays our
     // push-based data (setBars/pushBar) as pull-based getBars/subscribeBar.
     const dataFacade = createChartDataFacade();
@@ -2143,6 +2268,12 @@ export default function ChartCore({
     let zoomDownX = 0;
     let zoomMoved = false;
     let zoomDragCleanup: (() => void) | null = null;
+    // "Find similar" gesture state (clone of Zoom to range above; it shares the
+    // zoom band overlay, so onZoomBandClear below must know about this phase too).
+    let patternPhase: "idle" | "drag" | "track" = "idle";
+    let patternDownX = 0;
+    let patternMoved = false;
+    let patternDragCleanup: (() => void) | null = null;
     // Timestamp at an absolute page x, clamped into whitespace to the nearest end
     // bar (a range to "now" ends past the last bar, where convertFromPixel is null).
     const rangePickTsAtX = (clientX: number): number | null => {
@@ -2292,7 +2423,111 @@ export default function ChartCore({
     const onZoomBandClear = (e: MouseEvent) => {
       if (e.button !== 0) return;
       if (zoomRangeArmed.value || zoomPhase !== "idle") return;
+      // "Find similar" paints the same band: a press it declined to own (the
+      // price-axis strip, say) must not wipe the band out from under its
+      // click-move-click, which is still waiting for the closing click.
+      if (patternRangeArmed.value || patternPhase !== "idle") return;
       if (overlays.hasZoomBand()) overlays.clearZoomBand();
+    };
+
+    // --- Find similar (pattern search) ---
+    // Same two-gesture placement as Zoom to Range: press-drag-release, or
+    // click-move-click. On a real-width release the selected candles become the
+    // pattern query and the results panel opens. The band stays painted while
+    // the results are up, so the user can see what they asked about.
+    const patternFinalize = (endTs: number | null) => {
+      if (endTs != null) overlays.updateZoomBand(endTs);
+      const res = overlays.finishZoomBand(); // null if no real width (a plain click)
+      patternDragCleanup?.();
+      patternDragCleanup = null;
+      patternPhase = "idle";
+      patternRangeArmed.set(false); // one-shot: disarm after a pick
+      const mode = patternRangeMode.value;
+      patternRangeMode.set("search"); // one-shot, like the arming itself
+      if (!res) return;
+      if (mode === "copy") {
+        // Copy leaves no band up: nothing is being described, and the ghost the
+        // user is about to paste is the thing to look at.
+        copyPatternRef.current(res.fromMs, res.toMs);
+        overlays.clearZoomBand();
+        return;
+      }
+      // A new query retires the previous run's match bands: they mark a row in
+      // a result list that is about to be replaced.
+      overlays.clearMatchBands();
+      patternSearchRef.current?.run(res.fromMs, res.toMs);
+    };
+    const onPatternMove = (me: MouseEvent) => {
+      const ts = rangePickTsAtX(me.clientX);
+      if (ts == null) return;
+      if (Math.abs(me.clientX - patternDownX) > 4) patternMoved = true;
+      overlays.updateZoomBand(ts);
+    };
+    const onPatternUp = (ue: MouseEvent) => {
+      window.removeEventListener("mouseup", onPatternUp, true);
+      if (patternPhase !== "drag") return;
+      if (patternMoved) {
+        patternFinalize(rangePickTsAtX(ue.clientX)); // press-drag: release ends it
+      } else {
+        patternPhase = "track"; // a plain click: cursor sizes it, next click ends
+      }
+    };
+    const onPatternDown = (e: MouseEvent) => {
+      if (!patternRangeArmed.value || e.button !== 0) return;
+      const c = chartRef.current;
+      const mainW = c?.getSize("candle_pane", 'main')?.width ?? Infinity;
+      if (e.clientX - el.getBoundingClientRect().left > mainW) return; // price-axis strip
+      if (patternPhase === "track") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        patternFinalize(rangePickTsAtX(e.clientX));
+        return;
+      }
+      const startTs = rangePickTsAtX(e.clientX);
+      if (startTs == null) return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // the pattern tool owns this gesture
+      overlays.startZoomBand(startTs);
+      patternPhase = "drag";
+      patternDownX = e.clientX;
+      patternMoved = false;
+      window.addEventListener("mousemove", onPatternMove, true);
+      window.addEventListener("mouseup", onPatternUp, true);
+      patternDragCleanup = () => {
+        window.removeEventListener("mousemove", onPatternMove, true);
+        window.removeEventListener("mouseup", onPatternUp, true);
+      };
+    };
+
+    // --- Paste pattern (the copied candles as a ghost overlay) ---
+    // A single click, unlike the copy drag: the clipboard already says how many
+    // bars there are, so the click only decides where they start. The drop price
+    // matters only until the ghost's first auto-fit (see the patternGhost
+    // template) — a ghost pasted past the newest bar has nothing to fit to and
+    // hangs off exactly this price.
+    const onPastePatternDown = (e: MouseEvent) => {
+      if (!patternPasteArmed.value || e.button !== 0) return;
+      const ghost = patternClipboard.value;
+      if (!ghost) {
+        patternPasteArmed.set(false);
+        return;
+      }
+      const c = chartRef.current;
+      const mainW = c?.getSize("candle_pane", "main")?.width ?? Infinity;
+      const rect = el.getBoundingClientRect();
+      if (e.clientX - rect.left > mainW) return; // price-axis strip
+      const candle = c?.getSize("candle_pane", "root");
+      const y = e.clientY - rect.top;
+      if (!candle || y < candle.top || y > candle.top + candle.height) return; // a sub-pane
+      const ts = rangePickTsAtX(e.clientX);
+      if (ts == null) return;
+      const pt = first(
+        c?.convertFromPixel([{ y }], { paneId: "candle_pane", absolute: true }) ?? [],
+      );
+      e.preventDefault();
+      e.stopImmediatePropagation(); // the paste owns this press
+      overlays.pastePatternGhost(ts, typeof pt?.value === "number" ? pt.value : 0, ghost);
+      patternPasteArmed.set(false); // one-shot, like every other placement tool
     };
 
     // --- Time Range highlight (persistent) ---
@@ -2525,6 +2760,17 @@ export default function ChartCore({
       setZoomArmedUi(on);
       const c = chartRef.current;
       if (on) {
+        // Mutual exclusion with Find similar: the two share ONE overlay band, and
+        // arming the second while the first sat in its click-move-click "track"
+        // phase left that tool's mousemove handler attached, steering the frozen
+        // band's right edge around the chart. Disarming runs the other tool's OFF
+        // branch, which detaches its handler and resets its phase. Setting a
+        // signal false can't re-enter this true branch, so there is no loop.
+        // FIRST, before the disables below: .set notifies synchronously, so the
+        // other branch's setScroll/ZoomEnabled(true) restore must land before our
+        // disable, not after it.
+        patternRangeArmed.set(false);
+        patternPasteArmed.set(false); // one placement gesture at a time
         c?.setScrollEnabled(false);
         c?.setZoomEnabled(false);
         wrapRef.current?.focus({ preventScroll: true }); // so Esc reaches onKeyDown
@@ -2533,6 +2779,42 @@ export default function ChartCore({
         zoomDragCleanup = null;
         if (zoomPhase !== "idle") {
           zoomPhase = "idle";
+          // disarmed mid-drag: freeze the band; a zero-width one self-clears via
+          // finishZoomBand's side effect, a real one stays visible.
+          if (overlays.hasZoomBand()) overlays.finishZoomBand();
+        }
+        c?.setScrollEnabled(true);
+        c?.setZoomEnabled(true);
+      }
+    });
+
+    // Find-similar arm/disarm: same shape as zoom-to-range above (it shares the
+    // band). On disarm, tear down any half-drawn drag but LEAVE a completed band
+    // visible, since the results panel is describing it.
+    // Paste arm: the other two own a DRAG, this one a single click, but only one
+    // of the three may claim the next press — arming this disarms those, exactly
+    // as they disarm each other. Also focuses the wrap so Esc reaches onKeyDown.
+    const unsubPastArm = patternPasteArmed.subscribe((on) => {
+      if (!on) return;
+      zoomRangeArmed.set(false);
+      patternRangeArmed.set(false);
+      wrapRef.current?.focus({ preventScroll: true });
+    });
+
+    const unsubPatternArm = patternRangeArmed.subscribe((on) => {
+      setPatternArmedUi(on);
+      const c = chartRef.current;
+      if (on) {
+        zoomRangeArmed.set(false); // shared band: see the note in the zoom subscription
+        patternPasteArmed.set(false); // one placement gesture at a time
+        c?.setScrollEnabled(false);
+        c?.setZoomEnabled(false);
+        wrapRef.current?.focus({ preventScroll: true }); // so Esc reaches onKeyDown
+      } else {
+        patternDragCleanup?.();
+        patternDragCleanup = null;
+        if (patternPhase !== "idle") {
+          patternPhase = "idle";
           // disarmed mid-drag: freeze the band; a zero-width one self-clears via
           // finishZoomBand's side effect, a real one stays visible.
           if (overlays.hasZoomBand()) overlays.finishZoomBand();
@@ -2575,6 +2857,12 @@ export default function ChartCore({
       // so the measure/line/clone/anchor handlers below never fire during a pick.
       // Zoom-to-range FIRST (before Pick Range): when armed it owns the press.
       el.addEventListener("mousedown", onZoomDown, true);
+      // Find similar, alongside zoom-to-range: when armed it owns the press, and
+      // it must run before onZoomBandClear (they share the band).
+      el.addEventListener("mousedown", onPatternDown, true);
+      // Paste, alongside them: when armed it owns the press, before the band
+      // click-away handler can read it as a click-away.
+      el.addEventListener("mousedown", onPastePatternDown, true);
       el.addEventListener("mousedown", onRangePickDown, true);
       el.addEventListener("mousedown", onTimeRangeDown, true);
       el.addEventListener("mousedown", onMeasureShift, true);
@@ -2954,8 +3242,11 @@ export default function ChartCore({
       unsubSlopeArm();
       unsubRangePickArm();
       unsubZoomArm();
+      unsubPatternArm();
+      unsubPastArm();
       unsubTimeRangeArm();
       rangePickDragCleanup?.();
+      patternDragCleanup?.(); // drop an in-flight Find similar drag's window listeners
       timeRangeCleanup?.(); // drop an in-flight highlight placement's window listeners
       slopeDragCleanup?.(); // drop an in-flight slope handle drag's window listeners
       overlays.setMeasureDone(null);
@@ -2974,6 +3265,8 @@ export default function ChartCore({
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
       el.removeEventListener("mousedown", onZoomDown, true);
+      el.removeEventListener("mousedown", onPatternDown, true);
+      el.removeEventListener("mousedown", onPastePatternDown, true);
       el.removeEventListener("mousedown", onRangePickDown, true);
       el.removeEventListener("mousedown", onTimeRangeDown, true);
       el.removeEventListener("mousedown", onMeasureShift, true);
@@ -3385,7 +3678,7 @@ export default function ChartCore({
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
   // Extracted to chart/useLiveMarketData.ts; every value it read from this
   // closure is passed via `handle` or the deps object below.
-  useLiveMarketData(handle, {
+  const { goLive } = useLiveMarketData(handle, {
     symbol,
     brokerId,
     priceSide,
@@ -3550,6 +3843,33 @@ export default function ChartCore({
     };
   }, [replayMode, replayStartAt]);
 
+  // Drive the "back to live" pill. onVisibleRangeChange (not onScroll/onZoom) is
+  // the subscription that matters: klinecharts fires it from the range recompute
+  // itself, so PROGRAMMATIC moves — the jump, a quick-range pick, a TF switch —
+  // update the pill too, where a scroll action would leave it stale showing.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const refresh = () => {
+      const label = readLiveEdge(chart);
+      const right = (chart.getSize("candle_pane", "yAxis")?.width ?? 0) + 10;
+      const bottom = (chart.getSize("x_axis_pane", "root")?.height ?? 0) + 10;
+      // Same object identity while nothing moved: onVisibleRangeChange fires on
+      // every frame of a drag, and a fresh object each time would re-render the
+      // whole cell throughout the gesture.
+      setLiveEdge((prev) =>
+        label == null
+          ? null
+          : prev && prev.label === label && prev.right === right && prev.bottom === bottom
+            ? prev
+            : { label, right, bottom },
+      );
+    };
+    refresh();
+    chart.subscribeAction("onVisibleRangeChange", refresh);
+    return () => chart.unsubscribeAction("onVisibleRangeChange", refresh);
+  }, []);
+
   // Two independent hide gestures, each with its own live effect:
   //  • Sidebar eye menu "Hide indicators" — masks every indicator's curve IN PLACE
   //    (pane stays); re-derives visibility from intent + interval on toggle.
@@ -3662,6 +3982,8 @@ export default function ChartCore({
     setTradePills,
     setLegendRows,
     setSubPaneLegends,
+    setInsetLegend,
+    setInsetBand,
     timezone,
     theme,
     containerRef,
@@ -3693,6 +4015,7 @@ export default function ChartCore({
     curveLabelsRef,
     legendRowsSigRef,
     subPaneLegendsSigRef,
+    insetLegendSigRef,
     legendHandleRef,
     legendBarIdxRef,
     exitClustersRef,
@@ -4162,6 +4485,13 @@ export default function ChartCore({
             zoomRangeArmed.set(false); // subscription restores scroll/zoom
             overlays.clearZoomBand();
             e.preventDefault();
+          } else if (patternRangeArmed.value) {
+            patternRangeArmed.set(false); // subscription restores scroll/zoom
+            overlays.clearZoomBand();
+            e.preventDefault();
+          } else if (patternPasteArmed.value) {
+            patternPasteArmed.set(false);
+            e.preventDefault();
           } else if (rangePickArmed.value) {
             rangePickArmed.set(false); // subscription clears the band + restores scroll
             e.preventDefault();
@@ -4235,7 +4565,7 @@ export default function ChartCore({
     >
       <div
         ref={containerRef}
-        className={anchoring || measureArmedUi || slopeArmedUi || rangePickArmedUi || zoomArmedUi || timeRangeArmedUi ? "anchoring" : undefined}
+        className={anchoring || measureArmedUi || slopeArmedUi || rangePickArmedUi || zoomArmedUi || patternArmedUi || timeRangeArmedUi ? "anchoring" : undefined}
         style={{ width: "100%", height: "100%" }}
       />
       {paneDropTop != null && (
@@ -4368,6 +4698,28 @@ export default function ChartCore({
           pointerEvents: "none",
         }}
       />
+      {/* "Back to live" pill: shown only while the newest bar is off-screen, so a
+          long pan back through history always has a one-click way home. z-index 11
+          (above the overlay canvases, below the no-data banner) and the only element
+          in that stack that takes pointer events — the canvases stay click-through
+          so the draw tools underneath keep working. */}
+      {liveEdge && (
+        <Tooltip content="Jump to the latest bar" placement="left">
+          <button
+            type="button"
+            className="chart-golive"
+            data-testid="chart-golive"
+            style={{ right: liveEdge.right, bottom: liveEdge.bottom }}
+            onClick={goLive}
+          >
+            <span className="chart-golive-label">{liveEdge.label}</span>
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+                 strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m5 4 9 8-9 8z" /><line x1="19" y1="4" x2="19" y2="20" />
+            </svg>
+          </button>
+        </Tooltip>
+      )}
       {/* Data-unavailable banner: no candles after a grace period (broker maintenance,
           auth failure, offline, or an unknown epic). Generic on purpose — a 401 can't
           be told apart from expired creds, so we don't claim a specific cause. */}
@@ -4486,6 +4838,7 @@ export default function ChartCore({
         candleHidden={candleHidden}
         onToggleCandle={toggleCandleHidden}
         subPanes={subPaneLegends}
+        insetLegend={insetLegend}
         selectedName={selectedName}
         highlightedName={curveHoverNameState}
         handleRef={legendHandleRef}
@@ -4510,6 +4863,18 @@ export default function ChartCore({
         // symbol-search modal targets this cell's symbol.
         onChangeSymbol={requestSymbolSearch}
       />
+
+      {/* The inset band's resize handle, along its top edge. Rendered beside the
+          legend (same absolute coordinate basis as the cards) and only while a band
+          exists. */}
+      {insetBand && (
+        <InsetBandResizer
+          box={insetBand}
+          getChart={getChart}
+          onRepaint={() => handle.redrawRef.current()}
+          onCommit={(fraction) => saveInsetBand(scope, fraction)}
+        />
+      )}
 
       <HeatmapControls
         on={heatmap.on}
@@ -4555,6 +4920,49 @@ export default function ChartCore({
             onCancel={replay.cancelPicking}
           />
         </>
+      )}
+
+      {/* "Find similar" results. The band stays painted underneath while the panel
+          is up, so dismissing clears both. */}
+      {(patternSearch.result || patternSearch.loading || patternSearch.error) && (
+        <PatternMatchesPanel
+          result={patternSearch.result}
+          loading={patternSearch.loading}
+          error={patternSearch.error}
+          epic={symbol.epic}
+          resolution={period.resolution}
+          broker={brokerId}
+          priceSide={priceSide}
+          timezone={timezone}
+          truncatedTo={patternSearch.truncatedTo}
+          mode={patternSearch.mode}
+          onModeChange={patternSearch.setMode}
+          forwardBars={patternSearch.forwardBars}
+          onForwardBarsChange={patternSearch.setForwardBars}
+          onJump={(m) => {
+            // Mark where the match starts and ends BEFORE the jump: the bands
+            // anchor by timestamp, so they resolve themselves once the coverage
+            // walk lands the bars. PatternMatch is in seconds, overlays in ms.
+            // No forward bars measured (a match at the very edge of history)
+            // means one band, not an empty second one.
+            // The aftermath band spans the forward bars the panel actually
+            // measured, first to last, so it starts on the bar after the match.
+            const fwd = m.forward;
+            handle.overlays.showMatchBands(
+              m.ts * 1000,
+              m.endTs * 1000,
+              fwd.length
+                ? { fromTs: fwd[0].ts * 1000, toTs: fwd[fwd.length - 1].ts * 1000 }
+                : null,
+            );
+            goToRange(m.ts, m.endTs);
+          }}
+          onDismiss={() => {
+            patternSearch.dismiss();
+            handle.overlays.clearZoomBand();
+            handle.overlays.clearMatchBands();
+          }}
+        />
       )}
 
       {detailsAnchor && !sessionMasked && (

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { installMemStorage } from "../testMemStorage";
 
 installMemStorage();
-const { saveBacktestResult, loadBacktestResult, loadSweepResultId, saveSweepResultId, clearSweepResultId, matchBacktestKey, matchSweepPointerKey } =
+const { saveBacktestResult, loadBacktestResult, loadSweepResultId, saveSweepResultId, clearSweepResultId, matchBacktestKey, matchSweepPointerKey, loadInsetBand, saveInsetBand } =
   await import("./artifacts");
 const { save } = await import("./core");
 const { EQUITY_PERSIST_CAP } = await import("../equityDownsample");
@@ -147,5 +147,23 @@ describe("matchSweepPointerKey", () => {
     });
     expect(matchSweepPointerKey("auto-trader.tab.A.backtest.US100", ["tab.A"])).toBeNull();
     expect(matchSweepPointerKey("auto-trader.tab.B.sweep.US100", ["tab.A"])).toBeNull();
+  });
+});
+
+describe("inset band height", () => {
+  it("round-trips the dragged fraction per scope", () => {
+    saveInsetBand("tab.A", 0.42);
+    expect(loadInsetBand("tab.A")).toBe(0.42);
+    // Per cell: a second chart in the same tab keeps its own band.
+    expect(loadInsetBand("tab.B")).toBeNull();
+  });
+
+  it("reads null for a cell that was never dragged, so the default applies", () => {
+    expect(loadInsetBand("tab.A")).toBeNull();
+  });
+
+  it("rejects a stored non-number instead of handing a NaN band to the chart", () => {
+    save("auto-trader.tab.A.insetBand", "half" as never);
+    expect(loadInsetBand("tab.A")).toBeNull();
   });
 });

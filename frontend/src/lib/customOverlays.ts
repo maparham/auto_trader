@@ -28,6 +28,20 @@ import { slopeHandles } from "./slopeHandles";
 import { UP, DOWN } from "./chartTheme";
 import { hexToRgba } from "./lineStyle";
 import { bandEdges, formatTimeRangeReadout } from "./timeRangeMetrics";
+import {
+  ghostPrices,
+  ghostGeometry,
+  ghostLabelLines,
+  overallSimilarity,
+  prefixSimilarity,
+  similarityTint,
+  formatSimilarity,
+  windowUnder,
+  readoutLayout,
+  asGhostStyle,
+  type GhostStyle,
+} from "./patternGhost";
+import { periodFromTf } from "../chart/chartDataFacade";
 
 // --- line geometry, replicated from klinecharts' (non-exported) built-ins so the
 // overridden variants paint byte-identically to the originals. ---------------
@@ -631,6 +645,57 @@ const rangeBand: OverlayTemplate = {
   },
 };
 
+// --- matchBand: the "Find similar" match highlight -------------------------
+// Same full-height two-anchor geometry as rangeBand, but the polygon figure sets
+// NO styles of its own, so klinecharts falls back to overlay.styles.polygon (the
+// way timeRange's band does). That is the whole difference: one template renders
+// both bands a jump paints — the matched candles and, beside them, the dimmer
+// aftermath the panel measured — at different strengths from the same code.
+// Transient like rangeBand: never persisted, never interactive.
+//
+// Geometry note (the same centre-anchor gotcha bandEdges documents below):
+// klinecharts resolves a non-continuous overlay's timestamp to an integer bar
+// INDEX and returns that bar's CENTER x. There is no sub-bar precision, so
+// nudging the ANCHORS by half a timeframe cannot work — the floor search either
+// snaps a whole bar over or not at all. The half-bar has to be taken in PIXEL
+// space, here, off getBarSpace().bar: push the left edge half a bar left and the
+// right edge half a bar right and the band lands on bar boundaries, exactly
+// enclosing the anchored candles instead of stopping at their centres.
+// Adjacency between the two bands a jump paints is exact for free: klinecharts
+// lays bars out by index, so the first aftermath bar's left edge IS the last
+// matched bar's right edge, session gaps and all.
+// Exported for the geometry test, which drives createPointFigures with a stub
+// chart rather than booting a real one.
+export const matchBand: OverlayTemplate = {
+  name: "matchBand",
+  totalStep: 3,
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: ({ coordinates, bounding, chart }) => {
+    if (coordinates.length < 2) return [];
+    const [c0, c1] = coordinates;
+    const halfBar = chart.getBarSpace().bar / 2;
+    const left = Math.min(c0.x, c1.x) - halfBar;
+    const right = Math.max(c0.x, c1.x) + halfBar;
+    const h = bounding.height;
+    return [
+      {
+        type: "polygon",
+        attrs: {
+          coordinates: [
+            { x: left, y: 0 },
+            { x: right, y: 0 },
+            { x: right, y: h },
+            { x: left, y: h },
+          ],
+        },
+        ignoreEvent: true,
+      },
+    ];
+  },
+};
+
 // --- timeRange: a PERSISTENT full-height time-range highlight ---------------
 // Marks a time interval [from, to) as a full-height shaded vertical band. Unlike
 // the transient rangeBand it is a real drawing: persisted, selectable, colorable
@@ -707,6 +772,218 @@ const timeRange: OverlayTemplate = {
   },
 };
 
+
+// --- patternGhost: a copied run of candles, pasted anywhere ------------------
+// The pattern-overlay tool. extendData carries the copied shape (DrawingExtra.ghost)
+// and a single anchor point says where it starts; everything else is derived here on
+// every repaint, which is what makes the score live as the user drags it, pans, or
+// zooms.
+//
+// Vertical placement has two modes, and they exist because the SCORE is blind to
+// price level and volatility (it z-normalizes both away). Left alone, a ghost would
+// happily read 95% while floating visibly above the candles it is scoring. So by
+// default the shape is re-expressed in the underlying window's own price space
+// (fitToWindow) and what you see is what is being measured. Once the user drags the
+// ghost vertically, extendData.ghostPinned says "I placed this", and the stored
+// ratios hang off the anchor price instead (anchorToPrice) — the score is unchanged
+// either way. The Re-align menu item clears the pin.
+//
+// Axis note: the fit matches mean and sd in PRICE space and paints through
+// yAxis.convertToPixel, so on the logarithmic axis the drawn shape is a close
+// approximation rather than an exact picture of what the score measures (the
+// score itself is axis-independent). Negligible over a normal window, visible
+// over one spanning a wide price range.
+//
+// Exported for the geometry test, which drives createPointFigures with a stub chart
+// (same idiom as matchBand above).
+const GHOST_LABEL = "#8a93a3";
+// Outline strength over fill: at a low opacity a flat body all but disappears,
+// and the edge is what keeps the shape readable against the real candles.
+const GHOST_EDGE_BOOST = 0.35;
+
+// What a ghost bar is painted in: the chart's own up/down colours, or the one
+// colour the user chose, at the ghost's opacity. Style only — the score is
+// z-normalized and cannot see any of it.
+function ghostColors(up: boolean, style: GhostStyle): { fill: string; line: string } {
+  const base = style.color === "direction" ? (up ? UP : DOWN) : style.color;
+  return {
+    fill: hexToRgba(base, style.opacity),
+    line: hexToRgba(base, Math.min(1, style.opacity + GHOST_EDGE_BOOST)),
+  };
+}
+const STRIP_H = 13;
+// The two stacked label lines (11px + 10px, snug), and the provenance line alone.
+const LABEL_H = 26;
+const SUB_LABEL_H = 13;
+const STRIP_GAP = 6;
+// Below this the cell is too narrow for "91%" and shows colour only.
+const STRIP_TEXT_MIN_W = 22;
+const GHOST_FONT = "-apple-system, system-ui, sans-serif";
+
+function plainText(
+  x: number,
+  y: number,
+  text: string,
+  color: string,
+  size: number,
+  align: "left" | "center",
+): OverlayFigure {
+  return {
+    type: "text",
+    attrs: { x, y, text, align, baseline: "top" },
+    styles: {
+      color,
+      size,
+      family: GHOST_FONT,
+      backgroundColor: "transparent",
+      borderColor: "transparent",
+      borderSize: 0,
+      paddingLeft: 0,
+      paddingRight: 0,
+      paddingTop: 0,
+      paddingBottom: 0,
+    },
+    ignoreEvent: true,
+  };
+}
+
+export const patternGhost: OverlayTemplate = {
+  name: "patternGhost",
+  totalStep: 2, // one anchor click places it
+  needDefaultPointFigure: false,
+  needDefaultXAxisFigure: false,
+  needDefaultYAxisFigure: false,
+  createPointFigures: (params) => {
+    const { overlay, coordinates, chart, yAxis } = params;
+    const extra = asDrawingExtra(overlay.extendData);
+    const ghost = extra.ghost;
+    if (!ghost || ghost.bars.length === 0 || coordinates.length < 1 || yAxis == null) return [];
+    const style = asGhostStyle(extra.ghostStyle);
+
+    // The real candles under the ghost, from its anchor bar rightwards. Short
+    // (or empty) when the ghost hangs past the newest bar — every helper below
+    // takes that as "no score yet" rather than guessing.
+    const anchor = overlay.points?.[0] ?? {};
+    const actual = windowUnder(chart.getDataList(), anchor, ghost.bars.length);
+
+
+    const sims = prefixSimilarity(ghost.bars, actual);
+    const overall = overallSimilarity(ghost.bars, actual);
+    // One shared placement rule (pinned fit / fit to the candles / the chart's
+    // own scale at the drop price), so what is drawn here and what a pin freezes
+    // in OverlayManager cannot disagree.
+    const dataList = chart.getDataList();
+    const prices = ghostPrices(ghost.bars, {
+      actual,
+      reference: windowUnder(
+        dataList,
+        { dataIndex: Math.max(0, dataList.length - ghost.bars.length) },
+        ghost.bars.length,
+      ),
+      anchorPrice: anchor.value ?? 0,
+      pinned: extra.ghostPinned,
+      pinnedFit: extra.ghostPinned ? extra.ghostFit ?? null : null,
+    });
+
+    const space = chart.getBarSpace();
+    const candles = ghostGeometry(prices, {
+      anchorX: coordinates[0].x,
+      barSpace: space.bar,
+      bodyWidth: space.gapBar,
+      priceToY: (v) => yAxis.convertToPixel(v),
+    });
+
+    const figures: OverlayFigure[] = [];
+    if (style.shape === "line") {
+      // A close line reads better than bodies when the ghost sits directly on
+      // top of real candles. Each segment takes its direction from the move it
+      // draws, so the line still shows where the pattern turned.
+      for (let i = 1; i < candles.length; i++) {
+        const a = candles[i - 1];
+        const b = candles[i];
+        figures.push({
+          type: "line",
+          attrs: { coordinates: [{ x: a.x, y: a.closeY }, { x: b.x, y: b.closeY }] },
+          styles: { color: ghostColors(b.closeY <= a.closeY, style).line, size: 2 },
+        });
+      }
+      // A 2px polyline is a thin thing to grab, and a ghost has no default point
+      // handles, so the candle boxes stay as invisible hit targets: dragging a
+      // close-line ghost feels the same as dragging a candle one.
+      for (const c of candles) {
+        figures.push({
+          type: "rect",
+          attrs: { x: c.x - c.w / 2, y: c.wickTop, width: c.w, height: c.wickH },
+          styles: { style: "fill", color: "rgba(0, 0, 0, 0)" },
+        });
+      }
+    } else {
+      for (const c of candles) {
+        const { fill, line } = ghostColors(c.up, style);
+        figures.push({
+          type: "line",
+          attrs: { coordinates: [{ x: c.x, y: c.wickTop }, { x: c.x, y: c.wickTop + c.wickH }] },
+          styles: { color: line, size: 1 },
+        });
+        figures.push({
+          type: "rect",
+          attrs: { x: c.x - c.w / 2, y: c.bodyTop, width: c.w, height: c.bodyH },
+          styles: { style: "stroke_fill", color: fill, borderColor: line, borderSize: 1 },
+        });
+      }
+    }
+
+    // The running-score strip, one cell per candle, clear of the shape it
+    // describes — below it where there is room, above it where there is not.
+    const bottom = Math.max(...candles.map((c) => c.wickTop + c.wickH));
+    const top = Math.min(...candles.map((c) => c.wickTop));
+    const { stripY, labelY } = readoutLayout({
+      top,
+      bottom,
+      height: params.bounding.height,
+      // With the score off there is no strip and only the provenance line, so
+      // the layout reserves neither.
+      stripH: style.score ? STRIP_H : 0,
+      gap: STRIP_GAP,
+      labelH: style.score ? LABEL_H : SUB_LABEL_H,
+    });
+    if (style.score) candles.forEach((c, i) => {
+      const sim = sims[i] ?? null;
+      const w = Math.max(1, space.bar - 1);
+      figures.push({
+        type: "rect",
+        attrs: { x: c.x - space.bar / 2, y: stripY, width: w, height: STRIP_H },
+        styles: { style: "fill", color: similarityTint(sim) },
+        ignoreEvent: true,
+      });
+      if (space.bar >= STRIP_TEXT_MIN_W) {
+        figures.push(plainText(c.x, stripY + 2, formatSimilarity(sim), "#ffffff", 9, "center"));
+      }
+    });
+
+    // Provenance + overall score, on the far side of the strip.
+    const period = chart.getPeriod();
+    let sameTimeframe: boolean;
+    try {
+      const p = periodFromTf(ghost.resolution);
+      sameTimeframe = period != null && p.span === period.span && p.type === period.type;
+    } catch {
+      sameTimeframe = false; // an unparseable stored resolution is worth showing
+    }
+    const [head, sub] = ghostLabelLines(ghost, overall, {
+      epic: chart.getSymbol()?.ticker ?? "",
+      sameTimeframe,
+      compared: Math.min(actual.length, ghost.bars.length),
+    });
+    const labelX = candles[0].x - space.bar / 2;
+    if (style.score) figures.push(plainText(labelX, labelY, head, GHOST_LABEL, 11, "left"));
+    figures.push(
+      plainText(labelX, style.score ? labelY + SUB_LABEL_H : labelY, sub, GHOST_LABEL, 10, "left"),
+    );
+    return figures;
+  },
+};
+
 let registered = false;
 // Idempotent — safe to call on every chart mount (registration is global).
 export function registerCustomOverlays(): void {
@@ -720,5 +997,7 @@ export function registerCustomOverlays(): void {
   registerOverlay(measure);
   registerOverlay(slope);
   registerOverlay(rangeBand);
+  registerOverlay(matchBand);
   registerOverlay(timeRange);
+  registerOverlay(patternGhost);
 }

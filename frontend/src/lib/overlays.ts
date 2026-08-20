@@ -45,6 +45,15 @@ import { RESOLUTION_SECONDS } from "./feed";
 import { timeRangeSpan } from "./timeRangeMetrics";
 import type { ChartDataFacade } from "../chart/chartDataFacade";
 import { type FibConfig, asFibConfig } from "./fibConfig";
+import {
+  asGhostStyle,
+  ghostPrices,
+  windowMoments,
+  windowUnder,
+  type GhostFit,
+  type GhostPattern,
+  type GhostStyle,
+} from "./patternGhost";
 
 type Kind = "drawing" | "alert" | "measure" | "rangeBand" | "slope";
 
@@ -115,7 +124,29 @@ export interface DrawingExtra {
   priceLabels?: boolean;
   // Fib retracement level/extend/… config (custom fibonacciLine overlay only).
   fib?: FibConfig;
+  // The copied candles a pattern-overlay ("ghost") draws and scores, plus the
+  // market and timeframe they came from (custom patternGhost overlay only).
+  ghost?: GhostPattern;
+  // Set once the user drags a ghost VERTICALLY: stop auto-aligning it to the
+  // candles underneath. See the patternGhost template for why the two modes
+  // exist.
+  ghostPinned?: boolean;
+  // The placement a pinned ghost keeps: the mean and sd its shape is stretched
+  // onto. A pin freezes the whole affine map, not just a price — anchoring by
+  // price alone kept the position but swapped the SCALE, so a 4px nudge could
+  // resize the ghost several-fold on release.
+  ghostFit?: GhostFit;
+  // How the ghost is painted (shape, opacity, colour, whether the score shows).
+  // Absent on ghosts pasted before the settings panel existed; asGhostStyle
+  // reads that back as the look they already had.
+  ghostStyle?: GhostStyle;
 }
+
+// The pattern-overlay's klinecharts name (see customOverlays' patternGhost).
+const GHOST_NAME = "patternGhost";
+// A drag that moves the ghost less than this vertically was aimed along the time
+// axis: keep auto-aligning rather than pinning it on a stray pixel or two.
+const GHOST_PIN_PX = 3;
 
 // Narrow unknown extendData to our shape (never throws; non-objects → {}).
 export function asDrawingExtra(v: unknown): DrawingExtra {
@@ -173,6 +204,18 @@ const TIME_RANGE_DEFAULT_STYLE: DeepPartial<OverlayStyle> = {
   polygon: { style: "stroke_fill" as PolygonType, color: "rgba(41, 98, 255, 0.10)", borderColor: "#2962ff", borderSize: 1 },
 };
 
+// The two strengths of the "Find similar" match bands. Same accent hue as
+// rangeBand (rgb(41, 98, 255)); the matched candles get rangeBand's own alphas,
+// and the aftermath band is that scaled by ~0.45 — the opacity the row preview
+// already dims its forward candles to (.pm-fwd in App.css) — so the list and the
+// chart read the same way.
+const MATCH_BAND_STYLE: DeepPartial<OverlayStyle> = {
+  polygon: { style: "stroke_fill" as PolygonType, color: "rgba(41, 98, 255, 0.12)", borderColor: "rgba(41, 98, 255, 0.7)", borderSize: 1 },
+};
+const MATCH_FWD_BAND_STYLE: DeepPartial<OverlayStyle> = {
+  polygon: { style: "stroke_fill" as PolygonType, color: "rgba(41, 98, 255, 0.05)", borderColor: "rgba(41, 98, 255, 0.32)", borderSize: 1 },
+};
+
 export class OverlayManager {
   private chart: Chart | null = null;
   // v10 data-pipeline facade (set alongside chart in attach). applyOlderBars
@@ -191,6 +234,9 @@ export class OverlayManager {
   // ChartCore before rehydrate; flipped false on Unlock (followed by a rehydrate).
   private readOnly = false;
   private entries = new Map<string, Kind>();
+  // Where a pattern ghost sat when the user pressed it (anchor price + bar), so
+  // the release can tell a vertical placement from a slide along the bars.
+  private ghostDragStart: { value: number; dataIndex: number; timestamp?: number } | null = null;
   // The live transient measure overlay (TV ruler), or null. Never persisted; a new
   // measure removes the old, and the next plain interaction / Esc / symbol change
   // clears it (ChartCore drives that). Single-instance by design.
@@ -222,6 +268,12 @@ export class OverlayManager {
   private zoomBandId: string | null = null;
   private zoomBandStartTs: number | null = null;
   private zoomBandEndTs: number | null = null;
+  // The pair of bands a "Find similar" jump paints on the match it landed on:
+  // the matched candles, and the forward window the panel measured. Separate
+  // from the two bands above so the query band the user dragged stays painted
+  // (the two live at different dates, so only one is ever on screen).
+  private matchBandId: string | null = null;
+  private matchFwdBandId: string | null = null;
   // The time-range highlight being placed (press-drag). Unlike rangeBand it is a
   // PERSISTENT drawing (kind "drawing"): finishTimeRange keeps the overlay and
   // persists it. The start timestamp is held here so a click (no drag) can collapse
@@ -1010,6 +1062,18 @@ export class OverlayManager {
         if (isDrawing) this.maybeSnapDrawing(e);
         return false;
       },
+      onPressedMoveStart: (e) => {
+        // Ghost only: remember where it started so the release can tell a
+        // placement from a slide (see settleGhostDrag).
+        if (e.overlay.name === GHOST_NAME) {
+          const p = e.overlay.points?.[0];
+          this.ghostDragStart =
+            p?.value != null
+              ? { value: p.value, dataIndex: p.dataIndex ?? -1, timestamp: p.timestamp }
+              : null;
+        }
+        return false;
+      },
       onPressedMoving: (e) => {
         if (isAlert) {
           this.draggingAlert = true;
@@ -1038,6 +1102,8 @@ export class OverlayManager {
           this.notifyAlerts();
           return false;
         }
+        // A ghost decides on release whether the drag placed it by hand.
+        if (e.overlay.name === GHOST_NAME) this.settleGhostDrag(e.overlay);
         this.persist(); // a dragged drawing endpoint
         return false;
       },
@@ -1064,6 +1130,8 @@ export class OverlayManager {
           this.zoomBandStartTs = null;
           this.zoomBandEndTs = null;
         }
+        if (this.matchBandId === e.overlay.id) this.matchBandId = null;
+        if (this.matchFwdBandId === e.overlay.id) this.matchFwdBandId = null;
         if (this.timeRangeId === e.overlay.id) {
           this.timeRangeId = null;
           this.timeRangeStartTs = null;
@@ -1432,6 +1500,63 @@ export class OverlayManager {
     return this.zoomBandId != null;
   }
 
+  // --- "Find similar" match bands --------------------------------------------
+  // Mark where a jumped-to match starts and ends: one band over the matched
+  // candles, and (when the panel had forward bars to measure) a dimmer one over
+  // the aftermath. The two are ADJACENT, so their shared edge IS the divider
+  // between "the shape" and "what happened next" — no third overlay draws it.
+  // Both take their colors from styles.polygon via the matchBand template, which
+  // is how the same template renders the two strengths; the aftermath sits at
+  // roughly the row preview's 0.45 opacity so the list and the chart agree.
+  //
+  // Every timestamp is in MILLISECONDS (like every other overlay anchor here),
+  // while PatternMatch carries seconds — callers convert.
+  //
+  // The anchors are the RAW first and last bar of each window. Enclosing those
+  // bars rather than stopping at their centres is the matchBand template's job,
+  // in pixel space off getBarSpace() (see its geometry note: klinecharts snaps a
+  // timestamp to a whole bar index, so there is no sub-bar precision to nudge an
+  // anchor with). `forward` is the window the panel measured, from its FIRST
+  // forward bar, which is the bar immediately after matchToTs — so the two bands
+  // come out exactly adjacent and their shared edge is the divider. null when
+  // the match had no aftermath to measure.
+  showMatchBands(
+    matchFromTs: number,
+    matchToTs: number,
+    forward: { fromTs: number; toTs: number } | null,
+  ): void {
+    if (!this.chart) return;
+    this.clearMatchBands();
+    this.matchBandId = this.create(
+      "rangeBand",
+      "matchBand",
+      [
+        { timestamp: matchFromTs, value: 0 },
+        { timestamp: matchToTs, value: 0 },
+      ],
+      cloneStyles(MATCH_BAND_STYLE),
+      true,
+    );
+    if (forward == null || forward.toTs < forward.fromTs) return;
+    this.matchFwdBandId = this.create(
+      "rangeBand",
+      "matchBand",
+      [
+        { timestamp: forward.fromTs, value: 0 },
+        { timestamp: forward.toTs, value: 0 },
+      ],
+      cloneStyles(MATCH_FWD_BAND_STYLE),
+      true,
+    );
+  }
+
+  clearMatchBands(): void {
+    if (this.matchBandId) this.chart?.removeOverlay({ id: this.matchBandId });
+    if (this.matchFwdBandId) this.chart?.removeOverlay({ id: this.matchFwdBandId });
+    this.matchBandId = null;
+    this.matchFwdBandId = null;
+  }
+
   // --- time-range highlight (persistent) -------------------------------------
   // Begin placing a highlight at `startTs` (bar open under the press): create the
   // full-height band with both anchors at the start. ChartCore's drag calls
@@ -1511,6 +1636,129 @@ export class OverlayManager {
     return this.timeRangeId != null;
   }
 
+  // --- pattern ghost (the pasted pattern overlay) ----------------------------
+  // A ghost auto-aligns to the candles under it until the user drags it
+  // VERTICALLY, which is the whole reason this drag state exists: the score is
+  // blind to price level, so "did they move it up/down" is the only signal that
+  // they want to place it themselves. Recorded on press, judged on release.
+  //
+  // Paste + Re-align live here (not in ChartCore) so the ghost goes through the
+  // same create/persist path as every other drawing.
+
+  /** Paste a copied pattern with its first bar on the bar at `ts`, anchored at
+   *  `value` (the drop price, used only until the first auto-fit). Returns the
+   *  new overlay id. */
+  pastePatternGhost(ts: number, value: number, ghost: GhostPattern): string | null {
+    if (!this.chart || this.readOnly) return null;
+    const seed = this.seedFromDefault("patternGhost");
+    const extendData: DrawingExtra = { ...asDrawingExtra(seed?.extendData), ghost };
+    const id = this.create("drawing", "patternGhost", [{ timestamp: ts, value }], seed?.styles, undefined, {
+      extendData,
+    });
+    if (!id) return null;
+    this.persist();
+    // An in-place create never fires onDrawEnd, so any seeded per-interval
+    // visibility has to be enforced here (same as addDrawing's points branch).
+    const ov = this.byId(id);
+    if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
+    // Leave it selected so Delete works straight away, like a placed time range.
+    this.selectedDrawingId = id;
+    this.drawingListener?.();
+    return id;
+  }
+
+  /** Hand a pinned ghost back to the auto-fit, so what is drawn is what is
+   *  scored. A no-op on a ghost that was never pinned. */
+  realignGhost(id: string): void {
+    const ov = this.byId(id);
+    if (!ov || ov.name !== GHOST_NAME) return;
+    const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData) };
+    if (!extra.ghostPinned) return;
+    delete extra.ghostPinned;
+    delete extra.ghostFit;
+    this.applyDisplay(id, ov, extra);
+    this.persist();
+  }
+
+  /** Repaint a ghost: shape / opacity / colour / score visibility. The copied
+   *  shape and the match are untouched — this is look only. */
+  setGhostStyle(id: string, style: GhostStyle): void {
+    const ov = this.byId(id);
+    if (!ov || ov.name !== GHOST_NAME) return;
+    const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), ghostStyle: asGhostStyle(style) };
+    this.chart?.overrideOverlay({ id, extendData: extra });
+    this.persist();
+  }
+
+  /** True for a pattern ghost, so the drawing context menu can offer Re-align
+   *  only where it means something. */
+  isPinnedGhost(id: string): boolean {
+    const ov = this.byId(id);
+    return ov?.name === GHOST_NAME && asDrawingExtra(ov.extendData).ghostPinned === true;
+  }
+
+  // Vertical pixels between two prices on the candle pane, for the pin test.
+  private priceGapPx(a: number, b: number): number {
+    if (!this.chart) return 0;
+    const cs = this.chart.convertToPixel([{ value: a }, { value: b }], {
+      paneId: "candle_pane",
+      absolute: true,
+    });
+    if (!Array.isArray(cs) || cs.length < 2) return 0;
+    const y0 = cs[0]?.y;
+    const y1 = cs[1]?.y;
+    return y0 == null || y1 == null ? 0 : Math.abs(y1 - y0);
+  }
+
+  // The placement the ghost was actually DRAWN at before the drag — position and
+  // scale both. Pinning has to start from this, not from the anchor value nobody
+  // was looking at, and it goes through the same ghostPrices the template paints
+  // with so the two cannot drift.
+  private ghostDrawnFit(
+    ghost: GhostPattern,
+    at: { dataIndex: number; timestamp?: number; value: number },
+  ): GhostFit | null {
+    const list = this.chart?.getDataList() ?? [];
+    const n = ghost.bars.length;
+    const drawn = ghostPrices(ghost.bars, {
+      actual: windowUnder(list, at, n),
+      reference: windowUnder(list, { dataIndex: Math.max(0, list.length - n) }, n),
+      anchorPrice: at.value,
+    });
+    return windowMoments(drawn);
+  }
+
+  // Decide, on release, whether the drag was a placement (vertical) or just a
+  // slide along the bars. Called from create()'s onPressedMoveEnd.
+  private settleGhostDrag(ov: Overlay): void {
+    const start = this.ghostDragStart;
+    this.ghostDragStart = null;
+    if (!start || !this.chart) return;
+    const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData) };
+    const ghost = extra.ghost;
+    const end = ov.points?.[0]?.value;
+    if (!ghost || end == null) return;
+    const delta = end - start.value;
+    // An already-placed ghost just travels with the drag: the frozen fit is what
+    // draws it, so a vertical move has to move THAT, not only the anchor point.
+    if (extra.ghostPinned) {
+      if (delta === 0 || !extra.ghostFit) return; // slid along the bars
+      extra.ghostFit = { ...extra.ghostFit, mean: extra.ghostFit.mean + delta };
+      this.chart.overrideOverlay({ id: ov.id, extendData: extra });
+      return;
+    }
+    if (this.priceGapPx(start.value, end) <= GHOST_PIN_PX) return; // slid sideways: stay aligned
+    // Pin it where it VISUALLY was: the placement it had before the press, moved
+    // by the drag. Freezing the whole fit (not just a price) is what stops it
+    // resizing on release — the drawn scale comes from the candles it was over,
+    // which a bare price anchor throws away.
+    const drawn = this.ghostDrawnFit(ghost, start);
+    if (!drawn) return; // nothing was drawable to pin; leave it aligned
+    extra.ghostPinned = true;
+    extra.ghostFit = { mean: drawn.mean + delta, sd: drawn.sd };
+    this.chart.overrideOverlay({ id: ov.id, extendData: extra });
+  }
+
   // --- user actions (called by Toolbar / chart "+" menu) ---------------------
 
   // Place a drawing. With points it's created in place (e.g. a horizontal line
@@ -1568,6 +1816,7 @@ export class OverlayManager {
     if (def.priceLabels !== undefined) extendData.priceLabels = def.priceLabels;
     if (def.visibility !== undefined) extendData.visibility = def.visibility;
     if (def.fib !== undefined) extendData.fib = def.fib;
+    if (def.ghostStyle !== undefined) extendData.ghostStyle = def.ghostStyle;
     const styles: DeepPartial<OverlayStyle> = {};
     if (def.line) (styles as { line?: unknown }).line = def.line;
     if (def.polygon) (styles as { polygon?: unknown }).polygon = def.polygon;
@@ -1911,6 +2160,7 @@ export class OverlayManager {
         style: line.style ?? 'solid',
       },
       ...(live.name === "fibonacciLine" ? { fib: asFibConfig(extra.fib) } : {}),
+      ...(live.name === GHOST_NAME ? { ghostStyle: asGhostStyle(extra.ghostStyle) } : {}),
       showMiddle: extra.showMiddle,
       priceLabels: extra.priceLabels,
       visibility: extra.visibility,
@@ -1924,6 +2174,7 @@ export class OverlayManager {
     if (cfg.line) this.setStyle(id, { line: cfg.line } as DeepPartial<OverlayStyle>);
     if (cfg.polygon) this.setStyle(id, { polygon: cfg.polygon } as DeepPartial<OverlayStyle>);
     if (cfg.fib !== undefined) this.setFibConfig(id, cfg.fib);
+    if (cfg.ghostStyle !== undefined) this.setGhostStyle(id, cfg.ghostStyle);
     if (cfg.showMiddle !== undefined) this.setShowMiddle(id, cfg.showMiddle);
     if (cfg.priceLabels !== undefined) this.setPriceLabels(id, cfg.priceLabels);
     if (cfg.visibility !== undefined) this.setVisibilityModel(id, cfg.visibility);

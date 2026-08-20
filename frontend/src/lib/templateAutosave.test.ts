@@ -11,6 +11,7 @@ vi.mock("./indicators", () => {
     mintInstanceId: vi.fn((_c: unknown, t: string) => `${t}#m${++seq}`),
     effectiveCalcParams: vi.fn((_t: string, saved?: number[]) => saved),
     isSubPaneIndicator: vi.fn(() => false),
+    isSubPaneInstance: vi.fn(() => false),
   };
 });
 

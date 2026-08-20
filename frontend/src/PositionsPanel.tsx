@@ -817,7 +817,11 @@ export function Stat({
 
 // Clickable column header: click to sort by this column, click again to flip
 // direction. A caret marks the active column; inactive heads stay quiet.
-export function SortHeader({
+// Generic over the key type so other tables (the pattern-search results) can
+// reuse it with their own column union. `sort.key` is deliberately the wider
+// `string`: inferring K from both `col` and `sort.key` at once gives two
+// competing literal candidates at every call site, and neither wins.
+export function SortHeader<K extends string>({
   label,
   col,
   sort,
@@ -825,9 +829,9 @@ export function SortHeader({
   title,
 }: {
   label: string;
-  col: SortKey;
-  sort: { key: SortKey; dir: SortDir };
-  onSort: (key: SortKey) => void;
+  col: K;
+  sort: { key: string; dir: SortDir };
+  onSort: (key: K) => void;
   title?: string;
 }) {
   const active = sort.key === col;

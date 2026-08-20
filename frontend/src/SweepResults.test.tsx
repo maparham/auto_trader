@@ -5,7 +5,34 @@ import { SweepResults } from "./SweepResults";
 import type { SweepRow } from "./api";
 import type { SweepAxis } from "./lib/sweep";
 
-afterEach(cleanup);
+// The collapsed display tier starts past 4000 cells, and building a real grid that
+// big cost ~940ms of jsdom on an idle machine and 20s+ under load — the single
+// slowest test in the suite and its most reliable false failure. The THRESHOLDS are
+// already pinned exactly, and cheaply, in lib/sweepHeat.test.ts; what belongs here
+// is what the component does once it is in that tier. So heatTier is overridable
+// per test, letting a 3x3 grid stand in for a 65x65 one.
+//
+// The link between the two is kept, not dropped: the override records the cell count
+// the component passed, and the collapsed test asserts it — so a component that
+// miscounts its cells still fails here, which is the only part a pure tier test
+// cannot see.
+const heat = vi.hoisted(() => ({ tier: null as string | null, calls: [] as number[] }));
+vi.mock("./lib/sweepHeat", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/sweepHeat")>();
+  return {
+    ...actual,
+    heatTier: (cellCount: number) => {
+      heat.calls.push(cellCount);
+      return heat.tier ?? actual.heatTier(cellCount);
+    },
+  };
+});
+
+afterEach(() => {
+  heat.tier = null;
+  heat.calls = [];
+  cleanup();
+});
 
 const rows = [
   { combo: { "param:n": 5, "risk:long.stop.value": 1 },
@@ -236,13 +263,20 @@ describe("SweepResults heatmap tiers", () => {
   });
 
   it("past the compact cap the heatmap collapses behind a Show heatmap toggle", () => {
-    const { rows, axes } = gridRows(65);                 // 4225 cells > 4000
+    // 3x3 standing in for a >4000-cell grid (see the heatTier override at the top):
+    // nine cells exercise the same branches as 4225 and cost none of the jsdom.
+    heat.tier = "collapsed";
+    const { rows, axes } = gridRows(3);
     render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
     expect(document.querySelector(".sweep-cell")).toBeNull();
     const toggle = screen.getByRole("button", { name: /Show heatmap/ });
     fireEvent.click(toggle);
-    expect(document.querySelectorAll(".sweep-cell").length).toBe(4225);
+    expect(document.querySelectorAll(".sweep-cell").length).toBe(9);
     expect(document.querySelector(".sweep-heat-grid")!.className).toContain("sweep-heat-compact");
+    // The component asked about the grid it actually built. Without this a
+    // miscounted cell total would pick the wrong tier in production and no test
+    // would notice, since the thresholds are verified separately from pure numbers.
+    expect(heat.calls).toContain(9);
   });
 
   it("under the text cap cells keep their metric text", () => {

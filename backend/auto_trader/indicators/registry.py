@@ -16,6 +16,7 @@ from auto_trader.indicators import atr as _atr
 from auto_trader.indicators import fvg as _fvg
 from auto_trader.indicators import slope as _slope
 from auto_trader.indicators import sr_levels as _sr
+from auto_trader.indicators import trendlines as _tl
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +60,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         outputs=_slope.slope_outputs,
         series=_slope.slope_series,
         warmup=_slope.slope_warmup,
+        timeframe=lambda cfg: cfg.timeframe,
+    ),
+    "TRENDLINES": IndicatorSeriesSpec(
+        parse_config=_tl.parse_trendlines_config,
+        outputs=_tl.trendlines_outputs,
+        series=_tl.trendlines_series,
+        warmup=_tl.trendlines_warmup,
         timeframe=lambda cfg: cfg.timeframe,
     ),
 }

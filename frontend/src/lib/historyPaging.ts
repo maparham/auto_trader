@@ -9,6 +9,31 @@
 // This is the shared primitive the quick-range "cover + fit" uses; the caller
 // owns the mutex (so it can't race the scroll-back loader) and the actual fit.
 
+/** Older bars requested per scroll-back page (ChartCore's page window). */
+export const PAGE_BARS = 500;
+
+/** Said when a jump to a known timestamp covers everything the broker will
+ *  serve and still lands short of it. Since the jump pages in parallel with no
+ *  page budget to spend (see coverHistoryRangeParallel), falling short means
+ *  the history itself ends there, so "scroll back further" would be a lie:
+ *  the way out is a coarser interval, the same answer the backtest trades
+ *  panel gives for a trade older than its timeframe's history. */
+export const DEEP_HISTORY_MESSAGE =
+  "That date is older than the history available at this timeframe. Try a higher timeframe.";
+/** Toast key: coalesces repeat clicks on unreachable matches into one toast. */
+export const DEEP_HISTORY_TOAST_KEY = "go-to-range-short";
+
+/** Said when the jump fell short because a WINDOW FETCH FAILED, not because the
+ *  history ends there. The two are worlds apart to the user: a timeout (a cold
+ *  span the broker takes ~50s to serve against a 10s client deadline) or a 503
+ *  is a "try again", while DEEP_HISTORY_MESSAGE means no amount of retrying
+ *  helps. Telling someone their 2018 data does not exist when it does, and the
+ *  broker was merely slow, is the worse failure of the two. */
+export const FETCH_FAILED_MESSAGE =
+  "Could not load history that far back just now. Try that match again.";
+/** Toast key: same coalescing as above, distinct so the two never merge. */
+export const FETCH_FAILED_TOAST_KEY = "go-to-range-failed";
+
 export interface BarLike {
   timestamp: number; // ms
 }
@@ -152,12 +177,17 @@ export interface CoverRangeParallelArgs<T extends BarLike> {
   applyData: (merged: T[]) => void; // called once, at settle, never when aborted
   onCursor?: (sec: number) => void; // oldest applied bar (unix sec)
   onProgress?: () => void; // fresh history landed
+  // A window fetch THREW (timeout / 5xx). Fires per failed window, before the
+  // settle. Lets the caller tell "the cover stopped because the request failed"
+  // apart from "the broker has nothing older" — indistinguishable from the
+  // applied bars alone, and the difference is what the user is told.
+  onWindowError?: () => void;
 }
 
 export async function coverHistoryRangeParallel<T extends BarLike>(
   args: CoverRangeParallelArgs<T>,
 ): Promise<PageResult> {
-  const { fromTs, toTs, resSec, pageBars, maxWindows, concurrency, isStale, getData, fetchOlder, applyData, onCursor, onProgress } = args;
+  const { fromTs, toTs, resSec, pageBars, maxWindows, concurrency, isStale, getData, fetchOlder, applyData, onCursor, onProgress, onWindowError } = args;
 
   const fromFloorSec = Math.floor(fromTs / 1000);
   // Same window arithmetic as pageHistoryBack: [max(from, to-width), to] then
@@ -188,6 +218,7 @@ export async function coverHistoryRangeParallel<T extends BarLike>(
         results[i] = await fetchOlder(windows[i].fromSec, windows[i].toSec);
       } catch {
         results[i] = null; // transient failure — breaks contiguity below
+        onWindowError?.();
       }
       if (isStale()) {
         stale = true;

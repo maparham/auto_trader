@@ -22,8 +22,14 @@ export const DRAW_TOOLS: DrawTool[] = [
   { name: "timeRange", label: "Time range" },
 ];
 
+// Overlay names that are NOT sidebar tools but still show up in drawing lists,
+// settings and the right-click menu — they need a label like everything else.
+const EXTRA_LABELS: Record<string, string> = {
+  patternGhost: "Pattern overlay",
+};
+
 const BY_NAME = new Map(DRAW_TOOLS.map((t) => [t.name, t]));
 
 export function toolLabel(name: string): string {
-  return BY_NAME.get(name)?.label ?? name;
+  return BY_NAME.get(name)?.label ?? EXTRA_LABELS[name] ?? name;
 }

@@ -80,6 +80,23 @@ describe("Tooltip", () => {
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 
+  it("stands down when it is disabled while showing, and stays down", () => {
+    // A menu trigger's tooltip: hovering opens the bubble, clicking opens the
+    // flyout in the same spot. The bubble has to go, and it must not pop back
+    // when the menu closes without the pointer moving.
+    const { rerender } = render(
+      <Tooltip content="Pattern clipboard"><button>menu</button></Tooltip>,
+    );
+    fireEvent.focus(screen.getByText("menu").parentElement!);
+    expect(screen.getByRole("tooltip")).toBeTruthy();
+
+    rerender(<Tooltip content="Pattern clipboard" disabled><button>menu</button></Tooltip>);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    rerender(<Tooltip content="Pattern clipboard"><button>menu</button></Tooltip>);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
   it("skips the delay for a different trigger hovered within the grace window", () => {
     vi.useFakeTimers();
     render(

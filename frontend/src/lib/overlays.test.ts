@@ -31,6 +31,7 @@ class MemStorage {
 (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
 
 const { OverlayManager, asDrawingExtra } = await import("./overlays");
+const { fitToWindow, windowMoments } = await import("./patternGhost");
 // Type-only alias: the runtime binding above is a value (dynamic import defers the
 // klinecharts-enum mock), so it can't be used in type position. This import is
 // erased at build time and does not eager-load the module.
@@ -85,10 +86,16 @@ class FakeChart {
     }
     return [...this.overlays.values()];
   }
-  // Loaded candles (timestamps only — all OverlayManager reads). Seeded by tests
-  // that exercise the future-anchored point encode/decode.
-  data: Array<{ timestamp: number }> = [];
+  // Loaded candles. Timestamps are all most of OverlayManager reads; the pattern
+  // ghost also reads OHLC (it fits a copied shape to the bars under it), so the
+  // rows are loosely typed and those tests seed prices too.
+  data: Array<{ timestamp: number; open?: number; high?: number; low?: number; close?: number }> = [];
   getDataList() { return this.data; }
+  // Straight-line price → pixel, enough for the ghost's "was this drag vertical?"
+  // test (it only compares two ys).
+  convertToPixel(points: Array<{ value?: number }>) {
+    return points.map((p) => ({ x: 0, y: 1000 - (p.value ?? 0) }));
+  }
   // Mirrors real klinecharts applyNewData: replaces the data list, then — like its
   // INIT-type OverlayStore.updatePointPosition (verified against klinecharts 9.8) —
   // BACK-FILLS point.timestamp for any dataIndex-only overlay point whose index now
@@ -1228,6 +1235,89 @@ describe("OverlayManager lock-all drawings (sidebar padlock)", () => {
   });
 });
 
+describe("OverlayManager match bands (where a jumped-to pattern match starts and ends)", () => {
+  // Every band the manager owns lands as a chart overlay named "matchBand".
+  const bands = (chart: FakeChart) =>
+    chart.getOverlays().filter((o) => (o as { name?: string }).name === "matchBand");
+  const points = (ov: unknown) =>
+    ((ov as { points: Array<{ timestamp: number }> }).points).map((p) => p.timestamp);
+  const fill = (ov: unknown) =>
+    ((ov as { styles: { polygon: { color: string } } }).styles.polygon.color);
+
+  // A 3-bar match at 10_000..12_000 with a 3-bar aftermath on the next bar.
+  // These are RAW bar timestamps: the half-bar that makes each band enclose its
+  // candles is taken in pixel space by the matchBand template, not here (see
+  // the "matchBand geometry" suite in customOverlays.test.ts).
+  const FWD = { fromTs: 13_000, toTs: 15_000 };
+
+  it("paints the match and the aftermath as two adjacent bands, the aftermath dimmer", () => {
+    const { chart, m } = setup();
+    m.showMatchBands(10_000, 12_000, FWD);
+    const [matched, fwd] = bands(chart);
+    expect(bands(chart)).toHaveLength(2);
+    expect(fill(fwd)).not.toBe(fill(matched));
+    // Non-interactive, like the range band it is modelled on.
+    expect((matched as { lock: boolean }).lock).toBe(true);
+    expect((fwd as { lock: boolean }).lock).toBe(true);
+  });
+
+  it("anchors each band on the raw first and last bar of its own window", () => {
+    // The aftermath starts on the FIRST measured forward bar (the one after the
+    // match), never back on the match's own last bar — that would re-cover a
+    // matched candle instead of butting up against it.
+    const { chart, m } = setup();
+    m.showMatchBands(10_000, 12_000, FWD);
+    expect(points(bands(chart)[0])).toEqual([10_000, 12_000]);
+    expect(points(bands(chart)[1])).toEqual([13_000, 15_000]);
+  });
+
+  it("paints one band when the match has no forward window", () => {
+    const { chart, m } = setup();
+    m.showMatchBands(10_000, 12_000, null);
+    expect(bands(chart)).toHaveLength(1);
+    expect(points(bands(chart)[0])).toEqual([10_000, 12_000]);
+  });
+
+  it("paints one band when the forward window is inverted", () => {
+    const { chart, m } = setup();
+    m.showMatchBands(10_000, 12_000, { fromTs: 15_000, toTs: 13_000 });
+    expect(bands(chart)).toHaveLength(1);
+  });
+
+  it("paints a one-bar aftermath band when only one forward bar was measured", () => {
+    const { chart, m } = setup();
+    m.showMatchBands(10_000, 12_000, { fromTs: 13_000, toTs: 13_000 });
+    expect(bands(chart)).toHaveLength(2);
+    expect(points(bands(chart)[1])).toEqual([13_000, 13_000]);
+  });
+
+  it("replaces rather than accumulates when a second match is picked", () => {
+    const { chart, m } = setup();
+    m.showMatchBands(10_000, 12_000, FWD);
+    m.showMatchBands(50_000, 60_000, { fromTs: 61_000, toTs: 70_000 });
+    expect(bands(chart)).toHaveLength(2);
+    expect(points(bands(chart)[0])).toEqual([50_000, 60_000]);
+  });
+
+  it("clears both bands", () => {
+    const { chart, m } = setup();
+    m.showMatchBands(10_000, 12_000, FWD);
+    m.clearMatchBands();
+    expect(bands(chart)).toHaveLength(0);
+    // And clearing twice is inert (dismiss can follow an identity reset).
+    m.clearMatchBands();
+    expect(bands(chart)).toHaveLength(0);
+  });
+
+  it("survives an external removal without leaving a stale id behind", () => {
+    const { chart, m } = setup();
+    m.showMatchBands(10_000, 12_000, FWD);
+    for (const ov of bands(chart)) chart.removeOverlay({ id: (ov as { id: string }).id });
+    m.showMatchBands(50_000, 60_000, FWD); // would throw/miss if ids were stale
+    expect(bands(chart)).toHaveLength(2);
+  });
+});
+
 describe("OverlayManager cancelDrawing (Esc cancels an in-progress drawing)", () => {
   it("returns false when nothing is in progress", () => {
     const { m } = setup();
@@ -1869,5 +1959,154 @@ describe("degenerate-drawing guard (unclickable half-drawn tool)", () => {
     const { m } = setup();
     m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
     expect(P.loadDrawings("tab.A", "US100")).toHaveLength(1);
+  });
+});
+
+describe("OverlayManager pattern ghost (paste, pin, re-align)", () => {
+  // A copied shape: ratios to the first open, exactly as capturePattern stores it.
+  const GHOST = {
+    bars: [
+      { open: 1, high: 1.02, low: 0.99, close: 1.01 },
+      { open: 1.01, high: 1.04, low: 1.0, close: 1.03 },
+      { open: 1.03, high: 1.05, low: 1.01, close: 1.02 },
+    ],
+    epic: "DE40",
+    resolution: "5m",
+    fromTs: 1_700_000_000,
+    toTs: 1_700_000_120,
+  };
+
+  // Three candles under the ghost, at a completely different price level — the
+  // case the whole feature exists for.
+  function seedCandles(chart: FakeChart) {
+    chart.data = [
+      { timestamp: 1_800_000_000, open: 21_000, high: 21_050, low: 20_980, close: 21_030 },
+      { timestamp: 1_800_000_300, open: 21_030, high: 21_090, low: 21_010, close: 21_070 },
+      { timestamp: 1_800_000_600, open: 21_070, high: 21_110, low: 21_040, close: 21_060 },
+    ];
+  }
+
+  function pasted() {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    seedCandles(chart);
+    const id = m.pastePatternGhost(1_800_000_000, 21_000, GHOST)!;
+    return { chart, m, id, ov: ovById(chart, id)! as Record<string, unknown> };
+  }
+
+  it("pastes as a normal drawing, carrying the copied shape on extendData", () => {
+    const { m, id, ov } = pasted();
+    expect(ov.name).toBe("patternGhost");
+    expect(asDrawingExtra(ov.extendData).ghost).toEqual(GHOST);
+    // It is a drawing like any other: persisted, and selected so Delete works.
+    expect(m.listDrawings().some((d) => d.id === id)).toBe(true);
+  });
+
+  it("stays auto-aligned when the drag only slid it along the bars", () => {
+    const { m, id, ov } = pasted();
+    const e = { overlay: ov };
+    (ov.onPressedMoveStart as (x: unknown) => void)(e);
+    // A horizontal drag: the anchor bar changes, the price under the cursor does not.
+    (ov.points as Array<{ value: number }>)[0].value = 21_000;
+    (ov.onPressedMoveEnd as (x: unknown) => void)(e);
+    expect(asDrawingExtra(ov.extendData).ghostPinned).toBeUndefined();
+    expect(m.isPinnedGhost(id)).toBe(false);
+  });
+
+  // The placement the auto-fit was drawing the ghost at, before any drag.
+  function drawnFit(chart: FakeChart) {
+    const actual = chart.data.map((k) => ({
+      open: k.open!, high: k.high!, low: k.low!, close: k.close!,
+    }));
+    return windowMoments(fitToWindow(GHOST.bars, actual)!)!;
+  }
+
+  it("pins the placement it was DRAWN at when the drag moved it vertically", () => {
+    const { chart, m, id, ov } = pasted();
+    const fitBefore = drawnFit(chart);
+    const e = { overlay: ov };
+    (ov.onPressedMoveStart as (x: unknown) => void)(e);
+    (ov.points as Array<{ value: number }>)[0].value = 21_040; // dragged up 40
+    (ov.onPressedMoveEnd as (x: unknown) => void)(e);
+    expect(m.isPinnedGhost(id)).toBe(true);
+    // Re-read: the override wrote a new overlay object, `ov` is the old one.
+    const fit = asDrawingExtra(ovById(chart, id)!.extendData).ghostFit!;
+    // Position carries the drag; SIZE is whatever it was already drawn at. A
+    // bare price anchor kept the first and threw away the second, so a small
+    // nudge could resize the ghost several-fold on release.
+    expect(fit.mean).toBeCloseTo(fitBefore.mean + 40, 6);
+    expect(fit.sd).toBeCloseTo(fitBefore.sd, 6);
+  });
+
+  it("carries a pinned ghost with a later vertical drag, and not a sideways one", () => {
+    const { chart, m, id } = pasted();
+    const drag = (to: number) => {
+      const live = ovById(chart, id)! as Record<string, unknown>;
+      (live.onPressedMoveStart as (x: unknown) => void)({ overlay: live });
+      (live.points as Array<{ value: number }>)[0].value = to;
+      (live.onPressedMoveEnd as (x: unknown) => void)({ overlay: live });
+    };
+    drag(21_040); // pins it
+    const pinnedAt = asDrawingExtra(ovById(chart, id)!.extendData).ghostFit!;
+    drag(21_040); // slid along the bars: same price, so nothing moves
+    expect(asDrawingExtra(ovById(chart, id)!.extendData).ghostFit).toEqual(pinnedAt);
+    drag(21_140); // 100 higher
+    const after = asDrawingExtra(ovById(chart, id)!.extendData).ghostFit!;
+    expect(after.mean).toBeCloseTo(pinnedAt.mean + 100, 6);
+    expect(after.sd).toBeCloseTo(pinnedAt.sd, 6);
+    expect(m.isPinnedGhost(id)).toBe(true);
+  });
+
+  it("repaints a ghost without touching the shape it scores", () => {
+    const { chart, m, id } = pasted();
+    m.setGhostStyle(id, { shape: "line", opacity: 0.9, color: "#9598a1", score: false });
+    const extra = asDrawingExtra(ovById(chart, id)!.extendData);
+    expect(extra.ghostStyle).toEqual({
+      shape: "line",
+      opacity: 0.9,
+      color: "#9598a1",
+      score: false,
+    });
+    expect(extra.ghost).toEqual(GHOST); // the copied candles are untouched
+  });
+
+  it("carries the ghost look through save-as-default and reset", () => {
+    const { m, id } = pasted();
+    m.setGhostStyle(id, { shape: "line", opacity: 0.9, color: "#9598a1", score: false });
+    const cfg = m.getDrawingConfig(id)!;
+    expect(cfg.ghostStyle?.shape).toBe("line");
+    m.applyDrawingConfig(id, { ...cfg, ghostStyle: { ...cfg.ghostStyle!, shape: "candles" } });
+    expect(m.getDrawingConfig(id)!.ghostStyle!.shape).toBe("candles");
+  });
+
+  it("seeds a fresh paste from the saved ghost default", () => {
+    const { chart, m, id } = pasted();
+    m.setGhostStyle(id, { shape: "line", opacity: 0.9, color: "#9598a1", score: false });
+    P.saveDrawingDefault("patternGhost", m.getDrawingConfig(id)!);
+    const next = m.pastePatternGhost(1_800_000_300, 21_030, GHOST)!;
+    expect(asDrawingExtra(ovById(chart, next)!.extendData).ghostStyle?.shape).toBe("line");
+    P.clearDrawingDefault("patternGhost");
+  });
+
+  it("hands a pinned ghost back to the fit on re-align", () => {
+    const { chart, m, id, ov } = pasted();
+    const e = { overlay: ov };
+    (ov.onPressedMoveStart as (x: unknown) => void)(e);
+    (ov.points as Array<{ value: number }>)[0].value = 21_500;
+    (ov.onPressedMoveEnd as (x: unknown) => void)(e);
+    expect(m.isPinnedGhost(id)).toBe(true);
+    m.realignGhost(id);
+    expect(m.isPinnedGhost(id)).toBe(false);
+    const extra = asDrawingExtra(ovById(chart, id)!.extendData);
+    expect(extra.ghostPinned).toBeUndefined();
+    expect(extra.ghostFit).toBeUndefined(); // the frozen placement goes with it
+  });
+
+  it("refuses to paste into a read-only snapshot view", () => {
+    const { chart, m } = setup();
+    m.setResolution("HOUR");
+    seedCandles(chart);
+    m.setReadOnly(true);
+    expect(m.pastePatternGhost(1_800_000_000, 21_000, GHOST)).toBeNull();
   });
 });

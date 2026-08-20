@@ -7,6 +7,7 @@
 // colour rows (no lines/LineDraft model — the whole config is the window list).
 import type { Chart, Indicator } from "klinecharts";
 import { getIndicator } from "../lib/indicators";
+import { overrideExtend } from "../lib/overrideExtend";
 import ColorLineStylePicker from "../ColorLineStylePicker";
 import {
   DEFAULT_TIME_WINDOWS,
@@ -19,7 +20,10 @@ export function makeWriteWindows(chart: Chart, paneId: string, name: string, set
   return function writeWindows(next: TimeWindowDef[]) {
     setWindows(next);
     const live = getIndicator(chart, paneId, name) as Indicator | null;
-    chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), windows: next } });
+    // overrideExtend, not overrideIndicator: klinecharts merges extendData
+    // index by index, so a DELETED row would leave the old tail painted on a
+    // list that the modal and storage both show as shorter.
+    overrideExtend(chart, paneId, name, { ...((live?.extendData as object) ?? {}), windows: next });
   };
 }
 

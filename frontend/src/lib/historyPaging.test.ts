@@ -508,6 +508,34 @@ describe("coverHistoryRangeParallel", () => {
     expect(timestamps).not.toContain(75 * MIN);
   });
 
+  it("reports a thrown window, so the caller can tell a failure from a history edge", async () => {
+    // Same truncation as above, but the caller needs to know WHY it fell short:
+    // "the broker has nothing older" and "that fetch timed out" look identical
+    // in the applied bars, and they get opposite advice.
+    const errors: number[] = [];
+    const h = parallelHarness({
+      fromTs: 75 * MIN,
+      toTs: 100 * MIN,
+      server: [75, 80, 90, 95].map((m) => m * MIN),
+      initial: [100 * MIN],
+      failWindow: (fromSec, toSec) => fromSec * SEC <= 85 * MIN && 85 * MIN <= toSec * SEC,
+    });
+    await coverHistoryRangeParallel({ ...h.args, onWindowError: () => errors.push(1) });
+    expect(errors).toHaveLength(1);
+  });
+
+  it("does not report an error for a genuinely empty window", async () => {
+    const errors: number[] = [];
+    const h = parallelHarness({
+      fromTs: 70 * MIN,
+      toTs: 100 * MIN,
+      server: [70, 71, 72, 73].map((m) => m * MIN),
+      initial: [100 * MIN],
+    });
+    await coverHistoryRangeParallel({ ...h.args, onWindowError: () => errors.push(1) });
+    expect(errors).toHaveLength(0);
+  });
+
   it("aborts without applying when isStale() flips true mid-run", async () => {
     let stale = false;
     const h = parallelHarness({

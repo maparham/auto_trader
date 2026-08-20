@@ -8,6 +8,8 @@
 // indicatorRemoved) moved onto ChartController so two cells don't cross-talk —
 // the Signal class is exported for that.
 
+import type { GhostPattern } from "./patternGhost";
+
 type Listener<T> = (value: T) => void;
 
 export class Signal<T> {
@@ -25,6 +27,13 @@ export class Signal<T> {
     return () => this.listeners.delete(fn);
   }
 }
+
+// The candles copied by the pattern-overlay tool, waiting to be pasted, or null.
+// GLOBAL on purpose (unlike the per-cell arming signals on ChartController): the
+// whole point is to copy a shape on one chart and drop it on another — another
+// cell, another instrument, another timeframe. Session-only; the ghosts it
+// places are what persist.
+export const patternClipboard = new Signal<GhostPattern | null>(null);
 
 // Request to open the "create alert" modal, prefilled with a price. Set by the
 // toolbar bell button (last price) and the chart's "+" axis menu (cursor price);

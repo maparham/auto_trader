@@ -8,7 +8,11 @@
 // endpoint (see [[capital-com-api]] / charting-stack memory).
 
 import type { Chart, KLineData } from "klinecharts";
+// RESOLUTION_SECONDS deliberately NOT imported: the HTF width comes from
+// nominalBarHours so a pin ALIAS ("1H") resolves the same as its canonical
+// resolution (see fetchHtfBars below).
 import { fetchRangeStrict, nominalBarHours } from "./feed";
+import { loadSettings } from "../theme";
 import { maSeries, htfCoverageStartMs, normalizeMaKind, type MaKind, type MtfSeriesBase } from "./mtf";
 import { pageHistoryBack } from "./historyPaging";
 import { barCloseMs } from "./replayBars";
@@ -26,6 +30,12 @@ import {
   type SrLevelsConfig,
   type SrLevelsExtend,
 } from "./indicators/srLevels";
+import { computeTrendlines, type TrendlinesExtend } from "./indicators/trendlines";
+import {
+  parseTrendlinesConfig,
+  TL_ATR_LEN,
+  type TrendlinesConfig,
+} from "./indicators/trendlinesOutputs";
 import {
   computeFvg,
   parseFvgConfig,
@@ -46,6 +56,7 @@ import {
   type SlopeSmoothing,
 } from "./indicators/slope";
 import { syncAccelCompanion, getIndicator, getIndicatorsByPane } from "./indicators";
+import { overrideExtend } from "./overrideExtend";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
 // so a wide loaded span needs several pages walked back — kept under the cap.
@@ -232,7 +243,7 @@ function mtfFetchTail(
   if (hasBars) return true;
   const mtf =
     prev?.timeframe === timeframe && prev.htfStarts?.length ? prev : { timeframe };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: { ...ext, mtf } });
+  overrideExtend(chart, paneId, name, { ...ext, mtf }, calcParams);
   return false;
 }
 
@@ -293,7 +304,21 @@ async function fetchHtfBars(
       // walk); pages that already landed are kept and rendered.
       fetchOlder: async (fSec, tSec) => {
         try {
-          return await fetchRangeStrict(epic, timeframe, fSec, tSec, "mid", brokerId);
+          // THE PANE'S OWN PRICE SIDE, not a hardcoded "mid". Read here rather
+          // than threaded through every apply*/refresh signature, the same way
+          // useLiveMarketData's centre-pin reads it (App re-saves settings and
+          // fires at:settings-saved; a side change reloads the series, which
+          // refreshes the pins). One reader cannot drift from the chart's.
+          //
+          // It looked cosmetic while MTF meant moving averages: mid vs bid
+          // shifts a curve by half a spread. It is not. Trendlines decide
+          // BOOLEANS against these bars — measured on a DAL daily pane, a
+          // support line's break came to bid low 84.52 against a threshold of
+          // 85.11 while the mid low was 85.13, so the mid bars left the line
+          // unbroken, drawn solid, still emitting as live support on a chart
+          // whose own candles had gone through it.
+          const side = loadSettings().priceSide;
+          return await fetchRangeStrict(epic, timeframe, fSec, tSec, side, brokerId);
         } catch (e) {
           failed = true;
           throw e;
@@ -343,7 +368,7 @@ export async function applyMaTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams: [config.length], extendData: ext });
+    overrideExtend(chart, paneId, name, ext, [config.length]);
     return;
   }
 
@@ -377,7 +402,7 @@ export async function applyMaTimeframe(
     htfSeries: base,
     htfMs,
   };
-  chart.overrideIndicator({ paneId, name, calcParams: [config.length], extendData: ext });
+  overrideExtend(chart, paneId, name, ext, [config.length]);
 }
 
 interface PivotBandsConfig {
@@ -419,7 +444,7 @@ export async function applyPivotBandsTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    overrideExtend(chart, paneId, name, ext, calcParams);
     return;
   }
 
@@ -455,7 +480,7 @@ export async function applyPivotBandsTimeframe(
     htfLow: pts.map((p) => p.pivotLow),
     htfMs,
   };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+  overrideExtend(chart, paneId, name, ext, calcParams);
 }
 
 // S/R levels accumulate over the staleness window rather than converging like a
@@ -491,7 +516,7 @@ export async function applySrLevelsTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    overrideExtend(chart, paneId, name, ext, calcParams);
     return;
   }
 
@@ -533,7 +558,104 @@ export async function applySrLevelsTimeframe(
       lastTs: htf[lv.lastIdx].timestamp,
     })),
   };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+  overrideExtend(chart, paneId, name, ext, calcParams);
+}
+
+// A trendline reaches back to its oldest anchor, and only Max Span bounds that
+// — which is 0 = OFF by default, so the off state needs the LARGER reach, not a
+// zero one. With no span ceiling the pairing width is the honest stand-in: a
+// line's first anchor is at most `pairPivots` pivots before its second, and a
+// pivot costs 2 * pivotLen + 1 bars at minimum. On top of that: the ATR warm-up,
+// one pivot confirm, and the projection horizon a line stays live for after its
+// last touch. Best-effort like S/R Levels — a shallow HTF history simply yields
+// fewer lines.
+const tlWarmup = (cfg: TrendlinesConfig): number =>
+  TL_ATR_LEN +
+  2 * cfg.pivotLen +
+  cfg.maxProjBars +
+  (cfg.maxSpanBars > 0 ? cfg.maxSpanBars : cfg.pairPivots * (2 * cfg.pivotLen + 1));
+
+/**
+ * Point Trendlines at a higher timeframe (or back to the chart timeframe when
+ * `timeframe` is null/"chart"). Fetches the HTF candles, runs the SAME detector
+ * on them, and stashes both the four operand series and the live line list;
+ * calc aligns the series onto the chart bars with waitClose semantics (no
+ * lookahead) and the draw path converts the lines' HTF bar indices to pixels.
+ * Config comes from the caller, not re-read from live extendData, so a param
+ * change can't race the write.
+ */
+export async function applyTrendlinesTimeframe(
+  chart: Chart,
+  epic: string,
+  name: string,
+  paneId: string,
+  config: TrendlinesConfig,
+  timeframe: string | null,
+  brokerId?: string,
+  oldestChartMs?: number,
+): Promise<void> {
+  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
+  const ind = getIndicator(chart, paneId, name) as { extendData?: TrendlinesExtend } | null;
+  const ext: TrendlinesExtend = { ...(ind?.extendData ?? {}) };
+  const calcParams = [
+    config.pivotLen, config.violMult, config.touchMult, config.minTouches,
+    config.minSpanBars, config.maxProjBars, config.breakHoldBars, config.maxLines,
+    config.minSwingAtr, config.minSwingReach, config.pairPivots, config.maxTouches,
+    config.maxSpanBars, config.maxSlopeAtr, config.minSlopeAtr, config.minBackBars,
+  ];
+
+  if (!timeframe || timeframe === "chart") {
+    clearMtfRetry(chart, paneId, name);
+    ext.mtf = { timeframe: null };
+    overrideExtend(chart, paneId, name, ext, calcParams);
+    return;
+  }
+
+  const { htf, htfMs, failed } = await fetchHtfBars(
+    chart,
+    epic,
+    timeframe,
+    tlWarmup(config),
+    brokerId,
+    oldestChartMs,
+  );
+  const proceed = mtfFetchTail(
+    chart,
+    paneId,
+    name,
+    timeframe,
+    failed,
+    htf.length > 0,
+    ind?.extendData?.mtf,
+    ext,
+    calcParams,
+    () => applyTrendlinesTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+  );
+  if (!proceed) return;
+  // CLOSED HTF BARS ONLY. The forming bar is never usable to an operand (calc
+  // aligns with waitClose), so letting it seed or break a line would put
+  // geometry on the chart that no rule can read, and repaint it when the bar
+  // finishes.
+  const data = chart.getDataList();
+  const newestMs = data.length ? data[data.length - 1].timestamp : 0;
+  const closed = newestMs
+    ? htf.filter((b) => b.timestamp + htfMs <= newestMs)
+    : htf;
+  // The exact chart-TF detector on the HTF bars: pivots, touches, breaks and
+  // the confirmation lag are all baked into the stashed series and lines.
+  const { points, lines, atr } = computeTrendlines(closed, config);
+  ext.mtf = {
+    timeframe,
+    htfStarts: closed.map((b) => b.timestamp),
+    htfMs,
+    htfSupport: points.map((p) => p.tl_support),
+    htfResistance: points.map((p) => p.tl_resistance),
+    htfBrokenSupport: points.map((p) => p.tl_broken_support),
+    htfBrokenResistance: points.map((p) => p.tl_broken_resistance),
+    htfLines: lines,
+    htfAtr: atr[atr.length - 1],
+  };
+  overrideExtend(chart, paneId, name, ext, calcParams);
 }
 
 // Gaps persist over the staleness window rather than converging like a moving
@@ -569,7 +691,7 @@ export async function applyFvgTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    overrideExtend(chart, paneId, name, ext, calcParams);
     return;
   }
 
@@ -612,7 +734,7 @@ export async function applyFvgTimeframe(
       createdTs: htf[g.createdIdx].timestamp,
     })),
   };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+  overrideExtend(chart, paneId, name, ext, calcParams);
 }
 
 interface SlopeConfig {
@@ -659,7 +781,7 @@ export async function applySlopeTimeframe(
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
-    chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+    overrideExtend(chart, paneId, name, ext, calcParams);
     // The companion mirrors the parent's extendData (here: the cleared MTF stash).
     syncAccelCompanion(chart, name);
     return;
@@ -747,7 +869,7 @@ export async function applySlopeTimeframe(
     htfAccelByLine: accelByLine,
     htfMs,
   };
-  chart.overrideIndicator({ paneId, name, calcParams, extendData: ext });
+  overrideExtend(chart, paneId, name, ext, calcParams);
   // The companion mirrors the parent's extendData (including the MTF stash).
   syncAccelCompanion(chart, name);
 }
@@ -845,6 +967,12 @@ export async function refreshMtfIndicators(
         if (covered(srWarmup(cfg))) return;
         jobs.push(
           applySrLevelsTimeframe(chart, epic, id, paneId, cfg, tf, brokerId, oldestChartMs),
+        );
+      } else if (type === "TRENDLINES") {
+        const cfg = parseTrendlinesConfig(ind.calcParams);
+        if (covered(tlWarmup(cfg))) return;
+        jobs.push(
+          applyTrendlinesTimeframe(chart, epic, id, paneId, cfg, tf, brokerId, oldestChartMs),
         );
       } else if (type === "FVG") {
         const cfg = parseFvgConfig(ind.calcParams);

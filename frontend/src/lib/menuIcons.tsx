@@ -85,6 +85,52 @@ export function ZoomRangeIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// "Find similar": three candles over a repeating wave (the shape recurring).
+export function SimilarSequenceIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 2.5v13M11 3.5v11M17 2.5v13" />
+      <rect x="3.4" y="5" width="3.2" height="6.5" rx="0.6" />
+      <rect x="9.4" y="6.5" width="3.2" height="4.5" rx="0.6" />
+      <rect x="15.4" y="4.5" width="3.2" height="7" rx="0.6" />
+      <path d="M3 20c1.5-1.8 3-1.8 4.5 0s3 1.8 4.5 0 3-1.8 4.5 0 2.2.9 3.5.4" opacity="0.8" />
+    </svg>
+  );
+}
+
+// Copy pattern: candles inside a dashed marquee — the drag that lifts a shape
+// off the chart. Sibling to SimilarSequenceIcon, which starts from the same
+// gesture but goes looking for matches instead.
+export function CopyPatternIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="3" width="14" height="14" rx="1.4" strokeDasharray="2.6 2" />
+      <path d="M6.5 5.5v9M11 5.5v9" />
+      <rect x="5.1" y="7.5" width="2.8" height="4.5" rx="0.5" />
+      <rect x="9.6" y="6.5" width="2.8" height="6" rx="0.5" />
+      <path d="M19 9v10.5H9" strokeDasharray="2.6 2" />
+    </svg>
+  );
+}
+
+// Paste pattern: the copied candles as a ghost (dashed) dropped onto the chart.
+export function PastePatternIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 19h19" opacity="0.55" />
+      <g strokeDasharray="2.4 1.8">
+        <path d="M6.5 3.5v11M11.5 5v10M16.5 3v11" />
+        <rect x="5.1" y="6" width="2.8" height="5.5" rx="0.5" />
+        <rect x="10.1" y="7.5" width="2.8" height="5" rx="0.5" />
+        <rect x="15.1" y="5.5" width="2.8" height="6.5" rx="0.5" />
+      </g>
+    </svg>
+  );
+}
+
 // Horseshoe magnet, angled −45° with detached pole caps (matches the user's
 // reference art). "Filled" look built from thick butt-capped strokes so it
 // still inherits currentColor like every other icon here.
@@ -132,6 +178,14 @@ export const MenuIcons = {
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </>,
   ),
+  // Re-align a pinned pattern ghost: snap-to-the-line.
+  realign: svg(
+    <>
+      <path d="M4 12h16" strokeDasharray="3 2" />
+      <path d="M12 4v4M12 16v4" />
+      <rect x="8.5" y="9" width="7" height="6" rx="1" />
+    </>,
+  ),
   clone: svg(
     <>
       <rect x="9" y="9" width="11" height="11" rx="2" />
@@ -166,6 +220,13 @@ export const MenuIcons = {
     <>
       <path d="M12 5v14" />
       <path d="M5 12l7 7 7-7" />
+    </>,
+  ),
+  // Inset: a small framed band inside a larger frame — the mode it names.
+  inset: svg(
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <rect x="6" y="14" width="12" height="3" rx="1" />
     </>,
   ),
   lock: svg(

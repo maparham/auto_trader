@@ -16,6 +16,7 @@ import {
   type Period,
 } from "../lib/feed";
 import { coverHistoryRangeParallel } from "../lib/historyPaging";
+import { jumpToLive } from "../lib/liveEdge";
 import type { PriceSide } from "../theme";
 import { synthPrecision } from "./chartPainters";
 import { nextHistoryRetryDelayMs, shouldKeepPaintedBars, shouldRetryHistory } from "./noDataPolicy";
@@ -1196,4 +1197,23 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // "Back to live": send the view to the newest bar. Lives here (not in
+  // ChartCore) because landing has to go through the SAME save path a real pan
+  // does — a programmatic move fires no scroll gesture, so without an explicit
+  // capture a reload would restore the far-past view the user just left, and a
+  // parked too-deep intended center would still outrank it.
+  const goLive = () => {
+    const chart = handle.chartRef.current;
+    if (!chart) return;
+    intendedCenterRef.current = null;
+    jumpToLive(chart, () => {
+      const c = handle.chartRef.current;
+      if (!c) return;
+      captureViewPos(c, scope, symbol.epic, period.resolution);
+      repositionPinRef.current?.();
+    });
+  };
+
+  return { goLive };
 }

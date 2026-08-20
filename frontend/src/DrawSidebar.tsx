@@ -4,7 +4,7 @@
 // button (click = arm the last-used tool; hover-caret = flyout listing all
 // 8 tools flat, no groups), measure + magnet (relocated from the toolbar),
 // then the bulk cluster (hide-all eye / lock-all padlock / delete-all).
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getSupportedOverlays } from "klinecharts";
 import DrawGlyph from "./DrawIcons";
 import InfoTip from "./components/InfoTip";
@@ -17,7 +17,8 @@ import {
   saveLastDrawTools,
 } from "./lib/persist";
 import { magnetSignal, toggleMagnet, setMagnetStrength } from "./lib/magnet";
-import { MagnetIcon, StrongMagnetIcon, RulerIcon, SlopeIcon, ZoomRangeIcon, MenuIcons } from "./lib/menuIcons";
+import { patternClipboard } from "./lib/signals";
+import { MagnetIcon, StrongMagnetIcon, RulerIcon, SlopeIcon, ZoomRangeIcon, SimilarSequenceIcon, CopyPatternIcon, PastePatternIcon, MenuIcons } from "./lib/menuIcons";
 import type { ChartController } from "./lib/chartController";
 
 interface Props {
@@ -85,6 +86,10 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
   useEffect(() => magnetSignal.subscribe(setMagnet), []);
   const [magnetOpen, setMagnetOpen] = useState(false);
   const magnetRef = useRef<HTMLDivElement>(null);
+  // Pattern clipboard menu. Copy and paste were two permanent buttons in the
+  // rail; one trigger keeps the rail short and lets each row say what it does.
+  const [patternMenuOpen, setPatternMenuOpen] = useState(false);
+  const patternMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!magnetOpen) return;
     const close = (e: MouseEvent) => {
@@ -93,6 +98,15 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [magnetOpen]);
+
+  useEffect(() => {
+    if (!patternMenuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (!patternMenuRef.current?.contains(e.target as Node)) setPatternMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [patternMenuOpen]);
   const [measuring, setMeasuring] = useState(controller?.measureArmed?.value ?? false);
   useEffect(() => {
     if (!controller?.measureArmed) return;
@@ -113,6 +127,58 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
     setZooming(controller.zoomRangeArmed.value);
     return controller.zoomRangeArmed.subscribe(setZooming);
   }, [controller]);
+  // "Find similar" tool mirror, plus whether it applies to this cell at all
+  // (ChartCore publishes that: synthetic epics, sub-minute intervals and
+  // read-only snapshots have nothing to search).
+  const [findingSimilar, setFindingSimilar] = useState(controller?.patternRangeArmed?.value ?? false);
+  useEffect(() => {
+    if (!controller?.patternRangeArmed) return;
+    setFindingSimilar(controller.patternRangeArmed.value);
+    return controller.patternRangeArmed.subscribe(setFindingSimilar);
+  }, [controller]);
+  const [canFindSimilar, setCanFindSimilar] = useState(controller?.patternSearchAvailable?.value ?? false);
+  useEffect(() => {
+    if (!controller?.patternSearchAvailable) return;
+    setCanFindSimilar(controller.patternSearchAvailable.value);
+    return controller.patternSearchAvailable.subscribe(setCanFindSimilar);
+  }, [controller]);
+
+  // Pattern overlay: copy arms the SAME range drag as Find similar (one signal,
+  // one band, one set of guards) with the mode signal saying what the release
+  // does. Paste is armed on its own — it is a single click, not a drag.
+  const [copyingPattern, setCopyingPattern] = useState(false);
+  useEffect(() => {
+    const armed = controller?.patternRangeArmed;
+    const mode = controller?.patternRangeMode;
+    if (!armed || !mode) return;
+    const sync = () => setCopyingPattern(armed.value && mode.value === "copy");
+    sync();
+    const unsubArmed = armed.subscribe(sync);
+    const unsubMode = mode.subscribe(sync);
+    return () => {
+      unsubArmed();
+      unsubMode();
+    };
+  }, [controller]);
+  const [pastingPattern, setPastingPattern] = useState(controller?.patternPasteArmed?.value ?? false);
+  useEffect(() => {
+    if (!controller?.patternPasteArmed) return;
+    setPastingPattern(controller.patternPasteArmed.value);
+    return controller.patternPasteArmed.subscribe(setPastingPattern);
+  }, [controller]);
+  // The clipboard is global (copy on one chart, paste on another), so this one
+  // is not read off the controller.
+  const [copied, setCopied] = useState(patternClipboard.value);
+  useEffect(() => patternClipboard.subscribe(setCopied), []);
+  const readOnly = useSyncExternalStore(
+    useCallback((cb) => controller?.readOnly.subscribe(cb) ?? (() => {}), [controller]),
+    () => controller?.readOnly.value ?? false,
+  );
+
+  // Paste needs somewhere to paste from, a cell that accepts drawings, and the
+  // signal to exist. Computed once: the row reads it for its look, its
+  // aria-disabled and its click guard, and those three must not drift apart.
+  const pasteDisabled = !controller?.patternPasteArmed || !copied || readOnly;
 
   // Eye menu: drawings/alerts-hidden live on the manager (existing); indicators/
   // positions are per-cell signals on the controller. Re-sync all four when focus moves, and
@@ -152,16 +218,17 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
   // focus; the chart's own Esc handling (measure/drawing cancel) lives on the
   // focused .chart-wrap and is unaffected unless focus sits inside the chart.
   useEffect(() => {
-    if (!openFly && !magnetOpen && !eyeOpen) return;
+    if (!openFly && !magnetOpen && !eyeOpen && !patternMenuOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       setOpenFly(false);
       setMagnetOpen(false);
       setEyeOpen(false);
+      setPatternMenuOpen(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [openFly, magnetOpen, eyeOpen]);
+  }, [openFly, magnetOpen, eyeOpen, patternMenuOpen]);
 
   // Only tools klinecharts actually supports (same guard the old dropdown had).
   const supported = new Set(getSupportedOverlays());
@@ -383,6 +450,108 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
           <ZoomRangeIcon />
         </button>
       </Tooltip>
+
+      {/* Find similar: drag across candles, get the closest historical matches. */}
+      <Tooltip
+        placement="right"
+        content={[
+          "Similarity search. Drag across the candles you want to match.",
+          "On release, finds where that shape appeared before.",
+        ]}
+      >
+        <button
+          className={"ds-btn pattern-range-toggle" + (findingSimilar && !copyingPattern ? " on" : "")}
+          disabled={!controller?.patternRangeArmed || !canFindSimilar}
+          onClick={() => {
+            // Mode first: arming with a stale "copy" would turn this button into
+            // the copy tool.
+            controller?.patternRangeMode?.set("search");
+            controller?.patternRangeArmed?.set(!controller.patternRangeArmed.value || copyingPattern);
+          }}
+          aria-label="Similarity search"
+        >
+          <SimilarSequenceIcon />
+        </button>
+      </Tooltip>
+
+      {/* Pattern clipboard: one trigger, copy and paste as menu options. Two
+          permanent buttons put a rarely-used pair in the rail beside the tools
+          people reach for constantly; a menu keeps the rail short and gives each
+          action a row that says what it does. */}
+      <div className="ds-family" ref={patternMenuRef}>
+        <Tooltip
+          placement="right"
+          // The flyout opens exactly where this bubble sits, so the hover
+          // tooltip stands down as soon as the menu is up.
+          disabled={patternMenuOpen}
+          content={[
+            "Pattern clipboard. Copy a shape, paste it on any chart.",
+            "Copy takes a drag; paste drops the copied candles as a ghost.",
+          ]}
+        >
+          <button
+            className={"ds-btn pattern-clip-toggle" + (copyingPattern || pastingPattern ? " on" : "")}
+            disabled={!controller?.patternRangeArmed}
+            onClick={() => setPatternMenuOpen((v) => !v)}
+            aria-label="Pattern clipboard"
+            aria-expanded={patternMenuOpen}
+          >
+            <CopyPatternIcon />
+          </button>
+        </Tooltip>
+        {patternMenuOpen && (
+          <DsFlyout>
+            <ul>
+              <li
+                className={"ds-row pattern-clip-opt" + (copyingPattern ? " is-armed" : "")}
+                onClick={() => {
+                  const next = !copyingPattern;
+                  controller?.patternRangeMode?.set(next ? "copy" : "search");
+                  controller?.patternRangeArmed?.set(next);
+                  setPatternMenuOpen(false);
+                }}
+              >
+                <span className="ds-glyph"><CopyPatternIcon /></span>
+                <span className="ds-label">Copy pattern</span>
+                <InfoTip
+                  title="Copy pattern"
+                  text={[
+                    "Drag across the candles you want to keep.",
+                    "Paste them anywhere, on any chart, to compare the shape.",
+                  ]}
+                />
+              </li>
+              <li
+                className={
+                  "ds-row pattern-clip-opt" +
+                  (pastingPattern ? " is-armed" : "") +
+                  (pasteDisabled ? " ds-row-disabled" : "")
+                }
+                aria-disabled={pasteDisabled}
+                onClick={() => {
+                  if (pasteDisabled) return;
+                  controller?.patternPasteArmed?.set(!controller.patternPasteArmed.value);
+                  setPatternMenuOpen(false);
+                }}
+              >
+                <span className="ds-glyph"><PastePatternIcon /></span>
+                <span className="ds-label">Paste pattern</span>
+                <InfoTip
+                  title="Paste pattern"
+                  text={
+                    copied
+                      ? [
+                          `${copied.bars.length} candles from ${copied.epic} ${copied.resolution}.`,
+                          "Click a candle to drop it there, then drag it around.",
+                        ]
+                      : ["Copy a pattern first."]
+                  }
+                />
+              </li>
+            </ul>
+          </DsFlyout>
+        )}
+      </div>
 
       {/* Magnet (moved from the toolbar): icon toggles, caret picks strength. */}
       <div className="ds-family" ref={magnetRef}>
