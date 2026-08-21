@@ -159,6 +159,53 @@ def test_market_hours_state_unusable_hours_returns_none():
     assert _market_hours_state({"zone": "UTC"}, _at(2026, 6, 27, 12, 0)) == (None, None)
 
 
+# EUR/USD's real schedule: Capital quotes this one to the SECOND, which a strict
+# "HH:MM" parse dropped outright — leaving Friday with no windows at all and
+# Mon-Thu with only the 21:05 evening session, so the tab wore a closed crescent
+# all day every weekday.
+_EURUSD_HOURS = {
+    "mon": ["00:00 - 20:59:50", "21:05 - 00:00"],
+    "tue": ["00:00 - 20:59:50", "21:05 - 00:00"],
+    "wed": ["00:00 - 20:59:50", "21:05 - 00:00"],
+    "thu": ["00:00 - 20:59:50", "21:05 - 00:00"],
+    "fri": ["00:00 - 20:59:50"],
+    "sat": [],
+    "sun": ["21:00 - 00:00"],
+    "zone": "UTC",
+}
+
+
+def test_market_hours_state_parses_windows_with_seconds():
+    # Fri 17:39 — mid-session, inside 00:00-20:59:50. This is the case that read
+    # closed before seconds were tolerated.
+    assert _market_hours_state(_EURUSD_HOURS, _at(2026, 8, 21, 17, 39))[0] is False
+    # Fri 21:30 — after the lone Friday session; closed until Sunday. (The broken
+    # parse happened to produce this same nextOpen, so it can't stand alone.)
+    closed, next_open = _market_hours_state(_EURUSD_HOURS, _at(2026, 8, 21, 21, 30))
+    assert closed is True
+    assert next_open == "2026-08-23T21:00:00+00:00"
+    # Thu 21:02 — in the daily rollover gap between 20:59:50 and 21:05, so closed
+    # with the evening session minutes away. Only half this day's pair parsed before.
+    closed, next_open = _market_hours_state(_EURUSD_HOURS, _at(2026, 8, 20, 21, 2))
+    assert closed is True
+    assert next_open == "2026-08-20T21:05:00+00:00"
+
+
+def test_market_hours_state_end_of_day_sentinel_needs_zero_seconds():
+    # A literal "00:00" end means end-of-day; "00:00:30" is a genuine half-minute
+    # past midnight and must not be widened into a 24-hour session.
+    hours = {"mon": ["22:00 - 00:00:30"], "zone": "UTC"}
+    assert _market_hours_state(hours, _at(2026, 6, 22, 23, 0))[0] is False  # inside
+    assert _market_hours_state(hours, _at(2026, 6, 23, 0, 10))[0] is True   # Tue, past it
+
+
+def test_market_hours_state_all_windows_unparseable_falls_back():
+    # Day keys present but nothing parsed out of them is a parser gap, not a market
+    # shut all week -> (None, None) so the caller trusts marketStatus instead.
+    hours = {"mon": ["garbage"], "tue": ["25:00 - 26:00"], "zone": "UTC"}
+    assert _market_hours_state(hours, _at(2026, 6, 22, 12, 0)) == (None, None)
+
+
 def test_market_hours_state_ignores_out_of_range_window():
     # A malformed "HH" >= 24 must be dropped, not reach datetime.replace and raise
     # (which would 502 the endpoint). The day reads closed; other days still parse.

@@ -24,7 +24,7 @@ from auto_trader.brokers._dealing import (
     clean as _clean,
     to_float as _f,
 )
-from auto_trader.brokers._market_hours import _market_hours_state, _minute_of_day
+from auto_trader.brokers._market_hours import _market_hours_state
 from auto_trader.brokers._prices import (
     PriceSide,
     _RateLimiter,

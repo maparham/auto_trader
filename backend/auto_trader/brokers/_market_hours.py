@@ -14,18 +14,29 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 _OH_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
-def _minute_of_day(hhmm: str) -> int | None:
-    """"HH:MM" -> minutes since midnight, or None if malformed."""
+def _minute_of_day(hhmm: str) -> tuple[int, bool] | None:
+    """"HH:MM" or "HH:MM:SS" -> (minutes since midnight, seconds were zero), or
+    None if malformed.
+
+    Capital quotes some instruments to the second ("20:59:50" is EUR/USD's
+    Friday close), so a strict two-field parse dropped those windows entirely and
+    badged the market closed all week. Seconds are truncated (minute resolution
+    is all the badge needs); the flag lets the caller tell a literal "00:00" end
+    (end-of-day) from an "00:00:30" one."""
+    parts = str(hhmm).strip().split(":")
+    if len(parts) < 2:
+        return None
     try:
-        h, m = (int(x) for x in hhmm.strip().split(":"))
-    except (ValueError, AttributeError):
+        h, m = int(parts[0]), int(parts[1])
+        sec = int(parts[2]) if len(parts) > 2 else 0
+    except ValueError:
         return None
     # Reject out-of-range values: an "HH" >= 24 would later reach datetime.replace
     # (when building next_open) and raise ValueError -> the endpoint 502s. Capital
     # encodes end-of-day as "00:00" (handled by the caller), never "24:00".
-    if not (0 <= h <= 23 and 0 <= m <= 59):
+    if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59):
         return None
-    return h * 60 + m
+    return h * 60 + m, sec == 0
 
 
 def _market_hours_state(
@@ -78,11 +89,16 @@ def _market_hours_state(
                 parts = [p.strip() for p in str(w).split("-")]
                 if len(parts) != 2:
                     continue
-                start = _minute_of_day(parts[0])
-                end = _minute_of_day(parts[1])
-                if start is None or end is None:
+                parsed_start = _minute_of_day(parts[0])
+                parsed_end = _minute_of_day(parts[1])
+                if parsed_start is None or parsed_end is None:
                     continue
-                if end == 0:  # "00:00" as an END means end-of-day (24:00)
+                start, _ = parsed_start
+                end, end_on_the_minute = parsed_end
+                if end == 0 and end_on_the_minute:
+                    # A literal "00:00" as an END means end-of-day (24:00). An
+                    # "00:00:30" is a real 30-second-past-midnight end, not the
+                    # sentinel, so it must not be widened to a full day.
                     end = 1440
                 if start < end:
                     parsed_days[di].append((start, end))
@@ -92,6 +108,13 @@ def _market_hours_state(
                     parsed_days[(di + 1) % 7].append((0, end))
 
     _parse_into(parsed)
+
+    # Day keys were present but NOTHING parsed out of them: that's a parser gap,
+    # not a market that's shut all week, and it's indistinguishable from the
+    # latter downstream (empty windows read as permanently closed — exactly how
+    # the seconds-in-"HH:MM:SS" bug hid). Degrade to marketStatus instead.
+    if any(opening_hours.get(day) for day in _OH_DAYS) and not any(parsed):
+        return None, None
 
     def windows(day_key: str) -> list[tuple[int, int]]:
         return parsed[_OH_DAYS.index(day_key)]
