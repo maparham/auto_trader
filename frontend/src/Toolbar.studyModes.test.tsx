@@ -168,3 +168,42 @@ describe("the heatmap split in the toolbar", () => {
     expect(caretBtn().disabled).toBe(true);
   });
 });
+
+describe("the similarity search entry in the toolbar", () => {
+  const searchBtn = () =>
+    document.querySelector(".toolbar .pattern-range-toggle") as HTMLButtonElement;
+
+  it("arms the range drag in search mode on the focused cell", () => {
+    controller.patternSearchAvailable.set(true);
+    paint();
+    expect(searchBtn().disabled).toBe(false);
+    fireEvent.click(searchBtn());
+    expect(controller.patternRangeArmed.value).toBe(true);
+    expect(controller.patternRangeMode.value).toBe("search");
+    expect(searchBtn().className).toContain("seg-on");
+    // A second click disarms.
+    fireEvent.click(searchBtn());
+    expect(controller.patternRangeArmed.value).toBe(false);
+  });
+
+  it("re-arms as search when the drag was armed for pattern copy", () => {
+    controller.patternSearchAvailable.set(true);
+    controller.patternRangeMode.set("copy");
+    controller.patternRangeArmed.set(true);
+    paint();
+    // Not lit for copy mode: that is the sidebar's pattern-copy tool.
+    expect(searchBtn().className).not.toContain("seg-on");
+    fireEvent.click(searchBtn());
+    expect(controller.patternRangeArmed.value).toBe(true);
+    expect(controller.patternRangeMode.value).toBe("search");
+  });
+
+  // Disabled rather than hidden, like Replay: stable chrome.
+  it("is disabled, not absent, on a cell with nothing to search", () => {
+    paint();
+    expect(searchBtn()).not.toBeNull();
+    expect(searchBtn().disabled).toBe(true);
+    fireEvent.click(searchBtn());
+    expect(controller.patternRangeArmed.value).toBe(false);
+  });
+});

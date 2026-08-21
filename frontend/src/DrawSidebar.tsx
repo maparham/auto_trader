@@ -18,7 +18,7 @@ import {
 } from "./lib/persist";
 import { magnetSignal, toggleMagnet, setMagnetStrength } from "./lib/magnet";
 import { patternClipboard } from "./lib/signals";
-import { MagnetIcon, StrongMagnetIcon, RulerIcon, SlopeIcon, ZoomRangeIcon, SimilarSequenceIcon, CopyPatternIcon, PastePatternIcon, MenuIcons } from "./lib/menuIcons";
+import { MagnetIcon, StrongMagnetIcon, RulerIcon, SlopeIcon, ZoomRangeIcon, CopyPatternIcon, PastePatternIcon, MenuIcons } from "./lib/menuIcons";
 import type { ChartController } from "./lib/chartController";
 
 interface Props {
@@ -126,21 +126,6 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
     if (!controller?.zoomRangeArmed) return;
     setZooming(controller.zoomRangeArmed.value);
     return controller.zoomRangeArmed.subscribe(setZooming);
-  }, [controller]);
-  // "Find similar" tool mirror, plus whether it applies to this cell at all
-  // (ChartCore publishes that: synthetic epics, sub-minute intervals and
-  // read-only snapshots have nothing to search).
-  const [findingSimilar, setFindingSimilar] = useState(controller?.patternRangeArmed?.value ?? false);
-  useEffect(() => {
-    if (!controller?.patternRangeArmed) return;
-    setFindingSimilar(controller.patternRangeArmed.value);
-    return controller.patternRangeArmed.subscribe(setFindingSimilar);
-  }, [controller]);
-  const [canFindSimilar, setCanFindSimilar] = useState(controller?.patternSearchAvailable?.value ?? false);
-  useEffect(() => {
-    if (!controller?.patternSearchAvailable) return;
-    setCanFindSimilar(controller.patternSearchAvailable.value);
-    return controller.patternSearchAvailable.subscribe(setCanFindSimilar);
   }, [controller]);
 
   // Pattern overlay: copy arms the SAME range drag as Find similar (one signal,
@@ -454,30 +439,9 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
         </button>
       </Tooltip>
 
-      {/* Find similar: drag across candles, get the closest historical matches. */}
-      <Tooltip
-        placement="right"
-        title="Similarity search"
-        content={[
-          "Drag across the candles you want to match.",
-          "On release, finds where that shape appeared before.",
-        ]}
-      >
-        <button
-          className={"ds-btn pattern-range-toggle" + (findingSimilar && !copyingPattern ? " on" : "")}
-          disabled={!controller?.patternRangeArmed || !canFindSimilar}
-          onClick={() => {
-            // Mode first: arming with a stale "copy" would turn this button into
-            // the copy tool.
-            controller?.patternRangeMode?.set("search");
-            controller?.patternRangeArmed?.set(!controller.patternRangeArmed.value || copyingPattern);
-          }}
-          aria-label="Similarity search"
-        >
-          <SimilarSequenceIcon />
-        </button>
-      </Tooltip>
-
+      {/* Similarity search moved to the toolbar, beside Backtest: it is a way
+          of studying the chart, not of drawing on it. The pattern-copy tool
+          below still arms the same range drag in "copy" mode. */}
       {/* Pattern clipboard: one trigger, copy and paste as menu options. Two
           permanent buttons put a rarely-used pair in the rail beside the tools
           people reach for constantly; a menu keeps the rail short and gives each

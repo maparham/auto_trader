@@ -47,7 +47,7 @@ import type { ChartController } from "./lib/chartController";
 import ContextMenu from "./ContextMenu";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
-import { MenuIcons } from "./lib/menuIcons";
+import { SimilarSequenceIcon, MenuIcons } from "./lib/menuIcons";
 import {
   Caret,
   SymbolChip,
@@ -152,6 +152,24 @@ export default function Toolbar({
     useCallback((cb) => controller?.replayEntry.subscribe(cb) ?? (() => {}), [controller]),
     () => controller?.replayEntry.value ?? null,
   );
+  // Similarity search arming state, published per cell over the controller like
+  // the other study modes: whether THIS cell can search at all (synthetic
+  // epics, sub-minute intervals and snapshots cannot), and whether the drag is
+  // currently armed in "search" mode (the same signal armed in "copy" mode is
+  // the pattern-copy tool, which stays in the draw sidebar).
+  const patternArmed = useSyncExternalStore(
+    useCallback((cb) => controller?.patternRangeArmed.subscribe(cb) ?? (() => {}), [controller]),
+    () => controller?.patternRangeArmed.value ?? false,
+  );
+  const patternMode = useSyncExternalStore(
+    useCallback((cb) => controller?.patternRangeMode.subscribe(cb) ?? (() => {}), [controller]),
+    () => controller?.patternRangeMode.value ?? "search",
+  );
+  const patternAvailable = useSyncExternalStore(
+    useCallback((cb) => controller?.patternSearchAvailable.subscribe(cb) ?? (() => {}), [controller]),
+    () => controller?.patternSearchAvailable.value ?? false,
+  );
+  const findingSimilar = patternArmed && patternMode === "search";
   // Panel open/closed, separate from the heatmap being ON. Turning it on opens
   // the panel (that was the old behaviour, where the panel WAS the on state);
   // clicking away closes the panel and leaves the heatmap painting.
@@ -770,6 +788,36 @@ export default function Toolbar({
           </div>
         )}
       </div>
+
+      {/* Similarity search: the third study mode. Arms the same range drag the
+          draw sidebar used to own; drag across candles and the results dock as
+          a sidebar. Disabled rather than hidden, like Replay. */}
+      <Tooltip
+        content={
+          !patternAvailable
+            ? "Similarity search needs a searchable chart: not a synthetic symbol, a sub-minute interval or a snapshot."
+            : "Similarity search: drag across candles to find where that shape appeared before"
+        }
+      >
+        <button
+          className={`anchor-btn pattern-range-toggle${findingSimilar ? " seg-on" : ""}`}
+          disabled={!controller || !patternAvailable}
+          aria-pressed={findingSimilar}
+          aria-label="Similarity search"
+          onClick={() => {
+            if (!controller) return;
+            const wasCopying =
+              controller.patternRangeArmed.value && controller.patternRangeMode.value === "copy";
+            // Mode first: arming with a stale "copy" would turn this button
+            // into the copy tool.
+            controller.patternRangeMode.set("search");
+            controller.patternRangeArmed.set(!controller.patternRangeArmed.value || wasCopying);
+          }}
+        >
+          <SimilarSequenceIcon />
+          <span className="tb-label">Similar</span>
+        </button>
+      </Tooltip>
 
       {/* Backtest + Live sit together here (kept off the tab bar so they survive
           maximized view): backtest a rule strategy, then arm the same strategy

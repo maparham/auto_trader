@@ -2774,6 +2774,12 @@
    control that did it should be unmistakable at a glance. */
 .toolbar .heatmap-toggle.seg-on { background: var(--accent); color: var(--accent-text); }
 .toolbar .heatmap-toggle.seg-on:hover:not(:disabled) { background: var(--accent); }
+/* Armed like a drawing tool, styled like one: the same quiet fill and accent
+   content the draw sidebar's armed tools use, not the Heatmap's solid accent
+   (that marks a persistent paint being ON, this marks a one-shot drag). */
+.toolbar .pattern-range-toggle.seg-on,
+.toolbar .pattern-range-toggle.seg-on:hover:not(:disabled) {
+  background: var(--hover-strong); color: var(--accent); }
 .toolbar .anchor-btn.heatmap-caret {
   border-radius: 0 6px 6px 0; padding: 5px 3px;
   display: inline-flex; align-items: center;
