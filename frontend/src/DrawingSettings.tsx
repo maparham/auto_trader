@@ -466,6 +466,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                     <label>Color</label>
                     <div className="ind-line-controls">
                       <select
+                        className="ghost-color-mode"
                         value={ghostStyle.color === "direction" ? "direction" : "flat"}
                         onChange={(e) =>
                           applyGhostStyle({

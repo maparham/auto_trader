@@ -69,6 +69,16 @@ import type { ChartHandle, ReplayHandle } from "./chartHandle";
 
 // Bars fetched left of the start (screen context the user can scroll into) and
 // right of the cursor (the forward buffer that keeps stepping local).
+/** Halvings a jump skips when a read comes back degraded, on top of the one the
+ * next attempt makes anyway. A timeout is evidence about the DEPTH asked for, so
+ * the search collapses rather than creeping: this bounds the whole jump to two
+ * slow reads, which is what a genuine outage costs before it is reported. */
+const DEGRADED_SKIP = 3;
+/** How long one jump read may take before the search moves on. Generous next to
+ * a cached page (milliseconds) and to a live broker round trip (a second or two),
+ * so it only ever fires on a read that was not going to arrive. */
+const JUMP_READ_TIMEOUT_MS = 10_000;
+const TIMEOUT_MSG = "Timed out reading that far back. Try a shorter window or a higher timeframe.";
 const CONTEXT_BARS = 300;
 const FORWARD_BARS = 200;
 // Refill when the cursor comes within this many unrevealed bars of the store's end.
@@ -415,7 +425,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
   // --- bar store ------------------------------------------------------------
 
   const fetchWindow = useCallback(
-    async (res: string, centerMs: number): Promise<CandlesResult> => {
+    async (res: string, centerMs: number, signal?: AbortSignal): Promise<CandlesResult> => {
       const cur = latest.current;
       const { fromSec, toSec } = bufferWindowSec({
         centerMs,
@@ -427,7 +437,9 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
       // WithStatus, not the forgiving fetchRange: that one flattens a 5xx to an
       // empty page, which replay would otherwise report to the user as "no
       // candles at that point" — blaming their pick for a broker outage.
-      return fetchRangeWithStatus(cur.epic, res, fromSec, toSec, cur.priceSide, cur.brokerId);
+      return fetchRangeWithStatus(
+        cur.epic, res, fromSec, toSec, cur.priceSide, cur.brokerId, signal,
+      );
     },
     [],
   );
@@ -884,6 +896,12 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
       const seq = ++reqSeq.current;
       setState((s) => ({ ...s, loading: true, error: null }));
       void (async () => {
+        // A degraded read is usually a real outage, but not always: asking a
+        // broker for minute candles from a year ago times out precisely because
+        // that history does not exist, and reporting "broker unreachable" for it
+        // sends the user looking at their connection. So one is spent asking
+        // again much nearer to now, where the answer is cheap and often cached.
+        let lastDegraded: string | null = null;
         for (let attempt = 0; attempt < MAX_JUMP_ATTEMPTS; attempt++) {
           if (seq !== reqSeq.current) return; // cancelled / exited / superseded
           const { targetMs } = pickJumpTarget({
@@ -892,19 +910,36 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
             attempt,
             random: Math.random,
           });
-          const { bars, degraded } = await fetchWindow(res, targetMs).catch(() => ({
-            bars: [] as KLineData[],
-            degraded: OUTAGE_MSG,
-          }));
+          // Bounded, because a read this deep does not merely fail slowly: asking
+          // a broker for year-old MINUTE candles can hang for minutes with no
+          // answer at all, and the picker would sit on "Finding candles..."
+          // forever. A jump is the one read that can afford a deadline, having
+          // five other places it could land.
+          const ctrl = new AbortController();
+          const timer = window.setTimeout(() => ctrl.abort(), JUMP_READ_TIMEOUT_MS);
+          const { bars, degraded } = await fetchWindow(res, targetMs, ctrl.signal)
+            .catch(() => ({
+              bars: [] as KLineData[],
+              degraded: ctrl.signal.aborted ? TIMEOUT_MSG : OUTAGE_MSG,
+            }))
+            .finally(() => window.clearTimeout(timer));
           if (seq !== reqSeq.current) return;
           if (degraded) {
-            // The backend is down, not the window empty. Re-rolling would burn
-            // every remaining attempt on the same outage.
-            setState((s) => ({ ...s, loading: false, error: OUTAGE_MSG }));
-            return;
+            lastDegraded = degraded;
+            // Plus the loop's own step. This can skip past a depth that would
+            // have worked, which is the trade: a read that did not arrive says
+            // nothing about where the data starts, and creeping down one halving
+            // at a time would cost another slow read to find out.
+            attempt += DEGRADED_SKIP;
+            continue;
           }
+          // A read that ARRIVED, empty or not, is the better witness: it says the
+          // history really does stop here rather than that the ask was too deep.
+          // Without this, one deep timeout would keep speaking for the whole run
+          // and report a broker problem where the answer is the timeframe.
+          lastDegraded = null;
           const cursor = cursorForStartTs(bars, targetMs, nominalMs(res));
-          if (cursor == null) continue; // dead zone (weekend / holiday): re-roll wider
+          if (cursor == null) continue; // dead zone or history floor: halve and re-roll
           barsRef.current = bars;
           storeResRef.current = res;
           setState((s) => ({
@@ -920,12 +955,24 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
             error: null,
           }));
           setReplayEpoch((n) => n + 1);
+          // Nothing on screen says the jump landed in a fraction of the window
+          // that was asked for: a blind session shows no date at all, and a
+          // dated one shows where it landed but never why. Two halvings (a
+          // quarter of the window or less) is where that stops being a detail.
+          if (attempt >= 2) toast("No candles that far back, so the jump stayed closer to now.");
           return;
         }
         setState((s) => ({
           ...s,
           loading: false,
-          error: "Couldn't find candles in that window. Try a wider one.",
+          // The broker's own reason wins when there was one: a jump that only
+          // ever saw timeouts has learned nothing about the timeframe.
+          //
+          // Otherwise NOT "try a wider one": by now the search has halved its
+          // way down to roughly a hundredth of the window and still found
+          // nothing, so more history is the one thing that cannot help. A
+          // coarser timeframe is what the broker actually keeps further back.
+          error: lastDegraded ?? "No candles at this timeframe. Try a higher one.",
         }));
       })();
     },

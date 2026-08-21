@@ -91,11 +91,26 @@ describe("pickJumpTarget", () => {
     expect(r.targetMs).toBe(r.fromMs + (r.toMs - r.fromMs) * 0.5);
   });
 
-  it("widens the window on each re-roll attempt so dead zones cannot trap it", () => {
-    const first = pickJumpTarget({ nowMs: NOW, windowMs: 7 * DAY, attempt: 0, random: () => 0 });
-    const third = pickJumpTarget({ nowMs: NOW, windowMs: 7 * DAY, attempt: 2, random: () => 0 });
-    expect(third.fromMs).toBeLessThan(first.fromMs);
-    expect(third.toMs).toBeGreaterThanOrEqual(first.toMs); // strict superset, never a retreating head
+  // The dead end that actually stops a jump is the broker's history floor, not a
+  // holiday: minute candles run out after weeks. So each re-roll draws CLOSER to
+  // now, converging on the floor from above. Widening (what this did before) walked
+  // away from the only data there was.
+  it("halves the window on each re-roll attempt, drawing closer to now", () => {
+    const first = pickJumpTarget({ nowMs: NOW, windowMs: 8 * DAY, attempt: 0, random: () => 0 });
+    const third = pickJumpTarget({ nowMs: NOW, windowMs: 8 * DAY, attempt: 2, random: () => 0 });
+    expect(first.fromMs).toBe(NOW - 8 * DAY);
+    expect(third.fromMs).toBe(NOW - 2 * DAY);
+    // The headroom shrinks with the window, so a late attempt still leaves bars
+    // to play instead of reserving a tenth of the ORIGINAL window it no longer uses.
+    expect(third.toMs).toBe(NOW - 0.2 * DAY);
+  });
+
+  it("stays inside the requested window however many times it re-rolls", () => {
+    for (let attempt = 0; attempt < MAX_JUMP_ATTEMPTS; attempt++) {
+      const r = pickJumpTarget({ nowMs: NOW, windowMs: 30 * DAY, attempt, random: () => 0 });
+      expect(r.fromMs).toBeGreaterThanOrEqual(NOW - 30 * DAY);
+      expect(r.targetMs).toBeLessThan(NOW);
+    }
   });
 
   it("bounds the re-roll budget", () => {

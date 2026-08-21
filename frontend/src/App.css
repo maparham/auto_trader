@@ -2541,6 +2541,9 @@
   border-radius: 4px; background: var(--input-bg); cursor: pointer;
 }
 .ind-line-controls select { width: 64px; }
+/* Pattern-overlay color mode: "Up / down" needs more room than the 64px
+   thickness selects this class was sized for. */
+.ind-line-controls select.ghost-color-mode { width: 96px; }
 /* PREV_HL lookback row: compact period count + a wider aggregation-function select
    (Max/Min · Average · Median) than the Style-tab thickness select. */
 .ind-prevhl-controls input[type="number"] { width: 56px; }
@@ -6055,6 +6058,18 @@ span.bt-leg-short { color: var(--neg); }
   background: none; border: 0; border-bottom: 1px solid var(--border);
   color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .pm-row:hover { background: var(--hover); }
+/* Per-row "copy as pattern": a SIBLING of the row button (a button cannot nest
+   in a button), floated over the row's right edge and only shown while the row
+   (or the control itself) is hovered or focused, so the five-column grid keeps
+   its alignment and the outcome column stays readable at rest. */
+.pm-row-wrap { position: relative; }
+.pm-copy { position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  display: none; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--surface); color: var(--text-dim);
+  cursor: pointer; z-index: 1; }
+.pm-row-wrap:hover .pm-copy, .pm-copy:focus-visible { display: inline-flex; }
+.pm-copy:hover { color: var(--text); background: var(--hover); }
 .pm-rank { color: var(--text-dim); }
 .pm-dist { font-variant-numeric: tabular-nums; color: var(--text-dim); }
 .pm-pct { font-variant-numeric: tabular-nums; text-align: right; color: var(--pos); }

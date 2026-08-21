@@ -110,12 +110,22 @@ export function clearReplaySession(scope: string): void {
 }
 
 /**
- * Where a random jump lands. Uniform inside [now - window, now - window/10]:
- * the 10% headroom guarantees the session has unseen bars left to play instead
- * of starting at the live edge. Each re-roll `attempt` widens the window by 50%
- * so a run of dead-zone landings (a long holiday closure, an instrument listed
- * mid-window) escapes instead of re-rolling inside the same gap forever. The range
- * on each attempt is a strict superset of the last, never retreating the head.
+ * Where a random jump lands. Uniform inside [now - span, now - span/10]: the 10%
+ * headroom guarantees the session has unseen bars left to play instead of
+ * starting at the live edge.
+ *
+ * Each re-roll `attempt` HALVES the span, drawing closer to now rather than
+ * further from it. The earlier version widened instead, on the theory that a run
+ * of dead-zone landings meant a long closure to escape. The real dead end is not
+ * a holiday, it is the HISTORY FLOOR: a broker keeps 1-minute candles for weeks
+ * and hourly ones for years, so a "past year" jump on a minute chart fails for
+ * every point older than the floor. Widening walked away from the data and the
+ * error even told the user to widen further. Halving converges on the floor from
+ * above, so six attempts take a year's window down to about eleven days, while a
+ * fresh uniform draw each time escapes an ordinary weekend just as well.
+ *
+ * The caller says how narrow it had to go (see randomJump): landing much closer
+ * to now than asked is worth a word, since a masked session cannot show it.
  */
 export function pickJumpTarget(args: {
   nowMs: number;
@@ -123,8 +133,8 @@ export function pickJumpTarget(args: {
   attempt: number;
   random: () => number;
 }): { fromMs: number; toMs: number; targetMs: number } {
-  const widened = args.windowMs * (1 + 0.5 * args.attempt);
-  const fromMs = args.nowMs - widened;
-  const toMs = args.nowMs - args.windowMs / 10;
+  const span = args.windowMs / 2 ** args.attempt;
+  const fromMs = args.nowMs - span;
+  const toMs = args.nowMs - span / 10;
   return { fromMs, toMs, targetMs: fromMs + (toMs - fromMs) * args.random() };
 }

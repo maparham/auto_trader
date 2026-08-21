@@ -37,7 +37,7 @@ const result = (over: Partial<PatternSearchResult> = {}): PatternSearchResult =>
 
 const props = {
   epic: "US100", resolution: "MINUTE_5", broker: "capital", priceSide: "bid",
-  timezone: "UTC", onJump: vi.fn(), onDismiss: vi.fn(),
+  timezone: "UTC", onJump: vi.fn(), onDismiss: vi.fn(), onCopy: vi.fn(),
   mode: "ohlc" as const, onModeChange: vi.fn(),
   forwardBars: 20, onForwardBarsChange: vi.fn(),
 };
@@ -282,6 +282,27 @@ describe("PatternMatchesPanel", () => {
     render(<PatternMatchesPanel {...props} result={null} loading={true} error={null} />);
     expect(screen.getByRole("button", { name: /whole candles/i })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: /aftermath/i })).toBeTruthy();
+  });
+
+  it("copies a match to the pattern clipboard without jumping there", () => {
+    const onCopy = vi.fn();
+    const onJump = vi.fn();
+    const m = match();
+    render(
+      <PatternMatchesPanel {...props} onCopy={onCopy} onJump={onJump} result={result({ matches: [m] })} loading={false} error={null} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Copy pattern from/ }));
+    expect(onCopy).toHaveBeenCalledWith(m);
+    // The copy is its own control: taking a pattern must not also jump the
+    // chart away from where the user is.
+    expect(onJump).not.toHaveBeenCalled();
+  });
+
+  it("keeps the copy control out of the jump row, so both stay reachable", () => {
+    render(<PatternMatchesPanel {...props} result={result()} loading={false} error={null} />);
+    const copy = screen.getByRole("button", { name: /^Copy pattern from/ });
+    // A button nested in a button is invalid and unreachable by keyboard.
+    expect(copy.closest(".pm-row")).toBeNull();
   });
 
   it("closes on Escape", () => {

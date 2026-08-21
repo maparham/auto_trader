@@ -2,6 +2,7 @@
 // lives in usePatternSearch, all geometry in lib/patternSearch.
 import { useEffect, useMemo, useState } from "react";
 import CloseButton from "./CloseButton";
+import { CopyPatternIcon } from "./lib/menuIcons";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { SortHeader } from "./PositionsPanel";
@@ -39,6 +40,9 @@ interface Props {
   /** The whole match, not just its two ends: the caller also paints the forward
    *  window the row previews, which it reads off match.forward. */
   onJump: (match: PatternMatch) => void;
+  /** Copy this match onto the pattern clipboard, so it can be pasted as a
+   *  ghost overlay without first jumping there and dragging over it. */
+  onCopy: (match: PatternMatch) => void;
   onDismiss: () => void;
   /** What the distance is measured over. Changing it re-runs the last range. */
   mode: PatternMode;
@@ -268,7 +272,20 @@ export default function PatternMatchesPanel(props: Props) {
             // Keyed on the similarity rank, not the view position, so a
             // re-sort moves rows instead of remounting them.
             return (
-            <li key={rank}>
+            <li key={rank} className="pm-row-wrap">
+              {/* A SIBLING of the row, not a child: the row is itself a button,
+                  and a button inside a button is invalid (and unreachable by
+                  keyboard). Shown on the row's hover/focus via CSS. */}
+              <Tooltip content="Copy as pattern. Paste it anywhere with the pattern tool.">
+                <button
+                  type="button"
+                  className="pm-copy"
+                  aria-label={`Copy pattern from ${stamp(m.ts, timezone)}`}
+                  onClick={() => props.onCopy(m)}
+                >
+                  <CopyPatternIcon />
+                </button>
+              </Tooltip>
               <button
                 type="button"
                 className="pm-row"

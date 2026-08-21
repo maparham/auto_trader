@@ -4985,6 +4985,22 @@ export default function ChartCore({
           onModeChange={patternSearch.setMode}
           forwardBars={patternSearch.forwardBars}
           onForwardBarsChange={patternSearch.setForwardBars}
+          onCopy={(m) => {
+            // The row already carries the match's bars, so this is capture
+            // straight off the result: no jump, no drag, no coverage walk.
+            const captured = capturePattern(m.bars, {
+              epic: symbol.epic,
+              resolution: period.resolution,
+            });
+            if (!captured) {
+              toast(`a pattern needs at least ${MIN_GHOST_BARS} candles`);
+              return;
+            }
+            patternClipboard.set(captured);
+            toast(
+              `copied ${captured.bars.length} candles: paste them anywhere with the pattern tool`,
+            );
+          }}
           onJump={(m) => {
             // Mark where the match starts and ends BEFORE the jump: the bands
             // anchor by timestamp, so they resolve themselves once the coverage
