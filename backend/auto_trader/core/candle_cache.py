@@ -809,6 +809,36 @@ class CandleCache:
 
         t.add_done_callback(_done)
 
+    async def absorb_closed(self, key: CandleKey, res_seconds: int, bar: Candle) -> None:
+        """Persist one bar that just CLOSED on the live stream.
+
+        This is what keeps the store's right edge tracking the stream while a
+        chart sits open: historically closed bars were only persisted on the
+        next view's forward bridge, so candle_history.db lagged the live feed
+        by however long the tab had been open (measured 2h on 1m), and
+        anything reading the store — pattern search's own-selection row, most
+        visibly — was told the recent past did not exist.
+
+        The bar is stored unconditionally. Coverage, however, extends ONLY
+        when the bar directly abuts covered territory (its open sits within
+        one bar of the newest watermark): after a stream drop or a weekend
+        the gap between newest and this bar may hide bars a broker fetch can
+        still supply, and claiming it covered would freeze the hole in place.
+        A non-contiguous bar stays an orphan row until the next REST bridge
+        marks the gap — the same state a coverage reset leaves, and one the
+        window() walk already knows how to absorb.
+
+        Takes the per-key lock, so it serializes with window()/recent() and
+        their read-modify-write of the coverage row."""
+        ts = int(bar.time.timestamp())
+        async with self._key_lock(key):
+            await asyncio.to_thread(
+                self._store_closed, key, [bar], ts + 1, False
+            )
+            cov = await asyncio.to_thread(self._coverage, key)
+            if cov is not None and cov[1] < ts and ts - res_seconds <= cov[1]:
+                await asyncio.to_thread(self._extend_coverage, key, cov[0], ts)
+
     async def backfill_below(
         self,
         key: CandleKey,

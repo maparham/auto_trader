@@ -3,9 +3,11 @@
 The /ws/candles relay calls on_view_start when a chart begins viewing a series and
 on_view_stop when it disconnects. The first viewer of a series triggers one one-shot
 background task that seeds a forward block if the series is cold, then deep-backfills
-history downward toward the broker's floor. There is NO periodic loop: bars that close
-while a chart stays open are persisted on the next open's forward bridge (recent()),
-so no broker sees continuous background traffic. Reference-counted per series, so N
+history downward toward the broker's floor. There is NO periodic loop and no broker
+sees continuous background traffic: bars that close while a chart stays open are
+persisted straight off the live stream (the /ws/candles relay hands each closed bar
+to CANDLE_CACHE.absorb_closed), and the next open's forward bridge (recent()) only
+has to cover whatever a stream drop missed. Reference-counted per series, so N
 charts on the same series share ONE task; an in-flight backfill is cancelled when the
 last viewer leaves. Broker-agnostic: the relay injects the guarded fetch callables (no
 broker imports here).

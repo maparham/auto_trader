@@ -1218,3 +1218,49 @@ def test_window_budget_already_spent_serves_cache_without_fetching(tmp_path):
     assert f.range_calls == [], "no time left means no fetch at all"
     assert [int(c.time.timestamp()) for c in out] == list(range(2500, 3001, 100))
     assert partial["done_chunks"] == 0
+
+
+# --- absorb_closed: live-stream bars persist as they close -------------------
+# What keeps the store's right edge tracking an open chart's stream. Coverage
+# extends only for a bar that directly abuts covered territory; anything else
+# is stored as an orphan for the next REST bridge (or the archive-absorb walk)
+# to claim.
+
+
+def test_absorb_closed_contiguous_bar_extends_coverage(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(100, 1.0), _c(160, 2.0)], cutoff_ts=10_000)
+    asyncio.run(cache.absorb_closed(KEY, 60, _c(220, 3.0)))
+    assert cache._coverage(KEY) == (100, 220)
+    got = cache._read_window(KEY, 0, 1_000)
+    assert [int(c.time.timestamp()) for c in got] == [100, 160, 220]
+
+
+def test_absorb_closed_after_gap_stores_but_does_not_claim_the_hole(tmp_path):
+    # A stream drop (or weekend) between newest and the closed bar may hide
+    # bars a broker fetch can still supply: coverage must not swallow it.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(100, 1.0), _c(160, 2.0)], cutoff_ts=10_000)
+    asyncio.run(cache.absorb_closed(KEY, 60, _c(400, 4.0)))
+    assert cache._coverage(KEY) == (100, 160)  # unchanged
+    got = cache._read_window(KEY, 380, 420)
+    assert [int(c.time.timestamp()) for c in got] == [400]  # stored regardless
+
+
+def test_absorb_closed_cold_key_stores_without_inventing_coverage(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    asyncio.run(cache.absorb_closed(KEY, 60, _c(100, 1.0)))
+    assert cache._coverage(KEY) is None
+    assert [int(c.time.timestamp()) for c in cache._read_window(KEY, 0, 1_000)] == [100]
+
+
+def test_absorb_closed_is_idempotent_and_never_moves_newest_back(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(100, 1.0), _c(160, 2.0)], cutoff_ts=10_000)
+    asyncio.run(cache.absorb_closed(KEY, 60, _c(160, 2.5)))  # re-close of a covered bar
+    assert cache._coverage(KEY) == (100, 160)
+    asyncio.run(cache.absorb_closed(KEY, 60, _c(220, 3.0)))
+    asyncio.run(cache.absorb_closed(KEY, 60, _c(220, 3.0)))  # duplicate rollover
+    assert cache._coverage(KEY) == (100, 220)
+    got = cache._read_window(KEY, 150, 170)
+    assert got[0].close == 2.5  # replace, not duplicate rows

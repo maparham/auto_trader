@@ -97,6 +97,9 @@ async def ws_candles(websocket: WebSocket) -> None:
 
     is_ig = isinstance(broker, IGBroker)
     is_mt5 = isinstance(broker, MT5Broker)
+    # (CandleKey, res_seconds) once the native branch below opts in; None keeps
+    # derived and sub-minute streams persistence-free.
+    persist: tuple[tuple[str, str, str, str], int] | None = None
     # Sub-minute intervals are built by bucketing the tick stream; native ones merge
     # the OHLC + tick channels. Sub-minute is mid-only (served from the single-price
     # TICK_STORE), so price_side intentionally doesn't apply there.
@@ -165,10 +168,33 @@ async def ws_candles(websocket: WebSocket) -> None:
             stream = mt5_stream.stream_candles(broker, epic, resolution, price_side)
         else:
             stream = stream_candles(broker, epic, resolution, price_side)
+        # Native resolutions persist their closed bars (below). Derived and
+        # sub-minute intervals don't: derived bars are folded from a stored
+        # base on demand and never live in the bars table, and seconds live
+        # in the tick store.
+        persist = ((broker_id, epic, resolution.value, price_side), resolution.seconds)
 
     async def forward() -> None:
+        # The stream yields the FORMING bar, over and over, until the next one
+        # opens — so a time rollover means the previous yield was that bar's
+        # final state: closed, and safe to persist. Fire-and-forget so a slow
+        # absorb (the per-key lock can be held by a deep backfill) never
+        # stalls the relay; refs keep the tasks alive, absorbs are idempotent
+        # (INSERT OR REPLACE + a gated coverage union), and a bar lost to a
+        # dropped task is re-bridged by the next REST fetch like any gap.
+        absorbs: set[asyncio.Task] = set()
+        prev: Candle | None = None
         try:
             async for bar in stream:
+                if persist is not None:
+                    cur = bar.candle
+                    if prev is not None and cur.time > prev.time:
+                        t = asyncio.create_task(
+                            CANDLE_CACHE.absorb_closed(persist[0], persist[1], prev)
+                        )
+                        absorbs.add(t)
+                        t.add_done_callback(absorbs.discard)
+                    prev = cur
                 # bid/ask ride alongside the candle so the client can draw the optional
                 # bid & ask price lines; they're null until the first quote names them.
                 await websocket.send_json(
