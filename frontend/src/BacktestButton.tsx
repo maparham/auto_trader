@@ -893,7 +893,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
             <path d="M3 4v4h4" />
             <path d="M12 7.5v5l3.5 2" />
           </svg>
-          Backtest
+          <span className="tb-label">Backtest</span>
         </button>
       </Tooltip>
     </div>

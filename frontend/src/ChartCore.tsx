@@ -3472,12 +3472,17 @@ export default function ChartCore({
   // Chart replay for this cell. Declared BEFORE useLiveMarketData so its render-
   // time handle assignment is in place when that hook's load effect runs, and so
   // replayEpoch is available to pass down.
+  // replayFmt is built further down (it reads the readout state this hook
+  // feeds), so the hook reaches it through a ref rather than a value. Only ever
+  // called from a user gesture that ends a session, long after render.
+  const replayRealFmtRef = useRef<(ms: number) => string>(() => "");
   const replay = useReplay(handle, {
     epic: symbol.epic,
     resolution: period.resolution,
     priceSide,
     brokerId,
     scope,
+    formatReal: (ms) => replayRealFmtRef.current(ms),
   });
   // The replay order ticket. Only ever mounted inside an active session (so it
   // disappears with one), but the flag itself is deliberately NOT reset on exit:
@@ -3751,6 +3756,12 @@ export default function ChartCore({
       }),
     [clock, dateFormat, showWeekday, timezone, readoutMode, readoutMasked, readoutStartMs],
   );
+
+  // In an effect, not during render: the only caller is a session-ending gesture,
+  // which is always later than the effect that armed this.
+  useEffect(() => {
+    replayRealFmtRef.current = replayFmt.real;
+  }, [replayFmt]);
 
   const replayReadout =
     readoutMode === "active" && readoutCursorMs ? replayFmt.cursor(readoutCursorMs) : "";

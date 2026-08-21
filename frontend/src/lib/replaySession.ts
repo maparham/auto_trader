@@ -19,6 +19,44 @@ export const JUMP_WINDOWS: ReadonlyArray<{ key: JumpWindowKey; label: string; ms
   { key: "custom", label: "Custom range", ms: 0 },
 ];
 
+/** The random-jump window the picker is left on, remembered across sessions.
+ *
+ * ONE global entry, not one per scope: a user thinks "my jump window", and
+ * keying it per cell would reintroduce the very surprise this fixes the moment
+ * they replay a different chart. Device-local like every other replay record.
+ *
+ * The picker unmounts the instant a jump succeeds (it is rendered on
+ * `mode === "picking"`), so its local state cannot be the memory: without this,
+ * every session after the first silently re-armed the default month window
+ * while the user believed they had asked for a year.
+ */
+export interface JumpWindowPref {
+  key: JumpWindowKey;
+  /** Days back for the "custom" entry. Kept even while another preset is
+   * selected, so switching away and back does not lose the number. */
+  days: number;
+}
+
+export const DEFAULT_JUMP_PREF: JumpWindowPref = { key: "1M", days: 90 };
+
+const JUMP_PREF_KEY = `${PREFIX}.replayJumpWindow`;
+
+/** Validated on READ, not on write: a stored key can outlive the preset list it
+ * came from (a rename, a removed window), and falling back beats jumping into a
+ * zero-width window. */
+export function loadJumpPref(): JumpWindowPref {
+  const raw = load<Partial<JumpWindowPref>>(JUMP_PREF_KEY, {});
+  const days = Number(raw.days);
+  return {
+    key: JUMP_WINDOWS.some((w) => w.key === raw.key) ? (raw.key as JumpWindowKey) : DEFAULT_JUMP_PREF.key,
+    days: Number.isFinite(days) && days >= 1 ? Math.floor(days) : DEFAULT_JUMP_PREF.days,
+  };
+}
+
+export function saveJumpPref(pref: JumpWindowPref): void {
+  saveLocal(JUMP_PREF_KEY, pref);
+}
+
 /** How many times a jump may re-roll past a dead zone (weekend / holiday /
  * pre-listing gap) before the caller gives up and says so. */
 export const MAX_JUMP_ATTEMPTS = 6;

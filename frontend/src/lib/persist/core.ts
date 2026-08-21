@@ -148,6 +148,7 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   `${PREFIX}.viewPos`,
   `${PREFIX}.replaySessions`,
   `${PREFIX}.replayPillPos`,
+  `${PREFIX}.replayJumpWindow`,
   `${PREFIX}.holdout`,
   `${PREFIX}.alertUnseen`,
 ]);

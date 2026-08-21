@@ -32,12 +32,19 @@ installMemStorage();
 // trades fetch. Nothing here has a backend; stub the one function rather than
 // the module, so the rest of lib/trading (TradeView, the toTradeViews path) is
 // the real thing.
+// The reveal an untraded blind session gets INSTEAD of the card.
+vi.mock("../lib/notify", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/notify")>()),
+  toast: vi.fn(),
+}));
+
 vi.mock("../lib/trading", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/trading")>()),
   refreshTrades: vi.fn(),
 }));
 
 const { useReplay } = await import("./useReplay");
+const { toast } = await import("../lib/notify");
 
 const MIN = 60_000;
 const BASE = Date.UTC(2021, 4, 17, 9, 0);
@@ -115,6 +122,7 @@ async function mountWithStore(handle: ChartHandle) {
       priceSide: "mid",
       brokerId: "capital",
       scope: SCOPE,
+      formatReal: (ms: number) => `T${ms}`,
     }),
   );
   await act(async () => {
@@ -160,16 +168,37 @@ describe("useReplay exit reveal", () => {
     });
   });
 
-  it("opens the card for an untraded MASKED session (the dates are the reveal)", async () => {
+  it("reveals an untraded MASKED session in a toast, not a card", async () => {
+    // The dates are still owed (the picker promised them on exit), but a dialog
+    // reporting an empty book is a click for its own sake. The reveal goes out
+    // as a toast and the session tears down in the same gesture.
     seedSession({ masked: true, ledger: null });
     const { result } = await mountWithStore(fakeHandle());
 
     act(() => result.current.requestExit());
 
-    expect(result.current.pendingReport).toMatchObject({
-      masked: true,
-      summary: { trades: 0, openPositions: 0 },
-    });
+    expect(result.current.pendingReport).toBeNull();
+    expect(result.current.state.mode).toBe("off");
+    expect(toast).toHaveBeenCalledWith(`Replay was T${BASE} to T${CURSOR}`);
+  });
+
+  it("names one instant, not a range, for a session that never stepped", async () => {
+    seedSession({ masked: true, ledger: null, cursorMs: BASE, highWaterMs: BASE });
+    const { result } = await mountWithStore(fakeHandle());
+
+    act(() => result.current.requestExit());
+
+    expect(toast).toHaveBeenCalledWith(`Replay was T${BASE}`);
+  });
+
+  it("says nothing extra when an untraded UNMASKED session ends", async () => {
+    // Nothing was hidden, so there is nothing to reveal either.
+    seedSession({ masked: false, ledger: null });
+    const { result } = await mountWithStore(fakeHandle());
+
+    act(() => result.current.requestExit());
+
+    expect(toast).not.toHaveBeenCalled();
   });
 
   it("drops the persisted record as soon as the card opens", async () => {

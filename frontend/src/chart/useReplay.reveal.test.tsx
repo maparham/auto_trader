@@ -454,12 +454,15 @@ describe("ending a session restores the cell's own saved result", () => {
     return { handle, ...rendered };
   }
 
-  it("restores on the report card's Done (the ✕ path)", async () => {
+  // These sessions never trade, so they take finishSession's skip path: the
+  // teardown happens in the gesture itself and there is no card to dismiss (the
+  // blind ones get their reveal as a toast instead — useReplay.report.test.tsx).
+  it("restores on the ✕ path", async () => {
     seedSession({});
     const { result } = await revealing();
     await act(async () => result.current.requestExit());
-    expect(result.current.pendingReport).not.toBeNull();
-    await act(async () => result.current.dismissReport());
+    expect(result.current.pendingReport).toBeNull();
+    expect(result.current.state.mode).toBe("off");
     expect(rehydrateBacktest).toHaveBeenCalledWith(expect.anything(), SCOPE, EPIC, "1m");
   });
 
@@ -467,7 +470,6 @@ describe("ending a session restores the cell's own saved result", () => {
     seedSession({});
     const { result } = await revealing();
     await act(async () => result.current.requestNewStart());
-    await act(async () => result.current.dismissReport());
     expect(result.current.state.mode).toBe("picking");
     expect(rehydrateBacktest).toHaveBeenCalledWith(expect.anything(), SCOPE, EPIC, "1m");
   });

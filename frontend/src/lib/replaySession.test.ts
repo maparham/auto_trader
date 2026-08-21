@@ -10,6 +10,9 @@ const {
   pickJumpTarget,
   JUMP_WINDOWS,
   MAX_JUMP_ATTEMPTS,
+  loadJumpPref,
+  saveJumpPref,
+  DEFAULT_JUMP_PREF,
 } = await import("./replaySession");
 
 const { hydrateFromBackend } = await import("./persist/core");
@@ -101,5 +104,53 @@ describe("pickJumpTarget", () => {
 
   it("offers the spec's window presets plus custom", () => {
     expect(JUMP_WINDOWS.map((w) => w.key)).toEqual(["1W", "1M", "3M", "1Y", "custom"]);
+  });
+});
+
+// The picker unmounts on a successful jump, so its window choice cannot live in
+// component state: without this, every session after the first silently re-armed
+// the default month while the user believed they had asked for a year.
+describe("the remembered jump window", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("defaults before anything is chosen", () => {
+    expect(loadJumpPref()).toEqual(DEFAULT_JUMP_PREF);
+  });
+
+  it("round-trips a choice", () => {
+    saveJumpPref({ key: "1Y", days: 120 });
+    expect(loadJumpPref()).toEqual({ key: "1Y", days: 120 });
+  });
+
+  it("is one global entry, not one per cell", () => {
+    saveJumpPref({ key: "3M", days: 90 });
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k) keys.push(k);
+    }
+    expect(keys).toEqual(["auto-trader.replayJumpWindow"]);
+  });
+
+  it("falls back on a preset that no longer exists, and on a nonsense day count", () => {
+    // A stored key can outlive the list it came from; jumping into a zero-width
+    // window would land at the live edge with nothing to play.
+    localStorage.setItem(
+      "auto-trader.replayJumpWindow",
+      JSON.stringify({ key: "5Y", days: 0 }),
+    );
+    expect(loadJumpPref()).toEqual(DEFAULT_JUMP_PREF);
+  });
+
+  it("survives a backend hydrate (the key is registered device-local)", async () => {
+    saveJumpPref({ key: "1Y", days: 90 });
+    const fetchStub = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ "auto-trader.someOtherKey": JSON.stringify({ a: 1 }) }),
+    }));
+    vi.stubGlobal("fetch", fetchStub);
+    await hydrateFromBackend();
+    expect(loadJumpPref().key).toBe("1Y");
+    vi.unstubAllGlobals();
   });
 });

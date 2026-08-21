@@ -4,7 +4,12 @@
 import { useEffect, useRef, useState } from "react";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
-import { JUMP_WINDOWS, type JumpWindowKey } from "./lib/replaySession";
+import {
+  JUMP_WINDOWS,
+  loadJumpPref,
+  saveJumpPref,
+  type JumpWindowKey,
+} from "./lib/replaySession";
 
 interface Props {
   loading: boolean;
@@ -29,8 +34,14 @@ export default function ReplayStartPanel({
   masked,
   onCancel,
 }: Props) {
-  const [windowKey, setWindowKey] = useState<JumpWindowKey>("1M");
-  const [customDays, setCustomDays] = useState("90");
+  // The window choice is PERSISTED, not local-and-forgotten. This panel is
+  // rendered on `mode === "picking"`, so a successful jump unmounts it: local
+  // state would put the picker back on the default month every time, and a user
+  // who asked for a year got one month for every session after the first.
+  // Read once on mount, written on every change (see loadJumpPref).
+  const [pref] = useState(loadJumpPref);
+  const [windowKey, setWindowKey] = useState<JumpWindowKey>(pref.key);
+  const [customDays, setCustomDays] = useState(String(pref.days));
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Esc cancels picking (the curtain is a modal-ish mode).
@@ -65,8 +76,9 @@ export default function ReplayStartPanel({
 
   // JUMP_WINDOWS' "custom" entry carries ms: 0 — a span the picker would read as a
   // degenerate jump at the live edge. The days field supplies the real one.
+  const daysBack = () => Math.max(1, Math.floor(Number(customDays) || 1));
   const windowMs = () => {
-    if (windowKey === "custom") return Math.max(1, Number(customDays) || 1) * DAY_MS;
+    if (windowKey === "custom") return daysBack() * DAY_MS;
     return JUMP_WINDOWS.find((w) => w.key === windowKey)?.ms ?? 30 * DAY_MS;
   };
 
@@ -91,7 +103,11 @@ export default function ReplayStartPanel({
           className="rsp-select"
           aria-label="Random jump window"
           value={windowKey}
-          onChange={(e) => setWindowKey(e.target.value as JumpWindowKey)}
+          onChange={(e) => {
+            const key = e.target.value as JumpWindowKey;
+            setWindowKey(key);
+            saveJumpPref({ key, days: daysBack() });
+          }}
         >
           {JUMP_WINDOWS.map((w) => (
             <option key={w.key} value={w.key}>
@@ -110,7 +126,13 @@ export default function ReplayStartPanel({
             min={1}
             aria-label="Days back"
             value={customDays}
-            onChange={(e) => setCustomDays(e.target.value)}
+            // Saved only when it parses: the field is briefly empty mid-edit,
+            // and remembering "0 days" would arm a degenerate jump.
+            onChange={(e) => {
+              setCustomDays(e.target.value);
+              const days = Number(e.target.value);
+              if (Number.isFinite(days) && days >= 1) saveJumpPref({ key: windowKey, days });
+            }}
           />
         </div>
       )}

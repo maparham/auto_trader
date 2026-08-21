@@ -196,6 +196,10 @@ export interface ReplayDeps {
   priceSide: PriceSide;
   brokerId: string;
   scope: string;
+  /** Real (never masked) timestamp label, in the cell's timezone and clock. Used
+   * only for the reveal a no-trade blind session gets INSTEAD of the report card
+   * (see finishSession); the card itself is formatted by the caller. */
+  formatReal?: (ms: number) => string;
 }
 
 const OFF: ReplayUiState = {
@@ -238,8 +242,8 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
   const storeResRef = useRef<string>(resolution);
   // Latest state for imperative callbacks (playback timer, the handle) without
   // stale closures — same idiom as useProximityHeatmap's `latest`.
-  const latest = useRef({ state, epic, resolution, priceSide, brokerId, scope });
-  latest.current = { state, epic, resolution, priceSide, brokerId, scope };
+  const latest = useRef({ state, epic, resolution, priceSide, brokerId, scope, formatReal: deps.formatReal });
+  latest.current = { state, epic, resolution, priceSide, brokerId, scope, formatReal: deps.formatReal };
   const refillingRef = useRef(false);
   // Monotonic request id: a resolved fetch applies only if it is still the newest
   // one issued (useProximityHeatmap's idiom). ONE counter for every path that
@@ -940,14 +944,27 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
    * acknowledge a reveal cannot stand between them and a chart they just
    * navigated away from.
    *
-   * A session with no trades and no masking has nothing to reveal — no book to
-   * report on and no hidden dates to unhide — so it skips the card entirely and
-   * takes the teardown it was headed for. */
+   * A session with no trades has no book to report on, so it skips the card
+   * entirely and takes the teardown it was headed for. A modal that says nothing
+   * happened is worse than no modal.
+   *
+   * A BLIND one still owes the user the reveal (the picker promised the real
+   * dates on exit), so that goes out as a toast instead: the same fact, without
+   * a dialog to dismiss. The card stays the moment there is a book to show,
+   * where its numbers are the reason to stop and read. An open position counts
+   * as a trade — it is the one that has not finished yet. */
   const finishSession = useCallback(
     (restart: boolean) => {
       const s = latest.current.state;
       const sum = summarize(ledgerRef.current);
-      if (sum.trades === 0 && sum.openPositions === 0 && !s.masked) {
+      if (sum.trades === 0 && sum.openPositions === 0) {
+        const fmt = latest.current.formatReal;
+        // A session exited without stepping has one instant, not a range, and
+        // "X to X" reads like a bug.
+        if (s.masked && fmt) {
+          const start = fmt(s.startMs);
+          toast(s.cursorMs > s.startMs ? `Replay was ${start} to ${fmt(s.cursorMs)}` : `Replay was ${start}`);
+        }
         if (restart) enterPicking();
         else exit();
         return;

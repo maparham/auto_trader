@@ -712,7 +712,12 @@ export default function Toolbar({
           disabled={!replayEntry?.available || replayEntry.active}
           onClick={() => replayEntry?.enter()}
         >
-          ⟲ Replay
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true">
+            <path d="M7 4.5v15l12-7.5z" />
+          </svg>
+          <span className="tb-label">Replay</span>
         </button>
       </Tooltip>
 
@@ -733,7 +738,17 @@ export default function Toolbar({
               setHeatOpen(next);
             }}
           >
-            Heatmap
+            {/* Cell-grid icon: only shown when the tight-toolbar rules hide the
+                labels, so this button keeps a face. */}
+            <svg className="heatmap-ic" viewBox="0 0 24 24" width="15" height="15" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              aria-hidden="true">
+              <rect x="3.5" y="3.5" width="7" height="7" rx="1.2" />
+              <rect x="13.5" y="3.5" width="7" height="7" rx="1.2" />
+              <rect x="3.5" y="13.5" width="7" height="7" rx="1.2" />
+              <rect x="13.5" y="13.5" width="7" height="7" rx="1.2" />
+            </svg>
+            <span className="tb-label">Heatmap</span>
           </button>
         </Tooltip>
         <Tooltip content="Heatmap settings">

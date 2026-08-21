@@ -152,20 +152,22 @@ test("chart replay: jump, step, mask, persist, exit", async ({ page }) => {
   await expect(page.locator(".rp-readout")).toHaveText(stepped ?? "");
   await expect(page.locator(".chart-range-bar")).toHaveCount(0);
 
-  // Exit through the report card: the reveal shows a real date range, and the
-  // cell returns to live (the quick-range bar comes back).
+  // Exit: this session never traded, so there is no book to report and no card
+  // (a modal saying nothing happened is a click for its own sake). The reveal is
+  // still owed — the picker promised the real dates on exit — and arrives as a
+  // toast, in the same gesture that returns the cell to live.
   await page.locator('[aria-label="Exit replay"]').click();
-  await expect(page.locator(".replay-report")).toBeVisible();
-  const reveal = page.locator(".rr-reveal-range");
+  await expect(page.locator(".replay-report")).toHaveCount(0);
+  const reveal = page.locator("#toast-container .toast").filter({ hasText: "Replay was" });
+  await expect(reveal).toBeVisible();
   // Both halves of the reveal's contract. The positive match is the default
   // "ymd" date format ("2026-07-10 09:30"); the "\d{2}/" alternative covers a
   // dmy/mdy preference. The negative is the one replayFormat.ts's header calls
-  // out by name: handing this card the MASKED formatter is a one-word edit at
+  // out by name: handing this reveal the MASKED formatter is a one-word edit at
   // the call site that leaves every unit test green and renders "Day 4 09:30 to
   // Day 4 15:30" here.
   await expect(reveal).toHaveText(/\d{4}|\d{2}\//);
   await expect(reveal).not.toHaveText(/Day -?\d/);
-  await page.locator(".rr-done").click();
   await expect(page.locator(".replay-pill")).toHaveCount(0);
   await expect(page.locator(".chart-range-bar")).toHaveCount(1);
   await expect.poll(saved).toBe(0);
