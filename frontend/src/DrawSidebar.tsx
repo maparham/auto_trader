@@ -403,7 +403,8 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
       {/* Measure ruler (moved from the toolbar; same signal contract). */}
       <Tooltip
         placement="right"
-        content={["Measure. Click a start point, then an end point.", "Shift-drag also works."]}
+        title="Measure"
+        content={["Click a start point, then an end point.", "Shift-drag also works."]}
       >
         <button
           className={"ds-btn measure-toggle" + (measuring ? " on" : "")}
@@ -419,8 +420,9 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
           fixed rate (1%/bar = 45°), not the line's on-screen tilt. */}
       <Tooltip
         placement="right"
+        title="Slope"
         content={[
-          "Slope. Click a start point, then an end point.",
+          "Click a start point, then an end point.",
           "Then drag either end, drag the middle to slide it, or drag the knob to rotate (hold Shift to snap 15°).",
           "The angle is a fixed rate: 1%/bar = 45°, the same on every symbol and zoom level.",
         ]}
@@ -437,8 +439,9 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
       {/* Zoom to range: drag a band, drop one timeframe lower centered on it. */}
       <Tooltip
         placement="right"
+        title="Zoom to range"
         content={[
-          "Zoom to range. Drag across a time range.",
+          "Drag across a time range.",
           "On release, drops one timeframe lower centered on it.",
         ]}
       >
@@ -454,8 +457,9 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
       {/* Find similar: drag across candles, get the closest historical matches. */}
       <Tooltip
         placement="right"
+        title="Similarity search"
         content={[
-          "Similarity search. Drag across the candles you want to match.",
+          "Drag across the candles you want to match.",
           "On release, finds where that shape appeared before.",
         ]}
       >
@@ -484,8 +488,9 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
           // The flyout opens exactly where this bubble sits, so the hover
           // tooltip stands down as soon as the menu is up.
           disabled={patternMenuOpen}
+          title="Pattern clipboard"
           content={[
-            "Pattern clipboard. Copy a shape, paste it on any chart.",
+            "Copy a shape, paste it on any chart.",
             "Copy takes a drag; paste drops the copied candles as a ghost.",
           ]}
         >

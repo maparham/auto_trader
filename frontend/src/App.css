@@ -2759,7 +2759,9 @@
    pinned over the price axis). The face toggles the paint, the caret opens the
    settings — same shape as the snapshot split beside it. */
 .toolbar .heatmap-split { display: flex; gap: 0; align-items: stretch; position: relative; }
-.toolbar .heatmap-toggle { border-radius: 6px 0 0 6px; }
+/* Trimmed right padding so the caret sits beside the word rather than floating
+   away from it — the pair should read as one control. */
+.toolbar .heatmap-toggle { border-radius: 6px 0 0 6px; padding-right: 4px; }
 /* ON is a filled pill: the heatmap repaints the whole candle pane, so the
    control that did it should be unmistakable at a glance. */
 .toolbar .heatmap-toggle.seg-on { background: var(--accent); color: var(--accent-text); }
