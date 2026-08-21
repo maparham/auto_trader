@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  avgDistance,
   barsInRange,
   formatForwardPct,
   previewGeometry,
@@ -7,6 +8,7 @@ import {
   DEFAULT_MATCH_SORT,
   nextMatchSort,
   sortMatches,
+  summarizeMatches,
   type MatchSort,
   type PatternMatch,
 } from "./patternSearch";
@@ -241,5 +243,103 @@ describe("nextMatchSort", () => {
     expect(nextMatchSort({ key: "dist", dir: "asc" }, "when")).toEqual({ key: "when", dir: "desc" });
     expect(nextMatchSort({ key: "dist", dir: "asc" }, "outcome"))
       .toEqual({ key: "outcome", dir: "desc" });
+  });
+});
+
+describe("sortMatches on the all-mode formula columns", () => {
+  const m = (over: Partial<PatternMatch>): PatternMatch => ({
+    ts: 0, endTs: 0, distance: 0,
+    bars: [], forward: [], forwardComplete: true, forwardPct: 0,
+    ...over,
+  });
+  // ohlc order disagrees with the arrival (mean-rank) order, so a wrong key
+  // cannot pass by luck; one null ohlc must sort last either way.
+  const matches = [
+    m({ distance: 1.0, distances: { shape: 0.1, ohlc: 0.9, close: 0.2, dtw: 0.3 } }),
+    m({ distance: 2.0, distances: { shape: 0.4, ohlc: null, close: 0.5, dtw: 0.1 } }),
+    m({ distance: 3.0, distances: { shape: 0.6, ohlc: 0.2, close: 0.9, dtw: 0.8 } }),
+  ];
+
+  it("sorts by one formula's distances, nulls last in both directions", () => {
+    expect(sortMatches(matches, { key: "ohlc", dir: "asc" }).map((r) => r.rank))
+      .toEqual([3, 1, 2]);
+    expect(sortMatches(matches, { key: "ohlc", dir: "desc" }).map((r) => r.rank))
+      .toEqual([1, 3, 2]);
+  });
+
+  it("sorts by the average of the formula distances", () => {
+    // Averages over scored formulas: 0.375 / 0.333... / 0.625.
+    expect(sortMatches(matches, { key: "avg", dir: "asc" }).map((r) => r.rank))
+      .toEqual([2, 1, 3]);
+  });
+
+  it("averages only the formulas that scored the window", () => {
+    expect(avgDistance(matches[1])).toBeCloseTo((0.4 + 0.5 + 0.1) / 3);
+    expect(avgDistance(m({ distance: 1 }))).toBeNull();
+  });
+
+  it("keeps arrival order when no match carries formula distances", () => {
+    const plain = matches.map(({ distances: _d, ...rest }) => m(rest));
+    expect(sortMatches(plain, { key: "shape", dir: "asc" }).map((r) => r.rank))
+      .toEqual([1, 2, 3]);
+  });
+});
+
+describe("summarizeMatches", () => {
+  const m = (over: Partial<PatternMatch>): PatternMatch => ({
+    ts: 500, endTs: 600, distance: 0.5,
+    bars: [bar(500, 1, 2, 0, 1), bar(600, 1, 2, 0, 1)],
+    forward: [], forwardComplete: true, forwardPct: 1.0,
+    ...over,
+  });
+
+  it("excludes the selection row from every figure", () => {
+    const s = summarizeMatches([
+      m({ isSelection: true, distance: 0, forwardPct: 99, ts: 1 }),
+      m({ ts: 100, distance: 0.2, forwardPct: 2.0 }),
+      m({ ts: 300, distance: 0.4, forwardPct: -1.0 }),
+    ])!;
+    expect(s.count).toBe(2);
+    expect(s.withOutcome).toBe(2);
+    expect(s.up).toBe(1);
+    expect(s.medianPct).toBe(0.5);
+    expect(s.bestPct).toBe(2.0);
+    expect(s.worstPct).toBe(-1.0);
+    expect(s.medianDist).toBeCloseTo(0.3);
+    expect(s.oldestTs).toBe(100);
+    expect(s.newestTs).toBe(300);
+  });
+
+  it("is null when only the selection row exists", () => {
+    expect(summarizeMatches([m({ isSelection: true })])).toBeNull();
+    expect(summarizeMatches([])).toBeNull();
+  });
+
+  it("counts a flat outcome as up, matching the row colouring", () => {
+    const s = summarizeMatches([m({ forwardPct: 0 }), m({ forwardPct: -2 })])!;
+    expect(s.up).toBe(1);
+  });
+
+  it("keeps rows without aftermath out of the outcome figures but in the rest", () => {
+    const s = summarizeMatches([m({ forwardPct: null }), m({ forwardPct: 3 })])!;
+    expect(s.count).toBe(2);
+    expect(s.withOutcome).toBe(1);
+    expect(s.medianPct).toBe(3);
+  });
+
+  it("has no median distance in all mode, where distance is a mean rank", () => {
+    const s = summarizeMatches([
+      m({ distances: { shape: 0.1, ohlc: 0.2, close: 0.3, dtw: 0.4 } }),
+    ])!;
+    expect(s.medianDist).toBeNull();
+  });
+
+  it("reports the spread of window lengths", () => {
+    const s = summarizeMatches([
+      m({}),
+      m({ bars: [bar(1, 1, 2, 0, 1), bar(2, 1, 2, 0, 1), bar(3, 1, 2, 0, 1)] }),
+    ])!;
+    expect(s.minLen).toBe(2);
+    expect(s.maxLen).toBe(3);
   });
 });

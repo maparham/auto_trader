@@ -7,17 +7,36 @@ import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { SortHeader } from "./PositionsPanel";
 import {
+  avgDistance,
   DEFAULT_MATCH_SORT,
   formatForwardPct,
   nextMatchSort,
   previewGeometry,
   sortMatches,
+  summarizeMatches,
   type MatchSort,
   type MatchSortKey,
   type PatternMatch,
   type PatternMode,
   type PatternSearchResult,
 } from "./lib/patternSearch";
+
+// The distance columns of the "all" tab, in display order: the four formulas
+// plus their plain average. The short labels fit 46px columns; the
+// aria-labels carry the full names. `value` reads a row's cell, so the Avg
+// column (derived, not sent by the backend) needs no special casing below.
+const ALL_COLS: readonly (readonly [
+  MatchSortKey,
+  string,
+  string,
+  (m: PatternMatch) => number | null,
+])[] = [
+  ["shape", "Shape", "Shape distance", (m) => m.distances?.shape ?? null],
+  ["ohlc", "Cndl", "Candles distance", (m) => m.distances?.ohlc ?? null],
+  ["close", "Close", "Close distance", (m) => m.distances?.close ?? null],
+  ["dtw", "DTW", "DTW distance", (m) => m.distances?.dtw ?? null],
+  ["avg", "Avg", "Average of the four distances", avgDistance],
+] as const;
 
 // A few round numbers rather than a free field: the horizon is a "what happened
 // next" question, not a parameter to tune. 0 is left out on purpose, since an
@@ -89,8 +108,39 @@ function Preview({ match }: { match: PatternMatch }) {
   );
 }
 
+// Smaller than this and the five-column rows stop being readable.
+const MIN_W = 340;
+// The chart keeps at least this much width however far the splitter is dragged.
+const MIN_CHART_W = 260;
+
 export default function PatternMatchesPanel(props: Props) {
   const { result, loading, error, epic, resolution, broker, priceSide, timezone, onDismiss } = props;
+
+  // User-dragged sidebar width, null until the splitter is used: the CSS
+  // defaults (400px / 606px in All mode) stay in charge until then. The panel
+  // docks as a full-height column on the cell's right, so width is the only
+  // dimension to negotiate — dragging the left-edge splitter out takes space
+  // from the chart, which reflows to what remains.
+  const [width, setWidth] = useState<number | null>(null);
+  const startResize = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const rect = e.currentTarget.parentElement!.getBoundingClientRect();
+    const sx = e.clientX;
+    const onMove = (me: MouseEvent) => {
+      setWidth(
+        Math.min(
+          Math.max(MIN_W, rect.width + (sx - me.clientX)),
+          window.innerWidth - MIN_CHART_W,
+        ),
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   // Close button and Esc only, deliberately. Dismissing also clears the band on
   // the chart, so a click-away would destroy the ranked list the moment the user
@@ -108,18 +158,40 @@ export default function PatternMatchesPanel(props: Props) {
   // Only the order is state here. The rank a row shows comes from where the
   // backend put it, so sorting by outcome still reports similarity.
   const [sort, setSort] = useState<MatchSort>(DEFAULT_MATCH_SORT);
+  // A mode change redraws the columns, and a sort keyed to a column the new
+  // mode does not show would silently order the list by an invisible number.
+  useEffect(() => setSort(DEFAULT_MATCH_SORT), [props.mode]);
+  // The row whose jump the chart is showing, keyed by the match's start ts so
+  // a re-sort moves the highlight with its row. It stays until another row is
+  // picked: the user pans around the landed match, and the panel should keep
+  // saying which row the chart context belongs to. A new result list clears
+  // it — the old pick describes matches that are no longer shown.
+  const [jumpedTs, setJumpedTs] = useState<number | null>(null);
+  useEffect(() => setJumpedTs(null), [result]);
   const rows = useMemo(
     () => (result ? sortMatches(result.matches, sort) : []),
     [result, sort],
   );
   const onSort = (key: MatchSortKey) => setSort((s) => nextMatchSort(s, key));
 
-  const worst = result?.matches.length
+  const all = props.mode === "all";
+  const stats = useMemo(() => (result ? summarizeMatches(result.matches) : null), [result]);
+
+  // In "all" mode `distance` is a mean rank, not a distance, so there is no
+  // "worst shown" figure to report.
+  const worst = !all && result?.matches.length
     ? result.matches[result.matches.length - 1].distance
     : null;
 
   return (
-    <div className="pattern-matches">
+    <div
+      className={"pattern-matches" + (all ? " pm-wide" : "")}
+      style={width != null ? { width } : undefined}
+    >
+      {/* The width splitter along the docked panel's left edge. Drag-only
+          affordance; sighted-pointer feature like the transport drag, so it
+          is hidden from the accessibility tree. */}
+      <div className="pm-resize" aria-hidden="true" onMouseDown={startResize} />
       <div className="pm-head">
         <span className="pm-title">Similarity search</span>
         <InfoTip
@@ -139,7 +211,8 @@ export default function PatternMatchesPanel(props: Props) {
           {([["shape", "Shape", "Match the overall price shape"],
              ["ohlc", "Candles", "Match whole candles"],
              ["close", "Close", "Match closing prices only"],
-             ["dtw", "DTW", "Match with time warping"]] as const).map(
+             ["dtw", "DTW", "Match with time warping"],
+             ["all", "All", "Combine every metric into one ranking"]] as const).map(
             ([m, label, described]) => (
               <button
                 key={m}
@@ -160,6 +233,7 @@ export default function PatternMatchesPanel(props: Props) {
             "Candles matches body, wick and colour, so the shape of each bar counts.",
             "Close matches only the path of closing prices, ignoring the wicks.",
             "DTW lets time flex, so a pattern that ran fast early and slow late still matches.",
+            "All runs every metric, merges overlapping finds into one row each, and orders by their combined rank.",
           ]}
         />
         <label className="pm-horizon">
@@ -182,28 +256,53 @@ export default function PatternMatchesPanel(props: Props) {
         />
       </div>
 
-      {result && (
-        <div className="pm-sub">
+      {result && !loading && !error && stats && (
+        <div className="pm-stats">
           <span>
-            {epic} {resolution} on {broker} ({priceSide})
+            <b>{stats.count}</b> matches
           </span>
-          <span>
-            {day(result.series.oldestTs, timezone)} to {day(result.series.newestTs, timezone)},{" "}
-            {result.series.bars.toLocaleString("en-GB")} bars
-          </span>
-          {/* Not the same number as the bar count: windows that are flat or
-              gapped are dropped before ranking, so this is how much history was
-              genuinely compared. */}
-          <span>{result.scanned.toLocaleString("en-GB")} windows ranked</span>
-          <span>
-            {result.elapsedMs} ms{result.cold ? " (first search)" : ""}
-            {worst != null ? `, worst shown ${worst.toFixed(2)}` : ""}
-          </span>
-          {props.truncatedTo != null && (
-            <span className="pm-trunc">
-              Matched on the last {props.truncatedTo} candles of your selection.
+          {stats.withOutcome > 0 && (
+            <span>
+              <b>
+                {stats.up}/{stats.withOutcome}
+              </b>{" "}
+              up ({Math.round((100 * stats.up) / stats.withOutcome)}%)
             </span>
           )}
+          {stats.medianPct != null && (
+            <span>
+              median <b>{formatForwardPct(stats.medianPct)}</b>
+            </span>
+          )}
+          {stats.worstPct != null && stats.bestPct != null && (
+            <span>
+              range <b>{formatForwardPct(stats.worstPct)}</b> to{" "}
+              <b>{formatForwardPct(stats.bestPct)}</b>
+            </span>
+          )}
+          {stats.medianDist != null && (
+            <span>
+              median dist <b>{stats.medianDist.toFixed(2)}</b>
+            </span>
+          )}
+          <span>
+            <b>
+              {stats.minLen === stats.maxLen
+                ? stats.minLen
+                : `${stats.minLen}–${stats.maxLen}`}
+            </b>{" "}
+            bars
+          </span>
+          <span>
+            {day(stats.oldestTs, timezone)} to {day(stats.newestTs, timezone)}
+          </span>
+          <InfoTip
+            title="Match statistics"
+            text={[
+              "Computed over the matches shown, excluding your own selection row: its distance of 0 and known aftermath would flatter every number.",
+              `Outcome figures cover only rows with aftermath; "up" counts moves of 0% or more over the next ${props.forwardBars} bars.`,
+            ]}
+          />
         </div>
       )}
 
@@ -215,35 +314,44 @@ export default function PatternMatchesPanel(props: Props) {
 
       {result && !loading && result.matches.length > 0 && (
         <>
-        <div className="pm-cols">
+        <div className={"pm-cols" + (all ? " pm-all" : "")}>
           <span className="pm-rank" />
           <SortHeader label="When" col="when" sort={sort} onSort={onSort} />
           {/* The InfoTip sits beside the sort button, never inside it: nesting
               it would put a second control in the button and swallow the
               heading's accessible name. */}
-          <span className="pm-dist-h">
-            <SortHeader label="Dist" col="dist" sort={sort} onSort={onSort} />
-            <InfoTip
-              title="Distance"
-              text={
-                props.mode === "dtw"
-                  ? [
-                      "0 is an identical shape after the best time warp; near 2 is an inversion.",
-                      "Price level, size and uneven tempo are all forgiven, only the shape counts.",
-                    ]
-                  : props.mode === "shape"
+          {all ? (
+            ALL_COLS.map(([key, label, described]) => (
+              <span key={key} className="pm-dist-h">
+                <SortHeader label={label} col={key} sort={sort} onSort={onSort} title={described} />
+              </span>
+            ))
+          ) : (
+            <span className="pm-dist-h">
+              <SortHeader label="Dist" col="dist" sort={sort} onSort={onSort} />
+              <InfoTip
+                title="Distance"
+                text={
+                  props.mode === "dtw"
                     ? [
-                        "0 is an identical trajectory, 2 is an exact inversion.",
-                        "The overall shape counts most; bar-by-bar detail only breaks ties.",
+                        "0 is an identical shape after the best time warp; near 2 is an inversion.",
+                        "Price level, size and uneven tempo are all forgiven, only the shape counts.",
                       ]
-                    : [
-                        "0 is an identical shape, 2 is an exact inversion.",
-                        "Price level and size are ignored, so the same shape matches at any scale.",
-                      ]
-              }
-            />
-          </span>
-          <span>Shape</span>
+                    : props.mode === "shape"
+                      ? [
+                          "0 is an identical trajectory, 2 is an exact inversion.",
+                          "The overall shape counts most; bar-by-bar detail only breaks ties.",
+                        ]
+                      : [
+                          "0 is an identical shape, 2 is an exact inversion.",
+                          "Price level and size are ignored, so the same shape matches at any scale.",
+                        ]
+                }
+              />
+            </span>
+          )}
+          {/* "Preview" when a formula column is already named Shape. */}
+          <span>{all ? "Preview" : "Shape"}</span>
           {/* Names the horizon rather than saying "outcome": the number is
               meaningless without knowing how many bars it covers, and this
               tracks the Next control so it can never disagree with it. */}
@@ -288,9 +396,13 @@ export default function PatternMatchesPanel(props: Props) {
               </Tooltip>
               <button
                 type="button"
-                className="pm-row"
+                className={"pm-row" + (all ? " pm-all" : "") + (m.ts === jumpedTs ? " pm-row-sel" : "")}
                 aria-label={`Go to ${stamp(m.ts, timezone)}`}
-                onClick={() => props.onJump(m)}
+                aria-current={m.ts === jumpedTs || undefined}
+                onClick={() => {
+                  setJumpedTs(m.ts);
+                  props.onJump(m);
+                }}
               >
                 {/* The similarity rank, NOT the row's position after sorting:
                     a "7" while sorted by outcome is the finding, since it says
@@ -310,7 +422,17 @@ export default function PatternMatchesPanel(props: Props) {
                     </Tooltip>
                   )}
                 </span>
-                <span className="pm-dist">{m.distance.toFixed(2)}</span>
+                {all ? (
+                  // One cell per column. A null is a formula that could not
+                  // score this window (flat under its transform).
+                  ALL_COLS.map(([key, , , value]) => (
+                    <span key={key} className="pm-dist">
+                      {value(m)?.toFixed(2) ?? "–"}
+                    </span>
+                  ))
+                ) : (
+                  <span className="pm-dist">{m.distance.toFixed(2)}</span>
+                )}
                 <Preview match={m} />
                 <span className={"pm-pct" + pctClass(m.forwardPct)}>
                   {formatForwardPct(m.forwardPct)}
@@ -324,6 +446,33 @@ export default function PatternMatchesPanel(props: Props) {
           })}
         </ol>
         </>
+      )}
+
+      {/* Series facts and timings read as a footnote, so they sit BELOW the
+          results: the ranked rows are what a search was run for. */}
+      {result && (
+        <div className="pm-sub">
+          <span>
+            {epic} {resolution} on {broker} ({priceSide})
+          </span>
+          <span>
+            {day(result.series.oldestTs, timezone)} to {day(result.series.newestTs, timezone)},{" "}
+            {result.series.bars.toLocaleString("en-GB")} bars
+          </span>
+          {/* Not the same number as the bar count: windows that are flat or
+              gapped are dropped before ranking, so this is how much history was
+              genuinely compared. */}
+          <span>{result.scanned.toLocaleString("en-GB")} windows ranked</span>
+          <span>
+            {result.elapsedMs} ms{result.cold ? " (first search)" : ""}
+            {worst != null ? `, worst shown ${worst.toFixed(2)}` : ""}
+          </span>
+          {props.truncatedTo != null && (
+            <span className="pm-trunc">
+              Matched on the last {props.truncatedTo} candles of your selection.
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

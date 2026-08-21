@@ -4531,19 +4531,26 @@ export default function ChartCore({
 
   return (
     <div
-      ref={wrapRef}
-      className={`chart-wrap${alertHovered ? " alert-hover" : ""}${cursorMode ? " " + cursorMode : ""}${replay.state.mode === "active" ? " replaying" : ""}`}
-      style={{ width: "100%", height: "100%", position: "relative", outline: "none" }}
-      // tabIndex makes the cell focusable so Ctrl/Cmd+C/V are scoped to it (only the
-      // focused cell responds — no global listener cross-talk between split cells).
-      tabIndex={0}
+      className="chart-cell-split"
+      style={{ width: "100%", height: "100%", display: "flex" }}
       // Capture-phase so focus registers even when an inner handler (anchor drag)
-      // stops propagation. App marks this cell focused → routes the chrome to it; we
-      // also DOM-focus the wrap so it receives keyboard shortcuts.
+      // stops propagation, and on the SPLIT root so a click in the docked results
+      // sidebar focuses the cell too. App marks this cell focused → routes the
+      // chrome to it; we also DOM-focus the wrap so it receives keyboard shortcuts.
       onPointerDownCapture={() => {
         onFocus?.(cellId);
         wrapRef.current?.focus({ preventScroll: true });
       }}
+    >
+    <div
+      ref={wrapRef}
+      className={`chart-wrap${alertHovered ? " alert-hover" : ""}${cursorMode ? " " + cursorMode : ""}${replay.state.mode === "active" ? " replaying" : ""}`}
+      // flex:1 + minWidth:0, not width:100%: the docked results sidebar is a
+      // flex sibling, and the chart must yield real layout space to it.
+      style={{ flex: "1 1 auto", minWidth: 0, height: "100%", position: "relative", outline: "none" }}
+      // tabIndex makes the cell focusable so Ctrl/Cmd+C/V are scoped to it (only the
+      // focused cell responds — no global listener cross-talk between split cells).
+      tabIndex={0}
       onKeyDown={(e) => {
         // Don't hijack copy/paste/delete while typing in a field.
         const t = e.target as HTMLElement;
@@ -4973,69 +4980,6 @@ export default function ChartCore({
         </>
       )}
 
-      {/* "Find similar" results. The band stays painted underneath while the panel
-          is up, so dismissing clears both. */}
-      {/* `readoutMode` as well as the state: the dismiss above runs in an effect,
-          so without this the panel would paint one frame of real match dates
-          between a session starting and that effect firing. */}
-      {readoutMode === "off" &&
-        (patternSearch.result || patternSearch.loading || patternSearch.error) && (
-        <PatternMatchesPanel
-          result={patternSearch.result}
-          loading={patternSearch.loading}
-          error={patternSearch.error}
-          epic={symbol.epic}
-          resolution={period.resolution}
-          broker={brokerId}
-          priceSide={priceSide}
-          timezone={timezone}
-          truncatedTo={patternSearch.truncatedTo}
-          mode={patternSearch.mode}
-          onModeChange={patternSearch.setMode}
-          forwardBars={patternSearch.forwardBars}
-          onForwardBarsChange={patternSearch.setForwardBars}
-          onCopy={(m) => {
-            // The row already carries the match's bars, so this is capture
-            // straight off the result: no jump, no drag, no coverage walk.
-            const captured = capturePattern(m.bars, {
-              epic: symbol.epic,
-              resolution: period.resolution,
-            });
-            if (!captured) {
-              toast(`a pattern needs at least ${MIN_GHOST_BARS} candles`);
-              return;
-            }
-            patternClipboard.set(captured);
-            toast(
-              `copied ${captured.bars.length} candles: paste them anywhere with the pattern tool`,
-            );
-          }}
-          onJump={(m) => {
-            // Mark where the match starts and ends BEFORE the jump: the bands
-            // anchor by timestamp, so they resolve themselves once the coverage
-            // walk lands the bars. PatternMatch is in seconds, overlays in ms.
-            // No forward bars measured (a match at the very edge of history)
-            // means one band, not an empty second one.
-            // The aftermath band spans the forward bars the panel actually
-            // measured, first to last, so it starts on the bar after the match.
-            const fwd = m.forward;
-            handle.overlays.showMatchBands(
-              m.ts * 1000,
-              m.endTs * 1000,
-              fwd.length
-                ? { fromTs: fwd[0].ts * 1000, toTs: fwd[fwd.length - 1].ts * 1000 }
-                : null,
-            );
-            goToRange(m.ts, m.endTs);
-          }}
-          onDismiss={() => {
-            patternSearch.dismiss();
-            handle.overlays.clearZoomBand();
-            handle.overlays.clearMatchBands();
-          }}
-        />
-      )}
-
       {detailsAnchor && !sessionMasked && (
         <MarketInfoPopover
           epic={symbol.epic}
@@ -5326,6 +5270,75 @@ export default function ChartCore({
           }}
         />
       )}
+    </div>
+
+      {/* "Find similar" results, docked as a full-height sidebar OUTSIDE the
+          chart wrap: the wrap is flex:1, so an open panel shrinks the chart
+          instead of covering it, and every wrap-anchored piece of chrome
+          (legend, pills, range bar) tracks the shrunken chart for free. The
+          band stays painted underneath while the panel is up, so dismissing
+          clears both. */}
+      {/* `readoutMode` as well as the state: the dismiss above runs in an effect,
+          so without this the panel would paint one frame of real match dates
+          between a session starting and that effect firing. */}
+      {readoutMode === "off" &&
+        (patternSearch.result || patternSearch.loading || patternSearch.error) && (
+        <PatternMatchesPanel
+          result={patternSearch.result}
+          loading={patternSearch.loading}
+          error={patternSearch.error}
+          epic={symbol.epic}
+          resolution={period.resolution}
+          broker={brokerId}
+          priceSide={priceSide}
+          timezone={timezone}
+          truncatedTo={patternSearch.truncatedTo}
+          mode={patternSearch.mode}
+          onModeChange={patternSearch.setMode}
+          forwardBars={patternSearch.forwardBars}
+          onForwardBarsChange={patternSearch.setForwardBars}
+          onCopy={(m) => {
+            // The row already carries the match's bars, so this is capture
+            // straight off the result: no jump, no drag, no coverage walk.
+            const captured = capturePattern(m.bars, {
+              epic: symbol.epic,
+              resolution: period.resolution,
+            });
+            if (!captured) {
+              toast(`a pattern needs at least ${MIN_GHOST_BARS} candles`);
+              return;
+            }
+            patternClipboard.set(captured);
+            toast(
+              `copied ${captured.bars.length} candles: paste them anywhere with the pattern tool`,
+            );
+          }}
+          onJump={(m) => {
+            // Mark where the match starts and ends BEFORE the jump: the bands
+            // anchor by timestamp, so they resolve themselves once the coverage
+            // walk lands the bars. PatternMatch is in seconds, overlays in ms.
+            // No forward bars measured (a match at the very edge of history)
+            // means one band, not an empty second one.
+            // The aftermath band spans the forward bars the panel actually
+            // measured, first to last, so it starts on the bar after the match.
+            const fwd = m.forward;
+            handle.overlays.showMatchBands(
+              m.ts * 1000,
+              m.endTs * 1000,
+              fwd.length
+                ? { fromTs: fwd[0].ts * 1000, toTs: fwd[fwd.length - 1].ts * 1000 }
+                : null,
+            );
+            goToRange(m.ts, m.endTs);
+          }}
+          onDismiss={() => {
+            patternSearch.dismiss();
+            handle.overlays.clearZoomBand();
+            handle.overlays.clearMatchBands();
+          }}
+        />
+      )}
+
     </div>
   );
 }

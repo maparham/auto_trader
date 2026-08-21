@@ -11,10 +11,24 @@ export interface PatternBar {
   c: number;
 }
 
+/** One window's distance under every formula, present only in "all" mode.
+ *  null where a formula could not score the window (flat under its
+ *  transform): JSON has no Infinity. */
+export interface PatternModeDistances {
+  shape: number | null;
+  ohlc: number | null;
+  close: number | null;
+  dtw: number | null;
+}
+
 export interface PatternMatch {
   ts: number;
   endTs: number;
+  /** The mode's own distance — except in "all" mode, where no single distance
+   *  exists and this carries the mean rank the row was ordered by. */
   distance: number;
+  /** Every formula's distance, set only by "all" mode. */
+  distances?: PatternModeDistances | null;
   bars: PatternBar[];
   forward: PatternBar[];
   forwardComplete: boolean;
@@ -30,8 +44,11 @@ export interface PatternMatch {
  *  candles (body, wick and colour), "close" the raw path of closing prices,
  *  and "dtw" re-ranks whole-candle matches with dynamic time warping, which
  *  forgives a recurrence that runs fast in one stretch and slow in another.
- *  None is more correct: each ranks real history differently. */
-export type PatternMode = "shape" | "ohlc" | "close" | "dtw";
+ *  None is more correct: each ranks real history differently. "all" runs
+ *  every formula, folds overlapping windows into one event each, orders by
+ *  mean rank across the formulas, and each match carries its per-formula
+ *  distances. */
+export type PatternMode = "shape" | "ohlc" | "close" | "dtw" | "all";
 
 export interface PatternSearchRequest {
   epic: string;
@@ -159,9 +176,12 @@ export function formatForwardPct(pct: number | null): string {
 // reading "7" in the rank column is the whole point, since it says the best
 // analogue was only the seventh most similar.
 
-/** Which column the results are ordered by. Rank and Shape are not sortable:
- *  rank IS the default order, and a candle picture has no order. */
-export type MatchSortKey = "when" | "dist" | "outcome";
+/** Which column the results are ordered by. Rank and the candle preview are
+ *  not sortable: rank IS the default order, and a picture has no order. The
+ *  four formula keys exist only in "all" mode, where each per-formula
+ *  distance column sorts on its own numbers. */
+export type MatchSortKey =
+  "when" | "dist" | "outcome" | "shape" | "ohlc" | "close" | "dtw" | "avg";
 export type MatchSortDir = "asc" | "desc";
 export interface MatchSort {
   key: MatchSortKey;
@@ -181,7 +201,7 @@ export const DEFAULT_MATCH_SORT: MatchSort = { key: "dist", dir: "asc" };
  *  end of the column a reader actually wants first. */
 export function defaultMatchSortDir(key: MatchSortKey): MatchSortDir {
   // Closest first, most recent first, best first.
-  return key === "dist" ? "asc" : "desc";
+  return key === "when" || key === "outcome" ? "desc" : "asc";
 }
 
 /** The next sort state after clicking `key`: the active column flips, any
@@ -191,32 +211,104 @@ export function nextMatchSort(sort: MatchSort, key: MatchSortKey): MatchSort {
   return { key, dir: defaultMatchSortDir(key) };
 }
 
+/** The plain average of a match's per-formula distances, over the formulas
+ *  that could score it. A reading aid, not the ranking: the metrics are not
+ *  calibrated against each other, so the All list stays ordered by mean
+ *  rank. null outside "all" mode or when no formula scored the window. */
+export function avgDistance(m: PatternMatch): number | null {
+  if (!m.distances) return null;
+  const vals = Object.values(m.distances).filter((v): v is number => v != null);
+  if (vals.length === 0) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+function sortValue(m: PatternMatch, key: MatchSortKey): number | null {
+  switch (key) {
+    case "when":
+      return m.ts;
+    case "dist":
+      return m.distance;
+    case "outcome":
+      return m.forwardPct;
+    case "avg":
+      return avgDistance(m);
+    default:
+      // A per-formula column in "all" mode; absent outside it.
+      return m.distances?.[key] ?? null;
+  }
+}
+
 /** Rank the matches as the backend sent them, then order those pairs.
  *
  *  Stable by construction: equal values fall back to the arrival rank rather
  *  than to the engine's sort, so the tie order is the same in both directions.
- *  A null outcome ("no bars after") sorts to the END either way, because a
- *  missing outcome is not a small one; that rule is scoped to the outcome
- *  column, so those rows sort normally by date or distance. */
+ *  A null value (no aftermath; a formula that could not score the window)
+ *  sorts to the END either way, because a missing value is not a small one;
+ *  those rows still sort normally by every other column. */
 export function sortMatches(matches: PatternMatch[], sort: MatchSort): RankedMatch[] {
   const ranked: RankedMatch[] = matches.map((match, i) => ({ match, rank: i + 1 }));
   const sign = sort.dir === "asc" ? 1 : -1;
   return ranked.sort((a, b) => {
-    if (sort.key === "outcome") {
-      const av = a.match.forwardPct;
-      const bv = b.match.forwardPct;
-      // Outside the direction sign on purpose: nulls go last in both.
-      if (av == null || bv == null) {
-        if (av == null && bv == null) return a.rank - b.rank;
-        return av == null ? 1 : -1;
-      }
-      if (av !== bv) return (av - bv) * sign;
-      return a.rank - b.rank;
+    const av = sortValue(a.match, sort.key);
+    const bv = sortValue(b.match, sort.key);
+    // Outside the direction sign on purpose: nulls go last in both.
+    if (av == null || bv == null) {
+      if (av == null && bv == null) return a.rank - b.rank;
+      return av == null ? 1 : -1;
     }
-    const av = sort.key === "when" ? a.match.ts : a.match.distance;
-    const bv = sort.key === "when" ? b.match.ts : b.match.distance;
     if (av !== bv) return (av - bv) * sign;
     // Also outside the sign: reversing ties would make "stable" mean nothing.
     return a.rank - b.rank;
   });
+}
+
+// ---------------------------------------------------------------------------
+// The per-tab summary strip: one line of statistics over the visible matches.
+
+/** Statistics over a result's matches, EXCLUDING the user's own selection row:
+ *  it is a calibration check, not an analogue, and counting its distance ~0 or
+ *  its known aftermath would flatter every number here. Outcome fields cover
+ *  only the rows that have an aftermath; `withOutcome` is their honest
+ *  denominator. null when a statistic has nothing to measure. */
+export interface MatchSummary {
+  count: number;
+  withOutcome: number;
+  /** Of `withOutcome`, how many moved up (>= 0, matching the row colouring). */
+  up: number;
+  medianPct: number | null;
+  bestPct: number | null;
+  worstPct: number | null;
+  /** Median distance. null in "all" mode, where no single distance exists. */
+  medianDist: number | null;
+  minLen: number;
+  maxLen: number;
+  oldestTs: number;
+  newestTs: number;
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+export function summarizeMatches(matches: PatternMatch[]): MatchSummary | null {
+  const real = matches.filter((m) => !m.isSelection);
+  if (real.length === 0) return null;
+  const outcomes = real.map((m) => m.forwardPct).filter((p): p is number => p != null);
+  const combined = real.some((m) => m.distances != null);
+  return {
+    count: real.length,
+    withOutcome: outcomes.length,
+    up: outcomes.filter((p) => p >= 0).length,
+    medianPct: median(outcomes),
+    bestPct: outcomes.length ? Math.max(...outcomes) : null,
+    worstPct: outcomes.length ? Math.min(...outcomes) : null,
+    medianDist: combined ? null : median(real.map((m) => m.distance)),
+    minLen: Math.min(...real.map((m) => m.bars.length)),
+    maxLen: Math.max(...real.map((m) => m.bars.length)),
+    oldestTs: Math.min(...real.map((m) => m.ts)),
+    newestTs: Math.max(...real.map((m) => m.ts)),
+  };
 }

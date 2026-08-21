@@ -881,16 +881,33 @@ class PatternSearchRequest(BaseModel):
     # close alone, or whole candles re-ranked by banded dynamic time warping
     # ("dtw"), which forgives a recurrence that runs fast in one stretch and
     # slow in another. Not a correctness knob: each ranks real history
-    # differently, and none is the right answer for every question.
-    mode: Literal["shape", "ohlc", "close", "dtw"] = "shape"
+    # differently, and none is the right answer for every question. "all"
+    # runs every formula, folds overlapping windows into one event each, and
+    # orders by mean rank across the formulas; each match then carries its
+    # per-formula distances.
+    mode: Literal["shape", "ohlc", "close", "dtw", "all"] = "shape"
 
     model_config = {"populate_by_name": True}
+
+
+class PatternModeDistancesDTO(BaseModel):
+    """One window's distance under every formula, for the combined "all" mode.
+    None where a formula cannot score the window (flat under its transform):
+    JSON has no Infinity, and "no score" is what the panel should say."""
+
+    shape: float | None
+    ohlc: float | None
+    close: float | None
+    dtw: float | None
 
 
 class PatternMatchDTO(BaseModel):
     ts: int
     end_ts: int = Field(serialization_alias="endTs")
     distance: float
+    # Set only by mode "all": the same window scored by every formula. The
+    # single modes leave it None rather than paying four extra scores per row.
+    distances: PatternModeDistancesDTO | None = None
     bars: list[PatternBarDTO]
     forward: list[PatternBarDTO]
     forward_complete: bool = Field(serialization_alias="forwardComplete")

@@ -6007,16 +6007,18 @@ span.bt-leg-short { color: var(--neg); }
 
 /* --- pattern search results ------------------------------------------------ */
 .pattern-matches {
-  /* z-index 51: the panel docks over the price-axis column, so it competes
-     with the in-cell axis pill ladder (ba-tag 44 / alert tags 45-48 /
-     price-tag 47 / cursor label 49) and the legend (50). A results list you
-     are reading must not have the live price pill punched through it. Stays
-     below the backtest overlay (54-55) and the modal layer (60). */
-  position: absolute; right: 8px; bottom: 8px; z-index: 51;
-  width: 400px; max-height: 60%; display: flex; flex-direction: column;
-  background: var(--surface); color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; font-size: 12px;
+  /* A docked sidebar, not an overlay: a flex sibling of .chart-wrap inside
+     .chart-cell-split, so the chart yields real layout space and nothing is
+     obstructed. position:relative only to anchor the .pm-resize splitter. */
+  position: relative; flex: 0 0 auto; width: 400px; height: 100%;
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  background: var(--surface); color: var(--text);
+  border-left: 1px solid var(--border); font-size: 12px;
 }
+/* The width splitter along the docked panel's left edge. */
+.pm-resize { position: absolute; top: 0; left: 0; width: 6px; height: 100%;
+  cursor: col-resize; z-index: 1; }
+.pm-resize:hover { background: var(--hover); }
 .pm-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
   border-bottom: 1px solid var(--border); }
 .pm-title { font-weight: 600; }
@@ -6024,16 +6026,26 @@ span.bt-leg-short { color: var(--neg); }
 /* Metric and horizon. One compact row under the title: the header below it
    already carries the source, span, window count, time and worst distance, and
    the results are what the panel is for. */
-.pm-controls { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
-  border-bottom: 1px solid var(--border); }
-.pm-seg button { padding: 2px 9px; font: inherit; }
+/* Wraps rather than clips: five metric tabs plus the Next control brush the
+   400px panel's width, and a clipped tab looks like a missing feature. */
+.pm-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 5px 8px; border-bottom: 1px solid var(--border); }
+.pm-seg button { padding: 2px 7px; font: inherit; }
 .pm-horizon { display: flex; align-items: center; gap: 5px; margin-left: auto;
   color: var(--text-dim); }
 .pm-horizon select { padding: 2px 4px; font: inherit; color: var(--text);
   background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; }
+/* Below the results, as a footnote: series facts and timings are context,
+   not findings. The border flips to the top accordingly. */
 .pm-sub { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px;
-  color: var(--text-dim); border-bottom: 1px solid var(--border); }
+  color: var(--text-dim); border-top: 1px solid var(--border); }
 .pm-trunc { margin-top: 2px; color: var(--text); }
+/* The per-tab statistics strip: one wrapping line of label-value chips. */
+.pm-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px;
+  padding: 5px 8px; border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--text-dim); }
+.pm-stats b { font-weight: 600; color: var(--text);
+  font-variant-numeric: tabular-nums; }
 .pm-msg { padding: 10px 8px; color: var(--text-dim); }
 .pm-err { color: var(--neg); }
 .pm-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
@@ -6058,6 +6070,14 @@ span.bt-leg-short { color: var(--neg); }
   background: none; border: 0; border-bottom: 1px solid var(--border);
   color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .pm-row:hover { background: var(--hover); }
+/* The row whose jump the chart is currently showing: stays lit until another
+   row is picked, so the panel keeps saying where the chart context came from. */
+.pm-row-sel, .pm-row-sel:hover { background: var(--hover-strong); }
+/* The combined "All" tab: four per-formula distance columns replace the one
+   Dist column, and the panel widens so When keeps a readable share. */
+.pattern-matches.pm-wide { width: 606px; }
+.pm-cols.pm-all, .pm-row.pm-all {
+  grid-template-columns: 18px 1fr 46px 46px 46px 46px 46px 88px 108px; }
 /* Per-row "copy as pattern": a SIBLING of the row button (a button cannot nest
    in a button), floated over the row's right edge and only shown while the row
    (or the control itself) is hovered or focused, so the five-column grid keeps

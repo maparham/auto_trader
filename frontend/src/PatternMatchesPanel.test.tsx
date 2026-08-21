@@ -151,8 +151,10 @@ describe("PatternMatchesPanel", () => {
 
   it("renders a row per match with its forward return", () => {
     render(<PatternMatchesPanel {...props} result={result()} loading={false} error={null} />);
-    expect(screen.getAllByRole("button", { name: /go to/i })).toHaveLength(1);
-    expect(screen.getByText("+4.17%")).toBeTruthy();
+    const rows = screen.getAllByRole("button", { name: /go to/i });
+    expect(rows).toHaveLength(1);
+    // Scoped to the row: the statistics strip echoes the same figure.
+    expect(within(rows[0]).getByText("+4.17%")).toBeTruthy();
   });
 
   it("says when a match has less aftermath than asked for", () => {
@@ -485,5 +487,180 @@ describe("Shape mode", () => {
     );
     fireEvent.focus(screen.getByLabelText("About Distance").parentElement!);
     expect(document.body.textContent).toMatch(/overall shape counts most/i);
+  });
+});
+
+describe("jumped-row highlight", () => {
+  const two = () =>
+    result({ matches: [match(), match({ ts: 1_690_000_000, endTs: 1_690_003_000 })] });
+
+  const rowButtons = () =>
+    screen.getAllByRole("button", { name: /^Go to / });
+
+  it("keeps the clicked row highlighted after the jump", () => {
+    render(<PatternMatchesPanel {...props} result={two()} loading={false} error={null} />);
+    fireEvent.click(rowButtons()[0]);
+    expect(rowButtons()[0].className).toContain("pm-row-sel");
+    expect(rowButtons()[0].getAttribute("aria-current")).toBe("true");
+  });
+
+  it("moves the highlight when another row is picked", () => {
+    render(<PatternMatchesPanel {...props} result={two()} loading={false} error={null} />);
+    fireEvent.click(rowButtons()[0]);
+    fireEvent.click(rowButtons()[1]);
+    expect(rowButtons()[0].className).not.toContain("pm-row-sel");
+    expect(rowButtons()[1].className).toContain("pm-row-sel");
+  });
+
+  it("clears the highlight when a new result list arrives", () => {
+    const view = render(
+      <PatternMatchesPanel {...props} result={two()} loading={false} error={null} />,
+    );
+    fireEvent.click(rowButtons()[0]);
+    view.rerender(
+      <PatternMatchesPanel {...props} result={two()} loading={false} error={null} />,
+    );
+    expect(rowButtons()[0].className).not.toContain("pm-row-sel");
+  });
+});
+
+describe("All mode", () => {
+  const dists = (shape: number, ohlc: number | null, close: number, dtw: number) =>
+    ({ shape, ohlc, close, dtw });
+  const allResult = () =>
+    result({
+      matches: [
+        match({ ts: 1_700_000_000, distance: 1.0, isSelection: true,
+                distances: dists(0, 0, 0, 0) }),
+        match({ ts: 1_650_000_000, distance: 2.5, distances: dists(0.61, 0.78, 0.66, 0.55) }),
+        match({ ts: 1_600_000_000, distance: 2.75, distances: dists(0.72, null, 0.7, 0.6) }),
+      ],
+    });
+  const allProps = { ...props, mode: "all" as const };
+
+  it("offers an All tab alongside the four metrics", () => {
+    render(<PatternMatchesPanel {...props} result={result()} loading={false} error={null} />);
+    const seg = screen.getByRole("group", { name: "Metric" });
+    expect(within(seg).getByText("All")).toBeTruthy();
+  });
+
+  it("shows one distance column per formula instead of Dist", () => {
+    render(<PatternMatchesPanel {...allProps} result={allResult()} loading={false} error={null} />);
+    // Scoped to the header row: the panel's close button and the metric tabs
+    // also answer to some of these names.
+    const cols = document.querySelector(".pm-cols")!;
+    for (const label of ["Shape", "Cndl", "Close", "DTW", "Avg"]) {
+      expect(within(cols as HTMLElement).getByRole("button", { name: label })).toBeTruthy();
+    }
+    expect(screen.queryByRole("button", { name: "Dist" })).toBeNull();
+    // The preview column renames so two columns are not both called Shape.
+    expect(screen.getByText("Preview")).toBeTruthy();
+  });
+
+  it("renders every formula's distance on a row, with a dash where one could not score", () => {
+    render(<PatternMatchesPanel {...allProps} result={allResult()} loading={false} error={null} />);
+    const row = screen.getAllByRole("button", { name: /^Go to/ })[1];
+    expect(row.textContent).toContain("0.61");
+    expect(row.textContent).toContain("0.78");
+    expect(row.textContent).toContain("0.66");
+    expect(row.textContent).toContain("0.55");
+    // The Avg cell: (0.61 + 0.78 + 0.66 + 0.55) / 4.
+    expect(row.textContent).toContain("0.65");
+    const third = screen.getAllByRole("button", { name: /^Go to/ })[2];
+    expect(third.textContent).toContain("–");
+    // Its average covers only the formulas that scored it: (0.72+0.7+0.6)/3.
+    expect(third.textContent).toContain("0.67");
+  });
+
+  it("sorts by a formula column's own numbers", () => {
+    render(<PatternMatchesPanel {...allProps} result={allResult()} loading={false} error={null} />);
+    const cols = document.querySelector(".pm-cols")! as HTMLElement;
+    fireEvent.click(within(cols).getByRole("button", { name: "DTW" }));
+    const ranks = screen
+      .getAllByRole("button", { name: /^Go to/ })
+      .map((b) => b.querySelector(".pm-rank")!.textContent);
+    // Ascending DTW: selection 0, then 0.55, then 0.6 — the arrival order here,
+    // but proven by flipping:
+    expect(ranks).toEqual(["1", "2", "3"]);
+    fireEvent.click(within(cols).getByRole("button", { name: "DTW" }));
+    const flipped = screen
+      .getAllByRole("button", { name: /^Go to/ })
+      .map((b) => b.querySelector(".pm-rank")!.textContent);
+    expect(flipped).toEqual(["3", "2", "1"]);
+  });
+
+  it("does not report a worst-shown distance, which would really be a mean rank", () => {
+    render(<PatternMatchesPanel {...allProps} result={allResult()} loading={false} error={null} />);
+    expect(screen.queryByText(/worst shown/)).toBeNull();
+  });
+});
+
+describe("summary statistics strip", () => {
+  const statsResult = () =>
+    result({
+      matches: [
+        match({ ts: 1_700_000_000, distance: 0.001, isSelection: true, forwardPct: 9 }),
+        match({ ts: 1_650_000_000, distance: 0.3, forwardPct: 2.0 }),
+        match({ ts: 1_600_000_000, distance: 0.5, forwardPct: -1.0 }),
+        match({ ts: 1_550_000_000, distance: 0.7, forwardPct: null, forwardComplete: false }),
+      ],
+    });
+
+  it("summarizes the matches excluding the selection row", () => {
+    render(<PatternMatchesPanel {...props} result={statsResult()} loading={false} error={null} />);
+    const strip = document.querySelector(".pm-stats")!;
+    expect(strip.textContent).toContain("3");
+    expect(strip.textContent).toContain("matches");
+    // 1 of 2 outcomes up; the selection's +9% must not be in the figures.
+    expect(strip.textContent).toContain("1/2");
+    expect(strip.textContent).toContain("(50%)");
+    expect(strip.textContent).toContain("+0.50%");
+    // median distance over 0.3/0.5/0.7.
+    expect(strip.textContent).toContain("0.50");
+  });
+
+  it("is absent while loading and when there are no matches", () => {
+    render(<PatternMatchesPanel {...props} result={statsResult()} loading={true} error={null} />);
+    expect(document.querySelector(".pm-stats")).toBeNull();
+    cleanup();
+    render(
+      <PatternMatchesPanel
+        {...props}
+        result={result({ matches: [] })}
+        loading={false}
+        error={null}
+      />,
+    );
+    expect(document.querySelector(".pm-stats")).toBeNull();
+  });
+});
+
+describe("resizing", () => {
+  it("drags the left-edge splitter to set the sidebar width", () => {
+    render(<PatternMatchesPanel {...props} result={result()} loading={false} error={null} />);
+    const panel = document.querySelector(".pattern-matches") as HTMLElement;
+    // jsdom has no layout; give the panel its CSS default footprint.
+    panel.getBoundingClientRect = () =>
+      ({ width: 400, height: 300, top: 0, left: 600, right: 1000, bottom: 300 }) as DOMRect;
+    const handle = panel.querySelector(".pm-resize")!;
+    fireEvent.mouseDown(handle, { clientX: 600 });
+    // Dragging 60px toward the chart widens the docked panel by 60.
+    fireEvent.mouseMove(window, { clientX: 540 });
+    expect(panel.style.width).toBe("460px");
+  });
+
+  it("stops tracking on mouseup and respects the minimum width", () => {
+    render(<PatternMatchesPanel {...props} result={result()} loading={false} error={null} />);
+    const panel = document.querySelector(".pattern-matches") as HTMLElement;
+    panel.getBoundingClientRect = () =>
+      ({ width: 400, height: 300, top: 0, left: 600, right: 1000, bottom: 300 }) as DOMRect;
+    const handle = panel.querySelector(".pm-resize")!;
+    fireEvent.mouseDown(handle, { clientX: 600 });
+    // Dragging far into the panel clamps at the minimum instead of inverting.
+    fireEvent.mouseMove(window, { clientX: 2000 });
+    expect(panel.style.width).toBe("340px");
+    fireEvent.mouseUp(window);
+    fireEvent.mouseMove(window, { clientX: 500 });
+    expect(panel.style.width).toBe("340px");
   });
 });

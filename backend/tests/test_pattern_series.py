@@ -365,3 +365,116 @@ async def test_a_backfill_alongside_new_bars_still_forces_a_full_reload(tmp_path
     assert second.bars == 28
     assert second.oldest_ts == 1_700_000_000 - 5 * 300
     assert second.newest_ts == 1_700_000_000 + 22 * 300
+
+
+# ---------------------------------------------------------------------------
+# Derived resolutions: folded from their base series, never stored themselves.
+
+from datetime import datetime, timezone
+
+from auto_trader.core.candle_aggregate import DERIVED, fold
+from auto_trader.core.models import Candle
+from auto_trader.core.pattern_series import fold_arrays
+
+
+def _random_bars(n, step, seed=5, start_ts=1_600_000_000):
+    rng = np.random.default_rng(seed)
+    ts = start_ts + np.arange(n, dtype=np.int64) * step
+    close = np.cumsum(rng.normal(0, 1.0, n)) + 100
+    o = close + rng.normal(0, 0.3, n)
+    h = np.maximum(o, close) + rng.uniform(0, 0.5, n)
+    l = np.minimum(o, close) - rng.uniform(0, 0.5, n)
+    return ts, np.stack([o, h, l, close], axis=1)
+
+
+@pytest.mark.parametrize("res", sorted(DERIVED))
+def test_fold_arrays_matches_the_candle_aggregate_fold(res):
+    rule = DERIVED[res]
+    step = 60 if rule.kind == "minute" else 86400 if rule.kind in ("month", "year") else 604800
+    ts, ohlc = _random_bars(400, step)
+    got_ts, got = fold_arrays(ts, ohlc, rule)
+
+    ref = fold(
+        [
+            Candle(datetime.fromtimestamp(int(t), tz=timezone.utc), *row, 0.0)
+            for t, row in zip(ts, ohlc)
+        ],
+        rule,
+    )
+    assert [int(t) for t in got_ts] == [int(c.time.timestamp()) for c in ref]
+    ref_arr = np.array([[c.open, c.high, c.low, c.close] for c in ref])
+    np.testing.assert_allclose(got, ref_arr)
+
+
+async def test_a_derived_resolution_folds_from_its_base_series(tmp_path):
+    """MONTH is served by folding stored DAY bars: the exact failure that
+    motivated this — a monthly chart over a store with only DAY history."""
+    path = tmp_path / "c.db"
+    day = 86400
+    rows = [
+        (1_680_000_000 - 1_680_000_000 % day + i * day, 100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i)
+        for i in range(90)
+    ]
+    _db(path, rows, res="DAY")
+    cache = PatternSeriesCache(str(path))
+    series = await cache.get("capital", "US100", "MONTH", "bid")
+    assert series is not None
+    assert 3 <= series.bars <= 5  # ~90 days of months
+    # Bucket opens are calendar month starts.
+    for t in series.ts:
+        dt = datetime.fromtimestamp(int(t), tz=timezone.utc)
+        assert (dt.day, dt.hour, dt.minute) == (1, 0, 0)
+    # The DAY series itself is untouched by the derived entry.
+    base = await cache.get("capital", "US100", "DAY", "bid")
+    assert base.bars == 90
+
+
+async def test_a_derived_series_with_no_base_history_is_none(tmp_path):
+    path = tmp_path / "c.db"
+    _db(path, _rows(10), res="MINUTE_5")
+    cache = PatternSeriesCache(str(path))
+    assert await cache.get("capital", "US100", "MONTH", "bid") is None
+
+
+async def test_new_base_bars_refold_the_newest_bucket_in_place(tmp_path):
+    """A derived tail is REFOLDED, not appended: a new base bar usually lands
+    inside the newest bucket, and appending it as its own bar would duplicate
+    the bucket. The extended entry must equal a cold reload."""
+    path = tmp_path / "c.db"
+    _db(path, _rows(40), res="MINUTE_5")  # 300s bars -> 3m buckets hold 10 each... no: MINUTE_3 folds MINUTE
+    # Use WEEK_2 over WEEK bars instead: 300s rows do not suit calendar folds.
+    con = sqlite3.connect(path)
+    con.execute("DELETE FROM bars")
+    con.execute("DELETE FROM coverage")
+    week = 604800
+    # Aligned to an EVEN week index, so the 9 weekly bars pair as 4 full
+    # 2-week buckets plus a half one, and the 10th week completes the half.
+    start = 1_600_000_000 - 1_600_000_000 % (2 * week)
+    rows = [(start + i * week, 10.0 + i, 11.0 + i, 9.0 + i, 10.5 + i)
+            for i in range(9)]
+    con.executemany(
+        "INSERT INTO bars VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [("capital", "US100", "WEEK", "bid", ts, o, h, l, c, 0.0) for ts, o, h, l, c in rows],
+    )
+    con.execute("INSERT INTO coverage VALUES (?,?,?,?,?,?)",
+                ("capital", "US100", "WEEK", "bid", rows[0][0], rows[-1][0]))
+    con.commit(); con.close()
+
+    cache = PatternSeriesCache(str(path))
+    first = await cache.get("capital", "US100", "WEEK_2", "bid")
+    assert first.bars == 5  # 9 weeks -> 4 full pairs + 1 half bucket
+
+    # A 10th week closes: it belongs INSIDE the last (half) bucket.
+    con = sqlite3.connect(path)
+    ts10 = rows[-1][0] + week
+    con.execute("INSERT INTO bars VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("capital", "US100", "WEEK", "bid", ts10, 19.0, 20.5, 18.0, 19.5, 0.0))
+    con.execute("UPDATE coverage SET newest_ts=? WHERE resolution='WEEK'", (ts10,))
+    con.commit(); con.close()
+
+    grown = await cache.get("capital", "US100", "WEEK_2", "bid")
+    assert grown.bars == 5  # still 5 buckets: the tail bucket absorbed it
+    fresh = await PatternSeriesCache(str(path)).get("capital", "US100", "WEEK_2", "bid")
+    np.testing.assert_allclose(grown.ts, fresh.ts)
+    np.testing.assert_allclose(grown.ohlc + grown.offset, fresh.ohlc + fresh.offset)
+    assert grown.newest_ts == fresh.newest_ts

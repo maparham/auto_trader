@@ -488,3 +488,113 @@ def test_shape_mode_scans_the_close_path(mode_client):
     assert _best_other(shape)["ts"] == twin_ts
     assert _best_other(shape)["distance"] == pytest.approx(0.0, abs=1e-6)
     assert _best_other(ohlc)["ts"] == near_ts
+
+
+def test_all_mode_scores_every_row_under_every_formula(client):
+    r = client.post("/api/patterns/search", json=_body(mode="all"))
+    assert r.status_code == 200
+    data = r.json()
+    top = data["matches"][0]
+    # The selection wins every formula, so it leads the combined ranking with
+    # a mean rank of 1 in the distance field and ~0 under each formula.
+    assert top["isSelection"] is True
+    assert top["distance"] == pytest.approx(1.0)
+    assert set(top["distances"]) == {"shape", "ohlc", "close", "dtw"}
+    for v in top["distances"].values():
+        assert v == pytest.approx(0.0, abs=1e-6)
+    # The planted repeats still surface, scored by all four formulas.
+    other = _best_other(data)
+    assert all(v is not None for v in other["distances"].values())
+
+
+def test_all_mode_rows_are_distinct_events(client):
+    r = client.post("/api/patterns/search", json=_body(mode="all"))
+    spans = [(m["ts"], m["endTs"]) for m in r.json()["matches"]]
+    for i, (a0, a1) in enumerate(spans):
+        for b0, b1 in spans[i + 1 :]:
+            assert a1 < b0 or b1 < a0, "combined rows overlap: same event twice"
+
+
+def test_single_modes_do_not_pay_for_per_formula_distances(client):
+    r = client.post("/api/patterns/search", json=_body(mode="shape"))
+    assert all(m["distances"] is None for m in r.json()["matches"])
+
+
+def test_all_mode_rejects_a_selection_flat_in_closes(mode_client):
+    """Mode "all" runs close-scanning formulas, so a selection with moving
+    wicks and identical closes is refused up front like close mode."""
+    client, _ = mode_client
+    flat = [
+        {"o": 50.0, "h": 50.0 + (i % 5), "l": 49.0 - (i % 3), "c": 50.0}
+        for i in range(10)
+    ]
+    r = client.post("/api/patterns/search", json=_body(query=flat, mode="all"))
+    assert r.status_code == 400
+    assert "no price movement" in r.json()["detail"]
+
+
+def test_a_derived_resolution_searches_the_folded_base_series(tmp_path, monkeypatch):
+    """A MONTH search over a store holding only DAY bars: the series cache
+    folds the base series, so the derived chart is searchable too."""
+    import sqlite3
+
+    path = tmp_path / "c.db"
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE bars (broker TEXT, epic TEXT, resolution TEXT, side TEXT,"
+        " ts INTEGER, open REAL, high REAL, low REAL, close REAL, volume REAL,"
+        " PRIMARY KEY (broker, epic, resolution, side, ts))"
+    )
+    con.execute(
+        "CREATE TABLE coverage (broker TEXT, epic TEXT, resolution TEXT, side TEXT,"
+        " oldest_ts INTEGER, newest_ts INTEGER,"
+        " PRIMARY KEY (broker, epic, resolution, side))"
+    )
+    rng = np.random.default_rng(9)
+    day = 86400
+    start = 1_500_000_000 - 1_500_000_000 % day
+    close = 100.0
+    rows = []
+    for i in range(365 * 3):
+        o = close
+        close += rng.normal(0, 1.0)
+        rows.append((start + i * day, o, max(o, close) + 0.5, min(o, close) - 0.5, close))
+    con.executemany(
+        "INSERT INTO bars VALUES ('capital','TSLA','DAY','bid',?,?,?,?,?,0)", rows
+    )
+    con.execute(
+        "INSERT INTO coverage VALUES ('capital','TSLA','DAY','bid',?,?)",
+        (rows[0][0], rows[-1][0]),
+    )
+    con.commit()
+    con.close()
+    monkeypatch.setattr(patterns_router, "PATTERN_SERIES", PatternSeriesCache(str(path)))
+    client = TestClient(app)
+
+    # The query IS the newest months as the chart would show them: fold the
+    # same days and take the last 8 buckets.
+    from auto_trader.core.candle_aggregate import DERIVED
+    from auto_trader.core.pattern_series import fold_arrays
+
+    arr = np.asarray(rows, dtype=np.float64)
+    fts, fohlc = fold_arrays(arr[:, 0].astype(np.int64), arr[:, 1:5], DERIVED["MONTH"])
+    q = [
+        {"ts": int(t), "o": r[0], "h": r[1], "l": r[2], "c": r[3]}
+        for t, r in zip(fts[-8:], fohlc[-8:])
+    ]
+    r = client.post(
+        "/api/patterns/search",
+        json=_body(
+            epic="TSLA",
+            resolution="MONTH",
+            query=q,
+            queryFromTs=q[0]["ts"],
+            queryToTs=q[-1]["ts"],
+        ),
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["series"]["bars"] in (36, 37)
+    top = data["matches"][0]
+    assert top["isSelection"] is True
+    assert top["distance"] < 1e-6

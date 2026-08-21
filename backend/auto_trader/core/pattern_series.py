@@ -19,12 +19,56 @@ from dataclasses import dataclass
 import numpy as np
 
 from auto_trader.config import settings
+from auto_trader.core.candle_aggregate import _WEEK, DERIVED, BucketRule, bucket_open
 from auto_trader.core.pattern_scan import prefix_sums
 
 # Roughly 250 MB of float64 once the prefix sums are counted.
 _MAX_BARS = 5_000_000
 
 CandleKey = tuple[str, str, str, str]
+
+
+def fold_arrays(
+    ts: np.ndarray, ohlc: np.ndarray, rule: BucketRule
+) -> tuple[np.ndarray, np.ndarray]:
+    """candle_aggregate.fold on arrays: reduce ascending base bars into one
+    OHLC row per bucket, vectorized so a million-bar 1m series folds in
+    milliseconds rather than through a million Candle objects. Bucket edges
+    follow bucket_open exactly (tested for parity), so the folded timestamps
+    match the bars the candles API serves the chart — which is what lets the
+    selection's own window come back flagged. Volume is not carried: the
+    pattern scan has no use for it."""
+    if len(ts) == 0:
+        return ts, ohlc
+    if rule.kind == "minute":
+        span = rule.group * 60
+        buckets = ts - ts % span
+    elif rule.kind == "week":
+        buckets = ts - ((ts // _WEEK) % rule.group) * _WEEK
+    else:
+        # Calendar buckets. Months-since-1970 make the group arithmetic flat:
+        # bucket_open aligns month groups within the calendar year, and the
+        # group sizes divide 12, so flooring the flat index is identical.
+        months = ts.astype("datetime64[s]").astype("datetime64[M]")
+        if rule.kind == "year":
+            starts = months.astype("datetime64[Y]").astype("datetime64[M]")
+        else:
+            idx = months.astype(np.int64)
+            starts = ((idx // rule.group) * rule.group).astype("datetime64[M]")
+        buckets = starts.astype("datetime64[s]").astype(np.int64)
+
+    firsts = np.concatenate([[0], np.flatnonzero(np.diff(buckets)) + 1])
+    lasts = np.concatenate([firsts[1:] - 1, [len(ts) - 1]])
+    folded = np.stack(
+        [
+            ohlc[firsts, 0],
+            np.maximum.reduceat(ohlc[:, 1], firsts),
+            np.minimum.reduceat(ohlc[:, 2], firsts),
+            ohlc[lasts, 3],
+        ],
+        axis=1,
+    )
+    return buckets[firsts], folded
 
 
 @dataclass(frozen=True)
@@ -153,7 +197,24 @@ class PatternSeriesCache:
             newest_ts=int(ts_new[-1]),
         )
 
-    def _load(self, key: CandleKey) -> Series | None:
+    @staticmethod
+    def _drop_last(series: Series) -> Series:
+        """The series without its newest bar. Only called with bars > 1, from
+        the derived-tail refold: that bar is about to be rebuilt from base
+        bars, possibly with more of them inside it."""
+        return Series(
+            ts=series.ts[:-1],
+            ohlc=series.ohlc[:-1],
+            s1=series.s1[:-1],
+            s2=series.s2[:-1],
+            offset=series.offset,
+            oldest_ts=series.oldest_ts,
+            newest_ts=int(series.ts[-2]),
+        )
+
+    def _load(self, key: CandleKey, rule: BucketRule | None = None) -> Series | None:
+        """`key` names the series to READ (the base series when `rule` is set);
+        folding into the derived buckets happens here, before centring."""
         with contextlib.closing(self._connect()) as con:
             rows = con.execute(
                 "SELECT ts, open, high, low, close FROM bars"
@@ -164,6 +225,9 @@ class PatternSeriesCache:
             return None
         arr = np.asarray(rows, dtype=np.float64)
         ts = arr[:, 0].astype(np.int64)
+        if rule is not None:
+            ts, arr = fold_arrays(ts, arr[:, 1:5], rule)
+            arr = np.concatenate([ts[:, None].astype(np.float64), arr], axis=1)
         # Centre once. Without this, cumsum cancellation over millions of values
         # at index price levels puts an exact self-match at 0.056 instead of 0,
         # which reorders the close ranks. Correctness, not tuning.
@@ -185,8 +249,17 @@ class PatternSeriesCache:
         self, broker: str, epic: str, resolution: str, side: str
     ) -> Series | None:
         key: CandleKey = (broker, epic, resolution, side)
+        # A derived resolution (MONTH, 3m, 2W…) is never stored as its own
+        # series: it is folded here from its base series, exactly as the
+        # candles API folds it for the chart. The cache entry lives under the
+        # DERIVED key; the database is only ever asked about the base one,
+        # whose coverage row also stamps freshness.
+        rule = DERIVED.get(resolution)
+        data_key: CandleKey = (
+            (broker, epic, rule.base.value, side) if rule is not None else key
+        )
         async with self._key_lock(key):
-            coverage = await asyncio.to_thread(self._coverage, key)
+            coverage = await asyncio.to_thread(self._coverage, data_key)
             cached = self._entries.get(key)
 
             if cached is not None and coverage is not None:
@@ -198,7 +271,26 @@ class PatternSeriesCache:
                 # moved LEFT edge means a backfill landed, and those bars sit
                 # before everything cached, so that falls through to a reload.
                 if stamp[0] == coverage[0] and coverage[1] > stamp[1]:
-                    grown = await asyncio.to_thread(self._load_after, key, series.newest_ts)
+                    if rule is None:
+                        grown = await asyncio.to_thread(
+                            self._load_after, data_key, series.newest_ts
+                        )
+                    elif series.bars > 1:
+                        # New base bars can EXTEND the newest bucket, not just
+                        # add buckets after it, so the tail is refolded: fetch
+                        # the base bars from that bucket's open and let the
+                        # refold replace the cached last bar.
+                        grown = await asyncio.to_thread(
+                            self._load_after,
+                            data_key,
+                            bucket_open(int(series.ts[-1]), rule) - 1,
+                        )
+                        if grown is not None:
+                            series = self._drop_last(series)
+                            ts_new, ohlc_new = fold_arrays(*grown, rule)
+                            grown = (ts_new, ohlc_new)
+                    else:
+                        grown = None  # 1-bar series: a reload is the refold
                     if grown is not None:
                         series = self._extend(series, *grown)
                         self._entries[key] = (coverage, series)
@@ -206,7 +298,7 @@ class PatternSeriesCache:
                         self._evict()
                         return series
 
-            series = await asyncio.to_thread(self._load, key)
+            series = await asyncio.to_thread(self._load, data_key, rule)
             if series is None:
                 return None
             stamp = coverage if coverage is not None else (series.oldest_ts, series.newest_ts)
