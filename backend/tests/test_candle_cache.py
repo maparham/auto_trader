@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+import pytest
+
 from auto_trader.core.candle_cache import CandleCache
 from auto_trader.core.models import Candle
 
@@ -1264,3 +1266,213 @@ def test_absorb_closed_is_idempotent_and_never_moves_newest_back(tmp_path):
     assert cache._coverage(KEY) == (100, 220)
     got = cache._read_window(KEY, 150, 170)
     assert got[0].close == 2.5  # replace, not duplicate rows
+
+
+def test_window_passthrough_deep_gap_serves_window_without_fill(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    # Warm coverage to [9000, 9060].
+    f0 = FakeFetcher([_c(t, float(t)) for t in (9000, 9060)])
+    asyncio.run(cache.window(KEY, 60, _dt(9000), _dt(9060), f0.range, now=10_000))
+    # Deep window [100, 220]: gap to coverage is ~150 bars; with chunk_bars=10
+    # the fill would need ~15 chunks > max_fill_chunks=2 -> pass-through.
+    src = [_c(t, float(t)) for t in (100, 160, 220)]
+    f = FakeFetcher(src)
+    out = asyncio.run(cache.window(
+        KEY, 60, _dt(100), _dt(220), f.range,
+        now=10_000, chunk_bars=10, max_fill_chunks=2,
+    ))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160, 220]
+    # Fetches covered ONLY the requested window, not the gap up to 9000.
+    assert all(to <= 220 + 60 for (_frm, to) in f.range_calls)
+    # Nothing was cached: coverage untouched, and asking again re-fetches.
+    assert cache._coverage(KEY) == (9000, 9060)
+
+
+def test_window_small_gap_still_fills_contiguously_despite_cap(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (220, 280)])
+    asyncio.run(cache.window(KEY, 60, _dt(220), _dt(280), f0.range, now=10_000))
+    # Gap [40, 220] is 3 bars; chunk_bars=10 -> 1 chunk <= cap -> normal fill.
+    src = [_c(t, float(t)) for t in (40, 100, 160, 220, 280)]
+    f = FakeFetcher(src)
+    out = asyncio.run(cache.window(
+        KEY, 60, _dt(40), _dt(120), f.range,
+        now=10_000, chunk_bars=10, max_fill_chunks=2,
+    ))
+    assert [int(c.time.timestamp()) for c in out] == [40, 100]
+    assert cache._coverage(KEY) == (40, 280)  # fill extended coverage as before
+
+
+def test_window_no_cap_keeps_deep_fill_behavior(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (9000, 9060)])
+    asyncio.run(cache.window(KEY, 60, _dt(9000), _dt(9060), f0.range, now=10_000))
+    src = [_c(t, float(t)) for t in (100, 160, 9000, 9060)]
+    f = FakeFetcher(src)
+    asyncio.run(cache.window(KEY, 60, _dt(100), _dt(160), f.range, now=10_000))
+    # Unbounded caller (backtest): the contiguous fill ran, coverage now reaches 100.
+    assert cache._coverage(KEY)[0] == 100
+
+
+def test_window_passthrough_chunks_large_window(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (99000, 99060)])
+    asyncio.run(cache.window(KEY, 60, _dt(99000), _dt(99060), f0.range, now=100_000))
+    # 50-bar window, chunk_bars=10 -> pass-through must make ~5 bounded calls.
+    src = [_c(t, float(t)) for t in range(600, 3601, 60)]
+    f = FakeFetcher(src)
+    out = asyncio.run(cache.window(
+        KEY, 60, _dt(600), _dt(3600), f.range,
+        now=100_000, chunk_bars=10, max_fill_chunks=2,
+    ))
+    assert len(out) == len(src)
+    assert len(f.range_calls) >= 2
+    assert all((to - frm) <= 60 * 10 for (frm, to) in f.range_calls)
+    # Oldest-first: the first call covers the bottom of the window.
+    assert f.range_calls[0][0] == 600
+
+
+def test_window_passthrough_overlapping_coverage_uses_normal_path(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (200, 260)])
+    asyncio.run(cache.window(KEY, 60, _dt(200), _dt(260), f0.range, now=10_000))
+    # Window [100, 260] overlaps coverage -> not "entirely below" -> normal fill.
+    src = [_c(t, float(t)) for t in (100, 160, 200, 260)]
+    f = FakeFetcher(src)
+    asyncio.run(cache.window(
+        KEY, 60, _dt(100), _dt(260), f.range,
+        now=10_000, chunk_bars=10, max_fill_chunks=2,
+    ))
+    assert cache._coverage(KEY) == (100, 260)
+
+
+def test_window_passthrough_serves_archived_bars_below_coverage(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (9000, 9060)])
+    asyncio.run(cache.window(KEY, 60, _dt(9000), _dt(9060), f0.range, now=10_000))
+    # Bars on disk BELOW coverage (a reset, an import). Such spans usually sit
+    # past broker retention, so an empty broker here is the realistic case: the
+    # pass-through must read them out of the store rather than answer nothing.
+    cache._store_closed(KEY, [_c(t, float(t)) for t in (100, 160, 220)], 10_000, False)
+    f = FakeFetcher([])  # the broker has nothing this deep
+    out = asyncio.run(cache.window(
+        KEY, 60, _dt(100), _dt(220), f.range,
+        now=10_000, chunk_bars=10, max_fill_chunks=2,
+    ))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160, 220]
+    assert all(to <= 220 for (_frm, to) in f.range_calls)  # no walk up to coverage
+    assert cache._coverage(KEY) == (9000, 9060)  # a read, never a write
+
+
+def test_window_passthrough_serves_a_window_straddling_the_archive_bottom(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (9000, 9060)])
+    asyncio.run(cache.window(KEY, 60, _dt(9000), _dt(9060), f0.range, now=10_000))
+    # The archive block starts at 3000 and runs upward; the window straddles that
+    # bottom edge, so only its upper 40% is on disk and the broker (empty this
+    # deep) cannot supply the rest. The stored part must still be served.
+    cache._store_closed(KEY, [_c(t, float(t)) for t in range(3000, 6001, 60)], 10_000, False)
+    f = FakeFetcher([])
+    out = asyncio.run(cache.window(
+        KEY, 60, _dt(1200), _dt(4200), f.range,
+        now=10_000, chunk_bars=10, max_fill_chunks=2,
+    ))
+    assert [int(c.time.timestamp()) for c in out] == list(range(3000, 4201, 60))
+    assert all(to <= 4200 for (_frm, to) in f.range_calls)  # no fetch above the window
+    assert cache._coverage(KEY) == (9000, 9060)
+
+
+def test_window_passthrough_dedupes_boundary_bars(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (99000, 99060)])
+    asyncio.run(cache.window(KEY, 60, _dt(99000), _dt(99060), f0.range, now=100_000))
+
+    class SnappingFetcher(FakeFetcher):
+        """Broker that widens a requested range out to bar boundaries, so two
+        adjacent chunks each return the bar on their shared edge."""
+
+        async def range(self, start: datetime, end: datetime) -> list[Candle]:
+            return await super().range(
+                _dt(int(start.timestamp()) - 60), _dt(int(end.timestamp()) + 60)
+            )
+
+    f = SnappingFetcher([_c(t, float(t)) for t in range(600, 1801, 60)])
+    out = asyncio.run(cache.window(
+        KEY, 60, _dt(600), _dt(1800), f.range,
+        now=100_000, chunk_bars=10, max_fill_chunks=2,
+    ))
+    ts = [int(c.time.timestamp()) for c in out]
+    assert len(f.range_calls) >= 2  # overlap only happens across chunks
+    assert ts == list(range(600, 1801, 60))  # unique, ascending, clipped
+
+
+def test_window_passthrough_merges_a_sparse_archive_without_a_gap_walk(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (9000, 9060)])
+    asyncio.run(cache.window(KEY, 60, _dt(9000), _dt(9060), f0.range, now=10_000))
+    # ONE orphan row inside a wide deep window. It must not defeat the cap (that
+    # would mean ~15 doomed chunk fetches under the key lock, hundreds at the
+    # real chunk size) — it just merges into the pass-through, deduped against
+    # the broker's own bar at the same timestamp.
+    cache._store_closed(KEY, [_c(100, 1.0)], 10_000, False)
+    src = [_c(t, float(t)) for t in range(100, 3001, 60)]
+    f = FakeFetcher(src)
+    out = asyncio.run(cache.window(
+        KEY, 60, _dt(100), _dt(3000), f.range,
+        now=10_000, chunk_bars=10, max_fill_chunks=2,
+    ))
+    assert [int(c.time.timestamp()) for c in out] == [b for b in range(100, 3001, 60)]
+    assert all(to <= 3000 for (_frm, to) in f.range_calls)  # window only, no gap walk
+    assert cache._coverage(KEY) == (9000, 9060)  # nothing cached
+
+
+def test_window_passthrough_first_chunk_error_raises(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (9000, 9060)])
+    asyncio.run(cache.window(KEY, 60, _dt(9000), _dt(9060), f0.range, now=10_000))
+    f = FakeFetcher(error=RuntimeError("broker down"))
+    with pytest.raises(RuntimeError, match="broker down"):
+        asyncio.run(cache.window(
+            KEY, 60, _dt(100), _dt(220), f.range,
+            now=10_000, chunk_bars=10, max_fill_chunks=2,
+        ))
+
+
+def test_window_passthrough_later_chunk_error_serves_landed_bars_degraded(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (99000, 99060)])
+    asyncio.run(cache.window(KEY, 60, _dt(99000), _dt(99060), f0.range, now=100_000))
+
+    class FlakyFetcher(FakeFetcher):
+        """Serves the first chunk, then goes down."""
+
+        async def range(self, start: datetime, end: datetime) -> list[Candle]:
+            if self.range_calls:
+                self.range_calls.append((int(start.timestamp()), int(end.timestamp())))
+                raise RuntimeError("broker down")
+            return await super().range(start, end)
+
+    f = FlakyFetcher([_c(t, float(t)) for t in range(600, 3601, 60)])
+    degraded: dict = {}
+    out = asyncio.run(cache.window(
+        KEY, 60, _dt(600), _dt(3600), f.range,
+        now=100_000, chunk_bars=10, max_fill_chunks=2, degraded=degraded,
+    ))
+    assert [int(c.time.timestamp()) for c in out] == [b for b in range(600, 1201, 60)]
+    assert degraded["reason"] == "broker down"
+
+
+def test_window_passthrough_expired_budget_reports_partial(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    f0 = FakeFetcher([_c(t, float(t)) for t in (99000, 99060)])
+    asyncio.run(cache.window(KEY, 60, _dt(99000), _dt(99060), f0.range, now=100_000))
+    f = FakeFetcher([_c(t, float(t)) for t in range(600, 3601, 60)])
+    partial: dict = {}
+    out = asyncio.run(cache.window(
+        KEY, 60, _dt(600), _dt(3600), f.range,
+        now=100_000, chunk_bars=10, max_fill_chunks=2, budget_s=0, partial=partial,
+    ))
+    assert out == []
+    assert f.range_calls == []  # budget was gone before the first chunk
+    assert partial["done_chunks"] == 0 and partial["total_chunks"] == 5
+    assert "still loading history" in partial["reason"]

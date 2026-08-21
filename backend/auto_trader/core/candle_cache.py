@@ -362,6 +362,7 @@ class CandleCache:
         degraded: dict | None = None,
         budget_s: float | None = None,
         partial: dict | None = None,
+        max_fill_chunks: int | None = None,
     ) -> list[Candle]:
         """Candles in [start, end]. Serializes per-key with recent() (see _key_lock).
 
@@ -385,8 +386,33 @@ class CandleCache:
         `partial` (optional out-param): set when the budget, not an error, ended
         the fill. Deliberately NOT `degraded` — nothing is broken and nothing is
         unreachable, the download is simply still going, and the two want
-        different words in front of a user."""
+        different words in front of a user.
+
+        `max_fill_chunks` (optional): the most fill chunks this caller is willing
+        to pay for before it would rather have the window alone. None (the
+        default) means unbounded — every existing caller keeps today's contiguous
+        fill. When set and the window sits ENTIRELY below coverage with a gap
+        wider than the cap, the window is served pass-through: exactly
+        [start, end], from the store and the broker, cached NOTHING (see
+        _passthrough). That is what a chart jumping to a deep date wants — the
+        span in between is months of bars it will never draw. Decided BEFORE the
+        lock on purpose: a peek must not queue behind someone else's minutes-long
+        backfill, and a slightly stale coverage read costs at most one
+        unnecessary pass-through."""
         deadline = None if budget_s is None else time.monotonic() + budget_s
+        if max_fill_chunks is not None:
+            from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
+            cov = await asyncio.to_thread(self._coverage, key)
+            chunk_secs = res_seconds * max(1, chunk_bars)
+            if cov is not None and to_ts < cov[0]:
+                gap_chunks = -(-(cov[0] - from_ts) // chunk_secs)  # ceil
+                if gap_chunks > max_fill_chunks:
+                    self._record_miss(key)
+                    return await self._passthrough(
+                        key, from_ts, to_ts, fetch_range,
+                        chunk_secs=chunk_secs, deadline=deadline,
+                        degraded=degraded, partial=partial,
+                    )
         async with self._key_lock(key):
             return await self._window(
                 key, res_seconds, start, end, fetch_range,
@@ -627,6 +653,95 @@ class CandleCache:
                 return cached
             raise first_err
         return cached
+
+    async def _passthrough(
+        self,
+        key: CandleKey,
+        from_ts: int,
+        to_ts: int,
+        fetch_range: Callable[[datetime, datetime], Awaitable[list[Candle]]],
+        *,
+        chunk_secs: int,
+        deadline: float | None,
+        degraded: dict | None,
+        partial: dict | None,
+    ) -> list[Candle]:
+        """Serve exactly [from_ts, to_ts] from the store plus the broker, WRITING
+        NOTHING.
+
+        The cache keeps ONE contiguous coverage range per series, so there is no
+        way to record a detached island of bars without either claiming the gap
+        below it as covered or punching a hole in the invariant. Reading only
+        sidesteps both: the bars go straight to the caller and the next ask
+        re-reads them.
+
+        Reading the store matters as much as fetching. Bars can sit in the table
+        BELOW what coverage claims (a coverage reset, an import — see _window's
+        archive-absorb block), and such spans are usually past broker retention,
+        so the wire alone would answer a deep window empty for a series whose
+        bars are on disk. _window rescues those with its per-chunk absorb, but
+        only by walking down from the coverage watermark — hundreds of doomed
+        fetches under the key lock, the exact cost this path exists to avoid. So
+        the merge happens here instead, inside the bounded window: whatever the
+        broker still has and whatever the archive kept, both clipped to the ask.
+        Broker bars come first in `out` so the stable sort below lets a live bar
+        win a tie against an older disk row.
+
+        Chunks walk BOTTOM-UP (oldest first), the opposite of _window's downward
+        backfill: there the ask sits at the bottom of a gap being filled from the
+        top, here the ask IS the window and its oldest end is the date the user
+        asked to see, so a deadline expiry should keep that end rather than the
+        far edge. Otherwise the out-params mean what they do in _window: `partial`
+        for a budget that ran out mid-walk, `degraded` for a fetch that failed
+        with bars already in hand — and a failure with nothing to serve raises,
+        the same "real bars beat a 5xx, an empty 200 does not" rule _window
+        applies to its own partial fills."""
+        stored = await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+        out: list[Candle] = []
+        total_chunks = max(1, -(-(to_ts - from_ts) // chunk_secs))  # ceil
+        done_chunks = 0
+        cur = from_ts
+        while cur <= to_ts:
+            if deadline is not None and time.monotonic() >= deadline:
+                if partial is not None:
+                    partial.update(
+                        done_chunks=done_chunks, total_chunks=total_chunks, bars=len(out),
+                        reason=(
+                            f"still loading history ({done_chunks}/{total_chunks} chunks)"
+                        ),
+                    )
+                break
+            chunk_to = min(to_ts, cur + chunk_secs)
+            try:
+                chunk = await fetch_range(
+                    datetime.fromtimestamp(cur, tz=timezone.utc),
+                    datetime.fromtimestamp(chunk_to, tz=timezone.utc))
+            except Exception as e:  # noqa: BLE001 — same contract as _window's walks
+                if not out and not stored:
+                    raise
+                if degraded is not None:
+                    degraded["reason"] = str(e)
+                break
+            out.extend(chunk)
+            done_chunks += 1
+            cur = chunk_to + 1  # chunks are disjoint: the ranges above are inclusive
+        out.extend(stored)
+        out.sort(key=lambda c: c.time)  # stable: broker bars stay ahead of stored ones
+        # Clip to the window and drop repeated timestamps, keeping the first of
+        # each. Every other window() path gets uniqueness free from
+        # _store_closed's INSERT OR REPLACE; this one never goes through sqlite,
+        # and it has two duplicate sources: the store overlapping the broker, and
+        # brokers that snap a requested range outward to bar boundaries so two
+        # adjacent chunks each return the bar on their shared edge. A chart
+        # series rejects duplicate times.
+        deduped: list[Candle] = []
+        seen: set[int] = set()
+        for c in out:
+            ts = int(c.time.timestamp())
+            if from_ts <= ts <= to_ts and ts not in seen:
+                seen.add(ts)
+                deduped.append(c)
+        return deduped
 
     async def _window_closed_complete(
         self, key: CandleKey, from_ts: int, to_ts: int, cutoff: int, res_seconds: int

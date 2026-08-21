@@ -162,3 +162,52 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .chart-range-bar { transition: opacity 0.14s ease; transform: none; }
 }
+
+/* Detached-view pill: the cell's top-right badge while a deep Go-to-date jump
+   has it parked on a standalone window with the live stream shut. Same surface
+   language as the calendar popover above (--surface on --border, radius 7), so
+   it reads as chrome of the range bar that put the chart here rather than as an
+   alert. z-index 11 puts it in the same layer as the live-edge pill: above the
+   overlay canvases, which are click-through, so its button is reachable. */
+.chart-detached {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 11;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 5px 4px 9px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.chart-detached-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.chart-detached-btn {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.1s ease, background-color 0.1s ease, border-color 0.1s ease;
+}
+.chart-detached-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.chart-detached-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}

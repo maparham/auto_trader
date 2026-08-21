@@ -732,6 +732,13 @@ export type LiveStatus = "connecting" | "live" | "down";
  * reports "live" and the market is open: a "down" feed already shows via status,
  * and a closed market legitimately has no ticks. `lastCandleAt`/`streamLiveAt`
  * are ms epochs (0 = none yet).
+ *
+ * A DETACHED cell is never stale, because it has no stream to have gone silent:
+ * useLiveMarketData returns before opening one, so `status` keeps whatever it
+ * said when the cell detached ("live", usually) and no candle ever arrives.
+ * Left ungated, the silence trips this watchdog ~90s into every detached view
+ * and the legend puts up a "stale feed" warning about a feed that was closed on
+ * purpose. The DetachedPill is the cell's status while detached.
  */
 export function isFeedStale(args: {
   status: LiveStatus;
@@ -740,10 +747,12 @@ export function isFeedStale(args: {
   streamLiveAt: number;
   now: number;
   staleMs: number;
+  detached?: boolean;
 }): boolean {
   const base = Math.max(args.lastCandleAt, args.streamLiveAt);
   return (
     base > 0 &&
+    !args.detached &&
     args.status === "live" &&
     !args.marketClosed &&
     args.now - base > args.staleMs

@@ -266,6 +266,15 @@ describe("isFeedStale", () => {
     expect(isFeedStale({ ...base, lastCandleAt: 0, streamLiveAt: 0 })).toBe(false);
   });
 
+  it("is suppressed while the cell is detached (no stream to go silent)", () => {
+    // A detached cell's stream is closed on purpose and `status` keeps saying
+    // "live" from before the jump, so the silence would otherwise trip this
+    // ~90s into every detached view and warn about a feed nobody expects ticks
+    // from. Same fixture as the base case, which IS stale.
+    expect(isFeedStale({ ...base, detached: true })).toBe(false);
+    expect(isFeedStale({ ...base, detached: false })).toBe(true);
+  });
+
   it("is suppressed when the market is closed (no ticks expected)", () => {
     expect(isFeedStale({ ...base, marketClosed: true })).toBe(false);
   });

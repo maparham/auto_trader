@@ -1531,8 +1531,18 @@ function trendlineIdxMap(
   const nHtf = starts.length;
   const nChart = dataList.length;
   return {
-    toChart: (j) =>
-      idxAtTime(nChart, chartAt, timeAtIdx(nHtf, htfAt, j, htfMs), barMs),
+    toChart: (j) => {
+      const idx = idxAtTime(nChart, chartAt, timeAtIdx(nHtf, htfAt, j, htfMs), barMs);
+      // A pin FINER than the chart puts a line-space bar INSIDE a chart bar,
+      // so the fractional index lands between two candles and an anchor's
+      // ring hangs in the gap off the candle's wick. Snap down to the candle
+      // that contains the time — but only over loaded history plus the
+      // forming bar: a ray's far edge extrapolates past the data on purpose
+      // (clamping a sloped line rotates it), and flooring there would pile
+      // it onto the last candle.
+      if (htfMs < barMs && idx >= 0 && idx < nChart) return Math.floor(idx);
+      return idx;
+    },
     toLine: (j) =>
       idxAtTime(nHtf, htfAt, timeAtIdx(nChart, chartAt, j, barMs), htfMs),
   };

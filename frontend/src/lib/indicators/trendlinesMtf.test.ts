@@ -204,3 +204,54 @@ describe("lineKey under a pin", () => {
     expect(lineKey(htfLine, bars)).not.toBe(lineKey(htfLine, bars, starts));
   });
 });
+
+describe("TRENDLINES_TEMPLATE.draw under a pin FINER than the chart", () => {
+  // The inverse pin: 15m lines on a 1h chart. A 15m anchor's timestamp lands
+  // INSIDE a chart bar, and interpolating puts it between two candles — the
+  // anchor must snap to the candle that contains it instead, or the ring
+  // hangs in the gap off the candle's wick.
+  const LTF_MS = 900_000; // 15m pin on a 1h chart (CHART_MS above is 15m,
+  // so build coarser chart bars here instead)
+  const hourBars = (n = 10): KLineData[] =>
+    Array.from({ length: n }, (_, i) => bar(T0 + i * HTF_MS));
+  const ltfStarts = (n = 40): number[] =>
+    Array.from({ length: n }, (_, i) => T0 + i * LTF_MS);
+  /** Anchors at 15m bars 6 and 18: T0+1.5h and T0+4.5h, i.e. the MIDDLES of
+   * chart bars 1 and 4. */
+  const ltfLine: TrendLine = {
+    side: "resistance",
+    i1: 6,
+    p1: 110,
+    i2: 18,
+    p2: 106,
+    touches: 2,
+    touchIdxs: [6, 18],
+    lastTouchIdx: 18,
+    brokenIdx: null,
+  };
+  const ltfStash = (): TrendlinesMtf => ({
+    timeframe: "MINUTE_15",
+    htfStarts: ltfStarts(),
+    htfMs: LTF_MS,
+    htfResistance: ltfStarts().map((_, i) => 110 - (i - 6) / 3),
+    htfLines: [ltfLine],
+    htfAtr: 2,
+  });
+
+  it("snaps an intra-bar anchor onto the chart bar that contains it", () => {
+    const { segments } = draw(hourBars(), ltfStash());
+    expect(segments).toHaveLength(1);
+    // T0+1.5h sits inside chart bar 1; interpolation alone would say 1.5.
+    expect(segments[0].x0).toBe(1);
+  });
+
+  it("rings each touch on a candle, not between two", () => {
+    const { rings } = draw(hourBars(), ltfStash());
+    expect(rings.map((r) => r.x)).toEqual([1, 4]);
+  });
+
+  it("still extends the ray past the newest chart bar", () => {
+    const { segments } = draw(hourBars(), ltfStash());
+    expect(segments[0].x1).toBeGreaterThan(9);
+  });
+});

@@ -40,6 +40,7 @@ import MarketInfoPopover from "./MarketInfoPopover";
 import Tooltip from "./components/Tooltip";
 import ReplayStartPanel from "./ReplayStartPanel";
 import ReplayPill from "./ReplayPill";
+import DetachedPill from "./DetachedPill";
 import ReplayTicket from "./ReplayTicket";
 import ReplayReportCard from "./ReplayReportCard";
 import { useProximityHeatmap } from "./chart/useProximityHeatmap";
@@ -189,6 +190,7 @@ import {
   type PriceAxisGeometry,
 } from "./chart/priceAxisGesture";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
+import type { DetachedTarget } from "./chart/detachedView";
 import { useReplay } from "./chart/useReplay";
 import { classifyNoData, type NoDataKind } from "./chart/noDataPolicy";
 import { useRangeNavigation } from "./chart/useRangeNavigation";
@@ -344,6 +346,19 @@ export default function ChartCore({
   // Active quick-range button (null once the user manually zooms/scrolls or
   // changes interval). Transient — not persisted.
   const [activeRange, setActiveRange] = useState<RangeKey | null>(null);
+  // Detached view: a Go-to-date target too deep to reach by extending history
+  // (see chart/detachedView.ts). Non-null makes useLiveMarketData reload the
+  // cell with just the window around that date and keeps the live stream shut;
+  // null is the ordinary live series. Transient — never persisted, so a reload
+  // always comes back live.
+  const [detached, setDetached] = useState<DetachedTarget | null>(null);
+  // Each entry is a FRESH object even for the same date, so re-jumping to a
+  // target already on screen still reloads the window (the load effect keys off
+  // this object's identity).
+  const enterDetached = (targetMs: number) => setDetached({ targetMs });
+  // The ONLY way out: dropping the target reloads the cell's live series and
+  // reopens the stream. What the DetachedPill's button calls.
+  const exitDetached = () => setDetached(null);
   // "Back to live" pill: how far the view sits behind the newest bar ("12d
   // back") plus where to park it, or null while the newest bar is on screen
   // (pill hidden). Derived from the visible range, never from scroll deltas —
@@ -1388,11 +1403,16 @@ export default function ChartCore({
           streamLiveAt: streamLiveAtRef.current,
           now: Date.now(),
           staleMs: STALE_MS,
+          // No stream while detached, so nothing to be stale — see isFeedStale.
+          detached: detached !== null,
         }),
       );
     }, 10_000);
     return () => clearInterval(id);
-  }, [symbol.epic, period.resolution, brokerId]);
+    // `detached` is in the deps for the reset above, not the interval: entering
+    // or leaving a detached view clears a stale flag raised for the other mode
+    // straight away rather than up to 10s later.
+  }, [symbol.epic, period.resolution, brokerId, detached]);
   // Market-info popover anchor (viewport coords of the legend ⓘ); null = closed.
   const [detailsAnchor, setDetailsAnchor] = useState<{ x: number; y: number } | null>(null);
   const [cacheStatsOpen, setCacheStatsOpen] = useState(false);
@@ -1638,6 +1658,9 @@ export default function ChartCore({
     onFocus,
     onPeriod,
     setActiveRange,
+    enterDetached,
+    exitDetached,
+    detached,
   });
 
   // Create the chart once (StrictMode-safe: init has no idempotent guard).
@@ -2481,6 +2504,46 @@ export default function ChartCore({
       };
     };
 
+    // --- Pan while Find similar is armed ---
+    // Left-drag belongs to the band, so the chart would otherwise be frozen while
+    // the user hunts for the shape to select. Wheel zoom stays on (the arm no
+    // longer disables it) and a middle- or right-button drag pans, feeding
+    // klinecharts the same per-move distance its own left-drag scroll uses.
+    let panLastX: number | null = null;
+    let panMoved = false;
+    const onPatternPanMove = (me: MouseEvent) => {
+      if (panLastX == null) return;
+      const dx = me.clientX - panLastX;
+      if (dx === 0) return;
+      panLastX = me.clientX;
+      panMoved = true;
+      chartRef.current?.scrollByDistance(dx);
+    };
+    const onPatternPanUp = (ue: MouseEvent) => {
+      if (ue.button !== 1 && ue.button !== 2) return;
+      panLastX = null;
+      window.removeEventListener("mousemove", onPatternPanMove, true);
+      window.removeEventListener("mouseup", onPatternPanUp, true);
+    };
+    // A right-drag that actually panned must not also open the Paste menu; a
+    // plain right-click (no movement) still does.
+    const onPatternPanContextMenu = (e: MouseEvent) => {
+      if (!panMoved) return;
+      panMoved = false;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    const onPatternPanDown = (e: MouseEvent) => {
+      if (!patternRangeArmed.value) return;
+      if (e.button !== 1 && e.button !== 2) return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // no clone/anchor/menu handler sees this press
+      panLastX = e.clientX;
+      panMoved = false;
+      window.addEventListener("mousemove", onPatternPanMove, true);
+      window.addEventListener("mouseup", onPatternPanUp, true);
+    };
+
     // --- Paste pattern (the copied candles as a ghost overlay) ---
     // A single click, unlike the copy drag: the clipboard already says how many
     // bars there are, so the click only decides where they start. The drop price
@@ -2783,18 +2846,26 @@ export default function ChartCore({
       wrapRef.current?.focus({ preventScroll: true });
     });
 
+    // Unlike the tools above, this one leaves scroll and zoom ENABLED: the shape
+    // worth searching for is usually off screen when the tool is armed, so the
+    // chart has to stay navigable (wheel zooms, middle/right-drag pans — see
+    // onPatternPanDown). Left presses inside the main pane never reach
+    // klinecharts anyway, since onPatternDown claims them for the band, and
+    // scrollByDistance needs scroll left on to move the chart at all.
     const unsubPatternArm = patternRangeArmed.subscribe((on) => {
       setPatternArmedUi(on);
       const c = chartRef.current;
       if (on) {
         zoomRangeArmed.set(false); // shared band: see the note in the zoom subscription
         patternPasteArmed.set(false); // one placement gesture at a time
-        c?.setScrollEnabled(false);
-        c?.setZoomEnabled(false);
         wrapRef.current?.focus({ preventScroll: true }); // so Esc reaches onKeyDown
       } else {
         patternDragCleanup?.();
         patternDragCleanup = null;
+        panLastX = null;
+        panMoved = false;
+        window.removeEventListener("mousemove", onPatternPanMove, true);
+        window.removeEventListener("mouseup", onPatternPanUp, true);
         if (patternPhase !== "idle") {
           patternPhase = "idle";
           // disarmed mid-drag: freeze the band; a zero-width one self-clears via
@@ -2841,6 +2912,8 @@ export default function ChartCore({
       el.addEventListener("mousedown", onZoomDown, true);
       // Find similar, alongside zoom-to-range: when armed it owns the press, and
       // it must run before onZoomBandClear (they share the band).
+      el.addEventListener("mousedown", onPatternPanDown, true);
+      el.addEventListener("contextmenu", onPatternPanContextMenu, true);
       el.addEventListener("mousedown", onPatternDown, true);
       // Paste, alongside them: when armed it owns the press, before the band
       // click-away handler can read it as a click-away.
@@ -3247,6 +3320,8 @@ export default function ChartCore({
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
       el.removeEventListener("mousedown", onZoomDown, true);
+      el.removeEventListener("mousedown", onPatternPanDown, true);
+      el.removeEventListener("contextmenu", onPatternPanContextMenu, true);
       el.removeEventListener("mousedown", onPatternDown, true);
       el.removeEventListener("mousedown", onPastePatternDown, true);
       el.removeEventListener("mousedown", onRangePickDown, true);
@@ -3707,6 +3782,7 @@ export default function ChartCore({
     scope,
     effPrecision,
     replayEpoch: replay.replayEpoch,
+    detached,
     setStatus,
     setLastPrice,
     setHasData,
@@ -4662,6 +4738,18 @@ export default function ChartCore({
           onGoToDate={onGoToDate}
         />
       )}
+      {/* Detached view: the badge that says this chart is parked on a jump target
+          with the live stream shut, plus the one control that undoes it. Gated on
+          replay being fully "off" (picking included) for the same reason the range
+          bar above is: a session owns the view, and detached state that lingered
+          into one must not offer a reload underneath it. */}
+      {detached && replay.state.mode === "off" && (
+        <DetachedPill
+          targetMs={detached.targetMs}
+          timezone={timezone}
+          onBackToLive={exitDetached}
+        />
+      )}
       {replay.state.mode === "active" && (
         <ReplayPill
           scope={scope}
@@ -4783,7 +4871,11 @@ export default function ChartCore({
           (above the overlay canvases, below the no-data banner) and the only element
           in that stack that takes pointer events — the canvases stay click-through
           so the draw tools underneath keep working. */}
-      {liveEdge && (
+      {/* Hidden while detached: the view is then pinned to a jump target with no
+          live edge to return to, `goLive` early-returns on it, and the DetachedPill
+          already owns the one honest way back. Two pills, one of them dead, is
+          worse than one. */}
+      {liveEdge && !detached && (
         <Tooltip content="Jump to the latest bar" placement="left">
           <button
             type="button"
@@ -4907,9 +4999,23 @@ export default function ChartCore({
           // the two are mutually exclusive.
           // A replaying cell has no stream: neither the green live dot nor the
           // amber stale dot means anything, and both would claim the bars on
-          // screen are current.
-          live: replay.state.mode === "off" && status === "live" && !marketClosed && !streamStale,
-          stale: replay.state.mode === "off" && streamStale && !marketClosed && status === "live",
+          // screen are current. A DETACHED cell is the same case — the load
+          // branch returns before reopening the socket, so `status` is still
+          // whatever it said before the jump and the green dot would go on
+          // claiming a shut stream was live over bars from years back. Neither
+          // dot while detached: the DetachedPill is that cell's status.
+          live:
+            replay.state.mode === "off" &&
+            !detached &&
+            status === "live" &&
+            !marketClosed &&
+            !streamStale,
+          stale:
+            replay.state.mode === "off" &&
+            !detached &&
+            streamStale &&
+            !marketClosed &&
+            status === "live",
           broker: brokerLabel(brokerId),
         }}
         rows={legendRows}

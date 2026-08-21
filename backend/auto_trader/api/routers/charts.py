@@ -35,6 +35,13 @@ router = APIRouter()
 # client that gives up first never sees the marker it could have acted on.
 CHART_FILL_BUDGET_S = 8.0
 
+# Deep-window pass-through cap for interactive chart reads: a window this many
+# chunks (x 3000 bars) below cached coverage is served straight from the broker
+# without the contiguous fill. 8 chunks = 24k bars (~80 days of 5m): nearer
+# gaps are cheap to fill and keep the cache growing; deeper asks are peeks and
+# should cost seconds, not a year of downloads.
+CHART_PASSTHROUGH_MAX_FILL_CHUNKS = 8
+
 
 def _mark_partial(response: Response, partial: dict) -> None:
     """Stamp the still-filling marker: the fill ran out of time, not out of luck.
@@ -87,6 +94,7 @@ async def candles(
     loaded = await deps._fetch_symbol_candles(
         broker_id, epic, resolution, bars, from_ts, to_ts, price_side,
         degraded=degraded, budget_s=CHART_FILL_BUDGET_S, partial=partial,
+        max_fill_chunks=CHART_PASSTHROUGH_MAX_FILL_CHUNKS,
     )
     if degraded and response is not None:
         _mark_degraded(response, degraded)

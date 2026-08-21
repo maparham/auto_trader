@@ -166,7 +166,7 @@ describe("ensureCoverageAndFit landing", () => {
 // "Short" has to mean the MATCH, not the padded coverage window: buildRangeToken
 // asks for 3x the match span of context on each side, which is a nice-to-have,
 // while the match itself is the thing the user clicked.
-function jumpHarness(oldestMs: number) {
+function jumpHarness(oldestMs: number, detached: { targetMs: number } | null = null) {
   type CoverOpts = {
     owner?: RangeReq | null;
     maxWindows?: number;
@@ -175,6 +175,9 @@ function jumpHarness(oldestMs: number) {
   };
   const coverHistoryTo =
     vi.fn<(fromTs: number, opts?: CoverOpts) => Promise<boolean>>(async () => true);
+  const enterDetached = vi.fn<(targetMs: number) => void>();
+  const exitDetached = vi.fn<() => void>();
+  const onPeriod = vi.fn<(cellId: string, p: { resolution: string }) => void>();
   // getSize width 0 makes readVisibleRange bail to its 30-day fallback span, so
   // onGoToDate can run against this light mock without a real layout.
   const chart = {
@@ -212,15 +215,29 @@ function jumpHarness(oldestMs: number) {
     timezone: "UTC",
     cellId: "cell.A",
     setActiveRange: () => {},
+    onPeriod,
+    enterDetached,
+    exitDetached,
+    detached,
   };
   // Not a component: the hook calls no React hooks of its own (see the note on
   // the harness above), so it runs as a plain function here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, react-hooks/rules-of-hooks
-  const { goToRange, onGoToDate } = useRangeNavigation(handle as any, deps as any);
+  const { goToRange, onGoToDate, onRangePick } = useRangeNavigation(handle as any, deps as any);
   // The walk clears the pending token when it settles — the signal that the
   // .then branch (and so the warning decision) has actually run.
   const settled = () => handle.pendingRangeRef.current === null;
-  return { goToRange, onGoToDate, settled, coverHistoryTo, handle };
+  return {
+    goToRange,
+    onGoToDate,
+    onRangePick,
+    settled,
+    coverHistoryTo,
+    enterDetached,
+    exitDetached,
+    onPeriod,
+    handle,
+  };
 }
 
 describe("goToRange deep-history handling", () => {
@@ -339,6 +356,78 @@ describe("goToRange deep-history handling", () => {
     const parked = opts!.owner as RangeReq;
     expect(Math.round((parked.fromTs + parked.toTs) / 2)).toBe(Date.UTC(2024, 2, 7, 14, 30));
     await vi.waitFor(() => expect(settled()).toBe(true));
+  });
+
+  // A date years behind the loaded oldest bar can't be reached by extending
+  // history: the parallel cover would be hundreds of windows and (cold) minutes
+  // of backfill. Past DETACH_GAP_BARS the chart reloads with just the target
+  // window instead — no cover, no fetch storm.
+  it("go-to-date deeper than the detach budget enters detached view", async () => {
+    const { onGoToDate, enterDetached, coverHistoryTo } = jumpHarness(LAST_BAR - 60 * MIN);
+    // ~2.9 years behind the loaded oldest on 5m (LAST_BAR is 2023-11-14T22:13Z):
+    // ~300k bars, far past DETACH_GAP_BARS.
+    onGoToDate("2021-01-05");
+    expect(enterDetached).toHaveBeenCalledTimes(1);
+    expect(enterDetached.mock.calls[0][0]).toBe(Date.UTC(2021, 0, 5));
+    expect(coverHistoryTo).not.toHaveBeenCalled(); // no fetch storm
+  });
+
+  it("go-to-date inside the detach budget keeps the parallel cover", async () => {
+    const { onGoToDate, settled, enterDetached, coverHistoryTo } = jumpHarness(LAST_BAR - 60 * MIN);
+    onGoToDate("2023-11-13"); // ~a day behind LAST_BAR (2023-11-14T22:13Z): near
+    expect(enterDetached).not.toHaveBeenCalled();
+    expect(coverHistoryTo).toHaveBeenCalled();
+    await vi.waitFor(() => expect(settled()).toBe(true));
+  });
+
+  // Already detached, EVERY Go re-detaches — inside the loaded window included.
+  // Recentring in place was cheaper, but it left the target (and so the "Viewing
+  // <date>" pill, and the next Go's own window) naming the FIRST jump while the
+  // view had moved on. The target is the last date asked for, always.
+  it("re-detaches on every go-to-date, inside the loaded window or not", async () => {
+    const target = Date.UTC(2021, 0, 5);
+    // A 3-day loaded extent stands in for the detached window.
+    const inside = jumpHarness(LAST_BAR - 3 * 1440 * MIN, { targetMs: target });
+    inside.onGoToDate("2023-11-13"); // inside [oldest, LAST_BAR] of this fixture
+    expect(inside.enterDetached).toHaveBeenCalledTimes(1);
+    expect(inside.enterDetached.mock.calls[0][0]).toBe(Date.UTC(2023, 10, 13));
+    expect(inside.coverHistoryTo).not.toHaveBeenCalled(); // a reload, not a cover
+
+    const outside = jumpHarness(LAST_BAR - 60 * MIN, { targetMs: target });
+    outside.onGoToDate("2019-06-03"); // older than the loaded oldest bar
+    expect(outside.enterDetached).toHaveBeenCalledTimes(1);
+    expect(outside.coverHistoryTo).not.toHaveBeenCalled();
+  });
+
+  // A quick range is a statement about the LIVE edge: every window it computes
+  // ends at now, which is nowhere near the detached window. Fitting one over
+  // that window would land on nothing while the cell still called itself
+  // detached (the pill asserting a date the view had left), so the pick exits
+  // instead and the reload it triggers consumes the parked token.
+  it("quick range while detached exits detached view, with the token parked", () => {
+    const h = jumpHarness(LAST_BAR - 60 * MIN, { targetMs: Date.UTC(2021, 0, 5) });
+    h.onRangePick("5D"); // MINUTE_5: same resolution as the fixture's period
+    expect(h.exitDetached).toHaveBeenCalledTimes(1);
+    expect(h.onPeriod).not.toHaveBeenCalled();
+    // Parked for the data-load effect that the exit's reload runs — the walk
+    // must NOT have been kicked off against the stale detached series.
+    expect(h.handle.pendingRangeRef.current?.resolution).toBe("MINUTE_5");
+    expect(h.coverHistoryTo).not.toHaveBeenCalled();
+  });
+
+  it("quick range while detached still switches the interval it implies", () => {
+    const h = jumpHarness(LAST_BAR - 60 * MIN, { targetMs: Date.UTC(2021, 0, 5) });
+    h.onRangePick("1Y"); // DAY: a resolution change AND an exit, both needed
+    expect(h.onPeriod).toHaveBeenCalledTimes(1);
+    expect(h.onPeriod.mock.calls[0][1].resolution).toBe("DAY");
+    expect(h.exitDetached).toHaveBeenCalledTimes(1);
+  });
+
+  it("quick range on the live series is untouched by the detached path", () => {
+    const h = jumpHarness(LAST_BAR - 60 * MIN); // not detached
+    h.onRangePick("5D");
+    expect(h.exitDetached).not.toHaveBeenCalled();
+    expect(h.onPeriod).not.toHaveBeenCalled();
   });
 
   it("leaves the landing to whoever preempted it", async () => {

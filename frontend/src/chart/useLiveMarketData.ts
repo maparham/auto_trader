@@ -16,6 +16,7 @@ import {
   type Period,
 } from "../lib/feed";
 import { coverHistoryRangeParallel } from "../lib/historyPaging";
+import { detachedWindows, type DetachedTarget } from "./detachedView";
 import { jumpToLive } from "../lib/liveEdge";
 import type { PriceSide } from "../theme";
 import { synthPrecision } from "./chartPainters";
@@ -63,6 +64,13 @@ export interface LiveMarketDataDeps {
   // whole load path — rehydrate, indicator visibility, MTF refresh, template —
   // instead of forking a second one.
   replayEpoch: number;
+  // Detached view: a Go-to-date target too deep to reach by extending history.
+  // Non-null makes the load effect a THIRD bars source — just the window around
+  // the target, with no live stream — and it sits in the effect's dep array, so
+  // entering, re-targeting or leaving reloads the whole series (the same idiom
+  // as replayEpoch). Each enter/re-target is a fresh object, so a repeat jump to
+  // the same date still reloads.
+  detached: DetachedTarget | null;
   // State setters (identity-stable across renders).
   setStatus: (s: LiveStatus) => void;
   setLastPrice: (p: number | null) => void;
@@ -148,6 +156,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     scope,
     effPrecision,
     replayEpoch,
+    detached,
     setStatus,
     setLastPrice,
     setHasData,
@@ -207,9 +216,17 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
   // by the retry backoff" apart from an epic/TF/side change, so retry re-runs
   // can hold the user's view steady (see keepCenter below).
   const lastRetryNonceRef = useRef(0);
+  // Detached state for the gesture effect below, whose dep array is
+  // [epic, resolution, scope] and so cannot see the prop directly — the same
+  // reason replay is read there through handle.replayRef.
+  // Written from the load effect below (which has `detached` in its deps), not
+  // in render: the gesture effect only ever reads it from a user event, long
+  // after that effect has run for the commit that changed it.
+  const detachedRef = useRef<DetachedTarget | null>(detached);
 
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
   useEffect(() => {
+    detachedRef.current = detached;
     const chart = handle.chartRef.current;
     const dataFacade = handle.dataFacadeRef.current;
     if (!chart || !dataFacade) return;
@@ -224,6 +241,12 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       retrySeriesRef.current = seriesKey;
       retryAttemptRef.current = 0;
     }
+    // Detached: this run paints ONLY the window around a deep Go-to-date target,
+    // with no live stream behind it. Replay wins if both are somehow on (a
+    // session owns the bars outright), so every guard below can read this one
+    // flag. It is decided synchronously here because the view/center decisions
+    // it gates are made before the async load starts.
+    const detachedMode = !!detached && !(handle.replayRef.current?.isActive() ?? false);
 
     // Center-preservation across a timeframe change: capture the bar at the
     // horizontal center of the view now, from the OLD (about-to-be-replaced)
@@ -264,13 +287,19 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // switches, while this is a background refresh the user never asked for.
     const isRetryRun = retryNonce !== lastRetryNonceRef.current && !isEpicChange && !isResChange;
     lastRetryNonceRef.current = retryNonce;
+    // Never while detached: the on-screen center is a target years back, and
+    // holding it would make a timeframe change trip the too-deep notice below
+    // (which would then print the very date a masked session hides) and park a
+    // stale intent. Detached positioning is owned by the explicit centre on
+    // detached.targetMs after the load — the same reasoning as replay's cursor.
     const keepCenter =
-      (isResChange &&
+      !detachedMode &&
+      ((isResChange &&
         !isEpicChange &&
         priorCenterTs != null &&
         !handle.pendingRangeRef.current &&
         loadSettings().preserveCenterOnTfChange) ||
-      (isRetryRun && priorCenterTs != null && !handle.pendingRangeRef.current);
+        (isRetryRun && priorCenterTs != null && !handle.pendingRangeRef.current));
     // Fresh mount (page reload / cell open): restore the view position the
     // scroll/zoom subscription below last saved for this cell — same opt-in as
     // the TF-change preserve, and only when the saved epic+resolution still
@@ -281,7 +310,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // cancelled) run must not consume the one-shot restore before the second
     // run — the one that actually loads — gets to use it.
     const savedView = !didInitRef.current && loadSettings().preserveCenterOnTfChange ? loadViewPos(scope) : null;
+    // Detached runs never consume the reload restore either (same reason as
+    // replay: the saved centre is a LIVE view, and it must still be there for
+    // the load that leaving detached triggers).
     const restoreView =
+      !detachedMode &&
       savedView &&
       savedView.epic === symbol.epic &&
       savedView.resolution === period.resolution &&
@@ -344,7 +377,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     const pendingCenter = handle.pendingCenterRef.current;
     const zoomCenterTs =
       pendingCenter && pendingCenter.resolution === period.resolution ? pendingCenter.centerTs : null;
-    const centerTargetTs = zoomCenterTs ?? (tooDeep ? null : wantCenterTs);
+    // Detached positions itself on detached.targetMs after the load, so every
+    // live-series centring target (including a parked zoom-to-range one, which
+    // belongs to the live view) is inert here.
+    const centerTargetTs = detachedMode ? null : (zoomCenterTs ?? (tooDeep ? null : wantCenterTs));
 
     // Declare the instrument (carries precision) + timeframe to v10. Both must be
     // set before the async setBars below, since v10 fires getBars(init) once
@@ -382,6 +418,15 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     handle.loadingRef.current = false;
     handle.exhaustedRef.current = false;
     handle.emptyStreakRef.current = 0;
+    // A detached load replaces the series with a window years away, so any
+    // parked quick-range pick targets bars that will not exist. Drop the token
+    // (not just its walk): consumption requires the walk to run, and a token
+    // left parked permanently gates ensureAnchorCoverage and every
+    // coverBacktestTradeTo walk — including after the user comes back to live.
+    if (detachedMode && handle.pendingRangeRef.current) {
+      handle.pendingRangeRef.current = null;
+      setActiveRange(null);
+    }
 
     // Drop a stale quick-range when this re-run isn't the range pick itself.
     // - Epic change: the boundary belongs to the OLD instrument's timeline — clear
@@ -479,6 +524,34 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       let degraded: string | null = null;
       if (replaying) {
         bars = await replay!.barsFor(period.resolution);
+      } else if (detachedMode) {
+        // The detached window: a few 500-bar ranges around the target, fetched
+        // concurrently (the backend serves a deep range pass-through, so this is
+        // seconds even on a cold cache). Adjacent windows SHARE a boundary
+        // second and the range read is inclusive, so dedupe by timestamp as well
+        // as sort — duplicate timestamps corrupt the series.
+        const resSec = RESOLUTION_SECONDS[period.resolution] ?? 60;
+        const failures: unknown[] = [];
+        const chunks = await Promise.all(
+          detachedWindows(detached!.targetMs, resSec).map((w) =>
+            fetchRange(symbol.epic, period.resolution, w.fromSec, w.toSec, priceSide, brokerId).catch(
+              (err: unknown) => {
+                // One window failing must not lose the rest; remember it so the
+                // banner can say the load was incomplete rather than empty.
+                failures.push(err);
+                return [] as KLineData[];
+              },
+            ),
+          ),
+        );
+        const byTs = new Map<number, KLineData>();
+        for (const chunk of chunks) for (const b of chunk) byTs.set(b.timestamp, b);
+        bars = [...byTs.values()].sort((a, b) => a.timestamp - b.timestamp);
+        const failed = failures[0];
+        if (failed !== undefined && !cancelled) {
+          console.warn(`[chart] detached load incomplete for ${symbol.epic}`, failed);
+          setLoadError(failed instanceof Error ? failed.message : String(failed));
+        }
       } else {
         // Tolerate a failed initial load (offline/DNS/refused/CORS make fetchRecent
         // REJECT, not return []): fall back to no history and carry on. Crucially this
@@ -564,7 +637,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       const keepPainted = shouldKeepPaintedBars(
         bars.length,
         handle.chartRef.current.getDataList().length,
-        sameSeriesRerun && !replaying,
+        // ...and never while DETACHED, for the same reason: entering detached is
+        // a same-series re-run, so an empty window read would leave the LIVE
+        // bars painted under a view the user thinks is 2021.
+        sameSeriesRerun && !replaying && !detachedMode,
       );
       if (!keepPainted) {
         // Cursor starts at the oldest loaded bar; scroll-back requests older windows.
@@ -589,7 +665,17 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       setHasData(bars.length > 0);
       if (!shouldRetryHistory(bars.length, degraded)) {
         retryAttemptRef.current = 0;
-      } else if (!period.liveOnly && !cancelled && (!replaying || bars.length === 0)) {
+      } else if (
+        !period.liveOnly &&
+        !cancelled &&
+        // Detached reads its own fixed window, so a DEGRADED live tail says
+        // nothing about it — no healing loop. But an EMPTY read is a failed
+        // fetch just as it is under replay, and the banner promises a retry, so
+        // re-arm the backoff for that case exactly (the re-run refetches the
+        // same windows; `detached` is in the dep array but unchanged, and the
+        // nonce is what re-enters).
+        ((!replaying && !detachedMode) || bars.length === 0)
+      ) {
         // Live-only (seconds) intervals legitimately start empty (they fill from
         // the stream) — everything else with no bars is a failed/empty load, and
         // a DEGRADED load (cached bars served during a broker outage) is missing
@@ -625,6 +711,14 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       if (replaying) {
         // The cursor bar IS the right edge of the replay slice.
         handle.chartRef.current.scrollToRealTime();
+      } else if (detachedMode) {
+        // The target date IS the view: centre on it (scrollTsToCenter clamps to
+        // the nearest loaded bar if the broker's history starts inside the
+        // window). No live-edge jump, and no captureViewPos — a detached centre
+        // is not where the user's LIVE chart belongs, and persisting it would
+        // drop the cell into the past on the next reload.
+        scrollTsToCenter(handle.chartRef.current, detached!.targetMs);
+        repositionPinRef.current?.();
       } else if (!keepPainted) {
         if (restoreView && restoreView.barSpace > 0) {
           handle.chartRef.current.setBarSpace(restoreView.barSpace);
@@ -806,7 +900,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // ensureAnchorCoverage typically finds nothing left to do.
       const snapMeta = markerMeta;
       const pendingRange = snapMeta?.pendingRange ?? null;
-      const snapshotWalk = pendingRange ? coverBacktestTradeTo(pendingRange.from) : null;
+      // Not while detached: the walk would page from the detached window's left
+      // edge toward a range in another era. The pendingRange stays unconsumed on
+      // snapMeta, and a later run (leaving detached, the next TF switch) retries
+      // it — the same "leave it parked" behaviour a preempted walk relies on.
+      const snapshotWalk = pendingRange && !detachedMode ? coverBacktestTradeTo(pendingRange.from) : null;
       // Position the window on the saved snapshot range and clear pendingRange
       // (one-shot — a later reload of this same tab must not re-scroll). Called
       // only once the walk(s) ahead of it have fully settled: paging via the
@@ -856,7 +954,12 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // owns it), not from this chain. Live-only intervals have no history to
       // page, so the snapshot walk (which also no-ops without history) settles on
       // its own and positions directly.
-      if (!period.liveOnly) {
+      // Not while detached either: every drawing anchor and backtest fill sits
+      // in the LIVE era, so the walk would page from the detached window back
+      // toward them — the years-deep backfill detaching exists to avoid. The
+      // capped-anchor bookkeeping stays untouched, so leaving detached walks
+      // them normally.
+      if (!period.liveOnly && !detachedMode) {
         const baseWalk = snapshotWalk
           ? rangeWalk
             ? snapshotWalk.then(() => rangeWalk)
@@ -919,7 +1022,19 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // happens — entering replay must kill the stream this cell had.
       handle.wsRef.current?.close();
       handle.wsRef.current = null;
-      if (replaying) {
+      // A DETACHED cell gets none either, and for the same reasons: a tick would
+      // append a now-bar onto a window years earlier (klinecharts appends any
+      // newer timestamp), and the axis tags would price today's market against
+      // 2021 candles. The close() above already killed the stream this cell had.
+      if (replaying || detachedMode) {
+        // A detached cell's stream is closed ON PURPOSE, but `status` still
+        // says whatever it said before the jump — and every consumer (legend
+        // dot, price-axis tag, staleness watchdog) inherits that lie. "down"
+        // is the honest value: there is no stream. Stamped at the source so
+        // indicators don't each need their own !detached special case.
+        // Replaying cells are deliberately left as they are (same quirk,
+        // different mode ownership — the replay pill owns that cell's story).
+        if (detachedMode) setStatus("down");
         // Stale spread sides would keep painting bid/ask lines from live prices.
         handle.bidRef.current = null;
         handle.askRef.current = null;
@@ -995,7 +1110,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       handle.wsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol.epic, period.resolution, priceSide, brokerId, retryNonce, replayEpoch]);
+  }, [symbol.epic, period.resolution, priceSide, brokerId, retryNonce, replayEpoch, detached]);
 
   // Persist the view position (centered bar time + zoom) on every user
   // pan/zoom, debounced, so a page reload can reopen the chart where the user
@@ -1031,7 +1146,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // A timer armed just BEFORE a session started. Skip the READ, not the
       // write: persist what was captured live, so the pan survives to the exit
       // restore that consumes this saved view.
-      if (handle.replayRef.current?.isActive()) {
+      // Same for a timer armed just before the cell DETACHED: the detached view
+      // is not where the live chart belongs, so persist the captured live centre
+      // instead of re-reading a 2021 one.
+      if (handle.replayRef.current?.isActive() || detachedRef.current) {
         if (armedCenterTs == null) return;
         captureViewPos(c, scope, symbol.epic, period.resolution, armedCenterTs);
         armedCenterTs = null;
@@ -1048,7 +1166,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // past and burning a cover walk paging history down to it. Returning
       // before the line below also keeps the parked too-deep intent alive, which
       // the load effect deliberately preserves across a session.
-      if (handle.replayRef.current?.isActive()) return;
+      // Scrolling a DETACHED cell says nothing about its live view either, and
+      // persisting a detached centre would drop the cell into the past on the
+      // next page reload (and burn a cover walk paging history down to it).
+      if (handle.replayRef.current?.isActive() || detachedRef.current) return;
       // A real pan/zoom gesture: the user owns the position now — drop any
       // parked too-deep intended center (see intendedCenterRef).
       intendedCenterRef.current = null;
@@ -1203,9 +1324,16 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
   // does — a programmatic move fires no scroll gesture, so without an explicit
   // capture a reload would restore the far-past view the user just left, and a
   // parked too-deep intended center would still outrank it.
+  // Inert while DETACHED. The cell's newest bar is then the right edge of a
+  // window years back, so "live" is not where this would land — and the capture
+  // below would persist that detached centre as the cell's saved view, dropping
+  // it into the past on the next page reload. The detached view has exactly one
+  // way out (the Back-to-live pill that reloads the live series); until it
+  // exists, the live-edge pill's click is a no-op rather than a wrong landing
+  // plus a poisoned save.
   const goLive = () => {
     const chart = handle.chartRef.current;
-    if (!chart) return;
+    if (!chart || detachedRef.current) return;
     intendedCenterRef.current = null;
     jumpToLive(chart, () => {
       const c = handle.chartRef.current;

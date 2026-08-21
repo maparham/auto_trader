@@ -172,3 +172,78 @@ def test_chart_reads_carry_a_fill_budget(monkeypatch):
     asyncio.run(scenario())
     assert cache.budgets[0] is not None and cache.budgets[0] > 0
     assert cache.budgets[1] is None
+
+
+# --- the deep-window peek -----------------------------------------------------
+#
+# Coverage is contiguous, so a chart jumping a year below the cache would
+# otherwise download the whole span in between (~175 chunks of 1m bars) to draw
+# one day. The route caps that with max_fill_chunks, and past the cap the cache
+# serves the window straight through: broker calls stay inside the ask and the
+# cache is left exactly as it was.
+
+
+class _FakeRangeBroker:
+    """Data broker that answers any range with hourly bars and records the
+    windows it was asked for."""
+
+    def __init__(self):
+        self.calls: list[tuple[int, int]] = []
+
+    async def get_candles(self, epic, resolution, start, end, price_side):
+        from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
+        self.calls.append((from_ts, to_ts))
+        return [_bar(ts) for ts in range(from_ts, to_ts + 1, 3600)]
+
+    async def get_recent_candles(self, epic, resolution, count, price_side):
+        raise AssertionError("windowed reads must not call get_recent_candles")
+
+
+def test_deep_window_served_passthrough_leaves_cache_coverage(monkeypatch, tmp_path):
+    import auto_trader.api.deps as deps_module
+    from auto_trader.core.candle_cache import CandleCache
+    from fastapi import Response
+
+    cache = CandleCache(str(tmp_path / "c.db"))
+    broker = _FakeRangeBroker()
+    monkeypatch.setattr(deps_module, "CANDLE_CACHE", cache)
+    monkeypatch.setattr(deps_module, "get_data", lambda broker_id: broker)
+    key = ("capital", "EURUSD", "MINUTE", "mid")
+
+    # Fixed past timestamps, never "now": a window ending at the live edge loses
+    # its last bar to the forming-bar cutoff, and priming coverage that comes
+    # back None would make this test pass without the feature.
+    near_from, near_to = 1748736000, 1748822400  # 2025-06-01 -> 2025-06-02
+    deep_from, deep_to = 1717200000, 1717286400  # 2024-06-01 -> 2024-06-02
+
+    async def prime():
+        return await app_module.candles(
+            epic="EURUSD", resolution="MINUTE", bars=500,
+            from_ts=near_from, to_ts=near_to, price_side="mid",
+            broker_id="capital", response=Response(),
+        )
+
+    async def peek():
+        return await app_module.candles(
+            epic="EURUSD", resolution="MINUTE", bars=500,
+            from_ts=deep_from, to_ts=deep_to, price_side="mid",
+            broker_id="capital", response=Response(),
+        )
+
+    assert asyncio.run(prime())
+    cov_before = cache._coverage(key)
+    assert cov_before is not None
+    broker.calls.clear()
+
+    # The deep ask sits a year below coverage. A 1m chunk is 3000 bars =
+    # 180_000s (~2.08 days), so the gap is ~175 chunks — far past the route's
+    # cap of 8, which is what puts this read on the pass-through path.
+    out = asyncio.run(peek())
+
+    assert out, "the requested deep window should still be served"
+    assert all(deep_from <= c.time <= deep_to for c in out)
+    # No fetch reaches up toward coverage: every call stays inside the ask.
+    assert broker.calls
+    assert all(deep_from <= s and e <= deep_to for s, e in broker.calls), broker.calls
+    # Nothing was written: the cache is exactly where priming left it.
+    assert cache._coverage(key) == cov_before

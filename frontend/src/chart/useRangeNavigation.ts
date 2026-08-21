@@ -26,6 +26,7 @@ import {
   FETCH_FAILED_TOAST_KEY,
   type PageResult,
 } from "../lib/historyPaging";
+import { shouldDetach, type DetachedTarget } from "./detachedView";
 import { loadDrawings } from "../lib/persist";
 import { getBacktestCoverageFromTs, reanchorBacktestMarkers } from "../lib/backtest";
 import { toast } from "../lib/notify";
@@ -73,6 +74,15 @@ export interface RangeNavigationDeps {
   onFocus?: (cellId: string) => void;
   onPeriod?: (cellId: string, p: Period) => void;
   setActiveRange: (k: RangeKey | null) => void;
+  // Detached view (see chart/detachedView.ts): a date too deep to reach by
+  // extending history reloads the chart with just the window around it.
+  // `detached` is the cell's current detached target (null = live series).
+  enterDetached: (targetMs: number) => void;
+  /** Drop the target: the cell reloads its live series and the stream reopens.
+   *  A quick range is a statement about the live edge, so picking one leaves
+   *  detached view rather than fitting a now-window over a window years back. */
+  exitDetached: () => void;
+  detached: DetachedTarget | null;
 }
 
 /** A RangeReq centred on [fromTs, toTs] with room around it. The padding is a
@@ -153,6 +163,9 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
     onFocus,
     onPeriod,
     setActiveRange,
+    enterDetached,
+    exitDetached,
+    detached,
   } = deps;
 
   const { overlays } = handle;
@@ -454,11 +467,27 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
       side: priceSide,
     };
     handle.pendingRangeRef.current = token;
-    if (resolution !== period.resolution) {
+    // The token is PARKED, not applied, whenever the pick also forces a reload:
+    // the data-load effect consumes it once the new series lands. Two things can
+    // force one, and a pick can do both at once.
+    const switchResolution = () => {
+      if (resolution === period.resolution) return false;
       const target = PERIODS.find((p) => p.resolution === resolution);
       if (target) onPeriod?.(cellId, target);
+      return true;
+    };
+    if (detached) {
+      // Detached, the loaded series is a window years back with the stream shut,
+      // and every quick range ends at NOW — fitting one over that window would
+      // land on nothing while the cell still claimed to be detached (the pill
+      // asserting a date the view had left). So a quick range EXITS: dropping
+      // the target reloads the live series, the reload consumes the parked
+      // token, and the pill unmounts with the state it described.
+      switchResolution();
+      exitDetached();
       return;
     }
+    if (switchResolution()) return;
     // Chain the anchor-coverage walk behind the fit: the picked window may still
     // not reach the oldest drawing anchor, and coverage would otherwise stay
     // gated on pendingRangeRef for the walk's whole duration.
@@ -579,6 +608,34 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
     // Resolve the picked instant in the chart timezone (consistent with the
     // range buttons / separator), not UTC.
     const dateMs = goToDateTs(dateStr, timezone || browserTimezone());
+    // Two modes. On the LIVE series, a date far enough behind the loaded oldest
+    // bar cannot be reached by extending history — the parallel cover would be
+    // hundreds of windows and, on a cold cache, minutes of backfill. Past
+    // DETACH_GAP_BARS, detach instead: the load effect reloads the chart with
+    // just the window around the target; the DetachedPill is the way back.
+    //
+    // Once DETACHED, EVERY Go re-detaches, a target already inside the loaded
+    // window included. Falling through to goToRange for those was cheaper (a
+    // scroll, no reload), but it left `detached.targetMs` pinned to the FIRST
+    // jump: the "Viewing <date>" pill went on naming a date the user had
+    // navigated away from, and the next Go measured itself against a stale
+    // window. One rule instead, so the state always matches the view: while
+    // detached, the target is the last date asked for and the window is freshly
+    // centred on it.
+    const data = chart.getDataList();
+    const loadedOldestMs = data[0]?.timestamp ?? null;
+    const resSec = RESOLUTION_SECONDS[period.resolution] ?? 60;
+    const redetach = detached ? true : shouldDetach(dateMs, loadedOldestMs, resSec);
+    if (redetach) {
+      // goToRange's own preamble, which we're skipping: focus this cell (the
+      // period/pill setters are cell-scoped) and drop the quick-range pill,
+      // which no longer describes the view we're about to land on.
+      onFocus?.(cellId);
+      setActiveRange(null);
+      handle.separatorTsRef.current = null;
+      enterDetached(dateMs);
+      return;
+    }
     const cur = readVisibleRange(chart);
     const span = cur ? cur.toTs - cur.fromTs : 30 * 86_400_000;
     // The current viewport span around the date: buildRangeToken pads it 3x

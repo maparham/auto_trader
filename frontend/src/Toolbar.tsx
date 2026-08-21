@@ -799,7 +799,7 @@ export default function Toolbar({
         content={
           !patternAvailable
             ? "Similarity search needs a searchable chart: not a synthetic symbol, a sub-minute interval or a snapshot."
-            : "Similarity search: drag across candles to find where that shape appeared before"
+            : "Similarity search: drag across candles to find where that shape appeared before (scroll to zoom, right-drag to pan while armed)"
         }
       >
         <button

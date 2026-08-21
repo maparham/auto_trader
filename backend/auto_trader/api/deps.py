@@ -265,6 +265,7 @@ async def _fetch_symbol_candles(
     degraded: dict | None = None,
     budget_s: float | None = None,
     partial: dict | None = None,
+    max_fill_chunks: int | None = None,
 ) -> list[Candle]:
     """Fetch raw candles for one epic against one broker: seconds (tick recorder),
     derived (folded from cached base series), or native (cache/broker). Raises the
@@ -281,7 +282,13 @@ async def _fetch_symbol_candles(
     out-param that says the budget, not a failure, ended it. Left None by every
     caller that needs the data to be COMPLETE (backtests, expression evaluation,
     strategy runs) and set by the interactive chart routes, where a request that
-    never returns is worse than one that returns what it has and says so."""
+    never returns is worse than one that returns what it has and says so.
+
+    `max_fill_chunks` (see CandleCache.window): the most fill chunks a windowed
+    read will pay for before it would rather have the window on its own. Left
+    None by every caller that needs history to be CONTIGUOUS and cached, and set
+    by the interactive chart route, where a jump to a date a year below the cache
+    is a peek at one screen of bars, not a reason to download the year."""
     # Resolve an unnamed broker BEFORE anything keys off broker_id (breaker,
     # candle cache, tick store) so an empty id never becomes a cache key.
     broker_id = broker_id or default_broker_id()
@@ -337,7 +344,7 @@ async def _fetch_symbol_candles(
                 raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
             base_bars = await CANDLE_CACHE.window(
                 base_key, base_seconds, start, end, fetch_range, degraded=degraded,
-                budget_s=budget_s, partial=partial,
+                budget_s=budget_s, partial=partial, max_fill_chunks=max_fill_chunks,
             )
             return fold(base_bars, rule)
         base_bars = await CANDLE_CACHE.recent(
@@ -388,7 +395,7 @@ async def _fetch_symbol_candles(
             raise HTTPException(422, f"from_ts/to_ts out of range: {e}") from e
         loaded = await CANDLE_CACHE.window(
             key, res_seconds, start, end, fetch_range, degraded=degraded,
-            budget_s=budget_s, partial=partial,
+            budget_s=budget_s, partial=partial, max_fill_chunks=max_fill_chunks,
         )
     else:
         loaded = await CANDLE_CACHE.recent(
