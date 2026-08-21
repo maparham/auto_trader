@@ -285,10 +285,18 @@ export function paintPivotDeltaLabels(
   ctx.restore();
 }
 
+/** Time left in the forming bar, scaled to how much of it there is.
+ *
+ * The unit steps down as the clock runs out: days+hours past a day, then
+ * H:MM:SS, then M:SS. A flat clock made the wide timeframes unreadable — a
+ * weekly bar showed "222:00:05", an hour count nobody can convert to "a bit
+ * over 9 days" at a glance, and it outgrew the pill. Seconds are dropped at day
+ * scale on purpose: they tick invisibly against a number that size. */
 export function fmtCountdown(totalSec: number): string {
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
   const mm = String(m).padStart(2, "0");
   const ss = String(s).padStart(2, "0");
   return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;

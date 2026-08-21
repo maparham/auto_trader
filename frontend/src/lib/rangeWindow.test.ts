@@ -99,4 +99,12 @@ describe("goToDateTs", () => {
     // the same tz-aware boundary periodStart uses, NOT Date.UTC midnight.
     expect(goToDateTs("2026-03-15", "Etc/GMT-2")).toBe(Date.UTC(2026, 2, 14, 22, 0));
   });
+
+  it("resolves a datetime-local value to that wall-clock minute", () => {
+    expect(goToDateTs("2026-03-15T14:30", "UTC")).toBe(Date.UTC(2026, 2, 15, 14, 30));
+  });
+
+  it("anchors the time part in the chart timezone too", () => {
+    expect(goToDateTs("2026-03-15T14:30", "Etc/GMT-2")).toBe(Date.UTC(2026, 2, 15, 12, 30));
+  });
 });

@@ -30,7 +30,7 @@ export const DEEP_HISTORY_TOAST_KEY = "go-to-range-short";
  *  helps. Telling someone their 2018 data does not exist when it does, and the
  *  broker was merely slow, is the worse failure of the two. */
 export const FETCH_FAILED_MESSAGE =
-  "Could not load history that far back just now. Try that match again.";
+  "Could not load history that far back just now. Try the jump again.";
 /** Toast key: same coalescing as above, distinct so the two never merge. */
 export const FETCH_FAILED_TOAST_KEY = "go-to-range-failed";
 
@@ -45,7 +45,7 @@ export const FETCH_FAILED_TOAST_KEY = "go-to-range-failed";
  *  2 of 96 and 90 of 96 are the same sentence but very different waits. */
 export function stillLoadingMessage(done: number, total: number): string {
   const progress = total > 0 ? ` (${done} of ${total} batches so far)` : "";
-  return `Still downloading history that far back${progress}. Try that match again in a moment.`;
+  return `Still downloading history that far back${progress}. Try the jump again in a moment.`;
 }
 /** Toast key: coalesces repeat clicks while the download runs. Distinct from the
  *  other two so a run of them never merges with a genuine dead end. */

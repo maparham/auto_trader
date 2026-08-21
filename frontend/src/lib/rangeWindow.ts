@@ -150,6 +150,9 @@ export function rangeWindow(key: RangeKey, nowMs: number, timeZone: string): Ran
 // tz-aware anchoring the range buttons use, so the calendar and the buttons agree
 // on where a day starts (rather than UTC midnight, which is hours off elsewhere).
 export function goToDateTs(dateStr: string, timeZone: string): number {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return zonedWallToUTC(timeZone, y, m - 1, d);
+  // "YYYY-MM-DD" (start of day) or a datetime-local "YYYY-MM-DDTHH:MM".
+  const [datePart, timePart] = dateStr.split("T");
+  const [y, m, d] = datePart.split("-").map(Number);
+  const [h = 0, mi = 0] = timePart ? timePart.split(":").map(Number) : [];
+  return zonedWallToUTC(timeZone, y, m - 1, d, h, mi);
 }

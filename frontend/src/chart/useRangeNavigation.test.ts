@@ -175,7 +175,12 @@ function jumpHarness(oldestMs: number) {
   };
   const coverHistoryTo =
     vi.fn<(fromTs: number, opts?: CoverOpts) => Promise<boolean>>(async () => true);
-  const chart = { getDataList: () => [{ timestamp: oldestMs }, { timestamp: LAST_BAR }] };
+  // getSize width 0 makes readVisibleRange bail to its 30-day fallback span, so
+  // onGoToDate can run against this light mock without a real layout.
+  const chart = {
+    getDataList: () => [{ timestamp: oldestMs }, { timestamp: LAST_BAR }],
+    getSize: () => ({ width: 0 }),
+  };
   const handle = {
     chartRef: { current: chart },
     pendingRangeRef: { current: null as RangeReq | null },
@@ -211,11 +216,11 @@ function jumpHarness(oldestMs: number) {
   // Not a component: the hook calls no React hooks of its own (see the note on
   // the harness above), so it runs as a plain function here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, react-hooks/rules-of-hooks
-  const { goToRange } = useRangeNavigation(handle as any, deps as any);
+  const { goToRange, onGoToDate } = useRangeNavigation(handle as any, deps as any);
   // The walk clears the pending token when it settles — the signal that the
   // .then branch (and so the warning decision) has actually run.
   const settled = () => handle.pendingRangeRef.current === null;
-  return { goToRange, settled, coverHistoryTo, handle };
+  return { goToRange, onGoToDate, settled, coverHistoryTo, handle };
 }
 
 describe("goToRange deep-history handling", () => {
@@ -307,7 +312,33 @@ describe("goToRange deep-history handling", () => {
     goToRange(matchFromSec, matchToSec);
     await vi.waitFor(() => expect(settled()).toBe(true));
     expect(toastSpy).toHaveBeenCalledTimes(1);
-    expect(toastSpy.mock.calls[0][0]).toMatch(/try that match again/i);
+    // "the jump", not "that match": the same path now serves the calendar Go.
+    expect(toastSpy.mock.calls[0][0]).toMatch(/try the jump again/i);
+  });
+
+  // The calendar Go used to only fit the already-loaded extent: landing in
+  // whitespace left the scroll-back pager to fill a years-deep gap one 500-bar
+  // request per second. It must ride the same parallel cover as a match jump.
+  it("go-to-date covers the gap in parallel, centred on the chosen day", async () => {
+    const { onGoToDate, settled, coverHistoryTo } = jumpHarness(LAST_BAR - 60 * MIN);
+    onGoToDate("2024-03-07");
+    const [askedFrom, opts] = coverHistoryTo.mock.calls[0]!;
+    const parked = opts!.owner as RangeReq;
+    expect(parked.fit).toBe("center");
+    expect(askedFrom).toBe(parked.fromTs);
+    // Padded symmetrically, so the token midpoint IS the chosen date (deps
+    // timezone is UTC, so the civil day starts at UTC midnight).
+    expect(Math.round((parked.fromTs + parked.toTs) / 2)).toBe(Date.UTC(2024, 2, 7));
+    await vi.waitFor(() => expect(settled()).toBe(true));
+  });
+
+  it("go-to-date honours a datetime-local value down to the minute", async () => {
+    const { onGoToDate, settled, coverHistoryTo } = jumpHarness(LAST_BAR - 60 * MIN);
+    onGoToDate("2024-03-07T14:30");
+    const [, opts] = coverHistoryTo.mock.calls[0]!;
+    const parked = opts!.owner as RangeReq;
+    expect(Math.round((parked.fromTs + parked.toTs) / 2)).toBe(Date.UTC(2024, 2, 7, 14, 30));
+    await vi.waitFor(() => expect(settled()).toBe(true));
   });
 
   it("leaves the landing to whoever preempted it", async () => {

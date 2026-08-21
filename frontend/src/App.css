@@ -4165,7 +4165,8 @@
    text label; only the icon/label row layout is bespoke. */
 .backtest-toggle { display: inline-flex; align-items: center; gap: 6px; }
 /* Replay's trigger shares the same icon + label row. */
-.replay-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.replay-toggle, .toolbar .pattern-range-toggle {
+  display: inline-flex; align-items: center; gap: 6px; }
 .bt-summary {
   display: inline-flex; align-items: center; gap: 10px; font-size: 12px;
   color: var(--text-dim); font-variant-numeric: tabular-nums;

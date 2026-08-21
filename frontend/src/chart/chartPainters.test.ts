@@ -12,7 +12,7 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-const { buildSlopeMaPills } = await import("./chartPainters");
+const { buildSlopeMaPills, fmtCountdown } = await import("./chartPainters");
 
 const bar = (t: number, c: number): KLineData =>
   ({ timestamp: t, open: c, high: c, low: c, close: c, volume: 1 }) as KLineData;
@@ -95,5 +95,28 @@ describe("buildSlopeMaPills", () => {
         maxX,
       ),
     ).toEqual([]);
+  });
+});
+
+describe("fmtCountdown", () => {
+  const h = (n: number) => n * 3600;
+
+  it("switches to days + hours once more than a day is left", () => {
+    // A weekly bar with 222h to go: "222:00:05" before, unreadable and too wide
+    // for the pill.
+    expect(fmtCountdown(h(222) + 5)).toBe("9d 6h");
+    expect(fmtCountdown(h(26) + 59 * 60 + 59)).toBe("1d 2h");
+  });
+
+  it("shows a whole day at the boundary, and H:MM:SS just below it", () => {
+    expect(fmtCountdown(h(24))).toBe("1d 0h");
+    expect(fmtCountdown(h(24) - 1)).toBe("23:59:59");
+  });
+
+  it("keeps the sub-day formats unchanged", () => {
+    expect(fmtCountdown(h(2) + 3 * 60 + 4)).toBe("2:03:04");
+    expect(fmtCountdown(59 * 60 + 7)).toBe("59:07");
+    expect(fmtCountdown(5)).toBe("0:05");
+    expect(fmtCountdown(0)).toBe("0:00");
   });
 });

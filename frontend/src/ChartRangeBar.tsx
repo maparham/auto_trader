@@ -24,10 +24,9 @@ export default function ChartRangeBar({
   const calBtnRef = useRef<HTMLButtonElement>(null);
   const calPopRef = useRef<HTMLFormElement>(null);
 
-  const closeCalendar = () => {
-    setCalOpen(false);
-    setDate("");
-  };
+  // Close only — the entered value survives close/submit (session-only state,
+  // nothing persisted), so a second jump near the first is an edit, not a re-type.
+  const closeCalendar = () => setCalOpen(false);
 
   // Track pointer proximity to the cell's bottom edge. A pure-CSS :hover on the
   // whole .chart-wrap kept the bar up the entire time the cursor was on the chart;
@@ -83,8 +82,8 @@ export default function ChartRangeBar({
   const submitDate = (e: FormEvent) => {
     e.preventDefault();
     if (!date) return;
-    // Hand the raw "YYYY-MM-DD" up; ChartCore resolves it in the chart timezone
-    // (the same anchoring the range buttons use), not UTC midnight.
+    // Hand the raw "YYYY-MM-DDTHH:MM" up; ChartCore resolves it in the chart
+    // timezone (the same anchoring the range buttons use), not UTC.
     onGoToDate(date);
     closeCalendar();
   };
@@ -125,7 +124,7 @@ export default function ChartRangeBar({
         </Tooltip>
       ))}
       <span className="crb-sep" />
-      <Tooltip content="Go to a specific date">
+      <Tooltip content="Go to a specific date and time">
         <button
           ref={calBtnRef}
           type="button"
@@ -145,7 +144,7 @@ export default function ChartRangeBar({
       {calOpen && (
         <form ref={calPopRef} className="crb-cal-pop" onSubmit={submitDate}>
           <input
-            type="date"
+            type="datetime-local"
             aria-label="Go to date"
             value={date}
             onChange={(e) => setDate(e.target.value)}

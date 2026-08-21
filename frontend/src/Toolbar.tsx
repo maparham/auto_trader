@@ -730,10 +730,13 @@ export default function Toolbar({
           disabled={!replayEntry?.available || replayEntry.active}
           onClick={() => replayEntry?.enter()}
         >
+          {/* Rewind glyph: two left-pointing triangles — playing the chart
+              from a point in the PAST, not plain playback. */}
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
             stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
             aria-hidden="true">
-            <path d="M7 4.5v15l12-7.5z" />
+            <path d="M12 5v14L3 12z" />
+            <path d="M22 5v14L13 12z" />
           </svg>
           <span className="tb-label">Replay</span>
         </button>
@@ -815,7 +818,7 @@ export default function Toolbar({
           }}
         >
           <SimilarSequenceIcon />
-          <span className="tb-label">Similar</span>
+          <span className="tb-label">Patterns</span>
         </button>
       </Tooltip>
 

@@ -146,7 +146,7 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
 }
-.crb-cal-pop input[type="date"] {
+.crb-cal-pop input[type="datetime-local"] {
   background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -155,7 +155,7 @@ body {
   font-size: 11px;
   padding: 3px 6px;
 }
-.crb-cal-pop input[type="date"]:focus-visible {
+.crb-cal-pop input[type="datetime-local"]:focus-visible {
   outline: none;
   border-color: var(--accent);
 }

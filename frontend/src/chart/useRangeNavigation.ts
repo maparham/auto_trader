@@ -467,24 +467,8 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
     });
   };
 
-  // Calendar "go to date": center the chosen date in the current window, keeping
-  // the interval. Degrades to the loaded extent if the date predates history.
-  const onGoToDate = (dateStr: string) => {
-    const chart = handle.chartRef.current;
-    if (!chart) return;
-    // Resolve the picked day in the chart timezone (consistent with the range
-    // buttons / separator), not UTC midnight.
-    const dateMs = goToDateTs(dateStr, timezone || browserTimezone());
-    const cur = readVisibleRange(chart);
-    const span = cur ? cur.toTs - cur.fromTs : 30 * 86_400_000;
-    setActiveRange(null);
-    handle.separatorTsRef.current = null;
-    fitVisibleRange(chart, dateMs - span / 2, dateMs + span / 2);
-  };
-
   // Land on an arbitrary historical window, paging older history in first if the
-  // chart has not loaded that far back. onGoToDate only fits what is already
-  // loaded, which is not enough for a match from years ago.
+  // chart has not loaded that far back.
   const goToRange = (fromTs: number, toTs: number) => {
     const chart = handle.chartRef.current;
     if (!chart) return;
@@ -582,6 +566,25 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
         );
       }
     })();
+  };
+
+  // Calendar "go to date": land on the chosen date (or datetime) at the current
+  // zoom, keeping the interval. Rides goToRange, so a date behind the loaded
+  // history is covered by the parallel cover up front — it used to only fit the
+  // loaded extent, which left the scroll-back pager to fill a years-deep gap
+  // one 500-bar request at a time (~10 minutes for a 2.5-year jump on 5m).
+  const onGoToDate = (dateStr: string) => {
+    const chart = handle.chartRef.current;
+    if (!chart) return;
+    // Resolve the picked instant in the chart timezone (consistent with the
+    // range buttons / separator), not UTC.
+    const dateMs = goToDateTs(dateStr, timezone || browserTimezone());
+    const cur = readVisibleRange(chart);
+    const span = cur ? cur.toTs - cur.fromTs : 30 * 86_400_000;
+    // The current viewport span around the date: buildRangeToken pads it 3x
+    // each side (context), centres on its midpoint = the date, and the token's
+    // fit:"center" keeps the user's zoom.
+    goToRange((dateMs - span / 2) / 1000, (dateMs + span / 2) / 1000);
   };
 
   return { onRangePick, onGoToDate, goToRange };
