@@ -374,6 +374,14 @@ export class OverlayManager {
   // applyMagnet).
   private magnetUnsub: Array<() => void> = [];
   private alertsListener: (() => void) | null = null;
+  // rehydrate() re-mints every overlay id, so anything holding a drawing id
+  // across a rebuild (the settings modal, via onIdRemap below) is silently
+  // orphaned without this: its writes keep going to an id that no longer
+  // exists. Listeners get an old-id -> new-id map, emitted only when the
+  // rebuild provably recreated the same drawings (same epic, same count, same
+  // names in order) — a symbol switch or a cross-tab divergence emits nothing
+  // and a held id goes stale exactly as before.
+  private idRemapListeners = new Set<(map: ReadonlyMap<string, string>) => void>();
   // ChartCore subscribes to react to drawing selection changes (clear keyboard
   // focus targets, repaint), independent of the alert listener.
   private drawingListener: (() => void) | null = null;
@@ -423,6 +431,14 @@ export class OverlayManager {
     this.hydratedEpic = null;
     this.rightClickClaimedAt = 0;
   }
+  /** Subscribe to rehydrate's old-id -> new-id map (see idRemapListeners). */
+  onIdRemap(fn: (map: ReadonlyMap<string, string>) => void): () => void {
+    this.idRemapListeners.add(fn);
+    return () => {
+      this.idRemapListeners.delete(fn);
+    };
+  }
+
   setEpic(epic: string): void {
     this.epic = epic;
     // Leave hydratedEpic stale until rehydrate() rebuilds for the new epic — that's
@@ -959,7 +975,7 @@ export class OverlayManager {
     points?: SavedOverlay["points"],
     styles?: DeepPartial<OverlayStyle> | null,
     lock?: boolean,
-    extra?: { visible?: boolean; zLevel?: number; extendData?: unknown },
+    extra?: { visible?: boolean; zLevel?: number; extendData?: unknown; id?: string },
   ): string | null {
     if (!this.chart) return null;
     const isAlert = kind === "alert";
@@ -968,6 +984,9 @@ export class OverlayManager {
     const isSlope = kind === "slope";
     const isDrawing = kind === "drawing";
     const id = this.chart.createOverlay({
+      // A caller-supplied id (rehydrate reviving a persisted drawing) keeps the
+      // overlay's identity across rebuilds; everyone else lets the library mint.
+      id: extra?.id,
       name,
       points: this.materializePoints(points) as Overlay["points"],
       styles: styles ?? undefined,
@@ -2552,6 +2571,24 @@ export class OverlayManager {
     const prevSelectedSavedId =
       this.selectedAlertId != null ? this.alertIds.get(this.selectedAlertId) ?? null : null;
     let droppedDegenerate = false;
+    // Any drawing that came back under a minted id (id-less pre-upgrade storage,
+    // or the duplicate fallback) writes straight back, so the NEXT rebuild is
+    // stable — "the next user edit will persist it" is not guaranteed to come.
+    let mintedIds = false;
+    // The drawings being torn down, in entries order — the SAME order and filter
+    // persist() writes them with, which is the order the storage loop below
+    // recreates them in. That is what makes index-pairing them valid (guarded
+    // further by the name check when the map is built).
+    const prevDrawings: Array<{ id: string; name: string }> = [];
+    if (this.hydratedEpic === this.epic) {
+      for (const [id, kind] of this.entries) {
+        if (kind === "alert" || kind === "measure" || kind === "rangeBand" || kind === "slope") continue;
+        const ov = this.byId(id);
+        if (!ov || OverlayManager.isDegenerateDrawing(ov.points)) continue;
+        prevDrawings.push({ id, name: ov.name });
+      }
+    }
+    const nextDrawings: Array<{ id: string; name: string }> = [];
     this.hydrating++;
     try {
       for (const id of [...this.entries.keys()]) this.chart.removeOverlay({ id });
@@ -2570,6 +2607,10 @@ export class OverlayManager {
       this.hoveredDrawingId = null;
       this.selectedDrawingId = null;
 
+      // Corrupt-storage guard: two records claiming one id would make
+      // createOverlay return the FIRST overlay instead of creating the second,
+      // silently dropping a drawing — the duplicate falls back to a minted id.
+      const usedIds = new Set<string>();
       for (const d of loadDrawings(this.scope, this.epic)) {
         // Skip a drawing whose stored anchors are collapsed/incomplete — recreating it
         // would resurrect an unclickable zero-width strip the user can't delete. We
@@ -2590,11 +2631,16 @@ export class OverlayManager {
           userVisible: base.userVisible ?? d.visible ?? true,
           visibility: base.visibility ?? defaultVisibility(),
         };
-        this.create("drawing", d.name, d.points, d.styles, this.readOnly || d.lock, {
+        const keepId = d.id && !usedIds.has(d.id) ? d.id : undefined;
+        if (keepId) usedIds.add(keepId);
+        else mintedIds = true; // pre-upgrade save (no id) or a duplicate: re-persist below
+        const createdId = this.create("drawing", d.name, d.points, d.styles, this.readOnly || d.lock, {
           visible: this.effectiveVisible(extra, d.points),
           zLevel: d.zLevel,
           extendData: extra,
+          id: keepId,
         });
+        if (createdId) nextDrawings.push({ id: createdId, name: d.name });
       }
       // Repaint any drawing that loaded on a filtered interval as a ghost stub (rather
       // than the plain effectiveVisible above, which would leave it invisible) — so a
@@ -2623,7 +2669,22 @@ export class OverlayManager {
     }
     // Scrub any degenerate drawings we skipped above out of storage (persist() is a
     // no-op while hydrating, so it must run after the guard block re-enables writes).
-    if (droppedDegenerate) this.persist();
+    if (droppedDegenerate || mintedIds) this.persist();
+    // Re-point held drawing ids at their recreated overlays — but only when the
+    // rebuild demonstrably restored the same list (see idRemapListeners).
+    if (
+      prevDrawings.length > 0 &&
+      prevDrawings.length === nextDrawings.length &&
+      prevDrawings.every((p, i) => p.name === nextDrawings[i].name)
+    ) {
+      // With persisted ids (SavedOverlay.id) a rebuild keeps every id and this
+      // map is empty — it only carries the drawings whose id actually changed
+      // (storage saved before ids existed, or a duplicate-id fallback above).
+      const map = new Map(
+        prevDrawings.flatMap((p, i) => (p.id === nextDrawings[i].id ? [] : [[p.id, nextDrawings[i].id] as [string, string]])),
+      );
+      if (map.size > 0) for (const fn of this.idRemapListeners) fn(map);
+    }
     this.notifyAlerts();
   }
 
@@ -2792,6 +2853,7 @@ export class OverlayManager {
       // are loaded and would make the drawing look degenerate and drop it.
       if (OverlayManager.isDegenerateDrawing(ov.points)) continue;
       drawings.push({
+        id,
         name: ov.name,
         // Stable anchors only (timestamp/value) — see stablePoints for why a
         // beyond-data anchor's dataIndex becomes an extrapolated timestamp.

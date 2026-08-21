@@ -82,7 +82,7 @@ const BARS = vi.hoisted(() =>
 
 vi.mock("../lib/feed", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/feed")>()),
-  fetchRangeWithStatus: vi.fn(async () => ({ bars: BARS, degraded: null })),
+  fetchRangeWithStatus: vi.fn(async () => ({ bars: BARS, degraded: null, partial: null })),
 }));
 
 const { useReplay } = await import("./useReplay");
@@ -566,7 +566,7 @@ describe("a frame that outlives what scheduled it", () => {
     const feed = await import("../lib/feed");
     vi.mocked(feed.fetchRangeWithStatus).mockImplementationOnce(async () => {
       await gate;
-      return { bars: BARS, degraded: null };
+      return { bars: BARS, degraded: null, partial: null };
     });
 
     autoRunFrames = false;

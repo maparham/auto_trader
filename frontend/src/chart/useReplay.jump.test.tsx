@@ -44,14 +44,14 @@ function historyFrom(floorMs: number, degradedFor: (fromMs: number) => string | 
   return async (_epic: string, _res: string, fromSec: number, toSec: number) => {
     const fromMs = fromSec * 1000;
     const degraded = degradedFor(fromMs);
-    if (degraded) return { bars: [], degraded };
+    if (degraded) return { bars: [], degraded, partial: null };
     const start = Math.max(fromMs, floorMs);
-    if (start > toSec * 1000) return { bars: [], degraded: null };
+    if (start > toSec * 1000) return { bars: [], degraded: null, partial: null };
     const bars = [];
     for (let t = start; t <= toSec * 1000; t += MIN) {
       bars.push({ timestamp: t, open: 1, high: 1, low: 1, close: 1, volume: 1 });
     }
-    return { bars, degraded: null };
+    return { bars, degraded: null, partial: null };
   };
 }
 
@@ -112,6 +112,25 @@ describe("a random jump past the end of the broker's history", () => {
 
     expect(result.current.state.mode).toBe("active");
     expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("does not blame the timeframe while the backend is still downloading", async () => {
+    // An empty page under the still-loading marker means the download has not
+    // reached that far back yet, not that the history is absent. Telling the user
+    // to change timeframe would be advice for a problem they do not have.
+    fetchRangeWithStatus.mockImplementation(async () => ({
+      bars: [],
+      degraded: null,
+      partial: "still loading history (2/175 chunks)",
+    }));
+    const { result } = mount();
+    act(() => result.current.enterPicking());
+
+    await act(async () => result.current.randomJump(YEAR, true));
+
+    expect(result.current.state.error).toBe(
+      "Still loading history for that range. Try again in a moment.",
+    );
   });
 
   it("gives up with advice that can actually help", async () => {

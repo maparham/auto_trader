@@ -171,6 +171,7 @@ function jumpHarness(oldestMs: number) {
     owner?: RangeReq | null;
     maxWindows?: number;
     onWindowError?: () => void;
+    onWindowPartial?: (p: { done: number; total: number }) => void;
   };
   const coverHistoryTo =
     vi.fn<(fromTs: number, opts?: CoverOpts) => Promise<boolean>>(async () => true);
@@ -241,6 +242,40 @@ describe("goToRange deep-history handling", () => {
     expect(toastSpy).toHaveBeenCalledTimes(1);
     // Coalesced by key, so repeat clicks on the same dead end don't stack.
     expect(toastSpy.mock.calls[0][1]).toMatchObject({ key: expect.any(String) });
+  });
+
+  // Three dead ends, three answers. Landing short because the backend is still
+  // DOWNLOADING the gap is not the same as landing short because the history
+  // ends there, and it used to be reported as the latter: "older than the
+  // history available at this timeframe" over data that was on its way.
+  it("says the history is still downloading, with how far it got", async () => {
+    const { goToRange, settled, coverHistoryTo } = jumpHarness(LAST_BAR - 60 * MIN);
+    coverHistoryTo.mockImplementation(async (_from, opts) => {
+      // Reported from inside the fetch each lane is awaiting, so the marker is
+      // in hand by the time the cover resolves (the real pager awaits all its
+      // lanes). The await here is what makes that ordering real in the test
+      // rather than assumed.
+      await Promise.resolve();
+      // Six lanes on one series: the one doing the work reports progress, the
+      // ones queued behind its lock report none. The furthest must win, or the
+      // user is told 0 of 96 while a lane is nearly done.
+      opts?.onWindowPartial?.({ done: 0, total: 96 });
+      opts?.onWindowPartial?.({ done: 37, total: 96 });
+      opts?.onWindowPartial?.({ done: 0, total: 96 });
+      return true;
+    });
+    goToRange(matchFromSec, matchToSec);
+    await vi.waitFor(() => expect(settled()).toBe(true));
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+    expect(toastSpy.mock.calls[0][0]).toContain("37 of 96");
+    expect(toastSpy.mock.calls[0][0]).not.toContain("higher timeframe");
+  });
+
+  it("still blames the history itself when nothing was downloading", async () => {
+    const { goToRange, settled } = jumpHarness(LAST_BAR - 60 * MIN);
+    goToRange(matchFromSec, matchToSec);
+    await vi.waitFor(() => expect(settled()).toBe(true));
+    expect(toastSpy.mock.calls[0][0]).toContain("higher timeframe");
   });
 
   it("covers the padded window in parallel, owned by the parked token", async () => {

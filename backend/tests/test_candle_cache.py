@@ -1063,3 +1063,158 @@ def test_active_backfills_drops_stale_entries(tmp_path):
         assert len(cc.active_backfills(now=120.0)) == 1      # fresh enough
     finally:
         cc._ACTIVE_BACKFILLS.clear()
+
+
+# --- archive fallback: stored bars below coverage serve without the broker ---
+# The bars table can hold history the coverage row does not claim (a coverage
+# reset, an import, bars recorded before the row was rebuilt). Those spans are
+# usually beyond the broker's retention, so walking the broker over them is
+# slow and fruitless; the walk absorbs them from the store instead.
+
+
+def _seed_archive_below_coverage(cache, stored_ts, covered_ts, cutoff=10_000):
+    """Bars at `stored_ts` in the table but NOT in coverage; coverage claims
+    only `covered_ts`. Mirrors the real failure: 17 months of bars on disk,
+    a coverage row that starts much later."""
+    cache._store_closed(KEY, [_c(t, float(t)) for t in stored_ts + covered_ts], cutoff)
+    cache._set_coverage(KEY, min(covered_ts), max(covered_ts))
+
+
+def test_window_below_coverage_serves_stored_bars_without_broker(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    _seed_archive_below_coverage(cache, stored_ts=[40, 100, 160], covered_ts=[220, 280])
+    f = FakeFetcher([])  # any call would find nothing; there should be none
+    out = asyncio.run(cache.window(KEY, 60, _dt(40), _dt(120), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in out] == [40, 100]
+    assert f.range_calls == []  # the archive served; the broker was never asked
+    assert cache._coverage(KEY) == (40, 280)  # coverage self-heals downward
+
+
+def test_window_below_coverage_bare_gap_still_asks_the_broker(tmp_path):
+    # Only part of the gap is stored: the stored chunk absorbs, the bare chunk
+    # below it still goes to the broker — the short-circuit must not swallow
+    # gaps the broker could genuinely fill.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    _seed_archive_below_coverage(cache, stored_ts=[160], covered_ts=[220, 280])
+    f = FakeFetcher([_c(40, 40.0)])
+    out = asyncio.run(
+        cache.window(KEY, 60, _dt(40), _dt(170), f.range, now=10_000, chunk_bars=2)
+    )
+    assert [int(c.time.timestamp()) for c in out] == [40, 160]
+    # The chunk holding the stored bar was absorbed; deeper bare chunks fetched.
+    assert all(to < 160 for _, to in f.range_calls)
+    assert len(f.range_calls) >= 1
+    assert cache._coverage(KEY) == (40, 280)
+
+
+def test_window_below_coverage_floor_skips_broker_entirely(tmp_path):
+    # Deep backfill already proved the broker has nothing below our oldest:
+    # a below-coverage window must not ask again, stored bars or not.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    _seed_archive_below_coverage(cache, stored_ts=[100], covered_ts=[220, 280])
+    cache._set_backfill_floor(KEY)
+    f = FakeFetcher([])
+    out = asyncio.run(cache.window(KEY, 60, _dt(40), _dt(120), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in out] == [100]
+    assert f.range_calls == []
+    assert cache._coverage(KEY) == (40, 280)
+
+
+def test_window_absorb_only_below_original_coverage(tmp_path):
+    # Orphaned rows ABOVE the live edge must not short-circuit a forward fill:
+    # the absorb rule applies strictly below the pre-walk oldest watermark.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(t, float(t)) for t in (100, 160)], cutoff_ts=10_000)
+    # Orphan a newer bar into the table without coverage claiming it.
+    cache._store_closed(KEY, [_c(400, 400.0)], cutoff_ts=10_000, extend_coverage=False)
+    cache._set_coverage(KEY, 100, 160)
+    f = FakeFetcher([_c(280, 280.0), _c(340, 340.0), _c(400, 400.0)])
+    out = asyncio.run(cache.window(KEY, 60, _dt(100), _dt(460), f.range, now=10_000))
+    # The forward gap above newest was fetched from the broker, not absorbed.
+    assert f.range_calls != []
+    assert [int(c.time.timestamp()) for c in out] == [100, 160, 280, 340, 400]
+
+
+class SlowFetcher(ChunkRecordingFetcher):
+    """A source that takes real time per chunk, so a fill budget can expire mid-walk."""
+
+    def __init__(self, bars: list[Candle], delay_s: float = 0.02):
+        super().__init__(bars)
+        self._delay = delay_s
+
+    async def range(self, start: datetime, end: datetime) -> list[Candle]:
+        await asyncio.sleep(self._delay)
+        return await super().range(start, end)
+
+
+def test_window_without_a_budget_completes_however_many_chunks_it_takes(tmp_path):
+    """The guard on the shared path. _fetch_symbol_candles serves backtests,
+    expression evaluation and strategy runs as well as the chart, and those need
+    the data to be COMPLETE: a year-long run that silently used the first eight
+    seconds of history would report numbers for bars it never saw. No budget must
+    stay no budget, however long the walk is."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(1000, 3100, 100)]
+    f = SlowFetcher(src)
+    out = asyncio.run(
+        cache.window(KEY, 100, _dt(1000), _dt(3000), f.range, now=10_000, chunk_bars=3)
+    )
+    assert [int(c.time.timestamp()) for c in out] == list(range(1000, 3001, 100))
+    assert len(f.range_calls) > 1
+    assert cache._coverage(KEY) == (1000, 3000)
+
+
+def test_window_budget_stops_the_walk_and_says_it_is_still_loading(tmp_path):
+    """The hang this exists for: coverage is contiguous, so a window deeper than
+    the cache downloads everything in between. On a 1m series a year back that is
+    ~175 sequential broker calls with this key's lock held, and the request simply
+    never returns. With a budget it serves what landed and says why."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(1000, 3100, 100)]
+    f = SlowFetcher(src)
+    partial: dict = {}
+    degraded: dict = {}
+    asyncio.run(
+        cache.window(
+            KEY, 100, _dt(1000), _dt(3000), f.range, now=10_000, chunk_bars=3,
+            budget_s=0.05, degraded=degraded, partial=partial,
+        )
+    )
+    cov = cache._coverage(KEY)
+    assert cov is not None and cov[0] > 1000, "the walk should have stopped short"
+    assert partial["reason"].startswith("still loading history")
+    assert partial["done_chunks"] < partial["total_chunks"]
+    # NOT degraded: nothing is unreachable and nothing is broken. The two carry
+    # different words to the user, and "broker unreachable" would be a lie here.
+    assert degraded == {}
+
+    # What landed is kept and is contiguous, so asking again resumes deeper
+    # rather than starting over. That is what makes stopping early cheap.
+    calls_before = len(f.range_calls)
+    out = asyncio.run(
+        cache.window(KEY, 100, _dt(1000), _dt(3000), f.range, now=10_000, chunk_bars=3)
+    )
+    assert [int(c.time.timestamp()) for c in out] == list(range(1000, 3001, 100))
+    assert all(e <= cov[0] for s, e in f.range_calls[calls_before:]), f.range_calls
+
+
+def test_window_budget_already_spent_serves_cache_without_fetching(tmp_path):
+    """The budget starts before the key lock, so a caller queued behind someone
+    else's long backfill is bounded too. By the time it gets in it may have no
+    time left at all: it must serve what the cache has rather than start a walk
+    the caller has already stopped waiting for."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(1000, 3100, 100)]
+    asyncio.run(cache.window(KEY, 100, _dt(2500), _dt(3000), ChunkRecordingFetcher(src).range, now=10_000))
+
+    f = ChunkRecordingFetcher(src)
+    partial: dict = {}
+    out = asyncio.run(
+        cache.window(
+            KEY, 100, _dt(1000), _dt(3000), f.range, now=10_000, chunk_bars=3,
+            budget_s=0.0, partial=partial,
+        )
+    )
+    assert f.range_calls == [], "no time left means no fetch at all"
+    assert [int(c.time.timestamp()) for c in out] == list(range(2500, 3001, 100))
+    assert partial["done_chunks"] == 0

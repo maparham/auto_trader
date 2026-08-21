@@ -46,7 +46,10 @@ def _run(**overrides):
 
 
 def test_synthetic_ratio_combines_symbols(monkeypatch):
-    async def fake_fetch(broker_id, epic, resolution, bars, from_ts, to_ts, price_side, degraded=None):
+    async def fake_fetch(
+        broker_id, epic, resolution, bars, from_ts, to_ts, price_side,
+        degraded=None, budget_s=None, partial=None,
+    ):
         if epic == "A":
             return [_c(60, 10), _c(120, 20)]
         if epic == "B":
@@ -65,7 +68,10 @@ def test_synthetic_bad_expr_422():
 
 
 def test_synthetic_no_overlap_404(monkeypatch):
-    async def fake_fetch(broker_id, epic, resolution, bars, from_ts, to_ts, price_side, degraded=None):
+    async def fake_fetch(
+        broker_id, epic, resolution, bars, from_ts, to_ts, price_side,
+        degraded=None, budget_s=None, partial=None,
+    ):
         return []
 
     monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_fetch)  # moved to auto_trader.api.deps

@@ -34,6 +34,23 @@ export const FETCH_FAILED_MESSAGE =
 /** Toast key: same coalescing as above, distinct so the two never merge. */
 export const FETCH_FAILED_TOAST_KEY = "go-to-range-failed";
 
+/** Said when the jump fell short because the backend is STILL DOWNLOADING the
+ *  history in between. The third of the three dead ends, and the one that was
+ *  previously mistaken for the first: the cache fills contiguously and bounds
+ *  how long any one request may spend at it (X-Candles-Partial), so a deep jump
+ *  legitimately lands short several times before it lands. Telling that user
+ *  their data is older than the available history is exactly the lie
+ *  FETCH_FAILED_MESSAGE exists to avoid, with the added sting that here the
+ *  data is not merely reachable, it is on its way. The counts are the point:
+ *  2 of 96 and 90 of 96 are the same sentence but very different waits. */
+export function stillLoadingMessage(done: number, total: number): string {
+  const progress = total > 0 ? ` (${done} of ${total} batches so far)` : "";
+  return `Still downloading history that far back${progress}. Try that match again in a moment.`;
+}
+/** Toast key: coalesces repeat clicks while the download runs. Distinct from the
+ *  other two so a run of them never merges with a genuine dead end. */
+export const STILL_LOADING_TOAST_KEY = "go-to-range-loading";
+
 export interface BarLike {
   timestamp: number; // ms
 }

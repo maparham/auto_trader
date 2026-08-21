@@ -13,6 +13,7 @@ import {
 import {
   fetchRangeStrict,
   fetchMarketMeta,
+  type FillProgress,
   fetchCandleCacheStats,
   RESOLUTION_SECONDS,
   type Instrument,
@@ -510,7 +511,12 @@ export default function ChartCore({
   // stale guards with the other pagers; a quick-range pick still preempts it.
   const coverBacktestTradeTo = async (
     fromTs: number,
-    opts?: { owner?: RangeReq | null; maxWindows?: number; onWindowError?: () => void },
+    opts?: {
+      owner?: RangeReq | null;
+      maxWindows?: number;
+      onWindowError?: () => void;
+      onWindowPartial?: (progress: FillProgress) => void;
+    },
   ): Promise<boolean> => {
     const chart = chartRef.current;
     if (!chart) return false;
@@ -570,7 +576,10 @@ export default function ChartCore({
         // rule would then glue distant bars together instead of stopping at the
         // gap.
         fetchOlder: (fromSec, toSec) =>
-          fetchRangeStrict(epic, resolution, fromSec, toSec, side, broker),
+          fetchRangeStrict(
+            epic, resolution, fromSec, toSec, side, broker, undefined,
+            opts?.onWindowPartial,
+          ),
         applyData: (merged) => overlays.applyOlderBars(merged),
         onCursor: (sec) => {
           cursorSecRef.current = sec;

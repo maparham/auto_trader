@@ -468,12 +468,41 @@ export async function fetchMarketMeta(
  * broker was unreachable and the bars came from the backend's candle cache —
  * possibly missing the unreachable portion. null = a normal, complete answer.
  */
-export type CandlesResult = { bars: KLineData[]; degraded: string | null };
+/** How far the backend got through a history fill it ran out of time for. */
+export interface FillProgress {
+  /** Chunks downloaded during THIS request. */
+  done: number;
+  /** Chunks the whole gap needs. */
+  total: number;
+}
+
+/** `degraded`: the broker could not be reached and the payload may be
+ * permanently short. `partial`: the backend ran out of its fill budget with the
+ * download unfinished, so asking again gets more. Two markers because they need
+ * two different words in front of a user, and because only one of them means
+ * something is wrong (see _mark_partial in the backend's charts router). */
+export type CandlesResult = {
+  bars: KLineData[];
+  degraded: string | null;
+  partial: FillProgress | null;
+};
 
 function degradedHeader(res: Response): string | null {
   // Optional chaining: unit tests (and defensive callers) stub fetch with
   // minimal response objects that may not carry headers at all.
   return res.headers?.get("X-Candles-Degraded") ?? null;
+}
+
+function partialHeader(res: Response): FillProgress | null {
+  const raw = res.headers?.get("X-Candles-Partial");
+  if (!raw) return null;
+  const [done, total] = raw.split("/").map((n) => Number(n));
+  // A malformed value still means "unfinished" — the fact matters more than the
+  // numbers, and a caller can show the fact without them.
+  return {
+    done: Number.isFinite(done) ? done : 0,
+    total: Number.isFinite(total) ? total : 0,
+  };
 }
 
 /** fetchRecent, but keeping the degraded-serve marker (see CandlesResult). */
@@ -495,8 +524,12 @@ export async function fetchRecentWithStatus(
     });
     const res = await fetchWithTimeout(`${BASE}/api/candles/synthetic?${qs}`);
     if (res.ok)
-      return { bars: ((await res.json()) as RawCandle[]).map(toKLine), degraded: degradedHeader(res) };
-    if (res.status === 404) return { bars: [], degraded: null };
+      return {
+        bars: ((await res.json()) as RawCandle[]).map(toKLine),
+        degraded: degradedHeader(res),
+        partial: partialHeader(res),
+      };
+    if (res.status === 404) return { bars: [], degraded: null, partial: null };
     throw new Error(await errorDetail(res));
   }
   const qs = new URLSearchParams({
@@ -508,9 +541,13 @@ export async function fetchRecentWithStatus(
   });
   const res = await fetchWithTimeout(`${BASE}/api/candles?${qs}`);
   if (res.ok)
-    return { bars: ((await res.json()) as RawCandle[]).map(toKLine), degraded: degradedHeader(res) };
+    return {
+      bars: ((await res.json()) as RawCandle[]).map(toKLine),
+      degraded: degradedHeader(res),
+      partial: partialHeader(res),
+    };
   // 404 = no data for this epic (unknown / no history) — empty, not an error.
-  if (res.status === 404) return { bars: [], degraded: null };
+  if (res.status === 404) return { bars: [], degraded: null, partial: null };
   // Anything else (e.g. 502 from a broker auth / maintenance failure) carries a
   // detail worth surfacing — throw it so the chart can show why it's blank.
   throw new Error(await errorDetail(res));
@@ -583,9 +620,16 @@ export async function fetchRangeStrict(
   priceSide: PriceSide = "mid",
   brokerId: string = DEFAULT_BROKER,
   signal?: AbortSignal,
+  // A callback rather than a richer return type on purpose: the parallel cover
+  // marks a hole by a THROW and needs the bare bar array, so this is the only
+  // seam that can carry the still-filling marker out without changing what the
+  // pager consumes.
+  onPartial?: (progress: FillProgress) => void,
 ): Promise<KLineData[]> {
   const res = await rangeResponse(epic, resolution, fromSec, toSec, priceSide, brokerId, signal);
   if (!res.ok) throw new CandlesFetchError(res.status);
+  const progress = partialHeader(res);
+  if (progress) onPartial?.(progress);
   return ((await res.json()) as RawCandle[]).map(toKLine);
 }
 
@@ -644,16 +688,21 @@ export async function fetchRangeWithStatus(
 ): Promise<CandlesResult> {
   const res = await rangeResponse(epic, resolution, fromSec, toSec, priceSide, brokerId, signal);
   if (!res.ok) {
-    if (!isOutageStatus(res.status)) return { bars: [], degraded: null };
+    if (!isOutageStatus(res.status)) return { bars: [], degraded: null, partial: null };
     // Surface the backend's own detail (e.g. the WAF "blocked by your network"
     // message from X-Broker-Blocked 503s) — it's the actionable part; the bare
     // status code is only the fallback for detail-less responses.
     return {
       bars: [],
       degraded: await errorDetail(res, `broker unreachable (${res.status})`),
+      partial: null,
     };
   }
-  return { bars: ((await res.json()) as RawCandle[]).map(toKLine), degraded: degradedHeader(res) };
+  return {
+    bars: ((await res.json()) as RawCandle[]).map(toKLine),
+    degraded: degradedHeader(res),
+    partial: partialHeader(res),
+  };
 }
 
 /** Candles in [fromSec, toSec], a failed response as an empty page. Used for

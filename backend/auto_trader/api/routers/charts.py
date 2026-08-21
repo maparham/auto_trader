@@ -25,6 +25,33 @@ from ..sweep_apply import candle_to_dto as _candle_dto
 router = APIRouter()
 
 
+# How long an interactive chart read may spend FILLING history before it serves
+# what it has (see CandleCache.window). Coverage is contiguous, so a window
+# deeper than the cache means a chunked download of everything in between: a year
+# of 1m candles is ~175 sequential broker calls, minutes of them, holding that
+# series' lock against every other read of it. The chart can ask again, and the
+# chunks that landed are kept, so the cost of stopping early is a repeat request
+# rather than lost work. Kept under the frontend's own 10s read deadline so a
+# client that gives up first never sees the marker it could have acted on.
+CHART_FILL_BUDGET_S = 8.0
+
+
+def _mark_partial(response: Response, partial: dict) -> None:
+    """Stamp the still-filling marker: the fill ran out of time, not out of luck.
+    A separate header from X-Candles-Degraded on purpose. Degraded means the
+    broker could not be reached and the payload may be permanently short; this
+    means the download is simply unfinished and asking again gets more. Reading
+    them as the same thing puts "Broker unreachable" in front of a user whose
+    only problem is that they asked for a lot of history.
+
+    The value is "<done>/<total>" chunks, not a sentence: the client turns it
+    into progress, and a number it has to parse out of prose is a number that
+    breaks the day the prose is reworded."""
+    done = int(partial.get("done_chunks") or 0)
+    total = int(partial.get("total_chunks") or 0)
+    response.headers["X-Candles-Partial"] = f"{done}/{total}"
+
+
 def _mark_degraded(response: Response, degraded: dict) -> None:
     """Stamp the degraded-serve marker header: the broker fetch failed but the
     cache served bars anyway, so the payload may be missing the unreachable
@@ -56,11 +83,15 @@ async def candles(
     extended live over the socket. Scroll-back (from_ts/to_ts) isn't supported
     for them — the chart disables it for live-only intervals."""
     degraded: dict = {}
+    partial: dict = {}
     loaded = await deps._fetch_symbol_candles(
-        broker_id, epic, resolution, bars, from_ts, to_ts, price_side, degraded=degraded
+        broker_id, epic, resolution, bars, from_ts, to_ts, price_side,
+        degraded=degraded, budget_s=CHART_FILL_BUDGET_S, partial=partial,
     )
     if degraded and response is not None:
         _mark_degraded(response, degraded)
+    if partial and response is not None:
+        _mark_partial(response, partial)
     # A date window may legitimately be empty (market closed); only 404 when no
     # window was requested at all (likely a bad epic). Seconds resolutions are
     # exempt: an epic that isn't currently streamed has no tick history yet, and
@@ -95,6 +126,7 @@ async def candles_synthetic(
 
     per_symbol: dict[str, list[Candle]] = {}
     degraded: dict = {}
+    partial: dict = {}
     for name in names:
         # Reuse the native/derived/cache path per symbol; a symbol-level HTTPException
         # (unknown broker, IG-derived block) propagates unchanged. One shared
@@ -102,10 +134,16 @@ async def candles_synthetic(
         # result (the last reason wins — presence is the signal).
         per_symbol[name] = await deps._fetch_symbol_candles(
             broker_id, name, resolution, bars, from_ts, to_ts, price_side,
-            degraded=degraded,
+            degraded=degraded, budget_s=CHART_FILL_BUDGET_S, partial=partial,
         )
     if degraded and response is not None:
         _mark_degraded(response, degraded)
+    # Per SYMBOL, one shared budget's worth each: a combination of three symbols
+    # may take three budgets to answer. Bounding the request as a whole would mean
+    # the last symbol never fills, and a synthetic series is only as deep as its
+    # shallowest leg.
+    if partial and response is not None:
+        _mark_partial(response, partial)
 
     result = combine(node, per_symbol)
     if not result and from_ts is None:

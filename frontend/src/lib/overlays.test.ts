@@ -68,13 +68,19 @@ class FakeChart {
   overlays = new Map<string, Record<string, unknown>>();
   private seq = 0;
   createOverlay(spec: Record<string, unknown>) {
-    const id = `ov_${++this.seq}`;
+    // Real klinecharts honours a caller-supplied id (`create.id ?? createId(...)`)
+    // and returns the EXISTING overlay's id without creating when it is taken.
+    const given = typeof spec.id === "string" ? spec.id : undefined;
+    if (given && this.overlays.has(given)) return given;
+    const id = given ?? `ov_${++this.seq}`;
     // Clone the default styles per-overlay: DEFAULT_OVERLAY_STYLES is a single shared
     // const, and overrideOverlay below now mutates `styles` objects in place (to match
     // real klinecharts). Without cloning, every overlay that never got an explicit
     // style would share ONE styles object, so fading overlay A would corrupt the
     // "default" styles read by every other never-styled overlay B too.
-    this.overlays.set(id, { id, ...spec, styles: spec.styles ?? cloneStyles(DEFAULT_OVERLAY_STYLES) });
+    // `id` AFTER the spread: spec carries an own `id` key (undefined when the
+    // caller let the library mint) which would otherwise clobber the real one.
+    this.overlays.set(id, { ...spec, id, styles: spec.styles ?? cloneStyles(DEFAULT_OVERLAY_STYLES) });
     return id;
   }
   // v10 filter-based lookup. OverlayManager only ever filters by { id }, so that's all
@@ -1959,6 +1965,87 @@ describe("degenerate-drawing guard (unclickable half-drawn tool)", () => {
     const { m } = setup();
     m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
     expect(P.loadDrawings("tab.A", "US100")).toHaveLength(1);
+  });
+});
+
+describe("OverlayManager id remap on rehydrate", () => {
+  it("keeps every drawing's id across a rebuild, so held ids never go stale", () => {
+    const { m } = setup();
+    const a = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const b = m.addDrawing("horizontalStraightLine", [{ value: 5 }])!;
+    let calls = 0;
+    const unsub = m.onIdRemap(() => {
+      calls++;
+    });
+    m.rehydrate(); // a same-epic rebuild, e.g. a live data refresh
+    unsub();
+    // The persisted id came back verbatim: no remap to announce, and a write
+    // through the ORIGINAL id still lands (the settings-modal case).
+    expect(calls).toBe(0);
+    expect(m.getDrawing(a)?.name).toBe("segment");
+    expect(m.getDrawing(b)?.name).toBe("horizontalStraightLine");
+    m.setStyle(a, { line: { color: "#123456" } } as Parameters<typeof m.setStyle>[1]);
+    expect((m.getDrawing(a)?.styles?.line as { color?: string })?.color).toBe("#123456");
+  });
+
+  it("remaps ids for drawings saved before ids were persisted", () => {
+    const { m } = setup();
+    const a = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    // Age the storage: strip the persisted ids, as any pre-upgrade save has.
+    P.saveDrawings("tab.A", "US100", P.loadDrawings("tab.A", "US100").map((d) => {
+      const aged = { ...d };
+      delete aged.id;
+      return aged;
+    }));
+    const maps: Array<ReadonlyMap<string, string>> = [];
+    const unsub = m.onIdRemap((map) => {
+      maps.push(map);
+    });
+    m.rehydrate();
+    unsub();
+    const na = maps[0]?.get(a);
+    expect(na).toBeTruthy();
+    expect(m.getDrawing(na!)?.name).toBe("segment");
+    // And the rebuild persisted the minted id, so the NEXT rebuild is stable.
+    expect(P.loadDrawings("tab.A", "US100")[0]?.id).toBe(na);
+  });
+
+  it("gives a duplicated stored id's second claimant a fresh one, losing neither", () => {
+    const { m } = setup();
+    m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
+    m.addDrawing("segment", [{ value: 3 }, { value: 4 }]);
+    const saved = P.loadDrawings("tab.A", "US100");
+    P.saveDrawings("tab.A", "US100", saved.map((d) => ({ ...d, id: saved[0].id })));
+    m.rehydrate();
+    const ids = m.listDrawings().map((d) => d.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids[0]).toBe(saved[0].id);
+  });
+
+  it("emits nothing across a symbol change, where pairing would be a lie", () => {
+    const { m } = setup();
+    m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
+    let calls = 0;
+    const unsub = m.onIdRemap(() => {
+      calls++;
+    });
+    m.setEpic("GOLD");
+    m.rehydrate();
+    unsub();
+    expect(calls).toBe(0);
+  });
+
+  it("stops notifying after unsubscribe", () => {
+    const { m } = setup();
+    m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
+    let calls = 0;
+    const unsub = m.onIdRemap(() => {
+      calls++;
+    });
+    unsub();
+    m.rehydrate();
+    expect(calls).toBe(0);
   });
 });
 

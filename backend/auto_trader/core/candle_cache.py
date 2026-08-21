@@ -179,6 +179,23 @@ class CandleCache:
             self._extend_coverage(key, *span)
         return span
 
+    def _has_stored(self, key: CandleKey, from_ts: int, to_ts: int) -> bool:
+        """Whether the bars table holds ANY bar in [from_ts, to_ts] — including
+        bars coverage does not claim (a coverage reset, an import, bars recorded
+        before the row was rebuilt). The archive-absorb path in _window keys off
+        this: such spans are usually beyond the broker's retention, so their
+        presence is the signal to serve from the store instead of the wire."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM bars WHERE broker=? AND epic=? AND resolution=? "
+                "AND side=? AND ts BETWEEN ? AND ? LIMIT 1",
+                (*key, from_ts, to_ts),
+            ).fetchone()
+        finally:
+            conn.close()
+        return row is not None
+
     def _read_window(self, key: CandleKey, from_ts: int, to_ts: int) -> list[Candle]:
         conn = self._connect()
         try:
@@ -343,16 +360,38 @@ class CandleCache:
         now: float | None = None,
         chunk_bars: int = _BACKFILL_CHUNK_BARS,
         degraded: dict | None = None,
+        budget_s: float | None = None,
+        partial: dict | None = None,
     ) -> list[Candle]:
         """Candles in [start, end]. Serializes per-key with recent() (see _key_lock).
 
         `degraded` (optional out-param): when a broker fetch failed but cached bars
         were served anyway, degraded["reason"] is set to the error text — the
-        caller's signal that the result may be missing the unreachable portion."""
+        caller's signal that the result may be missing the unreachable portion.
+
+        `budget_s` (optional): how long this call may spend FILLING before it
+        serves what it has. None (the default) means unbounded, which is what
+        every non-interactive reader wants: a backtest that silently ran on the
+        first twenty seconds of a year's history would report numbers for data it
+        never had. An interactive chart read passes one, because the alternative
+        is not a slower answer but no answer at all — coverage must stay
+        contiguous, so asking for a year of 1m candles behind a two-week cache
+        means ~175 sequential broker calls, minutes of them, with this key's lock
+        held against every other read of the same series.
+
+        The budget starts HERE, before the lock: a caller queued behind someone
+        else's backfill is exactly the caller that must not wait forever.
+
+        `partial` (optional out-param): set when the budget, not an error, ended
+        the fill. Deliberately NOT `degraded` — nothing is broken and nothing is
+        unreachable, the download is simply still going, and the two want
+        different words in front of a user."""
+        deadline = None if budget_s is None else time.monotonic() + budget_s
         async with self._key_lock(key):
             return await self._window(
                 key, res_seconds, start, end, fetch_range,
                 now=now, chunk_bars=chunk_bars, degraded=degraded,
+                deadline=deadline, partial=partial,
             )
 
     async def _window(
@@ -366,6 +405,8 @@ class CandleCache:
         now: float | None = None,
         chunk_bars: int = _BACKFILL_CHUNK_BARS,
         degraded: dict | None = None,
+        deadline: float | None = None,
+        partial: dict | None = None,
     ) -> list[Candle]:
         """Candles in [start, end]. Cache hit when the window is fully covered.
         Otherwise contiguous-backfill: fetch the gap below oldest down to `start`
@@ -388,6 +429,15 @@ class CandleCache:
         # historical source. Each walk stops on ITS first error only.
         fwd_err: Exception | None = None
         err: Exception | None = None
+        # Set when the BUDGET stopped a walk, so the caller can say "still
+        # downloading" rather than "broker unreachable". Checked before each
+        # chunk, never mid-flight: a chunk already in the air is cheaper to land
+        # (it is stored and marked covered, so the next call resumes deeper) than
+        # to abandon.
+        out_of_time = False
+
+        def spent() -> bool:
+            return deadline is not None and time.monotonic() >= deadline
         # Fill any gap ABOVE newest first (an API client walking history
         # forward, or a window straddling the live edge — historically this
         # returned an empty 200 with no fetch at all). Chunks walk BOTTOM-UP
@@ -399,6 +449,9 @@ class CandleCache:
             top = min(to_ts, cutoff)
             cur = cov[1]
             while cur < top:
+                if spent():
+                    out_of_time = True
+                    break
                 chunk_to = min(top, cur + chunk_secs)
                 try:
                     chunk = await fetch_range(
@@ -427,6 +480,22 @@ class CandleCache:
         # the hole. A chunk that raises (slow/failed source) stops the walk: coverage
         # stays contiguous down to the last success and the next request resumes there.
         cursor = fetch_end
+        # Archive absorb, for the downward walk only: bars can sit in the table
+        # BELOW what coverage claims (a coverage reset, an import, bars recorded
+        # before the row was rebuilt) — 17 months of real 1m bars behind a
+        # coverage row that starts much later, in the case that surfaced this.
+        # Walking the broker over such spans is slow and fruitless: they are
+        # usually beyond its retention, and a deep jump turns into hundreds of
+        # doomed fetches inside one request. So a chunk entirely below the
+        # pre-walk oldest watermark is served from the store when the store has
+        # bars in it (or when deep backfill already proved the broker floor),
+        # and coverage self-heals downward over it. Strictly below the original
+        # oldest, never above: orphaned rows near the live edge must not
+        # short-circuit a forward fill the broker could serve fresher.
+        absorb_below = cov[0] if cov is not None else None
+        floor_reached = absorb_below is not None and await asyncio.to_thread(
+            self._backfill_reached_floor, key
+        )
         # Progress logging. A multi-chunk backfill (a backtest's warm-up ask, a deep
         # scroll-back) can run for minutes inside ONE http request, and uvicorn only
         # logs that request when it finishes — so without these lines the download is
@@ -454,8 +523,30 @@ class CandleCache:
             }
         try:
             while err is None and start < cursor:
+                if spent():
+                    out_of_time = True
+                    break
                 chunk_from_ts = max(from_ts, int(cursor.timestamp()) - chunk_secs)
                 chunk_from = datetime.fromtimestamp(chunk_from_ts, tz=timezone.utc)
+                if (
+                    absorb_below is not None
+                    and int(cursor.timestamp()) <= absorb_below
+                    and (
+                        floor_reached
+                        or await asyncio.to_thread(
+                            self._has_stored, key, chunk_from_ts, int(cursor.timestamp()) - 1
+                        )
+                    )
+                ):
+                    # Stored (or provably broker-less) span: mark covered and move
+                    # on — the settle-time _read_window picks the bars up. A chunk
+                    # only partially stored is absorbed whole; its holes sit below
+                    # broker retention, so a fetch could not have filled them.
+                    if hi >= chunk_from_ts:
+                        await asyncio.to_thread(self._extend_coverage, key, chunk_from_ts, hi)
+                    cursor = chunk_from
+                    done_chunks += 1
+                    continue
                 try:
                     chunk = await fetch_range(chunk_from, cursor)
                 except Exception as e:  # noqa: BLE001 — a slow/failed broker call stops the walk
@@ -492,7 +583,9 @@ class CandleCache:
             if total_chunks > 1 and fetched_any:
                 log.info(
                     "backfill %s %s after %d/%d chunks, %d bars, %.1fs",
-                    _key_label(key), "stopped (fetch failed)" if err is not None else "done",
+                    _key_label(key),
+                    "stopped (fetch failed)" if err is not None
+                    else "paused (out of time)" if out_of_time else "done",
                     done_chunks, total_chunks, bars_in, time.monotonic() - started,
                 )
         finally:
@@ -513,6 +606,17 @@ class CandleCache:
         # scroll". Progress persists: the landed chunks are already stored +
         # covered, so the retry resumes deeper.
         cached = await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+        # The budget ran out with the walk unfinished. Report it whatever the
+        # payload looks like: a deep window is usually still EMPTY at this point
+        # (chunks fill top-down, the ask sits at the bottom), and an empty 200
+        # with no marker is indistinguishable from genuine end-of-history.
+        if out_of_time and partial is not None:
+            partial.update(
+                done_chunks=done_chunks, total_chunks=total_chunks, bars=bars_in,
+                reason=(
+                    f"still loading history ({done_chunks}/{total_chunks} chunks)"
+                ),
+            )
         first_err = err if err is not None else fwd_err
         if first_err is not None:
             if cached:

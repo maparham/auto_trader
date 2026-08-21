@@ -12,13 +12,17 @@
 // so the latest-render closure is equivalent to any captured one.
 import { type KLineData } from "klinecharts";
 import { maskedSessionNow } from "../lib/maskedReplay";
-import { fetchRangeStrict, RESOLUTION_SECONDS, PERIODS, type Period } from "../lib/feed";
+import {
+  fetchRangeStrict, RESOLUTION_SECONDS, PERIODS, type Period, type FillProgress,
+} from "../lib/feed";
 import { rangeWindow, goToDateTs, type RangeKey } from "../lib/rangeWindow";
 import {
   pageHistoryBack as pageHistoryBackImpl,
   DEEP_HISTORY_MESSAGE,
   DEEP_HISTORY_TOAST_KEY,
   FETCH_FAILED_MESSAGE,
+  STILL_LOADING_TOAST_KEY,
+  stillLoadingMessage,
   FETCH_FAILED_TOAST_KEY,
   type PageResult,
 } from "../lib/historyPaging";
@@ -51,7 +55,12 @@ export interface RangeNavigationDeps {
   // whole gap in concurrent windows instead of walking it a page at a time.
   coverHistoryTo: (
     fromTs: number,
-    opts?: { owner?: RangeReq | null; maxWindows?: number; onWindowError?: () => void },
+    opts?: {
+      owner?: RangeReq | null;
+      maxWindows?: number;
+      onWindowError?: () => void;
+      onWindowPartial?: (progress: FillProgress) => void;
+    },
   ) => Promise<boolean>;
   // Props / state the callbacks read.
   scope: string;
@@ -503,11 +512,20 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
       // Did any window fetch fail? It decides which of the two dead ends the
       // user is told about below.
       let fetchFailed = false;
+      // The FURTHEST any window got, not the last one to answer. The cover runs
+      // six lanes against one series, and the backend's fill budget starts
+      // before its per-series lock: five of them queue behind the lane that is
+      // doing the work and come back reporting nothing done. Taking the last
+      // would show 0 of 96 while a lane was most of the way through.
+      const filling: { best: FillProgress | null } = { best: null };
       await coverHistoryTo(token.fromTs, {
         owner: token,
         maxWindows: MATCH_JUMP_MAX_WINDOWS,
         onWindowError: () => {
           fetchFailed = true;
+        },
+        onWindowPartial: (p) => {
+          if (!filling.best || p.done > filling.best.done) filling.best = p;
         },
       });
       if (handle.pendingRangeRef.current !== token) return; // a newer click owns the chart
@@ -540,7 +558,24 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
       const oldest = handle.chartRef.current?.getDataList()[0];
       const wantedMs = fromTs * 1000; // the match's own first bar (seconds in)
       if (oldest && oldest.timestamp > wantedMs) {
+        // Three dead ends, three answers. A failed window is "try again"; a
+        // still-running download is "try again in a moment, here is how far it
+        // got"; only when neither happened is the history genuinely absent and
+        // a coarser timeframe the way out.
+        //
+        // Read after the cover resolves, so every lane that reported has
+        // reported: coverHistoryRangeParallel awaits all its lanes, and a lane
+        // publishes its marker inside the fetch it is awaiting. Held in an
+        // object rather than a bare `let` because the closure above is the only
+        // writer, which narrows a `let` to its initial null and would otherwise
+        // need a cast to read — a cast that would hide exactly this question.
+        const still = filling.best;
         if (fetchFailed) toast(FETCH_FAILED_MESSAGE, { key: FETCH_FAILED_TOAST_KEY });
+        else if (still)
+          // Keyed, and notify.ts rewrites a keyed toast's text in place, so
+          // clicking again while the download runs advances the count the user
+          // is reading rather than stacking a second toast.
+          toast(stillLoadingMessage(still.done, still.total), { key: STILL_LOADING_TOAST_KEY });
         else toast(DEEP_HISTORY_MESSAGE, { key: DEEP_HISTORY_TOAST_KEY });
         console.debug(
           `[chart] go-to-range covered only back to ${debugTs(oldest.timestamp)}, short of ${debugTs(wantedMs)}${fetchFailed ? " (a window fetch failed)" : ""}`,

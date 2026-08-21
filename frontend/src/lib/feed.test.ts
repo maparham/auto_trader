@@ -8,6 +8,7 @@ import {
   fetchRecent,
   fetchRecentWithStatus,
   fetchRangeWithStatus,
+  fetchRangeStrict,
   isFeedStale,
   nominalBarHours,
   openLive,
@@ -158,6 +159,50 @@ describe("degraded-aware candle fetches", () => {
     const r = await fetchRangeWithStatus("US100", "MINUTE", 0, 600, "mid", "capital");
     expect(r.bars.length).toBe(1);
     expect(r.degraded).toBe("broker offline");
+  });
+
+  // The still-filling marker. A separate header from the degraded one because
+  // the two mean different things to a user: unreachable versus unfinished.
+  it("fetchRangeWithStatus reads the fill progress off X-Candles-Partial", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "X-Candles-Partial": "2/96" }),
+      json: () => Promise.resolve(RAW),
+    }));
+    const r = await fetchRangeWithStatus("US100", "MINUTE", 0, 600, "mid", "capital");
+    expect(r.partial).toEqual({ done: 2, total: 96 });
+    // Nothing is unreachable: the download is simply unfinished.
+    expect(r.degraded).toBeNull();
+    expect(r.bars.length).toBe(1);
+  });
+
+  it("fetchRangeWithStatus keeps the FACT of an unfinished fill when the counts are junk", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "X-Candles-Partial": "wat" }),
+      json: () => Promise.resolve(RAW),
+    }));
+    const r = await fetchRangeWithStatus("US100", "MINUTE", 0, 600, "mid", "capital");
+    expect(r.partial).toEqual({ done: 0, total: 0 });
+  });
+
+  it("fetchRangeStrict hands the fill progress to its callback, keeping its bar array", async () => {
+    // The parallel cover marks a hole by a THROW, so this one cannot change its
+    // return shape — the marker has to come out sideways.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "X-Candles-Partial": "5/40" }),
+      json: () => Promise.resolve(RAW),
+    }));
+    const seen: { done: number; total: number }[] = [];
+    const bars = await fetchRangeStrict(
+      "US100", "MINUTE", 0, 600, "mid", "capital", undefined, (p) => seen.push(p),
+    );
+    expect(bars.length).toBe(1);
+    expect(seen).toEqual([{ done: 5, total: 40 }]);
   });
 
   it("fetchRangeWithStatus reports a healthy 200 as not degraded", async () => {

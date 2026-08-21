@@ -26,6 +26,8 @@ const overlays = {
   }),
   setStyle: () => {},
   setPoint: () => {},
+  // The modal subscribes on mount to follow rehydrate's id remaps.
+  onIdRemap: () => () => {},
 } as unknown as OverlayManager;
 
 const openCoords = () => {

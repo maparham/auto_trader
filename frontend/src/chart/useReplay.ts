@@ -902,6 +902,11 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
         // sends the user looking at their connection. So one is spent asking
         // again much nearer to now, where the answer is cheap and often cached.
         let lastDegraded: string | null = null;
+        // The backend bounds how long it spends filling history and says so
+        // (X-Candles-Partial). An empty page under that marker does not mean the
+        // history is absent, only that the download has not got there yet, so it
+        // must not end up reported as "no candles at this timeframe".
+        let sawPartial = false;
         for (let attempt = 0; attempt < MAX_JUMP_ATTEMPTS; attempt++) {
           if (seq !== reqSeq.current) return; // cancelled / exited / superseded
           const { targetMs } = pickJumpTarget({
@@ -917,10 +922,11 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           // five other places it could land.
           const ctrl = new AbortController();
           const timer = window.setTimeout(() => ctrl.abort(), JUMP_READ_TIMEOUT_MS);
-          const { bars, degraded } = await fetchWindow(res, targetMs, ctrl.signal)
+          const { bars, degraded, partial } = await fetchWindow(res, targetMs, ctrl.signal)
             .catch(() => ({
               bars: [] as KLineData[],
               degraded: ctrl.signal.aborted ? TIMEOUT_MSG : OUTAGE_MSG,
+              partial: null,
             }))
             .finally(() => window.clearTimeout(timer));
           if (seq !== reqSeq.current) return;
@@ -938,6 +944,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           // Without this, one deep timeout would keep speaking for the whole run
           // and report a broker problem where the answer is the timeframe.
           lastDegraded = null;
+          if (partial) sawPartial = true;
           const cursor = cursorForStartTs(bars, targetMs, nominalMs(res));
           if (cursor == null) continue; // dead zone or history floor: halve and re-roll
           barsRef.current = bars;
@@ -972,7 +979,11 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           // way down to roughly a hundredth of the window and still found
           // nothing, so more history is the one thing that cannot help. A
           // coarser timeframe is what the broker actually keeps further back.
-          error: lastDegraded ?? "No candles at this timeframe. Try a higher one.",
+          error:
+            lastDegraded ??
+            (sawPartial
+              ? "Still loading history for that range. Try again in a moment."
+              : "No candles at this timeframe. Try a higher one."),
         }));
       })();
     },

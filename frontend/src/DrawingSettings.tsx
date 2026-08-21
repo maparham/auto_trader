@@ -86,6 +86,21 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   // every handler below is recreated each render, so it closes over the current id.
   const [curId, setCurId] = useState(id);
 
+  // A rehydrate while this modal is open (live-feed reload, cross-tab layout
+  // sync) re-mints every overlay id; without following the remap, every control
+  // here keeps writing to a dead id and silently stops applying. onIdChange
+  // keeps the opener's signal pointing at the live overlay too, exactly as the
+  // Extend recreate path does.
+  useEffect(() => {
+    return overlays.onIdRemap((map) => {
+      const next = map.get(curId);
+      if (next) {
+        setCurId(next);
+        onIdChange(next);
+      }
+    });
+  }, [overlays, curId, onIdChange]);
+
   // Opening snapshot for Cancel — captured ONCE via the lazy state initializer (by
   // value), so it survives an Extend recreate (which cancel re-applies by recreating
   // if the name changed).

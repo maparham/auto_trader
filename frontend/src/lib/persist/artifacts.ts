@@ -16,6 +16,11 @@ import { historyCapture } from "../history";
 // --- drawings (overlays the user drew) ---------------------------------------
 
 export interface SavedOverlay {
+  // The overlay's klinecharts id, written by persist() and passed back on
+  // rehydrate so a rebuild keeps every drawing's identity (anything holding an
+  // id across the rebuild stays valid). Absent on drawings saved before this
+  // existed; the library mints one and the next persist() records it.
+  id?: string;
   name: string;
   points: Array<{ timestamp?: number; value?: number; dataIndex?: number }>;
   styles?: DeepPartial<OverlayStyle> | null;
