@@ -7,12 +7,13 @@
 // still owns the right-click drawing context menu (Lock/Settings/Delete).
 // Everything drives the Chart instance directly via its public API.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getSupportedIndicators } from "klinecharts";
 import { type Instrument, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
 import { ensureNotifyPermission, primeSound, toast } from "./lib/notify";
 import { refuseClipboardCopy } from "./lib/replayClipboard";
+import HeatmapPanel from "./HeatmapPanel";
 import { EQUITY_INDICATOR, isChartReplaying } from "./lib/backtest";
 import {
   alertModalRequest,
@@ -138,6 +139,23 @@ export default function Toolbar({
   // dropdown wrappers (for outside-click close)
   const indMenuRef = useRef<HTMLDivElement>(null);
   const tmplMenuRef = useRef<HTMLDivElement>(null);
+  const heatMenuRef = useRef<HTMLDivElement>(null);
+
+  // The two chart study modes, published by the FOCUSED cell (ChartController).
+  // Null while no chart is mounted, which is also how the buttons know to sit
+  // disabled rather than act on a cell that isn't there.
+  const heatmap = useSyncExternalStore(
+    useCallback((cb) => controller?.heatmap.subscribe(cb) ?? (() => {}), [controller]),
+    () => controller?.heatmap.value ?? null,
+  );
+  const replayEntry = useSyncExternalStore(
+    useCallback((cb) => controller?.replayEntry.subscribe(cb) ?? (() => {}), [controller]),
+    () => controller?.replayEntry.value ?? null,
+  );
+  // Panel open/closed, separate from the heatmap being ON. Turning it on opens
+  // the panel (that was the old behaviour, where the panel WAS the on state);
+  // clicking away closes the panel and leaves the heatmap painting.
+  const [heatOpen, setHeatOpen] = useState(false);
 
   // drawing right-click context menu (Lock/Settings/Delete etc — the tools that
   // CREATE drawings now live in DrawSidebar; this menu still fires from the chart).
@@ -153,16 +171,18 @@ export default function Toolbar({
   // Close dropdowns on click outside. The ref wraps button+dropdown, so clicking
   // the toggle stays "inside" and doesn't fight the button's own onClick.
   useEffect(() => {
-    if (!indOpen && !tmplOpen) return;
+    if (!indOpen && !tmplOpen && !heatOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (indOpen && indMenuRef.current && !indMenuRef.current.contains(t)) setIndOpen(false);
       if (tmplOpen && tmplMenuRef.current && !tmplMenuRef.current.contains(t))
         setTmplOpen(false);
+      if (heatOpen && heatMenuRef.current && !heatMenuRef.current.contains(t))
+        setHeatOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [indOpen, tmplOpen]);
+  }, [indOpen, tmplOpen, heatOpen]);
 
   // Right-clicking any overlay (drawn live or rehydrated) opens our context menu.
   // Bound to the FOCUSED cell's overlay manager; re-bind when focus changes.
@@ -665,6 +685,76 @@ export default function Toolbar({
           hourly cost stays visible, with manual Start/Stop. Renders nothing on
           non-EC2 installs. Self-contained (owns its own polling + state). */}
       <ComputeHostButton />
+
+      <span className="tb-div" aria-hidden="true" />
+
+      {/* The two chart STUDY MODES, sitting with Backtest: all three are ways of
+          studying the strategy rather than of drawing on the chart. Both used to
+          be pinned over the focused cell's price axis, one copy per cell in a
+          split; here there is one of each, acting on whichever cell has focus. */}
+
+      {/* Bar replay: play the chart forward from a point in the past. Disabled
+          rather than hidden — the toolbar is stable chrome, and a control that
+          vanishes reads as a bug. The two refusals are different facts, so they
+          say different things. */}
+      <Tooltip
+        content={
+          !replayEntry?.available
+            ? "Bar replay needs a chart with history: not a sub-minute interval, and not a saved snapshot."
+            : replayEntry.active
+              ? "A replay session is already running on this chart."
+              : "Bar replay: play the chart forward from a point in the past"
+        }
+      >
+        <button
+          type="button"
+          className="anchor-btn replay-toggle"
+          disabled={!replayEntry?.available || replayEntry.active}
+          onClick={() => replayEntry?.enter()}
+        >
+          ⟲ Replay
+        </button>
+      </Tooltip>
+
+      {/* Rule-proximity heatmap: a split control. The face toggles the paint on
+          and off; the caret opens its settings. Turning it ON opens the settings
+          too, which is what the old chart-pinned control did (there the panel WAS
+          the on state) — the difference is that clicking away now closes the
+          panel and leaves the heatmap painting. */}
+      <div className="menu heatmap-split" ref={heatMenuRef}>
+        <Tooltip content="Rule proximity heatmap">
+          <button
+            className={`anchor-btn heatmap-toggle${heatmap?.on ? " seg-on" : ""}`}
+            disabled={!heatmap}
+            onClick={() => {
+              if (!heatmap) return;
+              const next = !heatmap.on;
+              heatmap.setOn(next);
+              setHeatOpen(next);
+            }}
+          >
+            Heatmap
+          </button>
+        </Tooltip>
+        <Tooltip content="Heatmap settings">
+          <button
+            className="anchor-btn heatmap-caret"
+            disabled={!heatmap}
+            onClick={() => setHeatOpen((v) => !v)}
+          >
+            <Caret />
+          </button>
+        </Tooltip>
+        {heatOpen && heatmap && (
+          <div className="dropdown dropdown-right heatmap-dropdown">
+            <HeatmapPanel
+              view={heatmap.view}
+              onChange={heatmap.setView}
+              belowBase={heatmap.belowBase}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Backtest + Live sit together here (kept off the tab bar so they survive
           maximized view): backtest a rule strategy, then arm the same strategy

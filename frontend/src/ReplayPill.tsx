@@ -1,11 +1,23 @@
-// Floating replay controls (TradingView puts them bottom-center). Presentational:
-// every action is a callback into chart/useReplay.ts. No session state, no
-// fetching, no storage lives here — the hook owns all of it.
+// Floating replay controls, parked at the cell's top-right corner and draggable
+// anywhere inside it. Presentational as far as the SESSION goes: every action is
+// a callback into chart/useReplay.ts, and no session state or fetching lives
+// here. The one thing it does own is where it sits, because that is a property
+// of this pill on this screen and nothing else needs to know it (lib/replayPillPos).
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
 import { REPLAY_SPEEDS, type ReplayUiState } from "./chart/useReplay";
+import {
+  clampPillPos,
+  loadPillPos,
+  savePillPos,
+  clearPillPos,
+  type PillPos,
+} from "./lib/replayPillPos";
 
 interface Props {
   state: ReplayUiState;
+  /** The cell's persistence scope: where this pill's dragged position is kept. */
+  scope: string;
   /** Already-formatted cursor label: a real date, or "Day N HH:mm" when masked. */
   readout: string;
   onStepBack(): void;
@@ -33,6 +45,7 @@ interface Props {
 
 export default function ReplayPill({
   state,
+  scope,
   readout,
   onStepBack,
   onPlayPause,
@@ -57,8 +70,109 @@ export default function ReplayPill({
   // half the user can see.
   const tip = (normal: string) =>
     reportPending ? "This session has ended: close the report card" : normal;
+
+  // --- drag ------------------------------------------------------------------
+  //
+  // Null means "wherever the CSS parks it" (top-right), which is also what a
+  // reset returns to: no stored position is a real state, not a position of
+  // (8, 8), so the corner keeps working when the cell resizes.
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<PillPos | null>(() => loadPillPos(scope));
+  // Where in the pill the pointer grabbed it, so it doesn't jump under the
+  // cursor on the first move.
+  const grab = useRef<{ dx: number; dy: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  // Clamp whatever is stored back inside the cell, after layout. A cell that
+  // shrank, a split that went from one column to four, or a record written on a
+  // wider screen would otherwise leave the pill half outside or fully hidden.
+  // Layout effect, not effect: this runs before paint, so a clamped pill never
+  // shows for a frame at its out-of-bounds position.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const parent = el?.offsetParent as HTMLElement | null;
+    if (!el || !parent || !pos) return;
+    const next = clampPillPos(pos, parent.getBoundingClientRect(), el.getBoundingClientRect());
+    if (next.x !== pos.x || next.y !== pos.y) setPos(next);
+  }, [pos]);
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      // Only a drag of the BAR itself. Every control on it is interactive, and a
+      // press that started on one must reach it: `closest` covers the button's
+      // own children (the SVG in an icon button) as well as the button.
+      if ((e.target as HTMLElement).closest("button, select, input, a")) return;
+      const el = ref.current;
+      const parent = el?.offsetParent as HTMLElement | null;
+      if (!el || !parent) return;
+      const box = el.getBoundingClientRect();
+      grab.current = { dx: e.clientX - box.left, dy: e.clientY - box.top };
+      setDragging(true);
+      // Capture on the element, so a fast drag that outruns the pointer keeps
+      // sending moves here instead of to whatever is underneath — including the
+      // chart, which would read them as a pan.
+      el.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    },
+    [],
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const g = grab.current;
+      const el = ref.current;
+      const parent = el?.offsetParent as HTMLElement | null;
+      if (!g || !el || !parent) return;
+      const cell = parent.getBoundingClientRect();
+      setPos(
+        clampPillPos(
+          { x: e.clientX - cell.left - g.dx, y: e.clientY - cell.top - g.dy },
+          cell,
+          el.getBoundingClientRect(),
+        ),
+      );
+    },
+    [],
+  );
+
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!grab.current) return;
+      grab.current = null;
+      setDragging(false);
+      ref.current?.releasePointerCapture(e.pointerId);
+      // Persist the landed position, not every frame of the drag: a 60Hz drag
+      // would otherwise write to storage sixty times a second.
+      if (pos) savePillPos(scope, pos);
+    },
+    [pos, scope],
+  );
+
+  // Double-click the bar (not a control) to send it home. A dragged pill can end
+  // up somewhere the user did not mean, and hunting for a reset in a menu for a
+  // thing this small would be worse than the problem.
+  const onDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if ((e.target as HTMLElement).closest("button, select, input, a")) return;
+      setPos(null);
+      clearPillPos(scope);
+    },
+    [scope],
+  );
+
   return (
-    <div className="replay-pill" role="group" aria-label="Replay controls">
+    <div
+      ref={ref}
+      className={`replay-pill${pos ? " rp-moved" : ""}${dragging ? " rp-dragging" : ""}`}
+      style={pos ? { left: pos.x, top: pos.y } : undefined}
+      role="group"
+      aria-label="Replay controls"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onDoubleClick={onDoubleClick}
+    >
       <Tooltip content={tip("Step back one bar (view only: trades are not undone)")}>
         <button
           type="button"

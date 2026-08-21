@@ -1,14 +1,14 @@
-// Chart furniture for the rule-proximity heatmap: an on/off toggle plus, when
-// on, a compact control panel (side, scale basis, sensitivity, higher-timeframe
-// aggregation). Presentational only — all state lives in useProximityHeatmap;
-// this renders the current view and reports changes up.
+// The rule-proximity heatmap's settings panel: side, scale basis, sensitivity,
+// higher-timeframe aggregation. Presentational only — all state lives in
+// useProximityHeatmap; this renders the current view and reports changes up.
+//
+// The on/off TOGGLE is not here: it lives in the toolbar (Toolbar.tsx), which
+// opens this panel beneath it. The two were one component while the whole
+// control was pinned over the chart's price axis.
 import InfoTip from "./components/InfoTip";
-import Tooltip from "./components/Tooltip";
 import type { HeatmapView } from "./lib/heatmapController";
 
 interface Props {
-  on: boolean;
-  onToggle: (on: boolean) => void;
   view: HeatmapView;
   onChange: (patch: Partial<HeatmapView>) => void;
   // True when the chart resolution sits below the locked base timeframe, so the
@@ -16,19 +16,8 @@ interface Props {
   belowBase: boolean;
 }
 
-export default function HeatmapControls({ on, onToggle, view, onChange, belowBase }: Props) {
+export default function HeatmapPanel({ view, onChange, belowBase }: Props) {
   return (
-    <div className="heatmap-ctl">
-      <Tooltip content="Rule proximity heatmap">
-        <button
-          className={`heatmap-toggle${on ? " seg-on" : ""}`}
-          onClick={() => onToggle(!on)}
-        >
-          Heatmap
-        </button>
-      </Tooltip>
-
-      {on && (
         <div className="heatmap-panel">
           <div className="wfo-row">
             <span className="wfo-label">Side</span>
@@ -132,7 +121,5 @@ export default function HeatmapControls({ on, onToggle, view, onChange, belowBas
               : `Base ${view.baseResolution}`}
           </div>
         </div>
-      )}
-    </div>
   );
 }

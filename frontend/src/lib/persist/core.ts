@@ -147,6 +147,7 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   `${PREFIX}.lastDrawTools`,
   `${PREFIX}.viewPos`,
   `${PREFIX}.replaySessions`,
+  `${PREFIX}.replayPillPos`,
   `${PREFIX}.holdout`,
   `${PREFIX}.alertUnseen`,
 ]);

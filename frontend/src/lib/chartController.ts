@@ -15,6 +15,7 @@ import type { IndicatorInstance } from "./persist";
 import { loadScalePriceOnly, loadPriceStretched, savePriceStretched, loadSnapshotMeta } from "./persist";
 import { HistoryManager, registerHistory } from "./history";
 import { applyCandleFit, type PriceFitMode } from "../chart/candleFit";
+import type { HeatmapView } from "./heatmapController";
 
 // The selected indicator (TradingView-style): clicking an indicator's curve or its
 // legend row selects it (hollow handles appear); clicking empty chart space
@@ -32,6 +33,27 @@ export interface SelectedIndicator {
   // legend shows more than the plotted line — ATR's "atrPct" readout picks the
   // pane's .to% output. Only "pick from chart" sets and reads it.
   figureKey?: string;
+}
+
+/** The focused cell's proximity-heatmap control, as the toolbar needs it. */
+export interface HeatmapBinding {
+  on: boolean;
+  view: HeatmapView;
+  /** The chart's resolution sits below the locked base timeframe, so the heatmap
+   *  paints nothing. The panel says so rather than looking broken. */
+  belowBase: boolean;
+  setOn: (on: boolean) => void;
+  setView: (patch: Partial<HeatmapView>) => void;
+}
+
+/** The focused cell's replay entry point. `available` and `active` are separate
+ *  because they read differently to a user: a cell that can never replay
+ *  (sub-minute interval, read-only snapshot) is a different refusal from one
+ *  already mid-session, and the toolbar says which. */
+export interface ReplayEntry {
+  available: boolean;
+  active: boolean;
+  enter: () => void;
 }
 
 export class ChartController {
@@ -59,6 +81,23 @@ export class ChartController {
   // has nothing to subscribe to. Written by ChartCore's replay-mode effect, in
   // the same commit as setCellReplaying, so the two cannot disagree.
   readonly replaying = new Signal<boolean>(false);
+
+  // The two chart STUDY MODES, published for the toolbar to host.
+  //
+  // Both used to be chart furniture pinned to the cell's top-right corner, where
+  // they overlapped the price axis and duplicated themselves once per cell in a
+  // split. They now live in the toolbar, which already acts on the FOCUSED cell —
+  // so each cell publishes its own binding here and the toolbar renders whichever
+  // one is in focus.
+  //
+  // State and callbacks travel together in one object rather than as four
+  // signals: they are one thing (a toggle whose panel edits the view it
+  // reflects), and splitting them invites a render where the panel is showing
+  // last cell's view. Written by ChartCore in an EFFECT, never during render — a
+  // Signal set mid-render notifies subscribers while React is still rendering.
+  // Null until that effect lands, and while no chart is mounted.
+  readonly heatmap = new Signal<HeatmapBinding | null>(null);
+  readonly replayEntry = new Signal<ReplayEntry | null>(null);
 
   // --- per-cell UI signals (were module globals in signals.ts) ----------------
   // The AVWAP INSTANCE id the user is currently placing ("click a bar to anchor"),

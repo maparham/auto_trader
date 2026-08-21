@@ -1,13 +1,21 @@
 .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
 .toolbar {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px;
+  display: flex; align-items: center; gap: 4px; flex-wrap: nowrap;
+  padding: 10px 10px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px;
+  /* Size container so the timeframe quick-bar can collapse when the toolbar gets
+     tight (see the @container rule near .periods). nowrap: the toolbar is a
+     single row, always — controls collapse rather than wrap to a second row. */
+  container: toolbar / inline-size;
 }
+/* No child squishing: a squeezed button wraps its label onto two lines and
+   grows the bar. Below the collapse point the row clips at the right edge
+   instead — still one row, still 53px. */
+.toolbar > * { flex-shrink: 0; }
 /* Hairline rule separating functional clusters (symbol | intervals | study tools |
    chart actions). Group spacing is tight (6px); these dividers carry the grouping
    so controls read as related sets rather than one equidistant float. */
 .toolbar .tb-div {
-  flex: 0 0 auto; width: 1px; height: 20px; margin: 0 4px;
+  flex: 0 0 auto; width: 1px; height: 20px; margin: 0 2px;
   background: var(--border);
 }
 .toolbar label { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
@@ -2747,21 +2755,24 @@
 .seg button { background: var(--input-bg); color: var(--text); border: none; padding: 6px 14px; cursor: pointer; }
 .seg button.seg-on { background: var(--accent); color: var(--accent-text); }
 
-/* Rule-proximity heatmap controls: chart furniture pinned top-right, clear of the
-   top-left legend and the right price axis. Flat, no shadow, content-sized. */
-.heatmap-ctl {
-  position: absolute; top: 8px; right: 64px; z-index: 6;
-  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+/* Rule-proximity heatmap: a split control in the toolbar (it was chart furniture
+   pinned over the price axis). The face toggles the paint, the caret opens the
+   settings — same shape as the snapshot split beside it. */
+.toolbar .heatmap-split { display: flex; gap: 0; align-items: stretch; position: relative; }
+.toolbar .heatmap-toggle { border-radius: 6px 0 0 6px; }
+/* ON is a filled pill: the heatmap repaints the whole candle pane, so the
+   control that did it should be unmistakable at a glance. */
+.toolbar .heatmap-toggle.seg-on { background: var(--accent); color: var(--accent-text); }
+.toolbar .heatmap-toggle.seg-on:hover:not(:disabled) { background: var(--accent); }
+.toolbar .heatmap-caret {
+  border-radius: 0 6px 6px 0; padding: 5px 3px;
+  display: inline-flex; align-items: center;
 }
-.heatmap-toggle {
-  background: var(--input-bg); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 4px 10px; font-size: 12px; cursor: pointer;
-}
-.heatmap-toggle.seg-on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+/* The dropdown supplies the surface, border and radius, so the panel inside is
+   layout only — otherwise it draws a second box within the first. */
+.heatmap-dropdown { padding: 10px 12px; }
 .heatmap-panel {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 232px;
+  display: flex; flex-direction: column; gap: 8px; min-width: 232px;
 }
 .heatmap-panel .wfo-row { justify-content: space-between; }
 .heatmap-seg { font-size: 11px; }
@@ -3609,6 +3620,14 @@
 /* Selected timeframe: monochrome gray fill (toolbar stays black/white/gray), not
    the blue accent — matches the borderless .menu/.scale active state. */
 .periods button.on { background: var(--hover-strong); color: var(--text); }
+/* Tight toolbar: collapse the quick-bar to just the active interval + caret
+   (TV-style). Every interval stays reachable through the caret dropdown, and
+   with .toolbar on nowrap this is what absorbs the missing width instead of a
+   second row. Direct-child only: the caret's own tooltip-trigger inside
+   .interval-menu must not match (it is never .on while closed). */
+@container toolbar (max-width: 1530px) {
+  .periods > .tooltip-trigger:has(> button:not(.on)) { display: none; }
+}
 
 .menu { position: relative; }
 /* TradingView-style: borderless, transparent; subtle gray rounded highlight on
@@ -5753,13 +5772,9 @@ span.bt-leg-short { color: var(--neg); }
 
 /* --- chart replay ---------------------------------------------------------- */
 /* Entry button: sits left of the heatmap toggle in the cell's top-right stack. */
-.replay-ctl { position: absolute; top: 8px; right: 148px; z-index: 6; }
-.replay-toggle {
-  background: var(--input-bg); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 4px 10px; font-size: 12px; cursor: pointer;
-}
-.replay-toggle:hover { border-color: var(--accent); }
+/* Replay entry lives in the toolbar (it was chart furniture pinned over the
+   price axis). Plain .anchor-btn like its neighbours; the class stays for the
+   e2e selector and for reading the toolbar's markup. */
 
 /* Opaque curtain over everything right of the pointer while picking a start.
    Opaque, never dimmed: a dimmed future is still readable, and this feature
@@ -5809,21 +5824,27 @@ span.bt-leg-short { color: var(--neg); }
 }
 .rsp-error { color: var(--danger); }
 
-/* Replay controls: TV puts them bottom-center over the chart. Always visible
-   while a session is active (unlike the hover-revealed quick-range bar, which is
-   hidden entirely during replay).
+/* Replay controls. Always visible while a session is active (unlike the
+   hover-revealed quick-range bar, which is hidden entirely during replay).
 
    Z-INDEX (51, not the 12 the brief sketched): these are the only controls a
-   running session has, so they must stay clickable over EVERY overlay that can
-   reach the bottom of the cell. Inside .chart-wrap the in-cell chrome runs up to
-   .chart-legend at 50, with .trade-pill 47/48/49 and .alert-pill 46 free to sit
-   at the bottom of the price range right where this pill floats; .chart-nodata
-   is a full-cell inset:0 overlay at 12, which would TIE with 12 and win on DOM
-   order. 51 is the lowest number above all of them, and still below the picking
-   layer Task 6 established (.replay-curtain 55, .replay-start-panel 60), so that
-   ordering is untouched. */
+   running session has, so they must stay clickable over EVERY overlay they can
+   meet. Inside .chart-wrap the in-cell chrome runs up to .chart-legend at 50,
+   with .trade-pill 47/48/49 and .alert-pill 46 free to follow the price
+   anywhere in the cell; .chart-nodata is a full-cell inset:0 overlay at 12,
+   which would TIE with 12 and win on DOM order. 51 is the lowest number above
+   all of them, and still below the picking layer Task 6 established
+   (.replay-curtain 55, .replay-start-panel 60), so that ordering is untouched.
+   The number is independent of where the pill sits, which is why moving it from
+   the bottom to the top changed nothing here. */
 .replay-pill {
-  position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 51;
+  /* Top-RIGHT by default: the corner the Replay and Heatmap buttons vacated when
+     they moved to the toolbar, and the one piece of the top edge the legend
+     (top-left, and as wide as its indicator rows need) never reaches. Draggable
+     from there to anywhere in the cell — see .rp-moved, which swaps this anchor
+     for the dragged offset. */
+  position: absolute; right: 8px; top: 8px; z-index: 51;
+  cursor: grab;
   /* Wraps rather than overflowing: with an error string at its 220px cap the row
      is wider than a cell in a 3- or 4-way split. */
   display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px;
@@ -5834,6 +5855,15 @@ span.bt-leg-short { color: var(--neg); }
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   font-size: 12px; color: var(--text);
 }
+/* Dragged: the stored offset is applied as left/top, so the right-edge anchor
+   has to go or the pill would be pinned to both edges and stretch. `right: auto`
+   rather than a separate rule set, so the default and the dragged state stay one
+   block apart. */
+.replay-pill.rp-moved { right: auto; }
+.replay-pill.rp-dragging { cursor: grabbing; user-select: none; }
+/* The controls keep their own cursor: the bar is the drag handle, its buttons
+   are not. */
+.replay-pill button, .replay-pill select { cursor: pointer; }
 .rp-btn {
   appearance: none; border: none; background: transparent; color: var(--text);
   padding: 2px 7px; border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1.4;
@@ -5869,16 +5899,18 @@ span.bt-leg-short { color: var(--neg); }
   pointer-events: none;
 }
 
-/* The replay order ticket (ReplayTicket.tsx). Anchored bottom-right so it clears
-   the centred .replay-pill, and stacked at 52 rather than the 42 the plan
-   sketched: the price-axis furniture that shares that corner sits at 44-49
-   (.price-tag, .alert-tag, .trade-pill and their selected/raised variants), so a
-   42 would leave a live form with text inputs UNDER a floating tag, which eats
-   the click as well as the pixels. 52 is one above .replay-pill (51) - the
-   ticket is the interactive surface of the two - and still below the picking
-   layer (.replay-curtain 55, .replay-start-panel 60), so that ordering stands. */
+/* The replay order ticket (ReplayTicket.tsx). Anchored bottom-right, clear of the
+   pill now that the pill sits at the TOP of the cell (this was bottom: 52px to
+   clear it there). Stacked at 52 rather than the 42 the plan sketched: the
+   price-axis furniture that shares that corner sits at 44-49 (.price-tag,
+   .alert-tag, .trade-pill and their selected/raised variants), so a 42 would
+   leave a live form with text inputs UNDER a floating tag, which eats the click
+   as well as the pixels. 52 is one above .replay-pill (51) - the ticket is the
+   interactive surface of the two - and still below the picking layer
+   (.replay-curtain 55, .replay-start-panel 60), so that ordering stands
+   wherever the pill sits. */
 .replay-ticket {
-  position: absolute; right: 12px; bottom: 52px; z-index: 52;
+  position: absolute; right: 12px; bottom: 12px; z-index: 52;
   width: 210px; padding: 10px; border-radius: 8px;
   background: var(--surface); border: 1px solid var(--border);
   display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text);

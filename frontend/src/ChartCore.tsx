@@ -37,7 +37,6 @@ import { ChartController } from "./lib/chartController";
 import { isInvertShortcut } from "./lib/invertShortcut";
 import MarketInfoPopover from "./MarketInfoPopover";
 import Tooltip from "./components/Tooltip";
-import HeatmapControls from "./HeatmapControls";
 import ReplayStartPanel from "./ReplayStartPanel";
 import ReplayPill from "./ReplayPill";
 import ReplayTicket from "./ReplayTicket";
@@ -3593,6 +3592,40 @@ export default function ChartCore({
     replay.state.startMs,
   ]);
 
+  // Publish the two study-mode controls to this cell's controller, so the TOOLBAR
+  // can host them (they used to be furniture pinned over this cell's price axis).
+  // In effects, never during render: setting a Signal mid-render notifies its
+  // subscribers while React is still rendering the tree they live in.
+  //
+  // `heatmap.setOn` / `setView` are useCallbacks in the hook, so the object only
+  // changes when something the toolbar actually draws changes.
+  useEffect(() => {
+    controller.heatmap.set({
+      on: heatmap.on,
+      view: heatmap.view,
+      belowBase: heatmap.belowBase,
+      setOn: heatmap.setOn,
+      setView: heatmap.setView,
+    });
+  }, [controller, heatmap.on, heatmap.view, heatmap.belowBase, heatmap.setOn, heatmap.setView]);
+
+  // Replay entry. `available` is PERMANENT capability, not a deferral: sub-minute
+  // timeframes are built live from the tick stream and have no history to replay,
+  // and a read-only snapshot cell is a frozen study copy, not a chart you can play
+  // forward. `active` is the running session, which the pill takes over from here.
+  // Reads replay.state.mode rather than the `replayMode` alias declared further
+  // down: this effect sits above it, and the alias exists for the curtain's own
+  // listener deps.
+  const enterReplay = replay.enterPicking;
+  const entryMode = replay.state.mode;
+  useEffect(() => {
+    controller.replayEntry.set({
+      available: !period.liveOnly && !snapView,
+      active: entryMode !== "off",
+      enter: enterReplay,
+    });
+  }, [controller, period.liveOnly, snapView, entryMode, enterReplay]);
+
   // Publish this cell's masked session to app-level chrome (drawing coordinates,
   // indicator anchors, the aggregate-marker popovers) — see maskedReplaySignal.
   // Those panels render BAR timestamps and live outside the cell, so they cannot
@@ -4604,6 +4637,7 @@ export default function ChartCore({
       )}
       {replay.state.mode === "active" && (
         <ReplayPill
+          scope={scope}
           state={replay.state}
           readout={replayReadout}
           onStepBack={replay.stepBack}
@@ -4893,28 +4927,6 @@ export default function ChartCore({
           onRepaint={() => handle.redrawRef.current()}
           onCommit={(fraction) => saveInsetBand(scope, fraction)}
         />
-      )}
-
-      <HeatmapControls
-        on={heatmap.on}
-        onToggle={heatmap.setOn}
-        view={heatmap.view}
-        onChange={heatmap.setView}
-        belowBase={heatmap.belowBase}
-      />
-
-      {/* Replay entry. Gated on !period.liveOnly PERMANENTLY, not as a deferral:
-          sub-minute timeframes are built live from the tick stream and have no
-          history to replay. Also gated on !snapView — a read-only snapshot cell is
-          a frozen study copy, not a chart you can play forward. */}
-      {!period.liveOnly && !snapView && replay.state.mode === "off" && (
-        <div className="replay-ctl">
-          <Tooltip content="Bar replay: play the chart forward from a point in the past">
-            <button type="button" className="replay-toggle" onClick={replay.enterPicking}>
-              ⟲ Replay
-            </button>
-          </Tooltip>
-        </div>
       )}
 
       {replay.state.mode === "picking" && (
