@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import PatternMatchesPanel from "./PatternMatchesPanel";
 import type { PatternMatch, PatternSearchResult } from "./lib/patternSearch";
 
@@ -416,5 +416,53 @@ describe("DTW mode", () => {
     fireEvent.focus(screen.getByLabelText("About Distance").parentElement!);
     expect(document.body.textContent).not.toMatch(/warp/i);
     expect(document.body.textContent).toMatch(/exact inversion/);
+  });
+});
+
+describe("Shape mode", () => {
+  it("offers a Shape metric button ahead of the others", () => {
+    const onModeChange = vi.fn();
+    render(
+      <PatternMatchesPanel
+        {...props}
+        onModeChange={onModeChange}
+        result={result()}
+        loading={false}
+        error={null}
+      />,
+    );
+    const group = screen.getByRole("group", { name: "Metric" });
+    const buttons = within(group).getAllByRole("button");
+    expect(buttons[0].textContent).toBe("Shape");
+    fireEvent.click(buttons[0]);
+    expect(onModeChange).toHaveBeenCalledWith("shape");
+  });
+
+  it("marks the Shape button as the active metric when selected", () => {
+    render(
+      <PatternMatchesPanel
+        {...props}
+        mode="shape"
+        result={result()}
+        loading={false}
+        error={null}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "Match the overall price shape" });
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("explains that the overall shape outweighs bar detail", () => {
+    render(
+      <PatternMatchesPanel
+        {...props}
+        mode="shape"
+        result={result()}
+        loading={false}
+        error={null}
+      />,
+    );
+    fireEvent.focus(screen.getByLabelText("About Distance").parentElement!);
+    expect(document.body.textContent).toMatch(/overall shape counts most/i);
   });
 });

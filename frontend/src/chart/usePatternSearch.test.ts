@@ -122,14 +122,14 @@ describe("usePatternSearch", () => {
     expect(hook.current.loading).toBe(false);
   });
 
-  it("defaults to whole candles and a 20-bar aftermath", async () => {
+  it("defaults to shape matching and a 20-bar aftermath", async () => {
     const spy = vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
     const { result: hook } = renderHook(() => usePatternSearch(args));
-    expect(hook.current.mode).toBe("ohlc");
+    expect(hook.current.mode).toBe("shape");
     expect(hook.current.forwardBars).toBe(20);
     act(() => hook.current.run(1_700_000_000_000, 1_700_003_000_000));
     await waitFor(() => expect(spy).toHaveBeenCalled());
-    expect(spy.mock.calls[0][0].mode).toBe("ohlc");
+    expect(spy.mock.calls[0][0].mode).toBe("shape");
     expect(spy.mock.calls[0][0].forwardBars).toBe(20);
   });
 
@@ -141,7 +141,7 @@ describe("usePatternSearch", () => {
     act(() => hook.current.setMode("close"));
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
     // The NEW mode, not the one from before the change: `run` reading it out of
-    // a stale closure would re-search on "ohlc" and still look like a re-run.
+    // a stale closure would re-search on "shape" and still look like a re-run.
     expect(spy.mock.calls[1][0].mode).toBe("close");
     expect(spy.mock.calls[1][0].queryFromTs).toBe(spy.mock.calls[0][0].queryFromTs);
     expect(hook.current.mode).toBe("close");

@@ -342,7 +342,7 @@ def test_the_metric_mode_changes_which_window_is_closest(mode_client):
     exact-close twin first. Comparing the winning TIMESTAMPS, not distances:
     a router that ignored `mode` would return the same window twice."""
     client, (_query_ts, twin_ts, near_ts) = mode_client
-    candles = client.post("/api/patterns/search", json=_body()).json()
+    candles = client.post("/api/patterns/search", json=_body(mode="ohlc")).json()
     closes = client.post("/api/patterns/search", json=_body(mode="close")).json()
     # Rank 1 is the selection itself under either metric, so the metric shows in
     # the best window that is NOT the selection.
@@ -362,8 +362,9 @@ def test_close_mode_still_returns_whole_candles(mode_client):
     assert top["bars"][0]["l"] == pytest.approx(CLOSE_TWIN[0]["l"], abs=1e-6)
 
 
-def test_the_default_mode_is_candles(mode_client):
-    """No `mode` in the body must behave exactly like mode="ohlc"."""
+def test_the_default_mode_is_shape(mode_client):
+    """No `mode` in the body must behave exactly like mode="shape": the
+    perceptual matcher is the default a first-time search gets."""
     client, _ = mode_client
     body = _body()
     body.pop("mode", None)
@@ -371,22 +372,25 @@ def test_the_default_mode_is_candles(mode_client):
         [m["ts"] for m in client.post("/api/patterns/search", json=body).json()["matches"]]
         == [
             m["ts"]
-            for m in client.post("/api/patterns/search", json=_body(mode="ohlc")).json()["matches"]
+            for m in client.post("/api/patterns/search", json=_body(mode="shape")).json()["matches"]
         ]
     )
 
 
 def test_a_selection_flat_in_closes_is_a_400_not_a_500(mode_client):
     """Moving wicks, identical closes: fine in candle mode, no shape at all in
-    close mode. The flatness check runs on the column being scanned."""
+    any close-based mode. The flatness check runs on the column being
+    scanned."""
     client, _ = mode_client
     flat_closes = [
         {"o": 10.0, "h": 10.0 + i, "l": 9.0 - i, "c": 10.0} for i in range(6)
     ]
-    assert client.post("/api/patterns/search", json=_body(query=flat_closes)).status_code == 200
-    r = client.post("/api/patterns/search", json=_body(query=flat_closes, mode="close"))
-    assert r.status_code == 400
-    assert "no price movement" in r.json()["detail"]
+    ok = client.post("/api/patterns/search", json=_body(query=flat_closes, mode="ohlc"))
+    assert ok.status_code == 200
+    for mode in ("close", "shape"):
+        r = client.post("/api/patterns/search", json=_body(query=flat_closes, mode=mode))
+        assert r.status_code == 400
+        assert "no price movement" in r.json()["detail"]
 
 
 def test_an_unknown_mode_is_rejected(client):
@@ -467,3 +471,20 @@ def test_dtw_mode_still_finds_the_planted_repeats(client):
     best = _best_other(data)
     assert best["distance"] < 0.05
     assert len(best["forward"]) == 10
+
+
+# --- shape mode -------------------------------------------------------------
+
+
+def test_shape_mode_scans_the_close_path(mode_client):
+    """Shape mode's whole pipeline runs on close trajectories: the exact-close
+    twin (whose candles look nothing like the query's) must come back first at
+    distance ~0, where candle mode prefers the jittered near-repeat. The
+    perceptual macro-over-texture ordering itself is pinned in
+    test_pattern_shape; this guards the routing and the raw-close refine."""
+    client, (_query_ts, twin_ts, near_ts) = mode_client
+    shape = client.post("/api/patterns/search", json=_body(mode="shape")).json()
+    ohlc = client.post("/api/patterns/search", json=_body(mode="ohlc")).json()
+    assert _best_other(shape)["ts"] == twin_ts
+    assert _best_other(shape)["distance"] == pytest.approx(0.0, abs=1e-6)
+    assert _best_other(ohlc)["ts"] == near_ts

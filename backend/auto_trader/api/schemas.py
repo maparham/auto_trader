@@ -872,12 +872,14 @@ class PatternSearchRequest(BaseModel):
     query_to_ts: int = Field(alias="queryToTs")
     top_k: int = Field(20, alias="topK", ge=1, le=100)
     forward_bars: int = Field(20, alias="forwardBars", ge=0, le=500)
-    # What the distance is measured over: whole candles (open, high, low,
-    # close), the close alone, or whole candles re-ranked by banded dynamic
-    # time warping ("dtw"), which forgives a recurrence that runs fast in one
-    # stretch and slow in another. Not a correctness knob: each ranks real
-    # history differently, and none is the right answer for every question.
-    mode: Literal["ohlc", "close", "dtw"] = "ohlc"
+    # What the distance is measured over: the smoothed close trajectory
+    # re-ranked coarse-to-fine ("shape", the default: closest to what a match
+    # looks like to a person), whole candles (open, high, low, close), the
+    # close alone, or whole candles re-ranked by banded dynamic time warping
+    # ("dtw"), which forgives a recurrence that runs fast in one stretch and
+    # slow in another. Not a correctness knob: each ranks real history
+    # differently, and none is the right answer for every question.
+    mode: Literal["shape", "ohlc", "close", "dtw"] = "shape"
 
     model_config = {"populate_by_name": True}
 

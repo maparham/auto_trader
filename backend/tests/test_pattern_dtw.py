@@ -118,24 +118,25 @@ class TestRefine:
 class TestMatcherRegistry:
     """The mode string picks a matcher; the existing modes wrap unchanged."""
 
-    def test_the_three_modes_are_registered(self):
+    def test_the_four_modes_are_registered(self):
         from auto_trader.core.pattern_matchers import MATCHERS
 
-        assert set(MATCHERS) == {"ohlc", "close", "dtw"}
+        assert set(MATCHERS) == {"shape", "ohlc", "close", "dtw"}
 
-    def test_existing_modes_have_no_refine_stage(self):
+    def test_rigid_modes_have_no_refine_stage(self):
         from auto_trader.core.pattern_matchers import MATCHERS
 
         assert MATCHERS["ohlc"].refine is None
         assert MATCHERS["close"].refine is None
-        assert MATCHERS["ohlc"].close_only is False
-        assert MATCHERS["close"].close_only is True
+        assert MATCHERS["ohlc"].scan == "ohlc"
+        assert MATCHERS["close"].scan == "close"
 
     def test_dtw_refines_full_candles_from_a_deep_candidate_pool(self):
         from auto_trader.core.pattern_matchers import MATCHERS
 
         m = MATCHERS["dtw"]
-        assert m.close_only is False
+        assert m.scan == "ohlc"
+        assert m.refine_on == "scan"
         assert m.refine is refine
         # The panel shows ~20 rows; DTW re-ranks a much deeper pool so a
         # warped recurrence the rigid scan puts at rank 80 can still surface.

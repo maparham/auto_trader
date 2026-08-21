@@ -132,7 +132,8 @@ export default function PatternMatchesPanel(props: Props) {
         {/* Spelled-out aria labels, not the visible word: "Close" alone reads
             identically to the panel's own close button. */}
         <div className="seg pm-seg" role="group" aria-label="Metric">
-          {([["ohlc", "Candles", "Match whole candles"],
+          {([["shape", "Shape", "Match the overall price shape"],
+             ["ohlc", "Candles", "Match whole candles"],
              ["close", "Close", "Match closing prices only"],
              ["dtw", "DTW", "Match with time warping"]] as const).map(
             ([m, label, described]) => (
@@ -226,10 +227,15 @@ export default function PatternMatchesPanel(props: Props) {
                       "0 is an identical shape after the best time warp; near 2 is an inversion.",
                       "Price level, size and uneven tempo are all forgiven, only the shape counts.",
                     ]
-                  : [
-                      "0 is an identical shape, 2 is an exact inversion.",
-                      "Price level and size are ignored, so the same shape matches at any scale.",
-                    ]
+                  : props.mode === "shape"
+                    ? [
+                        "0 is an identical trajectory, 2 is an exact inversion.",
+                        "The overall shape counts most; bar-by-bar detail only breaks ties.",
+                      ]
+                    : [
+                        "0 is an identical shape, 2 is an exact inversion.",
+                        "Price level and size are ignored, so the same shape matches at any scale.",
+                      ]
               }
             />
           </span>

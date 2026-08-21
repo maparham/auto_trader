@@ -12,7 +12,7 @@ import {
 const MIN_BARS = 3;
 const MAX_BARS = 64;
 const TOP_K = 20;
-const DEFAULT_MODE: PatternMode = "ohlc";
+const DEFAULT_MODE: PatternMode = "shape";
 const DEFAULT_FORWARD_BARS = 20;
 
 interface Args {

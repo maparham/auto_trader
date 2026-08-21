@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 
 from auto_trader.core.pattern_matchers import MATCHERS
 from auto_trader.core.pattern_scan import DEFAULT_SCALES, prefix_sums, scan
+from auto_trader.core.pattern_shape import query_kernel, smooth_close
 from auto_trader.core.pattern_series import PATTERN_SERIES, Series
 
 from .. import deps
@@ -54,11 +55,12 @@ async def search_patterns(req: PatternSearchRequest) -> PatternSearchResponse:
     query = np.array([[b.o, b.h, b.l, b.c] for b in req.query], dtype=np.float64)
     if not np.isfinite(query).all():
         raise HTTPException(400, "the selection contains a non-numeric price")
-    # Close mode scans the close column alone, so the flatness check has to run
-    # on the column the scan will actually normalize. A selection with moving
-    # wicks and identical closes passes the OHLC check and is flat in close
-    # mode; checking the whole array here would let it reach zflat and raise.
-    if matcher.close_only:
+    # Every mode but ohlc scans (a transform of) the close column alone, so
+    # the flatness check has to run on the column the scan will actually
+    # normalize. A selection with moving wicks and identical closes passes the
+    # OHLC check and is flat in close mode; checking the whole array here
+    # would let it reach zflat and raise.
+    if matcher.scan != "ohlc":
         query = np.ascontiguousarray(query[:, 3:4])
     if query.std() <= 1e-12:
         raise HTTPException(400, "the selection has no price movement to match on")
@@ -95,22 +97,31 @@ async def search_patterns(req: PatternSearchRequest) -> PatternSearchResponse:
 
     # Scan input only. The cache holds the 4-column centred array and its prefix
     # sums, and `_bars` below still slices its response candles out of
-    # series.ohlc: the close column and its two prefix sums are request-local
-    # and nothing here writes back. Building them costs 13 ms on the largest
-    # series against a 4.5 s cold load, which is not worth threading a second
-    # cached pair through the cache's incremental-extend path.
-    if matcher.close_only:
-        scan_arr = np.ascontiguousarray(series.ohlc[:, 3:4])
-        s1, s2 = prefix_sums(scan_arr)
-    else:
+    # series.ohlc: the close column, its smoothed copy and their prefix sums
+    # are request-local and nothing here writes back. Building them costs tens
+    # of ms on the largest series against a 4.5 s cold load, which is not
+    # worth threading more cached pairs through the cache's incremental-extend
+    # path — and the smoothed array cannot be cached anyway, because its
+    # kernel follows the query's length.
+    if matcher.scan == "ohlc":
         scan_arr, s1, s2 = series.ohlc, series.s1, series.s2
+        scan_query = query
+    else:
+        close_arr = np.ascontiguousarray(series.ohlc[:, 3:4])
+        if matcher.scan == "smooth":
+            kernel = query_kernel(len(query))
+            scan_arr = smooth_close(close_arr, kernel)
+            scan_query = smooth_close(query, kernel)
+        else:
+            scan_arr, scan_query = close_arr, query
+        s1, s2 = prefix_sums(scan_arr)
     hits, candidates = await asyncio.to_thread(
         scan,
         scan_arr,
         s1,
         s2,
         series.ts,
-        query,
+        scan_query,
         # Seconds, matching Series.ts: the bars table stores int(time.timestamp())
         # and the DTO convention is unix seconds. The client knows the selection's
         # span even when it sits in the live tail and has no counterpart in the
@@ -129,7 +140,16 @@ async def search_patterns(req: PatternSearchRequest) -> PatternSearchResponse:
         # Stage two: re-score the survivors with the matcher's own metric and
         # keep only what the caller asked to see. The centred series is fine
         # here: the refine metric z-normalizes, so the removed mean drops out.
-        hits = (await asyncio.to_thread(matcher.refine, scan_arr, query, hits))[: req.top_k]
+        # A refine_on="close" matcher judges the RAW close path even when
+        # stage one scanned a smoothed copy: what surfaces is decided on the
+        # smoothed trajectory, what the user sees is ranked on real candles.
+        if matcher.refine_on == "close":
+            refine_arr, refine_query = close_arr, query
+        else:
+            refine_arr, refine_query = scan_arr, scan_query
+        hits = (await asyncio.to_thread(matcher.refine, refine_arr, refine_query, hits))[
+            : req.top_k
+        ]
 
     matches: list[PatternMatchDTO] = []
     for hit in hits:

@@ -24,12 +24,14 @@ export interface PatternMatch {
   isSelection?: boolean;
 }
 
-/** What the distance is measured over. "ohlc" compares whole candles (body,
- *  wick and colour), "close" only the path of closing prices, and "dtw"
- *  re-ranks whole-candle matches with dynamic time warping, which forgives a
- *  recurrence that runs fast in one stretch and slow in another. None is more
- *  correct: each ranks real history differently. */
-export type PatternMode = "ohlc" | "close" | "dtw";
+/** What the distance is measured over. "shape" (the default) matches the
+ *  smoothed close trajectory and re-ranks coarse-to-fine, so the overall
+ *  shape counts most and bar noise counts least; "ohlc" compares whole
+ *  candles (body, wick and colour), "close" the raw path of closing prices,
+ *  and "dtw" re-ranks whole-candle matches with dynamic time warping, which
+ *  forgives a recurrence that runs fast in one stretch and slow in another.
+ *  None is more correct: each ranks real history differently. */
+export type PatternMode = "shape" | "ohlc" | "close" | "dtw";
 
 export interface PatternSearchRequest {
   epic: string;
