@@ -133,7 +133,8 @@ export default function PatternMatchesPanel(props: Props) {
             identically to the panel's own close button. */}
         <div className="seg pm-seg" role="group" aria-label="Metric">
           {([["ohlc", "Candles", "Match whole candles"],
-             ["close", "Close", "Match closing prices only"]] as const).map(
+             ["close", "Close", "Match closing prices only"],
+             ["dtw", "DTW", "Match with time warping"]] as const).map(
             ([m, label, described]) => (
               <button
                 key={m}
@@ -153,6 +154,7 @@ export default function PatternMatchesPanel(props: Props) {
           text={[
             "Candles matches body, wick and colour, so the shape of each bar counts.",
             "Close matches only the path of closing prices, ignoring the wicks.",
+            "DTW lets time flex, so a pattern that ran fast early and slow late still matches.",
           ]}
         />
         <label className="pm-horizon">
@@ -218,10 +220,17 @@ export default function PatternMatchesPanel(props: Props) {
             <SortHeader label="Dist" col="dist" sort={sort} onSort={onSort} />
             <InfoTip
               title="Distance"
-              text={[
-                "0 is an identical shape, 2 is an exact inversion.",
-                "Price level and size are ignored, so the same shape matches at any scale.",
-              ]}
+              text={
+                props.mode === "dtw"
+                  ? [
+                      "0 is an identical shape after the best time warp; near 2 is an inversion.",
+                      "Price level, size and uneven tempo are all forgiven, only the shape counts.",
+                    ]
+                  : [
+                      "0 is an identical shape, 2 is an exact inversion.",
+                      "Price level and size are ignored, so the same shape matches at any scale.",
+                    ]
+              }
             />
           </span>
           <span>Shape</span>
@@ -269,6 +278,9 @@ export default function PatternMatchesPanel(props: Props) {
                     shift every other row's alignment. */}
                 <span className="pm-when">
                   {stamp(m.ts, timezone)}
+                  {/* Scales make lengths differ per row, so each row says how
+                      many bars its window covers. */}
+                  <span className="pm-len">{m.bars.length} bars</span>
                   {m.isSelection && (
                     <Tooltip content="The window you dragged. It is ranked like every other window, so seeing it here at a distance near 0 is the check that the matching works.">
                       <span className="pm-self-flag">your selection</span>

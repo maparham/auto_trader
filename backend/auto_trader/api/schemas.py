@@ -872,11 +872,12 @@ class PatternSearchRequest(BaseModel):
     query_to_ts: int = Field(alias="queryToTs")
     top_k: int = Field(20, alias="topK", ge=1, le=100)
     forward_bars: int = Field(20, alias="forwardBars", ge=0, le=500)
-    # What the distance is measured over: whole candles (open, high, low, close)
-    # or the close alone. Not a correctness knob: the two rank real history
-    # differently enough that the top 20 overlap by about half, and neither is
-    # the right answer for every question.
-    mode: Literal["ohlc", "close"] = "ohlc"
+    # What the distance is measured over: whole candles (open, high, low,
+    # close), the close alone, or whole candles re-ranked by banded dynamic
+    # time warping ("dtw"), which forgives a recurrence that runs fast in one
+    # stretch and slow in another. Not a correctness knob: each ranks real
+    # history differently, and none is the right answer for every question.
+    mode: Literal["ohlc", "close", "dtw"] = "ohlc"
 
     model_config = {"populate_by_name": True}
 

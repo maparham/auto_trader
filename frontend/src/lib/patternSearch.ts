@@ -25,9 +25,11 @@ export interface PatternMatch {
 }
 
 /** What the distance is measured over. "ohlc" compares whole candles (body,
- *  wick and colour), "close" only the path of closing prices. Neither is more
- *  correct: on real data the two top-20 sets overlap by about half. */
-export type PatternMode = "ohlc" | "close";
+ *  wick and colour), "close" only the path of closing prices, and "dtw"
+ *  re-ranks whole-candle matches with dynamic time warping, which forgives a
+ *  recurrence that runs fast in one stretch and slow in another. None is more
+ *  correct: each ranks real history differently. */
+export type PatternMode = "ohlc" | "close" | "dtw";
 
 export interface PatternSearchRequest {
   epic: string;

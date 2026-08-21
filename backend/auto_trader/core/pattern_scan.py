@@ -129,13 +129,32 @@ _SPAN_FACTOR = 3.0
 
 @dataclass(frozen=True)
 class Match:
-    """One accepted window: where it starts, how close it is, and how many bars
+    """One accepted window: where it starts, how many bars it covers (the query
+    length times whichever scale won there), how close it is, and how many bars
     of aftermath were available (which can be fewer than requested near the
     right edge)."""
 
     start: int
+    length: int
     distance: float
     forward_len: int
+
+
+# The time-scale ladder the endpoint searches: the same shape often recurs
+# compressed or stretched in time, and a fixed-length window scores such a
+# recurrence as noise (an OIL_CRUDE pattern at 0.6x the duration measured 1.19
+# against 0.59 once rescaled). Geometric with ratio ~2^(1/3), so neighbouring
+# rungs are close enough that a true match between them still scores well.
+DEFAULT_SCALES: tuple[float, ...] = (0.5, 0.63, 0.79, 1.0, 1.26, 1.59, 2.0)
+
+
+def stretch(query: np.ndarray, m: int) -> np.ndarray:
+    """Resample an (n, C) query onto m bars, per column, linearly. Linear is
+    enough: the metric z-normalizes, so only the path's shape matters."""
+    q = np.asarray(query, dtype=np.float64)
+    xi = np.linspace(0.0, len(q) - 1.0, m)
+    xp = np.arange(len(q), dtype=np.float64)
+    return np.stack([np.interp(xi, xp, q[:, k]) for k in range(q.shape[1])], axis=1)
 
 
 def scan(
@@ -148,45 +167,74 @@ def scan(
     query_span: float,
     top_k: int,
     forward_bars: int,
+    scales: tuple[float, ...] = (1.0,),
 ) -> tuple[list[Match], int]:
-    """Rank every window against `query` and return the best `top_k`, separated,
-    with the number of candidate offsets that survived the filters.
+    """Rank every window against `query` — at every length in `scales` times the
+    query's own — and return the best `top_k`, separated, with the number of
+    candidate offsets that survived the filters (summed across scales).
 
     Rules, in order: drop windows with no defined shape, drop windows that
-    straddle a gap the query does not, then take minima greedily, blanking a
-    query-length neighbourhood around each. `query_span` is the selection's own
+    straddle a gap the query does not, then take minima greedily across all
+    scales at once, blanking everything that overlaps each pick so one event
+    comes back once, at its best scale. `query_span` is the selection's own
     wall-clock span in seconds, supplied by the caller: a live-tail selection
     has no counterpart in the stored series to measure it from.
 
     The selection's own window is NOT removed. It comes back at distance ~0,
     which is the plainest evidence available that the matcher is working, and
-    the greedy neighbourhood blanking below is what keeps the list free of the
-    query shifted by a bar or two: it blanks exactly the range the old
-    exclusion did."""
-    m = len(query)
-    d = window_distances(ohlc, s1, s2, query)
-
-    # Rule 1 is already applied: window_distances returns inf for a flat window.
-
-    # Rule 2: span. One-directional on purpose — a candidate tighter than the
-    # query is never the problem, and rejecting those too would leave a
-    # weekend-straddling query matching only other weekend-straddlers.
-    if query_span > 0:
-        spans = ts[m - 1 :] - ts[: len(ts) - m + 1]
-        d[spans > query_span * _SPAN_FACTOR] = np.inf
-
-    # Rule 3: greedy, blanking a query-length neighbourhood around each pick so
-    # the list is distinct events rather than one event shifted by a bar.
+    the greedy overlap blanking below is what keeps the list free of the
+    query shifted by a bar or two: for a single scale it blanks exactly the
+    range the old exclusion did."""
+    m0 = len(query)
     n = len(ohlc)
-    # Counted here: after the three filters, before the greedy pass starts
-    # blanking neighbourhoods. This is what the endpoint reports as `scanned`.
-    candidates = int(np.isfinite(d).sum())
+
+    # One distance array per usable scale. A rescaled rung below 8 bars is
+    # dropped: with so few z-normed values, near-perfect scores are spurious
+    # and would crowd out real matches. The query's OWN length is exempt — a
+    # short selection still scans at scale 1, as it always did. A scale that
+    # stretches past the series contributes nothing rather than raising.
+    lengths: list[int] = []
+    dists: list[np.ndarray] = []
+    for f in scales:
+        m = int(round(m0 * f))
+        if (m < 8 and m != m0) or m < 3 or m > n or m in lengths:
+            continue
+        q = query if m == m0 else stretch(query, m)
+        d = window_distances(ohlc, s1, s2, q)
+
+        # Rule 1 is already applied: window_distances returns inf for a flat
+        # window.
+
+        # Rule 2: span, scaled to this rung's bar count. One-directional on
+        # purpose — a candidate tighter than the query is never the problem,
+        # and rejecting those too would leave a weekend-straddling query
+        # matching only other weekend-straddlers.
+        if query_span > 0:
+            spans = ts[m - 1 :] - ts[: len(ts) - m + 1]
+            d[spans > query_span * (m / m0) * _SPAN_FACTOR] = np.inf
+        lengths.append(m)
+        dists.append(d)
+
+    # Counted here: after the filters, before the greedy pass starts blanking.
+    # This is what the endpoint reports as `scanned`.
+    candidates = int(sum(np.isfinite(d).sum() for d in dists))
+
+    # Rule 3: greedy over all scales at once, blanking every window (at every
+    # scale) that overlaps the pick, so the list is distinct events rather
+    # than one event shifted by a bar or found again a rung away.
     out: list[Match] = []
     for _ in range(top_k):
-        i = int(np.argmin(d))
-        if not np.isfinite(d[i]):
+        k = min(range(len(dists)), key=lambda j: dists[j].min(), default=-1)
+        if k < 0:
             break
+        i = int(np.argmin(dists[k]))
+        if not np.isfinite(dists[k][i]):
+            break
+        m = lengths[k]
         forward_len = min(forward_bars, n - (i + m))
-        out.append(Match(start=i, distance=float(d[i]), forward_len=max(0, forward_len)))
-        d[max(0, i - m + 1) : i + m] = np.inf
+        out.append(
+            Match(start=i, length=m, distance=float(dists[k][i]), forward_len=max(0, forward_len))
+        )
+        for mk, d in zip(lengths, dists):
+            d[max(0, i - mk + 1) : i + m] = np.inf
     return out, candidates

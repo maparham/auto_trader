@@ -48,6 +48,29 @@ const props = {
 afterEach(cleanup);
 
 describe("PatternMatchesPanel", () => {
+  it("tags every row with its own bar count, since scales make lengths differ", () => {
+    const three = match({
+      ts: 1_700_005_000,
+      endTs: 1_700_005_600,
+      bars: [
+        bar(1_700_005_000, 10, 12, 9, 11),
+        bar(1_700_005_300, 11, 13, 10, 12),
+        bar(1_700_005_600, 12, 13, 11, 12.5),
+      ],
+    });
+    render(
+      <PatternMatchesPanel
+        {...props}
+        result={result({ matches: [match(), three] })}
+        loading={false}
+        error={null}
+      />,
+    );
+    expect(screen.getByText("2 bars")).toBeTruthy();
+    expect(screen.getByText("3 bars")).toBeTruthy();
+  });
+
+
   it("states what was searched, so a thin source is visible", () => {
     render(<PatternMatchesPanel {...props} result={result()} loading={false} error={null} />);
     expect(screen.getByText(/412,040 bars/)).toBeTruthy();
@@ -337,5 +360,61 @@ describe("PatternMatchesPanel sorting", () => {
 
     fireEvent.click(outcomeHead());
     expect(outcomeHead().getAttribute("aria-sort")).toBe("ascending");
+  });
+});
+
+describe("DTW mode", () => {
+  it("offers a DTW metric button beside Candles and Close", () => {
+    const onModeChange = vi.fn();
+    render(
+      <PatternMatchesPanel
+        {...props}
+        onModeChange={onModeChange}
+        result={result()}
+        loading={false}
+        error={null}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "Match with time warping" });
+    expect(btn.textContent).toBe("DTW");
+    fireEvent.click(btn);
+    expect(onModeChange).toHaveBeenCalledWith("dtw");
+  });
+
+  it("marks the DTW button as the active metric when selected", () => {
+    render(
+      <PatternMatchesPanel
+        {...props}
+        mode="dtw"
+        result={result()}
+        loading={false}
+        error={null}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "Match with time warping" });
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("explains the distance differently in DTW mode", () => {
+    render(
+      <PatternMatchesPanel
+        {...props}
+        mode="dtw"
+        result={result()}
+        loading={false}
+        error={null}
+      />,
+    );
+    fireEvent.focus(screen.getByLabelText("About Distance").parentElement!);
+    expect(document.body.textContent).toMatch(/warp/i);
+  });
+
+  it("keeps the rigid distance wording in the other modes", () => {
+    render(
+      <PatternMatchesPanel {...props} result={result()} loading={false} error={null} />,
+    );
+    fireEvent.focus(screen.getByLabelText("About Distance").parentElement!);
+    expect(document.body.textContent).not.toMatch(/warp/i);
+    expect(document.body.textContent).toMatch(/exact inversion/);
   });
 });

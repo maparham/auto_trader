@@ -399,3 +399,121 @@ def test_ghost_parity_fixture() -> None:
         k = i + 2  # the fixture starts at a 2-bar prefix: one bar is not a shape
         d = np.linalg.norm(zflat(query[:k]) - zflat(window[:k])) / np.sqrt(4 * k)
         assert d == pytest.approx(expected, abs=1e-9)
+
+
+# ---------------------------------------------------------------- multi-scale
+
+
+def _wiggle(m: int = 12, seed: int = 5) -> np.ndarray:
+    """A 12-bar shape with real structure: a sine leg with noise, as OHLC."""
+    rng = np.random.default_rng(seed)
+    c = 20 + 3 * np.sin(np.linspace(0, 2.5 * np.pi, m)) + rng.normal(0, 0.15, m)
+    o = np.concatenate([[c[0]], c[:-1]])
+    h = np.maximum(o, c) + 0.3
+    l = np.minimum(o, c) - 0.3
+    return np.stack([o, h, l, c], axis=1)
+
+
+def _compress(win: np.ndarray, m: int) -> np.ndarray:
+    """The obviously-correct reference resample: per-column linear interp."""
+    xi = np.linspace(0, len(win) - 1, m)
+    return np.stack([np.interp(xi, np.arange(len(win)), win[:, k]) for k in range(4)], axis=1)
+
+
+def _scaled_series(seed: int = 7) -> tuple[np.ndarray, np.ndarray, int]:
+    """The wiggle at index 0 full length, and compressed to 8 bars at `where`."""
+    rng = np.random.default_rng(seed)
+    motif = _wiggle()
+    small = _compress(motif, 8)
+    filler = lambda n: rng.normal(30, 2, (n, 4))  # noqa: E731
+    ohlc = np.concatenate([motif, filler(48), small, filler(48)])
+    ts = np.arange(len(ohlc), dtype=np.int64) * 60
+    where = len(motif) + 48
+    return ohlc, ts, where
+
+
+def test_matches_carry_their_own_window_length():
+    ohlc, ts = _motif_series(reps=3, gap=40)
+    centred, s1, s2 = _prep(ohlc)
+    hits, _ = scan(centred, s1, s2, ts, ohlc[0:6], query_span=300.0, top_k=3, forward_bars=5)
+    assert all(h.length == 6 for h in hits)
+
+
+def test_scales_find_a_time_compressed_recurrence():
+    """The same shape squeezed into 8 bars instead of 12. At the query's own
+    length it is nowhere near the top (which is the bug this exists to fix);
+    with scales it comes back as a near-exact hit at its own length."""
+    ohlc, ts, where = _scaled_series()
+    centred, s1, s2 = _prep(ohlc)
+    query = ohlc[0:12]
+
+    flat, _ = scan(centred, s1, s2, ts, query, query_span=660.0, top_k=10, forward_bars=0)
+    assert not any(h.start == where and h.distance < 0.2 for h in flat)
+
+    hits, _ = scan(
+        centred, s1, s2, ts, query,
+        query_span=660.0, top_k=10, forward_bars=0,
+        scales=(0.5, 8 / 12, 1.0),
+    )
+    hit = next(h for h in hits if h.start == where)
+    assert hit.length == 8
+    assert hit.distance == pytest.approx(0.0, abs=1e-5)
+
+
+def test_hits_from_different_scales_never_overlap():
+    """One event must come back once, at its best scale, not once per scale."""
+    ohlc, ts, _ = _scaled_series()
+    centred, s1, s2 = _prep(ohlc)
+    hits, _ = scan(
+        centred, s1, s2, ts, ohlc[0:12],
+        query_span=660.0, top_k=30, forward_bars=0,
+        scales=(0.5, 8 / 12, 1.0, 1.5),
+    )
+    spans = sorted((h.start, h.start + h.length) for h in hits)
+    assert all(b0 >= a1 for (_, a1), (b0, _) in zip(spans, spans[1:])), spans
+
+
+def test_degenerate_scales_are_skipped_not_fatal():
+    """A scale that stretches past the series (or collapses the query to fewer
+    than 3 bars) contributes nothing rather than raising."""
+    ohlc, ts, where = _scaled_series()
+    centred, s1, s2 = _prep(ohlc)
+    hits, _ = scan(
+        centred, s1, s2, ts, ohlc[0:12],
+        query_span=660.0, top_k=5, forward_bars=0,
+        scales=(0.1, 1.0, 50.0),
+    )
+    assert hits[0].start == 0 and hits[0].distance == pytest.approx(0.0, abs=1e-5)
+
+
+def test_rungs_below_eight_bars_are_not_scanned():
+    """A 3-to-7-bar window has so few z-normed values that near-perfect scores
+    are spurious; they would crowd out real matches. The query's OWN length is
+    exempt: a short selection still scans at scale 1."""
+    ohlc, ts, where = _scaled_series()
+    centred, s1, s2 = _prep(ohlc)
+    hits, _ = scan(
+        centred, s1, s2, ts, ohlc[0:12],
+        query_span=660.0, top_k=30, forward_bars=0, scales=(0.5, 1.0),
+    )
+    assert all(h.length != 6 for h in hits)
+
+    short = ohlc[0:6]
+    hits, _ = scan(
+        centred, s1, s2, ts, short,
+        query_span=300.0, top_k=3, forward_bars=0, scales=(0.5, 1.0),
+    )
+    assert hits[0].start == 0 and hits[0].length == 6
+
+
+def test_scanned_counts_windows_across_all_scales():
+    ohlc, ts, _ = _scaled_series()
+    centred, s1, s2 = _prep(ohlc)
+    _, one = scan(centred, s1, s2, ts, ohlc[0:12], query_span=660.0, top_k=1, forward_bars=0)
+    _, both = scan(
+        centred, s1, s2, ts, ohlc[0:12],
+        query_span=660.0, top_k=1, forward_bars=0, scales=(8 / 12, 1.0),
+    )
+    n = len(ohlc)
+    assert one == n - 12 + 1
+    assert both == (n - 12 + 1) + (n - 8 + 1)

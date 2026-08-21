@@ -14,7 +14,8 @@ import time
 import numpy as np
 from fastapi import APIRouter, HTTPException
 
-from auto_trader.core.pattern_scan import prefix_sums, scan
+from auto_trader.core.pattern_matchers import MATCHERS
+from auto_trader.core.pattern_scan import DEFAULT_SCALES, prefix_sums, scan
 from auto_trader.core.pattern_series import PATTERN_SERIES, Series
 
 from .. import deps
@@ -48,6 +49,7 @@ async def search_patterns(req: PatternSearchRequest) -> PatternSearchResponse:
     # only when the client named none — asking the registry unconditionally
     # would make the route depend on a live broker registry it has no use for.
     broker = req.broker or deps.default_broker_id()
+    matcher = MATCHERS[req.mode]
 
     query = np.array([[b.o, b.h, b.l, b.c] for b in req.query], dtype=np.float64)
     if not np.isfinite(query).all():
@@ -56,7 +58,7 @@ async def search_patterns(req: PatternSearchRequest) -> PatternSearchResponse:
     # on the column the scan will actually normalize. A selection with moving
     # wicks and identical closes passes the OHLC check and is flat in close
     # mode; checking the whole array here would let it reach zflat and raise.
-    if req.mode == "close":
+    if matcher.close_only:
         query = np.ascontiguousarray(query[:, 3:4])
     if query.std() <= 1e-12:
         raise HTTPException(400, "the selection has no price movement to match on")
@@ -97,7 +99,7 @@ async def search_patterns(req: PatternSearchRequest) -> PatternSearchResponse:
     # and nothing here writes back. Building them costs 13 ms on the largest
     # series against a 4.5 s cold load, which is not worth threading a second
     # cached pair through the cache's incremental-extend path.
-    if req.mode == "close":
+    if matcher.close_only:
         scan_arr = np.ascontiguousarray(series.ohlc[:, 3:4])
         s1, s2 = prefix_sums(scan_arr)
     else:
@@ -114,14 +116,27 @@ async def search_patterns(req: PatternSearchRequest) -> PatternSearchResponse:
         # span even when it sits in the live tail and has no counterpart in the
         # stored series to measure it from.
         query_span=float(req.query_to_ts - req.query_from_ts),
-        top_k=req.top_k,
+        # A refining matcher re-ranks a pool much deeper than the panel
+        # shows, so a warped recurrence the rigid scan puts at rank 80 can
+        # still surface in the visible top rows.
+        top_k=max(req.top_k, matcher.candidate_pool),
         forward_bars=req.forward_bars,
+        # The same shape recurring faster or slower than the selection: scan a
+        # ladder of window lengths, not just the selection's own.
+        scales=DEFAULT_SCALES,
     )
+    if matcher.refine is not None:
+        # Stage two: re-score the survivors with the matcher's own metric and
+        # keep only what the caller asked to see. The centred series is fine
+        # here: the refine metric z-normalizes, so the removed mean drops out.
+        hits = (await asyncio.to_thread(matcher.refine, scan_arr, query, hits))[: req.top_k]
 
     matches: list[PatternMatchDTO] = []
     for hit in hits:
-        bars = _bars(series, hit.start, m, offset)
-        forward = _bars(series, hit.start + m, hit.forward_len, offset)
+        # hit.length, not len(req.query): a hit found on another rung of the
+        # scale ladder covers its own number of bars.
+        bars = _bars(series, hit.start, hit.length, offset)
+        forward = _bars(series, hit.start + hit.length, hit.forward_len, offset)
         pct = None
         # `!= 0`, not a truthiness test: the guard exists because a zero close
         # makes the percentage undefined, and only because of that. A falsy

@@ -117,10 +117,12 @@ def test_finds_the_repeats_and_reports_the_scanned_series(client):
     assert data["series"]["bars"] == 138
     assert data["series"]["oldestTs"] == 1_700_000_000
     # Candidate OFFSETS that survived the filters, not the number of matches
-    # returned: 138 bars give 133 windows of 6, all of them ranked. Nothing here
-    # is flat, and every window spans exactly the query's 1500s, so no rule
-    # bites and the selection's own window is ranked with the rest.
-    assert data["scanned"] == 133
+    # returned, summed over the scale ladder: the 6-bar query scans at its own
+    # length plus the 8-, 10- and 12-bar rungs (rescaled rungs under 8 bars are
+    # dropped as spurious), so 138 bars give 133+131+129+127 windows. Nothing
+    # here is flat, and every window is as tight as the query at its rung, so
+    # no rule bites and the selection's own window is ranked with the rest.
+    assert data["scanned"] == 133 + 131 + 129 + 127
     assert data["elapsedMs"] >= 0
     assert data["cold"] is True
 
@@ -406,3 +408,62 @@ def test_a_zero_horizon_measures_nothing(client):
     top = client.post("/api/patterns/search", json=_body(forwardBars=0)).json()["matches"][0]
     assert top["forward"] == []
     assert top["forwardPct"] is None
+
+
+def test_a_time_rescaled_recurrence_is_found_at_its_own_length(tmp_path, monkeypatch):
+    """The series holds the motif stretched over 8 bars as well as the exact
+    6-bar copies. The scan runs a scale ladder, so the stretched copy comes
+    back as a match whose bars are ITS 8 bars, not a 6-bar slice of them."""
+    import sqlite3
+
+    path = tmp_path / "c.db"
+    ts_axis = _make_db(path)
+
+    # Append the 8-bar stretched motif (linear resample) after the last bar.
+    xi = np.linspace(0, len(MOTIF) - 1, 8)
+    xp = np.arange(len(MOTIF), dtype=float)
+    cols = {k: np.interp(xi, xp, [b[k] for b in MOTIF]) for k in "ohlc"}
+    con = sqlite3.connect(path)
+    t0 = ts_axis[-1]
+    big_ts = [t0 + (i + 1) * 300 for i in range(8)]
+    con.executemany(
+        "INSERT INTO bars VALUES ('capital','US100','MINUTE_5','bid',?,?,?,?,?,0)",
+        [
+            (big_ts[i], cols["o"][i], cols["h"][i], cols["l"][i], cols["c"][i])
+            for i in range(8)
+        ],
+    )
+    con.execute("UPDATE coverage SET newest_ts=?", (big_ts[-1],))
+    con.commit()
+    con.close()
+
+    monkeypatch.setattr(patterns_router, "PATTERN_SERIES", PatternSeriesCache(str(path)))
+    client = TestClient(app)
+    data = client.post("/api/patterns/search", json=_body(topK=10)).json()
+
+    big = next(m for m in data["matches"] if m["ts"] == big_ts[0])
+    assert len(big["bars"]) == 8
+    assert big["endTs"] == big_ts[-1]
+    assert big["distance"] < 0.1
+
+
+def test_dtw_mode_returns_the_selection_first_at_zero(client):
+    r = client.post("/api/patterns/search", json=_body(mode="dtw"))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["matches"], "dtw mode returned nothing"
+    top = data["matches"][0]
+    assert top["isSelection"] is True
+    assert top["distance"] < 1e-6
+    dists = [m["distance"] for m in data["matches"]]
+    assert dists == sorted(dists)
+    # The deep candidate pool is internal: the response still honours topK.
+    assert len(data["matches"]) <= 5
+
+
+def test_dtw_mode_still_finds_the_planted_repeats(client):
+    r = client.post("/api/patterns/search", json=_body(mode="dtw"))
+    data = r.json()
+    best = _best_other(data)
+    assert best["distance"] < 0.05
+    assert len(best["forward"]) == 10

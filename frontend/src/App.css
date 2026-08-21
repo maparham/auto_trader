@@ -2760,13 +2760,15 @@
    settings — same shape as the snapshot split beside it. */
 .toolbar .heatmap-split { display: flex; gap: 0; align-items: stretch; position: relative; }
 /* Trimmed right padding so the caret sits beside the word rather than floating
-   away from it — the pair should read as one control. */
-.toolbar .heatmap-toggle { border-radius: 6px 0 0 6px; padding-right: 4px; }
+   away from it — the pair should read as one control, like the Template menu
+   button. .anchor-btn in the selectors: `.toolbar .anchor-btn` is defined later
+   with equal specificity, so without it these paddings lose the cascade. */
+.toolbar .anchor-btn.heatmap-toggle { border-radius: 6px 0 0 6px; padding-right: 4px; }
 /* ON is a filled pill: the heatmap repaints the whole candle pane, so the
    control that did it should be unmistakable at a glance. */
 .toolbar .heatmap-toggle.seg-on { background: var(--accent); color: var(--accent-text); }
 .toolbar .heatmap-toggle.seg-on:hover:not(:disabled) { background: var(--accent); }
-.toolbar .heatmap-caret {
+.toolbar .anchor-btn.heatmap-caret {
   border-radius: 0 6px 6px 0; padding: 5px 3px;
   display: inline-flex; align-items: center;
 }
@@ -6048,6 +6050,9 @@ span.bt-leg-short { color: var(--neg); }
 .pm-partial { font-style: normal; color: var(--text-dim); }
 .pm-far-flag, .pm-self-flag { margin-left: 6px; font-size: 11px; color: var(--text-dim);
   border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+/* Bar count per row: plain muted text, not a bordered flag, since it is on
+   every row (the scale ladder makes window lengths differ between rows). */
+.pm-len { margin-left: 6px; font-size: 11px; color: var(--text-dim); white-space: nowrap; }
 .pm-preview { width: 88px; height: 26px; }
 .pm-preview .pm-up rect, .pm-preview .pm-up line { fill: var(--pos); stroke: var(--pos); }
 .pm-preview .pm-down rect, .pm-preview .pm-down line { fill: var(--neg); stroke: var(--neg); }
