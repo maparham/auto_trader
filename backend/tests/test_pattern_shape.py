@@ -109,3 +109,66 @@ class TestRefine:
         assert by_start[50].forward_len == 3
         assert by_start[200].forward_len == 7
         assert by_start[50].distance < by_start[200].distance
+
+
+class TestActivityProfile:
+    """The auxiliary term of shape refinement: WHERE structure lives along the
+    path, on a scale the amplitude hierarchy cannot squash."""
+
+    def _top_lead(self, rng, wiggle=2.0, noise=0.5):
+        n = 64
+        t = np.linspace(0, 1, n)
+        main = np.where(t < 0.35, 1.0, np.where(t < 0.55, 1 - (t - 0.35) / 0.2 * 0.9,
+                                                0.1 + (t - 0.55) / 0.45 * 0.5)) * 30
+        lead = np.where(t < 0.35, np.sin(t * 40) * wiggle, 0.0)
+        return main + lead + rng.normal(0, noise, n)
+
+    def test_flat_lead_scores_far_from_structured_lead(self):
+        from auto_trader.core.pattern_shape import activity_distance
+
+        rng = np.random.default_rng(1)
+        q = self._top_lead(rng)
+        structured = self._top_lead(rng)
+        flat = self._top_lead(rng, wiggle=0.0, noise=0.15)
+        assert activity_distance(q, structured) < 0.35
+        assert activity_distance(q, flat) > 0.5
+
+    def test_uniform_stretch_stays_well_inside_the_match_band(self):
+        # Not exactly zero: resampling smooths the noise floor non-uniformly
+        # and the kernel width steps with length. The property that matters is
+        # that a stretched copy stays far below the flat-lead separation.
+        from auto_trader.core.pattern_shape import activity_distance
+
+        q = self._top_lead(np.random.default_rng(2))
+        for m in (81, 101, 128):
+            stretched = np.interp(np.linspace(0, 63, m), np.arange(64), q)
+            assert activity_distance(q, stretched) < 0.35
+
+    def test_overall_noise_level_drops_out(self):
+        # Mean-centring: a uniformly noisier texture shifts every segment's
+        # activity together and must not read as a different structure.
+        from auto_trader.core.pattern_shape import activity_distance
+
+        rng = np.random.default_rng(3)
+        q = self._top_lead(rng, noise=0.5)
+        noisy = self._top_lead(rng, noise=1.2)
+        flat = self._top_lead(rng, wiggle=0.0, noise=0.15)
+        assert activity_distance(q, noisy) < activity_distance(q, flat)
+
+    def test_refine_prefers_structured_lead_over_flat(self):
+        # The end-to-end property the term ships for: same dominant move, one
+        # candidate with the query's structured lead, one dead flat — the
+        # structured one must win the re-rank.
+        from auto_trader.core.pattern_shape import refine
+
+        rng = np.random.default_rng(4)
+        q = self._top_lead(rng)
+        structured = self._top_lead(rng)
+        flat = self._top_lead(rng, wiggle=0.0, noise=0.15)
+        series = np.concatenate([np.full(10, q[0]), structured, np.full(10, q[0]), flat]).reshape(-1, 1)
+        hits = [
+            Match(start=10 + 64 + 10, length=64, distance=0.1, forward_len=0),  # flat first
+            Match(start=10, length=64, distance=0.2, forward_len=0),
+        ]
+        out = refine(series, q.reshape(-1, 1), hits)
+        assert out[0].start == 10  # structured lead wins

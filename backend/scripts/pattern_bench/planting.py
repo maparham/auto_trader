@@ -36,6 +36,13 @@ ARCHETYPES: dict[str, tuple[tuple[float, float], ...]] = {
     "inv-double-top": ((0.0, 1.0), (0.25, 0.0), (0.5, 0.45), (0.75, 0.03), (1.0, 0.85)),
     "choppy-up": ((0.0, 0.0), (0.1, 0.28), (0.2, 0.06), (0.33, 0.52), (0.44, 0.22),
                   (0.58, 0.72), (0.72, 0.42), (0.85, 0.88), (1.0, 1.0)),
+    # A structured low-amplitude lead (rounded top, ~8% of the range) before a
+    # big decline and recovery — the amplitude-hierarchy case: after global
+    # normalization the lead is numerically near-flat, and the metric must
+    # still prefer a structured lead over a dead-flat one.
+    "top-lead-v": ((0.0, 0.92), (0.07, 1.0), (0.14, 0.94), (0.21, 1.0), (0.28, 0.95),
+                   (0.35, 0.97), (0.55, 0.05), (0.75, 0.12), (1.0, 0.55)),
+    "flat-lead-v": ((0.0, 0.965), (0.35, 0.965), (0.55, 0.05), (0.75, 0.12), (1.0, 0.55)),
 }
 
 

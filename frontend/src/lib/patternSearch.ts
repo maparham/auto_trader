@@ -78,6 +78,28 @@ export function barsInRange(bars: PatternBar[], fromMs: number, toMs: number): P
 
 const VIEW_H = 100;
 const MIN_BODY = 0.75;
+/** Above this many candles a preview aggregates neighbours into one candle
+ *  (first open, last close, extreme high/low): with the query cap at 1024, an
+ *  unaggregated row would put thousands of sub-pixel rects in a 100-unit-wide
+ *  SVG, and twenty rows of that stalls the panel. Aggregation is display-only
+ *  and OHLC-faithful, the same reduction a coarser timeframe performs. */
+const PREVIEW_MAX_CANDLES = 160;
+
+function aggregate(bars: PatternBar[], groupSize: number): PatternBar[] {
+  if (groupSize <= 1) return bars;
+  const out: PatternBar[] = [];
+  for (let i = 0; i < bars.length; i += groupSize) {
+    const g = bars.slice(i, i + groupSize);
+    out.push({
+      ts: g[0].ts,
+      o: g[0].o,
+      c: g[g.length - 1].c,
+      h: Math.max(...g.map((b) => b.h)),
+      l: Math.min(...g.map((b) => b.l)),
+    });
+  }
+  return out;
+}
 
 /** Lay a match and its aftermath out in a 0..100 box for the row preview.
  *  Both halves share one price scale: the whole point of the preview is the
@@ -91,7 +113,11 @@ export function previewGeometry(match: PatternMatch): {
   }[];
   dividerX: number;
 } {
-  const all = [...match.bars, ...match.forward];
+  // One group size for both halves, so the divider stays at the true join.
+  const groupSize = Math.ceil((match.bars.length + match.forward.length) / PREVIEW_MAX_CANDLES);
+  const bars = aggregate(match.bars, groupSize);
+  const forward = aggregate(match.forward, groupSize);
+  const all = [...bars, ...forward];
   const n = all.length || 1;
   const hi = Math.max(...all.map((b) => b.h));
   const lo = Math.min(...all.map((b) => b.l));
@@ -112,10 +138,10 @@ export function previewGeometry(match: PatternMatch): {
       wickTop: y(b.h),
       wickH: y(b.l) - y(b.h),
       up,
-      forward: i >= match.bars.length,
+      forward: i >= bars.length,
     };
   });
-  return { candles, dividerX: match.bars.length * step };
+  return { candles, dividerX: bars.length * step };
 }
 
 export function formatForwardPct(pct: number | null): string {

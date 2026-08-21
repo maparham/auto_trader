@@ -30,6 +30,11 @@ class Variant:
     multires: bool = False
     swing: bool = False
     dtw: bool = False
+    # Weight of the local-activity profile term (0 = off): penalizes windows
+    # whose movement lives in different places than the query's (a flat lead
+    # against a structured one), which the amplitude-normalized shape
+    # distance cannot see.
+    activity: float = 0.0
 
 
 VARIANTS: dict[str, Variant] = {
@@ -51,13 +56,19 @@ VARIANTS: dict[str, Variant] = {
         Variant("smooth-m8+mres+swing", scan="close", smooth_frac=1 / 8, multires=True, swing=True),
         Variant("smooth-m8+dtw", scan="close", smooth_frac=1 / 8, dtw=True),
         Variant("mres+swing", multires=True, swing=True),
+        # Local-activity profile on top of the shipped shape config.
+        Variant("shape+act.10", scan="close", smooth_frac=1 / 8, multires=True, activity=0.10),
+        Variant("shape+act.15", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15),
+        Variant("shape+act.25", scan="close", smooth_frac=1 / 8, multires=True, activity=0.25),
     )
 }
 
-# The production "shape" mode is smooth-m8+mres exactly (same code, imported
-# from auto_trader.core.pattern_shape). Named here so reports read against the
-# shipped configuration.
-VARIANTS["shape"] = VARIANTS["smooth-m8+mres"]
+# The production "shape" mode: smooth-m8 scan + multires + the activity
+# profile at pattern_shape.ACTIVITY_WEIGHT (same code, imported from core).
+# Named here so reports read against the shipped configuration.
+VARIANTS["shape"] = Variant(
+    "shape", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15
+)
 
 
 def run_variant(
@@ -82,7 +93,7 @@ def run_variant(
         scan_query = smooth_close(close_query, kernel)
 
     s1, s2 = prefix_sums(scan_arr)
-    refining = variant.multires or variant.dtw or variant.swing
+    refining = variant.multires or variant.dtw or variant.swing or variant.activity > 0
     hits, _ = scan(
         scan_arr,
         s1,
@@ -95,12 +106,13 @@ def run_variant(
         scales=DEFAULT_SCALES,
     )
 
-    if variant.multires or variant.swing:
+    if variant.multires or variant.swing or variant.activity:
         # Refinement looks at the RAW close path, not the smoothed scan array:
         # stage one decides what surfaces, stage two ranks what the user sees.
         hits = rescore(
             close_series, close_query, hits,
             use_multires=variant.multires, use_swing=variant.swing,
+            activity_weight=variant.activity,
         )
     if variant.dtw:
         hits = dtw_refine(scan_arr, scan_query, hits)

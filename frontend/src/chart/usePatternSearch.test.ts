@@ -4,10 +4,13 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { usePatternSearch } from "./usePatternSearch";
 import * as api from "../lib/patternSearch";
 
-// 80 bars, so a drag can exceed the 64-bar cap the backend enforces.
-const bars = Array.from({ length: 80 }, (_, i) => ({
-  ts: 1_700_000_000 + i * 300, o: 10 + i, h: 11 + i, l: 9 + i, c: 10.5 + i,
-}));
+const mkBars = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    ts: 1_700_000_000 + i * 300, o: 10 + i, h: 11 + i, l: 9 + i, c: 10.5 + i,
+  }));
+
+// 80 bars for the ordinary flows; the cap tests build their own 1100.
+const bars = mkBars(80);
 
 const result = (scanned: number): api.PatternSearchResult => ({
   matches: [], scanned, series: { oldestTs: 1, newestTs: 2, bars: 80 },
@@ -51,27 +54,33 @@ describe("usePatternSearch", () => {
     expect(hook.current.loading).toBe(false);
   });
 
-  it("caps the query at 64 candles, keeping the most recent ones", async () => {
+  it("caps the query at 1024 candles, keeping the most recent ones", async () => {
     const spy = vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
-    const { result: hook } = renderHook(() => usePatternSearch(args));
-    // The whole 80-bar fixture. The backend's schema rejects more than 64, so
+    const long = mkBars(1100);
+    const { result: hook } = renderHook(() =>
+      usePatternSearch({ ...args, getBars: () => long }),
+    );
+    // The whole 1100-bar drag. The backend's schema rejects more than 1024, so
     // an uncapped request is a 422 rather than a slow search.
-    act(() => hook.current.run(1_700_000_000_000, 1_700_000_000_000 + 79 * 300_000));
+    act(() => hook.current.run(1_700_000_000_000, 1_700_000_000_000 + 1099 * 300_000));
     await waitFor(() => expect(spy).toHaveBeenCalled());
     const sent = spy.mock.calls[0][0];
-    expect(sent.query).toHaveLength(64);
-    // The NEWEST 64, not the oldest: slice(-MAX_BARS), not slice(0, MAX_BARS).
-    expect(sent.query[63].ts).toBe(bars[79].ts);
-    expect(sent.queryFromTs).toBe(bars[16].ts);
+    expect(sent.query).toHaveLength(1024);
+    // The NEWEST 1024, not the oldest: slice(-MAX_BARS), not slice(0, MAX_BARS).
+    expect(sent.query[1023].ts).toBe(long[1099].ts);
+    expect(sent.queryFromTs).toBe(long[76].ts);
   });
 
   it("reports the cap when the drag covered more candles than were searched", async () => {
     // The band stays painted over the whole drag, so without this the panel
     // shows one window and the results describe another.
     vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
-    const { result: hook } = renderHook(() => usePatternSearch(args));
-    act(() => hook.current.run(1_700_000_000_000, 1_700_000_000_000 + 79 * 300_000));
-    expect(hook.current.truncatedTo).toBe(64);
+    const long = mkBars(1100);
+    const { result: hook } = renderHook(() =>
+      usePatternSearch({ ...args, getBars: () => long }),
+    );
+    act(() => hook.current.run(1_700_000_000_000, 1_700_000_000_000 + 1099 * 300_000));
+    expect(hook.current.truncatedTo).toBe(1024);
   });
 
   it("reports no truncation for a selection inside the cap", async () => {

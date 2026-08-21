@@ -14,6 +14,8 @@ import numpy as np
 
 from auto_trader.core.pattern_scan import Match
 from auto_trader.core.pattern_shape import (  # noqa: F401  (re-exported for variants/tests)
+    activity_distance,
+    activity_profile,
     multires_distance,
     query_kernel,
     smooth_close,
@@ -83,6 +85,7 @@ def rescore(
     *,
     use_multires: bool = True,
     use_swing: bool = False,
+    activity_weight: float = 0.0,
 ) -> list[Match]:
     """Re-rank scan candidates by multi-resolution shape (optionally plus the
     swing penalty), mirroring pattern_dtw.refine's contract: every field of a
@@ -93,6 +96,8 @@ def rescore(
         d = multires_distance(query_close, win) if use_multires else h.distance
         if use_swing:
             d += swing_penalty(query_close, win)
+        if activity_weight > 0.0:
+            d += activity_weight * activity_distance(query_close, win)
         out.append(Match(start=h.start, length=h.length, distance=float(d), forward_len=h.forward_len))
     out.sort(key=lambda h: h.distance)
     return out

@@ -16,12 +16,19 @@ from __future__ import annotations
 
 import numpy as np
 
-from .pattern_scan import Match, zflat
+from .pattern_scan import Match, stretch, zflat
 
 # Half-width of the warp corridor as a fraction of the longer window. +-20%
 # absorbs real tempo drift; wider starts matching shapes that merely share a
 # bag of moves.
 _BAND_FRAC = 0.2
+
+# Windows longer than this are resampled down to it before the DTW pass: the
+# banded fill below is a Python loop, quadratic-ish in length, and at the
+# 1024-bar query cap a 2x rung would cost seconds PER CANDIDATE. DTW is a
+# tempo judgement on the macro path, which survives resampling; bar-level
+# texture is the rigid stage's business, not this one's.
+_DTW_MAX_LEN = 128
 
 
 def dtw_distance(query: np.ndarray, window: np.ndarray, band_frac: float = _BAND_FRAC) -> float:
@@ -31,6 +38,10 @@ def dtw_distance(query: np.ndarray, window: np.ndarray, band_frac: float = _BAND
     half-width. A flat window has no defined shape and scores infinity."""
     q = np.asarray(query, dtype=np.float64)
     w = np.asarray(window, dtype=np.float64)
+    if len(q) > _DTW_MAX_LEN:
+        q = stretch(q, _DTW_MAX_LEN)
+    if len(w) > _DTW_MAX_LEN:
+        w = stretch(w, _DTW_MAX_LEN)
     try:
         zq = zflat(q).reshape(q.shape)
         zw = zflat(w).reshape(w.shape)
@@ -39,7 +50,7 @@ def dtw_distance(query: np.ndarray, window: np.ndarray, band_frac: float = _BAND
 
     n, m, c = len(zq), len(zw), q.shape[1]
     # All pairwise squared bar costs at once: n and m are at most 128 here
-    # (query cap 64, ladder tops out at 2x), so the (n, m) matrix is small.
+    # (longer inputs were resampled above), so the (n, m) matrix is small.
     local = np.square(zq[:, None, :] - zw[None, :, :]).sum(axis=2)
 
     half = int(round(band_frac * max(n, m)))

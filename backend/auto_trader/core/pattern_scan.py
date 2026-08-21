@@ -80,8 +80,38 @@ def brute_distances(ohlc: np.ndarray, query: np.ndarray) -> np.ndarray:
     return out / np.sqrt(cols * m)
 
 
+# Queries at or above this length compute the sliding dot product via FFT.
+# np.correlate is O(n*m): fine at m=64, ~2 GFLOP per rung at m=1024 on the
+# largest series. The FFT path is O(n log n) INDEPENDENT of m, and the series
+# transform is computed once per scan and shared by every rung.
+_FFT_MIN_M = 96
+
+
+def series_fft(ohlc: np.ndarray, max_m: int) -> tuple[list[np.ndarray], int]:
+    """Per-column rFFT of the series, padded for 'valid' correlation against
+    queries up to max_m bars. Computed once per scan, reused across rungs."""
+    x = np.asarray(ohlc, dtype=np.float64)
+    fft_len = 1 << (len(x) + max_m - 1).bit_length()
+    return [np.fft.rfft(x[:, k], fft_len) for k in range(x.shape[1])], fft_len
+
+
+def _corr_valid(
+    x_col: np.ndarray, q_col: np.ndarray, xf: np.ndarray | None, fft_len: int
+) -> np.ndarray:
+    """correlate(x, q, 'valid'), via the precomputed series FFT when given."""
+    if xf is None:
+        return np.correlate(x_col, q_col, mode="valid")
+    m, n = len(q_col), len(x_col)
+    qf = np.fft.rfft(q_col[::-1], fft_len)
+    return np.fft.irfft(xf * qf, fft_len)[m - 1 : n]
+
+
 def window_distances(
-    ohlc: np.ndarray, s1: np.ndarray, s2: np.ndarray, query: np.ndarray
+    ohlc: np.ndarray,
+    s1: np.ndarray,
+    s2: np.ndarray,
+    query: np.ndarray,
+    xfft: tuple[list[np.ndarray], int] | None = None,
 ) -> np.ndarray:
     """Distance from `query` to every window of the same length, all at once.
 
@@ -111,8 +141,9 @@ def window_distances(
 
     qcols = qz.reshape(m, cols)
     dot = np.zeros(len(x) - m + 1)
+    cols_fft, fft_len = xfft if xfft is not None else ([None] * cols, 0)
     for k in range(cols):
-        dot += np.correlate(x[:, k], qcols[:, k], mode="valid")
+        dot += _corr_valid(x[:, k], qcols[:, k], cols_fft[k], fft_len)
 
     untrustworthy = var <= _VAR_REL_EPS * mu * mu
     safe_sd = np.where(untrustworthy | (sd <= 0.0), 1.0, sd)
@@ -195,12 +226,19 @@ def scan(
     # stretches past the series contributes nothing rather than raising.
     lengths: list[int] = []
     dists: list[np.ndarray] = []
+    usable = [
+        m for f in scales
+        if not ((m := int(round(m0 * f))) < 8 and m != m0) and 3 <= m <= n
+    ]
+    # One series transform shared by every rung, when any rung is long enough
+    # for the FFT path to win.
+    xfft = series_fft(ohlc, max(usable)) if usable and max(usable) >= _FFT_MIN_M else None
     for f in scales:
         m = int(round(m0 * f))
         if (m < 8 and m != m0) or m < 3 or m > n or m in lengths:
             continue
         q = query if m == m0 else stretch(query, m)
-        d = window_distances(ohlc, s1, s2, q)
+        d = window_distances(ohlc, s1, s2, q, xfft=xfft)
 
         # Rule 1 is already applied: window_distances returns inf for a flat
         # window.

@@ -852,7 +852,7 @@ class ExprLiteralsRequest(BaseModel):
 
 
 class PatternBarDTO(BaseModel):
-    """One candle in a pattern query or result. Short keys: a 64-bar query plus
+    """One candle in a pattern query or result. Short keys: a 1024-bar query plus
     20 matches of 6+20 bars each rides on every request and response."""
 
     ts: int = 0
@@ -867,7 +867,10 @@ class PatternSearchRequest(BaseModel):
     resolution: str
     price_side: str = Field("bid", alias="priceSide", pattern="^(bid|mid|ask)$")
     broker: str = ""  # empty = server default broker (deps.default_broker_id)
-    query: list[PatternBarDTO] = Field(min_length=3, max_length=64)
+    # 1024, up from 64 (2026-08-21): the exact scan's dot product is FFT-based
+    # and indifferent to query length, and DTW resamples long windows down.
+    # The frontend truncates a longer drag to the newest 1024 and says so.
+    query: list[PatternBarDTO] = Field(min_length=3, max_length=1024)
     query_from_ts: int = Field(alias="queryFromTs")
     query_to_ts: int = Field(alias="queryToTs")
     top_k: int = Field(20, alias="topK", ge=1, le=100)

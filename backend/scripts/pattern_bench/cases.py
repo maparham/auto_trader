@@ -240,6 +240,28 @@ def case_short_query() -> Case:
     )
 
 
+def case_flat_lead_trap() -> Case:
+    ts, ohlc = load_segment(DB_PATH, "dukascopy", "US100", "MINUTE_5", 1747000000, 1755000000)
+    scale = bar_scale(ohlc)
+    rng = np.random.default_rng(808)
+    query = build_pattern("top-lead-v", 64, scale, rng, amplitude=30, noise=0.6)
+    goods = [
+        build_pattern("top-lead-v", 64, scale, rng, amplitude=30, noise=1.0),
+        build_pattern("top-lead-v", 64, scale, rng, amplitude=30, noise=0.6),
+        tempo(build_pattern("top-lead-v", 64, scale, rng, amplitude=30, noise=0.8), 1.26),
+    ]
+    bads = [
+        build_pattern("flat-lead-v", 64, scale, rng, amplitude=30, noise=0.3),
+        build_pattern("flat-lead-v", 64, scale, rng, amplitude=30, noise=0.3),
+        build_pattern("flat-lead-v", 64, scale, rng, amplitude=30, noise=0.5),
+    ]
+    return _assemble(
+        "flat-lead-trap",
+        "A structured rounded-top lead before a big V; dead-flat leads on the same V as decoys.",
+        ts, ohlc, query, goods, bads,
+    )
+
+
 ALL_CASES = (
     case_v_bottom_noise,
     case_tempo_warp,
@@ -248,4 +270,5 @@ ALL_CASES = (
     case_trend_vs_chop,
     case_real_recurrence,
     case_short_query,
+    case_flat_lead_trap,
 )
