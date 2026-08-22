@@ -216,3 +216,30 @@ def test_window_metrics_median_even_count():
     trades = [_trade_window(10, 1.0), _trade_window(110, 2.0), _trade_window(210, 3.0), _trade_window(310, 10.0)]
     _, agg = window_metrics(trades, bounds)
     assert agg["median_window_pnl"] == 2.5
+
+
+def test_slice_window_metrics_includes_absolute_max_drawdown():
+    """WFO fold tables read the sweep table's absolute `max_drawdown`; the
+    window slice must carry it (peak-to-trough on the rebased window equity)."""
+    from datetime import datetime, timezone
+
+    from auto_trader.engine.metrics import slice_window_metrics
+
+    class _T:
+        def __init__(self, ts, pnl):
+            self.entry_time = datetime.fromtimestamp(ts, tz=timezone.utc)
+            self.exit_time = datetime.fromtimestamp(ts + 60, tz=timezone.utc)
+            self.pnl = pnl
+
+    class _Pt:
+        def __init__(self, ts, equity):
+            self.time = datetime.fromtimestamp(ts, tz=timezone.utc)
+            self.equity = equity
+
+    # Equity inside the one-week window: 1000 -> 1100 (peak) -> 900 -> 1050.
+    # Max peak-to-trough = 200.
+    day = 86_400
+    equity = [_Pt(day, 1000.0), _Pt(2 * day, 1100.0), _Pt(3 * day, 900.0), _Pt(4 * day, 1050.0)]
+    trades = [_T(day + 60, 100.0), _T(2 * day + 60, -200.0), _T(3 * day + 60, 150.0)]
+    m = slice_window_metrics(trades, equity, day, 7 * day, 1000.0, 60)
+    assert m["max_drawdown"] == 200.0

@@ -59,3 +59,20 @@ describe("withPlateau", () => {
     expect((center.metrics as never as { plateau_score: number }).plateau_score).toBe(1);
   });
 });
+
+describe("withPlateau without range axes", () => {
+  it("preserves a backend-provided plateau_score instead of nulling it", () => {
+    const rows = [
+      {
+        combo: { "param:n": 1 },
+        metrics: { net_pnl: 5, n_trades: 1, win_rate: 1, max_drawdown: 0,
+                   profit_factor: null, avg_win_loss_ratio: null, return_pct: 1,
+                   plateau_score: 4.2 },
+        windows: null,
+        error: null,
+      } as never,
+    ];
+    const { rows: scored } = withPlateau(rows, []);
+    expect((scored[0].metrics as never as { plateau_score: number }).plateau_score).toBe(4.2);
+  });
+});

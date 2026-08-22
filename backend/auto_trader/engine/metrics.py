@@ -224,5 +224,14 @@ def slice_window_metrics(trades, equity, from_ts: float, to_ts: float,
     net = sum(t.pnl for t in w_trades)
     core = compute_metrics(w_trades, w_equity, net, starting_cash, res_seconds)
     leg = leg_metrics(w_trades, res_seconds, round_trip_cost=0.0)
+    # Absolute peak-to-trough drawdown over the window's rebased equity: the
+    # sweep results table reads `max_drawdown` (an amount), and compute_metrics
+    # only carries the percent form.
+    peak = starting_cash
+    max_dd = 0.0
+    for pt in w_equity:
+        peak = max(peak, pt.equity)
+        max_dd = max(max_dd, peak - pt.equity)
     return {"net_pnl": round(net, 5), "n_trades": len(w_trades),
-            "win_rate": round(leg["win_rate"], 4)} | core
+            "win_rate": round(leg["win_rate"], 4),
+            "max_drawdown": round(max_dd, 5)} | core

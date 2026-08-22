@@ -364,3 +364,31 @@ describe("SweepResults robustness columns", () => {
     expect(screen.getByRole("tooltip").textContent).toContain("The most this combo lost");
   });
 });
+
+describe("SweepResults without axes (WFO archive fold tables)", () => {
+  const row = (combo: SweepRow["combo"], m: Partial<NonNullable<SweepRow["metrics"]>> = {}): SweepRow => ({
+    combo,
+    metrics: {
+      net_pnl: 10, n_trades: 3, win_rate: 0.5, max_drawdown: 1,
+      profit_factor: null, avg_win_loss_ratio: null, return_pct: 1, ...m,
+    },
+    windows: null,
+    error: null,
+  });
+
+  it("renders the raw combo text instead of a dash when axes are unknown", () => {
+    render(<SweepResults rows={[row({ "param:breakout_window": 6, "param:bb_period": 11 })]} axes={[]} onApply={() => {}} />);
+    expect(screen.getByText("breakout_window 6, bb_period 11")).toBeTruthy();
+  });
+
+  it("hides the robustness column group when no row carries window metrics", () => {
+    render(<SweepResults rows={[row({ "param:n": 1 }), row({ "param:n": 2 })]} axes={[]} onApply={() => {}} />);
+    expect(screen.queryByText(/Robustness/)).toBeNull();
+    expect(screen.queryByText("Worst wnd")).toBeNull();
+  });
+
+  it("keeps the robustness group when any row has window metrics", () => {
+    render(<SweepResults rows={[row({ "param:n": 1 }, { worst_window_pnl: -5 })]} axes={[]} onApply={() => {}} />);
+    expect(screen.getByText(/Robustness/)).toBeTruthy();
+  });
+});

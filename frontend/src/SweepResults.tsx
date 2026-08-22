@@ -10,7 +10,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { SweepRow } from "./api";
-import { axisColumnLabel, comboAxisLabel, comboAxisText, type SweepAxis } from "./lib/sweep";
+import { axisColumnLabel, comboAxisLabel, comboAxisText, comboFallbackText, type SweepAxis } from "./lib/sweep";
 import { axisTicks, buildHeatIndex, cellKey, heatTier, type HeatTick } from "./lib/sweepHeat";
 import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
@@ -347,9 +347,18 @@ export const SweepResults = memo(function SweepResults(props: {
 
   // The robust aggregates share one collapsible group. When collapsed they drop
   // out of the header AND body loops; the toggle keeps its own column so widths
-  // stay aligned either way.
+  // stay aligned either way. A run whose rows never carry window aggregates
+  // (windowless sweeps, walk-forward fold tables) drops the whole group —
+  // toggle included — instead of showing permanently empty sortable columns.
   const baseCols = METRIC_COLS.filter((c) => !c.robust);
-  const robustCols = robustOpen ? METRIC_COLS.filter((c) => c.robust) : [];
+  const hasWindowStats =
+    rows.length === 0 ||
+    rows.some(
+      (r) =>
+        r.windows != null ||
+        METRIC_COLS.some((c) => c.robust && r.metrics?.[c.key] !== undefined),
+    );
+  const robustCols = robustOpen && hasWindowStats ? METRIC_COLS.filter((c) => c.robust) : [];
 
   // Each sweep axis gets one short tag column (A, B, C, ...) so the table stays
   // narrow; a legend above the table maps every tag to its full operand name.
@@ -438,7 +447,8 @@ export const SweepResults = memo(function SweepResults(props: {
   // axis cells (one per axis, or a single "Combo" cell) + base metrics + the
   // robustness-toggle column + open robust metrics + optional Refine action.
   const axisColCount = axes.length > 0 ? axes.length : 1;
-  const colCount = axisColCount + baseCols.length + 1 + robustCols.length + (onRefine ? 1 : 0);
+  const colCount =
+    axisColCount + baseCols.length + (hasWindowStats ? 1 : 0) + robustCols.length + (onRefine ? 1 : 0);
 
   // Before the container is measured (mount, or re-mount with results already
   // present), fall back to a render-time top window so a large set never renders
@@ -511,15 +521,17 @@ export const SweepResults = memo(function SweepResults(props: {
                   )}
                 </th>
               ))}
-              <th className="sweep-robust-toggle-th">
-                <Tooltip content="These score how evenly the P&L was earned across sub-windows of the range. A combo that wins on Net P&L but fails here likely got lucky in one period.">
-                  <button type="button" className="sweep-robust-toggle"
-                          onClick={() => setRobustOpen((o) => !o)}
-                          aria-expanded={robustOpen}>
-                    {robustOpen ? "Robustness ▾" : "Robustness ▸"}
-                  </button>
-                </Tooltip>
-              </th>
+              {hasWindowStats && (
+                <th className="sweep-robust-toggle-th">
+                  <Tooltip content="These score how evenly the P&L was earned across sub-windows of the range. A combo that wins on Net P&L but fails here likely got lucky in one period.">
+                    <button type="button" className="sweep-robust-toggle"
+                            onClick={() => setRobustOpen((o) => !o)}
+                            aria-expanded={robustOpen}>
+                      {robustOpen ? "Robustness ▾" : "Robustness ▸"}
+                    </button>
+                  </Tooltip>
+                </th>
+              )}
               {robustCols.map((c) => (
                 <th key={c.key} className="sweep-c-num">
                   {c.info ? (
@@ -571,7 +583,11 @@ export const SweepResults = memo(function SweepResults(props: {
                       );
                     })
                   ) : (
-                    <td>{failed ? <Tooltip content={row.error ?? "failed"}>—</Tooltip> : "—"}</td>
+                    <td className="sweep-c-axis">
+                      {failed
+                        ? <Tooltip content={row.error ?? "failed"}>{comboFallbackText(combo)}</Tooltip>
+                        : comboFallbackText(combo)}
+                    </td>
                   )}
                   {baseCols.map((c) => {
                     const v = metricValue(row, c.key);
@@ -586,7 +602,7 @@ export const SweepResults = memo(function SweepResults(props: {
                       </td>
                     );
                   })}
-                  <td className="sweep-robust-toggle-td" />
+                  {hasWindowStats && <td className="sweep-robust-toggle-td" />}
                   {robustCols.map((c) => {
                     const v = metricValue(row, c.key);
                     const isBest = v !== null && bestByCol[c.key] === v;

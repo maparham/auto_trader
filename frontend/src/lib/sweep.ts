@@ -202,6 +202,15 @@ export function comboAxisLabel(axis: SweepAxis, combo: SweepCombo): string {
   return `${axis.label} ${comboAxisText(axis, combo)}`;
 }
 
+/** Display text for a whole combo when its axes are not available (e.g. a
+ * reopened walk-forward archive, whose sweep axes were not persisted): every
+ * entry as "name value", with the target prefix stripped. */
+export function comboFallbackText(combo: SweepCombo): string {
+  return Object.entries(combo)
+    .map(([k, v]) => `${k.replace(/^param:/, "")} ${v}`)
+    .join(", ");
+}
+
 /** Column header for a per-axis results column: the axis label verbatim (the
  * swept value reads under it in the cell). */
 export function axisColumnLabel(axis: SweepAxis): string {

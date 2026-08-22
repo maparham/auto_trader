@@ -7,6 +7,7 @@ import {
   submitWfoJob,
   type BacktestRequest,
   type ExprBacktestRequest,
+  type SweepRow,
   type SweepTarget,
   type WfoAxis,
   type WalkForwardPayload,
@@ -166,6 +167,16 @@ export function buildWalkForwardPayload(
 // The whole grid + test schedule is submitted as one backend job; runWalkForward
 // then polls it every WFO_POLL_MS, streaming winner rows out through onState as
 // they land and cancelling the job on abort. Mirrors runSweep/pollToCompletion.
+
+/** A WFO fold-table row carries the backend's selection-time plateau score
+ * top-level (SweepRow has no such field). Lift it into `metrics` so the sweep
+ * table's Plateau column can show it even when the sweep axes are unknown
+ * (reopened archives) and client-side recomputation is impossible. */
+export function liftFoldPlateau(row: SweepRow): SweepRow {
+  const score = (row as SweepRow & { plateau_score?: number | null }).plateau_score;
+  if (row.metrics == null || score === undefined) return row;
+  return { ...row, metrics: { ...row.metrics, plateau_score: score } };
+}
 
 export const WFO_POLL_MS = 700;
 

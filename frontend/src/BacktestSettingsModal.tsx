@@ -43,7 +43,7 @@ import {
 import { stageLabel } from "./lib/progressLabels";
 import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
-import { buildWalkForwardPayload, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
+import { buildWalkForwardPayload, liftFoldPlateau, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
 import { WfoResults } from "./WfoResults";
 import { requiredWarmupBars, resolveWindow } from "./lib/backtestWindow";
 import { exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
@@ -861,7 +861,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     const jobId = wfoStateSignal.value?.jobId;
     if (!jobId) return [];
     const { rows } = await getWfoFoldTable(jobId, key, sweepTargetSignal.value);
-    return rows;
+    return rows.map(liftFoldPlateau);
   });
   // A reopened archive shown in the WFO results area (null = show the ranking
   // list, when there is no live/last run). Carries the run id + its result so
@@ -881,7 +881,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     if (wfoArchiveTables.current?.id !== id) {
       wfoArchiveTables.current = { id, dict: await getWfoArchiveTables(id) };
     }
-    return wfoArchiveTables.current.dict[key] ?? [];
+    return (wfoArchiveTables.current.dict[key] ?? []).map(liftFoldPlateau);
   });
   // Reconstructed done-state for the reopened archive (WfoRunState shape).
   const wfoArchiveState = wfoArchiveOpen
@@ -2271,13 +2271,13 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 aria-label={pinned ? "Unpin panel" : "Pin panel"}
                 onClick={() => setPinned(!pinned)}
               >
-                <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+                  {/* Material Symbols push_pin (filled / outlined by state). */}
                   <path
-                    d="M9.5 1.5l5 5-2.2.6-2.5 2.5.4 3.4-2-2-4.2 4.2-1-1L7.2 10l-2-2 3.4.4 2.5-2.5.4-2.4z"
-                    fill={pinned ? "currentColor" : "none"}
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinejoin="round"
+                    fill="currentColor"
+                    d={pinned
+                      ? "M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"
+                      : "M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z"}
                   />
                 </svg>
               </button>

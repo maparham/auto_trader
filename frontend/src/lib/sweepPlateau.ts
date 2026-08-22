@@ -74,8 +74,11 @@ export function withPlateau(
   const spikes: boolean[] = [];
   for (let i = 0; i < rows.length; i++) {
     if (!ok[i] || rangeTargets.length === 0 || coords[i] === null) {
+      // No axes to compute over — keep a score the row already carries (WFO
+      // fold tables ship the backend's selection-time plateau_score) rather
+      // than nulling it.
       scored.push(ok[i] && rows[i].metrics
-        ? { ...rows[i], metrics: { ...rows[i].metrics!, plateau_score: null } as never }
+        ? { ...rows[i], metrics: { ...rows[i].metrics!, plateau_score: (rows[i].metrics as Record<string, number | null>).plateau_score ?? null } as never }
         : rows[i]);
       spikes.push(false);
       continue;
