@@ -190,7 +190,7 @@ import {
   type PriceAxisGeometry,
 } from "./chart/priceAxisGesture";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
-import type { DetachedTarget } from "./chart/detachedView";
+import { shouldDetach, type DetachedTarget } from "./chart/detachedView";
 import { useReplay } from "./chart/useReplay";
 import { classifyNoData, type NoDataKind } from "./chart/noDataPolicy";
 import { useRangeNavigation } from "./chart/useRangeNavigation";
@@ -629,6 +629,7 @@ export default function ChartCore({
   // interval-switch path (park a pending range; the data-load effect covers +
   // fits once the new-resolution bars land); if already on the native timeframe
   // it just zooms. Padded so a same-window span still yields a real view.
+  // A span too deep to cover by extending history detaches instead (see below).
   const onBacktestDrillIn = (resolution: string, fromMs: number, toMs: number) => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -643,7 +644,30 @@ export default function ChartCore({
     }
     const target = periodByResolution(resolution);
     if (!target) return;
-    pendingRangeRef.current = { resolution, fromTs, toTs, epic: symbol.epic, broker: brokerId, side: priceSide };
+    // A backtest can sit YEARS behind the live edge, and the native timeframe's
+    // fresh load is recent-only — the same depth problem Go-to-date has, with
+    // the same two answers. Past the detach budget (measured at the TARGET
+    // resolution, from the live edge: that is where the new-resolution load
+    // will start), reload the cell detached around the trades — the load
+    // effect fetches just that window and rehydrateBacktest draws the per-fill
+    // arrows against it. Inside the budget, park the pick flagged deepCover so
+    // the data-load effect runs the parallel cover before the fit; the plain
+    // 16-page sequential walk (~8k bars) silently stops months short of a
+    // deep run and left the view at the live edge with no markers at all.
+    const resSec = RESOLUTION_SECONDS[resolution] ?? 60;
+    const data = chart.getDataList();
+    const liveEdgeMs = data.length ? data[data.length - 1].timestamp : Date.now();
+    if (shouldDetach(toMs, liveEdgeMs, resSec)) {
+      pendingRangeRef.current = null;
+      setActiveRange(null);
+      separatorTsRef.current = null;
+      enterDetached(Math.round((fromMs + toMs) / 2));
+      onPeriod?.(cellId, target);
+      return;
+    }
+    pendingRangeRef.current = {
+      resolution, fromTs, toTs, epic: symbol.epic, broker: brokerId, side: priceSide, deepCover: true,
+    };
     setActiveRange(null);
     onPeriod?.(cellId, target);
   };

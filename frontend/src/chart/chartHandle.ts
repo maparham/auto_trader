@@ -34,6 +34,12 @@ export type RangeReq = {
   // the quick-range picker builds keep the default. Reference identity is what
   // pendingRangeRef/launchedTokenRef compare, so an extra field is inert there.
   maxPages?: number;
+  // Set by the backtest drill-in when its trade span sits behind the fresh
+  // recent-only load by more than the sequential walk's 16-page budget (but
+  // inside the detach threshold): consumption must run the parallel cover
+  // (coverBacktestTradeTo) before ensureCoverageAndFit, the same recipe
+  // goToRange uses for match jumps.
+  deepCover?: boolean;
   // What the coverage walk does with the viewport once it settles. "range" (the
   // default, and what every caller that omits this gets) fits [fromTs, toTs] to
   // the viewport, which changes zoom. "center" keeps the user's current zoom and

@@ -50,7 +50,7 @@ import { refreshMtfIndicators } from "../lib/mtfCoordinator";
 import { setLivePrice } from "../lib/trading";
 import { isSynthetic, setSyntheticPrecision } from "../lib/syntheticRegistry";
 import type { LiveStatus } from "../lib/feed";
-import type { ChartHandle } from "./chartHandle";
+import type { ChartHandle, RangeReq } from "./chartHandle";
 
 export interface LiveMarketDataDeps {
   symbol: Instrument;
@@ -90,7 +90,9 @@ export interface LiveMarketDataDeps {
   marketClosedRef: React.MutableRefObject<boolean>;
   // Callbacks that stay in ChartCore (called across the extraction boundary).
   unlockSnapshotView: () => void;
-  coverBacktestTradeTo: (fromTs: number) => Promise<boolean>;
+  // `owner` is the parked range token a deepCover consumption runs FOR — the
+  // cover stands down for any OTHER owner of pendingRangeRef (see ChartCore).
+  coverBacktestTradeTo: (fromTs: number, opts?: { owner?: RangeReq | null }) => Promise<boolean>;
 }
 
 // Center-preserve cover budget: how much history a TF switch / reload restore
@@ -848,9 +850,27 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // initial new-resolution bars are loaded, so page back to the period start
       // (if needed) and fit. ensureCoverageAndFit clears pendingRangeRef when done.
       const pend = handle.pendingRangeRef.current;
+      // A deepCover token (backtest drill-in) targets bars behind the sequential
+      // walk's 16-page budget: run the parallel cover first (goToRange's recipe
+      // for match jumps — every window between the target and the loaded left
+      // edge fetched concurrently), then let the walk land the fit on bars that
+      // now exist. Toast when the broker's history bottoms out short of the
+      // trades: silence there reads as a broken drill-in (whitespace where the
+      // markers should be).
       const rangeWalk =
         pend && pend.resolution === period.resolution && handle.chartRef.current
-          ? handle.ensureCoverageAndFitRef.current(pend)
+          ? pend.deepCover
+            ? coverBacktestTradeTo(pend.fromTs, { owner: pend }).then(async () => {
+                if (handle.pendingRangeRef.current !== pend) return "aborted" as const;
+                const res = await handle.ensureCoverageAndFitRef.current(pend);
+                if (res !== "aborted" && !cancelled) {
+                  const oldest = handle.chartRef.current?.getDataList()[0];
+                  if (oldest && oldest.timestamp > pend.fromTs)
+                    toast(`History doesn't reach these trades on ${period.label}. Showing the oldest available.`);
+                }
+                return res;
+              })
+            : handle.ensureCoverageAndFitRef.current(pend)
           : null;
       // Re-apply each AVWAP instance's anchor for this epic (anchors are per-epic,
       // per-instance; no-op if no AVWAP is active).
