@@ -2,6 +2,7 @@
 import { fireEvent, render, screen, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WfoResults, driftPath } from "./WfoResults";
+import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import type { WfoRunState } from "./lib/signals";
 import {
   wfoEquityShownSignal,
@@ -206,5 +207,23 @@ describe("WfoResults", () => {
     renderResults(st);
     expect(screen.queryByText("-0%")).toBeNull();
     expect(screen.getByText("0%")).toBeTruthy();
+  });
+});
+
+describe("WfoResults fold ordering", () => {
+  it("renders folds chronologically by test window when no sort is active", () => {
+    // Folds stored in completion order (scrambled); day-scale timestamps so the
+    // window column text differs per fold.
+    const day = 86_400;
+    const shuffled = scheme("3m");
+    shuffled.folds = [fold(0, { test_from: 10 * day, test_to: 11 * day }),
+                      fold(1, { test_from: 2 * day, test_to: 3 * day }),
+                      fold(2, { test_from: 6 * day, test_to: 7 * day })];
+    render(<WfoResults state={doneState([shuffled])} onApplyCombo={() => {}} onLoadFoldTable={() => Promise.resolve([])}
+      axes={[]} schemeIndex={0} onSchemeIndex={() => {}} />);
+    const windows = [...document.querySelectorAll(".wfo-fold-row td:first-child")].map((td) => td.textContent);
+    const starts = [2 * day, 6 * day, 10 * day].map((s, i) =>
+      formatPeriodDateRange(s * 1000, ([3, 7, 11][i]) * day * 1000));
+    expect(windows).toEqual(starts);
   });
 });

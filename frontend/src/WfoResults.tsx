@@ -198,8 +198,11 @@ export const WfoResults = memo(function WfoResults(props: {
       : Object.entries(combo).map(([k, v]) => `${k.replace(/^param:/, "")} ${v}`).join(", ");
 
   // Sorted view of the selected scheme's folds; original index rides along so
-  // fold keys (s{scheme}/f{fold}) stay correct under any sort order.
+  // fold keys (s{scheme}/f{fold}) stay correct under any sort order. With no
+  // column sort active, folds read chronologically by test window (the stored
+  // order is completion order, which a parallel run scrambles).
   const folds = (scheme?.folds ?? []).map((f, i) => ({ f, i }));
+  if (!sort) folds.sort((a, b) => a.f.test_from - b.f.test_from);
   if (sort) {
     const dir = sort.dir === "asc" ? 1 : -1;
     folds.sort((a, b) => {
