@@ -68,7 +68,7 @@ def test_sweep_rows_one_per_combo_with_metrics(strategies):
     m = rows[0]["metrics"]
     assert set(m) == {"net_pnl", "n_trades", "win_rate", "max_drawdown",
                       "profit_factor", "avg_win_loss_ratio", "return_pct",
-                      "sharpe", "sqn"}
+                      "sharpe", "sqn", "trade_skew", "trade_kurtosis"}
     assert "sharpe" in rows[0]["metrics"] and "sqn" in rows[0]["metrics"]
     # Different n => different trade counts.
     assert rows[0]["metrics"]["n_trades"] != rows[1]["metrics"]["n_trades"]

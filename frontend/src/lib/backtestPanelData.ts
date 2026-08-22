@@ -1,4 +1,5 @@
 import type { BacktestResult, LegMetrics } from "../api";
+import { bootstrapPnl, type BootstrapSummary } from "./bootstrapStats";
 
 // The panel reads trades/metrics/equity only, never the candle array, so it
 // accepts the slimmed persisted result (StoredBacktestResult = BacktestResult
@@ -61,6 +62,22 @@ const METRIC_SCALES: Record<string, ScaleBand[]> = {
     { upTo: 3, label: "good", tone: "good", desc: "edge clearly beats randomness" },
     { upTo: 5, label: "excellent", tone: "good", desc: "steady edge, little luck dependence" },
     { upTo: Infinity, label: "superb", tone: "good", desc: "this uniform is rarely real; verify" },
+  ],
+  // P(profit) is the bootstrap's share of trade-list resamples that end
+  // profitable, so the bands read as confidence the edge is not arrangement luck.
+  "P(profit)": [
+    { upTo: 0.5, label: "losing", tone: "bad", desc: "a redraw of these trades loses more often than it wins" },
+    { upTo: 0.8, label: "fragile", tone: "mid", desc: "an unlucky redraw of the trades erases the profit" },
+    { upTo: 0.95, label: "leaning", tone: "mid", desc: "most redraws profit, but bad luck still bites" },
+    { upTo: Infinity, label: "robust", tone: "good", desc: "profit survives nearly every redraw of the trades" },
+  ],
+  // DSR is a probability that the true Sharpe is above zero after the
+  // best-of-N deflation, so the bands read as confidence levels.
+  "DSR": [
+    { upTo: 0.5, label: "likely luck", tone: "bad", desc: "picking the best of many combos explains this Sharpe" },
+    { upTo: 0.9, label: "inconclusive", tone: "mid", desc: "edge and selection luck are hard to tell apart" },
+    { upTo: 0.95, label: "leaning real", tone: "mid", desc: "edge is likely but below the usual 95% bar" },
+    { upTo: Infinity, label: "likely real", tone: "good", desc: "true Sharpe above zero at 95%+ confidence" },
   ],
   "Profit factor": [
     { upTo: 1, label: "losing", tone: "bad", desc: "wins don't cover the losses" },
@@ -156,6 +173,17 @@ function getTone(value: number | null): "pos" | "neg" | "" {
   return "";
 }
 
+// metricRows is called on every render of the panel; the resample loop is a
+// few million adds, so cache per result object (results are immutable once
+// received).
+const bootstrapCache = new WeakMap<object, BootstrapSummary | null>();
+function bootstrapFor(res: PanelResult): BootstrapSummary | null {
+  if (!bootstrapCache.has(res)) {
+    bootstrapCache.set(res, bootstrapPnl(res.trades.map((t) => t.pnl)));
+  }
+  return bootstrapCache.get(res) ?? null;
+}
+
 export function metricRows(res: PanelResult): MetricRow[] {
   const rows: MetricRow[] = [];
 
@@ -206,6 +234,29 @@ export function metricRows(res: PanelResult): MetricRow[] {
       : res.metrics.expectancy < 0
         ? { label: "negative", tone: "bad" }
         : undefined,
+  });
+
+  // Bootstrap luck-vs-edge rows: what a redraw of the same trade list would
+  // have produced. Dashes under 2 trades (nothing to resample); the P(profit)
+  // verdict mutes below the sample floor like the other sample statistics.
+  const boot = bootstrapFor(res);
+  rows.push({
+    label: "P(profit)",
+    value: boot ? Math.round(boot.probProfit * 100) + "%" : "-",
+    tone: "",
+    verdict: boot
+      ? sampledVerdictFor("P(profit)", boot.probProfit, res.summary.n_trades)
+      : undefined,
+  });
+  rows.push({
+    label: "P5 net P&L",
+    value: boot ? formatSignedMoney(boot.p5Net) : "-",
+    tone: boot ? getTone(boot.p5Net) : "",
+  });
+  rows.push({
+    label: "P95 drawdown",
+    value: boot ? boot.ddP95.toFixed(2) : "-",
+    tone: "",
   });
 
   // Per-trade magnitudes below are sign-fixed (a win is always ≥0, a loss ≤0),
@@ -346,9 +397,9 @@ export function metricRows(res: PanelResult): MetricRow[] {
 // (Risk & extremes). Grouping is the hierarchy the flat grid was missing; order
 // within each group leads with the metric you'd read first.
 const METRIC_GROUPS: { title: string; labels: string[] }[] = [
-  { title: "Performance", labels: ["Net P&L", "Financing", "Return %", "CAGR %", "Profit factor", "Expectancy", "Sharpe", "Sortino", "Calmar", "SQN"] },
+  { title: "Performance", labels: ["Net P&L", "Financing", "Return %", "CAGR %", "Profit factor", "Expectancy", "P(profit)", "P5 net P&L", "Sharpe", "Sortino", "Calmar", "SQN"] },
   { title: "Trades", labels: ["Trades", "Win rate", "Avg win", "Avg loss", "Avg win/loss", "Avg duration"] },
-  { title: "Risk & extremes", labels: ["Drawdown", "Drawdown %", "Exposure %", "Largest win", "Largest loss", "Win streak", "Loss streak"] },
+  { title: "Risk & extremes", labels: ["Drawdown", "Drawdown %", "P95 drawdown", "Exposure %", "Largest win", "Largest loss", "Win streak", "Loss streak"] },
 ];
 
 // One brief line per metric — plain language, keyed by the metric's label.
@@ -372,6 +423,9 @@ export const METRIC_INFO: Record<string, string> = {
   "Largest loss": "Biggest single losing trade. If it dwarfs the average loss, the stop discipline failed at least once; expect it to happen again live.",
   "Win streak": "Longest run of wins in a row. Mostly a psychology read; long streaks in a short run can also mean the entry only works in one regime.",
   "Loss streak": "Longest run of losses in a row. Ask: could you sit through this many losses live without abandoning the system?",
+  "P(profit)": "Share of a few thousand bootstrap redraws of the trade list that end profitable. Near 100% means the profit does not hinge on a few lucky trades.",
+  "P5 net P&L": "Pessimistic 5th percentile of net P&L across bootstrap redraws of the trades. Above zero means even an unlucky redraw stays profitable.",
+  "P95 drawdown": "95th percentile of max drawdown across bootstrap redraws of the trades. A realistic worst case if the same trades had arrived in a different order.",
   "Sharpe": "Annualized Sharpe ratio from daily equity returns. Unrated under 30 trades: too little evidence to read.",
   "Sortino": "Like Sharpe but only penalizes downside volatility. Unrated under 30 trades: with no losing stretches in the sample the downside estimate collapses and the ratio explodes.",
   "Calmar": "CAGR divided by max drawdown; return earned per unit of worst-case loss.",

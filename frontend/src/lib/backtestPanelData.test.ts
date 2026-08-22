@@ -264,3 +264,52 @@ describe("rowWindow", () => {
     expect(w.padTop).toBeLessThanOrEqual(50 * 27);
   });
 });
+
+describe("bootstrap rows in the overview groups", () => {
+  const trade = (pnl: number) => ({
+    side: "BUY", leg: "long", entry_time: 0, entry_price: 1, exit_time: 60,
+    exit_price: 1, pnl, quantity: 1, reason: "tp",
+  });
+
+  it("adds P(profit), P5 net P&L and P95 drawdown rows fed by the trade list", () => {
+    const pnls = Array.from({ length: 40 }, (_, i) => (i % 3 === 0 ? -5 : 8));
+    const res = result({
+      trades: pnls.map(trade) as never,
+      summary: { net_pnl: pnls.reduce((a, b) => a + b, 0), n_trades: 40, win_rate: 0.66, max_drawdown: 10 },
+    });
+    const byLabel = Object.fromEntries(metricRows(res).map((r) => [r.label, r]));
+    expect(byLabel["P(profit)"].value).toMatch(/^\d+%$/);
+    expect(byLabel["P(profit)"].verdict).toBeTruthy();
+    expect(byLabel["P5 net P&L"].value).toMatch(/^[+−]\d+\.\d\d$/);
+    expect(byLabel["P95 drawdown"].value).toMatch(/^\d+\.\d\d$/);
+  });
+
+  it("mutes the P(profit) verdict as low sample under 30 trades", () => {
+    const res = result({
+      trades: [trade(5), trade(6), trade(7)] as never,
+      summary: { net_pnl: 18, n_trades: 3, win_rate: 1, max_drawdown: 0 },
+    });
+    const byLabel = Object.fromEntries(metricRows(res).map((r) => [r.label, r]));
+    expect(byLabel["P(profit)"].verdict).toEqual({ label: "low sample", tone: "muted" });
+  });
+
+  it("dashes the bootstrap rows when there are too few trades to resample", () => {
+    const byLabel = Object.fromEntries(metricRows(result()).map((r) => [r.label, r]));
+    expect(byLabel["P(profit)"].value).toBe("-");
+    expect(byLabel["P5 net P&L"].value).toBe("-");
+    expect(byLabel["P95 drawdown"].value).toBe("-");
+  });
+
+  it("groups the rows under Performance and Risk & extremes", async () => {
+    const { metricGroups, METRIC_INFO } = await import("./backtestPanelData");
+    const groups = metricGroups(result());
+    const perf = groups.find((g) => g.title === "Performance")!;
+    const risk = groups.find((g) => g.title === "Risk & extremes")!;
+    expect(perf.rows.map((r) => r.label)).toContain("P(profit)");
+    expect(perf.rows.map((r) => r.label)).toContain("P5 net P&L");
+    expect(risk.rows.map((r) => r.label)).toContain("P95 drawdown");
+    for (const label of ["P(profit)", "P5 net P&L", "P95 drawdown"]) {
+      expect(METRIC_INFO[label]).toBeTruthy();
+    }
+  });
+});

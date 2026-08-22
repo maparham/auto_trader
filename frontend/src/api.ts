@@ -621,9 +621,17 @@ export interface SweepRow {
     return_pct: number;
     sharpe?: number | null;
     sqn?: number | null;
+    // Skew and raw kurtosis (normal = 3) of the trade P&L list, the
+    // non-normality inputs to the deflated Sharpe; null under 2 trades or
+    // zero variance, absent on old cached rows.
+    trade_skew?: number | null;
+    trade_kurtosis?: number | null;
     // Injected client-side by withPlateau (lib/sweepPlateau.ts); never sent by
     // the backend. Null when the sweep has no numeric range axes.
     plateau_score?: number | null;
+    // Injected client-side by withDsr (lib/deflatedSharpe.ts); never sent by
+    // the backend. Null when sqn or the trade moments are missing.
+    dsr?: number | null;
     // Sub-window robustness aggregates: present only when the sweep ran with
     // windows and the combo does not patch its own period.
     worst_window_pnl?: number;

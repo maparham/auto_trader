@@ -554,6 +554,8 @@ def sweep_row(req: BacktestRequest, combo: dict, result) -> SweepRowDTO:
         "return_pct": metrics.get("return_pct"),
         "sharpe": metrics.get("sharpe"),
         "sqn": metrics.get("sqn"),
+        "trade_skew": metrics.get("trade_skew"),
+        "trade_kurtosis": metrics.get("trade_kurtosis"),
     }
     windows = None
     if req.sweep.windows is not None and "period:from" not in combo:

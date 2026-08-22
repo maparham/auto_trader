@@ -26,7 +26,8 @@ def risk_metrics(trades, equity, starting_cash, res_seconds, max_dd_pct: float |
     trade list. Every ill-conditioned case (too few points, zero variance,
     non-positive equity) yields None for that stat rather than raising."""
     out = {"sharpe": None, "sortino": None, "calmar": None,
-           "cagr_pct": None, "sqn": None, "exposure_pct": None}
+           "cagr_pct": None, "sqn": None, "exposure_pct": None,
+           "trade_skew": None, "trade_kurtosis": None}
     if equity:
         out["exposure_pct"] = round(
             sum((getattr(t, "bars_held", None) or 0) for t in trades) / len(equity) * 100, 2)
@@ -56,6 +57,13 @@ def risk_metrics(trades, equity, starting_cash, res_seconds, max_dd_pct: float |
     sd_pnl = _pstdev(pnls)
     if len(pnls) >= 2 and sd_pnl > 0:
         out["sqn"] = round(len(pnls) ** 0.5 * _mean(pnls) / sd_pnl, 4)
+        # Population skew / raw kurtosis (normal = 3) of the trade P&L list:
+        # the non-normality inputs for the deflated-Sharpe correction.
+        mu = _mean(pnls)
+        out["trade_skew"] = round(
+            _mean([(p - mu) ** 3 for p in pnls]) / sd_pnl ** 3, 4)
+        out["trade_kurtosis"] = round(
+            _mean([(p - mu) ** 4 for p in pnls]) / sd_pnl ** 4, 4)
     return out
 
 

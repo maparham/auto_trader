@@ -13,6 +13,7 @@ import type { SweepRow } from "./api";
 import { axisColumnLabel, comboAxisLabel, comboAxisText, comboFallbackText, type SweepAxis } from "./lib/sweep";
 import { axisTicks, buildHeatIndex, cellKey, heatTier, type HeatTick } from "./lib/sweepHeat";
 import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
+import { withDsr } from "./lib/deflatedSharpe";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import Tooltip from "./components/Tooltip";
 import { rowWindow, verdictFor, MIN_SAMPLE_TRADES, type RowWindow } from "./lib/backtestPanelData";
@@ -30,6 +31,7 @@ type MetricKey =
   | "profit_factor"
   | "sharpe"
   | "sqn"
+  | "dsr"
   | "plateau_score"
   | "worst_window_pnl"
   | "median_window_pnl"
@@ -59,6 +61,8 @@ const METRIC_COLS: { key: MetricKey; label: string; abbr: string; robust?: boole
     info: "Annualized Sharpe ratio from daily equity returns. Treat with caution under 30 trades." },
   { key: "sqn", label: "SQN", abbr: "SQN",
     info: "System Quality Number: sqrt(trades) times expectancy over trade P&L deviation." },
+  { key: "dsr", label: "DSR", abbr: "DSR",
+    info: "Deflated Sharpe ratio: probability the true Sharpe is above zero after a penalty for the number of combos tried. Values above 95% mean the edge survives the multiple-testing discount." },
   { key: "plateau_score", label: "Plateau", abbr: "Plt",
     info: "Median Net P&L of this cell and its grid neighbors (one step on each numeric axis), capped at the cell's own result. A high plateau beats a high lone peak: neighbors confirm the edge is not one lucky cell." },
   { key: "worst_window_pnl", label: "Worst wnd", abbr: "Wst", robust: true,
@@ -85,6 +89,7 @@ const SCALED_COLS: Partial<Record<MetricKey, string>> = {
   profit_factor: "Profit factor",
   sharpe: "Sharpe",
   sqn: "SQN",
+  dsr: "DSR",
 };
 
 function verdictClass(key: MetricKey, v: number | null, nTrades: number | null): string {
@@ -92,13 +97,15 @@ function verdictClass(key: MetricKey, v: number | null, nTrades: number | null):
   // Sharpe/SQN are sample statistics: below the trade floor their band colours
   // would dress up noise (two identical wins band SQN "superb"), so leave the
   // cell untinted. Profit factor keeps its tint; it claims no significance.
-  if ((key === "sharpe" || key === "sqn") && (nTrades ?? 0) < MIN_SAMPLE_TRADES) return "";
+  if ((key === "sharpe" || key === "sqn" || key === "dsr") && (nTrades ?? 0) < MIN_SAMPLE_TRADES) return "";
   const tone = label ? verdictFor(label, v)?.tone : undefined;
   return tone ? ` sweep-tone-${tone}` : "";
 }
 
 function fmtMetric(key: MetricKey, v: number | null): string {
   if (v === null) return "—";
+  // DSR is an inference, never a certainty: cap the display below a flat 100%.
+  if (key === "dsr") return v > 0.99 ? ">99%" : `${(v * 100).toFixed(0)}%`;
   if (key === "win_rate") return `${(v * 100).toFixed(0)}%`;
   if (key === "return_pct") return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
   if (key === "net_pnl") return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
@@ -335,7 +342,10 @@ export const SweepResults = memo(function SweepResults(props: {
   // and [...].sort keeps identities).
   // rows is mutated in place during a streaming sweep (BacktestButton re-sets
   // the same `landed` array each chunk), so length is the change signal.
-  const { rows: scoredRows, spikes } = useMemo(() => withPlateau(rows, axes), [rows, rows.length, axes]);
+  // DSR first (deflated by THIS table's row count), plateau second so the
+  // fresh objects withPlateau returns are the ones the spike Set (identity
+  // membership) and the render both see.
+  const { rows: scoredRows, spikes } = useMemo(() => withPlateau(withDsr(rows), axes), [rows, rows.length, axes]);
   // Memoized so a scroll-driven re-render (the virtualization hook lives in this
   // component and updates on every scroll frame) doesn't rebuild the spike set.
   const spikeSet = useMemo(() => new Set(scoredRows.filter((_, i) => spikes[i])), [scoredRows, spikes]);

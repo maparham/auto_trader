@@ -392,3 +392,57 @@ describe("SweepResults without axes (WFO archive fold tables)", () => {
     expect(screen.getByText(/Robustness/)).toBeTruthy();
   });
 });
+
+describe("SweepResults DSR column", () => {
+  const dsrRow = (combo: SweepRow["combo"], m: Partial<NonNullable<SweepRow["metrics"]>>): SweepRow => ({
+    combo,
+    metrics: {
+      net_pnl: 10, n_trades: 3, win_rate: 0.5, max_drawdown: 1,
+      profit_factor: null, avg_win_loss_ratio: null, return_pct: 1, ...m,
+    },
+    windows: null,
+    error: null,
+  });
+
+  // DSR cell of the nth body row, located via the DSR header's column index.
+  const dsrCell = (rowIdx: number): HTMLElement => {
+    const headers = screen.getAllByRole("columnheader");
+    const di = headers.findIndex((h) => h.textContent?.includes("DSR"));
+    expect(di).toBeGreaterThan(-1);
+    const body = screen.getAllByRole("row").slice(1);
+    return within(body[rowIdx]).getAllByRole("cell")[di] as HTMLElement;
+  };
+
+  it("computes a per-row DSR probability, shown as a percent", () => {
+    render(<SweepResults
+      rows={[
+        dsrRow({ "param:n": 1 }, { n_trades: 40, sqn: 5, trade_skew: 0, trade_kurtosis: 3 }),
+        dsrRow({ "param:n": 2 }, { n_trades: 40, sqn: 0.6, trade_skew: 0, trade_kurtosis: 3 }),
+      ]}
+      axes={[]} onApply={() => {}}
+    />);
+    // The strong row's dsr is ~0.9996; it must not round up to a flat "100%".
+    expect(dsrCell(0).textContent).toBe(">99%");
+    expect(dsrCell(1).textContent).toMatch(/^\d+%$/);
+  });
+
+  it("tints a well-sampled DSR cell but leaves it untinted under the trade floor", () => {
+    render(<SweepResults
+      rows={[
+        dsrRow({ "param:n": 1 }, { n_trades: 40, sqn: 3.16, trade_skew: 0, trade_kurtosis: 3 }),
+        dsrRow({ "param:n": 2 }, { n_trades: 5, sqn: 1.0, trade_skew: 0, trade_kurtosis: 3 }),
+      ]}
+      axes={[]} onApply={() => {}}
+    />);
+    expect(dsrCell(0).className).toMatch(/sweep-tone-/);
+    expect(dsrCell(1).className).not.toMatch(/sweep-tone-/);
+  });
+
+  it("shows a dash when the trade moments are missing (old cached rows)", () => {
+    render(<SweepResults
+      rows={[dsrRow({ "param:n": 1 }, { n_trades: 40, sqn: 2 })]}
+      axes={[]} onApply={() => {}}
+    />);
+    expect(dsrCell(0).textContent).toBe("—");
+  });
+});
