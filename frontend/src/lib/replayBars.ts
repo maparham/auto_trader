@@ -160,6 +160,27 @@ export function hasLoadedSuccessor(
   return revealedCount(bars, cursorMs, nominalMs) + 1 < bars.length;
 }
 
+/** The next window to probe when a refill window came back with no bar past the
+ * cursor. That silence is ambiguous: it is the live edge, OR a market-closure
+ * gap wider than the window (a crude-oil weekend is ~49h; MINUTE_5's forward
+ * buffer is ~17h) — and only reaching `nowSec` can tell them apart. Probes are
+ * CONTIGUOUS with the window they extend (a jumped-over region would leave a
+ * hole in the bar store, and stepping would silently skip real trading days)
+ * and DOUBLE in width so a multi-day gap costs log probes — capped at
+ * `maxWidthSec` (the probe that finally lands past a gap fetches its whole span
+ * of real bars, so an uncapped width could request years of them), clamped at
+ * `nowSec`. null once the previous window already reached `nowSec`: that is the
+ * true end. */
+export function nextProbeWindowSec(
+  prev: { fromSec: number; toSec: number },
+  nowSec: number,
+  maxWidthSec: number = Infinity,
+): { fromSec: number; toSec: number } | null {
+  if (prev.toSec >= nowSec) return null;
+  const width = Math.min(2 * (prev.toSec - prev.fromSec), maxWidthSec);
+  return { fromSec: prev.toSec, toSec: Math.min(prev.toSec + width, nowSec) };
+}
+
 /** True when the cursor is within `margin` bars of the end of the store, so the
  * forward buffer should be refilled before stepping can block on the network. */
 export function needsBuffer(

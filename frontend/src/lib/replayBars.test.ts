@@ -13,6 +13,7 @@ import {
   bufferWindowSec,
   mergeForward,
   hasLoadedSuccessor,
+  nextProbeWindowSec,
 } from "./replayBars";
 
 const HOUR = 3_600_000;
@@ -211,5 +212,39 @@ describe("bufferWindowSec", () => {
   it("never asks for bars past now", () => {
     const w = bufferWindowSec({ centerMs: NOW, resSec: 3600, contextBars: 10, forwardBars: 200, nowMs: NOW });
     expect(w.toSec).toBe(Math.floor(NOW / 1000));
+  });
+});
+
+describe("nextProbeWindowSec", () => {
+  // A closure gap wider than the refill window (crude oil weekend on MINUTE_5)
+  // must not read as the end of history. Probes walk FORWARD from the empty
+  // window: contiguous so the store can never acquire a data hole, doubling so
+  // a multi-day gap costs log probes, clamped at now which IS the live edge.
+  const NOW = 10_000;
+
+  it("starts exactly where the empty window ended (no data hole)", () => {
+    const next = nextProbeWindowSec({ fromSec: 1_000, toSec: 1_500 }, NOW);
+    expect(next).toEqual({ fromSec: 1_500, toSec: 2_500 });
+  });
+
+  it("doubles the width on each successive probe", () => {
+    const first = nextProbeWindowSec({ fromSec: 1_000, toSec: 1_500 }, NOW)!;
+    const second = nextProbeWindowSec(first, NOW)!;
+    expect(second.fromSec).toBe(first.toSec);
+    expect(second.toSec - second.fromSec).toBe(2 * (first.toSec - first.fromSec));
+  });
+
+  it("caps the width so a probe can never request an unbounded span", () => {
+    const next = nextProbeWindowSec({ fromSec: 1_000, toSec: 2_000 }, 100_000, 1_500);
+    expect(next).toEqual({ fromSec: 2_000, toSec: 3_500 });
+  });
+
+  it("clamps at now: replay never crosses the live edge", () => {
+    const next = nextProbeWindowSec({ fromSec: 1_000, toSec: 9_500 }, NOW);
+    expect(next).toEqual({ fromSec: 9_500, toSec: NOW });
+  });
+
+  it("is null once the previous window already reached now — that is the true end", () => {
+    expect(nextProbeWindowSec({ fromSec: 1_000, toSec: NOW }, NOW)).toBeNull();
   });
 });

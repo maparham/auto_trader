@@ -86,6 +86,51 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("a random jump into a market closure", () => {
+  // A target inside a weekend/holiday gap WIDER than the fetch window used to
+  // read as a dead zone: the window's forward side (200 MINUTE bars = 3.3h)
+  // never reached the far side, cursorForStartTs saw no loaded successor, and
+  // the loop halved toward now — silently shrinking a 200-day ask to weeks.
+  // The probe walk (nextProbeWindowSec) crosses the gap instead, so the jump
+  // snaps to the first bar after the closure exactly as it already does for
+  // gaps narrower than the window.
+  function historyWithGap(gapStartMs: number, gapEndMs: number) {
+    return async (_epic: string, _res: string, fromSec: number, toSec: number) => {
+      const bars = [];
+      for (let t = fromSec * 1000; t <= toSec * 1000; t += MIN) {
+        if (t >= gapStartMs && t < gapEndMs) continue;
+        bars.push({ timestamp: t, open: 1, high: 1, low: 1, close: 1, volume: 1 });
+      }
+      return { bars, degraded: null, partial: null };
+    };
+  }
+
+  it("crosses the gap and starts at the first bar after it, without re-rolling", async () => {
+    const now = Date.now();
+    // Math.random = 0 puts the attempt-0 target at the window's far edge; the
+    // gap is 1000 minutes wide (5x the forward buffer) and the target lands
+    // 500 minutes INTO it — far enough from the last pre-gap bar that its
+    // nominal-width close cannot cover the target.
+    const windowMs = 30 * DAY;
+    const gapStart = now - windowMs - 500 * MIN;
+    const gapEnd = gapStart + 1000 * MIN;
+    fetchRangeWithStatus.mockImplementation(historyWithGap(gapStart, gapEnd));
+    const { result } = mount();
+    act(() => result.current.enterPicking());
+
+    await act(async () => result.current.randomJump(windowMs, true));
+
+    expect(result.current.state.mode).toBe("active");
+    // Snapped to the first bar past the closure (the mock's grid is per-fetch,
+    // so allow one bar of slack), never a shallower re-roll.
+    expect(result.current.state.startMs).toBeGreaterThanOrEqual(gapEnd);
+    expect(result.current.state.startMs).toBeLessThanOrEqual(gapEnd + 2 * MIN);
+    expect(result.current.state.error).toBeNull();
+    // Attempt 0 landed where it was asked to; nothing to apologise for.
+    expect(toast).not.toHaveBeenCalled();
+  });
+});
+
 describe("a random jump past the end of the broker's history", () => {
   it("re-rolls closer to now until it finds candles, and says that it did", async () => {
     const now = Date.now();

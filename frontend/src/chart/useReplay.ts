@@ -17,6 +17,7 @@ import { fetchRangeWithStatus, RESOLUTION_SECONDS, type CandlesResult } from "..
 import type { PriceSide } from "../theme";
 import {
   bufferWindowSec,
+  nextProbeWindowSec,
   cursorForStartTs,
   hasLoadedSuccessor,
   mergeForward,
@@ -83,6 +84,19 @@ const CONTEXT_BARS = 300;
 const FORWARD_BARS = 200;
 // Refill when the cursor comes within this many unrevealed bars of the store's end.
 const REFILL_MARGIN = 50;
+// Gap probing: a refill window that comes back with nothing past the cursor is
+// ambiguous — the live edge, or a market closure wider than the window (a
+// crude-oil weekend is ~49h; MINUTE_5's forward buffer is ~17h). Probes walk
+// contiguous, doubling windows toward `now` to tell the two apart. The width
+// cap bounds the one probe that finally lands past a gap (it fetches its whole
+// span of real bars); the probe cap bounds a market that is simply dead —
+// together they cover ~40+ days of closure at MINUTE before conceding.
+const MAX_GAP_PROBES = 16;
+// The jump's probe allowance is smaller: a weekend costs 1-2 probes and a long
+// holiday 3, while a history-floor target (which probes cannot help) should
+// waste as little as possible before the re-roll takes over.
+const JUMP_GAP_PROBES = 4;
+const PROBE_MAX_BARS = 5000;
 
 // Longest the session record may go unwritten while something keeps changing.
 // One second is ten steps at 10x: enough for the debounce to still coalesce a
@@ -424,16 +438,9 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
 
   // --- bar store ------------------------------------------------------------
 
-  const fetchWindow = useCallback(
-    async (res: string, centerMs: number, signal?: AbortSignal): Promise<CandlesResult> => {
+  const fetchSpan = useCallback(
+    async (res: string, fromSec: number, toSec: number, signal?: AbortSignal): Promise<CandlesResult> => {
       const cur = latest.current;
-      const { fromSec, toSec } = bufferWindowSec({
-        centerMs,
-        resSec: RESOLUTION_SECONDS[res] ?? 60,
-        contextBars: CONTEXT_BARS,
-        forwardBars: FORWARD_BARS,
-        nowMs: Date.now(),
-      });
       // WithStatus, not the forgiving fetchRange: that one flattens a 5xx to an
       // empty page, which replay would otherwise report to the user as "no
       // candles at that point" — blaming their pick for a broker outage.
@@ -442,6 +449,20 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
       );
     },
     [],
+  );
+
+  const fetchWindow = useCallback(
+    async (res: string, centerMs: number, signal?: AbortSignal): Promise<CandlesResult> => {
+      const { fromSec, toSec } = bufferWindowSec({
+        centerMs,
+        resSec: RESOLUTION_SECONDS[res] ?? 60,
+        contextBars: CONTEXT_BARS,
+        forwardBars: FORWARD_BARS,
+        nowMs: Date.now(),
+      });
+      return fetchSpan(res, fromSec, toSec, signal);
+    },
+    [fetchSpan],
   );
 
   /** Bars to PAINT for a resolution at the current cursor. Called by the load
@@ -559,11 +580,23 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     // cancel a foreground barsFor/startAt/randomJump; it only has to be cancelled
     // BY them (and by exit/cancelPicking, which bump the counter too).
     const seq = reqSeq.current;
-    void fetchWindow(res, cur.state.cursorMs)
-      .then(({ bars, degraded }) => {
-        // The seq check lives INSIDE .then so .finally still clears the in-flight
-        // flag on a superseded refill; skipping it would wedge refills off for
-        // the rest of the session.
+    const resSec = RESOLUTION_SECONDS[res] ?? 60;
+    void (async () => {
+      let window = bufferWindowSec({
+        centerMs: cur.state.cursorMs,
+        resSec,
+        contextBars: CONTEXT_BARS,
+        forwardBars: FORWARD_BARS,
+        nowMs: Date.now(),
+      });
+      // The first window is the ordinary re-centred refill. Each further lap is
+      // a gap probe: the previous window held nothing past the cursor, so ask
+      // about the span just beyond it (nextProbeWindowSec carries the why).
+      for (let probe = 0; probe <= MAX_GAP_PROBES; probe++) {
+        const { bars, degraded } = await fetchSpan(res, window.fromSec, window.toSec);
+        // The seq check lives INSIDE the loop (and again after every await) so
+        // .finally still clears the in-flight flag on a superseded refill;
+        // skipping it would wedge refills off for the rest of the session.
         if (seq !== reqSeq.current) return;
         // The store may have been re-established at another timeframe while this
         // was in flight; merging bars across resolutions would corrupt it.
@@ -574,8 +607,9 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
         }
         // NOT a length comparison: the refill window is the same width re-centred
         // on the advanced cursor, so on continuous data it carries the same bar
-        // count and would never look "longer". See mergeForward.
-        if (!bars.length) return; // a failed page reads as empty; keep what we have
+        // count and would never look "longer". See mergeForward. (An empty page
+        // merges as a no-op; inside a closure gap that is the expected answer,
+        // not a failure — hard failures reject and HTTP ones read as degraded.)
         barsRef.current = mergeForward(barsRef.current, bars);
         // The end of the session is "the store can no longer offer a bar with a
         // LOADED successor" — the exact predicate stepForward steps by, so the
@@ -593,13 +627,30 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           latest.current.state.cursorMs,
           nominalMs(res),
         );
+        if (!canAdvance) {
+          const next = nextProbeWindowSec(
+            window,
+            Math.floor(Date.now() / 1000),
+            PROBE_MAX_BARS * resSec,
+          );
+          if (next) {
+            window = next;
+            continue;
+          }
+          // null: the probes reached `now` and found nothing — the true end.
+          // (Probe-cap exhaustion concedes the same way; at these widths that
+          // is a market dead for weeks, not a weekend.)
+        }
         setState((s) =>
           s.atEnd === !canAdvance
             ? s
             : // Reaching the end also stops playback; leaving it must not start it.
               { ...s, atEnd: !canAdvance, playing: canAdvance ? s.playing : false },
         );
-      })
+        return;
+      }
+      setState((s) => (s.atEnd ? s : { ...s, atEnd: true, playing: false }));
+    })()
       .catch(() => {
         if (seq !== reqSeq.current) return;
         // A hard network fault (refused / DNS / offline) — HTTP failures come
@@ -613,7 +664,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
       .finally(() => {
         refillingRef.current = false;
       });
-  }, [fetchWindow, nominalMs]);
+  }, [fetchSpan, nominalMs]);
 
   // --- controls -------------------------------------------------------------
 
@@ -920,15 +971,26 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           // answer at all, and the picker would sit on "Finding candles..."
           // forever. A jump is the one read that can afford a deadline, having
           // five other places it could land.
-          const ctrl = new AbortController();
-          const timer = window.setTimeout(() => ctrl.abort(), JUMP_READ_TIMEOUT_MS);
-          const { bars, degraded, partial } = await fetchWindow(res, targetMs, ctrl.signal)
-            .catch(() => ({
-              bars: [] as KLineData[],
-              degraded: ctrl.signal.aborted ? TIMEOUT_MSG : OUTAGE_MSG,
-              partial: null,
-            }))
-            .finally(() => window.clearTimeout(timer));
+          const resSec = RESOLUTION_SECONDS[res] ?? 60;
+          let win = bufferWindowSec({
+            centerMs: targetMs,
+            resSec,
+            contextBars: CONTEXT_BARS,
+            forwardBars: FORWARD_BARS,
+            nowMs: Date.now(),
+          });
+          const deadlined = (fromSec: number, toSec: number) => {
+            const ctrl = new AbortController();
+            const timer = window.setTimeout(() => ctrl.abort(), JUMP_READ_TIMEOUT_MS);
+            return fetchSpan(res, fromSec, toSec, ctrl.signal)
+              .catch(() => ({
+                bars: [] as KLineData[],
+                degraded: ctrl.signal.aborted ? TIMEOUT_MSG : OUTAGE_MSG,
+                partial: null,
+              }))
+              .finally(() => window.clearTimeout(timer));
+          };
+          const { bars, degraded, partial } = await deadlined(win.fromSec, win.toSec);
           if (seq !== reqSeq.current) return;
           if (degraded) {
             lastDegraded = degraded;
@@ -945,9 +1007,53 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           // and report a broker problem where the answer is the timeframe.
           lastDegraded = null;
           if (partial) sawPartial = true;
-          const cursor = cursorForStartTs(bars, targetMs, nominalMs(res));
+          let store = bars;
+          const placeCursor = () => {
+            const c = cursorForStartTs(store, targetMs, nominalMs(res));
+            if (c != null) return c;
+            // No bar at or before the target, but bars after it: the window's
+            // context side never left the closure either, so the pre-gap bar is
+            // not in hand. Land on the first bar past the gap instead — the
+            // same forward snap cursorForStartTs performs when it can see both
+            // sides. Two bars, so the close is a real successor timestamp, not
+            // the nominal-width guess.
+            if (store.length >= 2 && store[0].timestamp > targetMs) {
+              return cursorForStartTs(store, store[0].timestamp, nominalMs(res));
+            }
+            return null;
+          };
+          let cursor = cursorForStartTs(store, targetMs, nominalMs(res));
+          // A null here is not necessarily the history floor — a target inside
+          // a closure WIDER than the window (a crude-oil weekend is ~49h;
+          // MINUTE_5's forward buffer is ~17h) looks identical: the window
+          // holds no bar with a loaded successor past the target, or no bars
+          // at all when even its context side is inside the gap. Walk the same
+          // contiguous, doubling probes the refill uses until the far side is
+          // in hand — halving toward now here is what silently shrank a
+          // 200-day ask to weeks (~40% of draws hit a closure). A floor null
+          // (bars present but all AFTER the target: the data starts inside the
+          // window) still re-rolls, and exhausted probes fall back to it too.
+          if (cursor == null && (!store.length || store[0].timestamp <= targetMs)) {
+            for (let probe = 0; probe < JUMP_GAP_PROBES && cursor == null; probe++) {
+              const next = nextProbeWindowSec(
+                win,
+                Math.floor(Date.now() / 1000),
+                PROBE_MAX_BARS * resSec,
+              );
+              if (!next) break; // the gap runs to the live edge: re-roll
+              const page = await deadlined(next.fromSec, next.toSec);
+              if (seq !== reqSeq.current) return;
+              // A probe that degrades says nothing about the gap; the re-roll
+              // path already knows how to price a read that did not arrive.
+              if (page.degraded) break;
+              if (page.partial) sawPartial = true;
+              win = next;
+              store = mergeForward(store, page.bars);
+              cursor = placeCursor();
+            }
+          }
           if (cursor == null) continue; // dead zone or history floor: halve and re-roll
-          barsRef.current = bars;
+          barsRef.current = store;
           storeResRef.current = res;
           setState((s) => ({
             ...s,
@@ -987,7 +1093,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
         }));
       })();
     },
-    [fetchWindow, nominalMs],
+    [fetchSpan, nominalMs],
   );
 
   const exit = useCallback(() => {
