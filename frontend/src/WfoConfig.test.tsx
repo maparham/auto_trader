@@ -23,10 +23,10 @@ describe("WfoConfig", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("shows combo math and dropped-axes note", () => {
-    render(<WfoConfig cfg={{ ...DEFAULT_WFO_CONFIG, trainSpans: ["2w", "3m"] }} onChange={() => {}} comboTotal={40} droppedAxes={["Period"]} />);
-    expect(screen.getByText(/40 combos/)).toBeTruthy();
-    expect(screen.getByText(/2 scheme/)).toBeTruthy();
+  // The combos x schemes count moved to the panel footer (next to Run), so the
+  // config surface only owns the dropped-axes note.
+  it("shows the dropped-axes note", () => {
+    render(<WfoConfig cfg={{ ...DEFAULT_WFO_CONFIG, trainSpans: ["2w", "3m"] }} onChange={() => {}} droppedAxes={["Period"]} />);
     expect(screen.getByText(/Period/)).toBeTruthy();
   });
 });

@@ -24,10 +24,9 @@ const METRIC_OPTIONS: Array<{ value: string; label: string }> = [
 export function WfoConfig(props: {
   cfg: WfoConfigState;
   onChange: (next: WfoConfigState) => void;
-  comboTotal: number; // from buildWalkForwardPayload (0 when invalid)
   droppedAxes: string[]; // labels of period/timeWindow axes excluded in WFO mode
 }): JSX.Element {
-  const { cfg, onChange, comboTotal, droppedAxes } = props;
+  const { cfg, onChange, droppedAxes } = props;
 
   // Train chips are multi-select: the first stays primary, extras become matrix
   // schemes. Removing the only remaining span is blocked (a run needs one).
@@ -42,8 +41,6 @@ export function WfoConfig(props: {
       onChange({ ...cfg, trainSpans: [...next] });
     }
   };
-
-  const schemes = cfg.trainSpans.length;
 
   return (
     <div className="wfo-config">
@@ -178,7 +175,8 @@ export function WfoConfig(props: {
         />
       </div>
 
-      {/* Row 3 — Advanced toggle and the combo count share one line. */}
+      {/* Row 3 — Advanced toggle. The combos x schemes count lives in the
+          panel footer next to Run, beside the sweep mode's combo estimate. */}
       <div className="wfo-row wfo-foot-row">
         <details className="wfo-advanced">
           <summary>Advanced</summary>
@@ -205,16 +203,6 @@ export function WfoConfig(props: {
             />
           </div>
         </details>
-        <span className="wfo-foot">
-          {comboTotal} {comboTotal === 1 ? "combo" : "combos"} x {schemes}{" "}
-          {schemes === 1 ? "scheme" : "schemes"}
-          <InfoTip
-            text={[
-              "The size of the run. Combos are every combination of the swept parameter values, each scored per fold.",
-              "A scheme is one train/test schedule; selecting several train spans runs one scheme per span.",
-            ]}
-          />
-        </span>
       </div>
       {droppedAxes.length > 0 && (
         <div className="wfo-note">

@@ -2478,7 +2478,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                       <WfoConfig
                         cfg={wfoCfg}
                         onChange={changeWfoCfg}
-                        comboTotal={wfoComboTotal}
                         droppedAxes={wfoDroppedAxes}
                       />
                     </Section>
@@ -3290,6 +3289,18 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                       space keeps textContent reading "275 combos". */}
                   <strong>{isFinite(effectiveCombos) ? effectiveCombos : "∞"}</strong>{" "}
                   {effectiveCombos === 1 ? "combo" : "combos"}
+                </span>
+              )}
+              {btMode === "walkforward" && wfoComboTotal > 0 && (
+                <span className="bt-sweep-estimate">
+                  <strong>{wfoComboTotal}</strong> {wfoComboTotal === 1 ? "combo" : "combos"} x{" "}
+                  {wfoCfg.trainSpans.length} {wfoCfg.trainSpans.length === 1 ? "scheme" : "schemes"}
+                  <InfoTip
+                    text={[
+                      "The size of the run. Combos are every combination of the swept parameter values, each scored per fold.",
+                      "A scheme is one train/test schedule; selecting several train spans runs one scheme per span.",
+                    ]}
+                  />
                 </span>
               )}
               {/* Duration follows the Run button: the docked column's footer
