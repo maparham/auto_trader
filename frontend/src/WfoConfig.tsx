@@ -197,11 +197,23 @@ export function WfoConfig(props: {
                 </button>
               ))}
             </span>
+            <InfoTip
+              text={[
+                "The distance each fold slides forward along the range.",
+                "= test steps by the test span, so test windows tile with no gap or overlap. A shorter step overlaps them and yields more folds.",
+              ]}
+            />
           </div>
         </details>
         <span className="wfo-foot">
           {comboTotal} {comboTotal === 1 ? "combo" : "combos"} x {schemes}{" "}
           {schemes === 1 ? "scheme" : "schemes"}
+          <InfoTip
+            text={[
+              "The size of the run. Combos are every combination of the swept parameter values, each scored per fold.",
+              "A scheme is one train/test schedule; selecting several train spans runs one scheme per span.",
+            ]}
+          />
         </span>
       </div>
       {droppedAxes.length > 0 && (
