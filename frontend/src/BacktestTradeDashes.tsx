@@ -188,6 +188,9 @@ export default function BacktestTradeDashes({
               height: 2,
               borderRadius: 1,
               background: d.trade.pnl >= 0 ? WIN_COLOR : LOSS_COLOR,
+              // A chart-background-colored ring so a win dash stays visible on
+              // a same-colored candle body (same halo idiom as the axis labels).
+              boxShadow: "0 0 0 1px var(--chart-bg, var(--bg))",
             }}
           />
         </span>
