@@ -124,8 +124,27 @@ async def expr_backtest(req: ExprBacktestRequest):
         result, _metrics = await compiled_run(req, on_progress=on_progress)
         # Imported lazily to avoid a router import cycle (backtest.py imports many
         # things at module load; expr.py is registered alongside it).
-        from ..routers.backtest import _result_to_response
+        from ..routers.backtest import _result_to_response, _trades_to_dto
         window = [c for c in req.candles if c.time >= req.tradeFromTime]
+
+        # Post-run enrichment + aggregate analytics, mirroring the structured
+        # handler: rule strategies are what the UI runs by default, and without
+        # this their Analysis tab (context breakdowns, win/loss contrast) is
+        # empty. Enrichment reads the FULL candle list, not `window` — a trade's
+        # signal bar can sit in the warm-up span before tradeFromTime.
+        # Best-effort: a failure here must not fail the run.
+        from auto_trader.api.sweep_apply import candle_from_dto
+        from auto_trader.engine.analysis import compute_analysis
+        from auto_trader.engine.context_features import enrich_trades
+
+        analysis = None
+        try:
+            enrich_trades(result.trades, [candle_from_dto(c) for c in req.candles])
+            analysis = compute_analysis([t.model_dump() for t in _trades_to_dto(result)])
+        except Exception:  # noqa: BLE001  analytics never fail the run
+            logger.warning("entry-context enrichment failed; continuing without it",
+                           exc_info=True)
+
         response = _result_to_response(
             result,
             epic=req.epic,
@@ -134,6 +153,7 @@ async def expr_backtest(req: ExprBacktestRequest):
             trade_from_time=req.tradeFromTime,
             starting_cash=req.costs.startingCash,
             commission_per_side=req.costs.commissionPerSide,
+            analysis=analysis,
         )
         # Companion runs: the same candles/costs with synthesized entry rules, so
         # the frontend can show what the signal added over "always in" and over

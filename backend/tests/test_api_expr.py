@@ -790,3 +790,26 @@ def test_expr_backtest_without_progress_id_touches_no_registry(monkeypatch):
     monkeypatch.setattr(pr, "set_progress", lambda *a, **k: calls.append((a, k)))
     asyncio.run(expr.expr_backtest(ExprBacktestRequest(**_base_req())))
     assert calls == []
+
+
+def test_expr_backtest_carries_analysis_and_entry_context():
+    """The expression surface enriches and analyses like the structured one.
+
+    Without this the whole Analysis tab (context breakdowns, win/loss contrast)
+    is empty for rule strategies, which is what the UI runs by default.
+    """
+    # 60 bars of a clean ramp-and-fade so the entry rule fires with enough
+    # history for the context features' EMA(50)/ATR(14) lookbacks.
+    closes = [100 + (k % 10) for k in range(60)]
+    r = client.post("/api/expr/backtest", json=_base_req(
+        candles=_candles(closes),
+        longEntry=[{"expr": "crossAbove(candle.close, 105)"}],
+    ))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["trades"], "expected the rule to fire at least once"
+    assert body["analysis"] is not None
+    assert body["analysis"]["n_trades"] == len(body["trades"])
+    ctx = body["trades"][0]["context"]
+    assert ctx is not None
+    assert "session" in ctx and "hour_utc" in ctx
