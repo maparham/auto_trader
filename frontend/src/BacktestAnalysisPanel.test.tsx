@@ -647,6 +647,36 @@ describe("BacktestAnalysisPanel", () => {
       expect(selectedTradeSignal.value).toBe(20);
     });
 
+    it("splits each bucket into long and short sub-rows on a two-sided run", () => {
+      // Same 40 trades, but the second half is short: 16/20 long wins, 4/20 short.
+      const twoSided = contrastTrades.map((t, i) =>
+        i < 20 ? t : ({ ...t, leg: "short" } as (typeof contrastTrades)[number]),
+      );
+      render(<BacktestAnalysisPanel analysis={analysis} trades={twoSided} />);
+      showTab("Breakdowns");
+      const section = screen
+        .getAllByRole("button", { name: /win\/loss contrast/i })
+        .find((el) => el.tagName === "H4")!
+        .closest("section")!;
+      const up = within(section).getByText("up").closest("tr")!;
+      const longRow = up.nextElementSibling as HTMLElement;
+      const shortRow = longRow.nextElementSibling as HTMLElement;
+      expect(within(longRow).getByText("Long")).toBeTruthy();
+      expect(within(longRow).getByText("80%")).toBeTruthy();
+      expect(within(shortRow).getByText("Short")).toBeTruthy();
+      expect(within(shortRow).getByText("0")).toBeTruthy(); // no shorts in this bucket
+    });
+
+    it("stays single-row on a one-sided run", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} trades={contrastTrades} />);
+      showTab("Breakdowns");
+      const section = screen
+        .getAllByRole("button", { name: /win\/loss contrast/i })
+        .find((el) => el.tagName === "H4")!
+        .closest("section")!;
+      expect(within(section).queryByText("Short")).toBeNull();
+    });
+
     it("is absent without trades (old stored runs)", () => {
       render(<BacktestAnalysisPanel analysis={analysis} />);
       showTab("Breakdowns");

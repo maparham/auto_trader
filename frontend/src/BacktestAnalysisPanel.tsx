@@ -10,6 +10,7 @@ import type {
 import {
   fmtDeltaPct,
   winLossContrast,
+  type ContrastBucket,
   type ContrastTrade,
   type FieldContrast,
 } from "./lib/contrast";
@@ -799,7 +800,25 @@ function WhatIfSection({
 // per-bucket win-rate table. Ranking uses a 0..1 effect size (Cramér's V /
 // rank-biserial, see lib/contrast.ts); the displayed numbers are plain win
 // rates and their deltas against the field's overall rate.
+// One direction's slice of a contrast bucket. Rendered only on runs that
+// actually traded both sides, so a long-only run keeps its compact tables.
+function ContrastLegRow({ label, leg }: { label: "Long" | "Short"; leg: ContrastBucket["legs"]["long"] }) {
+  return (
+    <tr className={`bt-analysis-subrow bt-leg-${label.toLowerCase()}`}>
+      <td className="bt-analysis-subrow-label">{label}</td>
+      <td>{leg.n}</td>
+      <td>{leg.n > 0 ? fmtPct(leg.wins / leg.n) : "—"}</td>
+      <td />
+      <td />
+    </tr>
+  );
+}
+
 function ContrastFields({ contrasts }: { contrasts: FieldContrast[] }) {
+  // Both sides traded somewhere in the run: the split earns its rows.
+  const split = contrasts.some((f) =>
+    f.buckets.some((b) => b.legs.short.n > 0) && f.buckets.some((b) => b.legs.long.n > 0),
+  );
   return (
     <>
       {contrasts.map((f) => (
@@ -829,7 +848,8 @@ function ContrastFields({ contrasts }: { contrasts: FieldContrast[] }) {
             </thead>
             <tbody>
               {f.buckets.map((b) => (
-                <tr key={b.bucket} className={b.low_sample ? "bt-analysis-low" : ""}>
+                <Fragment key={b.bucket}>
+                <tr className={b.low_sample ? "bt-analysis-low" : ""}>
                   <td>{b.bucket}</td>
                   <td>{b.n}</td>
                   <td>{fmtPct(b.win_rate)}</td>
@@ -857,6 +877,9 @@ function ContrastFields({ contrasts }: { contrasts: FieldContrast[] }) {
                     </button>
                   </td>
                 </tr>
+                {split && <ContrastLegRow label="Long" leg={b.legs.long} />}
+                {split && <ContrastLegRow label="Short" leg={b.legs.short} />}
+                </Fragment>
               ))}
             </tbody>
           </table>

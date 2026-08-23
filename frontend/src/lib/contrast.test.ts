@@ -225,3 +225,27 @@ describe("fmtDeltaPct", () => {
     expect(fmtDeltaPct(0)).toBe("0%");
   });
 });
+
+describe("per-leg bucket splits", () => {
+  it("counts long and short trades separately inside each bucket", () => {
+    const trades = [
+      ...Array.from({ length: 12 }, (_, i) =>
+        trade({ pnl: i < 9 ? 1 : -1, leg: "long", context: { trend: "up" } as Trade["context"] })),
+      ...Array.from({ length: 12 }, (_, i) =>
+        trade({ pnl: i < 3 ? 1 : -1, leg: "short", context: { trend: "up" } as Trade["context"] })),
+      ...batch(20, 4, { trend: "down" }),
+    ];
+    const up = winLossContrast(trades)
+      .find((f) => f.field === "trend")!
+      .buckets.find((b) => b.bucket === "up")!;
+    expect(up.legs.long).toEqual({ n: 12, wins: 9 });
+    expect(up.legs.short).toEqual({ n: 12, wins: 3 });
+  });
+
+  it("leaves a leg at zero when the run never traded it", () => {
+    const up = winLossContrast(batch(40, 20, { trend: "up" }))
+      .find((f) => f.field === "trend")!
+      .buckets[0];
+    expect(up.legs.short).toEqual({ n: 0, wins: 0 });
+  });
+});

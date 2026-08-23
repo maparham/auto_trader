@@ -26,6 +26,12 @@ export interface ContrastBucket {
   delta: number; // win_rate minus the field's overall win rate
   low_sample: boolean;
   indices: number[]; // positions in the input trades array, entry order
+  legs: { long: LegCount; short: LegCount }; // the bucket split by direction
+}
+
+export interface LegCount {
+  n: number;
+  wins: number;
 }
 
 export interface FieldContrast {
@@ -211,8 +217,33 @@ function conjectureFor(label: string, overall: number, buckets: ContrastBucket[]
   return `${side} concentrate where ${label} is ${extreme.bucket}: ${pct(extreme.win_rate)} win rate vs ${pct(overall)} overall.`;
 }
 
+interface Group {
+  n: number;
+  wins: number;
+  indices: number[];
+  legs: { long: LegCount; short: LegCount };
+}
+
+const emptyGroup = (): Group => ({
+  n: 0,
+  wins: 0,
+  indices: [],
+  legs: { long: { n: 0, wins: 0 }, short: { n: 0, wins: 0 } },
+});
+
+// One trade into its bucket's tallies (overall, direction split, membership).
+function addToGroup(g: Group, t: Trade, i: number): void {
+  const win = t.pnl > 0;
+  g.n++;
+  if (win) g.wins++;
+  g.indices.push(i);
+  const leg = t.leg === "short" ? g.legs.short : g.legs.long;
+  leg.n++;
+  if (win) leg.wins++;
+}
+
 function bucketsFromGroups(
-  groups: Map<string, { n: number; wins: number; indices: number[] }>,
+  groups: Map<string, Group>,
   overall: number,
   ord?: (bucket: string) => number,
 ): ContrastBucket[] {
@@ -223,6 +254,7 @@ function bucketsFromGroups(
     delta: g.wins / g.n - overall,
     low_sample: g.n < LOW_SAMPLE_N,
     indices: g.indices,
+    legs: g.legs,
   }));
   rows.sort(ord ? (a, b) => ord(a.bucket) - ord(b.bucket) : (a, b) => b.n - a.n);
   return rows;
@@ -242,16 +274,14 @@ export function winLossContrast(
   const out: FieldContrast[] = [];
 
   for (const f of CATEGORICAL) {
-    const groups = new Map<string, { n: number; wins: number; indices: number[] }>();
+    const groups = new Map<string, Group>();
     let n = 0;
     let wins = 0;
     for (const [i, t] of trades.entries()) {
       const bucket = f.value(t, offsetHours);
       if (bucket == null) continue;
-      const g = groups.get(bucket) ?? { n: 0, wins: 0, indices: [] };
-      g.n++;
-      if (t.pnl > 0) g.wins++;
-      g.indices.push(i);
+      const g = groups.get(bucket) ?? emptyGroup();
+      addToGroup(g, t, i);
       groups.set(bucket, g);
       n++;
       if (t.pnl > 0) wins++;
@@ -295,15 +325,13 @@ export function winLossContrast(
       ...edges.slice(1).map((e, k) => `${f.fmt(edges[k])}-${f.fmt(e)}`),
       `>${f.fmt(edges[edges.length - 1])}`,
     ];
-    const groups = new Map<string, { n: number; wins: number; indices: number[] }>();
+    const groups = new Map<string, Group>();
     for (const [i, t] of trades.entries()) {
       const v = f.value(t);
       if (v == null) continue;
       const bucket = labelFor(v);
-      const g = groups.get(bucket) ?? { n: 0, wins: 0, indices: [] };
-      g.n++;
-      if (t.pnl > 0) g.wins++;
-      g.indices.push(i);
+      const g = groups.get(bucket) ?? emptyGroup();
+      addToGroup(g, t, i);
       groups.set(bucket, g);
     }
     const buckets = bucketsFromGroups(groups, overall, (b) => orderedLabels.indexOf(b));
