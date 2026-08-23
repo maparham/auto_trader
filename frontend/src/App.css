@@ -5224,6 +5224,7 @@ span.bt-leg-short { color: var(--neg); }
 .bt-cluster-pop-table { border-collapse: collapse; }
 .bt-cluster-pop-table td { padding: 2px 7px 2px 0; white-space: nowrap; }
 .bt-cluster-pop-table tr td:last-child { padding-right: 0; }
+.bt-cluster-pop-seq { color: var(--text-faint); font-family: var(--mono); text-align: right; }
 .bt-cluster-pop-time { color: var(--text-dim); font-family: var(--mono); }
 .bt-cluster-pop-num { text-align: right; font-family: var(--mono); }
 .bt-cluster-pop-num.pos { color: var(--pos); }

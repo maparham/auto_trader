@@ -30,7 +30,7 @@ export interface AggPill {
   y: number;
   count: number;
   net: number;
-  trades: Trade[];
+  trades: { trade: Trade; index: number }[];
   resolution: string; // the backtest's native timeframe (drill-in target)
   fromMs: number; // bar's min-entry → max-exit window (drill-in zoom)
   toMs: number;
@@ -101,7 +101,7 @@ export default function BacktestAggMarkers({
         // Direction glyph(s) + count·net. Same ▲/▼ language as the native pill,
         // so long/short reads on the coarse timeframes too (aggPillLabel: one
         // glyph for a single-direction bar, ▲n ▼m split for a mixed one).
-        const longs = p.trades.reduce((n, t) => n + (t.leg === "long" ? 1 : 0), 0);
+        const longs = p.trades.reduce((n, t) => n + (t.trade.leg === "long" ? 1 : 0), 0);
         const text = aggPillLabel(longs, p.count - longs, p.net);
         return (
           <span

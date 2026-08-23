@@ -1135,7 +1135,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         if (g.length === 0) return;
         const cx = g.reduce((s, p) => s + p.x, 0) / g.length;
         if (cx >= 0 && cx <= paneW) {
-          const trades = g.flatMap((p) => p.cl.trades.map((t) => t.trade));
+          const trades = g.flatMap((p) => p.cl.trades);
           pills.push({
             key: `agg:${g[0].cl.barTs}-${g[g.length - 1].cl.barTs}`,
             x: cx,

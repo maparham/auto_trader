@@ -47,8 +47,9 @@ export default function BacktestClusterPopover() {
     <div className="bt-cluster-pop" style={style}>
       <table className="bt-cluster-pop-table">
         <tbody>
-          {shown.map((t, i) => (
+          {shown.map(({ trade: t, index }, i) => (
             <tr key={i}>
+              <td className="bt-cluster-pop-seq">#{index + 1}</td>
               <td className={t.leg === "long" ? "bt-panel-side-long" : "bt-panel-side-short"}>
                 {t.leg === "long" ? "Long" : "Short"}
               </td>

@@ -90,7 +90,7 @@ export default function BacktestTradeDashes({
   const clearOwned = (h: { kind: HoverKind; index: number; trade: Trade }) => {
     if (h.kind === "highlight") {
       if (highlightTradeSignal.value === h.index) highlightTradeSignal.set(null);
-    } else if (backtestClusterHoverSignal.value?.trades[0] === h.trade) {
+    } else if (backtestClusterHoverSignal.value?.trades[0]?.trade === h.trade) {
       backtestClusterHoverSignal.set(null);
     }
   };
@@ -138,7 +138,12 @@ export default function BacktestTradeDashes({
             if (prev !== null && prev.kind !== kind) clearOwned(prev);
             hoveredRef.current = { key: d.key, kind, index: d.index, trade: d.trade };
             if (kind === "highlight") highlightTradeSignal.set(d.index);
-            else backtestClusterHoverSignal.set({ trades: [d.trade], x: e.clientX, y: e.clientY });
+            else
+              backtestClusterHoverSignal.set({
+                trades: [{ trade: d.trade, index: d.index }],
+                x: e.clientX,
+                y: e.clientY,
+              });
           }}
           // Only clear if THIS dash still owns the hover: moving dash→dash can
           // fire the next enter before this leave (same guard as the pills).

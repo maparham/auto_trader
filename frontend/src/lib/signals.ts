@@ -200,9 +200,14 @@ export const backtestDrillRequestSignal = new Signal<{
 // aggregate pill's onMouseEnter (backtest.ts), cleared on leave / teardown; App
 // renders one popover for it. Global + one-at-a-time (only one pill is hovered
 // app-wide at a time), matching the modal-request idiom above — no per-cell
-// gating needed. Carries the stored trade shape (plain data, no candles).
+// gating needed. Carries the stored trade shape (plain data, no candles) plus
+// each trade's index in the run's trades array (its run-sequence number).
 export const backtestClusterHoverSignal = new Signal<
-  { trades: StoredBacktestResult["trades"]; x: number; y: number } | null
+  {
+    trades: { trade: StoredBacktestResult["trades"][number]; index: number }[];
+    x: number;
+    y: number;
+  } | null
 >(null);
 
 // The LIVE exit-cluster popover: journaled closes bucketed into one bar (a coarse-
