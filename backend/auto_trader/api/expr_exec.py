@@ -272,6 +272,7 @@ async def compiled_run(
         long_exit_combine=r.longExitCombine,
         short_entry_combine=r.shortEntryCombine,
         short_exit_combine=r.shortExitCombine,
+        epochs=[c.time.timestamp() for c in candles],
     )
     engine = BacktestEngine(
         strategy,

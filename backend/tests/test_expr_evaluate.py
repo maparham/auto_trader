@@ -247,6 +247,39 @@ def test_strategy_passes_entry_index():
     assert len(signals) == 1 and signals[0].leg == "long"
 
 
+def test_strategy_epochs_fast_path_matches_legacy():
+    """The optional epoch array changes nothing: gate decisions and
+    barsSinceEntry indices are identical to the per-bar datetime math, at every
+    bar and with an entry time between bars (bisect tie-breaking)."""
+    from auto_trader.strategy.base import Context
+    from auto_trader.strategy.expr.strategy import ExprRuleStrategy
+    candles = _bars([(10, 11), (11, 12), (12, 11), (11, 10), (10, 9), (9, 12)])
+    epochs = [c.time.timestamp() for c in candles]
+
+    def run(strat):
+        entry_row = compile_row(parse("candle.close > candle.open"), candles, "MINUTE_5", {})
+        exit_row = compile_row(parse("count(bearish(candle), barsSinceEntry) >= 2"), candles, "MINUTE_5", {})
+        strat.long_entry, strat.long_exit = [entry_row], [exit_row]
+        out = []
+        for i in range(len(candles)):
+            ctx = Context()
+            ctx.history = candles[:i + 1]
+            ctx.position_long = 1.0
+            ctx.long_entry_price = 12.0
+            # Entry time BETWEEN bars 1 and 2: exercises bisect tie-breaking.
+            ctx.long_entry_time = candles[1].time + (candles[2].time - candles[1].time) / 2
+            out.append([(s.side, s.leg) for s in strat.on_bar(ctx)])
+        return out
+
+    # trade_from_time mid-range so the gate flips within the run.
+    gate = int(epochs[2])
+    legacy = run(ExprRuleStrategy([], [], [], [], quantity=1.0, trade_from_time=gate))
+    fast = run(ExprRuleStrategy([], [], [], [], quantity=1.0, trade_from_time=gate,
+                                epochs=epochs))
+    assert fast == legacy
+    assert any(sig for sig in legacy)  # not vacuous: something fired somewhere
+
+
 # --- candle pattern predicates -------------------------------------------------
 #
 # `_bars` derives high = max(open, close) + 1 and low = min(open, close) - 1, so

@@ -231,6 +231,7 @@ def run_coded_sync(
                 long_enabled=req.longEnabled, short_enabled=req.shortEnabled,
                 long_exit_combine=req.exprLongExitCombine,
                 short_exit_combine=req.exprShortExitCombine,
+                epochs=[c.time.timestamp() for c in candles],
             ))
         # Reversed baseline: wrap the WHOLE stack (coded module + panel expr
         # exits) so everything above the wrapper keeps reasoning in original
@@ -339,6 +340,7 @@ def build_expr_engine(
         long_exit_combine=req.longExitCombine,
         short_entry_combine=req.shortEntryCombine,
         short_exit_combine=req.shortExitCombine,
+        epochs=[c.time.timestamp() for c in candles],
     )
     engine = BacktestEngine(
         strategy,

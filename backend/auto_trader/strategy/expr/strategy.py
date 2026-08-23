@@ -40,6 +40,12 @@ class ExprRuleStrategy(Strategy):
         long_exit_combine: str = "AND",
         short_entry_combine: str = "AND",
         short_exit_combine: str = "AND",
+        # Epoch seconds parallel to the candle list the engine will run over.
+        # ctx.history is that list's prefix even under start_index fast-forward,
+        # so bar i's epoch is epochs[i]; this drops the per-bar .timestamp() in
+        # the entry gate and the datetime-keyed bisect in _entry_index. None =
+        # legacy per-bar datetime math (identical results either way).
+        epochs: list[float] | None = None,
     ) -> None:
         self.long_entry = long_entry
         self.long_exit = long_exit
@@ -53,6 +59,7 @@ class ExprRuleStrategy(Strategy):
         self.long_exit_combine = long_exit_combine
         self.short_entry_combine = short_entry_combine
         self.short_exit_combine = short_exit_combine
+        self.epochs = epochs
 
     @staticmethod
     def _passes(rows: list[CompiledRow], i: int, entry: float | None,
@@ -80,20 +87,26 @@ class ExprRuleStrategy(Strategy):
         terms = tuple(t for r in passing for t in r.terms_at(i, entry, entry_i))
         return reason, terms
 
-    @staticmethod
-    def _entry_index(ctx: Context, entry_time) -> int | None:
+    def _entry_index(self, ctx: Context, entry_time) -> int | None:
         """Index of the bar containing `entry_time` (last bar at or before it),
-        feeding barsSinceEntry. None when flat or before all history."""
+        feeding barsSinceEntry. None when flat or before all history. Bisecting
+        the epoch array is ordering-identical to bisecting history by c.time
+        (UTC datetimes map monotonically to their epochs)."""
         if entry_time is None:
             return None
-        idx = bisect.bisect_right(ctx.history, entry_time, key=lambda c: c.time) - 1
+        if self.epochs is not None:
+            idx = bisect.bisect_right(
+                self.epochs, entry_time.timestamp(), 0, len(ctx.history)) - 1
+        else:
+            idx = bisect.bisect_right(ctx.history, entry_time, key=lambda c: c.time) - 1
         return idx if idx >= 0 else None
 
     def on_bar(self, ctx: Context) -> list[Signal]:
         i = len(ctx.history) - 1
         gated = (
             self.trade_from_time is not None
-            and ctx.bar.time.timestamp() < self.trade_from_time
+            and (self.epochs[i] if self.epochs is not None
+                 else ctx.bar.time.timestamp()) < self.trade_from_time
         )
         out: list[Signal] = []
         if self.long_enabled:
