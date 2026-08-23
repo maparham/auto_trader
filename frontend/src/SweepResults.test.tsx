@@ -446,3 +446,37 @@ describe("SweepResults DSR column", () => {
     expect(dsrCell(0).textContent).toBe("—");
   });
 });
+
+describe("SweepResults progress timing", () => {
+  const timing = () => document.querySelector(".sweep-progress-timing")?.textContent ?? null;
+  // performance.now() is what <RunTiming> subtracts startedAt from; pin it so
+  // the elapsed half formats deterministically.
+  const pinClock = (ms: number) => vi.spyOn(performance, "now").mockReturnValue(ms);
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("renders count, fill and the elapsed · remaining readout", () => {
+    pinClock(30_000);
+    render(<SweepResults rows={rows} axes={axes} onApply={() => {}}
+      progress={{ done: 2, total: 6, etaSeconds: 90, startedAt: 5_000 }} />);
+    expect(document.querySelector(".sweep-progress")?.textContent).toContain("2 / 6");
+    expect((document.querySelector(".sweep-progress-fill") as HTMLElement).style.width)
+      .toBe(`${(2 / 6) * 100}%`);
+    expect(timing()).toBe("25s · ~1m 30s left");
+  });
+
+  it("shows the ETA alone for a re-attached sweep (no startedAt)", () => {
+    pinClock(30_000);
+    render(<SweepResults rows={rows} axes={axes} onApply={() => {}}
+      progress={{ done: 2, total: 6, etaSeconds: 90 }} />);
+    expect(timing()).toBe("~1m 30s left");
+  });
+
+  it("omits the timing span entirely before the first combo lands", () => {
+    pinClock(30_000);
+    render(<SweepResults rows={rows} axes={axes} onApply={() => {}}
+      progress={{ done: 0, total: 6, etaSeconds: null }} />);
+    expect(document.querySelector(".sweep-progress")).toBeTruthy();
+    expect(document.querySelector(".sweep-progress-timing")).toBeNull();
+  });
+});
