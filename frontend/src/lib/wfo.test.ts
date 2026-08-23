@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_WFO_CONFIG, buildWalkForwardPayload, matchUiAxesByTargets, uiAxesFromResult, wfoAxesFromSweepAxes } from "./wfo";
+import { DEFAULT_WFO_CONFIG, buildWalkForwardPayload, matchUiAxesByTargets, uiAxesFromResult, wfoAxesFromSweepAxes, wfoComboSummary } from "./wfo";
 import type { WfoResult } from "../api";
 import type { SweepAxis } from "./sweep";
 
@@ -141,5 +141,52 @@ describe("buildWalkForwardPayload", () => {
   it("throws on no usable axes / no train span", () => {
     expect(() => buildWalkForwardPayload([period], DEFAULT_WFO_CONFIG)).toThrow(/parameter axis/);
     expect(() => buildWalkForwardPayload([range], { ...DEFAULT_WFO_CONFIG, trainSpans: [] })).toThrow(/training span/);
+  });
+});
+
+describe("wfoComboSummary", () => {
+  // The footer count must agree with the payload the run would actually submit,
+  // for every input shape — it is the cheap path past enumerateCombos, so a
+  // divergence here would show the user a count no run ever uses.
+  const agrees = (axes: SweepAxis[], cfg = DEFAULT_WFO_CONFIG) => {
+    let expected: number;
+    try {
+      expected = buildWalkForwardPayload(axes, cfg).comboTotal;
+    } catch {
+      expected = 0; // the modal renders a throw as 0 combos
+    }
+    expect(wfoComboSummary(axes, cfg).comboTotal).toBe(expected);
+  };
+
+  it("counts the grid without enumerating it", () => {
+    agrees([range, list]); // 3 x 2
+    expect(wfoComboSummary([range, list], DEFAULT_WFO_CONFIG).comboTotal).toBe(6);
+  });
+
+  it("reports 0 wherever the payload build would throw", () => {
+    agrees([]); // no axes at all
+    agrees([period, timeWin]); // every axis dropped
+    agrees([range], { ...DEFAULT_WFO_CONFIG, trainSpans: [] });
+    // step 0 makes axisValues empty, which enumerates to no combos at all —
+    // comboCount's Infinity sentinel for a zero-length axis must not leak out.
+    agrees([{ ...range, step: 0 }]);
+  });
+
+  it("passes through the dropped and usable axes the panel labels with", () => {
+    const { usable, dropped } = wfoComboSummary([range, list, period, timeWin], DEFAULT_WFO_CONFIG);
+    expect(usable.map((a) => a.target)).toEqual(["param:fast", "op:long.entry.0"]);
+    expect(dropped).toEqual(["Period", "Session"]);
+  });
+
+  it("stays cheap on a grid too large to materialize", () => {
+    // The regression this exists for: a 38k-combo grid enumerated on every
+    // render of the settings modal cost ~15s to first paint and ~1.8GB of heap.
+    const big: SweepAxis[] = [
+      { kind: "range", target: "param:a", label: "a", from: 1, to: 200, step: 1 },
+      { kind: "range", target: "param:b", label: "b", from: 1, to: 200, step: 1 },
+    ];
+    const t0 = performance.now();
+    expect(wfoComboSummary(big, DEFAULT_WFO_CONFIG).comboTotal).toBe(40_000);
+    expect(performance.now() - t0).toBeLessThan(50);
   });
 });

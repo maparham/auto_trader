@@ -18,7 +18,7 @@ import {
   type WfoObjective,
 } from "../api";
 import { cancelWithRetry } from "./cancelRetry";
-import { axisValues, enumerateCombos, type SweepAxis } from "./sweep";
+import { axisValues, comboCount, enumerateCombos, type SweepAxis } from "./sweep";
 import { wfoStateSignal, wfoCancelRequest, wfoCancelServer, type WfoRunState } from "./signals";
 
 export const TRAIN_SPAN_PICKS = ["2w", "1m", "3m", "6m"] as const;
@@ -158,6 +158,30 @@ export function matchUiAxesByTargets(resultAxes: WfoAxis[], sweepAxes: SweepAxis
     matched.push(usable[i]);
   }
   return matched;
+}
+
+/**
+ * Combo count for the WFO footer/badge, without building the grid.
+ *
+ * The panel only ever wanted the number, but read it off
+ * buildWalkForwardPayload, which materializes every combo as its own object.
+ * On a real saved grid (38k combos) that ran on each render of the settings
+ * modal: ~15s to first contentful paint and ~1.8GB of heap, since the axes memo
+ * it keys on re-runs whenever the backtest config identity changes. comboCount
+ * multiplies the axis lengths instead.
+ *
+ * Mirrors buildWalkForwardPayload's two gates, reporting 0 where it would throw
+ * (which is how the caller renders a throw anyway): no training span selected,
+ * and usable axes that produce no combos. comboCount's Infinity sentinel for a
+ * zero-length axis is one of those — enumerating it yields no combos at all.
+ */
+export function wfoComboSummary(
+  axes: SweepAxis[],
+  cfg: WfoConfigState,
+): { comboTotal: number; usable: SweepAxis[]; dropped: string[] } {
+  const { usable, dropped } = wfoAxesFromSweepAxes(axes);
+  const n = cfg.trainSpans.length === 0 ? 0 : comboCount(usable);
+  return { comboTotal: Number.isFinite(n) ? n : 0, usable, dropped };
 }
 
 /**

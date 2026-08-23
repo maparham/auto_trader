@@ -43,7 +43,7 @@ import {
 import { stageLabel } from "./lib/progressLabels";
 import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
-import { buildWalkForwardPayload, liftFoldPlateau, matchUiAxesByTargets, resumeWfo, uiAxesFromResult, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
+import { buildWalkForwardPayload, liftFoldPlateau, matchUiAxesByTargets, resumeWfo, uiAxesFromResult, wfoComboSummary, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
 import { WfoResults } from "./WfoResults";
 import { requiredWarmupBars, resolveWindow } from "./lib/backtestWindow";
 import { exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
@@ -838,19 +838,18 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // `wfoUsableAxes` are the surviving (non-period, non-timeWindow) sweep axes
   // the WFO grid actually varies — WfoResults labels params and drift by them.
   const { wfoComboTotal, wfoDroppedAxes, wfoUsableAxes } = useMemo(() => {
-    // wfoAxesFromSweepAxes lives INSIDE the try: a malformed persisted axis (e.g.
-    // an options-[] list axis) must degrade to 0 combos, never throw and crash
-    // the whole modal render. Keep the dropped/usable it produced so the "dropped
-    // from WFO" hint still shows when buildWalkForwardPayload throws on a config
-    // that has only period/timeWindow axes (0 combos, but dropped is meaningful).
-    let usable: SweepAxis[] = [];
-    let dropped: string[] = [];
+    // Counts the grid without materializing it. This memo re-runs on every
+    // backtest-config identity change — six times over a workspace restore, as
+    // measured — and enumerating a large saved grid on each of those cost
+    // seconds of paint and gigabytes of heap before the chart ever appeared.
+    //
+    // The try stays: a malformed persisted axis (e.g. an options-[] list axis)
+    // must degrade to 0 combos, never throw and crash the whole modal render.
     try {
-      ({ usable, dropped } = wfoAxesFromSweepAxes(activeSweepAxes));
-      const { comboTotal } = buildWalkForwardPayload(activeSweepAxes, wfoCfg);
+      const { comboTotal, usable, dropped } = wfoComboSummary(activeSweepAxes, wfoCfg);
       return { wfoComboTotal: comboTotal, wfoDroppedAxes: dropped, wfoUsableAxes: usable };
     } catch {
-      return { wfoComboTotal: 0, wfoDroppedAxes: dropped, wfoUsableAxes: usable };
+      return { wfoComboTotal: 0, wfoDroppedAxes: [] as string[], wfoUsableAxes: [] as SweepAxis[] };
     }
   }, [activeSweepAxes, wfoCfg]);
   const [wfoError, setWfoError] = useState<string | null>(null);
