@@ -161,7 +161,7 @@ async def expr_backtest(req: ExprBacktestRequest):
                 load_minutes=_load_minutes,
             )
         except Exception:  # noqa: BLE001  a broker failure never fails the run
-            logger.warning("exit-time resolution failed; continuing without it", exc_info=True)
+            log.warning("exit-time resolution failed; continuing without it", exc_info=True)
 
         analysis = None
         try:
@@ -171,7 +171,7 @@ async def expr_backtest(req: ExprBacktestRequest):
             enrich_trades_whatif(result.trades, conv_candles)
             analysis = compute_analysis([t.model_dump() for t in _trades_to_dto(result)])
         except Exception:  # noqa: BLE001  analytics never fail the run
-            logger.warning("entry-context enrichment failed; continuing without it",
+            log.warning("entry-context enrichment failed; continuing without it",
                            exc_info=True)
 
         response = _result_to_response(

@@ -872,3 +872,24 @@ def test_expr_backtest_survives_a_failing_minute_fetch(monkeypatch):
     ))
     assert r.status_code == 200, r.text
     assert r.json()["trades"]
+
+
+def test_expr_backtest_survives_failing_post_run_extras(monkeypatch):
+    """The best-effort handlers must actually be reachable.
+
+    attach_exit_times swallows a broker failure internally, so a fetch that
+    raises never reaches the handler's own except block. Raise from the
+    enrichment entry points themselves to exercise both recovery paths.
+    """
+    def boom(*a, **k):
+        raise RuntimeError("enrichment exploded")
+
+    async def aboom(*a, **k):
+        raise RuntimeError("exit times exploded")
+
+    monkeypatch.setattr("auto_trader.engine.exit_time.attach_exit_times", aboom)
+    monkeypatch.setattr("auto_trader.engine.context_features.enrich_trades", boom)
+    r = client.post("/api/expr/backtest", json=_sawtooth_req())
+    assert r.status_code == 200, r.text
+    assert r.json()["trades"]
+    assert r.json()["analysis"] is None  # analytics dropped, run intact
