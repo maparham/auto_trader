@@ -38,3 +38,13 @@ testpaths = ["tests"]
 # Put the backend root on sys.path so `scripts.*` (CLI helpers, not part of the
 # wheel) import under pytest the same way `python -m scripts.X` runs them.
 pythonpath = ["."]
+
+[tool.ruff.lint]
+# Default rule set (E4/E7/E9 + pyflakes). The point of running ruff here is
+# pyflakes: F821 (undefined name) catches the class of bug where a best-effort
+# `except` block references a name that does not exist, so the recovery path
+# crashes the request it was meant to survive.
+ignore = [
+    "E402",  # app.py imports routers after its app/middleware setup, on purpose
+    "E741",  # `l` reads fine as a local for "low" in the OHLC code
+]

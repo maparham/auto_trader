@@ -26,9 +26,13 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from auto_trader.core.models import Candle, Side, Signal, Trade
 from auto_trader.strategy.base import Context, Strategy
+
+if TYPE_CHECKING:  # the runtime import is local (below) to avoid a cycle
+    from auto_trader.engine.backtest import BacktestResult
 
 
 @dataclass(slots=True, frozen=True)

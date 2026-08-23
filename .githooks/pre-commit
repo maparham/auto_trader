@@ -1,0 +1,16 @@
+#!/bin/sh
+# Fast pre-commit lint. Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Ruff only (about 50ms over the whole backend): it catches undefined names,
+# unused imports and syntax errors, which is the class of defect that unit
+# tests miss because the broken line only runs in a rare error path. Type
+# checks and the test suites are too slow for a hook; run them yourself.
+if git diff --cached --name-only | grep -q '^backend/.*\.py$'; then
+  if command -v ruff >/dev/null 2>&1; then
+    ruff check backend/auto_trader backend/scripts || {
+      echo "pre-commit: ruff found problems (use --no-verify to bypass)" >&2
+      exit 1
+    }
+  fi
+fi
