@@ -5231,10 +5231,14 @@ span.bt-leg-short { color: var(--neg); }
 .bt-trade-row.selected { background: var(--accent-soft, rgba(41,98,255,.10)); box-shadow: inset 2px 0 0 var(--accent); }
 
 /* Aggregate-marker hover popover (higher-timeframe view) — flat card listing a
-   bar's bucketed trades. pointer-events:none so leaving the pill clears it. */
+   bar's bucketed trades. pointer-events:none so leaving the pill clears it.
+   Sized to its content: the seq/side/time/price/P&L columns are nowrap, so a
+   card narrower than them paints the table outside its own border. Capped at
+   500px, past which the reason column wraps (a reason can be a whole
+   expression). Keep the cap in sync with POP_MAX_W in BacktestClusterPopover. */
 .bt-cluster-pop {
   position: fixed; z-index: 2500; pointer-events: none;
-  max-width: 340px; padding: 7px 9px;
+  width: max-content; max-width: min(92vw, 500px); padding: 7px 9px;
   background: var(--surface-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
   font-size: 12px;
@@ -5247,7 +5251,9 @@ span.bt-leg-short { color: var(--neg); }
 .bt-cluster-pop-num { text-align: right; font-family: var(--mono); }
 .bt-cluster-pop-num.pos { color: var(--pos); }
 .bt-cluster-pop-num.neg { color: var(--neg); }
-.bt-cluster-pop-reason { color: var(--text-dim); }
+.bt-cluster-pop-table td.bt-cluster-pop-reason {
+  color: var(--text-dim); white-space: normal; overflow-wrap: anywhere;
+}
 .bt-cluster-pop-more { color: var(--text-faint); margin-top: 4px; }
 .bt-cluster-pop-hint {
   margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border);

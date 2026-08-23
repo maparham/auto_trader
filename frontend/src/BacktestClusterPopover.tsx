@@ -22,6 +22,9 @@ const toneOf = (n: number): string => (n > 0 ? "pos" : n < 0 ? "neg" : "");
 // collapses to a "+N more" footer so a busy bar doesn't fill the screen.
 const MAX_ROWS = 12;
 
+// Widest the card can be; keep in sync with .bt-cluster-pop's max-width.
+const POP_MAX_W = 500;
+
 export default function BacktestClusterPopover() {
   const hover = useSyncExternalStore(subscribe, () => backtestClusterHoverSignal.value);
   // These rows label bars that are ON SCREEN, so during a masked replay session
@@ -33,8 +36,10 @@ export default function BacktestClusterPopover() {
   const extra = trades.length - shown.length;
 
   // Offset from the cursor, and flip to the left / above when near a viewport
-  // edge so the card stays fully on screen.
-  const flipX = x > window.innerWidth - 320;
+  // edge so the card stays fully on screen. POP_MAX_W mirrors the card's CSS
+  // max-width (.bt-cluster-pop) — the card sizes to its content, so flip on the
+  // widest it can get rather than on a guess it can outgrow.
+  const flipX = x > window.innerWidth - POP_MAX_W;
   const flipY = y > window.innerHeight - 260;
   const style: React.CSSProperties = {
     left: flipX ? undefined : x + 14,
