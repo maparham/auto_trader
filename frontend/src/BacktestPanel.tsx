@@ -21,7 +21,9 @@ import {
   backtestRunningSignal,
   backtestProgressSignal,
   requestBacktestClear,
+  tradeReviewSignal,
 } from "./lib/signals";
+import { reviewOrder } from "./lib/tradeReview";
 import { saveBacktestPeriodsShown, saveBacktestRegionsShown, saveBacktestMarkersShown, saveBacktestEquityShown } from "./lib/persist";
 import { metricGroups, METRIC_INFO, legTable, tradeRows, sortTradeRows, rowWindow, type TradeRow, type LegTable } from "./lib/backtestPanelData";
 import { metricTipLines } from "./components/metricScaleTip";
@@ -399,6 +401,23 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
         <span className="bt-panel-count">
           {nTrades} {nTrades === 1 ? "trade" : "trades"}
         </span>
+        {/* The trade-review tour: step through losses (default) one at a time on
+            the chart with the floating context card. Entered here because the
+            panel is where the result already lives; the card (App level) owns
+            everything after. */}
+        <button
+          className="bt-review-btn"
+          disabled={nTrades === 0}
+          onClick={() => {
+            const res = backtestResultSignal.value;
+            if (!res) return;
+            const order = reviewOrder(res.trades, "losses");
+            tradeReviewSignal.set({ cohort: "losses", order, pos: 0, drill: false });
+            if (order.length > 0) selectedTradeSignal.set(order[0]);
+          }}
+        >
+          Review
+        </button>
       </div>
 
       <div className="bt-results-scroll" ref={scrollBodyRef} onScroll={onBodyScroll}>

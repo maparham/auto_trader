@@ -167,6 +167,30 @@ export const highlightTradeSignal = new Signal<number | null>(null);
 // risk/reward zone overlay on the chart. Reset to null on a new run / clearBacktest.
 export const selectedTradeSignal = new Signal<number | null>(null);
 
+// The trade-review tour: step through one cohort of the ACTIVE backtest's
+// trades (losses by default) to study each in context. Entered from the
+// backtest panel's Review button, driven by TradeReviewCard (rendered once at
+// App level). Each step publishes selectedTradeSignal (zone + scroll on the
+// owning chart). null = no tour. Reset on result change / clearBacktest.
+export interface TradeReviewState {
+  cohort: "losses" | "wins" | "all";
+  order: number[]; // trade indices into the active result, chronological
+  pos: number; // current position within `order`
+  drill: boolean; // steps first drill the chart into the run's native timeframe
+}
+export const tradeReviewSignal = new Signal<TradeReviewState | null>(null);
+
+// One-shot request to drill the active backtest's chart to the run's native
+// timeframe zoomed to [fromMs, toMs] — published by the review card (App level,
+// no chart handle), consumed and nulled by the ChartCore cell whose chart owns
+// the active result (chartOwnsActiveResult gate, mirroring the other
+// active-result-gated subscriptions).
+export const backtestDrillRequestSignal = new Signal<{
+  resolution: string;
+  fromMs: number;
+  toMs: number;
+} | null>(null);
+
 // Masked (blind) chart-replay sessions live in their own module —
 // lib/maskedReplay.ts — so lib/indicators can import the registry without
 // pulling in this file's persist/trading/backtest graph.

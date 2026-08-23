@@ -59,6 +59,7 @@ import {
   ensureMarkersCoverVisibleRange,
   extendBacktestArtifacts,
   registerBacktestPager,
+  chartOwnsActiveResult,
 } from "./lib/backtest";
 import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
 import BacktestTradeDashes, { type BacktestTradeDashesHandle } from "./BacktestTradeDashes";
@@ -83,6 +84,7 @@ import {
   confirmLineEditsSignal,
   tradeMarkerHoverSignal,
   highlightTradeSignal,
+  backtestDrillRequestSignal,
   snapshotViewChanged,
   indicatorOverlayRepaint,
   patternClipboard,
@@ -702,6 +704,25 @@ export default function ChartCore({
     };
     onPeriodRef.current?.(cellId, target);
   };
+
+  // Review-card drill requests: the trade-review card runs at App level with no
+  // chart handle, so it publishes a one-shot request; the cell whose chart owns
+  // the ACTIVE result consumes it (and nulls it) through the same drill path as
+  // an aggregate-pill click. Ref-bridged so the mount-time subscription always
+  // calls the current closure.
+  const drillInRef = useRef(onBacktestDrillIn);
+  drillInRef.current = onBacktestDrillIn;
+  useEffect(
+    () =>
+      backtestDrillRequestSignal.subscribe((req) => {
+        const chart = chartRef.current;
+        if (!req || !chart || !chartOwnsActiveResult(chart)) return;
+        backtestDrillRequestSignal.set(null); // consume before acting (re-entry guard)
+        drillInRef.current(req.resolution, req.fromMs, req.toMs);
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   // On-chart trade lines (entry/SL/TP for positions + resting orders). Server-
   // owned, non-persisted; see positionLines.ts.

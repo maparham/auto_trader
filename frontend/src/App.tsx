@@ -25,6 +25,7 @@ import { initAgentBridge } from "./agent";
 import { registerAction } from "./agent/registry";
 import SaveDefaultTemplateModal from "./SaveDefaultTemplateModal";
 import BacktestClusterPopover from "./BacktestClusterPopover";
+import TradeReviewCard from "./TradeReviewCard";
 import TradeExitClusterPopover from "./TradeExitClusterPopover";
 import TradeMarkerLabelPopover from "./TradeMarkerLabelPopover";
 import BacktestSignalPopover from "./BacktestSignalPopover";
@@ -2462,6 +2463,10 @@ export default function App() {
       {/* Hover popover for a backtest aggregate marker (higher-timeframe view).
           Self-driven by backtestClusterHoverSignal; renders nothing when idle. */}
       <BacktestClusterPopover />
+      {/* The trade-review tour card — step through one cohort of the active
+          backtest's trades with entry context. Self-driven by tradeReviewSignal
+          (entered from the backtest panel's Review button); nothing when idle. */}
+      <TradeReviewCard />
       {/* Hover popover for a coarse-timeframe LIVE exit pill — that bar's journaled
           closes. Self-driven by liveExitClusterHoverSignal; nothing when idle. */}
       <TradeExitClusterPopover />

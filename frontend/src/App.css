@@ -6143,3 +6143,59 @@ span.bt-leg-short { color: var(--neg); }
 }
 .chart-golive:hover { color: var(--text); border-color: var(--accent); }
 .chart-golive-label { font-variant-numeric: tabular-nums; }
+
+/* Trade-review tour card (TradeReviewCard): floating, draggable panel for
+   stepping through one cohort of the active backtest's trades. Shares the
+   signal-popover term classes for the Entry rules table. */
+.bt-review-card {
+  position: fixed; z-index: 2400;
+  width: 320px; padding: 8px 10px 10px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
+  font-size: 12px;
+}
+.bt-review-head {
+  display: flex; align-items: center; gap: 8px;
+  margin: -8px -10px 6px; padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: grab; user-select: none; touch-action: none;
+}
+.bt-review-head:active { cursor: grabbing; }
+.bt-review-title { font-weight: 600; margin-right: auto; }
+.bt-review-close {
+  border: 0; background: none; color: var(--text-dim); cursor: pointer;
+  font-size: 12px; padding: 2px 4px;
+}
+.bt-review-close:hover { color: var(--text); }
+.bt-review-empty { color: var(--text-dim); padding: 6px 0; }
+.bt-review-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.bt-review-nav > button {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 6px; width: 24px; height: 22px; cursor: pointer; line-height: 1;
+}
+.bt-review-nav > button:disabled { opacity: 0.4; cursor: default; }
+.bt-review-outcome { flex: 1; text-align: center; font-weight: 600; }
+.bt-review-outcome.pos { color: var(--pos); }
+.bt-review-outcome.neg { color: var(--neg); }
+.bt-review-grid {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 10px;
+}
+.bt-review-grid > span:nth-child(odd) { color: var(--text-dim); }
+.bt-review-grid > span:nth-child(even) { font-family: var(--mono); text-align: right; }
+.bt-review-section { margin-top: 8px; }
+.bt-review-section-title {
+  color: var(--text-dim); font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.04em; margin-bottom: 3px;
+}
+.bt-review-drill {
+  display: flex; align-items: center; gap: 6px; margin-top: 9px;
+  color: var(--text-dim); cursor: pointer;
+}
+.bt-review-btn {
+  margin-left: 8px; padding: 2px 9px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px;
+}
+.bt-review-btn:hover:not(:disabled) { border-color: var(--accent); }
+.bt-review-btn:disabled { opacity: 0.5; cursor: default; }

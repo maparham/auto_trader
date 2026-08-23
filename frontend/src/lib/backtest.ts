@@ -810,6 +810,14 @@ export function getBacktestAggregate(
   return { clusters: a.aggClusters, result: a.result };
 }
 
+/** Whether this chart's rendered backtest IS the panel-active result — the
+ * gate every cross-chart signal consumer uses (highlight, selection, and the
+ * review card's drill requests). */
+export function chartOwnsActiveResult(chart: Chart): boolean {
+  const a = artifactsByChart.get(chart);
+  return a?.result != null && backtestResultSignal.value === a.result;
+}
+
 const ZONE_OVERLAY = "tradeZone";
 
 // extendData for a `tradeZone` overlay instance: everything createPointFigures
