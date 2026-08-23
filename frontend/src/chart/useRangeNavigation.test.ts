@@ -362,6 +362,29 @@ describe("goToRange deep-history handling", () => {
   // history: the parallel cover would be hundreds of windows and (cold) minutes
   // of backfill. Past DETACH_GAP_BARS the chart reloads with just the target
   // window instead — no cover, no fetch storm.
+  // The date jump's window is HALF context by construction: goToRange gets the
+  // viewport span centred on the date, so its left edge is padding, not the
+  // destination. The short-history warning must measure against the date
+  // itself, or every jump landing within half a viewport of the series start
+  // gets called broken while the date sits right there on screen.
+  it("go-to-date stays quiet when the date landed, even if the left context did not", async () => {
+    // History starts Nov 10; the pick is Nov 13 with a 30-day fallback span, so
+    // the left context (back to Oct 29) is unreachable but the date is loaded.
+    const { onGoToDate, settled } = jumpHarness(Date.UTC(2023, 10, 10));
+    onGoToDate("2023-11-13");
+    await vi.waitFor(() => expect(settled()).toBe(true));
+    expect(toastSpy).not.toHaveBeenCalled();
+  });
+
+  it("go-to-date still warns when the date itself is behind the history", async () => {
+    // History starts Nov 14; Nov 13 does not exist at this timeframe.
+    const { onGoToDate, settled } = jumpHarness(Date.UTC(2023, 10, 14));
+    onGoToDate("2023-11-13");
+    await vi.waitFor(() => expect(settled()).toBe(true));
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+    expect(toastSpy.mock.calls[0][0]).toContain("higher timeframe");
+  });
+
   it("go-to-date deeper than the detach budget enters detached view", async () => {
     const { onGoToDate, enterDetached, coverHistoryTo } = jumpHarness(LAST_BAR - 60 * MIN);
     // ~2.9 years behind the loaded oldest on 5m (LAST_BAR is 2023-11-14T22:13Z):

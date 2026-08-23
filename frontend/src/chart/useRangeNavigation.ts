@@ -497,8 +497,12 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
   };
 
   // Land on an arbitrary historical window, paging older history in first if the
-  // chart has not loaded that far back.
-  const goToRange = (fromTs: number, toTs: number) => {
+  // chart has not loaded that far back. `targetFromTs` (seconds) is the instant
+  // the jump is actually ABOUT when [fromTs, toTs] carries viewport context
+  // around it (onGoToDate passes the picked date): the "history doesn't reach"
+  // toast measures against it, not the padded left edge, so landing on the
+  // target with history starting mid-context doesn't warn.
+  const goToRange = (fromTs: number, toTs: number, targetFromTs = fromTs) => {
     const chart = handle.chartRef.current;
     if (!chart) return;
     onFocus?.(cellId);
@@ -569,7 +573,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
       // deliberately NOT used — it is owned by usePatternSearch and would
       // clobber the results the user is reading.
       const oldest = handle.chartRef.current?.getDataList()[0];
-      const wantedMs = fromTs * 1000; // the match's own first bar (seconds in)
+      const wantedMs = targetFromTs * 1000; // the jump's own target (seconds in)
       if (oldest && oldest.timestamp > wantedMs) {
         // Three dead ends, three answers. A failed window is "try again"; a
         // still-running download is "try again in a moment, here is how far it
@@ -641,7 +645,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
     // The current viewport span around the date: buildRangeToken pads it 3x
     // each side (context), centres on its midpoint = the date, and the token's
     // fit:"center" keeps the user's zoom.
-    goToRange((dateMs - span / 2) / 1000, (dateMs + span / 2) / 1000);
+    goToRange((dateMs - span / 2) / 1000, (dateMs + span / 2) / 1000, dateMs / 1000);
   };
 
   return { onRangePick, onGoToDate, goToRange };
