@@ -4,6 +4,7 @@
 // data-only and unit-tested.
 
 import type { StoredBacktestResult } from "./persist";
+import type { TradeReviewState } from "./signals";
 
 type Trade = StoredBacktestResult["trades"][number];
 type Marker = StoredBacktestResult["markers"][number];
@@ -67,4 +68,27 @@ export function fmtTradeDuration(entrySec: number, exitSec: number): string {
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+// Chart focus for a custom-cohort tour: while one is active (a contrast bucket
+// launched it, so it carries a label), the trades OUTSIDE that cohort fade on
+// the chart, leaving the cohort at full strength. Two-tone by construction —
+// win/loss colors are untouched, only opacity carries the cohort. Standard
+// Losses/Wins/All tours return null: those are a stepping order, not a filter,
+// and dimming most of the chart for them would be noise.
+export const DIMMED_OPACITY = 0.22;
+
+export function cohortFocus(review: TradeReviewState | null): ReadonlySet<number> | null {
+  if (!review || review.label == null) return null;
+  return new Set(review.order);
+}
+
+/** Opacity for a marker covering `indices` (one dash, or an aggregate pill's
+ * trades): full while any of them is in the cohort, dimmed otherwise. */
+export function focusOpacity(
+  focus: ReadonlySet<number> | null,
+  indices: readonly number[],
+): number {
+  if (focus === null) return 1;
+  return indices.some((i) => focus.has(i)) ? 1 : DIMMED_OPACITY;
 }

@@ -1,6 +1,16 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { entryMarkerFor, realizedR, reviewOrder, reviewStep, fmtTradeDuration } from "./tradeReview";
+import {
+  DIMMED_OPACITY,
+  cohortFocus,
+  entryMarkerFor,
+  focusOpacity,
+  fmtTradeDuration,
+  realizedR,
+  reviewOrder,
+  reviewStep,
+} from "./tradeReview";
+import type { TradeReviewState } from "./signals";
 import type { StoredBacktestResult } from "./persist";
 
 type Trade = StoredBacktestResult["trades"][number];
@@ -126,5 +136,47 @@ describe("fmtTradeDuration", () => {
     expect(fmtTradeDuration(0, 25 * 60)).toBe("25m");
     expect(fmtTradeDuration(0, 3 * 3600 + 25 * 60)).toBe("3h 25m");
     expect(fmtTradeDuration(0, 2 * 86400 + 5 * 3600)).toBe("2d 5h");
+  });
+});
+
+describe("cohortFocus", () => {
+  const review = (over: Partial<TradeReviewState> = {}): TradeReviewState => ({
+    cohort: "all",
+    order: [2, 5, 7],
+    pos: 0,
+    drill: false,
+    ...over,
+  });
+
+  it("is null without a tour (nothing is dimmed)", () => {
+    expect(cohortFocus(null)).toBeNull();
+  });
+
+  it("is null for a standard cohort: those tours are not a chart filter", () => {
+    expect(cohortFocus(review())).toBeNull();
+    expect(cohortFocus(review({ cohort: "losses" }))).toBeNull();
+  });
+
+  it("is the labeled cohort's index set", () => {
+    const set = cohortFocus(review({ label: "trend: down" }))!;
+    expect([...set].sort((a, b) => a - b)).toEqual([2, 5, 7]);
+  });
+});
+
+describe("focusOpacity", () => {
+  it("is fully opaque without a focus set", () => {
+    expect(focusOpacity(null, [3])).toBe(1);
+  });
+
+  it("keeps trades inside the cohort and dims the rest", () => {
+    const focus = new Set([2, 5]);
+    expect(focusOpacity(focus, [5])).toBe(1);
+    expect(focusOpacity(focus, [3])).toBe(DIMMED_OPACITY);
+  });
+
+  it("keeps an aggregate that holds any cohort trade", () => {
+    const focus = new Set([2, 5]);
+    expect(focusOpacity(focus, [7, 8, 5])).toBe(1);
+    expect(focusOpacity(focus, [7, 8])).toBe(DIMMED_OPACITY);
   });
 });

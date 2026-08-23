@@ -16,12 +16,21 @@
 // cells — opens the shared trade-details popover (backtestClusterHoverSignal),
 // which carries its own trade payload and is safe from any cell.
 
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from "react";
 import {
   backtestClusterHoverSignal,
   backtestResultSignal,
   highlightTradeSignal,
+  tradeReviewSignal,
 } from "./lib/signals";
+import { cohortFocus, focusOpacity } from "./lib/tradeReview";
 import type { StoredBacktestResult } from "./lib/persist";
 
 const WIN_COLOR = "#26a69a";
@@ -71,6 +80,13 @@ export default function BacktestTradeDashes({
 }) {
   const [dashes, setDashes] = useState<ProjectedDash[]>([]);
   const sigRef = useRef("");
+  // A contrast-bucket tour focuses its cohort: everything else fades, so the
+  // bucket's trades stand out on the chart while stepping through them.
+  const review = useSyncExternalStore(
+    (cb) => tradeReviewSignal.subscribe(cb),
+    () => tradeReviewSignal.value,
+  );
+  const focus = cohortFocus(review);
   // The dash driving a hover effect and WHICH signal it set with what value.
   // Tracked so a hovered dash that gets culled (scrolled off / cleared) can
   // drop its effect — React fires no onMouseLeave when the hovered element
@@ -180,6 +196,10 @@ export default function BacktestTradeDashes({
             justifyContent: "center",
             width: 7,
             height: 5,
+            // Cohort indices key into the PANEL-ACTIVE result, so a cell
+            // showing some other run must not dim by them.
+            opacity:
+              d.result === backtestResultSignal.value ? focusOpacity(focus, [d.index]) : 1,
           }}
         >
           <span

@@ -11,8 +11,16 @@
 // rendered once at App level); clicking drills into the backtest's native
 // timeframe zoomed to that bar's window (onDrillIn, wired by ChartCore).
 
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
-import { backtestClusterHoverSignal } from "./lib/signals";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from "react";
+import { backtestClusterHoverSignal, backtestResultSignal, tradeReviewSignal } from "./lib/signals";
+import { cohortFocus, focusOpacity } from "./lib/tradeReview";
 import { aggPillLabel } from "./lib/backtest";
 import type { StoredBacktestResult } from "./lib/persist";
 
@@ -31,6 +39,7 @@ export interface AggPill {
   count: number;
   net: number;
   trades: { trade: Trade; index: number }[];
+  result: StoredBacktestResult; // owning result (cohort-focus gate)
   resolution: string; // the backtest's native timeframe (drill-in target)
   fromMs: number; // bar's min-entry → max-exit window (drill-in zoom)
   toMs: number;
@@ -58,6 +67,13 @@ export default function BacktestAggMarkers({
 }) {
   const [pills, setPills] = useState<AggPill[]>([]);
   const sigRef = useRef("");
+  // A contrast-bucket tour focuses its cohort: bars holding none of its trades
+  // fade, so the cohort's bars stand out while stepping through them.
+  const review = useSyncExternalStore(
+    (cb) => tradeReviewSignal.subscribe(cb),
+    () => tradeReviewSignal.value,
+  );
+  const focus = cohortFocus(review);
   // Key of the pill currently driving the shared hover popover (set on
   // mouseEnter, below). Tracked so we can dismiss the popover if that pill later
   // leaves the projected set — React fires NO onMouseLeave when a hovered element
@@ -102,6 +118,13 @@ export default function BacktestAggMarkers({
         // so long/short reads on the coarse timeframes too (aggPillLabel: one
         // glyph for a single-direction bar, ▲n ▼m split for a mixed one).
         const longs = p.trades.reduce((n, t) => n + (t.trade.leg === "long" ? 1 : 0), 0);
+        // A contrast-bucket tour fades the bars that hold none of its trades.
+        // Cohort indices key into the panel-active result, so a cell showing a
+        // different run stays at full strength.
+        const opacity =
+          p.result === backtestResultSignal.value
+            ? focusOpacity(focus, p.trades.map((t) => t.index))
+            : 1;
         const text = aggPillLabel(longs, p.count - longs, p.net);
         return (
           <span
@@ -121,6 +144,7 @@ export default function BacktestAggMarkers({
               position: "absolute",
               top: 0,
               left: 0,
+              opacity,
               // Center the pill on the bar and sit it just above the bar's high.
               transform: `translate(calc(${p.x}px - 50%), calc(${p.y}px - 100% - 6px))`,
               pointerEvents: "auto",

@@ -1143,6 +1143,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
             count: trades.length,
             net: g.reduce((s, p) => s + p.cl.net, 0),
             trades,
+            result: agg.result,
             resolution: agg.result.resolution,
             fromMs: Math.min(...g.map((p) => p.cl.fromTs)),
             toMs: Math.max(...g.map((p) => p.cl.toTs)),
