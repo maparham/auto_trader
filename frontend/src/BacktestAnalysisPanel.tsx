@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import type {
   AnalysisHist,
   AnalysisRow,
@@ -7,6 +7,7 @@ import type {
   BacktestWhatif,
   LegAnalysis,
 } from "./api";
+import { winLossContrast, type ContrastTrade, type FieldContrast } from "./lib/contrast";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import {
@@ -787,14 +788,74 @@ function WhatIfSection({
   );
 }
 
+// The win/loss contrast section body: every qualifying entry-context field,
+// strongest separation first, each with its generated conjecture line and a
+// per-bucket win-rate table. Ranking uses a 0..1 effect size (Cramér's V /
+// rank-biserial, see lib/contrast.ts); the displayed numbers are plain win
+// rates and their deltas against the field's overall rate.
+const fmtDelta = (d: number): string =>
+  `${d >= 0 ? "+" : "−"}${Math.abs(Math.round(d * 100))}%`;
+
+function ContrastFields({ contrasts }: { contrasts: FieldContrast[] }) {
+  return (
+    <>
+      {contrasts.map((f) => (
+        <div key={f.field} className="bt-contrast-field">
+          <div className="bt-contrast-head">
+            <span className="bt-contrast-label">
+              {f.label.charAt(0).toUpperCase() + f.label.slice(1)}
+            </span>
+            <Tooltip
+              content={
+                "0 to 1 effect size: Cramér's V for category fields, rank correlation for numeric ones. Orders the fields; read the win rates for meaning."
+              }
+            >
+              <span className="bt-contrast-effect">separation {f.effect.toFixed(2)}</span>
+            </Tooltip>
+          </div>
+          <p className="bt-contrast-conjecture">{f.conjecture}</p>
+          <table className="bt-analysis-table">
+            <thead>
+              <tr>
+                <th>Bucket</th>
+                <th>Trades</th>
+                <th>Win rate</th>
+                <th>vs overall</th>
+              </tr>
+            </thead>
+            <tbody>
+              {f.buckets.map((b) => (
+                <tr key={b.bucket} className={b.low_sample ? "bt-analysis-low" : ""}>
+                  <td>{b.bucket}</td>
+                  <td>{b.n}</td>
+                  <td>{fmtPct(b.win_rate)}</td>
+                  <td className={b.delta > 0 ? "pos" : b.delta < 0 ? "neg" : ""}>
+                    {fmtDelta(b.delta)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export default function BacktestAnalysisPanel({
   analysis,
+  trades,
   barSeconds = 60,
 }: {
   analysis: BacktestAnalysis | null | undefined;
+  trades?: ContrastTrade[]; // enables the client-computed win/loss contrast section
   barSeconds?: number;
 }) {
   const [tab, setTab] = useState<BacktestAnalysisTab>(loadBacktestAnalysisTab);
+  const contrasts = useMemo<FieldContrast[]>(
+    () => (trades && trades.length > 0 ? winLossContrast(trades) : []),
+    [trades],
+  );
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
     () => new Set(loadBacktestAnalysisCollapsed()),
   );
@@ -990,6 +1051,25 @@ export default function BacktestAnalysisPanel({
 
       {active === "context" && (
       <>
+      {contrasts.length > 0 && (
+        <section className="bt-analysis-section">
+          <SectionH4
+            slug="wl-contrast"
+            open={!collapsed.has("wl-contrast")}
+            onToggle={toggleSection}
+          >
+            Win/loss contrast
+            <InfoTip
+              title="Win/loss contrast"
+              text={[
+                "Each entry-context field split by outcome, ranked by how strongly it separates winners from losers.",
+                "The top fields are the best conjecture material: check whether their pattern holds up on the chart before trusting it.",
+              ]}
+            />
+          </SectionH4>
+          {!collapsed.has("wl-contrast") && <ContrastFields contrasts={contrasts} />}
+        </section>
+      )}
       {analysis.rolling && (
       <section className="bt-analysis-section">
         <SectionH4

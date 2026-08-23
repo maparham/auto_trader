@@ -5064,6 +5064,15 @@
 /* Small-sample bucket (fewer than 20 trades): dim the whole row so a noisy
    slice reads as low-confidence at a glance. Orthogonal to the color rules. */
 .bt-analysis-lowsample { opacity: 0.55; }
+/* Win/loss contrast section: one block per ranked field. */
+.bt-contrast-field { margin-top: 10px; }
+.bt-contrast-field:first-child { margin-top: 6px; }
+.bt-contrast-head { display: flex; align-items: baseline; gap: 8px; }
+.bt-contrast-label { font-weight: 600; font-size: 12px; }
+.bt-contrast-effect { color: var(--text-faint); font-size: 11px; font-family: var(--mono); }
+.bt-contrast-conjecture { margin: 2px 0 4px; font-size: 12px; color: var(--text-dim); }
+.bt-analysis-table td.pos { color: var(--pos); }
+.bt-analysis-table td.neg { color: var(--neg); }
 /* Rolling-expectancy sparkline in the "Edge over time" section. */
 .bt-analysis-edge { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .bt-analysis-edge-caption { margin: 0; font-size: 12px; color: var(--text-faint); }

@@ -555,7 +555,11 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
         {/* min-height 100%: landing on Analysis pins its top at the pane top
             even when its content is short, so the scrollspy can reach it. */}
         <section className="bt-results-section bt-results-section-last" ref={setSectionRef("analysis")}>
-          <BacktestAnalysisPanel analysis={result?.analysis} barSeconds={resSeconds} />
+          <BacktestAnalysisPanel
+            analysis={result?.analysis}
+            trades={result?.trades}
+            barSeconds={resSeconds}
+          />
         </section>
       </div>
     </div>

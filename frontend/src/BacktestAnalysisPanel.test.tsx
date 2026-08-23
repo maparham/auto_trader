@@ -601,6 +601,46 @@ describe("BacktestAnalysisPanel", () => {
       expect(screen.queryByRole("tab", { name: "Bar dynamics" })).toBeNull();
     });
   });
+
+  describe("win/loss contrast section", () => {
+    // 40 trades whose trend splits the outcomes hard: up 16/20, down 4/20.
+    const contrastTrades = Array.from({ length: 40 }, (_, i) => ({
+      side: "buy",
+      quantity: 1,
+      entry_time: 1000 + i,
+      entry_price: 100,
+      exit_time: 2000 + i,
+      exit_price: 101,
+      pnl: (i < 20 ? i < 16 : i >= 36) ? 1 : -1,
+      leg: "long",
+      reason: "target",
+      stop_initial: null,
+      context: { trend: i < 20 ? "up" : "down" },
+    })) as unknown as NonNullable<Parameters<typeof BacktestAnalysisPanel>[0]["trades"]>;
+
+    it("ranks fields on the Breakdowns tab with a conjecture and bucket rows", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} trades={contrastTrades} />);
+      showTab("Breakdowns");
+      // The section's InfoTip trigger shares the accessible name; pick the h4.
+      const head = screen
+        .getAllByRole("button", { name: /win\/loss contrast/i })
+        .find((el) => el.tagName === "H4")!;
+      const section = head.closest("section")!;
+      expect(
+        within(section).getByText(
+          "Losses concentrate where trend is down: 20% win rate vs 50% overall.",
+        ),
+      ).toBeTruthy();
+      const down = within(section).getByText("down").closest("tr")!;
+      expect(within(down).getByText("20%")).toBeTruthy();
+    });
+
+    it("is absent without trades (old stored runs)", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} />);
+      showTab("Breakdowns");
+      expect(screen.queryByRole("button", { name: /win\/loss contrast/i })).toBeNull();
+    });
+  });
 });
 
 describe("hourBucketRows", () => {
