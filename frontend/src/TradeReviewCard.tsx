@@ -115,7 +115,8 @@ export default function TradeReviewCard() {
 
   const pickCohort = (c: ReviewCohort) => {
     const nextOrder = reviewOrder(result.trades, c);
-    const next: TradeReviewState = { ...review, cohort: c, order: nextOrder, pos: 0 };
+    // Built fresh (not spread) so a custom cohort's `label` is dropped.
+    const next: TradeReviewState = { cohort: c, order: nextOrder, pos: 0, drill: review.drill };
     if (nextOrder.length > 0) goTo(next, 0);
     else {
       tradeReviewSignal.set(next);
@@ -157,12 +158,17 @@ export default function TradeReviewCard() {
       >
         <span className="bt-review-title">Review</span>
         <div className="seg" role="tablist" aria-label="Review cohort">
+          {review.label != null && (
+            <button role="tab" aria-selected className="seg-on bt-review-custom">
+              {review.label}
+            </button>
+          )}
           {COHORTS.map((c) => (
             <button
               key={c.key}
               role="tab"
-              aria-selected={cohort === c.key}
-              className={cohort === c.key ? "seg-on" : ""}
+              aria-selected={review.label == null && cohort === c.key}
+              className={review.label == null && cohort === c.key ? "seg-on" : ""}
               onClick={() => pickCohort(c.key)}
             >
               {c.label}

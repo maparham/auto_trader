@@ -25,6 +25,7 @@ export interface ContrastBucket {
   win_rate: number;
   delta: number; // win_rate minus the field's overall win rate
   low_sample: boolean;
+  indices: number[]; // positions in the input trades array, entry order
 }
 
 export interface FieldContrast {
@@ -203,7 +204,7 @@ function conjectureFor(label: string, overall: number, buckets: ContrastBucket[]
 }
 
 function bucketsFromGroups(
-  groups: Map<string, { n: number; wins: number }>,
+  groups: Map<string, { n: number; wins: number; indices: number[] }>,
   overall: number,
   ord?: (bucket: string) => number,
 ): ContrastBucket[] {
@@ -213,6 +214,7 @@ function bucketsFromGroups(
     win_rate: g.wins / g.n,
     delta: g.wins / g.n - overall,
     low_sample: g.n < LOW_SAMPLE_N,
+    indices: g.indices,
   }));
   rows.sort(ord ? (a, b) => ord(a.bucket) - ord(b.bucket) : (a, b) => b.n - a.n);
   return rows;
@@ -232,15 +234,16 @@ export function winLossContrast(
   const out: FieldContrast[] = [];
 
   for (const f of CATEGORICAL) {
-    const groups = new Map<string, { n: number; wins: number }>();
+    const groups = new Map<string, { n: number; wins: number; indices: number[] }>();
     let n = 0;
     let wins = 0;
-    for (const t of trades) {
+    for (const [i, t] of trades.entries()) {
       const bucket = f.value(t, offsetHours);
       if (bucket == null) continue;
-      const g = groups.get(bucket) ?? { n: 0, wins: 0 };
+      const g = groups.get(bucket) ?? { n: 0, wins: 0, indices: [] };
       g.n++;
       if (t.pnl > 0) g.wins++;
+      g.indices.push(i);
       groups.set(bucket, g);
       n++;
       if (t.pnl > 0) wins++;
@@ -284,14 +287,15 @@ export function winLossContrast(
       ...edges.slice(1).map((e, k) => `${f.fmt(edges[k])}-${f.fmt(e)}`),
       `>${f.fmt(edges[edges.length - 1])}`,
     ];
-    const groups = new Map<string, { n: number; wins: number }>();
-    for (const t of trades) {
+    const groups = new Map<string, { n: number; wins: number; indices: number[] }>();
+    for (const [i, t] of trades.entries()) {
       const v = f.value(t);
       if (v == null) continue;
       const bucket = labelFor(v);
-      const g = groups.get(bucket) ?? { n: 0, wins: 0 };
+      const g = groups.get(bucket) ?? { n: 0, wins: 0, indices: [] };
       g.n++;
       if (t.pnl > 0) g.wins++;
+      g.indices.push(i);
       groups.set(bucket, g);
     }
     const buckets = bucketsFromGroups(groups, overall, (b) => orderedLabels.indexOf(b));

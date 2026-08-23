@@ -175,6 +175,32 @@ describe("winLossContrast", () => {
     expect(f.buckets[0].bucket).toMatch(/m/); // duration-formatted, not raw seconds
   });
 
+  it("carries each bucket's trade indices, in entry order", () => {
+    const trades = [
+      ...batch(20, 16, { trend: "up" }),
+      ...batch(20, 4, { trend: "down" }),
+    ];
+    const trend = winLossContrast(trades).find((f) => f.field === "trend")!;
+    const up = trend.buckets.find((b) => b.bucket === "up")!;
+    const down = trend.buckets.find((b) => b.bucket === "down")!;
+    expect(up.indices).toEqual(Array.from({ length: 20 }, (_, i) => i));
+    expect(down.indices).toEqual(Array.from({ length: 20 }, (_, i) => 20 + i));
+  });
+
+  it("carries indices for numeric-field buckets too", () => {
+    const trades = [
+      ...Array.from({ length: 20 }, (_, i) =>
+        trade({ pnl: 1, context: { dist_swing_high: i * 0.1 } as Trade["context"] })),
+      ...Array.from({ length: 20 }, (_, i) =>
+        trade({ pnl: -1, context: { dist_swing_high: 10 + i * 0.1 } as Trade["context"] })),
+    ];
+    const f = winLossContrast(trades).find((x) => x.field === "dist_swing_high")!;
+    expect(f.buckets.flatMap((b) => b.indices).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 40 }, (_, i) => i),
+    );
+    expect(f.buckets[0].indices.every((i) => i < 20)).toBe(true);
+  });
+
   it("orders every returned field by descending effect", () => {
     const trades = [
       ...batch(20, 18, { trend: "up", session: "london", vol_regime: "low" }),

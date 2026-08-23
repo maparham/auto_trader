@@ -110,6 +110,26 @@ describe("TradeReviewCard", () => {
     expect(tradeReviewSignal.value).toBeNull();
   });
 
+  it("shows a custom-cohort chip when the review carries a label", () => {
+    backtestResultSignal.set(result);
+    // A contrast-bucket cohort: e.g. all trades where trend was down.
+    tradeReviewSignal.set({ cohort: "all", order: [0, 2], pos: 0, drill: false, label: "trend: down" });
+    render(<TradeReviewCard />);
+    const chip = screen.getByRole("tab", { name: "trend: down" });
+    expect(chip.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("clears the custom cohort when a standard cohort is picked", () => {
+    backtestResultSignal.set(result);
+    tradeReviewSignal.set({ cohort: "all", order: [0, 2], pos: 0, drill: false, label: "trend: down" });
+    render(<TradeReviewCard />);
+    fireEvent.click(screen.getByRole("tab", { name: "Losses" }));
+    expect(tradeReviewSignal.value?.label).toBeUndefined();
+    expect(tradeReviewSignal.value?.order).toEqual([0, 2]); // the run's losses
+    expect(screen.queryByRole("tab", { name: "trend: down" })).toBeNull();
+  });
+
   it("survives the SAME result being re-published (drill-in rehydrate)", () => {
     // A drill-in step switches timeframe; the rehydrate re-fires the result
     // signal with the identical object. That must not end the tour.

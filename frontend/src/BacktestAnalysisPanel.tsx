@@ -8,6 +8,7 @@ import type {
   LegAnalysis,
 } from "./api";
 import { winLossContrast, type ContrastTrade, type FieldContrast } from "./lib/contrast";
+import { selectedTradeSignal, tradeReviewSignal } from "./lib/signals";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import {
@@ -821,6 +822,7 @@ function ContrastFields({ contrasts }: { contrasts: FieldContrast[] }) {
                 <th>Trades</th>
                 <th>Win rate</th>
                 <th>vs overall</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -831,6 +833,26 @@ function ContrastFields({ contrasts }: { contrasts: FieldContrast[] }) {
                   <td>{fmtPct(b.win_rate)}</td>
                   <td className={b.delta > 0 ? "pos" : b.delta < 0 ? "neg" : ""}>
                     {fmtDelta(b.delta)}
+                  </td>
+                  <td>
+                    <button
+                      className="bt-contrast-review"
+                      aria-label={`Review trades where ${f.label} is ${b.bucket}`}
+                      onClick={() => {
+                        // Same entry path as the panel's Review button: the tour
+                        // card steps selectedTradeSignal through `order`.
+                        tradeReviewSignal.set({
+                          cohort: "all",
+                          order: b.indices,
+                          pos: 0,
+                          drill: tradeReviewSignal.value?.drill ?? false,
+                          label: `${f.label}: ${b.bucket}`,
+                        });
+                        selectedTradeSignal.set(b.indices[0]);
+                      }}
+                    >
+                      Review
+                    </button>
                   </td>
                 </tr>
               ))}

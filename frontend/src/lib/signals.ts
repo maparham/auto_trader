@@ -177,6 +177,10 @@ export interface TradeReviewState {
   order: number[]; // trade indices into the active result, chronological
   pos: number; // current position within `order`
   drill: boolean; // steps first drill the chart into the run's native timeframe
+  // A custom cohort's display name (e.g. a contrast bucket: "trend: down").
+  // When set, `order` is that cohort rather than the `cohort` filter's output;
+  // picking a standard cohort in the card clears it.
+  label?: string;
 }
 export const tradeReviewSignal = new Signal<TradeReviewState | null>(null);
 

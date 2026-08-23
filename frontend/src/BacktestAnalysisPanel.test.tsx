@@ -11,6 +11,7 @@ installMemStorage();
 
 import type { BacktestAnalysis, BacktestWhatif } from "./api";
 import { saveBacktestAnalysisTab } from "./lib/persist";
+import { selectedTradeSignal, tradeReviewSignal } from "./lib/signals";
 import BacktestAnalysisPanel, { hourBucketRows } from "./BacktestAnalysisPanel";
 
 // vitest isn't run with jest-style globals, so RTL's automatic cleanup never
@@ -633,6 +634,17 @@ describe("BacktestAnalysisPanel", () => {
       ).toBeTruthy();
       const down = within(section).getByText("down").closest("tr")!;
       expect(within(down).getByText("20%")).toBeTruthy();
+    });
+
+    it("starts a labeled review tour over a bucket's trades", () => {
+      render(<BacktestAnalysisPanel analysis={analysis} trades={contrastTrades} />);
+      showTab("Breakdowns");
+      fireEvent.click(screen.getByRole("button", { name: "Review trades where trend is down" }));
+      const review = tradeReviewSignal.value!;
+      expect(review.label).toBe("trend: down");
+      expect(review.order).toEqual(Array.from({ length: 20 }, (_, i) => 20 + i));
+      expect(review.pos).toBe(0);
+      expect(selectedTradeSignal.value).toBe(20);
     });
 
     it("is absent without trades (old stored runs)", () => {
