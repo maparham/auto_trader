@@ -19,7 +19,7 @@ import Tooltip from "./components/Tooltip";
 import { rowWindow, verdictFor, MIN_SAMPLE_TRADES, type RowWindow } from "./lib/backtestPanelData";
 import { useStableCallback } from "./lib/useStableCallback";
 import { metricTipLines } from "./components/metricScaleTip";
-import { fmtRunDuration, remainingEta } from "./lib/duration";
+import RunTiming from "./components/RunTiming";
 
 type MetricKey =
   | "net_pnl"
@@ -310,29 +310,11 @@ export interface SweepProgressInfo {
   startedAt?: number;
 }
 
-// Live progress header: count + fill bar + "elapsed · ~eta left" readout. Its
-// own component so the 1-second countdown tick re-renders only this row, never
-// the (large) results table below it. Mounted only while a sweep is running.
+// Live progress header: count + fill bar + "elapsed · ~eta left" readout. The
+// timing half lives in <RunTiming> (shared with the walk-forward bar), which
+// owns the 1-second countdown tick so it re-renders only that span, never the
+// (large) results table below. Mounted only while a sweep is running.
 function SweepProgress({ progress }: { progress: SweepProgressInfo }) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-  // The backend recomputes etaSeconds only when combos complete, so between
-  // chunks the value repeats — remember the client clock at which the latest
-  // DISTINCT value arrived and count down from there, so the readout keeps
-  // moving between polls instead of freezing on the last estimate.
-  const syncRef = useRef<{ eta: number; at: number } | null>(null);
-  if (progress.etaSeconds != null && syncRef.current?.eta !== progress.etaSeconds) {
-    syncRef.current = { eta: progress.etaSeconds, at: performance.now() };
-  }
-  const now = performance.now();
-  const elapsed = progress.startedAt != null ? fmtRunDuration(now - progress.startedAt) : null;
-  const eta = syncRef.current
-    ? `~${fmtRunDuration(remainingEta(syncRef.current.eta, syncRef.current.at, now) * 1000)} left`
-    : null;
-  const timing = [elapsed, eta].filter(Boolean).join(" · ");
   return (
     <div className="sweep-progress">
       <span>{progress.done} / {progress.total}</span>
@@ -342,7 +324,11 @@ function SweepProgress({ progress }: { progress: SweepProgressInfo }) {
           style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
         />
       </div>
-      {timing && <span className="sweep-progress-timing">{timing}</span>}
+      <RunTiming
+        etaSeconds={progress.etaSeconds}
+        startedAt={progress.startedAt}
+        className="sweep-progress-timing"
+      />
     </div>
   );
 }

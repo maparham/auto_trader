@@ -16,6 +16,7 @@ import { formatPeriodDateRange } from "./lib/backtestPeriods";
 import { SweepResults, SweepSortHeader, axisTag, type SortDir } from "./SweepResults";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
+import RunTiming from "./components/RunTiming";
 
 export const PHASE_LABEL: Record<string, string> = {
   grid: "evaluating grid",
@@ -274,6 +275,11 @@ export const WfoResults = memo(function WfoResults(props: {
               style={{ width: `${state.total ? (state.done / state.total) * 100 : 0}%` }}
             />
           </div>
+          <RunTiming
+            etaSeconds={state.etaSeconds}
+            startedAt={state.startedAt}
+            className="sweep-progress-timing"
+          />
         </div>
       )}
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
-import { runWalkForward, readWfoMemo, resumeWfo, WFO_POLL_MS } from "./wfo";
+import { runWalkForward, readWfoMemo, resumeWfo, stopResumedWfo, WFO_POLL_MS } from "./wfo";
 import { wfoStateSignal } from "./signals";
 
 const REQ = { epic: "X", resolution: "HOUR" } as unknown as api.BacktestRequest;
@@ -33,6 +33,36 @@ describe("runWalkForward", () => {
     expect(states.at(-1)).toBe("done:4");
     expect(poll).toHaveBeenCalledWith("j1", 0, "local");
     expect(readWfoMemo()).toBeNull();
+  });
+
+  // The progress bar's elapsed readout subtracts startedAt from
+  // performance.now(), so every streamed state must carry the CALLER's origin
+  // verbatim. runWalkForward recapturing its own clock here (as it once did,
+  // with Date.now()) renders a huge negative elapsed from the first poll on.
+  it("stamps the caller's startedAt onto every streamed state", async () => {
+    vi.spyOn(api, "submitWfoJob").mockResolvedValue({ jobId: "j1", total: 4, schemes: [] });
+    vi.spyOn(api, "pollWfoJob")
+      .mockResolvedValueOnce({ ...DONE, phase: "grid", running: true, done: 1, foldRows: [], result: null })
+      .mockResolvedValueOnce(DONE);
+    const started: Array<number | undefined> = [];
+    const p = runWalkForward(REQ, WF, { startedAt: 1234, onState: (s) => started.push(s.startedAt) });
+    await vi.advanceTimersByTimeAsync(WFO_POLL_MS * 3);
+    await p;
+    expect(started.length).toBeGreaterThan(1);
+    expect(started.every((s) => s === 1234)).toBe(true);
+  });
+
+  // Backstop on the fallback branch (no production caller reaches it): a
+  // Date.now() regression would read ~1.75e12 instead of a small uptime value.
+  it("falls back to the performance clock, never epoch ms", async () => {
+    vi.spyOn(api, "submitWfoJob").mockResolvedValue({ jobId: "j1", total: 4, schemes: [] });
+    vi.spyOn(api, "pollWfoJob").mockResolvedValue(DONE);
+    const started: Array<number | undefined> = [];
+    const p = runWalkForward(REQ, WF, { onState: (s) => started.push(s.startedAt) });
+    await vi.advanceTimersByTimeAsync(WFO_POLL_MS * 2);
+    await p;
+    expect(started[0]).toBeDefined();
+    expect(started[0]).toBeLessThan(1e12);
   });
 
   it("passes expr flag through to submitWfoJob", async () => {
@@ -109,5 +139,27 @@ describe("resumeWfo", () => {
     expect(await resumeWfo()).toBe(true);
     expect(wfoStateSignal.value?.phase).toBe("done");
     expect(readWfoMemo()).toBeNull();
+  });
+
+  // A re-attached run began before this page load, so its performance-clock
+  // origin is unrecoverable: it must publish NO startedAt, which renders the
+  // ETA alone rather than an elapsed counted from the wrong zero.
+  it("publishes no startedAt for a re-attached run", async () => {
+    vi.spyOn(api, "submitWfoJob").mockResolvedValue({ jobId: "j3", total: 4, schemes: [] });
+    vi.spyOn(api, "pollWfoJob")
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValue({ ...DONE, phase: "test", running: true, done: 2, result: null });
+    vi.spyOn(api, "cancelWfoJob").mockResolvedValue(undefined);
+    const ctl = new AbortController();
+    void runWalkForward(REQ, WF, {
+      signal: ctl.signal, shouldCancelServer: () => false, startedAt: 1234, onState: () => {},
+    }).catch(() => {});
+    await vi.advanceTimersByTimeAsync(WFO_POLL_MS);
+    ctl.abort();
+    expect(await resumeWfo()).toBe(true);
+    expect(wfoStateSignal.value?.running).toBe(true);
+    expect(wfoStateSignal.value?.startedAt).toBeUndefined();
+    // Stop the resumed poller so its timers don't leak into the next test.
+    stopResumedWfo();
   });
 });

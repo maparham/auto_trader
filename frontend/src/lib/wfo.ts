@@ -371,6 +371,10 @@ export async function runWalkForward(
     target?: SweepTarget;
     shouldCancelServer?: () => boolean;
     expr?: boolean;
+    // Client clock (performance.now() ms) the caller considers the run's start,
+    // stamped onto every streamed state so the progress bar's elapsed readout
+    // counts from there. See the capture below for why the caller's value wins.
+    startedAt?: number;
     onState: (st: WfoRunState) => void;
   },
 ): Promise<WfoResult | null> {
@@ -379,7 +383,12 @@ export async function runWalkForward(
 
   const { jobId } = await submitWfoJob(baseReq, wf, target, opts.expr ?? false);
   rememberWfoJob(jobId, target);
-  const startedAt = Date.now();
+  // performance.now()-clock, matching what <RunTiming> subtracts it from. The
+  // caller's timestamp wins because this line runs AFTER submitWfoJob resolves:
+  // seeding here would make the displayed elapsed jump backward by the submit
+  // gap (seconds, on a remote target) when the first poll lands. The fallback
+  // only covers direct callers/tests that pass no origin.
+  const startedAt = opts.startedAt ?? performance.now();
   const shouldCancelServer = opts.shouldCancelServer ?? (() => true);
 
   try {

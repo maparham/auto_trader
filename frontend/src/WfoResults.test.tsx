@@ -227,3 +227,36 @@ describe("WfoResults fold ordering", () => {
     expect(windows).toEqual(starts);
   });
 });
+
+describe("WfoResults progress timing", () => {
+  const runningState = (over: Partial<WfoRunState> = {}): WfoRunState => ({
+    phase: "grid", done: 2, total: 6, running: true, foldRows: [], result: null, ...over,
+  });
+  const timing = () => document.querySelector(".sweep-progress-timing")?.textContent ?? null;
+  // performance.now() is what <RunTiming> subtracts startedAt from; pin it so
+  // the elapsed half formats deterministically.
+  const pinClock = (ms: number) => vi.spyOn(performance, "now").mockReturnValue(ms);
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("renders elapsed and remaining while running", () => {
+    pinClock(30_000);
+    render(<WfoResults state={runningState({ startedAt: 5_000, etaSeconds: 90 })} onApplyCombo={() => {}}
+      onLoadFoldTable={() => Promise.resolve([])} axes={[]} schemeIndex={0} onSchemeIndex={() => {}} />);
+    expect(timing()).toBe("25s · ~1m 30s left");
+  });
+
+  it("shows the ETA alone for a re-attached run (no startedAt)", () => {
+    pinClock(30_000);
+    render(<WfoResults state={runningState({ etaSeconds: 90 })} onApplyCombo={() => {}}
+      onLoadFoldTable={() => Promise.resolve([])} axes={[]} schemeIndex={0} onSchemeIndex={() => {}} />);
+    expect(timing()).toBe("~1m 30s left");
+  });
+
+  it("omits the ETA before the backend has an estimate", () => {
+    pinClock(30_000);
+    render(<WfoResults state={runningState({ startedAt: 5_000, etaSeconds: null })} onApplyCombo={() => {}}
+      onLoadFoldTable={() => Promise.resolve([])} axes={[]} schemeIndex={0} onSchemeIndex={() => {}} />);
+    expect(timing()).toBe("25s");
+  });
+});

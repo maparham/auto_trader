@@ -666,7 +666,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // Cleared up front, written only on a clean completion below — a cancelled
         // or failed walk-forward shows no duration (mirrors the sweep branch).
         wfoDurationSignal.set(null);
-        wfoStateSignal.set({ phase: "grid", done: 0, total: 0, running: true, foldRows: [], result: null, startedAt: Date.now() });
+        wfoStateSignal.set({ phase: "grid", done: 0, total: 0, running: true, foldRows: [], result: null, startedAt: wfoRunStart });
         try {
           progressStageSignal.set(sweepTargetSignal.value === "remote" ? "uploading" : "submitting");
           const result = await runWalkForward(coded ? baseReq : exprReq, wf, {
@@ -674,6 +674,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
             target: sweepTargetSignal.value,
             shouldCancelServer: () => wfoCancelServer.value,
             expr: !coded,
+            // Same origin as the seed above and as wfoDurationSignal below, so
+            // the progress bar's elapsed readout never rewinds across the first
+            // poll and agrees with the footer's "Took Ns".
+            startedAt: wfoRunStart,
             // After an abort (modal closed / Cancel) the state may already be
             // cleared — a late-resolving poll must not resurrect a ghost run.
             // Mirrors the sweep branch's onRows guard + continueResumeWfo.
