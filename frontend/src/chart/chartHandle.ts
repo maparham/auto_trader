@@ -41,6 +41,12 @@ export type RangeReq = {
   // (coverBacktestTradeTo) before ensureCoverageAndFit, the same recipe
   // goToRange uses for match jumps.
   deepCover?: boolean;
+  // The UNPADDED left edge of what the request is actually about (the first
+  // trade of a drill-in span). fromTs carries symmetric context padding, and
+  // padding routinely lands inside a closed-market gap (weekend) no broker
+  // has bars for — "history doesn't reach" warnings must measure against
+  // this, not fromTs, or every span starting on a Monday warns spuriously.
+  targetFromTs?: number;
   // What the coverage walk does with the viewport once it settles. "range" (the
   // default, and what every caller that omits this gets) fits [fromTs, toTs] to
   // the viewport, which changes zoom. "center" keeps the user's current zoom and

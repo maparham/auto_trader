@@ -669,7 +669,8 @@ export default function ChartCore({
       return;
     }
     pendingRangeRef.current = {
-      resolution, fromTs, toTs, epic: symbol.epic, broker: brokerId, side: priceSide, deepCover: true,
+      resolution, fromTs, toTs, epic: symbol.epic, broker: brokerId, side: priceSide,
+      deepCover: true, targetFromTs: fromMs,
     };
     setActiveRange(null);
     onPeriod?.(cellId, target);

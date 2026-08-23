@@ -850,6 +850,12 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // initial new-resolution bars are loaded, so page back to the period start
       // (if needed) and fit. ensureCoverageAndFit clears pendingRangeRef when done.
       const pend = handle.pendingRangeRef.current;
+      // A deepCover fit that lands successfully must survive the anchor walk
+      // chained below: that walk prepends bars toward the run's OLDEST fill,
+      // and each prepend is a full setBars re-init that resets the view to
+      // the live edge — the same wipe positionSnapshotRange re-asserts
+      // against. Recorded here, re-applied in the anchorWalk.then block.
+      let drillFit: { fromTs: number; toTs: number } | null = null;
       // A deepCover token (backtest drill-in) targets bars behind the sequential
       // walk's 16-page budget: run the parallel cover first (goToRange's recipe
       // for match jumps — every window between the target and the loaded left
@@ -864,8 +870,14 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
                 if (handle.pendingRangeRef.current !== pend) return "aborted" as const;
                 const res = await handle.ensureCoverageAndFitRef.current(pend);
                 if (res !== "aborted" && !cancelled) {
+                  drillFit = { fromTs: pend.fromTs, toTs: pend.toTs };
+                  // Warn against the UNPADDED trade start: the padded fromTs
+                  // routinely sits in a closed-market gap (weekend) that no
+                  // broker has bars for, and warning on it would cry wolf on
+                  // every span that opens a Monday (see goToRange's identical
+                  // lesson: the target is the trades, padding is context).
                   const oldest = handle.chartRef.current?.getDataList()[0];
-                  if (oldest && oldest.timestamp > pend.fromTs)
+                  if (oldest && oldest.timestamp > (pend.targetFromTs ?? pend.fromTs))
                     toast(`History doesn't reach these trades on ${period.label}. Showing the oldest available.`);
                 }
                 return res;
@@ -1001,6 +1013,16 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         // A superseded run (cancelled) leaves the ref parked for its successor.
         void anchorWalk.then(() => {
           if (cancelled || !handle.chartRef.current) return;
+          // Re-land a drill-in fit the anchor walk's prepends reset (see
+          // drillFit above). Clamped to the loaded oldest bar the same way
+          // positionSnapshotRange clamps its window.
+          if (drillFit && !handle.pendingRangeRef.current) {
+            const oldest = handle.chartRef.current.getDataList()[0];
+            if (oldest) {
+              applyVisibleRange(handle.chartRef.current, Math.max(drillFit.fromTs, oldest.timestamp), drillFit.toTs);
+            }
+            return;
+          }
           const restore = handle.pendingTradeRestoreRef.current;
           if (restore == null) {
             // No studied trade to restore. If we're preserving a center (TF
