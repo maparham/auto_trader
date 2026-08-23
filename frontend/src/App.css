@@ -5546,14 +5546,20 @@ span.bt-leg-short { color: var(--neg); }
 .sweep-progress-timing { white-space: nowrap; }
 
 .sweep-table-wrap { overflow: auto; }
-.sweep-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+/* width auto, not 100%: a forced full-width table hands its slack to the
+   columns, spreading cells apart — content-hugging keeps them adjacent and
+   the whole row compact. min-width keeps very narrow tables (the scheme
+   matrix) from looking like a floating fragment in a wide panel. */
+/* align-self flex-start: several parents (.wfo-results, .sweep-results) are
+   flex columns whose default stretch would re-widen an auto-width table. */
+.sweep-table { width: auto; min-width: 50%; align-self: flex-start; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
 .sweep-table th {
   position: sticky; top: 0; z-index: 1; background: var(--surface);
-  text-align: left; font-weight: 500; font-size: 10px; letter-spacing: 0.05em;
+  text-align: left; font-weight: 500; font-size: 10px; letter-spacing: 0.03em;
   text-transform: uppercase; color: var(--text-faint);
-  padding: 5px 10px 6px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  padding: 5px 4px 6px; border-bottom: 1px solid var(--border); white-space: nowrap;
 }
-.sweep-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.sweep-table td { padding: 5px 4px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .sweep-c-num { text-align: right; font-family: var(--mono); }
 /* Verdict-band tint on scaled columns (Sharpe/SQN/PF), matching the backtest
    overview verdicts; the header ⓘ carries the scale. Defined before .sweep-best
@@ -5634,7 +5640,13 @@ span.bt-leg-short { color: var(--neg); }
 /* Hovered-cell breakdown, inline beside the color-metric dropdown. Single line:
    never wraps (which would grow the header and shove the table down); clips on
    overflow instead. */
-.sweep-heat-detail { display: flex; align-items: baseline; flex-wrap: nowrap; white-space: nowrap; overflow: hidden; gap: 10px; min-width: 0; font-variant-numeric: tabular-nums; }
+/* flex:1 + contain:inline-size: the hovered-cell detail must NEVER contribute
+   intrinsic width. Inside the WFO fold drill-in the heatmap lives in an
+   auto-width table cell, and without the containment each hover would widen
+   the table (detail text appears), enlarge the 1fr grid under the cursor,
+   drop the hover, shrink back — a flicker loop. Containment zeroes its
+   intrinsic size; flex:1 hands it the row's leftover space instead. */
+.sweep-heat-detail { flex: 1 1 0; contain: inline-size; display: flex; align-items: baseline; flex-wrap: nowrap; white-space: nowrap; overflow: hidden; gap: 10px; min-width: 0; font-variant-numeric: tabular-nums; }
 .sweep-heat-detail-combo { font-weight: 600; color: var(--text); font-family: var(--mono); }
 .sweep-heat-detail-stat { display: inline-flex; align-items: baseline; gap: 4px; }
 .sweep-heat-detail-lbl { color: var(--text-faint); }
@@ -5667,7 +5679,9 @@ span.bt-leg-short { color: var(--neg); }
    steals the hover that keeps it open. */
 .sweep-heat-detail-wstrip {
   position: fixed;
-  z-index: 50;
+  /* Above the backtest panel (.bt-overlay, z 55) but below modals (2000):
+     at 50 the portal rendered UNDERNEATH the panel that hosts the heatmap. */
+  z-index: 100;
   pointer-events: none;
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e0e3eb);
@@ -5675,6 +5689,10 @@ span.bt-leg-short { color: var(--neg); }
   padding: 6px 8px;
 }
 .sweep-heat-detail-wstrip .sweep-wstrip-barbox { height: 20px; }
+/* Hover popup body: combo line on top, wrapped abbr=value stats beneath. */
+.sweep-heat-pop { display: flex; flex-direction: column; gap: 5px; max-width: 340px; font-size: 11px; }
+.sweep-heat-pop-combo { font-family: var(--mono); font-weight: 600; color: var(--text); }
+.sweep-heat-pop-stats { display: flex; flex-wrap: wrap; gap: 3px 10px; font-variant-numeric: tabular-nums; }
 .sweep-heat-grid { display: grid; gap: 2px; font-size: 11px; }
 .sweep-heat-corner { }
 .sweep-heat-xlabel, .sweep-heat-ylabel {
@@ -5777,7 +5795,6 @@ span.bt-leg-short { color: var(--neg); }
 .wfo-arch { display: flex; flex-direction: column; gap: 8px; }
 .wfo-arch-head { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
 .wfo-arch-head .seg button { padding: 3px 10px; font-size: 12px; }
-.wfo-arch-table { width: 100%; }
 .wfo-arch-th { display: inline-flex; align-items: center; gap: 4px; }
 .wfo-arch-row { cursor: pointer; }
 .wfo-arch-row:hover { background: var(--hover); }

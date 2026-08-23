@@ -155,17 +155,44 @@ function WindowStrip({ windows }: { windows: NonNullable<SweepRow["windows"]> })
 // the whole heatmap (the big-sweep freeze). `place` offsets from the cursor
 // and flips to the other side of the pointer when it would spill off screen;
 // mounted off-screen until the first placement.
-function WindowStripOverlay({ windows, overlayRef, place }: {
-  windows: NonNullable<SweepRow["windows"]>;
+// Cursor-anchored hover popup for a heat cell: the full combo (axis tags), the
+// row's metric breakdown, and the per-window P&L strip when the run has one.
+// Positioned imperatively from the cursor ref (see placeOverlay) — a portal so
+// panel overflow containers can't clip it.
+function HoverDetailOverlay({ row, axes, overlayRef, place }: {
+  row: SweepRow;
+  axes: SweepAxis[];
   overlayRef: RefObject<HTMLDivElement | null>;
   place: () => void;
 }) {
   useLayoutEffect(() => {
     place();
-  }, [windows, place]);
+  }, [row, place]);
+  const combo = row.combo as Record<string, number | string>;
   return createPortal(
-    <div ref={overlayRef} className="sweep-heat-detail-wstrip" style={{ left: -9999, top: -9999 }}>
-      <WindowStrip windows={windows} />
+    <div ref={overlayRef} className="sweep-heat-detail-wstrip sweep-heat-pop" style={{ left: -9999, top: -9999 }}>
+      <div className="sweep-heat-pop-combo">
+        {axes.length
+          ? axes.map((a, i) => `${axisTag(i)}=${comboAxisText(a, combo)}`).join(" ")
+          : comboFallbackText(combo)}
+      </div>
+      {row.metrics === null ? (
+        <div className="sweep-heat-detail-err">{row.error ?? "failed"}</div>
+      ) : (
+        <div className="sweep-heat-pop-stats">
+          {METRIC_COLS.map((c) => {
+            const v = metricValue(row, c.key);
+            if (v === null) return null;
+            return (
+              <span key={c.key} className="sweep-heat-detail-stat">
+                <span className="sweep-heat-detail-lbl">{c.abbr}</span>
+                <span className="sweep-heat-detail-val">{fmtMetric(c.key, v)}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {row.windows && row.windows.length > 0 && <WindowStrip windows={row.windows} />}
     </div>,
     document.body,
   );
@@ -173,7 +200,8 @@ function WindowStripOverlay({ windows, overlayRef, place }: {
 
 // Short column tag for the Nth sweep axis: A, B, ... Z, then #27, #28, ... so
 // it never runs out (axis counts this high are already off the useful end).
-function axisTag(i: number): string {
+// Exported: WfoResults' fold tables reference params by the same tags.
+export function axisTag(i: number): string {
   return i < 26 ? String.fromCharCode(65 + i) : `#${i + 1}`;
 }
 
@@ -520,14 +548,18 @@ export const SweepResults = memo(function SweepResults(props: {
               ) : (
                 <th><Tooltip content="The swept parameter combination for the row."><span>Combo</span></Tooltip></th>
               )}
+              {/* Headers show the compact abbr (the full name rides in the
+                  tooltip title) so a dozen metric columns fit without pushing
+                  the row into a horizontal scroll — same pattern as the A/B/C
+                  axis tags with their legend. */}
               {baseCols.map((c) => (
                 <th key={c.key} className="sweep-c-num">
                   {c.info ? (
-                    <Tooltip content={metricTipLines(SCALED_COLS[c.key] ?? "", c.info)}>
-                      <span><SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} /></span>
+                    <Tooltip title={c.label} content={metricTipLines(SCALED_COLS[c.key] ?? "", c.info)}>
+                      <span><SweepSortHeader label={c.abbr} col={c.key} sort={sort} onSort={toggleSort} /></span>
                     </Tooltip>
                   ) : (
-                    <SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} />
+                    <SweepSortHeader label={c.abbr} col={c.key} sort={sort} onSort={toggleSort} />
                   )}
                 </th>
               ))}
@@ -545,11 +577,11 @@ export const SweepResults = memo(function SweepResults(props: {
               {robustCols.map((c) => (
                 <th key={c.key} className="sweep-c-num">
                   {c.info ? (
-                    <Tooltip content={c.info}>
-                      <span><SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} /></span>
+                    <Tooltip title={c.label} content={c.info}>
+                      <span><SweepSortHeader label={c.abbr} col={c.key} sort={sort} onSort={toggleSort} /></span>
                     </Tooltip>
                   ) : (
-                    <SweepSortHeader label={c.label} col={c.key} sort={sort} onSort={toggleSort} />
+                    <SweepSortHeader label={c.abbr} col={c.key} sort={sort} onSort={toggleSort} />
                   )}
                 </th>
               ))}
@@ -732,7 +764,6 @@ const SweepHeatmap = memo(function SweepHeatmap({
   const xAxis = axes.find((a) => a.target === xSel) ?? axes[0];
   const yAxis = axes.find((a) => a.target === ySel && a.target !== xAxis.target)
     ?? axes.find((a) => a.target !== xAxis.target);
-  const collapsed = axes.filter((a) => a !== xAxis && a !== yAxis);
   // Picking in one dropdown the axis the other holds swaps them: X and Y can
   // never be the same axis.
   const pickX = (t: string) => { if (t === yAxis?.target) setYSel(xAxis.target); setXSel(t); };
@@ -837,38 +868,13 @@ const SweepHeatmap = memo(function SweepHeatmap({
             </select>
           </span>
         )}
-        <div className="sweep-heat-detail" aria-live="polite">
-          {hovered && (
-            <>
-              {hovered.metrics === null ? (
-                <span className="sweep-heat-detail-err">{hovered.error ?? "failed"}</span>
-              ) : (
-                <>
-                  {collapsed.length > 0 && (
-                    <span className="sweep-heat-detail-combo">
-                      @ {collapsed.map((a) => comboAxisLabel(a, hovered.combo as Record<string, number | string>)).join(", ")}
-                    </span>
-                  )}
-                  {METRIC_COLS.map((c) => (
-                    <span key={c.key} className="sweep-heat-detail-stat">
-                      <span className="sweep-heat-detail-lbl">{c.abbr}</span>
-                      <span className="sweep-heat-detail-val">{fmtMetric(c.key, metricValue(hovered, c.key))}</span>
-                    </span>
-                  ))}
-                  {onRefine && (
-                    <button type="button" className="sweep-refine"
-                            onClick={() => onRefine(hovered.combo)}>
-                      Refine
-                    </button>
-                  )}
-                </>
-              )}
-            </>
-          )}
-        </div>
+        {/* Hovered-cell details moved to the cursor-anchored popup
+            (HoverDetailOverlay); an inline readout here clipped to fragments
+            in a narrow panel. Refine-on-hover rides along: the popup itself is
+            pointer-events:none, so keep the action on the row click instead. */}
       </div>
-      {hovered && hovered.windows && hovered.windows.length > 0 && (
-        <WindowStripOverlay windows={hovered.windows} overlayRef={overlayRef} place={placeOverlay} />
+      {hovered && (
+        <HoverDetailOverlay row={hovered} axes={axes} overlayRef={overlayRef} place={placeOverlay} />
       )}
       {tier === "collapsed" && !showCollapsed ? (
         <button type="button" className="sweep-heat-show" onClick={() => setShownFor(gridId)}>
@@ -927,7 +933,11 @@ const HeatGrid = memo(function HeatGrid({
   return (
     <div
       className={`sweep-heat-grid${compact ? " sweep-heat-compact" : ""}`}
-      style={{ gridTemplateColumns: `auto repeat(${xTicks.length}, 1fr)` }}
+      // Text tier: every column hugs its widest value (minimal cells) — the
+      // label column included: an `auto` track would flex into the free space
+      // and shove the value columns off the right edge. Compact tier keeps
+      // 1fr — color-only micro-cells should tile the full width.
+      style={{ gridTemplateColumns: `max-content repeat(${xTicks.length}, ${compact ? "1fr" : "max-content"})` }}
     >
       <div className="sweep-heat-corner" />
       {xTicks.map((xt) => (

@@ -11,9 +11,9 @@ import {
   wfoEquityCompoundedSignal,
 } from "./lib/signals";
 import type { SweepAxis, SweepCombo } from "./lib/sweep";
-import { comboAxisLabel } from "./lib/sweep";
+import { axisColumnLabel, comboAxisText } from "./lib/sweep";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
-import { SweepResults, SweepSortHeader, type SortDir } from "./SweepResults";
+import { SweepResults, SweepSortHeader, axisTag, type SortDir } from "./SweepResults";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
 
@@ -192,10 +192,23 @@ export const WfoResults = memo(function WfoResults(props: {
   };
   const expanded = expandedKey ? { key: expandedKey, ...(foldCache[expandedKey] ?? { rows: null }) } : null;
 
+  // Params referenced by the same A/B/C tags the drill-in table uses; the
+  // legend below the scorecard spells the tags out once instead of every row
+  // repeating full axis labels.
   const comboText = (combo: Record<string, number | boolean | string>): string =>
     axes.length
-      ? axes.map((a) => comboAxisLabel(a, combo as SweepCombo)).join(", ")
+      ? axes.map((a, i) => `${axisTag(i)}=${comboAxisText(a, combo as SweepCombo)}`).join(" ")
       : Object.entries(combo).map(([k, v]) => `${k.replace(/^param:/, "")} ${v}`).join(", ");
+  const axisLegend = axes.length > 0 && (
+    <div className="sweep-axis-legend">
+      {axes.map((a, ai) => (
+        <span key={a.target} className="sweep-axis-legend-item">
+          <span className="sweep-axis-tag">{axisTag(ai)}</span>
+          {axisColumnLabel(a)}
+        </span>
+      ))}
+    </div>
+  );
 
   // Sorted view of the selected scheme's folds; original index rides along so
   // fold keys (s{scheme}/f{fold}) stay correct under any sort order. With no
@@ -272,6 +285,9 @@ export const WfoResults = memo(function WfoResults(props: {
 
       {/* Streaming view while the job runs: winner rows as they land. */}
       {state.running && !result && state.foldRows.length > 0 && (
+        <>
+        {axisLegend}
+        <div className="sweep-table-wrap">
         <table className="sweep-table wfo-folds-table">
           <thead>
             <tr>
@@ -294,6 +310,8 @@ export const WfoResults = memo(function WfoResults(props: {
             ))}
           </tbody>
         </table>
+        </div>
+        </>
       )}
 
       {result && scheme && (
@@ -394,6 +412,11 @@ export const WfoResults = memo(function WfoResults(props: {
             </table>
           )}
 
+          {axisLegend}
+          {/* Scroll container, same as the sweep panel's: a fold drill-in
+              (heatmap + combo table) is wider than a narrow panel, and without
+              this the overflow is CLIPPED — cells past the edge unreachable. */}
+          <div className="sweep-table-wrap">
           <table className="sweep-table wfo-folds-table">
             <thead>
               <tr>
@@ -524,6 +547,7 @@ export const WfoResults = memo(function WfoResults(props: {
               })}
             </tbody>
           </table>
+          </div>
 
           {Object.keys(scheme.stability?.per_axis ?? {}).length > 0 && (
             <div className="wfo-drift">

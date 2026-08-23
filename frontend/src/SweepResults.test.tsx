@@ -53,7 +53,7 @@ describe("SweepResults", () => {
     render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
     expect(screen.getAllByRole("row")).toHaveLength(4);   // header + 3
     expect(document.querySelector(".sweep-error")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Net P\/L/ })); // sort desc
+    fireEvent.click(screen.getByRole("button", { name: /P\/L/ })); // sort desc (header shows the abbr)
     const first = screen.getAllByRole("row")[1];
     expect(first.textContent).toContain("100");
   });
@@ -218,11 +218,11 @@ describe("SweepResults 3+ axes", () => {
     expect((screen.getByLabelText("Heatmap Y axis") as HTMLSelectElement).value).toBe("param:a");
   });
 
-  it("hover on an aggregated cell names the collapsed axis value", () => {
+  it("hover on an aggregated cell pops the full combo, collapsed axis included", () => {
     render(<SweepResults rows={rows3} axes={axes3} onApply={() => {}} />);
     const best = [...document.querySelectorAll(".sweep-cell")].find((c) => c.textContent === "+80.00")!;
     fireEvent.mouseEnter(best);
-    expect(document.querySelector(".sweep-heat-detail")!.textContent).toContain("C 200");
+    expect(document.querySelector(".sweep-heat-pop")!.textContent).toContain("C=200");
   });
 });
 
@@ -309,9 +309,9 @@ describe("SweepResults robustness columns", () => {
       robustRow(2, {}, null),  // no window metrics: sorts below on robust columns
     ];
     render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
-    expect(screen.getByText("Worst wnd")).toBeTruthy();
+    expect(screen.getByText("Wst")).toBeTruthy();
     expect(screen.getByText("3/4")).toBeTruthy();
-    fireEvent.click(screen.getByText("Worst wnd"));
+    fireEvent.click(screen.getByText("Wst"));
     const cells = screen.getAllByRole("row").slice(1).map((r) => r.textContent);
     expect(cells[0]).toContain("-5");     // row with metrics first even on desc
   });
@@ -360,7 +360,7 @@ describe("SweepResults robustness columns", () => {
     const rows = [robustRow(1, { worst_window_pnl: -5 }, [])];
     render(<SweepResults rows={rows} axes={axes} onApply={() => {}} />);
     // Focus shows the shared Tooltip instantly (no delay on keyboard focus).
-    fireEvent.focus(screen.getByText("Worst wnd").closest(".tooltip-trigger")!);
+    fireEvent.focus(screen.getByText("Wst").closest(".tooltip-trigger")!);
     expect(screen.getByRole("tooltip").textContent).toContain("The most this combo lost");
   });
 });
@@ -384,7 +384,7 @@ describe("SweepResults without axes (WFO archive fold tables)", () => {
   it("hides the robustness column group when no row carries window metrics", () => {
     render(<SweepResults rows={[row({ "param:n": 1 }), row({ "param:n": 2 })]} axes={[]} onApply={() => {}} />);
     expect(screen.queryByText(/Robustness/)).toBeNull();
-    expect(screen.queryByText("Worst wnd")).toBeNull();
+    expect(screen.queryByText("Wst")).toBeNull();
   });
 
   it("keeps the robustness group when any row has window metrics", () => {
