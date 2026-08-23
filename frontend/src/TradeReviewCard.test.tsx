@@ -130,6 +130,32 @@ describe("TradeReviewCard", () => {
     expect(screen.queryByRole("tab", { name: "trend: down" })).toBeNull();
   });
 
+  it("explains each field on hover", () => {
+    // Keyboard focus shows a Tooltip instantly (no delay, no grace window).
+    const tipOf = (label: string): string => {
+      // getAllByText: the open tooltip repeats the label as its title.
+      const trigger = screen.getAllByText(label)[0].closest(".tooltip-trigger")!;
+      fireEvent.focus(trigger);
+      const text = screen.getByRole("tooltip").textContent ?? "";
+      fireEvent.blur(trigger);
+      return text;
+    };
+    backtestResultSignal.set({
+      ...result,
+      trades: [
+        { ...trades[0], mae_r: -1.11, mfe_r: 0.42, context: { vol_regime: "mid", hour_utc: 13 } },
+      ],
+    } as unknown as StoredBacktestResult);
+    tradeReviewSignal.set({ cohort: "losses", order: [0], pos: 0, drill: false });
+    render(<TradeReviewCard />);
+    expect(tipOf("MAE / MFE")).toMatch(/against|worst/i);
+    expect(tipOf("Held")).toBeTruthy();
+    expect(tipOf("Reason")).toBeTruthy();
+    // Context keys are raw backend field names, so they carry their own tips.
+    expect(tipOf("vol_regime")).toMatch(/volatil/i);
+    expect(tipOf("hour_utc")).toMatch(/UTC/);
+  });
+
   it("survives the SAME result being re-published (drill-in rehydrate)", () => {
     // A drill-in step switches timeframe; the rehydrate re-fires the result
     // signal with the identical object. That must not end the tour.

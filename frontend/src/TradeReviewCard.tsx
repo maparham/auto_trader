@@ -20,6 +20,7 @@ import {
 } from "./lib/signals";
 import { entryMarkerFor, fmtTradeDuration, realizedR, reviewOrder, type ReviewCohort } from "./lib/tradeReview";
 import { termLabel, opSymbol } from "./lib/signalGlyphs";
+import Tooltip from "./components/Tooltip";
 import { useBarTimeLabel } from "./lib/useMaskedReplay";
 import { periodByResolution } from "./lib/feed";
 
@@ -30,6 +31,39 @@ const fmtNum = (n: number | null): string =>
   n == null ? "—" : Number.isInteger(n) ? String(n) : String(Number(n.toFixed(5)));
 const fmtPnl = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
 const fmtR = (r: number | null): string => (r == null ? "" : ` (${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)}R)`);
+
+// Plain-language help for every row of the card. The entry-context keys are the
+// backend's own field names (context_features.py), so they get their own tips:
+// nobody reads "dist_swing_high" and knows it is measured in ATRs.
+const ROW_TIPS: Record<string, string> = {
+  Entry: "When the trade was filled, and at what price.",
+  Exit: "When the trade closed, and at what price.",
+  Reason: "What closed the trade: the stop, the target, an exit rule, or the session ending.",
+  Held: "Time from entry to exit.",
+  "MAE / MFE": "Worst and best the trade ever got, in R. MAE is how far it went against you before closing, MFE how far it went your way.",
+};
+
+const CONTEXT_TIPS: Record<string, string> = {
+  trend: "Direction of the 50-bar average at entry: up, down, or flat.",
+  vol_regime: "How volatile the market was at entry, against the rest of the run: low, mid, or high third.",
+  session: "Trading session at entry: Asia, London, New York, or the London and New York overlap.",
+  hour_utc: "Hour of the entry bar, in UTC (0 to 23).",
+  day_of_week: "Weekday of the entry: 0 is Monday, 4 is Friday.",
+  dist_swing_high: "Distance from entry up to the recent 20-bar high, in ATRs. Small means the trade started right under resistance.",
+  dist_swing_low: "Distance from entry down to the recent 20-bar low, in ATRs. Small means the trade started right above support.",
+  candle_pattern: "Shape of the signal candle, such as a pin bar or an engulfing candle.",
+};
+
+// A row label with its tip, or the bare label when no tip is written for it.
+function RowLabel({ name, tips }: { name: string; tips: Record<string, string> }) {
+  const tip = tips[name];
+  if (!tip) return <span>{name}</span>;
+  return (
+    <Tooltip content={tip} title={name}>
+      {name}
+    </Tooltip>
+  );
+}
 
 const COHORTS: Array<{ key: ReviewCohort; label: string }> = [
   { key: "losses", label: "Losses" },
@@ -202,21 +236,21 @@ export default function TradeReviewCard() {
           </div>
 
           <div className="bt-review-grid">
-            <span>Entry</span>
+            <RowLabel name="Entry" tips={ROW_TIPS} />
             <span>
               {barTime(trade.entry_time * 1000)} @ {fmtNum(trade.entry_price)}
             </span>
-            <span>Exit</span>
+            <RowLabel name="Exit" tips={ROW_TIPS} />
             <span>
               {barTime((trade.exit_time_exact ?? trade.exit_time) * 1000)} @ {fmtNum(trade.exit_price)}
             </span>
-            <span>Reason</span>
+            <RowLabel name="Reason" tips={ROW_TIPS} />
             <span>{trade.reason}</span>
-            <span>Held</span>
+            <RowLabel name="Held" tips={ROW_TIPS} />
             <span>{fmtTradeDuration(trade.entry_time, trade.exit_time_exact ?? trade.exit_time)}</span>
             {(trade.mae_r != null || trade.mfe_r != null) && (
               <>
-                <span>MAE / MFE</span>
+                <RowLabel name="MAE / MFE" tips={ROW_TIPS} />
                 <span>
                   {trade.mae_r != null ? `−${Math.abs(trade.mae_r).toFixed(2)}R` : "—"} /{" "}
                   {trade.mfe_r != null ? `+${Math.abs(trade.mfe_r).toFixed(2)}R` : "—"}
@@ -227,7 +261,12 @@ export default function TradeReviewCard() {
 
           {terms.length > 0 && (
             <div className="bt-review-section">
-              <div className="bt-review-section-title">Entry rules</div>
+              <Tooltip
+                content="The strategy's own entry conditions, with the values they had on the signal bar."
+                title="Entry rules"
+              >
+                <div className="bt-review-section-title">Entry rules</div>
+              </Tooltip>
               <table className="bt-cluster-pop-table">
                 <tbody>
                   {terms.map((t, i) =>
@@ -253,11 +292,16 @@ export default function TradeReviewCard() {
 
           {context && Object.keys(context).length > 0 && (
             <div className="bt-review-section">
-              <div className="bt-review-section-title">Entry context</div>
+              <Tooltip
+                content="What the market looked like on the signal bar. Compare these across losses to spot what they share."
+                title="Entry context"
+              >
+                <div className="bt-review-section-title">Entry context</div>
+              </Tooltip>
               <div className="bt-review-grid">
                 {Object.entries(context).map(([k, v]) => (
                   <React.Fragment key={k}>
-                    <span>{k}</span>
+                    <RowLabel name={k} tips={CONTEXT_TIPS} />
                     <span>{v == null ? "—" : typeof v === "number" ? fmtNum(v) : String(v)}</span>
                   </React.Fragment>
                 ))}
@@ -281,7 +325,11 @@ export default function TradeReviewCard() {
                 }
               }}
             />
-            Drill to {periodByResolution(result.resolution)?.label ?? result.resolution} on step
+            <Tooltip content="Each step switches the chart to the run's own timeframe and zooms to that trade. Off, the chart stays where you are.">
+              <span>
+                Drill to {periodByResolution(result.resolution)?.label ?? result.resolution} on step
+              </span>
+            </Tooltip>
           </label>
         </>
       )}
