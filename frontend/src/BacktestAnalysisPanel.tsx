@@ -7,7 +7,12 @@ import type {
   BacktestWhatif,
   LegAnalysis,
 } from "./api";
-import { winLossContrast, type ContrastTrade, type FieldContrast } from "./lib/contrast";
+import {
+  fmtDeltaPct,
+  winLossContrast,
+  type ContrastTrade,
+  type FieldContrast,
+} from "./lib/contrast";
 import { selectedTradeSignal, tradeReviewSignal } from "./lib/signals";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
@@ -794,9 +799,6 @@ function WhatIfSection({
 // per-bucket win-rate table. Ranking uses a 0..1 effect size (Cramér's V /
 // rank-biserial, see lib/contrast.ts); the displayed numbers are plain win
 // rates and their deltas against the field's overall rate.
-const fmtDelta = (d: number): string =>
-  `${d >= 0 ? "+" : "−"}${Math.abs(Math.round(d * 100))}%`;
-
 function ContrastFields({ contrasts }: { contrasts: FieldContrast[] }) {
   return (
     <>
@@ -832,7 +834,7 @@ function ContrastFields({ contrasts }: { contrasts: FieldContrast[] }) {
                   <td>{b.n}</td>
                   <td>{fmtPct(b.win_rate)}</td>
                   <td className={b.delta > 0 ? "pos" : b.delta < 0 ? "neg" : ""}>
-                    {fmtDelta(b.delta)}
+                    {fmtDeltaPct(b.delta)}
                   </td>
                   <td>
                     <button

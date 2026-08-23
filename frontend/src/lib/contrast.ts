@@ -120,6 +120,14 @@ function fmtDur(seconds: number): string {
   return rh ? `${d}d ${rh}h` : `${d}d`;
 }
 
+/** Signed percentage-point delta for display. A delta that rounds to zero
+ * prints unsigned: "−0%" reads as a defect rather than a near-average bucket. */
+export function fmtDeltaPct(delta: number): string {
+  const pp = Math.round(delta * 100);
+  if (pp === 0) return "0%";
+  return `${pp > 0 ? "+" : "−"}${Math.abs(pp)}%`;
+}
+
 const fmtVal = (v: number): string => String(Number(v.toFixed(2)));
 const pct = (v: number): string => `${Math.round(v * 100)}%`;
 

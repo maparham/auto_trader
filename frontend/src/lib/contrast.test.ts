@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   cramersV,
   rankBiserial,
+  fmtDeltaPct,
   quartileEdges,
   winLossContrast,
   type FieldContrast,
@@ -209,5 +210,18 @@ describe("winLossContrast", () => {
     const out = winLossContrast(trades);
     const effects = out.map((f: FieldContrast) => f.effect);
     expect([...effects].sort((a, b) => b - a)).toEqual(effects);
+  });
+});
+
+describe("fmtDeltaPct", () => {
+  it("signs non-zero deltas", () => {
+    expect(fmtDeltaPct(0.093)).toBe("+9%");
+    expect(fmtDeltaPct(-0.16)).toBe("−16%");
+  });
+
+  it("drops the sign when the rounded delta is zero", () => {
+    // −0.004 rounds to 0: "−0%" reads as a defect, not a near-average bucket.
+    expect(fmtDeltaPct(-0.004)).toBe("0%");
+    expect(fmtDeltaPct(0)).toBe("0%");
   });
 });
