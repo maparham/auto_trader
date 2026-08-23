@@ -136,10 +136,39 @@ async def expr_backtest(req: ExprBacktestRequest):
         from auto_trader.api.sweep_apply import candle_from_dto
         from auto_trader.engine.analysis import compute_analysis
         from auto_trader.engine.context_features import enrich_trades
+        from auto_trader.engine.exit_time import attach_exit_times
+        from auto_trader.engine.whatif import enrich_trades_whatif
+
+        conv_candles = [candle_from_dto(c) for c in req.candles]
+
+        # Sub-bar exit times for intra-bar stop/target exits, from the run's own
+        # 1-minute candles. Display only, and it can trigger a multi-second
+        # candle-cache backfill: relabel the progress stage first so the poller
+        # stops showing "Simulating (100%)" while it runs.
+        if req.progressId:
+            pr.set_progress(req.progressId, stage="exit-times")
+
+        async def _load_minutes(from_s: int, to_s: int) -> list[Candle]:
+            return await deps._fetch_symbol_candles(
+                req.broker, req.epic, "MINUTE", (to_s - from_s) // 60 + 2, from_s, to_s,
+                req.priceSide,
+            )
+
+        try:
+            await attach_exit_times(
+                result.trades,
+                run_tf_seconds=resolution_seconds(req.resolution),
+                load_minutes=_load_minutes,
+            )
+        except Exception:  # noqa: BLE001  a broker failure never fails the run
+            logger.warning("exit-time resolution failed; continuing without it", exc_info=True)
 
         analysis = None
         try:
-            enrich_trades(result.trades, [candle_from_dto(c) for c in req.candles])
+            enrich_trades(result.trades, conv_candles)
+            # Per-trade what-if stamps: compute_analysis aggregates THESE, so
+            # without them the What-if tab is a shell with every section None.
+            enrich_trades_whatif(result.trades, conv_candles)
             analysis = compute_analysis([t.model_dump() for t in _trades_to_dto(result)])
         except Exception:  # noqa: BLE001  analytics never fail the run
             logger.warning("entry-context enrichment failed; continuing without it",

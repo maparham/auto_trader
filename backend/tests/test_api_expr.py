@@ -813,3 +813,62 @@ def test_expr_backtest_carries_analysis_and_entry_context():
     ctx = body["trades"][0]["context"]
     assert ctx is not None
     assert "session" in ctx and "hour_utc" in ctx
+
+
+def _sawtooth_req(**over):
+    """A 60-bar sawtooth that fires a crossAbove entry several times, with enough
+    history for the context features' EMA(50)/ATR(14) lookbacks."""
+    closes = [100 + (k % 10) for k in range(60)]
+    base = dict(candles=_candles(closes), longEntry=[{"expr": "crossAbove(candle.close, 105)"}])
+    base.update(over)
+    return _base_req(**base)
+
+
+def test_expr_backtest_stamps_per_trade_whatif():
+    """compute_whatif aggregates the per-trade stamps, so without the enrichment
+    the What-if tab is a shell with every section None."""
+    r = client.post("/api/expr/backtest", json=_sawtooth_req(
+        longRisk={"stop": {"kind": "pct", "value": 1}, "target": {"kind": "pct", "value": 1}},
+    ))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["trades"]
+    assert body["trades"][0]["whatif"] is not None
+    # And the aggregate the tab renders is populated from those stamps.
+    assert any(v is not None for v in body["analysis"]["whatif"].values())
+
+
+def test_expr_backtest_resolves_sub_bar_exit_times(monkeypatch):
+    """Intra-bar stop/target exits get their minute-resolved exit_time_exact,
+    the same display refinement the structured handler does."""
+    seen = []
+
+    async def fake_minutes(broker, epic, resolution, bars, from_ts, to_ts, side):
+        seen.append(resolution)
+        # One minute candle per minute across the window, flat at a price that
+        # can't trigger anything — the call itself is what this asserts.
+        return [
+            candle_from_dto(CandleDTO(time=t, open=105.0, high=105.0, low=105.0,
+                                      close=105.0, volume=1.0))
+            for t in range(from_ts, to_ts + 60, 60)
+        ]
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake_minutes)
+    r = client.post("/api/expr/backtest", json=_sawtooth_req(
+        longRisk={"stop": {"kind": "pct", "value": 1}, "target": {"kind": "pct", "value": 1}},
+    ))
+    assert r.status_code == 200, r.text
+    assert "MINUTE" in seen
+
+
+def test_expr_backtest_survives_a_failing_minute_fetch(monkeypatch):
+    """Exit-time resolution is display-only: a broker failure must not fail the run."""
+    async def boom(*a, **k):
+        raise RuntimeError("broker down")
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", boom)
+    r = client.post("/api/expr/backtest", json=_sawtooth_req(
+        longRisk={"stop": {"kind": "pct", "value": 1}, "target": {"kind": "pct", "value": 1}},
+    ))
+    assert r.status_code == 200, r.text
+    assert r.json()["trades"]
