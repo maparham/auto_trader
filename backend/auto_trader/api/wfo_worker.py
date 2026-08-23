@@ -36,8 +36,13 @@ def run_grid_combo(combo: dict) -> dict:
         result = sweep_worker.execute_combo(s, s.req, combo)
         res_s = resolution_seconds(s.req.resolution)
         cash = s.req.costs.startingCash
+        # Epoch arrays once per combo run, shared by every window slice: the
+        # per-element .timestamp() conversion is what dominated slicing cost.
+        trade_ts = [t.entry_time.timestamp() for t in result.trades]
+        eq_ts = [pt.time.timestamp() for pt in result.equity]
         folds = [
-            slice_window_metrics(result.trades, result.equity, w[0], w[1], cash, res_s)
+            slice_window_metrics(result.trades, result.equity, w[0], w[1], cash, res_s,
+                                 trade_ts=trade_ts, eq_ts=eq_ts)
             for w in _TRAIN_WINDOWS
         ]
         return {"combo": combo, "folds": folds, "error": None}
@@ -45,7 +50,7 @@ def run_grid_combo(combo: dict) -> dict:
         return {"combo": combo, "folds": None, "error": str(e)}
 
 
-def _window_is_clean(trades, wfrom: int, wto: int) -> bool:
+def _window_is_clean(entry_ts, exit_ts, wfrom: int, wto: int) -> bool:
     """True when the full-range run over [wfrom, wto) is identical to a real
     flat-start run gated at wfrom, so the window can be sliced directly off the
     full-range trades with no engine work. False (a "boundary" window) when a
@@ -54,10 +59,10 @@ def _window_is_clean(trades, wfrom: int, wto: int) -> bool:
       - a trade filled exactly at wfrom (its signal fired on the wfrom-1 bar and
         a flat-start run gated at wfrom would suppress it);
       - an in-window entry still open past wto (a flat-start run truncated at wto
-        force-closes it at wto, the full-range run lets it run on)."""
-    for t in trades:
-        e = t.entry_time.timestamp()
-        x = t.exit_time.timestamp()
+        force-closes it at wto, the full-range run lets it run on).
+    Takes parallel entry/exit epoch arrays, built once per combo, because it
+    runs once per train window over the same trade list."""
+    for e, x in zip(entry_ts, exit_ts):
         if e < wfrom <= x:
             return False
         if e == wfrom:
@@ -88,8 +93,14 @@ def run_grid_combo_exact(combo: dict) -> dict:
         cash = s.req.costs.startingCash
         times = [c.time.timestamp() for c in session.candles]
         full = session.full
+        # Full-range epoch arrays once per combo: the clean-window check plus
+        # each clean window's slice reuse them across all train windows.
+        entry_ts = [t.entry_time.timestamp() for t in full.trades]
+        exit_ts = [t.exit_time.timestamp() for t in full.trades]
+        eq_ts = [pt.time.timestamp() for pt in full.equity]
         folds = [
-            _exact_window_metrics(session, full, w[0], w[1], times, cash, res_s)
+            _exact_window_metrics(session, full, w[0], w[1], times, cash, res_s,
+                                  entry_ts, exit_ts, eq_ts)
             for w in _TRAIN_WINDOWS
         ]
         return {"combo": combo, "folds": folds, "error": None}
@@ -97,12 +108,16 @@ def run_grid_combo_exact(combo: dict) -> dict:
         return {"combo": combo, "folds": None, "error": str(e)}
 
 
-def _exact_window_metrics(session, full, wfrom, wto, times, cash, res_s) -> dict:
-    if _window_is_clean(full.trades, wfrom, wto):
-        return slice_window_metrics(full.trades, full.equity, wfrom, wto, cash, res_s)
+def _exact_window_metrics(session, full, wfrom, wto, times, cash, res_s,
+                          entry_ts, exit_ts, eq_ts) -> dict:
+    if _window_is_clean(entry_ts, exit_ts, wfrom, wto):
+        return slice_window_metrics(full.trades, full.equity, wfrom, wto, cash, res_s,
+                                    trade_ts=entry_ts, eq_ts=eq_ts)
     end = _end_index(times, wto)
     if end is None:  # window ends before any candle: empty slice
         return slice_window_metrics([], [], wfrom, wto, cash, res_s)
+    # Boundary window: win is a fresh per-window run, so there is nothing to
+    # share and slice_window_metrics builds its own arrays.
     win = session.run_window(wfrom, end)
     return slice_window_metrics(win.trades, win.equity, wfrom, wto, cash, res_s)
 
@@ -134,25 +149,27 @@ def run_test(payload: dict) -> dict:
             start_index=sweep_worker.start_at(s.candles, test_from))
         res_s = resolution_seconds(s.req.resolution)
         cash = s.req.costs.startingCash
+        # One epoch-array build shared by the metrics slice and the manual
+        # rebase/filter loops below.
+        trade_ts = [t.entry_time.timestamp() for t in result.trades]
+        eq_ts = [pt.time.timestamp() for pt in result.equity]
         metrics = slice_window_metrics(
-            result.trades, result.equity, test_from, test_to, cash, res_s)
+            result.trades, result.equity, test_from, test_to, cash, res_s,
+            trade_ts=trade_ts, eq_ts=eq_ts)
         # Rebase equity inside the window to starting cash (same offset rule as
         # slice_window_metrics: last pre-window equity maps to cash).
-        e0 = cash
-        for pt in result.equity:
-            if pt.time.timestamp() >= test_from:
-                break
-            e0 = pt.equity
+        eq_lo = bisect.bisect_left(eq_ts, test_from)
+        eq_hi = bisect.bisect_left(eq_ts, test_to)
+        e0 = result.equity[eq_lo - 1].equity if eq_lo else cash
         offset = cash - e0
-        equity = [[int(pt.time.timestamp()), round(pt.equity + offset, 5)]
-                  for pt in result.equity
-                  if test_from <= pt.time.timestamp() < test_to]
+        equity = [[int(e), round(pt.equity + offset, 5)]
+                  for pt, e in zip(result.equity[eq_lo:eq_hi], eq_ts[eq_lo:eq_hi])]
         trades = [{
-            "entry_time": int(t.entry_time.timestamp()),
+            "entry_time": int(e),
             "exit_time": int(t.exit_time.timestamp()),
             "pnl": round(t.pnl, 5),
             "side": t.side.value,
-        } for t in result.trades if test_from <= t.entry_time.timestamp() < test_to]
+        } for t, e in zip(result.trades, trade_ts) if test_from <= e < test_to]
         return {"key": payload["key"], "combo": combo, "metrics": metrics,
                 "trades": trades, "equity": _downsample(equity, _EQUITY_CAP),
                 "error": None}

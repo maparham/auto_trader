@@ -79,5 +79,7 @@ def test_expr_both_paths_exercised():
     _init(300, _WINDOWS)
     s = sweep_worker.build_combo_session(
         sweep_worker._STATE, sweep_worker._STATE.req, _COMBO)
-    verdicts = {_window_is_clean(s.full.trades, w[0], w[1]) for w in _WINDOWS}
+    entry_ts = [t.entry_time.timestamp() for t in s.full.trades]
+    exit_ts = [t.exit_time.timestamp() for t in s.full.trades]
+    verdicts = {_window_is_clean(entry_ts, exit_ts, w[0], w[1]) for w in _WINDOWS}
     assert verdicts == {True, False}, f"want both paths, got {verdicts}"

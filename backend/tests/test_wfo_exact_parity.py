@@ -70,6 +70,8 @@ def test_both_paths_are_exercised(tmp_path):
     session = __import__("auto_trader.api.sweep_worker", fromlist=["build_combo_session"]) \
         .build_combo_session(wfo_worker.sweep_worker._STATE,
                              wfo_worker.sweep_worker._STATE.req, _COMBO)
-    verdicts = {_window_is_clean(session.full.trades, w[0], w[1]) for w in _WINDOWS}
+    entry_ts = [t.entry_time.timestamp() for t in session.full.trades]
+    exit_ts = [t.exit_time.timestamp() for t in session.full.trades]
+    verdicts = {_window_is_clean(entry_ts, exit_ts, w[0], w[1]) for w in _WINDOWS}
     assert True in verdicts, "no clean window -- free-slice path not exercised"
     assert False in verdicts, "no boundary window -- engine-replay path not exercised"
