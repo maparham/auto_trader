@@ -15,7 +15,7 @@
 // runs) so the one-time init effect + other cross-boundary callers keep working:
 // `handle.paintBracketRef.current = paintBracket`, `handle.paintSeparatorRef`,
 // `handle.redrawRef` — the same staleness-proof ref-bridge as the other hooks.
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import {
   first,
   paintSelectionDots,
@@ -40,8 +40,9 @@ import { insetBandBox, type InsetBandBox } from "../lib/indicators/inset";
 import { slopeMaLines } from "../lib/indicators/slope";
 import { getIndicatorsByPane } from "../lib/indicators";
 import { indTypeOf } from "../lib/customIndicators";
-import { getBacktestAggregate } from "../lib/backtest";
+import { dashSliceBounds, getBacktestAggregate, tradeDashes } from "../lib/backtest";
 import { type AggPill } from "../BacktestAggMarkers";
+import { type ProjectedDash } from "../BacktestTradeDashes";
 import { type ExitPill } from "../TradeExitAggMarkers";
 import { mergeTradeLevels, isBreakeven, isBreakevenTarget, getLivePrice, type OrderSide } from "../lib/trading";
 import { type TradeLineField } from "../lib/signals";
@@ -236,9 +237,18 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     controller,
     aggMarkersRef,
     exitAggMarkersRef,
+    tradeDashesRef,
   } = handle;
 
   const { selectedIndicator, legendHoverName, curveHover } = controller;
+
+  // tradeDashes memo for the redraw loop below — recomputed only when the
+  // aggregate clusters or the loaded-bar window change (see use site).
+  const dashCacheRef = useRef<{
+    clusters: NonNullable<ReturnType<typeof getBacktestAggregate>>["clusters"];
+    sig: string;
+    dashes: ReturnType<typeof tradeDashes>;
+  } | null>(null);
 
   const paintBracket = useCallback(() => {
     if (isSynthetic(epicRef.current)) return; // analysis-only: no position connector
@@ -1146,8 +1156,82 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       }
       flush();
       aggMarkersRef.current?.setPills(pills);
+      // Per-trade entry dashes: one tiny tick per trade at (entry price, entry
+      // time within its display candle). tradeDashes gives the containing bar +
+      // the 0..1 fraction through it; the bar center pixel comes from the same
+      // batch projection API as the pills, then the fraction offsets across the
+      // candle's width (frac 0.5 = center). Culled by x AND y — a dash belongs
+      // ON the candle, so one scrolled/priced out of the pane just disappears.
+      // Below ~3px of bar width the within-candle offset is sub-pixel noise and
+      // the DOM span count explodes (one per visible trade) — drop the layer,
+      // the pills still mark the trades.
+      const barW = chart.getBarSpace().bar;
+      if (barW < 3) {
+        tradeDashesRef.current?.setDashes([]);
+      } else {
+        // Memoized per (clusters identity, loaded-bar window): the redraw loop
+        // runs per scroll/zoom/tick frame — recompute the anchors only when the
+        // clusters change (markers redrawn) or bars load/prepend, and just
+        // re-project otherwise, matching how the pills reuse their cached
+        // clusters. The display interval comes from the resolution table (the
+        // min-gap fallback inside tradeDashes is poisoned by DST-short
+        // sessions and calendar bars).
+        const dl = chart.getDataList();
+        const dashSig = `${dl.length}:${dl[0]?.timestamp ?? 0}:${dl[dl.length - 1]?.timestamp ?? 0}`;
+        const cache = dashCacheRef.current;
+        const resSec = RESOLUTION_SECONDS[resRef.current];
+        const dashes =
+          cache && cache.clusters === agg.clusters && cache.sig === dashSig
+            ? cache.dashes
+            : (dashCacheRef.current = {
+                clusters: agg.clusters,
+                sig: dashSig,
+                dashes: tradeDashes(agg.clusters, dl, resSec ? resSec * 1000 : undefined),
+              }).dashes;
+        // Project only the dashes whose bar is in (or within one bar of) the
+        // visible range — dashes are barTs-ascending, so two binary searches
+        // bound the slice; a 10k-trade run costs O(log n + visible) per frame,
+        // not O(n) allocations for mostly off-screen points.
+        const vr = chart.getVisibleRange();
+        const fromTs = dl[Math.max(vr.from, 0)]?.timestamp ?? -Infinity;
+        const toTs = dl[Math.min(vr.to, dl.length - 1)]?.timestamp ?? Infinity;
+        const [sliceStart, sliceEnd] = dashSliceBounds(dashes, fromTs, toTs);
+        const slice = dashes.slice(sliceStart, sliceEnd);
+        const paneH = chart.getSize("candle_pane", 'main')?.height ?? Infinity;
+        // A run dense enough to fill the view with markers stops being readable
+        // as individual dashes — cap the layer rather than drown the DOM.
+        const dashPx =
+          slice.length > 0 && slice.length <= 800
+            ? (chart.convertToPixel(
+                slice.map((d) => ({ timestamp: d.barTs, value: d.price })),
+                { paneId: "candle_pane", absolute: true },
+              ) as Array<{ x: number | null; y: number | null }>)
+            : [];
+        const projDashes: ProjectedDash[] = [];
+        for (let i = 0; i < dashPx.length; i++) {
+          const d = slice[i];
+          const px = dashPx[i];
+          if (!px || px.x == null || px.y == null) continue;
+          const x = px.x + (d.frac - 0.5) * barW;
+          if (x < 0 || x > paneW || px.y < 0 || px.y > paneH) continue;
+          projDashes.push({
+            key: `dash:${d.index}`,
+            x,
+            y: px.y,
+            index: d.index,
+            trade: d.trade,
+            spanBars: d.spanBars,
+            result: agg.result,
+            fromMs: d.trade.entry_time * 1000,
+            toMs: (d.trade.exit_time_exact ?? d.trade.exit_time) * 1000,
+          });
+        }
+        tradeDashesRef.current?.setDashes(projDashes);
+      }
     } else {
       aggMarkersRef.current?.setPills([]);
+      tradeDashesRef.current?.setDashes([]);
+      dashCacheRef.current = null; // don't retain a cleared run's trade graph
     }
     // Coarse-timeframe LIVE exit pills: project each per-bar cluster's bar-high
     // anchor to a pixel and feed the DOM pill layer, same as the backtest aggregate

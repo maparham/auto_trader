@@ -647,6 +647,97 @@ export function aggregateTradesByBar(
   return [...byBar.values()].sort((a, b) => a.barTs - b.barTs);
 }
 
+/** One per-trade dash for the coarse-timeframe view: the containing display
+ * bar, how far through it the entry sits (0..1, so the dash lands time-wise on
+ * the candle, e.g. an entry 3h into a 4h bar draws at ¾ of its width), the
+ * entry price (the dash's y), and how many display candles the trade covers
+ * (drives hover: ≥2 shows the entry→exit overlay, 1 a details tooltip). */
+export interface TradeDash {
+  index: number; // index into result.trades (highlightTradeSignal key)
+  trade: Trade;
+  barTs: number; // containing display bar open (ms)
+  frac: number; // 0..1 entry position within that bar
+  price: number; // entry_price
+  spanBars: number; // display candles covered entry→exit, inclusive
+}
+
+/** Per-trade dash anchors for the aggregate (coarser-than-native) view. The
+ * within-bar fraction divides by the NOMINAL bar interval — `nominalMs` when
+ * the caller knows the display interval (preferred: the min-gap fallback is
+ * poisoned by one DST-short session or calendar-length bars), else the minimum
+ * gap between consecutive loaded bars — not the gap to the next bar, so a
+ * session closure after the containing bar can't smear an entry leftward; an
+ * entry inside a closure gap clamps to its bar's right edge. Trades entering
+ * OUTSIDE the loaded window are dropped on both sides (the cluster pill still
+ * counts them; a clamped dash would mark a made-up position). An exit past the
+ * loaded window forces spanBars >= 2 — the trade outlives the last candle even
+ * though its clamped exit index says otherwise. Fewer than two bars gives no
+ * interval to place within -> []. Pure + exported for tests. */
+export function tradeDashes(
+  clusters: TradeCluster[],
+  bars: readonly { timestamp: number }[],
+  nominalMs?: number,
+): TradeDash[] {
+  if (bars.length < 2) return [];
+  const barTimes = bars.map((b) => b.timestamp);
+  let intervalMs = nominalMs ?? Infinity;
+  if (nominalMs == null) {
+    for (let i = 1; i < barTimes.length; i++) {
+      const d = barTimes[i] - barTimes[i - 1];
+      if (d > 0 && d < intervalMs) intervalMs = d;
+    }
+  }
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return [];
+  const last = barTimes[barTimes.length - 1];
+  const out: TradeDash[] = [];
+  for (const cl of clusters) {
+    for (const { trade: t, index } of cl.trades) {
+      const entryMs = t.entry_time * 1000;
+      if (entryMs < barTimes[0] || entryMs >= last + intervalMs) continue;
+      const exitMs = t.exit_time * 1000;
+      const entryIdx = barIndexForTs(barTimes, entryMs);
+      const exitIdx = barIndexForTs(barTimes, exitMs);
+      let spanBars = Math.max(exitIdx - entryIdx, 0) + 1;
+      if (exitMs >= last + intervalMs) spanBars = Math.max(spanBars, 2);
+      out.push({
+        index,
+        trade: t,
+        barTs: barTimes[entryIdx],
+        frac: Math.min((entryMs - barTimes[entryIdx]) / intervalMs, 1),
+        price: t.entry_price,
+        spanBars,
+      });
+    }
+  }
+  return out;
+}
+
+/** [start, end) bounds of the dashes whose barTs falls in [fromTs, toTs] — two
+ * binary searches over the barTs-ascending dash list, so the per-frame
+ * projection touches O(log n + visible) dashes instead of every trade. Pure +
+ * exported for tests (the caller, useChartPaint, feeds it the visible range). */
+export function dashSliceBounds(
+  dashes: readonly { barTs: number }[],
+  fromTs: number,
+  toTs: number,
+): [number, number] {
+  let lo = 0;
+  let hi = dashes.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (dashes[mid].barTs < fromTs) lo = mid + 1;
+    else hi = mid;
+  }
+  const start = lo;
+  hi = dashes.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (dashes[mid].barTs <= toTs) lo = mid + 1;
+    else hi = mid;
+  }
+  return [start, lo];
+}
+
 /** Snap a timestamp (ms) to the closest bar in an ascending `barTimes` (ms).
  * Used to anchor native fill arrows on a finer view whose interval doesn't
  * evenly divide the native one (3m viewing a 5m run) — the fill falls between

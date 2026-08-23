@@ -61,6 +61,7 @@ import {
   registerBacktestPager,
 } from "./lib/backtest";
 import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
+import BacktestTradeDashes, { type BacktestTradeDashesHandle } from "./BacktestTradeDashes";
 import {
   alertEditRequest,
   requestConfirm,
@@ -782,6 +783,9 @@ export default function ChartCore({
   // legend's imperative-update pattern (no React churn per crosshair pixel).
   const curveLabelsRef = useRef<CurveLabelsHandle>(null);
   const aggMarkersRef = useRef<BacktestAggMarkersHandle>(null);
+  // Per-trade entry dashes on the coarse-timeframe view (price/time position on
+  // the candle) — companion layer to aggMarkersRef, fed by the same redraw pass.
+  const tradeDashesRef = useRef<BacktestTradeDashesHandle>(null);
   // Coarse-timeframe LIVE exit pills (one per bar, count + net P&L) — the live
   // analog of aggMarkersRef. Clusters are recomputed in drawTradeMarkers and
   // projected to pixels each redraw, like the backtest aggregate pills.
@@ -1628,6 +1632,7 @@ export default function ChartCore({
       crosshairRef,
       aggMarkersRef,
       exitAggMarkersRef,
+      tradeDashesRef,
       paintBracketRef,
       paintSeparatorRef,
       // Live-data + range-navigation shared refs (folded in for the hook extractions).
@@ -4987,6 +4992,10 @@ export default function ChartCore({
           backtest viewed on a coarser timeframe. Hover opens the trade-list
           popover; click drills into the native timeframe. Fed by the redraw loop. */}
       <BacktestAggMarkers handleRef={aggMarkersRef} onDrillIn={onBacktestDrillIn} />
+      {/* Per-trade entry dashes under the pills: tiny ticks at each trade's entry
+          price, offset through the candle by the entry's time within the bar.
+          Hover highlights the trade (≥2-candle span) or shows its details. */}
+      <BacktestTradeDashes handleRef={tradeDashesRef} onDrillIn={onBacktestDrillIn} />
       {/* Coarse-timeframe LIVE exit pills (count + net P&L) — the live analog of the
           backtest aggregate markers, for journaled closes that collide on the current
           timeframe. Hover lists that bar's exits; no drill-in. Fed by the redraw loop. */}

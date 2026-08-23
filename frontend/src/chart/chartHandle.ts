@@ -18,6 +18,7 @@ import type { PageResult } from "../lib/historyPaging";
 import type { CrosshairStyle, PriceSide } from "../theme";
 import type { BacktestAggMarkersHandle } from "../BacktestAggMarkers";
 import type { TradeExitAggMarkersHandle } from "../TradeExitAggMarkers";
+import type { BacktestTradeDashesHandle } from "../BacktestTradeDashes";
 
 // The in-flight quick-range request (resolution + window + the series identity
 // it was issued for). Acts as an ownership token: ensureCoverageAndFit bails if
@@ -93,6 +94,7 @@ export interface ChartHandle {
   crosshairRef: React.MutableRefObject<CrosshairStyle>;
   aggMarkersRef: React.RefObject<BacktestAggMarkersHandle | null>;
   exitAggMarkersRef: React.RefObject<TradeExitAggMarkersHandle | null>;
+  tradeDashesRef: React.RefObject<BacktestTradeDashesHandle | null>;
   paintBracketRef: React.MutableRefObject<() => void>;
   paintSeparatorRef: React.MutableRefObject<() => void>;
   // Live-data + range-navigation shared refs.
