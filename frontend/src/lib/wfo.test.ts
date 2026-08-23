@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_WFO_CONFIG, buildWalkForwardPayload, wfoAxesFromSweepAxes } from "./wfo";
+import { DEFAULT_WFO_CONFIG, buildWalkForwardPayload, matchUiAxesByTargets, uiAxesFromResult, wfoAxesFromSweepAxes } from "./wfo";
+import type { WfoResult } from "../api";
 import type { SweepAxis } from "./sweep";
 
 const range: SweepAxis = { kind: "range", target: "param:fast", label: "fast", from: 5, to: 15, step: 5 };
@@ -17,8 +18,8 @@ describe("wfoAxesFromSweepAxes", () => {
   it("converts range and list axes, drops period and timeWindow axes", () => {
     const { wfoAxes, usable, dropped } = wfoAxesFromSweepAxes([range, list, period, timeWin]);
     expect(wfoAxes).toEqual([
-      { kind: "range", targets: ["param:fast"], values: [5, 10, 15] },
-      { kind: "list", targets: ["op:long.entry.0"] },
+      { kind: "range", targets: ["param:fast"], values: [5, 10, 15], ui: range },
+      { kind: "list", targets: ["op:long.entry.0"], ui: list },
     ]);
     expect(usable.map((a) => a.target)).toEqual(["param:fast", "op:long.entry.0"]);
     expect(dropped).toEqual(["Period", "Session"]);
@@ -38,7 +39,7 @@ describe("wfoAxesFromSweepAxes", () => {
     expect(() => {
       result = wfoAxesFromSweepAxes([range, emptyTimeWin, emptyList]);
     }).not.toThrow();
-    expect(result.wfoAxes).toEqual([{ kind: "range", targets: ["param:fast"], values: [5, 10, 15] }]);
+    expect(result.wfoAxes).toEqual([{ kind: "range", targets: ["param:fast"], values: [5, 10, 15], ui: range }]);
     expect(result.usable.map((a) => a.target)).toEqual(["param:fast"]);
     expect(result.dropped).toEqual(["Window", "Op"]);
   });
@@ -47,6 +48,69 @@ describe("wfoAxesFromSweepAxes", () => {
     const mirrored: SweepAxis = { ...range, mirrorTarget: "risk:short.stop.value" } as SweepAxis;
     const { wfoAxes } = wfoAxesFromSweepAxes([mirrored]);
     expect(wfoAxes[0].targets).toEqual(["param:fast", "risk:short.stop.value"]);
+  });
+});
+
+describe("uiAxesFromResult", () => {
+  const resultWith = (axes: WfoResult["axes"]): WfoResult =>
+    ({ eval_mode: "exact", objective: {} as WfoResult["objective"], schedule: {}, axes, schemes: [] });
+
+  it("round-trips the SweepAxes a run's wfoAxes carried", () => {
+    const { wfoAxes } = wfoAxesFromSweepAxes([range, list]);
+    expect(uiAxesFromResult(resultWith(wfoAxes))).toEqual([range, list]);
+  });
+
+  it("yields [] for pre-field results and null results", () => {
+    expect(uiAxesFromResult(resultWith([{ kind: "range", targets: ["param:fast"], values: [5] }]))).toEqual([]);
+    expect(uiAxesFromResult(null)).toEqual([]);
+    expect(uiAxesFromResult(undefined)).toEqual([]);
+  });
+
+  it("skips axes whose ui is malformed, keeps the rest", () => {
+    const { wfoAxes } = wfoAxesFromSweepAxes([range]);
+    const axes = [...wfoAxes, { kind: "list" as const, targets: ["x"], ui: 42 }];
+    expect(uiAxesFromResult(resultWith(axes))).toEqual([range]);
+  });
+});
+
+describe("matchUiAxesByTargets", () => {
+  it("labels a pre-field result with sweep axes that align by kind+targets", () => {
+    const { wfoAxes } = wfoAxesFromSweepAxes([range, list]);
+    const bare = wfoAxes.map(({ ui: _ui, ...rest }) => rest); // pre-field: no ui stored
+    expect(matchUiAxesByTargets(bare, [range, list, period])).toEqual([range, list]);
+  });
+
+  it("matches regardless of config order, returning axes in the result's order", () => {
+    const { wfoAxes } = wfoAxesFromSweepAxes([range, list]);
+    const bare = wfoAxes.map(({ ui: _ui, ...rest }) => rest);
+    expect(matchUiAxesByTargets(bare, [list, range])).toEqual([range, list]);
+  });
+
+  it("tolerates extra config axes the run never swept", () => {
+    // The config grew an axis since the run — it appears in no archived combo,
+    // so it can't mislabel anything and must not break the match.
+    const { wfoAxes } = wfoAxesFromSweepAxes([range, list]);
+    const bare = wfoAxes.map(({ ui: _ui, ...rest }) => rest);
+    const extra: SweepAxis = { ...range, target: "lit:short.entry.0.0" };
+    expect(matchUiAxesByTargets(bare, [extra, range, list])).toEqual([range, list]);
+  });
+
+  it("matches a mirrored run axis to today's unmirrored axis (same primary target + grid)", () => {
+    const mirrored: SweepAxis = { ...range, target: "risk:long.stop.mult", mirrorTarget: "risk:short.stop.mult" };
+    const { wfoAxes } = wfoAxesFromSweepAxes([mirrored]);
+    const bare = wfoAxes.map(({ ui: _ui, ...rest }) => rest);
+    const unmirrored: SweepAxis = { ...range, target: "risk:long.stop.mult" };
+    expect(matchUiAxesByTargets(bare, [unmirrored])).toEqual([unmirrored]);
+  });
+
+  it("returns [] when the current config no longer matches the run", () => {
+    const { wfoAxes } = wfoAxesFromSweepAxes([range, list]);
+    const bare = wfoAxes.map(({ ui: _ui, ...rest }) => rest);
+    const otherRange: SweepAxis = { ...range, target: "param:slow" };
+    expect(matchUiAxesByTargets(bare, [otherRange, list])).toEqual([]); // target drift
+    expect(matchUiAxesByTargets(bare, [range])).toEqual([]); // missing counterpart
+    expect(matchUiAxesByTargets(bare, [{ ...range, step: 1 }, list])).toEqual([]); // grid drift
+    expect(matchUiAxesByTargets([], [range])).toEqual([]); // no archived axes
   });
 });
 

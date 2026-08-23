@@ -21,6 +21,21 @@ def test_walkforward_dto_defaults():
         {"kind": "range", "targets": ["param:fast"], "values": [5.0, 10.0]}]
 
 
+def test_axis_dicts_passes_ui_through_verbatim():
+    # `ui` is the frontend's SweepAxis, opaque here; it must survive into the
+    # result (and archive) so the UI can label combos, and stay absent when the
+    # client didn't send it (pre-field payloads).
+    ui = {"kind": "range", "target": "param:fast", "label": "fast", "from": 5, "to": 10, "step": 5}
+    axes = [
+        WfoAxisDTO(kind="range", targets=["param:fast"], values=[5, 10], ui=ui),
+        WfoAxisDTO(kind="list", targets=["op:long.entry.0"]),
+    ]
+    assert axis_dicts(axes) == [
+        {"kind": "range", "targets": ["param:fast"], "values": [5.0, 10.0], "ui": ui},
+        {"kind": "list", "targets": ["op:long.entry.0"]},
+    ]
+
+
 def test_eval_mode_normalizes_legacy_values():
     # Legacy "auto"/"sliced" both mean the one-run-sliced approximation now
     # called "fast"; older clients keep working.

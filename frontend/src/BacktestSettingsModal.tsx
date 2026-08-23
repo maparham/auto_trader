@@ -43,7 +43,7 @@ import {
 import { stageLabel } from "./lib/progressLabels";
 import { resumeSweep } from "./lib/sweepResume";
 import { WfoConfig } from "./WfoConfig";
-import { buildWalkForwardPayload, liftFoldPlateau, resumeWfo, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
+import { buildWalkForwardPayload, liftFoldPlateau, matchUiAxesByTargets, resumeWfo, uiAxesFromResult, wfoAxesFromSweepAxes, DEFAULT_WFO_CONFIG, type WfoConfigState } from "./lib/wfo";
 import { WfoResults } from "./WfoResults";
 import { requiredWarmupBars, resolveWindow } from "./lib/backtestWindow";
 import { exprInstancesFor, exprWarmupByRef } from "./lib/exprInstances";
@@ -883,6 +883,23 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     }
     return (wfoArchiveTables.current.dict[key] ?? []).map(liftFoldPlateau);
   });
+  // Axes used to LABEL the live/last run's WFO results (fold params, drill-in
+  // combos, drift strip): prefer the axes the RESULT carried (frozen at submit
+  // via the `ui` field on WfoAxis) — the user may have edited the sweep config
+  // since the run started, and the current-config wfoUsableAxes would then
+  // mislabel the combos. A still-running (or pre-field) result has none; fall
+  // back to the config's.
+  const wfoResultAxes = uiAxesFromResult(wfoState?.result);
+  const wfoLiveAxes = wfoResultAxes.length ? wfoResultAxes : wfoUsableAxes;
+  // Same for a reopened archive: its result carries its own axes. A pre-field
+  // archive stored none — label it with the CURRENT config's axes only when
+  // they align 1:1 with the archived axes by kind+targets (raw keys otherwise).
+  const wfoArchiveUiAxes = uiAxesFromResult(wfoArchiveOpen?.result);
+  const wfoArchiveAxes = wfoArchiveOpen
+    ? wfoArchiveUiAxes.length
+      ? wfoArchiveUiAxes
+      : matchUiAxesByTargets(wfoArchiveOpen.result.axes, activeSweepAxes)
+    : [];
   // Reconstructed done-state for the reopened archive (WfoRunState shape).
   const wfoArchiveState = wfoArchiveOpen
     ? { phase: "done" as const, done: 0, total: 0, running: false, foldRows: [], result: wfoArchiveOpen.result }
@@ -1938,7 +1955,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             onBackToArchive={() => setWfoArchiveOpen(null)}
             onApplyCombo={applySweepComboStable}
             onLoadFoldTable={loadWfoArchiveFoldTable}
-            axes={[]}
+            // Archived results carry their axes (see the `ui` field on WfoAxis),
+            // so fold tables label combos like sweep results; see wfoArchiveAxes
+            // for the pre-field fallback.
+            axes={wfoArchiveAxes}
             schemeIndex={wfoSchemeIndex}
             onSchemeIndex={setWfoSchemeIndex}
           />
@@ -1954,7 +1974,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
             state={wfoState}
             onApplyCombo={applySweepComboStable}
             onLoadFoldTable={loadWfoFoldTable}
-            axes={wfoUsableAxes}
+            axes={wfoLiveAxes}
             schemeIndex={wfoSchemeIndex}
             onSchemeIndex={(i) => {
               setWfoSchemeIndex(i);

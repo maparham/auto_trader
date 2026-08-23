@@ -877,6 +877,11 @@ export interface WfoAxis {
   kind: "range" | "list";
   targets: string[];
   values?: number[];               // ordered swept values, range axes only
+  // The SweepAxis this WFO axis was built from, carried verbatim through the
+  // backend (opaque there) and echoed in the result/archive so fold tables can
+  // label combos like sweep results. `unknown` to avoid an api -> lib/sweep
+  // import cycle; uiAxesFromResult (lib/wfo) narrows it back to SweepAxis.
+  ui?: unknown;
 }
 
 export interface WfoSchedule {

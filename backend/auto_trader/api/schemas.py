@@ -416,6 +416,12 @@ class WfoAxisDTO(BaseModel):
     kind: Literal["range", "list"]
     targets: list[str]
     values: list[float] | None = None   # ordered swept values, range axes only
+    # The frontend's SweepAxis this WFO axis was built from, verbatim and opaque
+    # to the backend. Echoed into the result (and therefore the archive) so the
+    # UI can label combos in fold tables exactly like sweep results — labels
+    # live only in the frontend axis shape, and axes reconstructed from an
+    # archive would otherwise fall back to raw target keys.
+    ui: dict | None = None
 
 
 class WfoScheduleDTO(BaseModel):
@@ -487,6 +493,8 @@ def axis_dicts(axes: list[WfoAxisDTO]) -> list[dict]:
         }
         if axis.values is not None:
             d["values"] = [float(v) for v in axis.values]
+        if axis.ui is not None:
+            d["ui"] = axis.ui
         result.append(d)
     return result
 

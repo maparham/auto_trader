@@ -87,7 +87,9 @@ export function wfoAxesFromSweepAxes(axes: SweepAxis[]): {
 
       // Convert list axis: targets are the keys from the first option's patch
       const targets = Object.keys(axis.options[0].patch);
-      wfoAxes.push({ kind: "list", targets });
+      // `ui` rides along verbatim so the result (and archive) can label combos
+      // like sweep results — see uiAxesFromResult.
+      wfoAxes.push({ kind: "list", targets, ui: axis });
       usable.push(axis);
       continue;
     }
@@ -99,12 +101,63 @@ export function wfoAxesFromSweepAxes(axes: SweepAxis[]): {
         targets.push(axis.mirrorTarget);
       }
       const values = axisValues(axis);
-      wfoAxes.push({ kind: "range", targets, values });
+      wfoAxes.push({ kind: "range", targets, values, ui: axis });
       usable.push(axis);
     }
   }
 
   return { wfoAxes, usable, dropped };
+}
+
+/**
+ * The SweepAxis[] a result's axes carried through the run (see the `ui` field
+ * on WfoAxis): the labeling source for fold tables and drift strips, frozen at
+ * submit time — unlike the modal's current sweep config, it can't drift, and it
+ * survives an archive reopen. Results from before the field existed (or axes
+ * that lost it) yield [], which callers treat as "fall back to raw keys".
+ */
+export function uiAxesFromResult(result: WfoResult | null | undefined): SweepAxis[] {
+  return (result?.axes ?? [])
+    .map((a) => a.ui as SweepAxis | undefined)
+    .filter((a): a is SweepAxis => a != null && typeof a === "object" && "kind" in a);
+}
+
+/**
+ * Fallback labeling for PRE-FIELD results (no `ui` on any axis): the given
+ * sweep axes, but only when they align 1:1 with the result's axes by kind and
+ * targets — labeling an old run with an unrelated current config would be
+ * worse than raw keys. Returns [] on any mismatch.
+ */
+export function matchUiAxesByTargets(resultAxes: WfoAxis[], sweepAxes: SweepAxis[]): SweepAxis[] {
+  const { wfoAxes, usable } = wfoAxesFromSweepAxes(sweepAxes);
+  if (wfoAxes.length === 0 || resultAxes.length === 0) return [];
+  // Order-independent, and extra CONFIG axes are fine (the config may have
+  // grown an axis since the run — they're absent from the archived combos, so
+  // they can't mislabel anything). Match each result axis to a not-yet-used
+  // config axis by kind + PRIMARY target (a display axis reads the combo via
+  // its primary target only, so a mirror added or dropped since the run does
+  // not change what the cell shows), plus exact swept-values equality for
+  // range axes — the whole grid matching is strong evidence it is the same
+  // axis. Hand back the SweepAxes in the RESULT's order — that is the order
+  // fold-table combos are read in. Any result axis without a counterpart
+  // fails the whole match.
+  const sameValues = (a?: number[], b?: number[]) =>
+    a != null && b != null && a.length === b.length && a.every((v, i) => v === b[i]);
+  const used = new Set<number>();
+  const matched: SweepAxis[] = [];
+  for (const ra of resultAxes) {
+    const i = wfoAxes.findIndex(
+      (a, j) =>
+        !used.has(j) &&
+        a.kind === ra.kind &&
+        a.targets[0] === ra.targets[0] &&
+        (a.kind !== "range" || sameValues(a.values, ra.values)),
+    );
+    if (i === -1) return [];
+    used.add(i);
+    matched.push(usable[i]);
+  }
+  return matched;
 }
 
 /**
