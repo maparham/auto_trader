@@ -33,6 +33,8 @@ const {
   applyIndicator,
   isSubPaneInstance,
   mirrorAccelCompanion,
+  validateInstanceName,
+  renameIndicatorInstance,
 } = await import("./indicators");
 
 // In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
@@ -860,5 +862,166 @@ describe("inset marker does not leak onto a Slope's accel companion", () => {
     expect(
       Object.prototype.hasOwnProperty.call(patch!.extendData as object, "inset"),
     ).toBe(false);
+  });
+});
+
+describe("validateInstanceName", () => {
+  function fakeChart(inds: Array<{ name: string; paneId: string }>) {
+    return { getIndicators: () => inds } as unknown as Chart;
+  }
+
+  it("accepts a fresh, well-formed name", () => {
+    expect(validateInstanceName(fakeChart([]), "MyPivot", "PIVOT_ANALYSIS")).toBeNull();
+  });
+
+  it("flags renaming to the same name as unchanged", () => {
+    expect(validateInstanceName(fakeChart([]), "PIVOT_ANALYSIS", "PIVOT_ANALYSIS")).toBe("unchanged");
+  });
+
+  it("rejects a name with illegal characters or a leading digit", () => {
+    expect(validateInstanceName(fakeChart([]), "My Pivot", "PIVOT_ANALYSIS")).toBe("invalid");
+    expect(validateInstanceName(fakeChart([]), "1Pivot", "PIVOT_ANALYSIS")).toBe("invalid");
+    expect(validateInstanceName(fakeChart([]), "", "PIVOT_ANALYSIS")).toBe("invalid");
+  });
+
+  it("rejects a name already used by another live pane", () => {
+    const chart = fakeChart([{ name: "FVG2", paneId: "candle_pane" }]);
+    expect(validateInstanceName(chart, "FVG2", "PIVOT_ANALYSIS")).toBe("taken");
+  });
+
+  it("rejects an expr grammar name (function, wrapper, keyword, root)", () => {
+    const chart = fakeChart([]);
+    expect(validateInstanceName(chart, "EMA", "PIVOT_ANALYSIS")).toBe("reserved");
+    expect(validateInstanceName(chart, "slope", "PIVOT_ANALYSIS")).toBe("reserved");
+    expect(validateInstanceName(chart, "count", "PIVOT_ANALYSIS")).toBe("reserved");
+    expect(validateInstanceName(chart, "candle", "PIVOT_ANALYSIS")).toBe("reserved");
+    expect(validateInstanceName(chart, "AND", "PIVOT_ANALYSIS")).toBe("reserved");
+  });
+
+  it("rejects a real base-type name", () => {
+    expect(validateInstanceName(fakeChart([]), "SLOPE", "PIVOT_ANALYSIS")).toBe("reserved");
+  });
+});
+
+describe("renameIndicatorInstance", () => {
+  // A stateful chart fake supporting create/remove/getSize, on top of the
+  // importExprInstances fixture above — enough to exercise the full
+  // teardown+recreate dance.
+  function statefulChart(
+    initial: Array<{
+      name: string;
+      type: string;
+      paneId?: string;
+      calcParams?: number[];
+      extendData?: Record<string, unknown>;
+      visible?: boolean;
+    }>,
+  ) {
+    let seq = 0;
+    type FakeInd = {
+      paneId: string;
+      name: string;
+      calcParams?: number[];
+      extendData?: Record<string, unknown>;
+      visible?: boolean;
+      styles?: { lines?: Array<Record<string, unknown>> };
+    };
+    const inds: FakeInd[] = initial.map((i) => ({
+      paneId: i.paneId ?? `pane_${++seq}`,
+      name: i.name,
+      calcParams: i.calcParams,
+      extendData: { ...i.extendData, indType: i.type },
+      visible: i.visible,
+    }));
+    const removed: string[] = [];
+    const created: FakeInd[] = [];
+    const chart = {
+      getIndicators: (q?: { paneId?: string; name?: string }) =>
+        inds.filter(
+          (i) => (!q?.paneId || i.paneId === q.paneId) && (!q?.name || i.name === q.name),
+        ),
+      createIndicator: (value: FakeInd & { paneId?: string }) => {
+        const paneId = value.paneId ?? `pane_${++seq}`;
+        const rec = {
+          paneId,
+          name: value.name,
+          calcParams: value.calcParams,
+          extendData: value.extendData,
+          visible: value.visible,
+        };
+        inds.push(rec);
+        created.push(rec);
+        return paneId;
+      },
+      removeIndicator: (filter: { paneId?: string; name?: string }) => {
+        const i = inds.findIndex(
+          (x) => (!filter.paneId || x.paneId === filter.paneId) && x.name === filter.name,
+        );
+        if (i > -1) {
+          removed.push(inds[i].name);
+          inds.splice(i, 1);
+        }
+      },
+      overrideIndicator: () => {},
+      setPaneOptions: () => {},
+      overrideYAxis: () => {},
+      getSize: () => ({ height: 150 }),
+    } as unknown as Chart;
+    return { chart, inds, removed, created };
+  }
+
+  it("recreates the instance under the new id with the same config", () => {
+    localStorage.clear();
+    const { chart, inds } = statefulChart([
+      {
+        name: "PIVOT_ANALYSIS",
+        type: "PIVOT_ANALYSIS",
+        calcParams: [34, 34, 0, 0],
+        extendData: { showLevels: true },
+        visible: true,
+      },
+    ]);
+    const result = renameIndicatorInstance(chart, "tab.rename", "US100", "PIVOT_ANALYSIS", "MyPivots");
+    expect(result.ok).toBe(true);
+    expect(inds.find((i) => i.name === "PIVOT_ANALYSIS")).toBeUndefined();
+    const created = inds.find((i) => i.name === "MyPivots")!;
+    expect(created).toBeDefined();
+    expect(created.calcParams).toEqual([34, 34, 0, 0]);
+    expect((created.extendData as { showLevels?: boolean }).showLevels).toBe(true);
+    // Persisted under the new id, so a later reload/teardown carries it forward.
+    expect(persist.loadIndicatorConfigs("tab.rename").MyPivots).toMatchObject({
+      calcParams: [34, 34, 0, 0],
+    });
+  });
+
+  it("refuses and makes no changes when the new name is invalid", () => {
+    localStorage.clear();
+    const { chart, inds, removed } = statefulChart([
+      { name: "PIVOT_ANALYSIS", type: "PIVOT_ANALYSIS", calcParams: [34, 34, 0, 0] },
+    ]);
+    const result = renameIndicatorInstance(chart, "tab.rename2", "US100", "PIVOT_ANALYSIS", "1bad");
+    expect(result).toEqual({ ok: false, error: "invalid" });
+    expect(removed).toEqual([]);
+    expect(inds.map((i) => i.name)).toEqual(["PIVOT_ANALYSIS"]);
+  });
+
+  it("refuses when the new name is already taken by another live pane", () => {
+    localStorage.clear();
+    const { chart, removed } = statefulChart([
+      { name: "PIVOT_ANALYSIS", type: "PIVOT_ANALYSIS", calcParams: [34, 34, 0, 0] },
+      { name: "FVG2", type: "FVG", calcParams: [0.25, 500, 10] },
+    ]);
+    const result = renameIndicatorInstance(chart, "tab.rename3", "US100", "PIVOT_ANALYSIS", "FVG2");
+    expect(result).toEqual({ ok: false, error: "taken" });
+    expect(removed).toEqual([]);
+  });
+
+  it("removing itself does not count as a collision (renaming to its own id is a no-op error)", () => {
+    localStorage.clear();
+    const { chart } = statefulChart([
+      { name: "PIVOT_ANALYSIS", type: "PIVOT_ANALYSIS", calcParams: [34, 34, 0, 0] },
+    ]);
+    const result = renameIndicatorInstance(chart, "tab.rename4", "US100", "PIVOT_ANALYSIS", "PIVOT_ANALYSIS");
+    expect(result).toEqual({ ok: false, error: "unchanged" });
   });
 });

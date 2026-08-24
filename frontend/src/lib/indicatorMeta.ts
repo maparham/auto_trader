@@ -342,8 +342,20 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   PIVOT_ANALYSIS: {
     inputs: [
       {
-        ...num(0, "Length"),
-        tip: "Bars required on each side of a swing. Higher value marks only the more prominent pivots (and confirms them later).",
+        ...num(0, "Pivot High Length"),
+        tip: "Bars required on each side of a swing high. Higher value marks only the more prominent highs (and confirms them later).",
+      },
+      {
+        ...num(1, "Pivot Low Length"),
+        tip: "Bars required on each side of a swing low. Higher value marks only the more prominent lows (and confirms them later).",
+      },
+      {
+        ...num(2, "Min Δ% High", { min: 0, step: 0.1 }),
+        tip: "A swing high only counts if it's at least this far (%) from the prior counted swing high. 0 = off.",
+      },
+      {
+        ...num(3, "Min Δ% Low", { min: 0, step: 0.1 }),
+        tip: "A swing low only counts if it's at least this far (%) from the prior counted swing low. 0 = off.",
       },
       {
         key: "showLevels",
@@ -356,7 +368,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     title: "Pivots High/Low [LuxAlgo]",
-    desc: "Marks each confirmed fractal swing high/low, connects it to the previous same-type pivot with a Δ% / Δt label, and (optionally) carries the latest pivot high/low forward as a level line. Length sets the bars required on each side of a swing; pivots confirm that many bars late (no repaint). Pivot high/low, Δ% and Δt are available as rule operands.",
+    desc: "Marks each confirmed fractal swing high/low, connects it to the previous COUNTED same-type pivot with a Δ% / Δt label, and (optionally) carries the latest pivot high/low forward as a level line. Pivot High/Low Length set the bars required on each side of a swing on each side independently; pivots confirm that many bars late (no repaint). Min Δ% filters out swings too small to count, per side. Pivot high/low, Δ% and Δt are available as rule operands.",
   },
   SR_LEVELS: {
     inputs: [

@@ -22,6 +22,17 @@ import {
   parseTrendlinesConfig,
   trendlinesWarmup,
 } from "./indicators/trendlinesOutputs";
+import {
+  PIVOT_BANDS_OUTPUTS,
+  parsePivotBandsRefConfig,
+  pivotBandsWarmup,
+} from "./indicators/pivotBandsOutputs";
+import type { PivotBandsExtend } from "./indicators/pivotBands"; // erased at build; no runtime edge
+import {
+  PIVOT_ANALYSIS_OUTPUTS,
+  parsePivotAnalysisRefConfig,
+  pivotAnalysisWarmup,
+} from "./indicators/pivotAnalysisOutputs";
 import type { ExprInstance } from "./expr/catalog";
 // Display vocabularies, both from klinecharts-free modules so this stays a pure,
 // node-testable bridge: mtf.ts type-imports klinecharts only, indicatorMeta.ts
@@ -38,6 +49,8 @@ export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set([
   "ATR",
   "FVG",
   "TRENDLINES",
+  "PIVOT_BANDS",
+  "PIVOT_ANALYSIS",
 ]);
 
 /** A live chart pane, flattened to just what the expression layer reads. */
@@ -147,11 +160,11 @@ export function synthesizeExprInstances(
     }
     // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
     // kept, as there), atrLength's 14 (single-length pane).
-    // FVG and TRENDLINES outputs are fixed names, not lengths, so nothing about
-    // the pane's params is recoverable from a ref — an empty list takes every
-    // default.
+    // FVG, TRENDLINES, PIVOT_BANDS and PIVOT_ANALYSIS outputs are fixed names,
+    // not lengths, so nothing about the pane's params is recoverable from a
+    // ref — an empty list takes every default.
     const calcParams =
-      type === "FVG" || type === "TRENDLINES"
+      type === "FVG" || type === "TRENDLINES" || type === "PIVOT_BANDS" || type === "PIVOT_ANALYSIS"
         ? []
         : type === "ATR"
           ? [lengths[0] ?? 14]
@@ -254,6 +267,17 @@ export function exprWarmupByRef(
       return (TRENDLINES_OUTPUTS as readonly string[]).includes(output)
         ? trendlinesWarmup(parseTrendlinesConfig(inst.calcParams))
         : 0;
+    // Every PIVOT_BANDS/PIVOT_ANALYSIS output shares one floor (the fractal
+    // confirm lag N); an output this pane does not expose costs 0, like the
+    // other branches. Both floors depend on the pane's params.
+    if (inst.type === "PIVOT_BANDS")
+      return (PIVOT_BANDS_OUTPUTS as readonly string[]).includes(output)
+        ? pivotBandsWarmup(parsePivotBandsRefConfig(inst.calcParams, inst.extendData))
+        : 0;
+    if (inst.type === "PIVOT_ANALYSIS")
+      return (PIVOT_ANALYSIS_OUTPUTS as readonly string[]).includes(output)
+        ? pivotAnalysisWarmup(parsePivotAnalysisRefConfig(inst.calcParams))
+        : 0;
     if (inst.type !== "SLOPE") return 0;
     return slopeWarmup(inst.calcParams, (inst.extendData ?? {}) as SlopeExtend, output);
   };
@@ -317,6 +341,29 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         // caps the DRAWN set and is deliberately absent, since naming it here
         // would read as "the operand only sees the top N".
         detail: `pivot ${cfg.pivotLen} · span ${cfg.minSpanBars}+ · touches ${cfg.minTouches}+`,
+      });
+      continue;
+    }
+    if (inst.type === "PIVOT_BANDS") {
+      const ext = (inst.extendData ?? {}) as PivotBandsExtend;
+      const cfg = parsePivotBandsRefConfig(inst.calcParams, inst.extendData);
+      out.push({
+        id: inst.id,
+        outputs: [...PIVOT_BANDS_OUTPUTS],
+        timeframe: ext.mtf?.timeframe ?? null,
+        // The output names say which side; what they cannot say is how many
+        // pivots feed each step — the SLOPE/ATR detail convention.
+        detail: `strength ${cfg.n}${cfg.mode === "avg" ? ` · avg ${cfg.k}` : ""}`,
+      });
+      continue;
+    }
+    if (inst.type === "PIVOT_ANALYSIS") {
+      const cfg = parsePivotAnalysisRefConfig(inst.calcParams);
+      out.push({
+        id: inst.id,
+        outputs: [...PIVOT_ANALYSIS_OUTPUTS],
+        timeframe: null, // chart-timeframe only (no MTF pin)
+        detail: cfg.nHigh === cfg.nLow ? `strength ${cfg.nHigh}` : `strength ${cfg.nHigh}/${cfg.nLow}`,
       });
       continue;
     }

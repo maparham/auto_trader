@@ -238,3 +238,73 @@ describe("TRENDLINES panes", () => {
     ).toBe("TRENDLINES.tl_support");
   });
 });
+
+describe("PIVOT_BANDS panes", () => {
+  it("emits the clicked legend figure as the output", () => {
+    expect(
+      chartIndicatorToExprToken("PIVOT_BANDS", [10, 3], {}, {
+        instanceId: "PIVOT_BANDS",
+        figureKey: "pivotLow",
+      }),
+    ).toBe("PIVOT_BANDS.pivotLow");
+  });
+
+  it("falls back to pivotHigh for a row click with no figure", () => {
+    expect(
+      chartIndicatorToExprToken("PIVOT_BANDS", [10, 3], {}, { instanceId: "PIVOT_BANDS#a1b" }),
+    ).toBe("PIVOT_BANDS#a1b.pivotHigh");
+    expect(
+      chartIndicatorToExprToken("PIVOT_BANDS", [10, 3], {}, {
+        instanceId: "PIVOT_BANDS",
+        figureKey: "nope",
+      }),
+    ).toBe("PIVOT_BANDS.pivotHigh");
+  });
+
+  it("refuses without an instance id — there is nothing to reference", () => {
+    expect(chartIndicatorToExprToken("PIVOT_BANDS", [10, 3], {}, {})).toBeNull();
+  });
+
+  it("keeps the ref valid across a retune (params reshape the same outputs)", () => {
+    expect(
+      chartIndicatorToExprToken("PIVOT_BANDS", [5, 1], { mode: "avg" }, { instanceId: "PIVOT_BANDS" }),
+    ).toBe("PIVOT_BANDS.pivotHigh");
+  });
+});
+
+describe("PIVOT_ANALYSIS panes", () => {
+  it("emits the clicked legend figure as the output", () => {
+    expect(
+      chartIndicatorToExprToken("PIVOT_ANALYSIS", [34], {}, {
+        instanceId: "PIVOT_ANALYSIS",
+        figureKey: "pivotLow",
+      }),
+    ).toBe("PIVOT_ANALYSIS.pivotLow");
+  });
+
+  it("falls back to pivotHigh for a row click with no figure", () => {
+    expect(
+      chartIndicatorToExprToken("PIVOT_ANALYSIS", [34], {}, { instanceId: "PIVOT_ANALYSIS#a1b" }),
+    ).toBe("PIVOT_ANALYSIS#a1b.pivotHigh");
+    // deltaPct/deltaT have no clickable figure in practice, but the mapping
+    // itself is by output name, not click origin: a passed key still resolves
+    // if it's one of the four valid outputs.
+    expect(
+      chartIndicatorToExprToken("PIVOT_ANALYSIS", [34], {}, {
+        instanceId: "PIVOT_ANALYSIS",
+        figureKey: "deltaPct",
+      }),
+    ).toBe("PIVOT_ANALYSIS.deltaPct");
+    // An unrecognised key behaves like absence.
+    expect(
+      chartIndicatorToExprToken("PIVOT_ANALYSIS", [34], {}, {
+        instanceId: "PIVOT_ANALYSIS",
+        figureKey: "nope",
+      }),
+    ).toBe("PIVOT_ANALYSIS.pivotHigh");
+  });
+
+  it("refuses without an instance id — there is nothing to reference", () => {
+    expect(chartIndicatorToExprToken("PIVOT_ANALYSIS", [34], {}, {})).toBeNull();
+  });
+});

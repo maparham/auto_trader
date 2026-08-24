@@ -2402,6 +2402,7 @@ export default function App() {
           chartResolution={period.resolution}
           paneId={indSettings.paneId}
           name={indSettings.name}
+          controller={focusedController}
           onClose={() => indicatorSettingsRequest.set(null)}
         />
       )}

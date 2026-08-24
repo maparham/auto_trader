@@ -9,8 +9,9 @@
 //      INDICATORS): EMA / SMA / RSI / VOLMA / VOL. The token restates the
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
-//      rule — SLOPE, ATR, FVG and TRENDLINES (the EXPR_INSTANCE_TYPES set; keep
-//      a case here for every member), as "<instanceId>.<output>" (e.g. "SLOPE.50",
+//      rule — SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS and PIVOT_ANALYSIS (the
+//      EXPR_INSTANCE_TYPES set; keep a case here for every member), as
+//      "<instanceId>.<output>" (e.g. "SLOPE.50",
 //      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
 //      the single source of truth for MA type, units and smoothing, so retuning
 //      any of those leaves every rule that references it correct with no edit.
@@ -34,6 +35,8 @@ import { slopeLengths, slopeOutputs } from "./indicators/slopeOutputs";
 import { atrOutputs } from "./atr";
 import { FVG_OUTPUTS } from "./indicators/fvgOutputs";
 import { TRENDLINES_OUTPUTS } from "./indicators/trendlinesOutputs";
+import { PIVOT_BANDS_OUTPUTS } from "./indicators/pivotBandsOutputs";
+import { PIVOT_ANALYSIS_OUTPUTS } from "./indicators/pivotAnalysisOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -163,6 +166,33 @@ export function chartIndicatorToExprToken(
       const output = (TRENDLINES_OUTPUTS as readonly string[]).includes(key ?? "")
         ? (key as string)
         : TRENDLINES_OUTPUTS[0];
+      return `${id}.${output}`;
+    }
+    // PIVOT_BANDS reads exactly like FVG/TRENDLINES: two FIXED output names
+    // ("pivotHigh"/"pivotLow", same strings as its figure keys), so no retune
+    // can invalidate a ref. A row click with no figureKey takes outputs[0],
+    // pivotHigh.
+    case "PIVOT_BANDS": {
+      const id = opts?.instanceId;
+      if (!id) return null;
+      const key = opts?.figureKey;
+      const output = (PIVOT_BANDS_OUTPUTS as readonly string[]).includes(key ?? "")
+        ? (key as string)
+        : PIVOT_BANDS_OUTPUTS[0];
+      return `${id}.${output}`;
+    }
+    // PIVOT_ANALYSIS exposes four FIXED outputs (pivotHigh/pivotLow/deltaPct/
+    // deltaT), but only the first two are drawn as figures — deltaPct/deltaT
+    // are draw-only labels with no clickable line, so a click can only ever
+    // resolve to pivotHigh/pivotLow (the other two remain typeable by hand in
+    // the editor). No retune can invalidate a ref, same as FVG/TRENDLINES.
+    case "PIVOT_ANALYSIS": {
+      const id = opts?.instanceId;
+      if (!id) return null;
+      const key = opts?.figureKey;
+      const output = (PIVOT_ANALYSIS_OUTPUTS as readonly string[]).includes(key ?? "")
+        ? (key as string)
+        : PIVOT_ANALYSIS_OUTPUTS[0];
       return `${id}.${output}`;
     }
     default:

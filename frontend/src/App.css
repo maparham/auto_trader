@@ -2422,6 +2422,7 @@
 .ind-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 120px; }
 .ind-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .ind-row > label { color: var(--text-dim); }
+.ind-ref-name-error { color: var(--danger); font-size: 11px; margin-top: -6px; }
 /* Labels never wrap to a second line. They used to refuse to SHRINK either, so
    a long label plus a fixed-width control simply overflowed the modal's right
    edge (TRENDLINES' "Min Swing Reach (bars)" did). The control is the one thing

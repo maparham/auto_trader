@@ -13,6 +13,17 @@
 // is only known at bar i+N. The forward-filled operand values (pivotHigh, pivotLow,
 // deltaPct, deltaT) therefore step at the CONFIRMATION bar i+N — never at the swing
 // bar. The swing-bar events (phEvent/plEvent) are for drawing only.
+//
+// Pivot-high and pivot-low detection use INDEPENDENT lengths (calcParams[0]/[1]):
+// each side confirms N bars after its OWN swing bar, on its own schedule.
+//
+// minPctHigh/minPctLow (calcParams[2]/[3], default 0 = off) filter out small
+// swings: a candidate pivot only counts — confirms, and becomes the new
+// baseline for the NEXT same-side Δ% — if it's the first pivot of its side, or
+// its |Δ%| vs the prior COUNTED same-side pivot meets the threshold. A
+// rejected candidate is treated as noise: it neither steps the output nor
+// becomes the baseline, so the next candidate compares against the last
+// pivot that DID count.
 import {
   type Indicator,
   type IndicatorTemplate,
@@ -172,37 +183,55 @@ export function resolvePivotConnector(c?: PivotConnectorStyle): Required<PivotCo
 }
 
 /** Confirmed fractal pivots (strict, high off the high series / low off the low
- * series), the swing-bar events, and the forward-filled operand step-values. */
-export function computePivotAnalysis(dataList: KLineData[], length: number): PivotAnalysisPoint[] {
-  const n = Math.max(1, Math.floor(length) || 1);
+ * series), the swing-bar events, and the forward-filled operand step-values.
+ * `nHigh`/`nLow` are each side's confirm lag; `minPctHigh`/`minPctLow` (0 =
+ * off) are each side's minimum |Δ%| vs the prior COUNTED same-side pivot for
+ * a candidate to count at all. */
+export function computePivotAnalysis(
+  dataList: KLineData[],
+  nHigh: number,
+  nLow: number,
+  minPctHigh = 0,
+  minPctLow = 0,
+): PivotAnalysisPoint[] {
+  const nH = Math.max(1, Math.floor(nHigh) || 1);
+  const nL = Math.max(1, Math.floor(nLow) || 1);
   const len = dataList.length;
   const highs = dataList.map((d) => d.high);
   const lows = dataList.map((d) => d.low);
   const out: PivotAnalysisPoint[] = Array.from({ length: len }, () => ({}));
 
   // Walk bars in order: build the swing-bar event and queue the confirmation
-  // (bar i+N) that steps the forward-filled values.
+  // (bar i+N, N per side) that steps the forward-filled values.
   type Confirm = { at: number; side: "high" | "low"; price: number; deltaPct?: number; deltaT?: number };
   const confirms: Confirm[] = [];
   let prevHigh: { index: number; price: number } | undefined;
   let prevLow: { index: number; price: number } | undefined;
 
   for (let i = 0; i < len; i++) {
-    if (isPivotAt(highs, i, n, n, "high", true)) {
+    if (isPivotAt(highs, i, nH, nH, "high", true)) {
       const price = highs[i];
       const deltaPct = prevHigh ? ((price - prevHigh.price) / prevHigh.price) * 100 : undefined;
-      const deltaT = prevHigh ? i - prevHigh.index : undefined;
-      out[i].phEvent = { price, prevPrice: prevHigh?.price, prevIndex: prevHigh?.index, deltaPct, deltaT };
-      confirms.push({ at: i + n, side: "high", price, deltaPct, deltaT });
-      prevHigh = { index: i, price };
+      // A candidate with a prior baseline counts only if it clears the
+      // threshold; a rejected candidate leaves prevHigh (and the swing-bar
+      // event) untouched, so it neither steps the output nor becomes the
+      // next baseline.
+      if (!prevHigh || Math.abs(deltaPct!) >= minPctHigh) {
+        const deltaT = prevHigh ? i - prevHigh.index : undefined;
+        out[i].phEvent = { price, prevPrice: prevHigh?.price, prevIndex: prevHigh?.index, deltaPct, deltaT };
+        confirms.push({ at: i + nH, side: "high", price, deltaPct, deltaT });
+        prevHigh = { index: i, price };
+      }
     }
-    if (isPivotAt(lows, i, n, n, "low", true)) {
+    if (isPivotAt(lows, i, nL, nL, "low", true)) {
       const price = lows[i];
       const deltaPct = prevLow ? ((price - prevLow.price) / prevLow.price) * 100 : undefined;
-      const deltaT = prevLow ? i - prevLow.index : undefined;
-      out[i].plEvent = { price, prevPrice: prevLow?.price, prevIndex: prevLow?.index, deltaPct, deltaT };
-      confirms.push({ at: i + n, side: "low", price, deltaPct, deltaT });
-      prevLow = { index: i, price };
+      if (!prevLow || Math.abs(deltaPct!) >= minPctLow) {
+        const deltaT = prevLow ? i - prevLow.index : undefined;
+        out[i].plEvent = { price, prevPrice: prevLow?.price, prevIndex: prevLow?.index, deltaPct, deltaT };
+        confirms.push({ at: i + nL, side: "low", price, deltaPct, deltaT });
+        prevLow = { index: i, price };
+      }
     }
   }
 
@@ -387,15 +416,22 @@ const PIVOT_ANALYSIS_DEFAULT_LINE_STYLES: SmoothLineStyle[] = [
 ];
 
 // Pivots High/Low Analysis: swing markers + Δ connectors + forward-carried levels.
-// Strength in calcParams[0]; showLevels toggle on extendData.
+// calcParams = [highLength, lowLength, minPctHigh, minPctLow]; showLevels
+// toggle on extendData.
 export const PIVOT_ANALYSIS_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Pivots High/Low [LuxAlgo]",
   series: 'price',
   precision: 2,
-  calcParams: [50],
+  calcParams: [50, 50, 0, 0],
   figures: PIVOT_ANALYSIS_FIGURES,
   styles: { lines: PIVOT_ANALYSIS_DEFAULT_LINE_STYLES },
   calc: (dataList: KLineData[], ind: Indicator) =>
-    computePivotAnalysis(dataList, Math.max(1, Number(ind.calcParams?.[0]) || 50)),
+    computePivotAnalysis(
+      dataList,
+      Math.max(1, Number(ind.calcParams?.[0]) || 50),
+      Math.max(1, Number(ind.calcParams?.[1]) || 50),
+      Math.max(0, Number(ind.calcParams?.[2]) || 0),
+      Math.max(0, Number(ind.calcParams?.[3]) || 0),
+    ),
   draw: (params) => drawPivotAnalysis(params as IndicatorDrawParams<PivotAnalysisPoint, unknown, unknown>),
 };

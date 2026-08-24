@@ -92,6 +92,11 @@ import Tooltip from "./components/Tooltip";
 import SelectMenu from "./components/SelectMenu";
 import { requestIndicatorOverlayRepaint } from "./lib/signals";
 import { mirrorAccelCompanion, syncAccelCompanion, getIndicator } from "./lib/indicators";
+import { EXPR_INSTANCE_TYPES } from "./lib/exprInstances";
+import { renameInstanceEverywhere } from "./lib/renameInstance";
+import type { RenameInstanceError } from "./lib/indicators";
+import type { ChartController } from "./lib/chartController";
+import { toast } from "./lib/notify";
 import { legendFiguresOf } from "./lib/indicators/inset";
 import ColorLineStylePicker from "./ColorLineStylePicker";
 import { toKLineStyle, fromKLineStyle } from "./lib/lineStyle";
@@ -161,6 +166,10 @@ interface Props {
   chartResolution: string;
   paneId: string;
   name: string;
+  // Only needed for the "Reference name" field (renaming needs to update the
+  // cell's persisted instance list and the active backtest config's rule
+  // text, both reached through the controller). Absent -> field is a no-op.
+  controller?: ChartController | null;
   onClose: () => void;
 }
 
@@ -175,6 +184,7 @@ export default function IndicatorSettings({
   chartResolution,
   paneId,
   name,
+  controller,
   onClose,
 }: Props) {
   const ind = useMemo(
@@ -212,6 +222,11 @@ export default function IndicatorSettings({
   // Overlay indicators with a multi-line channel get per-line show/hide checkboxes
   // (+ opacity) in the Style tab, like TradingView's band toggles.
   const hasLineToggle = isAvwap || type === "LR" || type === "PREV_HL";
+  // Rule-referenceable types (SLOPE/ATR/FVG/TRENDLINES/PIVOT_BANDS/PIVOT_ANALYSIS)
+  // get a "Reference name" field: the id a rule spells as `<id>.<output>`.
+  // `controller` is only wired for the focused cell, so the field is inert
+  // (accepted but requires a controller to actually commit) for anything else.
+  const isRenameable = EXPR_INSTANCE_TYPES.has(type);
 
   // Snapshot the original state once, for an exact revert on Cancel/Escape.
   const original = useRef({
@@ -251,6 +266,33 @@ export default function IndicatorSettings({
   // TODO: wire indicator bar-span (anchor timestamp -> current bar count) and
   // flip this back to `isAvwap` once that lands.
   const showAutoHide = false;
+
+  // --- Reference name (the id a rule spells as `<id>.<output>`) ---
+  const [refNameDraft, setRefNameDraft] = useState(name);
+  const [refNameError, setRefNameError] = useState<RenameInstanceError | null>(null);
+  function commitRefName() {
+    const candidate = refNameDraft.trim();
+    if (!controller || candidate === name) {
+      setRefNameDraft(name);
+      setRefNameError(null);
+      return;
+    }
+    const result = renameInstanceEverywhere(controller, epic, name, candidate);
+    if (!result.ok) {
+      if (result.error === "unchanged") {
+        setRefNameDraft(name);
+        setRefNameError(null);
+        return;
+      }
+      setRefNameError(result.error);
+      return;
+    }
+    // The id this modal was opened for no longer names anything (the pane was
+    // torn down and recreated under `candidate`) — close rather than keep
+    // editing a stale reference. Reopen via the gear icon to continue.
+    toast(`Renamed to ${candidate}`);
+    onClose();
+  }
 
   // --- RSI divergence config (extendData.divergence), OFF by default ---
   const rsiExt0 = (ind?.extendData ?? {}) as RsiExtend;
@@ -1513,6 +1555,50 @@ export default function IndicatorSettings({
         </div>
 
         <div className="ind-body">
+          {tab === "inputs" && isRenameable && (
+            <>
+              <div className="ind-row">
+                <span className="ind-row-head">
+                  <label htmlFor="ind-ref-name">Reference name</label>
+                  <InfoTip
+                    title="Reference name"
+                    text="The id a rule spells as name.output (e.g. PIVOT_ANALYSIS.pivotHigh). Renaming rewrites the current backtest rules that reference it."
+                  />
+                </span>
+                <Tooltip content="Only editable on the focused chart" disabled={!!controller}>
+                  <input
+                    id="ind-ref-name"
+                    type="text"
+                    value={refNameDraft}
+                    onChange={(e) => {
+                      setRefNameDraft(e.target.value);
+                      setRefNameError(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      if (e.key === "Escape") {
+                        setRefNameDraft(name);
+                        setRefNameError(null);
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    onBlur={commitRefName}
+                    disabled={!controller}
+                  />
+                </Tooltip>
+              </div>
+              {refNameError && (
+                <div className="ind-ref-name-error">
+                  {refNameError === "invalid" &&
+                    "Letters, digits and underscores only, starting with a letter or underscore."}
+                  {refNameError === "taken" && "Already used by another indicator on this chart."}
+                  {refNameError === "reserved" &&
+                    "Reserved — collides with a name in the rule language."}
+                </div>
+              )}
+            </>
+          )}
+
           {tab === "inputs" && isMa && (
             <MaInputsPanel
               maLength={maLength}

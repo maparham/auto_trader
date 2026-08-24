@@ -369,6 +369,47 @@ export function mintInstanceId(chart: Chart, type: string): string {
   }
 }
 
+// Reserved for the expression grammar: registered indicator/wrapper/cross/
+// predicate function names, the count() keyword, the two roots and the logic
+// keywords — none of these can be a rule-referenceable instance name (a ref
+// like "EMA.pivotHigh" would parse as the EMA(...) CALL's name colliding, or
+// as the language's own root/keyword). Generalizes mintInstanceId's
+// ATR-specific refCollision check to a user-TYPED candidate.
+const RESERVED_REF_NAMES: ReadonlySet<string> = new Set<string>([
+  ...Object.keys(INDICATOR_SPECS),
+  "slope", "highest", "lowest", "avg",
+  "crossAbove", "crossBelow",
+  "count", "bullish", "bearish", "barsSinceEntry",
+  "candle", "entry",
+  "and", "AND", "or", "OR", "not", "NOT",
+]);
+
+// A rule-referenceable custom name: the same shape the REF regex's instance
+// group requires (exprInstances.ts) — a name that fails this can never be
+// typed back out of a rule.
+const INSTANCE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export type RenameInstanceError = "invalid" | "taken" | "reserved" | "unchanged";
+
+/** Whether `candidate` is a legal, available reference name for the instance
+ * currently called `currentId` on `chart`. null = valid. Checked against LIVE
+ * panes only (a name freed by deleting its instance is reusable, same as
+ * mintInstanceId's own `taken` set) plus the two things that would actually
+ * break something: a real base-type name (blocks that type ever being added
+ * fresh) and an expr grammar name (unparseable as a ref). */
+export function validateInstanceName(
+  chart: Chart,
+  candidate: string,
+  currentId: string,
+): RenameInstanceError | null {
+  if (candidate === currentId) return "unchanged";
+  if (!INSTANCE_NAME_RE.test(candidate)) return "invalid";
+  if (RESERVED_REF_NAMES.has(candidate) || Object.hasOwn(BASE_TEMPLATES, candidate)) return "reserved";
+  const panes = getIndicatorsByPane(chart);
+  for (const inds of panes?.values() ?? []) if (inds.has(candidate)) return "taken";
+  return null;
+}
+
 // Pull a registerable template off a LIVE indicator instance of `type`. klinecharts
 // doesn't expose its built-in templates (getIndicatorClass is private), but a live
 // instance carries the template-defining properties (calc / figures / series / …),
@@ -1134,6 +1175,59 @@ export function getIndicatorById(chart: Chart, id: string): Indicator | null {
     if (ind) return ind as Indicator;
   }
   return null;
+}
+
+// Rename a rule-referenceable instance's id (the name a rule spells as
+// `<id>.<output>`). klinecharts has no rename API — IndicatorImp.override sets
+// `name`/`id` only ONCE, at construction, and ignores them on every later
+// override — so this tears the pane down and recreates it under the new id,
+// verbatim: same calcParams/extendData/styles/visible, same accel-companion
+// handling (removeIndicatorById/applyIndicator already own that dance, since
+// applyIndicator is the ONE creation choke point). A sub-pane instance's
+// HEIGHT is preserved; its stack POSITION is not (it re-appears at the
+// bottom of the sub-pane stack) — the same trade-off reorderSubPanes already
+// accepts elsewhere, since klinecharts has no pane-move API either.
+//
+// Persists the new id's config under the new key. The caller owns updating
+// its own IndicatorInstance[] list and rewriting any rule text that named the
+// old id — this function only touches the chart and the per-instance config
+// (see lib/renameInstance.ts for the full orchestration).
+export function renameIndicatorInstance(
+  chart: Chart,
+  scope: string,
+  epic: string,
+  oldId: string,
+  newId: string,
+): { ok: true } | { ok: false; error: RenameInstanceError } {
+  const err = validateInstanceName(chart, newId, oldId);
+  if (err) return { ok: false, error: err };
+  const ind = getIndicatorById(chart, oldId);
+  if (!ind) return { ok: false, error: "invalid" };
+  const type = indTypeOf(ind);
+  const config: SavedIndicatorConfig = {
+    calcParams: ind.calcParams,
+    extendData: withoutInset({ ...((ind.extendData as Record<string, unknown> | undefined) ?? {}) }),
+    visible: ind.visible,
+    styles: ind.styles?.lines
+      ? {
+          lines: ind.styles.lines.map((l) => ({
+            color: l.color,
+            size: l.size,
+            style: l.style as string | undefined,
+            dashedValue: l.dashedValue,
+          })),
+        }
+      : undefined,
+  };
+  const height = isSubPaneIndicator(type)
+    ? Math.round(chart.getSize(ind.paneId, "main")?.height ?? SUBPANE_HEIGHT)
+    : undefined;
+  removeIndicatorById(chart, scope, oldId);
+  if (!applyIndicator(chart, scope, epic, { id: newId, type }, { config, height })) {
+    return { ok: false, error: "invalid" };
+  }
+  saveIndicatorConfig(scope, newId, config);
+  return { ok: true };
 }
 
 // --- expression layer: the live pane list -----------------------------------

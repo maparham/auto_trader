@@ -303,5 +303,22 @@
   { "expr": "candle.range% > 2", "isExit": false, "error": null,
     "literals": [
       {"ordinal":0,"value":2,"from":16,"to":17,"label":"threshold"}
-    ] }
+    ] },
+
+  { "expr": "PIVOT_BANDS.pivotHigh > 0", "isExit": false, "error": null,
+    "instances": {"PIVOT_BANDS": {"type":"PIVOT_BANDS","calcParams":[10,3],"extendData":{}}},
+    "literals": [
+      {"ordinal":0,"value":0,"from":24,"to":25,"label":"threshold"}
+    ] },
+  { "expr": "PIVOT_BANDS.bogus > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":17},
+    "instances": {"PIVOT_BANDS": {"type":"PIVOT_BANDS","calcParams":[10,3],"extendData":{}}},
+    "literals": [] },
+  { "expr": "PIVOT_ANALYSIS.deltaPct > 0", "isExit": false, "error": null,
+    "instances": {"PIVOT_ANALYSIS": {"type":"PIVOT_ANALYSIS","calcParams":[34],"extendData":{}}},
+    "literals": [
+      {"ordinal":0,"value":0,"from":26,"to":27,"label":"threshold"}
+    ] },
+  { "expr": "PIVOT_ANALYSIS.bogus > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":20},
+    "instances": {"PIVOT_ANALYSIS": {"type":"PIVOT_ANALYSIS","calcParams":[34],"extendData":{}}},
+    "literals": [] }
 ]

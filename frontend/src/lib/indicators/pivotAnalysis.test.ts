@@ -31,7 +31,7 @@ describe("computePivotAnalysis — forward-filled operand values", () => {
     // High pivots: bar 5 (100 → confirm 7), bar 12 (110 → confirm 14).
     // Low pivot:  bar 8 (70 → confirm 10).
     const data = bars({ 5: 100, 12: 110 }, { 8: 70 }, 18);
-    const pts = computePivotAnalysis(data, N);
+    const pts = computePivotAnalysis(data, N, N);
 
     for (let i = 0; i <= 6; i++) expect(pts[i].pivotHigh).toBeUndefined();
     for (let i = 7; i <= 13; i++) expect(pts[i].pivotHigh).toBe(100);
@@ -43,7 +43,7 @@ describe("computePivotAnalysis — forward-filled operand values", () => {
 
   it("Δ%/Δt reflect the most recent pivot's swing vs its prior SAME-type pivot", () => {
     const data = bars({ 5: 100, 12: 110 }, { 8: 70 }, 18);
-    const pts = computePivotAnalysis(data, N);
+    const pts = computePivotAnalysis(data, N, N);
 
     // The first high (bar 7) and the lone low (bar 10) have no prior same-type
     // pivot → no Δ until the SECOND high confirms at bar 14.
@@ -62,13 +62,13 @@ describe("computePivotAnalysis — forward-filled operand values", () => {
     // A low (bar 8) sits between the two highs (bar 5, bar 12). The second high's
     // Δt must count back to bar 5 (7 bars), not to the low at bar 8 (4 bars).
     const data = bars({ 5: 100, 12: 110 }, { 8: 70 }, 18);
-    const pts = computePivotAnalysis(data, N);
+    const pts = computePivotAnalysis(data, N, N);
     expect(pts[14].deltaT).toBe(7);
   });
 
   it("tracks Δ across consecutive lows (negative Δ%)", () => {
     const data = bars({}, { 4: 70, 10: 60 }, 16);
-    const pts = computePivotAnalysis(data, N);
+    const pts = computePivotAnalysis(data, N, N);
     // Second low confirms at bar 12: (60-70)/70*100 ≈ -14.2857; Δt = 10-4 = 6.
     for (let i = 0; i <= 11; i++) expect(pts[i].deltaPct).toBeUndefined();
     expect(pts[12].deltaPct).toBeCloseTo(-14.285714, 5);
@@ -76,10 +76,64 @@ describe("computePivotAnalysis — forward-filled operand values", () => {
   });
 });
 
+describe("computePivotAnalysis — independent high/low lengths", () => {
+  it("confirms each side on its OWN lag", () => {
+    // High pivot at bar 5 confirms at 5+3=8 (nHigh=3); low pivot at bar 6
+    // confirms at 6+1=7 (nLow=1).
+    const data = bars({ 5: 100 }, { 6: 70 }, 12);
+    const pts = computePivotAnalysis(data, 3, 1);
+    expect(pts[7].pivotHigh).toBeUndefined();
+    expect(pts[8].pivotHigh).toBe(100);
+    expect(pts[6].pivotLow).toBeUndefined();
+    expect(pts[7].pivotLow).toBe(70);
+  });
+});
+
+describe("computePivotAnalysis — Min Δ% filter", () => {
+  it("lets the first pivot of a side through regardless of the threshold", () => {
+    const data = bars({ 5: 100 }, {}, 10);
+    const pts = computePivotAnalysis(data, N, N, 50, 0);
+    expect(pts[7].pivotHigh).toBe(100);
+  });
+
+  it("rejects a candidate whose |Δ%| is below the threshold, and it does not become the new baseline", () => {
+    // First high 100 (bar 5). Second high 101 (bar 12) is only +1% -> rejected
+    // at a 5% threshold. Third high 110 (bar 19) is +10% vs the still-live
+    // baseline of 100 (NOT vs the rejected 101) -> accepted.
+    const data = bars({ 5: 100, 12: 101, 19: 110 }, {}, 24);
+    const pts = computePivotAnalysis(data, N, N, 5, 0);
+    expect(pts[14].pivotHigh).toBe(100); // 101 never confirmed
+    expect(pts[21].pivotHigh).toBe(110);
+    expect(pts[21].deltaPct).toBeCloseTo(10, 10); // vs 100, not vs the rejected 101
+    expect(pts[21].deltaT).toBe(19 - 5);
+  });
+
+  it("accepts a candidate whose |Δ%| meets the threshold exactly", () => {
+    const data = bars({ 5: 100, 12: 105 }, {}, 16);
+    const pts = computePivotAnalysis(data, N, N, 5, 0);
+    expect(pts[14].pivotHigh).toBe(105);
+  });
+
+  it("filters each side independently", () => {
+    const data = bars({ 5: 100, 12: 101 }, { 6: 70, 13: 69.9 }, 16);
+    // High side strict (5%): the +1% high is rejected. Low side off (0):
+    // the -0.14% low still counts.
+    const pts = computePivotAnalysis(data, N, N, 5, 0);
+    expect(pts[14].pivotHigh).toBe(100);
+    expect(pts[15].pivotLow).toBe(69.9);
+  });
+
+  it("a threshold of 0 (default) never rejects", () => {
+    const data = bars({ 5: 100, 12: 100.001 }, {}, 16);
+    const pts = computePivotAnalysis(data, N, N, 0, 0);
+    expect(pts[14].pivotHigh).toBe(100.001);
+  });
+});
+
 describe("computePivotAnalysis — swing-bar events (for drawing)", () => {
   it("places a high event at the swing bar with prior-pivot geometry", () => {
     const data = bars({ 5: 100, 12: 110 }, { 8: 70 }, 18);
-    const pts = computePivotAnalysis(data, N);
+    const pts = computePivotAnalysis(data, N, N);
 
     // First high: marker only, no connector (no prior high).
     expect(pts[5].phEvent).toBeDefined();
@@ -99,7 +153,7 @@ describe("computePivotAnalysis — swing-bar events (for drawing)", () => {
 
   it("places a low event at the swing bar", () => {
     const data = bars({}, { 8: 70 }, 14);
-    const pts = computePivotAnalysis(data, N);
+    const pts = computePivotAnalysis(data, N, N);
     expect(pts[8].plEvent).toBeDefined();
     expect(pts[8].plEvent!.price).toBe(70);
     expect(pts[8].plEvent!.prevPrice).toBeUndefined();
@@ -107,7 +161,7 @@ describe("computePivotAnalysis — swing-bar events (for drawing)", () => {
 
   it("leaves non-pivot bars without events", () => {
     const data = bars({ 5: 100 }, {}, 12);
-    const pts = computePivotAnalysis(data, N);
+    const pts = computePivotAnalysis(data, N, N);
     expect(pts[4].phEvent).toBeUndefined();
     expect(pts[6].phEvent).toBeUndefined();
     expect(pts[5].phEvent).toBeDefined(); // the swing bar itself

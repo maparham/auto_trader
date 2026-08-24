@@ -14,6 +14,8 @@ from typing import Any
 from auto_trader.core.models import Candle
 from auto_trader.indicators import atr as _atr
 from auto_trader.indicators import fvg as _fvg
+from auto_trader.indicators import pivot_analysis as _pa
+from auto_trader.indicators import pivot_bands as _pb
 from auto_trader.indicators import slope as _slope
 from auto_trader.indicators import sr_levels as _sr
 from auto_trader.indicators import trendlines as _tl
@@ -47,6 +49,20 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         series=_fvg.fvg_series,
         warmup=_fvg.fvg_warmup,
         timeframe=lambda cfg: cfg.timeframe,
+    ),
+    "PIVOT_BANDS": IndicatorSeriesSpec(
+        parse_config=_pb.parse_pivot_bands_config,
+        outputs=_pb.pivot_bands_outputs,
+        series=_pb.pivot_bands_series,
+        warmup=_pb.pivot_bands_warmup,
+        timeframe=lambda cfg: cfg.timeframe,
+    ),
+    "PIVOT_ANALYSIS": IndicatorSeriesSpec(
+        parse_config=_pa.parse_pivot_analysis_config,
+        outputs=_pa.pivot_analysis_outputs,
+        series=_pa.pivot_analysis_series,
+        warmup=_pa.pivot_analysis_warmup,
+        timeframe=lambda cfg: None,
     ),
     "SR_LEVELS": IndicatorSeriesSpec(
         parse_config=_sr.parse_sr_config,
