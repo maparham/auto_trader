@@ -83,6 +83,55 @@ export function revealBarMs(resolution: string): number {
   return width >= DAY_MS ? width + HOUR_MS : width;
 }
 
+/** One backtest trade that is OPEN at the cursor: its entry bar has closed, its
+ * exit bar has not. Deliberately not a `Trade` — every field a Trade carries
+ * about the way it ENDS is the answer to the exercise the user is sitting in,
+ * so the shape names what may be shown and nothing else.
+ *
+ * `stop` is the trade's INITIAL stop, never `stop_final`: the final one is where
+ * the trail had walked to by the exit, i.e. tomorrow's stop drawn today. */
+export interface OpenStrategyTrade {
+  // This trade's index in the RUN's trade list. Keys the marker click's zone
+  // toggle: an index is stable while the cursor moves (a list position filtered
+  // per-cursor is not), and unique even for two trades opened on the same bar.
+  index: number;
+  leg: "long" | "short";
+  quantity: number;
+  entryTime: number; // epoch SECONDS, as the backtest stores it
+  entryPrice: number;
+  stop: number | null;
+  target: number | null;
+}
+
+/** The run's trades that are still open at `cursorMs` — usually one, but a
+ * strategy may hold several. Same "has this datum's bar closed?" predicate as
+ * the slice above, applied to the ENTRY (it has happened) and negated on the
+ * EXIT (it has not).
+ *
+ * Kept as its own field rather than folded into `trades` on purpose: an open
+ * trade has no P&L, so it must never reach the summary/metrics maths, and the
+ * panel's selection is an INDEX into `trades` — a pseudo-row would silently
+ * renumber every marker and dash the user can click. */
+export function openTradesAtCursor(
+  result: StoredBacktestResult,
+  cursorMs: number,
+): OpenStrategyTrade[] {
+  const nativeMs = revealBarMs(result.resolution);
+  const closed = (timeSec: number) => timeSec * 1000 + nativeMs <= cursorMs;
+  return result.trades
+    .map((t, index) => ({ t, index }))
+    .filter(({ t }) => closed(t.entry_time) && !closed(t.exit_time))
+    .map(({ t, index }) => ({
+      index,
+      leg: t.leg,
+      quantity: t.quantity,
+      entryTime: t.entry_time,
+      entryPrice: t.entry_price,
+      stop: t.stop_initial ?? null,
+      target: t.target ?? null,
+    }));
+}
+
 export function filterResultToCursor(
   result: StoredBacktestResult,
   cursorMs: number,
@@ -123,6 +172,12 @@ export function filterResultToCursor(
     trades,
     equity,
     regions,
+    // Carried BESIDE `trades`, never inside it: an open trade has no P&L, so it
+    // must not reach the summary/metrics maths below, and the panel's selection
+    // is an index into `trades` — a pseudo-row there would renumber every marker
+    // and dash the user can click. drawMarkers reads it to give the open trade's
+    // entry marker its click (the windowed R/R zone, clamped to the cursor).
+    openTrades: openTradesAtCursor(result, cursorMs),
     summary: {
       net_pnl: netPnl,
       n_trades: trades.length,

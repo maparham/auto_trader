@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { filterResultToCursor, revealBarMs } from "./replayReveal";
+import { filterResultToCursor, openTradesAtCursor, revealBarMs } from "./replayReveal";
 import type { StoredBacktestResult } from "./persist";
 
 const S = (ms: number) => Math.floor(ms / 1000);
@@ -261,5 +261,74 @@ describe("filterResultToCursor", () => {
       expect(filterResultToCursor(result, T + 7 * HOUR).summary.net_pnl).toBe(10);
       expect(filterResultToCursor(result, T + 8 * HOUR).summary.net_pnl).toBe(6);
     });
+  });
+});
+
+// The in-flight trade: entry printed, exit not. Its own describe rather than a
+// case inside the slice's, because the point is that it lives OUTSIDE the slice
+// — nothing here may reach `trades`, the summary, or the panel's index space.
+describe("openTradesAtCursor", () => {
+  const open = {
+    entry_time: S(T + 5 * HOUR),
+    exit_time: S(T + 7 * HOUR),
+    pnl: -4,
+    leg: "short",
+    quantity: 2,
+    entry_price: 105,
+    stop_initial: 108,
+    stop_final: 106, // where the trail had walked to BY THE EXIT: tomorrow's stop
+    target: 99,
+    reason: "stop",
+  };
+  const withOpen = { ...result, trades: [result.trades[0], open] } as unknown as StoredBacktestResult;
+
+  it("is empty before the entry's bar has closed", () => {
+    expect(openTradesAtCursor(withOpen, T + 5 * HOUR)).toEqual([]);
+  });
+
+  it("holds the trade for every cursor between the entry's close and the exit's", () => {
+    expect(openTradesAtCursor(withOpen, T + 6 * HOUR)).toHaveLength(1);
+    expect(openTradesAtCursor(withOpen, T + 7 * HOUR)).toHaveLength(1);
+  });
+
+  it("drops it the moment the exit's bar closes, when the slice picks it up", () => {
+    expect(openTradesAtCursor(withOpen, T + 8 * HOUR)).toEqual([]);
+    expect(filterResultToCursor(withOpen, T + 8 * HOUR).trades).toHaveLength(2);
+  });
+
+  it("carries the entry side of the trade and the INITIAL stop, never the final one", () => {
+    const [t] = openTradesAtCursor(withOpen, T + 6 * HOUR);
+    expect(t).toEqual({
+      index: 1,
+      leg: "short",
+      quantity: 2,
+      entryTime: S(T + 5 * HOUR),
+      entryPrice: 105,
+      stop: 108,
+      target: 99,
+    });
+    // Everything that describes how the trade ENDS is absent, not merely unused.
+    expect(Object.keys(t)).not.toContain("exit_price");
+    expect(Object.keys(t)).not.toContain("pnl");
+    expect(Object.keys(t)).not.toContain("reason");
+  });
+
+  it("rides the slice as its own field, counted by nothing", () => {
+    const out = filterResultToCursor(withOpen, T + 6 * HOUR);
+    expect(out.openTrades).toHaveLength(1);
+    // The whole reason it is not in `trades`: an open trade has no P&L, so it
+    // must not move the running summary or the metrics beside it.
+    expect(out.trades).toHaveLength(1);
+    expect(out.summary.n_trades).toBe(1);
+    expect(out.summary.net_pnl).toBe(10); // the closed winner alone
+  });
+
+  it("never overlaps the slice: a trade is open or closed, never both", () => {
+    for (let h = 0; h <= 9; h++) {
+      const cursor = T + h * HOUR;
+      const closed = filterResultToCursor(withOpen, cursor).trades.map((t) => t.entry_time);
+      const opened = openTradesAtCursor(withOpen, cursor).map((t) => t.entryTime);
+      expect(opened.filter((e) => closed.includes(e))).toEqual([]);
+    }
   });
 });

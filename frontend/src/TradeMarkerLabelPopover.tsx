@@ -22,7 +22,10 @@ const LOSS_COLOR = "#ef5350";
 
 export default function TradeMarkerLabelPopover() {
   const hover = useSyncExternalStore(subscribe, () => tradeMarkerHoverSignal.value);
-  if (!hover) return null;
+  // No text, no pill. The strategy reveal's open-trade marker sets the signal
+  // with an empty label — it paints its own on-chart pill and only needs the
+  // signal's SIDE EFFECT (ChartCore's over-a-marker click guard).
+  if (!hover || !hover.label) return null;
   const { label, win, x, y } = hover;
   const color = win == null ? ENTRY_COLOR : win ? WIN_COLOR : LOSS_COLOR;
 

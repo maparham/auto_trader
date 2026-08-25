@@ -139,9 +139,14 @@ const SAVED = {
     { time: S(BASE + 9 * MIN), side: "buy", price: 109, reason: "entry", leg: "long" },
     { time: S(BASE + 12 * MIN), side: "sell", price: 112, reason: "target", leg: "long" },
   ],
+  // The fields beyond the times are what the OPEN trade's position lines are
+  // built from (leg/quantity/entry price and the initial bracket); the slice
+  // itself reads only the times and the P&L.
   trades: [
-    { entry_time: S(BASE + 2 * MIN), exit_time: S(BASE + 4 * MIN), pnl: 2 },
-    { entry_time: S(BASE + 9 * MIN), exit_time: S(BASE + 12 * MIN), pnl: 3 },
+    { entry_time: S(BASE + 2 * MIN), exit_time: S(BASE + 4 * MIN), pnl: 2,
+      leg: "long", quantity: 1, entry_price: 102, stop_initial: 100, stop_final: 103, target: 106 },
+    { entry_time: S(BASE + 9 * MIN), exit_time: S(BASE + 12 * MIN), pnl: 3,
+      leg: "long", quantity: 2, entry_price: 109, stop_initial: 107, stop_final: 111, target: 113 },
   ],
   equity: Array.from({ length: 20 }, (_, i) => ({ time: S(BASE + i * MIN), value: 1000 + i })),
   summary: { net_pnl: 5, n_trades: 2, win_rate: 1, max_drawdown: 0 },

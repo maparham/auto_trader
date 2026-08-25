@@ -84,7 +84,9 @@ const SAVED = {
     {
       side: "buy", quantity: 1, entry_time: S(BASE + 9 * MIN), entry_price: 109,
       exit_time: S(BASE + 12 * MIN), exit_price: 112, pnl: 3, leg: "long", reason: "target",
-      stop_initial: null, stop_final: null, target: null, mae: 0, mfe: 3, mae_r: null, mfe_r: null,
+      // A real bracket on the SECOND trade: it is the one that is open mid-window,
+      // and its lines are what the open-trade case below asserts get drawn.
+      stop_initial: 107, stop_final: 111, target: 113, mae: 0, mfe: 3, mae_r: null, mfe_r: null,
     },
   ],
   equity: Array.from({ length: BAR_COUNT }, (_, i) => ({ time: S(BASE + i * MIN), value: 1000 + i })),
@@ -320,5 +322,54 @@ describe("the reveal against the real drawing stack", () => {
 
     expect(backtestResultSignal.value?.markers).toHaveLength(2);
     expect(ownsBacktestPanel(chart)).toBe(true);
+  });
+});
+
+// The open trade's R/R zone against a REAL klinecharts instance. The mocked
+// chart in lib/backtestOpenTradeMarker.test.ts proves WHICH call the per-step
+// path makes; only this proves klinecharts actually accepts it — an
+// overrideOverlay with a stale id, or points in a shape it rejects, is a silent
+// no-op there and a zone frozen at the click bar here.
+describe("the open trade's zone, on a real chart", () => {
+  const zoneOf = () => chart.getOverlays().filter((o) => o.name === "tradeZone");
+
+  it("keeps ONE overlay and moves its right edge as the cursor advances", async () => {
+    seedSession({ showStrategy: true });
+    const handle = fakeHandle();
+    const { result } = await mountWithStore(handle);
+    await nextFrame();
+
+    // Step from the resumed cursor (bar 6) into the second trade, which enters
+    // at minute 9 and exits at 12 — open for the rest of this test.
+    for (let i = 0; i < 4; i++) await act(async () => result.current.stepForward());
+    await nextFrame();
+    expect(backtestResultSignal.value!.openTrades).toHaveLength(1);
+
+    // Click the open trade's entry marker the way the chart does.
+    const marker = chart
+      .getOverlays()
+      .find((o) => o.name === "backtestMarker" && o.points[0].timestamp === BASE + 9 * MIN)!;
+    expect(marker).toBeDefined();
+    act(() => {
+      (marker as unknown as { onClick: () => void }).onClick();
+    });
+
+    const drawn = zoneOf();
+    expect(drawn).toHaveLength(1);
+    const id = drawn[0].id;
+    const edgeBefore = drawn[0].points[1].timestamp!;
+
+    // Step on; the trade is still open (its exit is at minute 12). TWO steps:
+    // the zone floors at one bar wide, so the first bar after the entry leaves
+    // the right edge exactly where the floor already put it.
+    await act(async () => result.current.stepForward());
+    await act(async () => result.current.stepForward());
+    await nextFrame();
+
+    const after = zoneOf();
+    expect(after).toHaveLength(1); // never stacked, never dropped
+    expect(after[0].id).toBe(id); // the SAME overlay, moved in place
+    expect(after[0].points[1].timestamp!).toBeGreaterThan(edgeBefore);
+    expect(backtestResultSignal.value!.openTrades).toHaveLength(1);
   });
 });

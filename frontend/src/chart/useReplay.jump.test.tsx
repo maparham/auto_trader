@@ -280,3 +280,55 @@ describe("a random jump that reads degraded", () => {
     expect(fetchRangeWithStatus).toHaveBeenCalledTimes(2);
   });
 });
+
+// The reveal is ARMED by a start, not by the toggle: a session that begins on a
+// cell with a saved backtest shows the run it is replaying without the user
+// having to find the pill first. Asserted here rather than in reveal.test.tsx
+// because that file's harness is resume-only by design, and resuming is the one
+// path that must NOT arm (it restores the toggle the user left).
+describe("the strategy reveal at session start", () => {
+  const BACKTEST_KEY = "auto-trader.tab1.cellJump.backtest.US100";
+
+  it("arms itself when the cell has a saved backtest", async () => {
+    localStorage.setItem(
+      BACKTEST_KEY,
+      JSON.stringify({ epic: "US100", resolution: "MINUTE", markers: [], trades: [], equity: [] }),
+    );
+    fetchRangeWithStatus.mockImplementation(historyFrom(0));
+    const { result } = mount();
+    expect(result.current.showStrategy).toBe(false); // nothing started yet
+
+    act(() => result.current.enterPicking());
+    await act(async () => result.current.randomJump(30 * DAY, true));
+
+    expect(result.current.state.mode).toBe("active");
+    expect(result.current.showStrategy).toBe(true);
+    expect(result.current.hasStrategy).toBe(true);
+  });
+
+  it("stays off when there is nothing to reveal", async () => {
+    fetchRangeWithStatus.mockImplementation(historyFrom(0));
+    const { result } = mount();
+
+    act(() => result.current.enterPicking());
+    await act(async () => result.current.randomJump(30 * DAY, true));
+
+    expect(result.current.state.mode).toBe("active");
+    expect(result.current.showStrategy).toBe(false);
+  });
+
+  it("arms a dated start too, not just a jump", async () => {
+    localStorage.setItem(
+      BACKTEST_KEY,
+      JSON.stringify({ epic: "US100", resolution: "MINUTE", markers: [], trades: [], equity: [] }),
+    );
+    fetchRangeWithStatus.mockImplementation(historyFrom(0));
+    const { result } = mount();
+
+    act(() => result.current.enterPicking());
+    await act(async () => result.current.startAt(Date.now() - 5 * DAY, { masked: false }));
+
+    expect(result.current.state.mode).toBe("active");
+    expect(result.current.showStrategy).toBe(true);
+  });
+});

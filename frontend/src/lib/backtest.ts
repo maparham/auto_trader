@@ -18,6 +18,7 @@ import {
   type Chart,
   type OverlayTemplate,
   type OverlayFigure,
+  type KLineData,
 } from "klinecharts";
 import { runBacktest, runExprBacktest, type BacktestRequest, type ExprBacktestRequest, type Marker } from "../api";
 import { toast } from "./notify";
@@ -36,7 +37,9 @@ import {
   wfoEquityShownSignal,
   wfoBandsShownSignal,
   wfoEquityCompoundedSignal,
+  tradeMarkerHoverSignal,
 } from "./signals";
+import type { OpenStrategyTrade } from "./replayReveal";
 import type { WfoScheme, TradeZone as TradeZoneWire } from "../api";
 import { buildSignalGlyphs, isEntryFill } from "./signalGlyphs";
 import { tradeZones } from "./tradeZones";
@@ -168,6 +171,27 @@ interface BacktestArtifacts {
   trades: Trade[];
   highlightOverlayId: string | null;
   selectionOverlayIds: string[];
+  // Which OPEN trade (replay reveal) the currently-drawn selection zone belongs
+  // to, or null when the zone is a closed trade's / none. `index` addresses the
+  // trade in the RUN's list (openTradesAtCursor carries it); entryTime/leg are
+  // kept so the moment the trade CLOSES its zone can be handed over to the real
+  // trade's selection (the closed slice is a filtered list, so the run index no
+  // longer addresses it). Lets the marker click toggle its own zone off, lets
+  // the per-step reveal update re-clamp the zone to the new cursor, and is
+  // cleared wherever the zone itself is (removeSelectionOverlays runs on every
+  // selection change and teardown).
+  openZoneFor: {
+    index: number;
+    entryTime: number;
+    leg: "long" | "short";
+    entryPrice: number;
+  } | null;
+  // The open-trade zone's own overlay id, so the per-step update can move its
+  // points IN PLACE (overrideOverlay) instead of remove + create. That
+  // distinction is the whole reason updateShownResult exists — see its note —
+  // and the zone is redrawn on EVERY revealed bar, up to ten a second at 10x.
+  // Null whenever no open-trade zone is drawn; cleared with it.
+  openZoneOverlayId: string | null;
   // The result THIS chart rendered, so teardownArtifacts resets the global
   // hover/selection signals only when this chart owns the currently-active
   // backtest — closing an unrelated cell must not wipe another cell's selection.
@@ -248,6 +272,8 @@ function artifactsFor(chart: Chart): BacktestArtifacts {
       trades: [],
       highlightOverlayId: null,
       selectionOverlayIds: [],
+      openZoneFor: null,
+      openZoneOverlayId: null,
       result: null,
       unsub: null,
       periodBandIds: [],
@@ -264,6 +290,8 @@ function artifactsFor(chart: Chart): BacktestArtifacts {
 function removeSelectionOverlays(chart: Chart, artifacts: BacktestArtifacts): void {
   for (const id of artifacts.selectionOverlayIds) chart.removeOverlay({ id });
   artifacts.selectionOverlayIds = [];
+  artifacts.openZoneFor = null;
+  artifacts.openZoneOverlayId = null;
 }
 
 /** Pan the chart — never zoom — so the selected trade is in view. If the whole
@@ -1144,36 +1172,179 @@ function drawPeriodBands(chart: Chart, artifacts: BacktestArtifacts, result: Sto
  * chart to its entry↔exit span. Pushes the created overlay's id into
  * `artifacts.selectionOverlayIds` (the caller is responsible for clearing any
  * prior selection first — see the selectedTradeSignal subscription). */
-function drawSelectionZone(
+/** The replay reveal's OPEN trade, shaped for `drawSelectionZone` — the same
+ * windowed R/R zone a selected closed trade draws, with everything the trade
+ * does not know yet standing in honestly:
+ *
+ *  - exit = the LAST LOADED BAR (during replay that is the cursor bar), so the
+ *    zone's right edge sits at "now" and the entry→exit segment reads as the
+ *    trade so far. It grows on the next full reveal redraw, not per step.
+ *  - stop_final = stop_initial: where the trail ends up is the future's
+ *    knowledge, so the zone never draws a moved-stop line.
+ *  - pnl = the mark-to-market sign, which only picks the segment's win/loss
+ *    colour — it is never summed anywhere.
+ *
+ * The unread bookkeeping fields (mae/mfe/context/...) are zeroed, not omitted,
+ * so this stays an honest `Trade` for the type system without a cast chain. */
+function openTradeAsTrade(
+  t: OpenStrategyTrade,
   chart: Chart,
-  artifacts: BacktestArtifacts,
-  t: Trade,
-  scroll = true,
+  bars?: readonly KLineData[],
+): Trade {
+  const data = bars ?? chart.getDataList() ?? [];
+  const last = data.length > 0 ? data[data.length - 1] : null;
+  const mark = last?.close ?? t.entryPrice;
+  const exitSec = last != null ? Math.floor(last.timestamp / 1000) : t.entryTime;
+  const dir = t.leg === "long" ? 1 : -1;
+  return {
+    side: t.leg === "long" ? "buy" : "sell",
+    quantity: t.quantity,
+    entry_time: t.entryTime,
+    entry_price: t.entryPrice,
+    exit_time: Math.max(exitSec, t.entryTime),
+    exit_price: mark,
+    pnl: dir * (mark - t.entryPrice) * t.quantity,
+    leg: t.leg,
+    reason: "open",
+    stop_initial: t.stop,
+    stop_final: t.stop,
+    target: t.target,
+    exit_time_exact: null,
+    mae: 0,
+    mfe: 0,
+    mae_r: null,
+    mfe_r: null,
+    context: null,
+  };
+}
+
+/** The open-trade zone's identity on `chart`, or null when none is drawn.
+ * Captured by the replay reveal BEFORE its full redraw (teardownArtifacts wipes
+ * it with the zone), and handed back to restoreOpenTradeZone afterwards. */
+export function openTradeZoneKey(
+  chart: Chart,
+): { index: number; entryTime: number; leg: "long" | "short"; entryPrice: number } | null {
+  return artifactsByChart.get(chart)?.openZoneFor ?? null;
+}
+
+/** Redraw the open trade's zone against the CURRENT result and bars — the
+ * "grows with the cursor" half of the marker click. Two callers:
+ *
+ *  - updateShownResult, once per replay step: the zone's right edge and its
+ *    entry→mark segment must follow the cursor, or the overlay freezes at the
+ *    bar it was clicked on while the session plays on.
+ *  - the reveal's full-redraw path (via useReplay), where teardownArtifacts has
+ *    just wiped the zone with everything else.
+ *
+ * When the trade is no longer in `openTrades`, its exit bar has printed: the
+ * zone is handed over to the CLOSED trade's normal selection (found by
+ * entry_time+leg — the slice is a filtered list, so the run index no longer
+ * addresses it), which draws the finished entry→exit zone and lights its panel
+ * row. The marker-click flag skips the selection scroll: the user is already
+ * at the cursor where the exit just printed, and yanking the view mid-session
+ * is exactly what that flag exists to prevent. */
+export function restoreOpenTradeZone(
+  chart: Chart,
+  key: { index: number; entryTime: number; leg: "long" | "short"; entryPrice: number },
 ): void {
-  ensureZoneOverlayRegistered();
+  const artifacts = artifactsByChart.get(chart);
+  if (!artifacts || backtestResultSignal.value !== artifacts.result) return;
+  const open = artifacts.result?.openTrades?.find((o) => o.index === key.index);
+  if (open) {
+    // Read ONCE and threaded through both: this runs on every revealed bar, and
+    // the list is the whole loaded window.
+    const bars = chart.getDataList() ?? [];
+    const t = openTradeAsTrade(open, chart, bars);
+    // Already on screen: move it instead of rebuilding it. A remove + create per
+    // revealed bar is exactly the destructive churn updateShownResult was built
+    // to avoid, and this runs on the same cadence. extendData rides along with
+    // the points — `win` is the mark-to-market sign and flips mid-trade.
+    const points = zonePoints(t, chart, bars);
+    if (artifacts.openZoneOverlayId && points) {
+      chart.overrideOverlay({
+        id: artifacts.openZoneOverlayId,
+        points,
+        extendData: zoneExtra(t),
+      });
+      artifacts.openZoneFor = key;
+      return;
+    }
+    removeSelectionOverlays(chart, artifacts);
+    zoneOverlayId = null;
+    drawSelectionZone(chart, artifacts, t, false);
+    artifacts.openZoneFor = key;
+    artifacts.openZoneOverlayId = zoneOverlayId;
+    return;
+  }
+  // Entry PRICE as well as time+leg: a strategy that pyramids opens two trades
+  // on one bar in one direction, and matching on the bar alone would hand the
+  // zone to whichever of them happens to be first in the list.
+  const closedIdx = (artifacts.result?.trades ?? []).findIndex(
+    (t) => t.entry_time === key.entryTime && t.leg === key.leg && t.entry_price === key.entryPrice,
+  );
+  if (closedIdx < 0) return; // gone entirely (result replaced): nothing to restore
+  selectFromMarkerClick = true;
+  try {
+    selectedTradeSignal.set(closedIdx);
+  } finally {
+    selectFromMarkerClick = false;
+  }
+}
+
+/** A `tradeZone` overlay's extendData. Shared by the initial draw and the replay
+ * reveal's per-step update for the same reason zonePoints is: `win` is the
+ * MARK-to-market sign for an open trade, so it flips the entry→mark segment and
+ * the exit dot from green to red the moment price crosses back through the
+ * entry. An update that moved only the points would strand the colour at
+ * whatever it was when the marker was clicked. */
+function zoneExtra(t: Trade): ZoneExtra {
+  const z = tradeZones(t);
+  return {
+    hasReward: z.hasReward,
+    hasRisk: z.hasRisk,
+    stopMoved: z.stopMoved,
+    rewardPct: z.rewardPct,
+    riskPct: z.riskPct,
+    rr: z.rr,
+    win: t.pnl >= 0,
+  };
+}
+
+/** The six points a `tradeZone` overlay is built from, or null when the trade's
+ * span doesn't overlap the loaded bars at all (a 5m run's Jun-22 trade viewed on
+ * 3m, whose broker history only reaches Jun-25). klinecharts would clamp every
+ * off-window point onto the first bar, drawing a degenerate zero-width zone
+ * stranded at the left edge, and scrollChartToTrade can't frame a span that is
+ * not loaded — so the caller skips the zone entirely and leaves the row
+ * highlighted instead.
+ *
+ * Shared by the initial draw and the replay reveal's per-step in-place update,
+ * so the two cannot drift: an open trade's zone is re-pointed on every revealed
+ * bar, and a geometry that disagreed with the draw would make the zone jump the
+ * moment it was first updated. */
+function zonePoints(
+  t: Trade,
+  chart: Chart,
+  bars?: readonly KLineData[],
+): Array<{ timestamp: number; value: number }> | null {
   const z = tradeZones(t);
   const entryTs = t.entry_time * 1000;
   const exitTs = t.exit_time * 1000;
   const hasExact = t.exit_time_exact != null;
   const exitPointTs = hasExact ? (t.exit_time_exact as number) * 1000 : exitTs;
-  const data = chart.getDataList();
-  // Robust bar interval, NOT the last-two-bars gap: that trailing gap can straddle
-  // a session/overnight/weekend break (or the seam between loaded history and a
-  // freshly appended live bar) and run to hours or days, which would balloon the
-  // zone's right edge for a short-lived trade. See minPositiveGap.
+  // `bars` lets the per-step caller hand over the list it already read rather
+  // than scanning the whole loaded window twice on every revealed bar.
+  const data = bars ?? chart.getDataList();
+  // Robust bar interval, NOT the last-two-bars gap: that trailing gap can
+  // straddle a session/overnight/weekend break (or the seam between loaded
+  // history and a freshly appended live bar) and run to hours or days, which
+  // would balloon the zone's right edge for a short-lived trade. See
+  // minPositiveGap.
   const barMs = (data && minPositiveGap(data.map((k) => k.timestamp))) || 1;
-  // Skip the zone entirely when the trade's span doesn't overlap the loaded bar
-  // window at all (e.g. a 5m run's Jun-22 trade viewed on 3m, whose broker history
-  // only reaches Jun-25). klinecharts would clamp every off-window point onto the
-  // first bar, drawing a degenerate zero-width zone stranded at the left edge; and
-  // scrollChartToTrade can't frame a span that isn't loaded. Selecting the row still
-  // highlights it — the trade just isn't drawable on this timeframe.
   if (data && data.length > 0) {
     const firstTs = data[0].timestamp;
     const lastTs = data[data.length - 1].timestamp;
-    const lo = Math.min(entryTs, exitTs);
-    const hi = Math.max(entryTs, exitTs);
-    if (hi < firstTs || lo > lastTs) return;
+    if (Math.max(entryTs, exitTs) < firstTs || Math.min(entryTs, exitTs) > lastTs) return null;
   }
   // End the zone AT the trade's exit so the reward/risk bands + entry line are
   // tight to the position's actual duration (a trailing pad made the box span
@@ -1182,28 +1353,42 @@ function drawSelectionZone(
   const windowEnd = hasExact
     ? overlayEndTs(exitPointTs, data ?? [], barMs, entryTs)
     : Math.max(Math.max(entryTs, exitTs), entryTs + barMs);
+  return [
+    { timestamp: entryTs, value: t.entry_price },
+    { timestamp: windowEnd, value: t.entry_price },
+    { timestamp: entryTs, value: z.hasReward ? (t.target as number) : t.entry_price },
+    { timestamp: entryTs, value: z.hasRisk ? (t.stop_initial as number) : t.entry_price },
+    { timestamp: entryTs, value: z.stopMoved ? (t.stop_final as number) : t.entry_price },
+    { timestamp: exitPointTs, value: t.exit_price },
+  ];
+}
+
+// The ZONE_OVERLAY id drawSelectionZone created on its last call — read only by
+// restoreOpenTradeZone, immediately after, so the per-step update can address
+// that overlay directly. A module-level handoff rather than a return value
+// because drawSelectionZone has four other callers that want nothing back.
+let zoneOverlayId: string | null = null;
+
+function drawSelectionZone(
+  chart: Chart,
+  artifacts: BacktestArtifacts,
+  t: Trade,
+  scroll = true,
+): void {
+  ensureZoneOverlayRegistered();
+  const entryTs = t.entry_time * 1000;
+  const exitPointTs = (t.exit_time_exact ?? t.exit_time) * 1000;
+  const data = chart.getDataList();
+  const points = zonePoints(t, chart);
+  if (!points) return; // span doesn't overlap the loaded bars — see zonePoints
   const id = chart.createOverlay({
     name: ZONE_OVERLAY,
     lock: true,
-    points: [
-      { timestamp: entryTs, value: t.entry_price },
-      { timestamp: windowEnd, value: t.entry_price },
-      { timestamp: entryTs, value: z.hasReward ? (t.target as number) : t.entry_price },
-      { timestamp: entryTs, value: z.hasRisk ? (t.stop_initial as number) : t.entry_price },
-      { timestamp: entryTs, value: z.stopMoved ? (t.stop_final as number) : t.entry_price },
-      { timestamp: exitPointTs, value: t.exit_price },
-    ],
-    extendData: {
-      hasReward: z.hasReward,
-      hasRisk: z.hasRisk,
-      stopMoved: z.stopMoved,
-      rewardPct: z.rewardPct,
-      riskPct: z.riskPct,
-      rr: z.rr,
-      win: t.pnl >= 0,
-    } satisfies ZoneExtra,
+    points,
+    extendData: zoneExtra(t),
   });
   if (typeof id === "string") artifacts.selectionOverlayIds.push(id);
+  zoneOverlayId = typeof id === "string" ? id : null;
   // Strategy-attached zones (e.g. the consolidation range a breakout broke out
   // of): one shaded rect each, cleared with the selection like the R/R zone.
   if (t.zones?.length) {
@@ -1377,6 +1562,26 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       pushFillKey(`${t.exit_time}|${t.leg}|${t.leg === "long" ? "sell" : "buy"}`, i);
     });
 
+    // Replay's in-flight trades. Their ENTRY fill has a marker (it happened) but
+    // no entry in the map above, because the reveal keeps an unclosed trade out of
+    // `trades` — it has no P&L to report. Without this the newest marker on a
+    // replaying chart is inert: no hover, no click, no selection, in the exact
+    // spot the user is watching. It has no index for `selectedTradeSignal` to
+    // carry, so its click draws the SAME windowed R/R zone a selected trade
+    // gets, directly — with the zone's right edge at the cursor, since the exit
+    // is the one part of the trade that has not happened yet.
+    // A QUEUE per key, for the same reason the trade map above uses one: a
+    // strategy that pyramids opens two trades on one bar, and both their entry
+    // markers carry the identical time|leg|side. A plain map's last-write-wins
+    // would point both markers at one trade and leave the other unreachable.
+    const openByFill = new Map<string, OpenStrategyTrade[]>();
+    for (const t of result.openTrades ?? []) {
+      const key = `${t.entryTime}|${t.leg}|${t.leg === "long" ? "buy" : "sell"}`;
+      const q = openByFill.get(key);
+      if (q) q.push(t);
+      else openByFill.set(key, [t]);
+    }
+
     // Fill timestamps land on the native timeframe's bar opens. On a finer view
     // whose interval doesn't evenly divide the native one (3m viewing a 5m run) a
     // fill falls between two bars — snap it to the nearest loaded bar so the arrow
@@ -1429,6 +1634,10 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
       if (!fillWithinLoadedWindow(m.time * 1000, barTimes)) continue;
       if (!inDrawWindow(m.time * 1000)) continue;
       const idx = tradeIndexByFill.get(`${m.time}|${m.leg}|${m.side}`)?.shift();
+      // Only consulted when the marker has no trade behind it, so a closed trade's
+      // marker keeps its existing behaviour untouched.
+      const openTrade =
+        idx === undefined ? openByFill.get(`${m.time}|${m.leg}|${m.side}`)?.shift() : undefined;
       const snappedTs = snapNearestBar(m.time * 1000, barTimes);
       const bar = barByTime.get(snappedTs);
       // Shared click handler for this trade's fill marker AND its signal caret:
@@ -1486,7 +1695,77 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
               },
               onClick: toggleTradeSelect,
             }
-          : {}),
+          : openTrade !== undefined
+            ? (() => {
+                const openKey = {
+                  index: openTrade.index,
+                  entryTime: openTrade.entryTime,
+                  leg: openTrade.leg,
+                  entryPrice: openTrade.entryPrice,
+                };
+                return {
+                  // tradeMarkerHoverSignal is load-bearing, not decoration:
+                  // ChartCore's DOM click handler reads it (`overTradeMarker`)
+                  // to know the click landed on a marker and skip both its own
+                  // line hit-test and the empty-space deselect — without the
+                  // tell, the DOM click that follows this overlay's onClick
+                  // fights the zone it just drew. Same idiom as
+                  // lib/tradeMarkers' live glyphs. No `tradeId`: there is no
+                  // trade-line selection behind this marker for a double-click
+                  // to open. label is empty on purpose: this marker paints its
+                  // own pill, so the DOM hover popover (which skips empty
+                  // labels) must not duplicate it.
+                  onMouseEnter: (e: { pageX?: number; pageY?: number }) => {
+                    tradeMarkerHoverSignal.set({
+                      label: "",
+                      win: null,
+                      x: e.pageX ?? 0,
+                      y: e.pageY ?? 0,
+                    });
+                    setMarkerHoverCursor(chart, true);
+                    return false;
+                  },
+                  onMouseLeave: () => {
+                    tradeMarkerHoverSignal.set(null);
+                    setMarkerHoverCursor(chart, false);
+                    return false;
+                  },
+                  // Same treatment as clicking any other trade's marker: the
+                  // windowed R/R zone. It cannot travel through
+                  // selectedTradeSignal (an open trade has no index in
+                  // `trades`), so the zone is drawn directly. Toggle semantics
+                  // match toggleTradeSelect: clicking the marker again takes
+                  // its zone back off.
+                  onClick: () => {
+                    if (backtestResultSignal.value !== artifacts.result) return false;
+                    const wasDrawn = artifacts.openZoneFor?.index === openTrade.index;
+                    // One selection at a time. The set clears a selected CLOSED
+                    // trade's zone (and its panel row) through the subscription
+                    // renderArtifacts installed; the explicit remove covers this
+                    // zone itself (no subscription owns it) and re-nulls
+                    // openZoneFor either way. The marker-click flag skips the
+                    // subscription's scroll, as toggleTradeSelect does.
+                    selectFromMarkerClick = true;
+                    try {
+                      selectedTradeSignal.set(null);
+                    } finally {
+                      selectFromMarkerClick = false;
+                    }
+                    removeSelectionOverlays(chart, artifacts);
+                    if (!wasDrawn) {
+                      zoneOverlayId = null;
+                      drawSelectionZone(chart, artifacts, openTradeAsTrade(openTrade, chart), false);
+                      artifacts.openZoneFor = openKey;
+                      // Recorded here too, not just in restoreOpenTradeZone:
+                      // without it the FIRST step after the click would rebuild
+                      // the overlay before the in-place path could take over.
+                      artifacts.openZoneOverlayId = zoneOverlayId;
+                    }
+                    return false;
+                  },
+                };
+              })()
+            : {}),
       });
       if (typeof id === "string") artifacts.markerIds.push(id);
 
@@ -2328,6 +2607,10 @@ export function updateShownResult(chart: Chart, result: StoredBacktestResult): b
   // module now reads `artifacts.result`, so the two must be swapped together or
   // the hover/selection sync goes inert for a frame.
   backtestResultSignal.set(result);
+  // The open trade's R/R zone follows the cursor: this per-step path is the
+  // only thing that runs between full redraws, so without the re-clamp the
+  // zone freezes at the bar it was clicked on while the session plays on.
+  if (artifacts.openZoneFor) restoreOpenTradeZone(chart, artifacts.openZoneFor);
   return true;
 }
 

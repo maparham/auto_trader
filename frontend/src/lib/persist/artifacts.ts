@@ -8,6 +8,9 @@ import type { FibConfig } from "../fibConfig";
 import type { GhostStyle } from "../patternGhost";
 import type { BacktestResult } from "../../api";
 import type { BacktestPeriod } from "../backtestPeriods";
+// Type-only (erased at build), so this does not close a cycle with replayReveal,
+// which imports StoredBacktestResult from here.
+import type { OpenStrategyTrade } from "../replayReveal";
 import { PREFIX, ns, root, load, save, saveLocal, removeKeyEverywhere } from "./core";
 import { emitLayoutChanged } from "./layoutEvents";
 import { downsampleEquity, EQUITY_PERSIST_CAP } from "../equityDownsample";
@@ -56,6 +59,10 @@ export function saveDrawings(scope: string, epic: string, list: SavedOverlay[]):
 // frontend-derived field (not returned by the backend), attached at save time.
 export type StoredBacktestResult = Omit<BacktestResult, "candles"> & {
   period?: BacktestPeriod;
+  // Replay's progressive reveal only (never persisted by a real run): the trades
+  // that are OPEN at the cursor, kept beside `trades` so no summary, metric or
+  // panel index counts them. See lib/replayReveal.
+  openTrades?: OpenStrategyTrade[];
 };
 
 const backtestKey = (scope: string, epic: string) => ns(scope, `backtest.${epic}`);

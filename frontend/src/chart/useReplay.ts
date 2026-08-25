@@ -57,7 +57,9 @@ import {
   backtestRenderFlags,
   ownsBacktestPanel,
   registerReplayingChart,
+  openTradeZoneKey,
   rehydrateBacktest,
+  restoreOpenTradeZone,
   renderArtifacts,
   teardownArtifacts,
   updateShownResult,
@@ -322,6 +324,30 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
   // count, and the load effect has torn the artifacts down by then.
   const revealSigRef = useRef("");
 
+  /** Turn the reveal ON as a session STARTS, whenever the cell has a saved
+   * backtest to reveal. The run being replayed is the thing the user came to
+   * watch play out; leaving it behind a toggle they had to find first meant most
+   * sessions ran with the strategy invisible.
+   *
+   * Deliberately not an effect on `mode -> active`: a RESUMED session mounts with
+   * `mode` already `active` (see the state initialiser), so an effect would
+   * overwrite the persisted `showStrategy` the user deliberately left OFF. Only
+   * the two start paths call this, which is what separates "new session" from
+   * "resumed session".
+   *
+   * `hasStrategy` is set here as well as by its own effect, which runs after the
+   * commit: without it the pill would style itself off for one render.
+   *
+   * The ref is written alongside the state for the same reason the toggle does
+   * it: the reveal effect re-reads the gate at requestAnimationFrame time. */
+  const armStrategyReveal = useCallback(() => {
+    const cur = latest.current;
+    const on = loadBacktestResult(cur.scope, cur.epic) != null;
+    showStrategyRef.current = on;
+    setShowStrategy(on);
+    setHasStrategy(on);
+  }, []);
+
   /** Take the revealed slice back off the chart, leaving the cell exactly as a
    * session that never turned the reveal on: no markers, no equity pane, an
    * empty panel.
@@ -368,18 +394,6 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     const cur = latest.current;
     rehydrateBacktest(chart, cur.scope, cur.epic, cur.resolution);
   }, [handle]);
-
-  /** The side effect lives OUT here rather than inside the setState updater:
-   * React invokes updaters twice under StrictMode, and doing this twice would
-   * tear the artifacts down and rebuild them for nothing. */
-  const toggleStrategy = useCallback(() => {
-    const next = !showStrategyRef.current;
-    showStrategyRef.current = next;
-    // Off: take the slice down now rather than waiting for the next load. NOT a
-    // restore — the session is still running. See clearRevealedBacktest.
-    if (!next) clearRevealedBacktest();
-    setShowStrategy(next);
-  }, [clearRevealedBacktest]);
 
   // --- the exit reveal ------------------------------------------------------
   //
@@ -435,6 +449,18 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     },
     [handle, markPriceNow],
   );
+
+  /** The side effect lives OUT here rather than inside the setState updater:
+   * React invokes updaters twice under StrictMode, and doing this twice would
+   * tear the artifacts down and rebuild them for nothing. */
+  const toggleStrategy = useCallback(() => {
+    const next = !showStrategyRef.current;
+    showStrategyRef.current = next;
+    // Off: take the slice down now rather than waiting for the next load. NOT a
+    // restore — the session is still running. See clearRevealedBacktest.
+    if (!next) clearRevealedBacktest();
+    setShowStrategy(next);
+  }, [clearRevealedBacktest]);
 
   // --- bar store ------------------------------------------------------------
 
@@ -927,6 +953,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
             loading: false,
             error: null,
           }));
+          armStrategyReveal();
           // Re-run the load effect: it repaints through barsFor and skips the
           // websocket, and rehydrates drawings/indicators for the new window.
           setReplayEpoch((n) => n + 1);
@@ -938,7 +965,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           setState((s) => ({ ...s, loading: false, error: "Couldn't load candles. Try again." }));
         });
     },
-    [fetchWindow, nominalMs],
+    [fetchWindow, nominalMs, armStrategyReveal],
   );
 
   const randomJump = useCallback(
@@ -1067,6 +1094,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
             loading: false,
             error: null,
           }));
+          armStrategyReveal();
           setReplayEpoch((n) => n + 1);
           // Nothing on screen says the jump landed in a fraction of the window
           // that was asked for: a blind session shows no date at all, and a
@@ -1093,7 +1121,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
         }));
       })();
     },
-    [fetchSpan, nominalMs],
+    [fetchSpan, nominalMs, armStrategyReveal],
   );
 
   const exit = useCallback(() => {
@@ -1265,6 +1293,12 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
       // whenever, the next fire rebuilds.
       if (revealSigRef.current === sig && updateShownResult(chart, shown)) return;
       revealSigRef.current = sig;
+      // The open trade's R/R zone (drawn by its marker's click) dies with the
+      // teardown below. Capture its identity first and put it back after the
+      // render — including the handover to the closed trade's selection when
+      // this very redraw is the one where its exit printed (a count change is
+      // what forces the full path, and the exit is a count change).
+      const zoneKey = openTradeZoneKey(chart);
       teardownArtifacts(chart);
       const flags = backtestRenderFlags(cur.resolution, saved.resolution);
       renderArtifacts(chart, shown, { markerMode: flags.markerMode, canEquity: flags.drawEquity });
@@ -1272,6 +1306,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
       // hover/selection sync renderArtifacts installs is identity-gated on it,
       // and teardownArtifacts' ownership check reads the same identity.
       backtestResultSignal.set(shown);
+      if (zoneKey) restoreOpenTradeZone(chart, zoneKey);
     });
     return () => cancelAnimationFrame(raf);
     // `state.storeSeq` is what re-runs this after a series load has repainted the
