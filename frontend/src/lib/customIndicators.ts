@@ -18,6 +18,7 @@ export * from "./indicators/sessions";
 export * from "./indicators/timeHighlight";
 export * from "./indicators/pivots";
 export * from "./indicators/pivotBands";
+export * from "./indicators/pivotBarsSince";
 export * from "./indicators/pivotAnalysis";
 export * from "./indicators/srLevels";
 export * from "./indicators/fvg";
@@ -36,6 +37,7 @@ import { SESSIONS_TEMPLATE, registerSessionsAxis } from "./indicators/sessions";
 import { TIME_HIGHLIGHT_TEMPLATE } from "./indicators/timeHighlight";
 import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
 import { PIVOT_ANALYSIS_TEMPLATE } from "./indicators/pivotAnalysis";
+import { PIVOT_BARS_SINCE_TEMPLATE } from "./indicators/pivotBarsSince";
 import { SR_LEVELS_TEMPLATE } from "./indicators/srLevels";
 import { FVG_TEMPLATE } from "./indicators/fvg";
 import { TRENDLINES_TEMPLATE } from "./indicators/trendlines";
@@ -61,6 +63,7 @@ export type CustomIndicatorType =
   | "PIVOT_BANDS"
   | "PIVOT_ANALYSIS"
   | "SR_LEVELS"
+  | "PIVOT_BARS_SINCE"
   | "FVG"
   | "TRENDLINES"
   | "SLOPE"
@@ -82,6 +85,7 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   PIVOT_ANALYSIS: PIVOT_ANALYSIS_TEMPLATE,
   SR_LEVELS: SR_LEVELS_TEMPLATE,
   FVG: FVG_TEMPLATE,
+  PIVOT_BARS_SINCE: PIVOT_BARS_SINCE_TEMPLATE,
   TRENDLINES: TRENDLINES_TEMPLATE,
   SLOPE: SLOPE_TEMPLATE,
   SLOPE_ACCEL: SLOPE_ACCEL_TEMPLATE,

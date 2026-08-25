@@ -8,7 +8,12 @@ import {
 
 describe("PIVOT_BANDS_OUTPUTS", () => {
   it("pins the fixed output names, pivotHigh first", () => {
-    expect(PIVOT_BANDS_OUTPUTS).toEqual(["pivotHigh", "pivotLow"]);
+    expect(PIVOT_BANDS_OUTPUTS).toEqual([
+      "pivotHigh",
+      "pivotLow",
+      "barsSinceHigh",
+      "barsSinceLow",
+    ]);
   });
 });
 

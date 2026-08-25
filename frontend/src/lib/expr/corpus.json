@@ -313,6 +313,16 @@
   { "expr": "PIVOT_BANDS.bogus > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":17},
     "instances": {"PIVOT_BANDS": {"type":"PIVOT_BANDS","calcParams":[10,3],"extendData":{}}},
     "literals": [] },
+  { "expr": "PIVOT_BANDS.barsSinceHigh > 20", "isExit": false, "error": null,
+    "instances": {"PIVOT_BANDS": {"type":"PIVOT_BANDS","calcParams":[10,3],"extendData":{}}},
+    "literals": [
+      {"ordinal":0,"value":20,"from":28,"to":30,"label":"threshold"}
+    ] },
+  { "expr": "PIVOT_BANDS.barsSinceLow > 5", "isExit": false, "error": null,
+    "instances": {"PIVOT_BANDS": {"type":"PIVOT_BANDS","calcParams":[10,3],"extendData":{}}},
+    "literals": [
+      {"ordinal":0,"value":5,"from":27,"to":28,"label":"threshold"}
+    ] },
   { "expr": "PIVOT_ANALYSIS.deltaPct > 0", "isExit": false, "error": null,
     "instances": {"PIVOT_ANALYSIS": {"type":"PIVOT_ANALYSIS","calcParams":[34],"extendData":{}}},
     "literals": [

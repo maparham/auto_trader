@@ -24,6 +24,9 @@ const {
   INTERNAL_INDICATORS,
   isInternalIndicator,
   accelCompanionId,
+  pivotBarsSinceCompanionId,
+  syncPivotBarsSinceCompanion,
+  removeIndicatorById,
   addIndicatorInstance,
   importExprInstances,
   liveExprInstances,
@@ -862,6 +865,102 @@ describe("inset marker does not leak onto a Slope's accel companion", () => {
     expect(
       Object.prototype.hasOwnProperty.call(patch!.extendData as object, "inset"),
     ).toBe(false);
+  });
+});
+
+describe("Pivot Bands' bars-since-pivot companion pane", () => {
+  // Derived, parent-owned state: the PIVOT_BANDS instance carries showBarsSince and the
+  // companion is minted from it. A stateful fake so a teardown is observable
+  // (removeIndicator really drops the instance).
+  function pivotChart() {
+    let seq = 0;
+    type FakeInd = {
+      paneId: string;
+      name: string;
+      calcParams?: number[];
+      extendData?: Record<string, unknown>;
+    };
+    const inds: FakeInd[] = [];
+    const chart = {
+      getIndicators: (q?: { paneId?: string; name?: string }) =>
+        inds.filter((i) => (!q?.paneId || i.paneId === q.paneId) && (!q?.name || i.name === q.name)),
+      createIndicator: (value: FakeInd & { paneId?: string }) => {
+        const paneId = value.paneId ?? `pane_${++seq}`;
+        inds.push({ paneId, name: value.name, calcParams: value.calcParams, extendData: value.extendData });
+        return paneId;
+      },
+      removeIndicator: (q: { paneId: string; name: string }) => {
+        const at = inds.findIndex((i) => i.paneId === q.paneId && i.name === q.name);
+        if (at >= 0) inds.splice(at, 1);
+      },
+      overrideIndicator: () => {},
+      setPaneOptions: () => {},
+      overrideYAxis: () => {},
+    } as unknown as Chart;
+    return { chart, inds };
+  }
+
+  const companionOf = (inds: Array<{ name: string }>) =>
+    inds.find((i) => i.name === pivotBarsSinceCompanionId("PIVOT_BANDS"));
+
+  it("is off by default: a plain Pivot Bands spawns no second pane", () => {
+    localStorage.clear();
+    const { chart, inds } = pivotChart();
+    applyIndicator(chart, "tab.age1", "US100", { id: "PIVOT_BANDS", type: "PIVOT_BANDS" });
+    expect(inds).toHaveLength(1);
+    expect(companionOf(inds)).toBeUndefined();
+  });
+
+  it("spawns it when showBarsSince is on, carrying the parent's params", () => {
+    localStorage.clear();
+    const { chart, inds } = pivotChart();
+    applyIndicator(chart, "tab.age2", "US100", { id: "PIVOT_BANDS", type: "PIVOT_BANDS" }, {
+      config: { calcParams: [8, 3], extendData: { showBarsSince: true } } as never,
+    });
+    const companion = companionOf(inds)!;
+    expect(companion).toBeDefined();
+    expect(companion.calcParams).toEqual([8, 3]);
+    expect((companion.extendData as { indType?: string }).indType).toBe("PIVOT_BARS_SINCE");
+  });
+
+  it("tears it down when the toggle goes off", () => {
+    localStorage.clear();
+    const { chart, inds } = pivotChart();
+    applyIndicator(chart, "tab.age3", "US100", { id: "PIVOT_BANDS", type: "PIVOT_BANDS" }, {
+      config: { extendData: { showBarsSince: true } } as never,
+    });
+    expect(companionOf(inds)).toBeDefined();
+    // The modal writes the flag onto the live parent, then re-syncs.
+    const parent = inds.find((i) => i.name === "PIVOT_BANDS")!;
+    parent.extendData = { ...parent.extendData, showBarsSince: false };
+    syncPivotBarsSinceCompanion(chart, "PIVOT_BANDS");
+    expect(companionOf(inds)).toBeUndefined();
+  });
+
+  it("goes away with its parent (never orphaned)", () => {
+    localStorage.clear();
+    const { chart, inds } = pivotChart();
+    applyIndicator(chart, "tab.age4", "US100", { id: "PIVOT_BANDS", type: "PIVOT_BANDS" }, {
+      config: { extendData: { showBarsSince: true } } as never,
+    });
+    expect(inds).toHaveLength(2);
+    removeIndicatorById(chart, "tab.age4", "PIVOT_BANDS");
+    expect(inds).toHaveLength(0);
+  });
+
+  it("counts as internal, so reorder/legend/the indicator menu skip it", () => {
+    expect(isInternalIndicator(pivotBarsSinceCompanionId("PIVOT_BANDS"))).toBe(true);
+    expect(isInternalIndicator(pivotBarsSinceCompanionId("PIVOT_BANDS#a1b2c3"))).toBe(true);
+    expect(isInternalIndicator("PIVOT_BANDS")).toBe(false);
+  });
+
+  it("is not offered to the expression layer (chart-only pane, no operands)", () => {
+    localStorage.clear();
+    const { chart } = pivotChart();
+    applyIndicator(chart, "tab.age5", "US100", { id: "PIVOT_BANDS", type: "PIVOT_BANDS" }, {
+      config: { extendData: { showBarsSince: true } } as never,
+    });
+    expect(liveExprInstances(chart).map((i) => i.id)).toEqual(["PIVOT_BANDS"]);
   });
 });
 

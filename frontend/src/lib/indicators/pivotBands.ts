@@ -45,8 +45,18 @@ export interface PivotBandsExtend {
     htfStarts?: number[]; // HTF bar open timestamps (ms)
     htfHigh?: Array<number | undefined>; // pivotHigh step-value per HTF bar
     htfLow?: Array<number | undefined>; // pivotLow step-value per HTF bar
+    // Bars-since-last-pivot per HTF bar, for the optional "Bars Since Pivot"
+    // companion pane (see ./pivotBarsSince). Counted in HTF bars: age is NOT
+    // derivable from the step-PRICES above (two consecutive pivots can print
+    // the same price), so the coordinator stashes it alongside them.
+    htfBarsSinceHigh?: Array<number | undefined>;
+    htfBarsSinceLow?: Array<number | undefined>;
     htfMs?: number; // HTF bar duration (ms)
   };
+  // Optional companion sub-pane counting the bars since the last confirmed
+  // pivot on each side (off by default). The parent owns the flag; the
+  // companion instance is derived from it (syncPivotBarsSinceCompanion).
+  showBarsSince?: boolean;
   // Legend toggle (settings modal): hide this indicator's value from the legend.
   hideLegendValue?: boolean;
 }

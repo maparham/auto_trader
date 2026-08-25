@@ -35,6 +35,7 @@ import { sameInstanceConfig, type InstanceAppearance, type PortableInstancePaylo
 import { INDICATOR_SPECS, type ExprInstance } from "./expr/catalog";
 import { RESOLUTION_SECONDS } from "./feed";
 import type { SlopeExtend } from "./indicators/slope";
+import type { PivotBandsExtend } from "./indicators/pivotBands"; // erased at build; no runtime edge
 import { INSET_CAPABLE, insetTemplate } from "./indicators/inset";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
 import { dropTrendlineHandles } from "./indicators/trendlines";
@@ -55,7 +56,8 @@ import {
   type SavedIndicatorConfig,
 } from "./persist";
 import type { ChartController } from "./chartController";
-export { overrideExtend } from "./overrideExtend";
+import { overrideExtend } from "./overrideExtend";
+export { overrideExtend };
 
 // v10 replaced v9's chart.getIndicatorByPaneId(paneId, name) with a flat
 // filter-based getIndicators({ paneId, name }). This helper restores the single
@@ -218,11 +220,23 @@ export const INTERNAL_INDICATORS = new Set<string>([EQUITY_INDICATOR]);
 export const ACCEL_SUFFIX = "__accel";
 export const accelCompanionId = (parentId: string): string => `${parentId}${ACCEL_SUFFIX}`;
 
-/** Internal for REORDER and LEGEND purposes: app-owned panes plus accel companions.
- * NOTE deliberately NOT used by applyIndicatorVisibility: see the comment there.
- * The equity pane has no user visibility intent; the accel pane follows its parent. */
+/** Pivot Bands' "Bars Since Pivot" companion pane: same parent-owned, derived
+ * deal as the accel companion above, minted from the parent's id. */
+export const BARS_SINCE_SUFFIX = "__barsSince";
+export const pivotBarsSinceCompanionId = (parentId: string): string =>
+  `${parentId}${BARS_SINCE_SUFFIX}`;
+
+/** Every parent-owned companion suffix. ONE definition: reorder, the legend and
+ * the indicator menu all filter on it, and they must agree or their indices go
+ * off by one. */
+const COMPANION_SUFFIXES = [ACCEL_SUFFIX, BARS_SINCE_SUFFIX];
+
+/** Internal for REORDER and LEGEND purposes: app-owned panes plus the parent-owned
+ * companions. NOTE deliberately NOT used by applyIndicatorVisibility: see the
+ * comment there. The equity pane has no user visibility intent; a companion pane
+ * follows its parent. */
 export const isInternalIndicator = (name: string): boolean =>
-  INTERNAL_INDICATORS.has(name) || name.endsWith(ACCEL_SUFFIX);
+  INTERNAL_INDICATORS.has(name) || COMPANION_SUFFIXES.some((s) => name.endsWith(s));
 
 // Per-instance template names registered this session (see registerInstanceTemplate).
 const mintedInstanceIds = new Set<string>();
@@ -682,6 +696,8 @@ export function applyIndicator(
   // creation choke point (hydrate, reorder, fresh add, paste, templates,
   // snapshots all route here), so every recreate path re-derives the companion.
   if (type === "SLOPE") syncAccelCompanion(chart, id);
+  // Same contract for Pivot Bands' optional "Bars Since Pivot" companion.
+  if (type === "PIVOT_BANDS") syncPivotBarsSinceCompanion(chart, id);
   return paneId;
 }
 
@@ -827,6 +843,135 @@ export function mirrorAccelCompanion(
         : {}),
     },
   );
+}
+
+// Spawn/tear down a Pivot Bands pane's "Bars Since Pivot" companion. Same
+// contract as syncAccelCompanion above: the parent owns showBarsSince and every
+// param, nothing about the companion is persisted, and remove-then-create is
+// what keeps the pane directly below its parent through a reorder.
+export function syncPivotBarsSinceCompanion(chart: Chart, parentId: string): void {
+  const companionId = pivotBarsSinceCompanionId(parentId);
+  const panes = getIndicatorsByPane(chart);
+  // Pane insertion order top-to-bottom: used to tell whether the companion
+  // already sits directly below its parent.
+  const order = [...(panes?.keys() ?? [])];
+  let parent: Indicator | null = null;
+  let parentPaneId: string | null = null;
+  let companionPaneId: string | null = null;
+  for (const [paneId, inds] of panes ?? []) {
+    const p = inds.get(parentId);
+    if (p) {
+      parent = p as Indicator;
+      parentPaneId = paneId;
+    }
+    if (inds.has(companionId)) companionPaneId = paneId;
+  }
+  const ext = (parent?.extendData ?? {}) as PivotBandsExtend & {
+    userVisible?: boolean;
+    visibility?: VisibilityModel;
+  };
+  // No parent, or the pane turned off: drop any stray companion and stop.
+  if (!parent || !ext.showBarsSince) {
+    if (companionPaneId) chart.removeIndicator({ paneId: companionPaneId, name: companionId });
+    return;
+  }
+  const nextExt = pivotBarsSinceExt(ext);
+
+  // In-place update when the companion already sits directly below the parent,
+  // so a param/style/Cancel edit can't hop the pane to the bottom of the stack.
+  // overrideExtend (not a bare overrideIndicator) because the copied extendData
+  // carries the parent's `mtf` stash: klinecharts merges nested objects and
+  // arrays index by index, so a switch back to the chart timeframe would leave
+  // the stale HTF count arrays live and the pane counting in the wrong unit.
+  const parentIdx = parentPaneId ? order.indexOf(parentPaneId) : -1;
+  const companionIdx = companionPaneId ? order.indexOf(companionPaneId) : -1;
+  if (companionPaneId && parentIdx >= 0 && companionIdx === parentIdx + 1) {
+    chart.overrideIndicator({
+      paneId: companionPaneId,
+      name: companionId,
+      calcParams: parent.calcParams,
+      visible: parent.visible !== false,
+      ...(parent.styles
+        ? { styles: parent.styles as unknown as Partial<IndicatorStyle> }
+        : {}),
+    });
+    overrideExtend(chart, companionPaneId, companionId, nextExt as Record<string, unknown>);
+    return;
+  }
+
+  // Otherwise (first spawn, or a reorder moved the parent so the companion is no
+  // longer directly below it): drop any existing companion and recreate it.
+  if (companionPaneId) chart.removeIndicator({ paneId: companionPaneId, name: companionId });
+  registerInstanceTemplate(chart, "PIVOT_BARS_SINCE", companionId);
+  // NO legendTooltipSource, same as the accel companion: internal panes get no
+  // DOM legend card, so they keep klinecharts' native canvas legend (named by
+  // the template's shortName "Bars Since Pivot").
+  const newPaneId = chart.createIndicator(
+    {
+      name: companionId,
+      calcParams: parent.calcParams,
+      extendData: nextExt as Record<string, unknown>,
+      ...(parent.visible === false ? { visible: false } : {}),
+    },
+    false,
+  );
+  if (newPaneId) {
+    chart.setPaneOptions({ id: newPaneId, height: SUBPANE_HEIGHT });
+    chart.overrideYAxis({ paneId: newPaneId, gap: { top: 0.08, bottom: 0.08 } });
+  }
+  // Match the parent's per-line style overrides so line N (high side / low side)
+  // is the same color in both panes.
+  if (newPaneId && parent.styles)
+    chart.overrideIndicator({
+      paneId: newPaneId,
+      name: companionId,
+      styles: parent.styles as unknown as Partial<IndicatorStyle>,
+    });
+}
+
+// The companion's extendData, derived from its parent's: the parent's config
+// wholesale, retyped so indTypeOf reports PIVOT_BARS_SINCE, minus the inset
+// placement marker (the companion always draws in its own sub-pane).
+//
+// The parent's per-line hides ride along untouched. They are inert here: their
+// keys name the BANDS' figures (pivotHigh/pivotLow) and this pane's calc emits
+// barsSinceHigh/barsSinceLow unconditionally, never reading lineHidden.
+// Stripping the key would also be a lie on the override path: overrideExtend
+// can only clear keys PRESENT in the patch, so a deleted one survives
+// klinecharts' merge.
+function pivotBarsSinceExt(ext: object): PivotBandsExtend & { indType: string } {
+  return withoutInset({ ...ext, indType: "PIVOT_BARS_SINCE" }) as PivotBandsExtend & {
+    indType: string;
+  };
+}
+
+// Mirror a visibility/extendData write from a Pivot Bands parent onto its
+// bars-since companion, if one exists (in place, so there is no pane flicker). No-ops when
+// the companion is absent. Mirrors mirrorAccelCompanion.
+export function mirrorPivotBarsSinceCompanion(
+  chart: Chart,
+  parentId: string,
+  patch: { extendData?: object; visible?: boolean },
+): void {
+  const companionId = pivotBarsSinceCompanionId(parentId);
+  const panes = getIndicatorsByPane(chart);
+  let companionPaneId: string | null = null;
+  for (const [paneId, inds] of panes ?? []) {
+    if (inds.has(companionId)) {
+      companionPaneId = paneId;
+      break;
+    }
+  }
+  if (companionPaneId === null) return;
+  if (patch.visible !== undefined)
+    chart.overrideIndicator({ paneId: companionPaneId, name: companionId, visible: patch.visible });
+  if (patch.extendData)
+    overrideExtend(
+      chart,
+      companionPaneId,
+      companionId,
+      pivotBarsSinceExt(patch.extendData) as Record<string, unknown>,
+    );
 }
 
 // Re-derive every indicator's effective on-chart visibility: user intent
@@ -1077,12 +1222,14 @@ export function removeIndicatorById(chart: Chart, scope: string, id: string): vo
       break;
     }
   }
-  // A Slope owns its accel companion: remove it alongside, or it is orphaned.
-  const companionId = accelCompanionId(id);
-  for (const [paneId, inds] of panes ?? []) {
-    if (inds.has(companionId)) {
-      chart.removeIndicator({ paneId, name: companionId });
-      break;
+  // A parent owns its companion panes (Slope → accel, Pivot Bands → bars-since):
+  // remove them alongside, or they are orphaned.
+  for (const companionId of [accelCompanionId(id), pivotBarsSinceCompanionId(id)]) {
+    for (const [paneId, inds] of panes ?? []) {
+      if (inds.has(companionId)) {
+        chart.removeIndicator({ paneId, name: companionId });
+        break;
+      }
     }
   }
   // A removed pane never draws again, so its recorded TRENDLINES pin handles

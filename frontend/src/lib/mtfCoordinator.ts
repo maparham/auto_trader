@@ -17,6 +17,7 @@ import { maSeries, htfCoverageStartMs, normalizeMaKind, type MaKind, type MtfSer
 import { pageHistoryBack } from "./historyPaging";
 import { barCloseMs } from "./replayBars";
 import { indTypeOf, templateMaKind, type MaExtend } from "./customIndicators";
+import { computePivotBarsSince } from "./indicators/pivotBarsSince";
 import {
   computePivotBands,
   type PivotBandsExtend,
@@ -55,7 +56,12 @@ import {
   type SlopeExtend,
   type SlopeSmoothing,
 } from "./indicators/slope";
-import { syncAccelCompanion, getIndicator, getIndicatorsByPane } from "./indicators";
+import {
+  syncAccelCompanion,
+  syncPivotBarsSinceCompanion,
+  getIndicator,
+  getIndicatorsByPane,
+} from "./indicators";
 import { overrideExtend } from "./overrideExtend";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
@@ -445,6 +451,9 @@ export async function applyPivotBandsTimeframe(
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
     overrideExtend(chart, paneId, name, ext, calcParams);
+    // The bars-since companion is derived from this extendData: re-sync so it
+    // drops the stale HTF counts and counts in chart bars again.
+    syncPivotBarsSinceCompanion(chart, name);
     return;
   }
 
@@ -473,14 +482,23 @@ export async function applyPivotBandsTimeframe(
   // carries each side's value forward (dense after the first pivot) and bakes in
   // the N-bar confirmation lag, so the aligned series stays gap-free and honest.
   const pts = computePivotBands(htf, config.n, config.k, { mode: config.mode, source: config.source });
+  // Bars-since is counted on the SAME HTF bars (so its unit is HTF bars, which
+  // is what the backend operand does too) and stashed alongside:
+  // they are not derivable from the step-prices above, since two consecutive
+  // pivots can print the same price. Computed unconditionally — cheap next to
+  // the fetch, and it keeps the stash valid the instant the user ticks the box.
+  const since = computePivotBarsSince(htf, config.n, { source: config.source });
   ext.mtf = {
     timeframe,
     htfStarts: htf.map((b) => b.timestamp),
     htfHigh: pts.map((p) => p.pivotHigh),
     htfLow: pts.map((p) => p.pivotLow),
+    htfBarsSinceHigh: since.map((p) => p.barsSinceHigh),
+    htfBarsSinceLow: since.map((p) => p.barsSinceLow),
     htfMs,
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
+  syncPivotBarsSinceCompanion(chart, name);
 }
 
 // S/R levels accumulate over the staleness window rather than converging like a

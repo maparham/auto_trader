@@ -27,8 +27,14 @@ def flat(n: int, frm: int, low: float = 99.0, high: float = 101.0) -> list[Candl
 
 
 def points(cfg: PivotBandsConfig, candles: list[Candle]) -> list[tuple]:
-    cols = [pivot_bands_series(cfg, o, candles, 1.0) for o in pivot_bands_outputs(cfg)]
+    """The two step-line columns only (the bars-since outputs have their own
+    tests below), so these tuples stay (pivotHigh, pivotLow)."""
+    cols = [pivot_bands_series(cfg, o, candles, 1.0) for o in ("pivotHigh", "pivotLow")]
     return list(zip(*cols))
+
+
+def bars_since(cfg: PivotBandsConfig, candles: list[Candle], side: str) -> list:
+    return pivot_bands_series(cfg, f"barsSince{side}", candles, 1.0)
 
 
 CFG = PivotBandsConfig(n=2, k=3, mode="last", source=None)
@@ -111,10 +117,56 @@ def test_parse_config_defaults_and_clamping():
     assert cfg.timeframe is None
 
 
+def test_outputs_are_the_four_fixed_names():
+    assert pivot_bands_outputs(CFG) == ("pivotHigh", "pivotLow", "barsSinceHigh", "barsSinceLow")
+
+
+# --- barsSinceHigh / barsSinceLow -------------------------------------------
+# Mirrors frontend/src/lib/indicators/pivotBarsSince.test.ts: the count is taken
+# from the PIVOT BAR, so it steps down to N (never 0) at each confirmation.
+
+
+def two_swing_highs() -> list[Candle]:
+    """Swing highs at bars 5 and 9 (n=2), nothing else extreme."""
+    highs = {5: 100.0, 9: 105.0}
+    return [bar(i, 80.0, highs.get(i, 90.0)) for i in range(14)]
+
+
+def test_bars_since_is_none_until_the_first_pivot_confirms():
+    col = bars_since(CFG, two_swing_highs(), "High")
+    assert col[:7] == [None] * 7  # pivot at bar 5 confirms at bar 7
+    assert col[7] == 2
+
+
+def test_bars_since_counts_from_the_pivot_bar_never_below_n():
+    col = bars_since(CFG, two_swing_highs(), "High")
+    # First pivot (bar 5) confirms at 7 and the count climbs one per bar...
+    assert col[7:11] == [2, 3, 4, 5]
+    # ...then the second (bar 9) confirms at 11: back to N, NOT to 0.
+    assert col[11:14] == [2, 3, 4]
+    assert all(v >= CFG.n for v in col if v is not None)
+
+
+def test_bars_since_tracks_the_two_sides_independently():
+    # Swing high at bar 4 (confirms 6), swing low at bar 9 (confirms 11).
+    candles = [
+        bar(i, 70.0 if i == 9 else 80.0, 100.0 if i == 4 else 90.0) for i in range(14)
+    ]
+    assert bars_since(CFG, candles, "High")[11] == 7  # 11 - 4
+    assert bars_since(CFG, candles, "Low")[11] == 2  # 11 - 9
+
+
+def test_unknown_output_yields_no_series_rather_than_the_wrong_one():
+    # The dispatch is by NAME: a typo must not silently return pivotLow.
+    assert pivot_bands_series(CFG, "bogus", two_swing_highs(), 1.0) == [None] * 14
+
+
 def test_warmup_is_the_confirm_lag():
     cfg = PivotBandsConfig(n=7, k=3, mode="last", source=None)
     assert pivot_bands_warmup(cfg, "pivotHigh") == 7
     assert pivot_bands_warmup(cfg, "pivotLow") == 7
+    assert pivot_bands_warmup(cfg, "barsSinceHigh") == 7
+    assert pivot_bands_warmup(cfg, "barsSinceLow") == 7
     assert pivot_bands_warmup(cfg, "bogus") == 0
 
 

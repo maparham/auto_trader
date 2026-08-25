@@ -1,8 +1,11 @@
 """PIVOT_BANDS instances (`PIVOT_BANDS#id.pivotHigh` / `.pivotLow`): two
 step-lines tracking the most recently confirmed fractal swing high/low (or the
-average of the newest K). Ported operation-for-operation from frontend
-lib/indicators/pivotBands.ts (computePivotBands) — keep the arithmetic order
-identical, per the parity contract in indicators/core.py.
+average of the newest K), plus `.barsSinceHigh` / `.barsSinceLow`, the bar
+count since each side's most recent confirmed pivot. Ported
+operation-for-operation from frontend lib/indicators/pivotBands.ts
+(computePivotBands) and lib/indicators/pivotBarsSince.ts
+(computePivotBarsSince) — keep the arithmetic order identical, per the parity
+contract in indicators/core.py.
 
 Causal by construction: a fractal pivot at bar i depends on the N bars to its
 right, so it is only known at bar i+N; each line holds its prior value across
@@ -19,7 +22,10 @@ single series (mirrors PivotBandsSource in pivotBands.ts).
 The math here is chart-agnostic: a settings-pinned timeframe
 (extendData.mtf.timeframe) needs no change below the config — the evaluator
 computes on that timeframe's own candles and aligns the result onto the base
-bars, exactly as it does for SR_LEVELS/TRENDLINES."""
+bars, exactly as it does for SR_LEVELS/TRENDLINES. One consequence worth
+naming: under a pin, barsSince* counts PINNED-timeframe bars, not base bars
+(the chart's companion pane counts the same way, so the number a rule reads is
+the number the user sees)."""
 
 from __future__ import annotations
 
@@ -35,10 +41,27 @@ Mode = Literal["last", "avg"]
 
 _DEFAULTS = (5.0, 3.0)
 
-# Fixed names (no length suffix): the params shape the SAME two series rather
-# than selecting different ones, so retuning keeps rules valid. `pivotHigh`
-# first — the chart click-to-insert token emits outputs[0].
-PIVOT_BANDS_OUTPUTS: tuple[str, ...] = ("pivotHigh", "pivotLow")
+# Fixed names (no length suffix): the params shape the SAME series rather than
+# selecting different ones, so retuning keeps rules valid. `pivotHigh` first —
+# the chart click-to-insert token emits outputs[0].
+#
+# barsSinceHigh/barsSinceLow are the BAR COUNT since the most recent confirmed
+# pivot on that side, measured from the PIVOT BAR (so they never read below N,
+# the confirm lag). They are drawn by the chart's optional "Bars since pivot"
+# companion pane, but they are NOT gated on that pane's toggle — a display
+# checkbox must never invalidate a saved rule — which is why the toggle is
+# absent from PivotBandsConfig.
+PIVOT_BANDS_OUTPUTS: tuple[str, ...] = (
+    "pivotHigh",
+    "pivotLow",
+    "barsSinceHigh",
+    "barsSinceLow",
+)
+
+# Which column of which computation each output reads. Two separate per-bar
+# computations (prices, counts), so the index alone is not enough.
+_PRICE_INDEX = {"pivotHigh": 0, "pivotLow": 1}
+_COUNT_INDEX = {"barsSinceHigh": 0, "barsSinceLow": 1}
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +170,49 @@ def _compute_points(
     return out
 
 
+def _compute_bars_since(
+    cfg: PivotBandsConfig, candles: Sequence[Candle]
+) -> list[tuple[float | None, float | None]]:
+    """Per-bar (barsSinceHigh, barsSinceLow) — the TS computePivotBarsSince main
+    loop. Same pivot detection as _compute_points; what is carried forward is
+    the pivot's BAR INDEX rather than its price, so the value at bar i is
+    i - pivot_bar (the PIVOT_ANALYSIS deltaT convention: bars between swing
+    BARS, not between confirmations)."""
+    length = len(candles)
+    if cfg.source is None:
+        highs = [c.high for c in candles]
+        lows = [c.low for c in candles]
+    else:
+        highs = [price_of(c, cfg.source) for c in candles]
+        lows = highs
+
+    high_pivot_at_confirm: dict[int, int] = {}
+    low_pivot_at_confirm: dict[int, int] = {}
+    for i in range(length):
+        if _is_pivot_at(highs, i, cfg.n, True):
+            high_pivot_at_confirm[i + cfg.n] = i
+        if _is_pivot_at(lows, i, cfg.n, False):
+            low_pivot_at_confirm[i + cfg.n] = i
+
+    last_high = -1
+    last_low = -1
+    out: list[tuple[float | None, float | None]] = []
+    for i in range(length):
+        h = high_pivot_at_confirm.get(i)
+        if h is not None:
+            last_high = h
+        low = low_pivot_at_confirm.get(i)
+        if low is not None:
+            last_low = low
+        out.append(
+            (
+                float(i - last_high) if last_high >= 0 else None,
+                float(i - last_low) if last_low >= 0 else None,
+            )
+        )
+    return out
+
+
 def pivot_bands_outputs(cfg: PivotBandsConfig) -> tuple[str, ...]:
     return PIVOT_BANDS_OUTPUTS
 
@@ -154,14 +220,21 @@ def pivot_bands_outputs(cfg: PivotBandsConfig) -> tuple[str, ...]:
 def pivot_bands_series(
     cfg: PivotBandsConfig, output: str, candles: Sequence[Candle], bar_hours: float
 ) -> list[float | None]:
-    points = _compute_points(cfg, candles)
-    idx = 0 if output == "pivotHigh" else 1
-    return [p[idx] for p in points]
+    # Dispatch on the NAME, never on "high or else low": with four outputs an
+    # else-branch would hand back a plausible price series for a bar COUNT and
+    # nothing would fail. An unknown name is the validation layer's error to
+    # report, so it yields an all-None series here (matching the warmup below).
+    if output in _COUNT_INDEX:
+        return [p[_COUNT_INDEX[output]] for p in _compute_bars_since(cfg, candles)]
+    if output in _PRICE_INDEX:
+        return [p[_PRICE_INDEX[output]] for p in _compute_points(cfg, candles)]
+    return [None] * len(candles)
 
 
 def pivot_bands_warmup(cfg: PivotBandsConfig, output: str) -> int:
     """Confirm lag N before the first pivot can possibly exist. Values keep
     stepping after that, so this is the floor, matching the other specs'
-    convention. 0 for an output this config does not expose (validation
-    layer's error to report)."""
+    convention; barsSince* first exist on that same confirmation bar, where
+    they read exactly N. 0 for an output this config does not expose
+    (validation layer's error to report)."""
     return cfg.n if output in PIVOT_BANDS_OUTPUTS else 0

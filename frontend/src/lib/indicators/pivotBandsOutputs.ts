@@ -16,8 +16,19 @@ export type PivotBandsRefMode = "last" | "avg";
 
 /** The rule-operand names, in pane order — the SAME strings as the backend's
  * pivot_bands_outputs and the chart figure keys, so an operand a user inserts
- * from the legend and the series the backend computes can never drift apart. */
-export const PIVOT_BANDS_OUTPUTS = ["pivotHigh", "pivotLow"] as const;
+ * from the legend and the series the backend computes can never drift apart.
+ *
+ * barsSinceHigh/barsSinceLow count the bars since the most recent confirmed
+ * pivot on that side, measured from the PIVOT BAR (so they never read below N,
+ * the confirm lag — see pivotBarsSince.ts). They are the two curves of the
+ * optional "Bars since pivot" companion pane, but they are NOT gated on that
+ * pane's toggle: a display checkbox must never invalidate a saved rule. */
+export const PIVOT_BANDS_OUTPUTS = [
+  "pivotHigh",
+  "pivotLow",
+  "barsSinceHigh",
+  "barsSinceLow",
+] as const;
 
 export type PivotBandsOutput = (typeof PIVOT_BANDS_OUTPUTS)[number];
 
@@ -52,7 +63,8 @@ export function parsePivotBandsRefConfig(
 
 /** Bars before the first pivot can possibly exist: the confirm lag N. Values
  * keep stepping after that, so this is the floor — the same convention as the
- * other specs. Every output shares it. */
+ * other specs. Every output shares it (barsSince* first exist on that same
+ * confirmation bar, where they read exactly N). */
 export function pivotBandsWarmup(cfg: PivotBandsRefConfig): number {
   return cfg.n;
 }

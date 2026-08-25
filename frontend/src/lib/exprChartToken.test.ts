@@ -265,6 +265,15 @@ describe("PIVOT_BANDS panes", () => {
     expect(chartIndicatorToExprToken("PIVOT_BANDS", [10, 3], {}, {})).toBeNull();
   });
 
+  it("resolves the bars-since figure keys too (the companion pane's curves)", () => {
+    expect(
+      chartIndicatorToExprToken("PIVOT_BANDS", [10, 3], {}, {
+        instanceId: "PIVOT_BANDS",
+        figureKey: "barsSinceLow",
+      }),
+    ).toBe("PIVOT_BANDS.barsSinceLow");
+  });
+
   it("keeps the ref valid across a retune (params reshape the same outputs)", () => {
     expect(
       chartIndicatorToExprToken("PIVOT_BANDS", [5, 1], { mode: "avg" }, { instanceId: "PIVOT_BANDS" }),

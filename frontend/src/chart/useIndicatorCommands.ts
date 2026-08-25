@@ -23,6 +23,7 @@ import {
   reorderSubPanes,
   subPaneOrder,
   mirrorAccelCompanion,
+  mirrorPivotBarsSinceCompanion,
   getIndicator,
   getIndicatorsByPane,
 } from "../lib/indicators";
@@ -93,6 +94,11 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // directly rather than re-running syncAccelCompanion: a pane teardown and
     // recreate on every eye click would flicker.
     mirrorAccelCompanion(c, name, {
+      extendData: ext,
+      visible: next && isVisibleOnResolution(vis, period.resolution),
+    });
+    // Pivot Bands' bars-since companion follows its parent the same way.
+    mirrorPivotBarsSinceCompanion(c, name, {
       extendData: ext,
       visible: next && isVisibleOnResolution(vis, period.resolution),
     });
@@ -382,6 +388,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // parent's ext can be forwarded as-is. Ordered after the persist so the whole
     // body reads in the same sequence as onLegendToggleVisible.
     mirrorAccelCompanion(c, name, { extendData: ext, visible });
+    mirrorPivotBarsSinceCompanion(c, name, { extendData: ext, visible });
     handle.redrawRef.current();
     // period.resolution is read above, so it has to be a dependency (the legend eye
     // path lists it for the same reason); an empty array would freeze it at the

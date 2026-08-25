@@ -335,9 +335,18 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         options: PIVOT_SOURCES,
         tip: "Price the swings are detected on. High / Low uses highs for the upper line and lows for the lower line; any other source uses that single series for both lines.",
       },
+      {
+        key: "showBarsSince",
+        label: "Bars since pivot pane",
+        type: "boolean",
+        source: "extend",
+        field: "showBarsSince",
+        default: false,
+        tip: "Adds a pane below counting the bars since the last confirmed swing high and swing low. The count runs from the swing bar, so it never reads below Strength.",
+      },
     ],
     title: "Pivot Bands",
-    desc: "Two step-lines tracking confirmed fractal swing highs and lows separately (a dynamic support/resistance channel). Strength sets the bars required on each side of a pivot. Mode carries either the last pivot or the average of the last K pivots forward; the line only steps when a new pivot confirms (N bars late, no repaint).",
+    desc: "Two step-lines tracking confirmed fractal swing highs and lows separately (a dynamic support/resistance channel). Strength sets the bars required on each side of a pivot. Mode carries either the last pivot or the average of the last K pivots forward; the line only steps when a new pivot confirms (N bars late, no repaint). Both pivot prices and the bars since each side's last pivot are available as rule operands, the counts whether or not their pane is shown.",
   },
   PIVOT_ANALYSIS: {
     inputs: [

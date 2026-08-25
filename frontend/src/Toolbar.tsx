@@ -231,10 +231,18 @@ export default function Toolbar({
   // as an addable "type" — and adding one minted an instance OF it ("FVG22").
   // Internal names are excluded: EQUITY (driven by the Backtest button), the
   // SLOPE_ACCEL base type and its "<parent>__accel" companion instances (driven
-  // by the Slope's "Show acceleration pane" toggle, never added directly).
+  // by the Slope's "Show acceleration pane" toggle, never added directly), and
+  // likewise PIVOT_BARS_SINCE with its "<parent>__barsSince" companions (the
+  // Pivot Bands "Bars since pivot pane" toggle).
   const allIndicators = getSupportedIndicators()
     .filter((n) => !isMintedInstanceId(n))
-    .filter((n) => n !== EQUITY_INDICATOR && n !== "SLOPE_ACCEL" && !isInternalIndicator(n));
+    .filter(
+      (n) =>
+        n !== EQUITY_INDICATOR
+        && n !== "SLOPE_ACCEL"
+        && n !== "PIVOT_BARS_SINCE"
+        && !isInternalIndicator(n),
+    );
   const matches = (n: string) => {
     const q = indFilter.toLowerCase();
     if (!q) return true;

@@ -91,7 +91,13 @@ import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import SelectMenu from "./components/SelectMenu";
 import { requestIndicatorOverlayRepaint } from "./lib/signals";
-import { mirrorAccelCompanion, syncAccelCompanion, getIndicator } from "./lib/indicators";
+import {
+  mirrorAccelCompanion,
+  syncAccelCompanion,
+  mirrorPivotBarsSinceCompanion,
+  syncPivotBarsSinceCompanion,
+  getIndicator,
+} from "./lib/indicators";
 import { EXPR_INSTANCE_TYPES } from "./lib/exprInstances";
 import { renameInstanceEverywhere } from "./lib/renameInstance";
 import type { RenameInstanceError } from "./lib/indicators";
@@ -599,6 +605,9 @@ export default function IndicatorSettings({
     const live = getIndicator(chart, paneId, name) as Indicator | null;
     chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), ...next } });
   }
+    // Pivot Bands' "Bars since pivot pane" checkbox is a plain extend write, but
+    // the pane itself is derived state: spawn or tear it down right here.
+    if (isPivotBands && field === "showBarsSince") syncPivotBarsSinceCompanion(chart, name);
 
   // Conditional visibility: an input whose showWhen guard is not met by the
   // current (extend-stored) value of the controlling field is not rendered.
@@ -1033,6 +1042,11 @@ export default function IndicatorSettings({
       brokerId,
     );
   }
+    // applyPivotBandsTimeframe re-syncs the companion too, but only after its
+    // awaited fetches: this synchronous call makes the bars-since pane appear /
+    // disappear instantly on toggle. Under an active higher timeframe the values
+    // it shows settle once that fetch resolves.
+    syncPivotBarsSinceCompanion(chart, name);
 
   // Push an S/R Levels config (chart-TF or MTF) through the coordinator, which
   // refetches + recomputes the levels on the higher timeframe's native bars when
@@ -1286,6 +1300,9 @@ export default function IndicatorSettings({
     // parent's freshly-overridden styles onto the companion in place.
     if (isSlope) syncAccelCompanion(chart, name);
   }
+    // Same for a Pivot Bands line's color/width: line N is the same color in the
+    // bars-since pane.
+    if (isPivotBands) syncPivotBarsSinceCompanion(chart, name);
 
   // Toggle a line's VISIBILITY (Style tab checkbox). Visibility lives in
   // extendData.lineHidden (calc-omit), NOT styles — so it must go through the
@@ -1323,6 +1340,8 @@ export default function IndicatorSettings({
     chart.overrideIndicator({ paneId, name, extendData: ext, visible: effVisible });
     if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
   }
+    if (isPivotBands)
+      mirrorPivotBarsSinceCompanion(chart, name, { extendData: ext, visible: effVisible });
 
   // Per-timeframe visibility grid (VisibilityTab onChange): persists the model AND
   // re-writes userVisible in the SAME operation (never separately), so a future
@@ -1335,6 +1354,8 @@ export default function IndicatorSettings({
     chart.overrideIndicator({ paneId, name, extendData: ext, visible: effVisible });
     if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
   }
+    if (isPivotBands)
+      mirrorPivotBarsSinceCompanion(chart, name, { extendData: ext, visible: effVisible });
 
   // Show/hide this indicator's value in the legend. Stored on extendData
   // (hideLegendValue), read by the shared legendTooltipSource. Merges with the
@@ -1361,6 +1382,9 @@ export default function IndicatorSettings({
     // leave an orphaned pane (or a missing one).
     if (isSlope) syncAccelCompanion(chart, name);
     // The Type/Envelope live preview retitles shortName/figures, which the
+    // Same for the bars-since pane: toggling it on and then cancelling must not
+    // leave an orphan (nor lose one that was already on).
+    if (isPivotBands) syncPivotBarsSinceCompanion(chart, name);
     // snapshot restore above does not carry: revert them from the original
     // extendData or a cancelled VWMA preview keeps its label while the curve
     // computes as an EMA again.

@@ -32,6 +32,19 @@ const ACCEL = {
   extendData: { indType: "SLOPE_ACCEL", units: "pctBar", showAccel: true },
 };
 
+const PIVOT = {
+  name: "PIVOT_BANDS#b2c",
+  paneId: "pane_1",
+  calcParams: [50, 3],
+  extendData: { indType: "PIVOT_BANDS", showBarsSince: true },
+};
+const BARS_SINCE = {
+  name: "PIVOT_BANDS#b2c__barsSince",
+  paneId: "pane_2",
+  calcParams: [50, 3],
+  extendData: { indType: "PIVOT_BARS_SINCE", showBarsSince: true },
+};
+
 describe("pickedIndicatorToken", () => {
   it("references the clicked slope line", () => {
     const chart = fakeChart([SLOPE, ACCEL]);
@@ -70,6 +83,31 @@ describe("pickedIndicatorToken", () => {
     const chart = fakeChart([SLOPE, ACCEL]);
     expect(pickedIndicatorToken(chart, { paneId: "pane_1", name: "SLOPE#a1b", lineIndex: 4 }))
       .toBeNull();
+  });
+
+  it("maps a bars-since pane click onto its PARENT, by line", () => {
+    // The companion has no DOM legend card, so a click is always a CURVE hit:
+    // lineIndex is the only signal for which side was clicked.
+    const chart = fakeChart([PIVOT, BARS_SINCE]);
+    expect(
+      pickedIndicatorToken(chart, { paneId: "pane_2", name: BARS_SINCE.name, lineIndex: 1 }),
+    ).toBe("PIVOT_BANDS#b2c.barsSinceLow");
+    expect(
+      pickedIndicatorToken(chart, { paneId: "pane_2", name: BARS_SINCE.name, lineIndex: 0 }),
+    ).toBe("PIVOT_BANDS#b2c.barsSinceHigh");
+  });
+
+  it("refuses an orphaned bars-since companion whose parent is gone", () => {
+    expect(
+      pickedIndicatorToken(fakeChart([BARS_SINCE]), { paneId: "pane_2", name: BARS_SINCE.name }),
+    ).toBeNull();
+  });
+
+  it("still picks the step-lines from the parent pane itself", () => {
+    const chart = fakeChart([PIVOT, BARS_SINCE]);
+    expect(
+      pickedIndicatorToken(chart, { paneId: "pane_1", name: PIVOT.name, figureKey: "pivotLow" }),
+    ).toBe("PIVOT_BANDS#b2c.pivotLow");
   });
 
   it("still emits a call token for a catalog indicator", () => {
