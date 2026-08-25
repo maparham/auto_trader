@@ -317,3 +317,41 @@ describe("PIVOT_ANALYSIS panes", () => {
     expect(chartIndicatorToExprToken("PIVOT_ANALYSIS", [34], {}, {})).toBeNull();
   });
 });
+
+describe("SR_LEVELS panes", () => {
+  const CP = [11, 0.5, 2, 8, 500];
+
+  it("emits the clicked legend figure as the output", () => {
+    expect(
+      chartIndicatorToExprToken("SR_LEVELS", CP, {}, {
+        instanceId: "SR_LEVELS",
+        figureKey: "resistance",
+      }),
+    ).toBe("SR_LEVELS.resistance");
+  });
+
+  it("falls back to support for a row click with no figure", () => {
+    expect(
+      chartIndicatorToExprToken("SR_LEVELS", CP, {}, { instanceId: "SR_LEVELS#a1b" }),
+    ).toBe("SR_LEVELS#a1b.support");
+    // An unrecognised key behaves like absence.
+    expect(
+      chartIndicatorToExprToken("SR_LEVELS", CP, {}, {
+        instanceId: "SR_LEVELS",
+        figureKey: "nope",
+      }),
+    ).toBe("SR_LEVELS.support");
+  });
+
+  it("keeps the ref stable across a retune — the params reshape the same series", () => {
+    expect(
+      chartIndicatorToExprToken("SR_LEVELS", [30, 1.5, 4, 3, 200], { mtf: { timeframe: "4H" } }, {
+        instanceId: "SR_LEVELS",
+      }),
+    ).toBe("SR_LEVELS.support");
+  });
+
+  it("refuses without an instance id — there is nothing to reference", () => {
+    expect(chartIndicatorToExprToken("SR_LEVELS", CP, {}, {})).toBeNull();
+  });
+});

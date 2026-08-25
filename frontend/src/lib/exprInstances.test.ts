@@ -245,3 +245,38 @@ describe("FVG instances", () => {
     });
   });
 });
+
+describe("SR_LEVELS instances", () => {
+  const live = [
+    { id: "SR_LEVELS", type: "SR_LEVELS", calcParams: [11, 0.5, 2, 8, 500], extendData: {} },
+    {
+      id: "SR_LEVELS2",
+      type: "SR_LEVELS",
+      calcParams: [30, 1.5, 4, 3, 200],
+      extendData: { mtf: { timeframe: "HOUR_4" } },
+    },
+  ];
+
+  it("lists S/R panes with their two fixed outputs and pinned timeframe", () => {
+    expect(exprInstancesFor(live).map((i) => [i.id, i.outputs, i.timeframe, i.detail])).toEqual([
+      ["SR_LEVELS", ["support", "resistance"], null, "pivot 11 · 0.5x ATR · touches 2+"],
+      ["SR_LEVELS2", ["support", "resistance"], "HOUR_4", "pivot 30 · 1.5x ATR · touches 4+"],
+    ]);
+  });
+
+  it("costs both outputs the pane's own floor (ATR(14) + a full pivot window)", () => {
+    const warm = exprWarmupByRef(live);
+    expect(warm("SR_LEVELS", "support")).toBe(14 + 2 * 11);
+    expect(warm("SR_LEVELS", "resistance")).toBe(14 + 2 * 11);
+    expect(warm("SR_LEVELS2", "support")).toBe(14 + 2 * 30);
+    expect(warm("SR_LEVELS", "nope")).toBe(0);
+  });
+
+  it("synthesizes a default pane for a ref with no stored snapshot", () => {
+    // Fixed output names, so nothing about the params is recoverable from the
+    // ref — an empty calcParams list makes the backend take every default.
+    expect(synthesizeExprInstances(["candle.close > SR_LEVELS.support"], new Set())).toEqual({
+      SR_LEVELS: { type: "SR_LEVELS", calcParams: [], extendData: {} },
+    });
+  });
+});

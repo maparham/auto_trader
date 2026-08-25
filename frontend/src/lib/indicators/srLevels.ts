@@ -28,14 +28,21 @@ import { fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
 import { atrSeries } from "../atr";
 import { alignHtfToChart } from "../mtf";
+// Config shape, defaults, parser, output names and warm-up live in the leaf
+// (no klinecharts) so the expression bridge can read them from a node context;
+// re-exported here so every existing `from "./indicators/srLevels"` import
+// keeps working.
+import { parseSrConfig, SR_ATR_LEN, type SrLevelsConfig } from "./srLevelsOutputs";
 
-export interface SrLevelsConfig {
-  pivotLen: number; // fractal lookback each side (N); confirm lag = N bars
-  atrMult: number; // cluster tolerance = ATR(14) × this
-  minTouches: number; // pivots needed before a level counts as major
-  maxLevels: number; // strongest levels kept live
-  maxBars: number; // a level goes stale maxBars after its last touch
-}
+export {
+  parseSrConfig,
+  SR_ATR_LEN,
+  SR_LEVELS_DEFAULTS,
+  SR_LEVELS_OUTPUTS,
+  srLevelsWarmup,
+  type SrLevelsConfig,
+  type SrLevelsOutput,
+} from "./srLevelsOutputs";
 
 export interface SrLevel {
   price: number; // mean of member pivot prices
@@ -49,8 +56,6 @@ export interface SrPoint {
   support?: number;
   resistance?: number;
 }
-
-export const SR_ATR_LEN = 14;
 
 interface Cluster {
   sum: number;
@@ -249,32 +254,6 @@ export function srZoneStyleOf(ext: SrLevelsExtend | undefined): SrZoneStyle {
  * it from indicator.result); every other row carries just the rule operands. */
 export interface SrLevelsPoint extends SrPoint {
   levels?: SrLevel[];
-}
-
-export const SR_LEVELS_DEFAULTS: SrLevelsConfig = {
-  pivotLen: 15,
-  atrMult: 0.5,
-  minTouches: 2,
-  maxLevels: 8,
-  maxBars: 500,
-};
-
-/** calcParams order: [pivotLen, atrMult, minTouches, maxLevels, maxBars].
- * Mirrored by backend sr_levels.parse_sr_config — keep in sync. */
-export function parseSrConfig(calcParams: unknown): SrLevelsConfig {
-  const p = Array.isArray(calcParams) ? calcParams : [];
-  const d = SR_LEVELS_DEFAULTS;
-  const numAt = (i: number, def: number): number => {
-    const v = Number(p[i]);
-    return Number.isFinite(v) && v > 0 ? v : def;
-  };
-  return {
-    pivotLen: Math.max(1, Math.floor(numAt(0, d.pivotLen))),
-    atrMult: numAt(1, d.atrMult),
-    minTouches: Math.max(1, Math.floor(numAt(2, d.minTouches))),
-    maxLevels: Math.max(1, Math.floor(numAt(3, d.maxLevels))),
-    maxBars: Math.max(1, Math.floor(numAt(4, d.maxBars))),
-  };
 }
 
 /** A level is BROKEN when the latest close sits on the opposite side of the

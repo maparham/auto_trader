@@ -33,6 +33,12 @@ import {
   parsePivotAnalysisRefConfig,
   pivotAnalysisWarmup,
 } from "./indicators/pivotAnalysisOutputs";
+import {
+  SR_LEVELS_OUTPUTS,
+  parseSrConfig,
+  srLevelsWarmup,
+} from "./indicators/srLevelsOutputs";
+import type { SrLevelsExtend } from "./indicators/srLevels"; // erased at build; no runtime edge
 import type { ExprInstance } from "./expr/catalog";
 // Display vocabularies, both from klinecharts-free modules so this stays a pure,
 // node-testable bridge: mtf.ts type-imports klinecharts only, indicatorMeta.ts
@@ -51,6 +57,7 @@ export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set([
   "TRENDLINES",
   "PIVOT_BANDS",
   "PIVOT_ANALYSIS",
+  "SR_LEVELS",
 ]);
 
 /** A live chart pane, flattened to just what the expression layer reads. */
@@ -160,11 +167,15 @@ export function synthesizeExprInstances(
     }
     // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
     // kept, as there), atrLength's 14 (single-length pane).
-    // FVG, TRENDLINES, PIVOT_BANDS and PIVOT_ANALYSIS outputs are fixed names,
-    // not lengths, so nothing about the pane's params is recoverable from a
-    // ref — an empty list takes every default.
+    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS and SR_LEVELS outputs are
+    // fixed names, not lengths, so nothing about the pane's params is
+    // recoverable from a ref — an empty list takes every default.
     const calcParams =
-      type === "FVG" || type === "TRENDLINES" || type === "PIVOT_BANDS" || type === "PIVOT_ANALYSIS"
+      type === "FVG" ||
+      type === "TRENDLINES" ||
+      type === "PIVOT_BANDS" ||
+      type === "PIVOT_ANALYSIS" ||
+      type === "SR_LEVELS"
         ? []
         : type === "ATR"
           ? [lengths[0] ?? 14]
@@ -278,6 +289,13 @@ export function exprWarmupByRef(
       return (PIVOT_ANALYSIS_OUTPUTS as readonly string[]).includes(output)
         ? pivotAnalysisWarmup(parsePivotAnalysisRefConfig(inst.calcParams))
         : 0;
+    // Both SR_LEVELS outputs share one floor (ATR(14) warm-up plus a full
+    // pivot window), which depends on the pane's pivot length; an output this
+    // pane does not expose costs 0, like the other branches.
+    if (inst.type === "SR_LEVELS")
+      return (SR_LEVELS_OUTPUTS as readonly string[]).includes(output)
+        ? srLevelsWarmup(parseSrConfig(inst.calcParams))
+        : 0;
     if (inst.type !== "SLOPE") return 0;
     return slopeWarmup(inst.calcParams, (inst.extendData ?? {}) as SlopeExtend, output);
   };
@@ -364,6 +382,21 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         outputs: [...PIVOT_ANALYSIS_OUTPUTS],
         timeframe: null, // chart-timeframe only (no MTF pin)
         detail: cfg.nHigh === cfg.nLow ? `strength ${cfg.nHigh}` : `strength ${cfg.nHigh}/${cfg.nLow}`,
+      });
+      continue;
+    }
+    if (inst.type === "SR_LEVELS") {
+      const ext = (inst.extendData ?? {}) as SrLevelsExtend;
+      const cfg = parseSrConfig(inst.calcParams);
+      out.push({
+        id: inst.id,
+        outputs: [...SR_LEVELS_OUTPUTS],
+        timeframe: ext.mtf?.timeframe ?? null,
+        // The output names say which side of the close; what they cannot say is
+        // how selective the pane is — the SLOPE/ATR detail convention. maxLevels
+        // is deliberately absent: it caps the DRAWN set, and naming it here
+        // would read as "the operand only sees the top N".
+        detail: `pivot ${cfg.pivotLen} · ${cfg.atrMult}x ATR · touches ${cfg.minTouches}+`,
       });
       continue;
     }

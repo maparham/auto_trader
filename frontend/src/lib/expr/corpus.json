@@ -330,5 +330,11 @@
     ] },
   { "expr": "PIVOT_ANALYSIS.bogus > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":20},
     "instances": {"PIVOT_ANALYSIS": {"type":"PIVOT_ANALYSIS","calcParams":[34],"extendData":{}}},
+    "literals": [] },
+  { "expr": "candle.close > SR_LEVELS.support", "isExit": false, "error": null,
+    "instances": {"SR_LEVELS": {"type":"SR_LEVELS","calcParams":[11,0.5,2,8,500],"extendData":{}}},
+    "literals": [] },
+  { "expr": "SR_LEVELS.bogus > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":15},
+    "instances": {"SR_LEVELS": {"type":"SR_LEVELS","calcParams":[11,0.5,2,8,500],"extendData":{}}},
     "literals": [] }
 ]

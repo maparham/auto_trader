@@ -9,7 +9,8 @@
 //      INDICATORS): EMA / SMA / RSI / VOLMA / VOL. The token restates the
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
-//      rule — SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS and PIVOT_ANALYSIS (the
+//      rule — SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS and
+//      SR_LEVELS (the
 //      EXPR_INSTANCE_TYPES set; keep a case here for every member), as
 //      "<instanceId>.<output>" (e.g. "SLOPE.50",
 //      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
@@ -37,6 +38,7 @@ import { FVG_OUTPUTS } from "./indicators/fvgOutputs";
 import { TRENDLINES_OUTPUTS } from "./indicators/trendlinesOutputs";
 import { PIVOT_BANDS_OUTPUTS } from "./indicators/pivotBandsOutputs";
 import { PIVOT_ANALYSIS_OUTPUTS } from "./indicators/pivotAnalysisOutputs";
+import { SR_LEVELS_OUTPUTS } from "./indicators/srLevelsOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -193,6 +195,21 @@ export function chartIndicatorToExprToken(
       const output = (PIVOT_ANALYSIS_OUTPUTS as readonly string[]).includes(key ?? "")
         ? (key as string)
         : PIVOT_ANALYSIS_OUTPUTS[0];
+      return `${id}.${output}`;
+    }
+    // SR_LEVELS reads exactly like FVG: two FIXED output names
+    // ("support"/"resistance", the same strings as its figure keys), so no
+    // retune can invalidate a ref — the params reshape the same two series.
+    // Its figure lines are draw-suppressed (the pane paints zones instead), so
+    // in practice a click arrives without a figureKey and takes outputs[0],
+    // support; the key is still honoured when the legend passes one.
+    case "SR_LEVELS": {
+      const id = opts?.instanceId;
+      if (!id) return null;
+      const key = opts?.figureKey;
+      const output = (SR_LEVELS_OUTPUTS as readonly string[]).includes(key ?? "")
+        ? (key as string)
+        : SR_LEVELS_OUTPUTS[0];
       return `${id}.${output}`;
     }
     default:

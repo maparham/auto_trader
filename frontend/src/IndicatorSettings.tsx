@@ -228,7 +228,8 @@ export default function IndicatorSettings({
   // Overlay indicators with a multi-line channel get per-line show/hide checkboxes
   // (+ opacity) in the Style tab, like TradingView's band toggles.
   const hasLineToggle = isAvwap || type === "LR" || type === "PREV_HL";
-  // Rule-referenceable types (SLOPE/ATR/FVG/TRENDLINES/PIVOT_BANDS/PIVOT_ANALYSIS)
+  // Rule-referenceable types (SLOPE/ATR/FVG/TRENDLINES/PIVOT_BANDS/
+  // PIVOT_ANALYSIS/SR_LEVELS)
   // get a "Reference name" field: the id a rule spells as `<id>.<output>`.
   // `controller` is only wired for the focused cell, so the field is inert
   // (accepted but requires a controller to actually commit) for anything else.
