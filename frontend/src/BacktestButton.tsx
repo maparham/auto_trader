@@ -58,6 +58,8 @@ import {
   backtestCancelRequest,
   progressStageSignal,
   backtestDurationSignal,
+  backtestSelectNoticeSignal,
+  tradeReviewSignal,
   sweepDurationSignal,
   sweepAxesSignal,
   sweepStateSignal,
@@ -880,6 +882,12 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     if (chart && controller && epic) clearBacktest(chart, controller.scope, epic);
     backtestResultSignal.set(null);
     setError(null);
+    // Companions of the result that outlive teardownArtifacts: the trade review
+    // card, the footer's "Took …" readout (run() resets it, clear() must too)
+    // and the trades-tab select notice would all render against a gone result.
+    tradeReviewSignal.set(null);
+    backtestDurationSignal.set(null);
+    backtestSelectNoticeSignal.set(null);
   }
 
   return (

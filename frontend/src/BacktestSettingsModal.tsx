@@ -27,7 +27,9 @@ import {
   holdoutEvalSignal,
   sweepStateSignal,
   requestBacktestCancel,
+  requestBacktestClear,
   requestSweepCancel,
+  backtestResultSignal,
   sweepTargetSignal,
   saveSweepTarget,
   sweepCombosOverrideSignal,
@@ -1143,6 +1145,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // already a no-op mid-run, but the button looked active.
   const [runInFlight, setRunInFlight] = useState(backtestRunningSignal.value);
   useEffect(() => backtestRunningSignal.subscribe(setRunInFlight), []);
+  // Whether a backtest result exists (owned by BacktestButton/persistence) —
+  // gates the footer's "Clear results" so it only shows with something to clear.
+  const [hasBtResult, setHasBtResult] = useState(backtestResultSignal.value != null);
+  useEffect(() => backtestResultSignal.subscribe((r) => setHasBtResult(r != null)), []);
   // Is the cell this panel is pointed at inside a chart-replay session? This
   // panel is app-level and survives entering one, so both of its chart-acting
   // controls (Pick Range, Run) have to know. Re-subscribed when the focused cell
@@ -2048,6 +2054,13 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       // AND stops the server engine (BacktestButton owns both).
       <button className="ghost" onClick={requestBacktestCancel}>
         Cancel backtest
+      </button>
+    ) : btMode === "backtest" && !runInFlight && hasBtResult ? (
+      // Same job as the results pane's ✕, reachable without a summary row: the
+      // teardown lives in BacktestButton (it owns the chart), reached through
+      // the same clear-request signal.
+      <button className="ghost" onClick={requestBacktestClear}>
+        Clear results
       </button>
     ) : null;
   // Last completed run's wall-clock duration (session-only, final number only —

@@ -67,7 +67,7 @@ import { SESSION_PRESETS, minToTime, sessionWindowInTz } from "./lib/backtestSch
 import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
 import { loadBacktestLastUsed } from "./lib/persist/defaults";
 import { putPreset, newPreset } from "./lib/backtestPresets";
-import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal, backtestRunningSignal, backtestCancelRequest } from "./lib/signals";
+import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal, backtestRunningSignal, backtestCancelRequest, backtestResultSignal, backtestClearRequest } from "./lib/signals";
 import type { SweepRow } from "./api";
 import { saveSweepAxes } from "./lib/sweepMemory";
 
@@ -1170,6 +1170,56 @@ describe("cancel backtest", () => {
     });
     expect(screen.queryByRole("button", { name: "Cancel backtest" })).toBeNull();
     act(() => sweepStateSignal.set(null));
+  });
+});
+
+describe("clear backtest results", () => {
+  beforeEach(() => {
+    // jsdom implements no ResizeObserver; with a result set, BacktestPanel's
+    // trades table mounts and measures its viewport (see BacktestPanel.test.tsx).
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  });
+  afterEach(() => {
+    backtestResultSignal.set(null);
+    backtestRunningSignal.set(false);
+  });
+
+  it("shows Clear results only when an idle backtest result exists, and clicking it requests a clear", () => {
+    renderModal();
+    // No result yet: nothing to clear.
+    expect(screen.queryByRole("button", { name: "Clear results" })).toBeNull();
+    // Same shape as BacktestPanel.test.tsx's BASE — the panel renders the full
+    // summary row and metric table off it, so it must be complete.
+    act(() =>
+      backtestResultSignal.set({
+        epic: "TEST",
+        resolution: "MINUTE",
+        candles: [],
+        markers: [],
+        trades: [],
+        equity: [],
+        summary: { net_pnl: 12500, n_trades: 4, win_rate: 0.5, max_drawdown: 100 },
+        metrics: {
+          return_pct: 416.67, profit_factor: 1.8, expectancy: 3125,
+          avg_win: 5000, avg_loss: 1500, avg_win_loss_ratio: 3.33,
+          largest_win: 7000, largest_loss: 2000, max_drawdown_pct: 12.5,
+          avg_duration_bars: 30, max_consec_wins: 2, max_consec_losses: 1, sharpe: 1.4,
+        },
+      } as never),
+    );
+    // While a run is in flight the slot belongs to Cancel, not Clear.
+    act(() => backtestRunningSignal.set(true));
+    expect(screen.queryByRole("button", { name: "Clear results" })).toBeNull();
+    act(() => backtestRunningSignal.set(false));
+    const before = backtestClearRequest.value;
+    fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+    // The teardown lives in BacktestButton (it owns the chart); the modal only
+    // asks for it through the same signal as the results pane's ✕.
+    expect(backtestClearRequest.value).toBe(before + 1);
   });
 });
 
