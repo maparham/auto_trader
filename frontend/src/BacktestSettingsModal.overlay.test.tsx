@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 //
 // Overlay / auto-hide layout mode for the backtest panel: pin toggle, hidden
-// state, chart-click hide, peek-tab reveal, and chart right-offset compensation.
+// state, chart-click hide, peek-tab reveal, and the promise that an unpinned
+// panel never moves the chart.
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
@@ -124,8 +125,7 @@ describe("backtest panel layout mode", () => {
   // Anchoring: the overlay is absolutely positioned, so WHERE it lives decides
   // what it covers. Inside main.chart it covers the chart and nothing else;
   // parented to .workspace (the old home) it also covered the alerts/trade
-  // sidebars and the live-trading panel, and the width compensation overshot
-  // by their widths.
+  // sidebars and the live-trading panel.
   describe("anchoring", () => {
     afterEach(removeChartArea);
 
@@ -298,21 +298,19 @@ describe("overlay carve-outs", () => {
   });
 });
 
-describe("chart offset compensation", () => {
-  // Models klinecharts 10's REAL scroll semantics, because the bugs this guards
-  // against only exist against them:
-  //   - the store's scroll position is _lastBarRightSideDiffBarCount, in BARS.
-  //     scroll(distance) does diffBarCount -= distance/barSpace, converting px
-  //     to bars at CALL time (index.esm.js StoreImp.prototype.scroll) — so a
-  //     px delta applied at one zoom and reversed at another does not cancel.
-  //     `gapBars` is therefore the source of truth here, not a pixel count.
-  //   - a NEGATIVE distance widens the right-hand gap.
-  //   - getOffsetRightDistance() is Math.max(0, diffBarCount * barSpace) — the
-  //     LIVE position, clamped to 0 once the user pans back into history. So a
-  //     capture-base/restore-base implementation reads a lie and teleports.
-  //   - getBarSpace() returns the klinecharts BarSpace record, not a number.
-  // `pan` and `zoom` stand in for the user dragging / wheeling the chart
-  // between apply and cleanup.
+// The unpinned panel floats OVER the chart and must leave it alone: opening,
+// resizing, hiding, revealing and closing it may not scroll, offset or
+// otherwise move the chart by a single bar. Only pinning may change the chart,
+// and it does so by shrinking the layout, never by scrolling.
+//
+// This suite replaces an earlier "offset compensation" one, which slid the
+// chart left by the panel's width so the newest candles cleared the overlay.
+// That shift is exactly what these tests now forbid.
+describe("the panel never moves the chart", () => {
+  // Models klinecharts 10's scroll surface: getBarSpace returns the BarSpace
+  // record (not a number), scrollByDistance takes a px delta (negative widens
+  // the right gap), getOffsetRightDistance clamps at 0. The stub tracks the
+  // gap in BARS, so any move at all — at any zoom — is visible here.
   function stubChart(barSpace = 10) {
     let bar = barSpace;
     let gapBars = 6 / barSpace; // 6px of whitespace right of the last bar
@@ -333,9 +331,9 @@ describe("chart offset compensation", () => {
     return chart;
   }
 
-  // The compensation is gated on the chart host having a real laid-out width
-  // (see the zero-width test below), and jsdom reports clientWidth 0 for every
-  // element — so the normal-path tests have to fake it.
+  // jsdom reports clientWidth 0 for every element. A laid-out chart host is
+  // the case where a shift WOULD have been computed, so the tests fake a real
+  // width — a zero-width host would pass vacuously.
   function withSizedChartCells(clientWidth = 1400): HTMLElement {
     const cells = withChartCells();
     Object.defineProperty(chartMain(), "clientWidth", { value: clientWidth, configurable: true });
@@ -345,18 +343,23 @@ describe("chart offset compensation", () => {
     const controller = new ChartController("cell-1", "scope-1");
     controller.chart = chart as unknown as import("klinecharts").Chart;
     // `prepare` runs BEFORE the first render, so a test watching
-    // programmaticMove sees the mount-time apply too, not just the reversal.
+    // programmaticMove sees any mount-time move too, not just later ones.
     prepare?.(controller);
     renderPanel(controller);
     return controller;
   }
+  // Every way the panel can touch a chart goes through one of these.
+  const assertUntouched = (chart: ReturnType<typeof stubChart>, gapPx = 6) => {
+    expect(chart.scrollByDistance).not.toHaveBeenCalled();
+    expect(chart.setOffsetRightDistance).not.toHaveBeenCalled();
+    expect(chart.gapPx()).toBeCloseTo(gapPx);
+  };
 
   beforeEach(() => {
     backtestPanelHiddenSignal.set(false);
-    // jsdom defaults to 1024px; clampWidth (BacktestSettingsModal.tsx) would
-    // shrink the 720 default panel width down to innerWidth-380=644 at that
-    // size. Widen past 720+380 so the default width survives the clamp and
-    // the 726 expectation below (base 6 + panel 720) actually holds.
+    // jsdom defaults to 1024px, where clampWidth would shrink the 720 default
+    // panel width to innerWidth-380. Widen past 720+380 so the panel really is
+    // at its full width — the widest shift the old code would have applied.
     Object.defineProperty(window, "innerWidth", { value: 1400, configurable: true, writable: true });
   });
   afterEach(() => {
@@ -364,152 +367,116 @@ describe("chart offset compensation", () => {
     Object.defineProperty(window, "innerWidth", { value: 1024, configurable: true, writable: true });
   });
 
-  it("widens the right gap by the overlay width, and gives exactly that back on hide", () => {
+  it("leaves the chart alone on reveal, hide, and re-reveal", () => {
     withSizedChartCells();
     const chart = stubChart();
     mount(chart);
-    // Negative distance widens the right gap: 6 + 720 (default panel width).
-    // Exact single-argument match — an animationDuration would make the
-    // compensation a visible slide and fail here.
-    expect(chart.scrollByDistance).toHaveBeenLastCalledWith(-720);
-    expect(chart.gapPx()).toBeCloseTo(726);
+    assertUntouched(chart);
     act(() => backtestPanelHiddenSignal.set(true));
-    expect(chart.scrollByDistance).toHaveBeenLastCalledWith(720);
-    expect(chart.gapPx()).toBeCloseTo(6);
-    // Relative moves only — an absolute set is the teleport bug.
-    expect(chart.setOffsetRightDistance).not.toHaveBeenCalled();
+    assertUntouched(chart);
+    act(() => backtestPanelHiddenSignal.set(false));
+    assertUntouched(chart);
   });
 
-  it("reverses in BARS, so a zoom between reveal and hide leaves no residual", () => {
-    // The store counts the gap in bars and converts px at call time, so
-    // applying -720px at barSpace 10 (=72 bars) and handing back +720px at
-    // barSpace 20 would return only 36 bars — a permanent 36-bar strip of
-    // whitespace the user can never scroll away.
+  it("leaves the chart alone while the width handle is dragged", () => {
     withSizedChartCells();
-    const chart = stubChart(10);
+    // The old width path deferred its shift to a frame, so a drag test that
+    // never runs the frame would pass vacuously. Capture frames and run them.
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => { frames.push(cb); return frames.length; });
+    const chart = stubChart();
     mount(chart);
-    expect(chart.gapBars()).toBeCloseTo(0.6 + 72);
-    act(() => chart.zoom(20)); // user wheels in: bars are now twice as wide
+    const handle = screen.getByRole("separator", { name: /resize backtest panel/i });
+    handle.setPointerCapture = () => {};
+    handle.releasePointerCapture = () => {};
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 680 });
+    act(() => {
+      for (const clientX of [670, 660, 650])
+        handle.dispatchEvent(new MouseEvent("pointermove", { clientX, bubbles: false }));
+    });
+    act(() => frames.splice(0).forEach((cb) => cb(0)));
+    assertUntouched(chart);
     act(() => backtestPanelHiddenSignal.set(true));
-    expect(chart.gapBars()).toBeCloseTo(0.6);
-    // Stated in the units that matter: 72 bars out, 72 bars back.
-    expect(chart.scrollByDistance).toHaveBeenLastCalledWith(72 * 20);
+    act(() => frames.splice(0).forEach((cb) => cb(0)));
+    assertUntouched(chart);
+    raf.mockRestore();
   });
 
-  it("preserves a pan made while the overlay was up (no teleport to the newest bar)", () => {
+  it("leaves the chart alone when the side-by-side results column is docked", () => {
+    // The widest the panel gets (panel + results column): if any shift path
+    // survived, this is where it would be largest.
+    saveBacktestResultsSideBySide(true);
     withSizedChartCells();
     const chart = stubChart();
     mount(chart);
-    expect(chart.gapPx()).toBeCloseTo(726);
-    // The user drags the chart far back into history: the right gap goes
-    // negative and getOffsetRightDistance() now reports a clamped 0, which is
-    // precisely what a capture-base implementation would "restore" to.
-    act(() => chart.pan(9000));
-    expect(chart.gapPx()).toBeCloseTo(-8274);
-    expect(chart.getOffsetRightDistance()).toBe(0);
-    act(() => backtestPanelHiddenSignal.set(true));
-    // Only the overlay's own width comes back — the pan survives untouched.
-    expect(chart.scrollByDistance).toHaveBeenLastCalledWith(720);
-    expect(chart.gapPx()).toBeCloseTo(-8994);
-    expect(chart.setOffsetRightDistance).not.toHaveBeenCalled();
+    assertUntouched(chart);
   });
 
-  it("never shifts by more than the chart is wide", () => {
-    // The alerts (300px) and trade (268px) sidebars make the chart much
-    // narrower than the window, and the user-facing width clamps only know
-    // about the window — so the overlay can legitimately be wider than the
-    // chart it covers. Shifting by the full overlay width would then blow past
-    // klinecharts' own right-scroll limit, which clamps the apply but not the
-    // reversal, drifting the view left by the remainder.
-    withSizedChartCells(600);
+  it("leaves the chart alone across a pin / unpin round trip", () => {
+    withSizedChartCells();
     const chart = stubChart();
     mount(chart);
-    expect(chart.scrollByDistance).toHaveBeenLastCalledWith(-(600 - 120));
-    act(() => backtestPanelHiddenSignal.set(true));
-    expect(chart.gapPx()).toBeCloseTo(6);
+    fireEvent.click(screen.getByRole("button", { name: /pin panel/i }));
+    assertUntouched(chart);
+    fireEvent.click(screen.getByRole("button", { name: /unpin panel/i }));
+    assertUntouched(chart);
   });
 
-  it("does not scroll a chart host that has not been laid out", () => {
-    // The toolbar's Backtest button works while the trading dock is maximized,
-    // which hides .workspace outright (display:none → clientWidth 0). There is
-    // no meaningful width to compensate for, and scrolling a zero-size chart
-    // is how you get a nonsense offset that survives the un-maximize.
-    withChartCells(); // no clientWidth override: jsdom reports 0
+  it("leaves the chart alone on unmount (no give-back move either)", () => {
+    // The shift used to be paid back in the effect cleanup. Nothing is owed
+    // now, so teardown must be silent too.
+    withSizedChartCells();
     const chart = stubChart();
-    mount(chart);
-    expect(chart.scrollByDistance).not.toHaveBeenCalled();
-    act(() => backtestPanelHiddenSignal.set(true));
-    expect(chart.scrollByDistance).not.toHaveBeenCalled();
+    const { unmount } = (() => {
+      const controller = new ChartController("cell-1", "scope-1");
+      controller.chart = chart as unknown as import("klinecharts").Chart;
+      return renderPanel(controller);
+    })();
+    assertUntouched(chart);
+    act(() => unmount());
+    assertUntouched(chart);
   });
 
-  it("routes the scroll through the cell's programmaticMove, flagged as layout", () => {
-    // Otherwise ChartCore's scroll listener reads the compensation as a user
-    // gesture: it drops the quick-range pill and, under syncTime, broadcasts
-    // the shift to every sibling cell in the grid.
+  it("never routes a layout move through the cell's programmaticMove", () => {
+    // The compensation's transport. No caller left means no chart motion the
+    // sibling-cell time link has to be shielded from.
     withSizedChartCells();
     const chart = stubChart();
     const moves: Array<{ layout?: boolean } | undefined> = [];
-    // Installed before the first render, so BOTH ends are covered — the apply
-    // on reveal as well as the reversal on hide.
     mount(chart, (c) => {
       c.programmaticMove = <T,>(fn: () => T, opts?: { layout?: boolean }) => {
         moves.push(opts);
         return fn();
       };
     });
-    expect(moves).toEqual([{ layout: true }]);
     act(() => backtestPanelHiddenSignal.set(true));
-    expect(moves).toEqual([{ layout: true }, { layout: true }]);
-    expect(chart.gapPx()).toBeCloseTo(6);
+    act(() => backtestPanelHiddenSignal.set(false));
+    expect(moves).toEqual([]);
+    assertUntouched(chart);
   });
 
-  it("coalesces a width drag into one net shift per frame", () => {
-    // The drag handle fires pointermove per frame; re-running the compensation
-    // per move meant a full give-back + re-take (two klinecharts layout cycles
-    // and two onScroll dispatches) per pixel dragged. The frame's moves must
-    // collapse into a single scroll for the NET width change.
+  it("preserves a pan made while the overlay was up", () => {
+    // End-to-end statement of the promise: whatever window the user scrolled
+    // to stays put, panel or no panel.
     withSizedChartCells();
-    const frames: FrameRequestCallback[] = [];
-    const raf = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((cb) => { frames.push(cb); return frames.length; });
-    try {
-      const chart = stubChart();
-      mount(chart);
-      // Mount is synchronous (not deferred to a frame) so the panel never
-      // appears over uncompensated candles.
-      expect(chart.scrollByDistance).toHaveBeenCalledTimes(1);
-      const handle = screen.getByRole("separator", { name: /resize backtest panel/i });
-      handle.setPointerCapture = () => {};
-      handle.releasePointerCapture = () => {};
-      fireEvent.pointerDown(handle, { pointerId: 1, clientX: 680 });
-      // Three moves in one frame: 720 -> 730 -> 740 -> 750.
-      act(() => {
-        for (const clientX of [670, 660, 650])
-          handle.dispatchEvent(new MouseEvent("pointermove", { clientX, bubbles: false }));
-      });
-      // Nothing yet — the width changes are waiting on the frame.
-      expect(chart.scrollByDistance).toHaveBeenCalledTimes(1);
-      act(() => frames.splice(0).forEach((cb) => cb(0)));
-      // Exactly one more call, for the net +30px, not three round trips.
-      expect(chart.scrollByDistance).toHaveBeenCalledTimes(2);
-      expect(chart.scrollByDistance).toHaveBeenLastCalledWith(-30);
-      expect(chart.gapPx()).toBeCloseTo(756);
-      // And the whole 750 still comes back on hide.
-      act(() => backtestPanelHiddenSignal.set(true));
-      expect(chart.gapPx()).toBeCloseTo(6);
-    } finally {
-      raf.mockRestore();
-    }
+    const chart = stubChart();
+    mount(chart);
+    act(() => chart.pan(9000));
+    const after = chart.gapBars();
+    act(() => backtestPanelHiddenSignal.set(true));
+    act(() => backtestPanelHiddenSignal.set(false));
+    expect(chart.gapBars()).toBeCloseTo(after);
+    expect(chart.scrollByDistance).not.toHaveBeenCalled();
   });
 
-  it("pinned mode never touches the offset", () => {
+  it("pinned mode never touches the offset either", () => {
     saveBacktestPanelPinned(true);
     withSizedChartCells();
     const chart = stubChart();
     mount(chart);
-    expect(chart.scrollByDistance).not.toHaveBeenCalled();
-    expect(chart.setOffsetRightDistance).not.toHaveBeenCalled();
+    assertUntouched(chart);
   });
 });
 

@@ -251,10 +251,13 @@ export class ChartController {
   // Run a view-moving call (chart.scrollByDistance / setOffsetRightDistance)
   // flagged as OURS, so the cell's scroll listener doesn't mistake it for a user
   // gesture (null until mount; assigned by ChartCore). Without it, chrome that
-  // scrolls the chart from outside — the unpinned backtest panel compensating
-  // for the width it covers — silently clears the quick-range pill and, under
-  // syncTime, broadcasts the shift to every sibling cell.
-  // `layout: true` marks a move that is pure chrome compensation rather than
+  // scrolls the chart from outside silently clears the quick-range pill and,
+  // under syncTime, broadcasts the shift to every sibling cell. The original
+  // caller (the unpinned backtest panel, shifting the chart clear of the width
+  // it covered) is gone — a floating panel may not move the chart — so this is
+  // infrastructure without an outside caller today; fitVisibleRange still uses
+  // it internally.
+  // `layout: true` marks a move that is pure chrome layout rather than
   // navigation: it additionally suppresses the sibling broadcast (see the flags
   // in ChartCore). Callers must tolerate this being null (chart not mounted yet)
   // by making the call directly — the move still needs to happen.

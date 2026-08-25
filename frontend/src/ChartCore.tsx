@@ -449,23 +449,24 @@ export default function ChartCore({
   // True while WE are moving the view (rather than the user), so the scroll/zoom
   // listener doesn't treat it as a manual gesture and clear the quick-range pill.
   const programmaticMoveRef = useRef(false);
-  // True while a LAYOUT-DRIVEN move is in flight (the backtest overlay's chart
-  // offset compensation). A strictly stronger suppression than
-  // programmaticMoveRef: that one only silences the pill, this one ALSO silences
-  // the date-range broadcast to sibling cells. The distinction is deliberate. A
-  // quick-range pick (fitVisibleRange) really does move the window to one the
-  // user asked for, so under syncTime the siblings SHOULD follow — that is the
-  // link working, and this change must not alter it. Chrome sliding in over the
-  // chart's right edge is not a view anyone chose: broadcasting it would shove
-  // every synced sibling sideways by THIS cell's panel width, then shove them
-  // back on hide, for a panel they can't even see.
+  // True while a LAYOUT-DRIVEN move is in flight. NO CALLER TODAY: this was
+  // built for the unpinned backtest panel, which used to scroll the chart left
+  // by the width it covered; a floating panel must not move the chart, so that
+  // shift is gone. Kept because the distinction it encodes is the general one
+  // for any future chrome that moves a cell's view. A strictly stronger
+  // suppression than programmaticMoveRef: that one only silences the pill, this
+  // one ALSO silences the date-range broadcast to sibling cells. A quick-range
+  // pick (fitVisibleRange) really does move the window to one the user asked
+  // for, so under syncTime the siblings SHOULD follow — that is the link
+  // working. Chrome shifting a cell for its own layout reasons is not a view
+  // anyone chose: broadcasting it would shove every synced sibling sideways for
+  // something they can't even see.
   const layoutMoveRef = useRef(false);
   // Run `fn` with the scroll/zoom listener told this move is ours, releasing on
   // the next macrotask — klinecharts emits its scroll event synchronously, but
   // the listener's follow-ups settle by the end of the tick. `layout` opts into
   // the stronger suppression described above. Published on the controller so
-  // outside chrome that scrolls this cell (the backtest overlay panel) can use
-  // it; also the single implementation behind fitVisibleRange, so the pill
+  // outside chrome that scrolls this cell can use it (no such caller today); also the single implementation behind fitVisibleRange, so the pill
   // suppression can't drift between the two.
   const programmaticMove = <T,>(fn: () => T, opts?: { layout?: boolean }): T => {
     programmaticMoveRef.current = true;
@@ -3325,8 +3326,8 @@ export default function ChartCore({
       // panel's selection subscription — which only holds the Chart — can reach it.
       controller.coverBacktestTradeTo = (fromTs) => coverBacktestTradeTo(fromTs);
       // Let outside chrome move this cell's view without the scroll listener
-      // reading it as a user gesture (see programmaticMove). Used by the
-      // unpinned backtest panel's offset compensation.
+      // reading it as a user gesture (see programmaticMove). No caller today —
+      // the unpinned backtest panel used to shift the chart and no longer may.
       controller.programmaticMove = programmaticMove;
       registerBacktestPager(chart, (fromTs) => coverBacktestTradeTo(fromTs));
       // Hydrate this cell's saved indicators synchronously on chart-ready (they
@@ -4429,10 +4430,10 @@ export default function ChartCore({
       // to the period-start timestamp and only becomes visible once you scroll/zoom
       // away from the left edge, which is exactly when it's useful.
       if (!programmaticMoveRef.current) setActiveRange(null);
-      // A layout move (the backtest overlay's offset compensation) is chrome
-      // sliding over this cell's right edge, not a window anyone navigated to,
-      // so it must not drive the date-range link — siblings would jump sideways
-      // by this cell's panel width and back again. Programmatic moves that ARE
+      // A layout move is chrome shifting this cell for its own layout reasons,
+      // not a window anyone navigated to, so it must not drive the date-range
+      // link — siblings would jump sideways and back for something they cannot
+      // see. (No caller today; see layoutMoveRef.) Programmatic moves that ARE
       // navigation (a quick-range pick) deliberately fall through and publish.
       if (layoutMoveRef.current) return;
       // A replaying cell sits at a different — and hidden — moment in time;

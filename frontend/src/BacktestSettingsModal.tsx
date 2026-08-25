@@ -5,7 +5,6 @@
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { Chart } from "klinecharts";
 import CloseButton from "./CloseButton";
 import InfoTip from "./components/InfoTip";
 import NumberField from "./components/NumberField";
@@ -1246,10 +1245,9 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // rendered here. Its containing block decides what it covers: parented to
   // .workspace (this component's render site) the absolute wrapper spanned the
   // WHOLE workspace, so it sat on top of the alerts sidebar / trade sidebar /
-  // live-trading panel whenever those were open, and the right-offset
-  // compensation above overshot by their widths. Anchored to the chart area,
-  // `right: 0` means the chart's right edge and overlayWidth is correct by
-  // construction. Pinned mode is NOT portaled: docking is a flex-order
+  // live-trading panel whenever those were open. Anchored to the chart area,
+  // `right: 0` means the chart's right edge — the panel covers the chart and
+  // nothing else. Pinned mode is NOT portaled: docking is a flex-order
   // question that belongs to App (chart, alerts, trade, backtest, live), and
   // moving the render site would reshuffle that order.
   // Looked up from the DOM, not passed as a ref, because App renders this
@@ -1358,122 +1356,13 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   const [resultsColWidth, setResultsColWidth] = useState<number>(() =>
     clampColWidth(loadBacktestResultsColWidth()),
   );
-  // While the overlay is visible it covers the chart's right edge — exactly
-  // where the newest candles sit. Compensate by widening the whitespace right
-  // of the last bar by the overlay's width, so the latest bars slide left into
-  // view, and give exactly that back on hide/close/pin.
-  //
-  // RELATIVE moves, not capture-base/restore-base. klinecharts'
-  // getOffsetRightDistance() returns the LIVE scroll position clamped at zero
-  // (Math.max(0, lastBarRightSideDiffBarCount * barSpace)) and
-  // setOffsetRightDistance() force-scrolls the last bar to that distance — so
-  // capturing a base on reveal and setting it back on hide teleports the chart
-  // to the newest candle whenever the user panned in between (and reads 0 for
-  // any pan into history). scrollByDistance is a pure delta, so applying and
-  // reversing it cancels out wherever the user has since scrolled to. No
-  // animationDuration — the shift must be instant, not a visible slide.
-  //
-  // The bookkeeping is in BARS, not pixels, because the store is: the scroll
-  // position is _lastBarRightSideDiffBarCount and StoreImp.scroll does
-  // `diffBarCount -= distance / barSpace`, converting at CALL time. Pay -720px
-  // at barSpace 10 (72 bars) and hand +720px back after the user zoomed to
-  // barSpace 20 and you have only returned 36 bars — a strip of whitespace
-  // that never goes away. So `appliedBarsRef` holds the gap this panel has
-  // added, in bars, and every path drives that number to a new target via the
-  // delta; cleanup drives it to zero. One number, so the width path and the
-  // teardown path can never disagree about what is owed.
-  //
-  // Compensation targets the FOCUSED cell only. In a multi-cell grid the
-  // overlay covers whatever cells sit under it, and those are knowingly left
-  // uncompensated — there is one controller here, and shifting siblings the
-  // user is not interacting with would be worse than the coverage.
-  const appliedBarsRef = useRef(0);
-  // Leave this much chart visibly uncovered by the shift. The user-facing width
-  // clamps measure the WINDOW, but the chart is narrower than that whenever the
-  // alerts (300px) / trade (268px) sidebars are open, and a side-by-side layout
-  // (720 + 560) can exceed the chart outright. Asking for a gap wider than the
-  // chart runs into klinecharts' own right-scroll limit, which clamps the apply
-  // but not the reversal — the view then drifts left by the remainder. Clamping
-  // here rather than in clampWidth/clampColWidth on purpose: those own what the
-  // user dragged and what gets persisted, this owns only how far we scroll.
-  const MIN_UNCOVERED_CHART = 120;
-  const overlayWidth = panelWidth + (sideBySide ? resultsColWidth : 0);
-  // How much the chart should currently be shifted by, or null when there is
-  // nothing sane to compute it from. clientWidth 0 means the chart is not laid
-  // out — the toolbar's Backtest button works while the trading dock is
-  // maximized, which sets .workspace display:none, and scrolling a zero-size
-  // chart just banks a nonsense offset that outlives the un-maximize.
-  const compensationPx = () => {
-    const avail = chartHost?.clientWidth ?? 0;
-    if (avail <= 0) return null;
-    return Math.min(overlayWidth, Math.max(0, avail - MIN_UNCOVERED_CHART));
-  };
-  // Move the applied gap to `targetPx` worth of bars, scrolling by the
-  // difference only. Idempotent: re-running with an unchanged target is a
-  // no-op, which is what lets the two effects below overlap harmlessly.
-  const applyCompensation = (chart: Chart, targetPx: number) => {
-    const barSpace = chart.getBarSpace().bar;
-    if (!barSpace) return; // pre-layout chart; nothing to convert against
-    const targetBars = targetPx / barSpace;
-    const deltaBars = targetBars - appliedBarsRef.current;
-    if (!deltaBars) return;
-    // Negative distance widens the right gap.
-    const scroll = () => chart.scrollByDistance(-deltaBars * barSpace);
-    // Flagged as a LAYOUT move: klinecharts fires its `onScroll` action (which
-    // setOffsetRightDistance would not), and ChartCore's listener otherwise
-    // reads it as a user gesture — dropping the quick-range pill and, under
-    // syncTime, broadcasting the shift to every sibling cell. Null before the
-    // cell has mounted its chart; the move still has to happen, so fall back.
-    if (controller?.programmaticMove) controller.programmaticMove(scroll, { layout: true });
-    else scroll();
-    appliedBarsRef.current = targetBars;
-  };
-  // Reveal / hide / pin / cell-focus change: apply synchronously, so the shift
-  // lands in the same frame the panel appears rather than a frame later.
-  useEffect(() => {
-    if (pinned || hidden) return;
-    const chart = controller?.chart;
-    if (!chart) return;
-    const target = compensationPx();
-    if (target == null) return;
-    applyCompensation(chart, target);
-    return () => {
-      // Only reverse against the chart we actually scrolled: a tab switch
-      // disposes the cell's chart and assigns a new one to the controller, and
-      // paying the gap back to a destroyed instance is at best a no-op. Either
-      // way the debt is settled, so the ref resets — a stale count would be
-      // charged to the next chart that mounts.
-      if (controller.chart === chart) applyCompensation(chart, 0);
-      appliedBarsRef.current = 0;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pinned, hidden, controller, chartHost]);
-  // Width changes (the left-edge drag handle, the side-by-side toggle) go
-  // through a rAF instead. The drag fires pointermove per frame, and running
-  // the effect above's cleanup+apply per move meant two full klinecharts layout
-  // cycles and two onScroll dispatches per pixel. Coalescing to one NET delta
-  // per frame is invisible to the result — appliedBarsRef makes every pass a
-  // difference against what is already applied, not a fresh apply.
-  const compensationRafRef = useRef(0);
-  useEffect(() => {
-    if (pinned || hidden) return;
-    const chart = controller?.chart;
-    if (!chart) return;
-    compensationRafRef.current = requestAnimationFrame(() => {
-      compensationRafRef.current = 0;
-      // Re-check: a frame is long enough for the cell to have swapped charts.
-      if (controller.chart !== chart) return;
-      const target = compensationPx();
-      if (target == null) return;
-      applyCompensation(chart, target);
-    });
-    return () => {
-      if (!compensationRafRef.current) return;
-      cancelAnimationFrame(compensationRafRef.current);
-      compensationRafRef.current = 0;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlayWidth, pinned, hidden, controller, chartHost]);
+  // The unpinned overlay is chrome floating over the chart: it must never move
+  // the chart. An earlier version compensated for the covered right edge by
+  // scrolling the focused cell left by the overlay's width (and paying it back
+  // on hide/close/pin), which meant opening the panel shifted the candles under
+  // it. Deliberately gone — a panel only affects the chart when it is PINNED,
+  // where the chart genuinely shrinks beside it. Nothing here may touch the
+  // chart's scroll/offset; use the peek tab or pin instead of a shift.
   const onResultsColResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     const startX = e.clientX;
