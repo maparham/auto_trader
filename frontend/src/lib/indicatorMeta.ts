@@ -414,6 +414,50 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Support / Resistance Levels",
     desc: "Clusters confirmed fractal swing highs and lows into major support/resistance zones. Each zone's price is the average of its touches; opacity and the ×N tag show touch count. Zones below the current close tint green (support), above tint red (resistance). Nearest support and resistance are available as rule operands. Pivots confirm Pivot Length bars late (no repaint).",
   },
+  SPIKE: {
+    inputs: [
+      {
+        ...num(0, "Spike Window"),
+        suffix: "bars",
+        tip: "Bars the spike leg may take. A spike arms when the high rises Min Rise above the lowest low of this trailing window.",
+      },
+      {
+        ...num(1, "Min Rise", { min: 0.1, step: 0.1 }),
+        suffix: "%",
+        tip: "Rise (%) from the window low that arms a spike. Higher values keep only the steeper, near-vertical moves.",
+      },
+      {
+        ...num(2, "Flat Bars"),
+        tip: "Consecutive bars holding the flat band that confirm the consolidation.",
+      },
+      {
+        ...num(3, "Flat Band", { min: 1, step: 1 }),
+        suffix: "%",
+        tip: "Consolidation band depth below the spike high, as a percent of the spike's height. Bars must hold inside it until the consolidation confirms; a dip below it before then voids the pattern.",
+      },
+      {
+        ...num(4, "Max Pattern Age"),
+        suffix: "bars",
+        tip: "Pattern lifetime after the spike (or its last extension). An armed pattern older than this expires, freeing the next spike to start fresh instead of extending stale anchors.",
+      },
+      {
+        ...num(5, "Max Retrace", { min: 1, step: 1 }),
+        suffix: "%",
+        tip: "Deepest allowed dip after the consolidation confirms, as a percent of the spike's height. A retrace below it invalidates the pattern: the bull continuation is no longer high-probability. Entry retrace bounds must sit inside this percentage.",
+      },
+      {
+        key: "showStageLabels",
+        label: "Stage labels",
+        type: "boolean",
+        source: "extend",
+        field: "showStageLabels",
+        default: true,
+        tip: "Text on each pattern box naming its stage: spike, consolidating, latched, and why it ended.",
+      },
+    ],
+    title: "Spike + Consolidation",
+    desc: "Tracks a vertical spike followed by a flat, low-volatility consolidation, then measures the retrace: the setup behind a buy-the-dip entry. Draws a phase-shaded box while a pattern is live. Rule operands: spikeHigh, spikeLow, barsSinceSpike, consolOk (1 once the consolidation confirms), retracePct (current dip as % of spike height) and maxRetracePct (deepest dip since confirmation). The Flat Band is the pattern's hard floor: any dip below it, before or after confirmation, invalidates — as does a break below the spike low.",
+  },
   FVG: {
     inputs: [
       {

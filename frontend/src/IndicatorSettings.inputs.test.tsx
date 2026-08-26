@@ -107,23 +107,22 @@ describe("Inputs tab renders a control for every declared input", () => {
     const box = screen.getByLabelText("Min Back Clearance");
     const row = box.closest(".ind-row");
     expect(row?.className).toContain("ind-row-cols");
-    // The tip rides with the CONTROL on these rows, not with the label: half a
-    // row does not hold the label and a tip, and the icon was the thing that
-    // got clipped.
-    const control = box.closest(".ind-cols-control");
-    expect(control).toBeTruthy();
-    expect(control!.querySelector(".ind-info")).toBeTruthy();
-    expect(row!.querySelector(".ind-row-head")).toBeNull();
+    // The tip rides beside the LABEL like on every other row, so the icons sit
+    // in one left-hand column instead of scattering out past the controls (the
+    // label ellipsises in CSS when the two don't fit).
+    const head = row!.querySelector(".ind-row-head");
+    expect(head).toBeTruthy();
+    expect(head!.querySelector(".ind-info")).toBeTruthy();
+    expect(row!.querySelector(".ind-cols-control")).toBeNull();
     // A select is deliberately not in that layout: its options are sentences.
     expect(
       screen.getByLabelText("Extend").closest(".ind-row")?.className,
     ).not.toContain("ind-row-cols");
   });
 
-  // A `wide` number keeps its ⓘ beside the label (the label is a phrase the
-  // control completes), unlike the half-width numbers above whose tip sits at
-  // the end of the row. Its control stays in the shared second column, so it
-  // lines up with the checkbox above it rather than running to the modal edge.
+  // A `wide` number lays out the same way (tip beside the label, control in
+  // the shared second column), so it lines up with the checkbox above it
+  // rather than running to the modal edge.
   it("gives the merge tolerance its tip beside the label, control in column two", () => {
     open();
     const box = screen.getByLabelText("Merge Lines within");

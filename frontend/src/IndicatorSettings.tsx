@@ -605,10 +605,10 @@ export default function IndicatorSettings({
     }
     const live = getIndicator(chart, paneId, name) as Indicator | null;
     chart.overrideIndicator({ paneId, name, extendData: { ...((live?.extendData as object) ?? {}), ...next } });
-  }
     // Pivot Bands' "Bars since pivot pane" checkbox is a plain extend write, but
     // the pane itself is derived state: spawn or tear it down right here.
     if (isPivotBands && field === "showBarsSince") syncPivotBarsSinceCompanion(chart, name);
+  }
 
   // Conditional visibility: an input whose showWhen guard is not met by the
   // current (extend-stored) value of the controlling field is not rendered.
@@ -1042,12 +1042,12 @@ export default function IndicatorSettings({
       tf === "chart" ? null : tf,
       brokerId,
     );
-  }
     // applyPivotBandsTimeframe re-syncs the companion too, but only after its
     // awaited fetches: this synchronous call makes the bars-since pane appear /
     // disappear instantly on toggle. Under an active higher timeframe the values
     // it shows settle once that fetch resolves.
     syncPivotBarsSinceCompanion(chart, name);
+  }
 
   // Push an S/R Levels config (chart-TF or MTF) through the coordinator, which
   // refetches + recomputes the levels on the higher timeframe's native bars when
@@ -1300,10 +1300,10 @@ export default function IndicatorSettings({
     // A Slope line's color/width also styles the matching accel line — push the
     // parent's freshly-overridden styles onto the companion in place.
     if (isSlope) syncAccelCompanion(chart, name);
-  }
     // Same for a Pivot Bands line's color/width: line N is the same color in the
     // bars-since pane.
     if (isPivotBands) syncPivotBarsSinceCompanion(chart, name);
+  }
 
   // Toggle a line's VISIBILITY (Style tab checkbox). Visibility lives in
   // extendData.lineHidden (calc-omit), NOT styles — so it must go through the
@@ -1340,9 +1340,9 @@ export default function IndicatorSettings({
     const effVisible = v && isVisibleOnResolution(vis, chartResolution);
     chart.overrideIndicator({ paneId, name, extendData: ext, visible: effVisible });
     if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
-  }
     if (isPivotBands)
       mirrorPivotBarsSinceCompanion(chart, name, { extendData: ext, visible: effVisible });
+  }
 
   // Per-timeframe visibility grid (VisibilityTab onChange): persists the model AND
   // re-writes userVisible in the SAME operation (never separately), so a future
@@ -1354,9 +1354,9 @@ export default function IndicatorSettings({
     const effVisible = visible && isVisibleOnResolution(next, chartResolution);
     chart.overrideIndicator({ paneId, name, extendData: ext, visible: effVisible });
     if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
-  }
     if (isPivotBands)
       mirrorPivotBarsSinceCompanion(chart, name, { extendData: ext, visible: effVisible });
+  }
 
   // Show/hide this indicator's value in the legend. Stored on extendData
   // (hideLegendValue), read by the shared legendTooltipSource. Merges with the
@@ -1382,10 +1382,10 @@ export default function IndicatorSettings({
     // accel params), so re-sync the companion: toggle-accel-then-Cancel must not
     // leave an orphaned pane (or a missing one).
     if (isSlope) syncAccelCompanion(chart, name);
-    // The Type/Envelope live preview retitles shortName/figures, which the
     // Same for the bars-since pane: toggling it on and then cancelling must not
     // leave an orphan (nor lose one that was already on).
     if (isPivotBands) syncPivotBarsSinceCompanion(chart, name);
+    // The Type/Envelope live preview retitles shortName/figures, which the
     // snapshot restore above does not carry: revert them from the original
     // extendData or a cancelled VWMA preview keeps its label while the curve
     // computes as an EMA again.
@@ -1582,7 +1582,7 @@ export default function IndicatorSettings({
         <div className="ind-body">
           {tab === "inputs" && isRenameable && (
             <>
-              <div className="ind-row">
+              <div className="ind-row ind-row-cols">
                 <span className="ind-row-head">
                   <label htmlFor="ind-ref-name">Reference name</label>
                   <InfoTip
@@ -1792,36 +1792,14 @@ export default function IndicatorSettings({
                     // checkbox at the half-way mark reads as unattached to
                     // either side.
                     //
-                    // The ⓘ MOVES TO THE END of the row here, rather than
-                    // riding next to the label as it does everywhere else.
-                    // Half a row is not enough for "Min Back Clearance" plus a
-                    // tip, and something has to give: an ellipsised label reads
-                    // as a bug, where a tip at the end of the row reads as a
-                    // layout.
-                    //
-                    // A `wide` number is the exception: its label is a phrase
-                    // the control completes ("Merge Lines within 1 ATR"), which
-                    // reads as one line only with the ⓘ between the two, so it
-                    // takes the label column whole and keeps its tip beside the
-                    // label. Same two columns either way, so the controls stay
-                    // in one line down the tab.
+                    // The ⓘ rides beside the label here like on every other
+                    // row (a tip out past the control left the icons scattered
+                    // mid-row while "Reference name" kept its beside the
+                    // label). A long label ellipsises rather than clipping the
+                    // icon; the tooltip carries the full wording.
                     <div className="ind-row ind-row-cols">
-                      {chunk[0].wide ? (
-                        <>
-                          {labelFor(chunk[0])}
-                          {controlFor(chunk[0])}
-                        </>
-                      ) : (
-                        <>
-                          <label>{chunk[0].label}</label>
-                          <span className="ind-cols-control">
-                            {controlFor(chunk[0])}
-                            {chunk[0].tip && (
-                              <InfoTip title={chunk[0].label} text={chunk[0].tip} />
-                            )}
-                          </span>
-                        </>
-                      )}
+                      {labelFor(chunk[0])}
+                      {controlFor(chunk[0])}
                     </div>
                   ) : (
                     // Checkboxes and selects share the numbers' two columns, so

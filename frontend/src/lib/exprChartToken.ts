@@ -39,6 +39,7 @@ import { TRENDLINES_OUTPUTS } from "./indicators/trendlinesOutputs";
 import { PIVOT_BANDS_OUTPUTS } from "./indicators/pivotBandsOutputs";
 import { PIVOT_ANALYSIS_OUTPUTS } from "./indicators/pivotAnalysisOutputs";
 import { SR_LEVELS_OUTPUTS } from "./indicators/srLevelsOutputs";
+import { SPIKE_OUTPUTS } from "./indicators/spikeOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -210,6 +211,19 @@ export function chartIndicatorToExprToken(
       const output = (SR_LEVELS_OUTPUTS as readonly string[]).includes(key ?? "")
         ? (key as string)
         : SR_LEVELS_OUTPUTS[0];
+      return `${id}.${output}`;
+    }
+    // SPIKE reads like PIVOT_BANDS: six FIXED output names, only the two
+    // price-scaled ones (spikeHigh/spikeLow) drawn as figures, so a click
+    // resolves to those (the state/percent outputs remain typeable by hand in
+    // the editor). No retune can invalidate a ref.
+    case "SPIKE": {
+      const id = opts?.instanceId;
+      if (!id) return null;
+      const key = opts?.figureKey;
+      const output = (SPIKE_OUTPUTS as readonly string[]).includes(key ?? "")
+        ? (key as string)
+        : SPIKE_OUTPUTS[0];
       return `${id}.${output}`;
     }
     default:

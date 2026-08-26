@@ -38,6 +38,7 @@ import {
   parseSrConfig,
   srLevelsWarmup,
 } from "./indicators/srLevelsOutputs";
+import { SPIKE_OUTPUTS, parseSpikeConfig, spikeWarmup } from "./indicators/spikeOutputs";
 import type { SrLevelsExtend } from "./indicators/srLevels"; // erased at build; no runtime edge
 import type { ExprInstance } from "./expr/catalog";
 // Display vocabularies, both from klinecharts-free modules so this stays a pure,
@@ -58,6 +59,7 @@ export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set([
   "PIVOT_BANDS",
   "PIVOT_ANALYSIS",
   "SR_LEVELS",
+  "SPIKE",
 ]);
 
 /** A live chart pane, flattened to just what the expression layer reads. */
@@ -167,15 +169,16 @@ export function synthesizeExprInstances(
     }
     // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
     // kept, as there), atrLength's 14 (single-length pane).
-    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS and SR_LEVELS outputs are
-    // fixed names, not lengths, so nothing about the pane's params is
-    // recoverable from a ref — an empty list takes every default.
+    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS and SPIKE
+    // outputs are fixed names, not lengths, so nothing about the pane's params
+    // is recoverable from a ref — an empty list takes every default.
     const calcParams =
       type === "FVG" ||
       type === "TRENDLINES" ||
       type === "PIVOT_BANDS" ||
       type === "PIVOT_ANALYSIS" ||
-      type === "SR_LEVELS"
+      type === "SR_LEVELS" ||
+      type === "SPIKE"
         ? []
         : type === "ATR"
           ? [lengths[0] ?? 14]
@@ -296,6 +299,12 @@ export function exprWarmupByRef(
       return (SR_LEVELS_OUTPUTS as readonly string[]).includes(output)
         ? srLevelsWarmup(parseSrConfig(inst.calcParams))
         : 0;
+    // Every SPIKE output shares one floor (the trailing spike window); an
+    // output this pane does not expose costs 0, like the other branches.
+    if (inst.type === "SPIKE")
+      return (SPIKE_OUTPUTS as readonly string[]).includes(output)
+        ? spikeWarmup(parseSpikeConfig(inst.calcParams))
+        : 0;
     if (inst.type !== "SLOPE") return 0;
     return slopeWarmup(inst.calcParams, (inst.extendData ?? {}) as SlopeExtend, output);
   };
@@ -397,6 +406,19 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         // is deliberately absent: it caps the DRAWN set, and naming it here
         // would read as "the operand only sees the top N".
         detail: `pivot ${cfg.pivotLen} · ${cfg.atrMult}x ATR · touches ${cfg.minTouches}+`,
+      });
+      continue;
+    }
+    if (inst.type === "SPIKE") {
+      const cfg = parseSpikeConfig(inst.calcParams);
+      out.push({
+        id: inst.id,
+        outputs: [...SPIKE_OUTPUTS],
+        timeframe: null, // chart-timeframe only (no MTF pin)
+        // The output names say which value; what they cannot say is what
+        // arms a spike and latches consolidation — the SLOPE/ATR detail
+        // convention.
+        detail: `${cfg.minSpikePct}%/${cfg.spikeBars} bars · flat ${cfg.flatBars} in ${cfg.maxFlatRangePct}% · ${cfg.maxPatternBars} bar life`,
       });
       continue;
     }

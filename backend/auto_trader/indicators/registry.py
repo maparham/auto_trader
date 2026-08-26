@@ -17,6 +17,7 @@ from auto_trader.indicators import fvg as _fvg
 from auto_trader.indicators import pivot_analysis as _pa
 from auto_trader.indicators import pivot_bands as _pb
 from auto_trader.indicators import slope as _slope
+from auto_trader.indicators import spike as _spike
 from auto_trader.indicators import sr_levels as _sr
 from auto_trader.indicators import trendlines as _tl
 
@@ -62,6 +63,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         outputs=_pa.pivot_analysis_outputs,
         series=_pa.pivot_analysis_series,
         warmup=_pa.pivot_analysis_warmup,
+        timeframe=lambda cfg: None,
+    ),
+    "SPIKE": IndicatorSeriesSpec(
+        parse_config=_spike.parse_spike_config,
+        outputs=_spike.spike_outputs,
+        series=_spike.spike_series,
+        warmup=_spike.spike_warmup,
         timeframe=lambda cfg: None,
     ),
     "SR_LEVELS": IndicatorSeriesSpec(

@@ -2444,24 +2444,32 @@
    with the number it applies to, not inside the label. */
 .ind-control-row { display: inline-flex; align-items: center; gap: 6px; }
 .ind-control-row > .ind-suffix { color: var(--text-dim); white-space: nowrap; }
-/* A solo row (number, checkbox, select) laid out on the SAME two columns as
-   .ind-pair2 below, so its control starts where a paired row's right-hand
-   control starts instead of at the modal's right edge. Without it the Inputs
-   tab zig-zags: numbers at the middle, checkboxes out at the edge. The one
-   opt-out is a `wide` select, which needs more than half a row. */
-.ind-row.ind-row-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: center; }
+/* A solo row (number, checkbox, select) laid out on two shared columns, so
+   every control down the tab starts at one x instead of at the modal's right
+   edge. Without it the Inputs tab zig-zags: numbers at the middle, checkboxes
+   out at the edge. The one opt-out is a `wide` select, which needs the width.
+
+   The control column is sized to the WIDEST control that lands in it (a 130px
+   select) rather than to half the row: nothing here needs half, and the labels
+   need every pixel the controls give back — an even split ellipsised labels as
+   ordinary as "Spike Window". */
+.ind-row.ind-row-cols { display: grid; grid-template-columns: minmax(0, 1fr) 138px; gap: 16px; align-items: center; }
 .ind-row.ind-row-cols > :last-child { justify-self: start; }
-/* The ⓘ sits after the control on these rows, not beside the label: half a row
-   does not hold "Min Back Clearance" plus a tip, and clipping the icon (which
-   .ind-row-head's flex-shrink: 0 on the label made it do) looked broken. */
-.ind-cols-control { display: inline-flex; align-items: center; gap: 8px; }
+/* The ⓘ rides beside the label on these rows like everywhere else, so the
+   icons sit in one left-hand column with the labels instead of scattering out
+   past the controls. Half a row does not always hold the label AND the tip
+   ("Min Back Clearance"), so the label yields with an ellipsis — never the
+   icon, which .ind-row-head's default flex-shrink: 0 used to clip. */
+.ind-row.ind-row-cols > .ind-row-head { min-width: 0; overflow: hidden; }
+.ind-row.ind-row-cols > .ind-row-head > label {
+  flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
 /* FULL STRENGTH, like the paired labels beside them. `.ind-row > label` dims
-   every label-left row, and it never used to reach these: labelFor wraps a
-   tipped label in .ind-row-head, so the label was a grandchild and the child
-   selector missed it. Rendering the label bare (the tip moved to the end of the
-   row) let the dim through, and a column of labels half of which are dimmer
-   than the rest reads as an accident. */
-.ind-row.ind-row-cols > label { color: var(--text); }
+   every label-left row, but labelFor wraps a tipped label in .ind-row-head, so
+   the label is a grandchild the child selector misses — and a column of labels
+   half of which are dimmer than the rest reads as an accident. */
+.ind-row.ind-row-cols > label,
+.ind-row.ind-row-cols > .ind-row-head > label { color: var(--text); }
 
 /* A related PAIR of inputs on one row, each label stacked above its own
    control (indicatorMeta's `group`). The column is half a row wide, so a

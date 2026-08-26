@@ -25,6 +25,7 @@ export * from "./indicators/fvg";
 export * from "./indicators/trendlines";
 export * from "./indicators/curveLabels";
 export * from "./indicators/slope";
+export * from "./indicators/spike";
 export * from "./indicators/atr";
 export * from "./indicators/candlePatterns";
 
@@ -36,12 +37,13 @@ import { RSI_TEMPLATE } from "./indicators/rsi";
 import { SESSIONS_TEMPLATE, registerSessionsAxis } from "./indicators/sessions";
 import { TIME_HIGHLIGHT_TEMPLATE } from "./indicators/timeHighlight";
 import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
-import { PIVOT_ANALYSIS_TEMPLATE } from "./indicators/pivotAnalysis";
 import { PIVOT_BARS_SINCE_TEMPLATE } from "./indicators/pivotBarsSince";
+import { PIVOT_ANALYSIS_TEMPLATE } from "./indicators/pivotAnalysis";
 import { SR_LEVELS_TEMPLATE } from "./indicators/srLevels";
 import { FVG_TEMPLATE } from "./indicators/fvg";
 import { TRENDLINES_TEMPLATE } from "./indicators/trendlines";
 import { SLOPE_TEMPLATE, SLOPE_ACCEL_TEMPLATE } from "./indicators/slope";
+import { SPIKE_TEMPLATE } from "./indicators/spike";
 import { ATR_TEMPLATE } from "./indicators/atr";
 import { CANDLE_PATTERNS_TEMPLATE } from "./indicators/candlePatterns";
 import { PROXIMITY_HEATMAP_TEMPLATE } from "./indicators/proximityHeatmap";
@@ -61,13 +63,14 @@ export type CustomIndicatorType =
   | "SESSIONS"
   | "TIME_HIGHLIGHT"
   | "PIVOT_BANDS"
+  | "PIVOT_BARS_SINCE"
   | "PIVOT_ANALYSIS"
   | "SR_LEVELS"
-  | "PIVOT_BARS_SINCE"
   | "FVG"
   | "TRENDLINES"
   | "SLOPE"
   | "SLOPE_ACCEL"
+  | "SPIKE"
   | "ATR"
   | "CANDLE_PATTERNS";
 
@@ -82,13 +85,14 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   SESSIONS: SESSIONS_TEMPLATE,
   TIME_HIGHLIGHT: TIME_HIGHLIGHT_TEMPLATE,
   PIVOT_BANDS: PIVOT_BANDS_TEMPLATE,
+  PIVOT_BARS_SINCE: PIVOT_BARS_SINCE_TEMPLATE,
   PIVOT_ANALYSIS: PIVOT_ANALYSIS_TEMPLATE,
   SR_LEVELS: SR_LEVELS_TEMPLATE,
   FVG: FVG_TEMPLATE,
-  PIVOT_BARS_SINCE: PIVOT_BARS_SINCE_TEMPLATE,
   TRENDLINES: TRENDLINES_TEMPLATE,
   SLOPE: SLOPE_TEMPLATE,
   SLOPE_ACCEL: SLOPE_ACCEL_TEMPLATE,
+  SPIKE: SPIKE_TEMPLATE,
   ATR: ATR_TEMPLATE,
   CANDLE_PATTERNS: CANDLE_PATTERNS_TEMPLATE,
 };
@@ -119,6 +123,7 @@ export const OVERLAY_INDICATORS = new Set([
   "PIVOT_BANDS",
   "PIVOT_ANALYSIS",
   "SR_LEVELS",
+  "SPIKE",
   "FVG",
   // TRENDLINES draws through the candle pane's y-axis (projectAt prices), so it
   // must overlay it. Off this list, isSubPaneIndicator() calls it a sub-pane
