@@ -634,7 +634,12 @@ export async function fetchRangeStrict(
   if (!res.ok) throw new CandlesFetchError(res.status);
   const progress = partialHeader(res);
   if (progress) onPartial?.(progress);
-  return ((await res.json()) as RawCandle[]).map(toKLine);
+  const rows = (await res.json()) as RawCandle[];
+  // The MTF/HTF walk fetches through THIS function, not fetchRangeWithStatus,
+  // so its rows have to be counted here too -- otherwise every windowed request
+  // the coordinator makes reads as returning nothing.
+  if (PERF_DIAG_ON) recordBars(rows.length);
+  return rows.map(toKLine);
 }
 
 /** The raw /api/candles date-window request shared by the range variants. */
