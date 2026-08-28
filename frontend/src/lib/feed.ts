@@ -7,6 +7,7 @@ import type { KLineData } from "klinecharts";
 import type { PriceSide } from "../theme";
 import { defaultBrokerId } from "./brokerDefaults";
 import { API_BASE as BASE, errorDetail } from "./http";
+import { PERF_DIAG_ON, recordBars, recordFetch } from "./perfDiag";
 import { getSynthetic, isSynthetic } from "./syntheticRegistry";
 // Pin aliases ("4H") only — the canonical table below is this file's own.
 import { tfSeconds } from "./expr/catalog";
@@ -540,12 +541,15 @@ export async function fetchRecentWithStatus(
     broker: brokerId,
   });
   const res = await fetchWithTimeout(`${BASE}/api/candles?${qs}`);
-  if (res.ok)
+  if (res.ok) {
+    const rows = (await res.json()) as RawCandle[];
+    if (PERF_DIAG_ON) recordFetch("recent", rows.length);
     return {
-      bars: ((await res.json()) as RawCandle[]).map(toKLine),
+      bars: rows.map(toKLine),
       degraded: degradedHeader(res),
       partial: partialHeader(res),
     };
+  }
   // 404 = no data for this epic (unknown / no history) — empty, not an error.
   if (res.status === 404) return { bars: [], degraded: null, partial: null };
   // Anything else (e.g. 502 from a broker auth / maintenance failure) carries a
@@ -661,6 +665,7 @@ async function rangeResponse(
         priceSide,
         broker: brokerId,
       });
+  if (PERF_DIAG_ON) recordFetch("range", 0); // bars land in the callers' parse
   return fetch(`${BASE}/api/candles${syn ? "/synthetic" : ""}?${qs}`, { signal });
 }
 
@@ -698,8 +703,10 @@ export async function fetchRangeWithStatus(
       partial: null,
     };
   }
+  const rows = (await res.json()) as RawCandle[];
+  if (PERF_DIAG_ON) recordBars(rows.length);
   return {
-    bars: ((await res.json()) as RawCandle[]).map(toKLine),
+    bars: rows.map(toKLine),
     degraded: degradedHeader(res),
     partial: partialHeader(res),
   };

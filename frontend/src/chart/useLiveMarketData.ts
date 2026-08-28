@@ -16,6 +16,7 @@ import {
   type Period,
 } from "../lib/feed";
 import { coverHistoryRangeParallel } from "../lib/historyPaging";
+import { PERF_DIAG_ON, recordTick } from "../lib/perfDiag";
 import { detachedWindows, type DetachedTarget } from "./detachedView";
 import { jumpToLive } from "../lib/liveEdge";
 import type { PriceSide } from "../theme";
@@ -1115,7 +1116,17 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
             );
             return;
           }
-          handle.dataFacadeRef.current?.pushBar(k);
+          // pushBar runs the whole synchronous recalc chain (klinecharts
+          // _addData -> _calcIndicator for EVERY indicator, over the full
+          // loaded series). That is the single most expensive thing a tick
+          // does, so it is the thing worth timing (see lib/perfDiag).
+          if (PERF_DIAG_ON) {
+            const t0 = performance.now();
+            handle.dataFacadeRef.current?.pushBar(k);
+            recordTick(performance.now() - t0);
+          } else {
+            handle.dataFacadeRef.current?.pushBar(k);
+          }
           // An APPENDED bar shifts every bar left at the live edge without any
           // scroll/zoom action — keep the center pin from drifting stale.
           if (k.timestamp > lastTs) repositionPinRef.current?.();
