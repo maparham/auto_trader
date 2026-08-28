@@ -132,6 +132,15 @@ export function computeSrLevels(
 
   const clusters: Cluster[] = [];
 
+  // majorAt's selection is recomputed lazily, not once per bar. It can only
+  // change two ways: a touch mutates the pool (invalidate below), or the age
+  // window slides past the OLDEST eligible cluster — and eligibility only ever
+  // shrinks with i, since a lapsed cluster re-enters only by being touched.
+  // So one recompute stays correct through `cachedThrough`, which is what turns
+  // a filter+sort+slice of the whole (unbounded) pool per bar into a rare one.
+  let cachedMajor: Cluster[] | null = null;
+  let cachedThrough = -1;
+
   const touch = (price: number, pivotIdx: number, confirmIdx: number, tol: number): void => {
     let best: Cluster | null = null;
     let bestDist = Infinity;
@@ -150,13 +159,30 @@ export function computeSrLevels(
     } else {
       clusters.push({ sum: price, touches: 1, firstIdx: pivotIdx, lastConfirm: confirmIdx, halfWidth: tol });
     }
+    cachedMajor = null; // the pool moved: rank and eligibility must be redone
+  };
+
+  const recomputeMajor = (i: number): Cluster[] => {
+    const cutoff = i - cfg.maxBars;
+    const eligible: Cluster[] = [];
+    let oldestConfirm = Infinity;
+    for (const c of clusters) {
+      if (c.touches < cfg.minTouches || c.lastConfirm < cutoff) continue;
+      eligible.push(c);
+      if (c.lastConfirm < oldestConfirm) oldestConfirm = c.lastConfirm;
+    }
+    eligible.sort(rankClusters);
+    cachedMajor = eligible.slice(0, Math.max(0, cfg.maxLevels));
+    // The first bar this selection could change by age alone: one past the bar
+    // the oldest eligible cluster ages out on. Nothing eligible = nothing to
+    // expire, so only a touch can dirty it.
+    cachedThrough =
+      oldestConfirm === Infinity ? Number.MAX_SAFE_INTEGER : oldestConfirm + cfg.maxBars;
+    return cachedMajor;
   };
 
   const majorAt = (i: number): Cluster[] =>
-    clusters
-      .filter((c) => c.touches >= cfg.minTouches && c.lastConfirm >= i - cfg.maxBars)
-      .sort(rankClusters)
-      .slice(0, Math.max(0, cfg.maxLevels));
+    cachedMajor !== null && i <= cachedThrough ? cachedMajor : recomputeMajor(i);
 
   for (let i = 0; i < len; i++) {
     const tolAtr = atr[i];
@@ -262,8 +288,19 @@ export interface SrLevelsPoint extends SrPoint {
  * upper side, matching the support classification's `price <= close`.
  * Drawing-only (broken zones dim); not a rule operand, so no backend port. */
 export function isLevelBroken(price: number, lastIdx: number, closes: number[]): boolean {
-  const side = (c: number): number => (c >= price ? 1 : -1);
-  return side(closes[closes.length - 1]) !== side(closes[lastIdx]);
+  return isLevelBrokenAt(price, closes[closes.length - 1], closes[lastIdx]);
+}
+
+/** The same break test from the only two closes it reads. The draw path runs
+ * this per level per FRAME, so it must never walk (or copy) the whole series;
+ * an absent close counts as below the level, as indexing off the end did. */
+export function isLevelBrokenAt(
+  price: number,
+  lastClose: number | undefined,
+  closeAtLastIdx: number | undefined,
+): boolean {
+  const side = (c: number | undefined): number => (c !== undefined && c >= price ? 1 : -1);
+  return side(lastClose) !== side(closeAtLastIdx);
 }
 
 /** Zone fill opacity grows with touch count so stronger levels read darker:
@@ -287,8 +324,7 @@ function drawSrLevels(params: IndicatorDrawParams<SrLevelsPoint, unknown, unknow
   const showMidline = ext?.showMidline === true;
   const zoneStyle = srZoneStyleOf(ext);
   const dataList = chart.getDataList();
-  const closes = dataList.map((d) => d.close);
-  const lastClose = closes[closes.length - 1];
+  const lastClose = dataList.length ? dataList[dataList.length - 1].close : undefined;
   // bounding.width spans the whole pane INCLUDING the y-axis strip on the
   // right (the fills deliberately run under it); the ×N tags must not, or the
   // axis overlay hides them.
@@ -306,7 +342,9 @@ function drawSrLevels(params: IndicatorDrawParams<SrLevelsPoint, unknown, unknow
     // A level price has closed through since its last touch dims to half —
     // still on the chart (it may reclaim), but visibly weaker than one holding.
     const broken =
-      zoneStyle.dimBroken && closes.length > 0 && isLevelBroken(lv.price, lv.lastIdx, closes);
+      zoneStyle.dimBroken &&
+      dataList.length > 0 &&
+      isLevelBrokenAt(lv.price, lastClose, dataList[lv.lastIdx]?.close);
     const dim = broken ? 0.5 : 1;
     const x0 = Math.max(0, xAxis.convertToPixel(lv.firstIdx));
     const yTop = yAxis.convertToPixel(lv.price + lv.halfWidth);

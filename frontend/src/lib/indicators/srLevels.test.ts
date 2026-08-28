@@ -140,6 +140,39 @@ describe("computeSrLevels MTF branch", () => {
   });
 });
 
+// The per-bar selection is cached and only rebuilt when the cluster pool moves
+// or the age window slides past the oldest eligible level. Expiry is the half a
+// cache can silently get wrong: it drops a level with no touch to signal it.
+describe("computeSrLevels level expiry", () => {
+  it("drops a level exactly maxBars after its last touch, with no later touch", () => {
+    // Four peaks put resistance past minTouches (ATR(14) only warms at bar 13,
+    // so the early cycles cannot count), then a long flat tail carrying no
+    // strict pivots at all, so nothing ever re-touches the level.
+    const head = triangle([110, 110, 110, 110]);
+    const flat: KLineData[] = [];
+    for (let i = 0; i < 200; i++) flat.push(bar(100, head.length + i));
+    const candles = [...head, ...flat];
+    const cfg = { ...CFG, maxBars: 40 };
+    const { points } = computeSrLevels(candles, cfg);
+
+    // The last touch can only confirm inside the triangle section, so the flat
+    // tail measures the window from there.
+    expect(points.some((p) => p.resistance !== undefined)).toBe(true);
+    // Held while inside the window...
+    expect(points[head.length + 5].resistance).toBeDefined();
+    // ...and gone once the window has slid past the newest touch entirely.
+    expect(points[head.length + cfg.maxBars + 5].resistance).toBeUndefined();
+  });
+
+  it("expires levels the same way at maxBars=1 (recompute on nearly every bar)", () => {
+    const candles = triangle([110, 110, 110, 110]);
+    const { points } = computeSrLevels(candles, { ...CFG, maxBars: 1 });
+    // A one-bar window can never hold a level beyond the bar after its touch.
+    const live = points.filter((p) => p.support !== undefined || p.resistance !== undefined);
+    expect(live.length).toBeLessThan(points.length / 2);
+  });
+});
+
 describe("srZoneStyleOf", () => {
   it("returns the defaults for a bare extendData", async () => {
     const { srZoneStyleOf, SR_ZONE_STYLE_DEFAULTS } = await import("./srLevels");
