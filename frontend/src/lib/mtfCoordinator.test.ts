@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+import { clearHtfCache } from "./htfBarCache";
 import type { Chart, KLineData } from "klinecharts";
 
 // The indicator templates pulled in via customIndicators read klinecharts
@@ -94,6 +96,11 @@ const applyEma = (chart: Chart, timeframe: string | null) =>
 beforeEach(() => {
   vi.useFakeTimers();
   fetchRangeStrict.mockReset();
+  // HTF bars are now fetched once per (epic, timeframe, side, edge) and shared
+  // (see htfBarCache). That cache lives at module scope and ages out by wall
+  // clock, which fake timers freeze -- so without this a walk from an earlier
+  // test would still be "fresh" here and satisfy this one's fetch.
+  clearHtfCache();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -349,6 +356,10 @@ describe("applyTrendlinesTimeframe", () => {
     );
     const from = async (maxSpanBars: number): Promise<number> => {
       fetchRangeStrict.mockClear();
+      // Each measurement needs its OWN walk to read the reach-back off. The
+      // shared cache would (correctly) serve the shallower second config from
+      // the deeper first one, leaving nothing to measure.
+      clearHtfCache();
       await applyTrendlinesTimeframe(
         fakeChart().chart, "EPIC", "tl1", "candle_pane",
         { ...TRENDLINES_DEFAULTS, maxSpanBars }, "MINUTE_15",

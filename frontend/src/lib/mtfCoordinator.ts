@@ -13,7 +13,14 @@ import type { Chart, KLineData } from "klinecharts";
 // resolution (see fetchHtfBars below).
 import { fetchRangeStrict, nominalBarHours } from "./feed";
 import { loadSettings } from "../theme";
-import { maSeries, htfCoverageStartMs, normalizeMaKind, type MaKind, type MtfSeriesBase } from "./mtf";
+import {
+  maSeries,
+  htfCoverageStartMs,
+  normalizeMaKind,
+  type MaKind,
+  type MtfSeriesBase,
+} from "./mtf";
+import { fetchHtfShared, htfKey } from "./htfBarCache";
 import { pageHistoryBack } from "./historyPaging";
 import { barCloseMs } from "./replayBars";
 import { indTypeOf, templateMaKind, type MaExtend } from "./customIndicators";
@@ -31,7 +38,10 @@ import {
   type SrLevelsConfig,
   type SrLevelsExtend,
 } from "./indicators/srLevels";
-import { computeTrendlines, type TrendlinesExtend } from "./indicators/trendlines";
+import {
+  computeTrendlines,
+  type TrendlinesExtend,
+} from "./indicators/trendlines";
 import {
   parseTrendlinesConfig,
   TL_ATR_LEN,
@@ -166,7 +176,10 @@ function scheduleMtfRetry(
 // cells and only some of them replay; a disposed chart's entry frees with it.
 const htfCursors = new WeakMap<Chart, () => number>();
 
-export function setHtfCursorClamp(chart: Chart, read: (() => number) | null): void {
+export function setHtfCursorClamp(
+  chart: Chart,
+  read: (() => number) | null,
+): void {
   if (read) htfCursors.set(chart, read);
   else htfCursors.delete(chart);
 }
@@ -178,7 +191,11 @@ export function setHtfCursorClamp(chart: Chart, read: (() => number) | null): vo
  * fetched bar (the one still forming, in the normal case) falls back to the
  * nominal width, and that fallback is what releases a bucket the instant the
  * cursor reaches its close. */
-export function clampHtfBars(bars: KLineData[], cursorMs: number, nominalMs: number): KLineData[] {
+export function clampHtfBars(
+  bars: KLineData[],
+  cursorMs: number,
+  nominalMs: number,
+): KLineData[] {
   if (!cursorMs) return bars;
   const out: KLineData[] = [];
   for (let i = 0; i < bars.length; i++) {
@@ -209,7 +226,8 @@ export function mtfBucketMs(chart: Chart): number {
   let smallest = 0;
   for (const [, byName] of getIndicatorsByPane(chart)) {
     for (const [, ind] of byName) {
-      const tf = (ind.extendData as { mtf?: MtfSeriesBase } | undefined)?.mtf?.timeframe;
+      const tf = (ind.extendData as { mtf?: MtfSeriesBase } | undefined)?.mtf
+        ?.timeframe;
       if (!tf) continue;
       const ms = (nominalBarHours(tf) ?? 0) * 3_600_000;
       if (ms > 0 && (smallest === 0 || ms < smallest)) smallest = ms;
@@ -248,7 +266,9 @@ function mtfFetchTail(
   scheduleMtfRetry(chart, paneId, name, timeframe, retry);
   if (hasBars) return true;
   const mtf =
-    prev?.timeframe === timeframe && prev.htfStarts?.length ? prev : { timeframe };
+    prev?.timeframe === timeframe && prev.htfStarts?.length
+      ? prev
+      : { timeframe };
   overrideExtend(chart, paneId, name, { ...ext, mtf }, calcParams);
   return false;
 }
@@ -294,55 +314,87 @@ async function fetchHtfBars(
   const oldest = Math.min(oldestChartMs ?? loadedOldest, loadedOldest);
   const fromMs = htfCoverageStartMs(oldest, htfMs, warmupBars);
 
-  let htf: KLineData[] = [];
-  let failed = false;
-  try {
-    await pageHistoryBack<KLineData>({
-      fromTs: fromMs,
-      toTs: newestMs,
-      resSec: htfSec || 3600,
-      pageBars: HTF_PAGE_BARS,
-      maxPages: HTF_MAX_PAGES,
-      maxEmpty: HTF_MAX_EMPTY,
-      isStale: () => false,
-      getData: () => htf,
-      // A non-2xx page marks the whole fetch failed (the rethrow stops the
-      // walk); pages that already landed are kept and rendered.
-      fetchOlder: async (fSec, tSec) => {
-        try {
-          // THE PANE'S OWN PRICE SIDE, not a hardcoded "mid". Read here rather
-          // than threaded through every apply*/refresh signature, the same way
-          // useLiveMarketData's centre-pin reads it (App re-saves settings and
-          // fires at:settings-saved; a side change reloads the series, which
-          // refreshes the pins). One reader cannot drift from the chart's.
-          //
-          // It looked cosmetic while MTF meant moving averages: mid vs bid
-          // shifts a curve by half a spread. It is not. Trendlines decide
-          // BOOLEANS against these bars — measured on a DAL daily pane, a
-          // support line's break came to bid low 84.52 against a threshold of
-          // 85.11 while the mid low was 85.13, so the mid bars left the line
-          // unbroken, drawn solid, still emitting as live support on a chart
-          // whose own candles had gone through it.
-          const side = loadSettings().priceSide;
-          return await fetchRangeStrict(epic, timeframe, fSec, tSec, side, brokerId);
-        } catch (e) {
-          failed = true;
-          throw e;
-        }
-      },
-      applyData: (merged) => {
-        htf = merged;
-      },
-    });
-  } catch {
-    failed = true;
-  }
+  // THE PANE'S OWN PRICE SIDE, not a hardcoded "mid". Read once here rather than
+  // threaded through every apply*/refresh signature, the same way
+  // useLiveMarketData's centre-pin reads it (App re-saves settings and fires
+  // at:settings-saved; a side change reloads the series, which refreshes the
+  // pins). One reader cannot drift from the chart's.
+  //
+  // It looked cosmetic while MTF meant moving averages: mid vs bid shifts a
+  // curve by half a spread. It is not. Trendlines decide BOOLEANS against these
+  // bars — measured on a DAL daily pane, a support line's break came to bid low
+  // 84.52 against a threshold of 85.11 while the mid low was 85.13, so the mid
+  // bars left the line unbroken, drawn solid, still emitting as live support on
+  // a chart whose own candles had gone through it.
+  //
+  // Hoisted out of fetchOlder because it now also identifies the bars for
+  // sharing: a bid walk and a mid walk are different data and must not pool.
+  const side = loadSettings().priceSide;
+  const key = htfKey({
+    brokerId,
+    epic,
+    timeframe,
+    priceSide: side,
+    newestMs,
+    htfMs,
+  });
+
+  // One walk per (epic, timeframe, side, live edge), shared by every indicator
+  // pinned to it — see htfBarCache. The clamp below stays per-caller.
+  const shared = await fetchHtfShared(key, fromMs, async (walkFromMs) => {
+    let htf: KLineData[] = [];
+    let failed = false;
+    try {
+      await pageHistoryBack<KLineData>({
+        fromTs: walkFromMs,
+        toTs: newestMs,
+        resSec: htfSec || 3600,
+        pageBars: HTF_PAGE_BARS,
+        maxPages: HTF_MAX_PAGES,
+        maxEmpty: HTF_MAX_EMPTY,
+        isStale: () => false,
+        getData: () => htf,
+        // A non-2xx page marks the whole fetch failed (the rethrow stops the
+        // walk); pages that already landed are kept and rendered.
+        fetchOlder: async (fSec, tSec) => {
+          try {
+            return await fetchRangeStrict(
+              epic,
+              timeframe,
+              fSec,
+              tSec,
+              side,
+              brokerId,
+            );
+          } catch (e) {
+            failed = true;
+            throw e;
+          }
+        },
+        applyData: (merged) => {
+          htf = merged;
+        },
+      });
+    } catch {
+      failed = true;
+    }
+    return { htf, failed };
+  });
+
   // The no-lookahead clamp, applied HERE because every MTF indicator's apply*
   // funnels through this one fetch — patching each of them separately is how the
   // rule drifts. Read at the END, after the awaits, so a fetch already in flight
   // when a session starts is clamped on resolution too.
+  //
+  // PER-CALLER, deliberately: the shared walk caches the raw bars, and two cells
+  // riding the same walk can sit at different replay cursors. Clamping before
+  // the cache would leak one cell's cursor into another's series.
   const cursorMs = htfCursors.get(chart)?.() ?? 0;
-  return { htf: clampHtfBars(htf, cursorMs, htfMs), htfMs, failed };
+  return {
+    htf: clampHtfBars(shared.htf, cursorMs, htfMs),
+    htfMs,
+    failed: shared.failed,
+  };
 }
 
 /**
@@ -368,7 +420,9 @@ export async function applyMaTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as { extendData?: MaExtend } | null;
+  const ind = getIndicator(chart, paneId, name) as {
+    extendData?: MaExtend;
+  } | null;
   const ext: MaExtend = { ...(ind?.extendData ?? {}), ...config.options };
 
   if (!timeframe || timeframe === "chart") {
@@ -396,7 +450,17 @@ export async function applyMaTimeframe(
     ind?.extendData?.mtf,
     ext,
     [config.length],
-    () => applyMaTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+    () =>
+      applyMaTimeframe(
+        chart,
+        epic,
+        name,
+        paneId,
+        config,
+        timeframe,
+        brokerId,
+        oldestChartMs,
+      ),
   );
   if (!proceed) return;
   // MTF carries the base line only (smoothing is not shown under MTF — see
@@ -443,8 +507,14 @@ export async function applyPivotBandsTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as { extendData?: PivotBandsExtend } | null;
-  const ext: PivotBandsExtend = { ...(ind?.extendData ?? {}), mode: config.mode, source: config.source };
+  const ind = getIndicator(chart, paneId, name) as {
+    extendData?: PivotBandsExtend;
+  } | null;
+  const ext: PivotBandsExtend = {
+    ...(ind?.extendData ?? {}),
+    mode: config.mode,
+    source: config.source,
+  };
   const calcParams = [config.n, config.k];
 
   if (!timeframe || timeframe === "chart") {
@@ -475,13 +545,26 @@ export async function applyPivotBandsTimeframe(
     ind?.extendData?.mtf,
     ext,
     calcParams,
-    () => applyPivotBandsTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+    () =>
+      applyPivotBandsTimeframe(
+        chart,
+        epic,
+        name,
+        paneId,
+        config,
+        timeframe,
+        brokerId,
+        oldestChartMs,
+      ),
   );
   if (!proceed) return;
   // Reuse the exact chart-TF math on the HTF bars: computePivotBands already
   // carries each side's value forward (dense after the first pivot) and bakes in
   // the N-bar confirmation lag, so the aligned series stays gap-free and honest.
-  const pts = computePivotBands(htf, config.n, config.k, { mode: config.mode, source: config.source });
+  const pts = computePivotBands(htf, config.n, config.k, {
+    mode: config.mode,
+    source: config.source,
+  });
   // Bars-since is counted on the SAME HTF bars (so its unit is HTF bars, which
   // is what the backend operand does too) and stashed alongside:
   // they are not derivable from the step-prices above, since two consecutive
@@ -505,7 +588,8 @@ export async function applyPivotBandsTimeframe(
 // moving average, so the honest reach-back is the full window: ATR warm-up +
 // one pivot span + maxBars. Best-effort like PivotBands — a shallow HTF history
 // simply yields fewer levels.
-const srWarmup = (cfg: SrLevelsConfig) => SR_ATR_LEN + 2 * cfg.pivotLen + cfg.maxBars;
+const srWarmup = (cfg: SrLevelsConfig) =>
+  SR_ATR_LEN + 2 * cfg.pivotLen + cfg.maxBars;
 
 /**
  * Point S/R Levels at a higher timeframe (or back to the chart timeframe when
@@ -527,9 +611,17 @@ export async function applySrLevelsTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as { extendData?: SrLevelsExtend } | null;
+  const ind = getIndicator(chart, paneId, name) as {
+    extendData?: SrLevelsExtend;
+  } | null;
   const ext: SrLevelsExtend = { ...(ind?.extendData ?? {}) };
-  const calcParams = [config.pivotLen, config.atrMult, config.minTouches, config.maxLevels, config.maxBars];
+  const calcParams = [
+    config.pivotLen,
+    config.atrMult,
+    config.minTouches,
+    config.maxLevels,
+    config.maxBars,
+  ];
 
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
@@ -556,7 +648,17 @@ export async function applySrLevelsTimeframe(
     ind?.extendData?.mtf,
     ext,
     calcParams,
-    () => applySrLevelsTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+    () =>
+      applySrLevelsTimeframe(
+        chart,
+        epic,
+        name,
+        paneId,
+        config,
+        timeframe,
+        brokerId,
+        oldestChartMs,
+      ),
   );
   if (!proceed) return;
   // Reuse the exact chart-TF math on the HTF bars: clustering, touch gating and
@@ -591,7 +693,9 @@ const tlWarmup = (cfg: TrendlinesConfig): number =>
   TL_ATR_LEN +
   2 * cfg.pivotLen +
   cfg.maxProjBars +
-  (cfg.maxSpanBars > 0 ? cfg.maxSpanBars : cfg.pairPivots * (2 * cfg.pivotLen + 1));
+  (cfg.maxSpanBars > 0
+    ? cfg.maxSpanBars
+    : cfg.pairPivots * (2 * cfg.pivotLen + 1));
 
 /**
  * Point Trendlines at a higher timeframe (or back to the chart timeframe when
@@ -613,13 +717,27 @@ export async function applyTrendlinesTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as { extendData?: TrendlinesExtend } | null;
+  const ind = getIndicator(chart, paneId, name) as {
+    extendData?: TrendlinesExtend;
+  } | null;
   const ext: TrendlinesExtend = { ...(ind?.extendData ?? {}) };
   const calcParams = [
-    config.pivotLen, config.violMult, config.touchMult, config.minTouches,
-    config.minSpanBars, config.maxProjBars, config.breakHoldBars, config.maxLines,
-    config.minSwingAtr, config.minSwingReach, config.pairPivots, config.maxTouches,
-    config.maxSpanBars, config.maxSlopeAtr, config.minSlopeAtr, config.minBackBars,
+    config.pivotLen,
+    config.violMult,
+    config.touchMult,
+    config.minTouches,
+    config.minSpanBars,
+    config.maxProjBars,
+    config.breakHoldBars,
+    config.maxLines,
+    config.minSwingAtr,
+    config.minSwingReach,
+    config.pairPivots,
+    config.maxTouches,
+    config.maxSpanBars,
+    config.maxSlopeAtr,
+    config.minSlopeAtr,
+    config.minBackBars,
   ];
 
   if (!timeframe || timeframe === "chart") {
@@ -647,7 +765,17 @@ export async function applyTrendlinesTimeframe(
     ind?.extendData?.mtf,
     ext,
     calcParams,
-    () => applyTrendlinesTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+    () =>
+      applyTrendlinesTimeframe(
+        chart,
+        epic,
+        name,
+        paneId,
+        config,
+        timeframe,
+        brokerId,
+        oldestChartMs,
+      ),
   );
   if (!proceed) return;
   // CLOSED HTF BARS ONLY. The forming bar is never usable to an operand (calc
@@ -702,7 +830,9 @@ export async function applyFvgTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as { extendData?: FvgExtend } | null;
+  const ind = getIndicator(chart, paneId, name) as {
+    extendData?: FvgExtend;
+  } | null;
   const ext: FvgExtend = { ...(ind?.extendData ?? {}) };
   const calcParams = [config.minSize, config.maxBars, config.maxGaps];
 
@@ -731,7 +861,17 @@ export async function applyFvgTimeframe(
     ind?.extendData?.mtf,
     ext,
     calcParams,
-    () => applyFvgTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+    () =>
+      applyFvgTimeframe(
+        chart,
+        epic,
+        name,
+        paneId,
+        config,
+        timeframe,
+        brokerId,
+        oldestChartMs,
+      ),
   );
   if (!proceed) return;
   // Reuse the exact chart-TF math on the HTF bars: detection, the size filter and
@@ -787,7 +927,9 @@ export async function applySlopeTimeframe(
   oldestChartMs?: number,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as { extendData?: SlopeExtend } | null;
+  const ind = getIndicator(chart, paneId, name) as {
+    extendData?: SlopeExtend;
+  } | null;
   const ext: SlopeExtend = {
     ...(ind?.extendData ?? {}),
     ...config.options,
@@ -807,14 +949,23 @@ export async function applySlopeTimeframe(
 
   // Reach back the longest MA length + slope period + accel period (+ both
   // smoothing windows) so the HTF left edge is populated for every line.
-  const smLen = config.smoothing && config.smoothing.type !== "none" ? Number(config.smoothing.length) || 0 : 0;
-  const aSmLen = ext.accelSmoothing && ext.accelSmoothing.type !== "none" ? Number(ext.accelSmoothing.length) || 0 : 0;
+  const smLen =
+    config.smoothing && config.smoothing.type !== "none"
+      ? Number(config.smoothing.length) || 0
+      : 0;
+  const aSmLen =
+    ext.accelSmoothing && ext.accelSmoothing.type !== "none"
+      ? Number(ext.accelSmoothing.length) || 0
+      : 0;
   const n2 = slopePeriodOf(ext.accelPeriod, 3);
   const { htf, htfMs, failed } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
-    Math.max(...config.lengths) + config.slopeN + smLen + (ext.showAccel ? n2 + aSmLen : 0),
+    Math.max(...config.lengths) +
+      config.slopeN +
+      smLen +
+      (ext.showAccel ? n2 + aSmLen : 0),
     brokerId,
     oldestChartMs,
   );
@@ -828,7 +979,17 @@ export async function applySlopeTimeframe(
     ind?.extendData?.mtf,
     ext,
     calcParams,
-    () => applySlopeTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, oldestChartMs),
+    () =>
+      applySlopeTimeframe(
+        chart,
+        epic,
+        name,
+        paneId,
+        config,
+        timeframe,
+        brokerId,
+        oldestChartMs,
+      ),
   );
   if (!proceed) return;
   // Slope computed on native HTF bars, BEFORE alignHtfToChart forward-fills.
@@ -847,7 +1008,16 @@ export async function applySlopeTimeframe(
   // at its own 1h default, so there is nothing better to fall back to.
   const barHours = nominalBarHours(timeframe) ?? inferBarHours(htf);
   const byLine = config.lengths.map((len) =>
-    slopeLineSeries(htf, config.maType, len, config.slopeN, config.units, config.options.source, config.smoothing, barHours),
+    slopeLineSeries(
+      htf,
+      config.maType,
+      len,
+      config.slopeN,
+      config.units,
+      config.options.source,
+      config.smoothing,
+      barHours,
+    ),
   );
   // Acceleration computed on NATIVE HTF bars too (same barHours), then aligned by
   // computeAccelCalc. Differentiating the ALIGNED slope would read zero inside each
@@ -933,7 +1103,10 @@ export async function refreshMtfIndicators(
       const covered = (warmup: number): boolean => {
         if (oldestChartMs == null) return false;
         if (!stashed?.htfStarts?.length || !stashed.htfMs) return false;
-        return stashed.htfStarts[0] <= htfCoverageStartMs(oldestChartMs, stashed.htfMs, warmup);
+        return (
+          stashed.htfStarts[0] <=
+          htfCoverageStartMs(oldestChartMs, stashed.htfMs, warmup)
+        );
       };
 
       if (type === "EMA" || type === "MA") {
@@ -966,7 +1139,8 @@ export async function refreshMtfIndicators(
         const n = Number(ind.calcParams?.[0]) || 5;
         const k = Number(ind.calcParams?.[1]) || 3;
         if (covered(pivotWarmup(n, k))) return;
-        const mode: PivotBandsMode = ind.extendData?.mode === "avg" ? "avg" : "last";
+        const mode: PivotBandsMode =
+          ind.extendData?.mode === "avg" ? "avg" : "last";
         const source: PivotBandsSource = ind.extendData?.source ?? "hl";
         jobs.push(
           applyPivotBandsTimeframe(
@@ -984,23 +1158,55 @@ export async function refreshMtfIndicators(
         const cfg = parseSrConfig(ind.calcParams);
         if (covered(srWarmup(cfg))) return;
         jobs.push(
-          applySrLevelsTimeframe(chart, epic, id, paneId, cfg, tf, brokerId, oldestChartMs),
+          applySrLevelsTimeframe(
+            chart,
+            epic,
+            id,
+            paneId,
+            cfg,
+            tf,
+            brokerId,
+            oldestChartMs,
+          ),
         );
       } else if (type === "TRENDLINES") {
         const cfg = parseTrendlinesConfig(ind.calcParams);
         if (covered(tlWarmup(cfg))) return;
         jobs.push(
-          applyTrendlinesTimeframe(chart, epic, id, paneId, cfg, tf, brokerId, oldestChartMs),
+          applyTrendlinesTimeframe(
+            chart,
+            epic,
+            id,
+            paneId,
+            cfg,
+            tf,
+            brokerId,
+            oldestChartMs,
+          ),
         );
       } else if (type === "FVG") {
         const cfg = parseFvgConfig(ind.calcParams);
         if (covered(fvgReachBack(cfg))) return;
-        jobs.push(applyFvgTimeframe(chart, epic, id, paneId, cfg, tf, brokerId, oldestChartMs));
+        jobs.push(
+          applyFvgTimeframe(
+            chart,
+            epic,
+            id,
+            paneId,
+            cfg,
+            tf,
+            brokerId,
+            oldestChartMs,
+          ),
+        );
       } else if (type === "SLOPE") {
         const ext = ind.extendData ?? {};
         const lengths = slopeLengths(ind.calcParams);
         const slopeN = slopePeriodOf(ext.slopePeriod, 3);
-        const smLen = ext.smoothing && ext.smoothing.type !== "none" ? Number(ext.smoothing.length) || 0 : 0;
+        const smLen =
+          ext.smoothing && ext.smoothing.type !== "none"
+            ? Number(ext.smoothing.length) || 0
+            : 0;
         // Match applySlopeTimeframe's reach-back: when the accel companion is on,
         // the HTF series must warm the extra accel period + accel smoothing too, or
         // a scroll-back page can leave the accel line's left edge blank.
@@ -1008,7 +1214,9 @@ export async function refreshMtfIndicators(
           ext.accelSmoothing && ext.accelSmoothing.type !== "none"
             ? Number(ext.accelSmoothing.length) || 0
             : 0;
-        const accelWarm = ext.showAccel ? slopePeriodOf(ext.accelPeriod, 3) + aSmLen : 0;
+        const accelWarm = ext.showAccel
+          ? slopePeriodOf(ext.accelPeriod, 3) + aSmLen
+          : 0;
         if (covered(Math.max(...lengths) + slopeN + smLen + accelWarm)) return;
         jobs.push(
           applySlopeTimeframe(
