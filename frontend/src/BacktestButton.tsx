@@ -799,6 +799,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         return;
       }
 
+      const runBaselines = cfg.runBaselines ? BASELINE_KINDS : undefined;
       progressStageSignal.set("engine");
       // Rule-mode single runs go through the expression-native /api/expr/backtest
       // via the exprReq built above (coded runs stay on baseReq). Sweeps/WFO above
@@ -814,9 +815,13 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // reference runs belong to a single run only, coded or expression. The
         // sweep and walk-forward branches above share baseReq/exprReq and their
         // per-combo/per-fold jobs must not carry the field.
+        //
+        // Opt-in: each baseline is another full engine pass, so they only run
+        // when the panel's "Reference baselines" toggle is on. Undefined (not
+        // an empty list) when off, so the backend skips the whole stage.
         coded
-          ? { ...baseReq, progressId, baselines: BASELINE_KINDS }
-          : { ...exprReq, progressId, baselines: BASELINE_KINDS },
+          ? { ...baseReq, progressId, baselines: runBaselines }
+          : { ...exprReq, progressId, baselines: runBaselines },
         controller!.scope,
         // Displayed TF, so runAndRender picks native/aggregate/none correctly when
         // the run's base TF (runResolution) differs from what the chart shows.

@@ -62,7 +62,7 @@ vi.mock("./api", async () => {
 });
 
 import BacktestSettingsModal, { resetCostProfileCache } from "./BacktestSettingsModal";
-import { defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig";
+import { backtestConfigEquals, defaultBacktestConfig, type BacktestConfig } from "./lib/backtestConfig";
 import { SESSION_PRESETS, minToTime, sessionWindowInTz } from "./lib/backtestSchedule";
 import { loadCodedCfg, saveCodedCfg, defaultCodedCfg } from "./lib/codedConfig";
 import { loadBacktestLastUsed } from "./lib/persist/defaults";
@@ -313,6 +313,57 @@ describe("Costs tab instrument profile", () => {
     // Spread stays at the config default (0) instead of a broker value.
     await waitFor(() => expect(mockGetCostProfile).toHaveBeenCalled());
     expect((screen.getByLabelText("Spread") as HTMLInputElement).value).toBe("0");
+  });
+});
+
+describe("Baselines toggle", () => {
+  function openCosts() {
+    const nav = document.querySelector(".bt-htabs") as HTMLElement;
+    fireEvent.click(within(nav).getByRole("button", { name: "Costs" }));
+  }
+  function toggle(): HTMLInputElement {
+    return screen.getByRole("checkbox", { name: /Run reference baselines/ }) as HTMLInputElement;
+  }
+  function runFooter() {
+    fireEvent.click(screen.getByRole("button", { name: "Run backtest" }));
+  }
+
+  it("is off by default, and turning it on sends runBaselines: true", () => {
+    const onRun = vi.fn();
+    render(
+      <BacktestSettingsModal
+        initial={defaultBacktestConfig()} epic="TEST" brokerId="capital" resolution="MINUTE"
+        controller={null} chartTimezone="UTC" onRun={onRun} onClose={vi.fn()}
+      />,
+    );
+    openCosts();
+    expect(toggle().checked).toBe(false);
+    runFooter();
+    expect(onRun.mock.calls[0][0].runBaselines).toBeUndefined();
+
+    fireEvent.click(toggle());
+    runFooter();
+    expect(onRun.mock.calls[1][0].runBaselines).toBe(true);
+  });
+
+  it("turning it back off deletes the key rather than storing false", () => {
+    const onRun = vi.fn();
+    render(
+      <BacktestSettingsModal
+        initial={{ ...defaultBacktestConfig(), runBaselines: true }} epic="TEST" brokerId="capital"
+        resolution="MINUTE" controller={null} chartTimezone="UTC" onRun={onRun} onClose={vi.fn()}
+      />,
+    );
+    openCosts();
+    expect(toggle().checked).toBe(true);
+    fireEvent.click(toggle());
+    runFooter();
+    // `false` would make backtestConfigEquals mark every preset saved before
+    // this flag existed as dirty.
+    expect(onRun.mock.calls[0][0].runBaselines).toBeUndefined();
+    // The user-visible consequence: a preset saved before this flag existed is
+    // still equal (no dirty dot) after the on/off round trip.
+    expect(backtestConfigEquals(onRun.mock.calls[0][0], defaultBacktestConfig())).toBe(true);
   });
 });
 

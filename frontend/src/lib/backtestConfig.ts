@@ -162,6 +162,13 @@ export interface BacktestConfig {
   // Sub-window robustness override for sweeps: split the range into this many
   // equal windows when scoring consistency. Undefined = auto (from range length).
   robustWindows?: number;
+  // Opt into the reference baselines (null/hold/reversed/oracle) on a single
+  // run: each is a full extra engine pass, so they are OFF unless asked for.
+  // Absent means off, and the toggle deletes the key rather than storing
+  // `false` — backtestConfigEquals compares absent and present-with-a-value
+  // unequal, so writing `false` would mark every older preset dirty.
+  // Walk-forward keeps its own always-on fold baselines (lib/wfo.ts).
+  runBaselines?: boolean;
 }
 
 const ATR_KINDS = new Set(["atr", "trailAtr"]);

@@ -1,8 +1,10 @@
 // Backtest workflow actions. backtest.run drives the SAME signal path as the
 // panel's Run button (requestBacktestRun -> BacktestButton.run), so all the
-// browser-side assembly (window resolution, candle fetch, warm-up widening,
-// baselines) is reused untouched; this module only adapts start/finish/error
-// signals into a promise + progress stream for the bridge.
+// browser-side assembly (window resolution, candle fetch, warm-up widening) is
+// reused untouched; this module only adapts start/finish/error signals into a
+// promise + progress stream for the bridge. That includes the baselines
+// opt-in: reference baselines are off unless the config carries
+// `runBaselines: true`, which backtest.config.set can patch in.
 import { ActionError, registerAction } from "../registry";
 import { maskedSessionNow } from "../../lib/maskedReplay";
 import {

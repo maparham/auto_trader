@@ -245,8 +245,9 @@ export interface BacktestAnalysis extends LegAnalysis {
 // corrected by hindsight (exit never later than the real one), replayed
 // through the same engine and cost model. A single run, not a per-side pair.
 export type BaselineKind = "null" | "hold" | "reversed" | "oracle_entries";
-/** What every baseline-aware single run asks for (all kinds, always on); the
- * backend expands null/hold into per-side runs. */
+/** What a single run asks for when the panel's Baselines toggle is on (all
+ * kinds; the toggle is off by default, and the request then omits the field
+ * entirely); the backend expands null/hold into per-side runs. */
 export const BASELINE_KINDS: BaselineKind[] = [
   "null", "hold", "reversed", "oracle_entries",
 ];
