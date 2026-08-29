@@ -2560,7 +2560,7 @@ export default function IndicatorSettings({
                     </label>
                     <InfoTip
                       title="Dim broken levels"
-                      text="Draw a zone at half opacity once price has closed through it since its last touch. Off: every zone renders at full strength."
+                      text="Zones price has closed through since their last touch render as ghosts: emptied fill, dashed outline, struck touch count. Off: every zone draws at full strength."
                     />
                   </span>
                 </>

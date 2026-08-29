@@ -224,3 +224,79 @@ describe("zoneAlpha", () => {
     expect(zoneAlpha(3, 2, 0.2)).toBeCloseTo(0.24, 10); // base scales the ramp start
   });
 });
+
+describe("drawSrLevels broken rendering", () => {
+  /** Records every paint call so a test can assert on the ink, not on pixels. */
+  function fakeCtx() {
+    const calls: string[] = [];
+    const ctx: Record<string, unknown> = {
+      fillStyle: "",
+      strokeStyle: "",
+      lineWidth: 0,
+      font: "",
+      textBaseline: "",
+      textAlign: "",
+      save: () => {},
+      restore: () => {},
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      setLineDash: (d: number[]) => calls.push(`dash:${d.join(",")}`),
+      measureText: () => ({ width: 12 }),
+      fillRect: () => calls.push(`fillRect:${ctx.fillStyle}`),
+      fillText: (t: string) => calls.push(`fillText:${t}:${ctx.fillStyle}`),
+      stroke: () => calls.push(`stroke:${ctx.strokeStyle}`),
+    };
+    return { ctx, calls };
+  }
+
+  /** One level at `price` on a chart whose last close is `lastClose`; the
+   * level's last touch closed at `touchClose`, which is what decides broken. */
+  async function paint(price: number, touchClose: number, lastClose: number) {
+    const { SR_LEVELS_TEMPLATE } = await import("./srLevels");
+    const { ctx, calls } = fakeCtx();
+    const dataList = [bar(touchClose, 0), bar(lastClose, 1)];
+    const result = [{}, { levels: [{ price, halfWidth: 5, touches: 3, firstIdx: 0, lastIdx: 0 }] }];
+    (SR_LEVELS_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
+      ctx,
+      chart: { getDataList: () => dataList, getSize: () => ({ width: 40 }) },
+      indicator: { result, calcParams: [15, 0.5, 2, 8, 500], extendData: {}, paneId: "candle_pane" },
+      bounding: { width: 300 },
+      xAxis: { convertToPixel: (i: number) => i * 10 },
+      yAxis: { convertToPixel: (p: number) => 1000 - p },
+    });
+    return calls;
+  }
+
+  it("gives a broken zone a dashed frame and a struck tag, not just a fainter fill", async () => {
+    // Level 100 held with the close above it, and price has since closed below.
+    const calls = await paint(100, 110, 90);
+    expect(calls.filter((c) => c.startsWith("stroke:")).length).toBeGreaterThanOrEqual(2);
+    expect(calls).toContain("dash:3,3");
+  });
+
+  it("leaves a holding zone as a bare fill with no frame or strike", async () => {
+    const calls = await paint(100, 110, 120);
+    expect(calls.filter((c) => c.startsWith("stroke:"))).toEqual([]);
+    expect(calls.some((c) => c.startsWith("fillRect:"))).toBe(true);
+  });
+
+  it("renders every zone at full strength when dimBroken is off", async () => {
+    const { SR_LEVELS_TEMPLATE } = await import("./srLevels");
+    const { ctx, calls } = fakeCtx();
+    (SR_LEVELS_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
+      ctx,
+      chart: { getDataList: () => [bar(110, 0), bar(90, 1)], getSize: () => ({ width: 40 }) },
+      indicator: {
+        result: [{}, { levels: [{ price: 100, halfWidth: 5, touches: 3, firstIdx: 0, lastIdx: 0 }] }],
+        calcParams: [15, 0.5, 2, 8, 500],
+        extendData: { zoneStyle: { dimBroken: false } },
+        paneId: "candle_pane",
+      },
+      bounding: { width: 300 },
+      xAxis: { convertToPixel: (i: number) => i * 10 },
+      yAxis: { convertToPixel: (p: number) => 1000 - p },
+    });
+    expect(calls.filter((c) => c.startsWith("stroke:"))).toEqual([]);
+  });
+});

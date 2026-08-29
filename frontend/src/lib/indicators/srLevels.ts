@@ -228,8 +228,9 @@ export interface SrZoneStyle {
   supColor: string;
   resColor: string;
   opacity: number;
-  // Draw broken levels (price closed through since the last touch) at half
-  // opacity. Off = every zone renders at full strength regardless.
+  // Draw broken levels (price closed through since the last touch) as ghosts:
+  // emptied fill, dashed frame, struck touch-count tag. Off = every zone
+  // renders at full strength regardless.
   dimBroken: boolean;
 }
 
@@ -286,7 +287,8 @@ export interface SrLevelsPoint extends SrPoint {
  * level from where the close was at the level's last touch — the level failed
  * to hold since it last reacted. A close exactly at the level counts as the
  * upper side, matching the support classification's `price <= close`.
- * Drawing-only (broken zones dim); not a rule operand, so no backend port. */
+ * Drawing-only (broken zones render as ghosts); not a rule operand, so no
+ * backend port. */
 export function isLevelBroken(price: number, lastIdx: number, closes: number[]): boolean {
   return isLevelBrokenAt(price, closes[closes.length - 1], closes[lastIdx]);
 }
@@ -313,6 +315,13 @@ function hexWithAlpha(hex: string, alpha: number): string {
   const a = Math.round(alpha * 255).toString(16).padStart(2, "0");
   return `${hex}${a}`;
 }
+
+// A broken zone empties out (fill scaled to this) and gains a dashed frame and
+// a struck touch-count tag, both drawn at BROKEN_INK. The frame and tag carry
+// the state; the fill alone cannot, because at the default 0.1 base opacity
+// every multiple of it lands within a couple of RGB steps of the background.
+const BROKEN_FILL = 0.3;
+const BROKEN_INK = 0.55;
 
 function drawSrLevels(params: IndicatorDrawParams<SrLevelsPoint, unknown, unknown>): boolean {
   const { ctx, chart, indicator, bounding, xAxis, yAxis } = params;
@@ -345,17 +354,36 @@ function drawSrLevels(params: IndicatorDrawParams<SrLevelsPoint, unknown, unknow
       zoneStyle.dimBroken &&
       dataList.length > 0 &&
       isLevelBrokenAt(lv.price, lastClose, dataList[lv.lastIdx]?.close);
-    const dim = broken ? 0.5 : 1;
     const x0 = Math.max(0, xAxis.convertToPixel(lv.firstIdx));
     const yTop = yAxis.convertToPixel(lv.price + lv.halfWidth);
     const yBot = yAxis.convertToPixel(lv.price - lv.halfWidth);
     const yMid = yAxis.convertToPixel(lv.price);
     const w = bounding.width - x0;
     if (w <= 0) continue;
-    ctx.fillStyle = hexWithAlpha(color, zoneAlpha(lv.touches, cfg.minTouches, zoneStyle.opacity) * dim);
-    ctx.fillRect(x0, yTop, w, Math.max(1, yBot - yTop));
+    const h = Math.max(1, yBot - yTop);
+    const fill = zoneAlpha(lv.touches, cfg.minTouches, zoneStyle.opacity);
+    ctx.fillStyle = hexWithAlpha(color, broken ? fill * BROKEN_FILL : fill);
+    ctx.fillRect(x0, yTop, w, h);
+    if (broken) {
+      // Broken gets its own ink channel, not just less alpha: halving a 0.1
+      // fill moves the band by one or two RGB steps, which reads as no change
+      // at all. Emptying the fill and framing it dashed makes the zone a ghost
+      // of a live one, and stays legible against the support/resistance
+      // re-tint (a broken support turns red as it starts acting as resistance,
+      // which on its own looks like a brand-new level).
+      ctx.strokeStyle = hexWithAlpha(color, BROKEN_INK);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x0, yTop + 0.5);
+      ctx.lineTo(bounding.width, yTop + 0.5);
+      ctx.moveTo(x0, yTop + h - 0.5);
+      ctx.lineTo(bounding.width, yTop + h - 0.5);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (showMidline) {
-      ctx.strokeStyle = hexWithAlpha(color, 0.9 * dim);
+      ctx.strokeStyle = hexWithAlpha(color, broken ? BROKEN_INK : 0.9);
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
@@ -364,11 +392,22 @@ function drawSrLevels(params: IndicatorDrawParams<SrLevelsPoint, unknown, unknow
       ctx.stroke();
       ctx.setLineDash([]);
     }
-    // Touch-count tag at the right edge.
+    // Touch-count tag at the right edge; struck through when broken, so the
+    // state is readable even where the zone is too thin to show its frame.
     const label = `×${lv.touches}`;
-    ctx.fillStyle = hexWithAlpha(color, 0.95 * dim);
+    ctx.fillStyle = hexWithAlpha(color, broken ? BROKEN_INK : 0.95);
     ctx.textAlign = "right";
-    ctx.fillText(label, tagRight, yMid - 7);
+    const yTag = yMid - 7;
+    ctx.fillText(label, tagRight, yTag);
+    if (broken) {
+      const tw = ctx.measureText(label).width;
+      ctx.strokeStyle = hexWithAlpha(color, BROKEN_INK);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(tagRight - tw - 1, yTag + 0.5);
+      ctx.lineTo(tagRight + 1, yTag + 0.5);
+      ctx.stroke();
+    }
   }
   ctx.restore();
   return true; // zones replace the default figure lines
