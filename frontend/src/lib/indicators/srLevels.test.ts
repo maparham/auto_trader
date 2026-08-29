@@ -47,6 +47,21 @@ describe("computeSrLevels", () => {
   // pivot at 16 (confirms 18).
   const candles = triangle([110, 110, 110, 110]);
 
+  it("anchors lastIdx to the last touch's extreme bar, not its confirm bar", () => {
+    const { levels } = computeSrLevels(candles, CFG);
+    const res = levels.find((l) => l.price === 111)!;
+    const sup = levels.find((l) => l.price === 99)!;
+    // Highs peak at bars 4/12/20/28 and lows trough at 8/16/24/32; the last
+    // usable touch of each is the pivot itself, not the bar pivotLen later
+    // where it confirmed (30 and 26). The broken test reads the close there,
+    // and only the extreme bar's close says which side the level acted from.
+    // (The trough at 32 is the last bar, so it never gets its right window.)
+    expect(res.lastIdx).toBe(28);
+    expect(sup.lastIdx).toBe(24);
+    expect(candles[res.lastIdx].high).toBe(111);
+    expect(candles[sup.lastIdx].low).toBe(99);
+  });
+
   it("returns one point per bar", () => {
     const { points } = computeSrLevels(candles, CFG);
     expect(points).toHaveLength(candles.length);

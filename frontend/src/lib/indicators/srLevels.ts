@@ -49,7 +49,11 @@ export interface SrLevel {
   halfWidth: number; // zone half-height = tolerance at the last touch
   touches: number;
   firstIdx: number; // bar index of the first member pivot's extreme
-  lastIdx: number; // bar index where the last member pivot confirmed
+  // Bar index of the LAST member pivot's extreme (not its confirm bar): the
+  // bar whose close says which side the level was acting from when it last
+  // reacted, which is what the broken test compares against. The confirm bar
+  // sits pivotLen bars later and its close has drifted arbitrarily far by then.
+  lastIdx: number;
 }
 
 export interface SrPoint {
@@ -61,7 +65,8 @@ interface Cluster {
   sum: number;
   touches: number;
   firstIdx: number;
-  lastConfirm: number;
+  lastConfirm: number; // confirm bar of the last touch: ranking + age window
+  lastPivot: number; // extreme bar of the last touch: the broken test's anchor
   halfWidth: number;
 }
 
@@ -98,8 +103,9 @@ export function computeSrLevels(
     const htfMs = mtf.htfMs;
     // Map each stashed level's timestamps onto chart bar indices: the zone
     // starts at the first chart bar inside its first pivot's HTF bar; its last
-    // touch anchors to the final chart bar of the confirming HTF bar (whose
-    // close approximates the HTF confirm close, for the broken-level check).
+    // touch anchors to the final chart bar of the HTF bar holding that touch's
+    // extreme (whose close approximates the HTF close there, for the
+    // broken-level check).
     const levels: SrLevel[] = (mtf.htfLevels ?? []).map((lv) => {
       const first = ts.findIndex((t) => t >= lv.firstTs);
       const afterLast = ts.findIndex((t) => t >= lv.lastTs + htfMs);
@@ -155,9 +161,17 @@ export function computeSrLevels(
       best.sum += price;
       best.touches += 1;
       best.lastConfirm = confirmIdx;
+      best.lastPivot = pivotIdx;
       best.halfWidth = tol;
     } else {
-      clusters.push({ sum: price, touches: 1, firstIdx: pivotIdx, lastConfirm: confirmIdx, halfWidth: tol });
+      clusters.push({
+        sum: price,
+        touches: 1,
+        firstIdx: pivotIdx,
+        lastConfirm: confirmIdx,
+        lastPivot: pivotIdx,
+        halfWidth: tol,
+      });
     }
     cachedMajor = null; // the pool moved: rank and eligibility must be redone
   };
@@ -212,7 +226,7 @@ export function computeSrLevels(
     halfWidth: c.halfWidth,
     touches: c.touches,
     firstIdx: c.firstIdx,
-    lastIdx: c.lastConfirm,
+    lastIdx: c.lastPivot,
   }));
 
   return { points, levels };
@@ -248,7 +262,7 @@ export interface SrMtfLevel {
   halfWidth: number;
   touches: number;
   firstTs: number; // open timestamp of the first member pivot's HTF extreme bar
-  lastTs: number; // open timestamp of the HTF bar where the last touch confirmed
+  lastTs: number; // open timestamp of the HTF bar holding the last touch's extreme
 }
 
 export interface SrLevelsExtend {
