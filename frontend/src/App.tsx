@@ -140,6 +140,7 @@ import {
   saveScratch,
   clearScratch,
   cloneWorkspace,
+  importLayout,
   pickActiveTabId,
   loadAutosave,
   saveAutosave,
@@ -1896,6 +1897,15 @@ export default function App() {
     setLayoutRev((n) => n + 1);
   };
 
+  // Import a layout-export file (LayoutManager parses it): register it under
+  // fresh tab/cell ids and switch this device to it. False = not a valid export.
+  const importLayoutFromFile = (data: unknown): boolean => {
+    const res = importLayout(data, newTabId, newCellId);
+    if (!res) return false;
+    switchLayout(res.id);
+    return true;
+  };
+
   // Delete a layout. If it's the one on screen, fall back to another layout (or a
   // blank scratch). deleteLayout purges its tabs' scopes + index entry + default.
   const removeLayout = (id: string) => {
@@ -2062,6 +2072,7 @@ export default function App() {
               onSave={saveActiveLayout}
               onSaveAs={saveLayoutAs}
               onDelete={removeLayout}
+              onImport={importLayoutFromFile}
               revision={layoutRev}
             />
             {active?.layout && (

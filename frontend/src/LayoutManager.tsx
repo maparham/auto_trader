@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
 import {
+  exportLayout,
   loadLayouts,
   loadDefaultLayoutId,
   renameLayout,
@@ -28,7 +29,26 @@ interface Props {
   onSave: () => void;
   onSaveAs: (name: string) => void;
   onDelete: (id: string) => void;
+  // Import a parsed layout-export document (App re-mints ids and switches to
+  // it). Returns false when the document isn't a valid export.
+  onImport: (data: unknown) => boolean;
   revision: number;
+}
+
+// Serialize a named layout (workspace + every cell scope's content) and hand it
+// to the browser as a download.
+function downloadLayout(id: string): void {
+  const data = exportLayout(id);
+  if (!data) return;
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${data.name}.layout.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function LayoutManager({
@@ -41,6 +61,7 @@ export default function LayoutManager({
   onSave,
   onSaveAs,
   onDelete,
+  onImport,
   revision,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -48,8 +69,10 @@ export default function LayoutManager({
   const [draft, setDraft] = useState("");
   const [saveAsName, setSaveAsName] = useState("");
   const [showSaveAs, setShowSaveAs] = useState(false);
+  const [importError, setImportError] = useState(false);
   const [localRev, setLocalRev] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const layouts = useMemo<LayoutMeta[]>(
     () => loadLayouts(),
@@ -69,6 +92,7 @@ export default function LayoutManager({
         setOpen(false);
         setEditing(null);
         setShowSaveAs(false);
+        setImportError(false);
       }
     };
     document.addEventListener("mousedown", onDown);
@@ -103,6 +127,21 @@ export default function LayoutManager({
     setOpen(false);
     setEditing(null);
     setShowSaveAs(false);
+    setImportError(false);
+  };
+
+  // A chosen file either becomes a new layout (App switches to it) or lights
+  // the inline error — same message for unreadable JSON and a wrong document,
+  // since either way it isn't a layout export.
+  const handleImportFile = async (file: File) => {
+    let ok: boolean;
+    try {
+      ok = onImport(JSON.parse(await file.text()));
+    } catch {
+      ok = false;
+    }
+    if (ok) close();
+    else setImportError(true);
   };
 
   return (
@@ -229,6 +268,37 @@ export default function LayoutManager({
                 <span className="layout-mgr-action-text">Make a copy…</span>
               </li>
             )}
+            <li
+              className="layout-mgr-action"
+              onClick={(e) => {
+                e.stopPropagation();
+                setImportError(false);
+                fileRef.current?.click();
+              }}
+            >
+              <span className="layout-mgr-action-icon">📥</span>
+              <span className="layout-mgr-action-text">Import layout…</span>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".json,application/json"
+                style={{ display: "none" }}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = ""; // let the same file be re-picked
+                  if (f) void handleImportFile(f);
+                }}
+              />
+            </li>
+            {importError && (
+              <li className="layout-mgr-action layout-mgr-import-error">
+                <span className="layout-mgr-action-icon">⚠</span>
+                <span className="layout-mgr-action-text">
+                  Not a layout export file
+                </span>
+              </li>
+            )}
           </ul>
 
           {/* ── Layout list ── */}
@@ -291,6 +361,15 @@ export default function LayoutManager({
                           }}
                         >
                           ✎
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Export to file (everything included)">
+                        <button
+                          className="act"
+                          aria-label={`Export ${l.name}`}
+                          onClick={() => downloadLayout(l.id)}
+                        >
+                          ⇩
                         </button>
                       </Tooltip>
                       <Tooltip content="Delete">

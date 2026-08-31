@@ -4290,6 +4290,10 @@
 .layout-mgr-action-kbd { font-size: 11px; color: var(--text-dim); }
 .layout-mgr-unsaved { color: var(--accent); margin-left: 2px; }
 
+/* Import-failed row: informational, not clickable. */
+.layout-mgr-import-error { color: var(--danger, #e5484d); cursor: default; }
+.layout-mgr-import-error:hover { background: transparent; }
+
 /* Autosave toggle row: cursor on the row itself is default; the switch is the target. */
 .layout-mgr-toggle { cursor: default; }
 .layout-mgr-toggle:hover { background: transparent; }
