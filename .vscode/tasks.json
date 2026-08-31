@@ -4,7 +4,7 @@
     {
       "label": "Backend: uvicorn",
       "type": "shell",
-      "command": ".venv/bin/uvicorn auto_trader.api.app:app --reload --reload-dir auto_trader --port 8000",
+      "command": ".venv/bin/python -m uvicorn auto_trader.api.app:app --reload --reload-dir auto_trader --port 8000",
       "options": {
         "cwd": "${workspaceFolder}/backend"
       },
@@ -12,7 +12,22 @@
       "presentation": {
         "panel": "dedicated"
       },
-      "problemMatcher": []
+      "problemMatcher": {
+        "owner": "uvicorn",
+        "pattern": [
+          {
+            "regexp": ".",
+            "file": 1,
+            "location": 2,
+            "message": 3
+          }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Application startup complete|Uvicorn running on"
+        }
+      }
     },
     {
       "label": "Frontend: npm run dev",
@@ -25,7 +40,22 @@
       "presentation": {
         "panel": "dedicated"
       },
-      "problemMatcher": []
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": [
+          {
+            "regexp": ".",
+            "file": 1,
+            "location": 2,
+            "message": 3
+          }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "ready in \\d+|Local:"
+        }
+      }
     },
     {
       "label": "Start servers",
