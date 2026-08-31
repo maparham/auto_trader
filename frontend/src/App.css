@@ -4356,8 +4356,8 @@
 .layout-mgr-row-actions {
   display: flex; gap: 2px; flex: none;
 }
-/* Rename/delete fade in on row hover; the default-star (.act-star) stays put. */
-.layout-mgr-row-actions .act:not(.act-star) { opacity: 0; transition: opacity 0.1s; }
+/* All row actions stay visible; they brighten on row hover. */
+.layout-mgr-row-actions .act:not(.act-star) { opacity: 0.6; transition: opacity 0.1s; }
 .layout-mgr-list li:hover .layout-mgr-row-actions .act:not(.act-star) { opacity: 1; }
 .layout-mgr-row-actions .act {
   width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center;

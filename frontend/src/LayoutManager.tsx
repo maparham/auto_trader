@@ -268,6 +268,18 @@ export default function LayoutManager({
                 <span className="layout-mgr-action-text">Make a copy…</span>
               </li>
             )}
+            {active && (
+              <li
+                className="layout-mgr-action"
+                onClick={() => {
+                  downloadLayout(active.id);
+                  close();
+                }}
+              >
+                <span className="layout-mgr-action-icon">📤</span>
+                <span className="layout-mgr-action-text">Export layout…</span>
+              </li>
+            )}
             <li
               className="layout-mgr-action"
               onClick={(e) => {

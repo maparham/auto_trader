@@ -76,6 +76,27 @@ describe("layout export", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake");
     click.mockRestore();
   });
+
+  it("exports the ACTIVE layout from the top-level action and closes the menu", () => {
+    const created: Blob[] = [];
+    Object.assign(URL, {
+      createObjectURL: vi.fn((b: Blob) => {
+        created.push(b);
+        return "blob:fake";
+      }),
+      revokeObjectURL: vi.fn(),
+    });
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+
+    renderMgr();
+    fireEvent.click(screen.getByText("Export layout…"));
+
+    expect(created).toHaveLength(1);
+    expect(document.querySelector(".layout-mgr-menu")).toBeNull();
+    click.mockRestore();
+  });
 });
 
 describe("layout import", () => {
