@@ -6,7 +6,8 @@
 import type { KLineData } from "klinecharts";
 import type { PriceSide } from "../theme";
 import { defaultBrokerId } from "./brokerDefaults";
-import { API_BASE as BASE, errorDetail } from "./http";
+import { API_BASE as BASE, apiFetch, errorDetail } from "./http";
+import { getAuthToken, hasTokenGetter } from "./authToken";
 import { PERF_DIAG_ON, recordBars, recordFetch } from "./perfDiag";
 import { getSynthetic, isSynthetic } from "./syntheticRegistry";
 // Pin aliases ("4H") only — the canonical table below is this file's own.
@@ -219,7 +220,7 @@ export async function searchInstruments(
   brokerId: string = DEFAULT_BROKER,
 ): Promise<Instrument[]> {
   const qs = new URLSearchParams({ q: q.trim(), broker: brokerId });
-  const res = await fetch(`${BASE}/api/markets?${qs}`);
+  const res = await apiFetch(`${BASE}/api/markets?${qs}`);
   if (!res.ok) return [];
   return res.json();
 }
@@ -237,7 +238,7 @@ function cachedInstrumentFetch(
 ): Promise<Instrument[]> {
   let cached = cache.get(brokerId);
   if (!cached) {
-    cached = fetch(url)
+    cached = apiFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`instrument fetch failed: ${r.status}`);
         return r.json() as Promise<Instrument[]>;
@@ -285,7 +286,7 @@ export async function addFavorite(
   brokerId: string = DEFAULT_BROKER,
 ): Promise<void> {
   const url = `${BASE}/api/favorites/${encodeURIComponent(epic)}?broker=${encodeURIComponent(brokerId)}`;
-  const r = await fetch(url, { method: "PUT" });
+  const r = await apiFetch(url, { method: "PUT" });
   if (!r.ok) throw new Error(`add favorite failed: ${r.status}`);
   invalidateFavorites(brokerId);
 }
@@ -296,7 +297,7 @@ export async function removeFavorite(
   brokerId: string = DEFAULT_BROKER,
 ): Promise<void> {
   const url = `${BASE}/api/favorites/${encodeURIComponent(epic)}?broker=${encodeURIComponent(brokerId)}`;
-  const r = await fetch(url, { method: "DELETE" });
+  const r = await apiFetch(url, { method: "DELETE" });
   if (!r.ok) throw new Error(`remove favorite failed: ${r.status}`);
   invalidateFavorites(brokerId);
 }
@@ -341,7 +342,7 @@ export async function fetchMarketDetail(
 ): Promise<MarketDetail | null> {
   try {
     const url = `${BASE}/api/market/${encodeURIComponent(epic)}/details?broker=${encodeURIComponent(brokerId)}`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) return null;
     const d = (await res.json()) as Partial<MarketDetail>;
     return {
@@ -580,7 +581,7 @@ const HISTORY_TIMEOUT_MS = 10_000;
 // fast-fails a down broker, but this bounds the client side too.
 const META_TIMEOUT_MS = 6_000;
 
-/** fetch() that aborts after `timeoutMs`, throwing a readable timeout error. */
+/** apiFetch() that aborts after `timeoutMs`, throwing a readable timeout error. */
 async function fetchWithTimeout(
   url: string,
   timeoutMs: number = HISTORY_TIMEOUT_MS,
@@ -588,7 +589,7 @@ async function fetchWithTimeout(
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    return await fetch(url, { signal: ctrl.signal });
+    return await apiFetch(url, { signal: ctrl.signal });
   } catch (err) {
     if (ctrl.signal.aborted) {
       throw new Error(`Request timed out after ${timeoutMs / 1000}s`);
@@ -671,7 +672,7 @@ async function rangeResponse(
         broker: brokerId,
       });
   if (PERF_DIAG_ON) recordFetch("range", 0); // bars land in the callers' parse
-  return fetch(`${BASE}/api/candles${syn ? "/synthetic" : ""}?${qs}`, { signal });
+  return apiFetch(`${BASE}/api/candles${syn ? "/synthetic" : ""}?${qs}`, { signal });
 }
 
 /** Statuses that mean "the broker/backend path is unreachable right now" (retry
@@ -808,51 +809,71 @@ export function openLive(
   const connect = () => {
     if (closed) return;
     onStatus?.("connecting");
-    ws = new WebSocket(url);
-    ws.onopen = () => {
-      // Deliberately do NOT reset `retry` here: the handshake succeeding proves
-      // nothing when the server accepts and then drops the relay immediately
-      // (e.g. a wedged MT5 upstream). Resetting on open pinned every reconnect
-      // to the 1s floor — a ~2s open/close storm for as long as the upstream
-      // was down. Only a real candle frame (below) proves the stream is healthy.
-      onStatus?.("live");
-    };
-    ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === "candle") {
-          retry = 0; // data flowing = healthy; future drops back off from 1s again
-          onStatus?.("live");
-          onCandle(toKLine(msg.candle), msg.bid ?? null, msg.ask ?? null);
-        } else if (msg.type === "error") {
-          // The server sends an error frame then closes. `fatal` distinguishes a
-          // permanent fault the client must NOT retry (e.g. a bad/unknown
-          // resolution — reconnecting hits the same bad URL forever) from a
-          // recoverable one (the server exhausted its reconnect attempts during a
-          // sustained outage). For a recoverable error we leave `closed` false so
-          // onclose reconnects and the chart self-heals when connectivity returns;
-          // only a fatal frame stops. Default a missing flag to fatal so an
-          // untagged error frame keeps the conservative stop-and-report behavior.
-          const fatal = msg.fatal !== false;
-          console.warn(
-            `[live] stream error for ${epic}/${resolution} (fatal=${fatal}):`,
-            msg.detail,
-          );
-          if (fatal) closed = true;
-          onStatus?.("down");
+    const dial = (token: string | null) => {
+      ws = new WebSocket(
+        token ? `${url}&token=${encodeURIComponent(token)}` : url,
+      );
+      ws.onopen = () => {
+        // Deliberately do NOT reset `retry` here: the handshake succeeding proves
+        // nothing when the server accepts and then drops the relay immediately
+        // (e.g. a wedged MT5 upstream). Resetting on open pinned every reconnect
+        // to the 1s floor — a ~2s open/close storm for as long as the upstream
+        // was down. Only a real candle frame (below) proves the stream is healthy.
+        onStatus?.("live");
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === "candle") {
+            retry = 0; // data flowing = healthy; future drops back off from 1s again
+            onStatus?.("live");
+            onCandle(toKLine(msg.candle), msg.bid ?? null, msg.ask ?? null);
+          } else if (msg.type === "error") {
+            // The server sends an error frame then closes. `fatal` distinguishes a
+            // permanent fault the client must NOT retry (e.g. a bad/unknown
+            // resolution — reconnecting hits the same bad URL forever) from a
+            // recoverable one (the server exhausted its reconnect attempts during a
+            // sustained outage). For a recoverable error we leave `closed` false so
+            // onclose reconnects and the chart self-heals when connectivity returns;
+            // only a fatal frame stops. Default a missing flag to fatal so an
+            // untagged error frame keeps the conservative stop-and-report behavior.
+            const fatal = msg.fatal !== false;
+            console.warn(
+              `[live] stream error for ${epic}/${resolution} (fatal=${fatal}):`,
+              msg.detail,
+            );
+            if (fatal) closed = true;
+            onStatus?.("down");
+          }
+        } catch (e) {
+          console.warn("[live] bad frame", e);
         }
-      } catch (e) {
-        console.warn("[live] bad frame", e);
-      }
+      };
+      ws.onclose = () => {
+        if (closed) return;
+        onStatus?.("down");
+        const delay = Math.min(1000 * 2 ** retry, 15000); // capped exponential backoff
+        retry += 1;
+        timer = setTimeout(connect, delay);
+      };
+      ws.onerror = () => ws?.close(); // triggers onclose -> reconnect
     };
-    ws.onclose = () => {
+    // Dev/test (no token getter registered): dial synchronously —
+    // byte-identical to pre-auth behavior. Once one is registered, a token
+    // must be fetched fresh per (re)connect (Clerk tokens live ~60s).
+    if (!hasTokenGetter()) {
+      dial(null);
+      return;
+    }
+    void (async () => {
+      // getAuthToken() (Clerk's getToken()) can reject (network blip, torn-down
+      // session). A tokenless dial here — rather than leaving the handle dead —
+      // lets the backend reject the socket and the existing onclose/backoff
+      // machinery own the retry.
+      const token = await getAuthToken().catch(() => null);
       if (closed) return;
-      onStatus?.("down");
-      const delay = Math.min(1000 * 2 ** retry, 15000); // capped exponential backoff
-      retry += 1;
-      timer = setTimeout(connect, delay);
-    };
-    ws.onerror = () => ws?.close(); // triggers onclose -> reconnect
+      dial(token);
+    })();
   };
 
   connect();

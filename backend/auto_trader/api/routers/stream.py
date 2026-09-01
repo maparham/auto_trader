@@ -27,6 +27,7 @@ from auto_trader.core.candle_accumulator import CANDLE_ACCUMULATOR
 from auto_trader.core.candle_cache import CANDLE_CACHE
 from auto_trader.core.models import Candle, Resolution
 
+from ..auth import verify_ws
 from .. import deps
 from .charts import _candle_dto
 
@@ -64,6 +65,8 @@ async def ws_candles(websocket: WebSocket) -> None:
     upstream Capital.com stream + ping task are torn down when the browser
     disconnects (stream_candles' finally cancels the ping; closing the generator
     closes the upstream socket)."""
+    if await verify_ws(websocket) is None:
+        return
     await websocket.accept()
     epic = websocket.query_params.get("epic", "")
     res_raw = websocket.query_params.get("resolution", Resolution.MINUTE.value)

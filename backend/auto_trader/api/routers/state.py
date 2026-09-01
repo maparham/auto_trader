@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from auto_trader.core.state_store import STATE_STORE
 
+from ..auth import verify_ws
 from ..schemas import StateValue
 
 router = APIRouter()
@@ -85,6 +86,8 @@ async def ws_state(websocket: WebSocket) -> None:
     """Subscribe to workspace-state changes from other tabs/devices. Each message
     is {key, value, origin} for an upsert or {key, deleted:true, origin} for a
     removal. The client applies it to localStorage and ignores its own origin."""
+    if await verify_ws(websocket) is None:
+        return
     await websocket.accept()
     _state_subscribers.add(websocket)
     try:

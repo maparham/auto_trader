@@ -1,7 +1,7 @@
 // Pattern search: the client for POST /api/patterns/search plus the pure
 // shaping the results panel renders from. No React and no chart here, so the
 // geometry can be tested without a DOM.
-import { API_BASE as BASE, errorDetail } from "./http";
+import { API_BASE as BASE, apiFetch, errorDetail } from "./http";
 
 export interface PatternBar {
   ts: number;
@@ -75,7 +75,7 @@ export async function searchPatterns(
   req: PatternSearchRequest,
   signal?: AbortSignal,
 ): Promise<PatternSearchResult> {
-  const res = await fetch(`${BASE}/api/patterns/search`, {
+  const res = await apiFetch(`${BASE}/api/patterns/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),

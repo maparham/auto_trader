@@ -1,7 +1,7 @@
 // Typed client for the Auto Trader backend.
 
 import type { Costs, SlippageModel, RiskConfig, ScalingConfig, RecurrenceMask } from "./lib/backtestConfig";
-import { API_BASE as BASE, errorDetail } from "./lib/http";
+import { API_BASE as BASE, apiFetch, errorDetail } from "./lib/http";
 import type { EvaluateRequest, EvaluateResult } from "./lib/liveTypes";
 import type { ExprInstancePayload } from "./lib/exprInstances";
 
@@ -428,7 +428,7 @@ export interface ExprBacktestRequest {
 }
 
 export async function runExprBacktest(req: ExprBacktestRequest, signal?: AbortSignal): Promise<BacktestResult> {
-  const res = await fetch(`${BASE}/api/expr/backtest`, {
+  const res = await apiFetch(`${BASE}/api/expr/backtest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -465,7 +465,7 @@ export interface ClosenessRequest {
 export async function fetchClosenessHeatmap(
   req: ClosenessRequest,
 ): Promise<{ times: number[]; values: (number | null)[] }> {
-  const res = await fetch(`${BASE}/api/expr/closeness`, {
+  const res = await apiFetch(`${BASE}/api/expr/closeness`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -479,7 +479,7 @@ export async function runBacktest(req: BacktestRequest, signal?: AbortSignal): P
   const t0 = performance.now();
   const body = JSON.stringify(req);
   const t1 = performance.now();
-  const res = await fetch(`${BASE}/api/backtest`, {
+  const res = await apiFetch(`${BASE}/api/backtest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body,
@@ -514,7 +514,7 @@ export interface CostProfile {
 
 // Fetch the stored profile, prefilling from the broker on first read for the epic.
 export async function getCostProfile(epic: string, broker: string): Promise<CostProfile> {
-  const res = await fetch(`${BASE}/api/costs/${encodeURIComponent(epic)}?broker=${encodeURIComponent(broker)}`);
+  const res = await apiFetch(`${BASE}/api/costs/${encodeURIComponent(epic)}?broker=${encodeURIComponent(broker)}`);
   if (!res.ok) throw new Error(await errorDetail(res, `cost profile failed (${res.status})`));
   return res.json();
 }
@@ -522,7 +522,7 @@ export async function getCostProfile(epic: string, broker: string): Promise<Cost
 // Partially patch the stored profile (only the fields present are written); the
 // server marks the result source "manual" and returns the merged profile.
 export async function putCostProfile(epic: string, patch: Partial<CostProfile>): Promise<CostProfile> {
-  const res = await fetch(`${BASE}/api/costs/${encodeURIComponent(epic)}`, {
+  const res = await apiFetch(`${BASE}/api/costs/${encodeURIComponent(epic)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -537,7 +537,7 @@ export async function refetchCostProfile(
   epic: string,
   broker: string,
 ): Promise<{ old: CostProfile | null; new: CostProfile }> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/api/costs/${encodeURIComponent(epic)}/refetch?broker=${encodeURIComponent(broker)}`,
     { method: "POST" },
   );
@@ -546,7 +546,7 @@ export async function refetchCostProfile(
 }
 
 export async function evaluateStrategy(req: EvaluateRequest): Promise<EvaluateResult> {
-  const res = await fetch(`${BASE}/api/strategy/evaluate`, {
+  const res = await apiFetch(`${BASE}/api/strategy/evaluate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -593,13 +593,13 @@ export interface StrategyInfo {
 }
 
 export async function fetchStrategies(): Promise<StrategyInfo[]> {
-  const res = await fetch(`${BASE}/api/strategies`);
+  const res = await apiFetch(`${BASE}/api/strategies`);
   if (!res.ok) throw new Error(await errorDetail(res, `strategies failed (${res.status})`));
   return res.json();
 }
 
 export async function fetchStrategySource(filename: string): Promise<string> {
-  const res = await fetch(`${BASE}/api/strategies/${encodeURIComponent(filename)}/source`);
+  const res = await apiFetch(`${BASE}/api/strategies/${encodeURIComponent(filename)}/source`);
   if (!res.ok) throw new Error(await errorDetail(res, `source failed (${res.status})`));
   const body = await res.json();
   return body.source;
@@ -676,7 +676,7 @@ export async function submitSweepJob(
   windows: number[] | undefined,
   target: SweepTarget,
 ): Promise<{ jobId: string; total: number }> {
-  const res = await fetch(sweepJobsBase(target), {
+  const res = await apiFetch(sweepJobsBase(target), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...req, sweep: { combos, windows } }),
@@ -692,7 +692,7 @@ export async function submitExprSweepJob(
   combos: Array<Record<string, number | boolean | string>>,
   windows: number[] | undefined,
 ): Promise<{ jobId: string; total: number }> {
-  const res = await fetch(`${BASE}/api/expr/sweep/jobs`, {
+  const res = await apiFetch(`${BASE}/api/expr/sweep/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...req, sweep: { combos, windows } }),
@@ -707,7 +707,7 @@ export async function pollSweepJob(
   cursor: number,
   target: SweepTarget,
 ): Promise<SweepJobStatus> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/api/backtest/sweep/jobs/${jobId}?cursor=${cursor}${target === "remote" ? "&target=remote" : ""}`,
   );
   if (!res.ok) throw new Error(await errorDetail(res, `sweep poll failed (${res.status})`));
@@ -719,7 +719,7 @@ export async function pollSweepJob(
 // and the POST /api/backtest returns 499. A 404 means the run already
 // finished (its progress entry is cleared in a finally) — not an error.
 export async function cancelBacktestRun(progressId: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/backtest/cancel/${progressId}`, { method: "POST" });
+  const res = await apiFetch(`${BASE}/api/backtest/cancel/${progressId}`, { method: "POST" });
   if (!res.ok && res.status !== 404) {
     throw new Error(await errorDetail(res, `backtest cancel failed (${res.status})`));
   }
@@ -727,7 +727,7 @@ export async function cancelBacktestRun(progressId: string): Promise<void> {
 
 // Ask the backend to stop a running job (best effort).
 export async function cancelSweepJob(jobId: string, target: SweepTarget): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/api/backtest/sweep/jobs/${jobId}/cancel${target === "remote" ? "?target=remote" : ""}`,
     { method: "POST" },
   );
@@ -743,7 +743,7 @@ export interface ComputeStatus {
 
 export async function computeStatus(): Promise<ComputeStatus> {
   try {
-    const res = await fetch(`${BASE}/api/compute/status`);
+    const res = await apiFetch(`${BASE}/api/compute/status`);
     if (!res.ok) return { remoteConfigured: false };
     return await res.json();
   } catch {
@@ -760,7 +760,7 @@ export async function computeHostState(): Promise<{
   detail: string | null;
   activeJobs: number;
 }> {
-  const res = await fetch(`${BASE}/api/compute/host`);
+  const res = await apiFetch(`${BASE}/api/compute/host`);
   if (!res.ok) throw new Error(`host state: ${res.status}`);
   return res.json();
 }
@@ -768,14 +768,14 @@ export async function computeHostState(): Promise<{
 // Boot the host. AWS/lifecycle errors surface as HTTP 502 with a `detail` body;
 // unwrap that into the thrown Error so the caller can toast it verbatim.
 export async function startComputeHost(): Promise<{ state: ComputeHostState }> {
-  const res = await fetch(`${BASE}/api/compute/host/start`, { method: "POST" });
+  const res = await apiFetch(`${BASE}/api/compute/host/start`, { method: "POST" });
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `start: ${res.status}`);
   return res.json();
 }
 
 // Stop the host (manual toolbar button). Same 502-detail unwrap as start.
 export async function stopComputeHost(): Promise<{ state: ComputeHostState }> {
-  const res = await fetch(`${BASE}/api/compute/host/stop`, { method: "POST" });
+  const res = await apiFetch(`${BASE}/api/compute/host/stop`, { method: "POST" });
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `stop: ${res.status}`);
   return res.json();
 }
@@ -790,7 +790,7 @@ export async function mt5DeployState(): Promise<{
   detail: string | null;
   idle_seconds_remaining: number | null;
 }> {
-  const res = await fetch(`${BASE}/api/mt5/deploy-state`);
+  const res = await apiFetch(`${BASE}/api/mt5/deploy-state`);
   if (!res.ok) throw new Error(`mt5 deploy state: ${res.status}`);
   return res.json();
 }
@@ -798,14 +798,14 @@ export async function mt5DeployState(): Promise<{
 // Deploy (turn on). MetaApi errors surface as HTTP 502 with a `detail` body;
 // unwrap that into the thrown Error so the caller can toast it verbatim.
 export async function deployMt5(): Promise<{ state: Mt5DeployState }> {
-  const res = await fetch(`${BASE}/api/mt5/deploy`, { method: "POST" });
+  const res = await apiFetch(`${BASE}/api/mt5/deploy`, { method: "POST" });
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `deploy: ${res.status}`);
   return res.json();
 }
 
 // Undeploy (turn off / pause billing). Same 502-detail unwrap as deploy.
 export async function undeployMt5(): Promise<{ state: Mt5DeployState }> {
-  const res = await fetch(`${BASE}/api/mt5/undeploy`, { method: "POST" });
+  const res = await apiFetch(`${BASE}/api/mt5/undeploy`, { method: "POST" });
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `undeploy: ${res.status}`);
   return res.json();
 }
@@ -840,7 +840,7 @@ export interface SweepArchiveIn {
 
 // Archive a completed sweep (axes verbatim + rows + optional windows).
 export async function saveSweepArchive(rec: SweepArchiveIn): Promise<{ id: string }> {
-  const res = await fetch(`${BASE}/api/backtest/sweeps`, {
+  const res = await apiFetch(`${BASE}/api/backtest/sweeps`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(rec),
@@ -852,21 +852,21 @@ export async function saveSweepArchive(rec: SweepArchiveIn): Promise<{ id: strin
 // Recent archived sweeps, newest first (summaries only).
 export async function listSweepArchives(epic?: string): Promise<SweepArchiveSummary[]> {
   const qs = epic ? `?epic=${encodeURIComponent(epic)}` : "";
-  const res = await fetch(`${BASE}/api/backtest/sweeps${qs}`);
+  const res = await apiFetch(`${BASE}/api/backtest/sweeps${qs}`);
   if (!res.ok) throw new Error(await errorDetail(res, `sweep list failed (${res.status})`));
   return res.json();
 }
 
 // One archived sweep: axes + rows + windows, ready to reopen.
 export async function getSweepArchive(id: string): Promise<SweepArchive> {
-  const res = await fetch(`${BASE}/api/backtest/sweeps/${encodeURIComponent(id)}`);
+  const res = await apiFetch(`${BASE}/api/backtest/sweeps/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(await errorDetail(res, `sweep fetch failed (${res.status})`));
   return res.json();
 }
 
 // Remove one archived sweep.
 export async function deleteSweepArchive(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/backtest/sweeps/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`${BASE}/api/backtest/sweeps/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(await errorDetail(res, `sweep delete failed (${res.status})`));
@@ -1003,7 +1003,7 @@ const exprWfoJobsBase = (target: SweepTarget) =>
 export async function submitWfoJob(
   req: BacktestRequest | ExprBacktestRequest, wf: WalkForwardPayload, target: SweepTarget, expr = false,
 ): Promise<{ jobId: string; total: number; schemes: Array<{ trainSpan: string; folds: Array<Record<string, number>> }> }> {
-  const res = await fetch(expr ? exprWfoJobsBase(target) : wfoJobsBase(target), {
+  const res = await apiFetch(expr ? exprWfoJobsBase(target) : wfoJobsBase(target), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...req, walkforward: wf }),
@@ -1013,7 +1013,7 @@ export async function submitWfoJob(
 }
 
 export async function pollWfoJob(jobId: string, cursor: number, target: SweepTarget): Promise<WfoJobStatus> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/api/backtest/walkforward/jobs/${jobId}?cursor=${cursor}${target === "remote" ? "&target=remote" : ""}`,
   );
   if (!res.ok) throw new Error(await errorDetail(res, `walk-forward poll failed (${res.status})`));
@@ -1021,7 +1021,7 @@ export async function pollWfoJob(jobId: string, cursor: number, target: SweepTar
 }
 
 export async function cancelWfoJob(jobId: string, target: SweepTarget): Promise<void> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/api/backtest/walkforward/jobs/${jobId}/cancel${target === "remote" ? "?target=remote" : ""}`,
     { method: "POST" },
   );
@@ -1029,7 +1029,7 @@ export async function cancelWfoJob(jobId: string, target: SweepTarget): Promise<
 }
 
 export async function getWfoFoldTable(jobId: string, key: string, target: SweepTarget): Promise<{ rows: SweepRow[] }> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/api/backtest/walkforward/jobs/${jobId}/fold?key=${encodeURIComponent(key)}${target === "remote" ? "&target=remote" : ""}`,
   );
   if (!res.ok) throw new Error(await errorDetail(res, `fold table fetch failed (${res.status})`));
@@ -1038,25 +1038,25 @@ export async function getWfoFoldTable(jobId: string, key: string, target: SweepT
 
 export async function listWfoArchives(epic?: string): Promise<WfoArchiveSummary[]> {
   const qs = epic ? `?epic=${encodeURIComponent(epic)}` : "";
-  const res = await fetch(`${BASE}/api/backtest/walkforward/archive${qs}`);
+  const res = await apiFetch(`${BASE}/api/backtest/walkforward/archive${qs}`);
   if (!res.ok) throw new Error(await errorDetail(res, `walk-forward list failed (${res.status})`));
   return res.json();
 }
 
 export async function getWfoArchive(id: string): Promise<{ id: string; created_at: number; epic: string; timeframe: string; name: string | null; request: unknown; result: WfoResult }> {
-  const res = await fetch(`${BASE}/api/backtest/walkforward/archive/${encodeURIComponent(id)}`);
+  const res = await apiFetch(`${BASE}/api/backtest/walkforward/archive/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(await errorDetail(res, `walk-forward fetch failed (${res.status})`));
   return res.json();
 }
 
 export async function getWfoArchiveTables(id: string): Promise<Record<string, SweepRow[]>> {
-  const res = await fetch(`${BASE}/api/backtest/walkforward/archive/${encodeURIComponent(id)}/tables`);
+  const res = await apiFetch(`${BASE}/api/backtest/walkforward/archive/${encodeURIComponent(id)}/tables`);
   if (!res.ok) throw new Error(await errorDetail(res, `walk-forward tables fetch failed (${res.status})`));
   return res.json();
 }
 
 export async function deleteWfoArchive(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/backtest/walkforward/archive/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`${BASE}/api/backtest/walkforward/archive/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(await errorDetail(res, `walk-forward delete failed (${res.status})`));
@@ -1072,7 +1072,7 @@ export type BackfillProgress = {
 
 export async function fetchActiveBackfills(): Promise<BackfillProgress[]> {
   try {
-    const res = await fetch(`${BASE}/api/candle-cache/backfill/active`);
+    const res = await apiFetch(`${BASE}/api/candle-cache/backfill/active`);
     if (!res.ok) return [];
     return await res.json();
   } catch {
@@ -1084,7 +1084,7 @@ export async function fetchBacktestProgress(
   id: string,
 ): Promise<{ stage: string; done: number; total: number } | null> {
   try {
-    const res = await fetch(`${BASE}/api/backtest/progress/${encodeURIComponent(id)}`);
+    const res = await apiFetch(`${BASE}/api/backtest/progress/${encodeURIComponent(id)}`);
     if (!res.ok) return null;
     return await res.json();
   } catch {

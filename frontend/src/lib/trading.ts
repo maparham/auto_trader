@@ -12,7 +12,7 @@ import { BROKERS_CACHE_KEY, defaultAccount } from "./brokerDefaults";
 import { isCapitalBroker, onTradesDirty } from "./persist";
 import { isStrategyDeal } from "./liveTags";
 import { tradesSignal } from "./signals";
-import { API_BASE as BASE, errorDetail, throwIfBrokerBlocked, BrokerBlockedError } from "./http";
+import { API_BASE as BASE, apiFetch, errorDetail, throwIfBrokerBlocked, BrokerBlockedError } from "./http";
 import { reportBrokerBlocked, reportBrokerReachable } from "./brokerBlocked";
 import { expiryToApi } from "./expiry";
 
@@ -215,7 +215,7 @@ export async function fetchBrokers(): Promise<BrokerInfo> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), BROKERS_TIMEOUT_MS);
   try {
-    const res = await fetch(`${BASE}/api/brokers`, { signal: ctrl.signal });
+    const res = await apiFetch(`${BASE}/api/brokers`, { signal: ctrl.signal });
     if (!res.ok) throw new Error(`brokers failed (${res.status})`);
     const info = (await res.json()) as BrokerInfo;
     noteBrokerLabels(info.labels);
@@ -316,7 +316,7 @@ export interface AccountSummary {
 export async function fetchAccountSummary(
   account: TradeAccount,
 ): Promise<AccountSummary | null> {
-  const res = await fetch(`${BASE}/api/account?account=${encodeURIComponent(account)}`);
+  const res = await apiFetch(`${BASE}/api/account?account=${encodeURIComponent(account)}`);
   if (res.status === 404) return null;
   if (!res.ok) {
     await throwIfBrokerBlocked(res);
@@ -343,13 +343,13 @@ export async function fetchQuote(
   account: TradeAccount = DEFAULT_ACCOUNT,
 ): Promise<Quote> {
   const url = `${BASE}/api/quote/${encodeURIComponent(epic)}?account=${encodeURIComponent(account)}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(`quote failed (${res.status})`);
   return res.json();
 }
 
 export async function placeOrder(req: OrderRequest): Promise<OrderResult> {
-  const res = await fetch(`${BASE}/api/orders`, {
+  const res = await apiFetch(`${BASE}/api/orders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -365,7 +365,7 @@ export async function placeOrder(req: OrderRequest): Promise<OrderResult> {
 }
 
 async function fetchPositions(account: TradeAccount): Promise<Position[]> {
-  const res = await fetch(`${BASE}/api/positions?account=${encodeURIComponent(account)}`);
+  const res = await apiFetch(`${BASE}/api/positions?account=${encodeURIComponent(account)}`);
   if (!res.ok) {
     await throwIfBrokerBlocked(res);
     throw new Error(`positions failed (${res.status})`);
@@ -387,7 +387,7 @@ export async function fetchOpenPositions(
 
 async function fetchWorkingOrders(account: TradeAccount): Promise<WorkingOrder[]> {
   const url = `${BASE}/api/orders/working?account=${encodeURIComponent(account)}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) {
     await throwIfBrokerBlocked(res);
     throw new Error(`working orders failed (${res.status})`);
@@ -578,7 +578,7 @@ export async function closePosition(
 ): Promise<OrderResult> {
   const qs = new URLSearchParams({ account });
   if (quantity != null) qs.set("quantity", String(quantity));
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/api/positions/${encodeURIComponent(dealId)}?${qs}`,
     { method: "DELETE" },
   );
@@ -609,7 +609,7 @@ export async function applyLevels(
     trade.kind === "position"
       ? `/api/positions/${encodeURIComponent(trade.id)}`
       : `/api/orders/working/${encodeURIComponent(trade.id)}`;
-  const res = await fetch(`${BASE}${path}?account=${encodeURIComponent(account)}`, {
+  const res = await apiFetch(`${BASE}${path}?account=${encodeURIComponent(account)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(edit),
@@ -760,7 +760,7 @@ export async function cancelWorkingOrder(
   account: TradeAccount = DEFAULT_ACCOUNT,
 ): Promise<OrderResult> {
   const url = `${BASE}/api/orders/working/${encodeURIComponent(orderId)}?account=${encodeURIComponent(account)}`;
-  const res = await fetch(url, { method: "DELETE" });
+  const res = await apiFetch(url, { method: "DELETE" });
   if (!res.ok) throw new Error(await errorDetail(res, `cancel failed (${res.status})`));
   return res.json();
 }

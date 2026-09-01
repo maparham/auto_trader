@@ -18,6 +18,7 @@ dependencies = [
     "yfinance>=1.5.1",
     "boto3>=1.43.51",
     "mcp>=2.0",
+    "pyjwt[crypto]>=2.9",
 ]
 
 [project.optional-dependencies]

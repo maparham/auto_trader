@@ -1,3 +1,5 @@
+import { getAuthToken, hasTokenGetter } from "./authToken";
+
 // Shared HTTP plumbing for the FastAPI backend: the single base-URL definition
 // and the response-error extractor, so every caller (api / feed / trading /
 // persist) resolves the same host and surfaces errors identically. The
@@ -49,4 +51,37 @@ export async function errorDetail(res: Response, fallback?: string): Promise<str
     /* non-JSON body — fall through */
   }
   return fallback ?? `${res.status} ${res.statusText}`.trim();
+}
+
+let onUnauthorized: (() => void) | null = null;
+
+/** Called when an authed request gets a 401 (session expired). main.tsx's
+ *  ClerkTokenBridge registers Clerk's signOut here. */
+export function setUnauthorizedHandler(fn: (() => void) | null): void {
+  onUnauthorized = fn;
+}
+
+/**
+ * fetch with the Clerk session token attached (when signed in). Every backend
+ * call goes through this so hosted mode authenticates uniformly; with no
+ * token (local dev) it IS fetch. A 401 on an authed call means the session
+ * died — notify so the app can sign out cleanly rather than error-spam.
+ */
+export function apiFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  // No getter registered (local dev, most tests): dial fetch directly and
+  // synchronously — no `await getAuthToken()` microtask in between — so this
+  // really IS fetch, not just "fetch a tick later with no header."
+  if (!hasTokenGetter()) return fetch(input, init);
+  return (async () => {
+    const token = await getAuthToken();
+    if (!token) return fetch(input, init);
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    const res = await fetch(input, { ...init, headers });
+    if (res.status === 401) onUnauthorized?.();
+    return res;
+  })();
 }

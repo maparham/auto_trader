@@ -6,6 +6,7 @@ import os
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..agent_bridge import HUB
+from ..auth import verify_ws
 from ..guard import REQUIRE_TOKEN_ENV, cors_origins, token_ok
 
 router = APIRouter()
@@ -42,6 +43,8 @@ async def ws_agent_ui(websocket: WebSocket) -> None:
     origin = websocket.headers.get("origin")
     if origin is not None and origin not in cors_origins():
         await websocket.close(code=WS_ORIGIN_CLOSE_CODE)
+        return
+    if await verify_ws(websocket) is None:
         return
     await websocket.accept()
     sid = HUB.register(websocket.send_json)

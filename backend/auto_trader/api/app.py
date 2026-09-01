@@ -28,6 +28,7 @@ from auto_trader.brokers.registry import build_registry
 from auto_trader.core.tick_store import TICK_STORE
 
 from . import deps
+from .auth import install_auth
 from .guard import cors_origins, install_guards
 from .mcp_server import mcp_http_app, mcp_session
 from .routers import agent, backtest, charts, compute, costs, expr, markets, mt5, patterns, state, strategy, stream, trading, strategies
@@ -103,6 +104,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Auto Trader API", version="0.1.0", lifespan=lifespan)
+
+# Clerk auth. Installed BEFORE CORSMiddleware so CORS wraps it (Starlette
+# stacks later-added middleware outside earlier ones) and auth 401s carry
+# CORS headers a cross-origin browser frontend can read. No-op without
+# CLERK_JWKS_URL. See auto_trader/api/auth.py.
+install_auth(app)
 
 # Vite dev origins + any CORS_ORIGINS deployment origins (read once at startup).
 app.add_middleware(

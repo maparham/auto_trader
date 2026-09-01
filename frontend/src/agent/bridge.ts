@@ -3,6 +3,7 @@
 // progress for long-running invocations. Frame shapes are documented in the
 // implementation plan and mirrored in backend/auto_trader/api/agent_bridge.py.
 import { API_BASE } from "../lib/http";
+import { getAuthToken, hasTokenGetter } from "../lib/authToken";
 import {
   ActionError, getAction, invokeAction, listActions, validateArgs,
 } from "./registry";
@@ -135,29 +136,49 @@ export function startAgentBridge(wsUrl?: string): () => void {
 
   const connect = () => {
     if (stopped) return;
-    ws = new WebSocket(url);
-    ws.onopen = () => {
-      // Only reset retryMs after connection has been stable for 5s
-      // (avoids backoff reset on handshake-then-close storms)
-      stabilityTimer = setTimeout(() => {
-        retryMs = 1000;
-        stabilityTimer = null;
-      }, 5000);
+    const dial = (token: string | null) => {
+      ws = new WebSocket(
+        token ? `${url}?token=${encodeURIComponent(token)}` : url,
+      );
+      ws.onopen = () => {
+        // Only reset retryMs after connection has been stable for 5s
+        // (avoids backoff reset on handshake-then-close storms)
+        stabilityTimer = setTimeout(() => {
+          retryMs = 1000;
+          stabilityTimer = null;
+        }, 5000);
+      };
+      ws.onmessage = (ev) => {
+        let frame: InboundFrame;
+        try { frame = JSON.parse(ev.data); } catch { return; }
+        void handleFrame(frame, (f) => {
+          if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(f));
+        });
+      };
+      ws.onclose = () => {
+        if (stopped) return; // stop() already drained
+        // Clear timers + abort in-flight invocations, then back off and retry.
+        drain();
+        reconnectTimer = setTimeout(connect, retryMs);
+        retryMs = Math.min(retryMs * 2, 15_000);
+      };
     };
-    ws.onmessage = (ev) => {
-      let frame: InboundFrame;
-      try { frame = JSON.parse(ev.data); } catch { return; }
-      void handleFrame(frame, (f) => {
-        if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(f));
-      });
-    };
-    ws.onclose = () => {
-      if (stopped) return; // stop() already drained
-      // Clear timers + abort in-flight invocations, then back off and retry.
-      drain();
-      reconnectTimer = setTimeout(connect, retryMs);
-      retryMs = Math.min(retryMs * 2, 15_000);
-    };
+    // Dev/test (no token getter registered): dial synchronously —
+    // byte-identical to pre-auth behavior. Once one is registered, a fresh
+    // token must be fetched per (re)connect (Clerk tokens live ~60s).
+    if (!hasTokenGetter()) {
+      dial(null);
+      return;
+    }
+    void (async () => {
+      // getAuthToken() (Clerk's getToken()) can reject (network blip, torn-down
+      // session). A tokenless dial here — rather than leaving the handle dead —
+      // lets the backend reject the socket and the existing onclose/backoff
+      // machinery own the retry.
+      const token = await getAuthToken().catch(() => null);
+      if (stopped) return;
+      dial(token);
+    })();
   };
   connect();
   // stop() sets `stopped` before closing, so onclose early-returns: drain here

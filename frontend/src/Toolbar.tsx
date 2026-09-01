@@ -64,6 +64,8 @@ import ComputeHostButton from "./ComputeHostButton";
 import BrokerSelector from "./BrokerSelector";
 import { isDataOnlyBroker, type BrokerAccount } from "./lib/trading";
 import { isSynthetic } from "./lib/syntheticRegistry";
+import { UserButton } from "@clerk/clerk-react";
+import { CLERK_ENABLED } from "./lib/authToken";
 
 interface DrawMenu {
   x: number;
@@ -860,6 +862,12 @@ export default function Toolbar({
           items={drawMenuItems}
           onClose={() => setDrawMenu(null)}
         />
+      )}
+
+      {CLERK_ENABLED && (
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+          <UserButton />
+        </div>
       )}
 
     </header>

@@ -4,7 +4,8 @@
 // builds on these.
 
 import { defaultBrokerId } from "../brokerDefaults";
-import { API_BASE } from "../http";
+import { API_BASE, apiFetch } from "../http";
+import { getAuthToken, hasTokenGetter } from "../authToken";
 
 export const PREFIX = "auto-trader";
 
@@ -182,7 +183,10 @@ function isDeviceLocalKey(k: string): boolean {
 //    reach those writes, a module flag does.
 //  - it keeps the test/node env from hitting a real backend: vitest never calls
 //    hydrateFromBackend(), so the flag stays false and save() mirrors nothing
-//    (Node 18+ has a global fetch, so `typeof fetch` is NOT a safe test guard).
+//    (Node 18+ has a global fetch — and mirrorSet/mirrorDelete now call
+//    apiFetch, which itself delegates straight to fetch when no auth token
+//    getter is registered — so `typeof fetch` is NOT a safe test guard on its
+//    own; mirrorEnabled is the real one).
 let mirrorEnabled = false;
 
 // A random id for THIS tab, sent as `origin` on every write. The backend echoes it
@@ -206,6 +210,9 @@ const CLIENT_ID =
 const remoteEcho = new Map<string, string>();
 
 function mirrorSet(key: string, value: string): void {
+  // Guards the environment fetch is delegated through, not the apiFetch call
+  // below directly — apiFetch always resolves to fetch (bare, or with an
+  // auth header attached), so "no global fetch" still means "can't mirror."
   if (!mirrorEnabled || typeof fetch === "undefined") return;
   if (remoteEcho.get(key) === value) {
     remoteEcho.delete(key);
@@ -219,7 +226,7 @@ function mirrorSet(key: string, value: string): void {
   } catch {
     return;
   }
-  void fetch(
+  void apiFetch(
     `${API_BASE}/api/state/${encodeURIComponent(key)}?origin=${CLIENT_ID}`,
     {
       method: "PUT",
@@ -232,12 +239,14 @@ function mirrorSet(key: string, value: string): void {
 }
 
 export function mirrorDelete(key: string): void {
+  // Same guard shape as mirrorSet: it's checking the environment fetch
+  // (which apiFetch delegates to) is available, not gating apiFetch itself.
   if (!mirrorEnabled || typeof fetch === "undefined") return;
   if (remoteEcho.get(key) === "\0deleted") {
     remoteEcho.delete(key);
     return; // echo of a remote delete
   }
-  void fetch(
+  void apiFetch(
     `${API_BASE}/api/state/${encodeURIComponent(key)}?origin=${CLIENT_ID}`,
     { method: "DELETE" },
   ).catch(() => {
@@ -409,7 +418,7 @@ export async function hydrateFromBackend(): Promise<boolean> {
   if (typeof fetch === "undefined") return false;
   let snapshot: Record<string, unknown>;
   try {
-    const res = await fetch(`${API_BASE}/api/state`);
+    const res = await apiFetch(`${API_BASE}/api/state`);
     if (!res.ok) return false;
     snapshot = (await res.json()) as Record<string, unknown>;
   } catch {
@@ -523,58 +532,78 @@ export function subscribeToBackendUpdates(
 
   const connect = (): void => {
     if (closed) return;
-    ws = new WebSocket(url);
-    ws.onopen = () => {
-      retry = 0;
+    const dial = (token: string | null) => {
+      ws = new WebSocket(
+        token ? `${url}?token=${encodeURIComponent(token)}` : url,
+      );
+      ws.onopen = () => {
+        retry = 0;
+      };
+      ws.onmessage = (ev) => {
+        let msg: StateMessage;
+        try {
+          msg = JSON.parse(ev.data as string) as StateMessage;
+        } catch {
+          return;
+        }
+        // Trades-changed push (not workspace state): fan out to the trades layer so it
+        // refetches once, and stop — it has no value to mirror into localStorage.
+        if (typeof msg.key === "string" && msg.key.startsWith(TRADES_DIRTY_PREFIX)) {
+          const account = msg.key.slice(TRADES_DIRTY_PREFIX.length);
+          for (const fn of _tradesDirty) fn(account);
+          return;
+        }
+        if (msg.origin === CLIENT_ID) return; // ignore our own echo
+        // NOTE: a push whose bytes match localStorage must STILL notify. Two tabs
+        // in the same browser share localStorage, so a sibling tab's save() has
+        // already written these exact bytes before its push arrives — the
+        // notification is the ONLY signal telling this tab to re-sync its React
+        // state/overlays to storage. Suppressing "unchanged" pushes here silently
+        // disables same-browser cross-tab sync (and the next persist() stomps the
+        // sibling's edit — the cross-tab data-loss bug this handler exists to fix).
+        if ("deleted" in msg && msg.deleted) {
+          localStorage.removeItem(msg.key);
+          remoteEcho.set(msg.key, "\0deleted");
+        } else {
+          const serialized = JSON.stringify((msg as { value: unknown }).value);
+          localStorage.setItem(msg.key, serialized);
+          // Remember it so the save effect this triggers doesn't mirror it back out
+          // (see remoteEcho) — otherwise two differing tabs ping-pong and the feed thrashes.
+          remoteEcho.set(msg.key, serialized);
+        }
+        // Forward the changed KEY so the handler can tell a per-cell CONTENT change
+        // (drawings/indicators/alerts on a cell we're showing) from a layout/tabs
+        // change. The old no-arg callback forced App to guess via a tabs-array compare,
+        // which silently missed content changes to a mounted cell — another tab's edit
+        // updated our localStorage but not our on-chart overlays, so our next persist()
+        // stomped it back (cross-tab data loss). See App.onBackendPush.
+        onChange(msg.key);
+      };
+      ws.onclose = () => {
+        if (closed) return;
+        // Backoff 0.5s → 5s; the backend may be mid-reload.
+        const delay = Math.min(5000, 500 * 2 ** retry++);
+        setTimeout(connect, delay);
+      };
+      // An error fires onclose right after; let onclose own the reconnect.
+      ws.onerror = () => ws?.close();
     };
-    ws.onmessage = (ev) => {
-      let msg: StateMessage;
-      try {
-        msg = JSON.parse(ev.data as string) as StateMessage;
-      } catch {
-        return;
-      }
-      // Trades-changed push (not workspace state): fan out to the trades layer so it
-      // refetches once, and stop — it has no value to mirror into localStorage.
-      if (typeof msg.key === "string" && msg.key.startsWith(TRADES_DIRTY_PREFIX)) {
-        const account = msg.key.slice(TRADES_DIRTY_PREFIX.length);
-        for (const fn of _tradesDirty) fn(account);
-        return;
-      }
-      if (msg.origin === CLIENT_ID) return; // ignore our own echo
-      // NOTE: a push whose bytes match localStorage must STILL notify. Two tabs
-      // in the same browser share localStorage, so a sibling tab's save() has
-      // already written these exact bytes before its push arrives — the
-      // notification is the ONLY signal telling this tab to re-sync its React
-      // state/overlays to storage. Suppressing "unchanged" pushes here silently
-      // disables same-browser cross-tab sync (and the next persist() stomps the
-      // sibling's edit — the cross-tab data-loss bug this handler exists to fix).
-      if ("deleted" in msg && msg.deleted) {
-        localStorage.removeItem(msg.key);
-        remoteEcho.set(msg.key, "\0deleted");
-      } else {
-        const serialized = JSON.stringify((msg as { value: unknown }).value);
-        localStorage.setItem(msg.key, serialized);
-        // Remember it so the save effect this triggers doesn't mirror it back out
-        // (see remoteEcho) — otherwise two differing tabs ping-pong and the feed thrashes.
-        remoteEcho.set(msg.key, serialized);
-      }
-      // Forward the changed KEY so the handler can tell a per-cell CONTENT change
-      // (drawings/indicators/alerts on a cell we're showing) from a layout/tabs
-      // change. The old no-arg callback forced App to guess via a tabs-array compare,
-      // which silently missed content changes to a mounted cell — another tab's edit
-      // updated our localStorage but not our on-chart overlays, so our next persist()
-      // stomped it back (cross-tab data loss). See App.onBackendPush.
-      onChange(msg.key);
-    };
-    ws.onclose = () => {
+    // Dev/test (no token getter registered): dial synchronously —
+    // byte-identical to pre-auth behavior. Once one is registered, a fresh
+    // token must be fetched per (re)connect (Clerk tokens live ~60s).
+    if (!hasTokenGetter()) {
+      dial(null);
+      return;
+    }
+    void (async () => {
+      // getAuthToken() (Clerk's getToken()) can reject (network blip, torn-down
+      // session). A tokenless dial here — rather than leaving the handle dead —
+      // lets the backend reject the socket and the existing onclose/backoff
+      // machinery own the retry.
+      const token = await getAuthToken().catch(() => null);
       if (closed) return;
-      // Backoff 0.5s → 5s; the backend may be mid-reload.
-      const delay = Math.min(5000, 500 * 2 ** retry++);
-      setTimeout(connect, delay);
-    };
-    // An error fires onclose right after; let onclose own the reconnect.
-    ws.onerror = () => ws?.close();
+      dial(token);
+    })();
   };
 
   connect();
