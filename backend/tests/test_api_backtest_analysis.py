@@ -10,6 +10,7 @@ pytest-asyncio and API tests don't use TestClient for the async handlers).
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -18,6 +19,10 @@ from auto_trader.api import app as app_module
 import auto_trader.api.routers.backtest as bt_router
 import auto_trader.strategy.loader as loader
 from auto_trader.core.run_store import RunStore
+
+# Handlers are invoked directly (no TestClient), so a fake Request stands in
+# for the auth middleware's request.state.user_id ('dev' in local mode).
+_REQ = SimpleNamespace(state=SimpleNamespace(user_id="dev"))
 
 
 # Always-open long: books a stopped-out trade with an initial stop (via panel
@@ -43,7 +48,7 @@ def tmp_run_store(tmp_path, monkeypatch):
 
 def _run(body: dict):
     async def scenario():
-        return await app_module.backtest(app_module.BacktestRequest(**body))
+        return await app_module.backtest(app_module.BacktestRequest(**body), _REQ)
 
     return asyncio.run(scenario())
 
@@ -88,12 +93,12 @@ def test_run_is_persisted_and_readable(tmp_run_store):
     result = _run(_trade_body())
     run_id = result.run_id
 
-    listed = asyncio.run(bt_router.list_runs())
+    listed = asyncio.run(bt_router.list_runs(_REQ))
     assert any(r["id"] == run_id for r in listed)
     row = next(r for r in listed if r["id"] == run_id)
     assert "summary" in row and "trades" not in row  # summaries only
 
-    full = asyncio.run(bt_router.get_run(run_id))
+    full = asyncio.run(bt_router.get_run(run_id, _REQ))
     assert full["id"] == run_id
     assert "trades" in full and "request" in full
     assert full["strategy_kind"] == "coded"
@@ -108,12 +113,12 @@ def test_run_is_persisted_and_readable(tmp_run_store):
     assert full["request"]["codedStrategy"] == "always_buy.py"
 
     with pytest.raises(HTTPException) as e:
-        asyncio.run(bt_router.get_run("nope"))
+        asyncio.run(bt_router.get_run("nope", _REQ))
     assert e.value.status_code == 404
 
-    assert asyncio.run(bt_router.delete_run(run_id)) == {"ok": True}
+    assert asyncio.run(bt_router.delete_run(run_id, _REQ)) == {"ok": True}
     with pytest.raises(HTTPException) as e2:
-        asyncio.run(bt_router.get_run(run_id))
+        asyncio.run(bt_router.get_run(run_id, _REQ))
     assert e2.value.status_code == 404
 
 
@@ -129,14 +134,14 @@ def test_response_and_stored_run_carry_whatif(tmp_run_store):
     for t in payload["trades"]:
         assert "whatif" in t
 
-    rec = asyncio.run(bt_router.get_run(payload["run_id"]))
+    rec = asyncio.run(bt_router.get_run(payload["run_id"], _REQ))
     assert "whatif" in rec["analysis"]
     assert rec["trades"]
     assert all("whatif" in t for t in rec["trades"])
 
 
 def test_store_failure_does_not_fail_backtest(tmp_run_store, monkeypatch):
-    async def boom(rec):
+    async def boom(user_id, rec):
         raise RuntimeError("disk full")
 
     monkeypatch.setattr(tmp_run_store, "insert", boom)
@@ -150,7 +155,7 @@ def test_reloaded_run_recomputes_leg_table(tmp_run_store):
     result = _run(_trade_body())
     run_id = result.run_id
 
-    body = asyncio.run(bt_router.get_run(run_id))
+    body = asyncio.run(bt_router.get_run(run_id, _REQ))
     assert "by_leg" in body
     assert set(body["by_leg"]) == {"long", "short"}
     assert "by_leg" in body["analysis"]

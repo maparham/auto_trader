@@ -11,7 +11,7 @@ import uuid
 from types import ModuleType
 from typing import Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from auto_trader.core.candle_aggregate import resolution_seconds
@@ -36,6 +36,7 @@ from auto_trader.strategy.base import Strategy
 from auto_trader.strategy.params import resolve_params, validate_params_schema
 
 from .. import deps
+from ..deps import current_user
 from . import compute
 from ..schemas import (
     BacktestRequest,
@@ -151,13 +152,14 @@ def _validate_coded_exit_series(req: BacktestRequest) -> None:
 
 
 @router.post("/api/backtest", response_model=BacktestResponse)
-async def backtest(req: BacktestRequest) -> BacktestResponse:
+async def backtest(req: BacktestRequest, request: Request) -> BacktestResponse:
     """No broker call (D1): the request carries the exact candles the series were
     computed on, so re-fetching (which can shift by one forming bar) can't
     silently misalign series and candles. Indicators warm up over the full
     posted `candles`, but only bars at/after `tradeFromTime` are tradeable or
     returned (D6) — that split is what lets a long indicator be fully warm on
     the trading window's first bar."""
+    user = current_user(request)
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
 
@@ -186,7 +188,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
     pass_span = [0, 1]
     if req.progressId:
         pid = req.progressId
-        pr.set_progress(pid, stage="simulate")
+        pr.set_progress(pid, stage="simulate", owner=user)
 
         def on_progress(done: int, total: int) -> None:
             # Cooperative cancel: POST /api/backtest/cancel/{id} flips the
@@ -224,7 +226,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         # simulate at done==total the frontend poller keeps showing
         # "Simulating (100%)" instead of falling through to the backfill row.
         if req.progressId:
-            pr.set_progress(req.progressId, stage="exit-times")
+            pr.set_progress(req.progressId, stage="exit-times", owner=user)
         run_s = resolution_seconds(req.resolution)
 
         async def _load_minutes(from_s: int, to_s: int) -> list[Candle]:
@@ -268,7 +270,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
                 # Re-runs are engine passes too: relabel the stage so it stays
                 # distinguishable in the wire payload (GET /api/backtest/progress/{id}).
                 if req.progressId:
-                    pr.set_progress(req.progressId, stage="cost-sensitivity")
+                    pr.set_progress(req.progressId, stage="cost-sensitivity", owner=user)
                 nets = []
                 # 1.0x reuses the main result, so only the other multiples are
                 # engine passes — they define this stage's pass count.
@@ -334,7 +336,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         run_id: str | None = None if req.sweep is not None else uuid.uuid4().hex
         if run_id is not None:
             try:
-                await RUN_STORE.insert({
+                await RUN_STORE.insert(user, {
                     "id": run_id,
                     "created_at": int(time.time()),
                     "epic": req.epic,
@@ -367,7 +369,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
             # poller doesn't sit on the previous phase for their duration
             # (same reason as the exit-times / cost-sensitivity relabels).
             if req.progressId:
-                pr.set_progress(req.progressId, stage="baselines")
+                pr.set_progress(req.progressId, stage="baselines", owner=user)
             baselines_out = dict(EMPTY_BASELINES)
             # Which sides to synthesize on. NOT req.long/shortEnabled: the
             # frontend hardwires both true on every coded run (an exit-gating
@@ -479,7 +481,7 @@ async def backtest(req: BacktestRequest) -> BacktestResponse:
         raise HTTPException(499, "backtest cancelled")
     finally:
         if req.progressId:
-            pr.clear_progress(req.progressId)
+            pr.clear_progress(req.progressId, owner=user)
 
 
 def _trades_to_dto(result: BacktestResult) -> list[TradeDTO]:
@@ -626,35 +628,37 @@ def _result_to_response(
 
 
 @router.get("/api/backtest/progress/{progress_id}")
-async def backtest_progress(progress_id: str) -> dict:
+async def backtest_progress(progress_id: str, request: Request) -> dict:
     """Simulate-phase progress for an in-flight POST /api/backtest run. 404
-    once the run finishes (the handler clears its entry in a finally)."""
-    entry = pr.get_progress(progress_id)
+    once the run finishes (the handler clears its entry in a finally) or if
+    it belongs to a different user."""
+    entry = pr.get_progress(progress_id, owner=current_user(request))
     if entry is None:
         raise HTTPException(404, "no such run")
     return entry
 
 
 @router.post("/api/backtest/cancel/{progress_id}")
-async def cancel_backtest(progress_id: str) -> dict:
+async def cancel_backtest(progress_id: str, request: Request) -> dict:
     """Cooperatively cancel an in-flight POST /api/backtest (or expr) run. The
     engine observes the flag at its next progress beat and the POST returns
-    499. 404 once the run has finished (its entry is cleared in a finally)."""
-    if not pr.request_cancel(progress_id):
+    499. 404 once the run has finished (its entry is cleared in a finally) or
+    if it belongs to a different user."""
+    if not pr.request_cancel(progress_id, owner=current_user(request)):
         raise HTTPException(404, "no such run")
     return {"ok": True}
 
 
 @router.get("/api/backtest/runs")
-async def list_runs(limit: int = 50, epic: str | None = None) -> list[dict]:
+async def list_runs(request: Request, limit: int = 50, epic: str | None = None) -> list[dict]:
     """Recent persisted runs, newest first (summaries only — no trades)."""
-    return await RUN_STORE.list(limit=limit, epic=epic)
+    return await RUN_STORE.list(current_user(request), limit=limit, epic=epic)
 
 
 @router.get("/api/backtest/runs/{run_id}")
-async def get_run(run_id: str) -> dict:
+async def get_run(run_id: str, request: Request) -> dict:
     """One stored run: config + trades (incl. MAE/MFE + context) + recomputed analysis."""
-    rec = await RUN_STORE.get(run_id)
+    rec = await RUN_STORE.get(current_user(request), run_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="run not found")
     rec["analysis"] = compute_analysis(rec["trades"])
@@ -671,9 +675,9 @@ async def get_run(run_id: str) -> dict:
 
 
 @router.delete("/api/backtest/runs/{run_id}")
-async def delete_run(run_id: str) -> dict:
+async def delete_run(run_id: str, request: Request) -> dict:
     """Remove one stored run (housekeeping)."""
-    await RUN_STORE.delete(run_id)
+    await RUN_STORE.delete(current_user(request), run_id)
     return {"ok": True}
 
 
@@ -693,36 +697,39 @@ class SweepArchiveIn(BaseModel):
 
 
 @router.post("/api/backtest/sweeps")
-async def save_sweep(body: SweepArchiveIn) -> dict:
+async def save_sweep(body: SweepArchiveIn, request: Request) -> dict:
     """Archive a completed sweep (axes verbatim + rows + optional windows)."""
     sweep_id = uuid.uuid4().hex
-    await SWEEP_STORE.insert({
-        "id": sweep_id, "created_at": int(time.time()),
-        "epic": body.epic, "timeframe": body.timeframe, "name": body.name,
-        "axes": body.axes, "rows": body.rows, "windows": body.windows,
-    })
+    try:
+        await SWEEP_STORE.insert(current_user(request), {
+            "id": sweep_id, "created_at": int(time.time()),
+            "epic": body.epic, "timeframe": body.timeframe, "name": body.name,
+            "axes": body.axes, "rows": body.rows, "windows": body.windows,
+        })
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return {"id": sweep_id}
 
 
 @router.get("/api/backtest/sweeps")
-async def list_sweeps(limit: int = 50, epic: str | None = None) -> list[dict]:
+async def list_sweeps(request: Request, limit: int = 50, epic: str | None = None) -> list[dict]:
     """Recent archived sweeps, newest first (summaries only — no rows/axes)."""
-    return await SWEEP_STORE.list(limit=limit, epic=epic)
+    return await SWEEP_STORE.list(current_user(request), limit=limit, epic=epic)
 
 
 @router.get("/api/backtest/sweeps/{sweep_id}")
-async def get_sweep(sweep_id: str) -> dict:
+async def get_sweep(sweep_id: str, request: Request) -> dict:
     """One archived sweep: axes + rows + windows, ready to reopen."""
-    rec = await SWEEP_STORE.get(sweep_id)
+    rec = await SWEEP_STORE.get(current_user(request), sweep_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="sweep not found")
     return rec
 
 
 @router.delete("/api/backtest/sweeps/{sweep_id}")
-async def delete_sweep(sweep_id: str) -> dict:
+async def delete_sweep(sweep_id: str, request: Request) -> dict:
     """Remove one archived sweep (housekeeping)."""
-    await SWEEP_STORE.delete(sweep_id)
+    await SWEEP_STORE.delete(current_user(request), sweep_id)
     return {"ok": True}
 
 
@@ -788,7 +795,7 @@ async def _prefetch_sweep_htf(
 
 
 @router.post("/api/backtest/sweep/jobs", response_model=SweepJobSubmitResponse)
-async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
+async def submit_sweep_job(req: BacktestRequest, request: Request, target: str = "local"):
     # target=remote: the remote compute host owns validation/probe/job creation, but
     # it must never fetch bars from a broker (COMPUTE_ONLY blocks that). So the local
     # backend fills req.htfCandles from ITS cache here, THEN forwards; the remote runs
@@ -876,6 +883,7 @@ async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
         epic=req.epic,
         timeframe=req.resolution,
         probe_row=probe_row,
+        owner=current_user(request),
     )
     return SweepJobSubmitResponse(jobId=job.job_id, total=job.total)
 
@@ -883,24 +891,26 @@ async def submit_sweep_job(req: BacktestRequest, target: str = "local"):
 # Declared BEFORE the {job_id} route so the literal `/jobs` path can't be
 # shadowed by the path-param route.
 @router.get("/api/backtest/sweep/jobs", response_model=list[SweepJobInfoDTO])
-async def list_sweep_jobs() -> list[SweepJobInfoDTO]:
+async def list_sweep_jobs(request: Request) -> list[SweepJobInfoDTO]:
+    user = current_user(request)
     return [
         SweepJobInfoDTO(
             jobId=j.job_id, epic=j.epic, timeframe=j.timeframe,
             done=j.done, total=j.total, running=j.running, createdAt=j.created_at,
         )
         for j in JOBS.list()
+        if j.owner == user
     ]
 
 
 @router.get("/api/backtest/sweep/jobs/{job_id}", response_model=SweepJobStatusResponse)
-async def sweep_job_status(job_id: str, cursor: int = 0, target: str = "local"):
+async def sweep_job_status(job_id: str, request: Request, cursor: int = 0, target: str = "local"):
     if target == "remote":
         return await compute.forward(
             "GET", f"/api/backtest/sweep/jobs/{job_id}", params={"cursor": cursor},
         )
     job = JOBS.get(job_id)
-    if job is None:
+    if job is None or job.owner != current_user(request):
         raise HTTPException(404, "sweep job not found")
     cursor = max(0, cursor)  # a cursor past the end just yields no rows
     return SweepJobStatusResponse(
@@ -915,12 +925,13 @@ async def sweep_job_status(job_id: str, cursor: int = 0, target: str = "local"):
 
 
 @router.post("/api/backtest/sweep/jobs/{job_id}/cancel")
-async def cancel_sweep_job(job_id: str, target: str = "local"):
+async def cancel_sweep_job(job_id: str, request: Request, target: str = "local"):
     if target == "remote":
         return await compute.forward(
             "POST", f"/api/backtest/sweep/jobs/{job_id}/cancel",
         )
-    if JOBS.get(job_id) is None:
+    job = JOBS.get(job_id)
+    if job is None or job.owner != current_user(request):
         raise HTTPException(404, "sweep job not found")
     JOBS.cancel(job_id)  # idempotent: cancelling a finished job is a no-op
     return {"ok": True}
@@ -945,16 +956,20 @@ async def _prefetch_wfo_htf(
     )
 
 
-def _persist_wfo(req: BacktestRequest):
+def _persist_wfo(req: BacktestRequest, user: str):
     """Build the on_complete callback that archives a finished WFO job. Slimmed
     like run_store: bulky re-derivable market data (candles/series/htfCandles)
     stays out of the stored request. Wrapped in try/except so a store failure
-    can never mark a completed job as errored."""
+    can never mark a completed job as errored.
+
+    `user` is captured from the submitting request: the callback runs later
+    inside the job thread's on_complete, where there is no request to read
+    current_user() from."""
     slim = req.model_dump(mode="json", exclude={"candles", "series", "htfCandles"})
 
     def _cb(job) -> None:
         try:
-            WFO_STORE.insert_sync({
+            WFO_STORE.insert_sync(user, {
                 "id": job.job_id, "created_at": int(job.created_at),
                 "epic": job.epic, "timeframe": job.timeframe, "name": None,
                 "request": slim, "result": job.result,
@@ -1018,7 +1033,7 @@ def _validate_wfo_combo_hygiene(wf) -> None:
 
 
 @router.post("/api/backtest/walkforward/jobs", response_model=WfoJobSubmitResponse)
-async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
+async def submit_wfo_job(req: BacktestRequest, request: Request, target: str = "local"):
     # target=remote: fill req.htfCandles from the LOCAL cache, then forward
     # verbatim — the COMPUTE_ONLY remote host runs on shipped bars and never
     # fetches from a broker (mirrors submit_sweep_job).
@@ -1109,7 +1124,8 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
         timeframe=req.resolution,
         eval_mode=wf.evalMode,
         baselines=wf.baselines,
-        on_complete=_persist_wfo(req),
+        on_complete=_persist_wfo(req, current_user(request)),
+        owner=current_user(request),
     )
     # Build the response from OUR pre-submit scheme copy, selecting only the 4
     # window keys — the orchestrator mutates the passed fold dicts (adds a "_w"
@@ -1126,13 +1142,13 @@ async def submit_wfo_job(req: BacktestRequest, target: str = "local"):
 # Declared BEFORE the {job_id} route so the literal `/jobs` sub-paths can't be
 # shadowed by the path-param route.
 @router.get("/api/backtest/walkforward/jobs/{job_id}", response_model=WfoJobStatusResponse)
-async def wfo_job_status(job_id: str, cursor: int = 0, target: str = "local"):
+async def wfo_job_status(job_id: str, request: Request, cursor: int = 0, target: str = "local"):
     if target == "remote":
         return await compute.forward(
             "GET", f"/api/backtest/walkforward/jobs/{job_id}", params={"cursor": cursor},
         )
     job = WFO_JOBS.get(job_id)
-    if job is None:
+    if job is None or job.owner != current_user(request):
         raise HTTPException(404, "wfo job not found")
     cursor = max(0, cursor)  # a cursor past the end just yields no rows
     return WfoJobStatusResponse(
@@ -1149,19 +1165,20 @@ async def wfo_job_status(job_id: str, cursor: int = 0, target: str = "local"):
 
 
 @router.post("/api/backtest/walkforward/jobs/{job_id}/cancel")
-async def cancel_wfo_job(job_id: str, target: str = "local"):
+async def cancel_wfo_job(job_id: str, request: Request, target: str = "local"):
     if target == "remote":
         return await compute.forward(
             "POST", f"/api/backtest/walkforward/jobs/{job_id}/cancel",
         )
-    if WFO_JOBS.get(job_id) is None:
+    job = WFO_JOBS.get(job_id)
+    if job is None or job.owner != current_user(request):
         raise HTTPException(404, "wfo job not found")
     WFO_JOBS.cancel(job_id)  # idempotent: cancelling a finished job is a no-op
     return {"ok": True}
 
 
 @router.get("/api/backtest/walkforward/jobs/{job_id}/fold")
-async def wfo_job_fold(job_id: str, key: str, target: str = "local"):
+async def wfo_job_fold(job_id: str, key: str, request: Request, target: str = "local"):
     """Lazy per-fold ranking table (key like 's0/f1'). Query param avoids the
     slash a path segment would choke on."""
     if target == "remote":
@@ -1169,7 +1186,7 @@ async def wfo_job_fold(job_id: str, key: str, target: str = "local"):
             "GET", f"/api/backtest/walkforward/jobs/{job_id}/fold", params={"key": key},
         )
     job = WFO_JOBS.get(job_id)
-    if job is None:
+    if job is None or job.owner != current_user(request):
         raise HTTPException(404, "wfo job not found")
     rows = job.fold_tables.get(key)
     if rows is None:
@@ -1185,31 +1202,31 @@ async def wfo_job_fold(job_id: str, key: str, target: str = "local"):
 
 
 @router.get("/api/backtest/walkforward/archive")
-async def list_wfo(limit: int = 50, epic: str | None = None) -> list[dict]:
+async def list_wfo(request: Request, limit: int = 50, epic: str | None = None) -> list[dict]:
     """Recent archived WFO jobs, newest first (summaries only)."""
-    return await WFO_STORE.list(limit=limit, epic=epic)
+    return await WFO_STORE.list(current_user(request), limit=limit, epic=epic)
 
 
 @router.get("/api/backtest/walkforward/archive/{wfo_id}")
-async def get_wfo(wfo_id: str) -> dict:
+async def get_wfo(wfo_id: str, request: Request) -> dict:
     """One archived WFO job: request config + full result."""
-    rec = await WFO_STORE.get(wfo_id)
+    rec = await WFO_STORE.get(current_user(request), wfo_id)
     if rec is None:
         raise HTTPException(404, "wfo job not found")
     return rec
 
 
 @router.get("/api/backtest/walkforward/archive/{wfo_id}/tables")
-async def get_wfo_tables(wfo_id: str) -> dict:
+async def get_wfo_tables(wfo_id: str, request: Request) -> dict:
     """The per-fold ranking tables for an archived job (lazy, bulky)."""
-    tables = await WFO_STORE.get_fold_tables(wfo_id)
+    tables = await WFO_STORE.get_fold_tables(current_user(request), wfo_id)
     if tables is None:
         raise HTTPException(404, "wfo job not found")
     return tables
 
 
 @router.delete("/api/backtest/walkforward/archive/{wfo_id}")
-async def delete_wfo(wfo_id: str) -> dict:
+async def delete_wfo(wfo_id: str, request: Request) -> dict:
     """Remove one archived WFO job (housekeeping)."""
-    await WFO_STORE.delete(wfo_id)
+    await WFO_STORE.delete(current_user(request), wfo_id)
     return {"ok": True}

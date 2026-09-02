@@ -2,10 +2,10 @@
 into runs by the frontend at submit time."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from auto_trader.api.deps import get_data, guarded
+from auto_trader.api.deps import current_user, get_data, guarded
 from auto_trader.api.schemas import SlippageDTO
 from auto_trader.core.cost_profiles import COST_PROFILES
 
@@ -47,33 +47,40 @@ async def _broker_prefill(broker_id: str, epic: str) -> dict | None:
 
 
 @router.get("/api/costs/{epic}")
-async def get_profile(epic: str, broker_id: str = Query("capital", alias="broker")) -> dict:
-    existing = await COST_PROFILES.get(epic)
+async def get_profile(
+    request: Request, epic: str, broker_id: str = Query("capital", alias="broker")
+) -> dict:
+    user = current_user(request)
+    existing = await COST_PROFILES.get(user, epic)
     if existing:
         return existing
     fetched = await _broker_prefill(broker_id, epic)
     if fetched is None:
         return _zeroed(epic)
-    await COST_PROFILES.upsert(epic, {**fetched, "source": "broker"})
-    return await COST_PROFILES.get(epic)
+    await COST_PROFILES.upsert(user, epic, {**fetched, "source": "broker"})
+    return await COST_PROFILES.get(user, epic)
 
 
 @router.put("/api/costs/{epic}")
-async def put_profile(epic: str, body: CostProfileIn) -> dict:
-    current = await COST_PROFILES.get(epic) or _zeroed(epic)
+async def put_profile(request: Request, epic: str, body: CostProfileIn) -> dict:
+    user = current_user(request)
+    current = await COST_PROFILES.get(user, epic) or _zeroed(epic)
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    await COST_PROFILES.upsert(epic, {**current, **patch, "source": "manual"})
-    return await COST_PROFILES.get(epic)
+    await COST_PROFILES.upsert(user, epic, {**current, **patch, "source": "manual"})
+    return await COST_PROFILES.get(user, epic)
 
 
 @router.post("/api/costs/{epic}/refetch")
-async def refetch_profile(epic: str, broker_id: str = Query("capital", alias="broker")) -> dict:
-    old = await COST_PROFILES.get(epic)
+async def refetch_profile(
+    request: Request, epic: str, broker_id: str = Query("capital", alias="broker")
+) -> dict:
+    user = current_user(request)
+    old = await COST_PROFILES.get(user, epic)
     base = old or _zeroed(epic)
     fetched = await _broker_prefill(broker_id, epic)
     # Only claim source "broker" when a fetch actually landed. When the broker
     # has no detail, keep the previous profile's source untouched (a fresh
     # zeroed profile stays "manual") rather than mislabelling it.
     source = "broker" if fetched is not None else base["source"]
-    await COST_PROFILES.upsert(epic, {**base, **(fetched or {}), "source": source})
-    return {"old": old, "new": await COST_PROFILES.get(epic)}
+    await COST_PROFILES.upsert(user, epic, {**base, **(fetched or {}), "source": source})
+    return {"old": old, "new": await COST_PROFILES.get(user, epic)}

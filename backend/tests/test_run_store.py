@@ -19,37 +19,37 @@ def _rec(i, epic="EURUSD"):
 
 def test_round_trip(tmp_path):
     store = RunStore(str(tmp_path / "runs.db"))
-    asyncio.run(store.insert(_rec(1)))
+    asyncio.run(store.insert("dev", _rec(1)))
 
-    listed = asyncio.run(store.list())
+    listed = asyncio.run(store.list("dev"))
     assert len(listed) == 1
     assert listed[0]["id"] == "run-001"
     assert listed[0]["summary"]["n_trades"] == 1
     assert "trades" not in listed[0] and "request" not in listed[0]
 
-    full = asyncio.run(store.get("run-001"))
+    full = asyncio.run(store.get("dev", "run-001"))
     assert full["trades"] == [{"pnl": 1.0, "leg": "long"}]
     assert full["request"]["longEntry"]["combine"] == "AND"
 
-    asyncio.run(store.delete("run-001"))
-    assert asyncio.run(store.get("run-001")) is None
-    asyncio.run(store.delete("run-001"))  # idempotent
+    asyncio.run(store.delete("dev", "run-001"))
+    assert asyncio.run(store.get("dev", "run-001")) is None
+    asyncio.run(store.delete("dev", "run-001"))  # idempotent
 
 
 def test_list_filters_and_orders(tmp_path):
     store = RunStore(str(tmp_path / "runs.db"))
-    asyncio.run(store.insert(_rec(1, epic="EURUSD")))
-    asyncio.run(store.insert(_rec(2, epic="GBPUSD")))
-    asyncio.run(store.insert(_rec(3, epic="EURUSD")))
+    asyncio.run(store.insert("dev", _rec(1, epic="EURUSD")))
+    asyncio.run(store.insert("dev", _rec(2, epic="GBPUSD")))
+    asyncio.run(store.insert("dev", _rec(3, epic="EURUSD")))
 
-    eur = asyncio.run(store.list(epic="EURUSD"))
+    eur = asyncio.run(store.list("dev", epic="EURUSD"))
     assert [r["id"] for r in eur] == ["run-003", "run-001"]  # newest first
-    assert len(asyncio.run(store.list(limit=2))) == 2
+    assert len(asyncio.run(store.list("dev", limit=2))) == 2
 
 
 def test_cap_prunes_oldest(tmp_path):
     store = RunStore(str(tmp_path / "runs.db"), cap=3)
     for i in range(5):
-        asyncio.run(store.insert(_rec(i)))
-    listed = asyncio.run(store.list(limit=10))
+        asyncio.run(store.insert("dev", _rec(i)))
+    listed = asyncio.run(store.list("dev", limit=10))
     assert [r["id"] for r in listed] == ["run-004", "run-003", "run-002"]

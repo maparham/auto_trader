@@ -6,6 +6,7 @@ surface end to end (parse/validate -> compile -> engine run -> shared serializer
 
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,7 @@ from auto_trader.core import progress as pr
 from auto_trader.core.models import Candle
 
 client = TestClient(app)
+_REQ = SimpleNamespace(state=SimpleNamespace(user_id="dev"))
 
 
 def _candles(closes):
@@ -753,7 +755,7 @@ def test_expr_backtest_with_progress_id_updates_then_clears(monkeypatch):
         snapshots.append(pr.get_progress(pid))
 
     monkeypatch.setattr(pr, "update_progress", spying_update)
-    asyncio.run(expr.expr_backtest(req))
+    asyncio.run(expr.expr_backtest(req, _REQ))
     assert snapshots, "engine progress never reached the registry"
     assert all(s["stage"] == "simulate" for s in snapshots)
     dones = [s["done"] for s in snapshots]
@@ -776,7 +778,7 @@ def test_expr_baseline_passes_never_rewind_the_wire_fraction(monkeypatch):
         snapshots.append(pr.get_progress(pid))
 
     monkeypatch.setattr(pr, "update_progress", spying_update)
-    asyncio.run(expr.expr_backtest(req))
+    asyncio.run(expr.expr_backtest(req, _REQ))
     fracs = [s["done"] / s["total"] for s in snapshots
              if s["stage"] == "baselines" and s["total"]]
     assert fracs, "baseline passes never reported progress"
@@ -788,8 +790,31 @@ def test_expr_backtest_without_progress_id_touches_no_registry(monkeypatch):
     """Zero behavior change when the client ships no id: nothing is registered."""
     calls: list[tuple] = []
     monkeypatch.setattr(pr, "set_progress", lambda *a, **k: calls.append((a, k)))
-    asyncio.run(expr.expr_backtest(ExprBacktestRequest(**_base_req())))
+    asyncio.run(expr.expr_backtest(ExprBacktestRequest(**_base_req()), _REQ))
     assert calls == []
+
+
+def test_expr_backtest_threads_owner_into_progress(monkeypatch):
+    """Every pr.set_progress(pid, stage=...) call site in expr.py must carry
+    owner=current_user(request) — otherwise a hosted expr run's progress/cancel
+    defaults to owner="dev" and is invisible to (or shared across) the actual
+    caller. Covers all three sites: simulate, exit-times, baselines."""
+    seen: list[dict] = []
+    real = pr.set_progress
+
+    def spying_set(pid, **kw):
+        seen.append(kw)
+        real(pid, **kw)
+
+    monkeypatch.setattr(pr, "set_progress", spying_set)
+    req = ExprBacktestRequest(**_base_req(
+        progressId="expr-owner-thread", baselines=["null", "hold"]))
+    asyncio.run(expr.expr_backtest(
+        req, SimpleNamespace(state=SimpleNamespace(user_id="alice"))))
+    assert seen, "no progress registered"
+    assert {s.get("owner") for s in seen} == {"alice"}
+    assert {s["stage"] for s in seen} >= {"simulate", "exit-times", "baselines"}
+    assert pr.get_progress("expr-owner-thread", owner="alice") is None  # cleared
 
 
 def test_expr_backtest_carries_analysis_and_entry_context():

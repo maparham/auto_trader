@@ -9,6 +9,7 @@ via asyncio.run, spies on the progress registry).
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -19,6 +20,10 @@ from auto_trader.api.routers import backtest as bt
 from auto_trader.api.routers import expr as expr_router
 from auto_trader.api.schemas import BacktestRequest, ExprBacktestRequest
 from auto_trader.core import progress as pr
+
+# Handlers are invoked directly (no TestClient), so a fake Request stands in
+# for the auth middleware's request.state.user_id ('dev' in local mode).
+_REQ = SimpleNamespace(state=SimpleNamespace(user_id="dev"))
 
 STRAT = '''"""Test strat."""
 def on_bar(ctx):
@@ -115,12 +120,12 @@ def test_cancel_survives_stage_reset():
 
 def test_cancel_route_flags_live_run_and_404s_when_absent():
     pr.set_progress("live", stage="simulate")
-    out = asyncio.run(bt.cancel_backtest("live"))
+    out = asyncio.run(bt.cancel_backtest("live", _REQ))
     assert out == {"ok": True}
     assert pr.is_cancelled("live") is True
 
     with pytest.raises(HTTPException) as e:
-        asyncio.run(bt.cancel_backtest("gone"))
+        asyncio.run(bt.cancel_backtest("gone", _REQ))
     assert e.value.status_code == 404
 
 
@@ -138,7 +143,7 @@ def test_backtest_cancel_mid_run_aborts_with_499_and_clears(strategies, monkeypa
 
     monkeypatch.setattr(pr, "update_progress", cancelling_update)
     with pytest.raises(HTTPException) as e:
-        asyncio.run(bt.backtest(req))
+        asyncio.run(bt.backtest(req, _REQ))
     assert e.value.status_code == 499
     assert pr.get_progress("cancel-test") is None  # cleared in finally
 
@@ -154,7 +159,7 @@ def test_expr_backtest_cancel_mid_run_aborts_with_499(monkeypatch):
 
     monkeypatch.setattr(pr, "update_progress", cancelling_update)
     with pytest.raises(HTTPException) as e:
-        asyncio.run(expr_router.expr_backtest(req))
+        asyncio.run(expr_router.expr_backtest(req, _REQ))
     assert e.value.status_code == 499
     assert pr.get_progress("expr-cancel") is None
 
@@ -174,7 +179,7 @@ def test_expr_baseline_passes_observe_cancel(monkeypatch):
 
     monkeypatch.setattr(pr, "update_progress", cancelling_update)
     with pytest.raises(HTTPException) as e:
-        asyncio.run(expr_router.expr_backtest(req))
+        asyncio.run(expr_router.expr_backtest(req, _REQ))
     assert e.value.status_code == 499
     assert pr.get_progress("expr-baseline-cancel") is None
 
@@ -194,5 +199,5 @@ def test_expr_progress_registered_before_htf_prefetch(monkeypatch):
         return await real_ensure(nodes, r, htf, instances)
 
     monkeypatch.setattr(expr_exec, "_ensure_htf", spying_ensure)
-    asyncio.run(expr_router.expr_backtest(req))
+    asyncio.run(expr_router.expr_backtest(req, _REQ))
     assert seen == [True]

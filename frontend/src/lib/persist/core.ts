@@ -5,7 +5,7 @@
 
 import { defaultBrokerId } from "../brokerDefaults";
 import { API_BASE, apiFetch } from "../http";
-import { getAuthToken, hasTokenGetter } from "../authToken";
+import { CLERK_ENABLED, getAuthToken, hasTokenGetter } from "../authToken";
 
 export const PREFIX = "auto-trader";
 
@@ -437,10 +437,24 @@ export async function hydrateFromBackend(): Promise<boolean> {
 
   const keys = Object.keys(snapshot);
   if (keys.length === 0) {
-    // Empty backend: seed it from this browser's existing localStorage (the only
-    // keys we own are PREFIX-namespaced) so we don't start by wiping the user.
-    seedBackendFromLocal();
-    return false;
+    if (!CLERK_ENABLED) {
+      // Dev mode: empty backend means a fresh mirror DB — seed it from this
+      // browser so we don't start by wiping the user.
+      seedBackendFromLocal();
+      return false;
+    }
+    // Hosted mode: an empty snapshot is a FRESH ACCOUNT. The backend is the
+    // source of truth; seeding from localStorage would leak whatever account
+    // used this browser last. Clear the mirrored keys (keep device-local).
+    let changed = false;
+    const own = `${PREFIX}.`;
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(own) || isDeviceLocalKey(k)) continue;
+      localStorage.removeItem(k);
+      changed = true;
+    }
+    return changed;
   }
 
   let changed = false;

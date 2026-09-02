@@ -2,8 +2,9 @@
 
 Runs sweep combos over a `ProcessPoolExecutor` from a daemon thread so the HTTP
 request returns immediately with a job id the frontend polls. One job computes at
-a time (an instance-level FIFO gate); queued jobs report `running=True, done=0`
-until they win the gate. Rows accumulate in completion order; ETA is derived from
+a time (an instance-level fair gate, round-robin across owners); queued jobs
+report `running=True, done=0` until they win the gate. Rows accumulate in
+completion order; ETA is derived from
 observed wall-clock pace over pool-produced rows (the probe row is excluded).
 
 Task 4 imports `JOBS` (module singleton) and `SWEEP_WORKERS` from here.
@@ -19,6 +20,7 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass, field
 
 from auto_trader.api import sweep_worker
+from auto_trader.api.fair_gate import FairGate
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +47,15 @@ class SweepJob:
     eta_seconds: float | None = None
     created_at: float = 0.0
     finished_at: float = 0.0
+    owner: str = "dev"
     # `_probe_offset` (1 if a probe row was seeded, else 0) is set as a bare
     # instance attribute in `submit`, NOT a dataclass field, so it stays out of
     # `fields()`/`asdict()` and never leaks into a serialized API payload.
 
 
 class SweepJobManager:
-    """Owns the job store, the FIFO gate, and one worker thread per job."""
+    """Owns the job store, the fair gate (round-robin across owners), and one
+    worker thread per job."""
 
     def __init__(self, pool_factory=ProcessPoolExecutor, grace_seconds: float = 10.0):
         self._pool_factory = pool_factory
@@ -60,7 +64,9 @@ class SweepJobManager:
         self._store_lock = threading.Lock()
         # Instance-level gate: one job computes at a time for THIS manager (the
         # app singleton). Separate managers in tests do not serialize together.
-        self._gate = threading.Semaphore(1)
+        # Waiting jobs are served round-robin across owners so one user's flood
+        # of queued sweeps cannot starve another user's first job.
+        self._gate = FairGate()
 
     def submit(
         self,
@@ -76,6 +82,7 @@ class SweepJobManager:
         workers: int | None = None,
         grace_seconds: float | None = None,
         expr_sweep: bool = False,
+        owner: str = "dev",
     ) -> SweepJob:
         probe_offset = 1 if probe_row is not None else 0
         job = SweepJob(
@@ -86,6 +93,7 @@ class SweepJobManager:
             rows=[probe_row] if probe_row is not None else [],
             done=probe_offset,
             created_at=time.time(),
+            owner=owner,
         )
         job._probe_offset = probe_offset  # bare attr, not a dataclass field
         with self._store_lock:
@@ -136,7 +144,8 @@ class SweepJobManager:
              grace: float) -> None:
         # row_lock protects rows/done/eta: only this _run thread mutates them.
         row_lock = threading.Lock()
-        with self._gate:  # FIFO gate: one job computes at a time
+        self._gate.acquire(job.owner)
+        try:
             if job.cancelled:
                 job.finished_at = time.time()
                 job.running = False
@@ -157,7 +166,7 @@ class SweepJobManager:
                 pending = set(futures)
                 # Bounded wait (not as_completed) so a cancel is observed even
                 # when no combo ever completes (e.g. a coded strategy hangs) —
-                # otherwise the thread blocks forever holding the FIFO gate.
+                # otherwise the thread blocks forever holding the fair gate.
                 while pending:
                     done_now, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
                     # Record finished combos BEFORE honoring a cancel, so work
@@ -186,6 +195,8 @@ class SweepJobManager:
                             time.monotonic() - t0, len(job.rows) - failed, failed)
                 job.finished_at = time.time()
                 job.running = False
+        finally:
+            self._gate.release()
 
     def _record(self, job: SweepJob, row: dict, row_lock: threading.Lock,
                 t0: float) -> None:

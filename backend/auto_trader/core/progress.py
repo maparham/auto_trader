@@ -22,13 +22,21 @@ class BacktestCancelled(Exception):
 
 
 def set_progress(progress_id: str, *, stage: str, done: int = 0, total: int = 0,
-                 now: float | None = None) -> None:
+                 owner: str = "dev", now: float | None = None) -> None:
     # Preserve a pending cancel across re-registration: handlers reset the
     # entry on stage changes (simulate -> exit-times -> cost-sensitivity) and
-    # a cancel that raced one of those must still be observed.
+    # a cancel that raced one of those must still be observed. Owner comes
+    # from the argument each time (not preserved from `prev`).
     prev = _ENTRIES.get(progress_id)
+    # Defense-in-depth: progress_id is client-chosen, so a colliding pid from
+    # another tenant must not take over a live entry (their clear_progress
+    # could then delete it, or their cancel could 499 someone else's run).
+    # Refuse silently — same as an unregistered pid, not worth failing the
+    # handler over.
+    if prev is not None and prev.get("owner", "dev") != owner:
+        return
     _ENTRIES[progress_id] = {
-        "stage": stage, "done": done, "total": total,
+        "stage": stage, "done": done, "total": total, "owner": owner,
         "cancelled": bool(prev and prev.get("cancelled")),
         "updated_at": now if now is not None else time.time(),
     }
@@ -43,20 +51,23 @@ def update_progress(progress_id: str, done: int, total: int,
                  updated_at=now if now is not None else time.time())
 
 
-def get_progress(progress_id: str, now: float | None = None) -> dict | None:
+def get_progress(progress_id: str, owner: str = "dev", now: float | None = None) -> dict | None:
     entry = _ENTRIES.get(progress_id)
     if entry is None:
         return None
     if (now if now is not None else time.time()) - entry["updated_at"] > _STALE_S:
         return None
+    if entry.get("owner", "dev") != owner:
+        return None
     return {"stage": entry["stage"], "done": entry["done"], "total": entry["total"]}
 
 
-def request_cancel(progress_id: str) -> bool:
+def request_cancel(progress_id: str, owner: str = "dev") -> bool:
     """Flag a live run's entry as cancelled. Returns False when no entry
-    exists (already finished, or never registered)."""
+    exists (already finished, or never registered) or the entry belongs to a
+    different owner — an owner mismatch behaves exactly like a missing entry."""
     entry = _ENTRIES.get(progress_id)
-    if entry is None:
+    if entry is None or entry.get("owner", "dev") != owner:
         return False
     entry["cancelled"] = True
     return True
@@ -67,5 +78,7 @@ def is_cancelled(progress_id: str) -> bool:
     return bool(entry and entry.get("cancelled"))
 
 
-def clear_progress(progress_id: str) -> None:
-    _ENTRIES.pop(progress_id, None)
+def clear_progress(progress_id: str, owner: str = "dev") -> None:
+    entry = _ENTRIES.get(progress_id)
+    if entry is not None and entry.get("owner", "dev") == owner:
+        _ENTRIES.pop(progress_id, None)

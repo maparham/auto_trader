@@ -5,8 +5,9 @@ per-train-window sliced metrics. Phase 2 (test): each fold's selected winner
 runs exactly over its test window. Phase 3 (aggregate): selection tables,
 stitching, stability, robustness -- pure arithmetic in this thread.
 
-Mirrors SweepJobManager (FIFO gate, daemon thread, bounded-wait cancel loop,
-reap-and-kill) but drives the three phases above instead of a flat row stream.
+Mirrors SweepJobManager (fair gate round-robin across owners, daemon thread,
+bounded-wait cancel loop, reap-and-kill) but drives the three phases above
+instead of a flat row stream.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass, field
 
 from auto_trader.api import wfo_worker
+from auto_trader.api.fair_gate import FairGate
 from auto_trader.api.sweep_jobs import SWEEP_WORKERS
 from auto_trader.api.wfo_select import plateau_breadth, select_fold
 from auto_trader.api.wfo_stitch import (
@@ -51,10 +53,12 @@ class WfoJob:
     eta_seconds: float | None = None
     created_at: float = 0.0
     finished_at: float = 0.0
+    owner: str = "dev"
 
 
 class WfoJobManager:
-    """Owns the job store, the FIFO gate, and one worker thread per job."""
+    """Owns the job store, the fair gate (round-robin across owners), and one
+    worker thread per job."""
 
     def __init__(self, pool_factory=ProcessPoolExecutor, grace_seconds: float = 10.0):
         self._pool_factory = pool_factory
@@ -62,7 +66,9 @@ class WfoJobManager:
         self._jobs: dict[str, WfoJob] = {}
         self._store_lock = threading.Lock()
         # Instance-level gate: one job computes at a time for THIS manager.
-        self._gate = threading.Semaphore(1)
+        # Waiting jobs are served round-robin across owners so one user's flood
+        # of queued jobs cannot starve another user's first job.
+        self._gate = FairGate()
 
     def submit(
         self,
@@ -82,6 +88,7 @@ class WfoJobManager:
         eval_mode: str = "exact",
         baselines: list[str] | None = None,
         on_complete=None,
+        owner: str = "dev",
     ) -> WfoJob:
         # Baselines run per fold for expr AND coded jobs (coded requests are
         # converted to expr null/hold in the worker). De-duplicated because
@@ -97,6 +104,7 @@ class WfoJobManager:
             timeframe=timeframe,
             total=total,
             created_at=time.time(),
+            owner=owner,
         )
         with self._store_lock:
             self._jobs[job.job_id] = job
@@ -156,7 +164,8 @@ class WfoJobManager:
         job.running = False
 
     def _run(self, job: WfoJob, kw: dict) -> None:
-        with self._gate:  # FIFO gate: one job computes at a time
+        self._gate.acquire(job.owner)
+        try:  # fair gate: one job computes at a time, released in the finally below
             if job.cancelled:
                 self._finish(job)
                 return
@@ -303,6 +312,8 @@ class WfoJobManager:
                 logger.info("wfo job %s done in %.1fs (phase=%s)",
                             job.job_id, time.monotonic() - t0, job.phase)
                 self._finish(job)
+        finally:
+            self._gate.release()
 
     def _record(self, job: WfoJob, row_lock: threading.Lock, t0: float) -> None:
         with row_lock:
@@ -323,7 +334,7 @@ class WfoJobManager:
         pending = set(futures)
         # Bounded wait (not as_completed) so a cancel is observed even when no
         # combo ever completes -- otherwise the thread blocks forever holding
-        # the FIFO gate.
+        # the fair gate.
         while pending:
             done_now, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
             # Record finished work BEFORE honoring a cancel, so results produced

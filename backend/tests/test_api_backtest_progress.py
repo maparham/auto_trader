@@ -8,6 +8,7 @@ The request/strategy fixtures mirror test_api_backtest_coded.py.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -16,6 +17,10 @@ import auto_trader.strategy.loader as loader
 from auto_trader.api.routers import backtest as bt
 from auto_trader.api.schemas import BacktestRequest
 from auto_trader.core import progress as pr
+
+# Handlers are invoked directly (no TestClient), so a fake Request stands in
+# for the auth middleware's request.state.user_id ('dev' in local mode).
+_REQ = SimpleNamespace(state=SimpleNamespace(user_id="dev"))
 
 STRAT = '''"""Test strat."""
 def on_bar(ctx):
@@ -71,13 +76,13 @@ def strategies(tmp_path, monkeypatch):
 def test_progress_route_reads_registry_and_404s_when_absent():
     pr.set_progress("live", stage="simulate", done=42, total=100)
     try:
-        out = asyncio.run(bt.backtest_progress("live"))
+        out = asyncio.run(bt.backtest_progress("live", _REQ))
     finally:
         pr.clear_progress("live")
     assert out == {"stage": "simulate", "done": 42, "total": 100}
 
     with pytest.raises(HTTPException) as e:
-        asyncio.run(bt.backtest_progress("gone"))
+        asyncio.run(bt.backtest_progress("gone", _REQ))
     assert e.value.status_code == 404
 
 
@@ -92,7 +97,7 @@ def test_backtest_run_with_progress_id_updates_then_clears(strategies, monkeypat
         snapshots.append(pr.get_progress(pid))
 
     monkeypatch.setattr(pr, "update_progress", spying_update)
-    asyncio.run(bt.backtest(req))
+    asyncio.run(bt.backtest(req, _REQ))
     assert snapshots, "engine progress never reached the registry"
     assert all(s["stage"] == "simulate" for s in snapshots)
     dones = [s["done"] for s in snapshots]
@@ -112,7 +117,7 @@ def test_backtest_resets_stage_before_exit_time_resolution(strategies, monkeypat
         seen.append(pr.get_progress("prog-test"))
 
     monkeypatch.setattr(bt, "attach_exit_times", spying_attach)
-    asyncio.run(bt.backtest(req))
+    asyncio.run(bt.backtest(req, _REQ))
     assert seen == [{"stage": "exit-times", "done": 0, "total": 0}]
 
 
@@ -135,7 +140,7 @@ def test_multi_pass_stages_never_rewind_the_wire_fraction(strategies, monkeypatc
         snapshots.append(pr.get_progress(pid))
 
     monkeypatch.setattr(pr, "update_progress", spying_update)
-    asyncio.run(bt.backtest(req))
+    asyncio.run(bt.backtest(req, _REQ))
 
     stages = {s["stage"] for s in snapshots}
     assert {"cost-sensitivity", "baselines"} <= stages, stages
@@ -151,5 +156,5 @@ def test_backtest_without_progress_id_touches_no_registry(strategies, monkeypatc
     calls: list[tuple] = []
     monkeypatch.setattr(pr, "set_progress",
                         lambda *a, **k: calls.append((a, k)))
-    asyncio.run(bt.backtest(base_request("test.py", make_candles())))
+    asyncio.run(bt.backtest(base_request("test.py", make_candles()), _REQ))
     assert calls == []

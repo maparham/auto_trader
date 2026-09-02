@@ -15,7 +15,7 @@ import dataclasses
 import logging
 from typing import Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from auto_trader.core import progress as pr
 from auto_trader.core.candle_aggregate import resolution_seconds
@@ -92,9 +92,10 @@ def _all_row_nodes(req: ExprBacktestRequest, instances=None) -> list[N.Node]:
 
 
 @router.post("/api/expr/backtest")
-async def expr_backtest(req: ExprBacktestRequest):
+async def expr_backtest(req: ExprBacktestRequest, request: Request):
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
+    user = deps.current_user(request)
     # Progress + cancel lifecycle for the WHOLE request lives here, not in
     # compiled_run: registered before compiled_run's HTF prefetch (that await
     # is the one multi-second suspension before the engine starts, and a cancel
@@ -111,7 +112,7 @@ async def expr_backtest(req: ExprBacktestRequest):
     pass_span = [0, 1]
     if req.progressId:
         pid = req.progressId
-        pr.set_progress(pid, stage="simulate")
+        pr.set_progress(pid, stage="simulate", owner=user)
 
         def on_progress(done: int, total: int) -> None:
             # Cooperative cancel: POST /api/backtest/cancel/{id} flips the
@@ -146,7 +147,7 @@ async def expr_backtest(req: ExprBacktestRequest):
         # candle-cache backfill: relabel the progress stage first so the poller
         # stops showing "Simulating (100%)" while it runs.
         if req.progressId:
-            pr.set_progress(req.progressId, stage="exit-times")
+            pr.set_progress(req.progressId, stage="exit-times", owner=user)
 
         async def _load_minutes(from_s: int, to_s: int) -> list[Candle]:
             return await deps._fetch_symbol_candles(
@@ -201,7 +202,7 @@ async def expr_backtest(req: ExprBacktestRequest):
             # passes, not the main simulate (mirrors the coded handler's
             # exit-times / cost-sensitivity stage relabels).
             if req.progressId:
-                pr.set_progress(req.progressId, stage="baselines")
+                pr.set_progress(req.progressId, stage="baselines", owner=user)
             # Null/hold run once per ENABLED side (slot "null_long", ...): a
             # both-sides 1==1 baseline is a long+short hedge worth exactly
             # minus the costs, useless as a reference (see baselines.py).
@@ -244,11 +245,11 @@ async def expr_backtest(req: ExprBacktestRequest):
         raise HTTPException(499, "backtest cancelled")
     finally:
         if req.progressId:
-            pr.clear_progress(req.progressId)
+            pr.clear_progress(req.progressId, owner=user)
 
 
 @router.post("/api/expr/sweep/jobs", response_model=SweepJobSubmitResponse)
-async def submit_expr_sweep_job(req: ExprBacktestRequest):
+async def submit_expr_sweep_job(req: ExprBacktestRequest, request: Request):
     """Submit an expression sweep as one job over the shared process pool. The
     frontend polls the SAME GET /api/backtest/sweep/jobs/{job_id} route (JOBS is
     a shared singleton), so there is no separate expr poll/cancel route. HTF is
@@ -289,12 +290,13 @@ async def submit_expr_sweep_job(req: ExprBacktestRequest):
         timeframe=req.resolution,
         probe_row=None,
         expr_sweep=True,
+        owner=deps.current_user(request),
     )
     return SweepJobSubmitResponse(jobId=job.job_id, total=job.total)
 
 
 @router.post("/api/expr/walkforward/jobs", response_model=WfoJobSubmitResponse)
-async def submit_expr_wfo_job(req: ExprBacktestRequest):
+async def submit_expr_wfo_job(req: ExprBacktestRequest, request: Request):
     """Walk-forward over expression rules. Combos carry lit:/risk: targets; the
     fold windows own the period. Polled via the shared GET
     /api/backtest/walkforward/jobs/{id} route (WFO_JOBS is a singleton)."""
@@ -347,7 +349,8 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest):
         expr=True,
         eval_mode=wf.evalMode,
         baselines=wf.baselines,
-        on_complete=_persist_wfo(req),
+        on_complete=_persist_wfo(req, deps.current_user(request)),
+        owner=deps.current_user(request),
     )
     return WfoJobSubmitResponse(
         jobId=job.job_id, total=job.total,

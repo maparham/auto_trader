@@ -17,8 +17,9 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import TypeVar
 
-from fastapi import HTTPException, Query
+from fastapi import HTTPException, Query, Request
 
+from auto_trader.api.auth import DEV_USER_ID
 from auto_trader.api.guard import COMPUTE_ONLY_ENV
 
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
@@ -73,6 +74,12 @@ def broker_query(broker: str = Query("")) -> str:
     default registered broker, so a deployment without capital creds (where the
     old literal "capital" default would 404) still serves bare requests."""
     return broker or default_broker_id()
+
+
+def current_user(request: Request) -> str:
+    """The verified user id the auth middleware stamped on this request
+    ('dev' in local mode). The only sanctioned way routes read it."""
+    return request.state.user_id
 
 
 # Per-broker circuit breaker shared by every data-broker route. Keeps one down or
@@ -196,8 +203,11 @@ async def _run_paper_triggers(broker: PaperExecutionBroker, account: str) -> Non
         await asyncio.sleep(_TRIGGER_INTERVAL)
         try:
             if await broker.check_triggers():
+                # Paper trading accounts aren't yet per-user partitioned (that's
+                # later partitioning work); broadcast to the dev user, matching
+                # today's single-user trading flow.
                 await _broadcast_state(
-                    {"key": f"{TRADES_DIRTY_PREFIX}{account}", "origin": ""}
+                    DEV_USER_ID, {"key": f"{TRADES_DIRTY_PREFIX}{account}", "origin": ""}
                 )
         except Exception:  # never let one bad tick kill the driver
             log.exception("paper trigger check failed")
