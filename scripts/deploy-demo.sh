@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the public demo (https://trader.rahkar.pro) in one go:
+# Deploy the authenticated hosted app (https://trader.rahkar.pro) in one go:
 #   backend  -> Lightsail box (systemd auto-trader-demo, uvicorn on 127.0.0.1:8010,
 #               reached via the aws-vps Cloudflare Tunnel as trader-api.rahkar.pro)
 #   frontend -> Cloudflare Pages project auto-trader-demo (trader.rahkar.pro +
@@ -9,9 +9,9 @@
 # tree — concurrent sessions share this checkout, so the working tree may hold
 # someone else's uncommitted WIP. Commit what you want deployed first.
 #
-# The demo intentionally ships NO broker credentials (that's what excludes
-# capital/IG/MT5 — see /etc/auto-trader/demo.env on the box); the smoke test
-# fails the deploy if a credentialed broker ever shows up.
+# Sign-in required (Clerk) — the box env must carry CLERK_JWKS_URL and
+# CLERK_AUTHORIZED_PARTIES. VITE_CLERK_PUBLISHABLE_KEY is baked into the
+# frontend build. The preflight check fails the deploy if Clerk vars are missing.
 #
 # Prereqs: `wrangler login` (pages:write), ssh access via ~/.ssh/id_ed25519.
 #
@@ -24,6 +24,7 @@ SSH_KEY="$HOME/.ssh/id_ed25519"
 SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes)
 PAGES_PROJECT="auto-trader-demo"
 API_BASE="https://trader-api.rahkar.pro"
+CLERK_PK="pk_live_Y2xlcmsudHJhZGVyLnJhaGthci5wcm8k"
 
 DO_FRONTEND=1
 DO_BACKEND=1
@@ -33,6 +34,34 @@ case "${1:-}" in
   "") ;;
   *) echo "usage: $0 [--frontend-only | --backend-only]" >&2; exit 2 ;;
 esac
+
+echo "==> preflight: box env must be hosted-mode (Clerk vars present)"
+rc=0
+"${SSH[@]}" "$HOST" '
+  grep -q "^CLERK_JWKS_URL=" /etc/auto-trader/demo.env \
+    && grep -q "^CLERK_AUTHORIZED_PARTIES=" /etc/auto-trader/demo.env
+' || rc=$?
+if [ "$rc" -eq 1 ]; then
+  echo "FAIL: /etc/auto-trader/demo.env is missing CLERK_JWKS_URL / CLERK_AUTHORIZED_PARTIES — add them first (see docs/superpowers/specs/2026-09-02-hosted-deployment-design.md §5)" >&2
+  exit 1
+elif [ "$rc" -ne 0 ]; then
+  echo "FAIL: could not reach the box over SSH (exit $rc) — preflight not run" >&2
+  exit 1
+fi
+
+echo "==> preflight: no broker credentials on the box"
+rc=0
+# Match only env ASSIGNMENTS whose variable name references a credentialed
+# broker (CAPITAL_*/IG_*/MT5_* and the like) — comments legitimately mention
+# these brokers when documenting their exclusion.
+"${SSH[@]}" "$HOST" 'grep -Eiq "^[a-z_]*(capital|mt5)[a-z0-9_]*=|^ig_" /etc/auto-trader/demo.env' || rc=$?
+if [ "$rc" -eq 0 ]; then
+  echo "FAIL: broker credentials found in /etc/auto-trader/demo.env" >&2
+  exit 1
+elif [ "$rc" -ne 1 ]; then
+  echo "FAIL: could not reach the box over SSH (exit $rc) — leak check not run" >&2
+  exit 1
+fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 HEAD_SHA="$(git -C "$ROOT" rev-parse --short HEAD)"
@@ -68,9 +97,11 @@ fi
 if [ "$DO_FRONTEND" = 1 ]; then
   echo "==> frontend: vite build (VITE_API_BASE=$API_BASE)"
   ln -s "$ROOT/frontend/node_modules" "$WT/frontend/node_modules"
-  (cd "$WT/frontend" && VITE_API_BASE="$API_BASE" npx vite build >/dev/null)
+  (cd "$WT/frontend" && VITE_API_BASE="$API_BASE" VITE_CLERK_PUBLISHABLE_KEY="$CLERK_PK" npx vite build >/dev/null)
   grep -rq "$API_BASE" "$WT/frontend/dist/assets" \
     || { echo "API base not found in bundle — build misconfigured" >&2; exit 1; }
+  grep -rq "$CLERK_PK" "$WT/frontend/dist/assets" \
+    || { echo "Clerk publishable key not found in bundle — build misconfigured" >&2; exit 1; }
   printf '/* /index.html 200\n' > "$WT/frontend/dist/_redirects"
 
   echo "==> frontend: wrangler pages deploy ($PAGES_PROJECT)"
@@ -80,11 +111,8 @@ fi
 
 echo "==> smoke test"
 curl -sf -m 15 "$API_BASE/health" >/dev/null || { echo "FAIL: $API_BASE/health" >&2; exit 1; }
-BROKERS="$(curl -sf -m 15 "$API_BASE/api/brokers")"
-echo "    brokers: $(python3 -c "import json,sys; print(', '.join(json.loads(sys.argv[1])['data']))" "$BROKERS")"
-case "$BROKERS" in
-  *capital*|*ig-*|*mt5*) echo "FAIL: credentialed broker leaked into the demo: $BROKERS" >&2; exit 1 ;;
-esac
+BROKERS_CODE="$(curl -s -m 15 -o /dev/null -w '%{http_code}' "$API_BASE/api/brokers")"
+[ "$BROKERS_CODE" = 401 ] || { echo "FAIL: unauthenticated /api/brokers returned $BROKERS_CODE (want 401 — is the box env hosted-mode?)" >&2; exit 1; }
 CORS="$(curl -s -m 15 -o /dev/null -w '%{http_code}' -X OPTIONS \
   -H 'Origin: https://trader.rahkar.pro' -H 'Access-Control-Request-Method: GET' \
   "$API_BASE/api/brokers")"

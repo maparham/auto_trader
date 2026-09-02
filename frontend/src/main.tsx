@@ -4,6 +4,7 @@ import { ClerkProvider, SignedIn, SignedOut, SignIn } from '@clerk/clerk-react'
 import './index.css'
 import App from './App.tsx'
 import ClerkTokenBridge from './components/ClerkTokenBridge.tsx'
+import AccountGate from './components/AccountGate.tsx'
 import { CLERK_ENABLED } from './lib/authToken.ts'
 
 // The publishable key doubles as the feature switch: unset (local dev) renders
@@ -18,7 +19,9 @@ createRoot(document.getElementById('root')!).render(
       <ClerkProvider publishableKey={clerkKey} afterSignOutUrl="/">
         <ClerkTokenBridge />
         <SignedIn>
-          <App />
+          <AccountGate>
+            <App />
+          </AccountGate>
         </SignedIn>
         <SignedOut>
           <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>

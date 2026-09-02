@@ -13,6 +13,7 @@ per request so tests can monkeypatch without reloading the app.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -131,7 +132,11 @@ def install_auth(app: FastAPI) -> None:
                 status_code=401, content={"detail": "missing bearer token"}
             )
         try:
-            request.state.user_id = verify_token(authz[len("Bearer ") :])
+            # verify_token can block on a JWKS HTTP fetch (cold cache, key
+            # rotation); keep that off the event loop.
+            request.state.user_id = await asyncio.to_thread(
+                verify_token, authz[len("Bearer ") :]
+            )
         except AuthError as e:
             return JSONResponse(status_code=401, content={"detail": str(e)})
         return await call_next(request)
@@ -153,7 +158,7 @@ async def verify_ws(websocket: WebSocket) -> str | None:
     token = websocket.query_params.get("token", "")
     if token:
         try:
-            return verify_token(token)
+            return await asyncio.to_thread(verify_token, token)
         except AuthError:
             pass
     await websocket.close(code=WS_AUTH_CLOSE_CODE)

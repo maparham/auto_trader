@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException
@@ -36,6 +37,29 @@ from .routers import agent, backtest, charts, compute, costs, expr, markets, mt5
 log = logging.getLogger(__name__)
 
 
+_TOKEN_RE = re.compile(r"(token=)[^&\s\"']+")
+
+
+class _TokenRedactionFilter(logging.Filter):
+    """Rewrite `token=<value>` to `token=REDACTED` in log-record args (hosted
+    WS dials put the Clerk JWT in the query string, and uvicorn.access prints
+    the request line verbatim). Filters must never raise — a raising filter
+    drops the record — so any surprise arg shape passes through untouched."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if isinstance(record.args, tuple):
+                record.args = tuple(
+                    _TOKEN_RE.sub(r"\1REDACTED", a) if isinstance(a, str) else a
+                    for a in record.args
+                )
+            if isinstance(record.msg, str) and "token=" in record.msg:
+                record.msg = _TOKEN_RE.sub(r"\1REDACTED", record.msg)
+        except Exception:
+            pass
+        return True
+
+
 def _configure_logging() -> None:
     """Prefix every log line with a timestamp. uvicorn's default access/error
     formatters omit it; we override them in place, and give the app's own
@@ -48,6 +72,8 @@ def _configure_logging() -> None:
     for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
         for handler in logging.getLogger(name).handlers:
             handler.setFormatter(fmt)
+            if not any(isinstance(f, _TokenRedactionFilter) for f in handler.filters):
+                handler.addFilter(_TokenRedactionFilter())
     # httpx logs every outbound request at INFO ("HTTP Request: GET ..."), which
     # floods the console during candle backfills and MetaApi polling. Broker-level
     # request visibility stays available by lowering this back to INFO/DEBUG.

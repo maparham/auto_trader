@@ -22,6 +22,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ..auth import auth_enabled
+
 URL_ENV = "COMPUTE_HOST_URL"
 TOKEN_ENV = "COMPUTE_HOST_TOKEN"
 
@@ -51,7 +53,10 @@ def _config() -> tuple[str, str]:
 @router.get("/api/compute/status")
 async def compute_status() -> dict:
     """Whether a remote compute host is configured (both url AND token set). The
-    frontend hides the remote toggle when this is False."""
+    frontend hides the remote toggle when this is False. Hosted mode always
+    answers False: the remote host is the operator's private box (see forward)."""
+    if auth_enabled():
+        return {"remoteConfigured": False}
     url, token = _config()
     return {"remoteConfigured": bool(url and token)}
 
@@ -175,6 +180,12 @@ async def forward(
     connect/read/write timeout, network drop) maps to 502 (the host is
     unreachable), a non-JSON upstream body to 502, and an unconfigured host to
     422 (the caller asked for remote but none is set up)."""
+    if auth_enabled():
+        # The remote host predates multi-tenancy: forwarded jobs carry no user
+        # identity, so proxying would hand every signed-in user the operator's
+        # COMPUTE_HOST_TOKEN powers. Refuse outright.
+        raise HTTPException(403, "remote compute is not available on the hosted service")
+
     url, token = _config()
     if not (url and token):
         raise HTTPException(422, "remote compute host not configured")
