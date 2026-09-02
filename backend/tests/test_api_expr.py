@@ -750,8 +750,8 @@ def test_expr_backtest_with_progress_id_updates_then_clears(monkeypatch):
     snapshots: list[dict] = []
     real_update = pr.update_progress
 
-    def spying_update(pid, done, total, now=None):
-        real_update(pid, done, total, now=now)
+    def spying_update(pid, done, total, owner="dev", now=None):
+        real_update(pid, done, total, owner=owner, now=now)
         snapshots.append(pr.get_progress(pid))
 
     monkeypatch.setattr(pr, "update_progress", spying_update)
@@ -773,8 +773,8 @@ def test_expr_baseline_passes_never_rewind_the_wire_fraction(monkeypatch):
     snapshots: list[dict] = []
     real_update = pr.update_progress
 
-    def spying_update(pid, done, total, now=None):
-        real_update(pid, done, total, now=now)
+    def spying_update(pid, done, total, owner="dev", now=None):
+        real_update(pid, done, total, owner=owner, now=now)
         snapshots.append(pr.get_progress(pid))
 
     monkeypatch.setattr(pr, "update_progress", spying_update)

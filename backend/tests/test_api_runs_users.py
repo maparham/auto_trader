@@ -70,6 +70,24 @@ def test_set_progress_refuses_to_take_over_another_owners_pid():
     pr.clear_progress("collide", owner="alice")
 
 
+def test_update_and_is_cancelled_are_owner_scoped():
+    """The engine-loop hot-path calls (update_progress / is_cancelled) must be
+    owner-guarded too: bob's run on a colliding pid (whose set_progress was
+    silently refused) must neither write into alice's entry nor observe
+    alice's cancel flag."""
+    pr.set_progress("hot", stage="simulate", done=1, total=10, owner="alice")
+
+    pr.update_progress("hot", 9, 9, owner="bob")  # silent no-op
+    assert pr.get_progress("hot", owner="alice") == {
+        "stage": "simulate", "done": 1, "total": 10}
+
+    assert pr.request_cancel("hot", owner="alice") is True
+    assert pr.is_cancelled("hot", owner="alice") is True
+    # Alice's cancel must not abort bob's unrelated run.
+    assert pr.is_cancelled("hot", owner="bob") is False
+    pr.clear_progress("hot", owner="alice")
+
+
 def test_clear_progress_is_owner_scoped():
     """clear_progress must only delete an entry when the caller owns it —
     otherwise one tenant could wipe out another tenant's live run entry."""

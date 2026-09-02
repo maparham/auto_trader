@@ -136,11 +136,19 @@ def _host_state(start: bool = False, stop: bool = False) -> dict:
 
 @router.get("/api/compute/host")
 def compute_host_state() -> dict:
+    # Hosted mode: the EC2 box is the operator's private machine — report
+    # unconfigured (frontend hides the pill) instead of leaking its state.
+    if auth_enabled():
+        return {"state": "unconfigured", "detail": None, "activeJobs": 0}
     return _host_state()
 
 
 @router.post("/api/compute/host/start")
 def compute_host_start() -> dict:
+    if auth_enabled():
+        # Same stance as forward(): any signed-in tenant could otherwise boot
+        # (and bill) or kill the operator's private EC2 instance.
+        raise HTTPException(403, "remote compute is not available on the hosted service")
     return _host_state(start=True)
 
 
@@ -148,6 +156,8 @@ def compute_host_start() -> dict:
 def compute_host_stop() -> dict:
     """Stop the instance if running (manual button). No job guard here: the
     frontend confirms and warns when a sweep is active; a deliberate stop wins."""
+    if auth_enabled():
+        raise HTTPException(403, "remote compute is not available on the hosted service")
     return _host_state(stop=True)
 
 

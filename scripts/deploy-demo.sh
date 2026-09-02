@@ -52,9 +52,11 @@ fi
 echo "==> preflight: no broker credentials on the box"
 rc=0
 # Match only env ASSIGNMENTS whose variable name references a credentialed
-# broker (CAPITAL_*/IG_*/MT5_* and the like) — comments legitimately mention
-# these brokers when documenting their exclusion.
-"${SSH[@]}" "$HOST" 'grep -Eiq "^[a-z_]*(capital|mt5)[a-z0-9_]*=|^ig_" /etc/auto-trader/demo.env' || rc=$?
+# broker — comments legitimately mention these brokers when documenting their
+# exclusion. Covers every env_prefix in backend/auto_trader/config.py:
+# CAPITAL_*, IG_*, METAAPI_* (the MT5 broker's actual prefix), OANOR_*, plus
+# any stray *mt5* name. Keep this list in sync with config.py's env_prefix set.
+"${SSH[@]}" "$HOST" 'grep -Eiq "^[a-z_]*(capital|mt5|metaapi|oanor)[a-z0-9_]*=|^ig_" /etc/auto-trader/demo.env' || rc=$?
 if [ "$rc" -eq 0 ]; then
   echo "FAIL: broker credentials found in /etc/auto-trader/demo.env" >&2
   exit 1

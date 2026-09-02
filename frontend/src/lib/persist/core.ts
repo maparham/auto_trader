@@ -152,6 +152,10 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   `${PREFIX}.replayJumpWindow`,
   `${PREFIX}.holdout`,
   `${PREFIX}.alertUnseen`,
+  // AccountGate's raw last-signed-in-user stamp. Never mirrored, so without
+  // this the prune below deletes it each hydrate and the gate treats EVERY
+  // reload as an account switch — wiping all device-local state each load.
+  `${PREFIX}.lastUserId`,
 ]);
 function isDeviceLocalKey(k: string): boolean {
   return (

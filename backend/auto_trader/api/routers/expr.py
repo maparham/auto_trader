@@ -117,10 +117,10 @@ async def expr_backtest(req: ExprBacktestRequest, request: Request):
         def on_progress(done: int, total: int) -> None:
             # Cooperative cancel: POST /api/backtest/cancel/{id} flips the
             # entry's flag; the next engine progress beat lands here and aborts.
-            if pr.is_cancelled(pid):
+            if pr.is_cancelled(pid, owner=user):
                 raise pr.BacktestCancelled()
             i, n = pass_span
-            pr.update_progress(pid, i * total + done, n * total)
+            pr.update_progress(pid, i * total + done, n * total, owner=user)
     try:
         result, _metrics = await compiled_run(req, on_progress=on_progress)
         # Imported lazily to avoid a router import cycle (backtest.py imports many

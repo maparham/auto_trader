@@ -30,12 +30,12 @@ _state_subscribers: dict[WebSocket, str] = {}
 _BROADCAST_SEND_TIMEOUT = 5.0
 
 
-async def _broadcast_state(user_id: str, message: dict[str, Any]) -> None:
-    """Push one change to every subscriber OWNED BY user_id. Sends CONCURRENTLY
-    with a per-client timeout so a slow/dead client can't block or break the
-    writer's request: a serial `await ws.send_json` loop let one slow-but-alive
-    socket apply backpressure and stall the PUT/DELETE that awaits this. Clients
-    that error OR time out are dropped."""
+async def _send_to(targets: list[WebSocket], message: dict[str, Any]) -> None:
+    """Send one message to each target CONCURRENTLY with a per-client timeout
+    so a slow/dead client can't block or break the writer's request: a serial
+    `await ws.send_json` loop let one slow-but-alive socket apply backpressure
+    and stall the PUT/DELETE that awaits this. Clients that error OR time out
+    are dropped from the registry."""
 
     async def _send(ws: WebSocket) -> WebSocket | None:
         try:
@@ -44,14 +44,30 @@ async def _broadcast_state(user_id: str, message: dict[str, Any]) -> None:
         except Exception:
             return ws  # errored or too slow → drop it
 
-    # Snapshot the matching subset: a concurrent /ws/state connect/disconnect
-    # would otherwise mutate the dict during iteration ("dictionary changed
-    # size during iteration"). Only sockets belonging to this user are targeted.
-    targets = [ws for ws, uid in list(_state_subscribers.items()) if uid == user_id]
     results = await asyncio.gather(*(_send(ws) for ws in targets))
     for ws in results:
         if ws is not None:
             _state_subscribers.pop(ws, None)
+
+
+async def _broadcast_state(user_id: str, message: dict[str, Any]) -> None:
+    """Push one change to every subscriber OWNED BY user_id."""
+    # Snapshot the matching subset: a concurrent /ws/state connect/disconnect
+    # would otherwise mutate the dict during iteration ("dictionary changed
+    # size during iteration"). Only sockets belonging to this user are targeted.
+    await _send_to(
+        [ws for ws, uid in list(_state_subscribers.items()) if uid == user_id], message
+    )
+
+
+async def _broadcast_state_all(message: dict[str, Any]) -> None:
+    """Push one message to EVERY subscriber regardless of owner. Only for
+    events about genuinely shared, unpartitioned resources (today: the paper
+    trading book's trades-dirty ping — until paper accounts are per-user
+    partitioned, every signed-in user is looking at the same book). Per-user
+    workspace writes must go through _broadcast_state so one user's state
+    never reaches another's tabs."""
+    await _send_to(list(_state_subscribers), message)
 
 
 @router.get("/api/state")

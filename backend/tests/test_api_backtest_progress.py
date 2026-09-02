@@ -92,8 +92,8 @@ def test_backtest_run_with_progress_id_updates_then_clears(strategies, monkeypat
 
     real_update = pr.update_progress
 
-    def spying_update(pid, done, total, now=None):
-        real_update(pid, done, total, now=now)
+    def spying_update(pid, done, total, owner="dev", now=None):
+        real_update(pid, done, total, owner=owner, now=now)
         snapshots.append(pr.get_progress(pid))
 
     monkeypatch.setattr(pr, "update_progress", spying_update)
@@ -135,8 +135,8 @@ def test_multi_pass_stages_never_rewind_the_wire_fraction(strategies, monkeypatc
     snapshots: list[dict] = []
     real_update = pr.update_progress
 
-    def spying_update(pid, done, total, now=None):
-        real_update(pid, done, total, now=now)
+    def spying_update(pid, done, total, owner="dev", now=None):
+        real_update(pid, done, total, owner=owner, now=now)
         snapshots.append(pr.get_progress(pid))
 
     monkeypatch.setattr(pr, "update_progress", spying_update)

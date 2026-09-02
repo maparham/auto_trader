@@ -8,7 +8,9 @@ const LAST_USER_KEY = `${PREFIX}.lastUserId`;
  * device-local keys (activeLayoutId/scratch/autosave) on purpose; on a shared
  * browser that leaks user A's layout state to user B. The wipe runs during
  * render, before children mount, so the persist hydrate never sees stale keys.
- * The stamp is a raw string (not JSON): no other code reads it. */
+ * The stamp is a raw string (not JSON): no other code reads it, but it IS
+ * listed in persist/core's DEVICE_LOCAL_FLAT_KEYS so the hosted hydrate's
+ * prune keeps it (otherwise every reload would look like an account switch). */
 export default function AccountGate({ children }: { children: ReactNode }) {
   const { isLoaded, user } = useUser();
   if (!isLoaded || !user) return null; // <SignedIn> makes this transient

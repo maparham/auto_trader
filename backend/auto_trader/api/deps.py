@@ -19,7 +19,6 @@ from typing import TypeVar
 
 from fastapi import HTTPException, Query, Request
 
-from auto_trader.api.auth import DEV_USER_ID
 from auto_trader.api.guard import COMPUTE_ONLY_ENV
 
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
@@ -197,17 +196,20 @@ async def _run_paper_triggers(broker: PaperExecutionBroker, account: str) -> Non
     frontend refetches once — no periodic polling."""
     # Late import to avoid a module-load cycle (routers.state has no deps needs,
     # but importing it here at load time would still couple the two files).
-    from .routers.state import _broadcast_state
+    from .routers.state import _broadcast_state_all
 
     while True:
         await asyncio.sleep(_TRIGGER_INTERVAL)
         try:
             if await broker.check_triggers():
                 # Paper trading accounts aren't yet per-user partitioned (that's
-                # later partitioning work); broadcast to the dev user, matching
-                # today's single-user trading flow.
-                await _broadcast_state(
-                    DEV_USER_ID, {"key": f"{TRADES_DIRTY_PREFIX}{account}", "origin": ""}
+                # later partitioning work): every signed-in user shares the same
+                # book, so the dirty ping goes to ALL subscribers. (Broadcasting
+                # to DEV_USER_ID would reach nobody in hosted mode — subscribers
+                # are keyed by Clerk ids — leaving positions panels stale after
+                # a trigger fires, with no poll to fall back on.)
+                await _broadcast_state_all(
+                    {"key": f"{TRADES_DIRTY_PREFIX}{account}", "origin": ""}
                 )
         except Exception:  # never let one bad tick kill the driver
             log.exception("paper trigger check failed")

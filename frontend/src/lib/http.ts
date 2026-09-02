@@ -76,7 +76,11 @@ export function apiFetch(
   // really IS fetch, not just "fetch a tick later with no header."
   if (!hasTokenGetter()) return fetch(input, init);
   return (async () => {
-    const token = await getAuthToken();
+    // getAuthToken() (Clerk's getToken()) can reject (network blip, torn-down
+    // session): fall back to a tokenless request and let the backend's 401
+    // (and the retry machinery around callers) take over — same stance as the
+    // three WebSocket dialers (feed / persist / agent bridge).
+    const token = await getAuthToken().catch(() => null);
     if (!token) return fetch(input, init);
     const headers = new Headers(init?.headers);
     headers.set("Authorization", `Bearer ${token}`);

@@ -12,6 +12,7 @@ from typing import Awaitable, Callable
 from fastapi import APIRouter, HTTPException
 
 from .. import deps
+from ..auth import auth_enabled
 
 router = APIRouter()
 
@@ -32,6 +33,10 @@ async def _lifecycle(action: Callable[[object], Awaitable[str]]) -> dict:
 
 @router.get("/api/mt5/deploy-state")
 async def mt5_deploy_state() -> dict:
+    if auth_enabled():
+        # Hosted mode: report unconfigured (frontend hides the pill) rather
+        # than exposing the operator's MetaApi account state to tenants.
+        return {"state": "unconfigured", "detail": None, "idle_seconds_remaining": None}
     try:
         broker = deps.get_data("mt5")
     except HTTPException:
@@ -47,6 +52,10 @@ async def mt5_deploy_state() -> dict:
 
 @router.post("/api/mt5/deploy")
 async def mt5_deploy() -> dict:
+    # Hosted mode: the MetaApi account is the operator's real dealing account —
+    # never let a signed-in tenant (re)deploy it (same stance as compute.py).
+    if auth_enabled():
+        raise HTTPException(403, "MT5 deploy is not available on the hosted service")
     return await _lifecycle(lambda b: b.resume())
 
 
@@ -54,4 +63,6 @@ async def mt5_deploy() -> dict:
 async def mt5_undeploy() -> dict:
     """No open-position guard here: the frontend confirm warns that positions
     stay open at the broker; a deliberate stop wins (same stance as compute)."""
+    if auth_enabled():
+        raise HTTPException(403, "MT5 deploy is not available on the hosted service")
     return await _lifecycle(lambda b: b.pause())

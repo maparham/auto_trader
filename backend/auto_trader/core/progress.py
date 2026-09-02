@@ -43,9 +43,12 @@ def set_progress(progress_id: str, *, stage: str, done: int = 0, total: int = 0,
 
 
 def update_progress(progress_id: str, done: int, total: int,
-                    now: float | None = None) -> None:
+                    owner: str = "dev", now: float | None = None) -> None:
+    # Owner-guarded like every other mutation: progress_id is client-chosen,
+    # so a colliding pid from another tenant (whose set_progress was silently
+    # refused) must not write into a live entry it doesn't own.
     entry = _ENTRIES.get(progress_id)
-    if entry is None:
+    if entry is None or entry.get("owner", "dev") != owner:
         return
     entry.update(done=done, total=total,
                  updated_at=now if now is not None else time.time())
@@ -73,9 +76,13 @@ def request_cancel(progress_id: str, owner: str = "dev") -> bool:
     return True
 
 
-def is_cancelled(progress_id: str) -> bool:
+def is_cancelled(progress_id: str, owner: str = "dev") -> bool:
+    # Owner mismatch reads as "no entry": another tenant's cancel on a
+    # colliding pid must not abort this owner's run.
     entry = _ENTRIES.get(progress_id)
-    return bool(entry and entry.get("cancelled"))
+    if entry is None or entry.get("owner", "dev") != owner:
+        return False
+    return bool(entry.get("cancelled"))
 
 
 def clear_progress(progress_id: str, owner: str = "dev") -> None:

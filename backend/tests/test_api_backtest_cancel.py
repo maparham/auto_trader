@@ -137,8 +137,8 @@ def test_backtest_cancel_mid_run_aborts_with_499_and_clears(strategies, monkeypa
 
     real_update = pr.update_progress
 
-    def cancelling_update(pid, done, total, now=None):
-        real_update(pid, done, total, now=now)
+    def cancelling_update(pid, done, total, owner="dev", now=None):
+        real_update(pid, done, total, owner=owner, now=now)
         pr.request_cancel(pid)  # cancel lands after the first progress beat
 
     monkeypatch.setattr(pr, "update_progress", cancelling_update)
@@ -153,8 +153,8 @@ def test_expr_backtest_cancel_mid_run_aborts_with_499(monkeypatch):
 
     real_update = pr.update_progress
 
-    def cancelling_update(pid, done, total, now=None):
-        real_update(pid, done, total, now=now)
+    def cancelling_update(pid, done, total, owner="dev", now=None):
+        real_update(pid, done, total, owner=owner, now=now)
         pr.request_cancel(pid)
 
     monkeypatch.setattr(pr, "update_progress", cancelling_update)
@@ -172,8 +172,8 @@ def test_expr_baseline_passes_observe_cancel(monkeypatch):
 
     real_update = pr.update_progress
 
-    def cancelling_update(pid, done, total, now=None):
-        real_update(pid, done, total, now=now)
+    def cancelling_update(pid, done, total, owner="dev", now=None):
+        real_update(pid, done, total, owner=owner, now=now)
         if done == total:  # cancel lands as the MAIN pass finishes
             pr.request_cancel(pid)
 
