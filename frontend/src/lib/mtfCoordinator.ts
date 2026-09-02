@@ -21,6 +21,7 @@ import {
   type MtfSeriesBase,
 } from "./mtf";
 import { fetchHtfShared, htfKey } from "./htfBarCache";
+import { foldFormingBar, formingOpenMs } from "./mtfForming";
 import { pageHistoryBack } from "./historyPaging";
 import { barCloseMs } from "./replayBars";
 import { indTypeOf, templateMaKind, type MaExtend } from "./customIndicators";
@@ -205,6 +206,70 @@ export function clampHtfBars(
   return out;
 }
 
+/** What a forming-mode apply/refresh computes on and stashes: the closed HTF
+ * bars plus (when one exists) ONE folded forming bar, and the extra mtf fields
+ * that make the fold repeatable without a refetch. */
+interface FormingPrep {
+  bars: KLineData[];
+  extra: Pick<
+    MtfSeriesBase,
+    "waitClose" | "formingIdx" | "htfClosed" | "htfSeed"
+  >;
+}
+
+/** The forming-bar half of TV's "Wait for timeframe closes" (unchecked): cut
+ * the fetched HTF series at the chart's newest bar, fold the chart's own
+ * candles inside the still-open bucket into one synthetic bar (seeded by the
+ * fetched partial when the fetch returned one), and append it. The chart's
+ * candles are the pane's own price side, so the fold matches the fetch's side
+ * by construction. Under replay the cursor clamps the fold — candles the user
+ * has not reached do not exist yet (fetchHtfBars already clamped the fetched
+ * bars the same way). */
+function prepFormingBars(
+  chart: Chart,
+  htf: KLineData[],
+  htfMs: number,
+): FormingPrep {
+  const data = chart.getDataList();
+  const newestMs = data.length ? data[data.length - 1].timestamp : 0;
+  const closed = newestMs
+    ? htf.filter((b) => b.timestamp + htfMs <= newestMs)
+    : htf;
+  // First fetched bar past the closed cut = the broker's own partial forming
+  // bar. Its timestamp is the authoritative bucket open (calendar timeframes
+  // have no nominal span); absent (e.g. under replay's clamp) the nominal
+  // derivation stands in.
+  const seed = htf[closed.length];
+  const openMs = formingOpenMs(
+    closed.map((b) => b.timestamp),
+    htfMs,
+    seed,
+  );
+  const cursorMs = htfCursors.get(chart)?.() ?? 0;
+  const forming =
+    openMs != null
+      ? foldFormingBar(data, openMs, htfMs, seed, cursorMs || undefined)
+      : null;
+  const bars = forming ? [...closed, forming] : closed;
+  return {
+    bars,
+    extra: {
+      waitClose: false,
+      ...(forming ? { formingIdx: bars.length - 1 } : {}),
+      htfClosed: closed,
+      ...(seed ? { htfSeed: seed } : {}),
+    },
+  };
+}
+
+/** The pin's "Wait for timeframe closes" state, read off the indicator's live
+ * extendData before an apply overwrites it. Only an explicit false opts into
+ * the forming fold. */
+function readWaitClose(ind: { extendData?: object } | null): boolean {
+  const mtf = (ind?.extendData as { mtf?: MtfSeriesBase } | undefined)?.mtf;
+  return mtf?.waitClose !== false;
+}
+
 /** The smallest higher-timeframe bucket any indicator on this chart is pinned
  * to, in ms (0 = nothing pinned). A replaying cell re-fetches its HTF series on
  * this grid: the set of bars CLOSED at the cursor can only change when the
@@ -265,10 +330,16 @@ function mtfFetchTail(
   }
   scheduleMtfRetry(chart, paneId, name, timeframe, retry);
   if (hasBars) return true;
+  // The fallback shape must keep the pin's waitClose choice: the retry's apply
+  // re-reads it off live extendData, so dropping it here would silently flip a
+  // forming-mode pin back to waiting after one transient failure.
   const mtf =
     prev?.timeframe === timeframe && prev.htfStarts?.length
       ? prev
-      : { timeframe };
+      : {
+          timeframe,
+          ...(prev?.waitClose === false ? { waitClose: false } : {}),
+        };
   overrideExtend(chart, paneId, name, { ...ext, mtf }, calcParams);
   return false;
 }
@@ -423,6 +494,7 @@ export async function applyMaTimeframe(
   const ind = getIndicator(chart, paneId, name) as {
     extendData?: MaExtend;
   } | null;
+  const waitClose = readWaitClose(ind);
   const ext: MaExtend = { ...(ind?.extendData ?? {}), ...config.options };
 
   if (!timeframe || timeframe === "chart") {
@@ -432,11 +504,15 @@ export async function applyMaTimeframe(
     return;
   }
 
+  // Reach back the MA length + the smoothing window, so the smoothing MA's own
+  // warmup never lands on the oldest visible bars.
+  const sm = config.options.smoothing;
+  const smLen = sm && sm.type !== "none" ? Number(sm.length) || 0 : 0;
   const { htf, htfMs, failed } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
-    config.length,
+    config.length + smLen,
     brokerId,
     oldestChartMs,
   );
@@ -463,16 +539,37 @@ export async function applyMaTimeframe(
       ),
   );
   if (!proceed) return;
-  // MTF carries the base line only (smoothing is not shown under MTF — see
-  // computeMa's MTF branch), so take the base series here.
-  const { base } = maSeries(htf, config.kind, config.length, config.options);
+  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
-    timeframe,
-    htfStarts: htf.map((b) => b.timestamp),
-    htfSeries: base,
-    htfMs,
+    ...buildMaMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
+    ...(fp?.extra ?? {}),
   };
   overrideExtend(chart, paneId, name, ext, [config.length]);
+}
+
+/** Base + smoothing computed on the native HTF bars (smoothing before
+ * alignment, so it never leaks across chart bars); calc aligns both. The
+ * envelope stays chart-TF-only — see computeMa's MTF branch. Shared by the
+ * apply above and refreshFormingBar's per-tick recompute. */
+function buildMaMtf(
+  bars: KLineData[],
+  config: MaConfig,
+  timeframe: string,
+  htfMs: number,
+): MaExtend["mtf"] {
+  const { base, smoothing } = maSeries(
+    bars,
+    config.kind,
+    config.length,
+    config.options,
+  );
+  return {
+    timeframe,
+    htfStarts: bars.map((b) => b.timestamp),
+    htfSeries: base,
+    htfSmoothing: smoothing,
+    htfMs,
+  };
 }
 
 interface PivotBandsConfig {
@@ -510,6 +607,7 @@ export async function applyPivotBandsTimeframe(
   const ind = getIndicator(chart, paneId, name) as {
     extendData?: PivotBandsExtend;
   } | null;
+  const waitClose = readWaitClose(ind);
   const ext: PivotBandsExtend = {
     ...(ind?.extendData ?? {}),
     mode: config.mode,
@@ -561,7 +659,22 @@ export async function applyPivotBandsTimeframe(
   // Reuse the exact chart-TF math on the HTF bars: computePivotBands already
   // carries each side's value forward (dense after the first pivot) and bakes in
   // the N-bar confirmation lag, so the aligned series stays gap-free and honest.
-  const pts = computePivotBands(htf, config.n, config.k, {
+  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
+  ext.mtf = {
+    ...buildPivotBandsMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
+    ...(fp?.extra ?? {}),
+  };
+  overrideExtend(chart, paneId, name, ext, calcParams);
+  syncPivotBarsSinceCompanion(chart, name);
+}
+
+function buildPivotBandsMtf(
+  bars: KLineData[],
+  config: PivotBandsConfig,
+  timeframe: string,
+  htfMs: number,
+): PivotBandsExtend["mtf"] {
+  const pts = computePivotBands(bars, config.n, config.k, {
     mode: config.mode,
     source: config.source,
   });
@@ -570,18 +683,16 @@ export async function applyPivotBandsTimeframe(
   // they are not derivable from the step-prices above, since two consecutive
   // pivots can print the same price. Computed unconditionally — cheap next to
   // the fetch, and it keeps the stash valid the instant the user ticks the box.
-  const since = computePivotBarsSince(htf, config.n, { source: config.source });
-  ext.mtf = {
+  const since = computePivotBarsSince(bars, config.n, { source: config.source });
+  return {
     timeframe,
-    htfStarts: htf.map((b) => b.timestamp),
+    htfStarts: bars.map((b) => b.timestamp),
     htfHigh: pts.map((p) => p.pivotHigh),
     htfLow: pts.map((p) => p.pivotLow),
     htfBarsSinceHigh: since.map((p) => p.barsSinceHigh),
     htfBarsSinceLow: since.map((p) => p.barsSinceLow),
     htfMs,
   };
-  overrideExtend(chart, paneId, name, ext, calcParams);
-  syncPivotBarsSinceCompanion(chart, name);
 }
 
 // S/R levels accumulate over the staleness window rather than converging like a
@@ -614,6 +725,7 @@ export async function applySrLevelsTimeframe(
   const ind = getIndicator(chart, paneId, name) as {
     extendData?: SrLevelsExtend;
   } | null;
+  const waitClose = readWaitClose(ind);
   const ext: SrLevelsExtend = { ...(ind?.extendData ?? {}) };
   const calcParams = [
     config.pivotLen,
@@ -663,10 +775,24 @@ export async function applySrLevelsTimeframe(
   if (!proceed) return;
   // Reuse the exact chart-TF math on the HTF bars: clustering, touch gating and
   // the pivot-confirmation lag are all baked into the stashed series/levels.
-  const { points, levels } = computeSrLevels(htf, config);
+  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
+    ...buildSrMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
+    ...(fp?.extra ?? {}),
+  };
+  overrideExtend(chart, paneId, name, ext, calcParams);
+}
+
+function buildSrMtf(
+  bars: KLineData[],
+  config: SrLevelsConfig,
+  timeframe: string,
+  htfMs: number,
+): SrLevelsExtend["mtf"] {
+  const { points, levels } = computeSrLevels(bars, config);
+  return {
     timeframe,
-    htfStarts: htf.map((b) => b.timestamp),
+    htfStarts: bars.map((b) => b.timestamp),
     htfMs,
     htfSupport: points.map((p) => p.support),
     htfResistance: points.map((p) => p.resistance),
@@ -674,11 +800,10 @@ export async function applySrLevelsTimeframe(
       price: lv.price,
       halfWidth: lv.halfWidth,
       touches: lv.touches,
-      firstTs: htf[lv.firstIdx].timestamp,
-      lastTs: htf[lv.lastIdx].timestamp,
+      firstTs: bars[lv.firstIdx].timestamp,
+      lastTs: bars[lv.lastIdx].timestamp,
     })),
   };
-  overrideExtend(chart, paneId, name, ext, calcParams);
 }
 
 // A trendline reaches back to its oldest anchor, and only Max Span bounds that
@@ -720,6 +845,7 @@ export async function applyTrendlinesTimeframe(
   const ind = getIndicator(chart, paneId, name) as {
     extendData?: TrendlinesExtend;
   } | null;
+  const waitClose = readWaitClose(ind);
   const ext: TrendlinesExtend = { ...(ind?.extendData ?? {}) };
   const calcParams = [
     config.pivotLen,
@@ -782,17 +908,37 @@ export async function applyTrendlinesTimeframe(
   // aligns with waitClose), so letting it seed or break a line would put
   // geometry on the chart that no rule can read, and repaint it when the bar
   // finishes.
+  // Forming mode appends the folded forming bucket past the closed cut;
+  // otherwise the closed filter alone (the forming bar is never usable to a
+  // waitClose operand, so letting it seed or break a line would put geometry
+  // on the chart that no rule can read, and repaint it when the bar finishes).
   const data = chart.getDataList();
   const newestMs = data.length ? data[data.length - 1].timestamp : 0;
-  const closed = newestMs
-    ? htf.filter((b) => b.timestamp + htfMs <= newestMs)
-    : htf;
+  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
+  const bars = fp
+    ? fp.bars
+    : newestMs
+      ? htf.filter((b) => b.timestamp + htfMs <= newestMs)
+      : htf;
+  ext.mtf = {
+    ...buildTrendlinesMtf(bars, config, timeframe, htfMs),
+    ...(fp?.extra ?? {}),
+  };
+  overrideExtend(chart, paneId, name, ext, calcParams);
+}
+
+function buildTrendlinesMtf(
+  bars: KLineData[],
+  config: TrendlinesConfig,
+  timeframe: string,
+  htfMs: number,
+): TrendlinesExtend["mtf"] {
   // The exact chart-TF detector on the HTF bars: pivots, touches, breaks and
   // the confirmation lag are all baked into the stashed series and lines.
-  const { points, lines, atr } = computeTrendlines(closed, config);
-  ext.mtf = {
+  const { points, lines, atr } = computeTrendlines(bars, config);
+  return {
     timeframe,
-    htfStarts: closed.map((b) => b.timestamp),
+    htfStarts: bars.map((b) => b.timestamp),
     htfMs,
     htfSupport: points.map((p) => p.tl_support),
     htfResistance: points.map((p) => p.tl_resistance),
@@ -801,7 +947,6 @@ export async function applyTrendlinesTimeframe(
     htfLines: lines,
     htfAtr: atr[atr.length - 1],
   };
-  overrideExtend(chart, paneId, name, ext, calcParams);
 }
 
 // Gaps persist over the staleness window rather than converging like a moving
@@ -833,6 +978,7 @@ export async function applyFvgTimeframe(
   const ind = getIndicator(chart, paneId, name) as {
     extendData?: FvgExtend;
   } | null;
+  const waitClose = readWaitClose(ind);
   const ext: FvgExtend = { ...(ind?.extendData ?? {}) };
   const calcParams = [config.minSize, config.maxBars, config.maxGaps];
 
@@ -876,10 +1022,24 @@ export async function applyFvgTimeframe(
   if (!proceed) return;
   // Reuse the exact chart-TF math on the HTF bars: detection, the size filter and
   // wick-driven mitigation are all baked into the stashed series/gaps.
-  const { points, gaps } = computeFvg(htf, config);
+  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
+    ...buildFvgMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
+    ...(fp?.extra ?? {}),
+  };
+  overrideExtend(chart, paneId, name, ext, calcParams);
+}
+
+function buildFvgMtf(
+  bars: KLineData[],
+  config: FvgConfig,
+  timeframe: string,
+  htfMs: number,
+): FvgExtend["mtf"] {
+  const { points, gaps } = computeFvg(bars, config);
+  return {
     timeframe,
-    htfStarts: htf.map((b) => b.timestamp),
+    htfStarts: bars.map((b) => b.timestamp),
     htfMs,
     htfBullTop: points.map((p) => p.bullTop),
     htfBullBottom: points.map((p) => p.bullBottom),
@@ -889,10 +1049,9 @@ export async function applyFvgTimeframe(
       side: g.side,
       top: g.top,
       bottom: g.bottom,
-      createdTs: htf[g.createdIdx].timestamp,
+      createdTs: bars[g.createdIdx].timestamp,
     })),
   };
-  overrideExtend(chart, paneId, name, ext, calcParams);
 }
 
 interface SlopeConfig {
@@ -930,6 +1089,7 @@ export async function applySlopeTimeframe(
   const ind = getIndicator(chart, paneId, name) as {
     extendData?: SlopeExtend;
   } | null;
+  const waitClose = readWaitClose(ind);
   const ext: SlopeExtend = {
     ...(ind?.extendData ?? {}),
     ...config.options,
@@ -1006,10 +1166,28 @@ export async function applySlopeTimeframe(
   // `tf_resolution(pin) or pin`. The infer fallback covers only a resolution
   // name in neither table — which fetchHtfBars above would already have paged
   // at its own 1h default, so there is nothing better to fall back to.
-  const barHours = nominalBarHours(timeframe) ?? inferBarHours(htf);
+  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
+  ext.mtf = {
+    ...buildSlopeMtf(fp ? fp.bars : htf, config, ext, timeframe, htfMs),
+    ...(fp?.extra ?? {}),
+  };
+  overrideExtend(chart, paneId, name, ext, calcParams);
+  // The companion mirrors the parent's extendData (including the MTF stash).
+  syncAccelCompanion(chart, name);
+}
+
+function buildSlopeMtf(
+  bars: KLineData[],
+  config: SlopeConfig,
+  ext: SlopeExtend,
+  timeframe: string,
+  htfMs: number,
+): SlopeExtend["mtf"] {
+  const n2 = slopePeriodOf(ext.accelPeriod, 3);
+  const barHours = nominalBarHours(timeframe) ?? inferBarHours(bars);
   const byLine = config.lengths.map((len) =>
     slopeLineSeries(
-      htf,
+      bars,
       config.maType,
       len,
       config.slopeN,
@@ -1026,7 +1204,7 @@ export async function applySlopeTimeframe(
   const accelByLine = ext.showAccel
     ? config.lengths.map((len) =>
         accelLineSeries(
-          htf,
+          bars,
           config.maType,
           len,
           config.slopeN,
@@ -1045,21 +1223,180 @@ export async function applySlopeTimeframe(
   // series, aligned in slopeMaLines. See SlopeExtend.mtf.htfMaBaseByLine.
   const maBaseByLine = config.lengths.map((len) =>
     smoothSeries(
-      maSeries(htf, config.maType, len, { source: config.options.source }).base,
+      maSeries(bars, config.maType, len, { source: config.options.source }).base,
       config.smoothing,
     ),
   );
-  ext.mtf = {
+  return {
     timeframe,
-    htfStarts: htf.map((b) => b.timestamp),
+    htfStarts: bars.map((b) => b.timestamp),
     htfSeriesByLine: byLine,
     htfMaBaseByLine: maBaseByLine,
     htfAccelByLine: accelByLine,
     htfMs,
   };
-  overrideExtend(chart, paneId, name, ext, calcParams);
-  // The companion mirrors the parent's extendData (including the MTF stash).
-  syncAccelCompanion(chart, name);
+}
+
+/**
+ * Write the pin's "Wait for timeframe closes" choice onto the live indicator.
+ * Only the flag moves — the stashed series stays, so the settings toggle can
+ * flip it and then run the per-type apply to rebuild the stash in the new
+ * mode without an intermediate blank. `true` REMOVES the flag (absent = wait,
+ * the default), keeping every pre-feature persisted shape byte-identical.
+ */
+export function setMtfWaitClose(
+  chart: Chart,
+  paneId: string,
+  name: string,
+  waitClose: boolean,
+): void {
+  const ind = getIndicator(chart, paneId, name) as {
+    extendData?: { mtf?: MtfSeriesBase };
+  } | null;
+  if (!ind) return;
+  const ext = { ...(ind.extendData ?? {}) } as { mtf?: MtfSeriesBase };
+  const mtf = { ...(ext.mtf ?? { timeframe: null }) };
+  if (waitClose) delete mtf.waitClose;
+  else mtf.waitClose = false;
+  ext.mtf = mtf;
+  overrideExtend(chart, paneId, name, ext);
+}
+
+// Tick-rate coalescing for refreshFormingBar: one full recompute per second
+// per chart is plenty (the folded bar only matters at human reading speed) and
+// keeps the per-tick cost flat however fast the stream runs. Leading-edge on
+// purpose — the first tick after a quiet spell updates immediately; ticks are
+// frequent enough that no trailing call is needed. Date.now(), not a timer:
+// nothing to leak on chart disposal (WeakMap, like mtfRetries).
+const FORMING_THROTTLE_MS = 1_000;
+const formingLastRun = new WeakMap<Chart, number>();
+
+export function refreshFormingBarThrottled(chart: Chart): void {
+  const now = Date.now();
+  const last = formingLastRun.get(chart) ?? 0;
+  if (now - last < FORMING_THROTTLE_MS) return;
+  formingLastRun.set(chart, now);
+  refreshFormingBar(chart);
+}
+
+/**
+ * Re-fold the forming HTF bar for every pin that opted out of waiting
+ * ("Wait for timeframe closes" unchecked) and recompute its series — from the
+ * STASHED closed bars, never a refetch, so it is cheap enough for the live
+ * newest-candle update path (the caller throttles). Synchronous on purpose:
+ * nothing here awaits, so a tick can never interleave with itself.
+ *
+ * Config derivation per type mirrors refreshMtfIndicators below (calcParams +
+ * extendData are the on-chart source of truth for both). When the forming
+ * bucket has CLOSED, the fold still covers it — candles past the bucket are
+ * ignored — and the next full refresh (refreshMtfIndicators / the replay
+ * bucket-crossing refetch) graduates it to a fetched closed bar.
+ */
+export function refreshFormingBar(chart: Chart): void {
+  const byPane = getIndicatorsByPane(chart);
+  if (!byPane) return;
+  byPane.forEach((nameMap, paneId) => {
+    nameMap.forEach((indUnknown, id) => {
+      const ind = indUnknown as {
+        calcParams?: unknown[];
+        extendData?: MaExtend & PivotBandsExtend & SlopeExtend;
+      };
+      const mtf = ind.extendData?.mtf as MtfSeriesBase | undefined;
+      if (!mtf?.timeframe || mtf.waitClose !== false) return;
+      const { htfClosed: closed, htfSeed: seed, htfMs, timeframe } = mtf;
+      if (!closed || !timeframe || !(htfMs && htfMs > 0)) return;
+
+      const data = chart.getDataList();
+      const openMs = formingOpenMs(
+        closed.map((b) => b.timestamp),
+        htfMs,
+        seed,
+      );
+      const cursorMs = htfCursors.get(chart)?.() ?? 0;
+      const forming =
+        openMs != null
+          ? foldFormingBar(data, openMs, htfMs, seed, cursorMs || undefined)
+          : null;
+      const bars = forming ? [...closed, forming] : closed;
+      const extra: Pick<
+        MtfSeriesBase,
+        "waitClose" | "formingIdx" | "htfClosed" | "htfSeed"
+      > = {
+        waitClose: false,
+        ...(forming ? { formingIdx: bars.length - 1 } : {}),
+        htfClosed: closed,
+        ...(seed ? { htfSeed: seed } : {}),
+      };
+
+      const type = indTypeOf({ name: id, extendData: ind.extendData });
+      const ext = { ...(ind.extendData ?? {}) } as MaExtend &
+        PivotBandsExtend &
+        SlopeExtend;
+      let built: object | null = null;
+      if (type === "EMA" || type === "MA") {
+        built = buildMaMtf(
+          bars,
+          {
+            kind: normalizeMaKind(ext.maType, templateMaKind(type)),
+            length: Number(ind.calcParams?.[0]) || (type === "EMA" ? 9 : 20),
+            options: {
+              source: ext.source,
+              offset: ext.offset,
+              smoothing: ext.smoothing,
+              maType: ext.maType,
+              envelope: ext.envelope,
+            },
+          },
+          timeframe,
+          htfMs,
+        );
+      } else if (type === "PIVOT_BANDS") {
+        built = buildPivotBandsMtf(
+          bars,
+          {
+            n: Number(ind.calcParams?.[0]) || 5,
+            k: Number(ind.calcParams?.[1]) || 3,
+            mode: ext.mode === "avg" ? "avg" : "last",
+            source: ext.source ?? "hl",
+          },
+          timeframe,
+          htfMs,
+        );
+      } else if (type === "SR_LEVELS") {
+        built = buildSrMtf(bars, parseSrConfig(ind.calcParams), timeframe, htfMs);
+      } else if (type === "TRENDLINES") {
+        built = buildTrendlinesMtf(
+          bars,
+          parseTrendlinesConfig(ind.calcParams),
+          timeframe,
+          htfMs,
+        );
+      } else if (type === "FVG") {
+        built = buildFvgMtf(bars, parseFvgConfig(ind.calcParams), timeframe, htfMs);
+      } else if (type === "SLOPE") {
+        built = buildSlopeMtf(
+          bars,
+          {
+            maType: normalizeMaKind(ext.maType),
+            lengths: slopeLengths(ind.calcParams),
+            slopeN: slopePeriodOf(ext.slopePeriod, 3),
+            units: normalizeSlopeUnit(ext.units),
+            smoothing: ext.smoothing,
+            options: { source: ext.source, offset: ext.offset },
+          },
+          ext,
+          timeframe,
+          htfMs,
+        );
+      }
+      if (!built) return;
+      ext.mtf = { ...built, ...extra } as typeof ext.mtf;
+      overrideExtend(chart, paneId, id, ext, ind.calcParams ?? []);
+      // The companions mirror the parent's extendData, forming bar included.
+      if (type === "PIVOT_BANDS") syncPivotBarsSinceCompanion(chart, id);
+      if (type === "SLOPE") syncAccelCompanion(chart, id);
+    });
+  });
 }
 
 /**

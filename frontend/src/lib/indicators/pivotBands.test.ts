@@ -169,6 +169,18 @@ describe("computePivotBands MTF alignment", () => {
     expect(pts[12].pivotLow).toBe(65);
   });
 
+  it("admits a flagged forming entry from its open (waitClose unchecked)", () => {
+    // Entry 2 is the FORMING bucket (opens t=8): bars 8..11 read it right away
+    // instead of waiting for its close at t=12. History keeps waitClose.
+    const pts = computePivotBands(chartBars(12), 2, 3, {
+      mode: "last",
+      mtf: { ...mtf, formingIdx: 2 },
+    });
+    expect(pts[7].pivotHigh).toBeUndefined(); // entry 0 closed, still no high
+    expect(pts[8].pivotHigh).toBe(110);
+    expect(pts[11].pivotLow).toBe(65);
+  });
+
   it("never lets a chart bar see an HTF bar that closes in its future", () => {
     const pts = computePivotBands(chartBars(12), 2, 3, { mode: "last", mtf });
     // Bar at t=11 must NOT yet see HTF bar 2 (closes at t=12).

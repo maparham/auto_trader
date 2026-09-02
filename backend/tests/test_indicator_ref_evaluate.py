@@ -11,10 +11,13 @@ from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.warmup import warmup_bars
 
 
-def mk(n):
+def mk(n, step_hours: float = 1.0):
+    """`step_hours` spaces the bars: a fixture declared HOUR_4 must actually
+    BE 4-hourly, since the same-TF bypass now keys on the declared resolution
+    and a mislabeled fixture would test a series that cannot occur."""
     t0 = datetime(2024, 1, 1, tzinfo=timezone.utc)
     return [
-        Candle(time=t0 + timedelta(hours=i), open=100.0 + i, high=101.0 + i,
+        Candle(time=t0 + timedelta(hours=i * step_hours), open=100.0 + i, high=101.0 + i,
                low=99.0 + i, close=100.0 + (i % 7), volume=10.0)
         for i in range(n)
     ]
@@ -98,7 +101,7 @@ def test_a_pinned_instance_uses_its_own_timeframes_candles_and_bar_hours(pin):
     series, computed on 1H candles with bar_hours=1.0 and aligned down — NOT the
     base series, and NOT the 1H candles with the BASE resolution's bar_hours
     (which would silently scale every pctHr value by 4 here)."""
-    base = mk(40)
+    base = mk(40, step_hours=4.0)
     tf_candles = mk(40)
     got = series_of(expr("SLOPE.5 > 0"), base, "HOUR_4",
                     {"HOUR": tf_candles}, _pinned(pin))
@@ -142,7 +145,7 @@ def test_the_instance_map_reaches_a_deeply_nested_ref_not_just_a_toplevel_one():
 
     `slope(SLOPE.5[-1], 3) @1H` nests the ref under Tf -> Call -> Offset,
     i.e. three separate forwarding hops through four node types."""
-    base = mk(40)
+    base = mk(40, step_hours=0.25)
     tf_candles = mk(40)
     got = series_of(expr("slope(SLOPE.5[-1], 3) @1H > 0"), base,
                     "MINUTE_15", {"HOUR": tf_candles}, INSTANCES)
@@ -216,17 +219,37 @@ def test_atr_ref_pct_end_to_end_and_warmup():
     assert atr_warmup(cfg, "bogus") == 0
 
 
-def test_a_pin_equal_to_the_run_timeframe_lags_one_bar_unlike_no_pin():
-    """Newly reachable: the chart now lets a pane be pinned to the chart's OWN
-    timeframe. That is NOT the same as leaving it unpinned — closed-bar
-    alignment means each bar reads the PREVIOUS bar's value, so the pin trades
-    one bar later. Locking this keeps the rule engine agreeing with the pane."""
+def test_a_pin_equal_to_the_run_timeframe_equals_no_pin():
+    """A pane pinned to the chart's OWN timeframe is the same series as leaving
+    it unpinned: align_htf_to_base's same-TF bypass maps bar-for-bar, so the
+    pin gains no artificial one-bar lag. Locking this keeps the rule engine
+    agreeing with the pane, which draws same-TF pins bar-for-bar too (the
+    frontend alignHtfToChart applies the identical bypass)."""
     base = mk(40)
     unpinned = series_of(expr("SLOPE.5 > 0"), base, "HOUR", {}, INSTANCES)
     pinned = series_of(expr("SLOPE.5 > 0"), base, "HOUR", {"HOUR": base},
                        _pinned("HOUR"))
 
-    assert pinned[1:] == unpinned[:-1]
-    assert pinned[0] is None
-    # Not a no-op rename of the same series: the lag is real.
-    assert pinned != unpinned
+    assert pinned == unpinned
+
+
+def test_same_tf_pin_survives_an_anomalous_partial_bar():
+    """A backtest range routinely holds one sub-interval bar (session-open
+    partial, DST-compressed hour). The same-TF bypass must key on the RUN's
+    declared resolution, not on gap inference over whatever candles were
+    posted — inferred, that one bar reads as a 30m series under an HOUR pin
+    and delays every value a bar, disagreeing with the chart pane."""
+    from datetime import datetime, timedelta, timezone
+
+    from auto_trader.core.models import Candle
+
+    base = mk(40)
+    # One 30-minute partial squeezed between bars 19 and 20.
+    partial_t = datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(hours=19, minutes=30)
+    base = base[:20] + [
+        Candle(time=partial_t, open=119.0, high=120.0, low=118.0, close=119.5, volume=5.0)
+    ] + base[20:]
+    unpinned = series_of(expr("SLOPE.5 > 0"), base, "HOUR", {}, INSTANCES)
+    pinned = series_of(expr("SLOPE.5 > 0"), base, "HOUR", {"HOUR": base},
+                       _pinned("HOUR"))
+    assert pinned == unpinned

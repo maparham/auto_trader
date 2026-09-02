@@ -262,6 +262,15 @@ describe("computeFvg MTF branch", () => {
     htfGaps: [{ side: "bull" as const, top: 103, bottom: 100, createdTs: t0 + 4 * H }],
   };
 
+  it("admits a flagged forming entry from its open (waitClose unchecked)", () => {
+    const { points } = computeFvg(chartBars, CFG, {
+      mtf: { ...mtf, formingIdx: 2 },
+    });
+    expect(points[7].bullTop).toBe(103); // history keeps waitClose
+    expect(points[8].bullTop).toBe(105); // forming entry, from its open
+    expect(points[11].bearBottom).toBe(119);
+  });
+
   it("aligns the HTF series onto chart bars using only CLOSED HTF bars", () => {
     const { points } = computeFvg(chartBars, CFG, { mtf });
     // Inside the first (still-open) HTF bar there is no closed HTF bar yet.

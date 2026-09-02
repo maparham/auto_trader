@@ -33,7 +33,7 @@ from auto_trader.indicators.core import (
     rsi_series,
     sma_series,
 )
-from auto_trader.indicators.mtf import align_htf_to_base, slope_of
+from auto_trader.indicators.mtf import align_htf_to_base, base_interval_ms_of, slope_of
 from auto_trader.strategy.base import Context, Strategy
 from auto_trader.strategy.params import resolve_params
 
@@ -231,7 +231,12 @@ class StrategyContext:
                 raise NeedTimeframe(tf)
             base_ms = self._strategy.base_times_ms
             htf_ms = resolution_seconds(tf) * 1000
-            arr = align_htf_to_base(base_ms, htf, values_fn(htf), htf_ms)
+            # The run's declared base timeframe decides the same-TF bypass;
+            # None (older direct instantiations) falls back to gap inference.
+            arr = align_htf_to_base(
+                base_ms, htf, values_fn(htf), htf_ms,
+                base_interval_ms=base_interval_ms_of(self._strategy.base_timeframe),
+            )
         self._cache[cache_key] = arr
         return arr
 

@@ -110,4 +110,26 @@ describe("computePivotBarsSince", () => {
     expect(pts[29].barsSinceHigh).toBe(3); // holds flat inside the HTF bar
     expect(pts[29].barsSinceLow).toBeUndefined();
   });
+
+  it("admits a flagged forming entry from its open (waitClose unchecked)", () => {
+    const chart = Array.from({ length: 30 }, (_, i) => ({
+      timestamp: i, open: 0, high: 0, low: 0, close: 0, volume: 0,
+    })) as KLineData[];
+    const pts = computePivotBarsSince(chart, N, {
+      mtf: {
+        timeframe: "1h",
+        htfStarts: [0, 10, 20],
+        htfBarsSinceHigh: [undefined, 3, 4],
+        htfBarsSinceLow: [undefined, undefined, 2],
+        htfMs: 10,
+        formingIdx: 2,
+      },
+    });
+    // History keeps waitClose: at t=19 only entry 0 (undefined) has closed.
+    expect(pts[19].barsSinceHigh).toBeUndefined();
+    // At t=20 the forming entry opens (and entry 1 closes): the newest usable
+    // entry wins, so the forming value shows, not the closed 3.
+    expect(pts[20].barsSinceHigh).toBe(4);
+    expect(pts[29].barsSinceLow).toBe(2); // undefined under waitClose
+  });
 });

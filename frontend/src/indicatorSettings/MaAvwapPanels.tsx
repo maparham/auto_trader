@@ -70,9 +70,10 @@ export function makeApplyMa(
     // the kind label only appears when the chosen kind differs from the
     // template's own kind.
     const label = maLegendLabel(kind, templateKind);
-    // The MTF path carries the base line only (computeMa never emits bandHi/
-    // bandLo there), so band figures must stay title-less on a higher
-    // timeframe or the DOM legend shows two permanent "n/a" rows.
+    // The MTF path carries the base + smoothing lines but never the envelope
+    // (computeMa never emits bandHi/bandLo there), so band figures must stay
+    // title-less on a higher timeframe or the DOM legend shows two permanent
+    // "n/a" rows.
     const figures = maFigures(label, envelope && tf === "chart");
     // Legend follows the chosen kind: retitle the figures and the row name.
     // (klinecharts' override applies figures/shortName per instance.) Skipped
@@ -121,6 +122,8 @@ export function MaInputsPanel({
   envelope,
   setEnvelope,
   applyMa,
+  waitClose,
+  onWaitClose,
 }: {
   maLength: number;
   setMaLength: (n: number) => void;
@@ -134,6 +137,8 @@ export function MaInputsPanel({
   setSmoothLen: (n: number) => void;
   timeframe: string;
   setTimeframe: (tf: string) => void;
+  waitClose: boolean;
+  onWaitClose: (next: boolean) => void;
   timeframeOptions: { resolution: string; label: string }[];
   maType: string;
   setMaType: (s: string) => void;
@@ -214,6 +219,7 @@ export function MaInputsPanel({
           <input
             type="checkbox"
             checked={envelope}
+            disabled={timeframe !== "chart"}
             onChange={(e) => {
               setEnvelope(e.target.checked);
               applyMa({ envelope: e.target.checked });
@@ -223,7 +229,14 @@ export function MaInputsPanel({
         </label>
         <InfoTip
           title="Envelope"
-          text="Adds upper and lower bands: the same moving average taken over each bar's high and low."
+          text={
+            timeframe !== "chart"
+              ? [
+                  "Adds upper and lower bands: the same moving average taken over each bar's high and low.",
+                  "Not available while the Calculation Timeframe is pinned — set Timeframe back to Chart to use it.",
+                ]
+              : "Adds upper and lower bands: the same moving average taken over each bar's high and low."
+          }
         />
       </span>
 
@@ -279,12 +292,20 @@ export function MaInputsPanel({
       </div>
       <span className="ind-row-head">
         <label className="ind-check">
-          <input type="checkbox" checked disabled readOnly />
+          <input
+            type="checkbox"
+            checked={waitClose}
+            disabled={timeframe === "chart"}
+            onChange={(e) => onWaitClose(e.target.checked)}
+          />
           <span>Wait for timeframe closes</span>
         </label>
         <InfoTip
           title="Wait for timeframe closes"
-          text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+          text={[
+            "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
+            "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so the line extends to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
+          ]}
         />
       </span>
     </>
@@ -302,11 +323,13 @@ export function maConfig(
   timeframe: string,
   maType: string,
   envelope: boolean,
+  waitClose = true,
 ) {
   extendData.source = source;
   extendData.offset = offset;
   if (smoothType !== "none") extendData.smoothing = { type: smoothType, length: smoothLen };
-  if (timeframe !== "chart") extendData.mtf = { timeframe };
+  if (timeframe !== "chart")
+    extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
   // Persist maType only when actually flipped. Writing the template's own kind
   // would mutate every instance whose settings were merely OPENED (the persist
   // effect fires on mount) and split its operands' recipe hashes from ones

@@ -10,7 +10,7 @@ import {
   type SmoothLineStyle,
 } from "klinecharts";
 import {
-  maSeries, alignHtfToChart, normalizeMaKind, MA_KIND_LABEL,
+  maSeries, alignHtfToChart, normalizeMaKind, MA_KIND_LABEL, type MtfSeriesBase,
   type MaOptions, type MaKind,
 } from "../mtf";
 import { fullLine } from "./shared";
@@ -32,10 +32,15 @@ interface MaPoint {
 // here and aligned onto the live chart bars inside calc — so scroll-back fills
 // in automatically (calc re-runs against the longer dataList).
 export interface MaExtend extends MaOptions {
-  mtf?: {
-    timeframe: string | null;
+  // MtfSeriesBase carries the shared pin fields, including the forming-bar
+  // ones ("Wait for timeframe closes" unchecked): waitClose, formingIdx and
+  // the fold inputs the coordinator re-folds from on live ticks.
+  mtf?: MtfSeriesBase & {
     htfStarts?: number[]; // HTF bar open timestamps (ms)
     htfSeries?: Array<number | undefined>; // MA value per HTF bar
+    // Smoothing MA computed on the native HTF bars (before alignment, so it
+    // never leaks across chart bars). Absent when smoothing is "none".
+    htfSmoothing?: Array<number | undefined>;
     htfMs?: number; // HTF bar duration (ms)
   };
   // Legend toggle (settings modal): hide this indicator's value from the legend.
@@ -107,17 +112,23 @@ export function computeMa(
   if (mtf?.timeframe && mtf.htfSeries && mtf.htfStarts && mtf.htfMs) {
     // Multi-timeframe: align the precomputed HTF series onto the live chart
     // bars (no lookahead: each bar takes the most recent CLOSED HTF bar).
+    const chartTs = dataList.map((k) => k.timestamp);
+    const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
     const aligned = alignHtfToChart(
-      dataList.map((k) => k.timestamp),
-      mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData),
-      mtf.htfSeries,
-      mtf.htfMs,
-      true,
+      chartTs, htfBars, mtf.htfSeries, mtf.htfMs, true, mtf.formingIdx,
     );
-    // NOTE: the MTF path carries a single precomputed line (htfSeries = the base
-    // MA on the higher timeframe), so the smoothing MA and envelope bands are
-    // intentionally NOT shown under MTF. Both apply on the chart-TF path below.
-    return aligned.map((v) => ({ ma: v ?? undefined }));
+    const smoothed = mtf.htfSmoothing
+      ? alignHtfToChart(
+          chartTs, htfBars, mtf.htfSmoothing, mtf.htfMs, true, mtf.formingIdx,
+        )
+      : undefined;
+    // NOTE: the envelope bands are intentionally NOT shown under MTF — the
+    // stash carries the base + smoothing lines only. Bands apply on the
+    // chart-TF path below.
+    return aligned.map((v, i) => ({
+      ma: v ?? undefined,
+      smoothingMa: smoothed?.[i] ?? undefined,
+    }));
   }
   const { base, smoothing } = maSeries(dataList, kind, length, ext);
   // Bands mirror the base line only: same kind/length over high/low, no offset,

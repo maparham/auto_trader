@@ -34,7 +34,8 @@ import type {
 } from "klinecharts";
 import { isPivotAt } from "./pivots";
 import { atrSeries } from "../atr";
-import { alignHtfToChart } from "../mtf";
+import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
+import { minPositiveGap } from "../barInterval";
 import {
   MAX_LIVE_MULT,
   parseTrendlinesConfig,
@@ -728,8 +729,7 @@ export function computeTrendlines(
  * interpolated indices), lineKey (a pin would rebind on every reload), and the
  * span ceilings (chart bars compared against an HTF-denominated setting). The
  * conversion happens once, at the last step, where an index becomes a pixel. */
-export interface TrendlinesMtf {
-  timeframe: string | null;
+export interface TrendlinesMtf extends MtfSeriesBase {
   htfStarts?: number[]; // HTF bar open timestamps (ms)
   htfMs?: number; // HTF bar duration (ms)
   htfSupport?: Array<number | undefined>; // per-HTF-bar operand values
@@ -1321,6 +1321,24 @@ export function lineExtent(
   return { jLeft, jRight: horizon };
 }
 
+/** The right-edge bar the STOPPING extend modes measure against, in line
+ * space. Waiting pins keep the last usable HTF bar. A FORMING pin's last entry
+ * is a bucket that runs through "now", so its lines run to the newest chart
+ * candle's fractional position inside it — otherwise "End at last bar" stops
+ * at the bucket's open, up to a whole HTF period short of the newest candle.
+ * Never pulls backwards (max), and only the drawn edge moves: isMajor and the
+ * emitted-value match still measure at the integer lastIdx the values came
+ * from. */
+export function trendlineDrawEdge(
+  formingIdx: number | undefined,
+  lastIdx: number,
+  toLine: (j: number) => number,
+  nChart: number,
+): number {
+  if (formingIdx === undefined || !nChart) return lastIdx;
+  return Math.max(lastIdx, toLine(nChart - 1));
+}
+
 export interface TrendlineHandle {
   key: string;
   x: number;
@@ -1429,7 +1447,7 @@ export function alignMtfTrendlines(
   const htfMs = mtf.htfMs ?? 0;
   const htfBars = starts.map((t) => ({ timestamp: t }) as KLineData);
   const at = (v?: Array<number | undefined>): Array<number | undefined> =>
-    v ? alignHtfToChart(ts, htfBars, v, htfMs, true) : [];
+    v ? alignHtfToChart(ts, htfBars, v, htfMs, true, mtf.formingIdx) : [];
   const sup = at(mtf.htfSupport);
   const res = at(mtf.htfResistance);
   const bSup = at(mtf.htfBrokenSupport);
@@ -1447,7 +1465,19 @@ export function alignMtfTrendlines(
   // must be the index those values came from and not simply the newest bar.
   let j = -1;
   const t = ts[ts.length - 1];
-  while (j + 1 < starts.length && starts[j + 1] + htfMs <= t) j++;
+  // Same-timeframe pin: alignHtfToChart above bypasses the closed-bar gate
+  // when the chart's own interval equals htfMs (see its sameTf detection) —
+  // this loop must apply the IDENTICAL rule, or on a same-TF pin the values
+  // come from HTF bar j+1 while lineIdx says j and the === match breaks.
+  const sameTf = minPositiveGap(ts) === htfMs;
+  while (
+    j + 1 < starts.length &&
+    // The flagged forming entry is usable from its OPEN, exactly as the
+    // alignment above admitted it — lineIdx must be the index those values
+    // came from, or selectDrawnLines' === match against projectAt breaks.
+    (sameTf || j + 1 === mtf.formingIdx ? starts[j + 1] : starts[j + 1] + htfMs) <= t
+  )
+    j++;
   out[out.length - 1] = {
     ...out[out.length - 1],
     lines: mtf.htfLines ?? [],
@@ -1585,6 +1615,13 @@ function drawTrendlines(
   // The CHART's newest close either way: it is the current price, and the price
   // is the price whatever timeframe the lines were found on.
   const lastClose = dataList[dataList.length - 1].close;
+  // Forming pin: stopping modes draw through "now" (see trendlineDrawEdge).
+  const drawEdge = trendlineDrawEdge(
+    mtf?.formingIdx,
+    lastIdx,
+    toLine,
+    dataList.length,
+  );
   const xAt = (j: number) => xAxis.convertToPixel(toChart(j));
   // A pin means "run past where you stopped", so it is only meaningful in the
   // modes that STOP a line. "ray" and "extended" already run to the horizon:
@@ -1686,9 +1723,9 @@ function drawTrendlines(
     // whether or not the line is pinned: a pinned line runs to the pane edge,
     // and a handle that travelled with it would leave nothing to click to undo
     // the pin (and would sit under the y-axis besides).
-    const natural = lineExtent(line, mode, cfg, drawn, lastIdx, null);
+    const natural = lineExtent(line, mode, cfg, drawn, drawEdge, null);
     const { jLeft, jRight } = isPinned
-      ? lineExtent(line, mode, cfg, drawn, lastIdx, edgeIdx)
+      ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx)
       : natural;
     const x0 = xAt(jLeft);
     const x1 = xAt(jRight);

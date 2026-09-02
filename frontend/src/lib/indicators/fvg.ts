@@ -46,7 +46,7 @@ import {
   type FvgConfig,
 } from "./fvgOutputs";
 import { atrSeries } from "../atr";
-import { alignHtfToChart } from "../mtf";
+import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 
 // The output names, config parser and warm-up live in the klinecharts-free leaf
 // ./fvgOutputs so pure callers (exprInstances.ts) can read them without pulling
@@ -138,7 +138,7 @@ export function computeFvg(
     const ts = dataList.map((k) => k.timestamp);
     const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
     const at = (v: Array<number | undefined> | undefined): Array<number | undefined> =>
-      alignHtfToChart(ts, htfBars, v ?? [], mtf.htfMs as number, true);
+      alignHtfToChart(ts, htfBars, v ?? [], mtf.htfMs as number, true, mtf.formingIdx);
     const bullTop = at(mtf.htfBullTop);
     const bullBottom = at(mtf.htfBullBottom);
     const bearTop = at(mtf.htfBearTop);
@@ -251,8 +251,7 @@ export interface FvgExtend {
   // Multi-timeframe: series + gaps computed on a higher timeframe and aligned
   // onto the chart bars inside calc (no lookahead). Set by the MTF coordinator
   // (applyFvgTimeframe); calc re-aligns on scroll-back.
-  mtf?: {
-    timeframe: string | null;
+  mtf?: MtfSeriesBase & {
     htfStarts?: number[]; // HTF bar open timestamps (ms)
     htfMs?: number; // HTF bar duration (ms)
     htfBullTop?: Array<number | undefined>;

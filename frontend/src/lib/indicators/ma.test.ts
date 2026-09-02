@@ -52,6 +52,54 @@ describe("computeMa envelope", () => {
   });
 });
 
+describe("computeMa MTF", () => {
+  // Minute-spaced chart bars (vbars) under a 2-minute HTF stash. waitClose
+  // alignment: each HTF bar's value appears from its CLOSE (open + htfMs) on.
+  const candles = vbars([1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1]);
+  const mtf = {
+    timeframe: "MINUTE_2",
+    htfStarts: [0, 120_000],
+    htfSeries: [10, 20],
+    htfMs: 120_000,
+  };
+  it("aligns the stashed HTF smoothing series as a separate smoothingMa line", () => {
+    const pts = computeMa(candles, "ema", 2, {
+      mtf: { ...mtf, htfSmoothing: [11, 21] },
+    });
+    expect(pts.map((p) => p.ma)).toEqual([undefined, undefined, 10, 10, 20, 20]);
+    expect(pts.map((p) => p.smoothingMa)).toEqual([undefined, undefined, 11, 11, 21, 21]);
+  });
+  it("emits no smoothingMa when the stash carries no smoothing series", () => {
+    const pts = computeMa(candles, "ema", 2, { mtf });
+    expect(pts.every((p) => p.smoothingMa === undefined)).toBe(true);
+  });
+  it("draws bar-for-bar when the pin equals the chart timeframe", () => {
+    // vbars are minute-spaced; a MINUTE_1-equivalent stash (htfMs = 60s) must
+    // not lag the pair one bar — Chart and same-TF pin render identically.
+    const pts = computeMa(candles, "ema", 2, {
+      mtf: {
+        timeframe: "MINUTE_1",
+        htfStarts: candles.map((c) => c.timestamp),
+        htfSeries: [1, 2, 3, 4, 5, 6],
+        htfSmoothing: [10, 20, 30, 40, 50, 60],
+        htfMs: 60_000,
+      },
+    });
+    expect(pts.map((p) => p.ma)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(pts.map((p) => p.smoothingMa)).toEqual([10, 20, 30, 40, 50, 60]);
+  });
+  it("admits a flagged forming entry from its open (waitClose unchecked)", () => {
+    // Entry 1 is the FORMING bucket: chart bars 2-3 sit inside it and read its
+    // value from its open; bar 0-1 (inside closed entry 0) still wait for the
+    // close — history keeps waitClose.
+    const pts = computeMa(candles, "ema", 2, {
+      mtf: { ...mtf, formingIdx: 1, htfSmoothing: [11, 21] },
+    });
+    expect(pts.map((p) => p.ma)).toEqual([undefined, undefined, 20, 20, 20, 20]);
+    expect(pts.map((p) => p.smoothingMa)).toEqual([undefined, undefined, 21, 21, 21, 21]);
+  });
+});
+
 describe("maLegendLabel", () => {
   it("keeps the template label when never flipped", () => {
     expect(maLegendLabel(undefined, "ema")).toBe("EMA");

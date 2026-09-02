@@ -7,6 +7,7 @@ import type { KLineData } from "klinecharts";
 import { describe, expect, it } from "vitest";
 import {
   alignMtfTrendlines,
+  trendlineDrawEdge,
   lineKey,
   TRENDLINES_TEMPLATE,
   type TrendLine,
@@ -83,6 +84,33 @@ describe("alignMtfTrendlines", () => {
     expect(last.lineIdx).toBe(8);
     // No row but the last carries the list, exactly as the chart-TF path does.
     expect(out[0].lines).toBeUndefined();
+  });
+
+  it("admits a flagged forming entry from its open, so values reach the newest chart bar", () => {
+    // The last HTF entry (index 9, opening at T0+9h) is the FORMING bucket:
+    // chart bars 36-39 sit inside it and must read ITS value, not bar 8's.
+    const out = alignMtfTrendlines(chartBars(), stash({ formingIdx: 9 }));
+    const resAt9 = 110 - 2 * (9 - 1); // the series value stashed for entry 9
+    expect(out[36].tl_resistance).toBe(resAt9);
+    expect(out[39].tl_resistance).toBe(resAt9);
+    // History keeps waitClose: bar 8 still reads HTF bar 1, not bar 2.
+    expect(out[8].tl_resistance).toBe(110);
+    // The draw path measures at the forming bar — the whole point: line ends
+    // reach the newest candle.
+    expect(out[out.length - 1].lineIdx).toBe(9);
+  });
+
+  it("trendlineDrawEdge runs a forming pin's edge to the newest chart bar, fractionally", () => {
+    // 40 chart bars; the newest (index 39, opening T0+9.75h) sits inside the
+    // forming HTF entry 9 (opens T0+9h): the draw edge is its LINE-SPACE
+    // position, 9.75 HTF bars, so a "lastbar" line ends at the newest candle
+    // rather than at the forming bucket's open.
+    const toLine = (j: number) => (j * CHART_MS) / HTF_MS; // aligned fixture: exact
+    expect(trendlineDrawEdge(9, 9, toLine, 40)).toBeCloseTo(9.75, 10);
+    // Waiting mode (no formingIdx): the closed-bar edge stands.
+    expect(trendlineDrawEdge(undefined, 8, toLine, 40)).toBe(8);
+    // Never pulls backwards: a lastIdx already past the newest bar wins.
+    expect(trendlineDrawEdge(9, 12, toLine, 40)).toBe(12);
   });
 
   it("draws nothing before the first HTF bar closes", () => {

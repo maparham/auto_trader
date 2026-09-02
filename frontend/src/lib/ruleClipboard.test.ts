@@ -88,8 +88,15 @@ describe("runtime state is stripped from the envelope", () => {
             htfStarts: [1, 2, 3],
             htfMs: 3_600_000,
             htfSeriesByLine: [[1, 2]],
+            htfSmoothing: [1, 2],
             htfMaBaseByLine: [[1, 2]],
             htfAccelByLine: [[0, 0]],
+            // Forming-bar mode: waitClose is CONFIG (persisted, ships), the
+            // fold inputs and flag are per-session runtime (stripped).
+            waitClose: false,
+            formingIdx: 2,
+            htfClosed: [{ timestamp: 1, open: 1, high: 1, low: 1, close: 1 }],
+            htfSeed: { timestamp: 2, open: 1, high: 1, low: 1, close: 1 },
           },
         },
       },
@@ -97,7 +104,7 @@ describe("runtime state is stripped from the envelope", () => {
     const out = decodeRuleClipboard(encodeRuleClipboard([{ expr: "SLOPE.9 > 0" }], live));
     expect(out!.indicators.SLOPE.extendData).toEqual({
       units: "pctBar",
-      mtf: { timeframe: "HOUR" },
+      mtf: { timeframe: "HOUR", waitClose: false },
     });
   });
 

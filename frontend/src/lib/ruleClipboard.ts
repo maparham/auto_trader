@@ -41,6 +41,7 @@ export interface RuleClipboardPayload {
 const MTF_RUNTIME_KEYS = [
   "htfStarts",
   "htfSeries",
+  "htfSmoothing",
   "htfMs",
   "htfSeriesByLine",
   "htfMaBaseByLine",
@@ -53,6 +54,12 @@ const MTF_RUNTIME_KEYS = [
   "htfBrokenResistance",
   "htfLines",
   "htfAtr",
+  // Forming-bar mode's per-session fold state (waitClose itself is CONFIG and
+  // ships): the flag and inputs are re-derived by the coordinator on the
+  // target, and htfClosed is a whole candle array besides.
+  "formingIdx",
+  "htfClosed",
+  "htfSeed",
 ] as const;
 
 /** extendData with runtime-derived state stripped — what the envelope ships. */

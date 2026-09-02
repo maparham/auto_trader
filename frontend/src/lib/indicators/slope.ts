@@ -320,7 +320,7 @@ function computeSlopeCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
     const ts = candles.map((k) => k.timestamp);
     const starts = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
     const aligned = mtf.htfSeriesByLine.map((series) =>
-      alignHtfToChart(ts, starts, series, mtf.htfMs!, true),
+      alignHtfToChart(ts, starts, series, mtf.htfMs!, true, mtf.formingIdx),
     );
     return candles.map((_, i) => {
       const p: SlopePoint = {};
@@ -491,7 +491,7 @@ export function slopeMaLines(ind: SlopeMaSource, candles: KLineData[]): SlopeMaL
     return lengths.map((_len, li) => ({
       color: colorAt(li),
       width: widthAt(li),
-      values: alignHtfToChart(ts, starts, mtf.htfMaBaseByLine![li] ?? [], mtf.htfMs!, true),
+      values: alignHtfToChart(ts, starts, mtf.htfMaBaseByLine![li] ?? [], mtf.htfMs!, true, mtf.formingIdx),
     }));
   }
   return lengths.map((len, li) => ({
@@ -558,7 +558,7 @@ function computeAccelCalc(candles: KLineData[], ind: Indicator): SlopePoint[] {
     const ts = candles.map((k) => k.timestamp);
     const starts = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
     const aligned = mtf.htfAccelByLine.map((series) =>
-      alignHtfToChart(ts, starts, series, mtf.htfMs!, true),
+      alignHtfToChart(ts, starts, series, mtf.htfMs!, true, mtf.formingIdx),
     );
     return candles.map((_, i) => {
       const p: SlopePoint = {};

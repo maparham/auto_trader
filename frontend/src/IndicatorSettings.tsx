@@ -23,7 +23,7 @@ import {
   SMOOTHING_TYPES,
   type IndicatorInputDef,
 } from "./lib/indicatorMeta";
-import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe } from "./lib/mtfCoordinator";
+import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, setMtfWaitClose } from "./lib/mtfCoordinator";
 import { parseTrendlinesConfig } from "./lib/indicators/trendlinesOutputs";
 import { declutterMode, type TrendlinesExtend } from "./lib/indicators/trendlines";
 import {
@@ -372,6 +372,9 @@ export default function IndicatorSettings({
   const [smoothType, setSmoothType] = useState<string>(ext0.smoothing?.type ?? "none");
   const [smoothLen, setSmoothLen] = useState<number>(ext0.smoothing?.length ?? 9);
   const [timeframe, setTimeframe] = useState<string>(ext0.mtf?.timeframe ?? "chart");
+  // TV's "Wait for timeframe closes": absent/true = closed HTF bars only (the
+  // default); false = fold the forming HTF bar in (see mtfCoordinator).
+  const [waitClose, setWaitClose] = useState<boolean>(ext0.mtf?.waitClose !== false);
   const [maType, setMaType] = useState<string>(ext0.maType ?? templateMaKind(type));
   const [envelope, setEnvelope] = useState<boolean>(ext0.envelope === true);
 
@@ -891,21 +894,21 @@ export default function IndicatorSettings({
   function currentConfig(): SavedIndicatorConfig {
     const extendData: Record<string, unknown> = {};
     if (isMa) {
-      maConfig(extendData, type, source, offset, smoothType, smoothLen, timeframe, maType, envelope);
+      maConfig(extendData, type, source, offset, smoothType, smoothLen, timeframe, maType, envelope, waitClose);
     }
     // Pivot Bands persists only the chosen timeframe (never the bulky HTF series);
     // refreshMtfIndicators refetches it on reload, like EMA/MA.
-    if (isPivotBands && timeframe !== "chart") extendData.mtf = { timeframe };
+    if (isPivotBands && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
     // Slope persists only the chosen timeframe (never the bulky HTF series);
     // refreshMtfIndicators refetches it on reload, like Pivot Bands/EMA/MA.
-    if (isSlope && timeframe !== "chart") extendData.mtf = { timeframe };
+    if (isSlope && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
     // S/R Levels: same MTF persistence contract as Pivot Bands/Slope.
-    if (isSrLevels && timeframe !== "chart") extendData.mtf = { timeframe };
+    if (isSrLevels && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
     // FVG: same MTF persistence contract as S/R Levels.
-    if (isFvg && timeframe !== "chart") extendData.mtf = { timeframe };
+    if (isFvg && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
     // Trendlines persists only the chosen timeframe; the HTF lines and series
     // are re-detected by the coordinator on load, exactly as S/R Levels does.
-    if (isTrendlines && timeframe !== "chart") extendData.mtf = { timeframe };
+    if (isTrendlines && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
     if (isSlope) {
       // slopePeriod/smoothing/colorByDirection don't ride genExtend (they're not
       // meta-declared selects) — persist them explicitly so they survive reload.
@@ -1006,7 +1009,16 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, waitClose, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt]);
+
+  // Flip the pin's "Wait for timeframe closes" choice: write the flag onto
+  // the live indicator FIRST (every apply* reads it from there), then rebuild
+  // the stash in the new mode via the caller's own apply.
+  function toggleWaitClose(next: boolean, reapply: () => void) {
+    setWaitClose(next);
+    setMtfWaitClose(chart, paneId, name, next);
+    if (timeframe !== "chart") reapply();
+  }
 
   // MA/EMA apply (moved to MaAvwapPanels.tsx). Also called directly from
   // setParam's isMa branch below, so it stays a shell-local binding.
@@ -1644,6 +1656,8 @@ export default function IndicatorSettings({
               envelope={envelope}
               setEnvelope={setEnvelope}
               applyMa={applyMa}
+              waitClose={waitClose}
+              onWaitClose={(next) => toggleWaitClose(next, () => applyMa({}))}
             />
           )}
 
@@ -2219,12 +2233,20 @@ export default function IndicatorSettings({
                   </div>
                   <span className="ind-row-head">
                     <label className="ind-check">
-                      <input type="checkbox" checked disabled readOnly />
+                      <input
+                        type="checkbox"
+                        checked={waitClose}
+                        disabled={timeframe === "chart"}
+                        onChange={(e) => toggleWaitClose(e.target.checked, () => applyPivotBands())}
+                      />
                       <span>Wait for timeframe closes</span>
                     </label>
                     <InfoTip
                       title="Wait for timeframe closes"
-                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                      text={[
+                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
+                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
+                      ]}
                     />
                   </span>
                 </>
@@ -2256,12 +2278,20 @@ export default function IndicatorSettings({
                   </div>
                   <span className="ind-row-head">
                     <label className="ind-check">
-                      <input type="checkbox" checked disabled readOnly />
+                      <input
+                        type="checkbox"
+                        checked={waitClose}
+                        disabled={timeframe === "chart"}
+                        onChange={(e) => toggleWaitClose(e.target.checked, () => applySlope())}
+                      />
                       <span>Wait for timeframe closes</span>
                     </label>
                     <InfoTip
                       title="Wait for timeframe closes"
-                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                      text={[
+                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
+                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
+                      ]}
                     />
                   </span>
                 </>
@@ -2293,12 +2323,20 @@ export default function IndicatorSettings({
                   </div>
                   <span className="ind-row-head">
                     <label className="ind-check">
-                      <input type="checkbox" checked disabled readOnly />
+                      <input
+                        type="checkbox"
+                        checked={waitClose}
+                        disabled={timeframe === "chart"}
+                        onChange={(e) => toggleWaitClose(e.target.checked, () => applySrLevels())}
+                      />
                       <span>Wait for timeframe closes</span>
                     </label>
                     <InfoTip
                       title="Wait for timeframe closes"
-                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                      text={[
+                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
+                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
+                      ]}
                     />
                   </span>
                 </>
@@ -2330,12 +2368,20 @@ export default function IndicatorSettings({
                   </div>
                   <span className="ind-row-head">
                     <label className="ind-check">
-                      <input type="checkbox" checked disabled readOnly />
+                      <input
+                        type="checkbox"
+                        checked={waitClose}
+                        disabled={timeframe === "chart"}
+                        onChange={(e) => toggleWaitClose(e.target.checked, () => applyFvg())}
+                      />
                       <span>Wait for timeframe closes</span>
                     </label>
                     <InfoTip
                       title="Wait for timeframe closes"
-                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                      text={[
+                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
+                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
+                      ]}
                     />
                   </span>
                 </>
@@ -2367,12 +2413,20 @@ export default function IndicatorSettings({
                   </div>
                   <span className="ind-row-head">
                     <label className="ind-check">
-                      <input type="checkbox" checked disabled readOnly />
+                      <input
+                        type="checkbox"
+                        checked={waitClose}
+                        disabled={timeframe === "chart"}
+                        onChange={(e) => toggleWaitClose(e.target.checked, () => applyTrendlines())}
+                      />
                       <span>Wait for timeframe closes</span>
                     </label>
                     <InfoTip
                       title="Wait for timeframe closes"
-                      text="Uses only closed higher-timeframe bars. No peeking at the current, unfinished bar."
+                      text={[
+                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
+                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
+                      ]}
                     />
                   </span>
                 </>

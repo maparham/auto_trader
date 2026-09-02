@@ -129,6 +129,17 @@ describe("computeSrLevels MTF branch", () => {
     htfLevels: [{ price: 100, halfWidth: 5, touches: 2, firstTs: t0, lastTs: t0 + 4 * H }],
   };
 
+  it("admits a flagged forming entry from its open (waitClose unchecked)", () => {
+    // Entry 2 is the FORMING bucket (opens t0+8h): bars 8..11 read it from its
+    // open instead of nothing (it never closes inside the fixture).
+    const { points } = computeSrLevels(chartBars, CFG, {
+      mtf: { ...mtf, formingIdx: 2 },
+    });
+    expect(points[7].support).toBe(100); // history keeps waitClose
+    expect(points[8].support).toBe(102);
+    expect(points[11].resistance).toBe(112);
+  });
+
   it("aligns the HTF series onto chart bars using only CLOSED HTF bars", () => {
     const { points } = computeSrLevels(chartBars, CFG, { mtf });
     // Bars inside the first (still-open) HTF bar have no closed HTF bar yet.

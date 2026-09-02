@@ -106,6 +106,56 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("applyMaTimeframe smoothing", () => {
+  it("stashes the HTF smoothing series alongside the base", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = fakeChart();
+    await applyMaTimeframe(chart, "EPIC", "ema1", "candle_pane",
+      { kind: "ema", length: 2, options: { smoothing: { type: "sma", length: 3 } } },
+      "MINUTE_15");
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as {
+      htfStarts?: number[];
+      htfSmoothing?: Array<number | undefined>;
+    };
+    expect(mtf.htfSmoothing?.length).toBe(mtf.htfStarts?.length);
+    expect(mtf.htfSmoothing?.some((v) => typeof v === "number")).toBe(true);
+  });
+
+  it("stashes no smoothing series when smoothing is off", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = fakeChart();
+    await applyEma(chart, "MINUTE_15");
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as { htfSmoothing?: unknown };
+    expect(mtf.htfSmoothing).toBeUndefined();
+  });
+
+  it("reaches back further by the smoothing window so the left edge is populated", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const from = async (smoothLen: number | null): Promise<number> => {
+      fetchRangeStrict.mockClear();
+      // Each measurement needs its OWN walk to read the reach-back off (the
+      // shared cache would serve the shallower config from the deeper one).
+      clearHtfCache();
+      await applyMaTimeframe(
+        fakeChart().chart, "EPIC", "ema1", "candle_pane",
+        {
+          kind: "ema", length: 2,
+          options: smoothLen ? { smoothing: { type: "sma", length: smoothLen } } : {},
+        },
+        "MINUTE_15",
+      );
+      return fetchRangeStrict.mock.calls[0][2] as number;
+    };
+    expect(await from(50)).toBeLessThan(await from(null));
+  });
+});
+
 describe("applyMaTimeframe fetch-failure retry", () => {
   it("falls back to chart-timeframe rendering on failure, then retries and stashes the series", async () => {
     // Broker down (e.g. 503 while MT5 rebuilds a wedged connection).
@@ -367,5 +417,194 @@ describe("applyTrendlinesTimeframe", () => {
       return fetchRangeStrict.mock.calls[0][2] as number;
     };
     expect(await from(0)).toBeLessThan(await from(5));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Forming-bar mode ("Wait for timeframe closes" unchecked): waitClose false on
+// the stashed mtf makes every apply append ONE folded forming bar and flag it,
+// and refreshFormingBar re-folds it from the chart's own candles without a
+// refetch. Default (absent/true) behavior is pinned by the tests above.
+// ---------------------------------------------------------------------------
+const { refreshFormingBar } = await import("./mtfCoordinator");
+
+describe("forming-bar mode (waitClose: false)", () => {
+  // Aligned to the 15m grid (htfPage starts at the requested fromSec, which is
+  // warmup-derived and not round), so the forming bucket's boundaries are
+  // knowable: newest chart bar 10_000_300_000 sits in [9_999_900_000,
+  // 10_000_800_000), and a pushed 10_000_600_000 tick lands INSIDE it.
+  const alignedPage = (fromSec: number, toSec: number): KLineData[] => {
+    const out: KLineData[] = [];
+    for (
+      let t = Math.floor((fromSec * 1000) / HTF_MS) * HTF_MS;
+      t <= toSec * 1000;
+      t += HTF_MS
+    )
+      out.push(bar(t));
+    return out;
+  };
+
+  // A chart whose candles are distinctive (close 5, high 7) so the folded
+  // forming bar is tellable from the flat fetched fixture (all 1s), plus a
+  // mutable dataList so a live update can be simulated.
+  function livelyChart(extendData: object) {
+    const data: KLineData[] = [
+      { timestamp: 10_000_000_000, open: 1, high: 7, low: 1, close: 5, volume: 1 } as KLineData,
+      { timestamp: 10_000_300_000, open: 5, high: 7, low: 1, close: 5, volume: 1 } as KLineData,
+    ];
+    const f = fakeChart(extendData);
+    (f.chart as { getDataList: () => KLineData[] }).getDataList = () => data;
+    return { ...f, data };
+  }
+
+  // refreshFormingBar branches on indTypeOf, like refreshMtfIndicators — the
+  // fixture carries the real indType an instance is created with.
+  const pinned = (waitClose?: boolean) => ({
+    indType: "EMA",
+    mtf: { timeframe: "MINUTE_15", ...(waitClose === undefined ? {} : { waitClose }) },
+  });
+
+  it("applyMaTimeframe appends a folded forming bar, flags it, and stashes the fold inputs", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(alignedPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = livelyChart(pinned(false));
+    await applyEma(chart, "MINUTE_15");
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as {
+      waitClose?: boolean;
+      formingIdx?: number;
+      htfStarts: number[];
+      htfClosed?: KLineData[];
+      htfSeries: Array<number | undefined>;
+    };
+    expect(mtf.waitClose).toBe(false);
+    expect(mtf.formingIdx).toBe(mtf.htfStarts.length - 1);
+    // Everything before the forming entry is a CLOSED bar, and the raw closed
+    // candles are stashed for the live re-fold.
+    expect(mtf.htfClosed).toHaveLength(mtf.htfStarts.length - 1);
+    const newest = chart.getDataList().at(-1)!.timestamp;
+    for (const t of mtf.htfStarts.slice(0, -1))
+      expect(t + HTF_MS).toBeLessThanOrEqual(newest);
+    // The forming EMA value read the chart's close-5 candles: it must sit above
+    // the all-1s closed tail.
+    expect(mtf.htfSeries.at(-1)!).toBeGreaterThan(mtf.htfSeries.at(-2)!);
+  });
+
+  it("waitClose absent keeps today's stash byte-for-byte (no forming fields)", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(alignedPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = livelyChart(pinned());
+    await applyEma(chart, "MINUTE_15");
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as Record<string, unknown>;
+    expect(mtf.formingIdx).toBeUndefined();
+    expect(mtf.htfClosed).toBeUndefined();
+    expect(mtf.waitClose).toBeUndefined();
+  });
+
+  it("applyTrendlinesTimeframe appends the forming bar past the closed cut", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(alignedPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = livelyChart(pinned(false));
+    await applyTrendlinesTimeframe(
+      chart, "EPIC", "tl1", "candle_pane",
+      { ...TRENDLINES_DEFAULTS }, "MINUTE_15",
+    );
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as {
+      formingIdx?: number;
+      htfStarts: number[];
+      htfSupport: unknown[];
+    };
+    const newest = chart.getDataList().at(-1)!.timestamp;
+    // Last entry IS the forming bucket (still open at the newest chart bar)…
+    expect(mtf.formingIdx).toBe(mtf.htfStarts.length - 1);
+    expect(mtf.htfStarts.at(-1)! + HTF_MS).toBeGreaterThan(newest);
+    // …and the operand series cover it.
+    expect(mtf.htfSupport).toHaveLength(mtf.htfStarts.length);
+  });
+
+  it("refreshFormingBar re-folds from the chart's candles without a refetch", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(alignedPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides, data } = livelyChart(pinned(false));
+    await applyEma(chart, "MINUTE_15");
+    const before = overrides.at(-1)!.patch.extendData?.mtf as {
+      htfSeries: Array<number | undefined>;
+      htfStarts: number[];
+    };
+    fetchRangeStrict.mockClear();
+    // A new tick inside the forming bucket moves the close from 5 to 50.
+    data.push({
+      timestamp: data.at(-1)!.timestamp + 300_000,
+      open: 5, high: 50, low: 5, close: 50, volume: 1,
+    } as KLineData);
+    refreshFormingBar(chart);
+    const after = overrides.at(-1)!.patch.extendData?.mtf as {
+      htfSeries: Array<number | undefined>;
+      htfStarts: number[];
+      formingIdx?: number;
+    };
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
+    expect(after.formingIdx).toBe(after.htfStarts.length - 1);
+    expect(after.htfSeries.at(-1)!).toBeGreaterThan(before.htfSeries.at(-1)!);
+  });
+
+  it("a fetch failure's fallback shape keeps waitClose, so the retry re-enters forming mode", async () => {
+    fetchRangeStrict.mockRejectedValue(new Error("candles fetch failed: 503"));
+    const { chart, overrides } = livelyChart(pinned(false));
+    await applyEma(chart, "MINUTE_15");
+    expect(overrides.at(-1)!.patch.extendData?.mtf).toEqual({
+      timeframe: "MINUTE_15",
+      waitClose: false,
+    });
+  });
+
+  it("refreshFormingBarThrottled coalesces tick-rate calls to ~1/s", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(alignedPage(fromSec as number, toSec as number)),
+    );
+    const { refreshFormingBarThrottled } = await import("./mtfCoordinator");
+    const { chart, overrides } = livelyChart(pinned(false));
+    await applyEma(chart, "MINUTE_15");
+    const n = overrides.length;
+    refreshFormingBarThrottled(chart); // leading call runs
+    refreshFormingBarThrottled(chart); // inside the window: dropped
+    refreshFormingBarThrottled(chart);
+    expect(overrides.length).toBe(n + 1);
+    vi.advanceTimersByTime(1100);
+    refreshFormingBarThrottled(chart); // window elapsed: runs again
+    expect(overrides.length).toBe(n + 2);
+  });
+
+  it("setMtfWaitClose writes only the flag, keeping the rest of the stash", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(alignedPage(fromSec as number, toSec as number)),
+    );
+    const { setMtfWaitClose } = await import("./mtfCoordinator");
+    const { chart, overrides } = livelyChart(pinned());
+    await applyEma(chart, "MINUTE_15");
+    setMtfWaitClose(chart, "candle_pane", "ema1", false);
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as Record<string, unknown>;
+    expect(mtf.waitClose).toBe(false);
+    expect(mtf.timeframe).toBe("MINUTE_15");
+    expect(mtf.htfSeries).toBeDefined(); // stash untouched
+    // Back to waiting: the flag comes OFF the stash (absent = wait), so the
+    // persisted shape stays the pre-feature one.
+    setMtfWaitClose(chart, "candle_pane", "ema1", true);
+    const mtf2 = overrides.at(-1)!.patch.extendData?.mtf as Record<string, unknown>;
+    expect(mtf2.waitClose).toBeUndefined();
+  });
+
+  it("refreshFormingBar is a no-op for a waiting pin", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(alignedPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = livelyChart(pinned());
+    await applyEma(chart, "MINUTE_15");
+    const n = overrides.length;
+    refreshFormingBar(chart);
+    expect(overrides.length).toBe(n);
   });
 });

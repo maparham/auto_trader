@@ -7,6 +7,7 @@
 // alignment that must NOT leak future information onto past bars.
 
 import type { KLineData } from "klinecharts";
+import { minPositiveGap } from "./barInterval";
 
 export type PriceSource =
   | "close"
@@ -25,6 +26,25 @@ export interface MtfSeriesBase {
   timeframe: string | null;
   htfStarts?: number[];
   htfMs?: number;
+  /** TV's "Wait for timeframe closes". Absent/true = today's closed-bar-only
+   * behavior. False = the coordinator appends ONE folded still-forming HTF bar
+   * to the computed series and flags it via formingIdx; alignment admits that
+   * entry from its open (see alignHtfToChart). Persisted alongside timeframe —
+   * the only mtf fields persistence keeps. */
+  waitClose?: boolean;
+  /** Index (into htfStarts/the series) of the appended forming bar, when one
+   * exists. Session-only, rewritten by every apply/refresh. */
+  formingIdx?: number;
+  /** The raw CLOSED HTF candles the compute ran on — the full set, not a tail:
+   * a truncated recompute could disagree with the stashed series (e.g. a
+   * trendline seeded from an older pivot). Session-only; lets
+   * refreshFormingBar re-fold + recompute on every chart tick without a
+   * refetch. Stashed only when waitClose is false. */
+  htfClosed?: KLineData[];
+  /** The fetched partial forming bar, kept as the fold seed: its open saw the
+   * bucket's true first trade, and for calendar-bucketed timeframes its
+   * timestamp is the authoritative bucket open. Session-only. */
+  htfSeed?: KLineData;
 }
 
 export function priceOf(k: KLineData, src: PriceSource): number {
@@ -304,14 +324,33 @@ export function alignHtfToChart(
   htfValues: Array<number | undefined>,
   htfMs: number,
   waitClose = true,
+  /** Index of the still-FORMING HTF bar, when the caller appended one (the
+   * "Wait for timeframe closes" box unchecked). That one entry is usable from
+   * its OPEN — its value was computed from data up to now, and the chart bars
+   * it spans are the "now" it belongs to. Every closed bar keeps the waitClose
+   * rule, so history never gains lookahead. */
+  formingIdx?: number,
 ): Array<number | undefined> {
   const out: Array<number | undefined> = new Array(chartTimestamps.length).fill(undefined);
+  // Same-timeframe pin: when the chart's own bar interval equals the HTF
+  // width, the closed-bar gate would delay every value one bar for nothing —
+  // the value belongs to the bar that produced it, exactly as the unpinned
+  // (chart-TF) indicator draws it. Detected from the data because calc never
+  // sees the chart's resolution string: the SMALLEST positive gap is the true
+  // interval regardless of session/weekend holes (see minPositiveGap). A
+  // genuinely higher pin always has htfMs above the chart interval, so this
+  // can't fire for it; the derived calendar widths (weeks/months) may miss
+  // the match and safely keep the gated path.
+  const sameTf = minPositiveGap(chartTimestamps) === htfMs;
   let j = -1; // index of the last HTF bar usable so far
   for (let i = 0; i < chartTimestamps.length; i++) {
     const t = chartTimestamps[i];
     while (j + 1 < htfBars.length) {
       const next = htfBars[j + 1];
-      const usableAt = waitClose ? next.timestamp + htfMs : next.timestamp;
+      const usableAt =
+        waitClose && !sameTf && j + 1 !== formingIdx
+          ? next.timestamp + htfMs
+          : next.timestamp;
       if (usableAt <= t) j++;
       else break;
     }

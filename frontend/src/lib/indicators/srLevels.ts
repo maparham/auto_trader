@@ -27,7 +27,7 @@ import {
 import { fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
 import { atrSeries } from "../atr";
-import { alignHtfToChart } from "../mtf";
+import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 // Config shape, defaults, parser, output names and warm-up live in the leaf
 // (no klinecharts) so the expression bridge can read them from a node context;
 // re-exported here so every existing `from "./indicators/srLevels"` import
@@ -94,8 +94,8 @@ export function computeSrLevels(
     // from an HTF bar that closes later — same contract as PivotBands.
     const ts = dataList.map((k) => k.timestamp);
     const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
-    const sup = alignHtfToChart(ts, htfBars, mtf.htfSupport, mtf.htfMs, true);
-    const res = alignHtfToChart(ts, htfBars, mtf.htfResistance, mtf.htfMs, true);
+    const sup = alignHtfToChart(ts, htfBars, mtf.htfSupport, mtf.htfMs, true, mtf.formingIdx);
+    const res = alignHtfToChart(ts, htfBars, mtf.htfResistance, mtf.htfMs, true, mtf.formingIdx);
     const points = ts.map((_, i) => ({
       support: sup[i] ?? undefined,
       resistance: res[i] ?? undefined,
@@ -274,8 +274,7 @@ export interface SrLevelsExtend {
   // Multi-timeframe: series + levels computed on a higher timeframe and aligned
   // onto the chart bars inside calc (no lookahead). Set by the MTF coordinator
   // (applySrLevelsTimeframe); calc re-aligns on scroll-back.
-  mtf?: {
-    timeframe: string | null;
+  mtf?: MtfSeriesBase & {
     htfStarts?: number[]; // HTF bar open timestamps (ms)
     htfMs?: number; // HTF bar duration (ms)
     htfSupport?: Array<number | undefined>; // per-HTF-bar nearest support

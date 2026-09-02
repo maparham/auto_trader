@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { KLineData } from "klinecharts";
-import { maSeries, normalizeMaKind, htfCoverageStartMs, HTF_WARMUP_BARS } from "./mtf";
+import { maSeries, normalizeMaKind, htfCoverageStartMs, HTF_WARMUP_BARS, alignHtfToChart } from "./mtf";
 
 // Minimal flat bars (open=high=low=close) one step apart.
 function bars(closes: number[]): KLineData[] {
@@ -175,5 +175,65 @@ describe("normalizeMaKind", () => {
     expect(normalizeMaKind("sma")).toBe("sma");
     expect(normalizeMaKind(undefined)).toBe("ema");
     expect(normalizeMaKind("garbage", "sma")).toBe("sma");
+  });
+});
+
+describe("alignHtfToChart same-timeframe pin", () => {
+  const H = 3_600_000;
+  const htfMs = 4 * H;
+  const vals = [10, 20, 30];
+
+  it("maps bar-for-bar when the chart's own interval equals the HTF width", () => {
+    // A 4H pin on a 4H chart: closed-bar gating would delay every value one
+    // bar for nothing — the value is the bar's own, as chart-TF drawing does.
+    const chartTs = [0, 4, 8].map((h) => h * H);
+    const htfBars = chartTs.map((t) => ({ timestamp: t }) as never);
+    expect(alignHtfToChart(chartTs, htfBars, vals, htfMs, true)).toEqual([10, 20, 30]);
+  });
+
+  it("still detects same-TF across a session/weekend hole in the chart bars", () => {
+    // One oversized gap (12h) must not defeat detection: the smallest positive
+    // gap is the true interval.
+    const chartTs = [0 * H, 4 * H, 16 * H];
+    const htfBars = chartTs.map((t) => ({ timestamp: t }) as never);
+    expect(alignHtfToChart(chartTs, htfBars, vals, htfMs, true)).toEqual([10, 20, 30]);
+  });
+
+  it("keeps closed-bar gating when the pin is genuinely higher", () => {
+    // 1h chart under a 4h pin: unchanged semantics (lag until close).
+    const chartTs = [0, 1, 2, 3, 4, 5].map((h) => h * H);
+    const htfBars = [0, 4].map((h) => ({ timestamp: h * H }) as never);
+    expect(alignHtfToChart(chartTs, htfBars, [10, 20], htfMs, true)).toEqual([
+      undefined, undefined, undefined, undefined, 10, 10,
+    ]);
+  });
+});
+
+describe("alignHtfToChart formingIdx", () => {
+  const H = 3_600_000;
+  const htfMs = 4 * H;
+  const htfBars = [0, 4, 8].map((h) => ({ timestamp: h * H }) as never);
+  const vals = [10, 20, 30];
+  const chartTs = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((h) => h * H);
+
+  it("admits only the forming entry from its open; closed entries keep waitClose", () => {
+    const out = alignHtfToChart(chartTs, htfBars, vals, htfMs, true, 2);
+    // Bars 0-3 sit inside the first HTF bar, which closes at 4h: nothing usable.
+    // Bars 4-7: first bar closed. Bars 8-9: inside the FORMING bar (index 2),
+    // admitted from its open — they read 30, not the closed 20.
+    expect(out).toEqual([
+      undefined, undefined, undefined, undefined,
+      10, 10, 10, 10,
+      30, 30,
+    ]);
+  });
+
+  it("changes nothing when no forming index is flagged", () => {
+    const out = alignHtfToChart(chartTs, htfBars, vals, htfMs, true);
+    expect(out).toEqual([
+      undefined, undefined, undefined, undefined,
+      10, 10, 10, 10,
+      20, 20,
+    ]);
   });
 });

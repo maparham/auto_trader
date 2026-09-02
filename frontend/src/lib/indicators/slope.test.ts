@@ -242,6 +242,28 @@ describe("slopeMaLines", () => {
     // (open 120_000) closes at 240_000 -> first appears there.
     expect(lines[0].values).toEqual([undefined, undefined, 10, 10, 20]);
   });
+
+  it("admits a flagged forming entry from its open (waitClose unchecked)", () => {
+    const chart = [bar(0, 1), bar(60_000, 1), bar(120_000, 1), bar(180_000, 1), bar(240_000, 1)];
+    const lines = slopeMaLines(
+      {
+        calcParams: [2],
+        extendData: {
+          showMa: true,
+          mtf: {
+            timeframe: "1h",
+            htfStarts: [0, 120_000],
+            htfMaBaseByLine: [[10, 20]],
+            htfMs: 120_000,
+            formingIdx: 1,
+          },
+        },
+      },
+      chart,
+    );
+    // Entry 1 is the FORMING bucket: usable from its open at 120_000.
+    expect(lines[0].values).toEqual([undefined, undefined, 20, 20, 20]);
+  });
 });
 
 describe("slopeLineSeries", () => {

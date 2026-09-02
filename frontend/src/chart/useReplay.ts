@@ -52,7 +52,7 @@ import {
   pickJumpTarget,
   saveReplaySession,
 } from "../lib/replaySession";
-import { mtfBucketMs, refreshMtfIndicators, setHtfCursorClamp } from "../lib/mtfCoordinator";
+import { mtfBucketMs, refreshFormingBarThrottled, refreshMtfIndicators, setHtfCursorClamp } from "../lib/mtfCoordinator";
 import {
   backtestRenderFlags,
   ownsBacktestPanel,
@@ -1454,6 +1454,13 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     }
     const chart = handle.chartRef.current;
     if (!chart) return;
+    // Forming-mode pins ("Wait for timeframe closes" unchecked) re-fold their
+    // forming HTF bar from the revealed candles on every step — throttled
+    // inside, reading the same cursor clamp as the fetch path, and a no-op
+    // when nothing opted in. Runs before the bucket-crossing gate below
+    // because the fold changes INSIDE a bucket, which is exactly the span the
+    // refetch machinery deliberately skips.
+    refreshFormingBarThrottled(chart);
     const bucket = mtfBucketMs(chart);
     if (!bucket) return; // nothing pinned to a higher timeframe: nothing to refresh
     const idx = Math.floor(state.cursorMs / bucket);

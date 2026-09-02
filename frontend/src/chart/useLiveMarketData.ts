@@ -47,7 +47,11 @@ import { flushTemplateCapture } from "../lib/templateAutosave";
 import { loadSettings } from "../theme";
 import { indTypeOf } from "../lib/customIndicators";
 import { applyVisibleRange, scrollTsToCenter } from "../lib/chartSync";
-import { refreshMtfIndicators } from "../lib/mtfCoordinator";
+import {
+  mtfBucketMs,
+  refreshFormingBarThrottled,
+  refreshMtfIndicators,
+} from "../lib/mtfCoordinator";
 import { setLivePrice } from "../lib/trading";
 import { isSynthetic, setSyntheticPrecision } from "../lib/syntheticRegistry";
 import type { LiveStatus } from "../lib/feed";
@@ -192,6 +196,15 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
   // prevEpicRef/prevResRef can't tell a mount apart (they seed from the current
   // props), and only a mount restores the saved view position.
   const didInitRef = useRef(false);
+  // Live twin of useReplay's mtfBucketRef: the epoch-grid HTF bucket index the
+  // last tick landed in. A tick crossing into a NEW bucket means the stashed
+  // forming fold's bucket just closed — refreshFormingBar alone cannot
+  // graduate it (it re-derives the SAME open from the stashed closed bars and
+  // ignores candles past it), so the crossing triggers the full refetch that
+  // folds the closed bar in and opens the next bucket. Reset on each load
+  // refresh so a symbol/timeframe switch re-records rather than "crosses".
+  const liveMtfBucketRef = useRef<number | null>(null);
+  const liveMtfRefreshingRef = useRef(false);
   // A preserved center a too-deep switch could NOT reach (it toasted and
   // showed the latest candles instead). The chosen center must survive that
   // failure: the next timeframe change re-targets it — but only while the
@@ -905,6 +918,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       }
       // Re-fetch HTF data for any EMA/MA pinned to a higher timeframe — the
       // stashed series belonged to the previous epic/range (no-op otherwise).
+      liveMtfBucketRef.current = null; // this refresh covers the current bucket
       void refreshMtfIndicators(handle.chartRef.current, symbol.epic, brokerId);
 
       // Make the cell LOOK like this symbol's saved template (replace-on-open).
@@ -1152,6 +1166,29 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           // stays event-driven) and flip the badge open instantly if it was closed.
           lastCandleAtRef.current = Date.now();
           if (marketClosedRef.current) setMarketClosed(false);
+          // Forming-mode MTF pins ("Wait for timeframe closes" unchecked)
+          // re-fold their forming HTF bar from the fresh candle — throttled
+          // inside, no-op when nothing opted in. When the tick lands in a NEW
+          // HTF bucket, the fold alone can't advance (it ignores candles past
+          // the stashed bucket's close), so run the full refetch instead —
+          // the live twin of useReplay's bucket-crossing refresh, same
+          // epoch-grid approximation (errs stale, self-corrects next crossing).
+          const bucket = mtfBucketMs(chart);
+          if (bucket) {
+            const idx = Math.floor(k.timestamp / bucket);
+            if (liveMtfBucketRef.current === null) {
+              liveMtfBucketRef.current = idx; // load's own refresh covered this bucket
+            } else if (idx !== liveMtfBucketRef.current && !liveMtfRefreshingRef.current) {
+              liveMtfBucketRef.current = idx;
+              liveMtfRefreshingRef.current = true;
+              void refreshMtfIndicators(chart, symbol.epic, brokerId)
+                .catch(() => {}) // broker outage: the coordinator's own retry handles it
+                .finally(() => {
+                  liveMtfRefreshingRef.current = false;
+                });
+            }
+          }
+          refreshFormingBarThrottled(chart);
           handle.redrawRef.current(); // keep the price/alert pills glued as the bar moves
           // NOTE: alert FIRING is owned by the background alertEngine (the single
           // authority across all tabs, active included) — not here. This chart feed

@@ -11,7 +11,7 @@ from auto_trader.indicators.candle_patterns import PATTERN_FNS, pattern_series
 from auto_trader.indicators.core import (
     atr_series, avwap_series, ema_series, rsi_series, sma_series,
 )
-from auto_trader.indicators.mtf import align_htf_to_base, slope_of
+from auto_trader.indicators.mtf import align_htf_to_base, base_interval_ms_of, slope_of
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.warmup import warmup_bars
@@ -283,7 +283,12 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
         tf_vals = series_of(node.base, tf_candles, tf_res, htf, instances)
         base_ms = [int(c.time.timestamp() * 1000) for c in candles]
         tf_ms = resolution_seconds(tf_res) * 1000
-        return align_htf_to_base(base_ms, tf_candles, tf_vals, tf_ms)
+        # The run's declared resolution decides the same-TF bypass, so one
+        # anomalous partial bar in the posted range can't flip the alignment.
+        return align_htf_to_base(
+            base_ms, tf_candles, tf_vals, tf_ms,
+            base_interval_ms=base_interval_ms_of(resolution),
+        )
     if isinstance(node, N.Unary):
         inner = series_of(node.operand, candles, resolution, htf, instances)
         return [None if v is None else -v for v in inner]
@@ -342,7 +347,10 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
                 inst.config, node.output, tf_candles, _tf_hours(tf_res)
             )
             base_ms = [int(c.time.timestamp() * 1000) for c in candles]
-            return align_htf_to_base(base_ms, tf_candles, tf_vals, resolution_seconds(tf_res) * 1000)
+            return align_htf_to_base(
+                base_ms, tf_candles, tf_vals, resolution_seconds(tf_res) * 1000,
+                base_interval_ms=base_interval_ms_of(resolution),
+            )
         return inst.spec.series(inst.config, node.output, candles, _tf_hours(resolution))
     if isinstance(node, N.Call):
         if node.name in WRAPPER_KINDS:

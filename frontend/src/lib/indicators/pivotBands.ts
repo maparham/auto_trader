@@ -21,7 +21,7 @@ import {
 } from "klinecharts";
 import { fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
-import { alignHtfToChart, priceOf, type PriceSource } from "../mtf";
+import { alignHtfToChart, priceOf, type MtfSeriesBase, type PriceSource } from "../mtf";
 
 export type PivotBandsMode = "last" | "avg";
 
@@ -40,8 +40,7 @@ export interface PivotBandsExtend {
   // chart bars inside calc (no lookahead). Unlike EMA/MA this carries TWO series
   // — the pivot-high and pivot-low step-lines — since each is independent. Set by
   // the MTF coordinator (applyPivotBandsTimeframe); calc re-aligns on scroll-back.
-  mtf?: {
-    timeframe: string | null;
+  mtf?: MtfSeriesBase & {
     htfStarts?: number[]; // HTF bar open timestamps (ms)
     htfHigh?: Array<number | undefined>; // pivotHigh step-value per HTF bar
     htfLow?: Array<number | undefined>; // pivotLow step-value per HTF bar
@@ -104,8 +103,8 @@ export function computePivotBands(
     // last-usable-bar rule needs.
     const ts = dataList.map((k) => k.timestamp);
     const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
-    const high = alignHtfToChart(ts, htfBars, mtf.htfHigh, mtf.htfMs, true);
-    const low = alignHtfToChart(ts, htfBars, mtf.htfLow, mtf.htfMs, true);
+    const high = alignHtfToChart(ts, htfBars, mtf.htfHigh, mtf.htfMs, true, mtf.formingIdx);
+    const low = alignHtfToChart(ts, htfBars, mtf.htfLow, mtf.htfMs, true, mtf.formingIdx);
     return ts.map((_, i) => ({ pivotHigh: high[i] ?? undefined, pivotLow: low[i] ?? undefined }));
   }
 
