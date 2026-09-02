@@ -778,6 +778,14 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         overlays.redrawZoomBand(pc.bandStartTs, pc.bandEndTs);
         handle.pendingCenterRef.current = null;
       }
+      // A restored pattern-search selection band, parked by the series-reset
+      // effect for the same reason: painted any earlier, rehydrate's teardown
+      // wipes it. Consumed once, like the zoom band above.
+      const ppb = handle.pendingPatternBandRef.current;
+      if (ppb) {
+        overlays.redrawZoomBand(ppb.fromMs, ppb.toMs);
+        handle.pendingPatternBandRef.current = null;
+      }
       // Snapshot-moment marker: dashed vertical line + time-axis chip at the
       // taken-at timestamp of a restored snapshot tab, independent of the
       // pendingRange walk below. Remove the previous marker first — this effect

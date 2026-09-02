@@ -375,6 +375,7 @@ export default function ChartCore({
   // (RangeReq now lives in chart/chartHandle.ts so the extracted hooks share it.)
   const pendingRangeRef = useRef<RangeReq | null>(null);
   const pendingCenterRef = useRef<CenterReq | null>(null);
+  const pendingPatternBandRef = useRef<{ fromMs: number; toMs: number } | null>(null);
   // Bridge refs for the range-coverage walks (defined below as ChartCore locals,
   // moving to useRangeNavigation in Step 7). Assigned in render (before any effect
   // runs) so useLiveMarketData can call them across the extraction boundary via
@@ -1671,6 +1672,7 @@ export default function ChartCore({
       emptyStreakRef,
       pendingRangeRef,
       pendingCenterRef,
+      pendingPatternBandRef,
       launchedTokenRef,
       cappedAnchorRef,
       separatorTsRef,
@@ -3947,18 +3949,33 @@ export default function ChartCore({
   // side/interval change, so without this the panel stays up rendering the NEW
   // epic and resolution over the OLD series' matches, and a row click would page
   // history for the wrong window. Same for a cell that just became gated — which
-  // now includes entering replay. Read the ref (assigned above, this render)
+  // now includes entering replay. But the matches are not destroyed: the cleanup
+  // PARKS them under the series they were searched on, and adoptSeries restores
+  // them (band included) when the user switches back — only the panel's own
+  // close forgets them for good. Read the ref (assigned above, this render)
   // rather than adding result/loading/error to the deps: only the identity change
-  // should trigger a reset. Clearing the band is separate from dismiss(), exactly
-  // as in the panel's onDismiss — and is skipped when no panel is up, so the zoom
-  // tool's own band (which survives the timeframe drop it just performed) is left
-  // alone.
+  // should trigger a reset. Band clearing is skipped when no panel was up, so the
+  // zoom tool's own band (which survives the timeframe drop it just performed)
+  // is left alone.
   useEffect(() => {
     const ps = patternSearchRef.current;
-    if (!ps.result && !ps.loading && !ps.error) return;
-    ps.dismiss();
-    overlays.clearZoomBand();
-    overlays.clearMatchBands();
+    const hadPanel = Boolean(ps.result || ps.loading || ps.error);
+    const restored = ps.adoptSeries(patternAvailable);
+    if (hadPanel) {
+      overlays.clearZoomBand();
+      overlays.clearMatchBands();
+    }
+    if (restored) overlays.redrawZoomBand(restored.fromMs, restored.toMs);
+    // The immediate redraw above covers a gating flip with no reload (leaving
+    // replay); a SERIES change reloads the data, whose rehydrate tears down
+    // every overlay, so the load effect repaints the band from this ref after
+    // it. Always assigned — a switch with nothing restored must also clear a
+    // leftover request from the previous switch.
+    pendingPatternBandRef.current = restored;
+    // Cleanup rather than effect-body parking: it sees the OLD series' live
+    // state before the new adopt, and it also runs on unmount, so a layout
+    // change that tears the cell down parks the result too.
+    return () => patternSearchRef.current.parkLive();
   }, [symbol.epic, brokerId, priceSide, period.resolution, patternAvailable, overlays]);
 
   // Picking-mode curtain: container-relative x of the pointer, so everything to

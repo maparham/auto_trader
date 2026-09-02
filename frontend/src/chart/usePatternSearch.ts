@@ -15,6 +15,28 @@ const TOP_K = 20;
 const DEFAULT_MODE: PatternMode = "shape";
 const DEFAULT_FORWARD_BARS = 20;
 
+// Finished searches parked per series, so switching market tab / interval /
+// side does not destroy a result list the user meant to come back to. Only the
+// panel's own close (dismiss) deletes an entry. Module-level, not React state:
+// the cell reloads in place on a series change and may unmount entirely on a
+// layout change, and the parked result must survive both. The range is enough
+// to repaint the selection band; the controls come along because the result
+// was computed with them (restoring under different controls would caption the
+// numbers wrongly).
+interface ParkedSearch {
+  result: PatternSearchResult;
+  range: { fromMs: number; toMs: number };
+  truncatedTo: number | null;
+  mode: PatternMode;
+  forwardBars: number;
+}
+const parkedSearches = new Map<string, ParkedSearch>();
+
+/** Test hook: the cache is deliberately module-level, so suites must clear it. */
+export function clearParkedPatternSearches(): void {
+  parkedSearches.clear();
+}
+
 interface Args {
   epic: string;
   broker: string;
@@ -50,11 +72,25 @@ export function usePatternSearch({ epic, broker, priceSide, resolution, getBars 
   // Only the newest request may write state: a slow first search must not
   // overwrite the result of a second one the user has already seen.
   const reqRef = useRef(0);
+  // Which series the live state belongs to vs. which the cell shows now. They
+  // differ between a series change and the adoptSeries() that follows it, and
+  // parkLive must file the result under the series it was SEARCHED on, not the
+  // one the cell just switched to.
+  const keyRef = useRef("");
+  keyRef.current = `${broker}|${epic}|${priceSide}|${resolution}`;
+  const liveKeyRef = useRef<string | null>(null);
+  // Live state mirrored for parkLive, which is a stable callback (same reason
+  // as modeRef above: it must read the value at call time, not at creation).
+  const resultRef = useRef(result);
+  resultRef.current = result;
+  const truncatedToRef = useRef(truncatedTo);
+  truncatedToRef.current = truncatedTo;
 
   const run = useCallback(
     (fromMs: number, toMs: number) => {
       const selected = barsInRange(getBars(), fromMs, toMs);
       const query = selected.slice(-MAX_BARS);
+      liveKeyRef.current = keyRef.current;
       setRange({ fromMs, toMs });
       rangeRef.current = { fromMs, toMs };
       setTruncatedTo(selected.length > MAX_BARS ? MAX_BARS : null);
@@ -129,12 +165,64 @@ export function usePatternSearch({ epic, broker, priceSide, resolution, getBars 
     rangeRef.current = null;
     setTruncatedTo(null);
     setLoading(false);
+    // Dismiss is the one deliberate "I am done with this" act, so it also
+    // forgets the parked copy: without this the panel would come back on the
+    // next tab switch after the user explicitly closed it.
+    parkedSearches.delete(keyRef.current);
     // mode and forwardBars survive: they are how the user wants to search, not
     // part of the result being cleared.
   }, []);
 
+  /** Park the live search under the series it was run on. Called from the
+   *  series-reset effect's CLEANUP, so it still sees the old series' state
+   *  while keyRef may already point at the new one. Only a finished result is
+   *  worth keeping; a search still in flight is superseded (the bump) so a
+   *  late response cannot land in the next series' panel. */
+  const parkLive = useCallback(() => {
+    const prev = liveKeyRef.current;
+    if (prev && resultRef.current && rangeRef.current) {
+      parkedSearches.set(prev, {
+        result: resultRef.current,
+        range: rangeRef.current,
+        truncatedTo: truncatedToRef.current,
+        mode: modeRef.current,
+        forwardBars: forwardBarsRef.current,
+      });
+    }
+    reqRef.current += 1;
+  }, []);
+
+  /** Take over the series the cell now shows: clear whatever parkLive left on
+   *  screen, then restore anything parked for this series (skipped while the
+   *  cell is gated — replay, snapshot — but the parked copy is kept for when
+   *  it comes back). Returns the restored range so the caller can repaint the
+   *  selection band, or null when there is nothing to show. */
+  const adoptSeries = useCallback(
+    (available: boolean): { fromMs: number; toMs: number } | null => {
+      liveKeyRef.current = keyRef.current;
+      setResult(null);
+      setError(null);
+      setLoading(false);
+      setRange(null);
+      rangeRef.current = null;
+      setTruncatedTo(null);
+      const saved = available ? parkedSearches.get(keyRef.current) : undefined;
+      if (!saved) return null;
+      setResult(saved.result);
+      setRange(saved.range);
+      rangeRef.current = saved.range;
+      setTruncatedTo(saved.truncatedTo);
+      setModeState(saved.mode);
+      modeRef.current = saved.mode;
+      setForwardBarsState(saved.forwardBars);
+      forwardBarsRef.current = saved.forwardBars;
+      return saved.range;
+    },
+    [],
+  );
+
   return {
     result, loading, error, range, truncatedTo, run, dismiss,
-    mode, setMode, forwardBars, setForwardBars,
+    mode, setMode, forwardBars, setForwardBars, parkLive, adoptSeries,
   };
 }

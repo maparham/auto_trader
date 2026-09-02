@@ -307,11 +307,13 @@ describe("PatternMatchesPanel", () => {
     expect(copy.closest(".pm-row")).toBeNull();
   });
 
-  it("closes on Escape", () => {
+  it("does not close on Escape: only the close button dismisses", () => {
+    // Esc is heavily used to cancel chart tools; a panel of found matches must
+    // not be collateral damage of one keypress.
     const onDismiss = vi.fn();
     render(<PatternMatchesPanel {...props} onDismiss={onDismiss} result={result()} loading={false} error={null} />);
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(onDismiss).toHaveBeenCalled();
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 });
 

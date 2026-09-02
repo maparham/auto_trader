@@ -116,6 +116,10 @@ export interface ChartHandle {
   emptyStreakRef: React.MutableRefObject<number>;
   pendingRangeRef: React.MutableRefObject<RangeReq | null>;
   pendingCenterRef: React.MutableRefObject<CenterReq | null>;
+  // A restored pattern-search selection band waiting for the series load:
+  // rehydrate tears down every overlay, so the band is repainted from this
+  // AFTER it (same timing as pendingCenterRef's zoom band, minus the centering).
+  pendingPatternBandRef: React.MutableRefObject<{ fromMs: number; toMs: number } | null>;
   launchedTokenRef: React.MutableRefObject<RangeReq | null>;
   cappedAnchorRef: React.MutableRefObject<Map<string, { target: number; reached: number }>>;
   separatorTsRef: React.MutableRefObject<number | null>;

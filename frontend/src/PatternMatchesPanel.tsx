@@ -142,18 +142,10 @@ export default function PatternMatchesPanel(props: Props) {
     window.addEventListener("mouseup", onUp);
   };
 
-  // Close button and Esc only, deliberately. Dismissing also clears the band on
-  // the chart, so a click-away would destroy the ranked list the moment the user
-  // clicked a match and panned to read the context around it.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onDismiss();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-    // onDismiss, not props: `props` is a fresh object every render, so depending
-    // on it re-subscribes the listener on every parent repaint.
-  }, [onDismiss]);
+  // The close button only, deliberately: no click-away, no Esc. Dismissing
+  // destroys the ranked list (and its parked copy), so it must be an explicit
+  // act — a stray Esc meant for a tool or a click to pan around a match must
+  // not cost the user their results.
 
   // Only the order is state here. The rank a row shows comes from where the
   // backend put it, so sorting by outcome still reports similarity.

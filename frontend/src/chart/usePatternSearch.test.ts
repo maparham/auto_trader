@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { usePatternSearch } from "./usePatternSearch";
+import { usePatternSearch, clearParkedPatternSearches } from "./usePatternSearch";
 import * as api from "../lib/patternSearch";
 
 const mkBars = (n: number) =>
@@ -22,7 +22,12 @@ const args = {
   getBars: () => bars,
 };
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  vi.restoreAllMocks();
+  // The park cache is module-level on purpose (results survive a cell reload),
+  // so tests must clear it or one test's parked result leaks into the next.
+  clearParkedPatternSearches();
+});
 
 describe("usePatternSearch", () => {
   it("sends only the bars inside the picked range", async () => {
@@ -197,6 +202,121 @@ describe("usePatternSearch", () => {
     act(() => hook.current.dismiss());
     act(() => hook.current.setMode("close"));
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  // The park/adopt pair is ChartCore's series-change protocol: the reset
+  // effect's cleanup parks the live search under the series it belongs to,
+  // and the next effect run adopts the new series, restoring anything parked
+  // for it. Found matches must survive a tab switch; only the panel's own
+  // close (dismiss) may destroy them.
+  describe("parking across series switches", () => {
+    const run = async (hook: { current: ReturnType<typeof usePatternSearch> }) => {
+      act(() => hook.current.run(1_700_000_000_000, 1_700_003_000_000));
+      await waitFor(() => expect(hook.current.result).not.toBeNull());
+    };
+
+    it("restores a parked result, its range and truncation on return to the series", async () => {
+      vi.spyOn(api, "searchPatterns").mockResolvedValue(result(7));
+      const { result: hook, rerender } = renderHook((a) => usePatternSearch(a), {
+        initialProps: args,
+      });
+      act(() => hook.current.adoptSeries(true));
+      await run(hook);
+      act(() => hook.current.parkLive());
+      rerender({ ...args, epic: "GOLD" });
+      act(() => expect(hook.current.adoptSeries(true)).toBeNull());
+      expect(hook.current.result).toBeNull();
+      act(() => hook.current.parkLive());
+      rerender(args);
+      let restored: { fromMs: number; toMs: number } | null = null;
+      act(() => { restored = hook.current.adoptSeries(true); });
+      // The band range comes back so the caller can repaint the selection.
+      expect(restored).toEqual({ fromMs: 1_700_000_000_000, toMs: 1_700_003_000_000 });
+      expect(hook.current.result?.scanned).toBe(7);
+      expect(hook.current.range).toEqual({ fromMs: 1_700_000_000_000, toMs: 1_700_003_000_000 });
+    });
+
+    it("restores the controls the parked search was run with", async () => {
+      const spy = vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      const { result: hook, rerender } = renderHook((a) => usePatternSearch(a), {
+        initialProps: args,
+      });
+      act(() => hook.current.adoptSeries(true));
+      await run(hook);
+      act(() => hook.current.setMode("close"));
+      act(() => hook.current.setForwardBars(50));
+      await waitFor(() => expect(spy).toHaveBeenCalledTimes(3));
+      act(() => hook.current.parkLive());
+      rerender({ ...args, epic: "GOLD" });
+      act(() => hook.current.adoptSeries(true));
+      act(() => hook.current.parkLive());
+      rerender(args);
+      act(() => hook.current.adoptSeries(true));
+      // The result shown was computed with these; showing it under the
+      // defaults would caption close/50 numbers as shape/20.
+      expect(hook.current.mode).toBe("close");
+      expect(hook.current.forwardBars).toBe(50);
+    });
+
+    it("dismiss forgets the series for good: nothing to restore on return", async () => {
+      vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      const { result: hook, rerender } = renderHook((a) => usePatternSearch(a), {
+        initialProps: args,
+      });
+      act(() => hook.current.adoptSeries(true));
+      await run(hook);
+      act(() => hook.current.parkLive());
+      rerender({ ...args, epic: "GOLD" });
+      act(() => hook.current.adoptSeries(true));
+      act(() => hook.current.parkLive());
+      rerender(args);
+      act(() => hook.current.adoptSeries(true));
+      expect(hook.current.result).not.toBeNull();
+      act(() => hook.current.dismiss());
+      act(() => hook.current.parkLive());
+      rerender({ ...args, epic: "GOLD" });
+      act(() => hook.current.adoptSeries(true));
+      act(() => hook.current.parkLive());
+      rerender(args);
+      act(() => expect(hook.current.adoptSeries(true)).toBeNull());
+      expect(hook.current.result).toBeNull();
+    });
+
+    it("a search still in flight when the series changes cannot write into the new one", async () => {
+      let resolveFirst: (r: api.PatternSearchResult) => void = () => {};
+      vi.spyOn(api, "searchPatterns").mockImplementationOnce(
+        () => new Promise((r) => { resolveFirst = r; }),
+      );
+      const { result: hook, rerender } = renderHook((a) => usePatternSearch(a), {
+        initialProps: args,
+      });
+      act(() => hook.current.adoptSeries(true));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_003_000_000));
+      act(() => hook.current.parkLive());
+      rerender({ ...args, epic: "GOLD" });
+      act(() => hook.current.adoptSeries(true));
+      act(() => resolveFirst(result(111)));
+      await new Promise((r) => setTimeout(r, 0));
+      // GOLD must not show US100's late-arriving matches.
+      expect(hook.current.result).toBeNull();
+      expect(hook.current.loading).toBe(false);
+    });
+
+    it("an unavailable cell restores nothing but keeps the parked search", async () => {
+      vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      const { result: hook } = renderHook(() => usePatternSearch(args));
+      act(() => hook.current.adoptSeries(true));
+      await run(hook);
+      // Entering replay gates the cell: the panel goes down, the data does not.
+      act(() => hook.current.parkLive());
+      act(() => expect(hook.current.adoptSeries(false)).toBeNull());
+      expect(hook.current.result).toBeNull();
+      act(() => hook.current.parkLive());
+      let restored: { fromMs: number; toMs: number } | null = null;
+      act(() => { restored = hook.current.adoptSeries(true); });
+      expect(restored).not.toBeNull();
+      expect(hook.current.result).not.toBeNull();
+    });
   });
 
   it("dismiss clears the result, the error and the range", async () => {

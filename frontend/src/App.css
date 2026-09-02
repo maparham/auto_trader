@@ -6082,7 +6082,11 @@ span.bt-leg-short { color: var(--neg); }
 .pm-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
   border-bottom: 1px solid var(--border); }
 .pm-title { font-weight: 600; }
-.pm-head .modal-close { margin-left: auto; }
+/* Push the close control to the panel's right edge. The margin must sit on
+   the flex CHILD, and CloseButton's Tooltip wraps the button in a
+   .tooltip-trigger span — a margin on .modal-close itself would be inside a
+   shrink-wrapped span and move nothing. */
+.pm-head > .tooltip-trigger:has(> .modal-close) { margin-left: auto; }
 /* Metric and horizon. One compact row under the title: the header below it
    already carries the source, span, window count, time and worst distance, and
    the results are what the panel is for. */
