@@ -46,7 +46,15 @@ import ReplayReportCard from "./ReplayReportCard";
 import { useProximityHeatmap } from "./chart/useProximityHeatmap";
 import PatternMatchesPanel from "./PatternMatchesPanel";
 import { usePatternSearch } from "./chart/usePatternSearch";
-import { barsInRange } from "./lib/patternSearch";
+import { barsInRange, type MatchSource, type PatternMatch } from "./lib/patternSearch";
+import {
+  clearPendingPatternJumps,
+  getPatternTarget,
+  listPatternTargets,
+  registerPatternTarget,
+  setPendingPatternJump,
+  takePendingPatternJump,
+} from "./lib/patternTargets";
 import { toast } from "./lib/notify";
 import { capturePattern, MIN_GHOST_BARS } from "./lib/patternGhost";
 import { useTrendlinePins } from "./chart/useTrendlinePins";
@@ -196,7 +204,7 @@ import { useLiveMarketData } from "./chart/useLiveMarketData";
 import { shouldDetach, type DetachedTarget } from "./chart/detachedView";
 import { useReplay } from "./chart/useReplay";
 import { classifyNoData, type NoDataKind } from "./chart/noDataPolicy";
-import { useRangeNavigation } from "./chart/useRangeNavigation";
+import { buildRangeToken, useRangeNavigation } from "./chart/useRangeNavigation";
 import { useChartPaint } from "./chart/useChartPaint";
 import { useIndicatorCommands } from "./chart/useIndicatorCommands";
 import { useLineDrag, type TradeLinePx } from "./chart/useLineDrag";
@@ -269,6 +277,13 @@ interface Props {
   // coarser/finer resolution than the current one). Cell-scoped so a keyboard-
   // activated preset targets the owning cell even without a prior pointer-down.
   onPeriod?: (cellId: string, p: Period) => void;
+  // Every searchable chart series across ALL tabs, for the pattern search's
+  // all-charts scope. App enumerates and gates them; absent (tests, detached
+  // views) the search covers this cell alone.
+  getPatternSeries?: () => MatchSource[];
+  // Cross-tab pattern jump: activate the tab and focus/flash the cell holding
+  // a foreign match row, while the match waits in the pending-jump map.
+  onRevealPatternCell?: (tabId: string, cellId: string) => void;
 }
 
 // PAGE_BARS (older bars per scroll-back page) now lives in lib/historyPaging, so
@@ -307,6 +322,8 @@ export default function ChartCore({
   onFocus,
   focused,
   onPeriod,
+  getPatternSeries,
+  onRevealPatternCell,
 }: Props) {
   // Per-cell controller: its own OverlayManager + the per-chart UI signals that
   // used to be module globals. Stable for the life of this mount (the cell key is
@@ -376,6 +393,15 @@ export default function ChartCore({
   const pendingRangeRef = useRef<RangeReq | null>(null);
   const pendingCenterRef = useRef<CenterReq | null>(null);
   const pendingPatternBandRef = useRef<{ fromMs: number; toMs: number } | null>(null);
+  // Match/aftermath bands for a cross-TAB pattern jump, painted AFTER the
+  // freshly mounted cell's first load: rehydrate tears down every overlay, so
+  // bands painted at mount would be wiped a moment later. Same idiom as
+  // pendingPatternBandRef above; consumed once by the data-load effect.
+  const pendingMatchBandsRef = useRef<{
+    fromMs: number;
+    toMs: number;
+    fwd: { fromTs: number; toTs: number } | null;
+  } | null>(null);
   // Bridge refs for the range-coverage walks (defined below as ChartCore locals,
   // moving to useRangeNavigation in Step 7). Assigned in render (before any effect
   // runs) so useLiveMarketData can call them across the extraction boundary via
@@ -1581,11 +1607,15 @@ export default function ChartCore({
   const copyPatternRef = useRef(copyPattern);
   copyPatternRef.current = copyPattern;
   const patternSearch = usePatternSearch({
+    cellId,
     epic: symbol.epic,
     broker: brokerId,
     priceSide,
     resolution: period.resolution,
     getBars: patternGetBars,
+    // Without App's workspace enumeration (tests, detached views) the search
+    // covers this cell alone, so all-charts scope degrades to this-chart.
+    getSeries: getPatternSeries ?? (() => []),
   });
   // The gesture lives in the once-mounted init effect, so it reads a ref rather
   // than the render-scope value (same reason as onZoomToRange's resRef).
@@ -1673,6 +1703,7 @@ export default function ChartCore({
       pendingRangeRef,
       pendingCenterRef,
       pendingPatternBandRef,
+      pendingMatchBandsRef,
       launchedTokenRef,
       cappedAnchorRef,
       separatorTsRef,
@@ -1716,6 +1747,34 @@ export default function ChartCore({
     exitDetached,
     detached,
   });
+
+  // Show a pattern match ON THIS CHART: mark where it starts and ends BEFORE
+  // the jump (the bands anchor by timestamp, so they resolve themselves once
+  // the coverage walk lands the bars; PatternMatch is in seconds, overlays in
+  // ms), then scroll there. Shared by the panel's own-row jump and by the
+  // pattern-target registry, where a SIBLING cell's panel routes a row found
+  // in this chart's series. The aftermath band spans the forward bars the
+  // panel actually measured; no forward bars (a match at the very edge of
+  // history) means one band, not an empty second one.
+  const showMatchHere = (m: PatternMatch) => {
+    const fwd = m.forward;
+    handle.overlays.showMatchBands(
+      m.ts * 1000,
+      m.endTs * 1000,
+      fwd.length
+        ? { fromTs: fwd[0].ts * 1000, toTs: fwd[fwd.length - 1].ts * 1000 }
+        : null,
+    );
+    goToRange(m.ts, m.endTs);
+  };
+  // The registry entry is registered from an effect and must not go stale when
+  // goToRange's identity changes, so it calls through this ref.
+  const showMatchHereRef = useRef(showMatchHere);
+  showMatchHereRef.current = showMatchHere;
+  // Sibling cells this panel painted match bands on (foreign-row jumps). The
+  // sibling never ran a search of its own, so nothing on its side clears the
+  // bands — the panel's dismiss must reach over and do it.
+  const jumpedSiblingsRef = useRef(new Set<string>());
 
   // Create the chart once (StrictMode-safe: init has no idempotent guard).
   useEffect(() => {
@@ -3945,6 +4004,54 @@ export default function ChartCore({
       patternRangeArmed.set(false);
     }
   }, [patternAvailable, patternSearchAvailable, patternRangeArmed, patternRangeMode]);
+  // Publish this cell into the pattern-target registry while it is searchable:
+  // a sibling cell searching in layout scope reads the registry for the series
+  // to fan out to, and routes a foreign row's jump to the entry's showMatch.
+  // Gated on the same availability as the tool itself, so a replaying or
+  // snapshot cell is neither searched nor jumped into.
+  useEffect(() => {
+    if (!patternAvailable) return;
+    const off = registerPatternTarget({
+      cellId,
+      epic: symbol.epic,
+      resolution: period.resolution,
+      label: period.label,
+      showMatch: (m) => showMatchHereRef.current(m),
+      clearMatchBands: () => handle.overlays.clearMatchBands(),
+    });
+    // A cross-tab jump parked for this cell before it was mounted. Everything
+    // goes through refs the data-load effect consumes AFTER the first load —
+    // calling goToRange here would race that load (its fit stomps the jump),
+    // and painting bands now would only have rehydrate wipe them. The parked
+    // RangeReq is the same recipe as a backtest drill-in: deepCover runs the
+    // parallel cover before the fit, and "center" lands the viewport on the
+    // match. Refs also make the consume StrictMode-safe: the effect's dev-mode
+    // double fire takes the one-shot pending once, and the refs it filled
+    // survive to the real load.
+    const pending = takePendingPatternJump(cellId);
+    if (pending && pending.source?.epic === symbol.epic && pending.source?.resolution === period.resolution) {
+      const fwd = pending.forward;
+      pendingMatchBandsRef.current = {
+        fromMs: pending.ts * 1000,
+        toMs: pending.endTs * 1000,
+        fwd: fwd.length
+          ? { fromTs: fwd[0].ts * 1000, toTs: fwd[fwd.length - 1].ts * 1000 }
+          : null,
+      };
+      const token = buildRangeToken({
+        fromTs: pending.ts,
+        toTs: pending.endTs,
+        resolution: period.resolution,
+        epic: symbol.epic,
+        broker: brokerId,
+        side: priceSide,
+      });
+      token.deepCover = true;
+      token.targetFromTs = pending.ts * 1000;
+      pendingRangeRef.current = token;
+    }
+    return off;
+  }, [patternAvailable, cellId, symbol.epic, period.resolution, period.label, brokerId, priceSide, handle]);
   // Results belong to ONE series. The cell reloads in place on a symbol/broker/
   // side/interval change, so without this the panel stays up rendering the NEW
   // epic and resolution over the OLD series' matches, and a row click would page
@@ -5476,12 +5583,15 @@ export default function ChartCore({
           onModeChange={patternSearch.setMode}
           forwardBars={patternSearch.forwardBars}
           onForwardBarsChange={patternSearch.setForwardBars}
+          scope={patternSearch.scope}
+          onScopeChange={patternSearch.setScope}
           onCopy={(m) => {
             // The row already carries the match's bars, so this is capture
             // straight off the result: no jump, no drag, no coverage walk.
+            // A layout-scope row credits the series it was FOUND in.
             const captured = capturePattern(m.bars, {
-              epic: symbol.epic,
-              resolution: period.resolution,
+              epic: m.source?.epic ?? symbol.epic,
+              resolution: m.source?.resolution ?? period.resolution,
             });
             if (!captured) {
               toast(`a pattern needs at least ${MIN_GHOST_BARS} candles`);
@@ -5493,27 +5603,44 @@ export default function ChartCore({
             );
           }}
           onJump={(m) => {
-            // Mark where the match starts and ends BEFORE the jump: the bands
-            // anchor by timestamp, so they resolve themselves once the coverage
-            // walk lands the bars. PatternMatch is in seconds, overlays in ms.
-            // No forward bars measured (a match at the very edge of history)
-            // means one band, not an empty second one.
-            // The aftermath band spans the forward bars the panel actually
-            // measured, first to last, so it starts on the bar after the match.
-            const fwd = m.forward;
-            handle.overlays.showMatchBands(
-              m.ts * 1000,
-              m.endTs * 1000,
-              fwd.length
-                ? { fromTs: fwd[0].ts * 1000, toTs: fwd[fwd.length - 1].ts * 1000 }
-                : null,
-            );
-            goToRange(m.ts, m.endTs);
+            // A row found in another chart's series jumps THAT chart, through
+            // its registry entry. Looked up by series, not just cellId: the
+            // cell the match was tagged with may have switched symbol since
+            // the search, while another cell still shows the series.
+            if (m.source && m.source.cellId !== cellId) {
+              const { cellId: srcCell, tabId: srcTab, epic: srcEpic, resolution: srcRes } = m.source;
+              const target = [getPatternTarget(srcCell), ...listPatternTargets()].find(
+                (t) => t && t.epic === srcEpic && t.resolution === srcRes,
+              );
+              if (target) {
+                target.showMatch(m);
+                jumpedSiblingsRef.current.add(target.cellId);
+              } else if (srcTab && onRevealPatternCell) {
+                // The chart lives on another tab (nothing mounted shows the
+                // series): park the match and switch there — the cell's mount
+                // consumes it. Focus/flash comes along from App.
+                setPendingPatternJump(srcCell, m);
+                onRevealPatternCell(srcTab, srcCell);
+              } else {
+                toast(`no open chart shows ${srcEpic} ${m.source.label} any more`);
+              }
+              return;
+            }
+            showMatchHere(m);
           }}
           onDismiss={() => {
             patternSearch.dismiss();
             handle.overlays.clearZoomBand();
             handle.overlays.clearMatchBands();
+            // Also the bands this panel painted on OTHER cells via foreign-row
+            // jumps; a sibling that left the layout since is simply gone.
+            for (const id of jumpedSiblingsRef.current) {
+              getPatternTarget(id)?.clearMatchBands();
+            }
+            jumpedSiblingsRef.current.clear();
+            // And any cross-tab jump still waiting for its cell to mount: the
+            // results it belongs to are gone.
+            clearPendingPatternJumps();
           }}
         />
       )}

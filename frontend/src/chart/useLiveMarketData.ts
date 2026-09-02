@@ -799,6 +799,13 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         overlays.redrawZoomBand(ppb.fromMs, ppb.toMs);
         handle.pendingPatternBandRef.current = null;
       }
+      // A cross-tab pattern jump's match/aftermath bands, parked by the mount
+      // that consumed the pending jump — painted here for the same reason.
+      const pmb = handle.pendingMatchBandsRef.current;
+      if (pmb) {
+        overlays.showMatchBands(pmb.fromMs, pmb.toMs, pmb.fwd);
+        handle.pendingMatchBandsRef.current = null;
+      }
       // Snapshot-moment marker: dashed vertical line + time-axis chip at the
       // taken-at timestamp of a restored snapshot tab, independent of the
       // pendingRange walk below. Remove the previous marker first — this effect

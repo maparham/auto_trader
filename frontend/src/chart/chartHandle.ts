@@ -120,6 +120,13 @@ export interface ChartHandle {
   // rehydrate tears down every overlay, so the band is repainted from this
   // AFTER it (same timing as pendingCenterRef's zoom band, minus the centering).
   pendingPatternBandRef: React.MutableRefObject<{ fromMs: number; toMs: number } | null>;
+  /** Cross-tab pattern jump's match/aftermath bands, painted after the first
+   *  load (rehydrate wipes overlays painted any earlier). */
+  pendingMatchBandsRef: React.MutableRefObject<{
+    fromMs: number;
+    toMs: number;
+    fwd: { fromTs: number; toTs: number } | null;
+  } | null>;
   launchedTokenRef: React.MutableRefObject<RangeReq | null>;
   cappedAnchorRef: React.MutableRefObject<Map<string, { target: number; reached: number }>>;
   separatorTsRef: React.MutableRefObject<number | null>;

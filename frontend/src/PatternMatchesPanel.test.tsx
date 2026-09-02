@@ -40,6 +40,7 @@ const props = {
   timezone: "UTC", onJump: vi.fn(), onDismiss: vi.fn(), onCopy: vi.fn(),
   mode: "ohlc" as const, onModeChange: vi.fn(),
   forwardBars: 20, onForwardBarsChange: vi.fn(),
+  scope: "all" as const, onScopeChange: vi.fn(),
 };
 
 // This repo runs vitest WITHOUT jest globals, so Testing Library's automatic
@@ -664,5 +665,58 @@ describe("resizing", () => {
     fireEvent.mouseUp(window);
     fireEvent.mouseMove(window, { clientX: 500 });
     expect(panel.style.width).toBe("340px");
+  });
+
+  describe("layout-wide results", () => {
+    const src = (cellId: string, epic: string, label: string, over: object = {}) => ({
+      cellId, epic, resolution: "X", label,
+      scanned: 1000, series: { oldestTs: 1_600_000_000, newestTs: NEWEST_TS, bars: 1001 },
+      elapsedMs: 5, cold: false, error: null,
+      ...over,
+    });
+    const merged = () =>
+      result({
+        matches: [
+          match({ source: { cellId: "a", epic: "US100", resolution: "MINUTE_5", label: "5m" } }),
+          match({
+            ts: 1_700_000_300,
+            source: { cellId: "b", epic: "GOLD", resolution: "MINUTE_15", label: "15m" },
+          }),
+        ],
+        sources: [src("a", "US100", "5m"), src("b", "GOLD", "15m")],
+      });
+
+    it("offers the scope toggle and reports a change", () => {
+      render(<PatternMatchesPanel {...props} result={result()} loading={false} error={null} />);
+      const cell = screen.getByRole("button", { name: /only this chart/i });
+      fireEvent.click(cell);
+      expect(props.onScopeChange).toHaveBeenCalledWith("cell");
+    });
+
+    it("tags each row with the chart its match came from when results span charts", () => {
+      render(<PatternMatchesPanel {...props} result={merged()} loading={false} error={null} />);
+      expect(screen.getByText("US100 · 5m")).toBeTruthy();
+      expect(screen.getByText("GOLD · 15m")).toBeTruthy();
+    });
+
+    it("shows no chart tags on a single-series result", () => {
+      render(<PatternMatchesPanel {...props} result={result()} loading={false} error={null} />);
+      expect(screen.queryByText(/US100 · /)).toBeNull();
+    });
+
+    it("footnotes every searched series, including one that failed", () => {
+      const withError = result({
+        matches: merged().matches,
+        sources: [
+          src("a", "US100", "5m"),
+          src("b", "GOLD", "15m", {
+            scanned: null, series: null, elapsedMs: null, error: "no stored history",
+          }),
+        ],
+      });
+      render(<PatternMatchesPanel {...props} result={withError} loading={false} error={null} />);
+      expect(screen.getByText(/US100 5m/)).toBeTruthy();
+      expect(screen.getByText(/GOLD 15m: no stored history/)).toBeTruthy();
+    });
   });
 });

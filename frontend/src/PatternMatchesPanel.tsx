@@ -19,7 +19,9 @@ import {
   type PatternMatch,
   type PatternMode,
   type PatternSearchResult,
+  type SourceOutcome,
 } from "./lib/patternSearch";
+import type { PatternScope } from "./chart/usePatternSearch";
 
 // The distance columns of the "all" tab, in display order: the four formulas
 // plus their plain average. The short labels fit 46px columns; the
@@ -44,7 +46,9 @@ const ALL_COLS: readonly (readonly [
 const HORIZONS = [5, 10, 20, 50, 100];
 
 interface Props {
-  result: PatternSearchResult | null;
+  /** `sources` rides along on a layout-wide search (one entry per open chart
+   *  searched); absent or single on results parked before the feature. */
+  result: (PatternSearchResult & { sources?: SourceOutcome[] }) | null;
   loading: boolean;
   error: string | null;
   epic: string;
@@ -69,6 +73,10 @@ interface Props {
   /** Bars of aftermath measured after each match. Also re-runs on change. */
   forwardBars: number;
   onForwardBarsChange: (bars: number) => void;
+  /** Whether the search covers this chart alone or every open chart in the
+   *  layout. Changing it re-runs the last range, like the metric. */
+  scope: PatternScope;
+  onScopeChange: (scope: PatternScope) => void;
 }
 
 function stamp(ts: number, timezone: string): string {
@@ -169,6 +177,11 @@ export default function PatternMatchesPanel(props: Props) {
   const all = props.mode === "all";
   const stats = useMemo(() => (result ? summarizeMatches(result.matches) : null), [result]);
 
+  // Rows carry a chart tag only when the result actually spans charts: on a
+  // one-chart layout (or cell scope) the tag would repeat the footer on every
+  // row and say nothing.
+  const multiSource = (result?.sources?.length ?? 0) > 1;
+
   // In "all" mode `distance` is a mean rank, not a distance, so there is no
   // "worst shown" figure to report.
   const worst = !all && result?.matches.length
@@ -226,6 +239,31 @@ export default function PatternMatchesPanel(props: Props) {
             "Close matches only the path of closing prices, ignoring the wicks.",
             "DTW lets time flex, so a pattern that ran fast early and slow late still matches.",
             "All runs every metric, merges overlapping finds into one row each, and orders by their combined rank.",
+          ]}
+        />
+        <div className="seg pm-seg" role="group" aria-label="Search scope">
+          {([["cell", "This chart", "Search only this chart"],
+             ["all", "All charts", "Search every chart in every open tab"]] as const).map(
+            ([s, label, described]) => (
+              <button
+                key={s}
+                type="button"
+                className={props.scope === s ? "seg-on" : ""}
+                aria-label={described}
+                aria-pressed={props.scope === s}
+                onClick={() => props.onScopeChange(s)}
+              >
+                {label}
+              </button>
+            ),
+          )}
+        </div>
+        <InfoTip
+          title="Search scope"
+          text={[
+            "All charts also scans every other chart in every open tab, ranking the finds in one list.",
+            "Shapes are scale-normalized, so distances compare across symbols and timeframes.",
+            "Clicking a row from a chart on another tab switches to that tab and jumps there.",
           ]}
         />
         <label className="pm-horizon">
@@ -408,6 +446,11 @@ export default function PatternMatchesPanel(props: Props) {
                   {/* Scales make lengths differ per row, so each row says how
                       many bars its window covers. */}
                   <span className="pm-len">{m.bars.length} bars</span>
+                  {multiSource && m.source && (
+                    <span className="pm-src">
+                      {m.source.epic} · {m.source.label}
+                    </span>
+                  )}
                   {m.isSelection && (
                     <Tooltip content="The window you dragged. It is ranked like every other window, so seeing it here at a distance near 0 is the check that the matching works.">
                       <span className="pm-self-flag">your selection</span>
@@ -444,17 +487,39 @@ export default function PatternMatchesPanel(props: Props) {
           results: the ranked rows are what a search was run for. */}
       {result && (
         <div className="pm-sub">
-          <span>
-            {epic} {resolution} on {broker} ({priceSide})
-          </span>
-          <span>
-            {day(result.series.oldestTs, timezone)} to {day(result.series.newestTs, timezone)},{" "}
-            {result.series.bars.toLocaleString("en-GB")} bars
-          </span>
-          {/* Not the same number as the bar count: windows that are flat or
-              gapped are dropped before ranking, so this is how much history was
-              genuinely compared. */}
-          <span>{result.scanned.toLocaleString("en-GB")} windows ranked</span>
+          {multiSource ? (
+            <>
+              <span>
+                {result.sources!.length} charts on {broker} ({priceSide})
+              </span>
+              {/* One line per searched series: each chart's history depth
+                  differs, and a failed series must say so here rather than
+                  silently contribute nothing. */}
+              {result.sources!.map((s) => (
+                <span key={`${s.epic}|${s.resolution}`} className={s.error ? "pm-src-err" : ""}>
+                  {s.epic} {s.label}:{" "}
+                  {s.error
+                    ? s.error
+                    : `${s.series!.bars.toLocaleString("en-GB")} bars, ` +
+                      `${s.scanned!.toLocaleString("en-GB")} windows ranked`}
+                </span>
+              ))}
+            </>
+          ) : (
+            <>
+              <span>
+                {epic} {resolution} on {broker} ({priceSide})
+              </span>
+              <span>
+                {day(result.series.oldestTs, timezone)} to {day(result.series.newestTs, timezone)},{" "}
+                {result.series.bars.toLocaleString("en-GB")} bars
+              </span>
+              {/* Not the same number as the bar count: windows that are flat or
+                  gapped are dropped before ranking, so this is how much history
+                  was genuinely compared. */}
+              <span>{result.scanned.toLocaleString("en-GB")} windows ranked</span>
+            </>
+          )}
           <span>
             {result.elapsedMs} ms{result.cold ? " (first search)" : ""}
             {worst != null ? `, worst shown ${worst.toFixed(2)}` : ""}

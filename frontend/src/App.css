@@ -6165,6 +6165,12 @@ span.bt-leg-short { color: var(--neg); }
 /* Bar count per row: plain muted text, not a bordered flag, since it is on
    every row (the scale ladder makes window lengths differ between rows). */
 .pm-len { margin-left: 6px; font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+/* Which chart a layout-wide match came from ("GOLD · 15m"). Bordered like the
+   flags: it distinguishes rows, unlike the bar count that annotates them. */
+.pm-src { margin-left: 6px; font-size: 11px; color: var(--text-dim); white-space: nowrap;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+/* A footer line for a series whose search failed. */
+.pm-src-err { color: var(--neg); }
 .pm-preview { width: 88px; height: 26px; }
 .pm-preview .pm-up rect, .pm-preview .pm-up line { fill: var(--pos); stroke: var(--pos); }
 .pm-preview .pm-down rect, .pm-preview .pm-down line { fill: var(--neg); stroke: var(--neg); }

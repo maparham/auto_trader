@@ -11,6 +11,8 @@ import {
   summarizeMatches,
   type MatchSort,
   type PatternMatch,
+  type PatternSearchResult,
+  mergePatternResults,
 } from "./patternSearch";
 
 const bar = (ts: number, o: number, h: number, l: number, c: number) => ({ ts, o, h, l, c });
@@ -341,5 +343,165 @@ describe("summarizeMatches", () => {
     ])!;
     expect(s.minLen).toBe(2);
     expect(s.maxLen).toBe(3);
+  });
+});
+
+describe("mergePatternResults", () => {
+  const m = (over: Partial<PatternMatch>): PatternMatch => ({
+    ts: 0, endTs: 0, distance: 0,
+    bars: [], forward: [], forwardComplete: true, forwardPct: 0,
+    ...over,
+  });
+  const res = (
+    matches: PatternMatch[],
+    over: Partial<PatternSearchResult> = {},
+  ): PatternSearchResult => ({
+    matches, scanned: 100, series: { oldestTs: 1, newestTs: 2, bars: 100 },
+    elapsedMs: 10, cold: false,
+    ...over,
+  });
+  const src = (cellId: string, epic = "US100", resolution = "MINUTE_5", label = "5m") =>
+    ({ cellId, epic, resolution, label });
+
+  it("tags every match with the series it was found in", () => {
+    const merged = mergePatternResults(
+      [
+        { source: src("a", "US100"), result: res([m({ ts: 10 })]) },
+        { source: src("b", "GOLD"), result: res([m({ ts: 20 })]) },
+      ],
+      20,
+    );
+    expect(merged.matches.map((x) => x.source?.epic)).toEqual(["US100", "GOLD"]);
+  });
+
+  it("orders the merged list by distance ascending across all series", () => {
+    const merged = mergePatternResults(
+      [
+        { source: src("a", "US100"), result: res([m({ distance: 0.2 }), m({ distance: 0.5 })]) },
+        { source: src("b", "GOLD"), result: res([m({ distance: 0.1 }), m({ distance: 0.3 })]) },
+      ],
+      20,
+    );
+    expect(merged.matches.map((x) => x.distance)).toEqual([0.1, 0.2, 0.3, 0.5]);
+    expect(merged.matches.map((x) => x.source?.epic)).toEqual(["GOLD", "US100", "GOLD", "US100"]);
+  });
+
+  it("breaks distance ties toward the earlier outcome (the origin series first)", () => {
+    const merged = mergePatternResults(
+      [
+        { source: src("a", "US100"), result: res([m({ distance: 0.2, ts: 1 })]) },
+        { source: src("b", "GOLD"), result: res([m({ distance: 0.2, ts: 2 })]) },
+      ],
+      20,
+    );
+    expect(merged.matches.map((x) => x.source?.cellId)).toEqual(["a", "b"]);
+  });
+
+  it("caps the merged list at topK, keeping the closest", () => {
+    const merged = mergePatternResults(
+      [
+        { source: src("a"), result: res([m({ distance: 0.1 }), m({ distance: 0.4 })]) },
+        { source: src("b", "GOLD"), result: res([m({ distance: 0.2 }), m({ distance: 0.3 })]) },
+      ],
+      3,
+    );
+    expect(merged.matches.map((x) => x.distance)).toEqual([0.1, 0.2, 0.3]);
+  });
+
+  it("sums scanned, takes the slowest elapsed and any cold flag", () => {
+    const merged = mergePatternResults(
+      [
+        { source: src("a"), result: res([], { scanned: 100, elapsedMs: 10, cold: false }) },
+        { source: src("b", "GOLD"), result: res([], { scanned: 50, elapsedMs: 30, cold: true }) },
+      ],
+      20,
+    );
+    expect(merged.scanned).toBe(150);
+    expect(merged.elapsedMs).toBe(30);
+    expect(merged.cold).toBe(true);
+  });
+
+  it("keeps a failed series in sources with its message, without killing the merge", () => {
+    const merged = mergePatternResults(
+      [
+        { source: src("a"), result: res([m({ distance: 0.1 })]) },
+        { source: src("b", "GOLD"), error: "no stored history" },
+      ],
+      20,
+    );
+    expect(merged.matches).toHaveLength(1);
+    expect(merged.sources).toHaveLength(2);
+    expect(merged.sources[1].error).toBe("no stored history");
+    expect(merged.sources[0].error).toBeNull();
+    // Failed series contribute nothing to the totals.
+    expect(merged.scanned).toBe(100);
+  });
+
+  it("carries each series' own facts in its source entry for the footer", () => {
+    const merged = mergePatternResults(
+      [
+        { source: src("a"), result: res([], { scanned: 100 }) },
+        { source: src("b", "GOLD"), result: res([], {
+          scanned: 42, series: { oldestTs: 5, newestTs: 6, bars: 43 }, elapsedMs: 7, cold: true,
+        }) },
+      ],
+      20,
+    );
+    expect(merged.sources[1]).toMatchObject({
+      epic: "GOLD", scanned: 42, elapsedMs: 7, cold: true, error: null,
+      series: { oldestTs: 5, newestTs: 6, bars: 43 },
+    });
+  });
+
+  it("uses the first successful series' span for the top-level series facts", () => {
+    const merged = mergePatternResults(
+      [
+        { source: src("a"), error: "boom" },
+        { source: src("b", "GOLD"), result: res([], { series: { oldestTs: 5, newestTs: 6, bars: 43 } }) },
+      ],
+      20,
+    );
+    expect(merged.series).toEqual({ oldestTs: 5, newestTs: 6, bars: 43 });
+  });
+
+  it("throws when every series failed: the caller shows an error, not an empty result", () => {
+    expect(() =>
+      mergePatternResults([{ source: src("a"), error: "boom" }], 20),
+    ).toThrow("boom");
+  });
+
+  it("only the origin series may carry the your-selection row", () => {
+    // Sibling requests reuse the origin's queryFromTs, so on a shared bar grid
+    // the backend flags a genuine sibling match at the same wall-clock bar as
+    // the user's own selection — which would hide it from the outcome stats.
+    const merged = mergePatternResults(
+      [
+        { source: src("a"), result: res([m({ ts: 10, isSelection: true })]) },
+        { source: src("b", "GOLD"), result: res([m({ ts: 10, distance: 0.2, isSelection: true })]) },
+      ],
+      20,
+    );
+    const gold = merged.matches.find((x) => x.source?.epic === "GOLD")!;
+    expect(gold.isSelection).toBeFalsy();
+    expect(merged.matches.find((x) => x.source?.epic === "US100")!.isSelection).toBe(true);
+  });
+
+  it("interleaves all-mode results by per-series rank instead of comparing mean ranks", () => {
+    // In "all" mode `distance` is a mean rank WITHIN each series' own candidate
+    // pool, so cross-series magnitude comparison is meaningless: a weak series'
+    // best row would beat a strong series' second-best on rank number alone.
+    const d = { shape: 0.5, ohlc: 0.5, close: 0.5, dtw: 0.5 };
+    const merged = mergePatternResults(
+      [
+        { source: src("a"), result: res([m({ ts: 1, distance: 2.0, distances: d })]) },
+        { source: src("b", "GOLD"), result: res([
+          m({ ts: 2, distance: 1.0, distances: d }),
+          m({ ts: 3, distance: 1.5, distances: d }),
+        ]) },
+      ],
+      20,
+    );
+    // Round-robin by each series' own order: A's best, B's best, then B's next.
+    expect(merged.matches.map((x) => x.ts)).toEqual([1, 2, 3]);
   });
 });

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { usePatternSearch, clearParkedPatternSearches } from "./usePatternSearch";
 import * as api from "../lib/patternSearch";
+import { clearPatternTargets } from "../lib/patternTargets";
 
 const mkBars = (n: number) =>
   Array.from({ length: n }, (_, i) => ({
@@ -17,16 +18,24 @@ const result = (scanned: number): api.PatternSearchResult => ({
   elapsedMs: 3, cold: false,
 });
 
+// The workspace's searchable series, as App enumerates them: origin first is
+// NOT assumed — the hook finds itself by cellId.
+const SELF = { cellId: "cell-1", tabId: "tab-1", epic: "US100", resolution: "MINUTE_5", label: "5m" };
+const GOLD = { cellId: "cell-2", tabId: "tab-2", epic: "GOLD", resolution: "MINUTE_15", label: "15m" };
+
 const args = {
+  cellId: "cell-1",
   epic: "US100", broker: "capital", priceSide: "bid", resolution: "MINUTE_5",
   getBars: () => bars,
+  getSeries: () => [SELF],
 };
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  // The park cache is module-level on purpose (results survive a cell reload),
-  // so tests must clear it or one test's parked result leaks into the next.
+  // The park cache and the target registry are module-level on purpose, so
+  // tests must clear them or one test's state leaks into the next.
   clearParkedPatternSearches();
+  clearPatternTargets();
 });
 
 describe("usePatternSearch", () => {
@@ -316,6 +325,147 @@ describe("usePatternSearch", () => {
       act(() => { restored = hook.current.adoptSeries(true); });
       expect(restored).not.toBeNull();
       expect(hook.current.result).not.toBeNull();
+    });
+  });
+
+  describe("all scope: searching every chart in every tab", () => {
+    const workspace = (...extra: (typeof SELF)[]) => ({
+      ...args,
+      getSeries: () => [SELF, ...extra],
+    });
+
+    it("defaults to all-charts scope", () => {
+      const { result: hook } = renderHook(() => usePatternSearch(args));
+      expect(hook.current.scope).toBe("all");
+    });
+
+    it("fans out one search per workspace chart, same query bars, each chart's own series", async () => {
+      const spy = vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      const { result: hook } = renderHook(() => usePatternSearch(workspace(GOLD)));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_001_500_000));
+      await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+      const reqs = spy.mock.calls.map((c) => c[0]);
+      expect(reqs.map((r) => `${r.epic}|${r.resolution}`).sort()).toEqual([
+        "GOLD|MINUTE_15", "US100|MINUTE_5",
+      ]);
+      // The query is the ORIGIN chart's drag on both requests.
+      expect(new Set(reqs.map((r) => r.queryFromTs)).size).toBe(1);
+      expect(reqs[0].query).toEqual(reqs[1].query);
+    });
+
+    it("searches a series only once when two cells show the same symbol and timeframe", async () => {
+      const spy = vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      const dupe = { ...SELF, cellId: "cell-3", tabId: "tab-3" };
+      const { result: hook } = renderHook(() => usePatternSearch(workspace(dupe)));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_001_500_000));
+      await waitFor(() => expect(hook.current.result).not.toBeNull());
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("runs at most four searches concurrently", async () => {
+      let inFlight = 0;
+      let peak = 0;
+      vi.spyOn(api, "searchPatterns").mockImplementation(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight -= 1;
+        return result(1);
+      });
+      const many = Array.from({ length: 9 }, (_, i) => ({
+        cellId: `c${i}`, tabId: `t${i}`, epic: `EPIC${i}`, resolution: "HOUR", label: "1H",
+      }));
+      const { result: hook } = renderHook(() => usePatternSearch(workspace(...many)));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_001_500_000));
+      await waitFor(() => expect(hook.current.result).not.toBeNull());
+      expect(hook.current.result!.sources).toHaveLength(10);
+      expect(peak).toBeLessThanOrEqual(4);
+      expect(peak).toBeGreaterThan(1);
+    });
+
+    it("tags merged matches with their chart and lists per-series sources", async () => {
+      const match = {
+        ts: 5, endTs: 6, distance: 0.5, bars: mkBars(3), forward: [],
+        forwardComplete: false, forwardPct: null,
+      };
+      vi.spyOn(api, "searchPatterns").mockImplementation(async (req) =>
+        req.epic === "GOLD"
+          ? { ...result(50), matches: [{ ...match, distance: 0.1 }] }
+          : { ...result(100), matches: [match] },
+      );
+      const { result: hook } = renderHook(() => usePatternSearch(workspace(GOLD)));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_001_500_000));
+      await waitFor(() => expect(hook.current.result).not.toBeNull());
+      const res = hook.current.result!;
+      expect(res.matches.map((m) => m.source?.epic)).toEqual(["GOLD", "US100"]);
+      expect(res.scanned).toBe(150);
+      expect("sources" in res && res.sources.map((s) => s.epic)).toEqual(["US100", "GOLD"]);
+    });
+
+    it("a failed sibling series does not kill the search", async () => {
+      vi.spyOn(api, "searchPatterns").mockImplementation(async (req) => {
+        if (req.epic === "GOLD") throw new Error("no stored history");
+        return result(100);
+      });
+      const { result: hook } = renderHook(() => usePatternSearch(workspace(GOLD)));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_001_500_000));
+      await waitFor(() => expect(hook.current.result).not.toBeNull());
+      expect(hook.current.error).toBeNull();
+      const res = hook.current.result!;
+      expect("sources" in res && res.sources.find((s) => s.epic === "GOLD")?.error).toBe(
+        "no stored history",
+      );
+    });
+
+    it("errors only when every series failed", async () => {
+      vi.spyOn(api, "searchPatterns").mockRejectedValue(new Error("down"));
+      const { result: hook } = renderHook(() => usePatternSearch(workspace(GOLD)));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_001_500_000));
+      await waitFor(() => expect(hook.current.error).toBe("down"));
+      expect(hook.current.result).toBeNull();
+      expect(hook.current.loading).toBe(false);
+    });
+
+    it("cell scope searches only this chart, and flipping scope re-runs the last range", async () => {
+      const spy = vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      const { result: hook } = renderHook(() => usePatternSearch(workspace(GOLD)));
+      act(() => hook.current.setScope("cell"));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_001_500_000));
+      await waitFor(() => expect(hook.current.result).not.toBeNull());
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].epic).toBe("US100");
+      act(() => hook.current.setScope("all"));
+      await waitFor(() => expect(spy).toHaveBeenCalledTimes(3));
+      expect(hook.current.scope).toBe("all");
+    });
+
+    it("a one-chart workspace in all scope behaves like a plain search", async () => {
+      const spy = vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      const { result: hook } = renderHook(() => usePatternSearch(args));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_001_500_000));
+      await waitFor(() => expect(hook.current.result).not.toBeNull());
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("parks and restores the scope with the result", async () => {
+      vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      const { result: hook, rerender } = renderHook((a) => usePatternSearch(a), {
+        initialProps: workspace(GOLD),
+      });
+      act(() => hook.current.adoptSeries(true));
+      act(() => hook.current.setScope("cell"));
+      act(() => hook.current.run(1_700_000_000_000, 1_700_003_000_000));
+      await waitFor(() => expect(hook.current.result).not.toBeNull());
+      act(() => hook.current.parkLive());
+      rerender({ ...workspace(GOLD), epic: "SILVER" });
+      act(() => hook.current.adoptSeries(true));
+      act(() => hook.current.setScope("all"));
+      act(() => hook.current.parkLive());
+      rerender(workspace(GOLD));
+      act(() => hook.current.adoptSeries(true));
+      // The restored result was computed under cell scope; showing it captioned
+      // as a layout-wide search would misread it.
+      expect(hook.current.scope).toBe("cell");
     });
   });
 

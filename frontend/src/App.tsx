@@ -845,6 +845,46 @@ export default function App() {
     [tabs, tabSearchQuery, flashCells],
   );
 
+  // Every searchable chart series across ALL tabs, for the pattern search's
+  // all-charts scope. Same gates as a cell's own patternCapable: synthetic
+  // epics have no stored history, sub-minute resolutions aren't served, and a
+  // snapshot cell is a frozen picture. Called at search time, so it reflects
+  // the tabs as they are then.
+  const getPatternSeries = useCallback(
+    () =>
+      tabs.flatMap((t) =>
+        t.cells
+          .filter(
+            (c) =>
+              !isSynthetic(c.symbol.epic) &&
+              !c.period.liveOnly &&
+              loadSnapshotMeta(c.scope) == null,
+          )
+          .map((c) => ({
+            cellId: c.id,
+            tabId: t.id,
+            epic: c.symbol.epic,
+            resolution: c.period.resolution,
+            label: c.period.label,
+          })),
+      ),
+    [tabs],
+  );
+
+  // A pattern-match jump to a chart on ANOTHER tab: activate the tab, focus
+  // the cell and flash it (the same glow as the symbol search), while the
+  // match itself waits in the pending-jump map for the cell to mount.
+  const revealPatternCell = useCallback(
+    (tabId: string, cellId: string) => {
+      setActiveId(tabId);
+      setTabs((ts) =>
+        ts.map((t) => (t.id === tabId ? { ...t, activeCellId: cellId } : t)),
+      );
+      flashCells([cellId]);
+    },
+    [flashCells],
+  );
+
   // Typing in the search flashes the ACTIVE tab's matches immediately —
   // no tab click needed when the symbol is already in front of you.
   useEffect(() => {
@@ -2184,6 +2224,8 @@ export default function App() {
               onReady={onCellReady}
               onFocus={onCellFocus}
               onPeriod={setCellPeriod}
+              getPatternSeries={getPatternSeries}
+              onRevealPatternCell={revealPatternCell}
               maximizedCellId={maximizedCellId}
               onToggleMaximizeCell={(cellId) =>
                 setMaximizedCellId((cur) => (cur === cellId ? null : cellId))

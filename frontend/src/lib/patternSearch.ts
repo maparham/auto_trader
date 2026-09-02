@@ -36,6 +36,21 @@ export interface PatternMatch {
   /** True on the window that is the user's own selection, scanned like every
    *  other and returned at distance ~0. */
   isSelection?: boolean;
+  /** The chart the match was found in. Client-side tag set by
+   *  mergePatternResults, absent on a single-series search. */
+  source?: MatchSource;
+}
+
+/** The series identity a merged match carries: which open chart it came from. */
+export interface MatchSource {
+  cellId: string;
+  /** The tab holding the cell — a jump to a chart on another tab needs to
+   *  switch there first. Absent on results parked before this field existed. */
+  tabId?: string;
+  epic: string;
+  resolution: string;
+  /** The period's display label ("5m"), for compact row tags. */
+  label: string;
 }
 
 /** What the distance is measured over. "shape" (the default) matches the
@@ -69,6 +84,82 @@ export interface PatternSearchResult {
   series: { oldestTs: number; newestTs: number; bars: number };
   elapsedMs: number;
   cold: boolean;
+}
+
+/** One series' outcome inside a merged layout-wide search: its identity, the
+ *  facts of its own scan for the footer, or the error that kept it out. */
+export interface SourceOutcome extends MatchSource {
+  scanned: number | null;
+  series: PatternSearchResult["series"] | null;
+  elapsedMs: number | null;
+  cold: boolean;
+  error: string | null;
+}
+
+/** A layout-wide search result: the single-series shape the panel already
+ *  renders, plus the per-series outcomes behind it. */
+export interface MergedPatternResult extends PatternSearchResult {
+  sources: SourceOutcome[];
+}
+
+/** Fold per-series search outcomes into one ranked list. Matches are tagged
+ *  with their series, ordered by distance ascending (ties toward the earlier
+ *  outcome, so the origin series wins them) and capped at topK. Distances are
+ *  scale-normalized so ordering across symbols is meaningful — EXCEPT in "all"
+ *  mode, where `distance` is a mean rank within each series' own candidate
+ *  pool: those are not comparable across series, so all-mode results are
+ *  interleaved round-robin by per-series rank instead. Totals cover only the
+ *  series that answered; a failed series rides along in `sources` with its
+ *  message. Throws when EVERY series failed — the caller wants its error
+ *  state, not an empty result.
+ *
+ *  The first outcome must be the ORIGIN series: only its matches may keep the
+ *  backend's your-selection flag. Sibling requests reuse the origin's
+ *  queryFromTs, so on a shared bar grid the backend flags a genuine sibling
+ *  match at the same wall-clock bar as the selection, which would hide it
+ *  from the outcome statistics. */
+export function mergePatternResults(
+  outcomes: { source: MatchSource; result?: PatternSearchResult; error?: string }[],
+  topK: number,
+): MergedPatternResult {
+  const ok = outcomes.filter((o) => o.result);
+  if (ok.length === 0) {
+    throw new Error(outcomes[0]?.error ?? "pattern search failed");
+  }
+  const tagged = ok.flatMap((o, oi) =>
+    o.result!.matches.map((m, mi) => ({
+      match: {
+        ...m,
+        source: o.source,
+        ...(oi > 0 && m.isSelection ? { isSelection: false } : null),
+      },
+      oi,
+      mi,
+    })),
+  );
+  // "all" mode is detected off the rows themselves (only it sets per-formula
+  // distances), so parked results merge the same way live ones did.
+  const allMode = tagged.some((t) => t.match.distances != null);
+  tagged.sort((a, b) =>
+    allMode
+      ? a.mi - b.mi || a.oi - b.oi
+      : a.match.distance - b.match.distance || a.oi - b.oi || a.mi - b.mi,
+  );
+  return {
+    matches: tagged.slice(0, topK).map((t) => t.match),
+    scanned: ok.reduce((n, o) => n + o.result!.scanned, 0),
+    series: ok[0].result!.series,
+    elapsedMs: Math.max(...ok.map((o) => o.result!.elapsedMs)),
+    cold: ok.some((o) => o.result!.cold),
+    sources: outcomes.map((o) => ({
+      ...o.source,
+      scanned: o.result?.scanned ?? null,
+      series: o.result?.series ?? null,
+      elapsedMs: o.result?.elapsedMs ?? null,
+      cold: o.result?.cold ?? false,
+      error: o.result ? null : (o.error ?? "pattern search failed"),
+    })),
+  };
 }
 
 export async function searchPatterns(
