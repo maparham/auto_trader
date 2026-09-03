@@ -100,6 +100,52 @@ describe("computeMa MTF", () => {
   });
 });
 
+describe("computeMa slopeState", () => {
+  const SLOPE_CFG = {
+    enabled: true, len: 1, flatBandPct: 0.1,
+    up: { color: "#0f0" }, down: { color: "#f00" }, flat: { color: "#999" },
+  };
+  it("attaches per-bar states when slopeColor is enabled", () => {
+    // SMA(1) === close, so states follow the closes directly: +10%/bar rising,
+    // -11.1%/bar falling, 0%/bar flat.
+    const bars = vbars([100, 110, 90, 80, 80], [1, 1, 1, 1, 1]);
+    const pts = computeMa(bars, "sma", 1, { slopeColor: SLOPE_CFG });
+    expect(pts[1].slopeState).toBe(1);
+    expect(pts[3].slopeState).toBe(-1);
+    expect(pts[4].slopeState).toBe(0);
+  });
+
+  it("attaches nothing when slopeColor is absent or disabled", () => {
+    const bars = vbars([100, 101, 102], [1, 1, 1]);
+    const pts = computeMa(bars, "sma", 1, {});
+    expect(pts.every((p) => p.slopeState === undefined)).toBe(true);
+    const off = computeMa(bars, "sma", 1, { slopeColor: { ...SLOPE_CFG, enabled: false } });
+    expect(off.every((p) => p.slopeState === undefined)).toBe(true);
+  });
+
+  it("MTF: computes states on the native HTF series, then forward-fills the STATE (anti-staircase)", () => {
+    // A steadily-rising HTF EMA held across many chart bars must be rising
+    // across the whole held span — never flat-within-bar/flip-at-boundary,
+    // which a naive slope-over-the-aligned-staircase would produce.
+    const bars = vbars([1, 1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1, 1]); // 1m bars
+    const htfMs = 4 * 60_000;
+    const pts = computeMa(bars, "ema", 9, {
+      mtf: {
+        timeframe: "HOUR", // any truthy value; the mtf block below is what matters
+        htfStarts: [-2 * htfMs, -htfMs, 0], // two CLOSED HTF bars before the chart + one at 0
+        htfSeries: [100, 101, 102], // steadily rising natively
+        htfMs,
+      },
+      slopeColor: SLOPE_CFG,
+    });
+    // Every chart bar holding a closed HTF value whose native slope was rising
+    // reads rising — the staircase artifact would make these 0.
+    const held = pts.map((p) => p.slopeState).filter((s) => s !== undefined);
+    expect(held.length).toBeGreaterThan(0);
+    expect(held.every((s) => s === 1)).toBe(true);
+  });
+});
+
 describe("maLegendLabel", () => {
   it("keeps the template label when never flipped", () => {
     expect(maLegendLabel(undefined, "ema")).toBe("EMA");

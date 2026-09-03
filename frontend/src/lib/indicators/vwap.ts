@@ -5,12 +5,14 @@
 //         Default anchor 0 → first bar (≡ VWAP) until the user sets one.
 import {
   type Indicator,
+  type IndicatorDrawParams,
   type IndicatorTemplate,
   type KLineData,
   type SmoothLineStyle,
 } from "klinecharts";
 import { priceOf, type PriceSource } from "../mtf";
 import { fullLine } from "./shared";
+import { slopeStates, makeSlopeColorDraw, type SlopeState, type SlopeColorConfig } from "./slopeColor";
 
 interface VwapPoint {
   vwap?: number;
@@ -22,6 +24,9 @@ interface VwapPoint {
   dn2?: number;
   up3?: number;
   dn3?: number;
+  // Rising/falling/flat classification of the vwap line (Task 3's draw).
+  // Absent unless extendData.slopeColor is enabled.
+  slopeState?: SlopeState;
 }
 
 // AVWAP band configuration carried on extendData (set by the settings modal).
@@ -41,6 +46,8 @@ export interface AvwapExtend {
   // nothing for it. Default (absent) = every line visible.
   lineHidden?: Record<string, boolean>;
   hideLegendValue?: boolean;
+  // Slope-state coloring (Task 1/3). Absent/disabled attaches nothing.
+  slopeColor?: SlopeColorConfig;
 }
 
 export const AVWAP_DEFAULT_BANDS: [BandSetting, BandSetting, BandSetting] = [
@@ -130,6 +137,18 @@ export function vwapFrom(
     }
     out.push(point);
   }
+  // Classify the produced vwap line, shared by both templates below. Zero
+  // work when disabled — don't even call slopeStates.
+  if (ext.slopeColor?.enabled) {
+    const states = slopeStates(
+      out.map((p) => p.vwap),
+      ext.slopeColor.len,
+      ext.slopeColor.flatBandPct,
+    );
+    out.forEach((p, i) => {
+      p.slopeState = states[i];
+    });
+  }
   return out;
 }
 
@@ -138,7 +157,13 @@ export const VWAP_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   series: 'price',
   precision: 2,
   figures: [{ key: "vwap", title: "VWAP: ", type: "line" }],
-  calc: (dataList: KLineData[]) => vwapFrom(dataList, 0, {}),
+  // Plain VWAP has no settings modal of its own (source/bands/etc. stay at
+  // their vwapFrom defaults), but the slope-color tab targets it too (Task
+  // 4's hasSlopeTab includes "VWAP") — thread ONLY slopeColor through so that
+  // stays true, without opening up source/bandMode/bands to plain VWAP.
+  calc: (dataList: KLineData[], indicator: Indicator) =>
+    vwapFrom(dataList, 0, { slopeColor: (indicator.extendData as AvwapExtend | undefined)?.slopeColor }),
+  draw: (params) => makeSlopeColorDraw("vwap")(params as IndicatorDrawParams<Record<string, unknown>, unknown, unknown>),
 };
 
 export const AVWAP_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
@@ -171,4 +196,5 @@ export const AVWAP_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     const start = idx < 0 ? dataList.length : idx;
     return vwapFrom(dataList, start, (indicator.extendData ?? {}) as AvwapExtend);
   },
+  draw: (params) => makeSlopeColorDraw("vwap")(params as IndicatorDrawParams<Record<string, unknown>, unknown, unknown>),
 };

@@ -19,10 +19,6 @@ remove it from here (git history and the memory index track shipped features).
   alert toasts, unread badge, connection splash, App-Nap prevention.
   [spec](superpowers/specs/2026-07-08-tauri-menubar-wrapper-design.md)
 
-- **Slope-colored moving averages** — render EMA/SMA/VWAP/AVWAP with
-  slope-based color coding (up vs. down segments).
-  [spec](superpowers/specs/2026-07-06-slope-colored-ma-design.md)
-
 - **Custom range calendar picker** — visual calendar for backtest range
   selection, replacing the native `datetime-local` inputs.
   [spec](superpowers/specs/2026-07-06-custom-range-calendar-picker-design.md)

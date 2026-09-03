@@ -148,6 +148,8 @@ import {
 } from "./indicatorSettings/TimeHighlightPanels";
 import { CandlePatternsPanel, candlePatternsConfig } from "./indicatorSettings/CandlePatternsPanel";
 import type { CandlePatternsExtend } from "./lib/indicators/candlePatterns";
+import SlopeColorPanel, { slopeColorConfig } from "./indicatorSettings/SlopeColorPanel";
+import { defaultSlopeColor, type SlopeColorConfig } from "./lib/indicators/slopeColor";
 import {
   DEFAULT_LINE_PALETTE,
   CURVE_LABEL_TYPES,
@@ -179,7 +181,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = "inputs" | "divergence" | "style" | "visibility";
+type Tab = "inputs" | "divergence" | "slope" | "style" | "visibility";
 
 export default function IndicatorSettings({
   chart,
@@ -228,6 +230,9 @@ export default function IndicatorSettings({
   // Overlay indicators with a multi-line channel get per-line show/hide checkboxes
   // (+ opacity) in the Style tab, like TradingView's band toggles.
   const hasLineToggle = isAvwap || type === "LR" || type === "PREV_HL";
+  // Slope-colored main line: gated to the MA family + AVWAP/VWAP (the templates
+  // that carry the custom draw — see lib/indicators/slopeColor.ts).
+  const hasSlopeTab = isMa || isAvwap || type === "VWAP";
   // Rule-referenceable types (SLOPE/ATR/FVG/TRENDLINES/PIVOT_BANDS/
   // PIVOT_ANALYSIS/SR_LEVELS)
   // get a "Reference name" field: the id a rule spells as `<id>.<output>`.
@@ -421,6 +426,15 @@ export default function IndicatorSettings({
     ((ind?.extendData ?? {}) as PivotAnalysisExtend).connector,
   );
   const [connector, setConnector] = useState<Required<PivotConnectorStyle>>(pivotConnector0);
+
+  // --- Slope-colored main line (MA/AVWAP/VWAP): color the main line by slope
+  // state, on extendData.slopeColor (see lib/indicators/slopeColor.ts). ---
+  const [slopeColor, setSlopeColor] = useState<SlopeColorConfig>(
+    () =>
+      ((ind?.extendData as Record<string, unknown> | undefined)?.slopeColor as
+        | SlopeColorConfig
+        | undefined) ?? defaultSlopeColor(),
+  );
 
   // --- SR_LEVELS: zone colors + base opacity (draw-only, on extendData.zoneStyle) ---
   const [srZone, setSrZone] = useState<SrZoneStyle>(() =>
@@ -985,6 +999,9 @@ export default function IndicatorSettings({
     if (isCandlePatterns) {
       candlePatternsConfig(extendData, candleExt);
     }
+    // Slope-colored main line: persist only when enabled or customized away from
+    // the fixed defaults, so a plain instance carries no slopeColor key.
+    slopeColorConfig(extendData, hasSlopeTab ? slopeColor : null);
     if (!showValue) extendData.hideLegendValue = true;
     // Per-timeframe visibility (TV Visibility tab) — model only when non-default,
     // but userVisible (the intent) is always written once touched, so a later read
@@ -1009,7 +1026,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, waitClose, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, waitClose, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt, slopeColor]);
 
   // Flip the pin's "Wait for timeframe closes" choice: write the flag onto
   // the live indicator FIRST (every apply* reads it from there), then rebuild
@@ -1196,6 +1213,23 @@ export default function IndicatorSettings({
     // toggle rather than after a network round-trip.
     syncAccelCompanion(chart, name);
     requestIndicatorOverlayRepaint();
+  }
+
+  // Slope-colored main line: the extendData override (merged over the live
+  // indicator's) makes klinecharts RECALC the indicator — calc is what attaches
+  // the per-bar slope states — and repaint. Do not "optimize" this to a
+  // draw-only path: without the recalc, enable/len/band edits paint all-flat.
+  // No key inside slopeColor is ever removed, so a plain merge is safe;
+  // slopeColorConfig (in currentConfig()) handles the persisted-side delete.
+  function patchSlopeColor(p: Partial<SlopeColorConfig>): void {
+    const next = { ...slopeColor, ...p };
+    setSlopeColor(next);
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({
+      paneId,
+      name,
+      extendData: { ...((live?.extendData as object) ?? {}), slopeColor: next },
+    });
   }
 
   // Merge one field into the connector style, push state + live redraw together.
@@ -1578,15 +1612,27 @@ export default function IndicatorSettings({
       footer={foot}
     >
         <div className="ind-tabs">
-          {((isRsi
-            ? ["inputs", "divergence", "style", "visibility"]
-            : ["inputs", "style", "visibility"]) as Tab[]).map((t) => (
+          {([
+            "inputs",
+            ...(isRsi ? ["divergence"] : []),
+            ...(hasSlopeTab ? ["slope"] : []),
+            "style",
+            "visibility",
+          ] as Tab[]).map((t) => (
             <button
               key={t}
               className={`ind-tab ${tab === t ? "on" : ""}`}
               onClick={() => setTab(t)}
             >
-              {t === "inputs" ? "Inputs" : t === "divergence" ? "Divergence" : t === "style" ? "Style" : "Visibility"}
+              {t === "inputs"
+                ? "Inputs"
+                : t === "divergence"
+                  ? "Divergence"
+                  : t === "slope"
+                    ? "Slope"
+                    : t === "style"
+                      ? "Style"
+                      : "Visibility"}
             </button>
           ))}
         </div>
@@ -1692,6 +1738,10 @@ export default function IndicatorSettings({
               setRsiDivergence={setRsiDivergence}
               resetDivergence={resetDivergence}
             />
+          )}
+
+          {tab === "slope" && hasSlopeTab && (
+            <SlopeColorPanel sc={slopeColor} patch={patchSlopeColor} />
           )}
 
           {tab === "inputs" && !isMa && !isAvwap && !isRsi && (

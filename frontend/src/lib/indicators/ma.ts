@@ -5,6 +5,7 @@
 // onto the live chart bars inside calc (no lookahead).
 import {
   type Indicator,
+  type IndicatorDrawParams,
   type IndicatorTemplate,
   type KLineData,
   type SmoothLineStyle,
@@ -14,6 +15,7 @@ import {
   type MaOptions, type MaKind,
 } from "../mtf";
 import { fullLine } from "./shared";
+import { slopeStates, makeSlopeColorDraw, type SlopeState, type SlopeColorConfig } from "./slopeColor";
 
 interface MaPoint {
   ma?: number;
@@ -24,6 +26,10 @@ interface MaPoint {
   // Undefined on every bar when extendData.envelope is off.
   bandHi?: number;
   bandLo?: number;
+  // Rising/falling/flat classification of the plotted base line, for the
+  // custom slope-colored draw (Task 3). Absent unless extendData.slopeColor
+  // is enabled — see computeMa's MTF-safe handling below.
+  slopeState?: SlopeState;
 }
 
 // Per-instance config for the TV-style moving averages, carried on the
@@ -51,6 +57,8 @@ export interface MaExtend extends MaOptions {
   maType?: MaKind;
   // Envelope toggle: plot the same MA over high and low as upper/lower bands.
   envelope?: boolean;
+  // Slope-state coloring (Task 1/3). Absent/disabled attaches nothing.
+  slopeColor?: SlopeColorConfig;
 }
 
 // MA_KIND_LABEL now lives beside MaKind/normalizeMaKind in ../mtf, which has no
@@ -122,12 +130,27 @@ export function computeMa(
           chartTs, htfBars, mtf.htfSmoothing, mtf.htfMs, true, mtf.formingIdx,
         )
       : undefined;
+    // Slope states MUST be computed on the native HTF series (mtf.htfSeries),
+    // never on `aligned` — the aligned staircase repeats each HTF value across
+    // many chart bars, so a naive per-bar slope over it would read flat for
+    // most of a held span and only move on the boundary bar. Classify on the
+    // native series first, then forward-fill the STATES with the exact same
+    // alignHtfToChart call shape used for the values above, so a rising HTF
+    // span reads rising across its whole held span on the chart.
+    const alignedStates = ext.slopeColor?.enabled
+      ? alignHtfToChart(
+          chartTs, htfBars,
+          slopeStates(mtf.htfSeries, ext.slopeColor.len, ext.slopeColor.flatBandPct),
+          mtf.htfMs, true, mtf.formingIdx,
+        )
+      : undefined;
     // NOTE: the envelope bands are intentionally NOT shown under MTF — the
     // stash carries the base + smoothing lines only. Bands apply on the
     // chart-TF path below.
     return aligned.map((v, i) => ({
       ma: v ?? undefined,
       smoothingMa: smoothed?.[i] ?? undefined,
+      slopeState: alignedStates?.[i] as SlopeState | undefined,
     }));
   }
   const { base, smoothing } = maSeries(dataList, kind, length, ext);
@@ -139,11 +162,17 @@ export function computeMa(
         lo: maSeries(dataList, kind, length, { source: "low" }).base,
       }
     : null;
+  // Chart-TF path: classify directly on the plotted base line (no MTF
+  // staircase to worry about).
+  const states = ext.slopeColor?.enabled
+    ? slopeStates(base, ext.slopeColor.len, ext.slopeColor.flatBandPct)
+    : undefined;
   return base.map((v, i) => ({
     ma: v ?? undefined,
     smoothingMa: smoothing?.[i] ?? undefined,
     bandHi: bands?.hi[i] ?? undefined,
     bandLo: bands?.lo[i] ?? undefined,
+    slopeState: states?.[i],
   }));
 }
 
@@ -158,6 +187,7 @@ export const EMA_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   styles: { lines: MA_DEFAULT_LINE_STYLES },
   calc: (dataList: KLineData[], ind: Indicator) =>
     computeMa(dataList, "ema", Number(ind.calcParams?.[0]) || 9, (ind.extendData ?? {}) as MaExtend),
+  draw: (params) => makeSlopeColorDraw("ma")(params as IndicatorDrawParams<Record<string, unknown>, unknown, unknown>),
 };
 
 export const MA_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
@@ -169,4 +199,5 @@ export const MA_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   styles: { lines: MA_DEFAULT_LINE_STYLES },
   calc: (dataList: KLineData[], ind: Indicator) =>
     computeMa(dataList, "sma", Number(ind.calcParams?.[0]) || 20, (ind.extendData ?? {}) as MaExtend),
+  draw: (params) => makeSlopeColorDraw("ma")(params as IndicatorDrawParams<Record<string, unknown>, unknown, unknown>),
 };
