@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle, Side
@@ -108,7 +108,8 @@ def _atr(spec, series: dict[str, list[float | None]], i: int) -> float | None:
 
 
 @router.post("/api/strategy/evaluate", response_model=EvaluateResponse)
-async def evaluate_strategy(req: EvaluateRequest) -> EvaluateResponse:
+async def evaluate_strategy(req: EvaluateRequest, request: Request) -> EvaluateResponse:
+    req.broker = deps.resolve_broker(request, req.broker)
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
     for name, arr in req.series.items():

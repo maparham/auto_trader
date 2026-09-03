@@ -37,12 +37,14 @@ def make_token(
     exp_delta: int = 60,
     kid: str = KID,
     key=None,
+    extra: dict | None = None,
 ) -> str:
     claims: dict = {"exp": int(time.time()) + exp_delta}
     if sub is not None:
         claims["sub"] = sub
     if azp is not None:
         claims["azp"] = azp
+    claims.update(extra or {})
     return jwt.encode(claims, key or _PRIVATE, algorithm="RS256", headers={"kid": kid})
 
 

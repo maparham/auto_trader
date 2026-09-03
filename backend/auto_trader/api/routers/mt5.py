@@ -9,12 +9,15 @@ from __future__ import annotations
 
 from typing import Awaitable, Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from .. import deps
 from ..auth import auth_enabled
+from ..deps import require_admin
 
-router = APIRouter()
+# The account-deploy lifecycle is dealing-adjacent (it toggles the operator's
+# real MetaApi account): admin-only in hosted mode, same as trading.py.
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 async def _lifecycle(action: Callable[[object], Awaitable[str]]) -> dict:

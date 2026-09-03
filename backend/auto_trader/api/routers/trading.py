@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auto_trader.core.broker_health import BrokerBlocked, BrokerReconnecting
 from auto_trader.core.models import (
@@ -14,7 +14,7 @@ from auto_trader.core.models import (
     Side,
 )
 
-from ..deps import broker_blocked_http, get_exec
+from ..deps import broker_blocked_http, get_exec, require_admin
 from ..schemas import (
     AccountSummaryDTO,
     LevelsRequest,
@@ -25,7 +25,10 @@ from ..schemas import (
     WorkingOrderDTO,
 )
 
-router = APIRouter()
+# The whole dealing/exec surface is admin-only in hosted mode (see
+# deps.require_admin): the paper book and dealing accounts are global, not
+# per-tenant.
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 def _order_result_dto(r: OrderResult) -> OrderResultDTO:

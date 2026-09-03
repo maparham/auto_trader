@@ -129,6 +129,17 @@ export function noteDataOnlyBrokers(exec: BrokerAccount[] | undefined): void {
 export function isDataOnlyBroker(brokerId: string): boolean {
   return dataOnlyBrokers.has(brokerId);
 }
+// Whether /api/brokers reported this account as admin (hosted: credentialed
+// brokers + dealing unlocked; dev mode: always true). Fed by fetchBrokers /
+// cachedBrokers, mirroring backendLabels — UI cues only, the backend enforces.
+let backendIsAdmin = false;
+export function noteIsAdmin(isAdmin: boolean | undefined): void {
+  backendIsAdmin = Boolean(isAdmin);
+}
+export function isAdminAccount(): boolean {
+  return backendIsAdmin;
+}
+
 export function brokerLabel(brokerId: string): string {
   return (
     backendLabels[brokerId] ??
@@ -176,6 +187,8 @@ export interface BrokerInfo {
   exec: BrokerAccount[];
   // Sparse broker-reported display names by broker id (see noteBrokerLabels).
   labels?: Record<string, string>;
+  // Hosted only: whether this account passes the backend's admin gate.
+  isAdmin?: boolean;
 }
 
 // The account list is purely descriptive (no broker network call), so it should
@@ -195,6 +208,7 @@ export function cachedBrokers(): BrokerInfo | null {
     if (info) {
       noteBrokerLabels(info.labels);
       noteDataOnlyBrokers(info.exec);
+      noteIsAdmin(info.isAdmin);
     }
     return info;
   } catch {
@@ -220,6 +234,7 @@ export async function fetchBrokers(): Promise<BrokerInfo> {
     const info = (await res.json()) as BrokerInfo;
     noteBrokerLabels(info.labels);
     noteDataOnlyBrokers(info.exec);
+    noteIsAdmin(info.isAdmin);
     try {
       localStorage.setItem(BROKERS_CACHE_KEY, JSON.stringify(info));
     } catch {

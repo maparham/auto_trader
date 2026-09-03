@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .. import deps
-from ..deps import broker_query, get_data, guarded
+from ..deps import broker_query, get_data, guarded, request_is_admin
 from ..schemas import MarketDTO
 
 router = APIRouter()
@@ -17,11 +17,13 @@ async def health() -> dict:
 
 
 @router.get("/api/brokers")
-async def brokers() -> dict:
+async def brokers(request: Request) -> dict:
     # Selector payload: registered data brokers + execution accounts. The frontend
-    # populates the toolbar broker/account dropdown from this.
+    # populates the toolbar broker/account dropdown from this. Non-admins in
+    # hosted mode see only the unrestricted (credential-free) brokers.
     assert deps._registry is not None, "registry not initialised"
-    return deps._registry.describe()
+    admin = request_is_admin(request)
+    return {**deps._registry.describe(include_restricted=admin), "isAdmin": admin}
 
 
 @router.get("/api/markets", response_model=list[MarketDTO])

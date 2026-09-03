@@ -21,6 +21,14 @@ from fastapi import HTTPException
 
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 
+# Data brokers that only register when credentials are present. In hosted mode
+# (Clerk auth on) these — and the ENTIRE exec namespace — are admin-only; the
+# credential-free trio (dukascopy, yfinance, nobitex) stays open to everyone.
+# Keep in sync with the credentialed blocks in build_registry().
+RESTRICTED_BROKER_IDS = frozenset(
+    {"capital", "capital-live", "ig-demo", "ig-live", "mt5", "oanor"}
+)
+
 
 @dataclass
 class BrokerRegistry:
@@ -52,19 +60,41 @@ class BrokerRegistry:
             raise HTTPException(422, f"unknown account: {key}")
         return broker
 
-    def default_data_id(self) -> str:
+    def is_restricted(self, broker_id: str) -> bool:
+        return broker_id in RESTRICTED_BROKER_IDS
+
+    def default_data_id(self, unrestricted_only: bool = False) -> str:
         """The broker a request that names none lands on: capital when registered
         (the historical default), else the first registered data broker (always
-        non-empty — dukascopy/yfinance register unconditionally)."""
-        if "capital" in self.data:
+        non-empty — dukascopy/yfinance register unconditionally). When
+        unrestricted_only is True, skip admin-gated brokers."""
+        ids = sorted(
+            bid for bid in self.data
+            if not (unrestricted_only and self.is_restricted(bid))
+        )
+        if "capital" in ids:
             return "capital"
-        return sorted(self.data)[0]
+        return ids[0]
 
-    def describe(self) -> dict:
+    def describe(self, include_restricted: bool = True) -> dict:
         """Selector payload for the frontend. env/is_real_money come straight off
         each executor, so a new account shows up here with no extra wiring."""
+        data_ids = {
+            bid for bid in self.data
+            if include_restricted or not self.is_restricted(bid)
+        }
+        exec_items = [
+            {
+                "key": key,
+                "broker": key.split(":", 1)[0],
+                "env": broker.env,
+                "isRealMoney": broker.is_real_money,
+            }
+            for key, broker in self.exec.items()
+        ] if include_restricted else []
+
         return {
-            "data": sorted(self.data),
+            "data": sorted(data_ids),
             # Broker-reported display names, keyed by broker id. Sparse: only
             # brokers that know their real name at runtime appear (MT5 reads it
             # from MetaApi account information); the frontend keeps its static
@@ -72,17 +102,9 @@ class BrokerRegistry:
             "labels": {
                 broker_id: label
                 for broker_id, broker in self.data.items()
-                if (label := getattr(broker, "display_name", None))
+                if broker_id in data_ids and (label := getattr(broker, "display_name", None))
             },
-            "exec": [
-                {
-                    "key": key,
-                    "broker": key.split(":", 1)[0],
-                    "env": broker.env,
-                    "isRealMoney": broker.is_real_money,
-                }
-                for key, broker in self.exec.items()
-            ]
+            "exec": exec_items
             # Data-only brokers (a read-only history source like dukascopy, with no
             # executor) get a synthetic pseudo-account so the account-keyed frontend
             # can select them. Flagged dataOnly so the dock suppresses all trading.
@@ -94,8 +116,8 @@ class BrokerRegistry:
                     "isRealMoney": False,
                     "dataOnly": True,
                 }
-                for broker_id in sorted(self.data)
-                if not any(key.split(":", 1)[0] == broker_id for key in self.exec)
+                for broker_id in sorted(data_ids)
+                if not any(key.split(":", 1)[0] == broker_id for key in (self.exec if include_restricted else []))
             ],
         }
 

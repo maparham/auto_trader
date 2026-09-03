@@ -49,19 +49,27 @@ elif [ "$rc" -ne 0 ]; then
   exit 1
 fi
 
-echo "==> preflight: no broker credentials on the box"
+echo "==> preflight: broker credentials (if any) must be admin-gated"
+# Broker creds are ALLOWED on the box since the admin gate (spec
+# 2026-09-03-admin-gated-brokers-design.md): restricted brokers and all
+# dealing are admin-only. But creds WITHOUT an admin gate would expose
+# dealing to every signed-in user, so that combination fails the deploy.
+# The cred regex matches env ASSIGNMENTS only (comments legitimately mention
+# broker names); keep it in sync with config.py's env_prefix set.
 rc=0
-# Match only env ASSIGNMENTS whose variable name references a credentialed
-# broker — comments legitimately mention these brokers when documenting their
-# exclusion. Covers every env_prefix in backend/auto_trader/config.py:
-# CAPITAL_*, IG_*, METAAPI_* (the MT5 broker's actual prefix), OANOR_*, plus
-# any stray *mt5* name. Keep this list in sync with config.py's env_prefix set.
 "${SSH[@]}" "$HOST" 'grep -Eiq "^[a-z_]*(capital|mt5|metaapi|oanor)[a-z0-9_]*=|^ig_" /etc/auto-trader/demo.env' || rc=$?
 if [ "$rc" -eq 0 ]; then
-  echo "FAIL: broker credentials found in /etc/auto-trader/demo.env" >&2
-  exit 1
+  rc2=0
+  "${SSH[@]}" "$HOST" 'grep -Eq "^ADMIN_EMAILS=..*|^ADMIN_USER_IDS=..*" /etc/auto-trader/demo.env' || rc2=$?
+  if [ "$rc2" -eq 1 ]; then
+    echo "FAIL: broker credentials present in /etc/auto-trader/demo.env but no ADMIN_EMAILS/ADMIN_USER_IDS — add the admin gate first (see docs/superpowers/specs/2026-09-03-admin-gated-brokers-design.md §6)" >&2
+    exit 1
+  elif [ "$rc2" -ne 0 ]; then
+    echo "FAIL: could not reach the box over SSH (exit $rc2) — admin-gate check not run" >&2
+    exit 1
+  fi
 elif [ "$rc" -ne 1 ]; then
-  echo "FAIL: could not reach the box over SSH (exit $rc) — leak check not run" >&2
+  echo "FAIL: could not reach the box over SSH (exit $rc) — broker-cred check not run" >&2
   exit 1
 fi
 

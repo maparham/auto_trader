@@ -12,7 +12,7 @@ import sqlite3
 import time
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from auto_trader.core.pattern_combine import MODE_ORDER, CombinedMatch, combine
 from auto_trader.core.pattern_matchers import MATCHERS, Matcher
@@ -110,13 +110,13 @@ def _bars(series: Series, start: int, count: int, offset: float) -> list[Pattern
 
 
 @router.post("/api/patterns/search", response_model=PatternSearchResponse)
-async def search_patterns(req: PatternSearchRequest) -> PatternSearchResponse:
+async def search_patterns(req: PatternSearchRequest, request: Request) -> PatternSearchResponse:
     t0 = time.perf_counter()
     # The broker is a cache KEY here, not a routed connection: this endpoint
-    # reads sqlite and never touches a broker object. So resolve it lazily,
-    # only when the client named none — asking the registry unconditionally
-    # would make the route depend on a live broker registry it has no use for.
-    broker = req.broker or deps.default_broker_id()
+    # reads sqlite and never touches a broker object, but the id still gates
+    # data by broker (restricted brokers keep their own cached series), so it
+    # goes through the same admin gate as every other broker-carrying route.
+    broker = deps.resolve_broker(request, req.broker)
 
     query = np.array([[b.o, b.h, b.l, b.c] for b in req.query], dtype=np.float64)
     if not np.isfinite(query).all():

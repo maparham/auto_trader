@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from auto_trader.api.deps import current_user, get_data, guarded
+from auto_trader.api.deps import current_user, get_data, guarded, resolve_broker
 from auto_trader.api.schemas import SlippageDTO
 from auto_trader.core.cost_profiles import COST_PROFILES
 
@@ -50,6 +50,7 @@ async def _broker_prefill(broker_id: str, epic: str) -> dict | None:
 async def get_profile(
     request: Request, epic: str, broker_id: str = Query("capital", alias="broker")
 ) -> dict:
+    broker_id = resolve_broker(request, broker_id)
     user = current_user(request)
     existing = await COST_PROFILES.get(user, epic)
     if existing:
@@ -74,6 +75,7 @@ async def put_profile(request: Request, epic: str, body: CostProfileIn) -> dict:
 async def refetch_profile(
     request: Request, epic: str, broker_id: str = Query("capital", alias="broker")
 ) -> dict:
+    broker_id = resolve_broker(request, broker_id)
     user = current_user(request)
     old = await COST_PROFILES.get(user, epic)
     base = old or _zeroed(epic)

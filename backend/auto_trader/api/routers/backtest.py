@@ -159,6 +159,7 @@ async def backtest(req: BacktestRequest, request: Request) -> BacktestResponse:
     posted `candles`, but only bars at/after `tradeFromTime` are tradeable or
     returned (D6) — that split is what lets a long indicator be fully warm on
     the trading window's first bar."""
+    req.broker = deps.resolve_broker(request, req.broker)
     user = current_user(request)
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
@@ -796,6 +797,7 @@ async def _prefetch_sweep_htf(
 
 @router.post("/api/backtest/sweep/jobs", response_model=SweepJobSubmitResponse)
 async def submit_sweep_job(req: BacktestRequest, request: Request, target: str = "local"):
+    req.broker = deps.resolve_broker(request, req.broker)
     # target=remote: the remote compute host owns validation/probe/job creation, but
     # it must never fetch bars from a broker (COMPUTE_ONLY blocks that). So the local
     # backend fills req.htfCandles from ITS cache here, THEN forwards; the remote runs
@@ -1034,6 +1036,7 @@ def _validate_wfo_combo_hygiene(wf) -> None:
 
 @router.post("/api/backtest/walkforward/jobs", response_model=WfoJobSubmitResponse)
 async def submit_wfo_job(req: BacktestRequest, request: Request, target: str = "local"):
+    req.broker = deps.resolve_broker(request, req.broker)
     # target=remote: fill req.htfCandles from the LOCAL cache, then forward
     # verbatim — the COMPUTE_ONLY remote host runs on shipped bars and never
     # fetches from a broker (mirrors submit_sweep_job).

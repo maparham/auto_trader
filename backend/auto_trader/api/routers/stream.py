@@ -70,17 +70,30 @@ async def ws_candles(websocket: WebSocket) -> None:
     await websocket.accept()
     epic = websocket.query_params.get("epic", "")
     res_raw = websocket.query_params.get("resolution", Resolution.MINUTE.value)
-    broker_id = websocket.query_params.get("broker") or deps.default_broker_id()
-    # Bid (sell) / mid / ask (buy) — global chart setting; unknown values fall
-    # back to mid in pick_side, so a bad param can't break the stream.
-    price_side = websocket.query_params.get("priceSide", "mid")
     # Resolve the data broker by id. An unknown broker can never succeed on retry,
     # so it's fatal — the client stops reconnecting to the same bad URL.
     assert deps._registry is not None, "registry not initialised"
+    admin = deps.request_is_admin(websocket)
+    broker_id = websocket.query_params.get("broker") or deps._registry.default_data_id(
+        unrestricted_only=not admin
+    )
+    # Bid (sell) / mid / ask (buy) — global chart setting; unknown values fall
+    # back to mid in pick_side, so a bad param can't break the stream.
+    price_side = websocket.query_params.get("priceSide", "mid")
     broker = deps._registry.data.get(broker_id)
     if broker is None:
         await websocket.send_json(
             {"type": "error", "detail": f"unknown broker {broker_id}", "fatal": True}
+        )
+        await websocket.close()
+        return
+    if not admin and deps._registry.is_restricted(broker_id):
+        await websocket.send_json(
+            {
+                "type": "error",
+                "detail": f"broker '{broker_id}' requires admin access",
+                "fatal": True,
+            }
         )
         await websocket.close()
         return

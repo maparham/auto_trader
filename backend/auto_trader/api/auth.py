@@ -24,6 +24,8 @@ from starlette.responses import JSONResponse
 
 JWKS_URL_ENV = "CLERK_JWKS_URL"
 AUTHORIZED_PARTIES_ENV = "CLERK_AUTHORIZED_PARTIES"
+ADMIN_EMAILS_ENV = "ADMIN_EMAILS"
+ADMIN_USER_IDS_ENV = "ADMIN_USER_IDS"
 DEV_USER_ID = "dev"
 
 log = logging.getLogger(__name__)
@@ -57,16 +59,29 @@ def auth_enabled() -> bool:
     return bool(os.environ.get(JWKS_URL_ENV))
 
 
+def _csv_env(name: str) -> list[str]:
+    return [p.strip() for p in os.environ.get(name, "").split(",") if p.strip()]
+
+
 def _authorized_parties() -> list[str]:
-    return [
-        p.strip()
-        for p in os.environ.get(AUTHORIZED_PARTIES_ENV, "").split(",")
-        if p.strip()
-    ]
+    return _csv_env(AUTHORIZED_PARTIES_ENV)
 
 
-def verify_token(token: str) -> str:
-    """Verify a Clerk session JWT; return its `sub` (the Clerk user id).
+def is_admin_claims(claims: dict) -> bool:
+    """Whether the verified claims belong to an admin: `email` claim (present
+    only when the Clerk session token is customized to carry it) against
+    ADMIN_EMAILS, or `sub` against ADMIN_USER_IDS. Fails closed on both."""
+    email = claims.get("email")
+    if isinstance(email, str) and email.lower() in {
+        e.lower() for e in _csv_env(ADMIN_EMAILS_ENV)
+    }:
+        return True
+    sub = claims.get("sub")
+    return isinstance(sub, str) and sub in _csv_env(ADMIN_USER_IDS_ENV)
+
+
+def _verify_claims(token: str) -> dict:
+    """Verify a Clerk session JWT; return its claims dict.
 
     Raises AuthError on ANY failure — including JWKS fetch problems — so the
     middleware fails closed with a 401 rather than a 500."""
@@ -90,7 +105,12 @@ def verify_token(token: str) -> str:
     if not isinstance(sub, str) or not sub:
         log.info("auth failed: missing or invalid sub claim")
         raise AuthError(INVALID_TOKEN_MSG)
-    return sub
+    return claims
+
+
+def verify_token(token: str) -> str:
+    """Verify a Clerk session JWT; return its `sub` (the Clerk user id)."""
+    return _verify_claims(token)["sub"]
 
 
 def install_auth(app: FastAPI) -> None:
@@ -118,6 +138,7 @@ def install_auth(app: FastAPI) -> None:
     async def _auth(request: Request, call_next):
         if not auth_enabled():
             request.state.user_id = DEV_USER_ID
+            request.state.is_admin = True
             return await call_next(request)
         path = request.url.path
         # The MCP bridge is local-only; in hosted mode it does not exist.
@@ -132,11 +153,13 @@ def install_auth(app: FastAPI) -> None:
                 status_code=401, content={"detail": "missing bearer token"}
             )
         try:
-            # verify_token can block on a JWKS HTTP fetch (cold cache, key
+            # _verify_claims can block on a JWKS HTTP fetch (cold cache, key
             # rotation); keep that off the event loop.
-            request.state.user_id = await asyncio.to_thread(
-                verify_token, authz[len("Bearer ") :]
+            claims = await asyncio.to_thread(
+                _verify_claims, authz[len("Bearer ") :]
             )
+            request.state.user_id = claims["sub"]
+            request.state.is_admin = is_admin_claims(claims)
         except AuthError as e:
             return JSONResponse(status_code=401, content={"detail": str(e)})
         return await call_next(request)
@@ -154,11 +177,14 @@ async def verify_ws(websocket: WebSocket) -> str | None:
     call before OR after accept(); Starlette turns a pre-accept close into a
     handshake denial."""
     if not auth_enabled():
+        websocket.state.is_admin = True
         return DEV_USER_ID
     token = websocket.query_params.get("token", "")
     if token:
         try:
-            return await asyncio.to_thread(verify_token, token)
+            claims = await asyncio.to_thread(_verify_claims, token)
+            websocket.state.is_admin = is_admin_claims(claims)
+            return claims["sub"]
         except AuthError:
             pass
     await websocket.close(code=WS_AUTH_CLOSE_CODE)

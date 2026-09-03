@@ -93,6 +93,7 @@ def _all_row_nodes(req: ExprBacktestRequest, instances=None) -> list[N.Node]:
 
 @router.post("/api/expr/backtest")
 async def expr_backtest(req: ExprBacktestRequest, request: Request):
+    req.broker = deps.resolve_broker(request, req.broker)
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
     user = deps.current_user(request)
@@ -255,6 +256,7 @@ async def submit_expr_sweep_job(req: ExprBacktestRequest, request: Request):
     a shared singleton), so there is no separate expr poll/cancel route. HTF is
     combo-invariant for a lit: sweep (timeframes are name tokens, never sweepable
     number literals), so req.htfCandles ships to the workers as-is."""
+    req.broker = deps.resolve_broker(request, req.broker)
     if req.sweep is None or not req.sweep.combos:
         raise HTTPException(422, "sweep.combos is required")
     bounds = req.sweep.windows
@@ -307,6 +309,7 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest, request: Request):
     from ..routers.backtest import (
         _persist_wfo, _plan_wfo_schemes, _validate_wfo_combo_hygiene,
     )
+    req.broker = deps.resolve_broker(request, req.broker)
     wf = req.walkforward
     if wf is None or not wf.combos:
         raise HTTPException(422, "walkforward.combos is required")
@@ -362,7 +365,8 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest, request: Request):
 
 
 @router.post("/api/expr/series")
-async def expr_series(req: ExprSeriesRequest):
+async def expr_series(req: ExprSeriesRequest, request: Request):
+    req.broker = deps.resolve_broker(request, req.broker)
     instances = request_instances(req)
     try:
         node = parse(req.expr)
@@ -421,7 +425,8 @@ async def expr_series(req: ExprSeriesRequest):
 
 
 @router.post("/api/expr/closeness")
-async def expr_closeness(req: ExprClosenessRequest):
+async def expr_closeness(req: ExprClosenessRequest, request: Request):
+    req.broker = deps.resolve_broker(request, req.broker)
     instances = request_instances(req)
     try:
         nodes = [parse(expr) for expr in req.rows]

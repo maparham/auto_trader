@@ -11,7 +11,8 @@
 // The broker list is derived from GET /api/brokers (one row per distinct broker).
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { brokerLabel, type BrokerAccount } from "./lib/trading";
+import { brokerLabel, isAdminAccount, type BrokerAccount } from "./lib/trading";
+import { CLERK_ENABLED } from "./lib/authToken";
 import Tooltip from "./components/Tooltip";
 
 interface Props {
@@ -56,15 +57,31 @@ export default function BrokerSelector({ accounts, activeBroker, onChange }: Pro
     return out;
   }, [accounts]);
 
+  // Hosted-only admin cue. Dev mode is always "admin" backend-side, so the chip
+  // keys off CLERK_ENABLED too — otherwise every local build would wear it.
+  // Re-evaluated whenever the accounts prop changes (App sets it right after the
+  // fetchBrokers that also feeds noteIsAdmin), so no state/prop plumbing needed.
+  const showAdmin = CLERK_ENABLED && isAdminAccount();
+
   return (
     <div className="broker-selector" ref={menuRef}>
-      <Tooltip content="Active broker (workspace)">
+      <Tooltip
+        content={
+          showAdmin
+            ? [
+                "Active broker (workspace)",
+                "Admin account: credentialed brokers and dealing are enabled.",
+              ]
+            : "Active broker (workspace)"
+        }
+      >
         <button
           className="anchor-btn broker-selector-btn"
           aria-haspopup="menu"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
         >
+          {showAdmin && <span className="broker-admin-chip">Admin</span>}
           <span className="broker-selector-label">{brokerLabel(activeBroker)}</span>
           <svg
             className="tb-caret"

@@ -4065,6 +4065,14 @@
 .env-dot.live { background: var(--danger); } /* real money */
 .broker-selector-label { font-weight: 500; color: var(--text); }
 
+/* Hosted admin cue on the broker selector: this account passes the backend's
+   admin gate (credentialed brokers + dealing). Never shown in dev builds. */
+.broker-admin-chip {
+  padding: 2px 5px; border-radius: 4px; flex: none;
+  font-size: 9px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;
+  color: #26a69a; background: rgba(38, 166, 154, 0.14);
+}
+
 /* z 100, matching .menu > .dropdown: this drops out of the tab bar and hangs
    DOWN into the chart region, so it overlaps the unpinned backtest overlay
    (z 55) — at its old z 50 it was painted behind the panel. See the band rule

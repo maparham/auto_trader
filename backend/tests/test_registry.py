@@ -199,13 +199,17 @@ def test_default_data_id_falls_back_when_capital_absent(monkeypatch) -> None:
 
 def test_broker_query_resolves_empty_to_default(monkeypatch) -> None:
     """Routes take ?broker= via deps.broker_query: absent/empty lands on the
-    default registered broker, an explicit id passes through untouched."""
+    default registered broker, an explicit id passes through untouched.
+
+    broker_query now also takes the request (for the admin gate); passing
+    None is safe here since dev mode (no CLERK_JWKS_URL) short-circuits
+    request_is_admin to True before it ever touches the request object."""
     from auto_trader.api import deps
 
     monkeypatch.setattr(settings, "api_key", "", raising=False)
     monkeypatch.setattr(deps, "_registry", build_registry())
-    assert deps.broker_query("") == "dukascopy"
-    assert deps.broker_query("yfinance") == "yfinance"
+    assert deps.broker_query(None, "") == "dukascopy"
+    assert deps.broker_query(None, "yfinance") == "yfinance"
 
 
 def test_get_data_unknown_broker_is_404() -> None:

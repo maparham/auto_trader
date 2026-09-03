@@ -19,8 +19,8 @@ from typing import TypeVar
 
 from fastapi import HTTPException, Query, Request
 
+from auto_trader.api.auth import auth_enabled
 from auto_trader.api.guard import COMPUTE_ONLY_ENV
-
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.brokers.capital_stream import SECONDS_INTERVALS
 from auto_trader.brokers.ig import IGAllowanceExceeded, IGBroker
@@ -68,11 +68,37 @@ def default_broker_id() -> str:
     return _registry.default_data_id()
 
 
-def broker_query(broker: str = Query("")) -> str:
-    """The ?broker= param as a route dependency. Empty/absent resolves to the
-    default registered broker, so a deployment without capital creds (where the
-    old literal "capital" default would 404) still serves bare requests."""
-    return broker or default_broker_id()
+def request_is_admin(obj) -> bool:
+    """Admin flag for a Request OR WebSocket: True when auth is off (local
+    dev), else whatever the auth layer stamped (absent = False, fail closed)."""
+    if not auth_enabled():
+        return True
+    return bool(getattr(obj.state, "is_admin", False))
+
+
+def resolve_broker(request: Request, broker_id: str) -> str:
+    """Resolve a caller-supplied broker id (possibly empty) to a data broker
+    this request may use; 403 for non-admin access to a restricted broker."""
+    assert _registry is not None, "registry not initialised"
+    if request_is_admin(request):
+        return broker_id or _registry.default_data_id()
+    bid = broker_id or _registry.default_data_id(unrestricted_only=True)
+    if _registry.is_restricted(bid):
+        raise HTTPException(403, f"broker '{bid}' requires admin access")
+    return bid
+
+
+def require_admin(request: Request) -> None:
+    """Router-level dependency: the whole exec/dealing surface is admin-only
+    in hosted mode (the paper book and dealing accounts are global)."""
+    if not request_is_admin(request):
+        raise HTTPException(403, "dealing requires admin access")
+
+
+def broker_query(request: Request, broker: str = Query("")) -> str:
+    """The ?broker= param as a route dependency: resolves the default and
+    enforces the admin gate (see resolve_broker)."""
+    return resolve_broker(request, broker)
 
 
 def current_user(request: Request) -> str:
