@@ -262,6 +262,31 @@ def case_flat_lead_trap() -> Case:
     )
 
 
+def case_pivot_trap() -> Case:
+    ts, ohlc = load_segment(DB_PATH, "dukascopy", "US100", "MINUTE_5", 1742000000, 1754000000)
+    scale = bar_scale(ohlc)
+    rng = np.random.default_rng(909)
+    query = build_pattern("double-top", 48, scale, rng, amplitude=30, noise=1.0)
+    goods = [
+        build_pattern("double-top", 48, scale, rng, amplitude=30, noise=2.0),
+        build_pattern("double-top", 48, scale, rng, amplitude=30, noise=2.5),
+        tempo(build_pattern("double-top", 48, scale, rng, amplitude=30, noise=1.5), 1.26),
+    ]
+    bads = [
+        # The same path with one swing extreme moved: cleaner than every good
+        # (noise 1.0 vs 2.0+), so a pointwise metric is tempted to rank the
+        # wrong structure above the right one under noise.
+        build_pattern("lower-high-top", 48, scale, rng, amplitude=30, noise=1.0),
+        build_pattern("lower-high-top", 48, scale, rng, amplitude=30, noise=1.5),
+        build_pattern("higher-high-top", 48, scale, rng, amplitude=30, noise=1.0),
+    ]
+    return _assemble(
+        "pivot-trap",
+        "A double top; the same path with its second peak moved down or up as decoys.",
+        ts, ohlc, query, goods, bads,
+    )
+
+
 ALL_CASES = (
     case_v_bottom_noise,
     case_tempo_warp,
@@ -271,4 +296,5 @@ ALL_CASES = (
     case_real_recurrence,
     case_short_query,
     case_flat_lead_trap,
+    case_pivot_trap,
 )

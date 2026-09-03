@@ -43,6 +43,11 @@ ARCHETYPES: dict[str, tuple[tuple[float, float], ...]] = {
     "top-lead-v": ((0.0, 0.92), (0.07, 1.0), (0.14, 0.94), (0.21, 1.0), (0.28, 0.95),
                    (0.35, 0.97), (0.55, 0.05), (0.75, 0.12), (1.0, 0.55)),
     "flat-lead-v": ((0.0, 0.965), (0.35, 0.965), (0.55, 0.05), (0.75, 0.12), (1.0, 0.55)),
+    # The pivot-level traps: the double-top's exact path with ONE swing
+    # extreme moved. A pointwise distance sees a few points slightly off; a
+    # chartist sees a different pattern (a lower high / a breakout).
+    "lower-high-top": ((0.0, 0.0), (0.25, 1.0), (0.5, 0.55), (0.75, 0.72), (1.0, 0.15)),
+    "higher-high-top": ((0.0, 0.0), (0.25, 1.0), (0.5, 0.55), (0.75, 1.28), (1.0, 0.15)),
 }
 
 

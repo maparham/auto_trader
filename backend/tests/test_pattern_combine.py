@@ -41,6 +41,28 @@ def test_score_window_handles_unequal_lengths(series):
     assert all(np.isfinite(v) for v in d.values())
 
 
+def test_score_window_shape_matches_the_shape_modes_own_formula(series):
+    # The "all" tab's shape column must be the number the shape mode itself
+    # would show, pivot term included — otherwise the tabs disagree on the
+    # same window.
+    from auto_trader.core.pattern_shape import (
+        ACTIVITY_WEIGHT,
+        PIVOT_WEIGHT,
+        activity_distance,
+        multires_distance,
+        pivot_distance,
+    )
+
+    query, window = series[100:140], series[300:340]
+    qc, wc = query[:, 3:4], window[:, 3:4]
+    expected = (
+        multires_distance(qc, wc)
+        + ACTIVITY_WEIGHT * activity_distance(qc, wc)
+        + PIVOT_WEIGHT * pivot_distance(qc, wc)
+    )
+    assert score_window(query, window)["shape"] == pytest.approx(expected)
+
+
 def test_overlapping_windows_across_modes_fold_into_one_event(series):
     query = series[100:130]
     hits = {

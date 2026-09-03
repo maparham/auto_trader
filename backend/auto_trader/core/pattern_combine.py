@@ -20,7 +20,13 @@ import numpy as np
 
 from .pattern_dtw import dtw_distance
 from .pattern_scan import Match, stretch, zflat
-from .pattern_shape import ACTIVITY_WEIGHT, activity_distance, multires_distance
+from .pattern_shape import (
+    ACTIVITY_WEIGHT,
+    PIVOT_WEIGHT,
+    activity_distance,
+    multires_distance,
+    pivot_distance,
+)
 
 # The mode keys this module combines, in the order clustering consumes them.
 # Shape first: when two modes surface overlapping windows for the same event,
@@ -61,7 +67,8 @@ def score_window(query_ohlc: np.ndarray, window_ohlc: np.ndarray) -> dict[str, f
     w_close = np.ascontiguousarray(window_ohlc[:, 3:4])
     return {
         "shape": multires_distance(q_close, w_close)
-        + ACTIVITY_WEIGHT * activity_distance(q_close, w_close),
+        + ACTIVITY_WEIGHT * activity_distance(q_close, w_close)
+        + PIVOT_WEIGHT * pivot_distance(q_close, w_close),
         "ohlc": _rigid_distance(query_ohlc, window_ohlc),
         "close": _rigid_distance(q_close, w_close),
         "dtw": dtw_distance(query_ohlc, window_ohlc),

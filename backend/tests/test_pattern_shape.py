@@ -111,6 +111,109 @@ class TestRefine:
         assert by_start[50].distance < by_start[200].distance
 
 
+def _knot_path(knots, m, amplitude=30.0):
+    """Close path from (t, value) knots in the unit square, like the bench
+    archetypes: np.interp over m bars, scaled to `amplitude`."""
+    t = np.array([k[0] for k in knots])
+    v = np.array([k[1] for k in knots])
+    return np.interp(np.linspace(0.0, 1.0, m), t, v) * amplitude
+
+
+_DOUBLE_TOP = ((0.0, 0.0), (0.25, 1.0), (0.5, 0.55), (0.75, 0.97), (1.0, 0.15))
+_LOWER_HIGH = ((0.0, 0.0), (0.25, 1.0), (0.5, 0.55), (0.75, 0.72), (1.0, 0.15))
+
+
+class TestPivotDistance:
+    """The pivot-level term: swing extremes must sit at the same relative
+    heights in the window as in the query — the 'second top clearly lower'
+    decoy a pointwise path distance barely notices."""
+
+    def test_identical_path_scores_near_zero(self):
+        from auto_trader.core.pattern_shape import pivot_distance
+
+        rng = np.random.default_rng(20)
+        q = _knot_path(_DOUBLE_TOP, 48) + rng.normal(0, 0.5, 48)
+        assert pivot_distance(q, q.copy()) == pytest.approx(0.0, abs=1e-9)
+
+    def test_level_and_scale_drop_out(self):
+        from auto_trader.core.pattern_shape import pivot_distance
+
+        rng = np.random.default_rng(21)
+        q = _knot_path(_DOUBLE_TOP, 48) + rng.normal(0, 0.5, 48)
+        assert pivot_distance(q, q * 3.0 + 500.0) == pytest.approx(0.0, abs=1e-9)
+
+    def test_lower_second_peak_scores_worse_than_true_recurrence(self):
+        from auto_trader.core.pattern_shape import pivot_distance
+
+        rng = np.random.default_rng(22)
+        q = _knot_path(_DOUBLE_TOP, 48) + rng.normal(0, 0.5, 48)
+        true_rec = _knot_path(_DOUBLE_TOP, 48) + rng.normal(0, 1.0, 48)
+        lower = _knot_path(_LOWER_HIGH, 48) + rng.normal(0, 0.5, 48)
+        assert pivot_distance(q, true_rec) < pivot_distance(q, lower)
+        assert pivot_distance(q, lower) > 0.15
+
+    def test_uniform_stretch_stays_small(self):
+        from auto_trader.core.pattern_shape import pivot_distance
+
+        rng = np.random.default_rng(23)
+        q = _knot_path(_DOUBLE_TOP, 48) + rng.normal(0, 0.5, 48)
+        for m in (38, 61, 96):
+            stretched = np.interp(np.linspace(0, 47, m), np.arange(48), q)
+            assert pivot_distance(q, stretched) < 0.1
+
+    def test_trend_query_without_swings_scores_zero(self):
+        from auto_trader.core.pattern_shape import pivot_distance
+
+        rng = np.random.default_rng(24)
+        q = np.linspace(0.0, 30.0, 48) + rng.normal(0, 0.4, 48)
+        w = np.linspace(0.0, 30.0, 48) + rng.normal(0, 1.5, 48)
+        assert pivot_distance(q, w) == 0.0
+
+    def test_short_query_gated_off(self):
+        from auto_trader.core.pattern_shape import pivot_distance
+
+        rng = np.random.default_rng(25)
+        q = _knot_path(_DOUBLE_TOP, 12) + rng.normal(0, 0.3, 12)
+        w = _knot_path(_LOWER_HIGH, 12) + rng.normal(0, 0.3, 12)
+        assert pivot_distance(q, w) == 0.0
+
+    def test_shallow_double_top_still_confirms_its_pivots(self):
+        # A double top with a shallow valley (0.3 of the range) is still a
+        # double top to a chartist; the zigzag threshold must confirm both
+        # peaks and the valley so the term engages rather than gating off.
+        # A real US100 selection with this geometry got 1 pivot at the old
+        # 0.2 threshold and the term contributed nothing.
+        from auto_trader.core.pattern_shape import query_pivots
+
+        shallow = ((0.0, 0.0), (0.25, 1.0), (0.5, 0.7), (0.75, 0.97), (1.0, 0.15))
+        rng = np.random.default_rng(30)
+        q = _knot_path(shallow, 48) + rng.normal(0, 0.5, 48)
+        piv = query_pivots(q)
+        assert len(piv) >= 3
+        assert [d for _, _, d in piv[:3]] == [1, -1, 1]
+
+    def test_refine_demotes_lower_high_decoy(self):
+        # End-to-end: a clean lower-high decoy that the pointwise metric
+        # slightly prefers over a noisy true double top must lose the
+        # re-rank once pivot levels are compared.
+        from auto_trader.core.pattern_shape import refine
+
+        rng = np.random.default_rng(26)
+        q = _knot_path(_DOUBLE_TOP, 48) + rng.normal(0, 0.5, 48)
+        rng2 = np.random.default_rng(126)
+        true_rec = _knot_path(_DOUBLE_TOP, 48) + rng2.normal(0, 2.4, 48)
+        decoy = _knot_path(_LOWER_HIGH, 48) + rng2.normal(0, 0.4, 48)
+        series = np.concatenate(
+            [np.full(10, q[0]), true_rec, np.full(10, q[0]), decoy]
+        ).reshape(-1, 1)
+        hits = [
+            Match(start=10 + 48 + 10, length=48, distance=0.1, forward_len=0),
+            Match(start=10, length=48, distance=0.2, forward_len=0),
+        ]
+        out = refine(series, q.reshape(-1, 1), hits)
+        assert out[0].start == 10  # matching peak levels win
+
+
 class TestActivityProfile:
     """The auxiliary term of shape refinement: WHERE structure lives along the
     path, on a scale the amplitude hierarchy cannot squash."""

@@ -35,6 +35,10 @@ class Variant:
     # against a structured one), which the amplitude-normalized shape
     # distance cannot see.
     activity: float = 0.0
+    # Weight of the pivot-level term (0 = off): compares the heights of the
+    # query's swing extremes against the window's at the same relative
+    # positions — the lower-second-top decoy a pointwise distance shrugs at.
+    pivot: float = 0.0
 
 
 VARIANTS: dict[str, Variant] = {
@@ -60,14 +64,19 @@ VARIANTS: dict[str, Variant] = {
         Variant("shape+act.10", scan="close", smooth_frac=1 / 8, multires=True, activity=0.10),
         Variant("shape+act.15", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15),
         Variant("shape+act.25", scan="close", smooth_frac=1 / 8, multires=True, activity=0.25),
+        # Pivot-level term on top of the shipped shape config (mres + act.15).
+        Variant("shape+piv.05", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.05),
+        Variant("shape+piv.10", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.10),
+        Variant("shape+piv.15", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.15),
+        Variant("shape+piv.25", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.25),
     )
 }
 
-# The production "shape" mode: smooth-m8 scan + multires + the activity
-# profile at pattern_shape.ACTIVITY_WEIGHT (same code, imported from core).
-# Named here so reports read against the shipped configuration.
+# The production "shape" mode: smooth-m8 scan + multires + the activity and
+# pivot-level terms at pattern_shape's shipped weights (same code, imported
+# from core). Named here so reports read against the shipped configuration.
 VARIANTS["shape"] = Variant(
-    "shape", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15
+    "shape", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.1
 )
 
 
@@ -93,7 +102,10 @@ def run_variant(
         scan_query = smooth_close(close_query, kernel)
 
     s1, s2 = prefix_sums(scan_arr)
-    refining = variant.multires or variant.dtw or variant.swing or variant.activity > 0
+    refining = (
+        variant.multires or variant.dtw or variant.swing
+        or variant.activity > 0 or variant.pivot > 0
+    )
     hits, _ = scan(
         scan_arr,
         s1,
@@ -106,13 +118,13 @@ def run_variant(
         scales=DEFAULT_SCALES,
     )
 
-    if variant.multires or variant.swing or variant.activity:
+    if variant.multires or variant.swing or variant.activity or variant.pivot:
         # Refinement looks at the RAW close path, not the smoothed scan array:
         # stage one decides what surfaces, stage two ranks what the user sees.
         hits = rescore(
             close_series, close_query, hits,
             use_multires=variant.multires, use_swing=variant.swing,
-            activity_weight=variant.activity,
+            activity_weight=variant.activity, pivot_weight=variant.pivot,
         )
     if variant.dtw:
         hits = dtw_refine(scan_arr, scan_query, hits)
