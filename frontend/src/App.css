@@ -2177,6 +2177,51 @@
 .bt-heatstrip > span { flex: 1 1 0; min-width: 0; }
 .bt-heatstrip > span.on { background: var(--accent, #2b7); }
 .bt-heatstrip > span.off { background: var(--muted-bg, #e5e7eb); }
+/* Range calendar popover: month grid + 24h time strip. Compound selector, like
+   .dropdown.bt-session-dropdown below: .dropdown's own z-index rule sits LATER
+   in this file at equal specificity, so a bare .bt-calendar-pop would lose to
+   it and render behind the modal. */
+.dropdown.bt-calendar-pop { position: fixed; z-index: 2100; width: max-content; min-width: 0; padding: 10px; }
+.bt-cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.bt-cal-head button {
+  font: inherit; width: 24px; height: 24px; padding: 0; cursor: pointer;
+  color: var(--text-dim); background: none; border: 1px solid transparent; border-radius: 4px;
+}
+.bt-cal-head button:hover { background: var(--hover); color: var(--text); }
+.bt-cal-title { font-size: 12px; color: var(--text); }
+.bt-cal-grid { display: grid; grid-template-columns: repeat(7, 28px); gap: 2px; }
+/* Weekday headers double as daysOfWeek toggles; off columns read dimmed. */
+.bt-cal-dow {
+  font: inherit; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em;
+  padding: 2px 0; color: var(--text-faint); background: none; border: 0; border-radius: 3px; cursor: pointer;
+}
+.bt-cal-dow.on { color: var(--text-dim); }
+.bt-cal-dow:hover { background: var(--hover); }
+.bt-cal-cell {
+  font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+  height: 26px; padding: 0; color: var(--text);
+  background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer;
+}
+.bt-cal-cell:hover { background: var(--hover); }
+.bt-cal-cell.in-span { background: color-mix(in srgb, var(--accent, #2b7) 22%, transparent); }
+.bt-cal-cell.in-span:hover { background: color-mix(in srgb, var(--accent, #2b7) 35%, transparent); }
+.bt-cal-cell.off { opacity: 0.35; text-decoration: line-through; }
+.bt-cal-cell.today { border-color: var(--accent, #2b7); }
+.bt-cal-cell.armed { background: var(--accent, #2b7); color: var(--accent-text, #fff); }
+.bt-cal-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.bt-cal-timelabel {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 11px; color: var(--text-dim);
+}
+/* 24h time-of-day strip; the filled .win segment(s) mark the trading window
+   (two segments when the window wraps past midnight). */
+.bt-timestrip {
+  position: relative; height: 14px; margin-top: 6px;
+  border-radius: 4px; background: var(--muted-bg, #e5e7eb);
+  cursor: ew-resize; touch-action: none;
+}
+.bt-timestrip .win { position: absolute; top: 0; bottom: 0; background: var(--accent, #2b7); border-radius: 4px; }
+.bt-timestrip.is-off { opacity: 0.45; pointer-events: none; }
 /* Backtest range: From/To + pick button share one row. datetime-local can
    neither shrink nor be stretched gracefully (shrinking overlaps its calendar
    icon; .al-row's flex:1 stretch leaves dead space before it), so the inputs

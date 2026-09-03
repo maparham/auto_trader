@@ -1358,3 +1358,99 @@ describe("BacktestSettingsModal mode switch placement", () => {
     expect(document.querySelector(".bt-run-btn")).toBeTruthy();
   });
 });
+
+// The range calendar popover (RangeCalendarPopover) is wired in behind a
+// button on the range row. It portals to document.body, so its cells are
+// queried against `document`, not the render container. Assertions go
+// through the Run button's captured config rather than the datetime-local
+// inputs, since those render browser-local while the arithmetic here is
+// pinned to chartTimezone="UTC".
+describe("BacktestSettingsModal range calendar popover", () => {
+  // A fixed custom span (Jan 10..20 2024 inclusive, UTC) so the popover opens
+  // on a known month with deterministic day cells — same fixture shape as
+  // RangeCalendarPopover.test.tsx.
+  function customRangeConfig() {
+    const cfg = defaultBacktestConfig();
+    cfg.range = { ...cfg.range, mode: "custom", fromMs: Date.UTC(2024, 0, 10), toMs: Date.UTC(2024, 0, 21) };
+    return cfg;
+  }
+
+  function openCalendar() {
+    fireEvent.click(screen.getByRole("button", { name: "Open range calendar" }));
+  }
+
+  function cell(ds: string): HTMLElement {
+    const el = document.querySelector(`[data-date="${ds}"]`);
+    if (!el) throw new Error(`no cell for ${ds}`);
+    return el as HTMLElement;
+  }
+
+  function runAndCapture(onRun: ReturnType<typeof vi.fn>): BacktestConfig {
+    fireEvent.click(document.querySelector(".bt-run-btn") as HTMLElement);
+    expect(onRun).toHaveBeenCalled();
+    return onRun.mock.calls[onRun.mock.calls.length - 1][0] as BacktestConfig;
+  }
+
+  it("clicking the calendar button mounts the popover", () => {
+    renderModal(customRangeConfig());
+    expect(document.querySelector(".bt-calendar-pop")).toBeNull();
+    openCalendar();
+    expect(document.querySelector(".bt-calendar-pop")).toBeTruthy();
+  });
+
+  it("clicking the trigger button twice leaves the popover closed", () => {
+    // fireEvent.click alone doesn't reproduce the race (RTL doesn't synthesize
+    // the pointerdown a real click also fires); the second click below fires
+    // both, matching the browser's actual event order (pointerdown, then click).
+    renderModal(customRangeConfig());
+    const btn = screen.getByRole("button", { name: "Open range calendar" });
+    fireEvent.click(btn); // 1st click: opens (popover not yet mounted, no listener race)
+    expect(document.querySelector(".bt-calendar-pop")).toBeTruthy();
+    fireEvent.pointerDown(btn); // capture-phase dismissal listener: must ignore (ignoreRef)
+    fireEvent.click(btn); // then the button's own onClick toggles closed
+    expect(document.querySelector(".bt-calendar-pop")).toBeNull();
+  });
+
+  it("selecting a span in the popover lands in the run config as a custom range", () => {
+    const onRun = vi.fn();
+    render(
+      <BacktestSettingsModal
+        initial={customRangeConfig()} epic="TEST" brokerId="capital" resolution="MINUTE" controller={null}
+        chartTimezone="UTC" onRun={onRun} onClose={vi.fn()}
+      />,
+    );
+    openCalendar();
+    fireEvent.click(cell("2024-01-25")); // outside current span -> arms
+    fireEvent.click(cell("2024-01-28")); // completes the span
+
+    const next = runAndCapture(onRun);
+    expect(next.range.mode).toBe("custom");
+    expect(next.range.fromMs).toBe(Date.UTC(2024, 0, 25));
+    expect(next.range.toMs).toBe(Date.UTC(2024, 0, 29));
+  });
+
+  it("a date-cell exclusion lands in the run config's mask", () => {
+    const onRun = vi.fn();
+    const initial = customRangeConfig();
+    initial.range.mask = { enabled: true };
+    render(
+      <BacktestSettingsModal
+        initial={initial} epic="TEST" brokerId="capital" resolution="MINUTE" controller={null}
+        chartTimezone="UTC" onRun={onRun} onClose={vi.fn()}
+      />,
+    );
+    openCalendar();
+    fireEvent.click(cell("2024-01-15")); // inside Jan 10..20 -> excludeDates toggle
+
+    const next = runAndCapture(onRun);
+    expect(next.range.mask?.excludeDates).toContain("2024-01-15");
+  });
+
+  it("Escape closes the popover", () => {
+    renderModal(customRangeConfig());
+    openCalendar();
+    expect(document.querySelector(".bt-calendar-pop")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.querySelector(".bt-calendar-pop")).toBeNull();
+  });
+});

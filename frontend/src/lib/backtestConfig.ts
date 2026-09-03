@@ -85,6 +85,9 @@ export interface RecurrenceMask {
   daysOfWeek?: number[];    // JS getDay 0=Sun..6=Sat; absent/empty = all
   monthsOfYear?: number[];  // 1=Jan..12=Dec; absent/empty = all
   daysOfMonth?: number[];   // 1..31; absent/empty = all
+  // Specific tz-local calendar dates ("YYYY-MM-DD") that never trade — manual
+  // holiday click-off from the range calendar. Absent/empty = none excluded.
+  excludeDates?: string[];
   timeOfDay?: DayTimeWindow;
   session?: SessionPreset;
   tz?: string;              // IANA; default "UTC"

@@ -282,6 +282,7 @@ class RecurrenceMaskDTO(BaseModel):
     daysOfWeek: list[int] = []       # JS getDay 0=Sun..6=Sat
     monthsOfYear: list[int] = []     # 1=Jan..12=Dec
     daysOfMonth: list[int] = []      # 1..31
+    excludeDates: list[str] = []     # "YYYY-MM-DD" tz-local calendar dates, none trade
     timeOfDay: DayTimeWindowDTO | None = None
     tz: str = "UTC"
     # camelCase to match the wire (this DTO uses camelCase attr names, no aliases).
@@ -302,6 +303,7 @@ class RecurrenceMaskDTO(BaseModel):
             days_of_week=tuple(self.daysOfWeek),
             months_of_year=tuple(self.monthsOfYear),
             days_of_month=tuple(self.daysOfMonth),
+            exclude_dates=frozenset(self.excludeDates),
             time_start_min=self.timeOfDay.startMin if self.timeOfDay else None,
             time_end_min=self.timeOfDay.endMin if self.timeOfDay else None,
             tz=self.tz,

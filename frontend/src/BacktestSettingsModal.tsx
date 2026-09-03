@@ -12,6 +12,7 @@ import RunBar, { ModeSeg } from "./components/RunBar";
 import RuleExpressionInput from "./components/RuleExpressionInput";
 import RulePalette from "./components/RulePalette";
 import Tooltip from "./components/Tooltip";
+import RangeCalendarPopover from "./RangeCalendarPopover";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
 import { backtestActionBlockedByReplay } from "./lib/backtest";
 import {
@@ -1226,6 +1227,10 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   // Re-clamp on load: a width saved on a wider monitor must not swallow the
   // chart when reopened on a smaller window.
   const [panelWidth, setPanelWidth] = useState<number>(() => clampWidth(loadBacktestPanelWidth()));
+  // Range calendar popover: open state + the fixed-position anchor measured
+  // from the trigger button at click time.
+  const [calOpen, setCalOpen] = useState(false);
+  const [calAnchor, setCalAnchor] = useState<{ top: number; left: number } | null>(null);
   // Layout mode: pinned docks the panel beside the chart (the chart shrinks —
   // the pre-overlay behaviour); unpinned overlays the chart and auto-hides on
   // chart click. Device-local, like the width.
@@ -1544,12 +1549,19 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
 
   const defaultAvwapAnchor = resolveWindow(cfg, resSeconds, Date.now()).fromMs;
 
+  // Functional updates: the calendar popover can call onSpan then onMaskPatch
+  // back-to-back within one click handler (span completion also defaults the
+  // mask on). Two setCfg calls both closing over the same pre-update `cfg`
+  // would have the second clobber the first's range fields; folding off the
+  // previous state instead composes them correctly.
   function setRange(patch: Partial<RangeConfig>) {
-    setCfg({ ...cfg, range: { ...cfg.range, ...patch } });
+    setCfg((prev) => ({ ...prev, range: { ...prev.range, ...patch } }));
   }
   function setMask(patch: Partial<RecurrenceMask>) {
-    const base: RecurrenceMask = cfg.range.mask ?? { enabled: false };
-    setRange({ mask: { ...base, ...patch } });
+    setCfg((prev) => {
+      const base: RecurrenceMask = prev.range.mask ?? { enabled: false };
+      return { ...prev, range: { ...prev.range, mask: { ...base, ...patch } } };
+    });
   }
 
   // Coverage readout + heat-strip: sample the resolved window on a coarse grid
@@ -2056,8 +2068,24 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     </label>
   );
 
+  const calBtnRef = useRef<HTMLButtonElement>(null);
+
   const rangePicker = (
     <div className="al-row bt-range-row">
+      {calOpen && calAnchor && (
+        <RangeCalendarPopover
+          fromMs={pickerFromMs}
+          toMs={pickerToMs}
+          mask={cfg.range.mask}
+          tz={chartTimezone}
+          timeStripDisabled={resSeconds >= 86400}
+          anchor={calAnchor}
+          onSpan={(fromMs, toMs) => setRange({ mode: "custom", fromMs, toMs })}
+          onMaskPatch={(patch) => setMask(patch)}
+          onClose={() => setCalOpen(false)}
+          ignoreRef={calBtnRef}
+        />
+      )}
       <label className="bt-range-field">
         <span>From</span>
         <input
@@ -2112,6 +2140,28 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         >
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M3 4v8M13 4v8M3 8h10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </button>
+      </Tooltip>
+      <Tooltip content={pickBlocked || "Pick the range visually: month grid + recurrence mask"}>
+        <button
+          ref={calBtnRef}
+          type="button"
+          className="bt-pick-range"
+          disabled={!!pickBlocked}
+          aria-label="Open range calendar"
+          onClick={() => {
+            if (pickBlocked) return;
+            const r = calBtnRef.current?.getBoundingClientRect();
+            if (!r) return;
+            const left = Math.max(8, Math.min(r.left, window.innerWidth - 320 - 8));
+            setCalAnchor({ top: r.bottom + 4, left });
+            setCalOpen((on) => !on);
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="1.5" y="2.5" width="13" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+            <path d="M1.5 5.5h13M5 1v3M11 1v3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
           </svg>
         </button>
       </Tooltip>

@@ -23,6 +23,9 @@ class RecurrenceMask:
     days_of_week: tuple[int, ...] = ()        # JS getDay: 0=Sun..6=Sat; empty = all
     months_of_year: tuple[int, ...] = ()      # 1=Jan..12=Dec; empty = all
     days_of_month: tuple[int, ...] = ()       # 1..31 calendar day; empty = all
+    # Specific tz-local calendar dates ("YYYY-MM-DD") that never trade —
+    # manual holiday click-off from the range calendar. Empty = none excluded.
+    exclude_dates: frozenset[str] = frozenset()
     time_start_min: int | None = None         # minutes from midnight, local to tz
     time_end_min: int | None = None
     tz: str = "UTC"
@@ -54,6 +57,8 @@ def is_active(mask: RecurrenceMask | None, dt: datetime) -> bool:
     if mask.months_of_year and local.month not in mask.months_of_year:
         return False
     if mask.days_of_month and local.day not in mask.days_of_month:
+        return False
+    if mask.exclude_dates and local.strftime("%Y-%m-%d") in mask.exclude_dates:
         return False
     if mask.time_start_min is not None and mask.time_end_min is not None:
         minute = local.hour * 60 + local.minute

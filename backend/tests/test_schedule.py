@@ -57,3 +57,27 @@ def test_filters_are_anded():
     assert is_active(m, _utc(2024, 1, 1, 10, 0)) is True    # Monday, in window
     assert is_active(m, _utc(2024, 1, 1, 18, 0)) is False   # Monday, out of window
     assert is_active(m, _utc(2024, 1, 2, 10, 0)) is False   # Tuesday, in window
+
+
+def test_exclude_dates_blocks_matching_local_date():
+    # 2024-01-01 23:00 UTC is 2024-01-02 08:00 in Tokyo — the TOKYO date matters.
+    m = RecurrenceMask(enabled=True, tz="Asia/Tokyo", exclude_dates=frozenset({"2024-01-02"}))
+    assert is_active(m, _utc(2024, 1, 1, 23, 0)) is False
+    assert is_active(m, _utc(2024, 1, 1, 10, 0)) is True  # still 2024-01-01 in Tokyo
+
+
+def test_exclude_dates_ands_with_other_filters():
+    m = RecurrenceMask(
+        enabled=True, tz="UTC",
+        days_of_week=(1, 2, 3, 4, 5),
+        exclude_dates=frozenset({"2024-01-03"}),  # a Wednesday
+    )
+    assert is_active(m, _utc(2024, 1, 3, 12, 0)) is False  # weekday but excluded
+    assert is_active(m, _utc(2024, 1, 4, 12, 0)) is True   # Thursday, not excluded
+    assert is_active(m, _utc(2024, 1, 6, 12, 0)) is False  # Saturday (weekday filter)
+
+
+def test_exclude_dates_default_empty_changes_nothing():
+    m = RecurrenceMask(enabled=True, tz="UTC")
+    assert m.exclude_dates == frozenset()
+    assert is_active(m, _utc(2024, 1, 3, 12, 0)) is True

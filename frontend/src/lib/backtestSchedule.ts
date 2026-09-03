@@ -66,9 +66,12 @@ function cachedFormat(key: string, make: () => Intl.DateTimeFormat): Intl.DateTi
 }
 
 // Wall-clock fields of `tMs` in `tz`, via Intl (DST-correct).
-function localParts(tMs: number, tz: string): { dow: number; month: number; day: number; minute: number } {
+function localParts(
+  tMs: number,
+  tz: string,
+): { year: number; dow: number; month: number; day: number; minute: number } {
   const fmt = cachedFormat(`parts|${tz}`, () => new Intl.DateTimeFormat("en-US", {
-    timeZone: tz, weekday: "short", month: "numeric", day: "numeric",
+    timeZone: tz, weekday: "short", year: "numeric", month: "numeric", day: "numeric",
     hour: "2-digit", minute: "2-digit", hour12: false,
   }));
   const parts = Object.fromEntries(fmt.formatToParts(tMs).map((p) => [p.type, p.value]));
@@ -76,6 +79,7 @@ function localParts(tMs: number, tz: string): { dow: number; month: number; day:
   let hour = Number(parts.hour);
   if (hour === 24) hour = 0; // some engines emit "24" at midnight
   return {
+    year: Number(parts.year),
     dow: DOW[parts.weekday],
     month: Number(parts.month),
     day: Number(parts.day),
@@ -83,10 +87,18 @@ function localParts(tMs: number, tz: string): { dow: number; month: number; day:
   };
 }
 
+/** The tz-local calendar date of an instant, as "YYYY-MM-DD". Cached per-tz
+ *  formatter (computePeriodBands funnels every bar through isActive). */
+export function tzDateString(tMs: number, tz: string): string {
+  return cachedFormat(`date|${tz}`, () =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }),
+  ).format(tMs);
+}
+
 // Milliseconds that `tz`'s wall clock is ahead of UTC at instant `atMs`
 // (negative when behind). DST-correct via Intl. One-pass; only inaccurate
 // within the ~1h of a DST transition, which never matters for a session label.
-function tzOffsetMs(tz: string, atMs: number): number {
+export function tzOffsetMs(tz: string, atMs: number): number {
   const p = cachedFormat(`offset|${tz}`, () => new Intl.DateTimeFormat("en-US", {
     timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
@@ -150,10 +162,21 @@ function inWindow(minute: number, start: number, end: number): boolean {
 export function isActive(m: RecurrenceMask | undefined, tMs: number): boolean {
   if (!m || !m.enabled) return true;
   const tz = m.tz ?? "UTC";
-  const { dow, month, day, minute } = localParts(tMs, tz);
+  const { year, dow, month, day, minute } = localParts(tMs, tz);
   if (m.daysOfWeek?.length && !m.daysOfWeek.includes(dow)) return false;
   if (m.monthsOfYear?.length && !m.monthsOfYear.includes(month)) return false;
   if (m.daysOfMonth?.length && !m.daysOfMonth.includes(day)) return false;
+  // Built from the fields the one formatToParts call above already produced —
+  // NOT via tzDateString, whose separate formatter would be a second per-bar
+  // Intl call on this hot path (see the profiling note on cachedFormat).
+  if (
+    m.excludeDates?.length &&
+    m.excludeDates.includes(
+      `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    )
+  ) {
+    return false;
+  }
   if (m.timeOfDay && !inWindow(minute, m.timeOfDay.startMin, m.timeOfDay.endMin)) return false;
   return true;
 }

@@ -19,10 +19,6 @@ remove it from here (git history and the memory index track shipped features).
   alert toasts, unread badge, connection splash, App-Nap prevention.
   [spec](superpowers/specs/2026-07-08-tauri-menubar-wrapper-design.md)
 
-- **Custom range calendar picker** — visual calendar for backtest range
-  selection, replacing the native `datetime-local` inputs.
-  [spec](superpowers/specs/2026-07-06-custom-range-calendar-picker-design.md)
-
 ## In progress
 
 - **Slim large modules** — split the 10 biggest modules into focused files.

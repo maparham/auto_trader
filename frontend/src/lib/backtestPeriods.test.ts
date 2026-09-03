@@ -81,4 +81,22 @@ describe("period bands invariant", () => {
       if (isActive(period.mask, t)) expect(inBand(t)).toBe(true);
     }
   });
+
+  it("computePeriodBands splits bands around an excluded date inside an active span", () => {
+    // Hourly bars over 3 consecutive UTC days; the middle day is excluded.
+    const barTimes: number[] = [];
+    for (let d = 1; d <= 3; d++)
+      for (let h = 0; h < 24; h++) barTimes.push(Date.UTC(2024, 0, d, h));
+    const bands = computePeriodBands(
+      {
+        fromMs: Date.UTC(2024, 0, 1),
+        toMs: Date.UTC(2024, 0, 4),
+        mask: { enabled: true, tz: "UTC", excludeDates: ["2024-01-02"] },
+      },
+      barTimes,
+    );
+    expect(bands).toHaveLength(2);
+    expect(bands[0].toMs).toBeLessThan(Date.UTC(2024, 0, 2));
+    expect(bands[1].fromMs).toBeGreaterThanOrEqual(Date.UTC(2024, 0, 3));
+  });
 });
