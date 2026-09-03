@@ -6118,6 +6118,13 @@ span.bt-leg-short { color: var(--neg); }
   font-size: 11px; color: var(--text-dim); }
 .pm-stats b { font-weight: 600; color: var(--text);
   font-variant-numeric: tabular-nums; }
+/* The outcome verdict: the strip's one interpreted reading, so it wears a
+   chip while the raw figures stay plain text. Gray for mixed/small on
+   purpose — only a real lean gets a direction colour. */
+.pm-verdict { padding: 1px 6px; border-radius: 4px; font-weight: 600;
+  background: var(--input-bg); border: 1px solid var(--border); }
+.pm-verdict-up { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 45%, transparent); }
+.pm-verdict-down { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 45%, transparent); }
 .pm-msg { padding: 10px 8px; color: var(--text-dim); }
 .pm-err { color: var(--neg); }
 .pm-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }

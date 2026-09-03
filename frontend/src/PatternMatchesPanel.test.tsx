@@ -622,6 +622,39 @@ describe("summary statistics strip", () => {
     expect(strip.textContent).toContain("0.50");
   });
 
+  it("renders a lean chip when the outcomes are one-sided and the closest half agrees", () => {
+    const res = result({
+      matches: [
+        match({ isSelection: true, forwardPct: 9 }),
+        ...Array.from({ length: 12 }, (_, i) =>
+          match({ ts: 1_600_000_000 + i, forwardPct: i === 11 ? -1 : 1 + i * 0.1 })
+        ),
+      ],
+    });
+    render(<PatternMatchesPanel {...props} result={res} loading={false} error={null} />);
+    const chip = document.querySelector(".pm-verdict")!;
+    expect(chip.textContent).toContain("lean: up");
+    expect(chip.classList.contains("pm-verdict-up")).toBe(true);
+  });
+
+  it("renders the mixed chip on a coin-flip history", () => {
+    const res = result({
+      matches: Array.from({ length: 12 }, (_, i) =>
+        match({ ts: 1_600_000_000 + i, forwardPct: i % 2 ? 1 : -1 })
+      ),
+    });
+    render(<PatternMatchesPanel {...props} result={res} loading={false} error={null} />);
+    expect(document.querySelector(".pm-verdict")!.textContent).toContain("mixed");
+  });
+
+  it("says the sample is too small rather than judging seven outcomes", () => {
+    const res = result({
+      matches: Array.from({ length: 7 }, (_, i) => match({ ts: 1_600_000_000 + i, forwardPct: 2 })),
+    });
+    render(<PatternMatchesPanel {...props} result={res} loading={false} error={null} />);
+    expect(document.querySelector(".pm-verdict")!.textContent).toContain("small");
+  });
+
   it("is absent while loading and when there are no matches", () => {
     render(<PatternMatchesPanel {...props} result={statsResult()} loading={true} error={null} />);
     expect(document.querySelector(".pm-stats")).toBeNull();

@@ -403,3 +403,67 @@ export function summarizeMatches(matches: PatternMatch[]): MatchSummary | null {
     newestTs: Math.max(...real.map((m) => m.ts)),
   };
 }
+
+// ---------------------------------------------------------------------------
+// The outcome verdict: does this history actually lean anywhere, or is the
+// win-rate on the strip a coin flip dressed as a statistic?
+
+/** At least this many decisive (non-zero) outcomes before judging at all. */
+const VERDICT_MIN_N = 8;
+/** Two-sided sign-test p-value a lean must clear. 0.1, not 0.05: the chip
+ *  says "lean", deliberately short of "significant" — matches overlap in
+ *  regime and are correlated, so the test is indicative, never proof. */
+const VERDICT_MAX_P = 0.1;
+
+export interface OutcomeVerdict {
+  kind: "small" | "mixed" | "up" | "down";
+  /** Decisive outcomes judged: rows with aftermath, zeros excluded. */
+  n: number;
+  /** Of `n`, how many moved up. */
+  up: number;
+  /** Two-sided sign-test p-value. Absent below VERDICT_MIN_N, where no test
+   *  was run. */
+  p?: number;
+}
+
+/** P(X <= k) for X ~ Binomial(n, 1/2), exactly. n is at most a panel's worth
+ *  of matches, so the direct sum is both exact and instant. */
+function binomCdf(k: number, n: number): number {
+  let coef = 1; // C(n, 0)
+  let sum = 0;
+  for (let i = 0; i <= k; i++) {
+    sum += coef;
+    coef = (coef * (n - i)) / (i + 1);
+  }
+  return sum / 2 ** n;
+}
+
+/** Judge the matches' aftermaths, in arrival (rank) order, excluding the
+ *  selection row. A lean needs all three: enough decisive outcomes, an up/down
+ *  split lopsided enough that a fair coin rarely produces it, and a closest
+ *  half whose median moves the same way — so far, barely-similar matches
+ *  cannot manufacture a signal the good matches do not support. null when no
+ *  row has an aftermath at all. */
+export function outcomeVerdict(matches: PatternMatch[]): OutcomeVerdict | null {
+  const scored = matches.filter((m) => !m.isSelection && m.forwardPct != null);
+  if (scored.length === 0) return null;
+  const decisive = scored.filter((m) => m.forwardPct !== 0);
+  const n = decisive.length;
+  const up = decisive.filter((m) => (m.forwardPct as number) > 0).length;
+  if (n < VERDICT_MIN_N) return { kind: "small", n, up };
+
+  const k = Math.min(up, n - up);
+  const p = Math.min(1, 2 * binomCdf(k, n));
+  if (p > VERDICT_MAX_P) return { kind: "mixed", n, up, p };
+
+  const lean = up > n - up ? 1 : -1;
+  // Closest half by arrival order: the backend already ranks by distance
+  // (mean rank in "all" mode), and re-sorting the table must not move the
+  // verdict.
+  const closest = scored.slice(0, Math.ceil(scored.length / 2));
+  const closestMedian = median(closest.map((m) => m.forwardPct as number));
+  if (closestMedian == null || Math.sign(closestMedian) !== lean) {
+    return { kind: "mixed", n, up, p };
+  }
+  return { kind: lean > 0 ? "up" : "down", n, up, p };
+}

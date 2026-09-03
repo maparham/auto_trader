@@ -9,6 +9,7 @@ import {
   nextMatchSort,
   sortMatches,
   summarizeMatches,
+  outcomeVerdict,
   type MatchSort,
   type PatternMatch,
   type PatternSearchResult,
@@ -343,6 +344,75 @@ describe("summarizeMatches", () => {
     ])!;
     expect(s.minLen).toBe(2);
     expect(s.maxLen).toBe(3);
+  });
+});
+
+describe("outcomeVerdict", () => {
+  const m = (over: Partial<PatternMatch>): PatternMatch => ({
+    ts: 500, endTs: 600, distance: 0.5,
+    bars: [bar(500, 1, 2, 0, 1), bar(600, 1, 2, 0, 1)],
+    forward: [], forwardComplete: true, forwardPct: 1.0,
+    ...over,
+  });
+  /** Matches in arrival (rank) order with the given outcomes. */
+  const withOutcomes = (pcts: (number | null)[]) => pcts.map((p) => m({ forwardPct: p }));
+
+  it("is null with no outcomes to judge", () => {
+    expect(outcomeVerdict([])).toBeNull();
+    expect(outcomeVerdict(withOutcomes([null, null]))).toBeNull();
+  });
+
+  it("says the sample is too small under eight decisive outcomes", () => {
+    const v = outcomeVerdict(withOutcomes([1, 1, 1, 1, 1, 1, 1]))!;
+    expect(v.kind).toBe("small");
+    expect(v.n).toBe(7);
+  });
+
+  it("zero outcomes are not decisive and do not rescue a small sample", () => {
+    // 6 real moves + 3 dead-flat aftermaths: still too small to judge.
+    const v = outcomeVerdict(withOutcomes([1, 1, 1, 0, 0, 0, 1, 1, 1]))!;
+    expect(v.kind).toBe("small");
+    expect(v.n).toBe(6);
+  });
+
+  it("calls a strong one-sided history a lean", () => {
+    const v = outcomeVerdict(withOutcomes([2, 1, 3, 1, 2, 1, 2, 1, 2, 1, 2, -1]))!;
+    expect(v.kind).toBe("up");
+    expect(v.up).toBe(11);
+    expect(v.n).toBe(12);
+    expect(v.p).toBeLessThan(0.05);
+  });
+
+  it("calls the mirror history a lean down", () => {
+    const v = outcomeVerdict(withOutcomes([-2, -1, -3, -1, -2, -1, -2, -1, -2, -1, -2, 1]))!;
+    expect(v.kind).toBe("down");
+  });
+
+  it("calls a coin-flip history mixed", () => {
+    const v = outcomeVerdict(withOutcomes([1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1]))!;
+    expect(v.kind).toBe("mixed");
+  });
+
+  it("calls a mild 12-of-20 majority mixed, not a lean", () => {
+    const pcts = [...Array(12).fill(1), ...Array(8).fill(-1)];
+    expect(outcomeVerdict(withOutcomes(pcts))!.kind).toBe("mixed");
+  });
+
+  it("vetoes a lean the closest half does not support", () => {
+    // Overall 12/16 up passes the sign test, but the closest half is an
+    // even 4-4 split: far, weaker matches are carrying the signal.
+    const pcts = [1, -1, 1, -1, 1, -1, 1, -1, 1, 1, 1, 1, 1, 1, 1, 1];
+    expect(outcomeVerdict(withOutcomes(pcts))!.kind).toBe("mixed");
+    // The same split with the closest half agreeing is a lean.
+    const agreeing = [1, 1, 1, 1, 1, -1, 1, -1, 1, -1, 1, -1, 1, 1, 1, 1];
+    expect(outcomeVerdict(withOutcomes(agreeing))!.kind).toBe("up");
+  });
+
+  it("ignores the selection row entirely", () => {
+    const pcts = [1, 1, 1, 1, 1, 1, 1];
+    const v = outcomeVerdict([m({ forwardPct: 99, isSelection: true }), ...withOutcomes(pcts)])!;
+    expect(v.kind).toBe("small");
+    expect(v.n).toBe(7);
   });
 });
 

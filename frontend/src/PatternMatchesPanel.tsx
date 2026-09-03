@@ -14,6 +14,7 @@ import {
   previewGeometry,
   sortMatches,
   summarizeMatches,
+  outcomeVerdict,
   type MatchSort,
   type MatchSortKey,
   type PatternMatch,
@@ -176,6 +177,7 @@ export default function PatternMatchesPanel(props: Props) {
 
   const all = props.mode === "all";
   const stats = useMemo(() => (result ? summarizeMatches(result.matches) : null), [result]);
+  const verdict = useMemo(() => (result ? outcomeVerdict(result.matches) : null), [result]);
 
   // Rows carry a chart tag only when the result actually spans charts: on a
   // one-chart layout (or cell scope) the tag would repeat the footer on every
@@ -288,6 +290,14 @@ export default function PatternMatchesPanel(props: Props) {
 
       {result && !loading && !error && stats && (
         <div className="pm-stats">
+          {verdict && (
+            <span className={`pm-verdict pm-verdict-${verdict.kind}`}>
+              {verdict.kind === "up" && "lean: up"}
+              {verdict.kind === "down" && "lean: down"}
+              {verdict.kind === "mixed" && "mixed — no edge"}
+              {verdict.kind === "small" && "sample too small"}
+            </span>
+          )}
           <span>
             <b>{stats.count}</b> matches
           </span>
@@ -331,6 +341,8 @@ export default function PatternMatchesPanel(props: Props) {
             text={[
               "Computed over the matches shown, excluding your own selection row: its distance of 0 and known aftermath would flatter every number.",
               `Outcome figures cover only rows with aftermath; "up" counts moves of 0% or more over the next ${props.forwardBars} bars.`,
+              "The verdict chip calls a lean only when three things hold: at least 8 decisive outcomes, an up/down split a fair coin would rarely produce, and a closest half of the matches whose median moves the same way. Anything less reads as mixed.",
+              "It is an indication, not proof: matches from one instrument overlap in market regime and are not independent samples.",
             ]}
           />
         </div>
