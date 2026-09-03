@@ -23,7 +23,7 @@ MOTIF = [
 ]
 
 
-def _make_db(path, *, gap_after: int | None = None, gap_seconds: int = 0):
+def _make_db(path, *, gap_after: int | None = None, gap_seconds: int = 0, step: int = 300):
     """Three motifs separated by 40 noise bars, written as a candle_history.db.
 
     `gap_after` inserts a wall-clock hole before that motif index (1-based over
@@ -52,7 +52,7 @@ def _make_db(path, *, gap_after: int | None = None, gap_seconds: int = 0):
             base = rng.uniform(25, 35)
             rows.append((base, base + 1, base - 1, base + 0.4))
     start = 1_700_000_000
-    ts = [start + i * 300 for i in range(len(rows))]
+    ts = [start + i * step for i in range(len(rows))]
     if gap_after is not None:
         # Push a hole INSIDE the chosen motif so its own window straddles it.
         hole_at = motif_starts[gap_after] + 3
@@ -599,3 +599,37 @@ def test_a_derived_resolution_searches_the_folded_base_series(tmp_path, monkeypa
     top = data["matches"][0]
     assert top["isSelection"] is True
     assert top["distance"] < 1e-6
+
+
+def test_a_coarser_series_still_ranks_a_finer_timeframe_query(tmp_path, monkeypatch):
+    """The all-charts panel searches every open chart, including ones on a
+    COARSER timeframe than the selection. Every window there spans far more
+    wall clock than the selection did, which is a property of the timeframe,
+    not a gap to reject: the span rule must scale its cap by the bar-interval
+    ratio instead of zeroing out every coarse series."""
+    path = tmp_path / "d.db"
+    _make_db(path, step=86_400)
+    monkeypatch.setattr(patterns_router, "PATTERN_SERIES", PatternSeriesCache(str(path)))
+    client = TestClient(app)
+    query = [{**bar, "ts": 1_700_000_000 + i * 300} for i, bar in enumerate(MOTIF)]
+    data = client.post("/api/patterns/search", json=_body(query=query)).json()
+    assert data["scanned"] > 0
+    # The motif repeats are found across timeframes: shape is normalized, so
+    # the same pattern at a day-bar tempo is a legitimate match.
+    others = [m for m in data["matches"] if not m["isSelection"]]
+    assert others and others[0]["distance"] < 0.05
+
+
+def test_a_gap_straddling_window_is_still_rejected_on_a_coarser_series(tmp_path, monkeypatch):
+    """Scaling the span cap must not turn it off: on the coarser series the
+    rule still rejects a window straddling a hole (relative to ITS timeframe)
+    that the selection does not."""
+    path = tmp_path / "e.db"
+    # A hole worth ~200 day-bars inside the second motif.
+    _make_db(path, step=86_400, gap_after=1, gap_seconds=86_400 * 200)
+    monkeypatch.setattr(patterns_router, "PATTERN_SERIES", PatternSeriesCache(str(path)))
+    client = TestClient(app)
+    query = [{**bar, "ts": 1_700_000_000 + i * 300} for i, bar in enumerate(MOTIF)]
+    data = client.post("/api/patterns/search", json=_body(query=query)).json()
+    gap_motif_ts = 1_700_000_000 + 46 * 86_400
+    assert all(m["ts"] != gap_motif_ts for m in data["matches"])

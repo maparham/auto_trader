@@ -167,6 +167,24 @@ async def search_patterns(req: PatternSearchRequest) -> PatternSearchResponse:
     # stored series to measure it from.
     query_span = float(req.query_to_ts - req.query_from_ts)
 
+    # Cross-timeframe queries (the panel's all-charts scope searches every open
+    # chart): on a series COARSER than the selection's own timeframe, every
+    # window inherently spans more wall clock than the selection did — a
+    # property of the timeframe, not a gap for the span rule to reject, and
+    # unscaled it zeroes out every coarse series. Scale the cap by the
+    # bar-interval ratio (medians, so weekend gaps on either side don't skew
+    # it). Coarser only: on a FINER series windows are tighter than the cap
+    # anyway, and the rule already forgives tight windows by design. Same
+    # timeframe gives a ratio of ~1 and the historical behaviour, and query
+    # bars without timestamps (ts is optional in the DTO) leave it unscaled.
+    q_steps = np.diff(np.array([b.ts for b in req.query], dtype=np.float64))
+    q_steps = q_steps[q_steps > 0]
+    if len(q_steps) and series.bars > 1:
+        origin_step = float(np.median(q_steps))
+        target_step = float(np.median(np.diff(series.ts)))
+        if target_step > origin_step > 0:
+            query_span *= target_step / origin_step
+
     if req.mode == "all":
         # Every formula's search, then one list of distinct events, each
         # scored by every formula and ordered by mean rank across them. The
