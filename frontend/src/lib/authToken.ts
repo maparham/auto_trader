@@ -9,7 +9,10 @@ export const CLERK_ENABLED = Boolean(
     .env?.VITE_CLERK_PUBLISHABLE_KEY,
 );
 
-type TokenGetter = () => Promise<string | null>;
+/** `fresh` asks for a newly minted token, bypassing any cache (Clerk's
+ *  getToken({skipCache: true})) — the 401-retry path in apiFetch needs a token
+ *  that provably post-dates the rejection. */
+type TokenGetter = (opts?: { fresh?: boolean }) => Promise<string | null>;
 
 let getter: TokenGetter | null = null;
 
@@ -26,6 +29,6 @@ export function hasTokenGetter(): boolean {
   return getter !== null;
 }
 
-export async function getAuthToken(): Promise<string | null> {
-  return getter ? getter() : null;
+export async function getAuthToken(opts?: { fresh?: boolean }): Promise<string | null> {
+  return getter ? getter(opts) : null;
 }

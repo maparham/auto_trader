@@ -85,7 +85,23 @@ export function apiFetch(
     const headers = new Headers(init?.headers);
     headers.set("Authorization", `Bearer ${token}`);
     const res = await fetch(input, { ...init, headers });
-    if (res.status === 401) onUnauthorized?.();
+    if (res.status !== 401) return res;
+    // A 401 is not always a dead session: the backend deliberately maps
+    // transient JWKS/network failures to 401 (it fails closed), and a ~60s
+    // Clerk token can expire in flight. Retry ONCE with a freshly minted
+    // token — safe even for writes, since the auth middleware rejected the
+    // request before it executed — and sign out only when that retry is also
+    // unauthorized. No fresh token at all means the session really is gone.
+    const fresh = await getAuthToken({ fresh: true }).catch(() => null);
+    if (fresh) {
+      const retryHeaders = new Headers(init?.headers);
+      retryHeaders.set("Authorization", `Bearer ${fresh}`);
+      const retry = await fetch(input, { ...init, headers: retryHeaders });
+      if (retry.status !== 401) return retry;
+      onUnauthorized?.();
+      return retry;
+    }
+    onUnauthorized?.();
     return res;
   })();
 }

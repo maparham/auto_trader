@@ -22,6 +22,20 @@ def test_expired_token_rejected(clerk):
         auth.verify_token(clerk_fake.make_token(exp_delta=-60))
 
 
+def test_small_clock_skew_is_tolerated(clerk):
+    """Clerk session tokens live ~60s and carry nbf; a server clock a few
+    seconds off Clerk's must not reject freshly minted tokens ("not yet
+    valid") or barely-delivered ones (exp just passed). Clerk's own docs
+    recommend ~5s of leeway. Beyond it (the -60s test above) still fails."""
+    import time
+
+    now = int(time.time())
+    # Minted a moment "in the future" by the server's clock.
+    assert auth.verify_token(clerk_fake.make_token(extra={"nbf": now + 3})) == "user_123"
+    # Expired 3s ago by the server's clock.
+    assert auth.verify_token(clerk_fake.make_token(exp_delta=-3)) == "user_123"
+
+
 def test_wrong_signature_rejected(clerk):
     other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     with pytest.raises(auth.AuthError):

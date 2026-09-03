@@ -93,6 +93,11 @@ def _verify_claims(token: str) -> dict:
             key.key,
             algorithms=["RS256"],
             options={"require": ["exp", "sub"]},
+            # Clerk session tokens live ~60s and carry nbf; with zero
+            # tolerance a server clock a few seconds off Clerk's rejects
+            # freshly minted tokens ("not yet valid") or barely-delivered
+            # ones. Clerk's own docs recommend ~5s.
+            leeway=5,
         )
     except Exception as e:  # PyJWTError, JWKS/network errors: all 401
         log.info("auth failed: token verification error: %s", e)

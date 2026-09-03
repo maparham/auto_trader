@@ -10,7 +10,9 @@ export default function ClerkTokenBridge() {
   const { getToken } = useAuth();
   const clerk = useClerk();
   useEffect(() => {
-    setTokenGetter(() => getToken());
+    // `fresh` (the 401-retry path) forces a newly minted token: Clerk's cache
+    // would otherwise hand back the very token the server just rejected.
+    setTokenGetter((opts) => getToken(opts?.fresh ? { skipCache: true } : undefined));
     setUnauthorizedHandler(() => {
       void clerk.signOut();
     });
