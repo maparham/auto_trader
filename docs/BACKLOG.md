@@ -19,10 +19,6 @@ remove it from here (git history and the memory index track shipped features).
   alert toasts, unread badge, connection splash, App-Nap prevention.
   [spec](superpowers/specs/2026-07-08-tauri-menubar-wrapper-design.md)
 
-- **Sync indicators across layout cells** — layout-wide indicator mirroring
-  (add/remove/edit propagate to all cells; AVWAP anchor fan-out).
-  [spec](superpowers/specs/2026-07-07-sync-indicators-design.md)
-
 - **Slope-colored moving averages** — render EMA/SMA/VWAP/AVWAP with
   slope-based color coding (up vs. down segments).
   [spec](superpowers/specs/2026-07-06-slope-colored-ma-design.md)

@@ -154,7 +154,10 @@ import {
   type Workspace,
   type ChartSnapshot,
 } from "./lib/persist";
-import { clearHistoryForKey } from "./lib/history";
+import { clearHistoryForKey, onHistoryApplied, withHistorySuppressed } from "./lib/history";
+import { mirrorIndicatorState } from "./lib/indicatorSync";
+import { syncIndicatorsFromStorage } from "./lib/indicators";
+import { onLayoutChanged } from "./lib/persist/layoutEvents";
 import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
 import { loadSettings, saveSettings, chartColors, type Settings } from "./theme";
@@ -938,6 +941,81 @@ export default function App() {
     bumpReady();
   };
 
+  // --- Sync indicators (layout toggle): storage-level mirror ------------------
+  // Copy `origin`'s persisted indicator state to every other cell of `tab`, then
+  // reconcile each mounted sibling chart in place. Mirror writes are event- and
+  // history-suppressed, so this never re-triggers itself.
+  const replicateIndicators = useCallback((tab: ChartTab, originCellId: string) => {
+    const origin = tab.cells.find((c) => c.id === originCellId);
+    if (!origin) return;
+    for (const sib of tab.cells) {
+      if (sib.id === originCellId) continue;
+      const changed = mirrorIndicatorState(
+        { scope: origin.scope, epic: origin.symbol.epic },
+        { scope: sib.scope, epic: sib.symbol.epic },
+      );
+      const entry = readyRef.current.get(sib.id);
+      if (entry && changed.length > 0) {
+        withHistorySuppressed(() =>
+          syncIndicatorsFromStorage(
+            entry.chart, entry.controller, sib.scope, sib.symbol.epic,
+            sib.period.resolution, new Set(changed),
+          ),
+        );
+      }
+    }
+  }, []);
+
+  // Toggle-on: the focused cell's set becomes the layout's set (destructive to
+  // siblings by design — consistent with the other sync toggles acting
+  // immediately; no confirmation).
+  const seedIndicatorSync = replicateIndicators;
+
+  // Live tabs for the subscription below (a subscription must not re-bind per
+  // render). Named distinctly from the agent-bridge `tabsRef` declared further
+  // down in this component to avoid a duplicate-identifier clash.
+  const syncTabsRef = useRef(tabs);
+  syncTabsRef.current = tabs;
+  const replicateRef = useRef(replicateIndicators);
+  replicateRef.current = replicateIndicators;
+
+  useEffect(() => {
+    // Coalesce the several writes of one gesture (applyIndicator writes config +
+    // list + anchor back-to-back) into one mirror pass per origin scope. Fed by
+    // both onLayoutChanged (live edits) and onHistoryApplied (undo/redo, which
+    // deliberately skips emitLayoutChanged — see lib/history.ts) so a sibling
+    // never keeps a pre-undo indicator set.
+    const pending = new Set<string>();
+    let queued = false;
+    const onScopeTouched = (changedScope: string) => {
+      const tab = syncTabsRef.current.find(
+        (t) => t.syncIndicators && t.cells.some((c) => c.scope === changedScope),
+      );
+      if (!tab) return;
+      pending.add(changedScope);
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        const scopes = [...pending];
+        pending.clear();
+        for (const scope of scopes) {
+          const t = syncTabsRef.current.find(
+            (tt) => tt.syncIndicators && tt.cells.some((c) => c.scope === scope),
+          );
+          const cell = t?.cells.find((c) => c.scope === scope);
+          if (t && cell) replicateRef.current(t, cell.id);
+        }
+      });
+    };
+    const offLayout = onLayoutChanged(onScopeTouched);
+    const offHistory = onHistoryApplied(onScopeTouched);
+    return () => {
+      offLayout();
+      offHistory();
+    };
+  }, []);
+
   // Focus (or open) a chart showing `epic` and return its focused cell. Search
   // order for an existing cell: the active tab first (its focused cell, then its
   // other cells), then every other tab — so a chart already on screen is reused
@@ -1362,7 +1440,7 @@ export default function App() {
         broadcast,
         nextEpic: s.epic,
       }),
-      () =>
+      () => {
         setTabs((ts) =>
           ts.map((t) =>
             t.id !== active.id
@@ -1374,7 +1452,19 @@ export default function App() {
                   ),
                 },
           ),
-        ),
+        );
+        // Synced tabs: the changed cell's new epic may have no AVWAP anchors yet —
+        // mirror from a sibling so the curves recompute there too. Runs on the next
+        // microtask so tabs state has settled; the layout-changed subscription
+        // can't cover this (a symbol change writes no indicator storage).
+        if (active.syncIndicators) {
+          queueMicrotask(() => {
+            const t = tabsRef.current.find((tt) => tt.id === active.id);
+            const other = t?.cells.find((c) => c.id !== focusedCell.id);
+            if (t && other) replicateRef.current(t, other.id);
+          });
+        }
+      },
     );
   };
   // Switch a SPECIFIC cell's interval. The quick-range bar uses this (it knows the
@@ -1428,6 +1518,18 @@ export default function App() {
               scope: cellScope(t.id, cid),
             });
           }
+          // Sync-indicators tabs seed the new cells' storage NOW (before the cell
+          // mounts), so hydration finds the shared set and no template auto-apply
+          // races it.
+          if (t.syncIndicators) {
+            for (const c of cells) {
+              if (c.scope === base.scope) continue;
+              mirrorIndicatorState(
+                { scope: base.scope, epic: base.symbol.epic },
+                { scope: c.scope, epic: c.symbol.epic },
+              );
+            }
+          }
         } else if (cells.length > want) {
           for (const c of cells.slice(want)) {
             if (c.scope !== primaryCellScope(t.id)) purgeScope(c.scope);
@@ -1452,8 +1554,20 @@ export default function App() {
   // interval sync applies IMMEDIATELY — every cell adopts the focused cell's symbol /
   // timeframe right away (TradingView behaviour), not just on the next change.
   // Crosshair sync is live, so there's nothing to back-fill.
-  const toggleSync = (kind: "symbol" | "interval" | "crosshair" | "time") => {
+  const toggleSync = (
+    kind: "symbol" | "interval" | "crosshair" | "time" | "indicators",
+  ) => {
     if (!active || !focusedCell) return;
+    if (kind === "indicators") {
+      const turningOn = !active.syncIndicators;
+      if (turningOn) {
+        seedIndicatorSync(active, focusedCell.id);
+      }
+      setTabs((ts) =>
+        ts.map((t) => (t.id === active.id ? { ...t, syncIndicators: turningOn } : t)),
+      );
+      return;
+    }
     // Date-range link: enabling snaps the siblings to the focused cell's current
     // window once (read it now and broadcast); from then on the focused cell live-
     // broadcasts on every scroll/zoom (see ChartCore). The cells share only the
@@ -2123,6 +2237,7 @@ export default function App() {
                 syncInterval={!!active.syncInterval}
                 syncCrosshair={!!active.syncCrosshair}
                 syncTime={!!active.syncTime}
+                syncIndicators={!!active.syncIndicators}
                 locked={!!active.locked}
                 onToggleSync={toggleSync}
                 onToggleLock={toggleLock}

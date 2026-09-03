@@ -11,6 +11,7 @@ const {
   withHistorySuppressed,
   partitionHistorySuffixes,
   rebuildIdsForDeltas,
+  onHistoryApplied,
 } = await import("./history");
 
 const SCOPE = "tab.T.cell.c";
@@ -207,6 +208,37 @@ describe("subscribe", () => {
     expect(mgr.undo()).toBe(false); // empty stack
     expect(mgr.clear() as unknown).toBe(undefined);
     expect(n).toBe(0);
+  });
+});
+
+describe("onHistoryApplied", () => {
+  it("fires with the manager's scope after a successful undo() and redo()", () => {
+    const seen: string[] = [];
+    const off = onHistoryApplied((scope) => seen.push(scope));
+    try {
+      mgr.push(KEY, ["a"], ["b"], 1000);
+      expect(mgr.undo()).toBe(true);
+      expect(seen).toEqual([SCOPE]);
+      expect(mgr.redo()).toBe(true);
+      expect(seen).toEqual([SCOPE, SCOPE]);
+    } finally {
+      off();
+    }
+  });
+
+  it("does not fire for a plain push() or a failed applyTop (empty stack)", () => {
+    const seen: string[] = [];
+    const off = onHistoryApplied((scope) => seen.push(scope));
+    try {
+      mgr.push(KEY, ["a"], ["b"], 1000);
+      expect(seen).toEqual([]);
+      expect(mgr.undo()).toBe(true);
+      seen.length = 0;
+      expect(mgr.undo()).toBe(false); // stack now empty
+      expect(seen).toEqual([]);
+    } finally {
+      off();
+    }
   });
 });
 

@@ -59,6 +59,12 @@ export interface ChartTab {
   // When on, scrolling/zooming the time axis in the focused chart matches the same
   // wall-clock window on the tab's other cells (cross-interval; mapped by timestamp).
   syncTime?: boolean;
+  // When on, all cells of the tab share ONE indicator set: adding, removing, or
+  // editing an indicator in any cell mirrors to every cell (full mirror, same
+  // instance ids). Storage-level: see lib/indicatorSync.ts. Unlike the flags
+  // above, "Lock charts" does NOT override it — lock is visual alignment,
+  // indicator content is an independent choice.
+  syncIndicators?: boolean;
   // Master "lock charts" override. When on, every interaction with the cell under
   // the cursor (TF change, pan, zoom, crosshair) mirrors to the tab's other cells
   // as if the cursor were on each of them — each cell keeps its own symbol. It's a
@@ -256,14 +262,16 @@ export function loadLayout(id: string): Workspace | null {
 
 // Create or update-in-place the layout `id` (keeps tab/cell ids → scopes, so the
 // existing per-cell content stays addressed). Used by both "Save" (existing id)
-// and the index bookkeeping for a freshly-created layout.
-export function saveLayout(id: string, name: string, ws: Workspace): void {
-  save(layoutKey(id), ws);
+// and the index bookkeeping for a freshly-created layout. Returns false when a
+// write was dropped (storage quota); a failed BODY write also skips the index
+// update so we never index a layout whose body doesn't exist.
+export function saveLayout(id: string, name: string, ws: Workspace): boolean {
+  if (!save(layoutKey(id), ws)) return false;
   const list = loadLayouts();
   const idx = list.findIndex((l) => l.id === id);
   if (idx >= 0) list[idx] = { id, name };
   else list.push({ id, name });
-  save(layoutsKey(), list);
+  return save(layoutsKey(), list);
 }
 
 export function renameLayout(id: string, name: string): void {
@@ -395,26 +403,29 @@ export function pruneLegacyTabsKeys(): void {
   for (const k of doomed) removeKeyEverywhere(k);
 }
 
-// Deep-copy a workspace under FRESH tab/cell ids, copying each cell's scope
-// content (drawings/indicators/alerts/avwap/indicatorConfig) to the new scopes so
-// the copy is fully independent of the source. Returns the new workspace plus the
-// scope remap (unused by callers today, handy for tests/debug). `mintTabId` /
-// `mintCellId` are injected so the caller owns id generation (App.tsx's seq).
-export function cloneWorkspace(
-  src: Workspace,
+// Rebuild a list of tabs under FRESH tab/cell ids. This is the ONE copy of the
+// field-by-field ChartTab remap — shared by cloneWorkspace ("Save as…") and
+// importLayout, which previously each enumerated the fields by hand; a field
+// added to only one list silently vanished on the other path (syncIndicators
+// did exactly that). Add a ChartTab field → add it HERE, both paths get it.
+// `copyCellContent` supplies the callers' one divergence: how a cell's scope
+// content reaches its freshly minted scope (copied from live storage vs
+// written from an export document).
+export function remapTabs(
+  src: ChartTab[],
   mintTabId: () => string,
   mintCellId: () => string,
-): Workspace {
-  const tabs: ChartTab[] = src.tabs.map((t) => {
+  copyCellContent: (src: ChartCell, newScope: string) => void,
+): ChartTab[] {
+  return src.map((t) => {
     const newTabId = mintTabId();
     let activeCellId = "";
     const cells: ChartCell[] = t.cells.map((c, i) => {
-      const newCellId = i === 0 ? null : mintCellId();
       // The primary cell reuses the tab's primary scope (mirrors makeTab/migrate).
-      const id = newCellId ?? `${newTabId}-c0`;
-      const scope =
-        i === 0 ? primaryCellScope(newTabId) : cellScope(newTabId, id);
-      copyScopeContent(c.scope, scope);
+      const id = i === 0 ? `${newTabId}-c0` : mintCellId();
+      const scope = i === 0 ? primaryCellScope(newTabId) : cellScope(newTabId, id);
+      copyCellContent(c, scope);
+      // The active cell survives the id remap; anything else falls back to cell0.
       if (c.id === t.activeCellId || activeCellId === "") activeCellId = id;
       return { id, symbol: c.symbol, period: c.period, scope };
     });
@@ -422,16 +433,29 @@ export function cloneWorkspace(
       id: newTabId,
       layout: t.layout,
       cells,
-      activeCellId: cells.some((c) => c.id === activeCellId)
-        ? activeCellId
-        : cells[0].id,
+      activeCellId,
       syncSymbol: t.syncSymbol,
       syncInterval: t.syncInterval,
       syncCrosshair: t.syncCrosshair,
       syncTime: t.syncTime,
+      syncIndicators: t.syncIndicators,
       locked: t.locked,
       sizes: t.sizes,
     };
+  });
+}
+
+// Deep-copy a workspace under FRESH tab/cell ids, copying each cell's scope
+// content (drawings/indicators/alerts/avwap/indicatorConfig) to the new scopes so
+// the copy is fully independent of the source. `mintTabId` / `mintCellId` are
+// injected so the caller owns id generation (App.tsx's seq).
+export function cloneWorkspace(
+  src: Workspace,
+  mintTabId: () => string,
+  mintCellId: () => string,
+): Workspace {
+  const tabs = remapTabs(src.tabs, mintTabId, mintCellId, (c, scope) => {
+    copyScopeContent(c.scope, scope);
   });
   const srcActiveIdx = src.tabs.findIndex((t) => t.id === src.activeTabId);
   return {

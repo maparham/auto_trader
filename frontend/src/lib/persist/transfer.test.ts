@@ -33,6 +33,7 @@ function seedLayout(id: string, name: string): Workspace {
         layout: "2h",
         activeCellId: "C1",
         syncCrosshair: true,
+        syncIndicators: true,
         sizes: { cols: [0.3, 0.7], rows: [1] },
         cells: [
           { id: `${tabId}-c0`, symbol: SYM, period: P15, scope: s0 },
@@ -104,6 +105,7 @@ describe("importLayout", () => {
     expect(tab.id).not.toBe("T-L1"); // fresh ids
     expect(tab.layout).toBe("2h");
     expect(tab.syncCrosshair).toBe(true);
+    expect(tab.syncIndicators).toBe(true);
     expect(tab.sizes).toEqual({ cols: [0.3, 0.7], rows: [1] });
     expect(tab.cells.map((c) => c.symbol.epic)).toEqual(["US100", "DE40"]);
     expect(tab.cells.map((c) => c.period.label)).toEqual(["15m", "1h"]);
@@ -135,6 +137,66 @@ describe("importLayout", () => {
     const res2 = importLayout(data, mintTabId, mintCellId)!;
     expect(res2.name).toBe("Alpha (imported 2)");
     expect(new Set([res1.id, res2.id, "L1"]).size).toBe(3);
+  });
+
+  it("rejects a payload whose cell lacks a symbol without writing anything", () => {
+    seedLayout("L1", "Alpha");
+    const data = exportLayout("L1")!;
+    delete (data.workspace.tabs[0].cells[0] as { symbol?: unknown }).symbol;
+    storage = installMemStorage();
+    expect(importLayout(data, mintTabId, mintCellId)).toBeNull();
+    expect(storage.length).toBe(0);
+  });
+
+  it("rejects a payload whose cell has a null period without writing anything", () => {
+    seedLayout("L1", "Alpha");
+    const data = exportLayout("L1")!;
+    (data.workspace.tabs[0].cells[1] as { period: unknown }).period = null;
+    storage = installMemStorage();
+    expect(importLayout(data, mintTabId, mintCellId)).toBeNull();
+    expect(storage.length).toBe(0);
+  });
+
+  it("rejects a payload containing a zero-cell tab without writing anything", () => {
+    seedLayout("L1", "Alpha");
+    const data = exportLayout("L1")!;
+    data.workspace.tabs[0].cells = [];
+    storage = installMemStorage();
+    expect(importLayout(data, mintTabId, mintCellId)).toBeNull();
+    expect(storage.length).toBe(0);
+  });
+
+  it("returns null and leaves no partial state when scope-content writes fail (quota)", () => {
+    seedLayout("L1", "Alpha");
+    const data = exportLayout("L1")!;
+    storage = installMemStorage();
+    const orig = storage.setItem.bind(storage);
+    storage.setItem = (k: string, v: string) => {
+      if (k.includes(".drawings")) throw new Error("QuotaExceededError");
+      orig(k, v);
+    };
+    expect(importLayout(data, mintTabId, mintCellId)).toBeNull();
+    expect(loadLayouts()).toEqual([]);
+    // Nothing addressed to the freshly minted scopes survives the rollback.
+    for (let i = 0; i < storage.length; i++) {
+      expect(storage.key(i)).not.toMatch(/\.tab\.t-new-/);
+    }
+  });
+
+  it("returns null and cleans up scope content when persisting the layout body fails", () => {
+    seedLayout("L1", "Alpha");
+    const data = exportLayout("L1")!;
+    storage = installMemStorage();
+    const orig = storage.setItem.bind(storage);
+    storage.setItem = (k: string, v: string) => {
+      if (k.includes("layout.")) throw new Error("QuotaExceededError");
+      orig(k, v);
+    };
+    expect(importLayout(data, mintTabId, mintCellId)).toBeNull();
+    expect(loadLayouts()).toEqual([]);
+    for (let i = 0; i < storage.length; i++) {
+      expect(storage.key(i)).not.toMatch(/\.tab\.t-new-/);
+    }
   });
 
   it("skips scope values that are not valid JSON instead of failing the import", () => {

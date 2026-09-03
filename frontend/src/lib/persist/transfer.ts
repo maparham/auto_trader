@@ -5,12 +5,12 @@
 // Import re-mints every tab/cell id so the payload can never collide with ids
 // already living in this browser (or with a second import of the same file).
 
-import { PREFIX, save, primaryCellScope, cellScope } from "./core";
+import { PREFIX, save, purgeTabScope } from "./core";
 import {
   loadLayout,
   loadLayouts,
+  remapTabs,
   saveLayout,
-  type ChartCell,
   type ChartTab,
   type Workspace,
 } from "./workspace";
@@ -60,8 +60,12 @@ export function exportLayout(id: string): LayoutExportV1 | null {
 }
 
 // Shape check, not a full schema: enough to reject the wrong file and to make
-// the remap below safe to run. Anything deeper (unknown drawing types etc.)
-// degrades the same way it does for stale localStorage: consumers ignore it.
+// the remap below safe to run. Cells MUST carry a symbol and period object and
+// every tab MUST have at least one cell — the app renders those unguarded (a
+// symbol-less cell crashes App.tsx's precision lookup on every reload, and a
+// zero-cell tab breaks "Save as…"), so unlike unknown drawing types they can't
+// be left for consumers to ignore. Anything deeper degrades the same way it
+// does for stale localStorage.
 function isValidExport(data: unknown): data is LayoutExportV1 {
   if (typeof data !== "object" || data === null) return false;
   const d = data as Partial<LayoutExportV1>;
@@ -79,8 +83,16 @@ function isValidExport(data: unknown): data is LayoutExportV1 {
         typeof t === "object" &&
         t !== null &&
         Array.isArray((t as ChartTab).cells) &&
+        (t as ChartTab).cells.length > 0 &&
         (t as ChartTab).cells.every(
-          (c) => typeof c === "object" && c !== null && typeof c.scope === "string",
+          (c) =>
+            typeof c === "object" &&
+            c !== null &&
+            typeof c.scope === "string" &&
+            typeof c.symbol === "object" &&
+            c.symbol !== null &&
+            typeof c.period === "object" &&
+            c.period !== null,
         ),
     )
   );
@@ -99,44 +111,32 @@ function freeName(name: string): string {
 // ids (same remap rule as cloneWorkspace: cell0 rides the tab's primary scope,
 // the rest get their own nested scopes). Scope content is written through
 // save() so it mirrors to the backend like any local edit. Returns the new
-// layout's id + (possibly de-collided) name, or null for a malformed payload.
+// layout's id + (possibly de-collided) name, or null for a malformed payload
+// OR when any write was dropped (storage quota) — a partial import is rolled
+// back (scopes purged, nothing indexed) rather than reported as success.
 export function importLayout(
   data: unknown,
   mintTabId: () => string,
   mintCellId: () => string,
 ): { id: string; name: string } | null {
   if (!isValidExport(data)) return null;
-  const tabs: ChartTab[] = data.workspace.tabs.map((t) => {
-    const newTabId = mintTabId();
-    let activeCellId = "";
-    const cells: ChartCell[] = t.cells.map((c, i) => {
-      const id = i === 0 ? `${newTabId}-c0` : mintCellId();
-      const scope = i === 0 ? primaryCellScope(newTabId) : cellScope(newTabId, id);
-      for (const [suffix, raw] of Object.entries(data.scopes[c.scope] ?? {})) {
-        try {
-          save(`${PREFIX}.${scope}.${suffix}`, JSON.parse(raw));
-        } catch {
-          /* one corrupt value shouldn't sink the whole import */
-        }
+  let wroteOk = true;
+  const tabs = remapTabs(data.workspace.tabs, mintTabId, mintCellId, (c, scope) => {
+    for (const [suffix, raw] of Object.entries(data.scopes[c.scope] ?? {})) {
+      try {
+        wroteOk = save(`${PREFIX}.${scope}.${suffix}`, JSON.parse(raw)) && wroteOk;
+      } catch {
+        /* one corrupt value shouldn't sink the whole import */
       }
-      if (c.id === t.activeCellId || activeCellId === "") activeCellId = id;
-      return { id, symbol: c.symbol, period: c.period, scope };
-    });
-    return {
-      id: newTabId,
-      layout: t.layout,
-      cells,
-      activeCellId,
-      syncSymbol: t.syncSymbol,
-      syncInterval: t.syncInterval,
-      syncCrosshair: t.syncCrosshair,
-      syncTime: t.syncTime,
-      locked: t.locked,
-      sizes: t.sizes,
-    };
+    }
   });
   const id = `layout-${mintTabId()}`;
   const name = freeName(data.name);
-  saveLayout(id, name, { tabs, activeTabId: "" });
+  if (!wroteOk || !saveLayout(id, name, { tabs, activeTabId: "" })) {
+    // Quota hit somewhere: undo the scope content already written (the tab's
+    // primary scope prefix-matches its nested cell scopes) and report failure.
+    for (const t of tabs) purgeTabScope(t.id);
+    return null;
+  }
   return { id, name };
 }

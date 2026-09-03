@@ -38,6 +38,7 @@ const {
   mirrorAccelCompanion,
   validateInstanceName,
   renameIndicatorInstance,
+  diffIndicatorSync,
 } = await import("./indicators");
 
 // In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
@@ -1122,5 +1123,29 @@ describe("renameIndicatorInstance", () => {
     ]);
     const result = renameIndicatorInstance(chart, "tab.rename4", "US100", "PIVOT_ANALYSIS", "PIVOT_ANALYSIS");
     expect(result).toEqual({ ok: false, error: "unchanged" });
+  });
+});
+
+describe("diffIndicatorSync", () => {
+  it("stored=[a,b], live=[b,c], rebuild={b} → {remove:[c], build:[a,b], keep:[]}", () => {
+    expect(diffIndicatorSync(["a", "b"], ["b", "c"], new Set(["b"]))).toEqual({
+      remove: ["c"],
+      build: ["a", "b"],
+      keep: [],
+    });
+  });
+  it("stored=[a,b], live=[b,c], rebuild={} → {remove:[c], build:[a], keep:[b]}", () => {
+    expect(diffIndicatorSync(["a", "b"], ["b", "c"], new Set())).toEqual({
+      remove: ["c"],
+      build: ["a"],
+      keep: ["b"],
+    });
+  });
+  it("empty storage removes everything", () => {
+    expect(diffIndicatorSync([], ["x"], new Set())).toEqual({
+      remove: ["x"],
+      build: [],
+      keep: [],
+    });
   });
 });

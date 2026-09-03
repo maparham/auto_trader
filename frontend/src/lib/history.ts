@@ -31,6 +31,18 @@ interface HistoryStep {
 const GROUP_MS = 800;
 const CAP = 100;
 
+// Fired after a HistoryManager undo/redo lands its restored values in storage
+// (applier already run). Unlike emitLayoutChanged — which applyTop deliberately
+// skips so template autosave never fires for undo-only edits — this channel
+// exists solely so App-level indicator sync can mirror a restored scope to its
+// siblings (Sync indicators layout toggle).
+type AppliedListener = (scope: string) => void;
+const appliedListeners = new Set<AppliedListener>();
+export function onHistoryApplied(cb: AppliedListener): () => void {
+  appliedListeners.add(cb);
+  return () => appliedListeners.delete(cb);
+}
+
 const eq = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 // --- suppression -------------------------------------------------------------
@@ -241,6 +253,7 @@ export class HistoryManager {
     const prefix = `${PREFIX}.${this.scope}.`;
     this.applier?.(step.deltas.map((d) => ({ suffix: d.key.slice(prefix.length), before: d.before, after: d.after })));
     this.notify();
+    appliedListeners.forEach((l) => l(this.scope));
     return true;
   }
 }

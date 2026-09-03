@@ -14,8 +14,9 @@ interface Props {
   syncInterval: boolean;
   syncCrosshair: boolean;
   syncTime: boolean;
+  syncIndicators: boolean;
   locked: boolean;
-  onToggleSync: (kind: "symbol" | "interval" | "crosshair" | "time") => void;
+  onToggleSync: (kind: "symbol" | "interval" | "crosshair" | "time" | "indicators") => void;
   onToggleLock: () => void;
 }
 
@@ -70,6 +71,7 @@ export default function LayoutPicker({
   syncInterval,
   syncCrosshair,
   syncTime,
+  syncIndicators,
   locked,
   onToggleSync,
   onToggleLock,
@@ -180,6 +182,17 @@ export default function LayoutPicker({
               </Tooltip>
             </label>
             </div>
+            <label>
+              <input
+                type="checkbox"
+                checked={syncIndicators}
+                onChange={() => onToggleSync("indicators")}
+              />
+              <span className="ls-label">Sync indicators</span>
+              <Tooltip content="All charts in this layout share the same indicators — adding, removing, or editing one applies everywhere.">
+                <span className="ls-info">ⓘ</span>
+              </Tooltip>
+            </label>
           </div>
         </div>
       )}
