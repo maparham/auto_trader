@@ -1,7 +1,7 @@
 .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
 .toolbar {
   display: flex; align-items: center; gap: 4px; flex-wrap: nowrap;
-  padding: 10px 10px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px;
+  padding: 4px 10px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px;
   /* Size container so the timeframe quick-bar can collapse when the toolbar gets
      tight (see the @container rule near .periods). nowrap: the toolbar is a
      single row, always — controls collapse rather than wrap to a second row. */
@@ -9,7 +9,7 @@
 }
 /* No child squishing: a squeezed button wraps its label onto two lines and
    grows the bar. Below the collapse point the row clips at the right edge
-   instead — still one row, still 53px. */
+   instead — still one row, still 41px. */
 .toolbar > * { flex-shrink: 0; }
 /* Hairline rule separating functional clusters (symbol | intervals | study tools |
    chart actions). Group spacing is tight (6px); these dividers carry the grouping
@@ -26,6 +26,11 @@
   background: var(--accent); color: var(--accent-text); border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer;
 }
 .toolbar button:disabled { opacity: 0.6; cursor: default; }
+/* Clerk's UserButton trigger is a bare <button> inside the toolbar; without this
+   it catches the `.toolbar button` accent fill + 6/14 padding and renders as a
+   ~40px pill that stretches the bar (same leak `.symsearch` resets below). */
+.toolbar .clerk-user button { background: transparent; border: none; border-radius: 999px; padding: 0; }
+.toolbar .clerk-user .cl-avatarBox { width: 28px; height: 28px; }
 .toolbar button.ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
 .stats { color: var(--text-dim); margin-left: auto; }
 .stats .pos { color: var(--pos); }

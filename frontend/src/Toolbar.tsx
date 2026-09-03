@@ -865,7 +865,7 @@ export default function Toolbar({
       )}
 
       {CLERK_ENABLED && (
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+        <div className="clerk-user" style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
           <UserButton />
         </div>
       )}
