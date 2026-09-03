@@ -33,8 +33,13 @@ queries, hence 0.15).
 
 Kept out on benchmark evidence, not oversight: a swing-count penalty (its
 reversal threshold flips on borderline swings and drops true tempo-warped
-matches) and DTW-after-smoothing (warping on an already-smoothed path
-over-forgives, mean rank 6.7 against 2.7 for this pipeline)."""
+matches); DTW-after-smoothing (warping on an already-smoothed path
+over-forgives, mean rank 6.7 against 2.7 for this pipeline); and a per-rung
+query kernel for the exact scan (smoothing the query with kernel * m0/m
+before stretching, so both sides of a distant rung carry equal absolute
+smoothing — measured WORSE at both extremes of the ladder: the extra query
+noise it preserves helps every window, noise included, so the true
+recurrence's rank drops even as its distance narrows)."""
 
 from __future__ import annotations
 

@@ -38,6 +38,15 @@ class TestHitRule:
     def test_start_three_bars_off_misses(self):
         assert not is_hit(_match(97, 48), Region(100, 48))
 
+    def test_start_tolerance_scales_with_region_length(self):
+        # A 4-bar offset on a 120-bar window is the same event to the eye;
+        # on a 48-bar window it is a different start. The smoothed scan's
+        # best offset lands a few bars wide of a long plant, and a fixed
+        # +-2 was scoring those finds as misses.
+        assert is_hit(_match(105, 120), Region(100, 120))
+        assert not is_hit(_match(107, 120), Region(100, 120))
+        assert not is_hit(_match(104, 48), Region(100, 48))
+
     def test_any_ladder_rung_hits(self):
         assert is_hit(_match(100, 24), Region(100, 48))  # 0.5x
         assert is_hit(_match(100, 96), Region(100, 48))  # 2.0x

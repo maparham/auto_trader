@@ -460,6 +460,36 @@ def test_scales_find_a_time_compressed_recurrence():
     assert hit.distance == pytest.approx(0.0, abs=1e-5)
 
 
+def test_default_scales_reach_an_extreme_tempo_recurrence():
+    """The same shape at 2.52x and 0.4x the query's duration — the new outer
+    rungs. The old 0.5x-2x ladder scores both as noise; the ladder must
+    reach far enough that each comes back as a near-exact hit at its own
+    length."""
+    from auto_trader.core.pattern_scan import DEFAULT_SCALES, stretch
+
+    ohlc = _series(2000, seed=42)
+    query = ohlc[100:148].copy()
+    slow = stretch(query, 121)  # 2.52x
+    fast = stretch(query, 19)   # 0.4x
+    at_slow, at_fast = 700, 1400
+    ohlc[at_slow : at_slow + 121] = slow + (ohlc[at_slow - 1, 3] - slow[0, 0])
+    ohlc[at_fast : at_fast + 19] = fast + (ohlc[at_fast - 1, 3] - fast[0, 0])
+    ts = np.arange(2000, dtype=np.float64) * 300.0
+    centred, s1, s2 = _prep(ohlc)
+
+    hits, _ = scan(
+        centred, s1, s2, ts, query,
+        query_span=47 * 300.0, top_k=40, forward_bars=0,
+        scales=DEFAULT_SCALES,
+    )
+    slow_hit = next((h for h in hits if abs(h.start - at_slow) <= 3), None)
+    fast_hit = next((h for h in hits if abs(h.start - at_fast) <= 3), None)
+    assert slow_hit is not None and slow_hit.distance < 0.15, slow_hit
+    assert slow_hit.length > 96  # found on a rung beyond the old 2x cap
+    assert fast_hit is not None and fast_hit.distance < 0.15, fast_hit
+    assert fast_hit.length < 24  # found on a rung below the old 0.5x cap
+
+
 def test_hits_from_different_scales_never_overlap():
     """One event must come back once, at its best scale, not once per scale."""
     ohlc, ts, _ = _scaled_series()

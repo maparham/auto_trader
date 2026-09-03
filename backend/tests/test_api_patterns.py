@@ -118,11 +118,12 @@ def test_finds_the_repeats_and_reports_the_scanned_series(client):
     assert data["series"]["oldestTs"] == 1_700_000_000
     # Candidate OFFSETS that survived the filters, not the number of matches
     # returned, summed over the scale ladder: the 6-bar query scans at its own
-    # length plus the 8-, 10- and 12-bar rungs (rescaled rungs under 8 bars are
-    # dropped as spurious), so 138 bars give 133+131+129+127 windows. Nothing
-    # here is flat, and every window is as tight as the query at its rung, so
-    # no rule bites and the selection's own window is ranked with the rest.
-    assert data["scanned"] == 133 + 131 + 129 + 127
+    # length plus the 8-, 10-, 12- and 15-bar rungs (rescaled rungs under 8
+    # bars are dropped as spurious), so 138 bars give 133+131+129+127+124
+    # windows. Nothing here is flat, and every window is as tight as the query
+    # at its rung, so no rule bites and the selection's own window is ranked
+    # with the rest.
+    assert data["scanned"] == 133 + 131 + 129 + 127 + 124
     assert data["elapsedMs"] >= 0
     assert data["cold"] is True
 

@@ -29,7 +29,12 @@ class Region:
 
 
 def is_hit(cand: Match, region: Region) -> bool:
-    if abs(cand.start - region.start) > START_TOL:
+    # Start tolerance grows with the region: a 4-bar offset on a 120-bar
+    # window is the same event to the eye (the smoothed scan's best offset
+    # lands a few bars wide of a long plant), while on a 48-bar window +-2
+    # stays the rule.
+    tol = max(START_TOL, round(0.05 * region.length))
+    if abs(cand.start - region.start) > tol:
         return False
     ratio = cand.length / region.length
     return RATIO_LO <= ratio <= RATIO_HI

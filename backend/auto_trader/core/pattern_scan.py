@@ -176,7 +176,10 @@ class Match:
 # recurrence as noise (an OIL_CRUDE pattern at 0.6x the duration measured 1.19
 # against 0.59 once rescaled). Geometric with ratio ~2^(1/3), so neighbouring
 # rungs are close enough that a true match between them still scores well.
-DEFAULT_SCALES: tuple[float, ...] = (0.5, 0.63, 0.79, 1.0, 1.26, 1.59, 2.0)
+# 0.4-2.52 rather than 0.5-2: a chartist calls a pattern at well over twice
+# the duration the same pattern, and the extra rungs cost two more scan
+# passes while the benchmark shows no noise from them.
+DEFAULT_SCALES: tuple[float, ...] = (0.4, 0.5, 0.63, 0.79, 1.0, 1.26, 1.59, 2.0, 2.52)
 
 
 def stretch(query: np.ndarray, m: int) -> np.ndarray:

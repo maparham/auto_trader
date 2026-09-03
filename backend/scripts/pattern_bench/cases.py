@@ -287,6 +287,29 @@ def case_pivot_trap() -> Case:
     )
 
 
+def case_extreme_tempo() -> Case:
+    ts, ohlc = load_segment(DB_PATH, "dukascopy", "US500", "MINUTE_5", 1744000000, 1756000000)
+    scale = bar_scale(ohlc)
+    rng = np.random.default_rng(1010)
+    query = build_pattern("trend-pullback", 48, scale, rng, amplitude=30, noise=1.0)
+    goods = [
+        # The outer rungs of the widened ladder: the same trajectory at well
+        # under half and well over twice the query's duration.
+        tempo(build_pattern("trend-pullback", 48, scale, rng, amplitude=30, noise=1.0), 0.4),
+        tempo(build_pattern("trend-pullback", 48, scale, rng, amplitude=30, noise=1.2), 2.5),
+        tempo(build_pattern("trend-pullback", 48, scale, rng, amplitude=30, noise=1.0), 2.2),
+    ]
+    bads = [
+        tempo(build_pattern("inv-trend-pullback", 48, scale, rng, amplitude=30, noise=1.0), 0.4),
+        tempo(build_pattern("inv-trend-pullback", 48, scale, rng, amplitude=30, noise=1.0), 2.5),
+    ]
+    return _assemble(
+        "extreme-tempo",
+        "The same rally-dip-rally at 0.4x and 2.2-2.5x duration; inverted extremes as decoys.",
+        ts, ohlc, query, goods, bads,
+    )
+
+
 ALL_CASES = (
     case_v_bottom_noise,
     case_tempo_warp,
@@ -297,4 +320,5 @@ ALL_CASES = (
     case_short_query,
     case_flat_lead_trap,
     case_pivot_trap,
+    case_extreme_tempo,
 )
