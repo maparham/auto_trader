@@ -25,6 +25,7 @@ import AlertsSidebar, { type AlertNavTarget, type VisibleCell } from "./AlertsSi
 import ConfirmDialog from "./ConfirmDialog";
 import AgentConfirmHost from "./agent/AgentConfirmHost";
 import { initAgentBridge } from "./agent";
+import { setFocusedDrawingsProvider } from "./agent/actions/drawings";
 import { registerAction } from "./agent/registry";
 import SaveDefaultTemplateModal from "./SaveDefaultTemplateModal";
 import BacktestClusterPopover from "./BacktestClusterPopover";
@@ -2153,6 +2154,17 @@ export default function App() {
   }, [active?.id, active?.layout]);
 
   const focusedController = focused?.controller ?? null;
+
+  // Agent drawing actions target the focused chart. Re-set every render so the
+  // provider closure never goes stale (same ref-each-render idiom as
+  // jumpToEpicRef/tabsRef above, but as an effect without deps for clarity).
+  useEffect(() => {
+    setFocusedDrawingsProvider(() =>
+      focusedController && focusedCell && symbol
+        ? { overlays: focusedController.overlays, epic: symbol.epic, cellId: focusedCell.id }
+        : null,
+    );
+  });
 
   // Strategy-declared chart overlays (e.g. BB Regime's BOLL band) on the
   // focused cell, synced to the backtest strategy setup from ANY writer —
