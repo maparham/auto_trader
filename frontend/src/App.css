@@ -2405,8 +2405,15 @@
 /* Save-as-default indicator checklist. */
 .sdt-list { list-style: none; margin: 10px 0 0; padding: 0; }
 .sdt-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
-.sdt-row .ind-name { color: var(--text); }
-.sdt-params { margin-left: auto; opacity: 0.6; }
+/* flex: none overrides the legend's `.ind-name { flex: 1; min-width: 0 }`,
+   whose 0 flex-basis collapses the label under the params. */
+.sdt-row .ind-name { color: var(--text); flex: none; }
+/* Long param strings (e.g. TRENDLINES) truncate on one line; the tooltip on
+   the trigger shows the full list. min-width: 0 lets the flex item shrink. */
+.sdt-row > .tooltip-trigger { margin-left: auto; min-width: 0; }
+/* min-width: 0 again on the span: it's a flex item of the inline-flex trigger,
+   so without it the nowrap text can't shrink and spills over the label. */
+.sdt-params { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.6; }
 /* Edit-mode delete button, pinned to the footer's far left (TradingView). */
 .modal-foot .al-trash {
   margin-right: auto; display: inline-flex; align-items: center; justify-content: center;

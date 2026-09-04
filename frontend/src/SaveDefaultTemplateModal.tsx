@@ -5,6 +5,7 @@
 // — same primitives as ConfirmDialog, but with a checkbox list.
 import { useState } from "react";
 import CloseButton from "./CloseButton";
+import Tooltip from "./components/Tooltip";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import type { SaveDefaultTemplateRequest } from "./lib/signals";
 
@@ -48,7 +49,9 @@ export default function SaveDefaultTemplateModal({ req, onClose }: Props) {
                   <li key={c.id} className="sdt-row" onClick={() => toggle(c.id)}>
                     <input type="checkbox" checked={checked.has(c.id)} readOnly />
                     <span className="ind-name">{c.label}</span>
-                    <span className="sdt-params">{c.params}</span>
+                    <Tooltip content={c.params} disabled={!c.params}>
+                      <span className="sdt-params">{c.params}</span>
+                    </Tooltip>
                   </li>
                 ))}
               </ul>
