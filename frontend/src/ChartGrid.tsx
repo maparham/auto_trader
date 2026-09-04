@@ -12,6 +12,7 @@ import type { ChartController } from "./lib/chartController";
 import type { ChartCell, LayoutKind } from "./lib/persist";
 import type { Period } from "./lib/feed";
 import type { BidAsk, BidAskStyle, Clock, CrosshairStyle, DateFormat, PriceSide, Theme } from "./theme";
+import type { GoLivePillPos } from "./lib/liveEdge";
 
 // Grid shape (column x row counts) per layout kind. Templates are derived from
 // per-tab size fractions (equal split when none saved).
@@ -55,6 +56,8 @@ interface Props {
   bidAskStyle: BidAskStyle;
   // Crosshair guide-line appearance (style/color/opacity). Global.
   crosshair: CrosshairStyle;
+  // Where the jump-to-end pill parks (lib/liveEdge.ts). Global.
+  goLivePillPos: GoLivePillPos;
   // Per-tab crosshair-link toggle (drives the cross-cell vertical time guide).
   syncCrosshair: boolean;
   // Per-tab date-range link: scroll/zoom in one cell matches the time window on the others.
@@ -103,6 +106,7 @@ export default function ChartGrid({
   bidAsk,
   bidAskStyle,
   crosshair,
+  goLivePillPos,
   syncCrosshair,
   syncTime,
   locked,
@@ -311,6 +315,7 @@ export default function ChartGrid({
             bidAsk={bidAsk}
             bidAskStyle={bidAskStyle}
             crosshair={crosshair}
+            goLivePillPos={goLivePillPos}
             // Crosshair link only matters with >1 cell, and not while a cell is
             // maximized (siblings are hidden — no visible receiver to sync).
             syncCrosshair={syncCrosshair && cells.length > 1 && !validMaximizedCellId}

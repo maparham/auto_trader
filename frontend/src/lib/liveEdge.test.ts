@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Chart } from "klinecharts";
-import { LIVE_JUMP_MS, barsPastRightEdge, formatBehind, jumpToLive, readLiveEdge } from "./liveEdge";
+import {
+  GOLIVE_PILL_H,
+  LIVE_JUMP_MS,
+  barsPastRightEdge,
+  formatBehind,
+  goLivePillStyle,
+  jumpToLive,
+  readLiveEdge,
+} from "./liveEdge";
 
 // klinecharts' VisibleRange.realTo is an EXCLUSIVE index that keeps counting past
 // the last bar when the view sits in right-edge whitespace, so "how many bars are
@@ -79,6 +87,46 @@ describe("readLiveEdge", () => {
 
   it("gives no label on an empty chart", () => {
     expect(readLiveEdge(fakeChart(0, 0))).toBe(null);
+  });
+});
+
+describe("goLivePillStyle", () => {
+  // right/bottom are the axis-clearing offsets ChartCore already computes
+  // (y-axis width + 10, x-axis height + 10); height is the cell's full height.
+  const m = { right: 70, bottom: 38, priceY: 200, height: 600 };
+
+  it("parks above the time axis by default", () => {
+    expect(goLivePillStyle("axis", m)).toEqual({ right: 70, bottom: 38 });
+  });
+
+  it("parks at the top right of the chart area", () => {
+    expect(goLivePillStyle("topRight", m)).toEqual({ right: 70, top: 10 });
+  });
+
+  it("centers on the last-price line in priceLine mode", () => {
+    expect(goLivePillStyle("priceLine", m)).toEqual({
+      right: 70,
+      top: 200 - GOLIVE_PILL_H / 2,
+    });
+  });
+
+  it("clamps into the pane when the price line sits above the view", () => {
+    expect(goLivePillStyle("priceLine", { ...m, priceY: -50 })).toEqual({ right: 70, top: 8 });
+  });
+
+  it("clamps above the time axis when the price line sits below the view", () => {
+    // Pane bottom = height - x-axis height = 600 - 28; the pill stays 8px above it.
+    expect(goLivePillStyle("priceLine", { ...m, priceY: 900 })).toEqual({
+      right: 70,
+      top: 600 - 28 - GOLIVE_PILL_H - 8,
+    });
+  });
+
+  it("falls back to the axis park when there is no price line to follow", () => {
+    expect(goLivePillStyle("priceLine", { ...m, priceY: null })).toEqual({
+      right: 70,
+      bottom: 38,
+    });
   });
 });
 

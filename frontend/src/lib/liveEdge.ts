@@ -52,6 +52,43 @@ export function readLiveEdge(chart: Chart): string | null {
   return formatBehind(rightEdge.timestamp, latest.timestamp);
 }
 
+/** Where the pill parks (Settings → General). "topRight" is the default, clear
+ * of both axes; "axis" is the older spot just above the time axis; "priceLine"
+ * rides the last-price line so the pill sits where the eye already is when
+ * watching price. */
+export type GoLivePillPos = "axis" | "topRight" | "priceLine";
+
+/** The pill's rendered height (.chart-golive: 11.5px text + 4px padding ×2 +
+ * 1px border ×2), fixed here so priceLine mode can center on the line without
+ * measuring the DOM every tick. */
+export const GOLIVE_PILL_H = 24;
+
+/** The pill's CSS offsets for a placement.
+ *
+ * `right`/`bottom` are the axis-clearing offsets the caller already computes
+ * (price-axis width + 10 / time-axis height + 10) — every placement keeps the
+ * same `right`, so the pill never covers the price axis. `priceY` is the
+ * last-price line's y within the cell (null with no data), and `height` the
+ * cell's full height; priceLine mode centers on that y but clamps into the
+ * candle pane, so a price line pushed off-scale by a deep pan back still
+ * leaves the pill visible at the pane edge rather than following it off
+ * screen. No line to follow falls back to the axis park. */
+export function goLivePillStyle(
+  pos: GoLivePillPos,
+  m: { right: number; bottom: number; priceY: number | null; height: number },
+): { right: number; top?: number; bottom?: number } {
+  if (pos === "topRight") return { right: m.right, top: 10 };
+  if (pos === "priceLine" && m.priceY != null) {
+    // Pane bottom = height − time-axis height, where the axis height is what
+    // `bottom` was built from (axis + 10). 8px breathing room on both ends.
+    const min = 8;
+    const max = m.height - (m.bottom - 10) - GOLIVE_PILL_H - 8;
+    const top = Math.min(Math.max(m.priceY - GOLIVE_PILL_H / 2, min), Math.max(min, max));
+    return { right: m.right, top };
+  }
+  return { right: m.right, bottom: m.bottom };
+}
+
 /** Glide duration for the jump. Long enough to see WHERE the view came from
  * (a teleport reads as a reload), short enough not to feel like waiting. */
 export const LIVE_JUMP_MS = 260;

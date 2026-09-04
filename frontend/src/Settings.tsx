@@ -4,6 +4,7 @@
 import { useState } from "react";
 import CloseButton from "./CloseButton";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import type {
   AlertDefaults,
   AlertExpiry,
@@ -15,6 +16,7 @@ import type {
   Theme,
 } from "./theme";
 import type { AlertCondition, AlertTrigger } from "./lib/persist";
+import type { GoLivePillPos } from "./lib/liveEdge";
 import { chartColors, LEVERAGE_TYPES } from "./theme";
 import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker";
 import { useDraggable } from "./lib/useDraggable";
@@ -57,6 +59,54 @@ const BID_ASK: { value: BidAsk; label: string }[] = [
   { value: "labels", label: "Labels" },
   { value: "lines", label: "Lines" },
 ];
+
+// Where the jump-to-end pill parks on the chart (lib/liveEdge.ts). Each
+// option renders as a mini chart glyph — frame + time/price axes — with the
+// pill drawn where that placement puts it; the label lives in the tooltip.
+const GOLIVE_POSITIONS: { value: GoLivePillPos; label: string; pill: JSX.Element }[] = [
+  {
+    value: "axis",
+    label: "Above the time axis",
+    pill: <rect x="6" y="9" width="6" height="2.6" rx="1.3" fill="currentColor" stroke="none" />,
+  },
+  {
+    value: "topRight",
+    label: "Top right of the chart",
+    pill: <rect x="6" y="2.6" width="6" height="2.6" rx="1.3" fill="currentColor" stroke="none" />,
+  },
+  {
+    value: "priceLine",
+    label: "On the Price line",
+    pill: (
+      <>
+        <line x1="1" y1="7.2" x2="14" y2="7.2" strokeDasharray="1.6 1.6" />
+        <rect x="6" y="5.9" width="6" height="2.6" rx="1.3" fill="currentColor" stroke="none" />
+      </>
+    ),
+  },
+];
+
+// The glyph's shared chart furniture: outer frame, time axis along the bottom,
+// price axis down the right — so the pill rect reads as a position, not a shape.
+function GoLiveGlyph({ pill }: { pill: JSX.Element }) {
+  return (
+    <svg
+      className="golive-glyph"
+      viewBox="0 0 18 14"
+      width="18"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1"
+      aria-hidden="true"
+    >
+      <rect x="0.5" y="0.5" width="17" height="13" rx="1.5" />
+      <line x1="14.5" y1="0.5" x2="14.5" y2="13.5" />
+      <line x1="0.5" y1="12.5" x2="14.5" y2="12.5" />
+      {pill}
+    </svg>
+  );
+}
 
 const TRIGGERS: { value: AlertTrigger; label: string }[] = [
   { value: "once", label: "Once only" },
@@ -357,6 +407,27 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
                   >
                     {label}
                   </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <label className="label-info">
+                Jump to end
+                <InfoTip text='Where the "12d back" jump button parks while the newest bar is off-screen: above the time axis, at the top right of the chart, or riding the last-price line.' />
+              </label>
+              <div className="seg">
+                {GOLIVE_POSITIONS.map((p) => (
+                  <Tooltip key={p.value} content={p.label}>
+                    <button
+                      className={`golive-pos${settings.goLivePillPos === p.value ? " seg-on" : ""}`}
+                      aria-label={p.label}
+                      aria-pressed={settings.goLivePillPos === p.value}
+                      onClick={() => onChange({ ...settings, goLivePillPos: p.value })}
+                    >
+                      <GoLiveGlyph pill={p.pill} />
+                    </button>
+                  </Tooltip>
                 ))}
               </div>
             </div>

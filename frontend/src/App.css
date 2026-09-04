@@ -2831,6 +2831,12 @@
 .bt-section > .seg { align-self: flex-start; }
 .seg button { background: var(--input-bg); color: var(--text); border: none; padding: 6px 14px; cursor: pointer; }
 .seg button.seg-on { background: var(--accent); color: var(--accent-text); }
+/* Jump-to-end pill placement picker (Settings → General): icon-only seg
+   buttons, each a mini chart glyph. Flex centers the svg (a bare inline svg
+   rides the text baseline, sitting low in the button). */
+.seg button.golive-pos { display: inline-flex; align-items: center; padding: 6px 10px; }
+.seg button.golive-pos:not(.seg-on) .golive-glyph { color: var(--text-dim); }
+.seg button.golive-pos:not(.seg-on):hover .golive-glyph { color: var(--text); }
 
 /* Rule-proximity heatmap: a split control in the toolbar (it was chart furniture
    pinned over the price axis). The face toggles the paint, the caret opens the
@@ -6266,9 +6272,10 @@ span.bt-leg-short { color: var(--neg); }
 .pm-preview line { stroke-width: 0.6; }
 .pm-divider { stroke: var(--border); stroke-width: 0.6; stroke-dasharray: 2 2; }
 
-/* "Back to live" pill — bottom-right of the chart, above the time axis. Only
-   rendered while the newest bar is off-screen, so it costs no chrome once you
-   are back at the live edge. */
+/* Jump-to-end pill. Parked at the chart's top right by default; Settings →
+   General can move it above the time axis or onto the last-price line (offsets
+   come from lib/liveEdge.goLivePillStyle). Only rendered while the newest bar
+   is off-screen, so it costs no chrome once you are back at the live edge. */
 .chart-golive {
   position: absolute; z-index: 11;
   display: inline-flex; align-items: center; gap: 6px;

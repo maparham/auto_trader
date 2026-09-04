@@ -153,7 +153,7 @@ import {
   browserTimezone,
   first,
 } from "./chart/chartPainters";
-import { readLiveEdge } from "./lib/liveEdge";
+import { goLivePillStyle, readLiveEdge, type GoLivePillPos } from "./lib/liveEdge";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
 import { refreshMtfIndicators, setChartIntervalMs } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, restingLineEndX } from "./lib/positionLines";
@@ -257,6 +257,8 @@ interface Props {
   bidAskStyle: BidAskStyle;
   // Appearance of the crosshair guide lines (style/color/opacity). Global.
   crosshair: CrosshairStyle;
+  // Where the jump-to-end pill parks (lib/liveEdge.ts). Global.
+  goLivePillPos: GoLivePillPos;
   // When on, broadcast this cell's hovered timestamp to its tab's sibling cells
   // and paint their broadcasts as a vertical time guide (crosshair link).
   syncCrosshair?: boolean;
@@ -310,6 +312,7 @@ export default function ChartCore({
   bidAsk,
   bidAskStyle,
   crosshair,
+  goLivePillPos,
   syncCrosshair,
   syncTime,
   locked,
@@ -5140,7 +5143,17 @@ export default function ChartCore({
             type="button"
             className="chart-golive"
             data-testid="chart-golive"
-            style={{ right: liveEdge.right, bottom: liveEdge.bottom }}
+            // Placement is a global setting (lib/liveEdge.goLivePillStyle). The
+            // priceLine mode rides priceTag.y, which the redraw loop refreshes
+            // on every tick — so the pill follows the line without its own
+            // subscription. Height read live: it only matters for the clamp,
+            // and the ref is set long before the pill can first render.
+            style={goLivePillStyle(goLivePillPos, {
+              right: liveEdge.right,
+              bottom: liveEdge.bottom,
+              priceY: priceTag?.y ?? null,
+              height: containerRef.current?.clientHeight ?? 0,
+            })}
             onClick={goLive}
           >
             <span className="chart-golive-label">{liveEdge.label}</span>

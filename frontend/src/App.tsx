@@ -2354,6 +2354,7 @@ export default function App() {
               bidAsk={settings.bidAsk}
               bidAskStyle={settings.bidAskStyle}
               crosshair={settings.crosshair}
+              goLivePillPos={settings.goLivePillPos}
               syncCrosshair={effectiveSyncCrosshair(active)}
               syncTime={effectiveSyncTime(active)}
               locked={!!active.locked}

@@ -6,6 +6,7 @@
 import type { LineStyleOpt } from "./ColorLineStylePicker";
 import type { AlertCondition, AlertTrigger } from "./lib/persist";
 import { loadSettingsRaw, saveSettingsRaw } from "./lib/persist";
+import type { GoLivePillPos } from "./lib/liveEdge";
 
 export type Theme = "dark" | "light";
 
@@ -98,6 +99,9 @@ export interface Settings {
   // Default off: switching timeframe jumps to the latest candle.
   // See chart/useLiveMarketData.ts.
   preserveCenterOnTfChange: boolean;
+  // Where the jump-to-end pill parks on the chart (lib/liveEdge.ts). Global.
+  // Defaults to the chart's top right, clear of the axes and the price action.
+  goLivePillPos: GoLivePillPos;
   // Override the chart pane background (candle + sub-panes) with a custom color,
   // e.g. a dimmer grey between the light and dark themes. Undefined follows the
   // theme's default background. Global, independent of the light/dark theme.
@@ -197,6 +201,7 @@ const DEFAULT_SETTINGS: Settings = {
   trading: DEFAULT_TRADING_SETTINGS,
   autoSaveTemplates: true,
   preserveCenterOnTfChange: false,
+  goLivePillPos: "topRight",
 };
 
 export function loadSettings(): Settings {
