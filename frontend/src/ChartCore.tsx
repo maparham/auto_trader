@@ -109,11 +109,15 @@ import {
   deleteSnapshotMeta,
   loadFavoriteResolutions,
   loadAvwapAnchor,
+  loadIndicatorConfigs,
+  saveIndicatorConfig,
+  saveIndicators,
   type SnapshotMeta,
   type AlertCondition,
   type AlertTrigger,
 } from "./lib/persist";
 import {
+  addIndicatorInstance,
   applyIndicatorVisibility,
   collapseSubPanes,
   expandSubPanes,
@@ -135,7 +139,11 @@ import { scheduleAutoSave, cancelAutoSave } from "./lib/templateAutosave";
 import {
   indTypeOf,
   setIndicatorTimezone,
+  appendWindow,
+  buildRecurringWindowFromDrag,
+  type TimeHighlightExtend,
 } from "./lib/customIndicators";
+import { overrideExtend } from "./lib/overrideExtend";
 import {
   HIT_TOLERANCE_PX,
   type LineCache,
@@ -333,6 +341,7 @@ export default function ChartCore({
     patternPasteArmed,
     patternSearchAvailable,
     timeRangeArmed,
+    recurringHighlightArmed,
     selectedIndicator,
     legendHovered,
     legendHoverName,
@@ -1050,6 +1059,7 @@ export default function ChartCore({
   const [patternArmedUi, setPatternArmedUi] = useState(false);
   // Same, for the Time Range highlight tool while it's armed (press-drag to place).
   const [timeRangeArmedUi, setTimeRangeArmedUi] = useState(false);
+  const [recurringArmedUi, setRecurringArmedUi] = useState(false);
   // Cursor over the chart canvas: "cur-pointer" (hand) over a selectable indicator
   // curve, "cur-default" (arrow) over the legend strip, "" = klinecharts crosshair.
   // A class (not inline style) because klinecharts sets cursor on the canvas itself,
@@ -2689,27 +2699,71 @@ export default function ChartCore({
       patternPasteArmed.set(false); // one-shot, like every other placement tool
     };
 
-    // --- Time Range highlight (persistent) ---
-    // Armed from the draw sidebar (timeRangeArmed). Trendline-style placement,
-    // mirroring Pick Range above: the first click fixes the start edge, the second
-    // edge then follows the cursor until a second click commits it. A second click
-    // before the cursor has moved (or a plain click-release with no drag) collapses
-    // to the single candle at the first click's timestamp. Press-drag-release also
-    // commits, like TV. On commit the band is persisted and the tool disarms
-    // (one-shot). Reuses rangePickTsAtX to snap the cursor x to a bar open. Chart
-    // scroll/zoom are disabled while armed so the gesture selects instead of
-    // panning; this handler owns the press (stopImmediatePropagation).
+    // --- Time Range highlight (persistent) & Recurring highlight (indicator) ---
+    // Armed from the draw sidebar (timeRangeArmed / recurringHighlightArmed).
+    // Trendline-style placement, mirroring Pick Range above: the first click
+    // fixes the start edge, the second edge then follows the cursor until a
+    // second click commits it. A second click before the cursor has moved (or a
+    // plain click-release with no drag) collapses to the single candle at the
+    // first click's timestamp. Press-drag-release also commits, like TV. On
+    // commit the band is persisted (timeRange: a drawing; recurringRange: a
+    // recurring window appended to the cell's Time Highlight indicator) and the
+    // tool disarms (one-shot). Reuses rangePickTsAtX to snap the cursor x to a
+    // bar open. Chart scroll/zoom are disabled while armed so the gesture
+    // selects instead of panning; this handler owns the press
+    // (stopImmediatePropagation). Both tools share the timeRange draft overlay
+    // as their live preview.
     let timeRangeCleanup: (() => void) | null = null;
     let timeRangePhase: "idle" | "drag" | "track" = "idle";
     let timeRangeDownX = 0;
     let timeRangeMoved = false;
+    let timeRangeStartTs = 0; // first edge (recurring commit needs both edges)
     let timeRangeLastTs: number | null = null; // last previewed end (fallback when the commit x resolves null)
+
+    // Append a recurring daily window covering the dragged bars to this cell's
+    // TIME_HIGHLIGHT instance, creating the instance when absent, and persist —
+    // both live extendData and the saved config, so the window survives reload.
+    // The period defaults to "day"; the settings gear edits it afterwards.
+    const commitRecurringHighlight = (startTs: number, endTs: number | null) => {
+      const c = chartRef.current;
+      if (!c) return;
+      const barMs = (RESOLUTION_SECONDS[resRef.current] ?? 60) * 1000;
+      const win = buildRecurringWindowFromDrag(startTs, endTs, barMs);
+      const candlePane = getIndicatorsByPane(c).get("candle_pane");
+      for (const [id, ind] of candlePane ?? []) {
+        if (indTypeOf(ind) !== "TIME_HIGHLIGHT") continue;
+        const windows = appendWindow((ind.extendData ?? {}) as TimeHighlightExtend, win);
+        overrideExtend(c, "candle_pane", id, { ...((ind.extendData as object) ?? {}), windows });
+        const saved = loadIndicatorConfigs(scope)[id] ?? {};
+        saveIndicatorConfig(scope, id, {
+          ...saved,
+          extendData: { ...(saved.extendData ?? {}), windows },
+        });
+        return;
+      }
+      const inst = addIndicatorInstance(c, scope, epicRef.current, "TIME_HIGHLIGHT", {
+        config: { extendData: { windows: [win] } },
+        forceHidden: controller.indicatorsHidden.value,
+        resolution: resRef.current,
+      });
+      if (!inst) return;
+      const next = [...controller.indicators.value, inst];
+      controller.indicators.set(next);
+      saveIndicators(scope, next);
+    };
+
     const timeRangeFinalize = (endTs: number | null) => {
       // No cursor movement → null end collapses to the clicked candle's span.
       // A moved commit whose x transiently resolves to no timestamp keeps the
       // last previewed end instead of silently collapsing the band.
       // finishTimeRange leaves the band click-selected (so Delete works at once).
-      overlays.finishTimeRange(timeRangeMoved ? (endTs ?? timeRangeLastTs) : null);
+      const end = timeRangeMoved ? (endTs ?? timeRangeLastTs) : null;
+      if (recurringHighlightArmed.value) {
+        overlays.clearTimeRangeDraft(); // the indicator band replaces the preview
+        commitRecurringHighlight(timeRangeStartTs, end);
+      } else {
+        overlays.finishTimeRange(end);
+      }
       // Swallow the trailing click that closes this gesture so onClick's
       // syncDrawingSelectionFromClick doesn't immediately clear that selection
       // (the placement press was consumed before klinecharts saw it, so its click
@@ -2719,7 +2773,9 @@ export default function ChartCore({
       timeRangeCleanup?.();
       timeRangeCleanup = null;
       timeRangePhase = "idle";
-      timeRangeArmed.set(false); // one-shot: disarm after placing
+      // One-shot: disarm after placing.
+      timeRangeArmed.set(false);
+      recurringHighlightArmed.set(false);
     };
     const onTimeRangeMove = (me: MouseEvent) => {
       const ts = rangePickTsAtX(me.clientX);
@@ -2738,7 +2794,7 @@ export default function ChartCore({
       }
     };
     const onTimeRangeDown = (e: MouseEvent) => {
-      if (!timeRangeArmed.value || e.button !== 0) return;
+      if ((!timeRangeArmed.value && !recurringHighlightArmed.value) || e.button !== 0) return;
       const c = chartRef.current;
       const mainW = c?.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (e.clientX - el.getBoundingClientRect().left > mainW) return; // price-axis strip
@@ -2757,6 +2813,7 @@ export default function ChartCore({
       timeRangePhase = "drag";
       timeRangeDownX = e.clientX;
       timeRangeMoved = false;
+      timeRangeStartTs = startTs;
       timeRangeLastTs = null;
       window.addEventListener("mousemove", onTimeRangeMove, true);
       window.addEventListener("mouseup", onTimeRangeUp, true);
@@ -2991,11 +3048,12 @@ export default function ChartCore({
       }
     });
 
-    // Time Range arm/disarm: mirror rangePick — crosshair cursor, disable
-    // scroll/zoom so the press-drag selects instead of panning, focus for Esc, and
-    // on disarm clean up + discard any half-placed band + restore scroll/zoom.
-    const unsubTimeRangeArm = timeRangeArmed.subscribe((on) => {
-      setTimeRangeArmedUi(on);
+    // Time Range / Recurring highlight arm/disarm: mirror rangePick — crosshair
+    // cursor, disable scroll/zoom so the press-drag selects instead of panning,
+    // focus for Esc, and on disarm clean up + discard any half-placed band +
+    // restore scroll/zoom. Shared handler; both tools drive the same gesture.
+    const onRangeToolArm = (setUi: (on: boolean) => void) => (on: boolean) => {
+      setUi(on);
       const c = chartRef.current;
       if (on) {
         c?.setScrollEnabled(false);
@@ -3009,7 +3067,9 @@ export default function ChartCore({
         c?.setScrollEnabled(true);
         c?.setZoomEnabled(true);
       }
-    });
+    };
+    const unsubTimeRangeArm = timeRangeArmed.subscribe(onRangeToolArm(setTimeRangeArmedUi));
+    const unsubRecurringArm = recurringHighlightArmed.subscribe(onRangeToolArm(setRecurringArmedUi));
 
     if (chart) {
       chart.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current, candleHiddenRef.current));
@@ -3414,6 +3474,7 @@ export default function ChartCore({
       unsubPatternArm();
       unsubPastArm();
       unsubTimeRangeArm();
+      unsubRecurringArm();
       rangePickDragCleanup?.();
       patternDragCleanup?.(); // drop an in-flight Find similar drag's window listeners
       timeRangeCleanup?.(); // drop an in-flight highlight placement's window listeners
@@ -3651,9 +3712,10 @@ export default function ChartCore({
   }, [effPrecision]);
 
   // Timezone changes -> retime the axis ("" follows the browser), and rebucket the
-  // Previous-period H/L lines in the same zone so their day/week/month/year steps
-  // stay aligned with the axis date labels. PREV_HL has no calcParams, so we force
-  // a recompute by re-applying its extendData (klinecharts reruns calc on override).
+  // Previous-period H/L lines and Time Highlight windows in the same zone so their
+  // steps/bands stay aligned with the axis date labels. Neither has calcParams, so
+  // we force a recompute by re-applying extendData (klinecharts reruns calc on
+  // override).
   useEffect(() => {
     const c = chartRef.current;
     if (!c) return;
@@ -3662,7 +3724,8 @@ export default function ChartCore({
     if (!setIndicatorTimezone(resolved)) return; // zone unchanged → nothing to redo
     const candlePane = getIndicatorsByPane(c).get("candle_pane");
     for (const [id, ind] of candlePane ?? []) {
-      if (indTypeOf(ind) !== "PREV_HL") continue;
+      const t = indTypeOf(ind);
+      if (t !== "PREV_HL" && t !== "TIME_HIGHLIGHT") continue;
       c.overrideIndicator({ name: id, extendData: { ...(ind.extendData as object) } });
     }
   }, [timezone]);
@@ -4846,6 +4909,9 @@ export default function ChartCore({
           } else if (timeRangeArmed.value) {
             timeRangeArmed.set(false); // subscription discards the draft + restores scroll
             e.preventDefault();
+          } else if (recurringHighlightArmed.value) {
+            recurringHighlightArmed.set(false); // same cleanup path as timeRange
+            e.preventDefault();
           } else if (measureArmed.value) {
             measureArmed.set(false);
             overlays.clearMeasure();
@@ -4913,7 +4979,7 @@ export default function ChartCore({
     >
       <div
         ref={containerRef}
-        className={anchoring || measureArmedUi || slopeArmedUi || rangePickArmedUi || zoomArmedUi || patternArmedUi || timeRangeArmedUi ? "anchoring" : undefined}
+        className={anchoring || measureArmedUi || slopeArmedUi || rangePickArmedUi || zoomArmedUi || patternArmedUi || timeRangeArmedUi || recurringArmedUi ? "anchoring" : undefined}
         style={{ width: "100%", height: "100%" }}
       />
       {paneDropTop != null && (

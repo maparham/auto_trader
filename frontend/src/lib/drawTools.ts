@@ -20,6 +20,10 @@ export const DRAW_TOOLS: DrawTool[] = [
   { name: "priceChannelLine", label: "Parallel channel" },
   { name: "fibonacciLine", label: "Fib retracement" },
   { name: "timeRange", label: "Time range" },
+  // Not a klinecharts overlay: the gesture appends a recurring-range window to
+  // the cell's Time Highlight indicator (DrawSidebar arms a signal, like
+  // timeRange, and bypasses the supported-overlay filter for this name).
+  { name: "recurringRange", label: "Recurring highlight" },
 ];
 
 // Overlay names that are NOT sidebar tools but still show up in drawing lists,

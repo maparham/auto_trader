@@ -238,6 +238,12 @@ export function setIndicatorTimezone(tz: string): boolean {
   return true;
 }
 
+// The current chart-axis zone, for other indicators that bucket in it
+// (TIME_HIGHLIGHT's recurring windows resolve against this same zone).
+export function getIndicatorTimezone(): string {
+  return indicatorTz;
+}
+
 const WEEKDAY_INDEX: Record<string, number> = {
   Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6,
 };

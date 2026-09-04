@@ -72,6 +72,7 @@ import {
   RSI_STYLE_DEFAULTS,
   DEFAULT_SESSIONS,
   DEFAULT_TIME_WINDOWS,
+  timeHighlightZone,
   indTypeOf,
   templateMaKind,
   maLegendLabel,
@@ -1767,6 +1768,7 @@ export default function IndicatorSettings({
               {type === "TIME_HIGHLIGHT" && (
                 <TimeHighlightInputsPanel
                   windows={windows}
+                  tz={timeHighlightZone()}
                   patchWindow={patchWindow}
                   writeWindows={writeWindows}
                   addWindow={addWindow}
@@ -2512,7 +2514,7 @@ export default function IndicatorSettings({
                 <SessionsStylePanel sessions={sessions} patchSession={patchSession} />
               )}
               {type === "TIME_HIGHLIGHT" && (
-                <TimeHighlightStylePanel windows={windows} patchWindow={patchWindow} />
+                <TimeHighlightStylePanel windows={windows} tz={timeHighlightZone()} patchWindow={patchWindow} />
               )}
               {/* PREV_HL: pair each boundary's High and Low on ONE row —
                   "Day  High [color][size]  Low [color][size]" — halving the list.

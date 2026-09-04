@@ -150,6 +150,11 @@ export class ChartController {
   // Esc disarms. Uses its own press-drag (not klinecharts interactive draw) so it can
   // support the click=one-candle gesture, so it's armed via a signal like rangePick.
   readonly timeRangeArmed = new Signal<boolean>(false);
+  // True while the Recurring highlight tool is armed (from the draw sidebar).
+  // Same press-drag/click gesture as timeRange, but the commit appends a
+  // recurring-range window to the cell's Time Highlight indicator (creating the
+  // instance if absent) instead of placing a drawing. One-shot; Esc disarms.
+  readonly recurringHighlightArmed = new Signal<boolean>(false);
   // The most recent time range picked on the chart (ms), or null. The backtest
   // panel subscribes and drops it into the Custom from/to. One-shot: consumers may
   // reset it to null after reading.

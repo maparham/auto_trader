@@ -105,6 +105,18 @@ const GLYPHS: Record<string, () => ReactNode> = {
       <line x1="14" y1="3" x2="14" y2="17" />
     </svg>
   ),
+  // Recurring highlight: two vertical bands — a range and its echo in an
+  // earlier period.
+  recurringRange: () => (
+    <svg {...S}>
+      <rect x="3" y="3" width="5" height="14" rx="0.5" fill="currentColor" fillOpacity="0.12" />
+      <line x1="3" y1="3" x2="3" y2="17" />
+      <line x1="8" y1="3" x2="8" y2="17" />
+      <rect x="12" y="3" width="5" height="14" rx="0.5" fill="currentColor" fillOpacity="0.3" />
+      <line x1="12" y1="3" x2="12" y2="17" />
+      <line x1="17" y1="3" x2="17" y2="17" />
+    </svg>
+  ),
 };
 
 export default function DrawGlyph({ name }: GlyphProps) {

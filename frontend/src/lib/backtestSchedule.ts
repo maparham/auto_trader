@@ -66,7 +66,7 @@ function cachedFormat(key: string, make: () => Intl.DateTimeFormat): Intl.DateTi
 }
 
 // Wall-clock fields of `tMs` in `tz`, via Intl (DST-correct).
-function localParts(
+export function localParts(
   tMs: number,
   tz: string,
 ): { year: number; dow: number; month: number; day: number; minute: number } {

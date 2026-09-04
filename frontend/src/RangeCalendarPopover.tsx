@@ -206,6 +206,10 @@ export default function RangeCalendarPopover({
   return createPortal(
     <div
       ref={popRef}
+      // role=dialog: FloatingModal hosts (IndicatorSettings) dismiss on any
+      // mousedown outside their panel EXCEPT inside dialog/menu/listbox roles;
+      // without it a click on a day cell slams the hosting modal shut.
+      role="dialog"
       className="dropdown bt-calendar-pop"
       style={{ position: "fixed", top: anchor.top, left: anchor.left }}
     >

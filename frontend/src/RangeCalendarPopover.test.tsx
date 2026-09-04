@@ -42,6 +42,16 @@ function cell(ds: string): HTMLElement {
 }
 
 describe("RangeCalendarPopover", () => {
+  it("carries role=dialog so FloatingModal's click-away treats it as the modal's own popover", () => {
+    // FloatingModal (IndicatorSettings' shell) dismisses on any mousedown outside
+    // its panel EXCEPT inside [role=dialog]/[role=menu]/[role=listbox]. The
+    // popover is portaled to <body>, so without the role a click on a day cell
+    // slams the hosting settings modal shut.
+    renderCal();
+    const pop = document.querySelector(".bt-calendar-pop");
+    expect(pop?.getAttribute("role")).toBe("dialog");
+  });
+
   it("renders the month grid of fromMs in tz with Mon…Sun headers", () => {
     renderCal();
     // Displayed month derives from fromMs → January 2024.

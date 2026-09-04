@@ -2761,6 +2761,14 @@
 .session-row .session-time::-webkit-calendar-picker-indicator { display: none; }
 .session-row .session-time::-webkit-inner-spin-button { display: none; }
 .session-row .session-dash { color: var(--text-faint); flex: 0 0 auto; }
+/* Recurring-range rows: the anchor-range button opens the calendar popover. */
+.session-row .session-range {
+  flex: 1 1 auto; min-width: 0; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 4px; background: none;
+  color: var(--text); font-size: 12px; padding: 3px 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.session-row .session-range:hover { background: var(--hover); }
 .session-row .session-remove {
   border: none; background: none; color: var(--text-faint); cursor: pointer;
   font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 4px;

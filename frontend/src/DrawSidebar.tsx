@@ -216,16 +216,20 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
   }, [openFly, magnetOpen, eyeOpen, patternMenuOpen]);
 
   // Only tools klinecharts actually supports (same guard the old dropdown had).
+  // recurringRange is signal-armed (no overlay behind it), so it's always in.
   const supported = new Set(getSupportedOverlays());
+  supported.add("recurringRange");
   const tools = DRAW_TOOLS.filter((t) => supported.has(t.name));
   const favShown = favs.filter((n) => supported.has(n));
 
   function arm(name: string) {
-    // Time Range uses its own press-drag placement (click = one candle, drag =
-    // range), driven off a controller signal in ChartCore, not klinecharts'
-    // interactive click-to-place. Arm the signal instead of addDrawing.
-    if (name === "timeRange") {
-      controller?.timeRangeArmed.set(true);
+    // Time Range and Recurring highlight use their own press-drag placement
+    // (click = one candle, drag = range), driven off a controller signal in
+    // ChartCore, not klinecharts' interactive click-to-place. Arm the signal
+    // instead of addDrawing.
+    if (name === "timeRange" || name === "recurringRange") {
+      const sig = name === "timeRange" ? controller?.timeRangeArmed : controller?.recurringHighlightArmed;
+      sig?.set(true);
       controller?.focusChart?.();
       const next = { ...lastUsed, tool: name };
       setLastUsed(next);

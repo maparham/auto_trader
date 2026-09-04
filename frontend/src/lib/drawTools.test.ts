@@ -21,7 +21,7 @@ describe("draw-tool registry", () => {
     expect(DRAW_TOOLS.map((t) => t.name)).toEqual([
       "segment", "rayLine", "straightLine",
       "horizontalStraightLine", "verticalStraightLine", "rect", "priceLine",
-      "priceChannelLine", "fibonacciLine", "timeRange",
+      "priceChannelLine", "fibonacciLine", "timeRange", "recurringRange",
     ]);
   });
 
