@@ -3,7 +3,7 @@
 // scroll-back pagination. Hands the Chart up via onReady so the toolbar can
 // drive indicators, overlays, and the price scale.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   init,
   dispose,
@@ -44,17 +44,10 @@ import DetachedPill from "./DetachedPill";
 import ReplayTicket from "./ReplayTicket";
 import ReplayReportCard from "./ReplayReportCard";
 import { useProximityHeatmap } from "./chart/useProximityHeatmap";
-import PatternMatchesPanel from "./PatternMatchesPanel";
-import { usePatternSearch } from "./chart/usePatternSearch";
-import { barsInRange, type MatchSource, type PatternMatch } from "./lib/patternSearch";
-import {
-  clearPendingPatternJumps,
-  getPatternTarget,
-  listPatternTargets,
-  registerPatternTarget,
-  setPendingPatternJump,
-  takePendingPatternJump,
-} from "./lib/patternTargets";
+import { barsInRange, type PatternMatch } from "./lib/patternSearch";
+import { getPatternPanelState, runPatternSearch } from "./lib/patternPanelStore";
+import { registerPatternTarget, takePendingPatternJump } from "./lib/patternTargets";
+import { anyCellInReadout, setCellReadout, subscribeReplayingCells } from "./lib/replayingCells";
 import { toast } from "./lib/notify";
 import { capturePattern, MIN_GHOST_BARS } from "./lib/patternGhost";
 import { useTrendlinePins } from "./chart/useTrendlinePins";
@@ -277,13 +270,6 @@ interface Props {
   // coarser/finer resolution than the current one). Cell-scoped so a keyboard-
   // activated preset targets the owning cell even without a prior pointer-down.
   onPeriod?: (cellId: string, p: Period) => void;
-  // Every searchable chart series across ALL tabs, for the pattern search's
-  // all-charts scope. App enumerates and gates them; absent (tests, detached
-  // views) the search covers this cell alone.
-  getPatternSeries?: () => MatchSource[];
-  // Cross-tab pattern jump: activate the tab and focus/flash the cell holding
-  // a foreign match row, while the match waits in the pending-jump map.
-  onRevealPatternCell?: (tabId: string, cellId: string) => void;
 }
 
 // PAGE_BARS (older bars per scroll-back page) now lives in lib/historyPaging, so
@@ -322,8 +308,6 @@ export default function ChartCore({
   onFocus,
   focused,
   onPeriod,
-  getPatternSeries,
-  onRevealPatternCell,
 }: Props) {
   // Per-cell controller: its own OverlayManager + the per-chart UI signals that
   // used to be module globals. Stable for the life of this mount (the cell key is
@@ -1606,21 +1590,24 @@ export default function ChartCore({
   );
   const copyPatternRef = useRef(copyPattern);
   copyPatternRef.current = copyPattern;
-  const patternSearch = usePatternSearch({
-    cellId,
-    epic: symbol.epic,
-    broker: brokerId,
-    priceSide,
-    resolution: period.resolution,
-    getBars: patternGetBars,
-    // Without App's workspace enumeration (tests, detached views) the search
-    // covers this cell alone, so all-charts scope degrades to this-chart.
-    getSeries: getPatternSeries ?? (() => []),
-  });
+  // Hand the drag's selection to the WORKSPACE pattern panel (App renders it;
+  // the store owns the state, so the results outlive this cell's mount).
+  const runPatternHere = useCallback(
+    (fromMs: number, toMs: number) => {
+      runPatternSearch({
+        origin: { cellId, epic: symbol.epic, resolution: period.resolution, label: period.label },
+        broker: brokerId,
+        priceSide,
+        bars: barsInRange(patternGetBars(), fromMs, toMs),
+        range: { fromMs, toMs },
+      });
+    },
+    [cellId, symbol.epic, period.resolution, period.label, brokerId, priceSide, patternGetBars],
+  );
   // The gesture lives in the once-mounted init effect, so it reads a ref rather
   // than the render-scope value (same reason as onZoomToRange's resRef).
-  const patternSearchRef = useRef(patternSearch);
-  patternSearchRef.current = patternSearch;
+  const runPatternHereRef = useRef(runPatternHere);
+  runPatternHereRef.current = runPatternHere;
   // Whether the tool applies to this cell at all. Synthetic epics have no stored
   // history to search, sub-minute (liveOnly) resolutions aren't served by the
   // endpoint, and a read-only snapshot is a frozen picture. CAPABILITY only: the
@@ -1771,10 +1758,6 @@ export default function ChartCore({
   // goToRange's identity changes, so it calls through this ref.
   const showMatchHereRef = useRef(showMatchHere);
   showMatchHereRef.current = showMatchHere;
-  // Sibling cells this panel painted match bands on (foreign-row jumps). The
-  // sibling never ran a search of its own, so nothing on its side clears the
-  // bands — the panel's dismiss must reach over and do it.
-  const jumpedSiblingsRef = useRef(new Set<string>());
 
   // Create the chart once (StrictMode-safe: init has no idempotent guard).
   useEffect(() => {
@@ -2573,7 +2556,7 @@ export default function ChartCore({
       // A new query retires the previous run's match bands: they mark a row in
       // a result list that is about to be replaced.
       overlays.clearMatchBands();
-      patternSearchRef.current?.run(res.fromMs, res.toMs);
+      runPatternHereRef.current(res.fromMs, res.toMs);
     };
     const onPatternMove = (me: MouseEvent) => {
       const ts = rangePickTsAtX(me.clientX);
@@ -3987,10 +3970,27 @@ export default function ChartCore({
   // true with the dates on screen too.
   //
   // Folded into one value rather than a second effect writing the same signal:
-  // patternSearchAvailable then has exactly one owner, and the reset effect below
-  // sees a session start as just another availability change — dismissing an open
-  // panel and clearing its bands through the path that already exists.
-  const patternAvailable = patternCapable && readoutMode === "off";
+  // patternSearchAvailable then has exactly one owner, and the band-sync effect
+  // below sees a session start as just another availability change — clearing
+  // the bands through the path that already exists.
+  //
+  // ALSO gated on a readout anywhere ON SCREEN (any mounted cell, not just this
+  // one): the results panel is workspace-level and App hides it while a visible
+  // cell is in a readout, so a search from a sibling cell would run silently
+  // into a hidden panel — and its rows would print the very dates the session
+  // conceals the moment it ended. Withdrawing the tool on every visible cell
+  // keeps "you can search" and "you can see results" the same fact.
+  const readoutOnScreen = useSyncExternalStore(subscribeReplayingCells, anyCellInReadout);
+  const patternAvailable = patternCapable && readoutMode === "off" && !readoutOnScreen;
+  // The wider-than-active readout fact (picking counts too), for App's panel
+  // gate and the sibling-cell gate above. Effect-timed like setCellReplaying;
+  // the entry lag is immaterial — the panel was legitimately on screen the
+  // moment before the readout began, so the one pre-effect frame shows nothing
+  // that was not already visible.
+  useEffect(() => {
+    setCellReadout(cellId, readoutMode !== "off");
+    return () => setCellReadout(cellId, false);
+  }, [cellId, readoutMode]);
   // Publish availability so the draw sidebar can disable its button (it has no
   // epic/period/snapshot/session of its own). In an effect, not render: setting a
   // Signal during render would notify the sidebar's subscriber mid-render.
@@ -4018,6 +4018,7 @@ export default function ChartCore({
       label: period.label,
       showMatch: (m) => showMatchHereRef.current(m),
       clearMatchBands: () => handle.overlays.clearMatchBands(),
+      clearSelectionBand: () => handle.overlays.clearZoomBand(),
     });
     // A cross-tab jump parked for this cell before it was mounted. Everything
     // goes through refs the data-load effect consumes AFTER the first load —
@@ -4052,37 +4053,35 @@ export default function ChartCore({
     }
     return off;
   }, [patternAvailable, cellId, symbol.epic, period.resolution, period.label, brokerId, priceSide, handle]);
-  // Results belong to ONE series. The cell reloads in place on a symbol/broker/
-  // side/interval change, so without this the panel stays up rendering the NEW
-  // epic and resolution over the OLD series' matches, and a row click would page
-  // history for the wrong window. Same for a cell that just became gated — which
-  // now includes entering replay. But the matches are not destroyed: the cleanup
-  // PARKS them under the series they were searched on, and adoptSeries restores
-  // them (band included) when the user switches back — only the panel's own
-  // close forgets them for good. Read the ref (assigned above, this render)
-  // rather than adding result/loading/error to the deps: only the identity change
-  // should trigger a reset. Band clearing is skipped when no panel was up, so the
-  // zoom tool's own band (which survives the timeframe drop it just performed)
-  // is left alone.
+  // Selection-band sync with the WORKSPACE panel. The results live in the
+  // store, untouched by anything this cell does — but the band marking the
+  // dragged range is painted on THIS chart, so on mount, on a series change
+  // and on a gating flip (replay in or out) the cell must repaint or clear it
+  // to match whether it currently shows the origin series. Repaint goes
+  // through pendingPatternBandRef: the immediate redraw covers a gating flip
+  // with no reload (leaving replay); a SERIES change reloads the data, whose
+  // rehydrate tears down every overlay, so the load effect repaints the band
+  // from the ref after it.
   useEffect(() => {
-    const ps = patternSearchRef.current;
-    const hadPanel = Boolean(ps.result || ps.loading || ps.error);
-    const restored = ps.adoptSeries(patternAvailable);
-    if (hadPanel) {
-      overlays.clearZoomBand();
-      overlays.clearMatchBands();
+    const st = getPatternPanelState();
+    const mine =
+      st.origin != null && st.range != null &&
+      st.origin.epic === symbol.epic && st.origin.resolution === period.resolution &&
+      st.broker === brokerId && st.priceSide === priceSide;
+    if (mine && patternAvailable) {
+      overlays.redrawZoomBand(st.range!.fromMs, st.range!.toMs);
+      pendingPatternBandRef.current = st.range;
+    } else {
+      // Always assigned — a switch away from the origin series must also clear
+      // a leftover repaint request from the previous switch.
+      pendingPatternBandRef.current = null;
+      if (mine) {
+        // Still the origin series but gated (entering replay, which reloads
+        // nothing): the band would leak the searched range's dates.
+        overlays.clearZoomBand();
+        overlays.clearMatchBands();
+      }
     }
-    if (restored) overlays.redrawZoomBand(restored.fromMs, restored.toMs);
-    // The immediate redraw above covers a gating flip with no reload (leaving
-    // replay); a SERIES change reloads the data, whose rehydrate tears down
-    // every overlay, so the load effect repaints the band from this ref after
-    // it. Always assigned — a switch with nothing restored must also clear a
-    // leftover request from the previous switch.
-    pendingPatternBandRef.current = restored;
-    // Cleanup rather than effect-body parking: it sees the OLD series' live
-    // state before the new adopt, and it also runs on unmount, so a layout
-    // change that tears the cell down parks the result too.
-    return () => patternSearchRef.current.parkLive();
   }, [symbol.epic, brokerId, priceSide, period.resolution, patternAvailable, overlays]);
 
   // Picking-mode curtain: container-relative x of the pointer, so everything to
@@ -5558,92 +5557,6 @@ export default function ChartCore({
       )}
     </div>
 
-      {/* "Find similar" results, docked as a full-height sidebar OUTSIDE the
-          chart wrap: the wrap is flex:1, so an open panel shrinks the chart
-          instead of covering it, and every wrap-anchored piece of chrome
-          (legend, pills, range bar) tracks the shrunken chart for free. The
-          band stays painted underneath while the panel is up, so dismissing
-          clears both. */}
-      {/* `readoutMode` as well as the state: the dismiss above runs in an effect,
-          so without this the panel would paint one frame of real match dates
-          between a session starting and that effect firing. */}
-      {readoutMode === "off" &&
-        (patternSearch.result || patternSearch.loading || patternSearch.error) && (
-        <PatternMatchesPanel
-          result={patternSearch.result}
-          loading={patternSearch.loading}
-          error={patternSearch.error}
-          epic={symbol.epic}
-          resolution={period.resolution}
-          broker={brokerId}
-          priceSide={priceSide}
-          timezone={timezone}
-          truncatedTo={patternSearch.truncatedTo}
-          mode={patternSearch.mode}
-          onModeChange={patternSearch.setMode}
-          forwardBars={patternSearch.forwardBars}
-          onForwardBarsChange={patternSearch.setForwardBars}
-          scope={patternSearch.scope}
-          onScopeChange={patternSearch.setScope}
-          onCopy={(m) => {
-            // The row already carries the match's bars, so this is capture
-            // straight off the result: no jump, no drag, no coverage walk.
-            // A layout-scope row credits the series it was FOUND in.
-            const captured = capturePattern(m.bars, {
-              epic: m.source?.epic ?? symbol.epic,
-              resolution: m.source?.resolution ?? period.resolution,
-            });
-            if (!captured) {
-              toast(`a pattern needs at least ${MIN_GHOST_BARS} candles`);
-              return;
-            }
-            patternClipboard.set(captured);
-            toast(
-              `copied ${captured.bars.length} candles: paste them anywhere with the pattern tool`,
-            );
-          }}
-          onJump={(m) => {
-            // A row found in another chart's series jumps THAT chart, through
-            // its registry entry. Looked up by series, not just cellId: the
-            // cell the match was tagged with may have switched symbol since
-            // the search, while another cell still shows the series.
-            if (m.source && m.source.cellId !== cellId) {
-              const { cellId: srcCell, tabId: srcTab, epic: srcEpic, resolution: srcRes } = m.source;
-              const target = [getPatternTarget(srcCell), ...listPatternTargets()].find(
-                (t) => t && t.epic === srcEpic && t.resolution === srcRes,
-              );
-              if (target) {
-                target.showMatch(m);
-                jumpedSiblingsRef.current.add(target.cellId);
-              } else if (srcTab && onRevealPatternCell) {
-                // The chart lives on another tab (nothing mounted shows the
-                // series): park the match and switch there — the cell's mount
-                // consumes it. Focus/flash comes along from App.
-                setPendingPatternJump(srcCell, m);
-                onRevealPatternCell(srcTab, srcCell);
-              } else {
-                toast(`no open chart shows ${srcEpic} ${m.source.label} any more`);
-              }
-              return;
-            }
-            showMatchHere(m);
-          }}
-          onDismiss={() => {
-            patternSearch.dismiss();
-            handle.overlays.clearZoomBand();
-            handle.overlays.clearMatchBands();
-            // Also the bands this panel painted on OTHER cells via foreign-row
-            // jumps; a sibling that left the layout since is simply gone.
-            for (const id of jumpedSiblingsRef.current) {
-              getPatternTarget(id)?.clearMatchBands();
-            }
-            jumpedSiblingsRef.current.clear();
-            // And any cross-tab jump still waiting for its cell to mount: the
-            // results it belongs to are gone.
-            clearPendingPatternJumps();
-          }}
-        />
-      )}
 
     </div>
   );

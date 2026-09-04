@@ -6161,6 +6161,14 @@ span.bt-leg-short { color: var(--neg); }
    not findings. The border flips to the top accordingly. */
 .pm-sub { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px;
   color: var(--text-dim); border-top: 1px solid var(--border); }
+/* The folded per-series footnote's disclosure line: reads as one of the
+   footnote lines (inherits colour and size), only the chevron says it opens. */
+.pm-sub-toggle { display: flex; align-items: center; gap: 4px; padding: 0;
+  background: none; border: none; color: inherit; font: inherit;
+  text-align: left; cursor: pointer; }
+.pm-sub-toggle:hover { color: var(--text); }
+.pm-sub-chev { display: inline-block; font-size: 9px; transition: transform 0.12s; }
+.pm-sub-chev.open { transform: rotate(90deg); }
 .pm-trunc { margin-top: 2px; color: var(--text); }
 /* The per-tab statistics strip: one wrapping line of label-value chips. */
 .pm-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px;

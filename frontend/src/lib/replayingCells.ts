@@ -20,9 +20,22 @@
 // entry for a dead cell id would silently mute a later cell reusing it.
 const replayingCells = new Set<string>();
 
+// Notified on membership changes of either set below. The workspace pattern
+// panel and the per-cell pattern tool subscribe: both stand down while any
+// on-screen cell is in a readout (picking or active replay), because match
+// rows carry the real dates a masked session exists to conceal.
+const listeners = new Set<() => void>();
+
+export function subscribeReplayingCells(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
 export function setCellReplaying(id: string, active: boolean): void {
+  const had = replayingCells.has(id);
   if (active) replayingCells.add(id);
   else replayingCells.delete(id);
+  if (had !== active) for (const fn of listeners) fn();
 }
 
 export function isCellReplaying(id: string): boolean {
@@ -34,4 +47,27 @@ export function isCellReplaying(id: string): boolean {
  *  gate, which acts on the ACCOUNT rather than on a chart. */
 export function anyCellReplaying(): boolean {
   return replayingCells.size > 0;
+}
+
+// ---------------------------------------------------------------------------
+// The wider readout state: picking a blind start point OR an active session
+// (replayingCells above is the ACTIVE-session subset — its semantics feed the
+// dealing gate and broadcast muting, so picking must not be folded into it).
+// Mounted cells are the on-screen cells, and entries are released on unmount,
+// so "any readout cell" means "a readout is on screen". The workspace pattern
+// panel hides on it and the pattern tool disables on it: match rows and the
+// search band carry real dates, which during picking would place the concealed
+// present on the calendar.
+
+const readoutCells = new Set<string>();
+
+export function setCellReadout(id: string, active: boolean): void {
+  const had = readoutCells.has(id);
+  if (active) readoutCells.add(id);
+  else readoutCells.delete(id);
+  if (had !== active) for (const fn of listeners) fn();
+}
+
+export function anyCellInReadout(): boolean {
+  return readoutCells.size > 0;
 }

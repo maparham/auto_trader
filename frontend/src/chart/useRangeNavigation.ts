@@ -570,7 +570,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
       // `key` coalesces repeat clicks on unreachable matches into one toast
       // with a xN badge instead of stacking against the 5-toast cap. Not
       // sticky: it is informational. PatternMatchesPanel's error slot is
-      // deliberately NOT used — it is owned by usePatternSearch and would
+      // deliberately NOT used — it is owned by the pattern panel store and would
       // clobber the results the user is reading.
       const oldest = handle.chartRef.current?.getDataList()[0];
       const wantedMs = targetFromTs * 1000; // the jump's own target (seconds in)

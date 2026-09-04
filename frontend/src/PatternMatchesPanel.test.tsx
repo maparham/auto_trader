@@ -737,7 +737,13 @@ describe("resizing", () => {
       expect(screen.queryByText(/US100 · /)).toBeNull();
     });
 
-    it("footnotes every searched series, including one that failed", () => {
+    it("folds the per-series footnotes away by default: one line per open chart dwarfs the results", () => {
+      render(<PatternMatchesPanel {...props} result={merged()} loading={false} error={null} />);
+      expect(screen.getByText(/2 charts on capital \(bid\)/)).toBeTruthy();
+      expect(screen.queryByText(/US100 5m/)).toBeNull();
+    });
+
+    it("footnotes every searched series once unfolded, including one that failed", () => {
       const withError = result({
         matches: merged().matches,
         sources: [
@@ -748,8 +754,24 @@ describe("resizing", () => {
         ],
       });
       render(<PatternMatchesPanel {...props} result={withError} loading={false} error={null} />);
+      fireEvent.click(screen.getByRole("button", { name: /2 charts on/ }));
       expect(screen.getByText(/US100 5m/)).toBeTruthy();
       expect(screen.getByText(/GOLD 15m: no stored history/)).toBeTruthy();
+    });
+
+    it("a failed series still surfaces on the folded summary line", () => {
+      // Folding must not let a chart silently contribute nothing.
+      const withError = result({
+        matches: merged().matches,
+        sources: [
+          src("a", "US100", "5m"),
+          src("b", "GOLD", "15m", {
+            scanned: null, series: null, elapsedMs: null, error: "no stored history",
+          }),
+        ],
+      });
+      render(<PatternMatchesPanel {...props} result={withError} loading={false} error={null} />);
+      expect(screen.getByText(/1 failed/)).toBeTruthy();
     });
   });
 });

@@ -22,7 +22,7 @@ import {
   type PatternSearchResult,
   type SourceOutcome,
 } from "./lib/patternSearch";
-import type { PatternScope } from "./chart/usePatternSearch";
+import type { PatternScope } from "./lib/patternPanelStore";
 
 // The distance columns of the "all" tab, in display order: the four formulas
 // plus their plain average. The short labels fit 46px columns; the
@@ -183,6 +183,10 @@ export default function PatternMatchesPanel(props: Props) {
   // one-chart layout (or cell scope) the tag would repeat the footer on every
   // row and say nothing.
   const multiSource = (result?.sources?.length ?? 0) > 1;
+  // The per-series footnote lines, folded by default: one line per open chart
+  // reads as a wall under the results on a big workspace.
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const failedSources = result?.sources?.filter((s) => s.error).length ?? 0;
 
   // In "all" mode `distance` is a mean rank, not a distance, so there is no
   // "worst shown" figure to report.
@@ -501,21 +505,40 @@ export default function PatternMatchesPanel(props: Props) {
         <div className="pm-sub">
           {multiSource ? (
             <>
-              <span>
+              {/* The per-series lines number one per open chart — on a big
+                  workspace they would dwarf the results, so they fold away and
+                  start folded. A failed series still surfaces on the summary
+                  line: hiding it entirely would let a chart silently
+                  contribute nothing. */}
+              <button
+                type="button"
+                className="pm-sub-toggle"
+                aria-expanded={sourcesOpen}
+                onClick={() => setSourcesOpen((o) => !o)}
+              >
+                <span className={"pm-sub-chev" + (sourcesOpen ? " open" : "")} aria-hidden="true">
+                  ▸
+                </span>
                 {result.sources!.length} charts on {broker} ({priceSide})
-              </span>
+                {!sourcesOpen && failedSources > 0 && (
+                  <span className="pm-src-err">
+                    {" "}· {failedSources} failed
+                  </span>
+                )}
+              </button>
               {/* One line per searched series: each chart's history depth
                   differs, and a failed series must say so here rather than
                   silently contribute nothing. */}
-              {result.sources!.map((s) => (
-                <span key={`${s.epic}|${s.resolution}`} className={s.error ? "pm-src-err" : ""}>
-                  {s.epic} {s.label}:{" "}
-                  {s.error
-                    ? s.error
-                    : `${s.series!.bars.toLocaleString("en-GB")} bars, ` +
-                      `${s.scanned!.toLocaleString("en-GB")} windows ranked`}
-                </span>
-              ))}
+              {sourcesOpen &&
+                result.sources!.map((s) => (
+                  <span key={`${s.epic}|${s.resolution}`} className={s.error ? "pm-src-err" : ""}>
+                    {s.epic} {s.label}:{" "}
+                    {s.error
+                      ? s.error
+                      : `${s.series!.bars.toLocaleString("en-GB")} bars, ` +
+                        `${s.scanned!.toLocaleString("en-GB")} windows ranked`}
+                  </span>
+                ))}
             </>
           ) : (
             <>

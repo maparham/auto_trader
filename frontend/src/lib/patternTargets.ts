@@ -15,10 +15,14 @@ export interface PatternTarget {
   label: string;
   /** Jump this cell to the match: paint its bands and scroll there. */
   showMatch: (m: PatternMatch) => void;
-  /** Clear the bands showMatch painted. Called by the ORIGIN cell's dismiss:
-   *  the sibling cell never ran a search of its own, so nothing on its side
-   *  would ever clear them. */
+  /** Clear the bands showMatch painted. Called by the panel's dismiss: the
+   *  cell never ran a search of its own, so nothing on its side would ever
+   *  clear them. */
   clearMatchBands: () => void;
+  /** Clear the selection band the drag gesture painted. The panel's dismiss
+   *  calls it on the cell showing the ORIGIN series — the panel outlives that
+   *  cell's mount, so the cell cannot clear its own band on dismiss. */
+  clearSelectionBand: () => void;
 }
 
 // Map preserves insertion order, which is cell mount order — stable enough for

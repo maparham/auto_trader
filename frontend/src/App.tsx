@@ -5,6 +5,9 @@ import { flushPendingAutoSaves } from "./lib/templateAutosave";
 import Toolbar from "./Toolbar";
 import SnapshotToolbar from "./SnapshotToolbar";
 import DrawSidebar from "./DrawSidebar";
+import WorkspacePatternPanel from "./WorkspacePatternPanel";
+import { setPatternSeriesProvider } from "./lib/patternPanelStore";
+import { anyCellInReadout, subscribeReplayingCells } from "./lib/replayingCells";
 import LayoutPicker from "./LayoutPicker";
 import BrokerSelector from "./BrokerSelector";
 import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor, isCellReplaying } from "./lib/chartSync";
@@ -878,15 +881,33 @@ export default function App() {
   // the cell and flash it (the same glow as the symbol search), while the
   // match itself waits in the pending-jump map for the cell to mount.
   const revealPatternCell = useCallback(
-    (tabId: string, cellId: string) => {
-      setActiveId(tabId);
+    (cellId: string) => {
+      // Looked up in the workspace as it is NOW, not by the tab the match was
+      // tagged with: the cell may have moved tabs since the search.
+      const tab = tabs.find((t) => t.cells.some((c) => c.id === cellId));
+      if (!tab) return false;
+      setActiveId(tab.id);
       setTabs((ts) =>
-        ts.map((t) => (t.id === tabId ? { ...t, activeCellId: cellId } : t)),
+        ts.map((t) => (t.id === tab.id ? { ...t, activeCellId: cellId } : t)),
       );
       flashCells([cellId]);
+      return true;
     },
-    [flashCells],
+    [tabs, flashCells],
   );
+
+  // The workspace pattern panel's search fans out over this enumeration; the
+  // store is module-level, so the provider must be (re)registered as the tabs
+  // change rather than passed through the chart tree.
+  useEffect(() => setPatternSeriesProvider(getPatternSeries), [getPatternSeries]);
+
+  // Hide (never dismiss) the pattern panel while an ON-SCREEN cell is in a
+  // readout — picking a blind start point or an active session: its rows
+  // carry the real dates a masked session exists to conceal, and during
+  // picking they would place the concealed present on the calendar. Only
+  // mounted cells register, so a session parked on another tab hides nothing
+  // — the panel is workspace-level and the replaying chart is not on screen.
+  const patternPanelHidden = useSyncExternalStore(subscribeReplayingCells, anyCellInReadout);
 
   // Typing in the search flashes the ACTIVE tab's matches immediately —
   // no tab click needed when the symbol is already in front of you.
@@ -2339,8 +2360,6 @@ export default function App() {
               onReady={onCellReady}
               onFocus={onCellFocus}
               onPeriod={setCellPeriod}
-              getPatternSeries={getPatternSeries}
-              onRevealPatternCell={revealPatternCell}
               maximizedCellId={maximizedCellId}
               onToggleMaximizeCell={(cellId) =>
                 setMaximizedCellId((cur) => (cur === cellId ? null : cellId))
@@ -2373,6 +2392,16 @@ export default function App() {
             </div>
           )}
           </div>
+          {/* "Find similar" results, docked as a full-height sidebar on the
+              chart area's right, OUTSIDE the grid: the results span every
+              chart in every open tab, so the panel belongs to the workspace
+              and survives tab switches, series changes and cells closing —
+              only its own ✕ takes it down. */}
+          <WorkspacePatternPanel
+            timezone={settings.timezone}
+            hidden={patternPanelHidden}
+            onReveal={revealPatternCell}
+          />
         </main>
         {/* Panel is toggled by the toolbar bell; closed = chart uses full width. */}
         {panelOpen && symbol && !isSynthetic(symbol.epic) && (

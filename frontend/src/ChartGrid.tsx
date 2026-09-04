@@ -66,8 +66,6 @@ interface Props {
   onPeriod: (cellId: string, p: Period) => void;
   // Every searchable chart series across all tabs (pattern search, all-charts
   // scope) and the cross-tab jump that follows a foreign match row.
-  getPatternSeries: () => { cellId: string; tabId: string; epic: string; resolution: string; label: string }[];
-  onRevealPatternCell: (tabId: string, cellId: string) => void;
   // Per-cell maximize: the id of the cell expanded to fill the grid, or null.
   maximizedCellId: string | null;
   // Toggle maximize for a cell (maximize if none/other, restore if it's this one).
@@ -111,8 +109,6 @@ export default function ChartGrid({
   onReady,
   onFocus,
   onPeriod,
-  getPatternSeries,
-  onRevealPatternCell,
   maximizedCellId,
   onToggleMaximizeCell,
   onDetachCell,
@@ -337,8 +333,6 @@ export default function ChartGrid({
                 : cell.id === cells[0]?.id
             }
             onPeriod={onPeriod}
-            getPatternSeries={getPatternSeries}
-            onRevealPatternCell={onRevealPatternCell}
           />
         </div>
         );
