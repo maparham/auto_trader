@@ -199,6 +199,29 @@ describe("alignHtfToChart same-timeframe pin", () => {
     expect(alignHtfToChart(chartTs, htfBars, vals, htfMs, true)).toEqual([10, 20, 30]);
   });
 
+  it("a declared chart interval beats gap inference: an anomalous short gap cannot break the pin", () => {
+    // A 4H chart holding one partial bar 1h after its neighbour: the smallest
+    // gap reads 1h, so inference concludes "1h chart" and gates every value a
+    // bar late. The DECLARED interval (what the toolbar says) must win —
+    // mirror of the backend's base_interval_ms fix.
+    const chartTs = [0 * H, 4 * H, 5 * H, 8 * H];
+    const htfBars = [0, 4, 8].map((h) => ({ timestamp: h * H }) as never);
+    expect(alignHtfToChart(chartTs, htfBars, vals, htfMs, true, undefined, htfMs)).toEqual([
+      10, 20, 20, 30,
+    ]);
+  });
+
+  it("a declared interval below the pin keeps closed-bar gating even when the gaps lie high", () => {
+    // Sparse 1h chart whose loaded bars happen to sit 4h apart: inference
+    // would call it a 4H chart and hand every bar its own HTF value —
+    // lookahead. The declared 1h interval keeps the gate.
+    const chartTs = [0, 4, 8].map((h) => h * H);
+    const htfBars = chartTs.map((t) => ({ timestamp: t }) as never);
+    expect(alignHtfToChart(chartTs, htfBars, vals, htfMs, true, undefined, H)).toEqual([
+      undefined, 10, 20,
+    ]);
+  });
+
   it("keeps closed-bar gating when the pin is genuinely higher", () => {
     // 1h chart under a 4h pin: unchanged semantics (lag until close).
     const chartTs = [0, 1, 2, 3, 4, 5].map((h) => h * H);

@@ -123,11 +123,11 @@ export function computeMa(
     const chartTs = dataList.map((k) => k.timestamp);
     const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
     const aligned = alignHtfToChart(
-      chartTs, htfBars, mtf.htfSeries, mtf.htfMs, true, mtf.formingIdx,
+      chartTs, htfBars, mtf.htfSeries, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs,
     );
     const smoothed = mtf.htfSmoothing
       ? alignHtfToChart(
-          chartTs, htfBars, mtf.htfSmoothing, mtf.htfMs, true, mtf.formingIdx,
+          chartTs, htfBars, mtf.htfSmoothing, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs,
         )
       : undefined;
     // Slope states MUST be computed on the native HTF series (mtf.htfSeries),
@@ -141,7 +141,7 @@ export function computeMa(
       ? alignHtfToChart(
           chartTs, htfBars,
           slopeStates(mtf.htfSeries, ext.slopeColor.len, ext.slopeColor.flatBandPct),
-          mtf.htfMs, true, mtf.formingIdx,
+          mtf.htfMs, true, mtf.formingIdx, mtf.chartMs,
         )
       : undefined;
     // NOTE: the envelope bands are intentionally NOT shown under MTF — the

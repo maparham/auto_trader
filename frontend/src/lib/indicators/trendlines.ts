@@ -1447,7 +1447,7 @@ export function alignMtfTrendlines(
   const htfMs = mtf.htfMs ?? 0;
   const htfBars = starts.map((t) => ({ timestamp: t }) as KLineData);
   const at = (v?: Array<number | undefined>): Array<number | undefined> =>
-    v ? alignHtfToChart(ts, htfBars, v, htfMs, true, mtf.formingIdx) : [];
+    v ? alignHtfToChart(ts, htfBars, v, htfMs, true, mtf.formingIdx, mtf.chartMs) : [];
   const sup = at(mtf.htfSupport);
   const res = at(mtf.htfResistance);
   const bSup = at(mtf.htfBrokenSupport);
@@ -1469,7 +1469,7 @@ export function alignMtfTrendlines(
   // when the chart's own interval equals htfMs (see its sameTf detection) —
   // this loop must apply the IDENTICAL rule, or on a same-TF pin the values
   // come from HTF bar j+1 while lineIdx says j and the === match breaks.
-  const sameTf = minPositiveGap(ts) === htfMs;
+  const sameTf = (mtf.chartMs ?? minPositiveGap(ts)) === htfMs;
   while (
     j + 1 < starts.length &&
     // The flagged forming entry is usable from its OPEN, exactly as the

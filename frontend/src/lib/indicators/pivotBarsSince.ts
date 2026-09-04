@@ -60,8 +60,8 @@ export function computePivotBarsSince(
     // bar, so no lookahead).
     const ts = dataList.map((k) => k.timestamp);
     const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
-    const high = alignHtfToChart(ts, htfBars, mtf.htfBarsSinceHigh, mtf.htfMs, true, mtf.formingIdx);
-    const low = alignHtfToChart(ts, htfBars, mtf.htfBarsSinceLow, mtf.htfMs, true, mtf.formingIdx);
+    const high = alignHtfToChart(ts, htfBars, mtf.htfBarsSinceHigh, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs);
+    const low = alignHtfToChart(ts, htfBars, mtf.htfBarsSinceLow, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs);
     return ts.map((_, i) => ({ barsSinceHigh: high[i] ?? undefined, barsSinceLow: low[i] ?? undefined }));
   }
 

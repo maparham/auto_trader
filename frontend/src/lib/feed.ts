@@ -933,6 +933,13 @@ export function nominalBarHours(resolution: string): number | null {
   return secs != null && secs > 0 ? secs / 3600 : null;
 }
 
+/** nominalBarHours in milliseconds — the declared bar interval callers hand
+ * the MTF machinery (see mtfCoordinator.setChartIntervalMs). */
+export function declaredIntervalMs(resolution: string): number | null {
+  const hours = nominalBarHours(resolution);
+  return hours != null ? hours * 3_600_000 : null;
+}
+
 // The quick-access timeframe bar: the fixed defaults merged with the user's
 // favorite resolutions, de-duped and sorted ascending by duration. The favorite
 // list's own order is irrelevant — display order is always by RESOLUTION_SECONDS.

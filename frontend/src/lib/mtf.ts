@@ -26,6 +26,12 @@ export interface MtfSeriesBase {
   timeframe: string | null;
   htfStarts?: number[];
   htfMs?: number;
+  /** The chart's DECLARED bar interval (ms) at the time the stash was written,
+   * stamped by the coordinator (calc never sees the resolution string).
+   * alignHtfToChart prefers it over gap inference for the same-TF pin test;
+   * absent (pre-field stashes) the inferred interval stands in. Session-only:
+   * a chart-timeframe switch re-applies every pin, which restamps it. */
+  chartMs?: number;
   /** TV's "Wait for timeframe closes". Absent/true = today's closed-bar-only
    * behavior. False = the coordinator appends ONE folded still-forming HTF bar
    * to the computed series and flags it via formingIdx; alignment admits that
@@ -330,18 +336,26 @@ export function alignHtfToChart(
    * it spans are the "now" it belongs to. Every closed bar keeps the waitClose
    * rule, so history never gains lookahead. */
   formingIdx?: number,
+  /** The chart's DECLARED bar interval in ms (what the toolbar resolution
+   * means, via nominalBarHours) — stashed as mtf.chartMs by the coordinator,
+   * which unlike calc knows the chart it writes to. Preferred over gap
+   * inference, which anomalous data defeats in both directions: one partial
+   * bar shrinks the smallest gap (a real same-TF pin gates a bar late) and a
+   * DAY chart across a DST spring-forward reads 23h against the pin's nominal
+   * 24h (same miss the nominalBarHours doc note warns about). Optional so
+   * stashes written before this field existed keep the inferred behavior. */
+  chartMs?: number,
 ): Array<number | undefined> {
   const out: Array<number | undefined> = new Array(chartTimestamps.length).fill(undefined);
   // Same-timeframe pin: when the chart's own bar interval equals the HTF
   // width, the closed-bar gate would delay every value one bar for nothing —
   // the value belongs to the bar that produced it, exactly as the unpinned
-  // (chart-TF) indicator draws it. Detected from the data because calc never
-  // sees the chart's resolution string: the SMALLEST positive gap is the true
-  // interval regardless of session/weekend holes (see minPositiveGap). A
+  // (chart-TF) indicator draws it. The declared interval decides when the
+  // caller has it; the SMALLEST positive gap stands in otherwise (true
+  // interval regardless of session/weekend holes — see minPositiveGap). A
   // genuinely higher pin always has htfMs above the chart interval, so this
-  // can't fire for it; the derived calendar widths (weeks/months) may miss
-  // the match and safely keep the gated path.
-  const sameTf = minPositiveGap(chartTimestamps) === htfMs;
+  // can't fire for it.
+  const sameTf = (chartMs ?? minPositiveGap(chartTimestamps)) === htfMs;
   let j = -1; // index of the last HTF bar usable so far
   for (let i = 0; i < chartTimestamps.length; i++) {
     const t = chartTimestamps[i];

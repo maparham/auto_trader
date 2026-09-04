@@ -94,8 +94,8 @@ export function computeSrLevels(
     // from an HTF bar that closes later — same contract as PivotBands.
     const ts = dataList.map((k) => k.timestamp);
     const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
-    const sup = alignHtfToChart(ts, htfBars, mtf.htfSupport, mtf.htfMs, true, mtf.formingIdx);
-    const res = alignHtfToChart(ts, htfBars, mtf.htfResistance, mtf.htfMs, true, mtf.formingIdx);
+    const sup = alignHtfToChart(ts, htfBars, mtf.htfSupport, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs);
+    const res = alignHtfToChart(ts, htfBars, mtf.htfResistance, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs);
     const points = ts.map((_, i) => ({
       support: sup[i] ?? undefined,
       resistance: res[i] ?? undefined,

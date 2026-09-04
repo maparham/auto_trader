@@ -138,7 +138,7 @@ export function computeFvg(
     const ts = dataList.map((k) => k.timestamp);
     const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
     const at = (v: Array<number | undefined> | undefined): Array<number | undefined> =>
-      alignHtfToChart(ts, htfBars, v ?? [], mtf.htfMs as number, true, mtf.formingIdx);
+      alignHtfToChart(ts, htfBars, v ?? [], mtf.htfMs as number, true, mtf.formingIdx, mtf.chartMs);
     const bullTop = at(mtf.htfBullTop);
     const bullBottom = at(mtf.htfBullBottom);
     const bearTop = at(mtf.htfBearTop);

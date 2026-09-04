@@ -103,8 +103,8 @@ export function computePivotBands(
     // last-usable-bar rule needs.
     const ts = dataList.map((k) => k.timestamp);
     const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
-    const high = alignHtfToChart(ts, htfBars, mtf.htfHigh, mtf.htfMs, true, mtf.formingIdx);
-    const low = alignHtfToChart(ts, htfBars, mtf.htfLow, mtf.htfMs, true, mtf.formingIdx);
+    const high = alignHtfToChart(ts, htfBars, mtf.htfHigh, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs);
+    const low = alignHtfToChart(ts, htfBars, mtf.htfLow, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs);
     return ts.map((_, i) => ({ pivotHigh: high[i] ?? undefined, pivotLow: low[i] ?? undefined }));
   }
 

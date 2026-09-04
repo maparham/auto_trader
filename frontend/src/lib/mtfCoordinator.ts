@@ -177,6 +177,23 @@ function scheduleMtfRetry(
 // cells and only some of them replay; a disposed chart's entry frees with it.
 const htfCursors = new WeakMap<Chart, () => number>();
 
+// The chart's DECLARED bar interval (ms), registered by ChartCore on every
+// resolution change. Stamped into each stash as mtf.chartMs so calc — which
+// never sees the chart or its resolution string — can hand alignHtfToChart
+// the real interval instead of a gap-inferred guess (mirror of the backend's
+// base_interval_ms fix; see the nominalBarHours doc note on why gaps lie).
+// Same WeakMap idiom as htfCursors: nothing to leak on chart disposal.
+const chartIntervals = new WeakMap<Chart, number>();
+
+export function setChartIntervalMs(chart: Chart, ms: number | null): void {
+  if (ms && ms > 0) chartIntervals.set(chart, ms);
+  else chartIntervals.delete(chart);
+}
+
+function chartIntervalOf(chart: Chart): number | undefined {
+  return chartIntervals.get(chart);
+}
+
 export function setHtfCursorClamp(
   chart: Chart,
   read: (() => number) | null,
@@ -541,6 +558,7 @@ export async function applyMaTimeframe(
   if (!proceed) return;
   const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
+    chartMs: chartIntervalOf(chart),
     ...buildMaMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
   };
@@ -661,6 +679,7 @@ export async function applyPivotBandsTimeframe(
   // the N-bar confirmation lag, so the aligned series stays gap-free and honest.
   const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
+    chartMs: chartIntervalOf(chart),
     ...buildPivotBandsMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
   };
@@ -777,6 +796,7 @@ export async function applySrLevelsTimeframe(
   // the pivot-confirmation lag are all baked into the stashed series/levels.
   const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
+    chartMs: chartIntervalOf(chart),
     ...buildSrMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
   };
@@ -921,6 +941,7 @@ export async function applyTrendlinesTimeframe(
       ? htf.filter((b) => b.timestamp + htfMs <= newestMs)
       : htf;
   ext.mtf = {
+    chartMs: chartIntervalOf(chart),
     ...buildTrendlinesMtf(bars, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
   };
@@ -1024,6 +1045,7 @@ export async function applyFvgTimeframe(
   // wick-driven mitigation are all baked into the stashed series/gaps.
   const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
+    chartMs: chartIntervalOf(chart),
     ...buildFvgMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
   };
@@ -1168,6 +1190,7 @@ export async function applySlopeTimeframe(
   // at its own 1h default, so there is nothing better to fall back to.
   const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
+    chartMs: chartIntervalOf(chart),
     ...buildSlopeMtf(fp ? fp.bars : htf, config, ext, timeframe, htfMs),
     ...(fp?.extra ?? {}),
   };
@@ -1390,7 +1413,7 @@ export function refreshFormingBar(chart: Chart): void {
         );
       }
       if (!built) return;
-      ext.mtf = { ...built, ...extra } as typeof ext.mtf;
+      ext.mtf = { chartMs: chartIntervalOf(chart), ...built, ...extra } as typeof ext.mtf;
       overrideExtend(chart, paneId, id, ext, ind.calcParams ?? []);
       // The companions mirror the parent's extendData, forming bar included.
       if (type === "PIVOT_BANDS") syncPivotBarsSinceCompanion(chart, id);

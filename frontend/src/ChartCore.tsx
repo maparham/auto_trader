@@ -24,6 +24,7 @@ import {
   isFeedStale,
   periodByResolution,
   oneTfLower,
+  declaredIntervalMs,
 } from "./lib/feed";
 import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
@@ -146,7 +147,7 @@ import {
 } from "./chart/chartPainters";
 import { readLiveEdge } from "./lib/liveEdge";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
-import { refreshMtfIndicators } from "./lib/mtfCoordinator";
+import { refreshMtfIndicators, setChartIntervalMs } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, restingLineEndX } from "./lib/positionLines";
 import {
   TradeMarkers,
@@ -505,6 +506,20 @@ export default function ChartCore({
   // it a no-op once the series already reaches far enough. `explicitOldestMs` is
   // the just-loaded page's first bar when the caller has it (klinecharts may not
   // have merged the prepend into getDataList yet).
+  // Register the DECLARED bar interval with the MTF coordinator, which stamps
+  // it into every stash (mtf.chartMs) for alignHtfToChart's same-TF test —
+  // calc never sees the resolution string, and inferring the interval from
+  // candle gaps lies on anomalous data (see nominalBarHours' doc note). null
+  // for widths the table doesn't know, which falls back to inference. This
+  // effect is declared BEFORE the chart-init effect, so the first mount's run
+  // sees no chart and does nothing — the init effect performs the initial
+  // registration itself; this one covers every later resolution change.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    setChartIntervalMs(chart, declaredIntervalMs(period.resolution));
+  }, [period.resolution]);
+
   const extendMtfCoverage = (explicitOldestMs?: number) => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -1767,6 +1782,9 @@ export default function ChartCore({
     const chart = init(el);
     if (!chart) return;
     chartRef.current = chart;
+    // Initial declared-interval registration (see the resolution-keyed effect
+    // above — it runs before this init on first mount and finds no chart).
+    setChartIntervalMs(chart, declaredIntervalMs(period.resolution));
     // The band height the user last dragged this cell to. Seeded before the first
     // indicator is created, so an inset instance restored from storage paints at the
     // right height on its first frame rather than snapping after it.

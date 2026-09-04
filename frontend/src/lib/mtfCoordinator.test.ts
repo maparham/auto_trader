@@ -39,7 +39,7 @@ vi.mock("./feed", () => ({
   nominalBarHours: (res: string) => (RES_SECONDS[res] ? RES_SECONDS[res] / 3600 : null),
 }));
 
-const { applyMaTimeframe, applySlopeTimeframe, applyTrendlinesTimeframe, refreshMtfIndicators } =
+const { applyMaTimeframe, applySlopeTimeframe, applyTrendlinesTimeframe, refreshMtfIndicators, setChartIntervalMs } =
   await import("./mtfCoordinator");
 const { TRENDLINES_DEFAULTS } = await import("./indicators/trendlinesOutputs");
 const { slopeLineSeries } = await import("./indicators/slope");
@@ -104,6 +104,26 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("declared chart interval stamp", () => {
+  it("stamps the registered chartMs into the stash; unregistered charts stash none", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    // Registered: alignHtfToChart's same-TF test reads this instead of
+    // inferring the interval from candle gaps (which anomalous data defeats).
+    const a = fakeChart();
+    setChartIntervalMs(a.chart, 300_000);
+    await applyEma(a.chart, "MINUTE_15");
+    expect((a.overrides.at(-1)!.patch.extendData?.mtf as { chartMs?: number }).chartMs).toBe(300_000);
+    // Unregistered (or cleared): the stash omits it and inference stands in.
+    const b = fakeChart();
+    setChartIntervalMs(b.chart, 300_000);
+    setChartIntervalMs(b.chart, null);
+    await applyEma(b.chart, "MINUTE_15");
+    expect((b.overrides.at(-1)!.patch.extendData?.mtf as { chartMs?: number }).chartMs).toBeUndefined();
+  });
 });
 
 describe("applyMaTimeframe smoothing", () => {
