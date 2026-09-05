@@ -48,6 +48,7 @@ import {
   rehydrateBacktest,
 } from "./lib/backtest";
 import { registerCustomOverlays } from "./lib/customOverlays";
+import { accountSnapshotFrom, setAccountSnapshot } from "./lib/accountSnapshot";
 import { installMagnetModifierKeys } from "./lib/magnet";
 import { matchingCellIds } from "./lib/tabSearch";
 import { compositeOverHex } from "./lib/lineStyle";
@@ -628,6 +629,13 @@ export default function App() {
       clearInterval(timer);
     };
   }, [activeAccount]);
+
+  // Mirror the account onto a module-level snapshot for the trade drawings: their
+  // overlay paints synchronously (createPointFigures must never fetch), so it
+  // reads the last polled balance/currency from there.
+  useEffect(() => {
+    setAccountSnapshot(accountSnapshotFrom(accountSummary, settings.trading));
+  }, [accountSummary, settings.trading]);
 
   // Backend-wins startup hydration. hydrateFromBackend() pulls the snapshot,
   // overwrites localStorage where the backend differs, and (crucially) gates

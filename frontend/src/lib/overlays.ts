@@ -45,6 +45,8 @@ import { RESOLUTION_SECONDS } from "./feed";
 import { timeRangeSpan } from "./timeRangeMetrics";
 import type { ChartDataFacade } from "../chart/chartDataFacade";
 import { type FibConfig, asFibConfig } from "./fibConfig";
+import { type TradeConfig, asTradeConfig, defaultStopPrice, flipTradeLeg, syncTradePoints } from "./tradePlan";
+import { TRADE_BOX } from "./tradeOverlay";
 import {
   asGhostStyle,
   ghostPrices,
@@ -140,7 +142,14 @@ export interface DrawingExtra {
   // Absent on ghosts pasted before the settings panel existed; asGhostStyle
   // reads that back as the look they already had.
   ghostStyle?: GhostStyle;
+  // Label groups + account overrides for a Trade box drawing (tradeBox).
+  // Absent on a freshly drawn one — asTradeConfig fills the defaults.
+  trade?: TradeConfig;
 }
+
+// The trade-planning drawing: a three-point overlay whose third point (the stop)
+// is synthesized once the two-click draw completes.
+const isTradeDrawing = (name: string): boolean => name === TRADE_BOX;
 
 // The pattern-overlay's klinecharts name (see customOverlays' patternGhost).
 const GHOST_NAME = "patternGhost";
@@ -237,6 +246,9 @@ export class OverlayManager {
   // Where a pattern ghost sat when the user pressed it (anchor price + bar), so
   // the release can tell a vertical placement from a slide along the bars.
   private ghostDragStart: { value: number; dataIndex: number; timestamp?: number } | null = null;
+  // The right edge a trade drawing's target and stop shared when the current
+  // press began — settleTradeDrag reads it to tell which of the two moved.
+  private tradeDragEdge: number | null = null;
   // The live transient measure overlay (TV ruler), or null. Never persisted; a new
   // measure removes the old, and the next plain interaction / Esc / symbol change
   // clears it (ChartCore drives that). Single-instance by design.
@@ -983,6 +995,7 @@ export class OverlayManager {
     const isRangeBand = kind === "rangeBand";
     const isSlope = kind === "slope";
     const isDrawing = kind === "drawing";
+    const isTrade = isTradeDrawing(name);
     const id = this.chart.createOverlay({
       // A caller-supplied id (rehydrate reviving a persisted drawing) keeps the
       // overlay's identity across rebuilds; everyone else lets the library mint.
@@ -1051,6 +1064,11 @@ export class OverlayManager {
           this.slopeDone?.();
           return false;
         }
+        // A trade drawing is placed with two clicks (entry, target) but needs a
+        // third point for its stop, because klinecharts only projects an
+        // overlay's OWN points to pixels. Seed it opposite the target at a 1:2
+        // risk/reward, on the same right edge; the user drags it from there.
+        if (isTrade && typeof id === "string") this.completeTradeDrawing(id);
         // Reject a drawing that finished with collapsed/incomplete anchors (e.g. a fib
         // whose two clicks landed on the same bar): it renders as an unclickable
         // zero-width strip the user can't select or delete. Remove it rather than
@@ -1082,6 +1100,9 @@ export class OverlayManager {
         return false;
       },
       onPressedMoveStart: (e) => {
+        // Trade drawings: remember the right edge the target and stop shared, so
+        // the release can tell WHICH of them the user dragged sideways.
+        if (isTrade) this.tradeDragEdge = e.overlay.points?.[1]?.timestamp ?? null;
         // Ghost only: remember where it started so the release can tell a
         // placement from a slide (see settleGhostDrag).
         if (e.overlay.name === GHOST_NAME) {
@@ -1098,6 +1119,10 @@ export class OverlayManager {
           this.draggingAlert = true;
           this.notifyAlerts(); // keep the label glued during a drag
         }
+        // A trade level dragged across the entry converts the trade in place
+        // (long ⇄ short): reflect the opposite leg live, before klinecharts
+        // moves the dragged point itself — see maybeFlipTrade.
+        if (isTrade) this.maybeFlipTrade(e);
         // Shift snap while dragging an endpoint/corner: returning true tells
         // klinecharts to SKIP its own point update so our snapped point stands.
         if (isDrawing && isShiftHeld() && this.maybeSnapPressed(e)) return true;
@@ -1121,6 +1146,10 @@ export class OverlayManager {
           this.notifyAlerts();
           return false;
         }
+        // A trade's target and stop share the drawing's right edge, but
+        // klinecharts drags one point at a time — pull the other one back into
+        // line before this drop is persisted.
+        if (isTrade) this.settleTradeDrag(e.overlay);
         // A ghost decides on release whether the drag placed it by hand.
         if (e.overlay.name === GHOST_NAME) this.settleGhostDrag(e.overlay);
         this.persist(); // a dragged drawing endpoint
@@ -1747,6 +1776,64 @@ export class OverlayManager {
     return windowMoments(drawn);
   }
 
+  // Give a freshly drawn trade its stop point. The two-click gesture places only
+  // entry and target, so on draw-end the stop is seeded opposite the target at
+  // half the reward (a 1:2 trade) and pinned to the same right edge. Called from
+  // create()'s onDrawEnd, before the degenerate-anchor check.
+  private completeTradeDrawing(id: string): void {
+    const ov = this.byId(id);
+    const points = ov?.points ?? [];
+    if (!ov || points.length !== 2) return; // already complete (rehydrate/paste)
+    const entry = points[0]?.value;
+    const target = points[1]?.value;
+    if (entry == null || target == null) return;
+    this.chart?.overrideOverlay({
+      id,
+      points: [
+        ...points,
+        { ...points[1], value: defaultStopPrice(entry, target) },
+      ] as Overlay["points"],
+    });
+  }
+
+  // Keep a trade's reward and risk zones on opposite sides of the entry while a
+  // level handle is dragged across it: the OTHER leg reflects over the entry at
+  // its own distance (flipTradeLeg), converting the trade long ⇄ short in place
+  // instead of piling both zones onto one side. Runs inside onPressedMoving,
+  // which fires BEFORE klinecharts moves the dragged point — so the dragged
+  // level is predicted from the cursor (same conversion the native update will
+  // make) and only the opposite leg is written here; returning false from the
+  // handler then lets the native update place the dragged point itself. A
+  // whole-body translate moves all three points together and never crosses.
+  private maybeFlipTrade(e: OverlayEvent<unknown>): void {
+    const overlay = e.overlay;
+    const points = overlay.points;
+    if (points.length !== 3) return; // still being drawn: no stop yet
+    const key = e.figure?.key;
+    if (!key?.startsWith("overlay_figure_point_")) return; // body drag, not a handle
+    const idx = Number(key.slice("overlay_figure_point_".length));
+    if (idx !== 0 && idx !== 1 && idx !== 2) return;
+    if (typeof e.x !== "number" || typeof e.y !== "number") return;
+    const value = this.fromPx(overlay, { x: e.x, y: e.y })?.value;
+    const [entry, target, stop] = points.map((p) => p?.value);
+    if (value == null || entry == null || target == null || stop == null) return;
+    const flip = flipTradeLeg({ entry, target, stop }, idx as 0 | 1 | 2, value);
+    if (flip) points[flip.index] = { ...points[flip.index], value: flip.value };
+  }
+
+  // Pull a trade's target and stop back onto one right edge after a horizontal
+  // drag moved only the point under the cursor. Called from create()'s
+  // onPressedMoveEnd; a vertical-only drag is a no-op.
+  private settleTradeDrag(ov: Overlay): void {
+    const prevEdge = this.tradeDragEdge;
+    this.tradeDragEdge = null;
+    if (prevEdge == null || !this.chart) return;
+    const points = (ov.points ?? []) as Array<{ timestamp: number; value: number }>;
+    const synced = syncTradePoints(points, prevEdge);
+    if (!synced) return;
+    this.chart.overrideOverlay({ id: ov.id, points: synced as Overlay["points"] });
+  }
+
   // Decide, on release, whether the drag was a placement (vertical) or just a
   // slide along the bars. Called from create()'s onPressedMoveEnd.
   private settleGhostDrag(ov: Overlay): void {
@@ -1879,6 +1966,9 @@ export class OverlayManager {
       extendData: spec.extendData,
     });
     if (id) {
+      // No onDrawEnd on this path (it is the non-interactive one), so a trade
+      // arriving with only entry+target still needs its stop seeded.
+      if (isTradeDrawing(spec.name)) this.completeTradeDrawing(id);
       this.persist();
       this.selectedDrawingId = id;
       this.drawingListener?.();
@@ -2104,6 +2194,18 @@ export class OverlayManager {
     this.persist();
   }
 
+  // Replace a trade drawing's label/account config (custom-overlay feature).
+  // Same extendData path as setFibConfig — overrideOverlay re-invokes
+  // createPointFigures, so the pills redraw immediately.
+  setTradeConfig(id: string, trade: TradeConfig): void {
+    if (this.entries.get(id) !== "drawing") return;
+    const ov = this.byId(id);
+    if (!ov) return;
+    const extra: DrawingExtra = { ...asDrawingExtra(ov.extendData), trade };
+    this.chart?.overrideOverlay({ id, extendData: extra });
+    this.persist();
+  }
+
   // Record the chart's current resolution and re-derive every drawing's effective
   // visibility against it. A VIEW reaction, not a user edit — so it does NOT
   // persist (persist samples intent from extendData, untouched here).
@@ -2180,6 +2282,7 @@ export class OverlayManager {
       },
       ...(live.name === "fibonacciLine" ? { fib: asFibConfig(extra.fib) } : {}),
       ...(live.name === GHOST_NAME ? { ghostStyle: asGhostStyle(extra.ghostStyle) } : {}),
+      ...(isTradeDrawing(live.name) ? { trade: asTradeConfig(extra.trade) } : {}),
       showMiddle: extra.showMiddle,
       priceLabels: extra.priceLabels,
       visibility: extra.visibility,
@@ -2194,6 +2297,7 @@ export class OverlayManager {
     if (cfg.polygon) this.setStyle(id, { polygon: cfg.polygon } as DeepPartial<OverlayStyle>);
     if (cfg.fib !== undefined) this.setFibConfig(id, cfg.fib);
     if (cfg.ghostStyle !== undefined) this.setGhostStyle(id, cfg.ghostStyle);
+    if (cfg.trade !== undefined) this.setTradeConfig(id, cfg.trade);
     if (cfg.showMiddle !== undefined) this.setShowMiddle(id, cfg.showMiddle);
     if (cfg.priceLabels !== undefined) this.setPriceLabels(id, cfg.priceLabels);
     if (cfg.visibility !== undefined) this.setVisibilityModel(id, cfg.visibility);
@@ -2244,8 +2348,17 @@ export class OverlayManager {
     if (!TREND.has(ov.name)) return id; // not a convertible trend line
     const target = mode === "none" ? "segment" : mode === "ray" ? "rayLine" : "straightLine";
     if (target === ov.name) return id;
+    return this.renameDrawing(id, ov, target);
+  }
+
+  // Move a drawing to a DIFFERENT klinecharts overlay name, keeping everything
+  // else (points, canonical style, lock, z, extendData). klinecharts has no
+  // rename, so this is a remove + recreate and the id changes — which is why
+  // callers that hold an id either take the returned one (setExtend) or announce
+  // the remap (the trade-direction flip). Returns the new id, or null if the
+  // recreate failed.
+  private renameDrawing(id: string, ov: Overlay, name: string): string | null {
     const spec = {
-      name: target,
       points: (ov.points ?? []).map((p) => ({ timestamp: p.timestamp, value: p.value, dataIndex: p.dataIndex })),
       // The CANONICAL style, never the faded ghost color — the recreated overlay must
       // look identical to the (possibly currently-ghosted) original, not bake the fade
@@ -2260,7 +2373,7 @@ export class OverlayManager {
     const newId = this.guarded(() => {
       this.chart!.removeOverlay({ id }); // onRemoved drops entries + any stashed fadedStyles
       this.entries.delete(id);
-      return this.create("drawing", spec.name, spec.points, spec.styles, spec.lock, {
+      return this.create("drawing", name, spec.points, spec.styles, spec.lock, {
         zLevel: spec.zLevel,
         extendData: spec.extendData,
       });

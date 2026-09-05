@@ -117,6 +117,20 @@ const GLYPHS: Record<string, () => ReactNode> = {
       <line x1="17" y1="3" x2="17" y2="17" />
     </svg>
   ),
+  // Trade box: one outlined box split by the entry line — reward green above it,
+  // risk red below, at the 1:2 proportion a fresh trade is drawn with. Outlined
+  // (rather than two floating bars) so it reads as the BOX the tool is named for,
+  // and the entry line carries an anchor dot like the other two-point tools.
+  // Coloured, not currentColor: reward-vs-risk IS the picture.
+  tradeBox: () => (
+    <svg {...S}>
+      <rect x="3.5" y="2.5" width="13" height="8" rx="0.5" fill="#26a69a" fillOpacity="0.28" stroke="none" />
+      <rect x="3.5" y="10.5" width="13" height="4" rx="0.5" fill="#ef5350" fillOpacity="0.28" stroke="none" />
+      <rect x="3.5" y="2.5" width="13" height="12" rx="0.5" strokeOpacity="0.55" />
+      <line x1="3.5" y1="10.5" x2="16.5" y2="10.5" />
+      <Dot x={3.5} y={10.5} />
+    </svg>
+  ),
 };
 
 export default function DrawGlyph({ name }: GlyphProps) {

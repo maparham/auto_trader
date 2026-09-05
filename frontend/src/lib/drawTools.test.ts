@@ -22,7 +22,12 @@ describe("draw-tool registry", () => {
       "segment", "rayLine", "straightLine",
       "horizontalStraightLine", "verticalStraightLine", "rect", "priceLine",
       "priceChannelLine", "fibonacciLine", "timeRange", "recurringRange",
+      "tradeBox",
     ]);
+  });
+
+  it("labels the trade tool", () => {
+    expect(toolLabel("tradeBox")).toBe("Trade box");
   });
 
   it("toolLabel resolves by overlay name and falls back gracefully", () => {

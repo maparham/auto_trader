@@ -42,6 +42,7 @@ import {
   type GhostStyle,
 } from "./patternGhost";
 import { periodFromTf } from "../chart/chartDataFacade";
+import { tradeBox } from "./tradeOverlay";
 
 // --- line geometry, replicated from klinecharts' (non-exported) built-ins so the
 // overridden variants paint byte-identically to the originals. ---------------
@@ -1000,4 +1001,5 @@ export function registerCustomOverlays(): void {
   registerOverlay(matchBand);
   registerOverlay(timeRange);
   registerOverlay(patternGhost);
+  registerOverlay(tradeBox);
 }

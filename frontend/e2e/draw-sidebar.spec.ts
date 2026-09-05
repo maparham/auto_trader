@@ -28,7 +28,7 @@ test("draw sidebar: flyout, favorites, last-used, bulk buttons", async ({ page }
   const flyout = sidebar.locator(".ds-flyout");
   await expect(flyout).toBeVisible();
   await expect(flyout.locator(".ds-fly-section")).toHaveText("Drawing tools");
-  await expect(flyout.locator(".ds-row")).toHaveCount(8);
+  await expect(flyout.locator(".ds-row")).toHaveCount(12);
   await expect(flyout.locator(".ds-row").first()).toContainText("Trend line");
   await expect(flyout.locator(".ds-row svg").first()).toBeVisible(); // glyph
 

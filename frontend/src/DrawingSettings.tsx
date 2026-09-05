@@ -32,6 +32,7 @@ import { useMaskedReplay } from "./lib/useMaskedReplay";
 import { maskedTimeLabel } from "./lib/timeFormat";
 import { type FibConfig, asFibConfig } from "./lib/fibConfig";
 import { asGhostStyle, type GhostStyle } from "./lib/patternGhost";
+import { asTradeConfig, type TradeConfig } from "./lib/tradePlan";
 import {
   loadDrawingDefault,
   saveDrawingDefault,
@@ -75,7 +76,11 @@ const TITLES: Record<string, string> = {
   priceChannelLine: "Parallel channel",
   fibonacciLine: "Fib retracement",
   patternGhost: "Pattern overlay",
+  tradeBox: "Trade box",
 };
+
+// The trade-planning drawing, which paints its own labels off a TradeConfig.
+const TRADE_NAME = "tradeBox";
 
 // The colour a ghost falls back to when the user switches it off the chart's
 // up/down colours: neutral, so one flat ghost reads apart from real candles.
@@ -116,6 +121,10 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   // none of the generic line/text controls apply to it: it gets its own Style
   // tab (shape, colour, opacity, score) and no Text tab at all.
   const isGhost = name === "patternGhost";
+  // Long/Short Position. Its look is fixed (green reward, red risk, one entry
+  // line), so the Style tab carries the trade's OWN settings instead: which
+  // labels it paints, and the account the money figures are sized against.
+  const isTrade = name === TRADE_NAME;
 
   const line = (live?.styles?.line ?? {}) as Partial<{ color: string; size: number; style: LineType }>;
   const poly = (live?.styles?.polygon ?? {}) as Partial<{ color: string; borderColor: string; borderSize: number }>;
@@ -144,6 +153,8 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const [fib, setFib] = useState<FibConfig>(() => asFibConfig(extra0.fib));
   // Pattern overlay look (patternGhost only).
   const [ghostStyle, setGhostStyleState] = useState<GhostStyle>(() => asGhostStyle(extra0.ghostStyle));
+  // Trade box labels + account overrides (the tradeBox drawing only).
+  const [trade, setTradeState] = useState<TradeConfig>(() => asTradeConfig(extra0.trade));
 
   // "Defaults ▾" footer menu: this drawing type's default + named templates (global,
   // keyed by overlay name). Mirrors the indicator settings Defaults menu.
@@ -224,6 +235,12 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
     const merged = { ...ghostStyle, ...next };
     setGhostStyleState(merged);
     overlays.setGhostStyle(curId, merged);
+  }
+
+  function applyTrade(next: Partial<TradeConfig>) {
+    const merged = { ...trade, ...next };
+    setTradeState(merged);
+    overlays.setTradeConfig(curId, merged);
   }
 
   function applyExtend(mode: "none" | "ray" | "both") {
@@ -348,6 +365,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
         overlays.setShowMiddle(curId, oExtra.showMiddle ?? false);
         if (o.name === "fibonacciLine") overlays.setFibConfig(curId, asFibConfig(oExtra.fib));
         if (o.name === "patternGhost") overlays.setGhostStyle(curId, asGhostStyle(oExtra.ghostStyle));
+        if (o.name === TRADE_NAME) overlays.setTradeConfig(curId, asTradeConfig(oExtra.trade));
         overlays.setVisible(curId, o.visible);
       }
     }
@@ -463,7 +481,107 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
         <div className="ind-body">
           {tab === "style" && (
             <>
-              {isGhost ? (
+              {isTrade ? (
+                <>
+                  {/* Which labels the drawing paints. R:R and the two
+                      percentages are always on; these are the extras, off by
+                      default because all of them at once buries the chart. */}
+                  <label className="ind-check" htmlFor="trade-price">
+                    <input
+                      id="trade-price"
+                      type="checkbox"
+                      checked={trade.showPrice}
+                      onChange={(e) => applyTrade({ showPrice: e.target.checked })}
+                    />
+                    <span>Show level prices</span>
+                  </label>
+                  <label className="ind-check" htmlFor="trade-points">
+                    <input
+                      id="trade-points"
+                      type="checkbox"
+                      checked={trade.showPoints}
+                      onChange={(e) => applyTrade({ showPoints: e.target.checked })}
+                    />
+                    <span>Show point distance</span>
+                  </label>
+                  <label className="ind-check" htmlFor="trade-money">
+                    <input
+                      id="trade-money"
+                      type="checkbox"
+                      checked={trade.showMoney}
+                      onChange={(e) => applyTrade({ showMoney: e.target.checked })}
+                    />
+                    <span>Show risk in account currency</span>
+                  </label>
+                  <label className="ind-check" htmlFor="trade-duration">
+                    <input
+                      id="trade-duration"
+                      type="checkbox"
+                      checked={trade.showDuration}
+                      onChange={(e) => applyTrade({ showDuration: e.target.checked })}
+                    />
+                    <span>Show span in bars</span>
+                  </label>
+                  <div className="ind-row">
+                    <label htmlFor="trade-account">Account size</label>
+                    <input
+                      id="trade-account"
+                      type="number"
+                      placeholder="Live account"
+                      value={trade.accountSize ?? ""}
+                      onChange={(e) =>
+                        applyTrade({
+                          // Empty ⇒ back to the connected dealing account.
+                          accountSize: e.target.value === "" ? null : Number(e.target.value),
+                        })
+                      }
+                    />
+                    <InfoTip
+                      title="Account size"
+                      text="Leave empty to use the connected dealing account's balance."
+                    />
+                  </div>
+                  <div className="ind-row">
+                    <label htmlFor="trade-risk">Risk per trade %</label>
+                    <input
+                      id="trade-risk"
+                      type="number"
+                      step={0.1}
+                      value={trade.riskPct}
+                      onChange={(e) => applyTrade({ riskPct: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="ind-row">
+                    <label htmlFor="trade-vpp">Value per point</label>
+                    <input
+                      id="trade-vpp"
+                      type="number"
+                      step={0.01}
+                      value={trade.valuePerPoint}
+                      onChange={(e) => applyTrade({ valuePerPoint: Number(e.target.value) })}
+                    />
+                    <InfoTip
+                      title="Value per point"
+                      text={[
+                        "Account currency won or lost per one point of price movement, per unit of position.",
+                        "1 is right for a CFD quoted in your account currency; the position size is only as correct as this number.",
+                      ]}
+                    />
+                  </div>
+                  <div className="ind-row">
+                    <label htmlFor="trade-currency">Currency</label>
+                    <input
+                      id="trade-currency"
+                      type="text"
+                      placeholder="Live account"
+                      value={trade.currency ?? ""}
+                      onChange={(e) =>
+                        applyTrade({ currency: e.target.value.trim() === "" ? null : e.target.value })
+                      }
+                    />
+                  </div>
+                </>
+              ) : isGhost ? (
                 <>
                   <div className="ind-row">
                     <label>Shape</label>
@@ -717,7 +835,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
           )}
 
           {tab === "text" &&
-            (isTrend || isRect ? (
+            (isTrend || isRect || isTrade ? (
               <>
                 <div className="ind-row ind-style-row">
                   <label>Label</label>
@@ -744,7 +862,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
               </>
             ) : (
               <p className="ind-note">
-                Text labels are available on trend lines and rectangles.
+                Text labels are available on trend lines, rectangles and trade boxes.
               </p>
             ))}
 

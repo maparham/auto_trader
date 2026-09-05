@@ -24,6 +24,9 @@ export const DRAW_TOOLS: DrawTool[] = [
   // the cell's Time Highlight indicator (DrawSidebar arms a signal, like
   // timeRange, and bypasses the supported-overlay filter for this name).
   { name: "recurringRange", label: "Recurring highlight" },
+  // The trade-planning tool (lib/tradeOverlay.ts). One entry for both
+  // directions: drag the target above the entry for a long, below for a short.
+  { name: "tradeBox", label: "Trade box" },
 ];
 
 // Overlay names that are NOT sidebar tools but still show up in drawing lists,

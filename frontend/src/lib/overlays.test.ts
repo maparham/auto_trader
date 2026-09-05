@@ -38,6 +38,7 @@ const { fitToWindow, windowMoments } = await import("./patternGhost");
 type OverlayManagerT = import("./overlays").OverlayManager;
 const P = await import("./persist");
 const { alertsChanged } = await import("./signals");
+const { asTradeConfig } = await import("./tradePlan");
 const { setMagnet, DEFAULT_MAGNET } = await import("./magnet");
 
 // Minimal faithful stand-in for a klinecharts Chart: the only 4 methods
@@ -2195,5 +2196,197 @@ describe("OverlayManager pattern ghost (paste, pin, re-align)", () => {
     seedCandles(chart);
     m.setReadOnly(true);
     expect(m.pastePatternGhost(1_800_000_000, 21_000, GHOST)).toBeNull();
+  });
+});
+
+describe("OverlayManager trade drawings (Long/Short Position)", () => {
+  const T = 1_750_000_000_000;
+  const BAR = 60_000;
+
+  // Two clicks place entry and target; the stop point only exists afterwards.
+  function drawTrade(name = "tradeBox") {
+    const { chart, m } = setup();
+    const id = m.addDrawing(name, [
+      { timestamp: T, value: 100 },
+      { timestamp: T + 10 * BAR, value: 102 },
+    ])!;
+    (ovById(chart, id) as { onDrawEnd?: (e: { overlay: { id: string } }) => void }).onDrawEnd?.({
+      overlay: { id },
+    });
+    return { chart, m, id };
+  }
+
+  function pointsOf(m: OverlayManagerT, id: string) {
+    return (m.getDrawing(id)?.points ?? []) as Array<{ timestamp?: number; value?: number }>;
+  }
+
+  it("completes a two-click draw with a stop point at a 1:2 risk/reward", () => {
+    const { m, id } = drawTrade();
+    const pts = pointsOf(m, id);
+    expect(pts).toHaveLength(3);
+    expect(pts[2].value).toBeCloseTo(99);
+  });
+
+  it("puts the stop on the drawing's right edge, so the two zones share a width", () => {
+    const { m, id } = drawTrade();
+    const pts = pointsOf(m, id);
+    expect(pts[2].timestamp).toBe(pts[1].timestamp);
+  });
+
+  it("mirrors the stop for a trade drawn downwards (a short)", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("tradeBox", [
+      { timestamp: T, value: 100 },
+      { timestamp: T + 10 * BAR, value: 98 },
+    ])!;
+    (ovById(chart, id) as { onDrawEnd?: (e: { overlay: { id: string } }) => void }).onDrawEnd?.({
+      overlay: { id },
+    });
+    expect(pointsOf(m, id)[2].value).toBeCloseTo(101);
+  });
+
+  it("persists the completed trade with all three levels", () => {
+    const { m, id } = drawTrade();
+    expect(m.getDrawing(id)).not.toBeNull();
+    const saved = P.loadDrawings("tab.A", "US100");
+    expect(saved).toHaveLength(1);
+    expect(saved[0].points).toHaveLength(3);
+  });
+
+  it("drags the stop's edge along when the target is pulled sideways", () => {
+    const { chart, m, id } = drawTrade();
+    const ov = ovById(chart, id) as {
+      onPressedMoveStart?: (e: { overlay: unknown }) => void;
+      onPressedMoveEnd?: (e: { overlay: unknown }) => void;
+      points: Array<{ timestamp?: number; value?: number }>;
+    };
+    onPressedMove(ov, () => {
+      ov.points[1].timestamp = T + 20 * BAR; // klinecharts moved the target only
+    });
+    const pts = pointsOf(m, id);
+    expect(pts[1].timestamp).toBe(T + 20 * BAR);
+    expect(pts[2].timestamp).toBe(T + 20 * BAR);
+    expect(pts[2].value).toBeCloseTo(99); // the level itself is untouched
+  });
+
+  it("leaves a purely vertical level drag alone", () => {
+    const { chart, m, id } = drawTrade();
+    const ov = ovById(chart, id) as {
+      onPressedMoveStart?: (e: { overlay: unknown }) => void;
+      onPressedMoveEnd?: (e: { overlay: unknown }) => void;
+      points: Array<{ timestamp?: number; value?: number }>;
+    };
+    onPressedMove(ov, () => {
+      ov.points[2].value = 97; // stop dragged down, same bar
+    });
+    const pts = pointsOf(m, id);
+    expect(pts[2].value).toBe(97);
+    expect(pts[1].timestamp).toBe(T + 10 * BAR);
+  });
+
+  it("completes a trade placed with only two anchors (agent bridge / paste)", () => {
+    // placeDrawing never fires onDrawEnd, so a two-point trade would otherwise
+    // persist half-drawn and render as a preview forever.
+    const { m } = setup();
+    const id = m.placeDrawing({
+      name: "tradeBox",
+      points: [
+        { timestamp: T, value: 100 },
+        { timestamp: T + 10 * BAR, value: 102 },
+      ],
+    })!;
+    expect(pointsOf(m, id)).toHaveLength(3);
+    expect(P.loadDrawings("tab.A", "US100")[0].points).toHaveLength(3);
+  });
+
+  it("leaves a fully specified trade's own stop alone", () => {
+    const { m } = setup();
+    const id = m.placeDrawing({
+      name: "tradeBox",
+      points: [
+        { timestamp: T, value: 100 },
+        { timestamp: T + 10 * BAR, value: 98 },
+        { timestamp: T + 10 * BAR, value: 100.5 },
+      ],
+    })!;
+    expect(pointsOf(m, id)[2].value).toBe(100.5);
+  });
+
+  it("leaves the shared edge intact when the whole trade is dragged sideways", () => {
+    // Dragging the body moves all three points together, so nothing is torn —
+    // the edge sync must not mistake that for one point escaping.
+    const { chart, m, id } = drawTrade();
+    const ov = ovById(chart, id) as {
+      onPressedMoveStart?: (e: { overlay: unknown }) => void;
+      onPressedMoveEnd?: (e: { overlay: unknown }) => void;
+      points: Array<{ timestamp?: number; value?: number }>;
+    };
+    onPressedMove(ov, () => {
+      for (const p of ov.points) p.timestamp = (p.timestamp ?? 0) + 5 * BAR;
+    });
+    const pts = pointsOf(m, id);
+    expect(pts[0].timestamp).toBe(T + 5 * BAR);
+    expect(pts[1].timestamp).toBe(T + 15 * BAR);
+    expect(pts[2].timestamp).toBe(T + 15 * BAR);
+  });
+
+  it("stores the drawing's trade settings so the labels survive a reload", () => {
+    const { m, id } = drawTrade();
+    m.setTradeConfig(id, { ...asTradeConfig(undefined), showMoney: true, riskPct: 2 });
+    expect(asDrawingExtra(m.getDrawing(id)?.extendData).trade).toMatchObject({
+      showMoney: true,
+      riskPct: 2,
+    });
+    const saved = P.loadDrawings("tab.A", "US100");
+    expect((saved[0].extendData as { trade?: { riskPct?: number } })?.trade?.riskPct).toBe(2);
+  });
+});
+
+// Run a klinecharts press-drag over an overlay: start, mutate the points the way
+// the library would, then release.
+function onPressedMove(
+  ov: {
+    onPressedMoveStart?: (e: { overlay: unknown }) => void;
+    onPressedMoveEnd?: (e: { overlay: unknown }) => void;
+  },
+  move: () => void,
+) {
+  ov.onPressedMoveStart?.({ overlay: ov });
+  move();
+  ov.onPressedMoveEnd?.({ overlay: ov });
+}
+
+describe("OverlayManager trade-drawing defaults and templates", () => {
+  const T = 1_750_000_000_000;
+
+  function tradeWithConfig() {
+    const { chart, m } = setup();
+    const id = m.addDrawing("tradeBox", [
+      { timestamp: T, value: 100 },
+      { timestamp: T + 600_000, value: 102 },
+    ])!;
+    (ovById(chart, id) as { onDrawEnd?: (e: { overlay: { id: string } }) => void }).onDrawEnd?.({
+      overlay: { id },
+    });
+    m.setTradeConfig(id, { ...asTradeConfig(undefined), showPoints: true, riskPct: 3 });
+    return { m, id };
+  }
+
+  it("reads the trade config into a saveable drawing config", () => {
+    const { m, id } = tradeWithConfig();
+    expect(m.getDrawingConfig(id)?.trade).toMatchObject({ showPoints: true, riskPct: 3 });
+  });
+
+  it("applies a saved trade config back onto a drawing", () => {
+    const { m, id } = tradeWithConfig();
+    m.applyDrawingConfig(id, { trade: { ...asTradeConfig(undefined), showMoney: true } });
+    const trade = asDrawingExtra(m.getDrawing(id)?.extendData).trade;
+    expect(trade).toMatchObject({ showMoney: true, showPoints: false });
+  });
+
+  it("leaves other drawing types without a trade config", () => {
+    const { m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    expect(m.getDrawingConfig(id)?.trade).toBeUndefined();
   });
 });

@@ -6,6 +6,7 @@ import type { DeepPartial, OverlayStyle, LineType } from "klinecharts";
 import type { VisibilityModel } from "../visibility";
 import type { FibConfig } from "../fibConfig";
 import type { GhostStyle } from "../patternGhost";
+import type { TradeConfig } from "../tradePlan";
 import type { BacktestResult } from "../../api";
 import type { BacktestPeriod } from "../backtestPeriods";
 // Type-only (erased at build), so this does not close a cycle with replayReveal,
@@ -438,6 +439,8 @@ export interface SavedDrawingConfig {
   fib?: FibConfig;
   // Pattern-overlay look (shape/opacity/colour/score). Only patternGhost sets it.
   ghostStyle?: GhostStyle;
+  // Trade label groups + account overrides. Only the tradeBox drawing sets it.
+  trade?: TradeConfig;
   showMiddle?: boolean;
   priceLabels?: boolean;
   visibility?: VisibilityModel;
