@@ -679,6 +679,37 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Hides the dashed lines price has already cut through.",
       },
       {
+        key: "dimTouches",
+        // Reads as a phrase the number and suffix complete ("Dim after
+        // touching 5 pivots"), the same shape the row below it and Merge
+        // Lines within use.
+        label: "Dim after touching",
+        wide: true,
+        type: "number",
+        source: "extend",
+        field: "dimTouches",
+        default: 0,
+        min: 0,
+        suffix: "pivots",
+        tip: "Fades a line once price has touched it this many times, so a level with history reads at a glance instead of by counting its ×N tag. Zero never dims. It only fades the line — Max Touches is the setting that removes one, and if that is set lower this never fires.",
+      },
+      {
+        key: "dimStaleBars",
+        // The row reads as a phrase the number completes ("Dim if untouched
+        // for 40 bars"), which is why the count is not in the suffix: "bars
+        // untouched" is wider than the suffix column and clipped to "bars
+        // untouc" in the panel.
+        label: "Dim if untouched for",
+        wide: true,
+        type: "number",
+        source: "extend",
+        field: "dimStaleBars",
+        default: 0,
+        min: 0,
+        suffix: "bars",
+        tip: "Fades a line price has not touched for this many bars, counted from its last touch, so a level everyone has forgotten stops competing with a live one. Zero never dims, and it only fades — Max Projection is what drops a stale line entirely.",
+      },
+      {
         key: "dedupeAtr",
         label: "Merge Lines within",
         // The label runs to a phrase the number completes ("Merge Lines

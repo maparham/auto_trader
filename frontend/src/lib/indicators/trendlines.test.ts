@@ -24,6 +24,8 @@ import {
   rankLines,
   dedupeTolerance,
   selectDrawnLines,
+  trendlineDimmed,
+  TL_DIM_ALPHA,
   TL_DEDUPE_ATR,
   TL_NEAR_PRICE_ATR,
   TRENDLINES_TEMPLATE,
@@ -1309,6 +1311,9 @@ interface Segment {
   x1: number;
   y1: number;
   dashed: boolean;
+  /** The opacity the stroke was painted at: full for a live line, the dim
+   * alpha for a stale or well-touched one, and the broken fade under a break. */
+  alpha: number;
 }
 
 /** A recorded fillText call: the ×N tag and where it landed. */
@@ -1404,6 +1409,9 @@ function record(
   // The Declutter select. Absent leaves the key off entirely, which is how the
   // tests above exercise the legacy `nearPrice` fallback the draw path keeps.
   declutter?: "off" | "near" | "pivot",
+  // The two dim thresholds. Absent leaves both keys off, so every test above
+  // paints at the alphas it always did.
+  dim?: { dimTouches?: number; dimStaleBars?: number },
 ): Painted {
   const segments: Segment[] = [];
   const tags: Tag[] = [];
@@ -1440,7 +1448,7 @@ function record(
       cur = { x, y };
     },
     lineTo: (x: number, y: number) => {
-      const seg = { x0: cur.x, y0: cur.y, x1: x, y1: y, dashed };
+      const seg = { x0: cur.x, y0: cur.y, x1: x, y1: y, dashed, alpha: ctx.globalAlpha };
       if (ctx.lineWidth === TL_HANDLE_STROKE) handleStrokes.push(seg);
       else segments.push(seg);
       cur = { x, y };
@@ -1469,6 +1477,7 @@ function record(
     ...(dedupe === "default" ? {} : { dedupe }),
     ...(nearPrice === "default" ? {} : { nearPrice }),
     ...(declutter ? { declutter } : {}),
+    ...(dim ?? {}),
     hideBroken,
   };
   const result = TRENDLINES_TEMPLATE.calc!(bars, {
@@ -1551,6 +1560,45 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     // test above uses.
     expect(record(b, withCeiling(39)).segments).toHaveLength(0);
     expect(record(b, withCeiling(40)).segments).toHaveLength(wide);
+  });
+
+  it("fades a well-touched line, RINGS AND ALL, and only when asked", () => {
+    const b = bars();
+    // Min Touches is 2, so every line the fixture yields meets a threshold of
+    // 2: the assertion is about the whole drawn set, not about one line.
+    const live = record(b, params(1), "lastbar");
+    const solid = live.segments.filter((sg) => !sg.dashed);
+    expect(solid.length, "fixture must draw an unbroken line").toBeGreaterThan(0);
+    expect(solid.every((sg) => sg.alpha === 1)).toBe(true);
+
+    const dimmed = record(b, params(1), "lastbar", undefined, undefined, false, false, false, undefined, {
+      dimTouches: 2,
+    });
+    const dimSolid = dimmed.segments.filter((sg) => !sg.dashed);
+    expect(dimSolid.length).toBe(solid.length);
+    expect(dimSolid.every((sg) => sg.alpha === TL_DIM_ALPHA)).toBe(true);
+    // THE RINGS TOO. The alpha is restored at three sites in the draw loop
+    // (after the break dot, after the pin handle), and a stroke that fades
+    // while its touch rings stay opaque is the failure this pins: it looks
+    // right on the line and wrong everywhere else.
+    // The broken lines' own rings stay at the break fade, so the claim is that
+    // NO ring paints opaque any more and the unbroken ones carry the dim.
+    expect(dimmed.touchMarks.some((m) => m.alpha === TL_DIM_ALPHA)).toBe(true);
+    expect(dimmed.touchMarks.every((m) => m.alpha < 1)).toBe(true);
+  });
+
+  it("leaves a broken line at the BREAK fade, not the dim one", () => {
+    const b = bars();
+    const dashedAt = (dim?: { dimTouches?: number }) =>
+      record(b, params(1), "lastbar", undefined, undefined, false, false, false, undefined, dim)
+        .segments.filter((sg) => sg.dashed)
+        .map((sg) => sg.alpha);
+    const before = dashedAt();
+    expect(before.length, "fixture must draw a broken line").toBeGreaterThan(0);
+    expect(before.every((a) => a === 0.45)).toBe(true);
+    // A break is the darker statement: dimming a line that is already broken
+    // must not lighten it back up.
+    expect(dashedAt({ dimTouches: 2 })).toEqual(before);
   });
 
   it("rings every touch, on the line and not at the candle's own extreme", () => {
@@ -2293,5 +2341,49 @@ describe("hitAnyTrendlineHandle", () => {
       0,
     );
     expect(hitAnyTrendlineHandle(drew, h.x, h.y)).toBe(false);
+  });
+});
+
+describe("trendlineDimmed", () => {
+  const line = (touches: number, lastTouchIdx: number) =>
+    ({ touches, lastTouchIdx }) as const;
+
+  it("is off with no thresholds, whatever the line looks like", () => {
+    expect(trendlineDimmed(line(9, 0), 500, undefined)).toBe(false);
+    expect(trendlineDimmed(line(9, 0), 500, {})).toBe(false);
+  });
+
+  it("treats 0 and a non-number as OFF, not as 'dim everything'", () => {
+    // 0 is this file's standing off switch (maxTouches, maxSpan, minSlope), so
+    // a threshold of 0 must not read as "touches >= 0", which every line meets.
+    expect(trendlineDimmed(line(2, 100), 100, { dimTouches: 0 })).toBe(false);
+    expect(trendlineDimmed(line(2, 0), 100, { dimStaleBars: 0 })).toBe(false);
+    expect(
+      trendlineDimmed(line(9, 0), 100, {
+        dimTouches: NaN,
+        dimStaleBars: NaN,
+      }),
+    ).toBe(false);
+  });
+
+  it("dims AT the touch threshold, not one past it", () => {
+    expect(trendlineDimmed(line(4, 100), 100, { dimTouches: 5 })).toBe(false);
+    expect(trendlineDimmed(line(5, 100), 100, { dimTouches: 5 })).toBe(true);
+    expect(trendlineDimmed(line(6, 100), 100, { dimTouches: 5 })).toBe(true);
+  });
+
+  it("counts staleness from the LAST TOUCH, not from the line's age", () => {
+    // Both lines are equally old; only the second has been forgotten.
+    expect(trendlineDimmed(line(3, 95), 100, { dimStaleBars: 20 })).toBe(false);
+    expect(trendlineDimmed(line(3, 80), 100, { dimStaleBars: 20 })).toBe(true);
+  });
+
+  it("ORs the two conditions", () => {
+    const ext = { dimTouches: 5, dimStaleBars: 20 };
+    // Fresh and lightly touched: neither fires.
+    expect(trendlineDimmed(line(2, 100), 100, ext)).toBe(false);
+    // Either one alone is enough.
+    expect(trendlineDimmed(line(7, 100), 100, ext)).toBe(true);
+    expect(trendlineDimmed(line(2, 70), 100, ext)).toBe(true);
   });
 });

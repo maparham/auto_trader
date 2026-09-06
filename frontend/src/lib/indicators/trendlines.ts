@@ -820,6 +820,33 @@ export interface TrendlinesExtend {
    * and belongs to whoever ticks it: the broken outputs keep emitting with
    * nothing drawn at them. */
   hideBroken?: boolean;
+  /** Dim a line once it has been touched this many times or more, in pivots.
+   * 0 (or absent) is the off switch, the same idiom `maxTouches` uses.
+   *
+   * The complaint it answers: touch count is already painted (the ×N tag), but
+   * reading a number off every line is work a glance should do. A line price
+   * has leaned on many times is not the same object as a fresh one — whether
+   * that makes it stronger or spent is the trader's call, and this only says
+   * "this one has history", it does not rank them.
+   *
+   * NOT `maxTouches`, which DROPS such a line from the pane and from what an
+   * operand may read. This is the softer statement, and it is render-only: a
+   * dimmed line still emits, and every gate still sees it. Set both and the
+   * drop wins, because isMajor runs first. */
+  dimTouches?: number;
+  /** Dim a line that has gone this many bars without a touch. 0 (or absent) is
+   * off.
+   *
+   * MEASURED FROM `lastTouchIdx`, not from the first anchor, because staleness
+   * is about how long ago price last agreed with the line, not how old the line
+   * is: a decade-long support touched last week is live, and a three-week line
+   * last touched at its second anchor is not. It is also the clock maxProjBars
+   * already ages a line out on, so the two say the same kind of thing and a
+   * user who has met one can predict the other.
+   *
+   * Render-only and softer than `maxSpanBars` in exactly the way `dimTouches`
+   * is softer than `maxTouches`. */
+  dimStaleBars?: number;
   /** Lines the user pinned open by clicking their end handle, as lineKey()
    * strings. A pinned line ignores `extend` and runs to the right edge of the
    * pane, re-measured every render so it stays "indefinite" through scroll and
@@ -946,6 +973,48 @@ export function declutterMode(
   const m = ext?.declutter;
   if (m === "off" || m === "near" || m === "pivot") return m;
   return (ext?.nearPrice ?? true) ? "near" : "off";
+}
+
+/** Alpha a dimmed-but-unbroken line paints at.
+ *
+ * NOT the broken line's 0.45. Three states share one channel here — live,
+ * dimmed, broken — and at equal alpha the first two of them read as the same
+ * thing at a glance, with only the dashes telling them apart, which is a
+ * detail the eye resolves late. Dashing stays what it has always been, the
+ * mark of a break; the fade carries two depths instead. 0.6 is far enough
+ * from 1 to be seen at a glance and far enough from 0.45 to be told from a
+ * break at one. */
+export const TL_DIM_ALPHA = 0.6;
+
+/** True when a line should paint faded for a reason OTHER than being broken.
+ *
+ * The two conditions OR together: they answer different questions (has price
+ * leaned on this often, and has it forgotten about it), and a user who sets
+ * both means either. Only positive finite thresholds count, so an absent key,
+ * a 0 and a hand-written payload all read as off — the file's standing off
+ * switch idiom.
+ *
+ * A PURE PREDICATE beside declutterMode, and for the same reason: the draw
+ * path is canvas paint, so a rule buried in it cannot be tested, and any
+ * second surface that wants to explain the fade must be able to ask. */
+export function trendlineDimmed(
+  line: Pick<TrendLine, "touches" | "lastTouchIdx">,
+  /** The bar the whole draw path measures at, in the LINES' own space (an HTF
+   * bar under a timeframe pin), so the stale count is in the bars the line was
+   * detected on rather than the chart's. */
+  atIdx: number,
+  ext: Pick<TrendlinesExtend, "dimTouches" | "dimStaleBars"> | undefined,
+): boolean {
+  const t = ext?.dimTouches;
+  if (typeof t === "number" && Number.isFinite(t) && t > 0 && line.touches >= t)
+    return true;
+  const b = ext?.dimStaleBars;
+  return (
+    typeof b === "number" &&
+    Number.isFinite(b) &&
+    b > 0 &&
+    atIdx - line.lastTouchIdx >= b
+  );
 }
 
 export function dedupeTolerance(
@@ -1718,6 +1787,18 @@ function drawTrendlines(
   ctx.textAlign = "left";
   for (const line of drawn) {
     const broken = line.brokenIdx !== null;
+    // ONE alpha for the whole line, computed before the stroke and reused at
+    // every site that restores it below (the break dot and the pin handle both
+    // paint at full opacity and hand it back). Recomputing `broken ? ... : 1`
+    // at those sites is how the touch rings and the ×N tag snapped back to
+    // full opacity while the stroke itself faded correctly.
+    // A BREAK OUTRANKS A DIM: both fade, and the broken depth is the darker
+    // statement, so a line that is stale AND broken reads as broken.
+    const alpha = broken
+      ? 0.45
+      : trendlineDimmed(line, lastIdx, ext)
+        ? TL_DIM_ALPHA
+        : 1;
     const isPinned = pins.has(lineKey(line, dataList, starts));
     // The line's end under the MODE alone. The handle and the ×N tag ride here
     // whether or not the line is pinned: a pinned line runs to the pane edge,
@@ -1742,7 +1823,7 @@ function drawTrendlines(
       x1 === x0 ? y0 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
     ctx.strokeStyle =
       line.side === "support" ? TL_SUPPORT_COLOR : TL_RESISTANCE_COLOR;
-    ctx.globalAlpha = broken ? 0.45 : 1;
+    ctx.globalAlpha = alpha;
     ctx.lineWidth = 1;
     ctx.setLineDash(broken ? [4, 3] : []);
     ctx.beginPath();
@@ -1765,7 +1846,7 @@ function drawTrendlines(
         ctx.beginPath();
         ctx.arc(xB, yB, TL_BREAK_RADIUS, 0, Math.PI * 2);
         ctx.fill();
-        ctx.globalAlpha = 0.45;
+        ctx.globalAlpha = alpha;
       }
     }
     // The touches themselves, one hollow ring each, so the ×N tag can be read
@@ -1853,7 +1934,7 @@ function drawTrendlines(
       }
       ctx.stroke();
       ctx.lineWidth = 1;
-      ctx.globalAlpha = broken ? 0.45 : 1;
+      ctx.globalAlpha = alpha;
     }
     const label = `×${line.touches}`;
     const xTag = Math.min(
