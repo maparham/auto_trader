@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_store import ALERT_STORE
+from auto_trader.core.telegram_notify import TELEGRAM
 
 from ..deps import current_user
 from .state import broadcast_to_user
@@ -157,10 +158,42 @@ async def clear_triggered(request: Request) -> None:
     await ALERT_STORE.clear_triggered(user)
 
 
-# The fixed-path /api/alerts/triggered* routes above must be registered
-# BEFORE these {alert_id} routes — FastAPI matches path operations in
-# registration order, and a {alert_id} route would otherwise swallow
-# "triggered" as an id.
+@router.post("/api/alerts/telegram/link")
+async def telegram_link(request: Request) -> dict[str, Any]:
+    if not TELEGRAM.enabled:
+        raise HTTPException(503, "telegram bot not configured")
+    user = current_user(request)
+    code = TELEGRAM.new_link_code(user)
+    username = await TELEGRAM.bot_username()
+    return {"url": f"https://t.me/{username}?start={code}"}
+
+
+@router.get("/api/alerts/telegram")
+async def telegram_status(request: Request) -> dict[str, Any]:
+    user = current_user(request)
+    chat_id = await ALERT_STORE.get_telegram(user)
+    return {"linked": chat_id is not None, "enabled": TELEGRAM.enabled}
+
+
+@router.delete("/api/alerts/telegram", status_code=204)
+async def telegram_unlink(request: Request) -> None:
+    user = current_user(request)
+    await ALERT_STORE.delete_telegram(user)
+
+
+@router.post("/api/alerts/telegram/test", status_code=204)
+async def telegram_test(request: Request) -> None:
+    user = current_user(request)
+    chat_id = await ALERT_STORE.get_telegram(user)
+    if chat_id is None:
+        raise HTTPException(404, "telegram not linked")
+    await TELEGRAM.send(chat_id, "🔔 Test alert from Auto Trader")
+
+
+# The fixed-path /api/alerts/triggered* and /api/alerts/telegram* routes above
+# must be registered BEFORE these {alert_id} routes — FastAPI matches path
+# operations in registration order, and a {alert_id} route would otherwise
+# swallow "triggered"/"telegram" as an id.
 
 
 @router.patch("/api/alerts/{alert_id}")

@@ -211,3 +211,26 @@ class OanorSettings(BaseSettings):
 
 
 oanor_settings = OanorSettings()
+
+
+# Telegram bot delivery for price alerts (deep-link account linking + DM
+# notifier). Registers only when a bot token is set (see TelegramNotify.enabled
+# in core/telegram_notify.py) — an absent token just disables the feature
+# (link endpoint 503s, poller returns immediately), same "half-configured
+# never shows a dead entry" convention as the broker settings above.
+class TelegramSettings(BaseSettings):
+    """Telegram bot credentials (env-prefixed TELEGRAM_).
+
+    `bot_token` comes from @BotFather (`/newbot`)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="TELEGRAM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    bot_token: str = ""
+
+
+telegram_settings = TelegramSettings()
