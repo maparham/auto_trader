@@ -2544,6 +2544,17 @@
 .ind-row.ind-row-cols > label,
 .ind-row.ind-row-cols > .ind-row-head > label { color: var(--text); }
 
+/* A min/max pair collapsed into ONE "label [min] – [max] unit" row
+   (indicatorMeta's `range`). Two boxes plus dash plus unit outgrow the shared
+   138px control column, so range rows get their own FIXED column, sized to the
+   widest cluster (two 56px boxes, the dash, "ATR/bar"): fixed rather than
+   content-sized so the three rows' min boxes start at ONE x instead of each
+   cluster anchoring to the right edge and zig-zagging by suffix width. */
+.ind-row.ind-row-cols.ind-range-row { grid-template-columns: minmax(0, 1fr) 190px; }
+.ind-range { gap: 6px; }
+.ind-range input[type="number"] { width: 56px; }
+.ind-range-dash { color: var(--text-dim); }
+
 /* A related PAIR of inputs on one row, each label stacked above its own
    control (indicatorMeta's `group`). The column is half a row wide, so a
    paired label has to be short; the ⓘ tip carries the full wording. */

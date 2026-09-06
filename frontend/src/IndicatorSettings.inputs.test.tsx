@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import IndicatorSettings from "./IndicatorSettings";
 import { TRENDLINES_DEFAULTS } from "./lib/indicators/trendlinesOutputs";
 
@@ -29,6 +29,7 @@ function chartWith(extendData: object) {
 // Same, but recording what the modal writes back onto the live instance.
 function chartRecording(extendData: object) {
   const writes: Array<Record<string, unknown>> = [];
+  const cpWrites: number[][] = [];
   const ind = {
     paneId: "candle_pane",
     name: "TRENDLINES",
@@ -39,14 +40,36 @@ function chartRecording(extendData: object) {
   };
   const chart = {
     getIndicators: () => [ind],
-    overrideIndicator: (o: { extendData?: Record<string, unknown> }) => {
+    overrideIndicator: (o: {
+      extendData?: Record<string, unknown>;
+      calcParams?: number[];
+    }) => {
       if (o.extendData) writes.push(o.extendData);
+      if (o.calcParams) cpWrites.push(o.calcParams);
       return true;
     },
     getStyles: () => ({ indicator: { lines: [] } }),
     getDataList: () => [],
   };
-  return { chart: chart as never, writes };
+  return { chart: chart as never, writes, cpWrites };
+}
+
+function openRecording(extendData: object = {}) {
+  const rec = chartRecording(extendData);
+  render(
+    <IndicatorSettings
+      chart={rec.chart}
+      scope="tab.test"
+      epic="US100"
+      brokerId="capital"
+      chartResolution="DAY"
+      paneId="candle_pane"
+      name="TRENDLINES"
+      cellId="cell.test"
+      onClose={vi.fn()}
+    />,
+  );
+  return rec;
 }
 
 function open(extendData: object = {}) {
@@ -242,5 +265,91 @@ describe("the merge tolerance under One line per pivot", () => {
     // guard reading the raw stored value would blank the row here.
     open({ nearPrice: false });
     expect(screen.getByLabelText("Merge Lines within")).toBeTruthy();
+  });
+});
+
+describe("min/max range rows", () => {
+  // Touches, Span and Slope each used to be TWO labeled fields ("Min Touches" /
+  // "Max Touches"...) saying almost the same thing. Each is one concept, so
+  // each is one "label [min] – [max] unit" row now.
+  it("collapses each pair into one row holding both boxes", () => {
+    open();
+    for (const [label, minLabel, maxLabel] of [
+      ["Touches", "Min Touches", "Max Touches"],
+      ["Span", "Min Span", "Max Span"],
+      ["Slope", "Min Slope", "Max Slope"],
+    ]) {
+      const row = screen.getByText(label).closest(".ind-range-row");
+      expect(row, `${label} has no range row`).toBeTruthy();
+      expect(row!.contains(screen.getByLabelText(minLabel))).toBe(true);
+      expect(row!.contains(screen.getByLabelText(maxLabel))).toBe(true);
+    }
+  });
+
+  // The stored 0 means "no limit", which a literal 0 in the box hid ("zero
+  // touches allowed?"). The box shows that state as empty behind an ∞.
+  it("shows a stored 0 on an unbounded max as empty behind an ∞", () => {
+    open();
+    const box = screen.getByLabelText("Max Touches") as HTMLInputElement;
+    expect(box.value).toBe("");
+    expect(box.placeholder).toBe("∞");
+    // The min side keeps its literal value.
+    expect((screen.getByLabelText("Min Touches") as HTMLInputElement).value).toBe("2");
+  });
+
+  it("stores the same 0 sentinel when the box is cleared", () => {
+    const { cpWrites } = openRecording();
+    const box = screen.getByLabelText("Max Span") as HTMLInputElement;
+    fireEvent.change(box, { target: { value: "120" } });
+    expect(cpWrites.at(-1)![12]).toBe(120);
+    fireEvent.change(box, { target: { value: "" } });
+    expect(cpWrites.at(-1)![12]).toBe(0);
+    expect(box.value).toBe("");
+  });
+});
+
+describe("preset select", () => {
+  // A SelectMenu, like Declutter: what is asserted is the trigger's text — the
+  // preset in force, resolved by VALUE comparison so it survives reopen.
+  it("opens on Balanced for a pane at the defaults", () => {
+    open();
+    expect(screen.getByLabelText("Preset").textContent).toContain("Balanced");
+  });
+
+  // A preset writes the FULL calcParams, so the params it doesn't mention land
+  // on their defaults and the option means the same thing on every chart.
+  it("applies Clean's values on pick", () => {
+    const { cpWrites } = openRecording();
+    fireEvent.click(screen.getByLabelText("Preset"));
+    fireEvent.click(screen.getByRole("option", { name: "Clean" }));
+    const cp = cpWrites.at(-1)!;
+    expect(cp[7]).toBe(2); // maxLines
+    expect(cp[3]).toBe(3); // minTouches
+    expect(cp[4]).toBe(40); // minSpanBars
+    expect(cp[8]).toBe(0.75); // minSwingAtr
+    expect(cp[15]).toBe(10); // minBackBars untouched: still the default
+    expect(screen.getByLabelText("Preset").textContent).toContain("Clean");
+  });
+
+  // Any edit that leaves a preset's numbers behind reads as Custom — an
+  // out-of-list state the menu only offers while it is true.
+  it("reads Custom after a manual edit", () => {
+    open();
+    fireEvent.change(screen.getByLabelText("Max Trendlines"), {
+      target: { value: "9" },
+    });
+    expect(screen.getByLabelText("Preset").textContent).toContain("Custom");
+    fireEvent.click(screen.getByLabelText("Preset"));
+    expect(screen.getByRole("option", { name: "Custom" })).toBeTruthy();
+  });
+});
+
+describe("input sections", () => {
+  // Sixteen equal-weight fields read as a wall; the headings break the run
+  // into the detector's story: pivots -> fit -> filters -> lifetime.
+  it("opens a heading over each run of related params", () => {
+    open();
+    for (const h of ["Pivots", "Line Fit", "Filters", "Lifetime"])
+      expect(screen.getByText(h).className, `${h} heading`).toContain("ind-group");
   });
 });

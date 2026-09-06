@@ -20,6 +20,7 @@ import {
   resolveInputs,
   groupInputs,
   isMovingAverage,
+  presetsFor,
   SMOOTHING_TYPES,
   type IndicatorInputDef,
 } from "./lib/indicatorMeta";
@@ -668,6 +669,14 @@ export default function IndicatorSettings({
 
   function controlFor(inp: IndicatorInputDef) {
     if (inp.source === "calcParam" && inp.index != null) {
+      // A slot the saved instance predates reads undefined, which would
+      // render an EMPTY box for a param that does have a default (a chart
+      // created before the param existed keeps its shorter list). Show the
+      // meta's default there; editing writes the slot and the array grows
+      // to the new length.
+      const stored = Number.isFinite(calcParams[inp.index])
+        ? calcParams[inp.index]
+        : ((inp.default as number | undefined) ?? "");
       return withSuffix(
         inp,
         <input
@@ -678,17 +687,17 @@ export default function IndicatorSettings({
           min={inp.min}
           max={inp.max}
           step={inp.step ?? 1}
-          // A slot the saved instance predates reads undefined, which would
-          // render an EMPTY box for a param that does have a default (a chart
-          // created before the param existed keeps its shorter list). Show the
-          // meta's default there; editing writes the slot and the array grows
-          // to the new length.
-          value={
-            Number.isFinite(calcParams[inp.index])
-              ? calcParams[inp.index]
-              : ((inp.default as number | undefined) ?? "")
+          // An `unbounded` param stores 0 for "no limit": the box shows that
+          // state as empty behind an ∞ placeholder, and clearing it writes the
+          // same 0 back — the sentinel never changes, only how it reads.
+          placeholder={inp.unbounded ? "∞" : undefined}
+          value={inp.unbounded && stored === 0 ? "" : stored}
+          onChange={(e) =>
+            setParam(
+              inp.index!,
+              e.target.value === "" && inp.unbounded ? 0 : Number(e.target.value),
+            )
           }
-          onChange={(e) => setParam(inp.index!, Number(e.target.value))}
         />,
       );
     }
@@ -1336,6 +1345,32 @@ export default function IndicatorSettings({
     }
   }
 
+  // --- Preset chips (only TRENDLINES declares any today) ---
+  // One click writes the preset's FULL calcParams, so params a preset doesn't
+  // mention land on their defaults and the chips stay deterministic.
+  const inputPresets = presetsFor(type);
+  // Which chip is in force, by VALUE comparison (so it survives reopen): the
+  // live params — slots a saved chart predates filled from the defaults — must
+  // match a preset on every slot. No match reads as Custom.
+  const activePreset = useMemo(() => {
+    if (!inputPresets) return null;
+    const cur = inputPresets.base.map((d, i) =>
+      Number.isFinite(calcParams[i]) ? calcParams[i] : d,
+    );
+    return (
+      inputPresets.options.find((o) => o.calcParams.every((v, i) => v === cur[i]))
+        ?.name ?? null
+    );
+  }, [inputPresets, calcParams]);
+  function applyPreset(nextCp: number[]) {
+    setCalcParams(nextCp);
+    apply({ calcParams: nextCp });
+    // Same contract as setParam's per-slot write: every trendline param feeds
+    // the DETECTOR, so under an active timeframe the HTF lines must be found
+    // again, not re-aligned.
+    if (isTrendlines && timeframe !== "chart") applyTrendlines({}, nextCp);
+  }
+
   // Edit a line's STYLE (color/opacity/width), keyed by figure key so the TV
   // display reorder can't corrupt which line is edited. Goes through the styles
   // path (gated by linesEdited).
@@ -1828,6 +1863,38 @@ export default function IndicatorSettings({
                   </Tooltip>
                 </div>
               )}
+              {inputPresets && (
+                // One-click starting points above the individual params. The
+                // select shows which preset is in force by VALUE, so any edit
+                // that leaves the preset's numbers behind reads as Custom —
+                // an out-of-list state the menu only offers while it is true.
+                <div className="ind-row ind-row-cols">
+                  <span className="ind-row-head">
+                    <label>Preset</label>
+                    <InfoTip
+                      title="Preset"
+                      text="One-click starting points: Clean draws fewer, stricter lines; Busy keeps more. Picking one resets every calculation input to that preset's values, and editing any of them switches to Custom."
+                    />
+                  </span>
+                  <SelectMenu
+                    ariaLabel="Preset"
+                    value={activePreset ?? "Custom"}
+                    options={[
+                      ...inputPresets.options.map((p) => ({
+                        value: p.name,
+                        label: p.name,
+                      })),
+                      ...(activePreset === null
+                        ? [{ value: "Custom", label: "Custom" }]
+                        : []),
+                    ]}
+                    onChange={(v) => {
+                      const p = inputPresets.options.find((o) => o.name === v);
+                      if (p) applyPreset([...p.calcParams]);
+                    }}
+                  />
+                </div>
+              )}
               {groupInputs(inputs.filter(visibleInput)).map((chunk) => (
                 <Fragment key={chunk[0].key}>
                   {/* A heading before the input that opens a section, so a tab
@@ -1837,7 +1904,30 @@ export default function IndicatorSettings({
                   {chunk[0].section && (
                     <div className="ind-group">{chunk[0].section}</div>
                   )}
-                  {chunk.length > 1 ? (
+                  {chunk.length === 2 && chunk[0].range ? (
+                    // Min/max of ONE concept (Touches, Span, Slope): a single
+                    // "label [min] – [max] unit" row under one label and one
+                    // merged tip, instead of two labeled fields saying almost
+                    // the same thing. The two inputs keep their own aria
+                    // labels; the shared unit renders once, after the max.
+                    <div className="ind-row ind-row-cols ind-range-row">
+                      <span className="ind-row-head">
+                        <label>{chunk[0].range.label}</label>
+                        <InfoTip
+                          title={chunk[0].range.label}
+                          text={chunk[0].range.tip}
+                        />
+                      </span>
+                      <span className="ind-control-row ind-range">
+                        {controlFor({ ...chunk[0], suffix: undefined })}
+                        <span className="ind-range-dash">–</span>
+                        {controlFor({ ...chunk[1], suffix: undefined })}
+                        {chunk[0].suffix && (
+                          <span className="ind-suffix">{chunk[0].suffix}</span>
+                        )}
+                      </span>
+                    </div>
+                  ) : chunk.length > 1 ? (
                     // Related pair: two to a row, each label stacked above its
                     // own control. Halves the width a label gets, which is why
                     // only inputs with short labels carry a `group`.

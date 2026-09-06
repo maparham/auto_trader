@@ -53,14 +53,14 @@ describe("TRENDLINES registration", () => {
     const chunks = groupInputs(resolveInputs("TRENDLINES", undefined));
     expect(chunks.map((c) => c.map((i) => i.label))).toEqual([
       ["Max Trendlines"],
-      ["Min Back Clearance"],
       ["Min Pivot Length", "Max Pivot Pairs"],
+      ["Min Pivot Size", "Min Pivot Reach"],
       ["Max Pierce", "Max Touch Gap"],
+      ["Min Back Clearance"],
       ["Min Touches", "Max Touches"],
       ["Min Span", "Max Span"],
-      ["Max Projection", "Max Break Hold"],
-      ["Min Pivot Size", "Min Pivot Reach"],
       ["Min Slope", "Max Slope"],
+      ["Max Projection", "Max Break Hold"],
       ["Extend"],
       ["Declutter"],
       ["Hide broken lines"],

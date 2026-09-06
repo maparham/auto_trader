@@ -8,6 +8,8 @@
 // reshape. Anything not listed here falls back to generic numeric inputs read
 // from the live indicator's calcParams (see `resolveInputs`).
 
+import { TRENDLINES_DEFAULTS } from "./indicators/trendlinesOutputs";
+
 type IndicatorInputType = "number" | "select" | "boolean";
 
 export interface IndicatorInputDef {
@@ -48,6 +50,26 @@ export interface IndicatorInputDef {
   // (extend-stored) value is one of `equals`. Used e.g. to hide Pivot Bands'
   // "Window (K)" unless Mode is "avg". Honored by the generic Inputs renderer.
   showWhen?: { field: string; equals: Array<string | number> };
+  // Carried by the FIRST member of a grouped pair whose two inputs are the min
+  // and max of ONE concept (Touches, Span, Slope). The renderer collapses the
+  // pair into a single "label [min] – [max] unit" row under this label and tip
+  // instead of two labeled fields. The members keep their own labels for
+  // aria/screen readers, and render as ordinary rows if the pair ever splits.
+  range?: { label: string; tip: string };
+  // The stored value 0 means "no limit" for this input: render an empty box
+  // with an "∞" placeholder instead of a literal 0, and store 0 when cleared.
+  // Display-only — the stored sentinel does not change.
+  unbounded?: boolean;
+}
+
+// A named one-click starting point for an indicator's calcParams. `calcParams`
+// is the FULL array (every slot), so applying a preset is deterministic:
+// params a preset doesn't care about land on their defaults.
+export interface IndicatorPresets {
+  // Full default calcParams, used to fill slots a saved chart predates when
+  // matching the live values against an option.
+  base: number[];
+  options: Array<{ name: string; calcParams: number[] }>;
 }
 
 interface IndicatorMetaDef {
@@ -56,6 +78,8 @@ interface IndicatorMetaDef {
   // info tooltip. Optional: indicators without these fall back to the raw code.
   title?: string;
   desc?: string;
+  // Optional preset chips rendered above the inputs (only TRENDLINES today).
+  presets?: IndicatorPresets;
 }
 
 /** Chunk inputs for the settings modal: CONSECUTIVE inputs sharing a non-empty
@@ -137,6 +161,36 @@ export const SLOPE_UNIT_LABEL: Record<string, string> = {
 
 const SLOPE_UNIT_OPTIONS: Array<{ value: string; label: string }> =
   Object.entries(SLOPE_UNIT_LABEL).map(([value, label]) => ({ value, label }));
+
+// TRENDLINES' default calcParams in slot order (the order documented in
+// trendlinesOutputs.ts and mirrored by the backend parser). Built from
+// TRENDLINES_DEFAULTS by name so the two cannot drift apart silently.
+const TL = TRENDLINES_DEFAULTS;
+const TL_DEFAULT_PARAMS: number[] = [
+  TL.pivotLen, TL.violMult, TL.touchMult, TL.minTouches, TL.minSpanBars,
+  TL.maxProjBars, TL.breakHoldBars, TL.maxLines, TL.minSwingAtr,
+  TL.minSwingReach, TL.pairPivots, TL.maxTouches, TL.maxSpanBars,
+  TL.maxSlopeAtr, TL.minSlopeAtr, TL.minBackBars,
+];
+
+// A preset = the defaults with a sparse patch (by slot index) on top, so the
+// unmentioned params reset to their defaults and the chips are deterministic.
+function tlPreset(name: string, patch: Record<number, number>) {
+  return { name, calcParams: TL_DEFAULT_PARAMS.map((v, i) => patch[i] ?? v) };
+}
+
+// Chip values: Balanced IS the defaults; Clean tightens the MAJOR gates (fewer,
+// stricter lines — Min Swing Size 0.75 sits mid-way in the useful 0.5–1.0 band
+// measured on the DXY fixture, see the TRENDLINES comment below); Busy loosens
+// them and raises the per-side cap.
+const TRENDLINES_PRESETS: IndicatorPresets = {
+  base: TL_DEFAULT_PARAMS,
+  options: [
+    tlPreset("Clean", { 7: 2, 3: 3, 4: 40, 8: 0.75 }),
+    tlPreset("Balanced", {}),
+    tlPreset("Busy", { 7: 8, 4: 10 }),
+  ],
+};
 
 const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   CANDLE_PATTERNS: {
@@ -531,14 +585,13 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ...num(7, "Max Trendlines"),
         tip: "Max number of lines drawn per side, nearest to price first, counted after merging. Raising it also keeps more lines in play, which can change the prices this indicator reports.",
       },
-      {
-        ...num(15, "Min Back Clearance"),
-        default: 10,
-        suffix: "bars",
-        tip: "Bars before a line's first anchor that price must leave clear, on the line's own side. Zero accepts any pair, which lets a line start at a pivot the trend had already left behind.",
-      },
+      // The list below is RENDER order, resectioned to tell the detector's
+      // story in reading order — what counts as a pivot, how a line hugs
+      // price, which lines qualify, how long they live — while every slot
+      // index stays put (indexes are storage, order is presentation).
       {
         ...num(0, "Min Pivot Length"),
+        section: "Pivots",
         group: "pivot",
         suffix: "bars",
         tip: "Min number of bars a pivot must beat on each side before it counts as a turning point. Higher values keep fewer pivots and confirm them later.",
@@ -549,56 +602,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         suffix: "pairs",
         default: 20,
         tip: "Max number of earlier pivots a new pivot tries to draw a line with. Counted in pivots, not bars, so filtering pivots out lets the same slots reach further back.",
-      },
-      {
-        ...num(1, "Max Pierce", { min: 0, step: 0.05 }),
-        group: "tol",
-        suffix: "ATR",
-        tip: "The furthest a wick may poke past a line without breaking it, in ATR(14). Zero means any poke through breaks it.",
-      },
-      {
-        ...num(2, "Max Touch Gap", { min: 0.05, step: 0.05 }),
-        group: "tol",
-        suffix: "ATR",
-        tip: "The furthest a pivot may sit from a line and still count as touching it, in ATR(14).",
-      },
-      {
-        ...num(3, "Min Touches", { min: 2 }),
-        group: "major",
-        suffix: "pivots",
-        tip: "Min number of pivots that must touch a line before it counts as a real trendline. Two is just the pair that drew it, so Min Span does most of the filtering.",
-      },
-      {
-        ...num(11, "Max Touches", { min: 0 }),
-        group: "major",
-        default: 0,
-        suffix: "pivots",
-        tip: "Max number of pivots that may touch a line before it stops counting as a trendline. Zero means no limit. A line that keeps collecting touches is usually a flat shelf half the swings in a range graze.",
-      },
-      {
-        ...num(4, "Min Span"),
-        group: "span",
-        suffix: "bars",
-        tip: "Min number of bars a line must span before it counts as a real trendline. It keeps short, meaningless lines off the chart.",
-      },
-      {
-        ...num(12, "Max Span", { min: 0 }),
-        group: "span",
-        default: 0,
-        suffix: "bars",
-        tip: "Max number of bars a line may span before it stops counting as a trendline. Zero means no limit. Useful when only the recent structure matters and a line reaching back years is noise.",
-      },
-      {
-        ...num(5, "Max Projection"),
-        group: "life",
-        suffix: "bars",
-        tip: "Max number of bars an unbroken line keeps running past its last touch before it retires. Once price breaks a line, Max Break Hold takes over.",
-      },
-      {
-        ...num(6, "Max Break Hold"),
-        group: "life",
-        suffix: "bars",
-        tip: "Max number of bars a broken line stays on the chart, dashed, after price cuts through it. Long enough to watch for a retest.",
       },
       {
         ...num(8, "Min Pivot Size", { min: 0, step: 0.1 }),
@@ -618,18 +621,92 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Min number of bars a pivot must beat to its left before it counts as a turning point. Set it above Min Pivot Length to have any effect, since a pivot already beats that many.",
       },
       {
+        ...num(1, "Max Pierce", { min: 0, step: 0.05 }),
+        section: "Line Fit",
+        group: "tol",
+        suffix: "ATR",
+        tip: "The furthest a wick may poke past a line without breaking it, in ATR(14). Zero means any poke through breaks it.",
+      },
+      {
+        ...num(2, "Max Touch Gap", { min: 0.05, step: 0.05 }),
+        group: "tol",
+        suffix: "ATR",
+        tip: "The furthest a pivot may sit from a line and still count as touching it, in ATR(14).",
+      },
+      {
+        ...num(15, "Min Back Clearance"),
+        default: 10,
+        suffix: "bars",
+        tip: "Bars before a line's first anchor that price must leave clear, on the line's own side. Zero accepts any pair, which lets a line start at a pivot the trend had already left behind.",
+      },
+      {
+        ...num(3, "Min Touches", { min: 2 }),
+        section: "Filters",
+        group: "major",
+        suffix: "pivots",
+        range: {
+          label: "Touches",
+          tip: "How many pivots must touch a line for it to count as a real trendline, and at most how many before it stops counting. Two is just the pair that drew it, so Span does most of the filtering; a line that keeps collecting touches is usually a flat shelf half the swings in a range graze. An empty right box means no limit.",
+        },
+        tip: "Min number of pivots that must touch a line before it counts as a real trendline. Two is just the pair that drew it, so Min Span does most of the filtering.",
+      },
+      {
+        ...num(11, "Max Touches", { min: 0 }),
+        group: "major",
+        default: 0,
+        unbounded: true,
+        suffix: "pivots",
+        tip: "Max number of pivots that may touch a line before it stops counting as a trendline. Empty means no limit. A line that keeps collecting touches is usually a flat shelf half the swings in a range graze.",
+      },
+      {
+        ...num(4, "Min Span"),
+        group: "span",
+        suffix: "bars",
+        range: {
+          label: "Span",
+          tip: "How many bars a line must cover to count as a real trendline, and at most how many before it stops counting. The floor keeps short, meaningless lines off the chart; the cap is useful when only the recent structure matters and a line reaching back years is noise. An empty right box means no limit.",
+        },
+        tip: "Min number of bars a line must span before it counts as a real trendline. It keeps short, meaningless lines off the chart.",
+      },
+      {
+        ...num(12, "Max Span", { min: 0 }),
+        group: "span",
+        default: 0,
+        unbounded: true,
+        suffix: "bars",
+        tip: "Max number of bars a line may span before it stops counting as a trendline. Empty means no limit. Useful when only the recent structure matters and a line reaching back years is noise.",
+      },
+      {
         ...num(14, "Min Slope", { min: 0, step: 0.01 }),
         group: "slope",
         default: 0,
         suffix: "ATR/bar",
+        range: {
+          label: "Slope",
+          tip: "How steep a line must be and may be, in ATR(14) of price per bar. Zero floor accepts even flat lines — though a line flat enough to be a horizontal shelf is not a trendline, and S/R Levels draws those properly. A line too steep outruns price and is never touched again, which is what a fan off one sharp pivot keeps producing. An empty right box means no limit.",
+        },
         tip: "Min steepness a line must have, in ATR(14) of price per bar. Zero means no floor. A line flat enough to be a horizontal shelf is not a trendline, and the S/R Levels indicator draws those properly.",
       },
       {
         ...num(13, "Max Slope", { min: 0, step: 0.01 }),
         group: "slope",
         default: 0,
+        unbounded: true,
         suffix: "ATR/bar",
-        tip: "Max steepness a line may have, in ATR(14) of price per bar. Zero means no limit. A steep line outruns price and is never touched again, which is what a fan off one sharp pivot keeps producing.",
+        tip: "Max steepness a line may have, in ATR(14) of price per bar. Empty means no limit. A steep line outruns price and is never touched again, which is what a fan off one sharp pivot keeps producing.",
+      },
+      {
+        ...num(5, "Max Projection"),
+        section: "Lifetime",
+        group: "life",
+        suffix: "bars",
+        tip: "Max number of bars an unbroken line keeps running past its last touch before it retires. Once price breaks a line, Max Break Hold takes over.",
+      },
+      {
+        ...num(6, "Max Break Hold"),
+        group: "life",
+        suffix: "bars",
+        tip: "Max number of bars a broken line stays on the chart, dashed, after price cuts through it. Long enough to watch for a retest.",
       },
       {
         key: "extend",
@@ -757,6 +834,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "One pivot often starts several lines almost on top of each other; this keeps the closest and frees the slots for lines with a different shape. The distance is measured at the last bar, and 0 merges nothing.",
       },
     ],
+    presets: TRENDLINES_PRESETS,
     title: "Trendlines",
     desc: "Sloping support and resistance drawn from confirmed pivot highs and lows, keeping only the lines no candle has cut through. The lines nearest price are drawn and tagged with how many times price touched them. A broken line turns dashed and marks where it broke, so you can watch for a retest. Pivots confirm a few bars late, so nothing repaints.",
   },
@@ -909,4 +987,9 @@ export function resolveInputs(
   return params.map((_, i) =>
     num(i, params.length > 1 ? `Param ${i + 1}` : "Length"),
   );
+}
+
+/** The preset chips (if any) for an indicator's Inputs tab. */
+export function presetsFor(name: string): IndicatorPresets | undefined {
+  return INDICATOR_META[name]?.presets;
 }
