@@ -130,7 +130,7 @@ interface AlertRow {
   broker: string;
   epic: string;
   kind: string;
-  params: { level: number; condition: AlertCondition; trigger: AlertTrigger };
+  params: { level: number; condition: AlertCondition; trigger: AlertTrigger; timeframe?: string };
   message: string;
   expires_at: number | null;
   notify?: Partial<AlertNotifyChannels>;
@@ -304,6 +304,7 @@ export async function addStoredAlert(
   alert: SavedAlert,
   broker: string = getPersistBroker(),
   precision = 2,
+  timeframe?: string,
 ): Promise<void> {
   const prev = loadAlerts(epic, broker);
   if (prev.some((a) => a.id === alert.id)) return; // already present (idempotent)
@@ -315,7 +316,16 @@ export async function addStoredAlert(
     broker,
     epic,
     kind: "price_level",
-    params: { level: alert.level, condition: alert.condition, trigger: alert.trigger },
+    // `timeframe` (the chart resolution the alert was created on) rides in
+    // params so the backend can render the Telegram snapshot on the same
+    // timeframe the user was looking at. PATCHes never resend it — the server
+    // merges params sub-keys, so it survives level drags/edits.
+    params: {
+      level: alert.level,
+      condition: alert.condition,
+      trigger: alert.trigger,
+      ...(timeframe ? { timeframe } : {}),
+    },
     message: alert.message,
     expires_at: alert.expiresAt ?? null,
     notify: alert.notify,

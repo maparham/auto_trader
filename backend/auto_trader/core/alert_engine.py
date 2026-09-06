@@ -87,6 +87,12 @@ class AlertEngine:
         # price-side cache: user_id -> (side, cached_at_monotonic)
         self._price_side_cache: dict[str, tuple[str, float]] = {}
 
+        # Telegram "Snooze" mutes: (user_id, alert_id) -> epoch-ms until which
+        # firings are suppressed. In-memory only, by design: losing snoozes on
+        # restart means an alert may fire again — the safe direction (a missed
+        # alert would not be).
+        self._snoozed: dict[tuple[str, str], int] = {}
+
         self._reconcile_event = asyncio.Event()
         self._expiry_task: asyncio.Task | None = None
         self._reconciler_task: asyncio.Task | None = None
@@ -139,6 +145,7 @@ class AlertEngine:
         self._baseline.clear()
         self._sig.clear()
         self._price_side_cache.clear()
+        self._snoozed.clear()
         all_rows = await self._store.list_all()
         for user_id, row in all_rows:
             key = (row["broker"], row["epic"])
@@ -417,6 +424,23 @@ class AlertEngine:
         self._armed.pop(state_key, None)
         self._baseline.pop(state_key, None)
         self._sig.pop(state_key, None)
+        self._snoozed.pop(state_key, None)
+
+    # ---- snooze (Telegram inline button) ----
+
+    def snooze(self, user_id: str, alert_id: str, seconds: float) -> None:
+        """Suppress firings for one alert until now+seconds. Evaluation state
+        (baseline/armed) keeps advancing normally — only the fire is muted."""
+        self._snoozed[(user_id, alert_id)] = int(time.time() * 1000 + seconds * 1000)
+
+    def _is_snoozed(self, state_key: tuple[str, str], now_ms: int) -> bool:
+        until = self._snoozed.get(state_key)
+        if until is None:
+            return False
+        if until <= now_ms:
+            del self._snoozed[state_key]
+            return False
+        return True
 
     def feeds_needed(self) -> set[tuple[str, str]]:
         return {
@@ -534,7 +558,7 @@ class AlertEngine:
             if result.next_armed != armed:
                 self._armed[state_key] = result.next_armed
 
-            if result.fired:
+            if result.fired and not self._is_snoozed(state_key, now_ms):
                 await self._fire(user_id, row, price)
 
             if result.remove:
@@ -568,7 +592,7 @@ class AlertEngine:
         level = params.get("level")
         condition = params.get("condition")
 
-        await self._store.add_triggered(
+        triggered_id = await self._store.add_triggered(
             user_id,
             {
                 "time": int(time.time() * 1000),
@@ -581,6 +605,9 @@ class AlertEngine:
                 "condition": condition,
                 "message": row.get("message", ""),
                 "precision": row.get("precision", 2),
+                # The fired alert's full definition, so the Telegram "Re-arm"
+                # button can recreate a `once` alert after it deletes itself.
+                "alert_json": json.dumps(row),
             },
         )
 
@@ -595,6 +622,13 @@ class AlertEngine:
             "message": row.get("message", ""),
             "precision": row.get("precision", 2),
             "notify": row.get("notify", {}),
+            # Notifier-facing extras: which trigger mode fired (drives which
+            # inline buttons Telegram shows), the chart timeframe the alert was
+            # created from (drives the snapshot), and the triggered rowid (the
+            # re-arm callback reference).
+            "trigger": params.get("trigger"),
+            "timeframe": params.get("timeframe"),
+            "triggered_id": triggered_id,
         }
         await self._broadcast(user_id, {"key": "__alerts__:fired", "value": payload})
 

@@ -243,3 +243,75 @@ def test_telegram_set_get_delete(tmp_path):
     assert asyncio.run(store.get_telegram(USER)) == "chat-123"
     asyncio.run(store.delete_telegram(USER))
     assert asyncio.run(store.get_telegram(USER)) is None
+
+
+def test_update_params_merges_subkeys_preserving_timeframe(tmp_path):
+    """A level-drag PATCH sends only {level, condition, trigger}; keys it
+    doesn't know about (the stored snapshot timeframe) must survive."""
+    store = AlertStore(str(tmp_path / "alerts.db"))
+    asyncio.run(store.create(USER, _row(params={
+        "level": 100.0, "condition": "crossing", "trigger": "every",
+        "timeframe": "MINUTE_15",
+    })))
+    updated = asyncio.run(store.update(USER, "a1", {"params": {
+        "level": 101.0, "condition": "crossing", "trigger": "every",
+    }}))
+    assert updated["params"]["level"] == 101.0
+    assert updated["params"]["timeframe"] == "MINUTE_15"
+
+
+def test_add_triggered_returns_rowid_and_get_triggered_row(tmp_path):
+    store = AlertStore(str(tmp_path / "alerts.db"))
+    rowid = asyncio.run(store.add_triggered(USER, {
+        "time": 1, "alert_id": "a1", "broker": "capital", "epic": "US100",
+        "kind": "price_level", "price": 100.5, "level": 100.0,
+        "condition": "crossing", "alert_json": "{\"id\": \"a1\"}",
+    }))
+    assert rowid > 0
+    row = asyncio.run(store.get_triggered_row(rowid))
+    assert row["user_id"] == USER
+    assert row["alert_json"] == "{\"id\": \"a1\"}"
+    assert asyncio.run(store.get_triggered_row(rowid + 999)) is None
+    # alert_json is store-internal: the frontend-facing listing must not carry it.
+    assert "alert_json" not in asyncio.run(store.list_triggered(USER))[0]
+
+
+def test_get_user_by_chat_reverse_lookup(tmp_path):
+    store = AlertStore(str(tmp_path / "alerts.db"))
+    assert asyncio.run(store.get_user_by_chat("chat-123")) is None
+    asyncio.run(store.set_telegram(USER, "chat-123"))
+    assert asyncio.run(store.get_user_by_chat("chat-123")) == USER
+
+
+def test_alert_json_migration_on_pre_existing_db(tmp_path):
+    """A triggered table created WITHOUT alert_json (an existing alerts.db)
+    gains the column via the versioned migration on the next open."""
+    import sqlite3
+    # A distinct filename: conftest's autouse isolated-store fixture already
+    # owns tmp_path/"alerts.db".
+    path = str(tmp_path / "alerts-legacy.db")
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE triggered ("
+        "user_id TEXT NOT NULL, time INTEGER NOT NULL, alert_id TEXT NOT NULL, "
+        "broker TEXT NOT NULL, epic TEXT NOT NULL, kind TEXT NOT NULL, "
+        "price REAL NOT NULL, level REAL NOT NULL, condition TEXT NOT NULL, "
+        "message TEXT NOT NULL DEFAULT '', precision INTEGER NOT NULL DEFAULT 2)"
+    )
+    conn.execute(
+        "INSERT INTO triggered (user_id, time, alert_id, broker, epic, kind, "
+        "price, level, condition) VALUES ('dev', 1, 'a1', 'capital', 'US100', "
+        "'price_level', 100.5, 100.0, 'crossing')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = AlertStore(path)
+    old = asyncio.run(store.get_triggered_row(1))
+    assert old["alert_json"] is None  # pre-migration row survives, column added
+    rowid = asyncio.run(store.add_triggered(USER, {
+        "time": 2, "alert_id": "a2", "broker": "capital", "epic": "US100",
+        "kind": "price_level", "price": 1.0, "level": 1.0,
+        "condition": "crossing", "alert_json": "{}",
+    }))
+    assert asyncio.run(store.get_triggered_row(rowid))["alert_json"] == "{}"

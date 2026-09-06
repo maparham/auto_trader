@@ -29,7 +29,7 @@ import json
 import sqlite3
 import time
 
-from auto_trader.core.db_migrate import run_migrations
+from auto_trader.core.db_migrate import run_migrations, table_columns
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS alerts (
@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS triggered (
   user_id TEXT NOT NULL, time INTEGER NOT NULL, alert_id TEXT NOT NULL,
   broker TEXT NOT NULL, epic TEXT NOT NULL, kind TEXT NOT NULL,
   price REAL NOT NULL, level REAL NOT NULL, condition TEXT NOT NULL,
-  message TEXT NOT NULL DEFAULT '', precision INTEGER NOT NULL DEFAULT 2);
+  message TEXT NOT NULL DEFAULT '', precision INTEGER NOT NULL DEFAULT 2,
+  alert_json TEXT);
 CREATE INDEX IF NOT EXISTS idx_triggered_user ON triggered (user_id, time);
 CREATE TABLE IF NOT EXISTS alert_meta (
   user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
@@ -66,6 +67,15 @@ _NOTIFY_CHANNELS = ("toast", "browser", "sound", "push", "telegram")
 
 # Patch keys `update()` accepts — a shallow merge onto the stored row.
 _UPDATABLE_FIELDS = ("params", "message", "expires_at", "notify", "precision", "active")
+
+
+def _migrate_triggered_alert_json(conn: sqlite3.Connection) -> None:
+    # Pre-existing DBs from before the Telegram re-arm button: `triggered` gains
+    # `alert_json` (the fired alert's full row, so a `once` alert deleted on
+    # firing can be recreated from its history entry). Fresh DBs get the column
+    # from _SCHEMA already, hence the introspection guard.
+    if "alert_json" not in table_columns(conn, "triggered"):
+        conn.execute("ALTER TABLE triggered ADD COLUMN alert_json TEXT")
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
@@ -85,7 +95,7 @@ class AlertStore:
         self._db_path = db_path
         conn = self._connect()
         try:
-            run_migrations(conn, {})
+            run_migrations(conn, {1: _migrate_triggered_alert_json})
         finally:
             conn.close()
 
@@ -182,7 +192,13 @@ class AlertStore:
             merged = _row_to_dict(existing)
             for field in _UPDATABLE_FIELDS:
                 if field in patch:
-                    merged[field] = patch[field]
+                    if field == "params":
+                        # Sub-key merge, not replacement: a level drag PATCHes
+                        # {level, condition, trigger} and must not silently drop
+                        # keys it doesn't know about (e.g. the stored timeframe).
+                        merged["params"] = {**merged["params"], **patch["params"]}
+                    else:
+                        merged[field] = patch[field]
             merged["updated_at"] = int(time.time() * 1000)
             conn.execute(
                 "UPDATE alerts SET params = ?, message = ?, expires_at = ?, notify = ?, "
@@ -223,15 +239,18 @@ class AlertStore:
 
     # ---- triggered history ----
 
-    async def add_triggered(self, user_id: str, entry: dict) -> None:
-        await asyncio.to_thread(self._add_triggered_sync, user_id, entry)
+    async def add_triggered(self, user_id: str, entry: dict) -> int:
+        """Insert one firing; returns its rowid (the Telegram re-arm button's
+        stable, 64-byte-safe callback reference)."""
+        return await asyncio.to_thread(self._add_triggered_sync, user_id, entry)
 
-    def _add_triggered_sync(self, user_id: str, entry: dict) -> None:
+    def _add_triggered_sync(self, user_id: str, entry: dict) -> int:
         conn = self._connect()
         try:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO triggered (user_id, time, alert_id, broker, epic, kind, price, "
-                "level, condition, message, precision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "level, condition, message, precision, alert_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     user_id,
                     entry["time"],
@@ -244,8 +263,10 @@ class AlertStore:
                     entry["condition"],
                     entry.get("message", ""),
                     entry.get("precision", 2),
+                    entry.get("alert_json"),
                 ),
             )
+            rowid = cur.lastrowid
             # Prune to the newest 500 rows for this user.
             conn.execute(
                 "DELETE FROM triggered WHERE user_id = ? AND rowid NOT IN ("
@@ -254,6 +275,23 @@ class AlertStore:
                 (user_id, user_id),
             )
             conn.commit()
+            return int(rowid or 0)
+        finally:
+            conn.close()
+
+    async def get_triggered_row(self, rowid: int) -> dict | None:
+        """One triggered entry by rowid — includes `user_id` and `alert_json`
+        (unlike `list_triggered`, whose rows go to the frontend). Used by the
+        Telegram re-arm callback to recover the fired alert's definition."""
+        return await asyncio.to_thread(self._get_triggered_row_sync, rowid)
+
+    def _get_triggered_row_sync(self, rowid: int) -> dict | None:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT rowid, * FROM triggered WHERE rowid = ?", (rowid,)
+            ).fetchone()
+            return dict(row) if row is not None else None
         finally:
             conn.close()
 
@@ -391,6 +429,22 @@ class AlertStore:
                 "SELECT chat_id FROM telegram_links WHERE user_id = ?", (user_id,)
             ).fetchone()
             return row["chat_id"] if row is not None else None
+        finally:
+            conn.close()
+
+    async def get_user_by_chat(self, chat_id: str) -> str | None:
+        """Reverse link lookup: which user (if any) owns this Telegram chat.
+        The authorization check for inline-button callbacks — a callback is
+        honored only when its chat maps back to the alert's owner."""
+        return await asyncio.to_thread(self._get_user_by_chat_sync, chat_id)
+
+    def _get_user_by_chat_sync(self, chat_id: str) -> str | None:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT user_id FROM telegram_links WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+            return row["user_id"] if row is not None else None
         finally:
             conn.close()
 

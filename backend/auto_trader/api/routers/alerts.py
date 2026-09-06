@@ -81,6 +81,14 @@ def _validate_params(kind: str, params: dict[str, Any]) -> None:
     trigger = params.get("trigger")
     if trigger not in _TRIGGERS:
         raise HTTPException(422, f"unknown trigger: {trigger!r}")
+    # Optional: the chart timeframe the alert was created from (drives the
+    # Telegram snapshot's resolution). Free-form because resolutions include
+    # derived ("3m") and seconds strings — just keep junk out of the row.
+    timeframe = params.get("timeframe")
+    if timeframe is not None and (
+        not isinstance(timeframe, str) or not (1 <= len(timeframe) <= 20)
+    ):
+        raise HTTPException(422, "params.timeframe must be a short string")
 
 
 class CreateAlertBody(BaseModel):

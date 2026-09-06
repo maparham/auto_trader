@@ -119,9 +119,12 @@ async def lifespan(app: FastAPI):
     from auto_trader.core.push_notify import PUSH
     from auto_trader.core.state_store import STATE_STORE
     from auto_trader.core.telegram_notify import TELEGRAM
+    from .alert_hooks import build_alert_hooks
     from .routers import state as state_router
 
-    TELEGRAM.configure(telegram_settings.bot_token or None, ALERT_STORE)
+    TELEGRAM.configure(
+        telegram_settings.bot_token or None, ALERT_STORE, hooks=build_alert_hooks()
+    )
     PUSH.configure(ALERT_STORE)
     ALERT_ENGINE.configure(
         store=ALERT_STORE,

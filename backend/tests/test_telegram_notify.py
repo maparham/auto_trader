@@ -131,14 +131,14 @@ async def test_notifier_sends_when_linked(store):
         "alice",
         {
             "epic": "US100", "message": "broke out", "level": 100.0, "price": 100.456,
-            "precision": 2, "notify": {"telegram": True},
+            "precision": 2, "notify": {"telegram": True}, "condition": "crossing_up",
         },
     )
 
     assert route.called
     body = json.loads(route.calls.last.request.content)
     assert body["chat_id"] == "chat-1"
-    assert body["text"] == "🔔 US100 broke out @ 100.00 · now 100.46"
+    assert body["text"] == "🔔 US100 crossed up 100.00 · now 100.46\nbroke out"
 
 
 @respx.mock

@@ -2424,7 +2424,12 @@ export class OverlayManager {
     // 4th arg: the instrument's display precision, stored with the row so the
     // BACKEND (which now formats the firing message) renders the same decimals
     // the axis does. Omitting it would silently store 2 for every symbol.
-    void addStoredAlert(this.epic, saved, this.broker || undefined, this.pricePrecision ?? 2);
+    // 5th arg: the chart resolution this alert was created on, stored so the
+    // backend's Telegram snapshot renders the same timeframe the user set the
+    // level against.
+    void addStoredAlert(
+      this.epic, saved, this.broker || undefined, this.pricePrecision ?? 2, this.resolution || undefined,
+    );
     const id = this.materializeSavedAlert(saved);
     if (id) this.notifyAlerts(); // peers reconcile off the bump; sidebar re-pulls
     return id;
