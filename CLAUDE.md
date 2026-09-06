@@ -72,3 +72,14 @@ frontend bridge is on in dev builds and off in production unless
 7. One backtest or sweep at a time: a second `run`/`sweep.start` while one
    is in flight is rejected. `ui_read_state` only works for read-kind
    actions (NOT_READ_ACTION otherwise); use `ui_invoke` for writes.
+
+## Alerts
+
+Price alerts are backend-owned: every alert is evaluated server-side in
+`backend/auto_trader/core/alert_engine.py` off one live feed per (broker,
+epic), independent of any open browser tab. CRUD is `/api/alerts` (create,
+list, patch, delete) plus `/api/alerts/triggered` for fired history; delivery
+fans out to `/ws/state`, web push, and Telegram. `TELEGRAM_BOT_TOKEN` in the
+environment enables the Telegram channel. End-to-end probe:
+`cd backend && python3 -m scripts.alert_probe [--epic EPIC --broker BROKER
+--timeout SECONDS]`.
