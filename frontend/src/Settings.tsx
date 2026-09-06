@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import CloseButton from "./CloseButton";
+import NotificationSettings from "./NotificationSettings";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import type {
@@ -496,6 +497,8 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
                 ))}
               </div>
             </div>
+
+            <NotificationSettings />
           </>
         )}
 

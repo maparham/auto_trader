@@ -2353,6 +2353,20 @@
 .notify-toggle input { flex: none; cursor: pointer; }
 /* Sub-header inside a settings tab. */
 .setting-sub { padding: 14px 16px 4px; color: var(--text-dim); font-size: 12px; font-weight: 600; }
+/* Device notifications (NotificationSettings): "Enable on this device" ↔
+   enabled state. Persistent-on state is a quiet gray fill, not the seg's
+   solid accent — matches .tl-modes' muted-toggle convention for long-lived
+   on/off state rather than a momentary selection. */
+.notif-toggle-btn {
+  padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim); cursor: pointer; font-size: 12px;
+}
+.notif-toggle-btn:hover:not(:disabled) { color: var(--text); }
+.notif-toggle-btn.on {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text); font-weight: 600;
+}
+.notif-toggle-btn:disabled { opacity: 0.6; cursor: default; }
 .modal-foot {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 12px 16px; border-top: 1px solid var(--border);
