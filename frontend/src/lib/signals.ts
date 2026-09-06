@@ -651,6 +651,13 @@ function loadSweepTarget(): SweepTarget {
 export function saveSweepTarget(t: SweepTarget): void {
   saveLocal(`${PREFIX}.sweepTarget`, t);
 }
+// NOTE — this is a MODULE-SCOPE read of persist/core's PREFIX/load, and it is
+// only safe because persist/core never imports back into this module (or into
+// anything that does). Give core such a back-edge and signals.ts joins an import
+// cycle with it: whichever member evaluates first sees the other's bindings in
+// the TDZ, and this line throws "Cannot access 'PREFIX' before initialization" at
+// boot — a white screen, not a caught error. See persist/core's alert-router
+// registration comment, and lib/moduleInitOrder.test.ts.
 export const sweepTargetSignal = new Signal<SweepTarget>(loadSweepTarget());
 
 // Managed-compute host lifecycle state, polled by the sweep settings modal while

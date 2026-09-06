@@ -162,6 +162,11 @@ export function asDrawingExtra(v: unknown): DrawingExtra {
   return v && typeof v === "object" ? (v as DrawingExtra) : {};
 }
 
+// Every notify channel, so a comparison can't silently skip one. Push and
+// telegram are BACKEND-delivered but still per-alert config the modal edits, so
+// they belong here exactly like the three in-tab channels.
+const NOTIFY_CHANNELS = ["toast", "browser", "sound", "push", "telegram"] as const;
+
 // True when a cell's cached alert config already matches a saved row — every
 // firing-relevant field PLUS the notify channels (absent channel = on). Used by
 // reconcileAlerts to decide whether a peer's edit needs pulling in; omitting notify
@@ -172,9 +177,7 @@ function sameAlertCfg(cfg: AlertConfig, a: SavedAlert): boolean {
     cfg.trigger === a.trigger &&
     cfg.message === a.message &&
     (cfg.expiresAt ?? null) === (a.expiresAt ?? null) &&
-    (cfg.notify?.toast ?? true) === (a.notify?.toast ?? true) &&
-    (cfg.notify?.browser ?? true) === (a.notify?.browser ?? true) &&
-    (cfg.notify?.sound ?? true) === (a.notify?.sound ?? true)
+    NOTIFY_CHANNELS.every((ch) => (cfg.notify?.[ch] ?? true) === (a.notify?.[ch] ?? true))
   );
 }
 
@@ -295,7 +298,7 @@ export class OverlayManager {
   private alertCfg = new Map<string, AlertConfig>();
   // klinecharts overlay id -> the alert's STABLE id (SavedAlert.id). The overlay id
   // is regenerated on every rehydrate; the stable id is the identity persisted to
-  // storage and used by the background engine, so this map is how we write the right
+  // the backend and used by its alert engine, so this map is how we write the right
   // id in persist() and match lines to saved rows by id (not by value) in reconcile.
   private alertIds = new Map<string, string>();
   // klinecharts overlay id -> creation timestamp (ms UTC). Set once at addAlert;
@@ -558,7 +561,13 @@ export class OverlayManager {
         trigger: cfg.trigger,
         message: cfg.message,
         expiresAt: cfg.expiresAt ?? null,
-        notify: cfg.notify ?? { toast: true, browser: true, sound: true },
+        notify: cfg.notify ?? {
+          toast: true,
+          browser: true,
+          sound: true,
+          push: true,
+          telegram: true,
+        },
       },
       this.broker || undefined,
     );
@@ -638,7 +647,7 @@ export class OverlayManager {
 
   // Sidebar "hide alert lines" eye — SESSION-ONLY and per cell, like drawingsHidden.
   // Only the on-chart presentation hides (lines, axis tags, hit/snap targets);
-  // storage and the background alert engine are untouched, so hidden alerts still
+  // storage and the backend's alert engine are untouched, so hidden alerts still
   // fire and the alerts sidebar still lists them.
   private alertsHidden = false;
   getAlertsHidden(): boolean {
@@ -960,7 +969,7 @@ export class OverlayManager {
   }
 
   // Flip an alert's trigger (once ↔ every) in place — the pill's clickable toggle.
-  // Persists + notifies; the alert keeps its stable id, so the background engine
+  // Persists + notifies; the alert keeps its stable id, so the backend engine
   // sees the changed signature (level|condition|trigger) and re-arms + re-seeds it.
   toggleAlertTrigger(id: string): void {
     if (!this.chart || this.entries.get(id) !== "alert") return;
@@ -2412,14 +2421,17 @@ export class OverlayManager {
     if (!this.canWriteAlerts()) return null;
     level = this.roundLevel(level);
     const saved = normalizeAlert({ id: newAlertId(), level, ...cfg, createdAt: Date.now() });
-    addStoredAlert(this.epic, saved, this.broker || undefined);
+    // 4th arg: the instrument's display precision, stored with the row so the
+    // BACKEND (which now formats the firing message) renders the same decimals
+    // the axis does. Omitting it would silently store 2 for every symbol.
+    void addStoredAlert(this.epic, saved, this.broker || undefined, this.pricePrecision ?? 2);
     const id = this.materializeSavedAlert(saved);
     if (id) this.notifyAlerts(); // peers reconcile off the bump; sidebar re-pulls
     return id;
   }
 
   // Edit an existing alert (from the edit modal). Moves the line to `level` and
-  // replaces its config. The stable id is unchanged, so the engine sees the same
+  // replaces its config. The stable id is unchanged, so the backend sees the same
   // alert with a new signature and re-arms + re-seeds its baseline itself — a
   // changed level/condition can fire again, with no spurious crossing off the move.
   updateAlert(id: string, level: number, cfg: AlertConfig): void {
@@ -2455,7 +2467,7 @@ export class OverlayManager {
   // Full resync of this cell's alert lines to storage, matched by STABLE id (not by
   // value — two alerts can share a level, and a dragged line would otherwise
   // self-match the wrong row). Called on the alerts signal, which fires when ANYONE
-  // changes the epic's (now GLOBAL) alert list: the background engine removing a
+  // changes the epic's (now GLOBAL) alert list: the backend removing a
   // fired "once", OR another cell showing the same epic in a split layout adding /
   // moving / deleting / re-configuring one. So this must do three things, not just
   // remove:
@@ -2503,7 +2515,7 @@ export class OverlayManager {
 
       let changed = false;
       this.guarded(() => {
-        // Drop overlays no longer in storage (engine removed / peer cell deleted).
+        // Drop overlays no longer in storage (backend removed / peer cell deleted).
         for (const [id, kind] of [...this.entries]) {
           if (kind !== "alert") continue;
           const aid = this.alertIds.get(id);
@@ -2559,7 +2571,7 @@ export class OverlayManager {
   }
 
   // Sidebar eye: hide/show every alert line at once (session-only; storage and the
-  // background engine are untouched — see alertsHidden). Consumers that hit-test or
+  // backend engine are untouched — see alertsHidden). Consumers that hit-test or
   // tag alert lines (alertHitTest, snap targets, drag grab, axis tags) gate on
   // getAlertsHidden() themselves, so a hidden line is neither visible nor grabbable.
   setAlertsHidden(hidden: boolean): void {
@@ -2657,6 +2669,14 @@ export class OverlayManager {
   // rebuild) and reconcileAlerts (a peer cell added it), so both render identically.
   // Returns the overlay id, or null if create() declined (e.g. no chart).
   private materializeSavedAlert(a: SavedAlert): string | null {
+    // IDEMPOTENT BY SAVED ID. addStoredAlert (backend client) bumps the alerts
+    // signal synchronously, INSIDE the write — so ChartCore's live
+    // `alertsChanged -> reconcileAlerts` subscription re-enters this cell and
+    // materializes the brand-new row BEFORE addAlert() gets to. Without this
+    // guard the caller then draws a second line for the same alert (the localStorage
+    // helpers didn't bump, so the old ordering hid this).
+    const existing = this.findAlertOverlayId(a.id);
+    if (existing != null) return existing;
     // Respect the session eye toggle: an alert added/reconciled while "Hide alert
     // lines" is on must materialize hidden, not flash visible.
     const id = this.create("alert", "priceLine", [{ value: a.level }], ALERT_LINE_STYLE, undefined, {
@@ -2811,10 +2831,10 @@ export class OverlayManager {
     this.notifyAlerts();
   }
 
-  // NOTE: alert FIRING moved to the background alertEngine (the single authority
-  // across all tabs). This module now only renders/persists alert lines; the
-  // engine evaluates ticks (via the shared evaluateAlert) and calls
-  // reconcileAlerts() through the alerts signal to drop lines it removed.
+  // NOTE: alert FIRING lives in the BACKEND (the single authority, running with
+  // no tab open). This module only renders/persists alert lines; the server's
+  // `__alerts__:` pushes land in alertsApi.applyAlertEvent, which re-hydrates and
+  // bumps the alerts signal so reconcileAlerts() drops lines it removed.
 
   // --- persistence -----------------------------------------------------------
 

@@ -27,7 +27,7 @@ import {
   loadAllAlerts,
   clearTriggered,
   loadTriggeredSeen,
-  saveTriggeredSeen,
+  pushTriggeredSeen,
   deleteStoredAlert,
   normalizeAlert,
   CONDITION_LABELS,
@@ -250,9 +250,9 @@ export default function AlertsSidebar({
   // the tick above; epic changes (rehydrate) also bump alertsChanged.
   const live = sortAlerts([...(overlays?.getAlerts() ?? [])], () => epic);
 
-  // All-alerts mode: collect saved alerts from every tab/cell. We read from
-  // localStorage (the same source the alert engine uses) so we see alerts on
-  // symbols not currently on-screen. Re-read on every alertsChanged bump (the
+  // All-alerts mode: collect saved alerts from every tab/cell. We read the
+  // backend-backed alerts cache (the same source the charts read) so we see
+  // alerts on symbols not currently on-screen. Re-read on every alertsChanged bump (the
   // `now` tick above handles that). Grouped by epic, sorted price-descending.
   type AllGroup = { epic: string; precision: number; alerts: SavedAlert[] };
   const allGroups: AllGroup[] = (() => {
@@ -264,16 +264,16 @@ export default function AlertsSidebar({
         precMap.set(c.symbol.epic, c.symbol.pricePrecision ?? 2);
 
     // Alerts are global per epic now — one stored list per symbol, whether or not a
-    // chart is open for it. So a single localStorage scan covers everything; no
+    // chart is open for it. So a single pass over the cache covers everything; no
     // per-cell loop and no cross-source de-dupe.
     const byEpic = new Map<string, Map<string, SavedAlert>>();
     // loadAllAlerts returns RAW stored rows (no normalizeAlert), so legacy alerts can
     // lack id/condition. We normalize before bucketing: keying the dedup Map on a
     // missing id collapses every id-less row onto one entry (they'd vanish from the
     // list and count) and breaks React keys / condition labels. We also drop
-    // already-expired alerts — a closed symbol has no engine feed to prune them, so
-    // otherwise a past-expiry alert is shown and counted forever. `index` keeps the
-    // backfilled legacy id deterministic (matches the engine's own id).
+    // already-expired alerts — the backend prunes them on its own schedule, so
+    // between sweeps a past-expiry alert would otherwise still be shown and counted.
+    // `index` keeps the backfilled legacy id deterministic (every reader agrees).
     const addToBucket = (ep: string, raw: SavedAlert[]) => {
       let bucket = byEpic.get(ep);
       if (!bucket) { bucket = new Map(); byEpic.set(ep, bucket); }
@@ -321,11 +321,11 @@ export default function AlertsSidebar({
   const unseen = historyState.filter((t) => t.time > seen).length;
   // When History is on screen, advance the marker to the newest firing (writing to
   // localStorage is updating an external system — the allowed effect shape). The
-  // saveTriggeredSeen call changes what the next render reads, so the badge clears.
+  // pushTriggeredSeen call changes what the next render reads, so the badge clears.
   useEffect(() => {
     if (tab !== "history" || historyState.length === 0) return;
     const newest = historyState[0].time; // list is newest-first
-    if (newest > seen) saveTriggeredSeen(newest);
+    if (newest > seen) pushTriggeredSeen(newest);
   }, [tab, historyState, seen]);
 
   return (
@@ -461,6 +461,11 @@ export default function AlertsSidebar({
                       onMouseLeave={onChart ? () => hoverTarget(g.epic, target, false) : undefined}
                     >
                       <div className="ap-row-main">
+                        {/* Repeat the symbol on every card (not just the group
+                            header): headers scroll away, so a card must
+                            self-identify — same ap-sym lead as the current-chart
+                            and history rows. */}
+                        <span className="ap-sym">{g.epic}</span>
                         <span className="ap-cond">
                           {CONDITION_LABELS[a.condition]} {a.level.toFixed(g.precision)}
                         </span>

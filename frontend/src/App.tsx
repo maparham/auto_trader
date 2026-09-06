@@ -40,7 +40,7 @@ import PositionsPanel from "./PositionsPanel";
 import SnapshotGallery from "./SnapshotGallery";
 import { writeSnapshotToScope } from "./lib/snapshots";
 import { saveSnapshotOfChart } from "./lib/snapshotSave";
-import { toast } from "./lib/notify";
+import { notify, playPing, toast } from "./lib/notify";
 import { registerCustomIndicators } from "./lib/customIndicators";
 import {
   coverBacktestHistory,
@@ -86,7 +86,6 @@ import {
   snapshotsGalleryOpen,
   snapshotViewChanged,
 } from "./lib/signals";
-import { alertEngine } from "./lib/alertEngine";
 import { minPositiveGap } from "./lib/barInterval";
 import {
   PERIODS,
@@ -120,7 +119,6 @@ import {
   PREFIX,
   load,
   saveLocal,
-  parseAlertsStateKey,
   matchBacktestKey,
   matchSweepPointerKey,
   purgeTabScope,
@@ -138,6 +136,8 @@ import {
   loadStoredAlert,
   updateStoredAlert,
   deleteStoredAlert,
+  hydrateAlerts,
+  setOnAlertFired,
   loadLayouts,
   loadLayout,
   saveLayout,
@@ -712,7 +712,8 @@ export default function App() {
   // — the autosave effect ran under the old persistBroker on every prior render — so
   // we just FLIP the namespace, then reload the incoming broker's saved workspace (or
   // a fresh default for a first-time broker) and remount the grid onto its charts.
-  // The alert engine follows via its own setBrokerId/setTabs effects below.
+  // Alerts follow on their own: they're backend rows keyed by broker, and the
+  // cache hydrateAlerts() filled holds every broker's set.
   const prevBrokerRef = useRef(brokerId);
   useEffect(() => {
     const prev = prevBrokerRef.current;
@@ -739,8 +740,10 @@ export default function App() {
     // persist() stomps the other tab's edit back to storage (cross-tab data loss: the
     // reported alerts/drawings vanishing when the app is open in two tabs). Route those
     // keys explicitly so the mounted cells re-sync to storage:
-    //  - alerts are global-per-epic and reconcile IN PLACE off the alerts signal
-    //    (every mounted same-epic cell); no remount needed.
+    //  - alerts are NOT here any more: they're backend state and their
+    //    `__alerts__:` pushes are consumed by alertsApi (persist/core routes them
+    //    before this callback ever runs), which re-hydrates and bumps the alerts
+    //    signal so every mounted same-epic cell reconciles in place.
     //  - backtest results / sweep pointers have their own in-place handling — the
     //    two early returns below, BEFORE the resolveStartup + tabs-stringify work
     //    those paths would only throw away (neither key can carry a layout or
@@ -748,7 +751,6 @@ export default function App() {
     //  - drawings/indicators/avwap are per-cell-scope and have no in-place reconcile,
     //    so remount the grid (rehydrate re-reads storage) when the changed key belongs
     //    to a cell that's currently on screen.
-    if (parseAlertsStateKey(key)) bumpAlerts();
     const activeTab = workspaceRef.current.tabs.find(
       (t) => t.id === workspaceRef.current.activeTabId,
     );
@@ -828,8 +830,15 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
-    hydrateFromBackend().then(() => {
+    hydrateFromBackend().then(async () => {
       if (cancelled) return;
+      // Alerts are backend-owned and have NO localStorage fallback, so the
+      // in-memory cache every read goes through is empty until this resolves.
+      // Awaited here (alongside the workspace hydrate, before the first chart
+      // render below) so the sidebar and the cells' rehydrate see the real list.
+      await hydrateAlerts();
+      bumpAlerts(); // the sidebar/all-symbols list was rendered off an empty cache
+      if (cancelled) return; // the await re-opens the StrictMode double-mount window
       // Per-broker isolation rollout: the workspace is now ISOLATED PER BROKER and
       // this is a FRESH START (each broker begins blank). Drop the abandoned old
       // GLOBAL workspace roots once — AFTER hydrate so the deletes reach the backend
@@ -1391,9 +1400,9 @@ export default function App() {
     resolvePendingSelect();
   };
 
-  // The alert engine's toast/banner clicks navigate through this handler (the
-  // engine lives outside React and can't reach openAlert directly). Re-assigned
-  // every render so it always closes over current tabs.
+  // A fired alert's toast/banner clicks navigate through this handler (the
+  // fired callback is registered outside React and can't reach openAlert
+  // directly). Re-assigned every render so it always closes over current tabs.
   useEffect(() => {
     alertNavHandler.current = (epic, savedId, precision) =>
       openAlert(epic, { savedId }, precision);
@@ -1644,34 +1653,37 @@ export default function App() {
     }
   }, [tabs, activeLayoutId, layoutName, autosave]);
 
-  // Keep the alert feeds on the same data broker as the charts — epics are
-  // broker-specific, so a feed must stream from the active broker. setBrokerId
-  // no-ops when unchanged.
-  //
-  // ORDER MATTERS: this effect MUST precede the setTabs effect below. setTabs arms
-  // feeds via `loadAlerts(epic, this.brokerId)`, and setBrokerId only reopens
-  // ALREADY-OPEN feeds (none on mount) — so if setTabs ran first on mount, it would
-  // arm with the stale default broker and a non-default broker's alerts would never
-  // get a feed. Setting the broker first means the initial setTabs reads the right
-  // store. Do NOT reorder these two effects.
+  // Alert FIRING lives in the backend now (it runs with no tab open). All this
+  // tab does is surface a firing: the server broadcasts `__alerts__:fired` over
+  // /ws/state, persist/core hands it to alertsApi, and alertsApi calls back here.
+  // Registered once — the deleted browser engine's fire() relocated, copy verbatim.
   useEffect(() => {
-    alertEngine.setBrokerId(brokerId);
-  }, [brokerId]);
-  // Drive the background alert engine — the single firing authority across ALL
-  // cells of ALL tabs. Re-sync whenever the tab set changes OR an alert is added/
-  // removed/fired (alertsChanged), so it opens/closes one live feed per distinct
-  // epic that has alerts. Lives here (outside the remounted ChartCore cells) so its
-  // arming state is continuous. Tolerates an empty tab set (no armed feeds).
-  useEffect(() => {
-    alertEngine.setTabs(tabs);
-    const unsub = alertsChanged.subscribe(() => alertEngine.setTabs(tabs));
-    return unsub;
-  }, [tabs]);
-  // Keep the alert feeds on the same bid/mid/ask side as the charts, so an alert
-  // fires on the price the user sees. setPriceSide no-ops when unchanged.
-  useEffect(() => {
-    alertEngine.setPriceSide(settings.priceSide);
-  }, [settings.priceSide]);
+    setOnAlertFired((p) => {
+      const prec = p.precision ?? 2;
+      const now = p.price.toFixed(prec);
+      // Attribution: always lead with the epic, even for a custom message — the
+      // sound alone says nothing about WHERE. One `detail` feeds both surfaces.
+      const detail = p.message || `@ ${p.level.toFixed(prec)}`;
+      const body = `${p.epic} ${p.message ? "\u00b7 " : ""}${detail}`;
+      // Click either surface to jump to a chart on this epic and select the line.
+      const goTo = () => alertNavHandler.current?.(p.epic, p.id, prec);
+      // Per-alert dedupe key: an "every" alert oscillating around its level
+      // coalesces into the existing toast / replaces the banner, never stacks.
+      const key = `${p.epic}|${p.id}`;
+      if (p.notify?.toast ?? true)
+        toast(`\u{1F514} ${body} (now ${now})`, { onClick: goTo, duration: null, key });
+      if (p.notify?.browser ?? true) notify(p.epic, `${detail} \u00b7 now ${now}`, goTo, key);
+      if (p.notify?.sound ?? true) playPing();
+      // Outside the channel gates, like the server-written history: the tab badge
+      // is attribution ("something fired here"), not a mutable surface.
+      alertFired.set({ epic: p.epic });
+      // applyAlertEvent already prepended the firing to the triggered cache but
+      // doesn't bump — do it here so the History tab and any once-alert removal
+      // re-render.
+      bumpAlerts();
+    });
+    return () => setOnAlertFired(null);
+  }, []);
   // Keep activeId valid (heal to first tab) and persist this device's active layout.
   useEffect(() => {
     if (active && active.id !== activeId) setActiveId(active.id);

@@ -58,6 +58,11 @@ interface AlertNotify {
   toast: boolean;
   browser: boolean;
   sound: boolean;
+  // Backend-delivered channels (the server fires these, so they reach the user
+  // with no browser tab open). Absent in settings blobs saved before they
+  // existed — loadSettings deep-merges over the defaults below, so they land on.
+  push: boolean;
+  telegram: boolean;
 }
 
 export interface AlertDefaults {
@@ -167,7 +172,7 @@ const DEFAULT_ALERT_DEFAULTS: AlertDefaults = {
   condition: "crossing",
   trigger: "once",
   expiry: { kind: "open" },
-  notify: { toast: true, browser: true, sound: true },
+  notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
 };
 
 // Dashed, black at half opacity (so it reads as a muted grey over the chart) at the

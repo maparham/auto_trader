@@ -29,17 +29,10 @@ describe("persist scoping", () => {
     expect(localStorage.getItem("auto-trader.tab.A.drawings.US100")).not.toBeNull();
   });
 
-  it("alerts are global per epic (scope-independent); avwap anchors are scope+epic keyed", () => {
-    P.saveAlerts("US100", [
-      { id: "a1", level: 5, condition: "crossing", trigger: "every", message: "" },
-    ]);
+  // (Alerts used to be asserted here too; they are BACKEND state now — no
+  // localStorage key at all — and lib/alertsApi.test.ts owns their coverage.)
+  it("avwap anchors are scope+epic keyed", () => {
     P.saveAvwapAnchor("tab.A", "US100", "AVWAP", 123);
-    // Alerts belong to the instrument, not a cell — readable without a scope, and a
-    // different epic is separate.
-    expect(P.loadAlerts("US100")).toHaveLength(1);
-    expect(P.loadAlerts("BTC")).toEqual([]);
-    expect(localStorage.getItem("auto-trader.b.capital.alerts.US100")).not.toBeNull();
-    // AVWAP anchors stay per-scope.
     expect(P.loadAvwapAnchor("tab.A", "US100", "AVWAP")).toBe(123);
     expect(P.loadAvwapAnchor("tab.B", "US100", "AVWAP")).toBe(0);
   });
@@ -67,82 +60,6 @@ describe("persist scoping", () => {
     expect(P.loadCandleHidden("tab.B")).toBe(false);
     P.saveCandleHidden("tab.A", false);
     expect(P.loadCandleHidden("tab.A")).toBe(false);
-  });
-});
-
-// Overlay-less edits of a stored alert (the alerts panel's all-symbols rows act on
-// alerts whose chart may not be open). Keyed by the NORMALIZED stable id so legacy
-// rows (no stored id) match by their deterministic backfilled id too.
-describe("stored-alert direct edits (loadStoredAlert / updateStoredAlert / deleteStoredAlert)", () => {
-  const A = { id: "a1", level: 5, condition: "crossing" as const, trigger: "every" as const, message: "" };
-  const B = { id: "a2", level: 7, condition: "less" as const, trigger: "once" as const, message: "hi" };
-
-  it("loadStoredAlert finds by id (incl. a legacy row by its backfilled id)", () => {
-    P.saveAlerts("US100", [A]);
-    expect(P.loadStoredAlert("US100", "a1")!.level).toBe(5);
-    expect(P.loadStoredAlert("US100", "nope")).toBeNull();
-    // Legacy row (no stored id): match by the same id normalizeAlert backfills.
-    localStorage.setItem("auto-trader.b.capital.alerts.BTC", JSON.stringify([{ level: 3, condition: "crossing" }]));
-    const legacyId = P.normalizeAlert({ level: 3, condition: "crossing" }, 0).id;
-    expect(P.loadStoredAlert("BTC", legacyId)!.level).toBe(3);
-  });
-
-  it("updateStoredAlert replaces level + cfg in place, keeps id, leaves siblings untouched", () => {
-    P.saveAlerts("US100", [A, B]);
-    P.updateStoredAlert("US100", "a1", 9, {
-      condition: "greater", trigger: "once", message: "edited", expiresAt: null,
-      notify: { toast: true, browser: false, sound: true },
-    });
-    const list = P.loadAlerts("US100");
-    const a1 = list.find((x) => x.id === "a1")!;
-    expect(a1.level).toBe(9);
-    expect(a1.condition).toBe("greater");
-    expect(a1.message).toBe("edited");
-    expect(a1.notify).toEqual({ toast: true, browser: false, sound: true });
-    expect(list.find((x) => x.id === "a2")).toEqual(B); // sibling unchanged
-  });
-
-  it("deleteStoredAlert removes only the matching id", () => {
-    P.saveAlerts("US100", [A, B]);
-    P.deleteStoredAlert("US100", "a1");
-    expect(P.loadAlerts("US100").map((x) => x.id)).toEqual(["a2"]);
-    P.deleteStoredAlert("US100", "ghost"); // no-op
-    expect(P.loadAlerts("US100").map((x) => x.id)).toEqual(["a2"]);
-  });
-
-  it("addStoredAlert appends a row, preserving its id + createdAt", () => {
-    P.saveAlerts("US100", [A]);
-    P.addStoredAlert("US100", {
-      id: "a2", level: 7, condition: "less", trigger: "once", message: "hi",
-      expiresAt: null, notify: { toast: true, browser: true, sound: true }, createdAt: 4242,
-    });
-    const list = P.loadAlerts("US100");
-    expect(list.map((x) => x.id)).toEqual(["a1", "a2"]);
-    const a2 = list.find((x) => x.id === "a2")!;
-    expect(a2.level).toBe(7);
-    expect(a2.createdAt).toBe(4242);
-  });
-
-  it("addStoredAlert is idempotent by id (a re-add of the same id is a no-op)", () => {
-    P.saveAlerts("US100", [A]);
-    P.addStoredAlert("US100", { ...A, level: 999 }); // same id, different level
-    const list = P.loadAlerts("US100");
-    expect(list).toHaveLength(1); // not duplicated
-    expect(list[0].level).toBe(5); // original row untouched
-  });
-
-  it("addStoredAlert leaves a legacy sibling byte-for-byte (no id/default backfill)", () => {
-    // A legacy row (no stored id) must not be re-normalized when a new alert is
-    // appended — that would mint+lock its backfilled id from the wrong index.
-    const legacyRaw = [{ level: 3, condition: "crossing" }];
-    localStorage.setItem("auto-trader.b.capital.alerts.BTC", JSON.stringify(legacyRaw));
-    P.addStoredAlert("BTC", {
-      id: "new1", level: 9, condition: "greater", trigger: "every", message: "",
-      expiresAt: null, notify: { toast: true, browser: true, sound: true }, createdAt: 1,
-    });
-    const rawAfter = JSON.parse(localStorage.getItem("auto-trader.b.capital.alerts.BTC")!);
-    expect(rawAfter[0]).toEqual({ level: 3, condition: "crossing" }); // sibling verbatim
-    expect(rawAfter[1].id).toBe("new1");
   });
 });
 
@@ -482,18 +399,6 @@ describe("per-broker workspace isolation", () => {
     expect(P.loadScratch()!.tabs.map((t) => t.id)).toEqual(["cap1"]);
     expect(localStorage.getItem("auto-trader.b.capital.scratch")).not.toBeNull();
     expect(localStorage.getItem("auto-trader.b.ig-demo.scratch")).not.toBeNull();
-  });
-
-  it("alerts are isolated per broker (explicit broker arg)", () => {
-    const A = { id: "a1", level: 5, condition: "crossing" as const, trigger: "every" as const, message: "" };
-    P.saveAlerts("CS.D.EURUSD.CFD.IP", [A], "ig-demo");
-    // Same epic on a different broker (ig-live) is a separate store.
-    expect(P.loadAlerts("CS.D.EURUSD.CFD.IP", "ig-live")).toEqual([]);
-    expect(P.loadAlerts("CS.D.EURUSD.CFD.IP", "ig-demo").map((a) => a.id)).toEqual(["a1"]);
-    expect(localStorage.getItem("auto-trader.b.ig-demo.alerts.CS.D.EURUSD.CFD.IP")).not.toBeNull();
-    // loadAllAlerts only scans the requested broker.
-    expect(P.loadAllAlerts("ig-demo").map((g) => g.epic)).toEqual(["CS.D.EURUSD.CFD.IP"]);
-    expect(P.loadAllAlerts("ig-live")).toEqual([]);
   });
 
   it("recent symbols and templates are isolated per broker", () => {

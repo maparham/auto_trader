@@ -4490,8 +4490,8 @@ export default function ChartCore({
       handle.redrawRef.current();
     });
     if (containerRef.current) ro.observe(containerRef.current);
-    // The background alertEngine can fire/remove an alert on THIS (active) epic and
-    // write the change to storage; reconcile the on-chart lines off the signal so a
+    // The BACKEND can fire/remove an alert on THIS (active) epic and push the
+    // change down /ws/state; reconcile the on-chart lines off the signal so a
     // "once" alert it deleted also vanishes from the chart.
     const unsubAlerts = alertsChanged.subscribe(() => overlays.reconcileAlerts());
     return () => {

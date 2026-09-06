@@ -30,6 +30,16 @@ class MemStorage {
 }
 (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
 
+// Alerts are BACKEND state now (lib/alertsApi): the reads below are served from an
+// in-memory cache and every mutation fires an optimistic apiFetch. Stub fetch so
+// those calls resolve OK — a rejection would make addStoredAlert roll the
+// optimistic row back out of the cache, which is exactly what these tests read.
+const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+(globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+// Every request this file's alert writes make (POST/PATCH/DELETE /api/alerts...).
+const alertRequests = () =>
+  fetchMock.mock.calls.filter(([u]: unknown[]) => String(u).includes("/api/alerts"));
+
 const { OverlayManager, asDrawingExtra } = await import("./overlays");
 const { fitToWindow, windowMoments } = await import("./patternGhost");
 // Type-only alias: the runtime binding above is a value (dynamic import defers the
@@ -212,7 +222,18 @@ function setup() {
   return { chart, m };
 }
 
-beforeEach(() => localStorage.clear());
+// The alerts cache is module state that outlives a test, so drain it (localStorage
+// .clear() no longer touches alerts). Deleting by id is the only public write.
+function clearStoredAlerts() {
+  for (const { epic, alerts } of P.loadAllAlerts())
+    for (const a of alerts) P.deleteStoredAlert(epic, a.id);
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  clearStoredAlerts();
+  fetchMock.mockClear();
+});
 
 describe("OverlayManager interactive-draw preview visibility (v10 regression)", () => {
   // v10's OverlayView.drawImp gates the IN-PROGRESS (progress) overlay's paint on a
@@ -458,7 +479,7 @@ describe("OverlayManager alert identity (stable id survives drag/edit)", () => {
     expect(ovById(chart, ovId)).not.toBeNull();
 
     // Engine fired a "once" and wrote survivors=[] (the id is gone from storage).
-    P.saveAlerts("US100", []);
+    clearStoredAlerts();
     m.reconcileAlerts();
     expect(ovById(chart, ovId)).toBeNull(); // line removed off the id mismatch
   });
@@ -508,7 +529,7 @@ describe("OverlayManager alert lookup + selection survives rehydrate (sidebar na
     const { m } = setup();
     const ovId = m.addAlert(100, cfg)!;
     m.selectAlert(ovId);
-    P.saveAlerts("US100", []); // alert removed (e.g. a fired "once")
+    clearStoredAlerts(); // alert removed (e.g. a fired "once")
     m.rehydrate();
     expect(m.getSelectedAlertId()).toBeNull();
   });
@@ -585,12 +606,33 @@ describe("OverlayManager global alerts shared across same-epic cells", () => {
     const ovId = a.addAlert(100, cfg)!; // notify defaults: all on
     b.reconcileAlerts(); // B mirrors [100] with notify all-on
     // A mutes ONLY the sound channel (level/condition/trigger/message unchanged).
-    a.updateAlert(ovId, 100, { ...cfg, notify: { toast: true, browser: true, sound: false } });
+    a.updateAlert(ovId, 100, {
+      ...cfg,
+      notify: { toast: true, browser: true, sound: false, push: true, telegram: true },
+    });
     b.reconcileAlerts(); // B must pull the notify change in...
     // ...so when B persists (adds another alert), it writes the muted notify, not stale all-on.
     b.addAlert(200, cfg);
     const at100 = P.loadAlerts("US100").find((x) => x.level === 100)!;
     expect(at100.notify!.sound).toBe(false);
+  });
+
+  it("a BACKEND-channel-only edit (push/telegram) syncs too — sameAlertCfg covers all 5", () => {
+    const { a, b } = twoCells();
+    const ovId = a.addAlert(100, cfg)!; // notify defaults: all on
+    b.reconcileAlerts();
+    // Mute ONLY push + telegram: the three in-tab channels are untouched, so a
+    // sameAlertCfg that compares toast/browser/sound alone reads this as "no
+    // change" and leaves B's cached cfg (and its edit modal) showing stale state.
+    a.updateAlert(ovId, 100, {
+      ...cfg,
+      notify: { toast: true, browser: true, sound: true, push: false, telegram: false },
+    });
+    b.reconcileAlerts();
+    const bOvId = b.findAlertOverlayId(P.loadAlerts("US100")[0].id)!;
+    expect(b.getAlert(bOvId)!.cfg.notify).toEqual({
+      toast: true, browser: true, sound: true, push: false, telegram: false,
+    });
   });
 });
 
@@ -638,7 +680,7 @@ describe("OverlayManager reconcile re-entrancy (self-triggered alerts signal)", 
     // Wire the cell's reconcile to the GLOBAL signal exactly as ChartCore does.
     const unsub = alertsChanged.subscribe(() => m.reconcileAlerts());
     // Engine clears the stored list, then signals a reconcile.
-    P.saveAlerts("US100", []);
+    clearStoredAlerts();
     expect(() => m.reconcileAlerts()).not.toThrow(); // no infinite recursion
     unsub();
     expect(priceLines(chart)).toHaveLength(0); // both lines removed
@@ -653,21 +695,15 @@ describe("OverlayManager reconcile re-entrancy (self-triggered alerts signal)", 
 // 2026-07-08-alert-write-decoupling-design.md.
 describe("OverlayManager alert-write decoupling (persist is drawings-only)", () => {
   const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
-  // Count localStorage writes to THIS epic's shared alerts key.
-  function alertWrites(spy: ReturnType<typeof vi.spyOn>) {
-    return spy.mock.calls.filter(([k]: unknown[]) => String(k).includes(".alerts.")).length;
-  }
-
-  it("a drawing action does not write the alerts key", () => {
+  it("a drawing action does not write alerts", () => {
     const { m } = setup();
     m.addAlert(100, cfg); // one legitimate alert intent
-    const spy = vi.spyOn(localStorage, "setItem");
+    fetchMock.mockClear();
     m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
-    expect(alertWrites(spy)).toBe(0); // drawing persist must not touch alerts
-    spy.mockRestore();
+    expect(alertRequests()).toHaveLength(0); // drawing persist must not touch alerts
   });
 
-  it("a full rehydrate of a cell holding alerts + drawings writes the alerts key zero times", () => {
+  it("a full rehydrate of a cell holding alerts + drawings writes alerts zero times", () => {
     const { m } = setup();
     m.addAlert(100, cfg);
     m.addAlert(200, cfg);
@@ -675,12 +711,25 @@ describe("OverlayManager alert-write decoupling (persist is drawings-only)", () 
     // Wire the cell's reconcile to the GLOBAL alerts signal exactly as ChartCore does,
     // so a teardown removal that rings the signal re-enters reconcileAlerts live.
     const unsub = alertsChanged.subscribe(() => m.reconcileAlerts());
-    const spy = vi.spyOn(localStorage, "setItem");
+    fetchMock.mockClear();
     m.rehydrate(); // teardown + rebuild — a pure view op
-    expect(alertWrites(spy)).toBe(0); // the class is dead: no view op writes alerts
+    expect(alertRequests()).toHaveLength(0); // the class is dead: no view op writes alerts
     unsub();
-    spy.mockRestore();
     expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100, 200]); // survived
+  });
+
+  it("addAlert draws exactly one line with the reconcile signal wired (ChartCore's real wiring)", () => {
+    const { chart, m } = setup();
+    // ChartCore subscribes the cell's reconcile to the global signal for the whole
+    // mount, so addStoredAlert's own bump re-enters reconcileAlerts BEFORE addAlert
+    // has materialised its line. The line must not be drawn twice.
+    const unsub = alertsChanged.subscribe(() => m.reconcileAlerts());
+    const ovId = m.addAlert(100, cfg)!;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const lines = [...chart.overlays.values()].filter((o: any) => o.name === "priceLine");
+    unsub();
+    expect(lines).toHaveLength(1);
+    expect(ovById(chart, ovId)).not.toBeNull();
   });
 
   it("addAlert routes through the storage intent (line drawn + selectable + persisted)", () => {
@@ -760,18 +809,6 @@ describe("OverlayManager cross-tab shared-storage stomp (two same-epic/scope cel
     A.m.addAlert(200, cfg);
     B.m.addDrawing("segment", [{ value: 1 }, { value: 2 }]);
     expect(P.loadAlerts("US100").map((x) => x.level)).toEqual([100, 200]);
-  });
-});
-
-describe("parseAlertsStateKey (routing per-epic alert pushes to reconcile)", () => {
-  it("matches a per-epic alerts key and extracts the epic; rejects others", () => {
-    expect(P.parseAlertsStateKey("auto-trader.b.capital-live.alerts.OIL_CRUDE")).toBe("OIL_CRUDE");
-    expect(P.parseAlertsStateKey("auto-trader.b.capital.alerts.US100")).toBe("US100");
-    // Per-cell drawing key (must remount, not bumpAlerts) → not an alerts key.
-    expect(P.parseAlertsStateKey("auto-trader.tab.abc.drawings.OIL_CRUDE")).toBeNull();
-    // Layout / settings keys → not alerts.
-    expect(P.parseAlertsStateKey("auto-trader.b.capital.tabs")).toBeNull();
-    expect(P.parseAlertsStateKey("auto-trader.settings")).toBeNull();
   });
 });
 

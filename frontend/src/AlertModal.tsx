@@ -50,7 +50,24 @@ interface Props {
   onClose: () => void;
 }
 
-const ALL_ON: AlertNotifyChannels = { toast: true, browser: true, sound: true };
+const ALL_ON: AlertNotifyChannels = {
+  toast: true,
+  browser: true,
+  sound: true,
+  push: true,
+  telegram: true,
+};
+
+// Channel order + labels, shared with Settings' alert defaults. "App"/"Browser"/
+// "Sound" fire in THIS tab; Push and Telegram are delivered by the BACKEND, so
+// they arrive with no tab open.
+const CHANNELS = [
+  ["toast", "App"],
+  ["browser", "Browser"],
+  ["sound", "Sound"],
+  ["push", "Push"],
+  ["telegram", "Telegram"],
+] as const;
 
 export default function AlertModal({
   epic,
@@ -198,14 +215,14 @@ export default function AlertModal({
           <div className="al-row al-row-top">
             <span>Notifications</span>
             <div className="notify-toggles">
-              {(["toast", "browser", "sound"] as const).map((ch) => (
+              {CHANNELS.map(([ch, label]) => (
                 <label key={ch} className="notify-toggle">
                   <input
                     type="checkbox"
-                    checked={notify[ch]}
+                    checked={notify[ch] ?? true}
                     onChange={(e) => setNotify({ ...notify, [ch]: e.target.checked })}
                   />
-                  {ch === "toast" ? "App" : ch === "browser" ? "Browser" : "Sound"}
+                  {label}
                 </label>
               ))}
             </div>

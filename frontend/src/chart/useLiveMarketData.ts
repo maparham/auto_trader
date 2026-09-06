@@ -1197,10 +1197,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           }
           refreshFormingBarThrottled(chart);
           handle.redrawRef.current(); // keep the price/alert pills glued as the bar moves
-          // NOTE: alert FIRING is owned by the background alertEngine (the single
-          // authority across all tabs, active included) — not here. This chart feed
-          // only drives the visible candles/pills. The engine persists fired/removed
-          // alerts and bumps the alerts signal; overlays reconciles its lines off it.
+          // NOTE: alert FIRING is owned by the BACKEND (the single authority; it
+          // runs with no tab open) — not here. This chart feed only drives the
+          // visible candles/pills. The server persists fired/removed alerts and
+          // pushes `__alerts__:` over /ws/state; alertsApi bumps the alerts signal
+          // and overlays reconciles its lines off it.
         },
         setStatus,
         priceSide,

@@ -539,6 +539,32 @@ export function onTradesDirty(cb: (account: string) => void): () => void {
   return () => _tradesDirty.delete(cb);
 }
 
+// --- alerts routing (registered by lib/alertsApi, never imported from here) ---
+//
+// Alerts are backend state, NOT mirrored localStorage: their `__alerts__:` ws
+// events belong to the alerts client, not the generic /api/state path below.
+// The alerts client REGISTERS itself here rather than this module importing it,
+// and that direction is deliberate: `signals.ts` already imports PREFIX/load from
+// this module and reads them AT MODULE SCOPE, so any import edge from core into
+// alertsApi (which imports signals) closes a cycle and puts those bindings in the
+// TDZ — "Cannot access 'PREFIX' before initialization", a white screen at boot.
+// Keeping core a leaf of the alerts graph makes that structurally impossible.
+// Registration happens when lib/alertsApi is first imported, which the persist
+// barrel does at app load — long before any socket is dialed.
+
+/** Routes one ws message; returns true when it was an alerts event (stop here). */
+let routeAlertEvent: ((key: string, value: unknown) => boolean) | null = null;
+/** Re-pulls the alerts snapshot after a reconnect (they have no local fallback). */
+let resyncAlertsOnReconnect: (() => void) | null = null;
+
+export function registerAlertsRouter(
+  route: (key: string, value: unknown) => boolean,
+  onReconnect: () => void,
+): void {
+  routeAlertEvent = route;
+  resyncAlertsOnReconnect = onReconnect;
+}
+
 export function subscribeToBackendUpdates(
   onChange: (key: string) => void,
 ): () => void {
@@ -555,6 +581,14 @@ export function subscribeToBackendUpdates(
         token ? `${url}?token=${encodeURIComponent(token)}` : url,
       );
       ws.onopen = () => {
+        // A RECONNECT (not the first dial) means we were offline for a stretch:
+        // any alert event broadcast in that window was missed, so re-pull the
+        // alerts snapshot. The generic state keys are re-read on the next push;
+        // alerts have no localStorage to fall back on. resyncAlerts (not a bare
+        // hydrate) so the signal is rung when it lands — same as applyAlertEvent's
+        // "changed" branch — or every mounted cell and the sidebar keep rendering
+        // the pre-outage set until some unrelated write bumps.
+        if (retry > 0) resyncAlertsOnReconnect?.();
         retry = 0;
       };
       ws.onmessage = (ev) => {
@@ -571,6 +605,15 @@ export function subscribeToBackendUpdates(
           for (const fn of _tradesDirty) fn(account);
           return;
         }
+        // Alerts-changed / alert-fired push. Backend-owned state with its own
+        // in-memory cache — it must NEVER touch localStorage, so route it (and
+        // its own-echo filtering, which is origin-keyed inside the client) before
+        // the generic path below.
+        if (
+          typeof msg.key === "string" &&
+          routeAlertEvent?.(msg.key, (msg as { value?: unknown }).value)
+        )
+          return;
         if (msg.origin === CLIENT_ID) return; // ignore our own echo
         // NOTE: a push whose bytes match localStorage must STILL notify. Two tabs
         // in the same browser share localStorage, so a sibling tab's save() has

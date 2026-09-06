@@ -476,14 +476,22 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
             <div className="setting-row">
               <label>Notifications</label>
               <div className="notify-toggles">
-                {(["toast", "browser", "sound"] as const).map((ch) => (
+                {(
+                  [
+                    ["toast", "App"],
+                    ["browser", "Browser"],
+                    ["sound", "Sound"],
+                    ["push", "Push"],
+                    ["telegram", "Telegram"],
+                  ] as const
+                ).map(([ch, label]) => (
                   <label key={ch} className="notify-toggle">
                     <input
                       type="checkbox"
-                      checked={ad.notify[ch]}
+                      checked={ad.notify[ch] ?? true}
                       onChange={(e) => setAd({ notify: { ...ad.notify, [ch]: e.target.checked } })}
                     />
-                    {ch === "toast" ? "App" : ch === "browser" ? "Browser" : "Sound"}
+                    {label}
                   </label>
                 ))}
               </div>
