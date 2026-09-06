@@ -679,6 +679,15 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Hides the dashed lines price has already cut through.",
       },
       {
+        key: "dimBroken",
+        label: "Dim broken lines",
+        type: "boolean",
+        source: "extend",
+        field: "dimBroken",
+        default: false,
+        tip: "Fades a broken line as well as dashing it. Off by default: the dashes and the break dot already say a line is broken, and a broken line is exactly where a retest happens.",
+      },
+      {
         key: "dimTouches",
         // Reads as a phrase the number and suffix complete ("Dim after
         // touching 5 pivots"), the same shape the row below it and Merge

@@ -64,6 +64,7 @@ describe("TRENDLINES registration", () => {
       ["Extend"],
       ["Declutter"],
       ["Hide broken lines"],
+      ["Dim broken lines"],
       ["Dim after touching"],
       ["Dim if untouched for"],
       ["Merge Lines within"],

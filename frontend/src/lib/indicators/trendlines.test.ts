@@ -26,6 +26,7 @@ import {
   selectDrawnLines,
   trendlineDimmed,
   TL_DIM_ALPHA,
+  TL_BROKEN_ALPHA,
   TL_DEDUPE_ATR,
   TL_NEAR_PRICE_ATR,
   TRENDLINES_TEMPLATE,
@@ -1411,7 +1412,7 @@ function record(
   declutter?: "off" | "near" | "pivot",
   // The two dim thresholds. Absent leaves both keys off, so every test above
   // paints at the alphas it always did.
-  dim?: { dimTouches?: number; dimStaleBars?: number },
+  dim?: { dimTouches?: number; dimStaleBars?: number; dimBroken?: boolean },
 ): Painted {
   const segments: Segment[] = [];
   const tags: Tag[] = [];
@@ -1581,24 +1582,43 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     // (after the break dot, after the pin handle), and a stroke that fades
     // while its touch rings stay opaque is the failure this pins: it looks
     // right on the line and wrong everywhere else.
-    // The broken lines' own rings stay at the break fade, so the claim is that
-    // NO ring paints opaque any more and the unbroken ones carry the dim.
-    expect(dimmed.touchMarks.some((m) => m.alpha === TL_DIM_ALPHA)).toBe(true);
-    expect(dimmed.touchMarks.every((m) => m.alpha < 1)).toBe(true);
+    // Every drawn line here meets the threshold, broken ones included (the
+    // broken fade is off, so they take the dim depth too), so no ring is left
+    // opaque.
+    expect(dimmed.touchMarks.length).toBeGreaterThan(0);
+    expect(dimmed.touchMarks.every((m) => m.alpha === TL_DIM_ALPHA)).toBe(true);
   });
 
-  it("leaves a broken line at the BREAK fade, not the dim one", () => {
+  it("dashes a broken line WITHOUT fading it unless asked", () => {
     const b = bars();
-    const dashedAt = (dim?: { dimTouches?: number }) =>
+    const dashedAt = (dim?: {
+      dimTouches?: number;
+      dimBroken?: boolean;
+    }) =>
       record(b, params(1), "lastbar", undefined, undefined, false, false, false, undefined, dim)
         .segments.filter((sg) => sg.dashed)
         .map((sg) => sg.alpha);
-    const before = dashedAt();
-    expect(before.length, "fixture must draw a broken line").toBeGreaterThan(0);
-    expect(before.every((a) => a === 0.45)).toBe(true);
-    // A break is the darker statement: dimming a line that is already broken
-    // must not lighten it back up.
-    expect(dashedAt({ dimTouches: 2 })).toEqual(before);
+    const opaque = dashedAt();
+    expect(opaque.length, "fixture must draw a broken line").toBeGreaterThan(0);
+    // The dashes and the break dot carry the message on their own; a broken
+    // line is where a retest happens, so nothing pushes it back by default.
+    expect(opaque.every((a) => a === 1)).toBe(true);
+    expect(dashedAt({ dimBroken: true }).every((a) => a === TL_BROKEN_ALPHA)).toBe(true);
+  });
+
+  it("gives a broken line the BREAK depth, not the dim one, when both apply", () => {
+    const b = bars();
+    const dashedAt = (dim: Record<string, unknown>) =>
+      record(b, params(1), "lastbar", undefined, undefined, false, false, false, undefined, dim)
+        .segments.filter((sg) => sg.dashed)
+        .map((sg) => sg.alpha);
+    // Broken AND well-touched, with both fades asked for: the break wins.
+    expect(
+      dashedAt({ dimBroken: true, dimTouches: 2 }).every((a) => a === TL_BROKEN_ALPHA),
+    ).toBe(true);
+    // With the broken fade off, a broken line still picks up the dim depth —
+    // being broken is not a reason to paint a stale line brighter.
+    expect(dashedAt({ dimTouches: 2 }).every((a) => a === TL_DIM_ALPHA)).toBe(true);
   });
 
   it("rings every touch, on the line and not at the candle's own extreme", () => {

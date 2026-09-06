@@ -820,6 +820,18 @@ export interface TrendlinesExtend {
    * and belongs to whoever ticks it: the broken outputs keep emitting with
    * nothing drawn at them. */
   hideBroken?: boolean;
+  /** Fade a broken line as well as dashing it. OFF by default.
+   *
+   * The fade and the dashes used to be one thing, and they are not: dashing
+   * SAYS broken, and the fade says "pay this less attention", which is a
+   * judgement the pane should not make on its own. A broken line is where a
+   * retest happens — the whole reason breakHoldBars keeps it on screen — so
+   * pushing it into the background by default worked against the feature it
+   * belongs to. The dashes and the break dot still mark it either way.
+   *
+   * When on it fades HARDER than the dim thresholds below (see TL_DIM_ALPHA),
+   * so a line that is both broken and stale reads as broken. */
+  dimBroken?: boolean;
   /** Dim a line once it has been touched this many times or more, in pivots.
    * 0 (or absent) is the off switch, the same idiom `maxTouches` uses.
    *
@@ -974,6 +986,11 @@ export function declutterMode(
   if (m === "off" || m === "near" || m === "pivot") return m;
   return (ext?.nearPrice ?? true) ? "near" : "off";
 }
+
+/** Alpha a broken line paints at when the pane asks for broken lines to fade.
+ * Deliberately darker than TL_DIM_ALPHA: where both could apply, the break is
+ * the stronger statement and must read as the deeper fade. */
+export const TL_BROKEN_ALPHA = 0.45;
 
 /** Alpha a dimmed-but-unbroken line paints at.
  *
@@ -1792,13 +1809,17 @@ function drawTrendlines(
     // paint at full opacity and hand it back). Recomputing `broken ? ... : 1`
     // at those sites is how the touch rings and the ×N tag snapped back to
     // full opacity while the stroke itself faded correctly.
-    // A BREAK OUTRANKS A DIM: both fade, and the broken depth is the darker
-    // statement, so a line that is stale AND broken reads as broken.
-    const alpha = broken
-      ? 0.45
-      : trendlineDimmed(line, lastIdx, ext)
-        ? TL_DIM_ALPHA
-        : 1;
+    // A BREAK OUTRANKS A DIM once broken lines are set to fade at all: both
+    // fade, and the broken depth is the darker statement, so a line that is
+    // stale AND broken reads as broken. With the broken fade off, a broken
+    // line can still pick up the dim depth from the thresholds below — being
+    // broken is not a reason to paint a stale line brighter.
+    const alpha =
+      broken && (ext?.dimBroken ?? false)
+        ? TL_BROKEN_ALPHA
+        : trendlineDimmed(line, lastIdx, ext)
+          ? TL_DIM_ALPHA
+          : 1;
     const isPinned = pins.has(lineKey(line, dataList, starts));
     // The line's end under the MODE alone. The handle and the ×N tag ride here
     // whether or not the line is pinned: a pinned line runs to the pane edge,
@@ -1832,8 +1853,8 @@ function drawTrendlines(
     ctx.stroke();
     ctx.setLineDash([]);
     // The break itself: dashing says a line is dead, but not where it died,
-    // which is the half a retest actually turns on. Drawn at full opacity (the
-    // line around it is faded) and guarded on BOTH axes, because this canvas is
+    // which is the half a retest actually turns on. Drawn at full opacity
+    // whatever the line around it is doing, and guarded on BOTH axes, because this canvas is
     // shared with the other panes and an unclamped y bleeds into them, exactly
     // as the tag comment below records.
     if (broken) {
