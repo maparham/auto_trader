@@ -403,3 +403,37 @@ describe("PATTERN_PREDICATE_FNS: the rule-operand interface", () => {
   });
 
 });
+
+describe("drawCandlePatterns visible-range cull", () => {
+  // The marker/label loop otherwise walks every loaded bar per frame, with y
+  // from each bar's own high/low — unbounded under a zoomed price scale.
+  it("builds markers only for near-pane bars", async () => {
+    const { CANDLE_PATTERNS_TEMPLATE } = await import("./candlePatterns");
+    let tris = 0;
+    const ctx = new Proxy(
+      {
+        beginPath: () => { tris++; },
+        measureText: () => ({ width: 10 }),
+      },
+      { get: (t, p) => (p in t ? t[p as keyof typeof t] : () => {}), set: () => true },
+    );
+    const n = 8000;
+    const points = Array.from({ length: n }, () => ({ hits: [0] }));
+    const bars = Array.from({ length: n }, (_, i) => ({
+      timestamp: i, open: 100, high: 101, low: 99, close: 100, volume: 1,
+    }));
+    (CANDLE_PATTERNS_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
+      ctx,
+      chart: {
+        getDataList: () => bars,
+        getVisibleRange: () => ({ from: 7800, to: 7950 }),
+      },
+      indicator: { result: points, extendData: { showLabels: false } },
+      xAxis: { convertToPixel: (i: number) => (i - 7875) * 6 + 450 },
+      yAxis: { convertToPixel: (p: number) => 200 - p },
+      bounding: { width: 900, height: 200 },
+    });
+    expect(tris).toBeGreaterThan(100); // it painted the visible ones
+    expect(tris).toBeLessThan(300); // and only those, not all 8000
+  });
+});

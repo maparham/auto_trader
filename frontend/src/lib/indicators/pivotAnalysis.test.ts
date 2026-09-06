@@ -228,3 +228,47 @@ describe("pivotDeltaHit — pointer over the marker or the Δ label plate (pixel
     expect(pivotDeltaHit({ x: 103, y: 54 }, high).dist).toBeCloseTo(5, 10);
   });
 });
+
+describe("drawPivotAnalysis connector clipping", () => {
+  // A visible pivot's connectors reach back to prevIndex/prevPrice, which are
+  // unbounded (thousands of bars back; a price far outside the zoomed
+  // window). The dotted level segment and the dashed double-arrow shaft must
+  // clip near the pane, or dash generation walks millions of off-canvas
+  // pixels every frame (the trendlines MTF-ray bug).
+  it("keeps every stroked vertex near the pane", async () => {
+    const { PIVOT_ANALYSIS_TEMPLATE } = await import("./pivotAnalysis");
+    const verts: number[][] = [];
+    const ctx = new Proxy(
+      {
+        moveTo: (x: number, y: number) => verts.push([x, y]),
+        lineTo: (x: number, y: number) => verts.push([x, y]),
+        arc: () => {},
+        measureText: () => ({ width: 10 }),
+      },
+      { get: (t, p) => (p in t ? t[p as keyof typeof t] : () => {}), set: () => true },
+    );
+    const n = 12000;
+    const result: Array<Record<string, unknown>> = Array.from({ length: n }, () => ({}));
+    // Visible pivot at bar 11990 whose previous pivot is 11,900 bars back and
+    // far outside the price window.
+    result[11990] = {
+      phEvent: { price: 100, prevIndex: 90, prevPrice: 5000 },
+    };
+    (PIVOT_ANALYSIS_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
+      ctx,
+      chart: {
+        getVisibleRange: () => ({ from: 11900, to: n }),
+        getStyles: () => ({ indicator: { lines: [] } }),
+      },
+      indicator: { result, extendData: {}, styles: {} },
+      xAxis: { convertToPixel: (i: number) => (i - 11950) * 8 },
+      yAxis: { convertToPixel: (p: number) => 400 - (p - 100) * 2 },
+      bounding: { left: 0, width: 900, height: 400 },
+    });
+    expect(verts.length).toBeGreaterThan(0);
+    for (const [x, y] of verts) {
+      expect(Math.abs(x)).toBeLessThan(10_000);
+      expect(Math.abs(y)).toBeLessThan(10_000);
+    }
+  });
+});

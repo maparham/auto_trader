@@ -33,9 +33,10 @@ import type {
   KLineData,
 } from "klinecharts";
 import { isPivotAt } from "./pivots";
-import { atrSeries } from "../atr";
+import { atrSeries, rmaNext, trueRangeAt } from "../atr";
 import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { minPositiveGap } from "../barInterval";
+import { clipSegmentToRect, DRAW_CLIP_PAD } from "./shared";
 import {
   MAX_LIVE_MULT,
   parseTrendlinesConfig,
@@ -378,18 +379,17 @@ export function hasBackClearance(
   return true;
 }
 
-export function computeTrendlines(
-  dataList: KLineData[],
-  cfg: TrendlinesConfig,
-): { points: TrendlinesPoint[]; lines: TrendLine[]; atr: number[] } {
-  const n = dataList.length;
-  const points: TrendlinesPoint[] = Array.from({ length: n }, () => ({}));
-  if (n === 0) return { points, lines: [], atr: [] };
-
-  const atr = atrSeries(dataList, TL_ATR_LEN);
-  const highs = dataList.map((d) => d.high);
-  const lows = dataList.map((d) => d.low);
-  const pools: Record<TrendSide, number[]> = { resistance: [], support: [] };
+/** Mutable detector state after some prefix of bars has been processed. The
+ * detector is causal (see the file header), so state after bars [0..m-1] is a
+ * pure function of those bars — which is what lets the calc session below
+ * cache it and re-run only the forming bar per live tick instead of the whole
+ * series (a from-scratch run costs ~30ms at BTCUSD 1m bar counts, on EVERY
+ * tick, which was the pan/zoom jank). */
+interface TlState {
+  atr: Array<number | null>;
+  highs: number[];
+  lows: number[];
+  pools: Record<TrendSide, number[]>;
   // EVERY confirmed fractal pivot, including the ones the size and reach gates
   // reject. `pools` holds only survivors, because that is what may seed a line;
   // this holds the turning points themselves, because the leg Min Pivot Size
@@ -397,13 +397,59 @@ export function computeTrendlines(
   // to trade. Using `pools` here DEADLOCKS the indicator: the first pivot has no
   // opposite pivot, so it is rejected, so it never enters the pool, so the next
   // one has no opposite either, forever. Nothing is ever drawn.
-  const turns: Record<TrendSide, number[]> = { resistance: [], support: [] };
-  let lines: TrendLine[] = [];
+  turns: Record<TrendSide, number[]>;
+  lines: TrendLine[];
+  points: TrendlinesPoint[];
+}
 
+/** State after the first `m` bars, built from scratch. */
+function buildTlState(
+  dataList: KLineData[],
+  m: number,
+  cfg: TrendlinesConfig,
+): TlState {
+  const prefix = m === dataList.length ? dataList : dataList.slice(0, m);
+  const st: TlState = {
+    atr: atrSeries(prefix, TL_ATR_LEN),
+    highs: prefix.map((d) => d.high),
+    lows: prefix.map((d) => d.low),
+    pools: { resistance: [], support: [] },
+    turns: { resistance: [], support: [] },
+    lines: [],
+    points: Array.from({ length: m }, () => ({})),
+  };
+  for (let i = 0; i < m; i++) stepTrendlinesBar(st, prefix, i, cfg);
+  return st;
+}
+
+export function computeTrendlines(
+  dataList: KLineData[],
+  cfg: TrendlinesConfig,
+): { points: TrendlinesPoint[]; lines: TrendLine[]; atr: number[] } {
+  const n = dataList.length;
+  if (n === 0) return { points: [], lines: [], atr: [] };
+  const st = buildTlState(dataList, n, cfg);
+  // The declared atr type predates this refactor: warm-up bars are null at
+  // runtime (atrSeries), and every consumer already null-checks per bar.
+  return { points: st.points, lines: st.lines, atr: st.atr as number[] };
+}
+
+/** One bar of the detector, verbatim the loop body computeTrendlines always
+ * ran — the aliases below keep the body untouched so the Python parity port
+ * still reads line for line. Reads/writes state only at indices <= i (causal),
+ * which is the property the incremental session relies on. */
+function stepTrendlinesBar(
+  st: TlState,
+  dataList: KLineData[],
+  i: number,
+  cfg: TrendlinesConfig,
+): void {
+  const { atr, highs, lows, pools, turns, points } = st;
+  let lines = st.lines;
   const extremeOf = (side: TrendSide, j: number): number =>
     side === "resistance" ? highs[j] : lows[j];
 
-  for (let i = 0; i < n; i++) {
+  {
     const a = atr[i];
 
     // 1. PER-BAR break test. Runs every bar, not only at confirm bars: a line
@@ -712,8 +758,139 @@ export function computeTrendlines(
     }
     points[i] = point;
   }
+  st.lines = lines;
+}
 
-  return { points, lines, atr };
+const cloneTrendLine = (l: TrendLine): TrendLine => ({
+  ...l,
+  touchIdxs: l.touchIdxs.slice(),
+});
+
+/** ATR(14) for bar j, incrementally: the exact value atrSeries would put at j
+ * (same trueRangeAt / rmaNext operations — atrSeries itself runs them), given
+ * the values before it. The seed bar (and the never-expected null-prev case)
+ * fall back to a from-scratch prefix run, which is O(TL_ATR_LEN) there. */
+function tlAtrAt(
+  atr: Array<number | null>,
+  dataList: KLineData[],
+  j: number,
+): number | null {
+  if (j < TL_ATR_LEN - 1) return null;
+  const prev = j > 0 ? atr[j - 1] : null;
+  if (j === TL_ATR_LEN - 1 || prev === null)
+    return atrSeries(dataList.slice(0, j + 1), TL_ATR_LEN)[j];
+  return rmaNext(prev, trueRangeAt(dataList, j), TL_ATR_LEN);
+}
+
+/** Fold bar i into the state: fill its high/low/ATR slots, then run the
+ * detector step. */
+function advanceTlBar(
+  st: TlState,
+  dataList: KLineData[],
+  i: number,
+  cfg: TrendlinesConfig,
+): void {
+  st.highs[i] = dataList[i].high;
+  st.lows[i] = dataList[i].low;
+  st.atr[i] = tlAtrAt(st.atr, dataList, i);
+  stepTrendlinesBar(st, dataList, i, cfg);
+}
+
+export interface TrendlinesSession {
+  compute(
+    dataList: KLineData[],
+    cfg: TrendlinesConfig,
+  ): { points: TrendlinesPoint[]; lines: TrendLine[]; atr: number[] };
+}
+
+/** Incremental twin of computeTrendlines, for the live calc path. klinecharts
+ * re-runs calc synchronously on EVERY tick, over the full loaded series; this
+ * session caches detector state through the CLOSED bars (which a tick cannot
+ * change — the detector is causal) and re-runs only the forming bar, so a tick
+ * costs O(live lines + pivot pool) instead of O(series).
+ *
+ * HOW A TICK STAYS ISOLATED: the forming bar's values change tick to tick, so
+ * nothing it causes may leak into the cached base. The per-tick fork clones the
+ * three structures the step MUTATES (pools, turns, lines) and shares the flat
+ * per-bar arrays (atr/highs/lows/points), whose index n-1 is a scratch slot the
+ * next tick deterministically overwrites — indices < n-1 belong to closed bars
+ * and are never written again.
+ *
+ * INVALIDATION is by dataList ARRAY IDENTITY plus config equality: klinecharts
+ * mutates one array in place for ticks and appends (the fast paths), and mints
+ * a NEW array for init loads and history prepends (v10 _addData: forward is
+ * `data.concat(this._dataList)`), which correctly forces the full rebuild —
+ * bar indices shift on a prepend, so nothing cached survives it anyway.
+ *
+ * The returned prefix point rows are SHARED across ticks (that is the saving:
+ * no per-tick clone of the whole series). Consumers of indicator.result must
+ * treat rows as read-only, which the draw path already does. */
+export function createTrendlinesSession(): TrendlinesSession {
+  let ref: KLineData[] | null = null;
+  let cfgKey = "";
+  let base: TlState | null = null;
+  let baseCount = 0;
+  let lastBaseTs = 0;
+
+  return {
+    compute(dataList, cfg) {
+      const n = dataList.length;
+      if (n === 0) {
+        base = null;
+        ref = null;
+        return { points: [], lines: [], atr: [] };
+      }
+      // parseTrendlinesConfig builds the object with a fixed key order, so the
+      // JSON string is a stable equality key for its 16 numbers.
+      const key = JSON.stringify(cfg);
+      const usable =
+        base !== null &&
+        dataList === ref &&
+        key === cfgKey &&
+        n >= baseCount + 1 &&
+        (baseCount === 0 ||
+          dataList[baseCount - 1]?.timestamp === lastBaseTs);
+      if (!usable) {
+        base = buildTlState(dataList, n - 1, cfg);
+        baseCount = n - 1;
+        ref = dataList;
+        cfgKey = key;
+      } else if (baseCount < n - 1) {
+        // Bars closed since the last compute (klinecharts appends in place):
+        // fold their final values into the base. Their array slots may hold a
+        // stale tick's scratch — advanceTlBar overwrites all of them.
+        for (let j = baseCount; j < n - 1; j++)
+          advanceTlBar(base as TlState, dataList, j, cfg);
+        baseCount = n - 1;
+      }
+      lastBaseTs = baseCount > 0 ? dataList[baseCount - 1].timestamp : 0;
+      const b = base as TlState;
+      const fork: TlState = {
+        atr: b.atr,
+        highs: b.highs,
+        lows: b.lows,
+        points: b.points,
+        pools: {
+          resistance: b.pools.resistance.slice(),
+          support: b.pools.support.slice(),
+        },
+        turns: {
+          resistance: b.turns.resistance.slice(),
+          support: b.turns.support.slice(),
+        },
+        lines: b.lines.map(cloneTrendLine),
+      };
+      advanceTlBar(fork, dataList, n - 1, cfg);
+      // A fresh top-level array per call (callers replace the last row), with
+      // the prefix rows shared — see the isolation note above.
+      // Same atr cast as computeTrendlines: warm-up bars are null at runtime.
+      return {
+        points: b.points.slice(0, n),
+        lines: fork.lines,
+        atr: b.atr as number[],
+      };
+    },
+  };
 }
 
 /** Render-only options, on extendData rather than calcParams — the same seam
@@ -1689,6 +1866,19 @@ function trendlineIdxMap(
   };
 }
 
+/** Liang-Barsky clip of the segment (x0,y0)-(x1,y1) to the rectangle
+ * [xMin,xMax]x[yMin,yMax]; null when they don't intersect.
+ *
+ * The draw path MUST clip its strokes to the pane. A ray's end sits
+ * maxProjBars past the last touch IN THE LINE'S OWN TIMEFRAME, so under a
+ * timeframe pin far above the chart (1D lines on a 1m chart) that endpoint
+ * converts to MILLIONS of pixels off-canvas — and for a sloped line the y
+ * coordinate runs off just as far. Handing Skia those giant antialiased paths
+ * on every frame is what dropped pan/zoom to ~20fps (all the time sat in
+ * compositor Commit, invisible to JS profiles). The line is straight, so
+ * clipping is visually exact. */
+export { clipSegmentToRect } from "./shared";
+
 function drawTrendlines(
   params: IndicatorDrawParams<TrendlinesCalcPoint, unknown, unknown>,
 ): boolean {
@@ -1869,12 +2059,31 @@ function drawTrendlines(
       line.side === "support" ? TL_SUPPORT_COLOR : TL_RESISTANCE_COLOR;
     ctx.globalAlpha = alpha;
     ctx.lineWidth = 1;
-    ctx.setLineDash(broken ? [4, 3] : []);
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y1);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    // Stroke only the near-pane portion (see clipSegmentToRect: an unclipped
+    // MTF ray is millions of pixels long and stalls the compositor). The pad
+    // is deliberately GENEROUS: a chart-timeframe ray overshoots by a few
+    // hundred pixels, which Skia eats for free, and clipping tight to the
+    // pane would shift a dashed line's phase and drop lines the identity-view
+    // draw tests legitimately place outside their tiny fake pane. Only the
+    // absurd overshoots — a 1D pin's 250-day horizon on a 1m chart — are cut.
+    const seg = clipSegmentToRect(
+      x0, y0, x1, y1,
+      -DRAW_CLIP_PAD, -DRAW_CLIP_PAD,
+      bounding.width + DRAW_CLIP_PAD, bounding.height + DRAW_CLIP_PAD,
+    );
+    if (seg) {
+      ctx.setLineDash(broken ? [4, 3] : []);
+      // Anchor the dash phase to the line's TRUE start, not the clip point,
+      // or a broken line's dashes crawl along it as the pan moves the clip.
+      if (broken)
+        ctx.lineDashOffset = -Math.hypot(seg[0] - x0, seg[1] - y0);
+      ctx.beginPath();
+      ctx.moveTo(seg[0], seg[1]);
+      ctx.lineTo(seg[2], seg[3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+    }
     // The break itself: dashing says a line is dead, but not where it died,
     // which is the half a retest actually turns on. Drawn at full opacity
     // whatever the line around it is doing, and guarded on BOTH axes, because this canvas is
@@ -1995,6 +2204,8 @@ function drawTrendlines(
   return true;
 }
 
+const TL_CALC_SESSIONS = new WeakMap<Indicator, TrendlinesSession>();
+
 export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Trendlines",
   series: "price",
@@ -2032,11 +2243,22 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     const mtf = (ind.extendData as TrendlinesExtend | undefined)?.mtf;
     if (mtf?.timeframe && mtf.htfStarts?.length && mtf.htfMs)
       return alignMtfTrendlines(dataList, mtf);
-    const { points, lines, atr } = computeTrendlines(
+    // One session per indicator instance (klinecharts passes the same object
+    // to every calc), so per-tick recalcs re-run only the forming bar. The
+    // WeakMap lets a removed indicator's cache be collected with it.
+    let session = TL_CALC_SESSIONS.get(ind);
+    if (!session) {
+      session = createTrendlinesSession();
+      TL_CALC_SESSIONS.set(ind, session);
+    }
+    const { points, lines, atr } = session.compute(
       dataList,
       parseTrendlinesConfig(ind.calcParams),
     );
-    const out = points.map((p) => ({ ...p })) as TrendlinesCalcPoint[];
+    // The session already returns a fresh top-level array (prefix rows shared,
+    // read-only by contract — see createTrendlinesSession), so replacing the
+    // last row here mutates nothing cached.
+    const out = points as TrendlinesCalcPoint[];
     if (out.length)
       out[out.length - 1] = {
         ...out[out.length - 1],

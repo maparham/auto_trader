@@ -21,21 +21,30 @@ export function normalizeAtrSmoothing(v: unknown): AtrSmoothing {
   return v === "sma" || v === "ema" || v === "wma" || v === "rma" ? v : "rma";
 }
 
+/** One bar of Pine ta.tr(true). Split out of trueRangeSeries so an incremental
+ * caller (trendlines' calc session) computes the SAME value the full series
+ * would — one code path, no arithmetic twin to drift. */
+export function trueRangeAt(candles: KLineData[], i: number): number {
+  const k = candles[i];
+  const hl = k.high - k.low;
+  if (i === 0) return hl;
+  const pc = candles[i - 1].close;
+  return Math.max(hl, Math.abs(k.high - pc), Math.abs(k.low - pc));
+}
+
 /** Pine ta.tr(true): TR[0] = high-low; later bars max(h-l, |h-pc|, |l-pc|). */
 export function trueRangeSeries(candles: KLineData[]): number[] {
   const n = candles.length;
   const tr: number[] = new Array(n);
-  for (let i = 0; i < n; i++) {
-    const k = candles[i];
-    const hl = k.high - k.low;
-    if (i === 0) {
-      tr[i] = hl;
-    } else {
-      const pc = candles[i - 1].close;
-      tr[i] = Math.max(hl, Math.abs(k.high - pc), Math.abs(k.low - pc));
-    }
-  }
+  for (let i = 0; i < n; i++) tr[i] = trueRangeAt(candles, i);
   return tr;
+}
+
+/** One step of Wilder's smoothing — the same expression atrSeries' RMA loop
+ * applies, exported for the incremental caller for the same one-code-path
+ * reason as trueRangeAt. */
+export function rmaNext(prev: number, tr: number, length: number): number {
+  return (prev * (length - 1) + tr) / length;
 }
 
 /** Computes Average True Range using the specified smoothing mode.
@@ -71,7 +80,7 @@ export function atrSeries(
   let atr = sum / length;
   out[length - 1] = atr;
   for (let i = length; i < n; i++) {
-    atr = (atr * (length - 1) + tr[i]) / length;
+    atr = rmaNext(atr, tr[i], length);
     out[i] = atr;
   }
   return out;

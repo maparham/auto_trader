@@ -326,3 +326,65 @@ describe("drawSrLevels broken rendering", () => {
     expect(calls.filter((c) => c.startsWith("stroke:"))).toEqual([]);
   });
 });
+
+describe("drawSrLevels off-pane culling", () => {
+  // Under an MTF pin a 1D level can sit far outside a 1m chart's price
+  // window; its y coordinates land way off-pane, and the pane canvas is
+  // shared with the other panes, so unclamped paints bleed into them (the
+  // class of bug trendlines' draw guards document).
+  function fakeCtx() {
+    const calls: string[] = [];
+    const ctx: Record<string, unknown> = {
+      fillStyle: "", strokeStyle: "", lineWidth: 0, font: "",
+      textBaseline: "", textAlign: "",
+      save: () => {}, restore: () => {}, beginPath: () => {},
+      moveTo: () => {}, lineTo: () => {},
+      setLineDash: () => {},
+      measureText: () => ({ width: 12 }),
+      fillRect: (_x: number, y: number) => calls.push(`fillRect:${y}`),
+      fillText: (_t: string, _x: number, y: number) => calls.push(`fillText:${y}`),
+      stroke: () => calls.push("stroke"),
+    };
+    return { ctx, calls };
+  }
+
+  async function paint(price: number, opts: { midline?: boolean } = {}) {
+    const { SR_LEVELS_TEMPLATE } = await import("./srLevels");
+    const { ctx, calls } = fakeCtx();
+    const dataList = [bar(110, 0), bar(120, 1)];
+    const result = [{}, { levels: [{ price, halfWidth: 5, touches: 3, firstIdx: 0, lastIdx: 0 }] }];
+    (SR_LEVELS_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
+      ctx,
+      chart: { getDataList: () => dataList, getSize: () => ({ width: 40 }) },
+      indicator: {
+        result,
+        calcParams: [15, 0.5, 2, 8, 500],
+        extendData: opts.midline ? { showMidline: true } : {},
+        paneId: "candle_pane",
+      },
+      bounding: { width: 300, height: 200 },
+      xAxis: { convertToPixel: (i: number) => i * 10 },
+      yAxis: { convertToPixel: (p: number) => 1000 - p },
+    });
+    return calls;
+  }
+
+  it("paints nothing for a level whose whole band sits off-pane", async () => {
+    // price 5000 -> yMid = -4000, band [-4005, -3995]: entirely above the pane.
+    expect(await paint(5000, { midline: true })).toEqual([]);
+    // price 100 -> y 900, far below a 200px pane.
+    expect(await paint(100)).toEqual([]);
+  });
+
+  it("keeps a visible level's band but withholds an off-pane tag", async () => {
+    // price 902 -> yMid = 98: band on-pane, tag on-pane too.
+    const on = await paint(902);
+    expect(on.some((c) => c.startsWith("fillRect:"))).toBe(true);
+    expect(on.some((c) => c.startsWith("fillText:"))).toBe(true);
+    // price 998 -> yMid = 2: band clips into the pane top, but the tag would
+    // sit at y=-5, outside — it must be withheld, not bled into the pane above.
+    const edge = await paint(998);
+    expect(edge.some((c) => c.startsWith("fillRect:"))).toBe(true);
+    expect(edge.some((c) => c.startsWith("fillText:"))).toBe(false);
+  });
+});

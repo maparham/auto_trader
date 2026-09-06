@@ -498,9 +498,21 @@ function drawRsiZoneFill(
   hex: string,
   isUpper: boolean,
 ): void {
-  const { ctx, indicator, xAxis, yAxis } = params;
+  const { ctx, chart, indicator, xAxis, yAxis } = params;
   const result = indicator.result ?? [];
-  const start = result.findIndex((p) => p?.val !== undefined);
+  // Visible bars only (±1 for the edge segments): the fill is vertical
+  // between the line and the level, so off-pane bars contribute nothing —
+  // and walking all of them rebuilt an ~18k-point path every frame.
+  const vr = chart.getVisibleRange();
+  const lo = Math.max(0, vr.from - 1);
+  const hi = Math.min(result.length, vr.to + 1);
+  let start = -1;
+  for (let i = lo; i < hi; i++) {
+    if (result[i]?.val !== undefined) {
+      start = i;
+      break;
+    }
+  }
   if (start < 0) return;
   const yInner = yAxis.convertToPixel(inner);
   const yOuter = yAxis.convertToPixel(outer);
@@ -516,7 +528,7 @@ function drawRsiZoneFill(
   ctx.beginPath();
   ctx.moveTo(xAxis.convertToPixel(start), yAxis.convertToPixel(result[start].val as number));
   let lastX = xAxis.convertToPixel(start);
-  for (let i = start; i < result.length; i++) {
+  for (let i = start; i < hi; i++) {
     const v = result[i]?.val;
     if (v === undefined) continue;
     lastX = xAxis.convertToPixel(i);
@@ -543,15 +555,22 @@ function drawRsiSeries(
   width: number,
   dash: number[] = [],
 ): void {
-  const { ctx, indicator, xAxis, yAxis } = params;
+  const { ctx, chart, indicator, xAxis, yAxis } = params;
   const result = indicator.result ?? [];
+  // Visible bars only (±1 so the edge segments still reach off-pane): these
+  // polylines are DASHED, and a dashed path walked over the whole loaded
+  // series regenerates dash segments for its full geometric length every
+  // frame — the trendlines-ray bug in miniature.
+  const vr = chart.getVisibleRange();
+  const from = Math.max(0, vr.from - 1);
+  const to = Math.min(result.length, vr.to + 1);
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
   ctx.setLineDash(dash);
   ctx.beginPath();
   let pen = false;
-  for (let i = 0; i < result.length; i++) {
+  for (let i = from; i < to; i++) {
     const v = pick(result[i]);
     if (v === undefined) {
       pen = false;

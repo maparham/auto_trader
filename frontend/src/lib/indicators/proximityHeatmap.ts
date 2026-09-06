@@ -38,7 +38,13 @@ function drawHeatmap(
   const halfBar = barSpace.halfBar;
   const H = bounding.height;
   ctx.save();
-  for (let i = 0; i < points.length; i++) {
+  // Visible bars only (±1 for the edge slivers): the loop otherwise burns a
+  // globalAlpha/fillStyle state change plus an off-canvas fillRect per loaded
+  // bar per frame.
+  const vr = chart.getVisibleRange();
+  const lo = Math.max(0, vr.from - 1);
+  const hi = Math.min(points.length, vr.to + 1);
+  for (let i = lo; i < hi; i++) {
     const v = points[i].v;
     if (v == null) continue;
     const a = heatAlpha(v);

@@ -247,3 +247,42 @@ describe("spikeOutputs", () => {
     expect(spikeWarmup(CFG)).toBe(3 + 60);
   });
 });
+
+describe("drawSpike visible-range cull", () => {
+  // Historical episodes cover the whole loaded series; each off-pane segment
+  // was restroked (dotted edges + dashed floor) every frame for nothing.
+  it("paints only near-pane segments", async () => {
+    const { SPIKE_TEMPLATE } = await import("./spike");
+    const rects: number[][] = [];
+    const ctx = new Proxy(
+      { fillRect: (...a: number[]) => rects.push(a), measureText: () => ({ width: 10 }) },
+      { get: (t, p) => (p in t ? t[p as keyof typeof t] : () => {}), set: () => true },
+    );
+    const n = 6000;
+    // One 10-bar episode every 100 bars, each with a distinct spikeHigh so
+    // consecutive episodes never merge into one segment.
+    const result = Array.from({ length: n }, (_, i) => {
+      const ep = Math.floor(i / 100);
+      return i % 100 < 10
+        ? { spikeHigh: 110 + ep, spikeLow: 100 + ep, consolOk: 0 }
+        : {};
+    });
+    const bars = Array.from({ length: n }, (_, i) => ({
+      timestamp: i, open: 100, high: 111, low: 99, close: 100, volume: 1,
+    })) as unknown[];
+    (SPIKE_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
+      ctx,
+      chart: {
+        getDataList: () => bars,
+        getVisibleRange: () => ({ from: 5800, to: 5950 }),
+      },
+      indicator: { result, calcParams: [], extendData: {} },
+      xAxis: { convertToPixel: (i: number) => (i - 5875) * 6 + 450 },
+      yAxis: { convertToPixel: (p: number) => 800 - p * 2 },
+      bounding: { width: 900, height: 400 },
+    });
+    // ~2 visible episodes x 2 fills each, not ~60 episodes' worth.
+    expect(rects.length).toBeGreaterThan(0);
+    expect(rects.length).toBeLessThan(12);
+  });
+});

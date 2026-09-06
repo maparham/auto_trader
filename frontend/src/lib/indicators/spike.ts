@@ -278,6 +278,10 @@ function drawSpike(params: IndicatorDrawParams<SpikePoint, unknown, unknown>): b
     // (covering the spike leg and its swing low), the segment start otherwise.
     const x0 = xAxis.convertToPixel(s.legFrom ?? s.from) - half;
     const x1 = xAxis.convertToPixel(s.to) + half;
+    // Segments cover every historical episode in the loaded series; skip the
+    // off-pane ones instead of restroking their dotted edges and dashed
+    // floor off-canvas every frame.
+    if (x1 < 0 || x0 > params.bounding.width) continue;
     const w = x1 - x0;
     if (w <= 0) continue;
     const yTop = yAxis.convertToPixel(s.spikeHigh);

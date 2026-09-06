@@ -278,6 +278,9 @@ function drawTimeHighlight(params: IndicatorDrawParams<TimeHighlightPoint, unkno
       for (const seg of buildWindowSegments(points, w.id)) {
         const left = xAxis.convertToPixel(seg.start) - halfBar;
         const right = xAxis.convertToPixel(seg.end) + halfBar;
+        // Segments cover the whole loaded series; skip the off-pane ones
+        // (the width guard below can never do it — right > left always).
+        if (right < 0 || left > bounding.width) continue;
         const width = right - left;
         if (width <= 0) continue;
         ctx.fillRect(left, 0, width, H);
@@ -288,10 +291,15 @@ function drawTimeHighlight(params: IndicatorDrawParams<TimeHighlightPoint, unkno
       ctx.fillStyle = w.color;
       ctx.strokeStyle = w.color;
       ctx.lineWidth = 1;
-      // Iterate the full result (off-screen bars draw off-canvas, harmlessly) —
-      // same convention as the RSI/Sessions draws; avoids a visibleRange
-      // inclusive/exclusive off-by-one dropping the newest in-window candle.
-      for (let i = 0; i < points.length; i++) {
+      // Visible bars only, ±1 so an inclusive/exclusive off-by-one can never
+      // drop the newest in-window candle. The old "off-screen bars draw
+      // off-canvas, harmlessly" convention was wrong twice over: thousands of
+      // off-pane strokes per frame are pure waste, and the wick y comes from
+      // the bar's own high/low, unbounded under a zoomed price scale.
+      const vr = chart.getVisibleRange();
+      const lo = Math.max(0, vr.from - 1);
+      const hi = Math.min(points.length, vr.to + 1);
+      for (let i = lo; i < hi; i++) {
         if (!points[i].ids?.includes(w.id)) continue;
         const k = kLineDataList[i];
         if (!k) continue;

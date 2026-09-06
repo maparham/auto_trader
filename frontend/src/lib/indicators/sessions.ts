@@ -194,6 +194,13 @@ function drawSessions(params: IndicatorDrawParams<SessionPoint, unknown, unknown
   for (const seg of segs) {
     const left = xAxis.convertToPixel(seg.start) - half;
     const right = xAxis.convertToPixel(seg.end) + half;
+    // The segment list spans the ENTIRE loaded series, so on a long 1m load
+    // most segments convert to coordinates far off-pane (hundreds of
+    // thousands of px). Cull them before painting: the fills clip cheaply
+    // but are pure waste, and the shadowed label was gated only on WIDTH, so
+    // a wide off-canvas segment paid the most expensive primitive in the
+    // loop for nothing. Same class of bug as trendlines' unclipped MTF rays.
+    if (right < 0 || left > bounding.width) continue;
     const w = right - left;
     if (w <= 0) continue;
     const active = seg.ids.map((id) => byId.get(id)).filter(Boolean) as SessionDef[];

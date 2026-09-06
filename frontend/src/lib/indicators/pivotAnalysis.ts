@@ -31,7 +31,7 @@ import {
   type KLineData,
   type SmoothLineStyle,
 } from "klinecharts";
-import { fullLine } from "./shared";
+import { clipSegmentToRect, DRAW_CLIP_PAD, fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
 
 export type PivotConnectorLineStyle = "solid" | "dashed" | "dotted";
@@ -283,17 +283,34 @@ function drawDoubleArrow(
   y2: number,
   dash: number[],
   arrows: boolean,
+  clip: ClipRect,
 ): void {
-  ctx.setLineDash(dash);
-  ctx.beginPath();
-  ctx.moveTo(x, y1);
-  ctx.lineTo(x, y2);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  if (arrows) {
-    arrowHead(ctx, x, y1, Math.atan2(y1 - y2, 0));
-    arrowHead(ctx, x, y2, Math.atan2(y2 - y1, 0));
+  // The far level can sit way outside the pane's price window, and the shaft
+  // is DASHED — clip it near the pane or dash generation walks the whole
+  // off-canvas length every frame (see clipSegmentToRect).
+  const seg = clipSegmentToRect(x, y1, x, y2, clip.xMin, clip.yMin, clip.xMax, clip.yMax);
+  if (seg) {
+    ctx.setLineDash(dash);
+    ctx.beginPath();
+    ctx.moveTo(seg[0], seg[1]);
+    ctx.lineTo(seg[2], seg[3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
+  if (arrows) {
+    // Each head only where its end really is (a clipped-away end has no tip
+    // on screen to point at).
+    if (y1 >= clip.yMin && y1 <= clip.yMax) arrowHead(ctx, x, y1, Math.atan2(y1 - y2, 0));
+    if (y2 >= clip.yMin && y2 <= clip.yMax) arrowHead(ctx, x, y2, Math.atan2(y2 - y1, 0));
+  }
+}
+
+/** The generous near-pane clip window the connector strokes use. */
+interface ClipRect {
+  xMin: number;
+  yMin: number;
+  xMax: number;
+  yMax: number;
 }
 
 interface Axis {
@@ -310,6 +327,7 @@ function drawPivot(
   _side: "high" | "low",
   color: string,
   connector: Required<PivotConnectorStyle>,
+  clip: ClipRect,
 ): void {
   const x = xAxis.convertToPixel(i);
   const y = yAxis.convertToPixel(ev.price);
@@ -324,21 +342,30 @@ function drawPivot(
   const xPrev = xAxis.convertToPixel(ev.prevIndex);
   const yPrev = yAxis.convertToPixel(ev.prevPrice);
 
-  // Dotted horizontal segment at the previous pivot's level, back to it.
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  ctx.setLineDash([2, 2]);
-  ctx.beginPath();
-  ctx.moveTo(xPrev, yPrev);
-  ctx.lineTo(x, yPrev);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  // Dotted horizontal segment at the previous pivot's level, back to it —
+  // clipped: the previous pivot can be thousands of bars back, and this
+  // stroke is dashed (see clipSegmentToRect for why that combination stalls
+  // the compositor).
+  const hseg = clipSegmentToRect(
+    xPrev, yPrev, x, yPrev,
+    clip.xMin, clip.yMin, clip.xMax, clip.yMax,
+  );
+  if (hseg) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.moveTo(hseg[0], hseg[1]);
+    ctx.lineTo(hseg[2], hseg[3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   // Vertical connector between the two levels — color is price-driven (up when the
   // new pivot is higher, down when lower); width/dash/arrowheads are configurable.
   ctx.strokeStyle = ev.price > ev.prevPrice ? connector.upColor : connector.downColor;
   ctx.lineWidth = connector.width;
-  drawDoubleArrow(ctx, x, yPrev, y, CONNECTOR_DASH[connector.lineStyle], connector.arrows);
+  drawDoubleArrow(ctx, x, yPrev, y, CONNECTOR_DASH[connector.lineStyle], connector.arrows, clip);
 
   // The Δ%/Δt label is NOT drawn here: it's owned entirely by the chart overlay
   // (chartPainters.paintPivotDeltaLabels), which draws each pivot's label once —
@@ -395,11 +422,17 @@ function drawPivotAnalysis(params: IndicatorDrawParams<PivotAnalysisPoint, unkno
   // so a pivot whose marker/label sits just off-screen still peeks in.
   const lo = Math.max(0, from - 1);
   const hi = Math.min(result.length, to + 1);
+  const clip: ClipRect = {
+    xMin: -DRAW_CLIP_PAD,
+    yMin: -DRAW_CLIP_PAD,
+    xMax: params.bounding.width + DRAW_CLIP_PAD,
+    yMax: params.bounding.height + DRAW_CLIP_PAD,
+  };
   for (let i = lo; i < hi; i++) {
     const ph = result[i]?.phEvent;
-    if (ph) drawPivot(ctx, xAxis, yAxis, i, ph, "high", highColor, connector);
+    if (ph) drawPivot(ctx, xAxis, yAxis, i, ph, "high", highColor, connector, clip);
     const pl = result[i]?.plEvent;
-    if (pl) drawPivot(ctx, xAxis, yAxis, i, pl, "low", lowColor, connector);
+    if (pl) drawPivot(ctx, xAxis, yAxis, i, pl, "low", lowColor, connector, clip);
   }
   ctx.restore();
   return true; // suppress the default figure lines (we draw the levels ourselves)

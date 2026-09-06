@@ -412,9 +412,14 @@ function drawCandlePatterns(
   ctx.save();
   ctx.font = LABEL_FONT;
   ctx.textAlign = "center";
-  // Iterate the full result (off-screen bars draw off-canvas, harmlessly) —
-  // same convention as timeHighlight/RSI/Sessions draws.
-  for (let i = 0; i < points.length; i++) {
+  // Visible bars only, ±1 for the edges: walking the full result paid path
+  // and label-stack setup for thousands of off-pane bars every frame, at y
+  // coordinates unbounded under a zoomed price scale (the same class of
+  // waste the trendlines-ray fix removed).
+  const vr = chart.getVisibleRange();
+  const lo = Math.max(0, vr.from - 1);
+  const hi = Math.min(points.length, vr.to + 1);
+  for (let i = lo; i < hi; i++) {
     const hits = points[i].hits;
     if (!hits || hits.length === 0) continue;
     const k = kLineDataList[i];

@@ -16,6 +16,7 @@ import {
   sessionActiveAt,
   computeSessions,
   buildSegments,
+  SESSIONS_TEMPLATE,
   type SessionDef,
 } from "./sessions";
 
@@ -103,5 +104,56 @@ describe("computeSessions + buildSegments", () => {
     const pts = computeSessions([bar("2026-07-06T14:00:00Z")], {});
     expect(Array.isArray(pts[0].ids)).toBe(true);
     expect(DEFAULT_SESSIONS.length).toBe(4);
+  });
+});
+
+describe("SESSIONS_TEMPLATE.draw visible-range cull", () => {
+  // The draw must skip segments wholly outside the pane: the segment list
+  // covers the ENTIRE loaded series, and on a long 1m load the off-pane
+  // conversions put fills (and shadowed labels) hundreds of thousands of
+  // pixels off-canvas, every frame, for bands no one can see.
+  const draw = SESSIONS_TEMPLATE.draw as (params: unknown) => boolean;
+
+  function paint(viewCenterIdx: number) {
+    const points = Array.from({ length: 3000 }, (_, i) =>
+      (i >= 100 && i <= 200) || (i >= 2500 && i <= 2600) ? { ids: ["x"] } : {},
+    );
+    const rects: number[][] = [];
+    const texts: number[][] = [];
+    const ctx = new Proxy(
+      {
+        fillRect: (...a: number[]) => rects.push(a),
+        fillText: (_t: string, x: number, y: number) => texts.push([x, y]),
+        measureText: () => ({ width: 10 }),
+      },
+      { get: (t, p) => (p in t ? t[p as keyof typeof t] : () => {}), set: () => true },
+    );
+    const barPx = 6;
+    draw({
+      ctx,
+      indicator: { result: points, extendData: { sessions: [s({})] } },
+      xAxis: { convertToPixel: (i: number) => (i - viewCenterIdx) * barPx + 450 },
+      bounding: { width: 900, height: 20 },
+    });
+    return { rects, texts };
+  }
+
+  it("paints the on-screen segment and skips the far-off-pane one", () => {
+    const { rects } = paint(2550); // viewing bars ~2475..2625
+    expect(rects.length).toBeGreaterThan(0);
+    // Every painted rect intersects the pane; nothing lands at bar 150's
+    // ~-14,000px conversion.
+    for (const [x, , w] of rects) {
+      expect(x + w).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(900);
+    }
+  });
+
+  it("draws no label for a segment whose span sits off-pane", () => {
+    const { texts } = paint(2550);
+    for (const [x] of texts) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(900);
+    }
   });
 });

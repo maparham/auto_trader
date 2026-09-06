@@ -367,3 +367,53 @@ describe("buildWindowSegments", () => {
     expect(buildWindowSegments([{}, { ids: ["b"] }], "a")).toEqual([]);
   });
 });
+
+describe("drawTimeHighlight visible-range cull", () => {
+  // Band segments and highlighted candles both cover the ENTIRE loaded
+  // series; off-pane ones must be skipped, not painted "harmlessly"
+  // off-canvas (per-frame waste, and the wick strokes carry unbounded y —
+  // the trendlines-ray bug class).
+  it("paints only near-pane bands and candles", async () => {
+    const { TIME_HIGHLIGHT_TEMPLATE } = await import("./timeHighlight");
+    const rects: number[][] = [];
+    const wicks: number[][] = [];
+    const ctx = new Proxy(
+      {
+        fillRect: (...a: number[]) => rects.push(a),
+        moveTo: (x: number, y: number) => wicks.push([x, y]),
+        measureText: () => ({ width: 10 }),
+      },
+      { get: (t, p) => (p in t ? t[p as keyof typeof t] : () => {}), set: () => true },
+    );
+    const n = 8000;
+    const points = Array.from({ length: n }, () => ({ ids: ["w1"] }));
+    const bars = Array.from({ length: n }, (_, i) => ({
+      timestamp: i, open: 100, high: 101, low: 99, close: 100, volume: 1,
+    }));
+    (TIME_HIGHLIGHT_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
+      ctx,
+      chart: {
+        getBarSpace: () => ({ halfBar: 3, halfGapBar: 2 }),
+        getDataList: () => bars,
+        getVisibleRange: () => ({ from: 7800, to: 7950 }),
+      },
+      indicator: {
+        result: points,
+        extendData: { windows: [{ id: "w1", enabled: true, mode: "both", color: "#f00" }] },
+      },
+      xAxis: { convertToPixel: (i: number) => (i - 7875) * 6 + 450 },
+      yAxis: { convertToPixel: (p: number) => 200 - p },
+      bounding: { width: 900, height: 200 },
+    });
+    // ~150 visible candles (+ margin), not 8000.
+    expect(wicks.length).toBeGreaterThan(100);
+    expect(wicks.length).toBeLessThan(300);
+    for (const [x] of wicks) expect(Math.abs(x)).toBeLessThan(10_000);
+    // Small negative margin: the deliberate one-bar edge margin may place a
+    // body a few px off-pane.
+    for (const [x, , w] of rects) {
+      expect(x + w).toBeGreaterThanOrEqual(-50);
+      expect(x).toBeLessThanOrEqual(950);
+    }
+  });
+});

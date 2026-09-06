@@ -371,6 +371,10 @@ function drawSrLevels(params: IndicatorDrawParams<SrLevelsPoint, unknown, unknow
     const yTop = yAxis.convertToPixel(lv.price + lv.halfWidth);
     const yBot = yAxis.convertToPixel(lv.price - lv.halfWidth);
     const yMid = yAxis.convertToPixel(lv.price);
+    // Under an MTF pin a level's price can sit far outside the pane's price
+    // window, and this canvas is shared with the other panes — an unclamped y
+    // bleeds into them (the same both-axes rule trendlines' marks follow).
+    if (yBot < 0 || yTop > bounding.height) continue;
     const w = bounding.width - x0;
     if (w <= 0) continue;
     const h = Math.max(1, yBot - yTop);
@@ -411,6 +415,9 @@ function drawSrLevels(params: IndicatorDrawParams<SrLevelsPoint, unknown, unknow
     ctx.fillStyle = hexWithAlpha(color, broken ? BROKEN_INK : 0.95);
     ctx.textAlign = "right";
     const yTag = yMid - 7;
+    // A band clipped into the pane's top edge would put its tag above the
+    // pane; withhold it rather than paint into the pane above.
+    if (yTag < 0 || yTag > bounding.height) continue;
     ctx.fillText(label, tagRight, yTag);
     if (broken) {
       const tw = ctx.measureText(label).width;
