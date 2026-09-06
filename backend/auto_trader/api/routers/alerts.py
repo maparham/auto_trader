@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_store import ALERT_STORE
+from auto_trader.core.push_notify import PUSH
 from auto_trader.core.telegram_notify import TELEGRAM
 
 from ..deps import current_user
@@ -86,6 +87,15 @@ class PatchAlertBody(BaseModel):
 
 class TriggeredSeenBody(BaseModel):
     time: int
+
+
+class PushSubscribeBody(BaseModel):
+    endpoint: str
+    keys: dict[str, str]
+
+
+class PushUnsubscribeBody(BaseModel):
+    endpoint: str
 
 
 async def _notify(request: Request, row: dict | None, alert_id: str, broker: str, epic: str, origin: str) -> None:
@@ -190,10 +200,29 @@ async def telegram_test(request: Request) -> None:
     await TELEGRAM.send(chat_id, "🔔 Test alert from Auto Trader")
 
 
-# The fixed-path /api/alerts/triggered* and /api/alerts/telegram* routes above
-# must be registered BEFORE these {alert_id} routes — FastAPI matches path
-# operations in registration order, and a {alert_id} route would otherwise
-# swallow "triggered"/"telegram" as an id.
+@router.get("/api/alerts/push/vapid")
+async def push_vapid(request: Request) -> dict[str, Any]:
+    current_user(request)
+    return {"key": await PUSH.vapid_public()}
+
+
+@router.post("/api/alerts/push/subscribe", status_code=204)
+async def push_subscribe(request: Request, body: PushSubscribeBody) -> None:
+    user = current_user(request)
+    await ALERT_STORE.add_push_sub(user, body.endpoint, body.keys)
+
+
+@router.delete("/api/alerts/push/subscribe", status_code=204)
+async def push_unsubscribe(request: Request, body: PushUnsubscribeBody) -> None:
+    user = current_user(request)
+    await ALERT_STORE.delete_push_sub(user, body.endpoint)
+
+
+# The fixed-path /api/alerts/triggered*, /api/alerts/telegram* and
+# /api/alerts/push* routes above must be registered BEFORE these {alert_id}
+# routes — FastAPI matches path operations in registration order, and a
+# {alert_id} route would otherwise swallow "triggered"/"telegram"/"push" as
+# an id.
 
 
 @router.patch("/api/alerts/{alert_id}")

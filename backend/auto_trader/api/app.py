@@ -116,16 +116,18 @@ async def lifespan(app: FastAPI):
     from auto_trader.core.alert_engine import ALERT_ENGINE
     from auto_trader.core.alert_migrate import migrate_legacy_alerts
     from auto_trader.core.alert_store import ALERT_STORE
+    from auto_trader.core.push_notify import PUSH
     from auto_trader.core.state_store import STATE_STORE
     from auto_trader.core.telegram_notify import TELEGRAM
     from .routers import state as state_router
 
     TELEGRAM.configure(telegram_settings.bot_token or None, ALERT_STORE)
+    PUSH.configure(ALERT_STORE)
     ALERT_ENGINE.configure(
         store=ALERT_STORE,
         get_broker=deps.get_data,
         broadcast=state_router.broadcast_to_user,
-        notifiers=[TELEGRAM.notifier],  # push registers in a later task
+        notifiers=[TELEGRAM.notifier, PUSH.notifier],
     )
     telegram_poller = asyncio.create_task(TELEGRAM.run_poller())
     try:
