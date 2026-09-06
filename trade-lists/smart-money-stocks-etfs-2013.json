@@ -1,0 +1,1056 @@
+{
+  "source": "https://verifiedinvesting.com/pages/smart-money-trade-alerts-stocks-etfs-closed-position",
+  "service": "The Swing Trader",
+  "sheet": "CLOSED-2013",
+  "order": "as-listed-on-site",
+  "stats": {
+    "year": "2013",
+    "trades": 116,
+    "winners": 86,
+    "winRate": "76.11%"
+  },
+  "tradeCount": 116,
+  "trades": [
+    {
+      "symbol": "PEIX",
+      "side": "LONG",
+      "entryDate": "1/1/2013",
+      "entryPrice": "$0.35",
+      "exitDate": "2/4/2013",
+      "exitPrice": "$0.45",
+      "pctPL": "+29.50%"
+    },
+    {
+      "symbol": "ROSG",
+      "side": "LONG",
+      "entryDate": "1/3/2013",
+      "entryPrice": "$4.25",
+      "exitDate": "1/9/2013",
+      "exitPrice": "$5.50",
+      "pctPL": "+30.00%"
+    },
+    {
+      "symbol": "MPEL",
+      "side": "SHORT",
+      "entryDate": "1/7/2013",
+      "entryPrice": "$19.10",
+      "exitDate": "1/22/2013",
+      "exitPrice": "$20.19",
+      "pctPL": "-5.65%"
+    },
+    {
+      "symbol": "BBY",
+      "side": "LONG",
+      "entryDate": "1/8/2013",
+      "entryPrice": "$11.90",
+      "exitDate": "1/11/2013",
+      "exitPrice": "$13.25",
+      "pctPL": "+11.30%"
+    },
+    {
+      "symbol": "DISH",
+      "side": "SHORT",
+      "entryDate": "1/15/2013",
+      "entryPrice": "$37.05",
+      "exitDate": "2/19/2013",
+      "exitPrice": "$36.10",
+      "pctPL": "+2.56%"
+    },
+    {
+      "symbol": "ROSG",
+      "side": "LONG",
+      "entryDate": "1/24/2013",
+      "entryPrice": "$4.45",
+      "exitDate": "2/11/2013",
+      "exitPrice": "$5.45",
+      "pctPL": "+22.50%"
+    },
+    {
+      "symbol": "DIA",
+      "side": "SHORT",
+      "entryDate": "1/28/2013",
+      "entryPrice": "$138.85",
+      "exitDate": "3/5/2013",
+      "exitPrice": "$142.20",
+      "pctPL": "-2.40%"
+    },
+    {
+      "symbol": "MMM",
+      "side": "SHORT",
+      "entryDate": "1/29/2013",
+      "entryPrice": "$101.35",
+      "exitDate": "2/19/2013",
+      "exitPrice": "$104.15",
+      "pctPL": "-2.76%"
+    },
+    {
+      "symbol": "FXY",
+      "side": "LONG",
+      "entryDate": "2/5/2013",
+      "entryPrice": "$104.75",
+      "exitDate": "2/25/2013",
+      "exitPrice": "$107.45",
+      "pctPL": "+2.60%"
+    },
+    {
+      "symbol": "JPM",
+      "side": "SHORT",
+      "entryDate": "2/5/2013",
+      "entryPrice": "$48.35",
+      "exitDate": "3/7/2013",
+      "exitPrice": "$50.65",
+      "pctPL": "-4.75%"
+    },
+    {
+      "symbol": "SDS",
+      "side": "LONG",
+      "entryDate": "2/19/2013",
+      "entryPrice": "$46.60",
+      "exitDate": "2/21/2013",
+      "exitPrice": "$48.33",
+      "pctPL": "+3.71%"
+    },
+    {
+      "symbol": "SMH",
+      "side": "SHORT",
+      "entryDate": "2/19/2013",
+      "entryPrice": "$35.75",
+      "exitDate": "2/21/2013",
+      "exitPrice": "$34.60",
+      "pctPL": "+3.20%"
+    },
+    {
+      "symbol": "SDS",
+      "side": "LONG",
+      "entryDate": "2/22/2013",
+      "entryPrice": "$47.48",
+      "exitDate": "2/27/2013",
+      "exitPrice": "$47.48"
+    },
+    {
+      "symbol": "RAX",
+      "side": "LONG",
+      "entryDate": "2/22/2013",
+      "entryPrice": "$52.98",
+      "exitDate": "2/27/2013",
+      "exitPrice": "$55.00",
+      "pctPL": "+3.80%"
+    },
+    {
+      "symbol": "SDS",
+      "side": "LONG",
+      "entryDate": "2/27/2013",
+      "entryPrice": "$47.00",
+      "exitDate": "3/4/2013",
+      "exitPrice": "$48.15",
+      "pctPL": "+2.45%"
+    },
+    {
+      "symbol": "AAPL",
+      "side": "LONG",
+      "entryDate": "3/4/2013",
+      "entryPrice": "$422.25",
+      "exitDate": "3/25/2013",
+      "exitPrice": "$465.00",
+      "pctPL": "+10.20%"
+    },
+    {
+      "symbol": "BAC",
+      "side": "SHORT",
+      "entryDate": "3/5/2013",
+      "entryPrice": "$11.60",
+      "exitDate": "3/25/2013",
+      "exitPrice": "$12.57",
+      "pctPL": "-8.30%"
+    },
+    {
+      "symbol": "SDS",
+      "side": "LONG",
+      "entryDate": "3/11/2013",
+      "entryPrice": "$44.83",
+      "exitDate": "3/20/2013",
+      "exitPrice": "$45.75",
+      "pctPL": "+0.92%"
+    },
+    {
+      "symbol": "OXY",
+      "side": "SHORT",
+      "entryDate": "3/11/2013",
+      "entryPrice": "$83.10",
+      "exitDate": "3/19/2013",
+      "exitPrice": "$79.60",
+      "pctPL": "+4.20%"
+    },
+    {
+      "symbol": "SLV",
+      "side": "SHORT",
+      "entryDate": "3/12/2013",
+      "entryPrice": "$28.30",
+      "exitDate": "4/3/2013",
+      "exitPrice": "$25.95",
+      "pctPL": "+8.30%"
+    },
+    {
+      "symbol": "IBM",
+      "side": "SHORT",
+      "entryDate": "3/13/2013",
+      "entryPrice": "$212.10",
+      "exitDate": "4/17/2013",
+      "exitPrice": "$210.05",
+      "pctPL": "+2.00%"
+    },
+    {
+      "symbol": "EMC",
+      "side": "SHORT",
+      "entryDate": "3/13/2013",
+      "entryPrice": "$25.15",
+      "exitDate": "4/5/2013",
+      "exitPrice": "$22.83",
+      "pctPL": "+9.22%"
+    },
+    {
+      "symbol": "KR",
+      "side": "SHORT",
+      "entryDate": "3/21/2013",
+      "entryPrice": "$32.05",
+      "exitDate": "4/22/2013",
+      "exitPrice": "$34.65",
+      "pctPL": "-6.67%"
+    },
+    {
+      "symbol": "AMZN",
+      "side": "SHORT",
+      "entryDate": "3/27/2013",
+      "entryPrice": "$265.50",
+      "exitDate": "4/18/2013",
+      "exitPrice": "$257.00",
+      "pctPL": "+3.20%"
+    },
+    {
+      "symbol": "SDS",
+      "side": "LONG",
+      "entryDate": "3/28/2013",
+      "entryPrice": "$43.94",
+      "exitDate": "5/15/2013",
+      "exitPrice": "$39.25",
+      "pctPL": "-10.60%"
+    },
+    {
+      "symbol": "VLO",
+      "side": "SHORT",
+      "entryDate": "4/1/2013",
+      "entryPrice": "$45.35",
+      "exitDate": "4/3/2013",
+      "exitPrice": "$39.95",
+      "pctPL": "+11.90%"
+    },
+    {
+      "symbol": "IAU",
+      "side": "LONG",
+      "entryDate": "4/10/2013",
+      "entryPrice": "$15.20",
+      "exitDate": "4/12/2013",
+      "exitPrice": "$14.46",
+      "pctPL": "-4.86%"
+    },
+    {
+      "symbol": "CVX",
+      "side": "SHORT",
+      "entryDate": "4/10/2013",
+      "entryPrice": "$119.30",
+      "exitDate": "4/17/2013",
+      "exitPrice": "$114.90",
+      "pctPL": "+3.70%"
+    },
+    {
+      "symbol": "FXY",
+      "side": "LONG",
+      "entryDate": "4/10/2013",
+      "entryPrice": "$98.25",
+      "exitDate": "4/15/2013",
+      "exitPrice": "$100.05",
+      "pctPL": "+1.83%"
+    },
+    {
+      "symbol": "GLD",
+      "side": "LONG",
+      "entryDate": "4/15/2013",
+      "entryPrice": "$135.11",
+      "exitDate": "4/22/2013",
+      "exitPrice": "$138.75",
+      "pctPL": "+2.70%"
+    },
+    {
+      "symbol": "MHP",
+      "side": "LONG",
+      "entryDate": "4/17/2013",
+      "entryPrice": "$51.90",
+      "exitDate": "4/29/2013",
+      "exitPrice": "$54.00",
+      "pctPL": "+4.04%"
+    },
+    {
+      "symbol": "ABX",
+      "side": "LONG",
+      "entryDate": "4/17/2013",
+      "entryPrice": "$17.98",
+      "exitDate": "4/24/2013",
+      "exitPrice": "$19.03",
+      "pctPL": "+5.84%"
+    },
+    {
+      "symbol": "CAT",
+      "side": "LONG",
+      "entryDate": "4/18/2013",
+      "entryPrice": "$80.60",
+      "exitDate": "4/22/2013",
+      "exitPrice": "$82.80",
+      "pctPL": "+2.72%"
+    },
+    {
+      "symbol": "BIDU",
+      "side": "LONG",
+      "entryDate": "4/18/2013",
+      "entryPrice": "$88.25",
+      "exitDate": "4/29/2013",
+      "exitPrice": "$89.25",
+      "pctPL": "+1.13%"
+    },
+    {
+      "symbol": "ROSG",
+      "side": "LONG",
+      "entryDate": "4/22/2013",
+      "entryPrice": "$3.20",
+      "exitDate": "5/15/2013",
+      "exitPrice": "$4.01",
+      "pctPL": "+25.00%"
+    },
+    {
+      "symbol": "JPM",
+      "side": "SHORT",
+      "entryDate": "4/24/2013",
+      "entryPrice": "$48.85",
+      "exitDate": "5/3/2013",
+      "exitPrice": "$47.00",
+      "pctPL": "+3.80%"
+    },
+    {
+      "symbol": "TGT",
+      "side": "SHORT",
+      "entryDate": "4/25/2013",
+      "entryPrice": "$70.80",
+      "exitDate": "8/20/2013",
+      "exitPrice": "$68.20",
+      "pctPL": "+3.70%"
+    },
+    {
+      "symbol": "IBM",
+      "side": "SHORT",
+      "entryDate": "4/29/2013",
+      "entryPrice": "$198.85",
+      "exitDate": "5/17/2013",
+      "exitPrice": "$208.50",
+      "pctPL": "-4.80%"
+    },
+    {
+      "symbol": "CVX",
+      "side": "SHORT",
+      "entryDate": "5/2/2013",
+      "entryPrice": "$122.25",
+      "exitDate": "6/6/2013",
+      "exitPrice": "$120.75",
+      "pctPL": "+1.22%"
+    },
+    {
+      "symbol": "DE",
+      "side": "SHORT",
+      "entryDate": "5/8/2013",
+      "entryPrice": "$92.45",
+      "exitDate": "5/15/2013",
+      "exitPrice": "$88.95",
+      "pctPL": "+3.80%"
+    },
+    {
+      "symbol": "SWKS",
+      "side": "SHORT",
+      "entryDate": "5/8/2013",
+      "entryPrice": "$22.91",
+      "exitDate": "6/7/2013",
+      "exitPrice": "$21.91",
+      "pctPL": "+4.36%"
+    },
+    {
+      "symbol": "PG",
+      "side": "SHORT",
+      "entryDate": "5/9/2013",
+      "entryPrice": "$78.65",
+      "exitDate": "6/6/2013",
+      "exitPrice": "$76.05",
+      "pctPL": "+3.31%"
+    },
+    {
+      "symbol": "QQQ",
+      "side": "SHORT",
+      "entryDate": "5/14/2013",
+      "entryPrice": "$73.55",
+      "exitDate": "6/5/2013",
+      "exitPrice": "$72.05",
+      "pctPL": "+2.04%"
+    },
+    {
+      "symbol": "FXY",
+      "side": "LONG",
+      "entryDate": "5/17/2013",
+      "entryPrice": "$94.95",
+      "exitDate": "6/3/2013",
+      "exitPrice": "$98.95",
+      "pctPL": "+4.21%"
+    },
+    {
+      "symbol": "JPM",
+      "side": "SHORT",
+      "entryDate": "5/21/2013",
+      "entryPrice": "$53.20",
+      "exitDate": "5/30/2013",
+      "exitPrice": "$55.62",
+      "pctPL": "-4.50%"
+    },
+    {
+      "symbol": "CEF",
+      "side": "LONG",
+      "entryDate": "5/21/2013",
+      "entryPrice": "$15.54",
+      "exitDate": "6/11/2013",
+      "exitPrice": "$16.15",
+      "pctPL": "+1.85%"
+    },
+    {
+      "symbol": "SPG",
+      "side": "SHORT",
+      "entryDate": "5/28/2013",
+      "entryPrice": "$77.65",
+      "exitDate": "5/29/2013",
+      "exitPrice": "$70.95",
+      "pctPL": "+3.77%"
+    },
+    {
+      "symbol": "TSLA",
+      "side": "LONG",
+      "entryDate": "5/29/2013",
+      "entryPrice": "$12.60",
+      "exitDate": "5/29/2013",
+      "exitPrice": "$17.65",
+      "pctPL": "+40.00%"
+    },
+    {
+      "symbol": "IYR",
+      "side": "LONG",
+      "entryDate": "6/3/2013",
+      "entryPrice": "$68.15",
+      "exitDate": "6/12/2013",
+      "exitPrice": "$65.95",
+      "pctPL": "-3.22%"
+    },
+    {
+      "symbol": "O",
+      "side": "LONG",
+      "entryDate": "6/4/2013",
+      "entryPrice": "$43.80",
+      "exitDate": "6/20/2013",
+      "exitPrice": "$41.10",
+      "pctPL": "-6.16%"
+    },
+    {
+      "symbol": "HMC",
+      "side": "LONG",
+      "entryDate": "6/7/2013",
+      "entryPrice": "$36.35",
+      "exitDate": "6/12/2013",
+      "exitPrice": "$36.35"
+    },
+    {
+      "symbol": "ADM",
+      "side": "SHORT",
+      "entryDate": "6/17/2013",
+      "entryPrice": "$33.45",
+      "exitDate": "7/11/2013",
+      "exitPrice": "$36.20",
+      "pctPL": "-8.20%"
+    },
+    {
+      "symbol": "SPY",
+      "side": "LONG",
+      "entryDate": "6/21/2013",
+      "entryPrice": "$157.55",
+      "exitDate": "6/27/2013",
+      "exitPrice": "$161.55",
+      "pctPL": "+2.54%"
+    },
+    {
+      "symbol": "RSOL",
+      "side": "LONG",
+      "entryDate": "6/21/2013",
+      "entryPrice": "$2.15",
+      "exitDate": "6/26/2013",
+      "exitPrice": "$3.05",
+      "pctPL": "+35.00%"
+    },
+    {
+      "symbol": "SCCO",
+      "side": "LONG",
+      "entryDate": "6/24/2013",
+      "entryPrice": "$26.98",
+      "exitDate": "7/11/2013",
+      "exitPrice": "$27.90",
+      "pctPL": "+3.41%"
+    },
+    {
+      "symbol": "RHT",
+      "side": "SHORT",
+      "entryDate": "6/26/2013",
+      "entryPrice": "$46.79",
+      "exitDate": "6/27/2013",
+      "exitPrice": "$48.48",
+      "pctPL": "-3.80%"
+    },
+    {
+      "symbol": "SPY",
+      "side": "SHORT",
+      "entryDate": "7/8/2013",
+      "entryPrice": "$164.04",
+      "exitDate": "8/2/2013",
+      "exitPrice": "$170.85",
+      "pctPL": "-4.15%"
+    },
+    {
+      "symbol": "CVX",
+      "side": "SHORT",
+      "entryDate": "7/9/2013",
+      "entryPrice": "$123.30",
+      "exitDate": "8/19/2013",
+      "exitPrice": "$118.80",
+      "pctPL": "+3.65%"
+    },
+    {
+      "symbol": "USO",
+      "side": "SHORT",
+      "entryDate": "7/10/2013",
+      "entryPrice": "$37.26",
+      "exitDate": "11/5/2013",
+      "exitPrice": "$33.75",
+      "pctPL": "+6.29%"
+    },
+    {
+      "symbol": "BBBY",
+      "side": "SHORT",
+      "entryDate": "7/11/2013",
+      "entryPrice": "$76.35",
+      "exitDate": "9/4/2013",
+      "exitPrice": "$71.75",
+      "pctPL": "+5.95%"
+    },
+    {
+      "symbol": "TSLA",
+      "side": "SHORT",
+      "entryDate": "7/15/2013",
+      "entryPrice": "$132.95",
+      "exitDate": "7/16/2013",
+      "exitPrice": "$119.75",
+      "pctPL": "+13.60%"
+    },
+    {
+      "symbol": "IWM",
+      "side": "SHORT",
+      "entryDate": "7/18/2013",
+      "entryPrice": "$104.15",
+      "exitDate": "11/26/2013",
+      "exitPrice": "$112.72",
+      "pctPL": "-8.22%"
+    },
+    {
+      "symbol": "RENN",
+      "side": "LONG",
+      "entryDate": "7/25/2013",
+      "entryPrice": "$3.33",
+      "exitDate": "8/1/2013",
+      "exitPrice": "$3.78",
+      "pctPL": "+13.50%"
+    },
+    {
+      "symbol": "TSLA",
+      "side": "SHORT",
+      "entryDate": "7/30/2013",
+      "entryPrice": "$137.20",
+      "exitDate": "9/19/2013",
+      "exitPrice": "$176.80",
+      "pctPL": "-28.80%"
+    },
+    {
+      "symbol": "DD",
+      "side": "SHORT",
+      "entryDate": "7/31/2013",
+      "entryPrice": "$58.55",
+      "exitDate": "8/28/2013",
+      "exitPrice": "$56.50",
+      "pctPL": "+3.45%"
+    },
+    {
+      "symbol": "PEIX",
+      "side": "LONG",
+      "entryDate": "8/5/2013",
+      "entryPrice": "$4.05",
+      "exitDate": "12/4/2013",
+      "exitPrice": "$4.20",
+      "pctPL": "+3.70%"
+    },
+    {
+      "symbol": "ORCL",
+      "side": "SHORT",
+      "entryDate": "8/6/2013",
+      "entryPrice": "$33.12",
+      "exitDate": "10/8/2013",
+      "exitPrice": "$32.50",
+      "pctPL": "+1.88%"
+    },
+    {
+      "symbol": "FCX",
+      "side": "SHORT",
+      "entryDate": "8/8/2013",
+      "entryPrice": "$30.29",
+      "exitDate": "9/11/2013",
+      "exitPrice": "$32.83",
+      "pctPL": "-9.18%"
+    },
+    {
+      "symbol": "XOM",
+      "side": "LONG",
+      "entryDate": "8/19/2013",
+      "entryPrice": "$87.35",
+      "exitDate": "9/10/2013",
+      "exitPrice": "$87.50",
+      "pctPL": "+0.02%"
+    },
+    {
+      "symbol": "RSOL",
+      "side": "LONG",
+      "entryDate": "8/20/2013",
+      "entryPrice": "$1.79",
+      "exitDate": "9/5/2013",
+      "exitPrice": "$2.02",
+      "pctPL": "+14.44%"
+    },
+    {
+      "symbol": "BBY",
+      "side": "SHORT",
+      "entryDate": "9/4/2013",
+      "entryPrice": "$37.55",
+      "exitDate": "9/17/2013",
+      "exitPrice": "$38.95",
+      "pctPL": "-3.73%"
+    },
+    {
+      "symbol": "SCTY",
+      "side": "LONG",
+      "entryDate": "9/4/2013",
+      "entryPrice": "$28.65",
+      "exitDate": "9/5/2013",
+      "exitPrice": "$31.40",
+      "pctPL": "+6.11%"
+    },
+    {
+      "symbol": "ARO",
+      "side": "LONG",
+      "entryDate": "9/4/2013",
+      "entryPrice": "$7.80",
+      "exitDate": "9/5/2013",
+      "exitPrice": "$8.31",
+      "pctPL": "+6.41%"
+    },
+    {
+      "symbol": "CMI",
+      "side": "SHORT",
+      "entryDate": "9/9/2013",
+      "entryPrice": "$129.85",
+      "exitDate": "10/22/2013",
+      "exitPrice": "$138.15",
+      "pctPL": "-6.40%"
+    },
+    {
+      "symbol": "MA",
+      "side": "SHORT",
+      "entryDate": "9/9/2013",
+      "entryPrice": "$686.25",
+      "exitDate": "10/3/2013",
+      "exitPrice": "$665.25",
+      "pctPL": "+3.00%"
+    },
+    {
+      "symbol": "VZ",
+      "side": "LONG",
+      "entryDate": "9/10/2013",
+      "entryPrice": "$45.80",
+      "exitDate": "9/17/2013",
+      "exitPrice": "$48.40",
+      "pctPL": "+4.14%"
+    },
+    {
+      "symbol": "AMZN",
+      "side": "SHORT",
+      "entryDate": "9/10/2013",
+      "entryPrice": "$300.75",
+      "exitDate": "10/9/2013",
+      "exitPrice": "$296.75",
+      "pctPL": "+1.33%"
+    },
+    {
+      "symbol": "GDX",
+      "side": "LONG",
+      "entryDate": "9/12/2013",
+      "entryPrice": "$25.60",
+      "exitDate": "9/19/2013",
+      "exitPrice": "$27.15",
+      "pctPL": "+5.02%"
+    },
+    {
+      "symbol": "FB",
+      "side": "SHORT",
+      "entryDate": "9/12/2013",
+      "entryPrice": "$45.45",
+      "exitDate": "10/8/2013",
+      "exitPrice": "$45.10",
+      "pctPL": "+2.73%"
+    },
+    {
+      "symbol": "GS",
+      "side": "SHORT",
+      "entryDate": "9/16/2013",
+      "entryPrice": "$167.40",
+      "exitDate": "9/27/2013",
+      "exitPrice": "$159.60",
+      "pctPL": "+4.66%"
+    },
+    {
+      "symbol": "KORS",
+      "side": "SHORT",
+      "entryDate": "9/18/2013",
+      "entryPrice": "$75.25",
+      "exitDate": "10/8/2013",
+      "exitPrice": "$72.40",
+      "pctPL": "+3.79%"
+    },
+    {
+      "symbol": "NDAQ",
+      "side": "SHORT",
+      "entryDate": "9/24/2013",
+      "entryPrice": "$32.23",
+      "exitDate": "10/9/2013",
+      "exitPrice": "$31.80",
+      "pctPL": "+1.33%"
+    },
+    {
+      "symbol": "FB",
+      "side": "SHORT",
+      "entryDate": "9/24/2013",
+      "entryPrice": "$49.30",
+      "exitDate": "10/8/2013",
+      "exitPrice": "$47.30",
+      "pctPL": "+4.06%"
+    },
+    {
+      "symbol": "XONE",
+      "side": "LONG",
+      "entryDate": "9/30/2013",
+      "entryPrice": "$43.10",
+      "exitDate": "10/2/2013",
+      "exitPrice": "$45.50",
+      "pctPL": "+5.57%"
+    },
+    {
+      "symbol": "XONE",
+      "side": "LONG",
+      "entryDate": "10/3/2013",
+      "entryPrice": "$42.35",
+      "exitDate": "10/7/2013",
+      "exitPrice": "$46.35",
+      "pctPL": "+9.45%"
+    },
+    {
+      "symbol": "ROSG",
+      "side": "LONG",
+      "entryDate": "10/7/2013",
+      "entryPrice": "$3.19",
+      "exitDate": "1/13/2014",
+      "exitPrice": "$4.14",
+      "pctPL": "+29.78%"
+    },
+    {
+      "symbol": "KO",
+      "side": "LONG",
+      "entryDate": "10/7/2013",
+      "entryPrice": "$37.07",
+      "exitDate": "10/14/2013",
+      "exitPrice": "$37.75",
+      "pctPL": "+1.88%"
+    },
+    {
+      "symbol": "AMGN",
+      "side": "LONG",
+      "entryDate": "10/9/2013",
+      "entryPrice": "$106.00",
+      "exitDate": "10/15/2013",
+      "exitPrice": "$111.80",
+      "pctPL": "+3.68%"
+    },
+    {
+      "symbol": "AMZN",
+      "side": "SHORT",
+      "entryDate": "10/11/2013",
+      "entryPrice": "$310.35",
+      "exitDate": "10/22/2013",
+      "exitPrice": "$332.35",
+      "pctPL": "-7.00%"
+    },
+    {
+      "symbol": "BBY",
+      "side": "SHORT",
+      "entryDate": "10/15/2013",
+      "entryPrice": "$41.12",
+      "exitDate": "11/5/2013",
+      "exitPrice": "$44.10",
+      "pctPL": "-7.24%"
+    },
+    {
+      "symbol": "FB",
+      "side": "SHORT",
+      "entryDate": "10/15/2013",
+      "entryPrice": "$50.60",
+      "exitDate": "10/29/2013",
+      "exitPrice": "$49.45",
+      "pctPL": "+2.27%"
+    },
+    {
+      "symbol": "WYNN",
+      "side": "LONG",
+      "entryDate": "10/15/2013",
+      "entryPrice": "$170.10",
+      "exitDate": "11/7/2013",
+      "exitPrice": "$159.70",
+      "pctPL": "+6.12%"
+    },
+    {
+      "symbol": "JCP",
+      "side": "LONG",
+      "entryDate": "10/21/2013",
+      "entryPrice": "$6.70",
+      "exitDate": "11/1/2013",
+      "exitPrice": "$8.10",
+      "pctPL": "+21.00%"
+    },
+    {
+      "symbol": "MA",
+      "side": "SHORT",
+      "entryDate": "10/22/2013",
+      "entryPrice": "$720.35",
+      "exitDate": "11/18/2013",
+      "exitPrice": "$754.15",
+      "pctPL": "-4.62%"
+    },
+    {
+      "symbol": "UNG",
+      "side": "LONG",
+      "entryDate": "10/24/2013",
+      "entryPrice": "$18.36",
+      "exitDate": "11/4/2013",
+      "exitPrice": "$754.15",
+      "pctPL": "-6.90%"
+    },
+    {
+      "symbol": "FDX",
+      "side": "SHORT",
+      "entryDate": "10/24/2013",
+      "entryPrice": "$131.60",
+      "exitDate": "1/27/2014",
+      "exitPrice": "$131.60"
+    },
+    {
+      "symbol": "BA",
+      "side": "SHORT",
+      "entryDate": "10/30/2013",
+      "entryPrice": "$130.55",
+      "exitDate": "1/29/2014",
+      "exitPrice": "$128.55",
+      "pctPL": "+1.55%"
+    },
+    {
+      "symbol": "NUAN",
+      "side": "LONG",
+      "entryDate": "10/31/2013",
+      "entryPrice": "$15.54",
+      "exitDate": "11/21/2013",
+      "exitPrice": "$16.00",
+      "pctPL": "+3.00%"
+    },
+    {
+      "symbol": "TWGP",
+      "side": "LONG",
+      "entryDate": "11/5/2013",
+      "entryPrice": "$3.60",
+      "exitDate": "12/18/2013",
+      "exitPrice": "$3.45",
+      "pctPL": "+4.17%"
+    },
+    {
+      "symbol": "SINA",
+      "side": "SHORT",
+      "entryDate": "11/6/2013",
+      "entryPrice": "$81.05",
+      "exitDate": "11/8/2013",
+      "exitPrice": "$74.85",
+      "pctPL": "+7.65%"
+    },
+    {
+      "symbol": "MMM",
+      "side": "SHORT",
+      "entryDate": "11/7/2013",
+      "entryPrice": "$127.51",
+      "exitDate": "12/3/2013",
+      "exitPrice": "$125.31",
+      "pctPL": "+1.73%"
+    },
+    {
+      "symbol": "FXA",
+      "side": "LONG",
+      "entryDate": "11/12/2013",
+      "entryPrice": "$93.02",
+      "exitDate": "11/21/2013",
+      "exitPrice": "$93.90",
+      "pctPL": "+0.88%"
+    },
+    {
+      "symbol": "PCLN",
+      "side": "SHORT",
+      "entryDate": "11/14/2013",
+      "entryPrice": "$1,136.00",
+      "exitDate": "2/3/2014",
+      "exitPrice": "$1,111.00",
+      "pctPL": "+2.20%"
+    },
+    {
+      "symbol": "CELG",
+      "side": "LONG",
+      "entryDate": "11/15/2013",
+      "entryPrice": "$150.59",
+      "exitDate": "12/6/2013",
+      "exitPrice": "$166.25",
+      "pctPL": "-10.39%"
+    },
+    {
+      "symbol": "FB",
+      "side": "LONG",
+      "entryDate": "11/26/2013",
+      "entryPrice": "$45.15",
+      "exitDate": "12/12/2013",
+      "exitPrice": "$52.05",
+      "pctPL": "+9.10%"
+    },
+    {
+      "symbol": "ADBE",
+      "side": "SHORT",
+      "entryDate": "11/29/2013",
+      "entryPrice": "$56.90",
+      "exitDate": "12/5/2013",
+      "exitPrice": "$54.60",
+      "pctPL": "+4.04%"
+    },
+    {
+      "symbol": "HAL",
+      "side": "LONG",
+      "entryDate": "12/5/2013",
+      "entryPrice": "$50.50",
+      "exitDate": "1/16/2014",
+      "exitPrice": "$50.75",
+      "pctPL": "+0.50%"
+    },
+    {
+      "symbol": "ECTE",
+      "side": "LONG",
+      "entryDate": "12/5/2013",
+      "entryPrice": "$2.70",
+      "exitDate": "12/11/2013",
+      "exitPrice": "$3.60",
+      "pctPL": "+21.50%"
+    },
+    {
+      "symbol": "NEWL",
+      "side": "LONG",
+      "entryDate": "12/5/2013",
+      "entryPrice": "$1.95",
+      "exitDate": "12/27/2013",
+      "exitPrice": "$2.30",
+      "pctPL": "+17.95%"
+    },
+    {
+      "symbol": "WPRT",
+      "side": "LONG",
+      "entryDate": "12/9/2013",
+      "entryPrice": "$18.90",
+      "exitDate": "12/18/2013",
+      "exitPrice": "$17.75",
+      "pctPL": "-6.08%"
+    },
+    {
+      "symbol": "IBB",
+      "side": "SHORT",
+      "entryDate": "12/10/2013",
+      "entryPrice": "$121.75",
+      "exitDate": "3/24/2014",
+      "exitPrice": "$239.25",
+      "pctPL": "-7.89%"
+    },
+    {
+      "symbol": "CCXI",
+      "side": "LONG",
+      "entryDate": "12/12/2013",
+      "entryPrice": "$5.19",
+      "exitDate": "1/2/2014",
+      "exitPrice": "$6.19",
+      "pctPL": "+19.27%"
+    },
+    {
+      "symbol": "ABIO",
+      "side": "LONG",
+      "entryDate": "12/17/2013",
+      "entryPrice": "$1.53",
+      "exitDate": "1/8/2014",
+      "exitPrice": "$2.20",
+      "pctPL": "+43.40%"
+    },
+    {
+      "symbol": "TWGP",
+      "side": "LONG",
+      "entryDate": "12/20/2013",
+      "entryPrice": "$2.53",
+      "exitDate": "12/30/2013",
+      "exitPrice": "$3.25",
+      "pctPL": "+28.50%"
+    },
+    {
+      "symbol": "TWTR",
+      "side": "SHORT",
+      "entryDate": "12/24/2013",
+      "entryPrice": "$67.30",
+      "exitDate": "12/27/2013",
+      "exitPrice": "$64.80",
+      "pctPL": "+3.72%"
+    },
+    {
+      "symbol": "YHOO",
+      "side": "SHORT",
+      "entryDate": "12/27/2013",
+      "entryPrice": "$40.47",
+      "exitDate": "1/24/2014",
+      "exitPrice": "$38.30",
+      "pctPL": "+5.36%"
+    }
+  ]
+}

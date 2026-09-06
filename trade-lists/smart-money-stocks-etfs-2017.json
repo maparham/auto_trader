@@ -1,0 +1,1302 @@
+{
+  "source": "https://verifiedinvesting.com/pages/smart-money-trade-alerts-stocks-etfs-closed-position",
+  "service": "The Swing Trader",
+  "sheet": "CLOSED-2017",
+  "order": "as-listed-on-site",
+  "stats": {
+    "year": "2017",
+    "trades": 143,
+    "winners": 106,
+    "winRate": "74.13%"
+  },
+  "tradeCount": 143,
+  "trades": [
+    {
+      "symbol": "IBB",
+      "side": "LONG",
+      "entryDate": "1/3/2017",
+      "entryPrice": "$266.80",
+      "exitDate": "1/6/2017",
+      "exitPrice": "$280.60",
+      "pctPL": "+5.17%"
+    },
+    {
+      "symbol": "EBIO",
+      "side": "LONG",
+      "entryDate": "1/3/2017",
+      "entryPrice": "$1.93",
+      "exitDate": "1/4/2017",
+      "exitPrice": "$2.33",
+      "pctPL": "+20.07%"
+    },
+    {
+      "symbol": "TWLO",
+      "side": "LONG",
+      "entryDate": "1/3/2017",
+      "entryPrice": "$27.33",
+      "exitDate": "2/6/2017",
+      "exitPrice": "$32.40",
+      "pctPL": "+18.55%"
+    },
+    {
+      "symbol": "CMG",
+      "side": "LONG",
+      "entryDate": "1/4/2017",
+      "entryPrice": "$381.35",
+      "exitDate": "1/10/2017",
+      "exitPrice": "$416.70",
+      "pctPL": "+9.23%"
+    },
+    {
+      "symbol": "LRCX",
+      "side": "SHORT",
+      "entryDate": "1/9/2017",
+      "entryPrice": "$117.68",
+      "exitDate": "4/21/2017",
+      "exitPrice": "$139.90",
+      "pctPL": "-18.88%"
+    },
+    {
+      "symbol": "AXP",
+      "side": "SHORT",
+      "entryDate": "1/10/2017",
+      "entryPrice": "$83.12",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$87.84",
+      "pctPL": "-5.67%"
+    },
+    {
+      "symbol": "M",
+      "side": "LONG",
+      "entryDate": "1/10/2017",
+      "entryPrice": "$30.30",
+      "exitDate": "2/3/2017",
+      "exitPrice": "$33.10",
+      "pctPL": "+9.24%"
+    },
+    {
+      "symbol": "FIT",
+      "side": "LONG",
+      "entryDate": "1/12/2017",
+      "entryPrice": "$7.71",
+      "exitDate": "2/7/2017",
+      "exitPrice": "$5.81",
+      "pctPL": "-21.17%"
+    },
+    {
+      "symbol": "AMZN",
+      "side": "SHORT",
+      "entryDate": "1/13/2017",
+      "entryPrice": "$844.02",
+      "exitDate": "4/28/2017",
+      "exitPrice": "$925.00",
+      "pctPL": "-9.58%"
+    },
+    {
+      "symbol": "FB",
+      "side": "SHORT",
+      "entryDate": "1/13/2017",
+      "entryPrice": "$130.81",
+      "exitDate": "4/24/2017",
+      "exitPrice": "$145.50",
+      "pctPL": "-11.23%"
+    },
+    {
+      "symbol": "ENDP",
+      "side": "LONG",
+      "entryDate": "1/13/2017",
+      "entryPrice": "$12.50",
+      "exitDate": "2/15/2017",
+      "exitPrice": "$13.75",
+      "pctPL": "+10.00%"
+    },
+    {
+      "symbol": "TVIX",
+      "side": "LONG",
+      "entryDate": "1/17/2017",
+      "entryPrice": "$5.71",
+      "exitDate": "2/13/2017",
+      "exitPrice": "$4.47",
+      "pctPL": "-21.58%"
+    },
+    {
+      "symbol": "CSX",
+      "side": "SHORT",
+      "entryDate": "1/19/2017",
+      "entryPrice": "$45.41",
+      "exitDate": "1/20/2017",
+      "exitPrice": "$42.95",
+      "pctPL": "+5.42%"
+    },
+    {
+      "symbol": "CSX",
+      "side": "SHORT",
+      "entryDate": "1/23/2017",
+      "entryPrice": "$46.85",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$48.67",
+      "pctPL": "-3.88%"
+    },
+    {
+      "symbol": "IBM",
+      "side": "LONG",
+      "entryDate": "1/24/2017",
+      "entryPrice": "$175.50",
+      "exitDate": "4/11/2017",
+      "exitPrice": "$169.39",
+      "pctPL": "+3.48%"
+    },
+    {
+      "symbol": "SCON",
+      "side": "LONG",
+      "entryDate": "1/25/2017",
+      "entryPrice": "$1.05",
+      "exitDate": "2/16/2017",
+      "exitPrice": "$1.70",
+      "pctPL": "+47.83%"
+    },
+    {
+      "symbol": "SQQQ",
+      "side": "LONG",
+      "entryDate": "1/26/2017",
+      "entryPrice": "$42.95",
+      "exitDate": "3/15/2017",
+      "exitPrice": "$37.53",
+      "pctPL": "-12.62%"
+    },
+    {
+      "symbol": "MU",
+      "side": "SHORT",
+      "entryDate": "1/31/2017",
+      "entryPrice": "$32.21",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$37.54",
+      "pctPL": "-16.50%"
+    },
+    {
+      "symbol": "GE",
+      "side": "LONG",
+      "entryDate": "1/31/2017",
+      "entryPrice": "$29.63",
+      "exitDate": "4/20/2017",
+      "exitPrice": "$30.50",
+      "pctPL": "+2.93%"
+    },
+    {
+      "symbol": "SOXX",
+      "side": "LONG",
+      "entryDate": "2/3/2017",
+      "entryPrice": "$8.25",
+      "exitDate": "4/12/2017",
+      "exitPrice": "$8.55",
+      "pctPL": "+3.64%"
+    },
+    {
+      "symbol": "DUST",
+      "side": "LONG",
+      "entryDate": "2/6/2017",
+      "entryPrice": "$26.30",
+      "exitDate": "2/22/2017",
+      "exitPrice": "$28.85",
+      "pctPL": "+9.70%"
+    },
+    {
+      "symbol": "AMD",
+      "side": "SHORT",
+      "entryDate": "2/7/2017",
+      "entryPrice": "$14.25",
+      "exitDate": "2/17/2017",
+      "exitPrice": "$12.65",
+      "pctPL": "+12.65%"
+    },
+    {
+      "symbol": "SPXU",
+      "side": "LONG",
+      "entryDate": "2/9/2017",
+      "entryPrice": "$18.52",
+      "exitDate": "12/28/2017",
+      "exitPrice": "$11.31",
+      "pctPL": "-38.93%"
+    },
+    {
+      "symbol": "AA",
+      "side": "SHORT",
+      "entryDate": "2/14/2017",
+      "entryPrice": "$39.05",
+      "exitDate": "2/16/2017",
+      "exitPrice": "$36.45",
+      "pctPL": "+6.66%"
+    },
+    {
+      "symbol": "TSLA",
+      "side": "SHORT",
+      "entryDate": "2/14/2017",
+      "entryPrice": "$284.50",
+      "exitDate": "2/17/2017",
+      "exitPrice": "$264.50",
+      "pctPL": "+7.03%"
+    },
+    {
+      "symbol": "TZA",
+      "side": "LONG",
+      "entryDate": "2/21/2017",
+      "entryPrice": "$17.55",
+      "exitDate": "3/22/2017",
+      "exitPrice": "$20.12",
+      "pctPL": "+14.64%"
+    },
+    {
+      "symbol": "VVUS",
+      "side": "LONG",
+      "entryDate": "2/22/2017",
+      "entryPrice": "$1.11",
+      "exitDate": "6/2/2017",
+      "exitPrice": "$1.22",
+      "pctPL": "+10.00%"
+    },
+    {
+      "symbol": "AMD",
+      "side": "SHORT",
+      "entryDate": "2/22/2017",
+      "entryPrice": "$14.80",
+      "exitDate": "3/3/2017",
+      "exitPrice": "$13.35",
+      "pctPL": "+9.80%"
+    },
+    {
+      "symbol": "MMM",
+      "side": "SHORT",
+      "entryDate": "2/24/2017",
+      "entryPrice": "$197.07",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$218.83",
+      "pctPL": "-11.04%"
+    },
+    {
+      "symbol": "AAPL",
+      "side": "SHORT",
+      "entryDate": "2/28/2017",
+      "entryPrice": "$145.45",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$152.86",
+      "pctPL": "-5.09%"
+    },
+    {
+      "symbol": "NUGT",
+      "side": "LONG",
+      "entryDate": "3/7/2017",
+      "entryPrice": "$7.50",
+      "exitDate": "3/13/2017",
+      "exitPrice": "$8.30",
+      "pctPL": "+10.67%"
+    },
+    {
+      "symbol": "USLV",
+      "side": "LONG",
+      "entryDate": "3/9/2017",
+      "entryPrice": "$13.50",
+      "exitDate": "3/15/2017",
+      "exitPrice": "$14.11",
+      "pctPL": "+4.52%"
+    },
+    {
+      "symbol": "SINO",
+      "side": "LONG",
+      "entryDate": "3/10/2017",
+      "entryPrice": "$2.60",
+      "exitDate": "3/16/2017",
+      "exitPrice": "$3.15",
+      "pctPL": "+21.15%"
+    },
+    {
+      "symbol": "HD",
+      "side": "SHORT",
+      "entryDate": "3/15/2017",
+      "entryPrice": "$147.10",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$176.08",
+      "pctPL": "-19.70%"
+    },
+    {
+      "symbol": "FIT",
+      "side": "LONG",
+      "entryDate": "3/17/2017",
+      "entryPrice": "$5.68",
+      "exitDate": "5/4/2017",
+      "exitPrice": "$6.65",
+      "pctPL": "+17.08%"
+    },
+    {
+      "symbol": "EGLE",
+      "side": "LONG",
+      "entryDate": "3/20/2017",
+      "entryPrice": "$5.29",
+      "exitDate": "1/25/2018",
+      "exitPrice": "$5.30",
+      "pctPL": "+0.19%"
+    },
+    {
+      "symbol": "JCP",
+      "side": "LONG",
+      "entryDate": "3/22/2017",
+      "entryPrice": "$5.57",
+      "exitDate": "3/29/2017",
+      "exitPrice": "$6.29",
+      "pctPL": "+12.93%"
+    },
+    {
+      "symbol": "BAC",
+      "side": "LONG",
+      "entryDate": "3/28/2017",
+      "entryPrice": "$23.40",
+      "exitDate": "8/18/2017",
+      "exitPrice": "$24.20",
+      "pctPL": "+3.22%"
+    },
+    {
+      "symbol": "NTNX",
+      "side": "LONG",
+      "entryDate": "3/29/2017",
+      "entryPrice": "$17.37",
+      "exitDate": "5/22/2017",
+      "exitPrice": "$18.17",
+      "pctPL": "+4.61%"
+    },
+    {
+      "symbol": "ZEN",
+      "side": "LONG",
+      "entryDate": "3/31/2017",
+      "entryPrice": "$27.43",
+      "exitDate": "5/1/2017",
+      "exitPrice": "$29.10",
+      "pctPL": "+6.08%"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "4/4/2017",
+      "entryPrice": "$35.79",
+      "exitDate": "4/19/2017",
+      "exitPrice": "$36.82",
+      "pctPL": "+2.88%"
+    },
+    {
+      "symbol": "JRJC",
+      "side": "LONG",
+      "entryDate": "4/5/2017",
+      "entryPrice": "$3.07",
+      "exitDate": "4/12/2017",
+      "exitPrice": "$3.50",
+      "pctPL": "+14.00%"
+    },
+    {
+      "symbol": "KNDI",
+      "side": "LONG",
+      "entryDate": "4/5/2017",
+      "entryPrice": "$3.80",
+      "exitDate": "4/5/2017",
+      "exitPrice": "$4.20",
+      "pctPL": "+10.53%"
+    },
+    {
+      "symbol": "MNST",
+      "side": "LONG",
+      "entryDate": "4/5/2017",
+      "entryPrice": "$46.18",
+      "exitDate": "5/4/2017",
+      "exitPrice": "$45.73",
+      "pctPL": "-1.00%"
+    },
+    {
+      "symbol": "CCIH",
+      "side": "LONG",
+      "entryDate": "4/10/2017",
+      "entryPrice": "$1.50",
+      "exitDate": "6/2/2017",
+      "exitPrice": "$1.60",
+      "pctPL": "+6.67%"
+    },
+    {
+      "symbol": "GILD",
+      "side": "LONG",
+      "entryDate": "4/11/2017",
+      "entryPrice": "$65.90",
+      "exitDate": "6/22/2017",
+      "exitPrice": "$69.35",
+      "pctPL": "+5.24%"
+    },
+    {
+      "symbol": "TWTR",
+      "side": "LONG",
+      "entryDate": "4/12/2017",
+      "entryPrice": "$14.50",
+      "exitDate": "4/25/2017",
+      "exitPrice": "$16.40",
+      "pctPL": "+13.10%"
+    },
+    {
+      "symbol": "TBT",
+      "side": "LONG",
+      "entryDate": "4/13/2017",
+      "entryPrice": "$4.13",
+      "exitDate": "5/17/2017",
+      "exitPrice": "$38.25",
+      "pctPL": "+1.90%"
+    },
+    {
+      "symbol": "GRPN",
+      "side": "LONG",
+      "entryDate": "4/20/2017",
+      "entryPrice": "$3.81",
+      "exitDate": "7/5/2017",
+      "exitPrice": "$3.82",
+      "pctPL": "+0.26%"
+    },
+    {
+      "symbol": "SOXX",
+      "side": "LONG",
+      "entryDate": "4/20/2017",
+      "entryPrice": "$34.71",
+      "exitDate": "6/12/2017",
+      "exitPrice": "$30.20",
+      "pctPL": "-12.99%"
+    },
+    {
+      "symbol": "VXX",
+      "side": "LONG",
+      "entryDate": "4/24/2017",
+      "entryPrice": "$15.28",
+      "exitDate": "5/17/2017",
+      "exitPrice": "$16.20",
+      "pctPL": "+6.23%"
+    },
+    {
+      "symbol": "SQQQ",
+      "side": "LONG",
+      "entryDate": "4/25/2017",
+      "entryPrice": "$34.77",
+      "exitDate": "6/12/2017",
+      "exitPrice": "$32.67",
+      "pctPL": "-6.04%"
+    },
+    {
+      "symbol": "FB",
+      "side": "SHORT",
+      "entryDate": "4/28/2017",
+      "entryPrice": "$161.40",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$168.55",
+      "pctPL": "-4.43%"
+    },
+    {
+      "symbol": "USLV",
+      "side": "LONG",
+      "entryDate": "5/1/2017",
+      "entryPrice": "$12.16",
+      "exitDate": "5/16/2017",
+      "exitPrice": "$12.60",
+      "pctPL": "+3.62%"
+    },
+    {
+      "symbol": "T",
+      "side": "LONG",
+      "entryDate": "5/3/2017",
+      "entryPrice": "$38.35",
+      "exitDate": "7/25/2017",
+      "exitPrice": "$36.34",
+      "pctPL": "-5.24%"
+    },
+    {
+      "symbol": "X",
+      "side": "LONG",
+      "entryDate": "5/3/2017",
+      "entryPrice": "$20.96",
+      "exitDate": "5/24/2017",
+      "exitPrice": "$21.60",
+      "pctPL": "+3.05%"
+    },
+    {
+      "symbol": "UCO",
+      "side": "LONG",
+      "entryDate": "5/4/2017",
+      "entryPrice": "$15.23",
+      "exitDate": "5/5/2017",
+      "exitPrice": "$15.75",
+      "pctPL": "+3.41%"
+    },
+    {
+      "symbol": "OIH",
+      "side": "LONG",
+      "entryDate": "5/4/2017",
+      "entryPrice": "$26.46",
+      "exitDate": "5/25/2017",
+      "exitPrice": "$27.16",
+      "pctPL": "+2.65%"
+    },
+    {
+      "symbol": "SWKS",
+      "side": "SHORT",
+      "entryDate": "5/9/2017",
+      "entryPrice": "$102.10",
+      "exitDate": "6/29/2017",
+      "exitPrice": "$94.90",
+      "pctPL": "+7.05%"
+    },
+    {
+      "symbol": "JCP",
+      "side": "LONG",
+      "entryDate": "5/16/2017",
+      "entryPrice": "$4.17",
+      "exitDate": "5/30/2017",
+      "exitPrice": "$4.76",
+      "pctPL": "+14.15%"
+    },
+    {
+      "symbol": "FIT",
+      "side": "LONG",
+      "entryDate": "5/17/2017",
+      "entryPrice": "$5.58",
+      "exitDate": "9/11/2017",
+      "exitPrice": "$6.39",
+      "pctPL": "+14.52%"
+    },
+    {
+      "symbol": "EUO",
+      "side": "LONG",
+      "entryDate": "5/17/2017",
+      "entryPrice": "$24.20",
+      "exitDate": "7/21/2017",
+      "exitPrice": "$22.15",
+      "pctPL": "-8.47%"
+    },
+    {
+      "symbol": "GM",
+      "side": "LONG",
+      "entryDate": "5/18/2017",
+      "entryPrice": "$32.48",
+      "exitDate": "7/13/2017",
+      "exitPrice": "$35.02",
+      "pctPL": "+7.81%"
+    },
+    {
+      "symbol": "TEVA",
+      "side": "LONG",
+      "entryDate": "5/18/2017",
+      "entryPrice": "$29.85",
+      "exitDate": "6/15/2017",
+      "exitPrice": "$31.75",
+      "pctPL": "+6.37%"
+    },
+    {
+      "symbol": "VXX",
+      "side": "LONG",
+      "entryDate": "5/19/2017",
+      "entryPrice": "$45.51",
+      "exitDate": "12/28/2017",
+      "exitPrice": "$27.71",
+      "pctPL": "-39.11%"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "5/22/2017",
+      "entryPrice": "$36.05",
+      "exitDate": "5/25/2017",
+      "exitPrice": "$39.20",
+      "pctPL": "+8.74%"
+    },
+    {
+      "symbol": "AKAM",
+      "side": "LONG",
+      "entryDate": "5/25/2017",
+      "entryPrice": "$50.24",
+      "exitDate": "7/17/2017",
+      "exitPrice": "$51.14",
+      "pctPL": "+6.45%"
+    },
+    {
+      "symbol": "MCD",
+      "side": "SHORT",
+      "entryDate": "5/26/2017",
+      "entryPrice": "$150.05",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$156.58",
+      "pctPL": "-4.35%"
+    },
+    {
+      "symbol": "TSLA",
+      "side": "SHORT",
+      "entryDate": "5/31/2017",
+      "entryPrice": "$345.78",
+      "exitDate": "7/6/2017",
+      "exitPrice": "$307.50",
+      "pctPL": "+11.07%"
+    },
+    {
+      "symbol": "AMZN",
+      "side": "SHORT",
+      "entryDate": "6/2/2017",
+      "entryPrice": "$1,006.00",
+      "exitDate": "6/12/2017",
+      "exitPrice": "$951.00",
+      "pctPL": "+5.47%"
+    },
+    {
+      "symbol": "DSLV",
+      "side": "LONG",
+      "entryDate": "6/6/2017",
+      "entryPrice": "$22.45",
+      "exitDate": "6/9/2017",
+      "exitPrice": "$24.49",
+      "pctPL": "+9.13%"
+    },
+    {
+      "symbol": "EDZ",
+      "side": "LONG",
+      "entryDate": "6/8/2017",
+      "entryPrice": "$14.15",
+      "exitDate": "6/15/2017",
+      "exitPrice": "$15.18",
+      "pctPL": "+7.28%"
+    },
+    {
+      "symbol": "NVDA",
+      "side": "SHORT",
+      "entryDate": "6/9/2017",
+      "entryPrice": "$167.25",
+      "exitDate": "6/9/2017",
+      "exitPrice": "$149.75",
+      "pctPL": "+10.46%"
+    },
+    {
+      "symbol": "KNDI",
+      "side": "LONG",
+      "entryDate": "6/15/2017",
+      "entryPrice": "$4.05",
+      "exitDate": "9/13/2017",
+      "exitPrice": "$4.80",
+      "pctPL": "+18.52%"
+    },
+    {
+      "symbol": "AMZN",
+      "side": "SHORT",
+      "entryDate": "6/19/2017",
+      "entryPrice": "$996.00",
+      "exitDate": "10/30/2017",
+      "exitPrice": "$1,110.00",
+      "pctPL": "-11.45%"
+    },
+    {
+      "symbol": "FL",
+      "side": "LONG",
+      "entryDate": "6/20/2017",
+      "entryPrice": "$50.32",
+      "exitDate": "7/21/2017",
+      "exitPrice": "$47.20",
+      "pctPL": "-6.20%"
+    },
+    {
+      "symbol": "UCO",
+      "side": "LONG",
+      "entryDate": "6/21/2017",
+      "entryPrice": "$12.67",
+      "exitDate": "6/22/2017",
+      "exitPrice": "$13.08",
+      "pctPL": "+4.14%"
+    },
+    {
+      "symbol": "WTW",
+      "side": "SHORT",
+      "entryDate": "6/28/2017",
+      "entryPrice": "$34.10",
+      "exitDate": "6/29/2017",
+      "exitPrice": "$31.80",
+      "pctPL": "+6.75%"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "7/3/2017",
+      "entryPrice": "$42.22",
+      "exitDate": "7/5/2017",
+      "exitPrice": "$44.45",
+      "pctPL": "+5.28%"
+    },
+    {
+      "symbol": "JCP",
+      "side": "LONG",
+      "entryDate": "7/5/2017",
+      "entryPrice": "$4.70",
+      "exitDate": "7/25/2017",
+      "exitPrice": "$5.33",
+      "pctPL": "+13.40%"
+    },
+    {
+      "symbol": "ORLY",
+      "side": "LONG",
+      "entryDate": "7/5/2017",
+      "entryPrice": "$176.70",
+      "exitDate": "7/13/2017",
+      "exitPrice": "$185.25",
+      "pctPL": "+4.84%"
+    },
+    {
+      "symbol": "USLV",
+      "side": "LONG",
+      "entryDate": "7/7/2017",
+      "entryPrice": "$9.50",
+      "exitDate": "7/11/2017",
+      "exitPrice": "$10.09",
+      "pctPL": "+6.21%"
+    },
+    {
+      "symbol": "APRN",
+      "side": "LONG",
+      "entryDate": "7/7/2017",
+      "entryPrice": "$3.84",
+      "exitDate": "7/12/2018",
+      "exitPrice": "$3.95",
+      "pctPL": "+3.00%"
+    },
+    {
+      "symbol": "GE",
+      "side": "LONG",
+      "entryDate": "7/10/2017",
+      "entryPrice": "$25.90",
+      "exitDate": "8/18/2017",
+      "exitPrice": "$24.61",
+      "pctPL": "-1.08%"
+    },
+    {
+      "symbol": "DF",
+      "side": "LONG",
+      "entryDate": "7/13/2017",
+      "entryPrice": "$15.10",
+      "exitDate": "8/7/2017",
+      "exitPrice": "$14.99",
+      "pctPL": "-0.73%"
+    },
+    {
+      "symbol": "SQQQ",
+      "side": "LONG",
+      "entryDate": "7/14/2017",
+      "entryPrice": "$28.68",
+      "exitDate": "12/28/2017",
+      "exitPrice": "$21.20",
+      "pctPL": "-26.08%"
+    },
+    {
+      "symbol": "WTW",
+      "side": "SHORT",
+      "entryDate": "7/18/2017",
+      "entryPrice": "$37.65",
+      "exitDate": "8/2/2017",
+      "exitPrice": "$33.85",
+      "pctPL": "+10.00%"
+    },
+    {
+      "symbol": "NVDA",
+      "side": "LONG",
+      "entryDate": "7/19/2017",
+      "entryPrice": "$176.90",
+      "exitDate": "10/24/2018",
+      "exitPrice": "$199.50",
+      "pctPL": "-12.78%"
+    },
+    {
+      "symbol": "SDS",
+      "side": "LONG",
+      "entryDate": "7/26/2017",
+      "entryPrice": "$48.48",
+      "exitDate": "12/28/2017",
+      "exitPrice": "$40.90",
+      "pctPL": "-15.63%"
+    },
+    {
+      "symbol": "DSLV",
+      "side": "LONG",
+      "entryDate": "7/27/2017",
+      "entryPrice": "$25.72",
+      "exitDate": "8/4/2017",
+      "exitPrice": "$28.29",
+      "pctPL": "+10.00%"
+    },
+    {
+      "symbol": "EUO",
+      "side": "LONG",
+      "entryDate": "7/31/2017",
+      "entryPrice": "$21.62",
+      "exitDate": "5/1/2018",
+      "exitPrice": "$21.42",
+      "pctPL": "-0.90%"
+    },
+    {
+      "symbol": "SDOW",
+      "side": "LONG",
+      "entryDate": "8/2/2017",
+      "entryPrice": "$28.41",
+      "exitDate": "12/28/2017",
+      "exitPrice": "$19.38",
+      "pctPL": "-31.78%"
+    },
+    {
+      "symbol": "WTW",
+      "side": "SHORT",
+      "entryDate": "8/8/2017",
+      "entryPrice": "$45.50",
+      "exitDate": "9/11/2017",
+      "exitPrice": "$43.00",
+      "pctPL": "+5.50%"
+    },
+    {
+      "symbol": "XRT",
+      "side": "LONG",
+      "entryDate": "8/15/2017",
+      "entryPrice": "$38.64",
+      "exitDate": "9/11/2017",
+      "exitPrice": "$40.40",
+      "pctPL": "+4.56%"
+    },
+    {
+      "symbol": "CCIH",
+      "side": "LONG",
+      "entryDate": "8/16/2017",
+      "entryPrice": "$0.77",
+      "exitDate": "10/6/2017",
+      "exitPrice": "$1.12",
+      "pctPL": "+45.50%"
+    },
+    {
+      "symbol": "RH",
+      "side": "LONG",
+      "entryDate": "8/21/2017",
+      "entryPrice": "$46.86",
+      "exitDate": "9/5/2017",
+      "exitPrice": "$50.36",
+      "pctPL": "+7.47%"
+    },
+    {
+      "symbol": "ALK",
+      "side": "LONG",
+      "entryDate": "8/22/2017",
+      "entryPrice": "$77.35",
+      "exitDate": "10/3/2017",
+      "exitPrice": "$79.06",
+      "pctPL": "+2.21%"
+    },
+    {
+      "symbol": "CMG",
+      "side": "LONG",
+      "entryDate": "8/23/2017",
+      "entryPrice": "$299.88",
+      "exitDate": "9/8/2017",
+      "exitPrice": "$306.26",
+      "pctPL": "+2.10%"
+    },
+    {
+      "symbol": "WEAT",
+      "side": "LONG",
+      "entryDate": "8/31/2017",
+      "entryPrice": "$6.45",
+      "exitDate": "9/26/2017",
+      "exitPrice": "$6.66",
+      "pctPL": "+3.26%"
+    },
+    {
+      "symbol": "SOXS",
+      "side": "LONG",
+      "entryDate": "9/12/2017",
+      "entryPrice": "$22.64",
+      "exitDate": "12/28/2017",
+      "exitPrice": "$16.05",
+      "pctPL": "-29.10%"
+    },
+    {
+      "symbol": "EFX",
+      "side": "LONG",
+      "entryDate": "9/14/2017",
+      "entryPrice": "$90.40",
+      "exitDate": "9/21/2017",
+      "exitPrice": "$96.17",
+      "pctPL": "+6.38%"
+    },
+    {
+      "symbol": "TSLA",
+      "side": "SHORT",
+      "entryDate": "9/15/2017",
+      "entryPrice": "$377.41",
+      "exitDate": "9/22/2017",
+      "exitPrice": "$357.41",
+      "pctPL": "+5.30%"
+    },
+    {
+      "symbol": "RACE",
+      "side": "SHORT",
+      "entryDate": "9/20/2017",
+      "entryPrice": "$112.87",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$117.87",
+      "pctPL": "-4.43%"
+    },
+    {
+      "symbol": "UGLD",
+      "side": "LONG",
+      "entryDate": "9/21/2017",
+      "entryPrice": "$10.65",
+      "exitDate": "10/10/2017",
+      "exitPrice": "$11.07",
+      "pctPL": "+3.94%"
+    },
+    {
+      "symbol": "QCOM",
+      "side": "LONG",
+      "entryDate": "9/25/2017",
+      "entryPrice": "$51.73",
+      "exitDate": "10/11/2017",
+      "exitPrice": "$54.33",
+      "pctPL": "+5.03%"
+    },
+    {
+      "symbol": "JCP",
+      "side": "LONG",
+      "entryDate": "10/2/2017",
+      "entryPrice": "$3.46",
+      "exitDate": "11/29/2017",
+      "exitPrice": "$3.69",
+      "pctPL": "+6.65%"
+    },
+    {
+      "symbol": "TZA",
+      "side": "LONG",
+      "entryDate": "10/3/2017",
+      "entryPrice": "$13.20",
+      "exitDate": "2/5/2018",
+      "exitPrice": "$12.48",
+      "pctPL": "-5.45%"
+    },
+    {
+      "symbol": "AA",
+      "side": "SHORT",
+      "entryDate": "10/5/2017",
+      "entryPrice": "$48.32",
+      "exitDate": "11/9/2017",
+      "exitPrice": "$44.00",
+      "pctPL": "+9.00%"
+    },
+    {
+      "symbol": "GM",
+      "side": "SHORT",
+      "entryDate": "10/9/2017",
+      "entryPrice": "$45.26",
+      "exitDate": "10/30/2017",
+      "exitPrice": "$42.26",
+      "pctPL": "+6.63%"
+    },
+    {
+      "symbol": "TTWO",
+      "side": "SHORT",
+      "entryDate": "10/12/2017",
+      "entryPrice": "$103.70",
+      "exitDate": "12/4/2017",
+      "exitPrice": "$101.60",
+      "pctPL": "+2.03%"
+    },
+    {
+      "symbol": "PCG",
+      "side": "LONG",
+      "entryDate": "10/16/2017",
+      "entryPrice": "$52.00",
+      "exitDate": "10/17/2017",
+      "exitPrice": "$55.13",
+      "pctPL": "+6.01%"
+    },
+    {
+      "symbol": "QCOM",
+      "side": "LONG",
+      "entryDate": "10/17/2017",
+      "entryPrice": "$52.22",
+      "exitDate": "10/23/2017",
+      "exitPrice": "$53.60",
+      "pctPL": "+2.34%"
+    },
+    {
+      "symbol": "UGLD",
+      "side": "LONG",
+      "entryDate": "10/23/2017",
+      "entryPrice": "$10.15",
+      "exitDate": "12/20/2017",
+      "exitPrice": "$10.25",
+      "pctPL": "+1.00%"
+    },
+    {
+      "symbol": "PG",
+      "side": "LONG",
+      "entryDate": "10/24/2017",
+      "entryPrice": "$86.50",
+      "exitDate": "12/4/2017",
+      "exitPrice": "$90.16",
+      "pctPL": "+4.23%"
+    },
+    {
+      "symbol": "HMNY",
+      "side": "LONG",
+      "entryDate": "10/30/2017",
+      "entryPrice": "$9.75",
+      "exitDate": "10/31/2017",
+      "exitPrice": "$10.75",
+      "pctPL": "+10.26%"
+    },
+    {
+      "symbol": "NFLX",
+      "side": "SHORT",
+      "entryDate": "10/31/2017",
+      "entryPrice": "$196.30",
+      "exitDate": "11/29/2017",
+      "exitPrice": "$185.00",
+      "pctPL": "+5.76%"
+    },
+    {
+      "symbol": "GE",
+      "side": "LONG",
+      "entryDate": "11/2/2017",
+      "entryPrice": "$18.92",
+      "exitDate": "2/5/2018",
+      "exitPrice": "$15.10",
+      "pctPL": "-20.10%"
+    },
+    {
+      "symbol": "LRCX",
+      "side": "SHORT",
+      "entryDate": "11/3/2017",
+      "entryPrice": "$206.25",
+      "exitDate": "11/29/2017",
+      "exitPrice": "$194.00",
+      "pctPL": "+5.94%"
+    },
+    {
+      "symbol": "HMNY",
+      "side": "LONG",
+      "entryDate": "11/3/2017",
+      "entryPrice": "$9.60",
+      "exitDate": "11/6/2017",
+      "exitPrice": "$11.50",
+      "pctPL": "+20.00%"
+    },
+    {
+      "symbol": "VZ",
+      "side": "LONG",
+      "entryDate": "11/6/2017",
+      "entryPrice": "$45.30",
+      "exitDate": "11/29/2017",
+      "exitPrice": "$48.13",
+      "pctPL": "+6.16%"
+    },
+    {
+      "symbol": "TOL",
+      "side": "SHORT",
+      "entryDate": "11/10/2017",
+      "entryPrice": "$48.26",
+      "exitDate": "12/5/2017",
+      "exitPrice": "$45.45",
+      "pctPL": "+5.82%"
+    },
+    {
+      "symbol": "DCIX",
+      "side": "LONG",
+      "entryDate": "11/14/2017",
+      "entryPrice": "$5.98",
+      "exitDate": "11/15/2017",
+      "exitPrice": "$7.50",
+      "pctPL": "+25.42%"
+    },
+    {
+      "symbol": "BBBY",
+      "side": "LONG",
+      "entryDate": "11/16/2017",
+      "entryPrice": "$20.35",
+      "exitDate": "11/29/2017",
+      "exitPrice": "$22.65",
+      "pctPL": "+11.30%"
+    },
+    {
+      "symbol": "AAOI",
+      "side": "LONG",
+      "entryDate": "11/22/2017",
+      "entryPrice": "$41.98",
+      "exitDate": "11/30/2017",
+      "exitPrice": "$44.50",
+      "pctPL": "+6.00%"
+    },
+    {
+      "symbol": "AMZN",
+      "side": "SHORT",
+      "entryDate": "11/27/2017",
+      "entryPrice": "$1,212.00",
+      "exitDate": "11/29/2017",
+      "exitPrice": "$1,152.00",
+      "pctPL": "+5.00%"
+    },
+    {
+      "symbol": "IYT",
+      "side": "SHORT",
+      "entryDate": "11/30/2017",
+      "entryPrice": "$192.75",
+      "exitDate": "2/5/2018",
+      "exitPrice": "$187.75",
+      "pctPL": "+2.60%"
+    },
+    {
+      "symbol": "FAZ",
+      "side": "LONG",
+      "entryDate": "11/30/2017",
+      "entryPrice": "$12.12",
+      "exitDate": "2/5/2018",
+      "exitPrice": "$11.85",
+      "pctPL": "-2.20%"
+    },
+    {
+      "symbol": "JCI",
+      "side": "LONG",
+      "entryDate": "12/1/2017",
+      "entryPrice": "$37.49",
+      "exitDate": "1/4/2018",
+      "exitPrice": "$39.48",
+      "pctPL": "+5.30%"
+    },
+    {
+      "symbol": "INTU",
+      "side": "SHORT",
+      "entryDate": "12/4/2017",
+      "entryPrice": "$155.81",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$150.95",
+      "pctPL": "+3.13%"
+    },
+    {
+      "symbol": "COST",
+      "side": "SHORT",
+      "entryDate": "12/5/2017",
+      "entryPrice": "$189.45",
+      "exitDate": "2/5/2018",
+      "exitPrice": "$182.80",
+      "pctPL": "+3.51%"
+    },
+    {
+      "symbol": "USLV",
+      "side": "LONG",
+      "entryDate": "12/7/2017",
+      "entryPrice": "$9.32",
+      "exitDate": "12/13/2017",
+      "exitPrice": "$10.00",
+      "pctPL": "+7.30%"
+    },
+    {
+      "symbol": "BX",
+      "side": "LONG",
+      "entryDate": "12/8/2017",
+      "entryPrice": "$31.82",
+      "exitDate": "12/17/2017",
+      "exitPrice": "$35.46",
+      "pctPL": "+7.60%"
+    },
+    {
+      "symbol": "WBA",
+      "side": "LONG",
+      "entryDate": "12/8/2017",
+      "entryPrice": "$70.16",
+      "exitDate": "1/2/2018",
+      "exitPrice": "$74.51",
+      "pctPL": "+6.19%"
+    },
+    {
+      "symbol": "BABA",
+      "side": "SHORT",
+      "entryDate": "12/12/2017",
+      "entryPrice": "$179.59",
+      "exitDate": "12/14/2017",
+      "exitPrice": "$169.75",
+      "pctPL": "+5.48%"
+    },
+    {
+      "symbol": "BUD",
+      "side": "LONG",
+      "entryDate": "12/13/2017",
+      "entryPrice": "$110.50",
+      "exitDate": "2/2/2018",
+      "exitPrice": "$112.98",
+      "pctPL": "+2.24%"
+    },
+    {
+      "symbol": "ASML",
+      "side": "SHORT",
+      "entryDate": "12/14/2017",
+      "entryPrice": "$172.15",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$176.78",
+      "pctPL": "-2.69%"
+    },
+    {
+      "symbol": "ICPT",
+      "side": "LONG",
+      "entryDate": "12/18/2017",
+      "entryPrice": "$62.14",
+      "exitDate": "1/8/2018",
+      "exitPrice": "$54.15",
+      "pctPL": "-12.85%"
+    },
+    {
+      "symbol": "INTC",
+      "side": "LONG",
+      "entryDate": "12/20/2017",
+      "entryPrice": "$47.50",
+      "exitDate": "1/3/2018",
+      "exitPrice": "$44.90",
+      "pctPL": "+5.50%"
+    },
+    {
+      "symbol": "FCX",
+      "side": "SHORT",
+      "entryDate": "12/26/2017",
+      "entryPrice": "$18.75",
+      "exitDate": "2/2/2018",
+      "exitPrice": "$18.02",
+      "pctPL": "+3.90%"
+    },
+    {
+      "symbol": "JBL",
+      "side": "LONG",
+      "entryDate": "12/26/2017",
+      "entryPrice": "$27.28",
+      "exitDate": "1/4/2018",
+      "exitPrice": "$28.16",
+      "pctPL": "+5.47%"
+    },
+    {
+      "symbol": "BAC",
+      "side": "SHORT",
+      "entryDate": "12/27/2017",
+      "entryPrice": "$30.02",
+      "exitDate": "2/5/2018",
+      "exitPrice": "$29.30",
+      "pctPL": "+2.40%"
+    },
+    {
+      "symbol": "DGLD",
+      "side": "LONG",
+      "entryDate": "12/29/2017",
+      "entryPrice": "$41.03",
+      "exitDate": "2/9/2018",
+      "exitPrice": "$42.85",
+      "pctPL": "+4.44%"
+    },
+    {
+      "symbol": "USLV",
+      "side": "LONG",
+      "entryDate": "12/29/2017",
+      "entryPrice": "$23.45",
+      "exitDate": "1/23/2018",
+      "exitPrice": "$24.60",
+      "pctPL": "+5.00%"
+    }
+  ]
+}

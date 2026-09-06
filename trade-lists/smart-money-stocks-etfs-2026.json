@@ -1,0 +1,1738 @@
+{
+  "source": "https://verifiedinvesting.com/pages/smart-money-trade-alerts-stocks-etfs-closed-position",
+  "service": "The Swing Trader",
+  "sheet": "CLOSED-2026",
+  "order": "as-listed-on-site",
+  "stats": {
+    "year": "2026",
+    "trades": 172,
+    "winners": 159,
+    "winRate": "92.44%",
+    "startingAccount": "$1,000,000.00",
+    "totalGainLoss": "$213,184.04",
+    "portfolioBalance": "$1,213,184.04"
+  },
+  "tradeCount": 172,
+  "trades": [
+    {
+      "symbol": "MA",
+      "side": "SHORT",
+      "entryDate": "08/24/2026",
+      "entryPrice": "$597.07",
+      "exitDate": "09/04/2026",
+      "exitPrice": "$579.40",
+      "pctPL": "2.96%",
+      "dollarPL": "$3,534.00"
+    },
+    {
+      "symbol": "STNE",
+      "side": "LONG",
+      "entryDate": "07/15/2026",
+      "entryPrice": "$10.63",
+      "exitDate": "09/03/2026",
+      "exitPrice": "$10.65",
+      "pctPL": "0.16%",
+      "dollarPL": "$85.00"
+    },
+    {
+      "symbol": "AEM",
+      "side": "SHORT",
+      "entryDate": "08/20/2026",
+      "entryPrice": "$216.40",
+      "exitDate": "08/28/2026",
+      "exitPrice": "$211.82",
+      "pctPL": "2.12%",
+      "dollarPL": "$4,578.00"
+    },
+    {
+      "symbol": "IBIT",
+      "side": "SHORT",
+      "entryDate": "08/21/2026",
+      "entryPrice": "$44.93",
+      "exitDate": "08/28/2026",
+      "exitPrice": "$43.89",
+      "pctPL": "2.31%",
+      "dollarPL": "$2,080.00"
+    },
+    {
+      "symbol": "ANF",
+      "side": "SHORT",
+      "entryDate": "08/26/2026",
+      "entryPrice": "$151.33",
+      "exitDate": "08/26/2026",
+      "exitPrice": "$144.27",
+      "pctPL": "4.67%",
+      "dollarPL": "$2,118.00"
+    },
+    {
+      "symbol": "LLY",
+      "side": "SHORT",
+      "entryDate": "08/19/2026",
+      "entryPrice": "$1,292.53",
+      "exitDate": "08/21/2026",
+      "exitPrice": "$1,228.50",
+      "pctPL": "4.95%",
+      "dollarPL": "$6,403.00"
+    },
+    {
+      "symbol": "QLD",
+      "side": "SHORT",
+      "entryDate": "08/04/2026",
+      "entryPrice": "$91.36",
+      "exitDate": "08/19/2026",
+      "exitPrice": "$90.60",
+      "pctPL": "0.84%",
+      "dollarPL": "$1,915.00"
+    },
+    {
+      "symbol": "IBIT",
+      "side": "LONG",
+      "entryDate": "08/05/2026",
+      "entryPrice": "$36.45",
+      "exitDate": "08/19/2026",
+      "exitPrice": "$39.03",
+      "pctPL": "7.08%",
+      "dollarPL": "$5,160.00"
+    },
+    {
+      "symbol": "CRWD",
+      "side": "SHORT",
+      "entryDate": "08/10/2026",
+      "entryPrice": "$222.77",
+      "exitDate": "08/17/2026",
+      "exitPrice": "$213.50",
+      "pctPL": "4.16%",
+      "dollarPL": "$4,171.50"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "SHORT",
+      "entryDate": "08/10/2026",
+      "entryPrice": "$507.77",
+      "exitDate": "08/17/2026",
+      "exitPrice": "$485.77",
+      "pctPL": "4.33%",
+      "dollarPL": "$4,400.00"
+    },
+    {
+      "symbol": "MDB",
+      "side": "SHORT",
+      "entryDate": "08/13/2026",
+      "entryPrice": "$467.04",
+      "exitDate": "08/17/2026",
+      "exitPrice": "$444.13",
+      "pctPL": "4.91%",
+      "dollarPL": "$3,436.50"
+    },
+    {
+      "symbol": "PLTR",
+      "side": "SHORT",
+      "entryDate": "08/10/2026",
+      "entryPrice": "$178.03",
+      "exitDate": "08/12/2026",
+      "exitPrice": "$169.47",
+      "pctPL": "4.81%",
+      "dollarPL": "$4,280.00"
+    },
+    {
+      "symbol": "META",
+      "side": "SHORT",
+      "entryDate": "08/03/2026",
+      "entryPrice": "$586.33",
+      "exitDate": "08/12/2026",
+      "exitPrice": "$578.63",
+      "pctPL": "1.31%",
+      "dollarPL": "$2,310.00"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "SHORT",
+      "entryDate": "08/04/2026",
+      "entryPrice": "$492.75",
+      "exitDate": "08/06/2026",
+      "exitPrice": "$481.83",
+      "pctPL": "2.22%",
+      "dollarPL": "$4,368.00"
+    },
+    {
+      "symbol": "TLT",
+      "side": "LONG",
+      "entryDate": "07/31/2026",
+      "entryPrice": "$82.07",
+      "exitDate": "08/05/2026",
+      "exitPrice": "$83.13",
+      "pctPL": "1.29%",
+      "dollarPL": "$2,120.00"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "SHORT",
+      "entryDate": "08/03/2026",
+      "entryPrice": "$488.57",
+      "exitDate": "08/04/2026",
+      "exitPrice": "$476.25",
+      "pctPL": "2.52%",
+      "dollarPL": "$6,160.00"
+    },
+    {
+      "symbol": "WOLF",
+      "side": "LONG",
+      "entryDate": "07/16/2026",
+      "entryPrice": "$28.67",
+      "exitDate": "08/04/2026",
+      "exitPrice": "$27.27",
+      "pctPL": "-4.88%",
+      "dollarPL": "-$4,200.00"
+    },
+    {
+      "symbol": "ORCL",
+      "side": "LONG",
+      "entryDate": "07/02/2026",
+      "entryPrice": "$130.07",
+      "exitDate": "07/31/2026",
+      "exitPrice": "$132.53",
+      "pctPL": "1.89%",
+      "dollarPL": "$4,912.00"
+    },
+    {
+      "symbol": "FSLR",
+      "side": "LONG",
+      "entryDate": "07/02/2026",
+      "entryPrice": "$211.57",
+      "exitDate": "07/31/2026",
+      "exitPrice": "$216.53",
+      "pctPL": "2.34%",
+      "dollarPL": "$3,966.00"
+    },
+    {
+      "symbol": "BE",
+      "side": "LONG",
+      "entryDate": "07/29/2026",
+      "entryPrice": "$164.33",
+      "exitDate": "07/30/2026",
+      "exitPrice": "$175.33",
+      "pctPL": "6.69%",
+      "dollarPL": "$3,300.00"
+    },
+    {
+      "symbol": "AMAT",
+      "side": "LONG",
+      "entryDate": "07/29/2026",
+      "entryPrice": "$451.33",
+      "exitDate": "07/30/2026",
+      "exitPrice": "$471.53",
+      "pctPL": "4.48%",
+      "dollarPL": "$5,050.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "LONG",
+      "entryDate": "07/28/2026",
+      "entryPrice": "$97.62",
+      "exitDate": "07/30/2026",
+      "exitPrice": "$102.15",
+      "pctPL": "2.59%",
+      "dollarPL": "$3,868.00"
+    },
+    {
+      "symbol": "MRVL",
+      "side": "LONG",
+      "entryDate": "07/28/2026",
+      "entryPrice": "$166.07",
+      "exitDate": "07/30/2026",
+      "exitPrice": "$178.77",
+      "pctPL": "7.65%",
+      "dollarPL": "$7,620.00"
+    },
+    {
+      "symbol": "SNDK",
+      "side": "LONG",
+      "entryDate": "07/28/2026",
+      "entryPrice": "$1,075.05",
+      "exitDate": "07/30/2026",
+      "exitPrice": "$1,122.05",
+      "pctPL": "4.37%",
+      "dollarPL": "$9,400.00"
+    },
+    {
+      "symbol": "RKLB",
+      "side": "LONG",
+      "entryDate": "07/24/2026",
+      "entryPrice": "$61.36",
+      "exitDate": "07/30/2026",
+      "exitPrice": "$64.03",
+      "pctPL": "4.35%",
+      "dollarPL": "$3,740.00"
+    },
+    {
+      "symbol": "OKLO",
+      "side": "LONG",
+      "entryDate": "07/24/2026",
+      "entryPrice": "$39.45",
+      "exitDate": "07/30/2026",
+      "exitPrice": "$41.53",
+      "pctPL": "5.27%",
+      "dollarPL": "$4,160.00"
+    },
+    {
+      "symbol": "IONQ",
+      "side": "LONG",
+      "entryDate": "07/16/2026",
+      "entryPrice": "$33.94",
+      "exitDate": "07/30/2026",
+      "exitPrice": "$36.12",
+      "pctPL": "5.02%",
+      "dollarPL": "$6,390.00"
+    },
+    {
+      "symbol": "AAPL",
+      "side": "SHORT",
+      "entryDate": "07/13/2026",
+      "entryPrice": "$330.62",
+      "exitDate": "07/30/2026",
+      "exitPrice": "$320.18",
+      "pctPL": "3.16%",
+      "dollarPL": "$7,833.00"
+    },
+    {
+      "symbol": "BE",
+      "side": "LONG",
+      "entryDate": "07/29/2026",
+      "entryPrice": "$162.87",
+      "exitDate": "07/29/2026",
+      "exitPrice": "$175.00",
+      "pctPL": "7.45%",
+      "dollarPL": "$6,063.00"
+    },
+    {
+      "symbol": "TTD",
+      "side": "LONG",
+      "entryDate": "06/09/2026",
+      "entryPrice": "$17.92",
+      "exitDate": "07/29/2026",
+      "exitPrice": "$19.41",
+      "pctPL": "8.33%",
+      "dollarPL": "$7,460.00"
+    },
+    {
+      "symbol": "NFLX",
+      "side": "LONG",
+      "entryDate": "06/23/2026",
+      "entryPrice": "$70.36",
+      "exitDate": "07/28/2026",
+      "exitPrice": "$71.98",
+      "pctPL": "2.30%",
+      "dollarPL": "$3,235.00"
+    },
+    {
+      "symbol": "IBM",
+      "side": "LONG",
+      "entryDate": "07/14/2026",
+      "entryPrice": "$214.84",
+      "exitDate": "07/28/2026",
+      "exitPrice": "$221.21",
+      "pctPL": "2.18%",
+      "dollarPL": "$2,829.00"
+    },
+    {
+      "symbol": "QID",
+      "side": "LONG",
+      "entryDate": "04/08/2026",
+      "entryPrice": "$16.07",
+      "exitDate": "07/28/2026",
+      "exitPrice": "$15.34",
+      "pctPL": "-12.56%",
+      "dollarPL": "-$55,100.00"
+    },
+    {
+      "symbol": "BE",
+      "side": "LONG",
+      "entryDate": "07/27/2026",
+      "entryPrice": "$168.34",
+      "exitDate": "07/28/2026",
+      "exitPrice": "$179.35",
+      "pctPL": "6.55%",
+      "dollarPL": "$8,816.00"
+    },
+    {
+      "symbol": "VLO",
+      "side": "SHORT",
+      "entryDate": "07/22/2026",
+      "entryPrice": "$320.23",
+      "exitDate": "07/27/2026",
+      "exitPrice": "$292.00",
+      "pctPL": "8.82%",
+      "dollarPL": "$7,057.50"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "LONG",
+      "entryDate": "07/27/2026",
+      "entryPrice": "$119.77",
+      "exitDate": "07/27/2026",
+      "exitPrice": "$128.33",
+      "pctPL": "7.15%",
+      "dollarPL": "$3,424.00"
+    },
+    {
+      "symbol": "MU",
+      "side": "SHORT",
+      "entryDate": "07/23/2026",
+      "entryPrice": "$1,000.77",
+      "exitDate": "07/24/2026",
+      "exitPrice": "$942.77",
+      "pctPL": "5.80%",
+      "dollarPL": "$2,900.00"
+    },
+    {
+      "symbol": "STX",
+      "side": "SHORT",
+      "entryDate": "07/23/2026",
+      "entryPrice": "$933.77",
+      "exitDate": "07/24/2026",
+      "exitPrice": "$867.81",
+      "pctPL": "7.06%",
+      "dollarPL": "$3,298.00"
+    },
+    {
+      "symbol": "CRWD",
+      "side": "SHORT",
+      "entryDate": "07/15/2026",
+      "entryPrice": "$215.33",
+      "exitDate": "07/21/2026",
+      "exitPrice": "$195.47",
+      "pctPL": "9.22%",
+      "dollarPL": "$5,958.00"
+    },
+    {
+      "symbol": "OKLO",
+      "side": "LONG",
+      "entryDate": "07/16/2026",
+      "entryPrice": "$40.70",
+      "exitDate": "07/21/2026",
+      "exitPrice": "$44.03",
+      "pctPL": "8.18%",
+      "dollarPL": "$6,660.00"
+    },
+    {
+      "symbol": "MRVL",
+      "side": "LONG",
+      "entryDate": "7/16/2026",
+      "entryPrice": "$185.99",
+      "exitDate": "7/20/2026",
+      "exitPrice": "$197.57",
+      "pctPL": "6.23%",
+      "dollarPL": "$9,264.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "LONG",
+      "entryDate": "7/17/2026",
+      "entryPrice": "$132.50",
+      "exitDate": "7/20/2026",
+      "exitPrice": "$146.07",
+      "pctPL": "10.24%",
+      "dollarPL": "$4,071.00"
+    },
+    {
+      "symbol": "ARM",
+      "side": "LONG",
+      "entryDate": "7/16/2026",
+      "entryPrice": "$254.93",
+      "exitDate": "7/17/2026",
+      "exitPrice": "$272.53",
+      "pctPL": "6.90%",
+      "dollarPL": "$4,400.00"
+    },
+    {
+      "symbol": "RKLB",
+      "side": "LONG",
+      "entryDate": "7/16/2026",
+      "entryPrice": "$65.30",
+      "exitDate": "7/17/2026",
+      "exitPrice": "$70.57",
+      "pctPL": "8.07%",
+      "dollarPL": "$3,952.50"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "LONG",
+      "entryDate": "7/16/2026",
+      "entryPrice": "$129.09",
+      "exitDate": "7/17/2026",
+      "exitPrice": "$139.78",
+      "pctPL": "7.79%",
+      "dollarPL": "$10,056.00"
+    },
+    {
+      "symbol": "STX",
+      "side": "LONG",
+      "entryDate": "7/17/2026",
+      "entryPrice": "$699.50",
+      "exitDate": "7/17/2026",
+      "exitPrice": "$775.77",
+      "pctPL": "10.90%",
+      "dollarPL": "$7,627.00"
+    },
+    {
+      "symbol": "NBIS",
+      "side": "LONG",
+      "entryDate": "7/17/2026",
+      "entryPrice": "$162.00",
+      "exitDate": "7/17/2026",
+      "exitPrice": "$178.77",
+      "pctPL": "10.35%",
+      "dollarPL": "$5,031.00"
+    },
+    {
+      "symbol": "MU",
+      "side": "SHORT",
+      "entryDate": "4/22/2026",
+      "entryPrice": "$614.19",
+      "exitDate": "7/17/2026",
+      "exitPrice": "$671.96",
+      "pctPL": "-17.38%",
+      "dollarPL": "-$37,351.00"
+    },
+    {
+      "symbol": "STX",
+      "side": "SHORT",
+      "entryDate": "4/8/2026",
+      "entryPrice": "$548.87",
+      "exitDate": "7/16/2026",
+      "exitPrice": "$698.16",
+      "pctPL": "-28.53%",
+      "dollarPL": "-$78,292.00"
+    },
+    {
+      "symbol": "STLA",
+      "side": "LONG",
+      "entryDate": "7/9/2026",
+      "entryPrice": "$5.29",
+      "exitDate": "7/14/2026",
+      "exitPrice": "$5.72",
+      "pctPL": "8.13%",
+      "dollarPL": "$3,225.00"
+    },
+    {
+      "symbol": "BABA",
+      "side": "LONG",
+      "entryDate": "6/24/2026",
+      "entryPrice": "$100.87",
+      "exitDate": "7/8/2026",
+      "exitPrice": "$109.09",
+      "pctPL": "8.15%",
+      "dollarPL": "$4,932.00"
+    },
+    {
+      "symbol": "CRWD",
+      "side": "SHORT",
+      "entryDate": "7/6/2026",
+      "entryPrice": "$205.37",
+      "exitDate": "7/8/2026",
+      "exitPrice": "$188.85",
+      "pctPL": "8.04%",
+      "dollarPL": "$4,130.00"
+    },
+    {
+      "symbol": "DAL",
+      "side": "SHORT",
+      "entryDate": "7/2/2026",
+      "entryPrice": "$93.73",
+      "exitDate": "7/8/2026",
+      "exitPrice": "$86.00",
+      "pctPL": "8.25%",
+      "dollarPL": "$5,411.00"
+    },
+    {
+      "symbol": "ALAB",
+      "side": "SHORT",
+      "entryDate": "5/20/2026",
+      "entryPrice": "$335.59",
+      "exitDate": "7/7/2026",
+      "exitPrice": "$367.61",
+      "pctPL": "-9.54%",
+      "dollarPL": "-$12,810.00"
+    },
+    {
+      "symbol": "INTC",
+      "side": "SHORT",
+      "entryDate": "6/11/2026",
+      "entryPrice": "$123.43",
+      "exitDate": "7/7/2026",
+      "exitPrice": "$116.64",
+      "pctPL": "4.37%",
+      "dollarPL": "$5,938.00"
+    },
+    {
+      "symbol": "AMAT",
+      "side": "SHORT",
+      "entryDate": "6/11/2026",
+      "entryPrice": "$601.63",
+      "exitDate": "7/2/2026",
+      "exitPrice": "$600.25",
+      "pctPL": "0.23%",
+      "dollarPL": "$552.00"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "LONG",
+      "entryDate": "6/17/2026",
+      "entryPrice": "$373.59",
+      "exitDate": "7/2/2026",
+      "exitPrice": "$390.17",
+      "pctPL": "4.44%",
+      "dollarPL": "$6,631.00"
+    },
+    {
+      "symbol": "AA",
+      "side": "LONG",
+      "entryDate": "7/1/2026",
+      "entryPrice": "$46.57",
+      "exitDate": "7/2/2026",
+      "exitPrice": "$50.37",
+      "pctPL": "8.16%",
+      "dollarPL": "3,800.00"
+    },
+    {
+      "symbol": "ADBE",
+      "side": "LONG",
+      "entryDate": "6/11/2026",
+      "entryPrice": "$205.19",
+      "exitDate": "7/2/2026",
+      "exitPrice": "$216.75",
+      "pctPL": "4.76%",
+      "dollarPL": "$5,856.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "6/29/2026",
+      "entryPrice": "$241.35",
+      "exitDate": "7/1/2026",
+      "exitPrice": "$227.79",
+      "pctPL": "5.62%",
+      "dollarPL": "$10,846.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "6/11/2026",
+      "entryPrice": "$233.76",
+      "exitDate": "6/29/2026",
+      "exitPrice": "$211.57",
+      "pctPL": "4.77%",
+      "dollarPL": "$24,512.00"
+    },
+    {
+      "symbol": "DAL",
+      "side": "SHORT",
+      "entryDate": "6/25/2026",
+      "entryPrice": "$94.83",
+      "exitDate": "6/25/2026",
+      "exitPrice": "$91.97",
+      "pctPL": "3.02%",
+      "dollarPL": "$2,002.00"
+    },
+    {
+      "symbol": "WHR",
+      "side": "LONG",
+      "entryDate": "6/23/2026",
+      "entryPrice": "$36.57",
+      "exitDate": "6/25/2026",
+      "exitPrice": "$39.01",
+      "pctPL": "6.67%",
+      "dollarPL": "$3,660.00"
+    },
+    {
+      "symbol": "RBLX",
+      "side": "LONG",
+      "entryDate": "6/9/2026",
+      "entryPrice": "$42.33",
+      "exitDate": "6/15/2026",
+      "exitPrice": "$45.30",
+      "pctPL": "7.08%",
+      "dollarPL": "$2,376.00"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "LONG",
+      "entryDate": "6/9/2026",
+      "entryPrice": "$391.35",
+      "exitDate": "6/15/2026",
+      "exitPrice": "$395.06",
+      "pctPL": "0.95%",
+      "dollarPL": "$3,713.00"
+    },
+    {
+      "symbol": "CAG",
+      "side": "LONG",
+      "entryDate": "6/5/2026",
+      "entryPrice": "$12.80",
+      "exitDate": "6/12/2026",
+      "exitPrice": "$13.42",
+      "pctPL": "4.84%",
+      "dollarPL": "$3,100.00"
+    },
+    {
+      "symbol": "GOOGL",
+      "side": "LONG",
+      "entryDate": "6/11/2026",
+      "entryPrice": "$346.50",
+      "exitDate": "6/11/2026",
+      "exitPrice": "$353.69",
+      "pctPL": "2.08%",
+      "dollarPL": "$3,595.00"
+    },
+    {
+      "symbol": "QCOM",
+      "side": "LONG",
+      "entryDate": "6/10/2026",
+      "entryPrice": "$186.15",
+      "exitDate": "6/11/2026",
+      "exitPrice": "$199.07",
+      "pctPL": "6.94%",
+      "dollarPL": "$5,168.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "6/9/2026",
+      "entryPrice": "$186.23",
+      "exitDate": "6/10/2026",
+      "exitPrice": "$170.00",
+      "pctPL": "8.72%",
+      "dollarPL": "$16,230.00"
+    },
+    {
+      "symbol": "BE",
+      "side": "SHORT",
+      "entryDate": "4/14/2026",
+      "entryPrice": "$245.42",
+      "exitDate": "6/10/2026",
+      "exitPrice": "$238.82",
+      "pctPL": "2.69%",
+      "dollarPL": "$3,958.00"
+    },
+    {
+      "symbol": "WHR",
+      "side": "LONG",
+      "entryDate": "6/5/2026",
+      "entryPrice": "$38.97",
+      "exitDate": "6/10/2026",
+      "exitPrice": "$42.49",
+      "pctPL": "9.03%",
+      "dollarPL": "$5,280.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "5/8/2026",
+      "entryPrice": "$172.78",
+      "exitDate": "6/9/2026",
+      "exitPrice": "$152.81",
+      "pctPL": "12.44%",
+      "dollarPL": "$40,852.00"
+    },
+    {
+      "symbol": "INTC",
+      "side": "SHORT",
+      "entryDate": "6/8/2026",
+      "entryPrice": "$113.05",
+      "exitDate": "6/9/2026",
+      "exitPrice": "$103.67",
+      "pctPL": "8.30%",
+      "dollarPL": "$9,380.00"
+    },
+    {
+      "symbol": "RBLX",
+      "side": "LONG",
+      "entryDate": "6/5/2026",
+      "entryPrice": "$41.45",
+      "exitDate": "6/9/2026",
+      "exitPrice": "$44.13",
+      "pctPL": "6.47%",
+      "dollarPL": "$4,020.00"
+    },
+    {
+      "symbol": "INTC",
+      "side": "SHORT",
+      "entryDate": "4/29/2026",
+      "entryPrice": "$99.69",
+      "exitDate": "6/5/2026",
+      "exitPrice": "$98.20",
+      "pctPL": "1.50%",
+      "dollarPL": "$2,990.00"
+    },
+    {
+      "symbol": "CRWD",
+      "side": "SHORT",
+      "entryDate": "5/19/2026",
+      "entryPrice": "$634.14",
+      "exitDate": "5/27/2026",
+      "exitPrice": "$633.35",
+      "pctPL": "0.13%",
+      "dollarPL": "$119.00"
+    },
+    {
+      "symbol": "IQ",
+      "side": "LONG",
+      "entryDate": "1/16/2026",
+      "entryPrice": "$1.64",
+      "exitDate": "5/26/2026",
+      "exitPrice": "$1.07",
+      "pctPL": "-34.91%",
+      "dollarPL": "-$17,220.00"
+    },
+    {
+      "symbol": "CAG",
+      "side": "LONG",
+      "entryDate": "5/12/2026",
+      "entryPrice": "$13.99",
+      "exitDate": "5/22/2026",
+      "exitPrice": "$13.68",
+      "pctPL": "-2.20%",
+      "dollarPL": "-$2,310.00"
+    },
+    {
+      "symbol": "LULU",
+      "side": "LONG",
+      "entryDate": "5/18/2026",
+      "entryPrice": "$118.45",
+      "exitDate": "5/21/2026",
+      "exitPrice": "$124.87",
+      "pctPL": "5.42%",
+      "dollarPL": "$3,210.00"
+    },
+    {
+      "symbol": "WHR",
+      "side": "LONG",
+      "entryDate": "5/19/2026",
+      "entryPrice": "$38.95",
+      "exitDate": "5/21/2026",
+      "exitPrice": "$41.25",
+      "pctPL": "5.91%",
+      "dollarPL": "$2,760.00"
+    },
+    {
+      "symbol": "SOXS",
+      "side": "LONG",
+      "entryDate": "4/7/2026",
+      "entryPrice": "$23.68",
+      "exitDate": "5/11/2026",
+      "exitPrice": "$10.60",
+      "pctPL": "-57.58%",
+      "dollarPL": "-$306,765.00"
+    },
+    {
+      "symbol": "SPXU",
+      "side": "LONG",
+      "entryDate": "4/14/2026",
+      "entryPrice": "$45.84",
+      "exitDate": "5/8/2026",
+      "exitPrice": "$39.30",
+      "pctPL": "-14.26%",
+      "dollarPL": "-$39,235.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "5/6/2026",
+      "entryPrice": "$164.63",
+      "exitDate": "5/7/2026",
+      "exitPrice": "$148.83",
+      "pctPL": "9.60%",
+      "dollarPL": "$10,270.00"
+    },
+    {
+      "symbol": "GOOGL",
+      "side": "SHORT",
+      "entryDate": "4/14/2026",
+      "entryPrice": "$354.38",
+      "exitDate": "5/6/2026",
+      "exitPrice": "$393.01",
+      "pctPL": "-10.90%",
+      "dollarPL": "-$23,175.50"
+    },
+    {
+      "symbol": "AVGO",
+      "side": "SHORT",
+      "entryDate": "4/17/2026",
+      "entryPrice": "$412.78",
+      "exitDate": "5/5/2026",
+      "exitPrice": "$420.42",
+      "pctPL": "-1.85%",
+      "dollarPL": "-$3,821.00"
+    },
+    {
+      "symbol": "DELL",
+      "side": "SHORT",
+      "entryDate": "4/21/2026",
+      "entryPrice": "$212.87",
+      "exitDate": "5/1/2026",
+      "exitPrice": "$208.87",
+      "pctPL": "1.88%",
+      "dollarPL": "$1,200.00"
+    },
+    {
+      "symbol": "IWM",
+      "side": "SHORT",
+      "entryDate": "4/17/2026",
+      "entryPrice": "$275.25",
+      "exitDate": "4/29/2026",
+      "exitPrice": "$271.41",
+      "pctPL": "1.40%",
+      "dollarPL": "$1,920.00"
+    },
+    {
+      "symbol": "CIEN",
+      "side": "SHORT",
+      "entryDate": "4/2/2026",
+      "entryPrice": "$496.70",
+      "exitDate": "4/28/2026",
+      "exitPrice": "$472.17",
+      "pctPL": "3.31%",
+      "dollarPL": "$9,052.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "4/24/2026",
+      "entryPrice": "$126.07",
+      "exitDate": "4/28/2026",
+      "exitPrice": "$107.97",
+      "pctPL": "14.36%",
+      "dollarPL": "$18,100.00"
+    },
+    {
+      "symbol": "NBIS",
+      "side": "SHORT",
+      "entryDate": "4/14/2026",
+      "entryPrice": "$165.75",
+      "exitDate": "4/24/2026",
+      "exitPrice": "$149.63",
+      "pctPL": "9.73%",
+      "dollarPL": "$4,836.00"
+    },
+    {
+      "symbol": "COHR",
+      "side": "SHORT",
+      "entryDate": "4/16/2026",
+      "entryPrice": "$351.56",
+      "exitDate": "4/23/2026",
+      "exitPrice": "$336.31",
+      "pctPL": "3.61%",
+      "dollarPL": "$7,608.00"
+    },
+    {
+      "symbol": "MU",
+      "side": "SHORT",
+      "entryDate": "4/14/2026",
+      "entryPrice": "$467.30",
+      "exitDate": "4/20/2026",
+      "exitPrice": "$439.77",
+      "pctPL": "5.89%",
+      "dollarPL": "$5,506.00"
+    },
+    {
+      "symbol": "TTD",
+      "side": "LONG",
+      "entryDate": "3/17/2026",
+      "entryPrice": "$21.44",
+      "exitDate": "4/16/2026",
+      "exitPrice": "$22.75",
+      "pctPL": "3.66%",
+      "dollarPL": "$5,885.00"
+    },
+    {
+      "symbol": "CRM",
+      "side": "LONG",
+      "entryDate": "4/9/2026",
+      "entryPrice": "$168.95",
+      "exitDate": "4/16/2026",
+      "exitPrice": "$182.85",
+      "pctPL": "8.23%",
+      "dollarPL": "$4,170.00"
+    },
+    {
+      "symbol": "FIG",
+      "side": "LONG",
+      "entryDate": "3/24/2026",
+      "entryPrice": "$19.63",
+      "exitDate": "4/16/2026",
+      "exitPrice": "$20.77",
+      "pctPL": "5.81%",
+      "dollarPL": "$6,840.00"
+    },
+    {
+      "symbol": "ASAN",
+      "side": "LONG",
+      "entryDate": "4/9/2026",
+      "entryPrice": "$5.65",
+      "exitDate": "4/15/2026",
+      "exitPrice": "$6.00",
+      "pctPL": "6.19%",
+      "dollarPL": "$1,400.00"
+    },
+    {
+      "symbol": "TEAM",
+      "side": "LONG",
+      "entryDate": "4/9/2026",
+      "entryPrice": "$58.73",
+      "exitDate": "4/15/2026",
+      "exitPrice": "$63.53",
+      "pctPL": "8.17%",
+      "dollarPL": "$4,800.00"
+    },
+    {
+      "symbol": "BABA",
+      "side": "LONG",
+      "entryDate": "3/3/2026",
+      "entryPrice": "$125.70",
+      "exitDate": "4/14/2026",
+      "exitPrice": "$130.39",
+      "pctPL": "3.18%",
+      "dollarPL": "$10,390.00"
+    },
+    {
+      "symbol": "SMR",
+      "side": "LONG",
+      "entryDate": "3/6/2026",
+      "entryPrice": "$10.18",
+      "exitDate": "4/14/2026",
+      "exitPrice": "$10.54",
+      "pctPL": "2.10%",
+      "dollarPL": "$2,675.00"
+    },
+    {
+      "symbol": "DUOL",
+      "side": "LONG",
+      "entryDate": "4/9/2026",
+      "entryPrice": "$87.95",
+      "exitDate": "4/14/2026",
+      "exitPrice": "$95.53",
+      "pctPL": "8.62%",
+      "dollarPL": "$3,790.00"
+    },
+    {
+      "symbol": "ADBE",
+      "side": "LONG",
+      "entryDate": "4/6/2026",
+      "entryPrice": "$236.69",
+      "exitDate": "4/13/2026",
+      "exitPrice": "$237.73",
+      "pctPL": "0.44%",
+      "dollarPL": "$624.00"
+    },
+    {
+      "symbol": "ORCL",
+      "side": "LONG",
+      "entryDate": "3/26/2026",
+      "entryPrice": "$140.12",
+      "exitDate": "4/13/2026",
+      "exitPrice": "$147.23",
+      "pctPL": "5.07%",
+      "dollarPL": "$7,110.00"
+    },
+    {
+      "symbol": "CRWD",
+      "side": "LONG",
+      "entryDate": "4/10/2026",
+      "entryPrice": "$367.37",
+      "exitDate": "4/13/2026",
+      "exitPrice": "$395.53",
+      "pctPL": "7.67%",
+      "dollarPL": "$4,224.00"
+    },
+    {
+      "symbol": "WHR",
+      "side": "LONG",
+      "entryDate": "3/19/2026",
+      "entryPrice": "$53.60",
+      "exitDate": "4/8/2026",
+      "exitPrice": "$58.07",
+      "pctPL": "8.34%",
+      "dollarPL": "$3,576.00"
+    },
+    {
+      "symbol": "NVO",
+      "side": "LONG",
+      "entryDate": "3/30/2026",
+      "entryPrice": "$35.33",
+      "exitDate": "4/8/2026",
+      "exitPrice": "$38.13",
+      "pctPL": "7.93%",
+      "dollarPL": "$5,600.00"
+    },
+    {
+      "symbol": "VLO",
+      "side": "SHORT",
+      "entryDate": "3/11/2026",
+      "entryPrice": "$246.06",
+      "exitDate": "4/8/2026",
+      "exitPrice": "$237.28",
+      "pctPL": "2.23%",
+      "dollarPL": "$6,572.50"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "LONG",
+      "entryDate": "3/26/2026",
+      "entryPrice": "$367.87",
+      "exitDate": "4/8/2026",
+      "exitPrice": "$381.26",
+      "pctPL": "3.64%",
+      "dollarPL": "$5,355.00"
+    },
+    {
+      "symbol": "IONQ",
+      "side": "LONG",
+      "entryDate": "3/11/2026",
+      "entryPrice": "$28.82",
+      "exitDate": "4/8/2026",
+      "exitPrice": "$31.03",
+      "pctPL": "4.38%",
+      "dollarPL": "$12,005.00"
+    },
+    {
+      "symbol": "IBIT",
+      "side": "LONG",
+      "entryDate": "3/19/2026",
+      "entryPrice": "$38.43",
+      "exitDate": "4/7/2026",
+      "exitPrice": "$40.90",
+      "pctPL": "6.44%",
+      "dollarPL": "$4,950.00"
+    },
+    {
+      "symbol": "RGTI",
+      "side": "LONG",
+      "entryDate": "4/2/2026",
+      "entryPrice": "$12.87",
+      "exitDate": "4/2/2026",
+      "exitPrice": "$13.97",
+      "pctPL": "8.55%",
+      "dollarPL": "$3,300.00"
+    },
+    {
+      "symbol": "SOXS",
+      "side": "LONG",
+      "entryDate": "4/1/2026",
+      "entryPrice": "$35.87",
+      "exitDate": "4/2/2026",
+      "exitPrice": "$40.35",
+      "pctPL": "12.49%",
+      "dollarPL": "$4,480.00"
+    },
+    {
+      "symbol": "TEAM",
+      "side": "LONG",
+      "entryDate": "3/27/2026",
+      "entryPrice": "$64.90",
+      "exitDate": "4/1/2026",
+      "exitPrice": "$70.23",
+      "pctPL": "8.21%",
+      "dollarPL": "$5,330.00"
+    },
+    {
+      "symbol": "RBLX",
+      "side": "LONG",
+      "entryDate": "3/10/2026",
+      "entryPrice": "$54.16",
+      "exitDate": "4/1/2026",
+      "exitPrice": "$56.93",
+      "pctPL": "4.27%",
+      "dollarPL": "$5,544.00"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "3/26/2026",
+      "entryPrice": "$7.83",
+      "exitDate": "4/1/2026",
+      "exitPrice": "$8.46",
+      "pctPL": "7.96%",
+      "dollarPL": "$4,675.00"
+    },
+    {
+      "symbol": "ASAN",
+      "side": "LONG",
+      "entryDate": "3/20/2026",
+      "entryPrice": "$6.12",
+      "exitDate": "3/31/2026",
+      "exitPrice": "$6.43",
+      "pctPL": "5.07%",
+      "dollarPL": "$3,100.00"
+    },
+    {
+      "symbol": "RGTI",
+      "side": "LONG",
+      "entryDate": "3/30/2026",
+      "entryPrice": "$12.75",
+      "exitDate": "3/31/2026",
+      "exitPrice": "$13.70",
+      "pctPL": "7.45%",
+      "dollarPL": "$4,750.00"
+    },
+    {
+      "symbol": "CIEN",
+      "side": "SHORT",
+      "entryDate": "3/10/2026",
+      "entryPrice": "$392.99",
+      "exitDate": "3/26/2026",
+      "exitPrice": "$389.23",
+      "pctPL": "-0.59%",
+      "dollarPL": "-$2,332.00"
+    },
+    {
+      "symbol": "WRD",
+      "side": "LONG",
+      "entryDate": "3/10/2026",
+      "entryPrice": "$6.50",
+      "exitDate": "3/23/2026",
+      "exitPrice": "$7.22",
+      "pctPL": "11.08%",
+      "dollarPL": "$3,600.00"
+    },
+    {
+      "symbol": "NEM",
+      "side": "LONG",
+      "entryDate": "3/23/2026",
+      "entryPrice": "$88.81",
+      "exitDate": "3/23/2026",
+      "exitPrice": "$95.73",
+      "pctPL": "7.79%",
+      "dollarPL": "$4,152.00"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "3/13/2026",
+      "entryPrice": "$7.80",
+      "exitDate": "3/23/2026",
+      "exitPrice": "$8.60",
+      "pctPL": "8.53%",
+      "dollarPL": "$8,650.00"
+    },
+    {
+      "symbol": "MU",
+      "side": "SHORT",
+      "entryDate": "3/17/2026",
+      "entryPrice": "$460.33",
+      "exitDate": "3/18/2026",
+      "exitPrice": "$434.50",
+      "pctPL": "5.61%",
+      "dollarPL": "$3,874.50"
+    },
+    {
+      "symbol": "UAL",
+      "side": "LONG",
+      "entryDate": "3/12/2026",
+      "entryPrice": "$86.17",
+      "exitDate": "3/17/2026",
+      "exitPrice": "$94.50",
+      "pctPL": "9.67%",
+      "dollarPL": "$4,165.00"
+    },
+    {
+      "symbol": "IBIT",
+      "side": "LONG",
+      "entryDate": "3/6/2026",
+      "entryPrice": "$38.54",
+      "exitDate": "3/13/2026",
+      "exitPrice": "$41.95",
+      "pctPL": "8.85%",
+      "dollarPL": "$5,115.00"
+    },
+    {
+      "symbol": "FMC",
+      "side": "LONG",
+      "entryDate": "3/3/2026",
+      "entryPrice": "$13.33",
+      "exitDate": "3/12/2026",
+      "exitPrice": "$14.81",
+      "pctPL": "11.10%",
+      "dollarPL": "$4,440.00"
+    },
+    {
+      "symbol": "VLO",
+      "side": "SHORT",
+      "entryDate": "3/3/2026",
+      "entryPrice": "$225.83",
+      "exitDate": "3/10/2026",
+      "exitPrice": "$215.50",
+      "pctPL": "4.57%",
+      "dollarPL": "$4,132.00"
+    },
+    {
+      "symbol": "UAL",
+      "side": "LONG",
+      "entryDate": "3/6/2026",
+      "entryPrice": "$89.74",
+      "exitDate": "3/10/2026",
+      "exitPrice": "$96.03",
+      "pctPL": "7.01%",
+      "dollarPL": "$3,774.00"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "3/5/2026",
+      "entryPrice": "$10.22",
+      "exitDate": "3/9/2026",
+      "exitPrice": "$10.47",
+      "pctPL": "2.40%",
+      "dollarPL": "$3,675.00"
+    },
+    {
+      "symbol": "FDX",
+      "side": "SHORT",
+      "entryDate": "2/27/2026",
+      "entryPrice": "$389.37",
+      "exitDate": "3/6/2026",
+      "exitPrice": "$362.80",
+      "pctPL": "6.82%",
+      "dollarPL": "$5,314.00"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "LONG",
+      "entryDate": "3/2/2026",
+      "entryPrice": "$388.95",
+      "exitDate": "3/4/2026",
+      "exitPrice": "$409.83",
+      "pctPL": "5.37%",
+      "dollarPL": "$5,220.00"
+    },
+    {
+      "symbol": "GDX",
+      "side": "SHORT",
+      "entryDate": "2/25/2026",
+      "entryPrice": "$114.64",
+      "exitDate": "3/3/2026",
+      "exitPrice": "$105.73",
+      "pctPL": "7.77%",
+      "dollarPL": "$8,912.00"
+    },
+    {
+      "symbol": "SLV",
+      "side": "SHORT",
+      "entryDate": "2/27/2026",
+      "entryPrice": "$83.85",
+      "exitDate": "3/3/2026",
+      "exitPrice": "$74.50",
+      "pctPL": "11.15%",
+      "dollarPL": "$3,740.00"
+    },
+    {
+      "symbol": "TSM",
+      "side": "SHORT",
+      "entryDate": "2/24/2026",
+      "entryPrice": "$380.55",
+      "exitDate": "3/3/2026",
+      "exitPrice": "$349.43",
+      "pctPL": "8.18%",
+      "dollarPL": "$6,224.00"
+    },
+    {
+      "symbol": "STX",
+      "side": "SHORT",
+      "entryDate": "1/20/2026",
+      "entryPrice": "$364.16",
+      "exitDate": "3/3/2026",
+      "exitPrice": "$359.34",
+      "pctPL": "1.32%",
+      "dollarPL": "$1,204.50"
+    },
+    {
+      "symbol": "SQQQ",
+      "side": "LONG",
+      "entryDate": "2/25/2026",
+      "entryPrice": "$67.57",
+      "exitDate": "3/3/2026",
+      "exitPrice": "$75.60",
+      "pctPL": "11.88%",
+      "dollarPL": "$3,212.00"
+    },
+    {
+      "symbol": "DUOL",
+      "side": "LONG",
+      "entryDate": "2/4/2026",
+      "entryPrice": "$96.79",
+      "exitDate": "2/27/2026",
+      "exitPrice": "$101.71",
+      "pctPL": "2.32%",
+      "dollarPL": "$2,695.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "2/18/2026",
+      "entryPrice": "$69.55",
+      "exitDate": "2/26/2026",
+      "exitPrice": "$65.83",
+      "pctPL": "5.35%",
+      "dollarPL": "$5,952.00"
+    },
+    {
+      "symbol": "ASAN",
+      "side": "LONG",
+      "entryDate": "2/23/2026",
+      "entryPrice": "$6.81",
+      "exitDate": "2/26/2026",
+      "exitPrice": "$7.32",
+      "pctPL": "7.49%",
+      "dollarPL": "$1,530.00"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "LONG",
+      "entryDate": "2/17/2026",
+      "entryPrice": "$392.19",
+      "exitDate": "2/26/2026",
+      "exitPrice": "$401.11",
+      "pctPL": "2.27%",
+      "dollarPL": "$5,352.00"
+    },
+    {
+      "symbol": "CRWD",
+      "side": "LONG",
+      "entryDate": "2/23/2026",
+      "entryPrice": "$354.98",
+      "exitDate": "2/25/2026",
+      "exitPrice": "$359.10",
+      "pctPL": "1.16%",
+      "dollarPL": "$2,059.00"
+    },
+    {
+      "symbol": "RGTI",
+      "side": "LONG",
+      "entryDate": "2/2/2026",
+      "entryPrice": "$15.98",
+      "exitDate": "2/25/2026",
+      "exitPrice": "$17.12",
+      "pctPL": "7.09%",
+      "dollarPL": "$3,399.00"
+    },
+    {
+      "symbol": "IBIT",
+      "side": "LONG",
+      "entryDate": "2/19/2026",
+      "entryPrice": "$36.83",
+      "exitDate": "2/25/2026",
+      "exitPrice": "$38.44",
+      "pctPL": "4.37%",
+      "dollarPL": "$2,412.00"
+    },
+    {
+      "symbol": "WDAY",
+      "side": "LONG",
+      "entryDate": "2/23/2026",
+      "entryPrice": "$122.67",
+      "exitDate": "2/25/2026",
+      "exitPrice": "$126.65",
+      "pctPL": "3.24%",
+      "dollarPL": "$2,388.00"
+    },
+    {
+      "symbol": "RBLX",
+      "side": "LONG",
+      "entryDate": "2/23/2026",
+      "entryPrice": "$59.77",
+      "exitDate": "2/24/2026",
+      "exitPrice": "$64.37",
+      "pctPL": "7.70%",
+      "dollarPL": "$3,220.00"
+    },
+    {
+      "symbol": "INTU",
+      "side": "LONG",
+      "entryDate": "2/23/2026",
+      "entryPrice": "$355.73",
+      "exitDate": "2/24/2026",
+      "exitPrice": "$384.23",
+      "pctPL": "8.01%",
+      "dollarPL": "$4,275.00"
+    },
+    {
+      "symbol": "PYPL",
+      "side": "LONG",
+      "entryDate": "1/21/2026",
+      "entryPrice": "$45.46",
+      "exitDate": "2/23/2026",
+      "exitPrice": "$44.75",
+      "pctPL": "-1.56%",
+      "dollarPL": "-$1,420.00"
+    },
+    {
+      "symbol": "FIG",
+      "side": "LONG",
+      "entryDate": "1/15/2026",
+      "entryPrice": "$22.86",
+      "exitDate": "2/18/2026",
+      "exitPrice": "$24.27",
+      "pctPL": "2.68%",
+      "dollarPL": "$3,924.00"
+    },
+    {
+      "symbol": "SDOW",
+      "side": "LONG",
+      "entryDate": "2/10/2026",
+      "entryPrice": "$27.80",
+      "exitDate": "2/17/2026",
+      "exitPrice": "$29.83",
+      "pctPL": "7.30%",
+      "dollarPL": "$4,060.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "2/11/2026",
+      "entryPrice": "$68.90",
+      "exitDate": "2/17/2026",
+      "exitPrice": "$60.40",
+      "pctPL": "12.34%",
+      "dollarPL": "$6,800.00"
+    },
+    {
+      "symbol": "RDDT",
+      "side": "LONG",
+      "entryDate": "2/12/2026",
+      "entryPrice": "$127.87",
+      "exitDate": "2/13/2026",
+      "exitPrice": "$141.75",
+      "pctPL": "10.85%",
+      "dollarPL": "$3,470.00"
+    },
+    {
+      "symbol": "DAL",
+      "side": "SHORT",
+      "entryDate": "2/9/2026",
+      "entryPrice": "$75.10",
+      "exitDate": "2/12/2026",
+      "exitPrice": "$67.95",
+      "pctPL": "9.52%",
+      "dollarPL": "$3,575.00"
+    },
+    {
+      "symbol": "CPNG",
+      "side": "LONG",
+      "entryDate": "2/5/2026",
+      "entryPrice": "$16.82",
+      "exitDate": "2/9/2026",
+      "exitPrice": "$18.29",
+      "pctPL": "8.74%",
+      "dollarPL": "$2,205.00"
+    },
+    {
+      "symbol": "RBLX",
+      "side": "LONG",
+      "entryDate": "2/6/2026",
+      "entryPrice": "$60.67",
+      "exitDate": "2/6/2026",
+      "exitPrice": "$66.07",
+      "pctPL": "8.90%",
+      "dollarPL": "$2,160.00"
+    },
+    {
+      "symbol": "IBIT",
+      "side": "LONG",
+      "entryDate": "2/5/2026",
+      "entryPrice": "$36.77",
+      "exitDate": "2/6/2026",
+      "exitPrice": "$38.04",
+      "pctPL": "3.43%",
+      "dollarPL": "$3,785.00"
+    },
+    {
+      "symbol": "MSTR",
+      "side": "LONG",
+      "entryDate": "2/4/2026",
+      "entryPrice": "$112.78",
+      "exitDate": "2/6/2026",
+      "exitPrice": "$117.46",
+      "pctPL": "4.15%",
+      "dollarPL": "$4,680.00"
+    },
+    {
+      "symbol": "RBLX",
+      "side": "LONG",
+      "entryDate": "1/22/2026",
+      "entryPrice": "$67.75",
+      "exitDate": "2/5/2026",
+      "exitPrice": "$72.10",
+      "pctPL": "6.42%",
+      "dollarPL": "$6,528.00"
+    },
+    {
+      "symbol": "AMAT",
+      "side": "SHORT",
+      "entryDate": "1/5/2026",
+      "entryPrice": "$317.70",
+      "exitDate": "2/4/2026",
+      "exitPrice": "$303.93",
+      "pctPL": "4.34%",
+      "dollarPL": "$2,754.60"
+    },
+    {
+      "symbol": "BE",
+      "side": "SHORT",
+      "entryDate": "2/3/2026",
+      "entryPrice": "$171.55",
+      "exitDate": "2/3/2026",
+      "exitPrice": "$162.35",
+      "pctPL": "5.36%",
+      "dollarPL": "$2,760.00"
+    },
+    {
+      "symbol": "SLV",
+      "side": "LONG",
+      "entryDate": "1/30/2026",
+      "entryPrice": "$75.99",
+      "exitDate": "2/3/2026",
+      "exitPrice": "$78.55",
+      "pctPL": "3.37%",
+      "dollarPL": "$2,560.00"
+    },
+    {
+      "symbol": "KOLD",
+      "side": "LONG",
+      "entryDate": "1/23/2026",
+      "entryPrice": "$17.04",
+      "exitDate": "2/2/2026",
+      "exitPrice": "$18.60",
+      "pctPL": "4.96%",
+      "dollarPL": "$4,056.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "1/29/2026",
+      "entryPrice": "$70.03",
+      "exitDate": "1/30/2026",
+      "exitPrice": "$64.26",
+      "pctPL": "8.24%",
+      "dollarPL": "$2,885.00"
+    },
+    {
+      "symbol": "ASTS",
+      "side": "SHORT",
+      "entryDate": "1/30/2026",
+      "entryPrice": "$129.07",
+      "exitDate": "1/30/2026",
+      "exitPrice": "$115.85",
+      "pctPL": "10.24%",
+      "dollarPL": "$1,983.00"
+    },
+    {
+      "symbol": "NEM",
+      "side": "SHORT",
+      "entryDate": "1/23/2026",
+      "entryPrice": "$127.06",
+      "exitDate": "1/30/2026",
+      "exitPrice": "$117.47",
+      "pctPL": "7.54%",
+      "dollarPL": "$4,792.50"
+    },
+    {
+      "symbol": "GLL",
+      "side": "LONG",
+      "entryDate": "1/29/2026",
+      "entryPrice": "$16.51",
+      "exitDate": "1/30/2026",
+      "exitPrice": "$18.75",
+      "pctPL": "13.57%",
+      "dollarPL": "$11,200.00"
+    },
+    {
+      "symbol": "SOXL",
+      "side": "SHORT",
+      "entryDate": "1/28/2026",
+      "entryPrice": "$70.15",
+      "exitDate": "1/29/2026",
+      "exitPrice": "$65.77",
+      "pctPL": "6.24%",
+      "dollarPL": "$2,190.00"
+    },
+    {
+      "symbol": "GLL",
+      "side": "LONG",
+      "entryDate": "1/28/2026",
+      "entryPrice": "$16.29",
+      "exitDate": "1/29/2026",
+      "exitPrice": "$17.00",
+      "pctPL": "4.33%",
+      "dollarPL": "$7,060.00"
+    },
+    {
+      "symbol": "BE",
+      "side": "SHORT",
+      "entryDate": "1/28/2026",
+      "entryPrice": "$165.33",
+      "exitDate": "1/29/2026",
+      "exitPrice": "$156.15",
+      "pctPL": "5.55%",
+      "dollarPL": "$1,147.50"
+    },
+    {
+      "symbol": "CVNA",
+      "side": "SHORT",
+      "entryDate": "1/7/2026",
+      "entryPrice": "$469.85",
+      "exitDate": "1/28/2026",
+      "exitPrice": "$423.54",
+      "pctPL": "9.86%",
+      "dollarPL": "$3,473.50"
+    },
+    {
+      "symbol": "ASML",
+      "side": "SHORT",
+      "entryDate": "1/27/2026",
+      "entryPrice": "$1,494.53",
+      "exitDate": "1/28/2026",
+      "exitPrice": "$1,442.56",
+      "pctPL": "3.48%",
+      "dollarPL": "$2,338.50"
+    },
+    {
+      "symbol": "KOLD",
+      "side": "LONG",
+      "entryDate": "1/22/2026",
+      "entryPrice": "$21.00",
+      "exitDate": "1/22/2026",
+      "exitPrice": "$23.20",
+      "pctPL": "10.48%",
+      "dollarPL": "$2,200.00"
+    },
+    {
+      "symbol": "ASTS",
+      "side": "SHORT",
+      "entryDate": "1/16/2026",
+      "entryPrice": "$120.50",
+      "exitDate": "1/21/2026",
+      "exitPrice": "$107.25",
+      "pctPL": "11.00%",
+      "dollarPL": "$1,325.00"
+    },
+    {
+      "symbol": "UAL",
+      "side": "SHORT",
+      "entryDate": "1/7/2026",
+      "entryPrice": "$117.90",
+      "exitDate": "1/20/2026",
+      "exitPrice": "$107.78",
+      "pctPL": "8.58%",
+      "dollarPL": "$1,032.24"
+    },
+    {
+      "symbol": "RBLX",
+      "side": "LONG",
+      "entryDate": "1/2/2026",
+      "entryPrice": "$77.45",
+      "exitDate": "1/14/2026",
+      "exitPrice": "$86.07",
+      "pctPL": "11.13%",
+      "dollarPL": "$2,241.20"
+    }
+  ]
+}

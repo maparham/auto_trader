@@ -1,0 +1,1851 @@
+{
+  "source": "https://verifiedinvesting.com/pages/smart-money-trade-alerts-stocks-etfs-closed-position",
+  "service": "The Swing Trader",
+  "sheet": "CLOSED-2020",
+  "order": "as-listed-on-site",
+  "stats": {
+    "year": "2020",
+    "trades": 204,
+    "winners": 182,
+    "winRate": "89.22%"
+  },
+  "tradeCount": 204,
+  "trades": [
+    {
+      "symbol": "SFIX",
+      "side": "SHORT",
+      "entryDate": "12/16/2020",
+      "entryPrice": "$66.15",
+      "exitDate": "12/31/2020",
+      "exitPrice": "$59.55",
+      "pctPL": "+9.98%"
+    },
+    {
+      "symbol": "RDFN",
+      "side": "SHORT",
+      "entryDate": "12/17/2020",
+      "entryPrice": "$79.00",
+      "exitDate": "12/30/2020",
+      "exitPrice": "$70.95",
+      "pctPL": "+10.19%"
+    },
+    {
+      "symbol": "BABA",
+      "side": "LONG",
+      "entryDate": "12/24/2020",
+      "entryPrice": "$215.30",
+      "exitDate": "12/29/2020",
+      "exitPrice": "$238.35",
+      "pctPL": "+10.71%"
+    },
+    {
+      "symbol": "SDS",
+      "side": "LONG",
+      "entryDate": "04/09/2020",
+      "entryPrice": "$22.61",
+      "exitDate": "12/28/2020",
+      "exitPrice": "$12.57",
+      "pctPL": "-44.40%"
+    },
+    {
+      "symbol": "QID",
+      "side": "LONG",
+      "entryDate": "04/14/2020",
+      "entryPrice": "$14.84",
+      "exitDate": "12/28/2020",
+      "exitPrice": "$7.20",
+      "pctPL": "-51.48%"
+    },
+    {
+      "symbol": "SQQQ",
+      "side": "LONG",
+      "entryDate": "05/05/2020",
+      "entryPrice": "$44.25",
+      "exitDate": "12/28/2020",
+      "exitPrice": "$15.55",
+      "pctPL": "-64.85%"
+    },
+    {
+      "symbol": "SOXS",
+      "side": "LONG",
+      "entryDate": "05/14/2020",
+      "entryPrice": "$54.92",
+      "exitDate": "12/28/2020",
+      "exitPrice": "$18.95",
+      "pctPL": "-65.49%"
+    },
+    {
+      "symbol": "TWM",
+      "side": "LONG",
+      "entryDate": "06/30/2020",
+      "entryPrice": "$8.27",
+      "exitDate": "12/28/2020",
+      "exitPrice": "$4.85",
+      "pctPL": "-41.35%"
+    },
+    {
+      "symbol": "SPXU",
+      "side": "LONG",
+      "entryDate": "07/06/2020",
+      "entryPrice": "$8.24",
+      "exitDate": "12/28/2020",
+      "exitPrice": "$6.04",
+      "pctPL": "-26.69%"
+    },
+    {
+      "symbol": "GM",
+      "side": "SHORT",
+      "entryDate": "11/24/2020",
+      "entryPrice": "$46.25",
+      "exitDate": "12/11/2020",
+      "exitPrice": "$41.65",
+      "pctPL": "+9.95%"
+    },
+    {
+      "symbol": "NIO",
+      "side": "SHORT",
+      "entryDate": "12/02/2020",
+      "entryPrice": "$47.55",
+      "exitDate": "12/04/2020",
+      "exitPrice": "$43.45",
+      "pctPL": "+8.62%"
+    },
+    {
+      "symbol": "BBY",
+      "side": "SHORT",
+      "entryDate": "08/14/2020",
+      "entryPrice": "$116.19",
+      "exitDate": "12/03/2020",
+      "exitPrice": "$105.95",
+      "pctPL": "+8.81%"
+    },
+    {
+      "symbol": "NIO",
+      "side": "SHORT",
+      "entryDate": "11/03/2020",
+      "entryPrice": "$43.64",
+      "exitDate": "12/02/2020",
+      "exitPrice": "$38.64",
+      "pctPL": "+11.46%"
+    },
+    {
+      "symbol": "XPEV",
+      "side": "SHORT",
+      "entryDate": "11/23/2020",
+      "entryPrice": "$69.85",
+      "exitDate": "11/30/2020",
+      "exitPrice": "$60.25",
+      "pctPL": "+13.74%"
+    },
+    {
+      "symbol": "TLRY",
+      "side": "LONG",
+      "entryDate": "11/16/2020",
+      "entryPrice": "$7.15",
+      "exitDate": "11/24/2020",
+      "exitPrice": "$8.15",
+      "pctPL": "+13.99%"
+    },
+    {
+      "symbol": "XTZ/USD",
+      "side": "LONG",
+      "entryDate": "09/05/2020",
+      "entryPrice": "$2.15",
+      "exitDate": "11/23/2020",
+      "exitPrice": "$2.61",
+      "pctPL": "+21.40%"
+    },
+    {
+      "symbol": "TSCO",
+      "side": "SHORT",
+      "entryDate": "05/28/2020",
+      "entryPrice": "$136.55",
+      "exitDate": "11/10/2020",
+      "exitPrice": "$128.35",
+      "pctPL": "+6.01%"
+    },
+    {
+      "symbol": "PYPL",
+      "side": "SHORT",
+      "entryDate": "11/05/2020",
+      "entryPrice": "$203.00",
+      "exitDate": "11/10/2020",
+      "exitPrice": "$181.25",
+      "pctPL": "+10.74%"
+    },
+    {
+      "symbol": "JPM",
+      "side": "LONG",
+      "entryDate": "09/02/2020",
+      "entryPrice": "$100.00",
+      "exitDate": "11/09/2020",
+      "exitPrice": "$113.00",
+      "pctPL": "+13.00%"
+    },
+    {
+      "symbol": "TLRY",
+      "side": "LONG",
+      "entryDate": "10/15/2020",
+      "entryPrice": "$5.50",
+      "exitDate": "11/05/2020",
+      "exitPrice": "$7.24",
+      "pctPL": "+31.64%"
+    },
+    {
+      "symbol": "MJ",
+      "side": "LONG",
+      "entryDate": "10/01/2020",
+      "entryPrice": "$10.37",
+      "exitDate": "11/05/2020",
+      "exitPrice": "$12.25",
+      "pctPL": "+18.13%"
+    },
+    {
+      "symbol": "ACB",
+      "side": "LONG",
+      "entryDate": "09/22/2020",
+      "entryPrice": "$4.87",
+      "exitDate": "11/05/2020",
+      "exitPrice": "$5.99",
+      "pctPL": "+23.00%"
+    },
+    {
+      "symbol": "DKNG",
+      "side": "LONG",
+      "entryDate": "10/27/2020",
+      "entryPrice": "$35.40",
+      "exitDate": "11/04/2020",
+      "exitPrice": "$39.75",
+      "pctPL": "+12.29%"
+    },
+    {
+      "symbol": "PYPL",
+      "side": "SHORT",
+      "entryDate": "05/06/2020",
+      "entryPrice": "$177.88",
+      "exitDate": "11/03/2020",
+      "exitPrice": "$174.88",
+      "pctPL": "+1.69%"
+    },
+    {
+      "symbol": "FSLY",
+      "side": "LONG",
+      "entryDate": "10/30/2020",
+      "entryPrice": "$63.50",
+      "exitDate": "11/03/2020",
+      "exitPrice": "$68.04",
+      "pctPL": "+7.15%"
+    },
+    {
+      "symbol": "ZM",
+      "side": "SHORT",
+      "entryDate": "09/28/2020",
+      "entryPrice": "$532.00",
+      "exitDate": "10/30/2020",
+      "exitPrice": "$476.50",
+      "pctPL": "+10.43%"
+    },
+    {
+      "symbol": "PTON",
+      "side": "SHORT",
+      "entryDate": "09/29/2020",
+      "entryPrice": "$125.00",
+      "exitDate": "10/30/2020",
+      "exitPrice": "$111.75",
+      "pctPL": "+10.60%"
+    },
+    {
+      "symbol": "WHR",
+      "side": "SHORT",
+      "entryDate": "10/13/2020",
+      "entryPrice": "$202.27",
+      "exitDate": "10/30/2020",
+      "exitPrice": "$181.45",
+      "pctPL": "+10.29%"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "10/06/2020",
+      "entryPrice": "$16.00",
+      "exitDate": "10/26/2020",
+      "exitPrice": "$17.65",
+      "pctPL": "+10.31%"
+    },
+    {
+      "symbol": "VXX",
+      "side": "LONG",
+      "entryDate": "09/15/2020",
+      "entryPrice": "$23.72",
+      "exitDate": "10/26/2020",
+      "exitPrice": "$24.55",
+      "pctPL": "+3.50%"
+    },
+    {
+      "symbol": "WWR",
+      "side": "LONG",
+      "entryDate": "10/23/2020",
+      "entryPrice": "$4.12",
+      "exitDate": "10/26/2020",
+      "exitPrice": "$5.12",
+      "pctPL": "+24.27%"
+    },
+    {
+      "symbol": "Z",
+      "side": "SHORT",
+      "entryDate": "09/25/2020",
+      "entryPrice": "$106.55",
+      "exitDate": "10/22/2020",
+      "exitPrice": "$95.45",
+      "pctPL": "+10.42%"
+    },
+    {
+      "symbol": "LTC/USD",
+      "side": "LONG",
+      "entryDate": "09/05/2020",
+      "entryPrice": "$46.00",
+      "exitDate": "10/22/2020",
+      "exitPrice": "$55.20",
+      "pctPL": "+20.00%"
+    },
+    {
+      "symbol": "BTC/USD",
+      "side": "LONG",
+      "entryDate": "09/05/2020",
+      "entryPrice": "$9,900",
+      "exitDate": "10/21/2020",
+      "exitPrice": "$12,455",
+      "pctPL": "+25.81%"
+    },
+    {
+      "symbol": "JKS",
+      "side": "SHORT",
+      "entryDate": "10/07/2020",
+      "entryPrice": "$73.93",
+      "exitDate": "10/21/2020",
+      "exitPrice": "$69.43",
+      "pctPL": "+6.09%"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "SHORT",
+      "entryDate": "10/13/2020",
+      "entryPrice": "$223.90",
+      "exitDate": "10/19/2020",
+      "exitPrice": "$213.80",
+      "pctPL": "+4.51%"
+    },
+    {
+      "symbol": "TLRY",
+      "side": "LONG",
+      "entryDate": "09/17/2020",
+      "entryPrice": "$4.89",
+      "exitDate": "10/08/2020",
+      "exitPrice": "$5,90",
+      "pctPL": "+20.65%"
+    },
+    {
+      "symbol": "PENN",
+      "side": "SHORT",
+      "entryDate": "09/28/2020",
+      "entryPrice": "$72.75",
+      "exitDate": "10/08/2020",
+      "exitPrice": "$65.40",
+      "pctPL": "+10.10%"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "09/17/2020",
+      "entryPrice": "$16.03",
+      "exitDate": "09/29/2020",
+      "exitPrice": "$17.63",
+      "pctPL": "+10.00%"
+    },
+    {
+      "symbol": "X",
+      "side": "LONG",
+      "entryDate": "09/25/2020",
+      "entryPrice": "$6.88",
+      "exitDate": "09/28/2020",
+      "exitPrice": "$7.60",
+      "pctPL": "+10.47%"
+    },
+    {
+      "symbol": "PENN",
+      "side": "SHORT",
+      "entryDate": "09/17/2020",
+      "entryPrice": "$72.65",
+      "exitDate": "09/24/2020",
+      "exitPrice": "$62.65",
+      "pctPL": "+13.77%"
+    },
+    {
+      "symbol": "ZM",
+      "side": "SHORT",
+      "entryDate": "09/23/2020",
+      "entryPrice": "$509.25",
+      "exitDate": "09/24/2020",
+      "exitPrice": "$459.25",
+      "pctPL": "+9.82%"
+    },
+    {
+      "symbol": "KBH",
+      "side": "SHORT",
+      "entryDate": "09/22/2020",
+      "entryPrice": "$40.50",
+      "exitDate": "09/23/2020",
+      "exitPrice": "$37.95",
+      "pctPL": "+6.30%"
+    },
+    {
+      "symbol": "ACB",
+      "side": "LONG",
+      "entryDate": "09/11/2020",
+      "entryPrice": "$6.72",
+      "exitDate": "09/22/2020",
+      "exitPrice": "$7.22",
+      "pctPL": "+7.44%"
+    },
+    {
+      "symbol": "ZSL",
+      "side": "LONG",
+      "entryDate": "08/13/2020",
+      "entryPrice": "$7.46",
+      "exitDate": "09/21/2020",
+      "exitPrice": "$8.46",
+      "pctPL": "+13.41%"
+    },
+    {
+      "symbol": "EFX",
+      "side": "SHORT",
+      "entryDate": "06/03/2020",
+      "entryPrice": "$171.75",
+      "exitDate": "09/17/2020",
+      "exitPrice": "$156.80",
+      "pctPL": "+8.68%"
+    },
+    {
+      "symbol": "TLRY",
+      "side": "LONG",
+      "entryDate": "09/14/2020",
+      "entryPrice": "$5.17",
+      "exitDate": "09/16/2020",
+      "exitPrice": "$6.04",
+      "pctPL": "+17.16%"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "07/02/2020",
+      "entryPrice": "$15.88",
+      "exitDate": "09/08/2020",
+      "exitPrice": "$18.91",
+      "pctPL": "+19.08%"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "SHORT",
+      "entryDate": "04/16/2020",
+      "entryPrice": "$209.30",
+      "exitDate": "09/04/2020",
+      "exitPrice": "$207.00",
+      "pctPL": "+1.10%"
+    },
+    {
+      "symbol": "SPLK",
+      "side": "SHORT",
+      "entryDate": "07/01/2020",
+      "entryPrice": "$204.75",
+      "exitDate": "09/04/2020",
+      "exitPrice": "$191.50",
+      "pctPL": "+6.47%"
+    },
+    {
+      "symbol": "W",
+      "side": "SHORT",
+      "entryDate": "06/17/2020",
+      "entryPrice": "$269.82",
+      "exitDate": "09/04/2020",
+      "exitPrice": "$249.82",
+      "pctPL": "+7.42%"
+    },
+    {
+      "symbol": "FB",
+      "side": "SHORT",
+      "entryDate": "08/26/2020",
+      "entryPrice": "$301.25",
+      "exitDate": "09/04/2020",
+      "exitPrice": "$281.25",
+      "pctPL": "+6.64%"
+    },
+    {
+      "symbol": "GOOGL",
+      "side": "SHORT",
+      "entryDate": "09/02/2020",
+      "entryPrice": "$1,726.00",
+      "exitDate": "09/04/2020",
+      "exitPrice": "$1,592.00",
+      "pctPL": "+7.76%"
+    },
+    {
+      "symbol": "ZM",
+      "side": "SHORT",
+      "entryDate": "08/26/2020",
+      "entryPrice": "$403.33",
+      "exitDate": "09/03/2020",
+      "exitPrice": "$375.00",
+      "pctPL": "+7.56%"
+    },
+    {
+      "symbol": "OSTK",
+      "side": "SHORT",
+      "entryDate": "07/28/2020",
+      "entryPrice": "$94.28",
+      "exitDate": "09/02/2020",
+      "exitPrice": "$84.45",
+      "pctPL": "+11.45%"
+    },
+    {
+      "symbol": "VXX",
+      "side": "LONG",
+      "entryDate": "08/06/2020",
+      "entryPrice": "$25.80",
+      "exitDate": "09/02/2020",
+      "exitPrice": "$28.12",
+      "pctPL": "+8.99%"
+    },
+    {
+      "symbol": "ZSL",
+      "side": "LONG",
+      "entryDate": "07/21/2020",
+      "entryPrice": "$9.63",
+      "exitDate": "08/11/2020",
+      "exitPrice": "$9.22",
+      "pctPL": "-4.26%"
+    },
+    {
+      "symbol": "X",
+      "side": "LONG",
+      "entryDate": "07/27/2020",
+      "entryPrice": "$7.34",
+      "exitDate": "08/11/2020",
+      "exitPrice": "$8.20",
+      "pctPL": "+11.72%"
+    },
+    {
+      "symbol": "DOCU",
+      "side": "SHORT",
+      "entryDate": "07/30/2020",
+      "entryPrice": "$214.30",
+      "exitDate": "08/10/2020",
+      "exitPrice": "$197.00",
+      "pctPL": "+8.07%"
+    },
+    {
+      "symbol": "ILMN",
+      "side": "SHORT",
+      "entryDate": "06/19/2020",
+      "entryPrice": "$371.23",
+      "exitDate": "08/07/2020",
+      "exitPrice": "$343.69",
+      "pctPL": "+7.42%"
+    },
+    {
+      "symbol": "SPOT",
+      "side": "SHORT",
+      "entryDate": "06/29/2020",
+      "entryPrice": "$274.75",
+      "exitDate": "08/05/2020",
+      "exitPrice": "$247.27",
+      "pctPL": "+10.00%"
+    },
+    {
+      "symbol": "LTC/USD",
+      "side": "LONG",
+      "entryDate": "02/26/2020",
+      "entryPrice": "$42.55",
+      "exitDate": "07/27/2020",
+      "exitPrice": "$53.25",
+      "pctPL": "+25.15%"
+    },
+    {
+      "symbol": "BTC/USD",
+      "side": "LONG",
+      "entryDate": "07/22/2020",
+      "entryPrice": "$9,373.00",
+      "exitDate": "07/27/2020",
+      "exitPrice": "$11,405.00",
+      "pctPL": "+21.68%"
+    },
+    {
+      "symbol": "ZM",
+      "side": "SHORT",
+      "entryDate": "07/20/2020",
+      "entryPrice": "$271.00",
+      "exitDate": "07/23/2020",
+      "exitPrice": "$249.25",
+      "pctPL": "+8.03%"
+    },
+    {
+      "symbol": "XTZ/USD",
+      "side": "LONG",
+      "entryDate": "06/16/2020",
+      "entryPrice": "$2.59",
+      "exitDate": "07/15/2020",
+      "exitPrice": "$3.26",
+      "pctPL": "+25.87%"
+    },
+    {
+      "symbol": "SHOP",
+      "side": "SHORT",
+      "entryDate": "07/01/2020",
+      "entryPrice": "$1,029.00",
+      "exitDate": "07/14/2020",
+      "exitPrice": "$925.00",
+      "pctPL": "+10.11%"
+    },
+    {
+      "symbol": "ZM",
+      "side": "SHORT",
+      "entryDate": "06/22/2020",
+      "entryPrice": "$263.00",
+      "exitDate": "07/14/2020",
+      "exitPrice": "$240.50",
+      "pctPL": "+8.56%"
+    },
+    {
+      "symbol": "FSLY",
+      "side": "SHORT",
+      "entryDate": "06/30/2020",
+      "entryPrice": "$93.25",
+      "exitDate": "07/13/2020",
+      "exitPrice": "$83.90",
+      "pctPL": "+10.03%"
+    },
+    {
+      "symbol": "DOCU",
+      "side": "SHORT",
+      "entryDate": "07/10/2020",
+      "entryPrice": "$211.00",
+      "exitDate": "07/13/2020",
+      "exitPrice": "$189.25",
+      "pctPL": "+10.31%"
+    },
+    {
+      "symbol": "FB",
+      "side": "SHORT",
+      "entryDate": "04/29/2020",
+      "entryPrice": "$224.60",
+      "exitDate": "06/29/2020",
+      "exitPrice": "$207.75",
+      "pctPL": "+7.50%"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "06/23/2020",
+      "entryPrice": "$16.90",
+      "exitDate": "06/24/2020",
+      "exitPrice": "$18.65",
+      "pctPL": "+10.36%"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "06/05/2020",
+      "entryPrice": "$18.92",
+      "exitDate": "06/11/2020",
+      "exitPrice": "$21.00",
+      "pctPL": "+11.00%"
+    },
+    {
+      "symbol": "ILMN",
+      "side": "SHORT",
+      "entryDate": "05/28/2020",
+      "entryPrice": "$375.00",
+      "exitDate": "06/11/2020",
+      "exitPrice": "$343.50",
+      "pctPL": "+8.40%"
+    },
+    {
+      "symbol": "ADSK",
+      "side": "SHORT",
+      "entryDate": "06/10/2020",
+      "entryPrice": "$238.75",
+      "exitDate": "06/11/2020",
+      "exitPrice": "$224.48",
+      "pctPL": "+5.98%"
+    },
+    {
+      "symbol": "SPXU",
+      "side": "LONG",
+      "entryDate": "05/26/2020",
+      "entryPrice": "$12.70",
+      "exitDate": "06/11/2020",
+      "exitPrice": "$13.20",
+      "pctPL": "+3.94%"
+    },
+    {
+      "symbol": "TWM",
+      "side": "LONG",
+      "entryDate": "06/01/2020",
+      "entryPrice": "$11.18",
+      "exitDate": "06/11/2020",
+      "exitPrice": "$11.95",
+      "pctPL": "+6.89%"
+    },
+    {
+      "symbol": "LULU",
+      "side": "SHORT",
+      "entryDate": "06/01/2020",
+      "entryPrice": "$308.75",
+      "exitDate": "06/11/2020",
+      "exitPrice": "$283.00",
+      "pctPL": "+8.34%"
+    },
+    {
+      "symbol": "BA",
+      "side": "SHORT",
+      "entryDate": "06/05/2020",
+      "entryPrice": "$219.85",
+      "exitDate": "06/10/2020",
+      "exitPrice": "$198.25",
+      "pctPL": "+9.82%"
+    },
+    {
+      "symbol": "RIG",
+      "side": "LONG",
+      "entryDate": "02/07/2020",
+      "entryPrice": "$3.46",
+      "exitDate": "06/08/2020",
+      "exitPrice": "$3.32",
+      "pctPL": "-3.47%"
+    },
+    {
+      "symbol": "OXY",
+      "side": "LONG",
+      "entryDate": "03/06/2020",
+      "entryPrice": "$20.46",
+      "exitDate": "06/05/2020",
+      "exitPrice": "$20.24",
+      "pctPL": "-1.07%"
+    },
+    {
+      "symbol": "DKNG",
+      "side": "SHORT",
+      "entryDate": "06/01/2020",
+      "entryPrice": "$43.25",
+      "exitDate": "06/02/2020",
+      "exitPrice": "$39.95",
+      "pctPL": "+7.63%"
+    },
+    {
+      "symbol": "LABD",
+      "side": "LONG",
+      "entryDate": "05/28/2020",
+      "entryPrice": "$4.55",
+      "exitDate": "05/29/2020",
+      "exitPrice": "$5.10",
+      "pctPL": "+12.09%"
+    },
+    {
+      "symbol": "AMGN",
+      "side": "SHORT",
+      "entryDate": "04/23/2020",
+      "entryPrice": "$238.65",
+      "exitDate": "05/27/2020",
+      "exitPrice": "$220.00",
+      "pctPL": "+7.82%"
+    },
+    {
+      "symbol": "SHOP",
+      "side": "SHORT",
+      "entryDate": "04/24/2020",
+      "entryPrice": "$764.50",
+      "exitDate": "05/27/2020",
+      "exitPrice": "$714.50",
+      "pctPL": "+6.54%"
+    },
+    {
+      "symbol": "LABD",
+      "side": "LONG",
+      "entryDate": "05/18/2020",
+      "entryPrice": "$4.37",
+      "exitDate": "05/27/2020",
+      "exitPrice": "$5.24",
+      "pctPL": "+19.91%"
+    },
+    {
+      "symbol": "ZM",
+      "side": "SHORT",
+      "entryDate": "05/20/2020",
+      "entryPrice": "$173.50",
+      "exitDate": "05/27/2020",
+      "exitPrice": "$155.00",
+      "pctPL": "+11.94%"
+    },
+    {
+      "symbol": "SE",
+      "side": "SHORT",
+      "entryDate": "05/26/2020",
+      "entryPrice": "$82.50",
+      "exitDate": "05/27/2020",
+      "exitPrice": "$75.50",
+      "pctPL": "+8.49%"
+    },
+    {
+      "symbol": "HSY",
+      "side": "SHORT",
+      "entryDate": "04/13/2020",
+      "entryPrice": "$142.20",
+      "exitDate": "05/26/2020",
+      "exitPrice": "$128.24",
+      "pctPL": "+9.82%"
+    },
+    {
+      "symbol": "BA",
+      "side": "LONG",
+      "entryDate": "04/30/2020",
+      "entryPrice": "$130.62",
+      "exitDate": "05/21/2020",
+      "exitPrice": "$140.05",
+      "pctPL": "+7.56%"
+    },
+    {
+      "symbol": "UCO",
+      "side": "LONG",
+      "entryDate": "04/14/2020",
+      "entryPrice": "$32.12",
+      "exitDate": "05/18/2020",
+      "exitPrice": "$21.32",
+      "pctPL": "-33.62%"
+    },
+    {
+      "symbol": "W",
+      "side": "SHORT",
+      "entryDate": "04/27/2020",
+      "entryPrice": "$178.96",
+      "exitDate": "05/18/2020",
+      "exitPrice": "$160.50",
+      "pctPL": "+10.32%"
+    },
+    {
+      "symbol": "TTD",
+      "side": "SHORT",
+      "entryDate": "04/29/2020",
+      "entryPrice": "$305.00",
+      "exitDate": "05/14/2020",
+      "exitPrice": "$280.00",
+      "pctPL": "+8.20%"
+    },
+    {
+      "symbol": "SOXS",
+      "side": "LONG",
+      "entryDate": "05/05/2020",
+      "entryPrice": "$9.27",
+      "exitDate": "05/14/2020",
+      "exitPrice": "$10.40",
+      "pctPL": "+12.19%"
+    },
+    {
+      "symbol": "LABD",
+      "side": "LONG",
+      "entryDate": "05/05/2020",
+      "entryPrice": "$5.22",
+      "exitDate": "05/13/2020",
+      "exitPrice": "$5.77",
+      "pctPL": "+10.54%"
+    },
+    {
+      "symbol": "KLAC",
+      "side": "SHORT",
+      "entryDate": "04/29/2020",
+      "entryPrice": "$173.75",
+      "exitDate": "05/01/2020",
+      "exitPrice": "$156.50",
+      "pctPL": "+10.00%"
+    },
+    {
+      "symbol": "LABD",
+      "side": "LONG",
+      "entryDate": "04/23/2020",
+      "entryPrice": "$6.12",
+      "exitDate": "05/01/2020",
+      "exitPrice": "$7.45",
+      "pctPL": "+21.73%"
+    },
+    {
+      "symbol": "TSLA",
+      "side": "SHORT",
+      "entryDate": "04/22/2020",
+      "entryPrice": "$810.50",
+      "exitDate": "05/01/2020",
+      "exitPrice": "$725.00",
+      "pctPL": "+10.55%"
+    },
+    {
+      "symbol": "SOXS",
+      "side": "LONG",
+      "entryDate": "04/22/2020",
+      "entryPrice": "$9.52",
+      "exitDate": "05/01/2020",
+      "exitPrice": "$10.50",
+      "pctPL": "+10.29%"
+    },
+    {
+      "symbol": "ETH/USD",
+      "side": "LONG",
+      "entryDate": "03/08/2020",
+      "entryPrice": "$161.83",
+      "exitDate": "04/29/2020",
+      "exitPrice": "$210.60",
+      "pctPL": "+30.14%"
+    },
+    {
+      "symbol": "BTC/USD",
+      "side": "LONG",
+      "entryDate": "10/25/2019",
+      "entryPrice": "$7,581.25",
+      "exitDate": "04/29/2020",
+      "exitPrice": "$8,573.00",
+      "pctPL": "+13.08%"
+    },
+    {
+      "symbol": "SOXS",
+      "side": "LONG",
+      "entryDate": "04/17/2020",
+      "entryPrice": "$10.19",
+      "exitDate": "04/21/2020",
+      "exitPrice": "$11.85",
+      "pctPL": "+16.29%"
+    },
+    {
+      "symbol": "SHOP",
+      "side": "SHORT",
+      "entryDate": "04/20/2020",
+      "entryPrice": "$637.50",
+      "exitDate": "04/21/2020",
+      "exitPrice": "$566.00",
+      "pctPL": "+11.22%"
+    },
+    {
+      "symbol": "LABD",
+      "side": "LONG",
+      "entryDate": "04/20/2020",
+      "entryPrice": "$6.66",
+      "exitDate": "04/21/2020",
+      "exitPrice": "$7.58",
+      "pctPL": "+13.81%"
+    },
+    {
+      "symbol": "NFLX",
+      "side": "SHORT",
+      "entryDate": "04/16/2020",
+      "entryPrice": "$445.00",
+      "exitDate": "04/17/2020",
+      "exitPrice": "$421.50",
+      "pctPL": "+5.28%"
+    },
+    {
+      "symbol": "SOHU",
+      "side": "LONG",
+      "entryDate": "02/10/2019",
+      "entryPrice": "$8.13",
+      "exitDate": "04/17/2020",
+      "exitPrice": "$8.60",
+      "pctPL": "+5.78%"
+    },
+    {
+      "symbol": "BAC",
+      "side": "LONG",
+      "entryDate": "04/16/2020",
+      "entryPrice": "$21.32",
+      "exitDate": "04/16/2020",
+      "exitPrice": "$22.82",
+      "pctPL": "+7.04%"
+    },
+    {
+      "symbol": "BAC",
+      "side": "LONG",
+      "entryDate": "03/05/2020",
+      "entryPrice": "$25.76",
+      "exitDate": "04/09/2020",
+      "exitPrice": "$24.70",
+      "pctPL": "-4.11%"
+    },
+    {
+      "symbol": "JPM",
+      "side": "LONG",
+      "entryDate": "03/04/2020",
+      "entryPrice": "$91.45",
+      "exitDate": "04/09/2020",
+      "exitPrice": "$100.45",
+      "pctPL": "+9.94%"
+    },
+    {
+      "symbol": "UWM",
+      "side": "LONG",
+      "entryDate": "03/11/2020",
+      "entryPrice": "$38.06",
+      "exitDate": "04/09/2020",
+      "exitPrice": "$38.15",
+      "pctPL": "+0.24%"
+    },
+    {
+      "symbol": "TUP",
+      "side": "LONG",
+      "entryDate": "04/07/2020",
+      "entryPrice": "$1.35",
+      "exitDate": "04/09/2020",
+      "exitPrice": "$1.82",
+      "pctPL": "+34.81%"
+    },
+    {
+      "symbol": "USO",
+      "side": "LONG",
+      "entryDate": "04/07/2020",
+      "entryPrice": "$4.98",
+      "exitDate": "04/08/2020",
+      "exitPrice": "$5.36",
+      "pctPL": "+7.63%"
+    },
+    {
+      "symbol": "XOM",
+      "side": "LONG",
+      "entryDate": "02/25/2020",
+      "entryPrice": "$40.41",
+      "exitDate": "04/07/2020",
+      "exitPrice": "$43.08",
+      "pctPL": "+6.61%"
+    },
+    {
+      "symbol": "KHC",
+      "side": "LONG",
+      "entryDate": "03/30/2020",
+      "entryPrice": "$24.50",
+      "exitDate": "04/07/2020",
+      "exitPrice": "$27.00",
+      "pctPL": "+10.21%"
+    },
+    {
+      "symbol": "SAVE",
+      "side": "LONG",
+      "entryDate": "04/03/2020",
+      "entryPrice": "$10.25",
+      "exitDate": "04/06/2020",
+      "exitPrice": "$11.60",
+      "pctPL": "+13.17%"
+    },
+    {
+      "symbol": "AXP",
+      "side": "LONG",
+      "entryDate": "04/01/2020",
+      "entryPrice": "$79.20",
+      "exitDate": "04/06/2020",
+      "exitPrice": "$83.20",
+      "pctPL": "+5.05%"
+    },
+    {
+      "symbol": "X",
+      "side": "LONG",
+      "entryDate": "04/02/2020",
+      "entryPrice": "$5.85",
+      "exitDate": "04/06/2020",
+      "exitPrice": "$6.55",
+      "pctPL": "+11.97%"
+    },
+    {
+      "symbol": "UCO",
+      "side": "LONG",
+      "entryDate": "02/25/2020",
+      "entryPrice": "$4.25",
+      "exitDate": "04/02/2020",
+      "exitPrice": "$2.60",
+      "pctPL": "-38.82%"
+    },
+    {
+      "symbol": "USO",
+      "side": "LONG",
+      "entryDate": "03/30/2020",
+      "entryPrice": "$4.08",
+      "exitDate": "04/02/2020",
+      "exitPrice": "$4.60",
+      "pctPL": "+12.75%"
+    },
+    {
+      "symbol": "HAL",
+      "side": "LONG",
+      "entryDate": "03/11/2020",
+      "entryPrice": "$7.25",
+      "exitDate": "04/02/2020",
+      "exitPrice": "$8.15",
+      "pctPL": "+12.41%"
+    },
+    {
+      "symbol": "X",
+      "side": "LONG",
+      "entryDate": "03/05/2020",
+      "entryPrice": "$6.24",
+      "exitDate": "04/01/2020",
+      "exitPrice": "$6.90",
+      "pctPL": "+10.58%"
+    },
+    {
+      "symbol": "AAL",
+      "side": "LONG",
+      "entryDate": "02/28/2020",
+      "entryPrice": "$18.77",
+      "exitDate": "03/26/2020",
+      "exitPrice": "$17.22",
+      "pctPL": "-8.26%"
+    },
+    {
+      "symbol": "TLRY",
+      "side": "LONG",
+      "entryDate": "02/24/2020",
+      "entryPrice": "$6.89",
+      "exitDate": "03/26/2020",
+      "exitPrice": "$7.55",
+      "pctPL": "+9.58%"
+    },
+    {
+      "symbol": "PSX",
+      "side": "LONG",
+      "entryDate": "03/16/2020",
+      "entryPrice": "$49.25",
+      "exitDate": "03/26/2020",
+      "exitPrice": "$55.10",
+      "pctPL": "+11.88%"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "LONG",
+      "entryDate": "03/16/2020",
+      "entryPrice": "$139.00",
+      "exitDate": "03/26/2020",
+      "exitPrice": "$153.95",
+      "pctPL": "+10.76%"
+    },
+    {
+      "symbol": "DIS",
+      "side": "LONG",
+      "entryDate": "02/28/2020",
+      "entryPrice": "$92.37",
+      "exitDate": "03/25/2020",
+      "exitPrice": "$102.00",
+      "pctPL": "+10.43%"
+    },
+    {
+      "symbol": "AAPL",
+      "side": "LONG",
+      "entryDate": "03/20/2020",
+      "entryPrice": "$221.12",
+      "exitDate": "03/25/2020",
+      "exitPrice": "$251.50",
+      "pctPL": "+13.74%"
+    },
+    {
+      "symbol": "SSO",
+      "side": "LONG",
+      "entryDate": "03/09/2020",
+      "entryPrice": "$84.27",
+      "exitDate": "03/25/2020",
+      "exitPrice": "$87.42",
+      "pctPL": "+3.74%"
+    },
+    {
+      "symbol": "USLV",
+      "side": "LONG",
+      "entryDate": "03/13/2020",
+      "entryPrice": "$29.88",
+      "exitDate": "03/24/2020",
+      "exitPrice": "$37.07",
+      "pctPL": "+24.06%"
+    },
+    {
+      "symbol": "UTX",
+      "side": "LONG",
+      "entryDate": "03/23/2020",
+      "entryPrice": "$73.64",
+      "exitDate": "03/24/2020",
+      "exitPrice": "$84.00",
+      "pctPL": "+14.07%"
+    },
+    {
+      "symbol": "RCL",
+      "side": "LONG",
+      "entryDate": "03/06/2020",
+      "entryPrice": "$37.09",
+      "exitDate": "03/24/2020",
+      "exitPrice": "$38.09",
+      "pctPL": "+2.70%"
+    },
+    {
+      "symbol": "SAVE",
+      "side": "LONG",
+      "entryDate": "03/04/2020",
+      "entryPrice": "$12.77",
+      "exitDate": "03/24/2020",
+      "exitPrice": "$13.67",
+      "pctPL": "+7.05%"
+    },
+    {
+      "symbol": "AXP",
+      "side": "LONG",
+      "entryDate": "03/18/2020",
+      "entryPrice": "$74.35",
+      "exitDate": "03/24/2020",
+      "exitPrice": "$83.55",
+      "pctPL": "+11.03%"
+    },
+    {
+      "symbol": "BA",
+      "side": "LONG",
+      "entryDate": "03/16/2020",
+      "entryPrice": "$118.96",
+      "exitDate": "03/24/2020",
+      "exitPrice": "$135.00",
+      "pctPL": "+13.48%"
+    },
+    {
+      "symbol": "MCD",
+      "side": "LONG",
+      "entryDate": "03/17/2020",
+      "entryPrice": "$140.50",
+      "exitDate": "03/20/2020",
+      "exitPrice": "$156.25",
+      "pctPL": "+11.21%"
+    },
+    {
+      "symbol": "SPCE",
+      "side": "LONG",
+      "entryDate": "03/16/2020",
+      "entryPrice": "$11.00",
+      "exitDate": "03/20/2020",
+      "exitPrice": "$13.50",
+      "pctPL": "+22.73%"
+    },
+    {
+      "symbol": "UBER",
+      "side": "LONG",
+      "entryDate": "03/17/2020",
+      "entryPrice": "$17.77",
+      "exitDate": "03/19/2020",
+      "exitPrice": "$19.15",
+      "pctPL": "+7.77%"
+    },
+    {
+      "symbol": "TSLA",
+      "side": "LONG",
+      "entryDate": "03/18/2020",
+      "entryPrice": "$354.00",
+      "exitDate": "03/19/2020",
+      "exitPrice": "$425.80",
+      "pctPL": "+20.28%"
+    },
+    {
+      "symbol": "UTX",
+      "side": "LONG",
+      "entryDate": "03/18/2020",
+      "entryPrice": "$75.25",
+      "exitDate": "03/19/2020",
+      "exitPrice": "$84.65",
+      "pctPL": "+12.49%"
+    },
+    {
+      "symbol": "TRV",
+      "side": "LONG",
+      "entryDate": "03/17/2020",
+      "entryPrice": "$80.70",
+      "exitDate": "03/17/2020",
+      "exitPrice": "$88.80",
+      "pctPL": "+10.04%"
+    },
+    {
+      "symbol": "HSY",
+      "side": "SHORT",
+      "entryDate": "05/22/2019",
+      "entryPrice": "$134.79",
+      "exitDate": "03/16/2020",
+      "exitPrice": "$132.00",
+      "pctPL": "+2.06%"
+    },
+    {
+      "symbol": "PSX",
+      "side": "LONG",
+      "entryDate": "03/11/2020",
+      "entryPrice": "$50.33",
+      "exitDate": "03/16/2020",
+      "exitPrice": "$57.50",
+      "pctPL": "+14.25%"
+    },
+    {
+      "symbol": "AAPL",
+      "side": "LONG",
+      "entryDate": "03/12/2020",
+      "entryPrice": "$237.75",
+      "exitDate": "03/13/2020",
+      "exitPrice": "$263.75",
+      "pctPL": "+10.94%"
+    },
+    {
+      "symbol": "AXP",
+      "side": "LONG",
+      "entryDate": "03/12/2020",
+      "entryPrice": "$82.85",
+      "exitDate": "03/13/2020",
+      "exitPrice": "$90.50",
+      "pctPL": "+9.23%"
+    },
+    {
+      "symbol": "QLD",
+      "side": "LONG",
+      "entryDate": "03/12/2020",
+      "entryPrice": "$83.50",
+      "exitDate": "03/13/2020",
+      "exitPrice": "$91.75",
+      "pctPL": "+9.88%"
+    },
+    {
+      "symbol": "QLD",
+      "side": "LONG",
+      "entryDate": "03/13/2020",
+      "entryPrice": "$83.11",
+      "exitDate": "03/13/2020",
+      "exitPrice": "$88.20",
+      "pctPL": "+6.14%"
+    },
+    {
+      "symbol": "TSLA",
+      "side": "SHORT",
+      "entryDate": "12/19/2019",
+      "entryPrice": "$613.26",
+      "exitDate": "03/12/2020",
+      "exitPrice": "$569.00",
+      "pctPL": "+7.22%"
+    },
+    {
+      "symbol": "GRMN",
+      "side": "SHORT",
+      "entryDate": "01/17/2020",
+      "entryPrice": "$68.52",
+      "exitDate": "03/12/2020",
+      "exitPrice": "$73.50",
+      "pctPL": "-7.26%"
+    },
+    {
+      "symbol": "MSFT",
+      "side": "SHORT",
+      "entryDate": "01/18/2020",
+      "entryPrice": "$139.00",
+      "exitDate": "03/12/2020",
+      "exitPrice": "$142.00",
+      "pctPL": "-2.16%"
+    },
+    {
+      "symbol": "QLD",
+      "side": "LONG",
+      "entryDate": "03/12/2020",
+      "entryPrice": "$83.00",
+      "exitDate": "03/12/2020",
+      "exitPrice": "$93.25",
+      "pctPL": "+12.35%"
+    },
+    {
+      "symbol": "BA",
+      "side": "SHORT",
+      "entryDate": "02/16/2017",
+      "entryPrice": "$213.35",
+      "exitDate": "03/11/2020",
+      "exitPrice": "$206.00",
+      "pctPL": "+3.45%"
+    },
+    {
+      "symbol": "HAL",
+      "side": "LONG",
+      "entryDate": "03/09/2020",
+      "entryPrice": "$8.45",
+      "exitDate": "03/10/2020",
+      "exitPrice": "$9.77",
+      "pctPL": "+15.62%"
+    },
+    {
+      "symbol": "TBT",
+      "side": "LONG",
+      "entryDate": "03/06/2020",
+      "entryPrice": "$16.00",
+      "exitDate": "03/10/2020",
+      "exitPrice": "$17.30",
+      "pctPL": "+8.13%"
+    },
+    {
+      "symbol": "USO",
+      "side": "LONG",
+      "entryDate": "03/09/2020",
+      "entryPrice": "$6.65",
+      "exitDate": "03/10/2020",
+      "exitPrice": "$7.33",
+      "pctPL": "+10.22%"
+    },
+    {
+      "symbol": "HAL",
+      "side": "LONG",
+      "entryDate": "03/10/2020",
+      "entryPrice": "$7.99",
+      "exitDate": "03/10/2020",
+      "exitPrice": "$8.80",
+      "pctPL": "+10.13%"
+    },
+    {
+      "symbol": "FISV",
+      "side": "SHORT",
+      "entryDate": "09/19/2019",
+      "entryPrice": "$105.25",
+      "exitDate": "03/09/2020",
+      "exitPrice": "$99.00",
+      "pctPL": "+5.94%"
+    },
+    {
+      "symbol": "ETH/USD",
+      "side": "LONG",
+      "entryDate": "03/01/2020",
+      "entryPrice": "$214.85",
+      "exitDate": "03/06/2020",
+      "exitPrice": "$238.15",
+      "pctPL": "+10.85%"
+    },
+    {
+      "symbol": "USLV",
+      "side": "LONG",
+      "entryDate": "02/28/2020",
+      "entryPrice": "$70.25",
+      "exitDate": "03/03/2020",
+      "exitPrice": "$75.50",
+      "pctPL": "+7.47%"
+    },
+    {
+      "symbol": "OXY",
+      "side": "LONG",
+      "entryDate": "02/27/2020",
+      "entryPrice": "$31.75",
+      "exitDate": "03/03/2020",
+      "exitPrice": "$34.25",
+      "pctPL": "+7.87%"
+    },
+    {
+      "symbol": "GOOGL",
+      "side": "LONG",
+      "entryDate": "02/28/2020",
+      "entryPrice": "$1,275.00",
+      "exitDate": "03/03/2020",
+      "exitPrice": "$1,403.00",
+      "pctPL": "+10.04%"
+    },
+    {
+      "symbol": "SSO",
+      "side": "LONG",
+      "entryDate": "02/28/2020",
+      "entryPrice": "$121.50",
+      "exitDate": "03/02/2020",
+      "exitPrice": "$130.75",
+      "pctPL": "+7.57%"
+    },
+    {
+      "symbol": "JPM",
+      "side": "LONG",
+      "entryDate": "02/28/2020",
+      "entryPrice": "$115.48",
+      "exitDate": "03/02/2020",
+      "exitPrice": "$121.48",
+      "pctPL": "+5.20%"
+    },
+    {
+      "symbol": "SQQQ",
+      "side": "LONG",
+      "entryDate": "10/04/2019",
+      "entryPrice": "$26.40",
+      "exitDate": "02/28/2020",
+      "exitPrice": "$26.30",
+      "pctPL": "-0.38%"
+    },
+    {
+      "symbol": "ROST",
+      "side": "SHORT",
+      "entryDate": "10/17/2019",
+      "entryPrice": "$112.78",
+      "exitDate": "02/28/2020",
+      "exitPrice": "$108.00",
+      "pctPL": "+4.24%"
+    },
+    {
+      "symbol": "QLD",
+      "side": "LONG",
+      "entryDate": "02/28/2020",
+      "entryPrice": "$105.30",
+      "exitDate": "02/28/2020",
+      "exitPrice": "$116.00",
+      "pctPL": "+10.16%"
+    },
+    {
+      "symbol": "SOXS",
+      "side": "LONG",
+      "entryDate": "10/11/2019",
+      "entryPrice": "$27.79",
+      "exitDate": "02/27/2020",
+      "exitPrice": "$25.35",
+      "pctPL": "-8.78%"
+    },
+    {
+      "symbol": "FAZ",
+      "side": "LONG",
+      "entryDate": "01/16/2019",
+      "entryPrice": "$35.28",
+      "exitDate": "02/27/2020",
+      "exitPrice": "$33.85",
+      "pctPL": "-4.05%"
+    },
+    {
+      "symbol": "SPXU",
+      "side": "LONG",
+      "entryDate": "01/15/2019",
+      "entryPrice": "$22.90",
+      "exitDate": "02/27/2020",
+      "exitPrice": "$23.20",
+      "pctPL": "+1.31%"
+    },
+    {
+      "symbol": "ASML",
+      "side": "SHORT",
+      "entryDate": "12/05/2019",
+      "entryPrice": "$288.65",
+      "exitDate": "02/27/2020",
+      "exitPrice": "$277.65",
+      "pctPL": "+3.81%"
+    },
+    {
+      "symbol": "ETH/USD",
+      "side": "LONG",
+      "entryDate": "02/25/2020",
+      "entryPrice": "$217.00",
+      "exitDate": "02/27/2020",
+      "exitPrice": "$237.75",
+      "pctPL": "+9.56%"
+    },
+    {
+      "symbol": "AAL",
+      "side": "LONG",
+      "entryDate": "02/27/2020",
+      "entryPrice": "$19.95",
+      "exitDate": "02/27/2020",
+      "exitPrice": "$22.45",
+      "pctPL": "+12.53%"
+    },
+    {
+      "symbol": "AAPL",
+      "side": "SHORT",
+      "entryDate": "08/13/2019",
+      "entryPrice": "$257.50",
+      "exitDate": "02/27/2020",
+      "exitPrice": "$269.80",
+      "pctPL": "-4.77%"
+    },
+    {
+      "symbol": "BAC",
+      "side": "SHORT",
+      "entryDate": "10/22/2019",
+      "entryPrice": "$32.15",
+      "exitDate": "02/25/2020",
+      "exitPrice": "$31.95",
+      "pctPL": "+0.60%"
+    },
+    {
+      "symbol": "KLAC",
+      "side": "SHORT",
+      "entryDate": "09/03/2019",
+      "entryPrice": "$160.75",
+      "exitDate": "02/25/2020",
+      "exitPrice": "$150.35",
+      "pctPL": "+6.47%"
+    },
+    {
+      "symbol": "SDS",
+      "side": "LONG",
+      "entryDate": "09/05/2019",
+      "entryPrice": "$26.43",
+      "exitDate": "02/25/2020",
+      "exitPrice": "$26.15",
+      "pctPL": "-1.06%"
+    },
+    {
+      "symbol": "BMY",
+      "side": "SHORT",
+      "entryDate": "12/13/2019",
+      "entryPrice": "$64.22",
+      "exitDate": "02/25/2020",
+      "exitPrice": "$61.72",
+      "pctPL": "+3.89%"
+    },
+    {
+      "symbol": "MA",
+      "side": "SHORT",
+      "entryDate": "01/29/2020",
+      "entryPrice": "$323.05",
+      "exitDate": "02/25/2020",
+      "exitPrice": "$303.05",
+      "pctPL": "+6.19%"
+    },
+    {
+      "symbol": "AMD",
+      "side": "SHORT",
+      "entryDate": "02/11/2020",
+      "entryPrice": "$55.25",
+      "exitDate": "02/24/2020",
+      "exitPrice": "$48.95",
+      "pctPL": "+11.40%"
+    },
+    {
+      "symbol": "VXX",
+      "side": "LONG",
+      "entryDate": "10/11/2019",
+      "entryPrice": "$17.20",
+      "exitDate": "02/24/2020",
+      "exitPrice": "$17.73",
+      "pctPL": "+3.08%"
+    },
+    {
+      "symbol": "NVDA",
+      "side": "SHORT",
+      "entryDate": "02/19/2020",
+      "entryPrice": "$310.00",
+      "exitDate": "02/21/2020",
+      "exitPrice": "$290.75",
+      "pctPL": "+6.21%"
+    },
+    {
+      "symbol": "TVIX",
+      "side": "LONG",
+      "entryDate": "02/05/2020",
+      "entryPrice": "$43.52",
+      "exitDate": "02/21/2020",
+      "exitPrice": "$48.85",
+      "pctPL": "+12.25%"
+    },
+    {
+      "symbol": "UCO",
+      "side": "LONG",
+      "entryDate": "01/24/2020",
+      "entryPrice": "$14.69",
+      "exitDate": "02/20/2020",
+      "exitPrice": "$15.82",
+      "pctPL": "+7.69%"
+    },
+    {
+      "symbol": "UGAZ",
+      "side": "LONG",
+      "entryDate": "01/17/2020",
+      "entryPrice": "$53.90",
+      "exitDate": "02/20/2020",
+      "exitPrice": "$52.08",
+      "pctPL": "-3.37%"
+    },
+    {
+      "symbol": "TLRY",
+      "side": "LONG",
+      "entryDate": "01/31/2020",
+      "entryPrice": "$16.72",
+      "exitDate": "02/19/2020",
+      "exitPrice": "$18.40",
+      "pctPL": "+10.05%"
+    },
+    {
+      "symbol": "VERI",
+      "side": "LONG",
+      "entryDate": "12/05/2019",
+      "entryPrice": "$2.66",
+      "exitDate": "02/18/2020",
+      "exitPrice": "$3.25",
+      "pctPL": "+22.18%"
+    },
+    {
+      "symbol": "SOHU",
+      "side": "LONG",
+      "entryDate": "01/27/2020",
+      "entryPrice": "$10.68",
+      "exitDate": "02/07/2020",
+      "exitPrice": "$11.85",
+      "pctPL": "+10.96%"
+    },
+    {
+      "symbol": "RIG",
+      "side": "LONG",
+      "entryDate": "01/27/2020",
+      "entryPrice": "$4.70",
+      "exitDate": "02/05/2020",
+      "exitPrice": "$5.07",
+      "pctPL": "+7.87%"
+    },
+    {
+      "symbol": "SLB",
+      "side": "LONG",
+      "entryDate": "01/27/2020",
+      "entryPrice": "$33.96",
+      "exitDate": "02/05/2020",
+      "exitPrice": "$35.60",
+      "pctPL": "+4.83%"
+    },
+    {
+      "symbol": "FB",
+      "side": "SHORT",
+      "entryDate": "01/09/2020",
+      "entryPrice": "$217.55",
+      "exitDate": "01/30/2020",
+      "exitPrice": "$204.85",
+      "pctPL": "+5.84%"
+    },
+    {
+      "symbol": "AMD",
+      "side": "SHORT",
+      "entryDate": "01/22/2020",
+      "entryPrice": "$51.48",
+      "exitDate": "01/29/2020",
+      "exitPrice": "$46.98",
+      "pctPL": "+8.74%"
+    },
+    {
+      "symbol": "LTC/USD",
+      "side": "LONG",
+      "entryDate": "01/23/2020",
+      "entryPrice": "$52.00",
+      "exitDate": "01/27/2020",
+      "exitPrice": "$59.25",
+      "pctPL": "+13.94%"
+    },
+    {
+      "symbol": "SOHU",
+      "side": "LONG",
+      "entryDate": "01/23/2020",
+      "entryPrice": "$11.13",
+      "exitDate": "01/24/2020",
+      "exitPrice": "$12.20",
+      "pctPL": "+9.61%"
+    },
+    {
+      "symbol": "TVIX",
+      "side": "LONG",
+      "entryDate": "01/16/2020",
+      "entryPrice": "$39.95",
+      "exitDate": "01/24/2020",
+      "exitPrice": "$44.50",
+      "pctPL": "+11.39%"
+    },
+    {
+      "symbol": "BABA",
+      "side": "SHORT",
+      "entryDate": "01/08/2020",
+      "entryPrice": "$220.10",
+      "exitDate": "01/24/2020",
+      "exitPrice": "$212.90",
+      "pctPL": "+3.27%"
+    },
+    {
+      "symbol": "LABD",
+      "side": "LONG",
+      "entryDate": "01/15/2020",
+      "entryPrice": "$11.67",
+      "exitDate": "01/23/2020",
+      "exitPrice": "$13.33",
+      "pctPL": "+14.22%"
+    },
+    {
+      "symbol": "LTC/USD",
+      "side": "LONG",
+      "entryDate": "09/24/2019",
+      "entryPrice": "$53.50",
+      "exitDate": "01/17/2020",
+      "exitPrice": "$63.15",
+      "pctPL": "+18.04%"
+    },
+    {
+      "symbol": "ACB",
+      "side": "LONG",
+      "entryDate": "01/06/2020",
+      "entryPrice": "$1.70",
+      "exitDate": "01/15/2020",
+      "exitPrice": "$1.89",
+      "pctPL": "+11.18%"
+    },
+    {
+      "symbol": "TUP",
+      "side": "LONG",
+      "entryDate": "01/02/2020",
+      "entryPrice": "$8.45",
+      "exitDate": "01/15/2020",
+      "exitPrice": "$9.15",
+      "pctPL": "+8.28%"
+    },
+    {
+      "symbol": "TLRY",
+      "side": "LONG",
+      "entryDate": "11/25/2019",
+      "entryPrice": "$17.92",
+      "exitDate": "01/14/2020",
+      "exitPrice": "$18.77",
+      "pctPL": "+4.74%"
+    },
+    {
+      "symbol": "ETH/USD",
+      "side": "LONG",
+      "entryDate": "11/22/2019",
+      "entryPrice": "$140.00",
+      "exitDate": "01/14/2020",
+      "exitPrice": "$165.50",
+      "pctPL": "+18.21%"
+    },
+    {
+      "symbol": "MJ",
+      "side": "LONG",
+      "entryDate": "12/04/2019",
+      "entryPrice": "$16.92",
+      "exitDate": "01/14/2020",
+      "exitPrice": "$17.84",
+      "pctPL": "+5.44%"
+    },
+    {
+      "symbol": "SOHU",
+      "side": "LONG",
+      "entryDate": "05/20/2019",
+      "entryPrice": "$14.13",
+      "exitDate": "01/09/2020",
+      "exitPrice": "$13.82",
+      "pctPL": "-2.19%"
+    },
+    {
+      "symbol": "SCO",
+      "side": "LONG",
+      "entryDate": "12/06/2019",
+      "entryPrice": "$12.34",
+      "exitDate": "01/08/2020",
+      "exitPrice": "$12.65",
+      "pctPL": "+2.51%"
+    },
+    {
+      "symbol": "WMT",
+      "side": "SHORT",
+      "entryDate": "10/17/2019",
+      "entryPrice": "$120.00",
+      "exitDate": "01/07/2020",
+      "exitPrice": "$116.40",
+      "pctPL": "+3.00%"
+    },
+    {
+      "symbol": "LABD",
+      "side": "LONG",
+      "entryDate": "12/16/2019",
+      "entryPrice": "$11.82",
+      "exitDate": "01/02/2020",
+      "exitPrice": "$12.82",
+      "pctPL": "+8.46%"
+    }
+  ]
+}
