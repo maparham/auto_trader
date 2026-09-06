@@ -6,11 +6,12 @@ import Toolbar from "./Toolbar";
 import SnapshotToolbar from "./SnapshotToolbar";
 import DrawSidebar from "./DrawSidebar";
 import WorkspacePatternPanel from "./WorkspacePatternPanel";
+import TradeListPanel from "./TradeListPanel";
 import { setPatternSeriesProvider } from "./lib/patternPanelStore";
 import { anyCellInReadout, subscribeReplayingCells } from "./lib/replayingCells";
 import LayoutPicker from "./LayoutPicker";
 import BrokerSelector from "./BrokerSelector";
-import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor, isCellReplaying } from "./lib/chartSync";
+import { rangeSync, readVisibleRange, readExactAnchor, getAlignAnchor, clearAlignAnchor, isCellReplaying, applyVisibleRange } from "./lib/chartSync";
 import { cellsChangingSymbol, replayLossMessage } from "./lib/replaySymbolGuard";
 import AppearanceMenu from "./AppearanceMenu";
 import SettingsModal from "./Settings";
@@ -42,6 +43,7 @@ import { saveSnapshotOfChart } from "./lib/snapshotSave";
 import { toast } from "./lib/notify";
 import { registerCustomIndicators } from "./lib/customIndicators";
 import {
+  coverBacktestHistory,
   backtestPanelActionForReplay,
   isChartReplaying,
   registerBacktestIndicators,
@@ -65,6 +67,7 @@ import {
   drawingSettingsRequest,
   alertsPanelOpen,
   tradePanelOpen,
+  tradeListPanelOpen,
   livePanelOpen,
   alertsChanged,
   alertFired,
@@ -84,9 +87,12 @@ import {
   snapshotViewChanged,
 } from "./lib/signals";
 import { alertEngine } from "./lib/alertEngine";
+import { minPositiveGap } from "./lib/barInterval";
 import {
   PERIODS,
   fetchMarketMeta,
+  fetchRangeWithStatus,
+  RESOLUTION_SECONDS,
   type Instrument,
   type Period,
 } from "./lib/feed";
@@ -153,6 +159,8 @@ import {
   canMergeTabs,
   unmergeScopes,
   loadSnapshotMeta,
+  loadDrawings,
+  saveDrawings,
   pushRecentSymbol,
   type ChartTab,
   type LayoutKind,
@@ -165,6 +173,8 @@ import { syncIndicatorsFromStorage } from "./lib/indicators";
 import { onLayoutChanged } from "./lib/persist/layoutEvents";
 import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
+import { autoTfResolution, loadAutoTf, loadSameTab, tradeBoxSpec, type TradeRow } from "./lib/tradeList";
+import type { KLineData } from "klinecharts";
 import { loadSettings, saveSettings, chartColors, type Settings } from "./theme";
 import { browserTimezone } from "./chart/chartPainters";
 import { useStrategyOverlaySync } from "./chart/useStrategyOverlaySync";
@@ -210,6 +220,20 @@ const DEFAULT_PERIOD: Period =
 // Which chart tab is active is remembered PER BROWSER TAB (sessionStorage, so it
 // survives a reload but isn't shared with sibling tabs) — see the activeId state.
 const ACTIVE_TAB_SESSION_KEY = "auto-trader.activeTabId";
+
+// Bar duration per native resolution — the trade-list scroll poll uses it to
+// tell whether the series on the chart is already the switched-to interval.
+// Derived from the feed's own table so a new resolution can't silently
+// disable the spacing guard.
+const RESOLUTION_MS: Record<string, number> = Object.fromEntries(
+  Object.entries(RESOLUTION_SECONDS).map(([r, secs]) => [r, secs * 1000]),
+);
+
+// Pointer to the ONE trade box the trade-list panel has sketched (one box at a
+// time by design: clicking a row replaces the previous one, wherever it lives).
+// localStorage so a leftover box from the last session is still found and
+// replaced, not orphaned.
+const TRADE_LIST_BOX_KEY = "auto-trader.tradeListBox";
 
 // The first instrument a brand-new broker workspace opens on (each broker is an
 // isolated instance with a FRESH START — no carry-over). Epics are broker-specific,
@@ -1054,7 +1078,15 @@ export default function App() {
   // own market meta on mount, so a minimal instrument is enough to render. Shared
   // by alert navigation and the trading dock's whole-book rows (clicking a position
   // re-scopes the order ticket + chart lines to its symbol).
-  const jumpToEpic = (epic: string, precisionGuess = 2): { cellId: string } => {
+  // `reuseTabId` (trade-list same-tab mode): when the epic is open nowhere and
+  // this tab still exists, its active cell SWITCHES SYMBOL to the epic instead
+  // of a new tab opening — unless that cell is mid-replay (silently killing a
+  // session is worse than an extra tab).
+  const jumpToEpic = (
+    epic: string,
+    precisionGuess = 2,
+    reuseTabId?: string | null,
+  ): { cellId: string; tabId: string; opened: boolean } => {
     const ordered = active ? [active, ...tabs.filter((t) => t.id !== active.id)] : tabs;
     for (const t of ordered) {
       const lead = t.cells.find((c) => c.id === t.activeCellId);
@@ -1065,7 +1097,23 @@ export default function App() {
         // follow it, and bring its tab to the front.
         setTabs((ts) => ts.map((tt) => (tt.id === t.id ? { ...tt, activeCellId: hit.id } : tt)));
         setActiveId(t.id);
-        return { cellId: hit.id };
+        return { cellId: hit.id, tabId: t.id, opened: false };
+      }
+    }
+    if (reuseTabId) {
+      const rt = tabs.find((t) => t.id === reuseTabId);
+      const cell = rt ? rt.cells.find((c) => c.id === rt.activeCellId) ?? rt.cells[0] : undefined;
+      if (rt && cell && !isCellReplaying(cell.id)) {
+        const symbol: Instrument = { epic, name: epic, status: null, pricePrecision: precisionGuess };
+        setTabs((ts) =>
+          ts.map((tt) =>
+            tt.id !== rt.id
+              ? tt
+              : { ...tt, cells: tt.cells.map((c) => (c.id === cell.id ? { ...c, symbol } : c)) },
+          ),
+        );
+        setActiveId(rt.id);
+        return { cellId: cell.id, tabId: rt.id, opened: true };
       }
     }
     const t = makeTab(
@@ -1074,7 +1122,7 @@ export default function App() {
     );
     setTabs((ts) => [...ts, t]);
     setActiveId(t.id);
-    return { cellId: t.cells[0].id };
+    return { cellId: t.cells[0].id, tabId: t.id, opened: true };
   };
 
   // Agent bridge: actions that need App's handlers (tabs, symbol jump). The
@@ -1133,6 +1181,198 @@ export default function App() {
       console.debug("agent: app actions already registered (HMR?)", e);
     }
   }, []);
+
+  // --- trade-list panel → chart navigation -----------------------------------
+  // A clicked row jumps to the trade's chart (jumpToEpic: reuse an open cell,
+  // else a fresh tab) and sketches the trade as a tradeBox drawing. Same
+  // deferred idiom as pendingSelectRef: a brand-new tab's chart hasn't mounted
+  // or rehydrated yet, so the request parks here and resolves once the target
+  // cell reports the right hydrated epic.
+  const brokerIdRef = useRef(brokerId);
+  brokerIdRef.current = brokerId;
+  const pendingTradeBoxRef = useRef<{ cellId: string; epic: string; trade: TradeRow } | null>(null);
+  // Guards the async placement against rapid row clicks: each click bumps the
+  // epoch, and a placement that comes back from its candle fetch to find a
+  // newer epoch drops out instead of deleting the newer click's box.
+  const tradeBoxEpochRef = useRef(0);
+  const removePreviousTradeListBox = useCallback(() => {
+    let ptr: { scope: string; epic: string; cellId: string; id: string } | null = null;
+    try {
+      ptr = JSON.parse(localStorage.getItem(TRADE_LIST_BOX_KEY) ?? "null");
+    } catch {
+      /* corrupt pointer: nothing to remove */
+    }
+    if (!ptr) return;
+    localStorage.removeItem(TRADE_LIST_BOX_KEY);
+    const entry = readyRef.current.get(ptr.cellId);
+    if (entry && entry.controller.overlays.getHydratedEpic() === ptr.epic) {
+      entry.controller.overlays.remove(ptr.id); // mounted: onRemoved persists
+      return;
+    }
+    // Unmounted (another tab, or the cell is gone): edit the saved drawings
+    // directly — the next mount rehydrates without the old box.
+    saveDrawings(ptr.scope, ptr.epic, loadDrawings(ptr.scope, ptr.epic).filter((d) => d.id !== ptr.id));
+  }, []);
+  const resolvePendingTradeBox = useCallback(() => {
+    const p = pendingTradeBoxRef.current;
+    if (!p) return;
+    const entry = readyRef.current.get(p.cellId);
+    if (!entry) return; // cell not mounted yet (retries on ready / alertsChanged)
+    if (entry.controller.overlays.getHydratedEpic() !== p.epic) return; // pre-rehydrate
+    pendingTradeBoxRef.current = null; // clear BEFORE the async work: no double-place
+    const epoch = tradeBoxEpochRef.current;
+    const t = p.trade;
+    const DAY_S = 86_400;
+    void (async () => {
+      // Daily bars over the trade's life (± a few days of context): they shape
+      // the sketched stop (just past the extreme the price actually reached)
+      // and snap the box edges onto real candles. A fetch failure still draws
+      // the box — the stop falls back to the entry/exit extreme.
+      let bars: KLineData[] = [];
+      try {
+        bars = (
+          await fetchRangeWithStatus(
+            p.epic, "DAY",
+            t.entryTs / 1000 - 5 * DAY_S, t.exitTs / 1000 + 5 * DAY_S,
+            "mid", brokerIdRef.current,
+          )
+        ).bars;
+      } catch {
+        /* stop falls back to the entry/exit extreme */
+      }
+      if (epoch !== tradeBoxEpochRef.current) return; // a newer click superseded this one
+      // Re-check the cell still shows OUR symbol: a symbol switch during the
+      // fetch doesn't bump the epoch (only trade-list clicks do), and placing
+      // now would persist the box into the new symbol's drawings — orphaned
+      // there forever, since the pointer below records the OLD epic.
+      const liveEntry = readyRef.current.get(p.cellId);
+      if (!liveEntry || liveEntry.controller.overlays.getHydratedEpic() !== p.epic) return;
+      const spec = tradeBoxSpec(t, bars);
+      // Auto TF (panel toggle, default on): a box under 5 bars at the cell's
+      // current interval reads as a sliver — drop to the coarsest interval that
+      // still gives it 5+. Trading days come from the daily fetch; wall-clock
+      // scaled ~5/7 stands in when that fetch failed.
+      const cellNow = tabsRef.current.flatMap((tt) => tt.cells).find((c) => c.id === p.cellId);
+      // When a TF switch is issued below, the scroll poll must not fire on the
+      // OLD interval's still-loaded series (the reload right after would reset
+      // the view): it waits until the chart's bar spacing matches this.
+      let switchedResMs: number | null = null;
+      if (loadAutoTf() && cellNow) {
+        // Date-only stamps (no time of day in the import) pin the chart to
+        // DAILY — the anchors are day-granular, so intraday bars would place
+        // the box edges at fictional times. Timed stamps are exact and may
+        // drop to whatever interval gives the box 5+ bars.
+        let target: string | null;
+        if (!t.hasTime) {
+          target = cellNow.period.resolution === "DAY" ? null : "DAY";
+        } else {
+          const lo = Math.min(spec.points[0].timestamp, spec.points[1].timestamp);
+          const hi = Math.max(spec.points[0].timestamp, spec.points[1].timestamp);
+          const spanDays =
+            bars.filter((b) => b.timestamp >= lo && b.timestamp <= hi).length ||
+            Math.max(1, Math.round(((t.exitTs - t.entryTs) / 86_400_000) * (5 / 7)));
+          target = autoTfResolution(cellNow.period.resolution, spanDays);
+        }
+        const targetPeriod = target ? PERIODS.find((x) => x.resolution === target) : undefined;
+        if (targetPeriod) {
+          switchedResMs = RESOLUTION_MS[targetPeriod.resolution] ?? null;
+          // This cell only — deliberately narrower than setCellPeriod's
+          // interval-sync broadcast: the jump is about reading ONE trade.
+          setTabs((ts) =>
+            ts.map((tt) =>
+              tt.cells.some((c) => c.id === p.cellId)
+                ? {
+                    ...tt,
+                    cells: tt.cells.map((c) =>
+                      c.id === p.cellId ? { ...c, period: targetPeriod } : c,
+                    ),
+                  }
+                : tt,
+            ),
+          );
+        }
+      }
+      removePreviousTradeListBox();
+      const id = liveEntry.controller.overlays.placeDrawing({
+        name: "tradeBox",
+        points: spec.points,
+        extendData: { text: spec.text, priceLabels: true },
+      });
+      const cell = tabsRef.current.flatMap((tt) => tt.cells).find((c) => c.id === p.cellId);
+      if (id && cell) {
+        try {
+          localStorage.setItem(
+            TRADE_LIST_BOX_KEY,
+            JSON.stringify({ scope: cell.scope, epic: p.epic, cellId: p.cellId, id }),
+          );
+        } catch {
+          /* pointer lost: worst case the old box lingers until deleted by hand */
+        }
+      }
+      // Bring the trade's span into view with breathing room either side —
+      // but only once the chart holds bars reaching the box (a fresh tab is
+      // still loading, and an auto-TF switch reloads the series). Poll briefly,
+      // then scroll anyway: applyVisibleRange clamps to whatever is loaded.
+      const from = Math.min(spec.points[0].timestamp, spec.points[1].timestamp);
+      const to = Math.max(spec.points[0].timestamp, spec.points[1].timestamp);
+      // Breathing room scales with the interval the chart ends on: a fixed
+      // 10-day floor would dwarf an intraday box right after Auto TF dropped
+      // the chart to keep it readable. ~10 bars each side.
+      const finalResMs =
+        switchedResMs ??
+        (cellNow ? RESOLUTION_MS[cellNow.period.resolution] : null) ??
+        DAY_S * 1000;
+      const pad = Math.max((to - from) * 0.6, 10 * finalResMs);
+      const tryScroll = (attempt: number) => {
+        if (epoch !== tradeBoxEpochRef.current) return; // superseded
+        const live = readyRef.current.get(p.cellId);
+        if (!live) return; // cell closed while we waited
+        const data = live.chart.getDataList();
+        // Spacing check: after a TF switch the OLD interval's (finer, hence
+        // closer-together) bars are still on the chart for a beat — scrolling
+        // them would be undone by the reload. Wait for the new series.
+        // Two-sided: the OLD series is stale whether it's finer (gap too
+        // small) or coarser (gap too big — Auto TF lowered the interval).
+        // The min positive gap is the real bar interval even when a pair of
+        // bars straddles a weekend.
+        const gap = minPositiveGap(data.map((b) => b.timestamp));
+        const spacingOk =
+          switchedResMs == null ||
+          (gap != null && gap >= switchedResMs * 0.5 && gap <= switchedResMs * 1.5);
+        if ((!spacingOk || data.length === 0) && attempt < 30) {
+          window.setTimeout(() => tryScroll(attempt + 1), 250);
+          return;
+        }
+        // A trade older than the loaded window first pages history back to it
+        // through the chart's own bounded walk (the backtest pager); then the
+        // scroll lands on real bars. A failed/absent walk still scrolls —
+        // applyVisibleRange clamps to whatever is loaded.
+        void coverBacktestHistory(live.chart, from - pad).then(() => {
+          if (epoch !== tradeBoxEpochRef.current) return;
+          const cur = readyRef.current.get(p.cellId);
+          if (cur) applyVisibleRange(cur.chart, from - pad, to + pad);
+        });
+      };
+      tryScroll(0);
+    })();
+  }, [removePreviousTradeListBox]);
+  useEffect(() => alertsChanged.subscribe(resolvePendingTradeBox), [resolvePendingTradeBox]);
+  useEffect(() => resolvePendingTradeBox(), [readyTick, resolvePendingTradeBox]);
+  // Same-tab mode reuses ONE tab for symbols not open anywhere; the ref tracks
+  // which (session-only — a fresh session starts with the first click's tab).
+  const tradeListTabRef = useRef<string | null>(null);
+  const jumpToTrade = (t: TradeRow) => {
+    tradeBoxEpochRef.current++;
+    const { cellId, tabId, opened } = jumpToEpic(
+      t.symbol, 2, loadSameTab() ? tradeListTabRef.current : null,
+    );
+    // Remember only a tab WE opened (created or symbol-replaced) as the reuse
+    // target — adopting a tab that merely already showed the symbol would let
+    // the next click hijack a user tab.
+    if (opened) tradeListTabRef.current = tabId;
+    pendingTradeBoxRef.current = { cellId, epic: t.symbol, trade: t };
+    resolvePendingTradeBox();
+  };
 
   // Open (or reuse) the chart for an alert and select its line. The select is
   // deferred via pendingSelectRef (see resolvePendingSelect) — resolvePendingSelect
@@ -1313,6 +1553,8 @@ export default function App() {
 
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
+  const [tradeListOpen, setTradeListOpen] = useState(tradeListPanelOpen.value);
+  useEffect(() => tradeListPanelOpen.subscribe(setTradeListOpen), []);
   const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
   useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
   const [snapGalleryOpen, setSnapGalleryOpen] = useState(snapshotsGalleryOpen.value);
@@ -2423,6 +2665,18 @@ export default function App() {
             hidden={patternPanelHidden}
             onReveal={revealPatternCell}
           />
+          {/* Imported trade list, docked like the pattern panel (workspace-level:
+              rows span symbols across tabs). Hidden — state intact — while a
+              replay readout is masking dates: its rows carry the real dates a
+              masked session exists to conceal. */}
+          {tradeListOpen && (
+            <TradeListPanel
+              onSelect={jumpToTrade}
+              onClose={() => tradeListPanelOpen.set(false)}
+              brokerId={brokerId}
+              hidden={patternPanelHidden}
+            />
+          )}
         </main>
         {/* Panel is toggled by the toolbar bell; closed = chart uses full width. */}
         {panelOpen && symbol && !isSynthetic(symbol.epic) && (

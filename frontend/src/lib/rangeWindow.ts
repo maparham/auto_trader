@@ -62,8 +62,9 @@ const RESOLUTION: Record<RangeKey, string> = {
 // in it), not UTC — otherwise "start of the month" lands at the UTC midnight,
 // which can be hours off the local one. These helpers do tz-aware civil-time math.
 
-// The wall-clock fields of `ms` as seen in `tz`.
-function tzParts(tz: string, ms: number) {
+// The wall-clock fields of `ms` as seen in `tz`. Exported: the trade-list
+// importer leans on the same civil-time math for naive sheet timestamps.
+export function tzParts(tz: string, ms: number) {
   const dtf = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
     year: "numeric",
@@ -88,8 +89,10 @@ function tzParts(tz: string, ms: number) {
 
 // UTC ms whose wall-clock time in `tz` is the given civil date/time. Refined once
 // so it's correct across DST offset changes.
-function zonedWallToUTC(tz: string, y: number, mo: number, d: number, h = 0, mi = 0): number {
-  const guess = Date.UTC(y, mo, d, h, mi);
+export function zonedWallToUTC(
+  tz: string, y: number, mo: number, d: number, h = 0, mi = 0, sec = 0,
+): number {
+  const guess = Date.UTC(y, mo, d, h, mi, sec);
   const offset = (atMs: number) => {
     const p = tzParts(tz, atMs);
     return Date.UTC(p.y, p.mo, p.d, p.h, p.mi, p.s) - atMs;

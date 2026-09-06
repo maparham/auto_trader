@@ -45,7 +45,7 @@ import { RESOLUTION_SECONDS } from "./feed";
 import { timeRangeSpan } from "./timeRangeMetrics";
 import type { ChartDataFacade } from "../chart/chartDataFacade";
 import { type FibConfig, asFibConfig } from "./fibConfig";
-import { type TradeConfig, asTradeConfig, defaultStopPrice, flipTradeLeg, syncTradePoints } from "./tradePlan";
+import { type TradeConfig, type TradePoint, asTradeConfig, defaultStopPrice, flipTradeLeg, normalizeTradePoints, syncTradePoints } from "./tradePlan";
 import { TRADE_BOX } from "./tradeOverlay";
 import {
   asGhostStyle,
@@ -2242,7 +2242,17 @@ export class OverlayManager {
   // Move a drawing's anchor points (Coordinates tab). Points are {timestamp,value}.
   updatePoints(id: string, points: SavedOverlay["points"]): void {
     if (this.entries.get(id) !== "drawing") return;
-    this.chart?.overrideOverlay({ id, points: points as Overlay["points"] });
+    let next = points;
+    // A trade's invariants (one right edge, zones on opposite sides of the
+    // entry) are enforced by the drag handlers for pointer moves — numeric
+    // edits arriving here must pass through the same normalization or the
+    // Coordinates tab can persist geometry every drag handler assumes
+    // impossible.
+    if (this.byId(id)?.name === "tradeBox") {
+      const fixed = normalizeTradePoints(points as TradePoint[]);
+      if (fixed) next = fixed as SavedOverlay["points"];
+    }
+    this.chart?.overrideOverlay({ id, points: next as Overlay["points"] });
     this.persist();
   }
 

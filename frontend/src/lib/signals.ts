@@ -94,6 +94,10 @@ export const alertsPanelOpen = new Signal<boolean>(false);
 // toolbar's trade button; read by App to render the panel beside the chart.
 export const tradePanelOpen = new Signal<boolean>(false);
 
+// True while the imported trade-list panel is open. Toggled by the toolbar's
+// list button; read by App to dock the panel beside the chart area.
+export const tradeListPanelOpen = new Signal<boolean>(false);
+
 /** Snapshots gallery modal (global, rendered by App). */
 export const snapshotsGalleryOpen = new Signal<boolean>(false);
 

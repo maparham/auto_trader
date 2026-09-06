@@ -32,7 +32,7 @@ import { useMaskedReplay } from "./lib/useMaskedReplay";
 import { maskedTimeLabel } from "./lib/timeFormat";
 import { type FibConfig, asFibConfig } from "./lib/fibConfig";
 import { asGhostStyle, type GhostStyle } from "./lib/patternGhost";
-import { asTradeConfig, type TradeConfig } from "./lib/tradePlan";
+import { asTradeConfig, TRADE_DEFAULTS, type TradeConfig } from "./lib/tradePlan";
 import {
   loadDrawingDefault,
   saveDrawingDefault,
@@ -548,7 +548,13 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                       type="number"
                       step={0.1}
                       value={trade.riskPct}
-                      onChange={(e) => applyTrade({ riskPct: Number(e.target.value) })}
+                      onChange={(e) =>
+                        applyTrade({
+                          // Empty ⇒ the default, like Account size: Number("")
+                          // is 0, which asTradeConfig's ?? would keep forever.
+                          riskPct: e.target.value === "" ? TRADE_DEFAULTS.riskPct : Number(e.target.value),
+                        })
+                      }
                     />
                   </div>
                   <div className="ind-row">
@@ -558,7 +564,12 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                       type="number"
                       step={0.01}
                       value={trade.valuePerPoint}
-                      onChange={(e) => applyTrade({ valuePerPoint: Number(e.target.value) })}
+                      onChange={(e) =>
+                        applyTrade({
+                          valuePerPoint:
+                            e.target.value === "" ? TRADE_DEFAULTS.valuePerPoint : Number(e.target.value),
+                        })
+                      }
                     />
                     <InfoTip
                       title="Value per point"

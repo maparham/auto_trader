@@ -30,7 +30,7 @@ export interface TradeConfig {
   currency: string | null;
 }
 
-const DEFAULTS: TradeConfig = {
+export const TRADE_DEFAULTS: TradeConfig = {
   showPrice: false,
   showPoints: false,
   showMoney: false,
@@ -45,14 +45,14 @@ const DEFAULTS: TradeConfig = {
 export function asTradeConfig(v: unknown): TradeConfig {
   const o = v && typeof v === "object" ? (v as Partial<TradeConfig>) : {};
   return {
-    showPrice: o.showPrice ?? DEFAULTS.showPrice,
-    showPoints: o.showPoints ?? DEFAULTS.showPoints,
-    showMoney: o.showMoney ?? DEFAULTS.showMoney,
-    showDuration: o.showDuration ?? DEFAULTS.showDuration,
-    accountSize: o.accountSize ?? DEFAULTS.accountSize,
-    riskPct: o.riskPct ?? DEFAULTS.riskPct,
-    valuePerPoint: o.valuePerPoint ?? DEFAULTS.valuePerPoint,
-    currency: o.currency ?? DEFAULTS.currency,
+    showPrice: o.showPrice ?? TRADE_DEFAULTS.showPrice,
+    showPoints: o.showPoints ?? TRADE_DEFAULTS.showPoints,
+    showMoney: o.showMoney ?? TRADE_DEFAULTS.showMoney,
+    showDuration: o.showDuration ?? TRADE_DEFAULTS.showDuration,
+    accountSize: o.accountSize ?? TRADE_DEFAULTS.accountSize,
+    riskPct: o.riskPct ?? TRADE_DEFAULTS.riskPct,
+    valuePerPoint: o.valuePerPoint ?? TRADE_DEFAULTS.valuePerPoint,
+    currency: o.currency ?? TRADE_DEFAULTS.currency,
   };
 }
 
@@ -213,6 +213,31 @@ export interface TradePoint {
 // left it is the one the user moved: adopt its timestamp for both. Returns null
 // when there is nothing to fix (a vertical-only drag, or an incomplete trade),
 // so the caller can skip the overlay rewrite entirely.
+/** Restore a trade's two invariants after a NUMERIC edit (the Coordinates tab,
+ *  or any write that isn't a drag): target and stop share one right edge, and
+ *  sit on opposite sides of the entry. flipTradeLeg predicts cursor motion
+ *  mid-drag; this one just repairs whatever was written, reflecting a stop
+ *  found on the target's side back across the entry at its own distance.
+ *  Returns corrected points, or null when nothing needs writing. */
+export function normalizeTradePoints(points: TradePoint[]): TradePoint[] | null {
+  if (points.length < 3) return null;
+  const [entry, target, stop] = points;
+  let changed = false;
+  let stopTs = stop.timestamp;
+  if (stopTs !== target.timestamp) {
+    stopTs = target.timestamp;
+    changed = true;
+  }
+  let stopVal = stop.value;
+  const legs = (target.value - entry.value) * (stopVal - entry.value);
+  if (legs > 0) {
+    stopVal = entry.value - (stopVal - entry.value);
+    changed = true;
+  }
+  if (!changed) return null;
+  return [entry, target, { ...stop, timestamp: stopTs, value: stopVal }];
+}
+
 export function syncTradePoints(points: TradePoint[], prevEdge: number): TradePoint[] | null {
   if (points.length < 3) return null;
   const [entry, target, stop] = points;

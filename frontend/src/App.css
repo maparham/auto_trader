@@ -6342,3 +6342,151 @@ span.bt-leg-short { color: var(--neg); }
 }
 .bt-review-btn:hover:not(:disabled) { border-color: var(--accent); }
 .bt-review-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* --- Trade list panel (imported closed-trades sheet) ------------------------ */
+.trade-list-panel {
+  /* Docked sidebar like .pattern-matches: a flex sibling of .chart-cells
+     inside main.chart, so charts yield real layout space. position:relative
+     only anchors the .tl-resize splitter. */
+  position: relative; flex: 0 0 auto; width: 430px; height: 100%;
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  background: var(--surface); color: var(--text);
+  border-left: 1px solid var(--border); font-size: 12px;
+}
+.tl-resize { position: absolute; top: 0; left: 0; width: 6px; height: 100%;
+  cursor: col-resize; z-index: 1; }
+.tl-resize:hover { background: var(--hover); }
+.tl-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border); }
+.tl-title { font-weight: 600; }
+.tl-head > .tooltip-trigger:has(> .modal-close) { margin-left: auto; }
+/* One control row: filter, the two mode pills (shared seg frame), stats pushed
+   to the right edge. Wraps as whole GROUPS when the panel is narrowed — never
+   splitting a label mid-phrase or clipping a control. */
+.tl-summary { display: flex; align-items: center; flex-wrap: wrap;
+  gap: 6px 10px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border); color: var(--text-dim); }
+.tl-summary > * { white-space: nowrap; }
+.tl-modes button { padding: 4px 10px; font-size: 11px; }
+.tl-modes button:not(.seg-on) { color: var(--text-dim); }
+.tl-modes button:not(.seg-on):hover { color: var(--text); }
+/* Muted "on" state: a quiet gray fill, not the global seg's solid accent —
+   these pills sit in the panel chrome and stay on for long stretches, so a
+   saturated fill would shout the whole session. */
+.tl-modes button.seg-on { background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text); font-weight: 600; }
+/* Tooltip wraps each pill in a span; keep the seg frame seamless through it. */
+.tl-modes .tooltip-trigger { display: inline-flex; }
+.tl-modes .tooltip-trigger + .tooltip-trigger button { border-left: 1px solid var(--border); }
+.tl-stats { display: flex; align-items: baseline; gap: 8px; margin-left: auto; }
+.tl-stats .tl-total { font-weight: 600; }
+.tl-skipped { color: var(--text-dim); font-style: italic; }
+.tl-filter { flex: 1 1 90px; min-width: 70px; max-width: 140px; padding: 3px 6px; font-size: 12px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; }
+.tl-scroll { flex: 1; overflow: auto; }
+.tl-table { width: 100%; border-collapse: collapse; }
+.tl-table th { position: sticky; top: 0; background: var(--surface); z-index: 1;
+  text-align: left; padding: 2px 4px; border-bottom: 1px solid var(--border); }
+.tl-table td { padding: 4px 6px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; }
+.tl-table tbody tr { cursor: pointer; }
+.tl-table tbody tr:hover { background: var(--hover); }
+/* The last-clicked row stays marked until the next click: accent-tinted with an
+   accent bar on the left edge (hover alone would be indistinguishable). */
+.tl-table tbody tr.tl-selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tl-table tbody tr.tl-selected td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.tl-table .tl-date { display: block; }
+.tl-table .tl-price { display: block; color: var(--text-dim); }
+/* Win/loss tint on the P/L cells (rows stay theme-colored to keep the table calm). */
+tr.tl-win td:nth-last-child(-n + 2) { color: var(--pos); }
+tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
+/* Drawdown is adverse by definition: keep it quiet, not win/loss colored. */
+.tl-table td.tl-dd { color: var(--text-dim); }
+.tl-summary .tl-win { color: var(--pos); }
+.tl-summary .tl-loss { color: var(--neg); }
+/* Sheet reported no money at all (percent-only): a dash, not a win/loss zero. */
+.tl-none { color: var(--text-dim); }
+/* Library view: saved imports, then the import form. */
+.tl-library { flex: 1; overflow: auto; display: flex; flex-direction: column; }
+.tl-list-row { display: flex; align-items: center; gap: 2px; padding: 0 6px 0 0;
+  border-bottom: 1px solid var(--border); }
+.tl-list-open { flex: 1; min-width: 0; display: flex; flex-direction: column;
+  align-items: flex-start; gap: 2px; padding: 8px 10px; background: none;
+  border: none; color: var(--text); text-align: left; cursor: pointer;
+  font-size: 12px; }
+.tl-list-row:hover { background: var(--hover); }
+.tl-list-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 100%; }
+.tl-list-meta { color: var(--text-dim); }
+.tl-icon-btn { background: none; border: none; color: var(--text-dim);
+  cursor: pointer; padding: 4px 6px; border-radius: 4px; font-size: 13px; }
+.tl-icon-btn:hover { background: var(--hover); color: var(--text); }
+.tl-rename-input { flex: 1; min-width: 0; margin: 6px 4px 6px 10px; padding: 4px 6px;
+  font-size: 12px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; }
+.tl-back { background: none; border: none; color: var(--text-dim); cursor: pointer;
+  padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+.tl-back:hover { background: var(--hover); color: var(--text); }
+.tl-head .tl-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+
+/* Import form (bottom of the library). */
+.tl-import { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.tl-hint { margin: 0; color: var(--text-dim); }
+.tl-tz { display: flex; align-items: center; gap: 8px; color: var(--text-dim); }
+.tl-tz select { flex: 1; min-width: 0; padding: 3px 6px; font-size: 12px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; }
+.tl-import textarea { resize: vertical; font-family: inherit; font-size: 12px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px; }
+.tl-err { color: var(--neg); }
+
+/* CSV mapping review (between parse and save): one row per source column. */
+.tl-review { display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  min-height: 0; font-size: 12px; }
+.tl-review .tl-scroll { overflow: auto; min-height: 0; }
+.tl-map-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tl-map-table th { position: sticky; top: 0; background: var(--surface);
+  text-align: left; padding: 4px 8px; color: var(--text-dim); font-weight: 500;
+  border-bottom: 1px solid var(--border); }
+.tl-map-table td { padding: 4px 8px; border-bottom: 1px solid var(--border);
+  vertical-align: middle; }
+.tl-map-col { white-space: nowrap; font-weight: 500; }
+.tl-map-samples { color: var(--text-dim); }
+.tl-map-samples span { display: block; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 160px; }
+.tl-map-ignored .tl-map-col, .tl-map-ignored .tl-map-samples { opacity: 0.45; }
+.tl-map-table select { width: 100%; min-width: 100px; padding: 3px 6px;
+  font-size: 12px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; }
+.tl-review-actions { display: flex; gap: 8px; }
+.tl-review-actions .tl-review-go { font-weight: 600; }
+.tl-review-actions button:disabled { opacity: 0.5; cursor: default; }
+
+/* Degenerate-row filter: suspect rows grouped by reason, each group ticked
+   (excluded) by default. Unticking keeps the group — a $0.00 exit can be a
+   real delisting, so nothing is dropped without the reason being visible. */
+.tl-flagged { margin-top: 10px; display: flex; flex-direction: column; gap: 8px;
+  padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
+.tl-flagged .tl-hint { margin: 0; }
+.tl-flag-group > label { display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 500; cursor: pointer; }
+.tl-flag-rows { margin: 4px 0 0; padding-left: 24px; list-style: none;
+  font-size: 11px; color: var(--text-dim); display: flex;
+  flex-direction: column; gap: 2px; }
+.tl-flag-rows li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Symbol check under the column mapping: unmatched symbols get a remap input. */
+.tl-symcheck { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.tl-symfix { display: flex; align-items: center; gap: 8px; }
+.tl-symfix-name { min-width: 70px; font-weight: 500; color: var(--neg); }
+.tl-symfix input { flex: 1; min-width: 0; padding: 3px 6px; font-size: 12px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; }
+
+/* No market for the row's symbol (unmatched and left unmapped at import):
+   nothing to jump to, so the row doesn't pretend to be clickable. */
+.tl-table tr.tl-dead { opacity: 0.45; cursor: default; }
+.tl-table tr.tl-dead:hover { background: none; }

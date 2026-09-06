@@ -3,6 +3,7 @@ import {
   asTradeConfig,
   defaultStopPrice,
   flipTradeLeg,
+  normalizeTradePoints,
   syncTradePoints,
   tradePlan,
   type TradePlanInput,
@@ -246,5 +247,27 @@ describe("syncTradePoints", () => {
 
   it("reports nothing to do for an incomplete trade", () => {
     expect(syncTradePoints([pts[0], pts[1]], 2000)).toBeNull();
+  });
+});
+
+describe("normalizeTradePoints", () => {
+  const pt = (timestamp: number, value: number) => ({ timestamp, value });
+
+  it("reflects a stop typed onto the target's side back across the entry", () => {
+    const out = normalizeTradePoints([pt(1, 100), pt(2, 110), pt(2, 105)]);
+    expect(out).toEqual([pt(1, 100), pt(2, 110), pt(2, 95)]); // its own distance, other side
+  });
+
+  it("pulls a torn stop timestamp back onto the target's edge", () => {
+    const out = normalizeTradePoints([pt(1, 100), pt(3, 110), pt(2, 92)]);
+    expect(out).toEqual([pt(1, 100), pt(3, 110), pt(3, 92)]);
+  });
+
+  it("returns null for an already-valid trade (nothing to write)", () => {
+    expect(normalizeTradePoints([pt(1, 100), pt(2, 110), pt(2, 92)])).toBeNull();
+  });
+
+  it("returns null for non-trade shapes (fewer than 3 points)", () => {
+    expect(normalizeTradePoints([pt(1, 100), pt(2, 110)])).toBeNull();
   });
 });

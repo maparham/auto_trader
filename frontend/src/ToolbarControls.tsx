@@ -14,6 +14,7 @@ import {
 } from "./lib/feed";
 import {
   alertsPanelOpen,
+  tradeListPanelOpen,
   tradePanelOpen,
   livePanelOpen,
 } from "./lib/signals";
@@ -408,6 +409,8 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
   useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
   const [liveOpen, setLiveOpen] = useState(livePanelOpen.value);
   useEffect(() => livePanelOpen.subscribe(setLiveOpen), []);
+  const [tradeListOpen, setTradeListOpen] = useState(tradeListPanelOpen.value);
+  useEffect(() => tradeListPanelOpen.subscribe(setTradeListOpen), []);
 
   return (
     <>
@@ -428,6 +431,22 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
         </button>
       </Tooltip>
       )}
+
+      {/* Trade-list panel toggle: imported closed-trades sheet, rows jump to
+          the trade's chart with a trade box sketched over its span. */}
+      <Tooltip content="Toggle trade list panel">
+        <button
+          className={`anchor-btn trade-list-toggle${tradeListOpen ? " on" : ""}`}
+          onClick={() => tradeListPanelOpen.set(!tradeListPanelOpen.value)}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true">
+            <path d="M4 5h16M4 12h16M4 19h16M4 5v0M8 5v0" />
+            <path d="M4 5h2M4 12h2M4 19h2" strokeWidth="3" />
+          </svg>
+        </button>
+      </Tooltip>
 
       {/* Alerts panel toggle (bell). */}
       <Tooltip content="Show alerts panel">
