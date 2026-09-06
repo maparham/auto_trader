@@ -60,6 +60,9 @@ async def _broadcast_state(user_id: str, message: dict[str, Any]) -> None:
     )
 
 
+broadcast_to_user = _broadcast_state  # public seam for the alert engine (injected in lifespan)
+
+
 async def _broadcast_state_all(message: dict[str, Any]) -> None:
     """Push one message to EVERY subscriber regardless of owner. Only for
     events about genuinely shared, unpartitioned resources (today: the paper

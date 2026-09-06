@@ -106,6 +106,19 @@ class StateStore:
         finally:
             conn.close()
 
+    async def list_users(self) -> list[str]:
+        """Every distinct user_id with at least one stored key (migration
+        scans this to know which users to sweep for legacy blobs)."""
+        return await asyncio.to_thread(self._list_users_sync)
+
+    def _list_users_sync(self) -> list[str]:
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT DISTINCT user_id FROM app_state").fetchall()
+            return [r[0] for r in rows]
+        finally:
+            conn.close()
+
     async def delete(self, user_id: str, key: str) -> None:
         """Remove one key for one user (idempotent — a missing key is a no-op)."""
         await asyncio.to_thread(self._delete_sync, user_id, key)

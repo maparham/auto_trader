@@ -32,7 +32,7 @@ from . import deps
 from .auth import install_auth
 from .guard import cors_origins, install_guards
 from .mcp_server import mcp_http_app, mcp_session
-from .routers import agent, backtest, charts, compute, costs, expr, markets, mt5, patterns, state, strategy, stream, trading, strategies
+from .routers import agent, alerts, backtest, charts, compute, costs, expr, markets, mt5, patterns, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
 
@@ -111,12 +111,51 @@ async def lifespan(app: FastAPI):
         )
     except HTTPException:
         mt5_watchdog = None
+
+    from auto_trader.core.alert_engine import ALERT_ENGINE
+    from auto_trader.core.alert_migrate import migrate_legacy_alerts
+    from auto_trader.core.alert_store import ALERT_STORE
+    from auto_trader.core.state_store import STATE_STORE
+    from .routers import state as state_router
+
+    ALERT_ENGINE.configure(
+        store=ALERT_STORE,
+        get_broker=deps.get_data,
+        broadcast=state_router.broadcast_to_user,
+        notifiers=[],  # push/telegram register in later tasks
+    )
     try:
+        # One-shot lift of legacy localStorage alert blobs (mirrored into
+        # StateStore pre-engine) into alerts.db, BEFORE start() so the
+        # engine's registry load below sees the migrated rows. A migration
+        # failure must not prevent boot — it's a background convenience, not
+        # a boot dependency.
+        try:
+            migrated = await migrate_legacy_alerts(STATE_STORE, ALERT_STORE)
+            if migrated:
+                logging.getLogger("auto_trader.alerts").info(
+                    "migrated %d legacy alert(s) from localStorage blobs", migrated
+                )
+        except Exception:
+            logging.getLogger("auto_trader.alerts").exception(
+                "legacy alert migration failed; continuing boot"
+            )
+        # start() is the first raising await in this block (a real store
+        # failure is possible here) — it's inside try/finally so a failure
+        # still tears down flusher/triggers/mt5_watchdog below rather than
+        # leaking them.
+        await ALERT_ENGINE.start()
         # The MCP endpoint is mounted, so its own lifespan never runs — drive its
         # streamable-HTTP session manager from here for the app's lifetime.
         async with mcp_session():
             yield
     finally:
+        # A raise/hang in ALERT_ENGINE.stop() must not prevent the teardown
+        # below (flusher/triggers/watchdog cancel + the registry close) —
+        # same "one broken cleanup step can't block the rest" convention as
+        # the suppress()s a few lines down.
+        with suppress(Exception):
+            await ALERT_ENGINE.stop()
         watchdogs = [t for t in (mt5_watchdog,) if t is not None]
         for task in (flusher, *triggers, *watchdogs):
             task.cancel()
@@ -164,7 +203,7 @@ async def _track_activity(request, call_next):
 # unless the corresponding env flags are set, which happens only on the remote host.
 install_guards(app)
 
-for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, agent, patterns):
+for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, agent, patterns, alerts):
     app.include_router(_module.router)
 
 # MCP endpoint for the Agent UI Bridge. Mounted LAST so it never shadows API

@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     # Set CAPITAL_COST_PROFILES_DB_PATH to relocate.
     cost_profiles_db_path: str = "cost_profiles.db"
 
+    # Where price alerts (definitions, triggered history, push subs, telegram
+    # links) are persisted. Set CAPITAL_ALERTS_DB_PATH to relocate.
+    alerts_db_path: str = "alerts.db"
+
     # CAPITAL_STREAM_DEBUG=1 turns on a per-second latency summary for the live
     # candle streams (see capital_stream._StreamDebug): tick rate, tick->candle
     # yield ratio, and age_ms = now - tick_timestamp. Verifies that ticks reach

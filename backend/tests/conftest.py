@@ -16,6 +16,27 @@ def _isolated_run_store(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_alert_store(tmp_path, monkeypatch):
+    """Alerts persist via a module singleton; point BOTH the router AND the
+    module singleton itself at a per-test temp store so the suite never
+    writes backend/alerts.db. Patching only the router's reference is not
+    enough: app.py's lifespan does its own
+    `from auto_trader.core.alert_store import ALERT_STORE` and hands that
+    (real) singleton to ALERT_ENGINE.configure()/start(), and several tests
+    do enter lifespan (test_api_admin_gate.py's `client` fixture, its
+    dev-mode tests, test_api_compute_hosted.py, test_coded_strategy_mtf.py)
+    — the engine can read AND delete rows (e.g. expiring/firing an alert)
+    off whatever store it was configured with."""
+    import auto_trader.api.routers.alerts as alerts_router
+    import auto_trader.core.alert_store as alert_store_mod
+    from auto_trader.core.alert_store import AlertStore
+
+    store = AlertStore(str(tmp_path / "alerts.db"))
+    monkeypatch.setattr(alert_store_mod, "ALERT_STORE", store)
+    monkeypatch.setattr(alerts_router, "ALERT_STORE", store)
+
+
+@pytest.fixture(autouse=True)
 def _registry_for_routes(monkeypatch):
     """Broker-carrying routes resolve the request's data broker through
     deps.resolve_broker (admin gate, Task 4), which needs deps._registry.

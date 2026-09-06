@@ -250,6 +250,11 @@ cost_profiles.db
 cost_profiles.db-wal
 cost_profiles.db-shm
 
+# Price alert store (definitions, triggered history, push subs, telegram links)
+alerts.db
+alerts.db-wal
+alerts.db-shm
+
 # MetaApi SDK local terminal-state cache (created at runtime by the streaming/RPC
 # connection; per-machine, never source)
 .metaapi/
