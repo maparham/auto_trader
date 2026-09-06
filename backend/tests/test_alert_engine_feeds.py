@@ -202,6 +202,161 @@ def test_stream_feed_dispatches_to_capital_stream_and_feeds_on_tick(tmp_path, mo
     asyncio.run(main())
 
 
+def test_stream_feed_returns_true_when_it_yields_and_is_not_interrupted(tmp_path, monkeypatch):
+    """A stream that DOES yield bars must run to completion unaffected by
+    the staleness timeout, and _stream_feed reports it yielded."""
+    async def main():
+        monkeypatch.setattr(alert_engine_module, "STREAM_STALE_SECONDS", 10.0)
+
+        class StreamingBroker(FakeBroker):
+            supports_streaming = True
+
+        broker = StreamingBroker([])
+        eng, store, sent = make_engine(tmp_path, get_broker=lambda b: broker)
+
+        class FakeBar:
+            def __init__(self, close, bid, ask):
+                self.candle = type("C", (), {"close": close})()
+                self.bid = bid
+                self.ask = ask
+
+        async def fake_stream_candles(broker_arg, epic, resolution, price_side):
+            yield FakeBar(100.0, 99.5, 100.5)
+            yield FakeBar(101.0, 100.5, 101.5)
+
+        monkeypatch.setattr(
+            "auto_trader.brokers.capital_stream.stream_candles", fake_stream_candles
+        )
+
+        ticks = []
+
+        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+            ticks.append((broker_id, epic, mid, bid, ask))
+
+        eng.on_tick = fake_on_tick
+
+        yielded = await eng._stream_feed(broker, "capital", "US100")
+
+        assert yielded is True
+        assert len(ticks) == 2
+
+    asyncio.run(main())
+
+
+def test_stream_feed_times_out_on_silent_stream_and_returns_false(tmp_path, monkeypatch):
+    """A stream that never yields anything must not block forever — bounded
+    by STREAM_STALE_SECONDS (patched tiny here), _stream_feed gives up,
+    closes the generator, and reports no bar was ever yielded."""
+    async def main():
+        monkeypatch.setattr(alert_engine_module, "STREAM_STALE_SECONDS", 0.02)
+
+        class StreamingBroker(FakeBroker):
+            supports_streaming = True
+
+        broker = StreamingBroker([])
+        eng, store, sent = make_engine(tmp_path, get_broker=lambda b: broker)
+
+        closed = {"n": 0}
+
+        async def fake_stream_candles(broker_arg, epic, resolution, price_side):
+            try:
+                await asyncio.Event().wait()  # never yields
+                yield None  # pragma: no cover - unreachable, keeps this a generator
+            finally:
+                # Fires whether the generator unwinds via the wait_for
+                # timeout's cancellation of the in-flight __anext__() or via
+                # the explicit aclose() _stream_feed issues afterward —
+                # either way this generator got torn down, not leaked.
+                closed["n"] += 1
+
+        monkeypatch.setattr(
+            "auto_trader.brokers.capital_stream.stream_candles", fake_stream_candles
+        )
+
+        ticks = []
+
+        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+            ticks.append(1)
+
+        eng.on_tick = fake_on_tick
+
+        yielded = await asyncio.wait_for(
+            eng._stream_feed(broker, "capital", "US100"), timeout=2.0
+        )
+
+        assert yielded is False
+        assert ticks == []
+        assert closed["n"] == 1
+
+    asyncio.run(main())
+
+
+def test_feed_loop_falls_back_to_polling_after_repeated_stream_failures(tmp_path, monkeypatch):
+    """The class-level scenario: a streaming broker whose stream keeps going
+    silent. After _STREAM_FAILURE_THRESHOLD consecutive no-bar attempts,
+    _feed_loop must fall back to polling get_quote for a cycle — on_tick
+    still gets fed even though the stream itself never produced anything."""
+    async def main():
+        monkeypatch.setattr(alert_engine_module, "STREAM_STALE_SECONDS", 0.01)
+
+        class StreamingBroker(FakeBroker):
+            supports_streaming = True
+
+        broker = StreamingBroker([(10.0, 12.0)])
+        eng, store, sent = make_engine(tmp_path, get_broker=lambda b: broker)
+
+        async def fake_stream_candles(broker_arg, epic, resolution, price_side):
+            await asyncio.Event().wait()  # silent forever -> always stale
+            yield None  # pragma: no cover
+
+        monkeypatch.setattr(
+            "auto_trader.brokers.capital_stream.stream_candles", fake_stream_candles
+        )
+
+        ticks = []
+
+        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+            ticks.append((mid, bid, ask))
+
+        eng.on_tick = fake_on_tick
+
+        task = asyncio.create_task(eng._feed_loop("capital", "US100"))
+        for _ in range(200):
+            if ticks:
+                break
+            await asyncio.sleep(0.02)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert ticks, "polling fallback never fed on_tick after repeated stream staleness"
+        assert ticks[0] == (11.0, 10.0, 12.0)
+
+    asyncio.run(main())
+
+
+def test_poll_feed_max_duration_returns_after_deadline(tmp_path):
+    async def main():
+        broker = FakeBroker([(1.0, 2.0)])
+        eng, store, sent = make_engine(tmp_path, get_broker=lambda b: broker)
+
+        ticks = []
+
+        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+            ticks.append(1)
+
+        eng.on_tick = fake_on_tick
+
+        await asyncio.wait_for(
+            eng._poll_feed(broker, "capital", "US100", max_duration=0.03),
+            timeout=2.0,
+        )
+
+        assert ticks  # at least fed once before the deadline
+
+    asyncio.run(main())
+
+
 def test_feed_spawn_waits_for_draining_task_before_starting_feed_loop(tmp_path):
     async def main():
         eng, store, sent = make_engine(tmp_path)

@@ -351,6 +351,81 @@ def test_telegram_test_endpoint_sends_and_404s_when_unlinked(clerk, routed_store
     assert body == {"chat_id": "chat-1", "text": "🔔 Test alert from Auto Trader"}
 
 
+# --- token scrubbing (finding 1) -------------------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_bot_username_401_does_not_leak_token(store):
+    """A 401 from Telegram embeds the full request URL (token included) in
+    httpx's HTTPStatusError message. bot_username() must re-raise with the
+    token scrubbed, since it's reachable from the /link route."""
+    TELEGRAM.configure(TOKEN, store)
+    respx.get(f"https://api.telegram.org/bot{TOKEN}/getMe").mock(
+        return_value=httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await TELEGRAM.bot_username()
+
+    assert TOKEN not in str(excinfo.value)
+    assert "***" in str(excinfo.value)
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_send_401_does_not_leak_token(store):
+    TELEGRAM.configure(TOKEN, store)
+    respx.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage").mock(
+        return_value=httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await TELEGRAM.send("999", "hi")
+
+    assert TOKEN not in str(excinfo.value)
+
+
+@respx.mock
+def test_telegram_link_401_does_not_leak_token_via_route(clerk, routed_store):
+    """End-to-end through /api/alerts/telegram/link: a 401 from Telegram
+    reaches the route as a RuntimeError (there's no custom exception handler
+    installed, so the TestClient — configured to re-raise server exceptions
+    — surfaces it directly); the point is its message never carries the
+    token, wherever it's ultimately rendered (a real deployment's default
+    500 traceback included)."""
+    TELEGRAM.configure(TOKEN, routed_store)
+    respx.get(f"https://api.telegram.org/bot{TOKEN}/getMe").mock(
+        return_value=httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        client.post("/api/alerts/telegram/link", headers=_auth("alice"))
+
+    assert TOKEN not in str(excinfo.value)
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_run_poller_401_logs_scrubbed_message_no_exc_info(store, caplog):
+    TELEGRAM.configure(TOKEN, store)
+    respx.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates").mock(
+        return_value=httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+    )
+
+    with caplog.at_level("WARNING", logger="auto_trader.core.telegram_notify"):
+        task = asyncio.create_task(TELEGRAM.run_poller())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert caplog.records, "poller never logged the error"
+    for record in caplog.records:
+        assert TOKEN not in record.getMessage()
+        assert record.exc_info is None
+
+
 def test_telegram_unlink(clerk, routed_store):
     TELEGRAM.configure(TOKEN, routed_store)
     _sync(routed_store.set_telegram("alice", "chat-1"))

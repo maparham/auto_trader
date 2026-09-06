@@ -1659,7 +1659,10 @@ export default function App() {
   // Registered once — the deleted browser engine's fire() relocated, copy verbatim.
   useEffect(() => {
     setOnAlertFired((p) => {
-      const prec = p.precision ?? 2;
+      // Guard against a bad/out-of-range payload (server validates on write,
+      // but a stale/mismatched deploy or hand-rolled ws message shouldn't be
+      // able to RangeError out of toFixed and kill this handler).
+      const prec = Math.min(10, Math.max(0, p.precision ?? 2));
       const now = p.price.toFixed(prec);
       // Attribution: always lead with the epic, even for a custom message — the
       // sound alone says nothing about WHERE. One `detail` feeds both surfaces.

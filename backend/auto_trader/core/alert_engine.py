@@ -51,6 +51,14 @@ POLL_INTERVAL = 5.0
 BACKOFF_MIN = 5.0
 BACKOFF_MAX = 60.0
 _BROKER_RETRY_SECONDS = 60.0
+# A streaming attempt that goes this long without yielding a single bar is
+# treated as a dead/hung stream (no error, no signal — just silence) rather
+# than left to block forever: _stream_feed gives up and _feed_loop retries.
+STREAM_STALE_SECONDS = 300.0
+# Consecutive streaming attempts that each ended without yielding a single
+# bar before _feed_loop stops retrying streaming and falls back to polling
+# for one backoff cycle.
+_STREAM_FAILURE_THRESHOLD = 2
 
 
 def _alert_sig(params: dict) -> str:
@@ -230,6 +238,13 @@ class AlertEngine:
         def reset_backoff() -> None:
             backoff[0] = BACKOFF_MIN
 
+        # Consecutive streaming attempts that ended (staleness timeout, or a
+        # generator that simply stopped) without ever yielding a bar. Reset
+        # on any attempt that yields at least one; once it hits the
+        # threshold, one polling cycle runs before streaming is retried —
+        # the fallback this loop's docstring promises.
+        stream_failures = 0
+
         while True:
             try:
                 assert self._get_broker is not None
@@ -241,12 +256,25 @@ class AlertEngine:
                     continue
 
                 if getattr(broker, "supports_streaming", False):
-                    await self._stream_feed(broker, broker_id, epic, reset_backoff)
+                    if stream_failures >= _STREAM_FAILURE_THRESHOLD:
+                        log.warning(
+                            "alert feed for %s/%s: streaming failed %d times in a row "
+                            "without a bar, polling for %.1fs before retrying streaming",
+                            broker_id, epic, stream_failures, backoff[0],
+                        )
+                        await self._poll_feed(
+                            broker, broker_id, epic, reset_backoff, max_duration=backoff[0],
+                        )
+                        stream_failures = 0
+                    else:
+                        yielded = await self._stream_feed(broker, broker_id, epic, reset_backoff)
+                        stream_failures = 0 if yielded else stream_failures + 1
                 else:
                     await self._poll_feed(broker, broker_id, epic, reset_backoff)
-                # Both helpers normally run forever; reaching here means one
-                # returned cleanly (e.g. a stream generator ended without
-                # raising). Sleep before retrying so that can never busy-spin.
+                # These helpers normally run forever (or, for streaming, until
+                # staleness/end-of-generator); reaching here means one
+                # returned cleanly. Sleep before retrying so that can never
+                # busy-spin.
                 reset_backoff()
                 await asyncio.sleep(POLL_INTERVAL)
             except asyncio.CancelledError:
@@ -259,7 +287,18 @@ class AlertEngine:
     async def _stream_feed(
         self, broker: Any, broker_id: str, epic: str,
         reset_backoff: Callable[[], None] = lambda: None,
-    ) -> None:
+    ) -> bool:
+        """Runs one streaming attempt for (broker_id, epic). Returns True if
+        at least one bar was fed to `on_tick` before the stream ended; False
+        if it ended (staleness timeout, or the generator simply stopping)
+        without ever yielding one. `_feed_loop` uses that to decide whether
+        to keep retrying streaming or fall back to polling for a cycle.
+
+        Each `__anext__()` is bounded by `STREAM_STALE_SECONDS` — a stream
+        that goes silent (no error, just nothing) would otherwise block this
+        task forever with no signal at all. CancelledError is never caught
+        here, so `_feed_loop`'s/`stop()`'s cancellation semantics are
+        unchanged."""
         # Imported lazily — these pull in websocket/MetaApi client deps that
         # the core package (and its tests) shouldn't need to import eagerly.
         from auto_trader.brokers import ig_stream, mt5_stream
@@ -271,21 +310,42 @@ class AlertEngine:
         if isinstance(broker, IGBroker):
             if not ig_stream.streamable(Resolution.MINUTE.seconds):
                 await self._poll_feed(broker, broker_id, epic, reset_backoff)
-                return
+                return True
             stream = ig_stream.stream_candles(broker, epic, Resolution.MINUTE, "mid")
         elif isinstance(broker, MT5Broker):
             stream = mt5_stream.stream_candles(broker, epic, Resolution.MINUTE, "mid")
         else:
             stream = capital_stream_candles(broker, epic, Resolution.MINUTE, "mid")
 
-        async for bar in stream:
+        stream_iter = stream.__aiter__()
+        yielded_any = False
+        while True:
+            try:
+                bar = await asyncio.wait_for(stream_iter.__anext__(), timeout=STREAM_STALE_SECONDS)
+            except StopAsyncIteration:
+                return yielded_any
+            except asyncio.TimeoutError:
+                log.warning(
+                    "alert feed stream for %s/%s went silent for %.0fs, "
+                    "abandoning this stream attempt",
+                    broker_id, epic, STREAM_STALE_SECONDS,
+                )
+                await stream_iter.aclose()
+                return yielded_any
+            yielded_any = True
             reset_backoff()
             await self.on_tick(broker_id, epic, bar.candle.close, bar.bid, bar.ask)
 
     async def _poll_feed(
         self, broker: Any, broker_id: str, epic: str,
         reset_backoff: Callable[[], None] = lambda: None,
+        *, max_duration: float | None = None,
     ) -> None:
+        """Polls `get_quote` forever, feeding `on_tick`, unless `max_duration`
+        is given — then it returns after that many seconds (used by
+        `_feed_loop`'s streaming-fallback cycle, so streaming gets retried
+        rather than polling taking over permanently)."""
+        deadline = time.monotonic() + max_duration if max_duration is not None else None
         while True:
             bid, ask = await broker.get_quote(epic)
             reset_backoff()
@@ -299,6 +359,8 @@ class AlertEngine:
                 mid = None
             if mid is not None:
                 await self.on_tick(broker_id, epic, mid, bid, ask)
+            if deadline is not None and time.monotonic() >= deadline:
+                return
             await asyncio.sleep(POLL_INTERVAL)
 
     async def _reconciler_loop(self) -> None:

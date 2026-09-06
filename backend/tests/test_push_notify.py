@@ -159,6 +159,43 @@ async def test_notifier_noop_without_subscriptions(store, monkeypatch):
     assert recorder.calls == []
 
 
+# --- error logging doesn't leak the endpoint (finding 4) -----------------
+
+
+@pytest.mark.anyio
+async def test_notifier_server_error_log_has_no_exc_info_or_full_endpoint(store, monkeypatch, caplog):
+    endpoint = "https://push.example/very-long-secret-looking-path-that-should-not-appear-in-full"
+    PUSH.configure(store)
+    await store.add_push_sub("alice", endpoint, {"p256dh": "x", "auth": "y"})
+    recorder = _Recorder(raise_exc=WebPushException("server error", response=_FakeResponse(500)))
+    monkeypatch.setattr(push_notify_mod, "webpush", recorder)
+
+    with caplog.at_level("WARNING", logger="auto_trader.core.push_notify"):
+        await PUSH.notifier("alice", PAYLOAD)
+
+    assert caplog.records
+    for record in caplog.records:
+        assert record.exc_info is None
+        assert endpoint not in record.getMessage()
+
+
+@pytest.mark.anyio
+async def test_notifier_unexpected_exception_log_has_no_exc_info_or_full_endpoint(store, monkeypatch, caplog):
+    endpoint = "https://push.example/another-very-long-secret-looking-endpoint-path"
+    PUSH.configure(store)
+    await store.add_push_sub("alice", endpoint, {"p256dh": "x", "auth": "y"})
+    recorder = _Recorder(raise_exc=RuntimeError("boom"))
+    monkeypatch.setattr(push_notify_mod, "webpush", recorder)
+
+    with caplog.at_level("WARNING", logger="auto_trader.core.push_notify"):
+        await PUSH.notifier("alice", PAYLOAD)
+
+    assert caplog.records
+    for record in caplog.records:
+        assert record.exc_info is None
+        assert endpoint not in record.getMessage()
+
+
 # --- vapid_public -------------------------------------------------------
 
 

@@ -89,20 +89,42 @@ class TelegramNotify:
             raise RuntimeError("TELEGRAM not configured")
         return self._client
 
+    def _scrub(self, s: str) -> str:
+        """Replace the bot token wherever it appears in `s` (e.g. baked into
+        the request URL of an httpx exception message) with a redacted
+        placeholder, so it never escapes into a log line or a route's error
+        response."""
+        if not self._token:
+            return s
+        return s.replace(self._token, "***")
+
     async def bot_username(self) -> str:
         client = self._require_client()
         if self._bot_username is None:
-            resp = await client.get(f"/bot{self._token}/getMe")
-            resp.raise_for_status()
+            try:
+                resp = await client.get(f"/bot{self._token}/getMe")
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # Re-raised as a plain RuntimeError with a scrubbed message —
+                # the original httpx exception's str() embeds the full
+                # request URL (token included), and this call is reachable
+                # from /api/alerts/telegram/link, which would otherwise leak
+                # the token into a FastAPI 500 traceback.
+                raise RuntimeError(self._scrub(str(exc))) from None
             self._bot_username = resp.json()["result"]["username"]
         return self._bot_username
 
     async def send(self, chat_id: str, text: str) -> None:
         client = self._require_client()
-        resp = await client.post(
-            f"/bot{self._token}/sendMessage", json={"chat_id": chat_id, "text": text}
-        )
-        resp.raise_for_status()
+        try:
+            resp = await client.post(
+                f"/bot{self._token}/sendMessage", json={"chat_id": chat_id, "text": text}
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Same reasoning as bot_username: reachable from /link and /test
+            # routes, so the raised message must never carry the token.
+            raise RuntimeError(self._scrub(str(exc))) from None
 
     async def notifier(self, user_id: str, payload: dict) -> None:
         if not self.enabled:
@@ -151,8 +173,16 @@ class TelegramNotify:
                         await asyncio.sleep(_MIN_POLL_ITERATION_SECONDS - elapsed)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                log.warning("telegram poller error", exc_info=True)
+            except Exception as exc:
+                # No exc_info: the default traceback formatting would include
+                # the request URL (token baked in) for an httpx error. Log
+                # just the status (when the exception carries one) and a
+                # scrubbed message instead.
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                log.warning(
+                    "telegram poller error: status=%s type=%s msg=%s",
+                    status, type(exc).__name__, self._scrub(str(exc)),
+                )
                 await asyncio.sleep(_POLL_ERROR_BACKOFF_SECONDS)
 
     async def _handle_update(self, update: dict) -> None:

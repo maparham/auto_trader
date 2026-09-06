@@ -142,9 +142,26 @@ class PushNotify:
             if status in (404, 410):
                 await store.delete_push_sub(user_id, sub["endpoint"])
             else:
-                log.warning("web push delivery failed (status %s)", status, exc_info=True)
+                # No exc_info and no full endpoint: pywebpush embeds the
+                # subscription endpoint URL (a bearer-token-bearing push
+                # service URL) in its exception/traceback, so only a short,
+                # non-identifying fragment is logged.
+                log.warning(
+                    "web push delivery failed (status %s, endpoint %s)",
+                    status, _endpoint_fragment(sub["endpoint"]),
+                )
         except Exception:
-            log.warning("web push delivery failed", exc_info=True)
+            log.warning(
+                "web push delivery failed (endpoint %s)",
+                _endpoint_fragment(sub["endpoint"]),
+            )
+
+
+def _endpoint_fragment(endpoint: str) -> str:
+    """First 40 chars of a push subscription endpoint URL — enough to spot
+    which push service (FCM/Mozilla/etc.) failed without logging the full,
+    effectively-secret URL."""
+    return endpoint[:40]
 
 
 def _b64url_public_key(vapid: Vapid01) -> str:

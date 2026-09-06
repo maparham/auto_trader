@@ -44,6 +44,24 @@ def _validate_kind(kind: str) -> None:
         raise HTTPException(422, f"unknown alert kind: {kind!r}")
 
 
+def _validate_precision(precision: int | None) -> None:
+    if precision is None:
+        return
+    if isinstance(precision, bool) or not isinstance(precision, int):
+        raise HTTPException(422, "precision must be an integer")
+    if not (0 <= precision <= 10):
+        raise HTTPException(422, "precision must be between 0 and 10")
+
+
+def _validate_expires_at(expires_at: int | None) -> None:
+    if expires_at is None:
+        return
+    if isinstance(expires_at, bool) or not isinstance(expires_at, int):
+        raise HTTPException(422, "expires_at must be null or a positive integer")
+    if expires_at <= 0:
+        raise HTTPException(422, "expires_at must be null or a positive integer")
+
+
 def _validate_params(kind: str, params: dict[str, Any]) -> None:
     if kind != "price_level":
         return
@@ -117,6 +135,8 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
     _validate_id(body.id)
     _validate_kind(body.kind)
     _validate_params(body.kind, body.params)
+    _validate_precision(body.precision)
+    _validate_expires_at(body.expires_at)
 
     notify = {ch: True for ch in _NOTIFY_CHANNELS}
     if body.notify:
@@ -245,6 +265,10 @@ async def patch_alert(
         existing = await ALERT_STORE.list_user(user)
         kind = next((r["kind"] for r in existing if r["id"] == alert_id), "price_level")
         _validate_params(kind, patch["params"])
+    if "precision" in patch:
+        _validate_precision(patch["precision"])
+    if "expires_at" in patch:
+        _validate_expires_at(patch["expires_at"])
 
     saved = await ALERT_STORE.update(user, alert_id, patch)
     if saved is None:

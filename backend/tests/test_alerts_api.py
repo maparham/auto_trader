@@ -102,6 +102,47 @@ def test_string_level_rejected_422(clerk):
     assert r.status_code == 422
 
 
+@pytest.mark.parametrize("precision", [-1, 11])
+def test_bad_precision_422_on_create(clerk, precision):
+    r = client.post("/api/alerts", json=_body(precision=precision), headers=_auth("alice"))
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("precision", [0, 10])
+def test_precision_boundary_accepted_on_create(clerk, precision):
+    r = client.post(
+        "/api/alerts", json=_body(id=f"al-prec-{precision}", precision=precision), headers=_auth("alice")
+    )
+    assert r.status_code == 200
+    assert r.json()["precision"] == precision
+
+
+def test_non_int_precision_422_on_create(clerk):
+    r = client.post("/api/alerts", json=_body(precision=2.5), headers=_auth("alice"))
+    assert r.status_code == 422
+
+
+def test_bad_expires_at_422_on_create(clerk):
+    r = client.post("/api/alerts", json=_body(expires_at=0), headers=_auth("alice"))
+    assert r.status_code == 422
+
+    r = client.post("/api/alerts", json=_body(expires_at=-5), headers=_auth("alice"))
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("precision", [-1, 11])
+def test_bad_precision_422_on_patch(clerk, precision):
+    client.post("/api/alerts", json=_body(), headers=_auth("alice"))
+    r = client.patch("/api/alerts/al-1", json={"precision": precision}, headers=_auth("alice"))
+    assert r.status_code == 422
+
+
+def test_bad_expires_at_422_on_patch(clerk):
+    client.post("/api/alerts", json=_body(), headers=_auth("alice"))
+    r = client.patch("/api/alerts/al-1", json={"expires_at": -1}, headers=_auth("alice"))
+    assert r.status_code == 422
+
+
 def test_patch_level_updates_row_and_notifies_engine(clerk, monkeypatch):
     import auto_trader.core.alert_engine as alert_engine
 
