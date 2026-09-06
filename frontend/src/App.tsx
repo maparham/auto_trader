@@ -131,6 +131,7 @@ import {
   LAYOUT_CELLS,
   KIND_FOR_COUNT,
   pruneLegacyGlobalWorkspace,
+  pruneStaleBacktests,
   pruneLegacyTabsKeys,
   setPersistBroker,
   getPersistBroker,
@@ -838,6 +839,11 @@ export default function App() {
       // The working tab set now lives in the layout body / scratch; drop the
       // abandoned per-broker `.tabs` roots (localStorage + backend).
       pruneLegacyTabsKeys();
+      // Expire stale backtest results. Safe here (unlike a liveness-based prune)
+      // because expiry is by timestamp: a cell mounting alongside this can only
+      // write a FRESH result, which by definition isn't stale. Runs after hydrate
+      // so the deletes reach the backend instead of being re-seeded by it.
+      pruneStaleBacktests();
       // ALWAYS reconcile to the resolved workspace — not only when hydrate reports a
       // change. The useState initializers ran before hydration (so a fresh device
       // with a synced workspace rendered its default); resolving again here applies

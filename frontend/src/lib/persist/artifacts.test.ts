@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { installMemStorage } from "../testMemStorage";
 
 installMemStorage();
-const { saveBacktestResult, loadBacktestResult, loadSweepResultId, saveSweepResultId, clearSweepResultId, matchBacktestKey, matchSweepPointerKey, loadInsetBand, saveInsetBand } =
+const { saveBacktestResult, loadBacktestResult, loadSweepResultId, saveSweepResultId, clearSweepResultId, matchBacktestKey, matchSweepPointerKey, loadInsetBand, saveInsetBand, pruneStaleBacktests, BACKTEST_TTL_MS } =
   await import("./artifacts");
 const { save } = await import("./core");
 const { EQUITY_PERSIST_CAP } = await import("../equityDownsample");
@@ -165,5 +165,50 @@ describe("inset band height", () => {
   it("rejects a stored non-number instead of handing a NaN band to the chart", () => {
     save("auto-trader.tab.A.insetBand", "half" as never);
     expect(loadInsetBand("tab.A")).toBeNull();
+  });
+});
+
+// --- backtest expiry ---------------------------------------------------------
+// Saved results are working data, not an archive: they exist so a chart can
+// redraw the run you just did. Anything older than the TTL is swept. Expiry is
+// by TIMESTAMP, not by liveness, so a sweep can never race a freshly-mounted
+// cell's save — that save is new by definition.
+
+describe("backtest result expiry", () => {
+  const day = 24 * 60 * 60 * 1000;
+
+  it("stamps a saved result with the time it was written", () => {
+    saveBacktestResult("tab.A", "US100", bigResult(10), undefined, 5_000);
+    expect(JSON.parse(localStorage.getItem(KEY)!).savedAt).toBe(5_000);
+  });
+
+  it("sweeps results older than the TTL and keeps fresh ones", () => {
+    const now = 100 * day;
+    saveBacktestResult("tab.old", "US100", bigResult(10), undefined, now - BACKTEST_TTL_MS - 1);
+    saveBacktestResult("tab.new", "US100", bigResult(10), undefined, now - 1000);
+    expect(pruneStaleBacktests(now)).toBe(1);
+    expect(localStorage.getItem("auto-trader.tab.old.backtest.US100")).toBeNull();
+    expect(localStorage.getItem("auto-trader.tab.new.backtest.US100")).not.toBeNull();
+  });
+
+  it("treats a result saved before stamping existed as stale", () => {
+    save("auto-trader.tab.legacy.backtest.US100", { epic: "US100", trades: [] });
+    expect(pruneStaleBacktests(100 * day)).toBe(1);
+    expect(localStorage.getItem("auto-trader.tab.legacy.backtest.US100")).toBeNull();
+  });
+
+  it("leaves keys that are not backtest results alone", () => {
+    save("auto-trader.tab.A.drawings.US100", [{ name: "line" }]);
+    save("auto-trader.b.capital.layouts", [{ id: "x" }]);
+    expect(pruneStaleBacktests(100 * day)).toBe(0);
+    expect(localStorage.getItem("auto-trader.tab.A.drawings.US100")).not.toBeNull();
+    expect(localStorage.getItem("auto-trader.b.capital.layouts")).not.toBeNull();
+  });
+
+  it("sweeps stale neighbours when a new result is saved", () => {
+    const now = 100 * day;
+    saveBacktestResult("tab.old", "US100", bigResult(10), undefined, now - BACKTEST_TTL_MS - 1);
+    saveBacktestResult("tab.new", "EURUSD", bigResult(10), undefined, now);
+    expect(localStorage.getItem("auto-trader.tab.old.backtest.US100")).toBeNull();
   });
 });

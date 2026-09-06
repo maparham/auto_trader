@@ -60,6 +60,9 @@ export function saveDrawings(scope: string, epic: string, list: SavedOverlay[]):
 // frontend-derived field (not returned by the backend), attached at save time.
 export type StoredBacktestResult = Omit<BacktestResult, "candles"> & {
   period?: BacktestPeriod;
+  /** When this result was written (ms epoch), for expiry. Absent on results
+   *  saved before stamping existed — those count as stale. */
+  savedAt?: number;
   // Replay's progressive reveal only (never persisted by a real run): the trades
   // that are OPEN at the cursor, kept beside `trades` so no summary, metric or
   // panel index counts them. See lib/replayReveal.
@@ -108,6 +111,32 @@ export function matchSweepPointerKey(
   return matchScopedEpicKey(key, scopes, "sweep");
 }
 
+/** How long a saved backtest result is worth keeping. They exist so a chart can
+ *  redraw the run you just did — not as an archive — so anything older is dead
+ *  weight in a ~5MB localStorage shared with drawings, layouts and templates. */
+export const BACKTEST_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Drop every persisted backtest result older than the TTL (and every one saved
+ *  before stamping existed). Returns how many went. Expiry is by TIMESTAMP, not
+ *  by whether a live cell still points at the key: that's what makes it safe to
+ *  run at any moment, including while cells are mounting — see the mount-save
+ *  race that rules out liveness-based pruning in pruneLegacyGlobalWorkspace. */
+export function pruneStaleBacktests(now: number = Date.now()): number {
+  let keys: string[];
+  try {
+    keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) ?? "");
+  } catch {
+    return 0; // no localStorage (test/node env) → nothing to sweep
+  }
+  const doomed = keys.filter((k) => {
+    if (!k.startsWith(`${PREFIX}.`) || !/\.backtest\.[^.]/.test(k)) return false;
+    const savedAt = load<StoredBacktestResult | null>(k, null)?.savedAt;
+    return savedAt == null || now - savedAt > BACKTEST_TTL_MS;
+  });
+  for (const k of doomed) removeKeyEverywhere(k);
+  return doomed.length;
+}
+
 export function loadBacktestResult(scope: string, epic: string): StoredBacktestResult | null {
   const key = backtestKey(scope, epic);
   const stored = load<StoredBacktestResult | null>(key, null);
@@ -130,6 +159,7 @@ export function saveBacktestResult(
   epic: string,
   result: BacktestResult,
   period?: BacktestPeriod,
+  now: number = Date.now(),
 ): boolean {
   // Strip the bulky candle array and bound the equity curve before persisting —
   // redraw doesn't need candles (markers/equity/periods attach to whatever bars
@@ -141,9 +171,15 @@ export function saveBacktestResult(
     ...result,
     equity: downsampleEquity(result.equity),
     period,
+    savedAt: now,
   };
   delete (stored as Partial<BacktestResult>).candles;
-  return save(backtestKey(scope, epic), stored);
+  const ok = save(backtestKey(scope, epic), stored);
+  // Sweep here rather than at boot: a freshly-mounted cell saving its result is
+  // exactly what a boot-time prune could race, and expiry-by-timestamp can't —
+  // the save it might collide with is new, so never stale.
+  pruneStaleBacktests(now);
+  return ok;
 }
 export function clearBacktestResult(scope: string, epic: string): void {
   removeKeyEverywhere(backtestKey(scope, epic));
