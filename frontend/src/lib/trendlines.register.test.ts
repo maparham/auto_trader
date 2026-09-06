@@ -39,7 +39,7 @@ describe("TRENDLINES registration", () => {
     // value. It is also the merge switch: 0 merges nothing, which is why there
     // is no checkbox beside it, and the two dim thresholds, which choose an
     // opacity and so are render-only for the same reason.
-    expect(inputs.filter((i) => i.type === "number")).toHaveLength(19);
+    expect(inputs.filter((i) => i.type === "number")).toHaveLength(20);
     expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(16);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
@@ -65,6 +65,7 @@ describe("TRENDLINES registration", () => {
       ["Declutter"],
       ["Hide broken lines"],
       ["Dim broken lines"],
+      ["Dim opacity"],
       ["Dim after touching"],
       ["Dim if untouched for"],
       ["Merge Lines within"],

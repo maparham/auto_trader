@@ -26,7 +26,7 @@ import {
   selectDrawnLines,
   trendlineDimmed,
   TL_DIM_ALPHA,
-  TL_BROKEN_ALPHA,
+  trendlineDimAlpha,
   TL_DEDUPE_ATR,
   TL_NEAR_PRICE_ATR,
   TRENDLINES_TEMPLATE,
@@ -1412,7 +1412,12 @@ function record(
   declutter?: "off" | "near" | "pivot",
   // The two dim thresholds. Absent leaves both keys off, so every test above
   // paints at the alphas it always did.
-  dim?: { dimTouches?: number; dimStaleBars?: number; dimBroken?: boolean },
+  dim?: {
+    dimTouches?: number;
+    dimStaleBars?: number;
+    dimBroken?: boolean;
+    dimOpacity?: number;
+  },
 ): Painted {
   const segments: Segment[] = [];
   const tags: Tag[] = [];
@@ -1603,22 +1608,35 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     // The dashes and the break dot carry the message on their own; a broken
     // line is where a retest happens, so nothing pushes it back by default.
     expect(opaque.every((a) => a === 1)).toBe(true);
-    expect(dashedAt({ dimBroken: true }).every((a) => a === TL_BROKEN_ALPHA)).toBe(true);
+    expect(dashedAt({ dimBroken: true }).every((a) => a === TL_DIM_ALPHA)).toBe(true);
   });
 
-  it("gives a broken line the BREAK depth, not the dim one, when both apply", () => {
+  it("paints EVERY dim at one depth, whatever put the line into it", () => {
     const b = bars();
     const dashedAt = (dim: Record<string, unknown>) =>
       record(b, params(1), "lastbar", undefined, undefined, false, false, false, undefined, dim)
         .segments.filter((sg) => sg.dashed)
         .map((sg) => sg.alpha);
-    // Broken AND well-touched, with both fades asked for: the break wins.
-    expect(
-      dashedAt({ dimBroken: true, dimTouches: 2 }).every((a) => a === TL_BROKEN_ALPHA),
-    ).toBe(true);
+    // Broken, well-touched, or both: one depth, and the dashes are what say
+    // which kind of dim this is.
+    expect(dashedAt({ dimBroken: true, dimTouches: 2 }).every((a) => a === TL_DIM_ALPHA)).toBe(true);
     // With the broken fade off, a broken line still picks up the dim depth —
     // being broken is not a reason to paint a stale line brighter.
     expect(dashedAt({ dimTouches: 2 }).every((a) => a === TL_DIM_ALPHA)).toBe(true);
+  });
+
+  it("paints the dim at the pane's own opacity, clamped", () => {
+    const b = bars();
+    const solidAt = (dim: Record<string, unknown>) =>
+      record(b, params(1), "lastbar", undefined, undefined, false, false, false, undefined, dim)
+        .segments.filter((sg) => !sg.dashed)
+        .map((sg) => sg.alpha);
+    expect(solidAt({ dimTouches: 2, dimOpacity: 25 }).every((a) => a === 0.25)).toBe(true);
+    // Floored: a fade that reached invisible would hide a line with no row
+    // saying so.
+    expect(solidAt({ dimTouches: 2, dimOpacity: 0 }).every((a) => a === 0.1)).toBe(true);
+    // An opacity alone dims nothing — it is a depth, not a switch.
+    expect(solidAt({ dimOpacity: 25 }).every((a) => a === 1)).toBe(true);
   });
 
   it("rings every touch, on the line and not at the candle's own extreme", () => {
@@ -2405,5 +2423,26 @@ describe("trendlineDimmed", () => {
     // Either one alone is enough.
     expect(trendlineDimmed(line(7, 100), 100, ext)).toBe(true);
     expect(trendlineDimmed(line(2, 70), 100, ext)).toBe(true);
+  });
+});
+
+describe("trendlineDimAlpha", () => {
+  it("defaults when the pane has no opacity of its own", () => {
+    expect(trendlineDimAlpha(undefined)).toBe(TL_DIM_ALPHA);
+    expect(trendlineDimAlpha({})).toBe(TL_DIM_ALPHA);
+    // A hand-written payload must not paint a line at NaN alpha, which canvas
+    // silently reads as "leave the last value alone".
+    expect(trendlineDimAlpha({ dimOpacity: NaN })).toBe(TL_DIM_ALPHA);
+  });
+
+  it("reads the panel's percent, clamped to [10, 100]", () => {
+    expect(trendlineDimAlpha({ dimOpacity: 40 })).toBe(0.4);
+    expect(trendlineDimAlpha({ dimOpacity: 100 })).toBe(1);
+    // 0 is NOT the off switch here, unlike every threshold on this panel: a
+    // line at 0 is gone, and removing a line is what Declutter and Hide broken
+    // lines are for.
+    expect(trendlineDimAlpha({ dimOpacity: 0 })).toBe(0.1);
+    expect(trendlineDimAlpha({ dimOpacity: -20 })).toBe(0.1);
+    expect(trendlineDimAlpha({ dimOpacity: 250 })).toBe(1);
   });
 });

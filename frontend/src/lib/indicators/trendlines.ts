@@ -829,9 +829,22 @@ export interface TrendlinesExtend {
    * pushing it into the background by default worked against the feature it
    * belongs to. The dashes and the break dot still mark it either way.
    *
-   * When on it fades HARDER than the dim thresholds below (see TL_DIM_ALPHA),
-   * so a line that is both broken and stale reads as broken. */
+   * When on it fades to the SAME depth as the thresholds below, because
+   * "dimmed" is one state and the dashes already say which kind this is. */
   dimBroken?: boolean;
+  /** How faded a dimmed line paints, as a PERCENT of full opacity. Absent
+   * takes TL_DIM_ALPHA. Governs every dim on the pane — the broken fade
+   * included — because "dimmed" is one visual state whatever put a line into
+   * it, and a second knob would only let a pane say two shades of the same
+   * sentence.
+   *
+   * A FIELD rather than the constant it used to be because the right value
+   * depends on the pane's theme and on how many lines are drawn: on a light
+   * chart with four lines 60% is a clear step down, and on a dark one carrying
+   * fifteen it is still too loud. The value is clamped, not honoured raw: a
+   * line at 0 is not dim, it is missing, and Declutter and Hide broken lines
+   * are the controls that remove a line. */
+  dimOpacity?: number;
   /** Dim a line once it has been touched this many times or more, in pivots.
    * 0 (or absent) is the off switch, the same idiom `maxTouches` uses.
    *
@@ -987,21 +1000,33 @@ export function declutterMode(
   return (ext?.nearPrice ?? true) ? "near" : "off";
 }
 
-/** Alpha a broken line paints at when the pane asks for broken lines to fade.
- * Deliberately darker than TL_DIM_ALPHA: where both could apply, the break is
- * the stronger statement and must read as the deeper fade. */
-export const TL_BROKEN_ALPHA = 0.45;
-
-/** Alpha a dimmed-but-unbroken line paints at.
+/** DEFAULT alpha a dimmed line paints at, and the floor the panel's percent is
+ * read against.
  *
- * NOT the broken line's 0.45. Three states share one channel here — live,
- * dimmed, broken — and at equal alpha the first two of them read as the same
- * thing at a glance, with only the dashes telling them apart, which is a
- * detail the eye resolves late. Dashing stays what it has always been, the
- * mark of a break; the fade carries two depths instead. 0.6 is far enough
- * from 1 to be seen at a glance and far enough from 0.45 to be told from a
- * break at one. */
+ * ONE DEPTH FOR EVERY DIM, broken lines included. There used to be two (0.45
+ * for a break, 0.6 for the rest) so that a broken line could not be mistaken
+ * for a merely stale one — an argument that died with the unconditional break
+ * fade: dashing is what says broken, it says so at any opacity, and a pane
+ * that has asked for both dims is asking for one background, not a ranking.
+ *
+ * 0.6 is far enough below 1 to register at a glance and far enough above
+ * nothing to leave the line readable. */
 export const TL_DIM_ALPHA = 0.6;
+
+/** The alpha a dimmed line paints at, from the panel's percent.
+ *
+ * CLAMPED to [10%, 100%]: a line at 0 is not dim, it is gone, and hiding a
+ * line is what Declutter and Hide broken lines are for — a fade that can reach
+ * invisible would hide one with no row saying so. Anything not a finite number
+ * (an older pane with no such key, a hand-written payload) takes the default,
+ * the same fallback dedupeTolerance uses for its multiple. */
+export function trendlineDimAlpha(
+  ext: Pick<TrendlinesExtend, "dimOpacity"> | undefined,
+): number {
+  const pct = ext?.dimOpacity;
+  if (typeof pct !== "number" || !Number.isFinite(pct)) return TL_DIM_ALPHA;
+  return Math.min(100, Math.max(10, pct)) / 100;
+}
 
 /** True when a line should paint faded for a reason OTHER than being broken.
  *
@@ -1809,17 +1834,15 @@ function drawTrendlines(
     // paint at full opacity and hand it back). Recomputing `broken ? ... : 1`
     // at those sites is how the touch rings and the ×N tag snapped back to
     // full opacity while the stroke itself faded correctly.
-    // A BREAK OUTRANKS A DIM once broken lines are set to fade at all: both
-    // fade, and the broken depth is the darker statement, so a line that is
-    // stale AND broken reads as broken. With the broken fade off, a broken
-    // line can still pick up the dim depth from the thresholds below — being
-    // broken is not a reason to paint a stale line brighter.
+    // Every reason to dim lands on the SAME depth, so the states a user reads
+    // are two (live, dim) and the dashes say which kind of dim it is. A broken
+    // line picks the fade up from the thresholds too even with the broken fade
+    // off — being broken is not a reason to paint a stale line brighter.
     const alpha =
-      broken && (ext?.dimBroken ?? false)
-        ? TL_BROKEN_ALPHA
-        : trendlineDimmed(line, lastIdx, ext)
-          ? TL_DIM_ALPHA
-          : 1;
+      (broken && (ext?.dimBroken ?? false)) ||
+      trendlineDimmed(line, lastIdx, ext)
+        ? trendlineDimAlpha(ext)
+        : 1;
     const isPinned = pins.has(lineKey(line, dataList, starts));
     // The line's end under the MODE alone. The handle and the ×N tag ride here
     // whether or not the line is pinned: a pinned line runs to the pane edge,

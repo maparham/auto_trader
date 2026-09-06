@@ -688,6 +688,19 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Fades a broken line as well as dashing it. Off by default: the dashes and the break dot already say a line is broken, and a broken line is exactly where a retest happens.",
       },
       {
+        key: "dimOpacity",
+        label: "Dim opacity",
+        type: "number",
+        source: "extend",
+        field: "dimOpacity",
+        default: 60,
+        min: 10,
+        max: 100,
+        step: 5,
+        suffix: "%",
+        tip: "How faded a dimmed line paints, for every reason a line dims. Floored at 10%: a fade that reached invisible would hide a line with no setting saying so, which is what Declutter and Hide broken lines are for.",
+      },
+      {
         key: "dimTouches",
         // Reads as a phrase the number and suffix complete ("Dim after
         // touching 5 pivots"), the same shape the row below it and Merge
