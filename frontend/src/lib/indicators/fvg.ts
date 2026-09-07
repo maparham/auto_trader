@@ -45,7 +45,7 @@ import {
   parseFvgConfig,
   type FvgConfig,
 } from "./fvgOutputs";
-import { atrSeries } from "../atr";
+import { atrSeries, rmaNext, trueRangeAt } from "../atr";
 import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 
 // The output names, config parser and warm-up live in the klinecharts-free leaf
@@ -124,46 +124,100 @@ function pointFrom(live: readonly MutableGap[]): FvgPoint {
   };
 }
 
+/** MTF alignment, factored out of computeFvg so the session can cache it: it
+ * reads only TIMESTAMPS (never prices), so a tick — which rewrites the forming
+ * bar's prices in place — cannot change its result. */
+function alignMtfFvg(
+  dataList: KLineData[],
+  mtf: NonNullable<FvgExtend["mtf"]>,
+): { points: FvgPoint[]; gaps: FvgGap[] } {
+  // Multi-timeframe: align the precomputed HTF series onto the live chart
+  // bars. Each chart bar takes the most recent CLOSED HTF bar (waitClose), so
+  // no chart bar sees a gap from an HTF bar that closes later — the same
+  // contract as SR_LEVELS and Pivot Bands.
+  const ts = dataList.map((k) => k.timestamp);
+  const htfBars = (mtf.htfStarts ?? []).map((t) => ({ timestamp: t }) as KLineData);
+  const at = (v: Array<number | undefined> | undefined): Array<number | undefined> =>
+    alignHtfToChart(ts, htfBars, v ?? [], mtf.htfMs as number, true, mtf.formingIdx, mtf.chartMs);
+  const bullTop = at(mtf.htfBullTop);
+  const bullBottom = at(mtf.htfBullBottom);
+  const bearTop = at(mtf.htfBearTop);
+  const bearBottom = at(mtf.htfBearBottom);
+  const points = ts.map((_, i) => ({
+    bullTop: bullTop[i],
+    bullBottom: bullBottom[i],
+    bearTop: bearTop[i],
+    bearBottom: bearBottom[i],
+  }));
+  // Each stashed gap's confirm timestamp maps to the first chart bar inside
+  // its HTF bar, so the box starts where that HTF bar started.
+  const gaps: FvgGap[] = (mtf.htfGaps ?? []).map((g) => {
+    const first = ts.findIndex((t) => t >= g.createdTs);
+    return { side: g.side, top: g.top, bottom: g.bottom, createdIdx: first < 0 ? 0 : first };
+  });
+  return { points, gaps };
+}
+
 export function computeFvg(
   dataList: KLineData[],
   cfg: FvgConfig,
   ext?: Pick<FvgExtend, "mtf">,
 ): { points: FvgPoint[]; gaps: FvgGap[] } {
   const mtf = ext?.mtf;
-  if (mtf?.timeframe && mtf.htfStarts && mtf.htfMs && mtf.htfBullTop && mtf.htfBearTop) {
-    // Multi-timeframe: align the precomputed HTF series onto the live chart
-    // bars. Each chart bar takes the most recent CLOSED HTF bar (waitClose), so
-    // no chart bar sees a gap from an HTF bar that closes later — the same
-    // contract as SR_LEVELS and Pivot Bands.
-    const ts = dataList.map((k) => k.timestamp);
-    const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
-    const at = (v: Array<number | undefined> | undefined): Array<number | undefined> =>
-      alignHtfToChart(ts, htfBars, v ?? [], mtf.htfMs as number, true, mtf.formingIdx, mtf.chartMs);
-    const bullTop = at(mtf.htfBullTop);
-    const bullBottom = at(mtf.htfBullBottom);
-    const bearTop = at(mtf.htfBearTop);
-    const bearBottom = at(mtf.htfBearBottom);
-    const points = ts.map((_, i) => ({
-      bullTop: bullTop[i],
-      bullBottom: bullBottom[i],
-      bearTop: bearTop[i],
-      bearBottom: bearBottom[i],
-    }));
-    // Each stashed gap's confirm timestamp maps to the first chart bar inside
-    // its HTF bar, so the box starts where that HTF bar started.
-    const gaps: FvgGap[] = (mtf.htfGaps ?? []).map((g) => {
-      const first = ts.findIndex((t) => t >= g.createdTs);
-      return { side: g.side, top: g.top, bottom: g.bottom, createdIdx: first < 0 ? 0 : first };
-    });
-    return { points, gaps };
-  }
+  if (mtf?.timeframe && mtf.htfStarts && mtf.htfMs && mtf.htfBullTop && mtf.htfBearTop)
+    return alignMtfFvg(dataList, mtf);
 
-  const len = dataList.length;
-  const atr = atrSeries(dataList, FVG_ATR_LEN);
-  const points: FvgPoint[] = new Array(len);
-  const live: MutableGap[] = [];
+  const st = buildFvgState(dataList, dataList.length, cfg);
+  const gaps: FvgGap[] = capPerSide(st.live, cfg.maxGaps).map((g) => ({
+    side: g.side,
+    top: g.top,
+    bottom: g.bottom,
+    createdIdx: g.createdIdx,
+  }));
 
-  for (let i = 0; i < len; i++) {
+  return { points: st.points, gaps };
+}
+
+// ---------------------------------------------------------------------------
+// Incremental calc (live tick path)
+// ---------------------------------------------------------------------------
+
+/** Everything the detector carries between bars. `atr` and `points` are flat
+ * per-bar arrays; `live` is the open-zone set the step mutates. */
+interface FvgState {
+  atr: Array<number | null>;
+  live: MutableGap[];
+  points: FvgPoint[];
+}
+
+/** ATR(14) for bar j, incrementally: the exact value atrSeries would put at j
+ * (same trueRangeAt / rmaNext operations atrSeries itself runs), given the
+ * values before it. The seed bar (and the never-expected null-prev case) fall
+ * back to a from-scratch prefix run, O(FVG_ATR_LEN) there. */
+function fvgAtrAt(
+  atr: Array<number | null>,
+  dataList: KLineData[],
+  j: number,
+): number | null {
+  if (j < FVG_ATR_LEN - 1) return null;
+  const prev = j > 0 ? atr[j - 1] : null;
+  if (j === FVG_ATR_LEN - 1 || prev === null)
+    return atrSeries(dataList.slice(0, j + 1), FVG_ATR_LEN)[j];
+  return rmaNext(prev, trueRangeAt(dataList, j), FVG_ATR_LEN);
+}
+
+/** Fold bar i into the state. THE BODY BELOW IS THE LOOP BODY OF computeFvg,
+ * verbatim — it is ported operation-for-operation to fvg.py, so keep the
+ * arithmetic and its order identical on both sides of the port. */
+function stepFvgBar(
+  st: FvgState,
+  dataList: KLineData[],
+  i: number,
+  cfg: FvgConfig,
+): void {
+  const { atr, live, points } = st;
+  atr[i] = fvgAtrAt(atr, dataList, i);
+  {
     const bar = dataList[i];
     // 1. Mitigate every OPEN gap with this bar's wick. A gap confirmed at this
     //    bar is appended in step 3, so its own pattern can never fill it.
@@ -200,15 +254,128 @@ export function computeFvg(
     }
     points[i] = pointFrom(capPerSide(live, cfg.maxGaps));
   }
+}
 
-  const gaps: FvgGap[] = capPerSide(live, cfg.maxGaps).map((g) => ({
-    side: g.side,
-    top: g.top,
-    bottom: g.bottom,
-    createdIdx: g.createdIdx,
-  }));
+/** State after folding the first `m` bars, from scratch. */
+function buildFvgState(dataList: KLineData[], m: number, cfg: FvgConfig): FvgState {
+  const st: FvgState = {
+    atr: new Array(dataList.length).fill(null),
+    live: [],
+    points: new Array(dataList.length),
+  };
+  for (let i = 0; i < m; i++) stepFvgBar(st, dataList, i, cfg);
+  return st;
+}
 
-  return { points, gaps };
+export interface FvgSession {
+  compute(
+    dataList: KLineData[],
+    cfg: FvgConfig,
+    ext?: Pick<FvgExtend, "mtf">,
+  ): { points: FvgPoint[]; gaps: FvgGap[] };
+}
+
+/** Incremental twin of computeFvg, for the live calc path. klinecharts re-runs
+ * calc synchronously on EVERY tick over the full loaded series, and with three
+ * FVG instances on a 1m chart that made computeFvg the heaviest function on the
+ * tick path. Two caches, one per branch:
+ *
+ * PLAIN: the detector is causal (a gap is confirmed by its third bar and every
+ * later mutation comes from a later bar's own wick), so state through the
+ * CLOSED bars cannot change on a tick. The session keeps that state and re-runs
+ * only the forming bar, making a tick O(live zones) instead of O(series).
+ * A tick stays isolated because the per-tick fork clones `live` (the only
+ * structure the step MUTATES, gaps included — their top/bottom move) and shares
+ * the flat per-bar arrays, whose index n-1 is a scratch slot the next tick
+ * deterministically overwrites.
+ *
+ * MTF: the alignment reads only timestamps, which a tick never changes, so the
+ * whole result is reused while the bar array, its length and the mtf series are
+ * the same objects.
+ *
+ * INVALIDATION is by dataList ARRAY IDENTITY plus config equality: klinecharts
+ * mutates one array in place for ticks and appends, and mints a NEW array for
+ * init loads and history prepends (v10 _addData forward is
+ * `data.concat(this._dataList)`), which correctly forces the full rebuild —
+ * bar indices shift on a prepend, so nothing cached survives it anyway.
+ *
+ * The returned prefix point rows are SHARED across ticks (that is the saving).
+ * Consumers of indicator.result must treat rows as read-only, which the draw
+ * path already does. */
+export function createFvgSession(): FvgSession {
+  let ref: KLineData[] | null = null;
+  let cfgKey = "";
+  let base: FvgState | null = null;
+  let baseCount = 0;
+  let lastBaseTs = 0;
+  // MTF branch cache: keyed on the same array identity plus the mtf object the
+  // coordinator replaces wholesale on every apply (applyFvgTimeframe).
+  let mtfRef: object | null = null;
+  let mtfLen = -1;
+  let mtfOut: { points: FvgPoint[]; gaps: FvgGap[] } | null = null;
+
+  return {
+    compute(dataList, cfg, ext) {
+      const mtf = ext?.mtf;
+      if (mtf?.timeframe && mtf.htfStarts && mtf.htfMs && mtf.htfBullTop && mtf.htfBearTop) {
+        if (mtfOut && dataList === ref && mtf === mtfRef && dataList.length === mtfLen)
+          return mtfOut;
+        mtfOut = alignMtfFvg(dataList, mtf);
+        mtfRef = mtf;
+        mtfLen = dataList.length;
+        ref = dataList;
+        base = null; // the plain cache cannot survive a spell on the MTF branch
+        return mtfOut;
+      }
+      mtfOut = null;
+      const n = dataList.length;
+      if (n === 0) {
+        base = null;
+        ref = null;
+        return { points: [], gaps: [] };
+      }
+      // parseFvgConfig builds the object with a fixed key order, so the JSON
+      // string is a stable equality key for its three numbers.
+      const key = JSON.stringify(cfg);
+      const usable =
+        base !== null &&
+        dataList === ref &&
+        key === cfgKey &&
+        n >= baseCount + 1 &&
+        (baseCount === 0 || dataList[baseCount - 1]?.timestamp === lastBaseTs);
+      if (!usable) {
+        base = buildFvgState(dataList, n - 1, cfg);
+        baseCount = n - 1;
+        ref = dataList;
+        cfgKey = key;
+      } else if (baseCount < n - 1) {
+        // Bars closed since the last compute (klinecharts appends in place):
+        // fold their final values into the base. Their array slots may hold a
+        // stale tick's scratch — stepFvgBar overwrites all of them.
+        for (let j = baseCount; j < n - 1; j++)
+          stepFvgBar(base as FvgState, dataList, j, cfg);
+        baseCount = n - 1;
+      }
+      lastBaseTs = baseCount > 0 ? dataList[baseCount - 1].timestamp : 0;
+      const b = base as FvgState;
+      const fork: FvgState = {
+        atr: b.atr,
+        points: b.points,
+        // Deep: the step moves a zone's top/bottom as price mitigates it.
+        live: b.live.map((g) => ({ ...g })),
+      };
+      stepFvgBar(fork, dataList, n - 1, cfg);
+      const gaps: FvgGap[] = capPerSide(fork.live, cfg.maxGaps).map((g) => ({
+        side: g.side,
+        top: g.top,
+        bottom: g.bottom,
+        createdIdx: g.createdIdx,
+      }));
+      // A fresh top-level array per call (callers replace the last row), with
+      // the prefix rows shared — see the isolation note above.
+      return { points: b.points.slice(0, n), gaps };
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +517,8 @@ function toCalcRow(p: FvgPoint): Record<string, number | undefined> {
   };
 }
 
+const FVG_CALC_SESSIONS = new WeakMap<Indicator, FvgSession>();
+
 // FVG: fair-value-gap zones. calcParams = [minSize, maxBars, maxGaps].
 export const FVG_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "FVG",
@@ -359,7 +528,15 @@ export const FVG_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   figures: FVG_FIGURES,
   styles: { lines: FVG_DEFAULT_LINE_STYLES },
   calc: (dataList: KLineData[], ind: Indicator) => {
-    const { points, gaps } = computeFvg(
+    // One session per indicator instance (klinecharts passes the same object to
+    // every calc), so per-tick recalcs re-run only the forming bar. The WeakMap
+    // lets a removed indicator's cache be collected with it.
+    let session = FVG_CALC_SESSIONS.get(ind);
+    if (!session) {
+      session = createFvgSession();
+      FVG_CALC_SESSIONS.set(ind, session);
+    }
+    const { points, gaps } = session.compute(
       dataList,
       parseFvgConfig(ind.calcParams),
       (ind.extendData ?? {}) as FvgExtend,
