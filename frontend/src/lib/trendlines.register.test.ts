@@ -32,15 +32,16 @@ describe("TRENDLINES registration", () => {
     expect(OVERLAY_INDICATORS.has("TRENDLINES")).toBe(true);
   });
 
-  it("has settings metadata for all sixteen params, the merge tolerance and the extend select", () => {
+  it("has settings metadata for all seventeen params, the merge tolerance and the extend select", () => {
     const inputs = resolveInputs("TRENDLINES", undefined);
-    // Sixteen calcParams plus the merge tolerance, which is a number on
-    // extendData rather than a calcParam because merging never moves an emitted
-    // value. It is also the merge switch: 0 merges nothing, which is why there
-    // is no checkbox beside it, and the two dim thresholds, which choose an
-    // opacity and so are render-only for the same reason.
+    // Seventeen calcParams (sixteen numbers plus the Mixed touches boolean)
+    // plus the merge tolerance, which is a number on extendData rather than a
+    // calcParam because merging never moves an emitted value. It is also the
+    // merge switch: 0 merges nothing, which is why there is no checkbox beside
+    // it, and the two dim thresholds, which choose an opacity and so are
+    // render-only for the same reason.
     expect(inputs.filter((i) => i.type === "number")).toHaveLength(20);
-    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(16);
+    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(17);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
     // metadata, so assert the named title too or this test passes on a miss.
@@ -60,9 +61,11 @@ describe("TRENDLINES registration", () => {
       ["Min Touches", "Max Touches"],
       ["Min Span", "Max Span"],
       ["Min Slope", "Max Slope"],
+      ["Mix Low and High Pivots"],
       ["Max Projection", "Max Break Hold"],
       ["Extend"],
       ["Declutter"],
+      ["Show pivots"],
       ["Hide broken lines"],
       ["Dim broken lines"],
       ["Dim opacity"],

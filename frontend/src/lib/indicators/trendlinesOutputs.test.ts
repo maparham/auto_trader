@@ -40,6 +40,7 @@ describe("constants and defaults", () => {
       maxSlopeAtr: 0,
       minSlopeAtr: 0,
       minBackBars: 10,
+      mixedTouches: 1,
     });
   });
 });
@@ -68,6 +69,7 @@ describe("parseTrendlinesConfig", () => {
       maxSlopeAtr: 0.3,
       minSlopeAtr: 0.02,
       minBackBars: 25,
+      mixedTouches: 1,
     });
   });
 
@@ -190,8 +192,12 @@ describe("parseTrendlinesConfig", () => {
     expect(at("x")).toBe(0);
   });
 
-  it("rejects a zero or negative touchMult back to the default", () => {
-    expect(parseTrendlinesConfig([5, 0.25, 0]).touchMult).toBe(0.75);
+  // ZERO STICKS, like violMult's: it is the strictest touch rule (no gap short
+  // of the line tolerated at all), not an off switch, so coercing it back to
+  // the default would silently restore a 0.75 ATR band the user just cleared.
+  // A NEGATIVE still falls back — there is no meaning below zero.
+  it("keeps a zero touchMult and rejects a negative back to the default", () => {
+    expect(parseTrendlinesConfig([5, 0.25, 0]).touchMult).toBe(0);
     expect(parseTrendlinesConfig([5, 0.25, -1]).touchMult).toBe(0.75);
   });
 
@@ -213,6 +219,24 @@ describe("parseTrendlinesConfig", () => {
 
   it("clamps integer params to at least 1", () => {
     expect(parseTrendlinesConfig([0.5]).pivotLen).toBe(1);
+  });
+});
+
+describe("mixedTouches (calcParams[16])", () => {
+  const BASE = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10];
+  it("defaults ON, including for a chart saved before the param existed", () => {
+    expect(TRENDLINES_DEFAULTS.mixedTouches).toBe(1);
+    expect(parseTrendlinesConfig([]).mixedTouches).toBe(1);
+    expect(parseTrendlinesConfig(BASE).mixedTouches).toBe(1); // 16 params, slot absent
+  });
+  it("honours an explicit 0 as OFF", () => {
+    expect(parseTrendlinesConfig([...BASE, 0]).mixedTouches).toBe(0);
+  });
+  it("clamps to {0, 1} and sends junk to the default", () => {
+    expect(parseTrendlinesConfig([...BASE, 3]).mixedTouches).toBe(1);
+    expect(parseTrendlinesConfig([...BASE, 0.4]).mixedTouches).toBe(0); // floor first
+    expect(parseTrendlinesConfig([...BASE, -1]).mixedTouches).toBe(1); // fails >= 0 → default
+    expect(parseTrendlinesConfig([...BASE, "junk"]).mixedTouches).toBe(1);
   });
 });
 

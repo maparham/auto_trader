@@ -9,10 +9,12 @@ import {
   alignMtfTrendlines,
   trendlineDrawEdge,
   lineKey,
+  TL_PIVOT_ARM,
   TRENDLINES_TEMPLATE,
   type TrendLine,
   type TrendlinesCalcPoint,
   type TrendlinesMtf,
+  type TrendPivots,
 } from "./trendlines";
 
 const T0 = 1_700_000_000_000;
@@ -40,6 +42,17 @@ const htfLine: TrendLine = {
   touchIdxs: [1, 3],
   lastTouchIdx: 3,
   brokenIdx: null,
+  firstTouchIdx: 1,
+};
+
+/** One resistance pivot at HTF bar 1, which turned at 110 — a price no CHART
+ * bar ever traded at (they are all 100), so a mark painted at the chart bar's
+ * own high would be visibly wrong. */
+const HTF_PIVOTS: TrendPivots = {
+  resistance: [1],
+  support: [],
+  highs: htfStarts().map((_, i) => (i === 1 ? 110 : 100)),
+  lows: htfStarts().map(() => 100),
 };
 
 const stash = (over: Partial<TrendlinesMtf> = {}): TrendlinesMtf => ({
@@ -150,7 +163,11 @@ interface Seg { x0: number; y0: number; x1: number; y1: number }
 /** Draw with an identity viewport: x pixel = CHART bar index, y = 400 - price,
  * so a recorded segment reads back as (chart bar, price) and every mark lands
  * inside the pane (the draw path drops marks outside it). */
-function draw(bars: KLineData[], mtf: TrendlinesMtf) {
+function draw(
+  bars: KLineData[],
+  mtf: TrendlinesMtf,
+  over: Record<string, unknown> = {},
+) {
   const segments: Seg[] = [];
   const rings: Array<{ x: number; y: number }> = [];
   let cur = { x: 0, y: 0 };
@@ -172,7 +189,7 @@ function draw(bars: KLineData[], mtf: TrendlinesMtf) {
     fillText: () => {},
     arc: (x: number, y: number, r: number) => { if (r === 2) rings.push({ x, y }); },
   };
-  const ext = { mtf, dedupe: false, nearPrice: false };
+  const ext = { mtf, dedupe: false, nearPrice: false, ...over };
   const result = TRENDLINES_TEMPLATE.calc!(bars, { calcParams: PARAMS, extendData: ext } as never);
   TRENDLINES_TEMPLATE.draw!({
     ctx,
@@ -218,6 +235,33 @@ describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
   it("draws nothing while no HTF bar has closed", () => {
     expect(draw(chartBars(2), stash()).segments).toHaveLength(0);
   });
+
+  it("marks a pivot at the HTF bar's own price, not the chart bar's", () => {
+    // Every chart bar here trades at 100 and HTF bar 1 turned at 110, so a
+    // draw path that looked the price up in the chart's dataList at index 1
+    // would land 10 points away — which is exactly why a mark carries its own
+    // price instead of only an index.
+    const { segments } = draw(
+      chartBars(),
+      stash({ htfPivots: HTF_PIVOTS }),
+    );
+    // One line (the fixture's) plus the caret's two arms.
+    const arms = segments.filter(
+      (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
+    );
+    expect(arms).toHaveLength(2);
+    // HTF bar 1 is chart bar 4, and the caret sits ABOVE the high it marks
+    // (smaller y under this viewport).
+    for (const a of arms) {
+      expect(Math.abs(a.x0 - 4)).toBeLessThanOrEqual(TL_PIVOT_ARM);
+      expect(Math.min(a.y0, a.y1)).toBeLessThan(400 - 110);
+    }
+  });
+
+  it("paints no marks when Show pivots is off", () => {
+    const mtf = stash({ htfPivots: HTF_PIVOTS });
+    expect(draw(chartBars(), mtf, { showPivots: false }).segments).toHaveLength(1);
+  });
 });
 
 describe("lineKey under a pin", () => {
@@ -256,6 +300,7 @@ describe("TRENDLINES_TEMPLATE.draw under a pin FINER than the chart", () => {
     touchIdxs: [6, 18],
     lastTouchIdx: 18,
     brokenIdx: null,
+    firstTouchIdx: 6,
   };
   const ltfStash = (): TrendlinesMtf => ({
     timeframe: "MINUTE_15",

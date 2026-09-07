@@ -37,7 +37,7 @@ from auto_trader.indicators.trendlines import (
 
 def _res() -> TrendLine:
     return TrendLine(side="resistance", i1=0, p1=100.0, i2=10, p2=90.0,
-                     touches=2, last_touch_idx=10, broken_idx=None)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
 
 
 # --------------------------------------------------------------------------
@@ -64,7 +64,7 @@ def test_min_swing_atr_defaults_off_and_keeps_a_zero():
 def test_within_slope():
     # Rise 10 over span 10 = 1.0 per bar; at ATR 2 that is 0.5 ATR per bar.
     line = TrendLine(side="support", i1=0, p1=100.0, i2=10, p2=110.0,
-                     touches=2, last_touch_idx=10, broken_idx=None)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
     assert within_slope(line, 2.0, 0.0) is True  # off
     assert within_slope(line, 2.0, 0.5) is True
     assert within_slope(line, 2.0, 0.49) is False
@@ -76,7 +76,7 @@ def test_within_slope():
 
 def test_above_slope():
     line = TrendLine(side="support", i1=0, p1=100.0, i2=10, p2=110.0,
-                     touches=2, last_touch_idx=10, broken_idx=None)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
     assert above_slope(line, 2.0, 0.0) is True  # off
     assert above_slope(line, 2.0, 0.5) is True
     assert above_slope(line, 2.0, 0.51) is False
@@ -181,7 +181,7 @@ def test_has_back_clearance_reads_only_bars_before_the_first_anchor():
     vals[12] = 95.0
     atr: list[float | None] = [1.0] * 20
     line = TrendLine(side="support", i1=4, p1=90.0, i2=12, p2=95.0,
-                     touches=2, last_touch_idx=12, broken_idx=None)
+                     touches=2, last_touch_idx=12, broken_idx=None, first_touch_idx=4)
     assert _has_back_clearance(line, vals, atr, 0.25, 0) is True
     assert _has_back_clearance(line, vals, atr, 0.25, 4) is True
     # Only four bars exist to the left, so a fifth cannot be demonstrated:
@@ -312,8 +312,12 @@ def test_huge_int_literal_falls_back_instead_of_raising():
     assert cfg == parse_trendlines_config([], {})
 
 
-def test_zero_touch_mult_falls_back():
-    assert parse_trendlines_config([5, 0.25, 0], {}).touch_mult == 0.75
+def test_zero_touch_mult_survives():
+    # The strictest touch rule (a pivot must reach the line), the mirror of a
+    # zero viol_mult — not an off switch, so it must not fall back to 0.75.
+    assert parse_trendlines_config([5, 0.25, 0], {}).touch_mult == 0.0
+    # Below zero has no meaning, so THAT still takes the default.
+    assert parse_trendlines_config([5, 0.25, -1], {}).touch_mult == 0.75
 
 
 def test_integer_params_floor_then_clamp_to_one():
@@ -392,7 +396,7 @@ def test_zero_tolerance_is_exact_containment():
 
 def test_rank_key_prefers_more_touches_then_longer_span():
     base = TrendLine(side="support", i1=0, p1=100.0, i2=10, p2=100.0,
-                     touches=2, last_touch_idx=10, broken_idx=None)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
     strong = replace(base, touches=3)
     assert rank_key(strong) < rank_key(base)
     longer = replace(base, last_touch_idx=40)
@@ -401,7 +405,7 @@ def test_rank_key_prefers_more_touches_then_longer_span():
 
 def test_rank_key_breaks_every_remaining_tie():
     base = TrendLine(side="support", i1=0, p1=100.0, i2=10, p2=100.0,
-                     touches=2, last_touch_idx=10, broken_idx=None)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
     a = replace(base, last_touch_idx=20)
     b = replace(base, last_touch_idx=10, i1=-10)
     # same touches, same span (20-0 vs 10-(-10)) -> newer last_touch_idx wins
@@ -687,3 +691,58 @@ def test_resolves_a_fifteen_param_payload():
         },
     })
     assert resolved["TRENDLINES"].config.min_swing_atr == 0.75
+
+
+# --------------------------------------------------------------------------
+# mixed touches
+# --------------------------------------------------------------------------
+
+def _mixed_candle(i: int, o: float, h: float, lo: float, c: float) -> Candle:
+    return Candle(time=_T0 + timedelta(minutes=i), open=o, high=h, low=lo,
+                  close=c, volume=1.0)
+
+
+def _mixed_walk(n: int = 400, seed: int = 3) -> list[Candle]:
+    """The SAME LCG walk as trendlines.test.ts's mixed-pivot suite (Numerical
+    Recipes constants), so the two runtimes exercise identical bars."""
+    s = seed & 0xFFFFFFFF
+    def rnd() -> float:
+        nonlocal s
+        s = (1664525 * s + 1013904223) & 0xFFFFFFFF
+        return s / 4294967296
+    out: list[Candle] = []
+    px = 100.0
+    for i in range(n):
+        drift = math.sin(i / 17) * 1.2 + (rnd() - 0.5) * 2.5
+        o, c = px, px + drift
+        h = max(o, c) + rnd() * 1.5
+        lo = min(o, c) - rnd() * 1.5
+        out.append(_mixed_candle(i, o, h, lo, c))
+        px = c
+    return out
+
+
+def test_mixed_touches_defaults_on_and_clamps():
+    base = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10]
+    assert parse_trendlines_config([], None).mixed_touches == 1
+    assert parse_trendlines_config(base, None).mixed_touches == 1
+    assert parse_trendlines_config([*base, 0], None).mixed_touches == 0
+    assert parse_trendlines_config([*base, 3], None).mixed_touches == 1
+    assert parse_trendlines_config([*base, 0.4], None).mixed_touches == 0
+    assert parse_trendlines_config([*base, -1], None).mixed_touches == 1
+    assert parse_trendlines_config([*base, "junk"], None).mixed_touches == 1
+
+
+def test_mixed_touches_changes_touches_only():
+    candles = _mixed_walk()
+    off = replace(parse_trendlines_config([], None), mixed_touches=0)
+    on = replace(parse_trendlines_config([], None), mixed_touches=1)
+    _, lines_off = compute_trendlines(candles, off)
+    _, lines_on = compute_trendlines(candles, on)
+    key = lambda l: (l.side, l.i1, l.p1, l.i2, l.p2, l.broken_idx, l.last_touch_idx)
+    assert sorted(map(key, lines_on)) == sorted(map(key, lines_off))
+    by = {key(l): l for l in lines_off}
+    assert all(l.touches >= by[key(l)].touches for l in lines_on)
+    assert sum(l.touches for l in lines_on) > sum(l.touches for l in lines_off)
+    assert all(l.first_touch_idx <= l.i1 for l in lines_on)
+    assert all(l.first_touch_idx == l.i1 for l in lines_off)

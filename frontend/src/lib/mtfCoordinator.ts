@@ -884,6 +884,7 @@ export async function applyTrendlinesTimeframe(
     config.maxSlopeAtr,
     config.minSlopeAtr,
     config.minBackBars,
+    config.mixedTouches,
   ];
 
   if (!timeframe || timeframe === "chart") {
@@ -956,7 +957,7 @@ function buildTrendlinesMtf(
 ): TrendlinesExtend["mtf"] {
   // The exact chart-TF detector on the HTF bars: pivots, touches, breaks and
   // the confirmation lag are all baked into the stashed series and lines.
-  const { points, lines, atr } = computeTrendlines(bars, config);
+  const { points, lines, atr, pivots } = computeTrendlines(bars, config);
   return {
     timeframe,
     htfStarts: bars.map((b) => b.timestamp),
@@ -966,6 +967,7 @@ function buildTrendlinesMtf(
     htfBrokenSupport: points.map((p) => p.tl_broken_support),
     htfBrokenResistance: points.map((p) => p.tl_broken_resistance),
     htfLines: lines,
+    htfPivots: pivots,
     htfAtr: atr[atr.length - 1],
   };
 }

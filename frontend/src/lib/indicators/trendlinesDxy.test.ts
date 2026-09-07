@@ -180,8 +180,15 @@ describe("TRENDLINES on DXY monthly", () => {
   // 57.36 against a close of 99.27: valid, and nowhere near the chart. Drawing
   // the live set would bury the two lines a human reads. So the drawn set is
   // maxLines per side by proximity (plus the operands' own lines, which on THIS
-  // bar all fall inside that budget, hence three a side), and this is the test
-  // that proves the stale ones are gone.
+  // bar all fall inside that budget), and this is the test that proves the
+  // stale ones are gone.
+  //
+  // With mixedTouches defaulted on (Task 1/2), touches feed rankLines, so rank
+  // order shifted and a 4th support line now makes the budget on this fixture
+  // (measured: 2011-05->2021-01, 2014-05->2021-01, 2023-07->2024-09, and the
+  // unbroken 2011-05->2026-01 operand line at ~96.12). All four are 2011+
+  // geometry projecting within a few points of the ~99.27 close, i.e. exactly
+  // the lines a human would still read off the chart, not a 1990s regression.
   it("draws only the lines in play, not the 1990s geometry", () => {
     const { points, lines } = computeTrendlines(bars, TRENDLINES_DEFAULTS);
     const last = bars.length - 1;
@@ -189,7 +196,12 @@ describe("TRENDLINES on DXY monthly", () => {
     expect(lines.length).toBeGreaterThan(20); // the live set really is crowded
     const drawn = selectDrawnLines(lines, last, close, TRENDLINES_DEFAULTS.maxLines, points[last]);
     const projections = drawn.map((l) => projectAt(l, last));
-    expect(drawn.filter((l) => l.side === "support")).toHaveLength(3);
+    const drawnSupport = drawn.filter((l) => l.side === "support");
+    expect(drawnSupport).toHaveLength(4);
+    // Every drawn support anchor is 2011 or later: no pre-2000 line resurfaces.
+    for (const l of drawnSupport) {
+      expect(month(bars[l.i1].timestamp) >= "2000-01").toBe(true);
+    }
     expect(drawn.filter((l) => l.side === "resistance")).toHaveLength(3);
     // The nearest pick per side, pinned. Not the whole six: resistance slot 3
     // (113.583) beats the first line out (113.587) by 0.004, so pinning all six
@@ -290,14 +302,19 @@ describe("TRENDLINES on DXY monthly", () => {
   // ...and the cap CHANGES WHAT A RULE READS, which is the claim the settings
   // copy and the MAX_LIVE_MULT comment both make. Pinned as the count the spec
   // quotes plus one named bar, so a drift is diagnosable rather than just red.
-  // At bar 184 the tighter setting drops tl_resistance entirely: a rule reading
-  // it stops firing, which is exactly why "maxLines does not affect operands"
-  // must never be written in user-facing copy.
+  // At bar 184 the tighter setting used to drop tl_resistance entirely; with
+  // mixedTouches defaulted on (Task 1/2) touches feed rankLines, so rank order
+  // shifted and both settings now emit a resistance value there, just
+  // different ones -- still proof that maxLines changes what a rule reads,
+  // which is exactly why "maxLines does not affect operands" must never be
+  // written in user-facing copy. Re-measured at defaults-on with the mirrored
+  // mixed-touch band (crossing extreme reads Max Pierce): 135 differing
+  // points (was 87 at mixedTouches off, 158 under the unmirrored band).
   it("changes an emitted value between maxLines 2 and 3", () => {
     const two = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 2 }).points;
     const three = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 3 }).points;
     const differing = two.filter((p, i) => JSON.stringify(p) !== JSON.stringify(three[i]));
-    expect(differing).toHaveLength(87);
+    expect(differing).toHaveLength(135);
     expect(two[184].tl_resistance).toBeUndefined();
     expect(three[184].tl_resistance).toBeCloseTo(119.53, 2);
   });
@@ -348,6 +365,46 @@ describe("TRENDLINES on DXY monthly", () => {
       const key = `${l.side}:${l.i1}:${l.i2}`;
       expect(seen.has(key), `duplicate ${key}`).toBe(false);
       seen.add(key);
+    }
+  });
+});
+
+describe("mixed touches on DXY monthly", () => {
+  // At TRENDLINES_DEFAULTS' maxLines (3), rankLines' primary key is touches
+  // (see trendlines.ts's MAX_LIVE_MULT cap block), and that cap runs at every
+  // confirm bar, not just the last one. mixedTouches changes touch counts
+  // mid-series, which reorders WHICH lines survive eviction on a side that
+  // reaches the cap — a different survivor set by the final bar, even though
+  // no surviving line's own geometry moved. That is the same "touches feed
+  // rankLines, so budget shifted" consequence the DXY repairs below document,
+  // so asserting anchor/break stability at the default cap would be pinning a
+  // false invariant.
+  //
+  // The real claim -- mixed touches never rotates or re-breaks a line -- is
+  // tested with the cap lifted (maxLines: 10_000) so eviction cannot bite and
+  // churn the survivor set. Measured with the cap lifted: the two runs
+  // produce the exact same 30 lines; sum of touches goes from 80 to 99.
+  it("gains touches at defaults without moving a single anchor or break", () => {
+    const cfg = { ...TRENDLINES_DEFAULTS, maxLines: 10_000 };
+    const off = computeTrendlines(bars, { ...cfg, mixedTouches: 0 });
+    const on = computeTrendlines(bars, { ...cfg, mixedTouches: 1 });
+    const key = (l: TrendLine) => `${l.side}:${l.i1}:${l.p1}:${l.i2}:${l.p2}:${l.brokenIdx}:${l.lastTouchIdx}`;
+    expect(on.lines.map(key).sort()).toEqual(off.lines.map(key).sort());
+    const sum = (ls: TrendLine[]) => ls.reduce((s, l) => s + l.touches, 0);
+    // Measured with the cap lifted: 80 -> 99 touches across the same 30 lines.
+    // Pin the direction, not the number — the fixture is real data.
+    expect(sum(on.lines)).toBeGreaterThan(sum(off.lines));
+  });
+  it("both hand-drawn lines still come out with the option on", () => {
+    // EXPECTED (top of file) was validated with strict same-side detection;
+    // the two existing per-line assertions run at defaults, which now include
+    // mixedTouches: 1 — so this is covered by the suite above. This test pins
+    // the OFF state instead, so a regression cannot hide behind the default.
+    const off = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, mixedTouches: 0 });
+    for (const exp of EXPECTED) {
+      const i1 = indexOfMonth(exp.from);
+      const i2 = indexOfMonth(exp.to);
+      expect(off.lines.some((l) => l.side === exp.side && l.i1 === i1 && l.i2 === i2)).toBe(true);
     }
   });
 });

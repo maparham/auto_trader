@@ -668,6 +668,22 @@ export default function IndicatorSettings({
   }
 
   function controlFor(inp: IndicatorInputDef) {
+    // A BOOLEAN stored in a calcParam slot (0 / 1) — TRENDLINES' Mixed
+    // touches. The number branch below would render it as a spinner.
+    if (inp.source === "calcParam" && inp.index != null && inp.type === "boolean") {
+      const stored = calcParams[inp.index];
+      const checked = Number.isFinite(stored)
+        ? (stored as number) >= 1
+        : ((inp.default as boolean | undefined) ?? false);
+      return (
+        <input
+          type="checkbox"
+          aria-label={inp.label}
+          checked={checked}
+          onChange={(e) => setParam(inp.index!, e.target.checked ? 1 : 0)}
+        />
+      );
+    }
     if (inp.source === "calcParam" && inp.index != null) {
       // A slot the saved instance predates reads undefined, which would
       // render an EMPTY box for a param that does have a default (a chart

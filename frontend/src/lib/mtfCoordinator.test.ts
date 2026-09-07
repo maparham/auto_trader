@@ -402,6 +402,11 @@ describe("applyTrendlinesTimeframe", () => {
     expect(fetchRangeStrict).toHaveBeenCalled();
   });
 
+  it("pins mixedTouches as the 17th key of TRENDLINES_DEFAULTS (insertion order feeds HTF calcParams)", () => {
+    expect(Object.values(TRENDLINES_DEFAULTS)).toHaveLength(17);
+    expect(Object.values(TRENDLINES_DEFAULTS)[16]).toBe(1);
+  });
+
   it("fetches the HTF candles on the PANE'S price side, not a hardcoded mid", async () => {
     // A side is worth half a spread on a moving average and a BOOLEAN here: the
     // break test compares a bar's low against the line, so detecting on mid bars

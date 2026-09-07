@@ -20,6 +20,8 @@ import {
   TL_HANDLE_RADIUS,
   TL_HANDLE_STROKE,
   TL_TOUCH_RADIUS,
+  TL_PIVOT_ARM,
+  TL_PIVOT_GAP,
   projectAt,
   rankLines,
   dedupeTolerance,
@@ -34,6 +36,7 @@ import {
   type TrendLine,
 } from "./trendlines";
 import {
+  parseTrendlinesConfig,
   TRENDLINES_DEFAULTS,
   type TrendlinesConfig,
 } from "./trendlinesOutputs";
@@ -52,6 +55,7 @@ const res: TrendLine = {
   touchIdxs: [0, 10],
   lastTouchIdx: 10,
   brokenIdx: null,
+  firstTouchIdx: 0,
 };
 
 // A support line rising 1.0 per bar from 50 at bar 0 to 60 at bar 10.
@@ -148,8 +152,10 @@ describe("pierces", () => {
       i2: 3,
       p2: 90,
       touches: 2,
+      touchIdxs: [0, 3],
       lastTouchIdx: 3,
       brokenIdx: null,
+      firstTouchIdx: 0,
     };
     expect(pierces(thirds, 1, 96.66666666666667, 0)).toBe(true);
   });
@@ -1435,6 +1441,12 @@ function record(
     dimBroken?: boolean;
     dimOpacity?: number;
   },
+  // OFF by default here, ON in the app — the same deal dedupe and nearPrice
+  // have, and for the same reason: the carets are strokes, so with them on
+  // every segment count below would be counting pivots as well as lines.
+  // "default" omits the key, which is how the test for the default-on
+  // behaviour exercises the draw path's own fallback.
+  showPivots: boolean | "default" = false,
 ): Painted {
   const segments: Segment[] = [];
   const tags: Tag[] = [];
@@ -1501,6 +1513,7 @@ function record(
     ...(nearPrice === "default" ? {} : { nearPrice }),
     ...(declutter ? { declutter } : {}),
     ...(dim ?? {}),
+    ...(showPivots === "default" ? {} : { showPivots }),
     hideBroken,
   };
   const result = TRENDLINES_TEMPLATE.calc!(bars, {
@@ -2152,6 +2165,25 @@ describe("lineExtent", () => {
   });
 });
 
+describe("lineExtent with mixed touches", () => {
+  const line: TrendLine = {
+    side: "support", i1: 100, p1: 50, i2: 140, p2: 60,
+    touches: 3, touchIdxs: [80, 100, 140], lastTouchIdx: 140,
+    firstTouchIdx: 80, brokenIdx: null,
+  };
+  it("stopping modes start at firstTouchIdx, extended runs maxProjBars before it", () => {
+    const cfg = { ...TRENDLINES_DEFAULTS, mixedTouches: 1 };
+    expect(lineExtent(line, "lastbar", cfg, [], 200, null).jLeft).toBe(80);
+    expect(lineExtent(line, "segment", cfg, [], 200, null).jLeft).toBe(80);
+    expect(lineExtent(line, "ray", cfg, [], 200, null).jLeft).toBe(80);
+    expect(lineExtent(line, "extended", cfg, [], 200, null).jLeft).toBe(80 - cfg.maxProjBars);
+  });
+  it("a line with no early touch is unchanged: firstTouchIdx === i1", () => {
+    const plain = { ...line, firstTouchIdx: 100, touchIdxs: [100, 140], touches: 2 };
+    expect(lineExtent(plain, "lastbar", TRENDLINES_DEFAULTS, [], 200, null).jLeft).toBe(100);
+  });
+});
+
 describe("hitHandle", () => {
   const handles = [
     { key: "a", x: 100, y: 100 },
@@ -2221,6 +2253,53 @@ describe("TRENDLINES draw handles", () => {
         ),
       ).toBe(true);
     }
+  });
+
+  it("anchors every handle at the newest bar, whatever the mode", () => {
+    // The natural end moves with the mode (last touch in segment, an apex),
+    // but the handle must not: it sits on the line's projection at the newest
+    // bar, one column beside price. In segment mode that is PAST the drawn
+    // stroke, on the line's invisible extension.
+    const b = dips();
+    const lastIdx = b.length - 1;
+    const OUT = TL_HANDLE_RADIUS + 0.5;
+    for (const mode of ["segment", "lastbar", "apex", "cross"] as const) {
+      const { segments } = record(b, params(3), mode);
+      const handles = getTrendlineHandles(
+        lastChart,
+        "candle_pane",
+        "TRENDLINES",
+      );
+      expect(handles.length).toBeGreaterThan(0);
+      for (const h of handles) {
+        // At the newest bar, pushed out at most one ring past it along the
+        // line's own direction.
+        expect(h.x).toBeGreaterThanOrEqual(lastIdx);
+        expect(h.x).toBeLessThanOrEqual(lastIdx + OUT);
+        // On its line's projection: collinear with one drawn segment.
+        expect(
+          segments.some((s) => {
+            const slope = (s.y1 - s.y0) / (s.x1 - s.x0);
+            return Math.abs(h.y - (s.y0 + slope * (h.x - s.x0))) < 1e-6;
+          }),
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("drops the handle when the newest bar is scrolled off the pane", () => {
+    // ABSOLUTE anchoring: panning back through history takes the handle
+    // off-screen with its bar. Clamping it to the pane edge instead is exactly
+    // what the anchor exists to prevent — a handle that moves to stay in view.
+    const b = dips();
+    // The identity view, cut down so the newest bar (79) sits past the plot
+    // area's right edge (width 50, axis 10): lines still draw, handles do not.
+    const scrolledBack: typeof IDENTITY_VIEW = { ...IDENTITY_VIEW, width: 50, axis: 10 };
+    const { segments } = record(b, params(3), "lastbar", scrolledBack);
+    expect(segments.length).toBeGreaterThan(0);
+    expect(
+      getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES"),
+    ).toHaveLength(0);
   });
 
   it("offers no handle in the modes that already run right", () => {
@@ -2313,7 +2392,7 @@ describe("TRENDLINES pinning", () => {
   });
 
   it("leaves the handle where it was so the same click undoes the pin", () => {
-    // THE point of anchoring the handle to the line's natural end: a handle that
+    // THE point of anchoring the handle to the newest bar: a handle that
     // travelled to the pane edge with the line would leave nothing to click.
     const b = dips();
     const key = firstDrawnKey(b);
@@ -2461,5 +2540,179 @@ describe("trendlineDimAlpha", () => {
     expect(trendlineDimAlpha({ dimOpacity: 0 })).toBe(0.1);
     expect(trendlineDimAlpha({ dimOpacity: -20 })).toBe(0.1);
     expect(trendlineDimAlpha({ dimOpacity: 250 })).toBe(1);
+  });
+});
+
+// The pivot MARKS: what the pivot settings admit, drawn directly instead of
+// only through the lines those pivots happen to produce.
+describe("TRENDLINES pivot marks", () => {
+  const bars = (): KLineData[] => {
+    const out = flat(80);
+    out[20] = bar(20, 90, 100.5);
+    out[40] = bar(40, 94, 100.5);
+    out[60] = bar(60, 96, 100.5);
+    // Highs too, or the flat corridor has no strict high pivot at all and the
+    // resistance side of every assertion below is vacuous.
+    out[30] = bar(30, 99.5, 110);
+    out[50] = bar(50, 99.5, 108);
+    return out;
+  };
+  // Padded on both sides, unlike IDENTITY_VIEW: a caret sits OUTSIDE the wick,
+  // so a view that maps the extreme highs onto y = 0 would clip every
+  // resistance mark and the counts below would be measuring the clamp.
+  const view: View = {
+    width: 900,
+    height: 400,
+    axis: 60,
+    toX: (i) => i * 10,
+    toY: (p) => (110 - p) * 15 + 40,
+  };
+  const paint = (
+    calcParams: number[],
+    showPivots: boolean | "default",
+  ): Segment[] =>
+    record(
+      bars(),
+      calcParams,
+      undefined,
+      view,
+      undefined,
+      false,
+      false,
+      false,
+      undefined,
+      undefined,
+      showPivots,
+    ).segments;
+  const passing = (calcParams: number[]) =>
+    computeTrendlines(bars(), parseTrendlinesConfig(calcParams)).pivots;
+  const LINES = [2, 0.25, 0.75, 2, 5, 250, 30, 3];
+  // Min Touches one above anything this fixture reaches: not a line survives,
+  // which is the case the marks have to keep working in.
+  const NO_LINES = [2, 0.25, 0.75, 4, 5, 250, 30, 3];
+
+  it("marks every passing pivot by default, and stops when switched off", () => {
+    const off = paint(LINES, false);
+    const on = paint(LINES, true);
+    // Absent key === on: the meta row's default and the draw path's fallback
+    // have to agree, or the panel shows a ticked box over an unmarked pane.
+    expect(paint(LINES, "default")).toEqual(on);
+    const pv = passing(LINES);
+    const total = pv.support.length + pv.resistance.length;
+    expect(total).toBeGreaterThan(0);
+    // Two arms per caret, and nothing else changed: the lines are untouched.
+    expect(on).toHaveLength(off.length + 2 * total);
+  });
+
+  it("marks the pivots even where no line survived to be drawn", () => {
+    // The pane is empty of lines at this config — the check the whole test
+    // rests on, since marks that rode the line early-returns would vanish here.
+    expect(paint(NO_LINES, false)).toHaveLength(0);
+    const pv = passing(NO_LINES);
+    const total = pv.support.length + pv.resistance.length;
+    expect(total).toBeGreaterThan(0);
+    expect(paint(NO_LINES, "default")).toHaveLength(2 * total);
+  });
+
+  it("points the caret away from price, clear of the wick", () => {
+    const marks = paint(NO_LINES, true);
+    const pv = passing(NO_LINES);
+    // Each arm is drawn from the tip outwards, so it clips independently at
+    // the pane edge.
+    const caret = (idx: number, price: number, dir: 1 | -1) => {
+      const x = view.toX(idx);
+      const yArm = view.toY(price) + dir * TL_PIVOT_GAP;
+      const yTip = view.toY(price) + dir * (TL_PIVOT_GAP + TL_PIVOT_ARM);
+      return [-TL_PIVOT_ARM, TL_PIVOT_ARM].map((arm) => ({
+        x0: x,
+        y0: yTip,
+        x1: x + arm,
+        y1: yArm,
+        dashed: false,
+        alpha: 1,
+      }));
+    };
+    // Down under a low, up over a high. Measured against the PIVOT's own
+    // price, which is the swing's extreme, not the line's projection.
+    const sup = pv.support[0];
+    const res = pv.resistance[0];
+    for (const arm of caret(sup, pv.lows[sup], 1))
+      expect(marks).toContainEqual(arm);
+    for (const arm of caret(res, pv.highs[res], -1))
+      expect(marks).toContainEqual(arm);
+  });
+});
+
+describe("mixed-pivot touches", () => {
+  // Deterministic zigzag walk (LCG, Numerical Recipes constants — same idiom
+  // as indicatorParityGolden). No Math.random.
+  function walk(n: number, seed: number): KLineData[] {
+    let s = seed >>> 0;
+    const rnd = () => ((s = (Math.imul(1664525, s) + 1013904223) >>> 0), s / 4294967296);
+    const out: KLineData[] = [];
+    let px = 100;
+    for (let i = 0; i < n; i++) {
+      const drift = Math.sin(i / 17) * 1.2 + (rnd() - 0.5) * 2.5;
+      const open = px;
+      const close = px + drift;
+      const high = Math.max(open, close) + rnd() * 1.5;
+      const low = Math.min(open, close) - rnd() * 1.5;
+      out.push({ timestamp: i * 60_000, open, high, low, close, volume: 1 });
+      px = close;
+    }
+    return out;
+  }
+  const bars = walk(400, 3);
+  const off = { ...TRENDLINES_DEFAULTS, mixedTouches: 0 };
+  const on = { ...TRENDLINES_DEFAULTS, mixedTouches: 1 };
+  const key = (l: TrendLine) => `${l.side}:${l.i1}:${l.i2}`;
+
+  it("changes touches only: geometry, lifetime and breaks are identical", () => {
+    const a = computeTrendlines(bars, off);
+    const b = computeTrendlines(bars, on);
+    const am = new Map(a.lines.map((l) => [key(l), l]));
+    const bm = new Map(b.lines.map((l) => [key(l), l]));
+    expect([...bm.keys()].sort()).toEqual([...am.keys()].sort());
+    for (const [k2, la] of am) {
+      const lb = bm.get(k2)!;
+      expect([lb.p1, lb.p2, lb.brokenIdx, lb.lastTouchIdx]).toEqual([la.p1, la.p2, la.brokenIdx, la.lastTouchIdx]);
+      expect(lb.touches).toBeGreaterThanOrEqual(la.touches);
+      expect(lb.touchIdxs.length).toBe(lb.touches);
+    }
+  });
+
+  it("off means untouched: firstTouchIdx === i1 and counts match today's", () => {
+    const a = computeTrendlines(bars, off);
+    for (const l of a.lines) {
+      expect(l.firstTouchIdx).toBe(l.i1);
+      expect(l.touchIdxs.length).toBe(l.touches);
+    }
+  });
+
+  it("on collects at least one opposite-side touch on this walk, each inside band and window", () => {
+    const b = computeTrendlines(bars, on);
+    const a = computeTrendlines(bars, off);
+    const am = new Map(a.lines.map((l) => [key(l), l]));
+    let extras = 0;
+    for (const l of b.lines) {
+      const base = am.get(key(l))!;
+      const extra = l.touchIdxs.filter((t) => !base.touchIdxs.includes(t));
+      extras += extra.length;
+      const oppPool = b.pivots[l.side === "support" ? "resistance" : "support"];
+      const oppVals = l.side === "support" ? b.pivots.highs : b.pivots.lows;
+      for (const t of extra) {
+        expect(oppPool).toContain(t);
+        expect(t).toBeGreaterThanOrEqual(l.i1 - TRENDLINES_DEFAULTS.maxProjBars);
+        const tol = b.atr[t] as number;
+        expect(
+          inTouchBand(l, t, oppVals[t], off.touchMult * tol, off.violMult * tol),
+        ).toBe(true);
+      }
+      expect(l.firstTouchIdx).toBeLessThanOrEqual(l.i1);
+      if (l.firstTouchIdx < l.i1) expect(l.touchIdxs).toContain(l.firstTouchIdx);
+    }
+    // The walk must actually exercise the feature. If a code change makes this
+    // 0, pick a different seed for walk() rather than deleting the assertion.
+    expect(extras).toBeGreaterThan(0);
   });
 });

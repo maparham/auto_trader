@@ -133,6 +133,9 @@ describe("indicator parity golden fixture", () => {
       // some other gate, and letting the clearance gate ride along would make
       // them all move whenever it changes. Its own pair is TL_BACK_* below.
       minBackBars: 0,
+      // 0 to keep every existing golden series byte-identical; a later task
+      // wires the real value.
+      mixedTouches: 0,
     };
     const tlPoints = computeTrendlines(candles, TL_CFG).points;
     // The SAME config with the swing-size gate ON. Parity for that gate cannot
@@ -182,6 +185,16 @@ describe("indicator parity golden fixture", () => {
     const tlBackPoints = computeTrendlines(candles, {
       ...TL_CFG, minBackBars: 15,
     }).points;
+    // MIXED TOUCHES, paired with its own off state at minTouches 3: at the
+    // default minTouches 2 every line already qualifies, so extra touches
+    // often move nothing — a third touch that only mixed detection finds is
+    // what makes a line major in one series and absent in the other.
+    const tlMixedPoints = computeTrendlines(candles, {
+      ...TL_CFG, mixedTouches: 1, minTouches: 3,
+    }).points;
+    const tlMixedOffPoints = computeTrendlines(candles, {
+      ...TL_CFG, mixedTouches: 0, minTouches: 3,
+    }).points;
 
     const series: Record<string, Array<number | null>> = {
       EMA_9: toNull(ema9Base),
@@ -223,6 +236,10 @@ describe("indicator parity golden fixture", () => {
       TL_FLAT_RESISTANCE: toNull(tlFlatPoints.map((p) => p.tl_resistance ?? null)),
       TL_BACK_SUPPORT: toNull(tlBackPoints.map((p) => p.tl_support ?? null)),
       TL_BACK_RESISTANCE: toNull(tlBackPoints.map((p) => p.tl_resistance ?? null)),
+      TL_MIXED_SUPPORT: toNull(tlMixedPoints.map((p) => p.tl_support ?? null)),
+      TL_MIXED_RESISTANCE: toNull(tlMixedPoints.map((p) => p.tl_resistance ?? null)),
+      TL_MIXED_OFF_SUPPORT: toNull(tlMixedOffPoints.map((p) => p.tl_support ?? null)),
+      TL_MIXED_OFF_RESISTANCE: toNull(tlMixedOffPoints.map((p) => p.tl_resistance ?? null)),
     };
 
     const fixture = {
@@ -245,6 +262,12 @@ describe("indicator parity golden fixture", () => {
     for (const v of series.RSI_14) if (v !== null) expect(v).toBeGreaterThanOrEqual(0);
     for (const key of ["ATR_14", "ATR_14_SMA", "ATR_14_EMA", "ATR_14_WMA"] as const)
       for (const v of series[key]) if (v !== null) expect(v).toBeGreaterThan(0);
+
+    // The pair must actually differ, or the Python port could ignore the
+    // param and still pass. If this fails, raise minTouches in BOTH mixed
+    // series (4, then 5) or set touchMult 1.5 in both, until it bites —
+    // never assert on only one side of the pair.
+    expect(JSON.stringify(tlMixedPoints)).not.toBe(JSON.stringify(tlMixedOffPoints));
 
     mkdirSync(dirname(OUT), { recursive: true });
     writeFileSync(OUT, JSON.stringify(fixture));

@@ -9,6 +9,7 @@ import type { Indicator } from "klinecharts";
 import {
   computeTrendlines,
   createTrendlinesSession,
+  pivotPrice,
   TRENDLINES_TEMPLATE,
   type TrendlinesCalcPoint,
 } from "./trendlines";
@@ -78,9 +79,21 @@ describe("createTrendlinesSession", () => {
       expect(inc.points).toEqual(ref.points);
       expect(inc.lines).toEqual(ref.lines);
       expect(inc.atr).toEqual(ref.atr);
+      // The pivot marks come off the forked pool, so they get the same
+      // bit-for-bit parity check the lines do: a mark that appeared or moved
+      // on the incremental path would be a pool the fork mutated wrongly.
+      expect(inc.pivots).toEqual(ref.pivots);
     }
     // Not vacuous: the fixture actually produces lines.
     expect(computeTrendlines(bars, cfg).lines.length).toBeGreaterThan(0);
+    const pv = computeTrendlines(bars, cfg).pivots;
+    expect(pv.support.length).toBeGreaterThan(0);
+    expect(pv.resistance.length).toBeGreaterThan(0);
+    // The marks carry the prices the swings turned at, which is what the draw
+    // path paints against instead of re-reading the chart's own bars.
+    for (const i of pv.support) expect(pivotPrice(pv, "support", i)).toBe(bars[i].low);
+    for (const i of pv.resistance)
+      expect(pivotPrice(pv, "resistance", i)).toBe(bars[i].high);
   });
 
   it("reuses prefix point rows by identity across ticks (proves the fast path ran)", () => {
@@ -112,6 +125,10 @@ describe("createTrendlinesSession", () => {
       expect(inc.points).toEqual(ref.points);
       expect(inc.lines).toEqual(ref.lines);
       expect(inc.atr).toEqual(ref.atr);
+      // The pivot marks come off the forked pool, so they get the same
+      // bit-for-bit parity check the lines do: a mark that appeared or moved
+      // on the incremental path would be a pool the fork mutated wrongly.
+      expect(inc.pivots).toEqual(ref.pivots);
     }
   });
 
@@ -181,7 +198,12 @@ describe("createTrendlinesSession", () => {
 
   it("handles short series (below ATR warm-up) and empty input", () => {
     const session = createTrendlinesSession();
-    expect(session.compute([], cfg)).toEqual({ points: [], lines: [], atr: [] });
+    expect(session.compute([], cfg)).toEqual({
+      points: [],
+      lines: [],
+      atr: [],
+      pivots: { resistance: [], support: [], highs: [], lows: [] },
+    });
     const bars = synthBars(10);
     const rand = lcg(4);
     for (let i = 0; i < 3; i++) {
@@ -190,6 +212,10 @@ describe("createTrendlinesSession", () => {
       const ref = computeTrendlines(bars, cfg);
       expect(inc.points).toEqual(ref.points);
       expect(inc.atr).toEqual(ref.atr);
+      // The pivot marks come off the forked pool, so they get the same
+      // bit-for-bit parity check the lines do: a mark that appeared or moved
+      // on the incremental path would be a pool the fork mutated wrongly.
+      expect(inc.pivots).toEqual(ref.pivots);
     }
   });
 });

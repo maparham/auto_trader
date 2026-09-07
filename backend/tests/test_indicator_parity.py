@@ -128,7 +128,7 @@ def test_trendlines(golden):
     cfg = TrendlinesConfig(
         pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
         min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
+        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0,
     )
     for output, key in (
         ("tl_support", "TL_SUPPORT"),
@@ -157,7 +157,7 @@ def test_trendlines_min_swing_atr(golden):
     cfg = TrendlinesConfig(
         pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
         min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=2.0, min_swing_reach=0, pair_pivots=20, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
+        min_swing_atr=2.0, min_swing_reach=0, pair_pivots=20, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0,
     )
     for output, key in (
         ("tl_support", "TL_SWING_SUPPORT"),
@@ -182,7 +182,7 @@ def test_trendlines_min_swing_reach(golden):
     cfg = TrendlinesConfig(
         pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
         min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=12, pair_pivots=20, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
+        min_swing_atr=0.0, min_swing_reach=12, pair_pivots=20, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0,
     )
     for output, key in (
         ("tl_support", "TL_REACH_SUPPORT"),
@@ -205,7 +205,7 @@ def test_trendlines_pair_pivots(golden):
     cfg = TrendlinesConfig(
         pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
         min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=5, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
+        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=5, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0,
     )
     for output, key in (
         ("tl_support", "TL_PAIR_SUPPORT"),
@@ -227,7 +227,7 @@ def test_trendlines_max_touches(golden):
     cfg = TrendlinesConfig(
         pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
         min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=3, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
+        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=3, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0,
     )
     for output, key in (
         ("tl_support", "TL_CAP_SUPPORT"),
@@ -250,7 +250,7 @@ def test_trendlines_max_span_bars(golden):
         pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
         min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
         min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-        max_span_bars=40, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
+        max_span_bars=40, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0,
     )
     for output, key in (
         ("tl_support", "TL_SPAN_SUPPORT"),
@@ -272,7 +272,7 @@ def test_trendlines_max_slope_atr(golden):
         pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
         min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
         min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-        max_span_bars=0, max_slope_atr=0.1, min_slope_atr=0.0, min_back_bars=0,
+        max_span_bars=0, max_slope_atr=0.1, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0,
     )
     for output, key in (
         ("tl_support", "TL_SLOPE_SUPPORT"),
@@ -294,7 +294,7 @@ def test_trendlines_min_slope_atr(golden):
         pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
         min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
         min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-        max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.05, min_back_bars=0,
+        max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.05, min_back_bars=0, mixed_touches=0,
     )
     for output, key in (
         ("tl_support", "TL_FLAT_SUPPORT"),
@@ -319,7 +319,7 @@ def test_trendlines_min_back_bars(golden):
         pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
         min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
         min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-        max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=15,
+        max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=15, mixed_touches=0,
     )
     for output, key in (
         ("tl_support", "TL_BACK_SUPPORT"),
@@ -330,6 +330,40 @@ def test_trendlines_min_back_bars(golden):
         base = series[key.replace("TL_BACK_", "TL_")]
         assert expected != base, f"{key}: identical to the ungated series"
         assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
+
+
+def test_trendlines_mixed_touches(golden):
+    """The mixed-touch pair: same walk, min_touches 3, option on vs off. The
+    generator asserts the two differ, so a port that ignores the param fails
+    one of them."""
+    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
+
+    candles, _, series = golden
+    for prefix, mixed in (("TL_MIXED", 1), ("TL_MIXED_OFF", 0)):
+        cfg = TrendlinesConfig(
+            pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=3,
+            min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
+            min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
+            max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
+            mixed_touches=mixed,
+        )
+        for output, key in (
+            ("tl_support", f"{prefix}_SUPPORT"),
+            ("tl_resistance", f"{prefix}_RESISTANCE"),
+        ):
+            expected = series[key]
+            assert any(v is not None for v in expected), f"{key}: golden is all-None"
+            assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
+    # And the pair must actually differ on BOTH sides, mirroring the
+    # generator's own guard — otherwise a port that ignores mixed_touches
+    # would still pass the inert side's half of the coverage above. On this
+    # walk support differs on 64 bars and resistance on 22; neither is inert.
+    assert series["TL_MIXED_SUPPORT"] != series["TL_MIXED_OFF_SUPPORT"], (
+        "TL_MIXED_SUPPORT: identical to TL_MIXED_OFF_SUPPORT, mixed_touches gate is vacuous"
+    )
+    assert series["TL_MIXED_RESISTANCE"] != series["TL_MIXED_OFF_RESISTANCE"], (
+        "TL_MIXED_RESISTANCE: identical to TL_MIXED_OFF_RESISTANCE, mixed_touches gate is vacuous"
+    )
 
 
 def test_avwap(golden):

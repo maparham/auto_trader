@@ -58,10 +58,9 @@ TRENDLINES_OUTPUTS: tuple[str, ...] = (
 
 # [pivot_len, viol_mult, touch_mult, min_touches, min_span_bars, max_proj_bars,
 #  break_hold_bars, max_lines, min_swing_atr, min_swing_reach, pair_pivots,
-#  max_touches, max_span_bars, max_slope_atr, min_slope_atr, min_back_bars] —
-#  TRENDLINES_DEFAULTS in
-#  trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.25, 0.75, 2, 20, 250, 30, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 10)
+#  max_touches, max_span_bars, max_slope_atr, min_slope_atr, min_back_bars,
+#  mixed_touches] — TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
+_DEFAULTS = (5, 0.25, 0.75, 2, 20, 250, 30, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 10, 1)
 
 Side = Literal["support", "resistance"]
 
@@ -76,7 +75,9 @@ SIDES: tuple[Side, ...] = ("resistance", "support")
 class TrendlinesConfig:
     pivot_len: int  # fractal lookback each side; confirm lag = this many bars
     viol_mult: float  # pierce tolerance as a multiple of ATR(14)
-    touch_mult: float  # touch tolerance as a multiple of ATR(14)
+    # Touch tolerance as a multiple of ATR(14). 0 is the strictest setting, not
+    # an off switch: no gap short of the line is tolerated.
+    touch_mult: float
     min_touches: int  # touches before a line is major (2 = anchors only)
     min_span_bars: int  # minimum span before a line is major
     max_proj_bars: int  # how far past its last touch an unbroken line stays live
@@ -98,6 +99,9 @@ class TrendlinesConfig:
     # within the Max Pierce tolerance. 0 = off, and the only gate here whose
     # DEFAULT is not off. See _has_back_clearance.
     min_back_bars: int
+    # Count opposite-side pivots as touches (never as anchors). 1 = on, the
+    # default; 0 = off restores strict same-side detection.
+    mixed_touches: int
     # Settings-pinned timeframe (extendData.mtf.timeframe, like SR_LEVELS); the
     # evaluator then feeds trendlines_series that timeframe's candles and aligns
     # the result onto the base bars (evaluate.py's pinned-IndicatorRef branch).
@@ -122,6 +126,10 @@ class TrendLine:
     touches: int
     last_touch_idx: int  # seeded to i2, only ever moves forward
     broken_idx: int | None  # bar that pierced it, once one has
+    # Earliest touch: i1 unless an opposite-side pivot before i1 landed in the
+    # touch band (mixed touches). Draw-only in the TS; ported so the two
+    # TrendLine shapes stay identical.
+    first_touch_idx: int
 
 
 def parse_trendlines_config(calc_params: object, extend_data: object) -> TrendlinesConfig:
@@ -136,7 +144,7 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
     belongs to the calculation, not to the drawing.
 
     Number coercion diverges from the TS on null, "" and [] — Number() makes
-    each 0 (which passes viol_mult's >= 0 rule) whereas float() raises and we
+    each 0 (which passes viol_mult's and touch_mult's >= 0 rule) whereas float() raises and we
     fall back to the default — and on other strings float() rejects but
     Number() does not, such as whitespace-only " " (0) and "0x10" (16). A few
     go the other way, e.g. float("1_0") is 10.0 while Number("1_0") is NaN.
@@ -174,10 +182,14 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
 
     return TrendlinesConfig(
         pivot_len=int_at(0, d[0]),
-        # viol_mult takes ZERO (exact containment, the strictest setting), so it
-        # alone validates on >= 0.
+        # viol_mult takes ZERO (exact containment, the strictest setting), so
+        # it validates on >= 0 — as does touch_mult just below.
         viol_mult=num_at(1, d[1], True),
-        touch_mult=num_at(2, d[2], False),
+        # ZERO like viol_mult, and the mirror of it: it shrinks the touch band
+        # to [line, line + viol_mult] (see in_touch_band's asymmetry), so a
+        # pivot short of the line by any gap stops counting. Strictest setting,
+        # not an off switch, which is why it validates on >= 0.
+        touch_mult=num_at(2, d[2], True),
         # A line is defined by two anchor pivots, so it cannot exist with fewer.
         min_touches=max(2, math.floor(num_at(3, d[3], False))),
         min_span_bars=int_at(4, d[4]),
@@ -203,6 +215,9 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         # so a chart saved before this param existed gets the gate at 10, which
         # is intended.
         min_back_bars=max(0, math.floor(num_at(15, d[15], True))),
+        # Clamped to {0, 1}; absent means ON — the option ships enabled, like
+        # min_back_bars its default is not the off state.
+        mixed_touches=min(1, max(0, math.floor(num_at(16, d[16], True)))),
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
@@ -547,7 +562,12 @@ def compute_trendlines(
                 #     side. NOTE the tolerance comes from atr[k], NOT `a`: k can
                 #     precede ATR warm-up even when atr[i] is warm.
                 for line in lines:
-                    if line.side != side:
+                    # Mixed touches: an opposite-side line is testable too,
+                    # with this pivot's OWN extreme (`price` is vals[k] of the
+                    # pivot's side). The band mirrors by pivot side: a crossing
+                    # extreme reads Max Pierce, a short one Max Touch Gap —
+                    # swapping in_touch_band's tolerances flips the asymmetry.
+                    if line.side != side and not cfg.mixed_touches > 0:
                         continue
                     if k <= line.i2:
                         continue
@@ -556,11 +576,18 @@ def compute_trendlines(
                     tol_a = atr[k]
                     if tol_a is None:
                         continue
+                    mixed = line.side != side
                     if in_touch_band(
-                        line, k, price, cfg.viol_mult * tol_a, cfg.touch_mult * tol_a
+                        line,
+                        k,
+                        price,
+                        (cfg.touch_mult if mixed else cfg.viol_mult) * tol_a,
+                        (cfg.viol_mult if mixed else cfg.touch_mult) * tol_a,
                     ):
                         line.touches += 1
-                        line.last_touch_idx = k
+                        # An opposite-side touch NEVER extends coverage.
+                        if line.side == side:
+                            line.last_touch_idx = k
 
                 # 2b. Seed candidates against the previous MAX_PAIR_PIVOTS
                 #     pivots. `pool.append(k)` happens AFTER this loop, so every
@@ -585,6 +612,7 @@ def compute_trendlines(
                         touches=2,
                         last_touch_idx=k,
                         broken_idx=None,
+                        first_touch_idx=i1,
                     )
                     # Slope first: one comparison, where the validation below
                     # walks every bar back to i1. Seed time is the only time it
@@ -637,6 +665,29 @@ def compute_trendlines(
                             cand, pj, vals[pj], cfg.viol_mult * tol_p, cfg.touch_mult * tol_p
                         ):
                             cand.touches += 1
+                    # Mixed touches BEFORE the first anchor: opposite-side
+                    # pivots in the band over [i1 - max_proj_bars, i1). NOT
+                    # pierce-tested — geometry, not a guarantee (design doc).
+                    if cfg.mixed_touches > 0:
+                        opp_pool = pools["support" if side == "resistance" else "resistance"]
+                        opp_vals = lows if side == "resistance" else highs
+                        back_from = i1 - cfg.max_proj_bars
+                        for pj in opp_pool:
+                            if pj >= i1:
+                                break
+                            if pj < back_from:
+                                continue
+                            tol_p = atr[pj]
+                            if tol_p is None:
+                                continue
+                            # Tolerances swapped, as in 2a: the band mirrors by
+                            # pivot side.
+                            if in_touch_band(
+                                cand, pj, opp_vals[pj], cfg.touch_mult * tol_p, cfg.viol_mult * tol_p
+                            ):
+                                cand.touches += 1
+                                if pj < cand.first_touch_idx:
+                                    cand.first_touch_idx = pj
                     lines.append(cand)
                 pool.append(k)
 

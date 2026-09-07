@@ -55,7 +55,9 @@ export type TrendlinesOutput = (typeof TRENDLINES_OUTPUTS)[number];
 export interface TrendlinesConfig {
   pivotLen: number; // fractal lookback each side; confirm lag = this many bars
   violMult: number; // pierce tolerance as a multiple of ATR(14)
-  touchMult: number; // touch tolerance as a multiple of ATR(14)
+  // Touch tolerance as a multiple of ATR(14). 0 is the strictest setting, not
+  // an off switch: no gap short of the line is tolerated.
+  touchMult: number;
   minTouches: number; // touches before a line is major (2 = anchors only)
   minSpanBars: number; // minimum span before a line is major
   maxProjBars: number; // how far past its last touch a line stays live
@@ -98,6 +100,10 @@ export interface TrendlinesConfig {
   // every other test as long as its wrong side is in the past, and this is the
   // seed-time pierce test run backwards. See hasBackClearance.
   minBackBars: number;
+  // Count opposite-side pivots as touches (never as anchors). 1 = on, the
+  // default; 0 = off restores the strict same-side detector. Stored as a
+  // number because calcParams carry numbers; every reader tests > 0.
+  mixedTouches: number;
 }
 
 export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
@@ -117,18 +123,24 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   maxSlopeAtr: 0,
   minSlopeAtr: 0,
   minBackBars: 10,
+  mixedTouches: 1,
 };
 
 /** calcParams order: [pivotLen, violMult, touchMult, minTouches, minSpanBars,
  * maxProjBars, breakHoldBars, maxLines, minSwingAtr, minSwingReach,
- * pairPivots, maxTouches, maxSpanBars, maxSlopeAtr, minSlopeAtr, minBackBars].
+ * pairPivots, maxTouches, maxSpanBars, maxSlopeAtr, minSlopeAtr, minBackBars,
+ * mixedTouches].
  * Mirrored by backend trendlines.parse_trendlines_config — keep in sync.
  *
- * violMult and minSwingAtr take ZERO (exact containment; the swing-size gate
- * switched off), so they validate on `>= 0` while every other param keeps the
- * usual `> 0` rule. For minSwingAtr that is the difference between an OFF
- * switch and no switch at all: on `> 0`, a stored 0 would fall back to the
- * default and the setting could never be turned off.
+ * violMult, touchMult and minSwingAtr take ZERO (exact containment on the
+ * first two; the swing-size gate switched off on the third), so they validate
+ * on `>= 0` while every other param keeps the usual `> 0` rule. For minSwingAtr
+ * that is the difference between an OFF switch and no switch at all: on `> 0`,
+ * a stored 0 would fall back to the default and the setting could never be
+ * turned off. touchMult 0 is the STRICTEST touch rule rather than an off
+ * switch, the mirror of violMult 0: it leaves the touch band as
+ * [line, line + violMult] on a resistance (see inTouchBand's asymmetry), so a
+ * pivot short of the line by any gap at all stops counting.
  * Getting this wrong silently restores tolerant containment, so both runtimes
  * test it.
  *
@@ -158,7 +170,7 @@ export function parseTrendlinesConfig(calcParams: unknown): TrendlinesConfig {
   return {
     pivotLen: intAt(0, d.pivotLen),
     violMult: numAt(1, d.violMult, true),
-    touchMult: numAt(2, d.touchMult, false),
+    touchMult: numAt(2, d.touchMult, true),
     minTouches: Math.max(2, Math.floor(numAt(3, d.minTouches, false))),
     minSpanBars: intAt(4, d.minSpanBars),
     maxProjBars: intAt(5, d.maxProjBars),
@@ -182,6 +194,11 @@ export function parseTrendlinesConfig(calcParams: unknown): TrendlinesConfig {
     // state, so a chart saved before this param existed reads undefined here
     // and gets the gate at 10, which is intended.
     minBackBars: Math.max(0, Math.floor(numAt(15, d.minBackBars, true))),
+    // Clamped to {0, 1}: floor sends fractions to 0 or 1, the min/max pin
+    // anything else. Absent (a chart saved before the param existed) reads the
+    // default, which is ON — like minBackBars, the default is not the off
+    // state, and that is intended.
+    mixedTouches: Math.min(1, Math.max(0, Math.floor(numAt(16, d.mixedTouches, true)))),
   };
 }
 

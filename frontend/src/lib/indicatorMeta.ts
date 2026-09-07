@@ -170,7 +170,7 @@ const TL_DEFAULT_PARAMS: number[] = [
   TL.pivotLen, TL.violMult, TL.touchMult, TL.minTouches, TL.minSpanBars,
   TL.maxProjBars, TL.breakHoldBars, TL.maxLines, TL.minSwingAtr,
   TL.minSwingReach, TL.pairPivots, TL.maxTouches, TL.maxSpanBars,
-  TL.maxSlopeAtr, TL.minSlopeAtr, TL.minBackBars,
+  TL.maxSlopeAtr, TL.minSlopeAtr, TL.minBackBars, TL.mixedTouches,
 ];
 
 // A preset = the defaults with a sparse patch (by slot index) on top, so the
@@ -628,10 +628,10 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "The furthest a wick may poke past a line without breaking it, in ATR(14). Zero means any poke through breaks it.",
       },
       {
-        ...num(2, "Max Touch Gap", { min: 0.05, step: 0.05 }),
+        ...num(2, "Max Touch Gap", { min: 0, step: 0.05 }),
         group: "tol",
         suffix: "ATR",
-        tip: "The furthest a pivot may sit from a line and still count as touching it, in ATR(14).",
+        tip: "The furthest a pivot may sit short of a line and still count as touching it, in ATR(14). Zero enforces a zero gap: only a pivot that reaches the line counts, the mirror of what zero does to Max Pierce.",
       },
       {
         ...num(15, "Min Back Clearance"),
@@ -696,6 +696,18 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Max steepness a line may have, in ATR(14) of price per bar. Empty means no limit. A steep line outruns price and is never touched again, which is what a fan off one sharp pivot keeps producing.",
       },
       {
+        key: "mixedTouches",
+        label: "Mix Low and High Pivots",
+        type: "boolean",
+        source: "calcParam",
+        index: 16,
+        default: true,
+        // `wide` so the full label shows: the shared two-column row ellipsises
+        // it, and a checkbox needs no control column anyway.
+        wide: true,
+        tip: "Lets a high count as a touch on a support line (and a low on a resistance line) when it lands in the touch band — never as an anchor. The line draws from its earliest touch. A crossing extreme is judged by Max Pierce, one that stops short by Max Touch Gap.",
+      },
+      {
         ...num(5, "Max Projection"),
         section: "Lifetime",
         group: "life",
@@ -745,6 +757,15 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
           { value: "pivot", label: "One line per pivot" },
         ],
         tip: "Near price removes distant lines. One per pivot shows only the nearest line where several pass through the same swing.",
+      },
+      {
+        key: "showPivots",
+        label: "Show pivots",
+        type: "boolean",
+        source: "extend",
+        field: "showPivots",
+        default: true,
+        tip: "Marks every swing that passed the pivot settings with a small caret outside its wick — up over a high, down under a low. This is the raw input the lines are built from, so it shows what Pivot Length, Min Pivot Size and Min Pivot Reach are actually admitting, including pivots no drawn line uses.",
       },
       {
         key: "hideBroken",

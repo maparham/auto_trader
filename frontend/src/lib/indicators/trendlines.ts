@@ -47,6 +47,39 @@ import {
 
 export type TrendSide = "support" | "resistance";
 
+/** The pivots that PASSED the pivot filter — the confirmed fractal turns that
+ * also cleared Min Pivot Size and Min Pivot Reach, i.e. exactly the set that
+ * may seed or touch a line (`TlState.pools`, not `turns`). Bar indices per
+ * side, in strictly increasing order.
+ *
+ * CARRIES THE PRICE ARRAYS TOO, and that is not redundancy. Under a timeframe
+ * pin these indices are HTF bar indices, so a draw path holding only them
+ * would have to read the price out of the CHART's dataList and would land on
+ * the wrong bar. The lines dodge this by carrying p1/p2 and the touch rings by
+ * riding the drawn segment; a standalone mark has no line to ride.
+ *
+ * REFERENCES, not copies: `highs`/`lows` are the detector's own per-bar arrays
+ * and the pools are the arrays it appends to (a fresh slice per tick on the
+ * session path, which forks them anyway). So carrying the marks costs no
+ * allocation on the tick path — which is the whole reason a pivot is an index
+ * into shared arrays here rather than an {idx, price} object. */
+export interface TrendPivots {
+  resistance: number[];
+  support: number[];
+  highs: number[];
+  lows: number[];
+}
+
+/** The price a pooled pivot turned at: its bar's high on the resistance side,
+ * its low on the support side — the same `vals` the detector tested it with. */
+export function pivotPrice(
+  pivots: TrendPivots,
+  side: TrendSide,
+  idx: number,
+): number {
+  return side === "resistance" ? pivots.highs[idx] : pivots.lows[idx];
+}
+
 /** A line is defined by two anchor pivots and NEVER rotates once defined.
  * Later touches move lastTouchIdx, which extends the line's coverage; they do
  * not move i2/p2, so the geometry a line was born with is the one it dies
@@ -70,6 +103,11 @@ export interface TrendLine {
   touchIdxs: number[];
   lastTouchIdx: number; // seeded to i2, only ever moves forward
   brokenIdx: number | null; // bar that pierced it, once one has
+  /** Earliest touch: `i1` unless an opposite-side pivot BEFORE i1 landed in
+   * the touch band (Mixed touches). Only ever moves backwards, and only at
+   * seed time. DRAW-ONLY, like touchIdxs: no gate reads it, so it cannot move
+   * an emitted value — it is where the drawn segment starts. */
+  firstTouchIdx: number;
 }
 
 /** The line's price at bar j. The ONLY division in this module: its output is
@@ -425,13 +463,42 @@ function buildTlState(
 export function computeTrendlines(
   dataList: KLineData[],
   cfg: TrendlinesConfig,
-): { points: TrendlinesPoint[]; lines: TrendLine[]; atr: number[] } {
+): {
+  points: TrendlinesPoint[];
+  lines: TrendLine[];
+  atr: number[];
+  pivots: TrendPivots;
+} {
   const n = dataList.length;
-  if (n === 0) return { points: [], lines: [], atr: [] };
+  if (n === 0)
+    return {
+      points: [],
+      lines: [],
+      atr: [],
+      pivots: { resistance: [], support: [], highs: [], lows: [] },
+    };
   const st = buildTlState(dataList, n, cfg);
   // The declared atr type predates this refactor: warm-up bars are null at
   // runtime (atrSeries), and every consumer already null-checks per bar.
-  return { points: st.points, lines: st.lines, atr: st.atr as number[] };
+  return {
+    points: st.points,
+    lines: st.lines,
+    atr: st.atr as number[],
+    pivots: pivotsOf(st),
+  };
+}
+
+/** The pools plus the arrays their prices live in — four references and no
+ * copying, so a pane with the marks switched off pays nothing for carrying
+ * them (calc must not read a drawing key to decide, see TRENDLINES_TEMPLATE).
+ * Read-only by contract, exactly like the prefix point rows. */
+function pivotsOf(st: TlState): TrendPivots {
+  return {
+    resistance: st.pools.resistance,
+    support: st.pools.support,
+    highs: st.highs,
+    lows: st.lows,
+  };
 }
 
 /** One bar of the detector, verbatim the loop body computeTrendlines always
@@ -525,23 +592,34 @@ function stepTrendlinesBar(
 
         // 2a. Test the new pivot against every existing line on this side.
         for (const line of lines) {
-          if (line.side !== side) continue;
+          // Mixed touches: an opposite-side line is testable too, with this
+          // pivot's OWN extreme (`price` is vals[k] of the pivot's side). The
+          // band mirrors by pivot side: an extreme that CROSSES the line is
+          // judged by Max Pierce, one that stops SHORT by Max Touch Gap —
+          // swapping inTouchBand's tolerances flips the asymmetry, because
+          // the crossing side for an opposite-side extreme is the line's
+          // touch side and vice versa.
+          if (line.side !== side && !(cfg.mixedTouches > 0)) continue;
           if (k <= line.i2) continue;
           if (line.brokenIdx !== null) continue;
           const tolA = atr[k];
           if (tolA === null) continue;
+          const mixed = line.side !== side;
           if (
             inTouchBand(
               line,
               k,
               price,
-              cfg.violMult * tolA,
-              cfg.touchMult * tolA,
+              (mixed ? cfg.touchMult : cfg.violMult) * tolA,
+              (mixed ? cfg.violMult : cfg.touchMult) * tolA,
             )
           ) {
             line.touches += 1;
             line.touchIdxs.push(k);
-            line.lastTouchIdx = k;
+            // An opposite-side touch NEVER extends coverage: lastTouchIdx
+            // feeds isLive and the span gates, and mixed touches must change
+            // touches and the drawn start, nothing else.
+            if (line.side === side) line.lastTouchIdx = k;
           }
         }
 
@@ -574,6 +652,7 @@ function stepTrendlinesBar(
             touchIdxs: [i1, k],
             lastTouchIdx: k,
             brokenIdx: null,
+            firstTouchIdx: i1,
           };
           // Slope first: it is one comparison, where the validation below walks
           // every bar back to i1. Seed time is the only time it needs asking,
@@ -628,6 +707,42 @@ function stepTrendlinesBar(
             ) {
               cand.touches += 1;
               cand.touchIdxs.push(pj);
+            }
+          }
+          // Mixed touches BEFORE the first anchor: opposite-side pivots whose
+          // extreme lands in the candidate's band, over [i1 - maxProjBars, i1)
+          // — the horizon the forward projection already uses, so no new
+          // bound. These bars are NOT pierce-tested: that leg is geometry,
+          // not a guarantee (see the design doc). Runs once, at seed time,
+          // off pool state that existed before this bar, so it cannot repaint.
+          // Opposite-side pivots strictly BETWEEN i1 and i2 are intentionally
+          // never tested: the rule's mechanics are the backward scan (before i1)
+          // plus step 2a (after i2 confirmation).
+          if (cfg.mixedTouches > 0) {
+            const oppPool = pools[side === "resistance" ? "support" : "resistance"];
+            const oppVals = side === "resistance" ? lows : highs;
+            const backFrom = i1 - cfg.maxProjBars;
+            for (const pj of oppPool) {
+              if (pj >= i1) break;
+              if (pj < backFrom) continue;
+              const tolP = atr[pj];
+              if (tolP === null) continue;
+              // Tolerances swapped, as in 2a: the band mirrors by pivot side,
+              // so a crossing extreme reads Max Pierce and a short one reads
+              // Max Touch Gap.
+              if (
+                inTouchBand(
+                  cand,
+                  pj,
+                  oppVals[pj],
+                  cfg.touchMult * tolP,
+                  cfg.violMult * tolP,
+                )
+              ) {
+                cand.touches += 1;
+                cand.touchIdxs.push(pj);
+                if (pj < cand.firstTouchIdx) cand.firstTouchIdx = pj;
+              }
             }
           }
           lines.push(cand);
@@ -800,7 +915,12 @@ export interface TrendlinesSession {
   compute(
     dataList: KLineData[],
     cfg: TrendlinesConfig,
-  ): { points: TrendlinesPoint[]; lines: TrendLine[]; atr: number[] };
+  ): {
+    points: TrendlinesPoint[];
+    lines: TrendLine[];
+    atr: number[];
+    pivots: TrendPivots;
+  };
 }
 
 /** Incremental twin of computeTrendlines, for the live calc path. klinecharts
@@ -838,7 +958,12 @@ export function createTrendlinesSession(): TrendlinesSession {
       if (n === 0) {
         base = null;
         ref = null;
-        return { points: [], lines: [], atr: [] };
+        return {
+          points: [],
+          lines: [],
+          atr: [],
+          pivots: { resistance: [], support: [], highs: [], lows: [] },
+        };
       }
       // parseTrendlinesConfig builds the object with a fixed key order, so the
       // JSON string is a stable equality key for its 16 numbers.
@@ -884,10 +1009,14 @@ export function createTrendlinesSession(): TrendlinesSession {
       // A fresh top-level array per call (callers replace the last row), with
       // the prefix rows shared — see the isolation note above.
       // Same atr cast as computeTrendlines: warm-up bars are null at runtime.
+      // From the FORK, like the lines: the forming bar can confirm a pivot
+      // (at n - 1 - pivotLen), and a mark that appeared only after the bar
+      // closed would lag the line it just seeded by one bar.
       return {
         points: b.points.slice(0, n),
         lines: fork.lines,
         atr: b.atr as number[],
+        pivots: pivotsOf(fork),
       };
     },
   };
@@ -914,6 +1043,7 @@ export interface TrendlinesMtf extends MtfSeriesBase {
   htfBrokenSupport?: Array<number | undefined>;
   htfBrokenResistance?: Array<number | undefined>;
   htfLines?: TrendLine[]; // live lines at the last closed HTF bar
+  htfPivots?: TrendPivots; // filter-passing pivots, in HTF bar indices
   /** ATR(14) on the HTF bars. The merge and near-price tolerances are
    * ATR-denominated, so the chart's own ATR would scale both by the ratio
    * between the timeframes. */
@@ -985,6 +1115,21 @@ export interface TrendlinesExtend {
    * `false` opens and draws as "off" instead of silently regaining the filter.
    * Never written. */
   nearPrice?: boolean;
+  /** Mark every pivot that passed the PIVOT FILTER with a small caret just
+   * outside its wick — the confirmed fractal turns that also cleared Min Pivot
+   * Size and Min Pivot Reach, which is the set that may seed or touch a line.
+   * ON by default.
+   *
+   * DELIBERATELY OUTSIDE the "one gate for both surfaces" rule the drawn LINES
+   * follow. maxLines, Declutter, Hide broken and the isMajor floors all choose
+   * which lines survive; a mark is not a line and is not gated by any of them,
+   * so a pivot that seeded nothing (or whose line lost its drawing slot) is
+   * still marked. That is the point of the setting: it shows what the pivot
+   * settings are actually admitting, which is otherwise only visible through
+   * the lines they happen to produce. Do not "fix" it toward the lines' gate.
+   *
+   * Render-only, like everything else in this block. */
+  showPivots?: boolean;
   /** Drop the broken lines from the chart entirely. Defaults to OFF, because a
    * broken line is where a retest happens and the break-hold window exists to
    * keep it visible for exactly that.
@@ -1088,6 +1233,10 @@ export function lineKey(
 export type TrendlinesCalcPoint = TrendlinesPoint & {
   lines?: TrendLine[];
   atr?: number;
+  /** Every pivot that passed the pivot filter, riding the last row like the
+   * lines. Read only by the draw path (Show pivots) — no operand reads it, so
+   * it needs no Python twin. */
+  pivots?: TrendPivots;
   /** The bar index the last row's values were read at, IN THE LINES' OWN SPACE:
    * the last chart bar normally, and under a timeframe pin the last HTF bar
    * that had closed by then. The draw path measures everything at it, and its
@@ -1503,6 +1652,13 @@ export const TL_HANDLE_RADIUS = 3;
 export const TL_BREAK_RADIUS = 2.5;
 export const TL_TOUCH_RADIUS = 2;
 export const TL_HANDLE_HIT = 8;
+/** The pivot mark: a caret pointing AWAY from price (up over a resistance
+ * pivot's high, down under a support pivot's low), sitting this many pixels
+ * clear of the wick with arms this long. A caret rather than a third circle —
+ * the break dot and the touch ring already own that shape, and a mark that
+ * belongs to no line must not read as one that does. */
+export const TL_PIVOT_GAP = 4;
+export const TL_PIVOT_ARM = 3;
 /** Handles stroke heavier than the 1px line they cap, so a 3px mark reads at
  * all. It is also what tells a handle stroke from a line stroke. */
 export const TL_HANDLE_STROKE = 1.5;
@@ -1581,7 +1737,14 @@ export function lineExtent(
   pinnedEdge: number | null,
 ): { jLeft: number; jRight: number } {
   const broken = line.brokenIdx !== null;
-  const jLeft = mode === "extended" ? line.i1 - cfg.maxProjBars : line.i1;
+  // The drawn segment starts at the EARLIEST touch, not the first anchor:
+  // under Mixed touches an opposite-side pivot before i1 is part of the line
+  // the user sees, and this is what draws it without "Extended both ways".
+  // firstTouchIdx === i1 whenever no such touch exists, so nothing else moves.
+  const jLeft =
+    mode === "extended"
+      ? line.firstTouchIdx - cfg.maxProjBars
+      : line.firstTouchIdx;
   // A broken line's own history runs to the break, which lands AFTER the last
   // touch by construction. Ending at lastTouchIdx would stop the line short of
   // the event that killed it, hiding the break marker on the one mode that
@@ -1776,6 +1939,10 @@ export function alignMtfTrendlines(
     ...out[out.length - 1],
     lines: mtf.htfLines ?? [],
     atr: mtf.htfAtr,
+    // HTF bar indices, like the lines, and the draw path maps them the same
+    // way. Their prices came from the HTF bars, which is why a pivot carries
+    // one instead of being looked up in the chart's dataList.
+    pivots: mtf.htfPivots,
     lineIdx: j,
   };
   return out;
@@ -1885,6 +2052,69 @@ function trendlineIdxMap(
  * clipping is visually exact. */
 export { clipSegmentToRect } from "./shared";
 
+/** Paint one caret per filter-passing pivot, clipped to the pane.
+ *
+ * NOT GATED by anything that selects lines (see TrendlinesExtend.showPivots):
+ * the marks answer "what is the pivot filter admitting", which the lines only
+ * answer indirectly. Full opacity for the same reason — there is no line whose
+ * dim state they could inherit.
+ *
+ * The pools are in strictly increasing bar order, so the walk stops at the
+ * right edge instead of running the whole series: on a zoomed-in pane of a
+ * long history that is the difference between a handful of carets and
+ * thousands of off-pane transforms per frame. */
+function paintPivotMarks(
+  ctx: CanvasRenderingContext2D,
+  pivots: TrendPivots,
+  xAt: (j: number) => number,
+  yOf: (price: number) => number,
+  right: number,
+  height: number,
+): void {
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  for (const side of SIDES) {
+    ctx.strokeStyle =
+      side === "support" ? TL_SUPPORT_COLOR : TL_RESISTANCE_COLOR;
+    // Up over a high, down under a low: the caret points the way the swing
+    // turned, so a pane with both sides marked reads without a legend.
+    const dir = side === "support" ? 1 : -1;
+    ctx.beginPath();
+    for (const idx of pivots[side]) {
+      const x = xAt(idx);
+      // The arms reach TL_PIVOT_ARM either way, so the window is widened by
+      // one arm rather than testing the tip alone — otherwise a caret at the
+      // very edge is dropped whole when only half of it is off-pane.
+      if (x < -TL_PIVOT_ARM) continue;
+      if (x > right + TL_PIVOT_ARM) break;
+      const y = yOf(pivotPrice(pivots, side, idx));
+      // The PIVOT's own y decides whether its mark exists at all: the mark
+      // belongs to a swing, and a swing scrolled out of the pane's price range
+      // has nothing to mark. The GLYPH is then clipped rather than dropped —
+      // on a live pane the y-axis autoscales to the visible extremes, so the
+      // highest swing high sits at the top edge and its caret hangs just over
+      // it. Dropping there would hide the mark on exactly the pivot the eye is
+      // on. Clipping (the same treatment the line strokes get) keeps the part
+      // that fits and lets nothing bleed into the neighbouring pane.
+      if (y < 0 || y > height) continue;
+      const yTip = y + dir * (TL_PIVOT_GAP + TL_PIVOT_ARM);
+      const yArm = y + dir * TL_PIVOT_GAP;
+      for (const arm of [-TL_PIVOT_ARM, TL_PIVOT_ARM]) {
+        const seg = clipSegmentToRect(x, yTip, x + arm, yArm, 0, 0, right, height);
+        if (!seg) continue;
+        ctx.moveTo(seg[0], seg[1]);
+        ctx.lineTo(seg[2], seg[3]);
+      }
+    }
+    // One path per side: the carets share a colour and a width, so the whole
+    // side is a single stroke call however many pivots are on screen.
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawTrendlines(
   params: IndicatorDrawParams<TrendlinesCalcPoint, unknown, unknown>,
 ): boolean {
@@ -1894,7 +2124,7 @@ function drawTrendlines(
   const dataList = chart.getDataList();
   // Clear on the empty paths too, or the last frame's handles stay clickable
   // over a chart that no longer draws them.
-  if (!last?.lines?.length || dataList.length === 0) {
+  if (dataList.length === 0) {
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
     return true;
   }
@@ -1912,6 +2142,28 @@ function drawTrendlines(
       : undefined;
   const starts = mtf?.htfStarts;
   const { toChart, toLine } = trendlineIdxMap(dataList, mtf);
+  // bounding.width spans the whole pane INCLUDING the y-axis strip on the
+  // right; nothing drawn may run under it (the ×N tags below share this).
+  const axisWidth = chart.getSize(indicator.paneId, "yAxis")?.width ?? 0;
+  const tagRight = bounding.width - axisWidth - 4;
+  const xAt = (j: number) => xAxis.convertToPixel(toChart(j));
+  // BEFORE the line early-returns, and that is the point: the pivot filter can
+  // admit plenty of pivots on a pane where every line was gated away (strict
+  // Min Touches, a short series, an HTF pin with nothing closed yet), and a
+  // mark that vanished there would read as the setting being broken.
+  if ((ext?.showPivots ?? true) && last?.pivots)
+    paintPivotMarks(
+      ctx,
+      last.pivots,
+      xAt,
+      (price) => yAxis.convertToPixel(price),
+      tagRight,
+      bounding.height,
+    );
+  if (!last?.lines?.length) {
+    setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    return true;
+  }
   const lastIdx = mtf ? (last.lineIdx ?? -1) : dataList.length - 1;
   // Under a pin, no HTF bar has closed inside the loaded window yet: there is
   // nothing to measure the lines at, so draw none rather than measure at -1.
@@ -1929,7 +2181,6 @@ function drawTrendlines(
     toLine,
     dataList.length,
   );
-  const xAt = (j: number) => xAxis.convertToPixel(toChart(j));
   // A pin means "run past where you stopped", so it is only meaningful in the
   // modes that STOP a line. "ray" and "extended" already run to the horizon:
   // there is nothing to release, and their end sits ~maxProjBars into the
@@ -2001,10 +2252,6 @@ function drawTrendlines(
     },
     nearTol,
   );
-  // bounding.width spans the whole pane INCLUDING the y-axis strip on the
-  // right; the ×N tags must stop before it or the axis overlay hides them.
-  const axisWidth = chart.getSize(indicator.paneId, "yAxis")?.width ?? 0;
-  const tagRight = bounding.width - axisWidth - 4;
   const handles: TrendlineHandle[] = [];
   // The bar index sitting at the pane's right edge, so a pinned line reaches it
   // at any zoom. The index-to-pixel map is linear (klinecharts multiplies by a
@@ -2040,10 +2287,10 @@ function drawTrendlines(
         ? trendlineDimAlpha(ext)
         : 1;
     const isPinned = pins.has(lineKey(line, dataList, starts));
-    // The line's end under the MODE alone. The handle and the ×N tag ride here
-    // whether or not the line is pinned: a pinned line runs to the pane edge,
-    // and a handle that travelled with it would leave nothing to click to undo
-    // the pin (and would sit under the y-axis besides).
+    // The line's end under the MODE alone: what the stroke reverts to when a
+    // pin is released. (The handle no longer rides it — see below — it sits at
+    // the newest bar, which likewise never travels to the pane edge with a
+    // pinned line, so there is always something to click to undo the pin.)
     const natural = lineExtent(line, mode, cfg, drawn, drawEdge, null);
     const { jLeft, jRight } = isPinned
       ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx)
@@ -2118,15 +2365,18 @@ function drawTrendlines(
     // marks reading as part of it rather than as a scatter beside it. The
     // anchors are included, so the ring count always equals the tag.
     //
-    // Every touch is inside the drawn span by construction (i1 <= idx <=
-    // lastTouchIdx <= jRight), so only the pane's own edges need guarding, the
-    // same both-axes clamp the break dot uses: this canvas is shared with the
-    // other panes and an unclamped y bleeds into them.
+    // Touches start at firstTouchIdx === jLeft (the line's left anchor). In
+    // segment mode, a forward opposite-side touch may lie beyond jRight — its
+    // ring would land on the line's invisible extension, so rings cull at the
+    // drawn end (x1) as well as the pane edge. The y-clamp guards canvas
+    // bleeding into adjacent panes: this canvas is shared with the other
+    // panes, and an unclamped y bleeds into them.
     ctx.lineWidth = 1;
     for (const idx of line.touchIdxs) {
       const xT = xAt(idx);
       const yT = onSegment(xT);
-      if (xT < 0 || xT > tagRight || yT < 0 || yT > bounding.height) continue;
+      if (xT < 0 || xT > Math.min(tagRight, x1) || yT < 0 || yT > bounding.height)
+        continue;
       ctx.beginPath();
       ctx.arc(xT, yT, TL_TOUCH_RADIUS, 0, Math.PI * 2);
       ctx.stroke();
@@ -2146,15 +2396,21 @@ function drawTrendlines(
     // landed outside the pane entirely and the two that stayed sat ~75px off
     // their line. The segment is straight, so interpolating at xTag puts the
     // tag back on it.
-    // The pin handle, on the line's right end wherever that end landed. Hollow
-    // when free, filled when pinned, so the toggle's state is readable without
-    // hovering. Clamped inside the pane like the tag, and its y interpolated at
-    // the clamped x for the same reason the tag's is.
-    const xNat = xAt(natural.jRight);
-    const yNat = yAxis.convertToPixel(projectAt(line, natural.jRight));
-    const xHandle = Math.min(xNat, tagRight);
-    const yHandle =
-      xNat === x0 ? yNat : y0 + ((yNat - y0) * (xHandle - x0)) / (xNat - x0);
+    // The pin handle, AT THE NEWEST BAR always, on the line's projection
+    // there — not at the line's natural end. The natural end moves with the
+    // mode (last touch in segment, an apex, the break), which scattered the
+    // handles across the chart; the newest bar lines them up in one column
+    // beside price where every line is being read anyway, and it is the same
+    // spot whether or not the line is pinned, so the click that made the pin
+    // is the click that undoes it. In segment mode the stroke can stop short
+    // of it: the handle then sits on the line's invisible projection, which is
+    // the price of "always". ABSOLUTE, unlike the tag: no clamp to the pane
+    // edge, so panning back through history moves the handle off-screen with
+    // its bar instead of leaving it clinging to the edge — the culling guard
+    // below drops it (undrawn AND unclickable) until the newest bar scrolls
+    // back into view, the same deal an off-pane-vertically handle gets.
+    const xHandle = xAt(drawEdge);
+    const yHandle = yAxis.convertToPixel(projectAt(line, drawEdge));
     // The ring sits just BEYOND the end, tangent to it, rather than centred on
     // it. Centred, a hollow ring has the line running through its middle, which
     // reads as a bead threaded on the line instead of a cap at its tip. Pushed
@@ -2162,7 +2418,18 @@ function drawTrendlines(
     // direction, it touches the tip and nothing more. A pinned line runs on past
     // it, so the offset dot still lands on the line there.
     const [xRing, yRing] = ringCentre(x0, y0, xHandle, yHandle);
-    if (stops && xRing >= 0 && yRing >= 0 && yRing <= bounding.height) {
+    // Culled on the BAR's x, not the ring's: at the live edge the newest bar
+    // sits flush against the axis strip and the ring pokes a radius past it —
+    // dropping the handle there would hide it in exactly the resting state a
+    // chart spends its life in. The ring overlapping the 4px axis gap by that
+    // much is the lesser evil.
+    if (
+      stops &&
+      xRing >= 0 &&
+      xHandle <= tagRight &&
+      yRing >= 0 &&
+      yRing <= bounding.height
+    ) {
       // Registered where it is DRAWN: the hit test and the ring must be the
       // same object or the click target drifts off the dot.
       handles.push({ key: lineKey(line, dataList, starts), x: xRing, y: yRing });
@@ -2201,7 +2468,9 @@ function drawTrendlines(
       tagRight - ctx.measureText(label).width,
     );
     const yTag =
-      xNat === x0 ? yNat : y0 + ((yNat - y0) * (xTag - x0)) / (xNat - x0);
+      xHandle === x0
+        ? yHandle
+        : y0 + ((yHandle - y0) * (xTag - x0)) / (xHandle - x0);
     ctx.fillStyle = ctx.strokeStyle;
     ctx.fillText(label, xTag, yTag);
   }
@@ -2257,7 +2526,7 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
       session = createTrendlinesSession();
       TL_CALC_SESSIONS.set(ind, session);
     }
-    const { points, lines, atr } = session.compute(
+    const { points, lines, atr, pivots } = session.compute(
       dataList,
       parseTrendlinesConfig(ind.calcParams),
     );
@@ -2270,6 +2539,7 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
         ...out[out.length - 1],
         lines,
         atr: atr[atr.length - 1],
+        pivots,
         lineIdx: out.length - 1,
       };
     return out;
