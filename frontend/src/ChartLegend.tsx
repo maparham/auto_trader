@@ -90,7 +90,7 @@ interface LegendCtx {
   // silently-wedged upstream. Shown as an amber dot in place of the green live one
   // (never both; ChartCore makes them mutually exclusive).
   stale: boolean;
-  broker: string; // display name of the data source ("Capital.com", "IG (demo)")
+  broker: string; // display name of the data source ("Capital.com", "IG (demo)"); "" hides it (compact/mobile)
 }
 
 // Imperative handle ChartCore drives on the live tick / crosshair change.
@@ -472,7 +472,8 @@ export default function ChartLegend({
           </button>
         </Tooltip>
         <span className="cl-meta">
-          · {ctx.period} · {ctx.broker}
+          · {ctx.period}
+          {ctx.broker ? ` · ${ctx.broker}` : ""}
         </span>
         {(["O", "H", "L", "C"] as const).map((k) => (
           <span className="cl-ohlc-item" key={k}>

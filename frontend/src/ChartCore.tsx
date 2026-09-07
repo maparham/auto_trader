@@ -52,6 +52,7 @@ import { anyCellInReadout, setCellReadout, subscribeReplayingCells } from "./lib
 import { toast } from "./lib/notify";
 import { capturePattern, MIN_GHOST_BARS } from "./lib/patternGhost";
 import { useTrendlinePins } from "./chart/useTrendlinePins";
+import { compactHides } from "./chart/compactChrome";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
 import {
@@ -282,6 +283,10 @@ interface Props {
   // coarser/finer resolution than the current one). Cell-scoped so a keyboard-
   // activated preset targets the owning cell even without a prior pointer-down.
   onPeriod?: (cellId: string, p: Period) => void;
+  // Mobile companion shell: suppresses desktop-only chrome (range bar, replay
+  // pill/ticket/start panel, detached pill, candle-cache stats modal) that
+  // doesn't fit a compact viewport. Undefined/false renders exactly as today.
+  compact?: boolean;
 }
 
 // PAGE_BARS (older bars per scroll-back page) now lives in lib/historyPaging, so
@@ -321,6 +326,7 @@ export default function ChartCore({
   onFocus,
   focused,
   onPeriod,
+  compact,
 }: Props) {
   // Per-cell controller: its own OverlayManager + the per-chart UI signals that
   // used to be module globals. Stable for the life of this mount (the cell key is
@@ -4866,6 +4872,9 @@ export default function ChartCore({
     [precision, symbol.epic, overlays, replay.state.mode, replay.canTrade, replay.place],
   );
 
+  // Mobile companion shell: which desktop-only chrome to suppress. Pure map,
+  // recomputed every render — cheap, and avoids a hook (JSX-only gating).
+  const hides = compactHides(compact);
 
   return (
     <div
@@ -4995,7 +5004,7 @@ export default function ChartCore({
           "not active"): the bar's quick ranges navigate to now, and its Go-to-date
           field would both break a running session and reveal the date a masked one
           hides. */}
-      {replay.state.mode === "off" && (
+      {!hides.rangeBar && replay.state.mode === "off" && (
         <ChartRangeBar
           activeKey={activeRange}
           disabled={!chartReady}
@@ -5008,14 +5017,14 @@ export default function ChartCore({
           replay being fully "off" (picking included) for the same reason the range
           bar above is: a session owns the view, and detached state that lingered
           into one must not offer a reload underneath it. */}
-      {detached && replay.state.mode === "off" && (
+      {!hides.detachedPill && detached && replay.state.mode === "off" && (
         <DetachedPill
           targetMs={detached.targetMs}
           timezone={timezone}
           onBackToLive={exitDetached}
         />
       )}
-      {replay.state.mode === "active" && (
+      {!hides.replay && replay.state.mode === "active" && (
         <ReplayPill
           scope={scope}
           state={replay.state}
@@ -5059,7 +5068,7 @@ export default function ChartCore({
           onDone={replay.dismissReport}
         />
       )}
-      {replay.state.mode === "active" && replayTicketOpen && (
+      {!hides.replay && replay.state.mode === "active" && replayTicketOpen && (
         <ReplayTicket
           mark={replay.markPrice}
           precision={effPrecision}
@@ -5278,7 +5287,9 @@ export default function ChartCore({
             streamStale &&
             !marketClosed &&
             status === "live",
-          broker: brokerLabel(brokerId),
+          // The mobile top bar already names the data source; on a phone the
+          // legend row can't spare the width, so compact drops it here.
+          broker: compact ? "" : brokerLabel(brokerId),
         }}
         rows={legendRows}
         collapsed={legendCollapsed}
@@ -5337,14 +5348,16 @@ export default function ChartCore({
             className="replay-curtain"
             style={{ left: curtainX == null ? "100%" : Math.max(0, curtainX) }}
           />
-          <ReplayStartPanel
-            loading={replay.state.loading}
-            error={replay.state.error}
-            masked={pickMasked}
-            onMaskedChange={setPickMasked}
-            onJump={(ms, masked) => replay.randomJump(ms, masked)}
-            onCancel={replay.cancelPicking}
-          />
+          {!hides.replay && (
+            <ReplayStartPanel
+              loading={replay.state.loading}
+              error={replay.state.error}
+              masked={pickMasked}
+              onMaskedChange={setPickMasked}
+              onJump={(ms, masked) => replay.randomJump(ms, masked)}
+              onCancel={replay.cancelPicking}
+            />
+          )}
         </>
       )}
 
@@ -5358,7 +5371,7 @@ export default function ChartCore({
         />
       )}
 
-      {cacheStatsOpen && !sessionMasked && (
+      {!hides.cacheStats && cacheStatsOpen && !sessionMasked && (
         <CandleCacheStatsModal
           epic={symbol.epic}
           resolution={period.resolution}

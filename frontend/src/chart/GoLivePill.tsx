@@ -91,6 +91,7 @@ export default function GoLivePill({ getChart, detached, pos, priceY, containerR
         type="button"
         className="chart-golive"
         data-testid="chart-golive"
+        data-pos={pos}
         // Placement is a global setting (lib/liveEdge.goLivePillStyle). The
         // priceLine mode rides priceTag.y, which the redraw loop refreshes
         // on every tick — so the pill follows the line without its own

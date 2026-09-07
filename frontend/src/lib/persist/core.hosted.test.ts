@@ -54,3 +54,17 @@ it("keeps the lastUserId stamp through a non-empty hydrate's prune", async () =>
   expect(localStorage.getItem("auto-trader.b.capital.stale")).toBeNull();
   expect(localStorage.getItem("auto-trader.lastUserId")).toBe("user_1");
 });
+
+it("keeps the mobileBoot stamp through a non-empty hydrate's prune", async () => {
+  // Written raw by src/lib/mobileBoot.ts, never mirrored — must survive the
+  // absent-from-snapshot prune just like lastUserId, or the mobile PWA shell
+  // forgets its boot-branch decision a beat after each hydrate.
+  localStorage.setItem("auto-trader.mobileBoot", "1");
+  localStorage.setItem("auto-trader.b.capital.stale", "1"); // absent from snapshot: pruned
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(JSON.stringify({ "auto-trader.b.capital.layouts": [1] }), { status: 200 }),
+  ));
+  await hydrateFromBackend();
+  expect(localStorage.getItem("auto-trader.b.capital.stale")).toBeNull();
+  expect(localStorage.getItem("auto-trader.mobileBoot")).toBe("1");
+});

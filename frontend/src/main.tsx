@@ -4,10 +4,12 @@ import { ClerkProvider, SignedIn, SignedOut, SignIn } from '@clerk/clerk-react'
 import './index.css'
 import App from './App.tsx'
 import SnapshotApp from './SnapshotApp.tsx'
+import MobileApp from './mobile/MobileApp.tsx'
 import ClerkTokenBridge from './components/ClerkTokenBridge.tsx'
 import AccountGate from './components/AccountGate.tsx'
 import { CLERK_ENABLED } from './lib/authToken.ts'
 import { parseSnapshotParams } from './lib/snapshotBoot.ts'
+import { shouldBootMobile } from './lib/mobileBoot.ts'
 
 // The publishable key doubles as the feature switch: unset (local dev) renders
 // exactly the pre-auth tree — no provider, no sign-in, no behavior change.
@@ -19,6 +21,9 @@ const clerkKey = (
 // the Clerk tree in all cases — its auth token comes from the URL, not Clerk.
 const snapshotParams = parseSnapshotParams(window.location.search)
 
+// Decided once so both the Clerk-enabled and no-Clerk fallback branches agree.
+const bootMobile = shouldBootMobile()
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {snapshotParams ? (
@@ -28,7 +33,7 @@ createRoot(document.getElementById('root')!).render(
         <ClerkTokenBridge />
         <SignedIn>
           <AccountGate>
-            <App />
+            {bootMobile ? <MobileApp /> : <App />}
           </AccountGate>
         </SignedIn>
         <SignedOut>
@@ -37,6 +42,8 @@ createRoot(document.getElementById('root')!).render(
           </div>
         </SignedOut>
       </ClerkProvider>
+    ) : bootMobile ? (
+      <MobileApp />
     ) : (
       <App />
     )}

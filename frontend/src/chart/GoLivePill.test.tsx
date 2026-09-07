@@ -36,7 +36,10 @@ function makeChart(opts: { behindMs: number }) {
   };
 }
 
-function renderPill(h: ReturnType<typeof makeChart>, extra?: { detached?: boolean }) {
+function renderPill(
+  h: ReturnType<typeof makeChart>,
+  extra?: { detached?: boolean; pos?: "topRight" | "priceLine" | "axis" },
+) {
   const onGoLive = vi.fn();
   let parentRenders = 0;
   let bump: () => void = () => {};
@@ -48,7 +51,7 @@ function renderPill(h: ReturnType<typeof makeChart>, extra?: { detached?: boolea
       <GoLivePill
         getChart={() => h.chart}
         detached={extra?.detached ?? false}
-        pos="topRight"
+        pos={extra?.pos ?? "topRight"}
         priceY={null}
         containerRef={{ current: null }}
         onGoLive={onGoLive}
@@ -125,6 +128,13 @@ describe("GoLivePill", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("carries a data-pos attribute matching the pos prop", () => {
+    const h = makeChart({ behindMs: 5 * MIN });
+    renderPill(h, { pos: "axis" });
+    act(() => h.fire("onVisibleRangeChange"));
+    expect(screen.getByTestId("chart-golive").getAttribute("data-pos")).toBe("axis");
   });
 
   it("survives a parent re-render without dropping the pill", () => {

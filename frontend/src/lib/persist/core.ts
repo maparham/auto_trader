@@ -156,6 +156,14 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   // this the prune below deletes it each hydrate and the gate treats EVERY
   // reload as an account switch — wiping all device-local state each load.
   `${PREFIX}.lastUserId`,
+  // The mobile PWA shell's boot-branch stamp (written raw by src/lib/mobileBoot.ts,
+  // not via saveLocal, but still PREFIX-owned so it's subject to the same prune).
+  // Never mirrored, so without this it's deleted a beat after each hydrate.
+  `${PREFIX}.mobileBoot`,
+  // Which broker account the MOBILE shell targets (mobile/mobileChartState).
+  // Device-local on purpose, same as desktop's active account: picking mt5 on
+  // the phone must not drag every desktop tab onto mt5.
+  `${PREFIX}.mobileAccount`,
 ]);
 function isDeviceLocalKey(k: string): boolean {
   return (

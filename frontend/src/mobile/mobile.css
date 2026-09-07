@@ -1,0 +1,353 @@
+.m-app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.m-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.m-tabbar {
+  display: flex;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.m-tabbar button {
+  flex: 1;
+  padding: 10px 0 8px;
+  background: none;
+  border: none;
+  color: var(--text-dim, var(--text));
+  font-size: 12px;
+}
+
+.m-tabbar button.active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Task 14: settings ⚙ button — sits apart from the four flex:1 tab buttons
+   (fixed width, not flex:1) so it doesn't steal space from them. */
+.m-tabbar-settings {
+  flex: 0 0 auto;
+  width: 44px;
+  padding: 10px 0 8px;
+  background: none;
+  border: none;
+  color: var(--text-dim, var(--text));
+  font-size: 16px;
+}
+
+.m-sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 200; display: flex; align-items: flex-end; }
+.m-sheet { width: 100%; max-height: 85vh; background: var(--bg); border-top: 1px solid var(--border); border-radius: 12px 12px 0 0; display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom); }
+.m-sheet-title { padding: 12px 16px; font-weight: 600; border-bottom: 1px solid var(--border); }
+.m-sheet-body { overflow-y: auto; padding: 8px 0; }
+.m-sheet-row { display: block; width: 100%; text-align: left; padding: 12px 16px; background: none; border: none; color: var(--text); font-size: 15px; }
+.m-sheet-row:active { background: var(--bg-hover, rgba(128,128,128,.15)); }
+
+.m-ind-list { padding: 4px 0; }
+.m-ind-row { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.m-ind-row-title { flex: 1; color: var(--text); font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-ind-row-btn { padding: 6px 10px; background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; }
+.m-ind-row-btn:active { background: var(--bg-hover, rgba(128,128,128,.15)); }
+.m-ind-empty { padding: 16px; color: var(--text-secondary, #888); font-size: 14px; text-align: center; }
+.m-ind-add-toggle { font-weight: 600; border-top: 1px solid var(--border); }
+.m-ind-add { border-top: 1px solid var(--border); padding-top: 4px; }
+.m-ind-filter { display: block; width: calc(100% - 32px); box-sizing: border-box; margin: 4px 16px 8px; padding: 8px 10px; background: var(--bg-hover, rgba(128,128,128,.1)); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 14px; }
+
+.m-chart-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.m-chart-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.m-chart-topbar button {
+  background: var(--panel-bg, rgba(128,128,128,.12));
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.m-chart-topbar button:disabled {
+  color: var(--text-dim, var(--text));
+  opacity: .5;
+}
+
+.m-chart-symbol {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-chart-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* Task 8: touch drawing tool strip. FAB floats bottom-right inside the chart
+   body (already above the tab bar, which is a sibling outside .m-chart-view);
+   the strip is a full-width horizontal scroller anchored just above the FAB. */
+.m-drawbar-fab {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 50;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.m-drawbar-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 64px;
+  z-index: 50;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.m-drawbar-tool {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: var(--text-dim, var(--text));
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Muted-gray active state for persistent toggles (magnet stays on for long
+   stretches) — not the solid accent-blue fill used for transient actions. */
+.m-drawbar-magnet.on {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
+  font-weight: 600;
+  border-radius: 6px;
+}
+
+.m-drawbar-delete {
+  color: var(--danger);
+}
+
+/* Desktop modals re-hosted on mobile (Task 7). Two families:
+   - ConfirmDialog / SymbolSearchModal render inline (no portal), so each
+     one's ".modal-backdrop" lands as a direct child of this host.
+   - AlertModal / IndicatorSettings / DrawingSettings render via the shared
+     FloatingModal, which portals to document.body (a *direct child of
+     <body>*, NOT of .m-app or .m-modal-host) and self-positions with an
+     inline style (fixed, centered, draggable). ".m-app" is a child of
+     "#root", not a sibling of the portal, so no descendant/sibling selector
+     rooted at ".m-app" can ever reach it (verified against
+     FloatingModal.tsx's createPortal(..., document.body) call — a prior
+     draft of this rule used ".m-app ~ .floating-modal", which never matches
+     in any browser and is invisible to jsdom-based tests, since jsdom does
+     not evaluate CSS selector matching at all).
+     MobileApp instead stamps a marker class straight onto <body> itself
+     (added/removed in a mount effect — see MobileApp.tsx), which every
+     body-level portal — including this one — sits under by definition. Scope
+     off that: "body.m-mobile .floating-modal". Since main.tsx always bundles
+     both App and MobileApp, and only the mobile boot path ever adds
+     "m-mobile" to <body>, this cannot leak onto desktop.
+     !important beats FloatingModal's inline style, which is the point
+     (bottom sheet instead of centered draggable panel). */
+.m-modal-host > .modal-backdrop {
+  align-items: flex-end;
+}
+.m-modal-host > .modal-backdrop > * {
+  width: 100%;
+  max-width: 100vw !important;
+  border-radius: 12px 12px 0 0;
+  max-height: 85vh;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Task 10: Alerts tab (Active/History segmented switch + row list). */
+.m-alerts-view { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.m-alerts-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.m-seg { flex: 1; display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.m-seg button { flex: 1; padding: 6px 0; background: none; border: none; color: var(--text-dim, var(--text)); font-size: 13px; font-weight: 600; }
+.m-seg button.on { background: var(--panel-bg, rgba(128,128,128,.12)); color: var(--text); }
+.m-alerts-add { width: 32px; height: 32px; border-radius: 8px; border: none; background: var(--panel-bg, rgba(128,128,128,.12)); color: var(--text); font-size: 18px; line-height: 1; }
+.m-alerts-list { flex: 1; min-height: 0; overflow-y: auto; }
+.m-alerts-row { padding: 10px 14px; border-bottom: 1px solid var(--border); position: relative; }
+.m-alerts-row-main { display: flex; align-items: baseline; gap: 8px; }
+.m-alerts-epic { font-weight: 600; color: var(--text); font-size: 14px; }
+.m-alerts-cond { color: var(--text-dim, var(--text)); font-size: 13px; }
+.m-alerts-time { margin-left: auto; color: var(--text-secondary, #888); font-size: 12px; }
+.m-alerts-msg { color: var(--text-secondary, #888); font-size: 12px; margin-top: 2px; padding-right: 60px; }
+.m-alerts-at { color: var(--text-secondary, #888); }
+.m-alerts-delete { position: absolute; right: 10px; top: 8px; padding: 4px 10px; background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--danger); font-size: 12px; }
+.m-alerts-empty { padding: 24px 16px; color: var(--text-secondary, #888); font-size: 14px; text-align: center; }
+
+/* Task 11: Positions tab (account summary strip + trade rows + detail sheet). */
+.m-pos-view { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.m-pos-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; flex-wrap: wrap; }
+.m-pos-account { font-weight: 600; color: var(--text); }
+.m-pos-live { margin-left: 6px; padding: 1px 6px; border-radius: 4px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; }
+.m-pos-paper { color: var(--text-secondary, #888); }
+.m-pos-figures { color: var(--text-dim, var(--text)); }
+.m-pos-list { flex: 1; min-height: 0; overflow-y: auto; }
+.m-pos-row { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.m-pos-row-main { display: flex; align-items: baseline; gap: 8px; }
+.m-pos-epic { font-weight: 600; color: var(--text); font-size: 14px; }
+.m-pos-label { color: var(--text-dim, var(--text)); font-size: 13px; }
+.m-pos-upnl { margin-left: auto; font-size: 13px; font-weight: 600; }
+.m-pos-row-sub { display: flex; gap: 10px; color: var(--text-secondary, #888); font-size: 12px; margin-top: 2px; }
+.m-pos-empty { padding: 24px 16px; color: var(--text-secondary, #888); font-size: 14px; text-align: center; }
+.m-pos-pnl-pos { color: var(--pos); }
+.m-pos-pnl-neg { color: var(--neg); }
+.m-pos-detail { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+.m-pos-detail-row { display: flex; justify-content: space-between; font-size: 14px; color: var(--text); }
+.m-pos-act-btn { margin-top: 8px; padding: 12px; border-radius: 8px; border: none; background: var(--danger); color: #fff; font-size: 15px; font-weight: 600; }
+
+body.m-mobile .floating-modal {
+  left: 0 !important;
+  right: 0 !important;
+  top: auto !important;
+  bottom: 0 !important;
+  transform: none !important;
+  width: 100% !important;
+  max-width: 100vw !important;
+  border-radius: 12px 12px 0 0;
+  max-height: 85vh;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Task 12: Trade tab (order ticket, full-width). */
+.m-trade-view { position: absolute; inset: 0; overflow-y: auto; }
+.m-app .m-trade-view .ot { width: 100%; padding: 16px; box-sizing: border-box; }
+.m-trade-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px 16px; color: var(--text-secondary, #888); font-size: 14px; text-align: center; }
+
+/* Task 13: PWA offline banner — muted, unobtrusive, sits above the tab content. */
+.m-offline {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  padding-top: calc(6px + env(safe-area-inset-top));
+  background: var(--surface, var(--bg));
+  color: var(--text-secondary, #888);
+  font-size: 12px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Task 14: Settings sheet (push notifications, theme, switch to desktop). */
+.m-set-label { padding: 12px 16px 4px; color: var(--text-dim, var(--text)); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .02em; }
+.m-set-hint { padding: 4px 16px 12px; color: var(--text-secondary, #888); font-size: 13px; }
+.m-set-toggle {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 0 16px 8px;
+  padding: 10px 14px;
+  text-align: left;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 15px;
+}
+/* Muted-gray "on" state for this persistent toggle, not the solid accent-blue
+   fill (see .m-drawbar-magnet.on / muted-toggle-states convention). */
+.m-set-toggle.on {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  font-weight: 600;
+}
+.m-set-theme { margin: 0 16px 12px; width: calc(100% - 32px); }
+.m-set-desktop { border-top: 1px solid var(--border); margin-top: 8px; }
+
+
+/* Desktop-layout mirror strip (Chart tab, under the top bar). */
+.m-chart-strip { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 4px 8px; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+.m-chart-strip-group { display: flex; align-items: center; gap: 6px; }
+.m-chart-strip-divider { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
+.m-chart-strip-chip { flex: 0 0 auto; border: 1px solid var(--border); background: none; color: var(--text-dim); border-radius: 12px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+.m-chart-strip-chip.active { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+
+/* Broker chip in the chart top bar (broker switching). Fixed-shrink so a long
+   broker label can't squeeze the symbol name out entirely. */
+.m-chart-broker {
+  flex: 0 1 auto;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Selected row in a sheet list (current broker account): muted, not accent. */
+.m-sheet-row-on {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.15));
+  font-weight: 600;
+}
+
+.m-broker-empty {
+  padding: 12px 16px;
+  color: var(--text-dim, var(--text));
+  font-size: 14px;
+}
+
+/* Compact chart legend on a phone: the desktop 12px/22px rows eat too much of
+   a small chart, so tighten font, row height and inter-segment gaps. */
+body.m-mobile .chart-legend {
+  font-size: 10.5px;
+  top: 4px;
+  left: 4px;
+}
+body.m-mobile .cl-row {
+  height: 18px;
+  padding: 0 4px;
+}
+body.m-mobile .cl-row > * + * { margin-left: 4px; }
+body.m-mobile .cl-row > .cl-ohlc-item + .cl-ohlc-item,
+body.m-mobile .cl-row > .cl-fig + .cl-fig { margin-left: 5px; }
+
+/* The draw FAB (44px, right/bottom 12) owns the axis corner on mobile, so the
+   axis-parked go-live pill can't live there without sliding underneath it.
+   Move it to the top edge instead, clear of BOTH the FAB and (unlike the
+   `topRight` placement MobileChartView avoids) the full-width OHLC legend
+   line: 4px top + 18px row height (see .chart-legend/.cl-row above) plus an
+   8px gap. `!important` is required to win over the inline bottom/right the
+   component sets from goLivePillStyle's axis branch. */
+body.m-mobile .chart-golive[data-pos="axis"] {
+  top: 30px !important;
+  bottom: auto !important;
+}

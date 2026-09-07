@@ -22,3 +22,49 @@ self.addEventListener("notificationclick", (event) => {
     return self.clients.openWindow("/");
   })());
 });
+
+// --- App-shell cache (mobile PWA; spec 2026-09-07-mobile-companion-design.md).
+// Network-first for navigations with a cached fallback, cache-first for hashed
+// /assets/ files. This SW must remain the ONLY root-scope SW (push lives here).
+const SHELL_CACHE = "shell-v1";
+self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(SHELL_CACHE).then((c) => c.put("/", copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match("/")),
+    );
+  } else if (url.pathname.startsWith("/assets/")) {
+    event.respondWith(
+      caches.match(event.request).then(
+        (hit) =>
+          hit ??
+          fetch(event.request).then((res) => {
+            if (res.ok) {
+              const copy = res.clone();
+              caches.open(SHELL_CACHE).then((c) => c.put(event.request, copy));
+            }
+            return res;
+          }),
+      ),
+    );
+  }
+});
+
+// Drop stale caches from older SW versions so a future SHELL_CACHE bump doesn't
+// leave orphaned caches behind forever.
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys().then((names) =>
+      Promise.all(names.filter((n) => n !== SHELL_CACHE).map((n) => caches.delete(n))),
+    ),
+  );
+});

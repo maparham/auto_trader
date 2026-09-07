@@ -24,7 +24,9 @@ import { activeSymbolFragment, insertSymbol, isSyntheticExpr, parseSymbols } fro
 import { registerSynthetic } from "./lib/syntheticRegistry";
 
 interface Props {
-  current: Instrument;
+  // Null when no market is selected yet (mobile boot on a broker with no
+  // heartbeat/favorites): nothing to highlight, everything else works.
+  current: Instrument | null;
   // Active data broker id ("capital"). The catalogue, search and favourites are
   // all broker-specific, so every call carries it and a change reloads the modal.
   brokerId: string;
@@ -388,7 +390,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
             <li
               key={`${m.epic}-${i}`}
               className={
-                (m.epic === current.epic ? "selected" : "") +
+                (m.epic === current?.epic ? "selected" : "") +
                 (m.status !== "TRADEABLE" ? " closed" : "")
               }
               onClick={() => (showOps ? addSymbol(m.epic) : pick(m))}
