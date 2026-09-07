@@ -1268,7 +1268,14 @@ export default function ChartCore({
   // TradingView-style right-click menu for the CHART itself (empty space) — Paste an
   // indicator or drawing copied earlier. Opened by a right-click that isn't on an
   // indicator curve.
-  const [chartMenu, setChartMenu] = useState<{ x: number; y: number; price: number | null } | null>(null);
+  const [chartMenu, setChartMenu] = useState<{
+    x: number;
+    y: number;
+    price: number | null;
+    // Bar time under the cursor when the menu opened ("Copy timestamp"). Captured
+    // at open time, not at render: the cursor has moved on by the time a click lands.
+    ts: number | null;
+  } | null>(null);
   // TradingView-style right-click menu for the PRICE AXIS column — the "Scale price
   // chart only" and "Stretch to fill height" toggles (see onContextMenu, which opens
   // it over the axis strip).
@@ -2186,7 +2193,13 @@ export default function ChartCore({
         ? first(c.convertFromPixel([{ y: menuY }], { paneId: "candle_pane", absolute: true }))
         : null;
       const price = pt != null && typeof pt.value === "number" ? pt.value : null;
-      setChartMenu({ x: e.clientX, y: e.clientY, price });
+      // Time under the cursor for "Copy timestamp" — via rangePickTsAtX (declared
+      // later in this same effect, so it exists by the time a right-click fires,
+      // like overPriceAxis above), which already clamps a click in the whitespace
+      // past either end to that end bar. Unlike price, this is meaningful over a
+      // sub-pane too, so it's read for every non-axis right-click.
+      const ts = rangePickTsAtX(e.clientX);
+      setChartMenu({ x: e.clientX, y: e.clientY, price, ts });
     };
 
     // AVWAP anchor drag + the manual horizontal-line drag (trade SL/TP/entry +
@@ -4781,6 +4794,27 @@ export default function ChartCore({
     return () => document.removeEventListener("keydown", onKey);
   }, [focused, controller]);
 
+  // Canonical stamp for "Copy timestamp": the cell's timezone, ISO-ish and
+  // parseable. Deliberately NOT the crosshair formatter — that one is reskinned by
+  // the date-format / weekday settings ("Mon 07/09 14:30"), which reads fine on an
+  // axis and badly in whatever the user pastes it into.
+  const copyStampFmt = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat("en-CA", {
+        hour12: false,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZone: timezone || browserTimezone(),
+      });
+    } catch {
+      return null;
+    }
+  }, [timezone]);
+
   // Shared source of truth for the four price-level actions offered by both the
   // axis "+" menu and the empty-chart right-click menu. `price` is the level under
   // the cursor at the moment the menu opened.
@@ -5354,6 +5388,29 @@ export default function ChartCore({
             // Gated to non-synthetic epics, matching the hidden "+" button there.
             ...(chartMenu.price != null && !isSynthetic(symbol.epic)
               ? priceActionItems(chartMenu.price)
+              : []),
+            // The bar time under the cursor, on the clipboard. Offered wherever a
+            // timestamp exists — sub-panes and synthetic epics included, unlike the
+            // price actions above. A masked replay hides real dates everywhere else
+            // (axis, crosshair, published ranges); copying one out here would be the
+            // one hole in that, so the item greys out for the session instead.
+            ...(chartMenu.ts != null
+              ? [
+                  {
+                    label: "Copy timestamp",
+                    icon: MenuIcons.copy,
+                    disabled: replay.state.mode === "active" && replay.state.masked,
+                    disabledReason: "Real dates are hidden in a masked replay",
+                    onClick: () => {
+                      const ts = chartMenu.ts;
+                      if (ts == null) return;
+                      const text = copyStampFmt
+                        ? copyStampFmt.format(ts).replace(", ", " ")
+                        : new Date(ts).toISOString();
+                      navigator.clipboard?.writeText(text);
+                    },
+                  } satisfies MenuItem,
+                ]
               : []),
             {
               label: "Paste",
