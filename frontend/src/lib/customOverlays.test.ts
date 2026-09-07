@@ -325,3 +325,57 @@ describe("patternGhost", () => {
     expect(body.ignoreEvent).toBeUndefined();
   });
 });
+
+// klinecharts never culls overlays and its dashed line figure has no clip, so
+// the templates themselves must keep stroke geometry near the pane: a steep
+// ray extended to the x-edge lands hundreds of thousands of px away in y, and
+// a dashed/dotted style walks that whole length every frame (the trendlines
+// MTF-ray bug through the overlay renderer).
+describe("line drawings keep their stroke geometry near the pane", () => {
+  const B = { height: 400, width: 800, left: 0, right: 0, top: 0, bottom: 0 };
+  const lineCoords = (
+    tpl: { createPointFigures?: unknown },
+    coordinates: Array<{ x: number; y: number }>,
+  ) => {
+    const create = tpl.createPointFigures as (p: unknown) => unknown;
+    const figs = create({
+      coordinates,
+      bounding: B,
+      overlay: { extendData: {} },
+    }) as Array<{ type: string; attrs: { coordinates?: Array<{ x: number; y: number }> } }>;
+    return figs.find((f) => f.type === "line")?.attrs.coordinates;
+  };
+  const near = (c?: Array<{ x: number; y: number }>) => {
+    expect(c).toBeDefined();
+    for (const p of c!) {
+      expect(Math.abs(p.x)).toBeLessThan(10_000);
+      expect(Math.abs(p.y)).toBeLessThan(10_000);
+    }
+  };
+
+  it("straightLine: a steep line's edge extensions stay near-pane in y", async () => {
+    const { straightLine } = await import("./customOverlays");
+    near(lineCoords(straightLine, [{ x: 400, y: 100 }, { x: 401, y: 500 }]));
+    // Shallow lines keep the exact edge-to-edge extension.
+    const flat = lineCoords(straightLine, [{ x: 100, y: 100 }, { x: 700, y: 300 }])!;
+    expect(flat[0]).toEqual({ x: 0, y: expect.closeTo(100 - (100 / 3), 6) });
+    expect(flat[1].x).toBe(800);
+  });
+
+  it("rayLine: a steep ray's far end stays near-pane in y", async () => {
+    const { rayLine } = await import("./customOverlays");
+    near(lineCoords(rayLine, [{ x: 400, y: 100 }, { x: 401, y: 500 }]));
+  });
+
+  it("segment: anchors panned/zoomed far off-pane are clipped", async () => {
+    const { segment } = await import("./customOverlays");
+    near(lineCoords(segment, [{ x: -60_000, y: -50_000 }, { x: 60_000, y: 50_000 }]));
+    // A fully off-pane segment (missing the padded pane box) emits no line.
+    const figs = (segment.createPointFigures as (p: unknown) => unknown)({
+      coordinates: [{ x: -60_000, y: 30_000 }, { x: 60_000, y: 40_000 }],
+      bounding: B,
+      overlay: { extendData: {} },
+    }) as Array<{ type: string }>;
+    expect(figs.some((f) => f.type === "line")).toBe(false);
+  });
+});

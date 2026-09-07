@@ -2427,3 +2427,28 @@ describe("OverlayManager trade-drawing defaults and templates", () => {
     expect(m.getDrawingConfig(id)?.trade).toBeUndefined();
   });
 });
+
+describe("OverlayManager alert drag restores a value-only anchor", () => {
+  // klinecharts writes dataIndex+timestamp into the point on any drag. The
+  // built-in priceLine then draws from that bar's x instead of x=0 — pan away
+  // and the dashed alert line runs from an arbitrarily distant x every frame.
+  // The drop handler must ALWAYS restore a value-only point, not only when
+  // the level happens to round.
+  it("strips the drag's bar anchor even when the price needs no rounding", () => {
+    const { chart, m } = setup();
+    m.setPricePrecision(2);
+    const id = m.addAlert(70.64, { condition: "crossing", trigger: "every", message: "" })!;
+    const ov = ovById(chart, id)!;
+    // Simulate klinecharts' drag write: bar anchor added, price already clean.
+    (ov.points as Array<Record<string, unknown>>)[0] = {
+      value: 70.64,
+      dataIndex: 12345,
+      timestamp: 1_700_000_000_000,
+    };
+    (ov as unknown as { onPressedMoveEnd: (e: unknown) => void }).onPressedMoveEnd({ overlay: ov });
+    const after = ovById(chart, id)!.points as Array<Record<string, unknown>>;
+    expect(after[0].value).toBe(70.64);
+    expect(after[0].dataIndex).toBeUndefined();
+    expect(after[0].timestamp).toBeUndefined();
+  });
+});

@@ -23,6 +23,7 @@ import { UP, DOWN } from "./chartTheme";
 import { getAccountSnapshot } from "./accountSnapshot";
 import { asTradeConfig, defaultStopPrice, tradePlan } from "./tradePlan";
 import { hexToRgba } from "./lineStyle";
+import { DRAW_CLIP_PAD } from "./indicators/shared";
 
 export const TRADE_BOX = "tradeBox";
 
@@ -137,21 +138,28 @@ export const tradeBox: OverlayTemplate = {
       });
     }
 
-    // Level lines, then the entry accent on top of them.
-    for (const leg of legs) {
+    // Level lines, then the entry accent on top of them. Clamped near the
+    // pane: these are UNCONDITIONALLY dashed, klinecharts neither culls
+    // overlays nor clips its line figure, and a saved trade panned far away
+    // would otherwise stroke a dashed line of arbitrary length every frame.
+    const lineL = Math.max(left, -DRAW_CLIP_PAD);
+    const lineR = Math.min(right, bounding.width + DRAW_CLIP_PAD);
+    if (lineR > lineL) {
+      for (const leg of legs) {
+        figures.push({
+          type: "line",
+          attrs: { coordinates: [{ x: lineL, y: leg.y }, { x: lineR, y: leg.y }] },
+          styles: { style: "dashed", dashedValue: [4, 4], color: leg.color, size: 1 },
+          ignoreEvent: true,
+        });
+      }
       figures.push({
         type: "line",
-        attrs: { coordinates: [{ x: left, y: leg.y }, { x: right, y: leg.y }] },
-        styles: { style: "dashed", dashedValue: [4, 4], color: leg.color, size: 1 },
+        attrs: { coordinates: [{ x: lineL, y: cEntry.y }, { x: lineR, y: cEntry.y }] },
+        styles: { style: "solid", color: ENTRY_COLOR, size: 1.5 },
         ignoreEvent: true,
       });
     }
-    figures.push({
-      type: "line",
-      attrs: { coordinates: [{ x: left, y: cEntry.y }, { x: right, y: cEntry.y }] },
-      styles: { style: "solid", color: ENTRY_COLOR, size: 1.5 },
-      ignoreEvent: true,
-    });
 
     if (width < MIN_LABEL_W) return figures;
 

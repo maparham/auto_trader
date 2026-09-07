@@ -12,6 +12,7 @@
 // LINE figure differs per geometry. Started with `segment` (trivial geometry =
 // zero regression risk); ray/straight extend the same shared helper.
 
+import { clipSegmentToRect, DRAW_CLIP_PAD } from "./indicators/shared";
 import { registerOverlay } from "klinecharts";
 import type {
   OverlayTemplate,
@@ -58,8 +59,22 @@ function linearY(c1: Coordinate, c2: Coordinate, target: Coordinate): number {
   const kb = linearSlopeIntercept(c1, c2);
   return kb ? kb[0] * target.x + kb[1] : target.y;
 }
+// Clip a stroke's endpoints into the padded pane box, or null when it misses
+// the box entirely. klinecharts neither culls overlays nor clips its line
+// figure, and dashed styles walk the FULL geometric length every frame — so
+// extending only to the x-edges (the library's own idiom) still leaves a
+// steep line's y hundreds of thousands of px out. The clip is exact on the
+// same straight line, so on-pane pixels and hit-tests are unchanged.
+function clipToPane(a: Coordinate, z: Coordinate, b: Bounding): Coordinate[] | null {
+  const seg = clipSegmentToRect(
+    a.x, a.y, z.x, z.y,
+    -DRAW_CLIP_PAD, -DRAW_CLIP_PAD,
+    b.width + DRAW_CLIP_PAD, b.height + DRAW_CLIP_PAD,
+  );
+  return seg ? [{ x: seg[0], y: seg[1] }, { x: seg[2], y: seg[3] }] : null;
+}
 // A ray from coordinates[0] through coordinates[1], extended to the chart edge.
-function rayLineCoords(cs: Coordinate[], b: Bounding): Coordinate[] {
+function rayLineCoords(cs: Coordinate[], b: Bounding): Coordinate[] | null {
   if (cs.length <= 1) return cs;
   let end: Coordinate;
   if (cs[0].x === cs[1].x && cs[0].y !== cs[1].y) {
@@ -69,17 +84,18 @@ function rayLineCoords(cs: Coordinate[], b: Bounding): Coordinate[] {
   } else {
     end = { x: b.width, y: linearY(cs[0], cs[1], { x: b.width, y: cs[0].y }) };
   }
-  return [cs[0], end];
+  return clipToPane(cs[0], end, b);
 }
 // A line through both points, extended to both chart edges.
-function straightLineCoords(cs: Coordinate[], b: Bounding): Coordinate[] {
+function straightLineCoords(cs: Coordinate[], b: Bounding): Coordinate[] | null {
   if (cs[0].x === cs[1].x) {
     return [{ x: cs[0].x, y: 0 }, { x: cs[0].x, y: b.height }];
   }
-  return [
+  return clipToPane(
     { x: 0, y: linearY(cs[0], cs[1], { x: 0, y: cs[0].y }) },
     { x: b.width, y: linearY(cs[0], cs[1], { x: b.width, y: cs[0].y }) },
-  ];
+    b,
+  );
 }
 
 const MARKER_COLOR = "#2962ff";
@@ -143,24 +159,27 @@ function labelFigure(
 }
 
 // segment: a plain two-point line (built-in geometry is exactly this).
-const segment: OverlayTemplate = {
+export const segment: OverlayTemplate = {
   name: "segment",
   totalStep: 3,
   needDefaultPointFigure: true,
   needDefaultXAxisFigure: true,
   needDefaultYAxisFigure: true,
   createPointFigures: (params) => {
-    const { coordinates } = params;
+    const { coordinates, bounding } = params;
     const figures: OverlayFigure[] = [];
     if (coordinates.length === 2) {
-      figures.push({ type: "line", attrs: { coordinates } });
+      // Clipped: panned/zoomed far away, the raw anchors can sit tens of
+      // thousands of px out, and the user may have styled the line dashed.
+      const cs = clipToPane(coordinates[0], coordinates[1], bounding);
+      if (cs) figures.push({ type: "line", attrs: { coordinates: cs } });
     }
     return [...figures, ...decorations(params)];
   },
 };
 
 // rayLine: from the first point through the second, extended to one edge.
-const rayLine: OverlayTemplate = {
+export const rayLine: OverlayTemplate = {
   name: "rayLine",
   totalStep: 3,
   needDefaultPointFigure: true,
@@ -170,14 +189,15 @@ const rayLine: OverlayTemplate = {
     const { coordinates, bounding } = params;
     const figures: OverlayFigure[] = [];
     if (coordinates.length > 1) {
-      figures.push({ type: "line", attrs: { coordinates: rayLineCoords(coordinates, bounding) } });
+      const cs = rayLineCoords(coordinates, bounding);
+      if (cs) figures.push({ type: "line", attrs: { coordinates: cs } });
     }
     return [...figures, ...decorations(params)];
   },
 };
 
 // straightLine: through both points, extended to both edges.
-const straightLine: OverlayTemplate = {
+export const straightLine: OverlayTemplate = {
   name: "straightLine",
   totalStep: 3,
   needDefaultPointFigure: true,
@@ -187,7 +207,8 @@ const straightLine: OverlayTemplate = {
     const { coordinates, bounding } = params;
     const figures: OverlayFigure[] = [];
     if (coordinates.length === 2) {
-      figures.push({ type: "line", attrs: { coordinates: straightLineCoords(coordinates, bounding) } });
+      const cs = straightLineCoords(coordinates, bounding);
+      if (cs) figures.push({ type: "line", attrs: { coordinates: cs } });
     }
     return [...figures, ...decorations(params)];
   },

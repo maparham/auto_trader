@@ -3,6 +3,8 @@
 // fibonacciLine overlay template. Level 0 sits at the SECOND anchor (point1) and
 // level 1 at the first, matching both the old built-in and TV; `reverse` swaps them.
 
+import { DRAW_CLIP_PAD } from "./indicators/shared";
+
 export interface FibLevel {
   value: number;
   enabled: boolean;
@@ -107,8 +109,14 @@ export function fibLevelSegments(args: {
   // Level 0 anchor / level 1 anchor (reverse swaps).
   const [zero, one] = cfg.reverse ? [c0, c1] : [c1, c0];
   const [vZero, vOne] = cfg.reverse ? [values[0], values[1]] : [values[1], values[0]];
-  const spanLeft = Math.min(c0.x, c1.x);
-  const spanRight = Math.max(c0.x, c1.x);
+  // Anchor x clamped near the pane: extend mixes a pane edge with a RAW
+  // anchor x, so a fib panned far off-pane would otherwise span the whole
+  // off-pane distance on every enabled (dashable) level, every frame —
+  // klinecharts neither culls overlays nor clips its line figure.
+  const clampX = (x: number): number =>
+    Math.min(boundingWidth + DRAW_CLIP_PAD, Math.max(-DRAW_CLIP_PAD, x));
+  const spanLeft = clampX(Math.min(c0.x, c1.x));
+  const spanRight = clampX(Math.max(c0.x, c1.x));
   const x1 = cfg.extend === "left" || cfg.extend === "both" ? 0 : spanLeft;
   const x2 = cfg.extend === "right" || cfg.extend === "both" ? boundingWidth : spanRight;
   return cfg.levels

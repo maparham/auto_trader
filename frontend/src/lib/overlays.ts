@@ -1148,7 +1148,12 @@ export class OverlayManager {
           const raw = e.overlay.points?.[0]?.value;
           if (raw != null) {
             const rounded = this.roundLevel(raw);
-            if (rounded !== raw) this.chart?.overrideOverlay({ id: e.overlay.id, points: [{ value: rounded }] });
+            // ALWAYS restore a value-only point, not just when rounding moved
+            // it: klinecharts writes dataIndex+timestamp into the point on any
+            // drag, and the built-in priceLine then draws from that bar's x
+            // instead of x=0 — pan away and the dashed line runs from an
+            // arbitrarily distant x on every frame.
+            this.chart?.overrideOverlay({ id: e.overlay.id, points: [{ value: rounded }] });
             const cfg = this.alertCfg.get(e.overlay.id);
             if (cfg) this.writeAlertUpdate(e.overlay.id, rounded, cfg);
           }

@@ -264,3 +264,35 @@ describe("registration", () => {
     expect(supported.has("tradeBox")).toBe(true);
   });
 });
+
+describe("trade overlay off-pane level lines", () => {
+  // The level lines are UNCONDITIONALLY dashed; a saved trade panned far away
+  // must not stroke a dashed line of arbitrary length every frame (klinecharts
+  // does not cull overlays or clip its line figure).
+  it("clamps the dashed level lines to the pane", () => {
+    const figures = paint(tradeBox, {
+      coordinates: [
+        { x: -60_000, y: 200 },
+        { x: 300, y: 100 },
+        { x: 300, y: 250 },
+      ],
+    });
+    const lines = figures.filter((f) => f.type === "line") as unknown as Array<{
+      attrs: { coordinates: Array<{ x: number }> };
+    }>;
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines)
+      for (const c of l.attrs.coordinates) expect(Math.abs(c.x)).toBeLessThan(10_000);
+  });
+
+  it("emits no level lines when the whole trade sits off-pane", () => {
+    const figures = paint(tradeBox, {
+      coordinates: [
+        { x: -60_000, y: 200 },
+        { x: -50_000, y: 100 },
+        { x: -50_000, y: 250 },
+      ],
+    });
+    expect(figures.some((f) => f.type === "line")).toBe(false);
+  });
+});

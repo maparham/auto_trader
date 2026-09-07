@@ -109,3 +109,26 @@ describe("fibLevelSegments", () => {
     ).toEqual([]);
   });
 });
+
+describe("fibLevelSegments off-pane clamping", () => {
+  // Levels are dashable per level, and extend mixes a pane edge with a RAW
+  // anchor x — a fib panned far off-pane otherwise spans the whole off-pane
+  // distance on every enabled level, every frame.
+  it("keeps both x endpoints near the pane when anchors sit far off it", () => {
+    const cfg = base();
+    const segs = fibLevelSegments({
+      cfg,
+      coordinates: [
+        { x: -60_000, y: 200 },
+        { x: -50_000, y: 0 },
+      ],
+      values: [90, 110] as const,
+      boundingWidth: 400,
+      precision: 2,
+    });
+    for (const s of segs) {
+      expect(Math.abs(s.x1)).toBeLessThan(10_000);
+      expect(Math.abs(s.x2)).toBeLessThan(10_000);
+    }
+  });
+});
