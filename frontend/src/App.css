@@ -3684,6 +3684,22 @@
   stroke-linejoin: round;
 }
 
+/* A collapsible group of same-type candle-pane indicators (e.g. three FVGs) —
+   collapses to a single header row so a chart with several instances of the same
+   indicator doesn't run the legend off the pane. Only rendered for a type with
+   2+ instances; a lone indicator stays a plain .cl-ind row. */
+.cl-group { display: flex; flex-direction: column; align-items: flex-start; }
+.cl-group-header { cursor: pointer; }
+/* Unlike the bottom .cl-collapse chevron (hover-revealed, since it sits below
+   every row), the group chevron is the only way to re-expand its own group, so
+   it stays visible at rest — only the group's eye icon (.cl-icons, reused from
+   the member rows) hover-reveals. */
+.cl-group-chevron.cl-collapsed svg { transform: rotate(180deg); }
+.cl-group-count { color: var(--text-dim); }
+/* Member rows indent under the group name, roughly the chevron's width, so they
+   read as nested under the header (TV-style). */
+.cl-group-rows { display: flex; flex-direction: column; align-items: flex-start; padding-left: 16px; }
+
 /* TV-style legend collapse chevron: its own mini-row under the indicator rows.
    Hover-revealed while the legend is hovered (like the row action icons); a
    COLLAPSED chevron stays visible — it's the only way back. The whole mini-row

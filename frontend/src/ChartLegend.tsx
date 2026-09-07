@@ -11,7 +11,7 @@
 // crosshair pixel. ChartCore subscribes OnCrosshairChange and calls our
 // updateValues(dataIndex|null); null = no crosshair → fall back to the last bar.
 
-import { useEffect, useImperativeHandle, useRef, type Ref, type RefObject } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref, type RefObject } from "react";
 import { type Chart, type Indicator, type KLineData } from "klinecharts";
 import type { ChartController } from "./lib/chartController";
 import InfoTip from "./components/InfoTip";
@@ -59,6 +59,9 @@ export interface LegendRow {
   visible: boolean;
   hideValue: boolean; // "show value in legend" toggle off
   figures: LegendFigure[];
+  // The indicator's real TYPE (e.g. "FVG", "TRENDLINES"), independent of `name`
+  // (unique per instance). Used to group same-type instances in the legend.
+  indType: string;
   // A ⚠ badge tooltip when some of the indicator's lines draw nothing at the current
   // timeframe (PREV_HL degenerate boundaries). Absent = no badge.
   warn?: string;
@@ -190,6 +193,62 @@ const ICON_CHEVRON_UP = (
   </svg>
 );
 
+// Same-type candle-pane rows (e.g. three FVGs) collapse into one group so a chart
+// with several instances of the same indicator doesn't scroll the whole legend.
+// A type with only one instance stays a plain row — no group chrome for the common
+// case. Grouped by first appearance, not sorted, so the legend order stays stable
+// as indicators are added/removed.
+type LegendEntry = { kind: "row"; row: LegendRow } | { kind: "group"; indType: string; rows: LegendRow[] };
+
+function groupRows(rows: LegendRow[]): LegendEntry[] {
+  const order: string[] = [];
+  const byType = new Map<string, LegendRow[]>();
+  for (const row of rows) {
+    let list = byType.get(row.indType);
+    if (!list) {
+      list = [];
+      byType.set(row.indType, list);
+      order.push(row.indType);
+    }
+    list.push(row);
+  }
+  return order.map((indType) => {
+    const list = byType.get(indType)!;
+    return list.length > 1 ? { kind: "group", indType, rows: list } : { kind: "row", row: list[0] };
+  });
+}
+
+// Which groups are collapsed, per symbol — so switching instruments doesn't carry
+// one symbol's collapsed FVG group onto another that has none. A single localStorage
+// key holds every symbol's set to avoid one key per symbol piling up over time.
+const GROUP_COLLAPSE_KEY = "cl-collapsed-groups";
+
+function loadCollapsedGroups(symbol: string): Set<string> {
+  try {
+    const all = JSON.parse(localStorage.getItem(GROUP_COLLAPSE_KEY) ?? "{}") as Record<
+      string,
+      string[]
+    >;
+    return new Set(all[symbol] ?? []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedGroups(symbol: string, groups: Set<string>): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(GROUP_COLLAPSE_KEY) ?? "{}") as Record<
+      string,
+      string[]
+    >;
+    if (groups.size) all[symbol] = [...groups];
+    else delete all[symbol];
+    localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(all));
+  } catch {
+    // localStorage unavailable (private mode, quota) — collapse state just won't persist.
+  }
+}
+
 export default function ChartLegend({
   getChart,
   controller,
@@ -228,6 +287,33 @@ export default function ChartLegend({
   const changeRef = useRef<HTMLSpanElement | null>(null);
   // figureValues[`${name}|${key}`] -> the span showing that figure's value.
   const figureValuesRef = useRef<Map<string, HTMLSpanElement>>(new Map());
+
+  // Which same-type groups are collapsed, for THIS symbol. Reloaded whenever the
+  // symbol changes (a symbol switch doesn't remount ChartLegend, so a plain
+  // useState initializer would only run once, for the first symbol).
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
+    loadCollapsedGroups(ctx.symbol),
+  );
+  useEffect(() => {
+    setCollapsedGroups(loadCollapsedGroups(ctx.symbol));
+  }, [ctx.symbol]);
+  const toggleGroupCollapsed = (indType: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(indType)) next.delete(indType);
+      else next.add(indType);
+      saveCollapsedGroups(ctx.symbol, next);
+      return next;
+    });
+  };
+  // Group-wide hide/unhide: if any member is visible, hide the rest; once every
+  // member is hidden, one click shows them all again.
+  const toggleGroupVisible = (rows: LegendRow[]) => {
+    const anyVisible = rows.some((r) => r.visible);
+    for (const row of rows) {
+      if (row.visible === anyVisible) onToggleVisible(row.name);
+    }
+  };
 
   // Imperatively set the displayed values for the bar at dataIndex (or the last
   // bar when null/out of range). Mirrors candleLegend's old formula: change is vs
@@ -294,7 +380,10 @@ export default function ChartLegend({
   useEffect(() => {
     updateValues(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, subPanes, insetLegend, ctx.symbol, ctx.precision, collapsed]);
+    // collapsedGroups for the same reason as `collapsed`: expanding a group
+    // re-mounts its member rows (fresh, empty value spans) without changing
+    // `rows`, so nothing would fill them until the next tick or crosshair move.
+  }, [rows, subPanes, insetLegend, ctx.symbol, ctx.precision, collapsed, collapsedGroups]);
 
   // Hovering a row drives BOTH the gray border + icon reveal (CSS, via this
   // signal) so they appear together on the exact row (matches the old behavior).
@@ -399,23 +488,45 @@ export default function ChartLegend({
         />
       </div>
 
-      {/* One row per candle-pane indicator (hidden entirely while collapsed). */}
+      {/* One row per candle-pane indicator (hidden entirely while collapsed).
+          Same-type instances (e.g. three FVGs) fold into a collapsible group;
+          a type with only one instance stays a plain row. */}
       {!collapsed &&
-        rows.map((row) => (
-          <IndicatorRow
-            key={row.name}
-            row={row}
-            selected={selectedName === row.name}
-            highlighted={highlightedName === row.name}
-            figureValuesRef={figureValuesRef}
-            setRowHover={setRowHover}
-            onSelectRow={onSelectRow}
-            onToggleVisible={onToggleVisible}
-            onOpenSettings={onOpenSettings}
-            onRemove={onRemove}
-            onOpenMenu={onOpenMenu}
-          />
-        ))}
+        groupRows(rows).map((entry) =>
+          entry.kind === "row" ? (
+            <IndicatorRow
+              key={entry.row.name}
+              row={entry.row}
+              selected={selectedName === entry.row.name}
+              highlighted={highlightedName === entry.row.name}
+              figureValuesRef={figureValuesRef}
+              setRowHover={setRowHover}
+              onSelectRow={onSelectRow}
+              onToggleVisible={onToggleVisible}
+              onOpenSettings={onOpenSettings}
+              onRemove={onRemove}
+              onOpenMenu={onOpenMenu}
+            />
+          ) : (
+            <IndicatorGroup
+              key={`group:${entry.indType}`}
+              indType={entry.indType}
+              rows={entry.rows}
+              collapsed={collapsedGroups.has(entry.indType)}
+              onToggleCollapsed={() => toggleGroupCollapsed(entry.indType)}
+              onToggleGroupVisible={() => toggleGroupVisible(entry.rows)}
+              selectedName={selectedName}
+              highlightedName={highlightedName}
+              figureValuesRef={figureValuesRef}
+              setRowHover={setRowHover}
+              onSelectRow={onSelectRow}
+              onToggleVisible={onToggleVisible}
+              onOpenSettings={onOpenSettings}
+              onRemove={onRemove}
+              onOpenMenu={onOpenMenu}
+            />
+          ),
+        )}
 
       {/* TV-style collapse chevron: its own mini-row under the indicator rows.
           Hover-revealed while expanded (CSS); always visible while collapsed. Only
@@ -665,6 +776,101 @@ function IndicatorRow({
   );
 }
 
+// A collapsible header for same-type candle-pane indicators (e.g. three FVGs),
+// followed by their rows when expanded. Mirrors the legend's own TV-style collapse
+// chevron (ICON_CHEVRON_UP, rotated via CSS) plus a hover-revealed eye that hides/
+// shows every member at once — the same `.cl-icons` reveal-on-hover the member
+// rows use, so it doesn't compete visually with them when idle.
+function IndicatorGroup({
+  indType,
+  rows,
+  collapsed,
+  onToggleCollapsed,
+  onToggleGroupVisible,
+  selectedName,
+  highlightedName,
+  figureValuesRef,
+  setRowHover,
+  onSelectRow,
+  onToggleVisible,
+  onOpenSettings,
+  onRemove,
+  onOpenMenu,
+}: {
+  indType: string;
+  rows: LegendRow[];
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  onToggleGroupVisible: () => void;
+  selectedName: string | null;
+  highlightedName: string | null;
+  figureValuesRef: RefObject<Map<string, HTMLSpanElement>>;
+  setRowHover: (name: string | null) => void;
+  onSelectRow: (name: string, figureKey?: string) => void;
+  onToggleVisible: (name: string) => void;
+  onOpenSettings: (name: string) => void;
+  onRemove: (name: string) => void;
+  onOpenMenu: (name: string, x: number, y: number) => void;
+}) {
+  const anyVisible = rows.some((r) => r.visible);
+  return (
+    <div className="cl-group">
+      <div
+        className={`cl-row cl-ind cl-group-header${anyVisible ? "" : " cl-hidden"}`}
+        onClick={onToggleCollapsed}
+      >
+        <button
+          className={`cl-icon cl-icon-svg cl-icon-stroke cl-group-chevron${
+            collapsed ? " cl-collapsed" : ""
+          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapsed();
+          }}
+        >
+          {ICON_CHEVRON_UP}
+        </button>
+        <span className="cl-name">
+          {rows[0].shortName}
+          <span className="cl-group-count"> · {rows.length}</span>
+        </span>
+        <span className={`cl-icons${anyVisible ? "" : " cl-icons-hidden-eye"}`}>
+          <Tooltip content={anyVisible ? "Hide all" : "Show all"}>
+            <button
+              className="cl-icon"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleGroupVisible();
+              }}
+            >
+              {anyVisible ? ICON_EYE : ICON_EYE_OFF}
+            </button>
+          </Tooltip>
+        </span>
+      </div>
+      {!collapsed && (
+        <div className="cl-group-rows">
+          {rows.map((row) => (
+            <IndicatorRow
+              key={row.name}
+              row={row}
+              selected={selectedName === row.name}
+              highlighted={highlightedName === row.name}
+              figureValuesRef={figureValuesRef}
+              setRowHover={setRowHover}
+              onSelectRow={onSelectRow}
+              onToggleVisible={onToggleVisible}
+              onOpenSettings={onOpenSettings}
+              onRemove={onRemove}
+              onOpenMenu={onOpenMenu}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // A sub-pane indicator legend: the rows for ONE pane below the chart (Volume, MACD,
 // RSI…), positioned by ChartCore at the top-left of that pane (where klinecharts
 // used to draw its blurry canvas legend). No symbol/OHLC row — just the indicator
@@ -772,6 +978,7 @@ function rowsForPane(
 ): LegendRow[] {
   const rows: LegendRow[] = [];
   for (const [name, ind] of inds ?? []) {
+    const indType = indTypeOf(ind);
     const hideValue =
       (ind.extendData as { hideLegendValue?: boolean } | undefined)?.hideLegendValue ?? false;
     // Indicators pinned to a timeframe (the chart's own or higher) show its short
@@ -785,7 +992,7 @@ function rowsForPane(
     // figure-less pane). AVWAP has no Timeframe control, so it never has one.
     const mtfOnlyText = mtfTf ? `(${mtfTf})` : "";
     const paramsText =
-      indTypeOf(ind) === "AVWAP"
+      indType === "AVWAP"
         ? ""
         : ind.calcParams?.length
           ? `(${[...ind.calcParams, ...(mtfTf ? [mtfTf] : [])].join(",")})`
@@ -817,7 +1024,7 @@ function rowsForPane(
     // the lookback at least one bar — so the message states that minimum.
     let warn: string | undefined;
     let summary: string | undefined;
-    if (indTypeOf(ind) === "PREV_HL") {
+    if (indType === "PREV_HL") {
       const ext = (ind.extendData ?? {}) as PrevHlExtend;
       if (dataList?.length) {
         const { degenerate, minDuration } = prevHlDegenerateInfo(dataList, ext);
@@ -839,6 +1046,7 @@ function rowsForPane(
       figures,
       warn,
       summary,
+      indType,
     });
   }
   return rows;
