@@ -14,11 +14,14 @@ import numpy as np
 
 from auto_trader.core.pattern_scan import Match
 from auto_trader.core.pattern_shape import (  # noqa: F401  (re-exported for variants/tests)
+    _light_z,
     activity_distance,
     activity_profile,
+    envelope_divergence_distance,
     multires_distance,
     pivot_distance,
     query_kernel,
+    query_pivots,
     smooth_close,
 )
 
@@ -79,6 +82,45 @@ def swing_penalty(query_close: np.ndarray, window_close: np.ndarray) -> float:
     return penalty
 
 
+# --- expanding-tops candidates (Sept 7 2026 session) -------------------------
+#
+# The envelope-divergence term WON (promoted to pattern_shape, imported
+# above): expanding-tops' endorsed EURUSD window unfound -> rank 3, all other
+# cases byte-identical. The wiggle term below (total-variation-over-range
+# log-ratio, a threshold-free pivot-density stand-in) is the recorded
+# negative: it never moved the case on its own or on top of the envelope
+# term — the oscillation rhythm the user pointed at is already carried by the
+# envelope pivots once they are detected on the light kernel.
+
+_TV_MIN_BARS = 16
+
+
+def _wiggle(close: np.ndarray) -> float:
+    """A path's oscillation budget: total variation of its lightly smoothed
+    z form over its z range. ~1 for a monotone move, growing with every
+    traversal — a continuous stand-in for 'how many swings', with no
+    reversal threshold to flip."""
+    z = _light_z(close)
+    rng = float(z.max() - z.min()) or 1e-9
+    return float(np.abs(np.diff(z, axis=0)).sum() / rng)
+
+
+def wiggle_distance(query_close: np.ndarray, window_close: np.ndarray) -> float:
+    """Log-ratio gap between the two paths' oscillation budgets: 0 when the
+    window is as busy as the query, ~0.7 when it has half or double the
+    traversal. The pivot-density complaint ('matches must share the query's
+    swing rhythm') as a threshold-free number."""
+    q = np.asarray(query_close, dtype=np.float64).ravel()
+    if q.size < _TV_MIN_BARS:
+        return 0.0
+    try:
+        tq = _wiggle(q)
+        tw = _wiggle(window_close)
+    except ValueError:
+        return float(np.inf)
+    return abs(float(np.log((tw + 1e-9) / (tq + 1e-9))))
+
+
 def rescore(
     series_close: np.ndarray,
     query_close: np.ndarray,
@@ -88,6 +130,8 @@ def rescore(
     use_swing: bool = False,
     activity_weight: float = 0.0,
     pivot_weight: float = 0.0,
+    envelope_weight: float = 0.0,
+    wiggle_weight: float = 0.0,
 ) -> list[Match]:
     """Re-rank scan candidates by multi-resolution shape (optionally plus the
     swing penalty), mirroring pattern_dtw.refine's contract: every field of a
@@ -102,6 +146,10 @@ def rescore(
             d += activity_weight * activity_distance(query_close, win)
         if pivot_weight > 0.0:
             d += pivot_weight * pivot_distance(query_close, win)
+        if envelope_weight > 0.0:
+            d += envelope_weight * envelope_divergence_distance(query_close, win)
+        if wiggle_weight > 0.0:
+            d += wiggle_weight * wiggle_distance(query_close, win)
         out.append(Match(start=h.start, length=h.length, distance=float(d), forward_len=h.forward_len))
     out.sort(key=lambda h: h.distance)
     return out

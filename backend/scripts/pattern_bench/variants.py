@@ -39,6 +39,13 @@ class Variant:
     # query's swing extremes against the window's at the same relative
     # positions — the lower-second-top decoy a pointwise distance shrugs at.
     pivot: float = 0.0
+    # Weight of the envelope-divergence term (0 = off): trendline slopes
+    # through the query's high pivots and low pivots vs the window's extremes
+    # at the same positions — an expanding structure vs a parallel channel.
+    envelope: float = 0.0
+    # Weight of the wiggle term (0 = off): total-variation-over-range
+    # log-ratio — the query's oscillation rhythm, threshold-free.
+    wiggle: float = 0.0
 
 
 VARIANTS: dict[str, Variant] = {
@@ -69,6 +76,14 @@ VARIANTS: dict[str, Variant] = {
         Variant("shape+piv.10", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.10),
         Variant("shape+piv.15", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.15),
         Variant("shape+piv.25", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.25),
+        # Envelope-divergence and wiggle terms on top of the shipped shape
+        # config (expanding-tops case candidates).
+        Variant("shape+env.10", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.1, envelope=0.10),
+        Variant("shape+env.20", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.1, envelope=0.20),
+        Variant("shape+wig.10", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.1, wiggle=0.10),
+        Variant("shape+wig.20", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.1, wiggle=0.20),
+        Variant("shape+env.10+wig.10", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.1, envelope=0.10, wiggle=0.10),
+        Variant("shape+env.20+wig.20", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.1, envelope=0.20, wiggle=0.20),
     )
 }
 
@@ -76,7 +91,8 @@ VARIANTS: dict[str, Variant] = {
 # pivot-level terms at pattern_shape's shipped weights (same code, imported
 # from core). Named here so reports read against the shipped configuration.
 VARIANTS["shape"] = Variant(
-    "shape", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.1
+    "shape", scan="close", smooth_frac=1 / 8, multires=True, activity=0.15, pivot=0.1,
+    envelope=0.2,
 )
 
 
@@ -105,6 +121,7 @@ def run_variant(
     refining = (
         variant.multires or variant.dtw or variant.swing
         or variant.activity > 0 or variant.pivot > 0
+        or variant.envelope > 0 or variant.wiggle > 0
     )
     hits, _ = scan(
         scan_arr,
@@ -118,13 +135,15 @@ def run_variant(
         scales=DEFAULT_SCALES,
     )
 
-    if variant.multires or variant.swing or variant.activity or variant.pivot:
+    if (variant.multires or variant.swing or variant.activity or variant.pivot
+            or variant.envelope or variant.wiggle):
         # Refinement looks at the RAW close path, not the smoothed scan array:
         # stage one decides what surfaces, stage two ranks what the user sees.
         hits = rescore(
             close_series, close_query, hits,
             use_multires=variant.multires, use_swing=variant.swing,
             activity_weight=variant.activity, pivot_weight=variant.pivot,
+            envelope_weight=variant.envelope, wiggle_weight=variant.wiggle,
         )
     if variant.dtw:
         hits = dtw_refine(scan_arr, scan_query, hits)

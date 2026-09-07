@@ -10,7 +10,9 @@ a different price story.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -310,6 +312,39 @@ def case_extreme_tempo() -> Case:
     )
 
 
+def case_expanding_tops() -> Case:
+    # The one case whose ground truth is HUMAN-labelled, not by-construction:
+    # real windows from a Sept 7 2026 session where the user judged Patterns'
+    # results on an OIL_CRUDE 3m selection (impulse bar, then an expanding
+    # pivot-rich consolidation: swing highs stair-stepping up a tight trendline
+    # over a flat-to-slightly-lower floor, ~10 pivots/60 bars). The fixture
+    # holds the raw OHLC of the query, the two matches the user endorsed
+    # (EURUSD 1W, INTC 1W — same expansion, same busy pivot rhythm) and five
+    # windows the user rejected, each of which had fooled a simpler metric
+    # (staircase uptrends, flat shelves, few-broad-swing expansions). Windows
+    # are rescaled about their mean close to a common amplitude in host
+    # bar-scales; labelling by eye is not circular here because no matcher
+    # under test produced the labels.
+    ts, ohlc = load_segment(DB_PATH, "dukascopy", "US100", "MINUTE_5", 1708000000, 1720000000)
+    scale = bar_scale(ohlc)
+    fixture = json.loads((Path(__file__).parent / "expanding_tops_windows.json").read_text())
+
+    def rescaled(w: dict) -> np.ndarray:
+        bars = np.asarray(w["ohlc"], dtype=np.float64)
+        closes = bars[:, 3]
+        span = float(closes.max() - closes.min()) or 1.0
+        return (bars - closes.mean()) * (30.0 * scale / span)
+
+    query = rescaled(fixture["query"][0])
+    goods = [rescaled(w) for w in fixture["good"]]
+    bads = [rescaled(w) for w in fixture["bad"]]
+    return _assemble(
+        "expanding-tops",
+        "A real expanding pivot-rich consolidation; user-endorsed matches vs the staircase/flat-shelf windows the user rejected.",
+        ts, ohlc, query, goods, bads,
+    )
+
+
 ALL_CASES = (
     case_v_bottom_noise,
     case_tempo_warp,
@@ -321,4 +356,5 @@ ALL_CASES = (
     case_flat_lead_trap,
     case_pivot_trap,
     case_extreme_tempo,
+    case_expanding_tops,
 )

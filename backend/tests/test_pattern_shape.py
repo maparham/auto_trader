@@ -275,3 +275,77 @@ class TestActivityProfile:
         ]
         out = refine(series, q.reshape(-1, 1), hits)
         assert out[0].start == 10  # structured lead wins
+
+
+# The expanding consolidation the envelope term exists for: an impulse, then
+# swing highs stair-stepping upward while the swing lows hold nearly flat —
+# and its two decoys: a staircase (both envelopes rising in parallel) and a
+# flat channel chop (neither rising).
+_EXPANDING = ((0.0, 0.0), (0.06, 0.55), (0.18, 0.72), (0.28, 0.50), (0.38, 0.80),
+              (0.48, 0.52), (0.58, 0.88), (0.68, 0.54), (0.82, 1.0), (1.0, 0.78))
+_STAIRCASE = ((0.0, 0.0), (0.12, 0.30), (0.24, 0.18), (0.36, 0.48), (0.48, 0.36),
+              (0.60, 0.66), (0.72, 0.54), (0.84, 0.86), (1.0, 1.0))
+_FLAT_CHOP = ((0.0, 0.0), (0.06, 0.6), (0.18, 0.75), (0.28, 0.45), (0.38, 0.75),
+              (0.48, 0.45), (0.58, 0.75), (0.68, 0.45), (0.82, 0.75), (1.0, 0.6))
+
+
+class TestEnvelopeDivergenceDistance:
+    """The envelope-divergence term: the query's top and floor trendlines
+    (through its light-kernel pivots) must trend the same way in the window —
+    an expanding consolidation vs the staircase with the same silhouette."""
+
+    def test_identical_path_scores_near_zero(self):
+        from auto_trader.core.pattern_shape import envelope_divergence_distance
+
+        rng = np.random.default_rng(30)
+        q = _knot_path(_EXPANDING, 60) + rng.normal(0, 0.4, 60)
+        assert envelope_divergence_distance(q, q.copy()) == pytest.approx(0.0, abs=1e-9)
+
+    def test_level_and_scale_drop_out(self):
+        from auto_trader.core.pattern_shape import envelope_divergence_distance
+
+        rng = np.random.default_rng(31)
+        q = _knot_path(_EXPANDING, 60) + rng.normal(0, 0.4, 60)
+        assert envelope_divergence_distance(q, q * 3.0 + 500.0) == pytest.approx(0.0, abs=1e-9)
+
+    def test_staircase_scores_worse_than_true_recurrence(self):
+        from auto_trader.core.pattern_shape import envelope_divergence_distance
+
+        rng = np.random.default_rng(32)
+        q = _knot_path(_EXPANDING, 60) + rng.normal(0, 0.4, 60)
+        true_rec = _knot_path(_EXPANDING, 60) + rng.normal(0, 0.8, 60)
+        stair = _knot_path(_STAIRCASE, 60) + rng.normal(0, 0.4, 60)
+        chop = _knot_path(_FLAT_CHOP, 60) + rng.normal(0, 0.4, 60)
+        d_rec = envelope_divergence_distance(q, true_rec)
+        assert d_rec < envelope_divergence_distance(q, stair)
+        assert d_rec < envelope_divergence_distance(q, chop)
+
+    def test_sparse_query_gates_off(self):
+        from auto_trader.core.pattern_shape import envelope_divergence_distance
+
+        # A clean V has at most one pivot per side: the term must not engage.
+        v = _knot_path(((0.0, 1.0), (0.5, 0.0), (1.0, 0.95)), 48)
+        anything = _knot_path(_STAIRCASE, 48)
+        assert envelope_divergence_distance(v, anything) == 0.0
+
+    def test_short_query_gated_off(self):
+        from auto_trader.core.pattern_shape import envelope_divergence_distance
+
+        q = _knot_path(_EXPANDING, 12)
+        assert envelope_divergence_distance(q, _knot_path(_STAIRCASE, 12)) == 0.0
+
+    def test_refine_demotes_staircase_decoy(self):
+        from auto_trader.core.pattern_scan import Match
+        from auto_trader.core.pattern_shape import refine
+
+        rng = np.random.default_rng(33)
+        q = _knot_path(_EXPANDING, 60) + rng.normal(0, 0.4, 60)
+        true_rec = _knot_path(_EXPANDING, 60) + rng.normal(0, 0.8, 60)
+        stair = _knot_path(_STAIRCASE, 60) + rng.normal(0, 0.4, 60)
+        series = np.concatenate([stair, np.full(20, stair[-1]), true_rec]).reshape(-1, 1)
+        hits = [
+            Match(start=0, length=60, distance=0.1, forward_len=0),  # staircase first
+            Match(start=80, length=60, distance=0.2, forward_len=0),
+        ]
+        out = refine(series, q.reshape(-1, 1), hits)
+        assert out[0].start == 80  # the expanding recurrence wins
