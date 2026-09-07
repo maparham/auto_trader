@@ -2874,6 +2874,7 @@ export default function App() {
                 message: a.message,
                 expiresAt: a.expiresAt,
                 notify: a.notify,
+                startAtCreation: a.startAtCreation,
               }}
               defaults={settings.alertDefaults}
               now={Date.now()}

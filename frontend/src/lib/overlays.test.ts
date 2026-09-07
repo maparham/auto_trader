@@ -425,7 +425,7 @@ describe("OverlayManager alert-level rounding (no raw cursor-pixel floats)", () 
     const { chart, m } = setup();
     m.setPricePrecision(2);
     const id = m.addAlert(RAW, { condition: "crossing", trigger: "every", message: "" })!;
-    expect(ovById(chart, id)!.points).toEqual([{ value: 70.64 }]);
+    expect((ovById(chart, id)!.points as Array<Record<string, unknown>>)[0]).toMatchObject({ value: 70.64 });
     expect(m.getAlert(id)!.level).toBe(70.64);
   });
 
@@ -441,7 +441,8 @@ describe("OverlayManager alert-level rounding (no raw cursor-pixel floats)", () 
     const { chart, m } = setup();
     // Simulate an alert stored before rounding-on-write existed: write raw directly.
     const id = m.addAlert(RAW, { condition: "crossing", trigger: "every", message: "" })!;
-    expect(ovById(chart, id)!.points).toEqual([{ value: RAW }]); // raw on disk (precision unset)
+    // raw on disk (precision unset)
+    expect((ovById(chart, id)!.points as Array<Record<string, unknown>>)[0]).toMatchObject({ value: RAW });
     m.setPricePrecision(2);
     expect(m.getAlert(id)!.level).toBe(70.64); // but the modal sees it clean
   });
@@ -2428,27 +2429,116 @@ describe("OverlayManager trade-drawing defaults and templates", () => {
   });
 });
 
-describe("OverlayManager alert drag restores a value-only anchor", () => {
-  // klinecharts writes dataIndex+timestamp into the point on any drag. The
-  // built-in priceLine then draws from that bar's x instead of x=0 — pan away
-  // and the dashed alert line runs from an arbitrarily distant x every frame.
-  // The drop handler must ALWAYS restore a value-only point, not only when
-  // the level happens to round.
-  it("strips the drag's bar anchor even when the price needs no rounding", () => {
-    const { chart, m } = setup();
-    m.setPricePrecision(2);
-    const id = m.addAlert(70.64, { condition: "crossing", trigger: "every", message: "" })!;
+describe("OverlayManager alert drag restores the alert's own anchor", () => {
+  // klinecharts writes dataIndex+timestamp into the point on any drag, and the
+  // built-in priceLine then draws from whatever bar the drop landed on — pan away
+  // and the dashed alert line runs from an arbitrarily distant x every frame. The
+  // drop handler must ALWAYS rewrite the point (not only when the level rounds)
+  // back to the x-start the alert owns: its creation time, or none at all.
+  function dropAfterDrag(chart: FakeChart, id: string, value: number) {
     const ov = ovById(chart, id)!;
-    // Simulate klinecharts' drag write: bar anchor added, price already clean.
     (ov.points as Array<Record<string, unknown>>)[0] = {
-      value: 70.64,
+      value,
       dataIndex: 12345,
       timestamp: 1_700_000_000_000,
     };
     (ov as unknown as { onPressedMoveEnd: (e: unknown) => void }).onPressedMoveEnd({ overlay: ov });
-    const after = ovById(chart, id)!.points as Array<Record<string, unknown>>;
+    return ovById(chart, id)!.points as Array<Record<string, unknown>>;
+  }
+
+  it("re-stamps the creation time over the drag's bar anchor", () => {
+    const { chart, m } = setup();
+    m.setPricePrecision(2);
+    const before = Date.now();
+    const id = m.addAlert(70.64, { condition: "crossing", trigger: "every", message: "" })!;
+    const after = dropAfterDrag(chart, id, 70.64);
+    expect(after[0].value).toBe(70.64);
+    expect(after[0].dataIndex).toBeUndefined();
+    expect(after[0].timestamp as number).toBeGreaterThanOrEqual(before);
+  });
+
+  it("strips the anchor entirely when the line spans the pane (startAtCreation off)", () => {
+    const { chart, m } = setup();
+    m.setPricePrecision(2);
+    const id = m.addAlert(70.64, {
+      condition: "crossing", trigger: "every", message: "", startAtCreation: false,
+    })!;
+    const after = dropAfterDrag(chart, id, 70.64);
     expect(after[0].value).toBe(70.64);
     expect(after[0].dataIndex).toBeUndefined();
     expect(after[0].timestamp).toBeUndefined();
+  });
+});
+
+describe("OverlayManager alert lines start at their creation time", () => {
+  it("anchors a new alert's line to the moment it was created", () => {
+    const { chart, m } = setup();
+    const before = Date.now();
+    const id = m.addAlert(100, { condition: "crossing", trigger: "every", message: "" })!;
+    const pt = (ovById(chart, id)!.points as Array<Record<string, unknown>>)[0];
+    expect(pt.value).toBe(100);
+    expect(pt.timestamp as number).toBeGreaterThanOrEqual(before);
+  });
+
+  it("clamps the anchor to the last bar so the line never starts past the data", () => {
+    const { chart, m } = setup();
+    // 1D bars ending last Friday; "now" (createdAt) is days past the newest bar.
+    // Unclamped, klinecharts extrapolates into the blank space right of the data
+    // and the line starts several bars into the future.
+    const lastBar = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    chart.data = [
+      { timestamp: lastBar - 24 * 60 * 60 * 1000 },
+      { timestamp: lastBar },
+    ];
+    const id = m.addAlert(100, { condition: "crossing", trigger: "every", message: "" })!;
+    const pt = (ovById(chart, id)!.points as Array<Record<string, unknown>>)[0];
+    expect(pt.timestamp).toBe(lastBar);
+  });
+
+  it("keeps the exact creation time when it falls inside the loaded bars", () => {
+    const { chart, m } = setup();
+    chart.data = [{ timestamp: Date.now() + 60_000 }];
+    const before = Date.now();
+    const id = m.addAlert(100, { condition: "crossing", trigger: "every", message: "" })!;
+    const pt = (ovById(chart, id)!.points as Array<Record<string, unknown>>)[0];
+    expect(pt.timestamp as number).toBeGreaterThanOrEqual(before);
+  });
+
+  it("leaves the line value-only when the option is off", () => {
+    const { chart, m } = setup();
+    const id = m.addAlert(100, {
+      condition: "crossing", trigger: "every", message: "", startAtCreation: false,
+    })!;
+    expect((ovById(chart, id)!.points as Array<Record<string, unknown>>)[0].timestamp)
+      .toBeUndefined();
+  });
+
+  it("toggleAlertLineStart flips the anchor in place and reports it via getAlerts", () => {
+    const { chart, m } = setup();
+    const id = m.addAlert(100, { condition: "crossing", trigger: "every", message: "" })!;
+    const flag = () => m.getAlerts().find((a) => a.id === id)!.startAtCreation;
+    const ts = () => (ovById(chart, id)!.points as Array<Record<string, unknown>>)[0].timestamp;
+    expect(flag()).toBe(true);
+    expect(ts()).toBeGreaterThan(0);
+
+    m.toggleAlertLineStart(id);
+    expect(flag()).toBe(false);
+    expect(ts()).toBeUndefined(); // line now spans the pane
+
+    m.toggleAlertLineStart(id);
+    expect(flag()).toBe(true);
+    expect(ts()).toBeGreaterThan(0);
+  });
+
+  it("moves the x-start when the edit modal toggles the option", () => {
+    const { chart, m } = setup();
+    const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
+    const id = m.addAlert(100, cfg)!;
+    m.updateAlert(id, 100, { ...cfg, startAtCreation: false });
+    expect((ovById(chart, id)!.points as Array<Record<string, unknown>>)[0].timestamp)
+      .toBeUndefined();
+    m.updateAlert(id, 100, { ...cfg, startAtCreation: true });
+    expect((ovById(chart, id)!.points as Array<Record<string, unknown>>)[0].timestamp)
+      .toBeGreaterThan(0);
   });
 });

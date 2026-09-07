@@ -501,6 +501,23 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
               </div>
             </div>
 
+            <div className="setting-row">
+              <label>Alert line</label>
+              <label className="notify-toggle">
+                <input
+                  type="checkbox"
+                  checked={ad.startAtCreation}
+                  onChange={(e) => setAd({ startAtCreation: e.target.checked })}
+                />
+                Start line at creation time
+              </label>
+            </div>
+            <div className="setting-hint">
+              The line begins at the bar the alert was created on, so it says nothing
+              about the bars before it. When off, it spans the whole chart. Every alert
+              can override this in its own settings.
+            </div>
+
             <NotificationSettings />
           </>
         )}

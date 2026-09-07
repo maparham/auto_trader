@@ -70,6 +70,10 @@ export interface AlertDefaults {
   trigger: AlertTrigger;
   expiry: AlertExpiry;
   notify: AlertNotify;
+  // Whether a new alert's chart line starts at the bar it was created on
+  // (rather than spanning the whole pane). Per-alert override lives in the
+  // create/edit modal; this is only the value a fresh alert inherits.
+  startAtCreation: boolean;
 }
 
 export interface Settings {
@@ -173,6 +177,7 @@ const DEFAULT_ALERT_DEFAULTS: AlertDefaults = {
   trigger: "once",
   expiry: { kind: "open" },
   notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+  startAtCreation: true,
 };
 
 // Dashed, black at half opacity (so it reads as a muted grey over the chart) at the

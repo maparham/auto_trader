@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import Tooltip from "./components/Tooltip";
+import InfoTip from "./components/InfoTip";
 import type { AlertCondition, AlertNotifyChannels, AlertTrigger } from "./lib/persist";
 import { openSettings } from "./lib/signals";
 import type { AlertDefaults } from "./theme";
@@ -27,6 +28,9 @@ interface AlertDraft {
   message: string;
   expiresAt: number | null;
   notify: AlertNotifyChannels;
+  // Draw the line from the alert's creation time rather than across the whole
+  // pane. On by default — an alert says nothing about the bars that predate it.
+  startAtCreation: boolean;
 }
 
 interface Props {
@@ -40,6 +44,7 @@ interface Props {
     message: string;
     expiresAt?: number | null;
     notify?: AlertNotifyChannels;
+    startAtCreation?: boolean;
   };
   // Defaults a NEW alert inherits (Settings → Alerts). Ignored in edit mode.
   defaults: AlertDefaults;
@@ -96,6 +101,9 @@ export default function AlertModal({
   const [notify, setNotify] = useState<AlertNotifyChannels>(
     initial?.notify ?? (isEdit ? ALL_ON : defaults.notify),
   );
+  const [startAtCreation, setStartAtCreation] = useState(
+    initial?.startAtCreation ?? (isEdit ? true : defaults.startAtCreation),
+  );
   const num = Number(value);
   const valid = value.trim() !== "" && Number.isFinite(num);
   const condLabel = CONDITIONS.find((c) => c.value === condition)?.label ?? "";
@@ -103,7 +111,14 @@ export default function AlertModal({
 
   function create() {
     if (!valid) return;
-    onCreate(num, { condition, trigger, message: message.trim() || autoMsg, expiresAt, notify });
+    onCreate(num, {
+      condition,
+      trigger,
+      message: message.trim() || autoMsg,
+      expiresAt,
+      notify,
+      startAtCreation,
+    });
   }
 
   const foot = (
@@ -234,6 +249,25 @@ export default function AlertModal({
               ))}
             </div>
           </div>
+
+          {/* Where the line starts. A plain checkbox + sentence (the .notify-toggle
+              row Settings uses for the same shape), not a chip — the chip's fill
+              read as decoration rather than an on/off state. */}
+          <label className="notify-toggle">
+            <input
+              type="checkbox"
+              checked={startAtCreation}
+              onChange={(e) => setStartAtCreation(e.target.checked)}
+            />
+            Start line at creation time
+            <InfoTip
+              title="Start line at creation time"
+              text={[
+                "Draw the alert line from the bar it was created on instead of across the whole chart.",
+                "Off: the line spans every bar, including the ones the alert never watched.",
+              ]}
+            />
+          </label>
         </div>
     </FloatingModal>
   );

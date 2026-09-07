@@ -150,6 +150,83 @@ describe("addStoredAlert", () => {
   });
 });
 
+describe("startAtCreation (where the chart line starts)", () => {
+  it("rides in the POST params, defaulted on when the caller omits it", async () => {
+    const broker = freshBroker();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await addStoredAlert("US100", SAVED, broker);
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.params.startAtCreation).toBe(true);
+  });
+
+  it("defaults on when reading back a server row saved before the flag existed", async () => {
+    const broker = freshBroker();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse({ alerts: [alertRow({ broker })] }))),
+    );
+
+    await hydrateAlerts();
+
+    expect(loadStoredAlert("US100", "al-1", broker)!.startAtCreation).toBe(true);
+  });
+
+  it("round-trips an off flag from the server row's params", async () => {
+    const broker = freshBroker();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            alerts: [
+              alertRow({
+                broker,
+                params: { level: 100, condition: "crossing", trigger: "every", startAtCreation: false },
+              }),
+            ],
+          }),
+        ),
+      ),
+    );
+
+    await hydrateAlerts();
+
+    expect(loadStoredAlert("US100", "al-1", broker)!.startAtCreation).toBe(false);
+  });
+
+  it("transmits a toggle in the PATCH params (an edit that leaves the level alone)", async () => {
+    vi.useFakeTimers();
+    const broker = freshBroker();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    await addStoredAlert("US100", SAVED, broker);
+    fetchMock.mockClear();
+
+    updateStoredAlert(
+      "US100",
+      SAVED.id,
+      SAVED.level,
+      {
+        condition: SAVED.condition,
+        trigger: SAVED.trigger,
+        message: SAVED.message,
+        expiresAt: null,
+        notify: SAVED.notify!,
+        startAtCreation: false,
+      },
+      broker,
+    );
+    await vi.advanceTimersByTimeAsync(300);
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.params.startAtCreation).toBe(false);
+    expect(loadStoredAlert("US100", SAVED.id, broker)!.startAtCreation).toBe(false);
+  });
+});
+
 describe("updateStoredAlert", () => {
   it("debounces two rapid updates into a single trailing PATCH", async () => {
     vi.useFakeTimers();
@@ -168,6 +245,7 @@ describe("updateStoredAlert", () => {
       message: "first",
       expiresAt: null,
       notify: SAVED.notify!,
+      startAtCreation: true,
     };
     updateStoredAlert("US100", SAVED.id, 60, cfg, broker);
     updateStoredAlert("US100", SAVED.id, 65, { ...cfg, message: "second" }, broker);

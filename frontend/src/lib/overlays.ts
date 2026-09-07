@@ -102,6 +102,10 @@ export interface AlertConfig {
   expiresAt?: number | null;
   // Which notification channels fire on trigger (absent = all on).
   notify?: AlertNotifyChannels;
+  // Draw the line from the alert's creation time instead of across the whole
+  // pane (absent = on). See alertPoints(). Cosmetic only — never sent to the
+  // engine's firing signature.
+  startAtCreation?: boolean;
 }
 
 // Per-drawing config stashed on the overlay's `extendData` (persisted as-is via
@@ -177,6 +181,7 @@ function sameAlertCfg(cfg: AlertConfig, a: SavedAlert): boolean {
     cfg.trigger === a.trigger &&
     cfg.message === a.message &&
     (cfg.expiresAt ?? null) === (a.expiresAt ?? null) &&
+    (cfg.startAtCreation ?? true) === (a.startAtCreation ?? true) &&
     NOTIFY_CHANNELS.every((ch) => (cfg.notify?.[ch] ?? true) === (a.notify?.[ch] ?? true))
   );
 }
@@ -568,6 +573,7 @@ export class OverlayManager {
           push: true,
           telegram: true,
         },
+        startAtCreation: cfg.startAtCreation ?? true,
       },
       this.broker || undefined,
     );
@@ -891,6 +897,7 @@ export class OverlayManager {
     trigger: AlertTrigger;
     message: string;
     expiresAt: number | null;
+    startAtCreation: boolean;
     createdAt: number;
     hovered: boolean;
     active: boolean;
@@ -904,6 +911,7 @@ export class OverlayManager {
       trigger: AlertTrigger;
       message: string;
       expiresAt: number | null;
+      startAtCreation: boolean;
       createdAt: number;
       hovered: boolean;
       active: boolean;
@@ -925,6 +933,7 @@ export class OverlayManager {
         trigger: cfg?.trigger ?? "every",
         message: cfg?.message ?? "",
         expiresAt: cfg?.expiresAt ?? null,
+        startAtCreation: cfg?.startAtCreation ?? true,
         createdAt: this.alertCreatedAt.get(id) ?? 0,
         hovered,
         active: hovered || dragging || id === this.selectedAlertId,
@@ -979,6 +988,23 @@ export class OverlayManager {
     this.alertCfg.set(id, next);
     const level = this.byId(id)?.points?.[0]?.value;
     if (level != null) this.writeAlertUpdate(id, level, next); // by-id intent, not persist()
+    this.notifyAlerts();
+  }
+
+  // Flip where an alert's line starts (creation bar ↔ whole pane) in place — the
+  // sidebar row's clickable badge. Cosmetic only: unlike toggleAlertTrigger this
+  // leaves the engine's signature (level|condition|trigger) alone, so nothing
+  // re-arms. Persists + notifies; alertPoints re-anchors the line off the new cfg.
+  toggleAlertLineStart(id: string): void {
+    if (!this.chart || this.entries.get(id) !== "alert") return;
+    const cfg = this.alertCfg.get(id);
+    if (!cfg) return;
+    const next: AlertConfig = { ...cfg, startAtCreation: !(cfg.startAtCreation ?? true) };
+    this.alertCfg.set(id, next); // BEFORE the points rewrite — alertPoints reads it
+    const level = this.byId(id)?.points?.[0]?.value;
+    if (level == null) return;
+    this.chart.overrideOverlay({ id, points: this.alertPoints(id, level) });
+    this.writeAlertUpdate(id, level, next); // by-id intent, not persist()
     this.notifyAlerts();
   }
 
@@ -1040,6 +1066,13 @@ export class OverlayManager {
       // drawings the price tag is on by default but user-toggleable (Visibility
       // tab) — honor extendData.priceLabels when present so rehydrate restores it.
       needDefaultYAxisFigure: isAlert || isMeasure || isRangeBand || isSlope ? false : asDrawingExtra(extra?.extendData).priceLabels ?? true,
+      // Same reasoning on the time axis, for alerts only: a startAtCreation line
+      // carries a real timestamp, and klinecharts would stamp its date under the
+      // line's start whenever it's click-selected. Spread rather than passed as
+      // `undefined` — createOverlay's config merge writes any OWN key over the
+      // library default, so an explicit undefined would silently disable the
+      // x-axis label for drawings too (same gotcha as `visible`/`mode` above).
+      ...(isAlert ? { needDefaultXAxisFigure: false } : {}),
       // v10 changed the right-click contract: the return value no longer suppresses
       // klinecharts' default "delete the overlay on right-click" — only calling
       // e.preventDefault() does (OverlayView._figureMouseRightClickEvent removes the
@@ -1148,12 +1181,17 @@ export class OverlayManager {
           const raw = e.overlay.points?.[0]?.value;
           if (raw != null) {
             const rounded = this.roundLevel(raw);
-            // ALWAYS restore a value-only point, not just when rounding moved
+            // ALWAYS restore the alert's OWN point, not just when rounding moved
             // it: klinecharts writes dataIndex+timestamp into the point on any
-            // drag, and the built-in priceLine then draws from that bar's x
-            // instead of x=0 — pan away and the dashed line runs from an
-            // arbitrarily distant x on every frame.
-            this.chart?.overrideOverlay({ id: e.overlay.id, points: [{ value: rounded }] });
+            // drag, and the built-in priceLine then draws from whatever bar the
+            // drop landed on — pan away and the dashed line runs from an
+            // arbitrarily distant x on every frame. alertPoints re-stamps the
+            // creation time (or drops the timestamp entirely) so the x-start stays
+            // the one the alert owns.
+            this.chart?.overrideOverlay({
+              id: e.overlay.id,
+              points: this.alertPoints(e.overlay.id, rounded),
+            });
             const cfg = this.alertCfg.get(e.overlay.id);
             if (cfg) this.writeAlertUpdate(e.overlay.id, rounded, cfg);
           }
@@ -2447,8 +2485,10 @@ export class OverlayManager {
   updateAlert(id: string, level: number, cfg: AlertConfig): void {
     if (!this.chart || this.entries.get(id) !== "alert") return;
     level = this.roundLevel(level);
-    this.chart.overrideOverlay({ id, points: [{ value: level }] }); // update the view
     this.alertCfg.set(id, cfg);
+    // Points AFTER the config: a toggled startAtCreation changes where the line
+    // starts, and alertPoints reads the cached config to decide.
+    this.chart.overrideOverlay({ id, points: this.alertPoints(id, level) }); // update the view
     this.writeAlertUpdate(id, level, cfg); // by-id storage intent, not persist()
     this.notifyAlerts();
   }
@@ -2544,16 +2584,19 @@ export class OverlayManager {
           }
           // Already present — pull the level/config forward if it drifted elsewhere.
           const ov = this.byId(ovId);
-          if (ov && ov.points?.[0]?.value !== a.level) {
-            this.chart!.overrideOverlay({ id: ovId, points: [{ value: a.level }] });
-            changed = true;
-          }
+          const levelDrift = !!ov && ov.points?.[0]?.value !== a.level;
           const cfg = this.alertCfg.get(ovId);
-          if (!cfg || !sameAlertCfg(cfg, a)) {
-            this.alertCfg.set(ovId, this.cfgFromSaved(a));
+          const cfgDrift = !cfg || !sameAlertCfg(cfg, a);
+          // Config + creation time BEFORE the points rewrite — alertPoints reads both.
+          if (cfgDrift) this.alertCfg.set(ovId, this.cfgFromSaved(a));
+          this.alertCreatedAt.set(ovId, a.createdAt ?? 0);
+          // A startAtCreation toggle is cfg drift at an UNCHANGED level, so the
+          // points rewrite can't be gated on the level alone or a peer cell would
+          // keep drawing from the old x-start.
+          if (levelDrift || cfgDrift) {
+            this.chart!.overrideOverlay({ id: ovId, points: this.alertPoints(ovId, a.level) });
             changed = true;
           }
-          this.alertCreatedAt.set(ovId, a.createdAt ?? 0);
         }
       });
       if (changed) this.notifyAlerts();
@@ -2671,7 +2714,32 @@ export class OverlayManager {
       message: a.message,
       expiresAt: a.expiresAt ?? null,
       notify: a.notify,
+      startAtCreation: a.startAtCreation ?? true,
     };
+  }
+
+  // The point an alert line is drawn from. klinecharts' built-in priceLine runs its
+  // line from the point's x to the right edge, and a point carrying only a `value`
+  // resolves to x=0 — so a value-only point spans the whole pane, while a point
+  // stamped with the creation time starts the line there ("alerts don't concern the
+  // past bars"). Legacy rows have createdAt 0: keep those full-width rather than
+  // handing klinecharts a 1970 timestamp to extrapolate from. A creation time older
+  // than the loaded bars clamps to the first bar, which reads as full-width too.
+  //
+  // CLAMPED TO THE LAST BAR. Wall-clock "now" routinely sits PAST the newest candle
+  // — a 1D chart over a weekend is days past it, and even intraday the forming bar
+  // opened minutes ago — and klinecharts extrapolates a beyond-data timestamp into
+  // the blank space right of the data instead of clamping. Unclamped, a fresh alert
+  // starts several bars into the future with a visible gap after the last candle.
+  // The bar the alert was created IN is the honest anchor, and it stays correct as
+  // later bars arrive.
+  private alertPoints(id: string, level: number): { value: number; timestamp?: number }[] {
+    const cfg = this.alertCfg.get(id);
+    const createdAt = this.alertCreatedAt.get(id) ?? 0;
+    if (!(cfg?.startAtCreation ?? true) || createdAt <= 0) return [{ value: level }];
+    const bars = this.chart?.getDataList() ?? [];
+    const last = bars[bars.length - 1];
+    return [{ value: level, timestamp: last ? Math.min(createdAt, last.timestamp) : createdAt }];
   }
 
   // Materialise a saved alert row as this cell's on-chart line and register its id
@@ -2698,6 +2766,12 @@ export class OverlayManager {
     // persist() writes it back explicitly, locking a backfilled id.
     this.alertIds.set(id, a.id);
     this.alertCreatedAt.set(id, a.createdAt ?? 0);
+    // The line is created value-only above (the overlay id the maps are keyed by
+    // only exists once createOverlay returns), then anchored here now that its
+    // config + creation time are registered — skipped when it would re-write the
+    // same value-only point (flag off, or a legacy row with no creation time).
+    const points = this.alertPoints(id, a.level);
+    if (points[0].timestamp != null) this.chart?.overrideOverlay({ id, points });
     return id;
   }
 

@@ -683,6 +683,13 @@
   font-size: 11px; color: var(--text-faint); border: 1px solid var(--border);
   border-radius: 3px; padding: 1px 6px;
 }
+/* The badge as a control (alert line start): same chip, but clickable — so it
+   needs the button reset plus a hover cue the static badge doesn't have. */
+.ap-badge-btn {
+  background: transparent; font: inherit; font-size: 11px; line-height: inherit;
+  cursor: pointer;
+}
+.ap-badge-btn:hover { color: var(--text); border-color: color-mix(in srgb, var(--text) 30%, var(--border)); }
 .ap-del { background: transparent; border: none; cursor: pointer; opacity: 0.6; padding: 0 4px; }
 .ap-del:hover { opacity: 1; }
 .ap-row-actions { display: flex; align-items: center; gap: 2px; }

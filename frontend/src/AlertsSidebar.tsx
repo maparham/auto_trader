@@ -29,11 +29,37 @@ import {
   loadTriggeredSeen,
   pushTriggeredSeen,
   deleteStoredAlert,
+  updateStoredAlert,
   normalizeAlert,
   CONDITION_LABELS,
   type TriggeredAlert,
   type SavedAlert,
 } from "./lib/persist";
+
+// Where an alert's line starts, as a clickable badge beside the trigger one. The
+// state is worth showing on the row (a full-width line is the exception now), and
+// the flip is one cosmetic bit — cheaper here than opening the edit modal for it.
+function LineStartBadge({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <Tooltip
+      content={
+        on
+          ? "Line starts at the bar this alert was created on. Click to span the whole chart."
+          : "Line spans the whole chart. Click to start it at the bar this alert was created on."
+      }
+    >
+      <button
+        className="ap-badge ap-badge-btn"
+        onClick={(e) => {
+          e.stopPropagation(); // the row itself selects/deselects the line
+          onToggle();
+        }}
+      >
+        {on ? "From creation" : "Full width"}
+      </button>
+    </Tooltip>
+  );
+}
 
 // A live, on-screen cell whose alert lines the panel can highlight directly. The
 // active tab can show several (split layouts), so an alert whose epic matches ANY
@@ -475,6 +501,28 @@ export default function AlertsSidebar({
                         <span className="ap-badge">
                           {a.trigger === "once" ? "Once" : "Every time"}
                         </span>
+                        <LineStartBadge
+                          on={a.startAtCreation ?? true}
+                          onToggle={() => {
+                            // Storage-level write: this row's chart may be closed, and
+                            // every open cell re-anchors its line off the bump.
+                            updateStoredAlert(
+                              g.epic,
+                              a.id,
+                              a.level,
+                              {
+                                condition: a.condition,
+                                trigger: a.trigger,
+                                message: a.message,
+                                expiresAt: a.expiresAt ?? null,
+                                notify: normalizeAlert(a).notify!,
+                                startAtCreation: !(a.startAtCreation ?? true),
+                              },
+                              brokerId,
+                            );
+                            bumpAlerts();
+                          }}
+                        />
                         <div className="ap-row-actions">
                           <Tooltip content="Go to chart">
                           <button
@@ -560,6 +608,10 @@ export default function AlertsSidebar({
                     <span className="ap-badge">
                       {a.trigger === "once" ? "Once" : "Every time"}
                     </span>
+                    <LineStartBadge
+                      on={a.startAtCreation}
+                      onToggle={() => overlays?.toggleAlertLineStart(a.id)}
+                    />
                     <div className="ap-row-actions">
                       <Tooltip content="Go to chart">
                       <button

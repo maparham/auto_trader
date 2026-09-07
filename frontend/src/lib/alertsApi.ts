@@ -49,6 +49,10 @@ export interface SavedAlert {
   expiresAt?: number | null;
   notify?: AlertNotifyChannels;
   createdAt?: number;
+  // Draw the chart line from `createdAt` rather than across the whole pane
+  // (absent = on). Purely cosmetic — the backend's firing signature ignores it —
+  // so an alert says nothing about the bars that predate it.
+  startAtCreation?: boolean;
 }
 
 const ALL_CHANNELS: AlertNotifyChannels = {
@@ -96,6 +100,7 @@ export function normalizeAlert(
         }
       : { ...ALL_CHANNELS },
     createdAt: a.createdAt ?? 0,
+    startAtCreation: a.startAtCreation ?? true,
   };
 }
 
@@ -130,7 +135,13 @@ interface AlertRow {
   broker: string;
   epic: string;
   kind: string;
-  params: { level: number; condition: AlertCondition; trigger: AlertTrigger; timeframe?: string };
+  params: {
+    level: number;
+    condition: AlertCondition;
+    trigger: AlertTrigger;
+    timeframe?: string;
+    startAtCreation?: boolean;
+  };
   message: string;
   expires_at: number | null;
   notify?: Partial<AlertNotifyChannels>;
@@ -163,6 +174,7 @@ function rowToSavedAlert(row: AlertRow): SavedAlert {
     expiresAt: row.expires_at,
     notify: row.notify as AlertNotifyChannels | undefined,
     createdAt: row.created_at,
+    startAtCreation: row.params.startAtCreation,
   });
 }
 
@@ -324,6 +336,7 @@ export async function addStoredAlert(
       level: alert.level,
       condition: alert.condition,
       trigger: alert.trigger,
+      startAtCreation: alert.startAtCreation ?? true,
       ...(timeframe ? { timeframe } : {}),
     },
     message: alert.message,
@@ -352,6 +365,10 @@ export interface AlertUpdateCfg {
   message: string;
   expiresAt: number | null;
   notify: AlertNotifyChannels;
+  // REQUIRED, unlike SavedAlert's optional field: this is the patch body, where
+  // omitting it would PATCH the server back to the default (true) and silently
+  // re-extend a line the user shortened. Callers must state the intent.
+  startAtCreation: boolean;
 }
 
 const DEBOUNCE_MS = 300;
@@ -379,7 +396,12 @@ export function updateStoredAlert(
   bumpAlerts();
 
   const patchBody = {
-    params: { level, condition: cfg.condition, trigger: cfg.trigger },
+    params: {
+      level,
+      condition: cfg.condition,
+      trigger: cfg.trigger,
+      startAtCreation: cfg.startAtCreation,
+    },
     message: cfg.message,
     expires_at: cfg.expiresAt,
     notify: cfg.notify,

@@ -4804,6 +4804,7 @@ export default function ChartCore({
               message: "",
               expiresAt: resolveExpiry(ad.expiry, Date.now()),
               notify: ad.notify,
+              startAtCreation: ad.startAtCreation,
             });
           },
         },
