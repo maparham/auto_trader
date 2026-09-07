@@ -306,16 +306,25 @@ function aggregate(values: number[], fn: PrevHlAgg, wantMax: boolean): number {
 
 // The typical bar spacing (ms), as the median positive timestamp delta — robust to
 // occasional gaps. 0 when there's too little data to tell.
+//
+// Memoized on (array identity, length): the legend rebuild asks on every pan
+// frame, and this walk + sort over the whole history was the frame's single
+// biggest cost. The pair pins the exact timestamp sequence — klinecharts only
+// mutates the forming bar's PRICES in place, appends grow the length, and a
+// prepend mints a new array.
+const barMsCache = new WeakMap<KLineData[], { len: number; barMs: number }>();
 function estimateBarMs(dataList: KLineData[]): number {
   if (dataList.length < 2) return 0;
+  const hit = barMsCache.get(dataList);
+  if (hit && hit.len === dataList.length) return hit.barMs;
   const deltas: number[] = [];
   for (let i = 1; i < dataList.length; i++) {
     const d = dataList[i].timestamp - dataList[i - 1].timestamp;
     if (d > 0) deltas.push(d);
   }
-  if (!deltas.length) return 0;
-  deltas.sort((a, b) => a - b);
-  return deltas[deltas.length >> 1];
+  const barMs = deltas.length ? deltas.sort((a, b) => a - b)[deltas.length >> 1] : 0;
+  barMsCache.set(dataList, { len: dataList.length, barMs });
+  return barMs;
 }
 
 type PrevHlBoundary = { kind: PeriodKind; hi: keyof PrevHlPoint; lo: keyof PrevHlPoint };

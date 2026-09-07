@@ -153,7 +153,8 @@ import {
   browserTimezone,
   first,
 } from "./chart/chartPainters";
-import { goLivePillStyle, readLiveEdge, type GoLivePillPos } from "./lib/liveEdge";
+import type { GoLivePillPos } from "./lib/liveEdge";
+import GoLivePill from "./chart/GoLivePill";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
 import { refreshMtfIndicators, setChartIntervalMs } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, restingLineEndX } from "./lib/positionLines";
@@ -376,12 +377,6 @@ export default function ChartCore({
   // The ONLY way out: dropping the target reloads the cell's live series and
   // reopens the stream. What the DetachedPill's button calls.
   const exitDetached = () => setDetached(null);
-  // "Back to live" pill: how far the view sits behind the newest bar ("12d
-  // back") plus where to park it, or null while the newest bar is on screen
-  // (pill hidden). Derived from the visible range, never from scroll deltas —
-  // see the effect below. The offsets clear klinecharts' own axes, whose sizes
-  // move with the price precision and the sub-pane layout.
-  const [liveEdge, setLiveEdge] = useState<{ label: string; right: number; bottom: number } | null>(null);
   // The in-flight quick-range request (resolution + window + the series identity it
   // was issued for). Acts as an ownership token: ensureCoverageAndFit bails if a
   // newer pick replaces it OR the epic/broker/side drifts from what it captured.
@@ -4249,33 +4244,6 @@ export default function ChartCore({
     };
   }, [replayMode, replayStartAt]);
 
-  // Drive the "back to live" pill. onVisibleRangeChange (not onScroll/onZoom) is
-  // the subscription that matters: klinecharts fires it from the range recompute
-  // itself, so PROGRAMMATIC moves — the jump, a quick-range pick, a TF switch —
-  // update the pill too, where a scroll action would leave it stale showing.
-  useEffect(() => {
-    const chart = chartRef.current;
-    if (!chart) return;
-    const refresh = () => {
-      const label = readLiveEdge(chart);
-      const right = (chart.getSize("candle_pane", "yAxis")?.width ?? 0) + 10;
-      const bottom = (chart.getSize("x_axis_pane", "root")?.height ?? 0) + 10;
-      // Same object identity while nothing moved: onVisibleRangeChange fires on
-      // every frame of a drag, and a fresh object each time would re-render the
-      // whole cell throughout the gesture.
-      setLiveEdge((prev) =>
-        label == null
-          ? null
-          : prev && prev.label === label && prev.right === right && prev.bottom === bottom
-            ? prev
-            : { label, right, bottom },
-      );
-    };
-    refresh();
-    chart.subscribeAction("onVisibleRangeChange", refresh);
-    return () => chart.unsubscribeAction("onVisibleRangeChange", refresh);
-  }, []);
-
   // Two independent hide gestures, each with its own live effect:
   //  • Sidebar eye menu "Hide indicators" — masks every indicator's curve IN PLACE
   //    (pane stays); re-derives visibility from intent + interval on toggle.
@@ -5128,42 +5096,25 @@ export default function ChartCore({
           pointerEvents: "none",
         }}
       />
-      {/* "Back to live" pill: shown only while the newest bar is off-screen, so a
-          long pan back through history always has a one-click way home. z-index 11
-          (above the overlay canvases, below the no-data banner) and the only element
-          in that stack that takes pointer events — the canvases stay click-through
-          so the draw tools underneath keep working. */}
+      {/* "Back to live" pill (z-index 11 via .chart-golive: above the overlay
+          canvases, below the no-data banner, and the only element in that stack
+          taking pointer events — the canvases stay click-through so the draw
+          tools underneath keep working). A separate component owning its own
+          onVisibleRangeChange subscription: its label changes on nearly every
+          frame of a pan, and as ChartCore state each change re-rendered the
+          whole cell tree — every legend included — for a one-word label. */}
       {/* Hidden while detached: the view is then pinned to a jump target with no
           live edge to return to, `goLive` early-returns on it, and the DetachedPill
           already owns the one honest way back. Two pills, one of them dead, is
           worse than one. */}
-      {liveEdge && !detached && (
-        <Tooltip content="Jump to the latest bar" placement="left">
-          <button
-            type="button"
-            className="chart-golive"
-            data-testid="chart-golive"
-            // Placement is a global setting (lib/liveEdge.goLivePillStyle). The
-            // priceLine mode rides priceTag.y, which the redraw loop refreshes
-            // on every tick — so the pill follows the line without its own
-            // subscription. Height read live: it only matters for the clamp,
-            // and the ref is set long before the pill can first render.
-            style={goLivePillStyle(goLivePillPos, {
-              right: liveEdge.right,
-              bottom: liveEdge.bottom,
-              priceY: priceTag?.y ?? null,
-              height: containerRef.current?.clientHeight ?? 0,
-            })}
-            onClick={goLive}
-          >
-            <span className="chart-golive-label">{liveEdge.label}</span>
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
-                 strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="m5 4 9 8-9 8z" /><line x1="19" y1="4" x2="19" y2="20" />
-            </svg>
-          </button>
-        </Tooltip>
-      )}
+      <GoLivePill
+        getChart={getChart}
+        detached={detached != null}
+        pos={goLivePillPos}
+        priceY={priceTag?.y ?? null}
+        containerRef={containerRef}
+        onGoLive={goLive}
+      />
       {/* Data-unavailable banner: no candles after a grace period (broker maintenance,
           auth failure, offline, or an unknown epic). Generic on purpose — a 401 can't
           be told apart from expired creds, so we don't claim a specific cause. */}

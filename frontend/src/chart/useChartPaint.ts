@@ -27,6 +27,7 @@ import {
   fmtCountdown,
 } from "./chartPainters";
 import { crossingsForSelection } from "./curveCrossings";
+import { stableValue, stableArray } from "./renderStability";
 import {
   type LineCache,
   buildLineCache,
@@ -618,7 +619,10 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     const replaying = replayRef.current?.isActive() ?? false;
     if (!chart) {
       setPriceTag(null);
-      setAlertTags([]);
+      // Identity-preserving (stableArray/stableValue) everywhere a fresh
+      // object/array is built per redraw: the redraw runs on every pan frame,
+      // and a fresh-but-equal identity would re-render the whole cell tree.
+      setAlertTags((prev) => stableArray(prev, []));
       handle.paintSeparatorRef.current();
       return;
     }
@@ -675,7 +679,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         const mainW = chart.getSize("candle_pane", 'main')?.width ?? 0;
         const totalW = containerRef.current?.clientWidth ?? mainW;
         const dir = last.close >= last.open ? "up" : "down";
-        setPriceTag({ y, price: last.close, countdown, w: Math.max(0, totalW - mainW), dir });
+        const nextTag: PriceTag = { y, price: last.close, countdown, w: Math.max(0, totalW - mainW), dir };
+        setPriceTag((prev) => stableValue(prev, nextTag));
         lastPriceY = y;
         priceTagHeight = countdown ? 40 : 20;
       }
@@ -707,8 +712,12 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       // (priceSide "bid"), the last-price pill is the bid, so a separate Bid label
       // is redundant — hide it (same for "ask").
       const side = priceSideRef.current;
-      setBidTag(side !== "bid" && bidV != null && by != null ? { y: by, price: bidV, w } : null);
-      setAskTag(side !== "ask" && askV != null && ay != null ? { y: ay, price: askV, w } : null);
+      setBidTag((prev) =>
+        stableValue(prev, side !== "bid" && bidV != null && by != null ? { y: by, price: bidV, w } : null),
+      );
+      setAskTag((prev) =>
+        stableValue(prev, side !== "ask" && askV != null && ay != null ? { y: ay, price: askV, w } : null),
+      );
     } else {
       setBidTag(null);
       setAskTag(null);
@@ -760,7 +769,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       chart.setStyles({ candle: { priceMark: { last: { line: { show: !priceObscured } } } } });
     }
     if (priceObscured) setPriceTag(null);
-    setAlertTags(tags);
+    setAlertTags((prev) => stableArray(prev, tags));
     const act = tags.find((t) => t.active);
     if (act) lastActivePillIdRef.current = act.id;
 
@@ -807,7 +816,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         }
       }
     }
-    setTradePills(pills);
+    setTradePills((prev) => stableArray(prev, pills));
 
     // Indicator-selection overlay (one canvas above klinecharts'): the hollow
     // selection handles on the curve, plus the white legend CARDS for hovered/
