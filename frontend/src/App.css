@@ -2092,8 +2092,11 @@
   font-variant-numeric: tabular-nums;
 }
 .bt-timeline-window-label { color: var(--accent); font-weight: 600; }
-.alert-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.al-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.alert-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* min-width: 0 overrides the flex-item default of min-width: auto (content's
+   intrinsic width) — without it, a row whose contents don't quite fit refuses
+   to shrink to the modal's width and overflows instead of wrapping/clipping. */
+.al-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; }
 .al-row > span { color: var(--text-dim); width: 90px; flex-shrink: 0; }
 .al-row select, .al-row input {
   flex: 1; background: var(--input-bg); color: var(--text);
@@ -2293,10 +2296,6 @@
 .bt-pick-range:hover:not(:disabled) { border-color: var(--accent, #2962ff); color: var(--accent, #2962ff); }
 .bt-pick-range.on { background: var(--accent, #2962ff); border-color: var(--accent, #2962ff); color: #fff; }
 .bt-pick-range:disabled { opacity: 0.5; cursor: not-allowed; }
-/* Rows whose control is taller than one line (message, expiration, notifications)
-   align their label to the top. */
-.al-row-top { align-items: flex-start; }
-.al-row-top > span { padding-top: 6px; }
 /* The Notifications row's shortcut into Settings → Alerts (Push / Telegram
    setup). Muted like other secondary chrome; accent only on hover. */
 .al-settings-link {
@@ -2304,13 +2303,25 @@
   cursor: pointer; color: var(--text-dim); font-size: 12px; line-height: 1;
 }
 .al-settings-link:hover { color: var(--text); }
-/* Condition row: source + operator side by side under one label (no zigzag /
-   orphaned right-floated select). Source is a fixed narrow width; the operator
-   takes the rest. */
-.al-cond { flex: 1; display: flex; gap: 8px; align-items: center; }
-.al-cond .al-source { flex: 0 0 110px; }
-.al-cond .al-operator { flex: 1; }
-.al-divider { height: 1px; background: var(--border); margin: 4px 0; }
+/* Condition field: label on its own line, operator/value in a row below it —
+   the label doesn't have to compete with the controls for width. Value is
+   fixed-width (it's a number, not prose); operator takes whatever's left. */
+.al-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.al-field > span { color: var(--text-dim); }
+.al-cond { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; }
+.al-cond .al-operator { flex: 1; min-width: 0; }
+.al-cond .al-value { flex: 0 0 70px; }
+/* Trigger + Expiration share a row; each field stacks its own label above its
+   own control (rather than beside it) so the label doesn't crowd the control. */
+.al-pair { display: flex; gap: 20px; min-width: 0; }
+.al-pair-field {
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+  flex: 1; min-width: 0;
+}
+.al-pair-field > span { color: var(--text-dim); }
+.al-pair-field select { min-width: 0; }
+.al-pair-field .al-expiry { min-width: 0; }
+.al-value { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .al-message {
   flex: 1; resize: vertical; min-height: 34px; font: inherit;
   background: var(--input-bg); color: var(--text);
@@ -2320,9 +2331,14 @@
    with the custom-date picker below when chosen. */
 .al-expiry { flex: 1; position: relative; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 .al-expiry-trigger {
-  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
   background: var(--input-bg); color: var(--text); text-align: left;
   border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; cursor: pointer;
+}
+/* Sharing the row with Trigger leaves less width than a resolved timestamp
+   ("July 22, 2026 at 19:05") needs — truncate instead of wrapping/overflowing. */
+.al-expiry-trigger > span {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .al-expiry-trigger.open { border-color: var(--accent); }
 .al-expiry-caret { flex: 0 0 auto; color: var(--text-dim); display: block; }
@@ -2351,13 +2367,43 @@
 /* Compact wrap-friendly segmented control for the expiry presets. */
 .expiry-seg { flex-wrap: wrap; }
 .expiry-seg button { padding: 5px 10px; font-size: 12px; }
-/* Notification channel checkboxes. */
+/* Notification channel checkboxes. Shared with Settings → Alerts/Trading,
+   where it's also used for a single checkbox + long sentence label — so this
+   stays a plain checkbox row; it must NOT become a chip here. */
 .notify-toggles { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
 .notify-toggle {
   display: flex; align-items: center; gap: 5px; width: auto; color: var(--text);
   cursor: pointer; font-size: 13px;
 }
 .notify-toggle input { flex: none; cursor: pointer; }
+/* AlertModal-only: notification channels as chips (matches the expiry/
+   segmented-control language elsewhere), scoped away from .notify-toggle so
+   Settings' reuse of that class (including a long-sentence checkbox row) is
+   unaffected. Checkbox stays in the DOM for accessibility but is visually
+   hidden; :has() drives the chip's on/off look. Persistent state (stays
+   checked all session), so a quiet gray fill rather than the solid accent —
+   see .tl-modes. */
+.al-notify-toggles {
+  display: flex; gap: 6px; flex-wrap: nowrap; align-items: center;
+  min-width: 0; overflow-x: auto; scrollbar-width: none;
+}
+.al-notify-toggles::-webkit-scrollbar { display: none; }
+.al-notify-chip {
+  position: relative;
+  display: flex; align-items: center; gap: 4px; width: auto; color: var(--text-dim);
+  cursor: pointer; font-size: 12px; white-space: nowrap; padding: 4px 8px;
+  border: 1px solid var(--border); border-radius: 999px;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.al-notify-chip:hover { border-color: color-mix(in srgb, var(--text) 30%, var(--border)); }
+.al-notify-chip:has(input:checked) {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  border-color: transparent; color: var(--text);
+}
+.al-notify-chip input {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
 /* Sub-header inside a settings tab. */
 .setting-sub { padding: 14px 16px 4px; color: var(--text-dim); font-size: 12px; font-weight: 600; }
 /* Device notifications (NotificationSettings): "Enable on this device" ↔

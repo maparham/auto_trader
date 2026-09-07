@@ -124,7 +124,7 @@ export default function AlertModal({
       <button className="ghost" onClick={onClose}>
         Cancel
       </button>
-      <button onClick={create} disabled={!valid}>
+      <button className="confirm-primary" onClick={create} disabled={!valid}>
         {isEdit ? "Save" : "Create"}
       </button>
     </>
@@ -143,20 +143,13 @@ export default function AlertModal({
       footer={foot}
     >
         <div className="alert-body">
-          {/* Condition block, TradingView-style: source (Price) + operator share one
-              row under a single label, value below. Not a <label> — it wraps two
-              controls, so each carries its own aria-label instead. */}
-          <div className="al-row">
+          {/* Label on its own line, then source/operator/value share one row below
+              it — the label needs room to breathe, not to compete with three
+              controls. None of the three is a <label>; each carries its own
+              aria-label instead. */}
+          <div className="al-field">
             <span>Condition</span>
             <div className="al-cond">
-              <select
-                className="al-source"
-                value="price"
-                disabled
-                aria-label="Alert source"
-              >
-                <option value="price">Price</option>
-              </select>
               <select
                 className="al-operator"
                 aria-label="Alert condition"
@@ -169,40 +162,39 @@ export default function AlertModal({
                   </option>
                 ))}
               </select>
+              <input
+                className="al-value"
+                type="number"
+                step="any"
+                aria-label="Alert value"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                autoFocus
+              />
             </div>
           </div>
 
-          <label className="al-row">
-            <span>Value</span>
-            <input
-              type="number"
-              step="any"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              autoFocus
-            />
-          </label>
-
-          <div className="al-divider" />
-
-          <label className="al-row">
-            <span>Trigger</span>
-            <select value={trigger} onChange={(e) => setTrigger(e.target.value as AlertTrigger)}>
-              <option value="once">Once only</option>
-              <option value="every">Every time</option>
-            </select>
-          </label>
-
-          <div className="al-row al-row-top">
-            <span>Expiration</span>
-            <ExpiryField
-              expiresAt={expiresAt}
-              now={now}
-              onChange={setExpiresAt}
-            />
+          {/* Trigger + Expiration share a row — each field stacks its own label
+              above its own control, so the label doesn't crowd the control. */}
+          <div className="al-row al-pair">
+            <label className="al-pair-field">
+              <span>Trigger</span>
+              <select value={trigger} onChange={(e) => setTrigger(e.target.value as AlertTrigger)}>
+                <option value="once">Once only</option>
+                <option value="every">Every time</option>
+              </select>
+            </label>
+            <div className="al-pair-field">
+              <span>Expiration</span>
+              <ExpiryField
+                expiresAt={expiresAt}
+                now={now}
+                onChange={setExpiresAt}
+              />
+            </div>
           </div>
 
-          <label className="al-row al-row-top">
+          <label className="al-field">
             <span>Message</span>
             <textarea
               className="al-message"
@@ -213,11 +205,11 @@ export default function AlertModal({
             />
           </label>
 
-          <div className="al-row al-row-top">
+          <div className="al-field">
             <span>Notifications</span>
-            <div className="notify-toggles">
+            <div className="al-notify-toggles">
               {CHANNELS.map(([ch, label]) => (
-                <label key={ch} className="notify-toggle">
+                <label key={ch} className="al-notify-chip">
                   <input
                     type="checkbox"
                     checked={notify[ch] ?? true}
