@@ -1351,7 +1351,8 @@ function dropDuplicates(
 
 /** The DRAWN set: the maxLines per side whose projection at `atIdx` sits
  * nearest to `close`, PLUS whichever lines the emit path is reading at that
- * bar. maxLines is a FLOOR for drawing, not a cap. This is cfg.maxLines' second
+ * bar, PLUS the pinned ones (`dedupe.keep`). maxLines is a FLOOR for drawing,
+ * not a cap. This is cfg.maxLines' second
  * job (the first being the MAX_LIVE_MULT sizing of live state inside
  * computeTrendlines).
  *
@@ -1469,11 +1470,16 @@ export function selectDrawnLines(
             return want !== undefined && e.proj === want;
           })
         : kept;
-    // Proximity order throughout: the budgeted head, then any emitting line
-    // that fell outside it, appended in the same order. Deterministic either
-    // way, and the ×N tags keep pairing with the segments they label.
+    // Proximity order throughout: the budgeted head, then any emitting or
+    // PINNED line that fell outside it, appended in the same order.
+    // Deterministic either way, and the ×N tags keep pairing with the
+    // segments they label. Pinned lines get the same pass merging and the
+    // near-price cut give them, and for the same reason: a pin's own handle
+    // is the only control that releases it, so a budget that evicted the line
+    // would strand the pin with nothing to click the moment other lines
+    // crowd closer to price.
     near.forEach((e, idx) => {
-      if (idx < maxLines) {
+      if (idx < maxLines || dedupe?.keep.has(e.line)) {
         out.push(e.line);
         return;
       }

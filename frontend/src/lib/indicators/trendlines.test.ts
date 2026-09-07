@@ -880,6 +880,23 @@ describe("selectDrawnLines", () => {
     ).toEqual([near, far]);
   });
 
+  it("keeps a pinned line that falls outside maxLines", () => {
+    // A pin's own handle is the only control that releases it, so the budget
+    // must not evict the line: merging and the near-price cut already spare
+    // pinned lines, and a budget that did not would strand a pin with nothing
+    // to click the moment other lines crowd closer to price.
+    expect(
+      selectDrawnLines(
+        [far, mid, near],
+        100,
+        100,
+        1,
+        {},
+        { tol: 0, keep: new Set([far]) },
+      ),
+    ).toEqual([near, far]);
+  });
+
   it("matches the emitted value by side and by broken state", () => {
     const brokenMid: TrendLine = { ...mid, brokenIdx: 50 };
     // tl_broken_support reaches the broken line; the unbroken `mid` at the same
