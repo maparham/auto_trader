@@ -31,6 +31,7 @@ function renderLegend(
   rows: LegendRow[],
   onToggleVisible = vi.fn(),
   getChart: () => import("klinecharts").Chart | null = () => null,
+  onRemove = vi.fn(),
 ) {
   const noop = () => {};
   render(
@@ -56,7 +57,7 @@ function renderLegend(
       highlightedName={null}
       onToggleVisible={onToggleVisible}
       onOpenSettings={noop}
-      onRemove={noop}
+      onRemove={onRemove}
       onSelectRow={noop}
       onOpenDetails={noop}
       onChangeSymbol={noop}
@@ -67,7 +68,7 @@ function renderLegend(
       onStartReorder={noop}
     />,
   );
-  return onToggleVisible;
+  return { onToggleVisible, onRemove };
 }
 
 const fvgs = [
@@ -156,7 +157,7 @@ describe("a group's readouts fill the moment it is expanded", () => {
 
 describe("the group eye hides and shows every member at once", () => {
   it("hides every visible member on one click", () => {
-    const onToggleVisible = renderLegend(fvgs);
+    const { onToggleVisible } = renderLegend(fvgs);
     // The chevron is button 0; the eye is button 1.
     fireEvent.click(groupHeader().querySelectorAll("button")[1]);
     expect(onToggleVisible.mock.calls.map((c) => c[0])).toEqual(["FVG", "FVG2", "FVG3"]);
@@ -164,15 +165,43 @@ describe("the group eye hides and shows every member at once", () => {
 
   it("shows every member once they are all hidden", () => {
     const allHidden = fvgs.map((r) => ({ ...r, visible: false }));
-    const onToggleVisible = renderLegend(allHidden);
+    const { onToggleVisible } = renderLegend(allHidden);
     fireEvent.click(groupHeader().querySelectorAll("button")[1]);
     expect(onToggleVisible.mock.calls.map((c) => c[0])).toEqual(["FVG", "FVG2", "FVG3"]);
   });
 
   it("hides only the still-visible members when the group is mixed", () => {
     const mixed = [fvgs[0], { ...fvgs[1], visible: false }, fvgs[2]];
-    const onToggleVisible = renderLegend(mixed);
+    const { onToggleVisible } = renderLegend(mixed);
     fireEvent.click(groupHeader().querySelectorAll("button")[1]);
     expect(onToggleVisible.mock.calls.map((c) => c[0])).toEqual(["FVG", "FVG3"]);
+  });
+});
+
+describe("the group trash removes every member", () => {
+  // The chevron is button 0, the eye 1, the trash 2.
+  const trash = () => groupHeader().querySelectorAll("button")[2];
+
+  it("removes all members on one click", () => {
+    const { onRemove } = renderLegend(fvgs);
+    fireEvent.click(trash());
+    expect(onRemove.mock.calls.map((c) => c[0])).toEqual(["FVG", "FVG2", "FVG3"]);
+  });
+
+  it("removes hidden members too", () => {
+    const mixed = [fvgs[0], { ...fvgs[1], visible: false }, fvgs[2]];
+    const { onRemove } = renderLegend(mixed);
+    fireEvent.click(trash());
+    expect(onRemove.mock.calls.map((c) => c[0])).toEqual(["FVG", "FVG2", "FVG3"]);
+  });
+
+  it("does not collapse the group as a side effect of the click", () => {
+    const { onRemove } = renderLegend(fvgs);
+    fireEvent.click(trash());
+    // The header row's own onClick toggles collapse; the trash must stopPropagation,
+    // or removing a group would also persist a collapsed flag for a type that is
+    // about to have no rows at all.
+    expect(onRemove).toHaveBeenCalledTimes(3);
+    expect(document.querySelectorAll(".cl-group-rows .cl-ind")).toHaveLength(3);
   });
 });

@@ -314,6 +314,11 @@ export default function ChartLegend({
       if (row.visible === anyVisible) onToggleVisible(row.name);
     }
   };
+  // Remove every member of a group. No confirmation — the per-row trash doesn't
+  // ask either, and the group's members are re-addable from the indicator menu.
+  const removeGroup = (rows: LegendRow[]) => {
+    for (const row of rows) onRemove(row.name);
+  };
 
   // Imperatively set the displayed values for the bar at dataIndex (or the last
   // bar when null/out of range). Mirrors candleLegend's old formula: change is vs
@@ -515,6 +520,7 @@ export default function ChartLegend({
               collapsed={collapsedGroups.has(entry.indType)}
               onToggleCollapsed={() => toggleGroupCollapsed(entry.indType)}
               onToggleGroupVisible={() => toggleGroupVisible(entry.rows)}
+              onRemoveGroup={() => removeGroup(entry.rows)}
               selectedName={selectedName}
               highlightedName={highlightedName}
               figureValuesRef={figureValuesRef}
@@ -787,6 +793,7 @@ function IndicatorGroup({
   collapsed,
   onToggleCollapsed,
   onToggleGroupVisible,
+  onRemoveGroup,
   selectedName,
   highlightedName,
   figureValuesRef,
@@ -802,6 +809,7 @@ function IndicatorGroup({
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onToggleGroupVisible: () => void;
+  onRemoveGroup: () => void;
   selectedName: string | null;
   highlightedName: string | null;
   figureValuesRef: RefObject<Map<string, HTMLSpanElement>>;
@@ -844,6 +852,17 @@ function IndicatorGroup({
               }}
             >
               {anyVisible ? ICON_EYE : ICON_EYE_OFF}
+            </button>
+          </Tooltip>
+          <Tooltip content={`Remove all ${rows.length}`}>
+            <button
+              className="cl-icon"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveGroup();
+              }}
+            >
+              {ICON_TRASH}
             </button>
           </Tooltip>
         </span>
