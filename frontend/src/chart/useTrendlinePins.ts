@@ -25,18 +25,24 @@ interface Args {
   containerRef: React.RefObject<HTMLElement | null>;
 }
 
+/** getIndicators' result as a flat list, whichever of klinecharts' two shapes
+ * (array, or Map of pane to array) it answered in. ONE normalizer for every
+ * caller: a toggle that understood fewer shapes than the instance walk would
+ * read the live `pinned` as empty on the shape it missed, and its write would
+ * then silently wipe every other pin. */
+function indicatorList(inds: unknown): Indicator[] {
+  if (Array.isArray(inds)) return inds as Indicator[];
+  if (inds instanceof Map)
+    return [...(inds as Map<string, Indicator[]>).values()].flat();
+  return [];
+}
+
 /** Every TRENDLINES instance on the chart, with its pane. */
 function trendlineInstances(
   chart: Chart,
 ): Array<{ paneId: string; name: string }> {
   const out: Array<{ paneId: string; name: string }> = [];
-  const inds = chart.getIndicators({}) as unknown;
-  const list: Indicator[] = Array.isArray(inds)
-    ? (inds as Indicator[])
-    : inds instanceof Map
-      ? [...(inds as Map<string, Indicator[]>).values()].flat()
-      : [];
-  for (const ind of list) {
+  for (const ind of indicatorList(chart.getIndicators({}) as unknown)) {
     // Instances are named TRENDLINES, TRENDLINES2, ... so match the prefix, not
     // equality, or only the first instance is ever clickable.
     if (typeof ind?.name === "string" && ind.name.startsWith("TRENDLINES")) {
@@ -65,10 +71,45 @@ export function overridePinned(
   overrideExtend(chart, paneId, name, { pinned: next });
 }
 
+/** Flip one lineKey in the live indicator's pin set: a second toggle on a
+ * pinned key releases it. Reads the CURRENT pins off the live instance (in
+ * either getIndicators shape) so a toggle only ever moves its own key. */
+export function togglePin(
+  chart: Chart,
+  paneId: string,
+  name: string,
+  key: string,
+): void {
+  const live = indicatorList(chart.getIndicators({ paneId, name }) as unknown)[0]
+    ?.extendData;
+  const ext = (live ?? {}) as TrendlinesExtend;
+  const pinned = new Set(ext.pinned ?? []);
+  if (pinned.has(key)) pinned.delete(key);
+  else pinned.add(key);
+  overridePinned(chart, paneId, name, [...pinned]);
+}
+
+/** How far the pointer may travel between press and release and still count
+ * as a click. Ordinary clicks wobble a pixel or two; a pan travels tens. */
+const TL_CLICK_SLOP = 4;
+
 export function useTrendlinePins({ chartRef, containerRef }: Args): void {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+
+    // A CLICK toggles, not a press. The mousedown over a handle is still
+    // swallowed — the press must never also pan the chart — but the toggle
+    // itself waits for a mouseup within TL_CLICK_SLOP of it, so a drag that
+    // happens to start inside a handle's 8px hit circle does nothing at all
+    // (no pan, no toggle) instead of flipping a pin the user never aimed at.
+    let pending: {
+      paneId: string;
+      name: string;
+      key: string;
+      x: number;
+      y: number;
+    } | null = null;
 
     const onDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
@@ -80,16 +121,7 @@ export function useTrendlinePins({ chartRef, containerRef }: Args): void {
       for (const { paneId, name } of trendlineInstances(chart)) {
         const key = hitHandle(getTrendlineHandles(chart, paneId, name), px, py);
         if (!key) continue;
-        const ind = chart.getIndicators({ paneId, name }) as unknown;
-        const live = (Array.isArray(ind) ? (ind[0] as Indicator) : null)
-          ?.extendData;
-        const ext = (live ?? {}) as TrendlinesExtend;
-        const pinned = new Set(ext.pinned ?? []);
-        // Toggle: a second click on a pinned handle releases it.
-        if (pinned.has(key)) pinned.delete(key);
-        else pinned.add(key);
-        const next = [...pinned];
-        overridePinned(chart, paneId, name, next);
+        pending = { paneId, name, key, x: e.clientX, y: e.clientY };
         // Ours: do not let the press reach klinecharts' pan, or a pin toggle
         // also nudges the chart.
         e.preventDefault();
@@ -98,11 +130,28 @@ export function useTrendlinePins({ chartRef, containerRef }: Args): void {
       }
     };
 
+    // On WINDOW, capture: the release may land outside the container (or off
+    // the handle entirely), and a pending press must be consumed either way
+    // or it would pair with some later, unrelated mouseup.
+    const onUp = (e: MouseEvent) => {
+      if (!pending) return;
+      const p = pending;
+      pending = null;
+      const chart = chartRef.current;
+      if (!chart || e.button !== 0) return;
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > TL_CLICK_SLOP) return;
+      togglePin(chart, p.paneId, p.name, p.key);
+    };
+
     // The hover cursor is NOT set here. klinecharts paints its own cursor on
     // the canvas, so an inline style on this container never shows; only
     // `.chart-wrap.cur-pointer canvas` beats it. usePointerCrosshair owns that
     // one cursorMode for every hit target, and calls hitAnyTrendlineHandle.
     el.addEventListener("mousedown", onDown, true);
-    return () => el.removeEventListener("mousedown", onDown, true);
+    window.addEventListener("mouseup", onUp, true);
+    return () => {
+      el.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("mouseup", onUp, true);
+    };
   }, [chartRef, containerRef]);
 }

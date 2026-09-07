@@ -56,3 +56,11 @@ def test_state_survives_reopen(tmp_path):
     asyncio.run(store.set(USER, "auto-trader.tabs", '[{"id":"t1"}]'))
     reopened = StateStore(path)
     assert asyncio.run(reopened.get_all(USER)) == {"auto-trader.tabs": '[{"id":"t1"}]'}
+
+
+def test_get_single_key(tmp_path):
+    store = StateStore(str(tmp_path / "s.db"))
+    asyncio.run(store.set("u1", "k1", '"v1"'))
+    assert asyncio.run(store.get("u1", "k1")) == '"v1"'
+    assert asyncio.run(store.get("u1", "missing")) is None
+    assert asyncio.run(store.get("other-user", "k1")) is None

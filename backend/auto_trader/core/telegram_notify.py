@@ -215,7 +215,7 @@ class TelegramNotify:
         # Best effort, richest first: photo with the chart snapshot, then plain
         # text with buttons, then bare text. The alert message must go out even
         # when market data or the renderer is down.
-        png = await self._render_snapshot(payload)
+        png = await self._render_snapshot(user_id, payload)
         if png is not None:
             try:
                 await self.send_photo(chat_id, png, caption, markup)
@@ -269,10 +269,25 @@ class TelegramNotify:
             )
         return lines
 
-    async def _render_snapshot(self, payload: dict) -> bytes | None:
+    async def _render_snapshot(self, user_id: str, payload: dict) -> bytes | None:
         """Chart snapshot PNG for a firing, or None when anything along the way
         fails — candles unavailable, renderer error — so the caller falls back
         to a text message."""
+        # Preferred: the user's real chart, rendered live in a headless
+        # browser (chart_snapshot). Any None (no heartbeat, frontend down,
+        # timeout, playwright missing) falls through to the matplotlib image.
+        try:
+            from auto_trader.core import chart_snapshot
+
+            png = await chart_snapshot.render_live_chart(user_id, payload)
+            if png is not None:
+                return png
+        except Exception as exc:
+            log.warning(
+                "telegram: live chart snapshot for %s/%s failed, falling back: %s",
+                payload.get("broker"), payload.get("epic"), self._scrub(str(exc)),
+            )
+
         if self._hooks is None:
             return None
         timeframe = payload.get("timeframe") or _DEFAULT_TIMEFRAME

@@ -6,6 +6,7 @@
 import type { LineStyleOpt } from "./ColorLineStylePicker";
 import type { AlertCondition, AlertTrigger } from "./lib/persist";
 import { loadSettingsRaw, saveSettingsRaw } from "./lib/persist";
+import { compositeOverHex } from "./lib/lineStyle";
 import type { GoLivePillPos } from "./lib/liveEdge";
 
 export type Theme = "dark" | "light";
@@ -197,7 +198,7 @@ const DEFAULT_BID_ASK_STYLE: BidAskStyle = {
   lineStyle: "dotted",
 };
 
-const DEFAULT_SETTINGS: Settings = {
+export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   timezone: "",
   clock: "24h",
@@ -256,3 +257,27 @@ export const chartColors: Record<
   dark: { bg: "#101418", text: "#d1d4dc", textDim: "#8a93a0", axisText: "#b2b5be", grid: "#1c2127", border: "#2a2f36" },
   light: { bg: "#ffffff", text: "#1f2933", textDim: "#5a6573", axisText: "#787b86", grid: "#eef1f5", border: "#cfd6df" },
 };
+
+// In DARK theme a full-opacity light wash would replace the dark background and
+// leave the chart glaringly light, so the effective --chart-bg opacity is capped
+// (never scaled up) — the wash only lifts the dark bg toward the color. Light is
+// untouched, so bg "moods" look exactly as picked there.
+export const DARK_CHART_BG_CAP = 0.15;
+
+// Stamp the active theme onto the DOM: `data-theme` on <html> (index.css defaults
+// to dark; [data-theme="light"] overrides) plus the `--chart-bg` override var
+// (consumed by .chart-cell) when a custom chart background is chosen. This is the
+// ONE shared path for it — App's theme effect and the headless SnapshotApp both
+// call it. SnapshotApp renders OUTSIDE App, so before this helper existed nothing
+// set data-theme there and the alert screenshot came out dark-on-light-chart.
+export function applyThemeToDocument(settings: Settings): void {
+  document.documentElement.dataset.theme = settings.theme;
+  if (settings.chartBg) {
+    const op = settings.chartBgOpacity ?? 1;
+    const effOpacity = settings.theme === "dark" ? Math.min(op, DARK_CHART_BG_CAP) : op;
+    const bg = compositeOverHex(settings.chartBg, chartColors[settings.theme].bg, effOpacity);
+    document.documentElement.style.setProperty("--chart-bg", bg);
+  } else {
+    document.documentElement.style.removeProperty("--chart-bg");
+  }
+}

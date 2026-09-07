@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Chart } from "klinecharts";
-import { overridePinned } from "./useTrendlinePins";
+import { overridePinned, togglePin } from "./useTrendlinePins";
 
 // klinecharts' own merge(), reproduced faithfully enough to catch the bug this
 // helper exists for: isObject() is true for arrays, so merge RECURSES into them
@@ -86,5 +86,40 @@ describe("overridePinned", () => {
     const { chart, calls } = makeChart({ pinned: ["a", "b"] });
     overridePinned(chart, "candle_pane", "TRENDLINES", ["a"]);
     expect(calls).toEqual([{ pinned: null }, { pinned: ["a"] }]);
+  });
+});
+
+describe("togglePin", () => {
+  /** getIndicators answering in either of klinecharts' two shapes. */
+  function withGetIndicators(
+    extendData: Record<string, unknown>,
+    shape: "array" | "map",
+  ) {
+    const { chart, ind } = makeChart(extendData);
+    (chart as unknown as Record<string, unknown>).getIndicators = () =>
+      shape === "array" ? [ind] : new Map([[ind.paneId, [ind]]]);
+    return { chart, ind };
+  }
+
+  it("adds a key, keeping the existing pins", () => {
+    const { chart, ind } = withGetIndicators({ pinned: ["a"] }, "array");
+    togglePin(chart, "candle_pane", "TRENDLINES", "b");
+    expect(ind.extendData.pinned).toEqual(["a", "b"]);
+  });
+
+  it("removes a key already pinned", () => {
+    const { chart, ind } = withGetIndicators({ pinned: ["a", "b"] }, "array");
+    togglePin(chart, "candle_pane", "TRENDLINES", "a");
+    expect(ind.extendData.pinned).toEqual(["b"]);
+  });
+
+  it("reads the live pins through the Map shape too, never wiping them", () => {
+    // getIndicators has answered with a Map in other klinecharts builds, and
+    // the instance walk already tolerates that. A toggle that only understood
+    // the array shape would read `pinned` as empty there and its write would
+    // silently drop every other pin.
+    const { chart, ind } = withGetIndicators({ pinned: ["a"] }, "map");
+    togglePin(chart, "candle_pane", "TRENDLINES", "b");
+    expect(ind.extendData.pinned).toEqual(["a", "b"]);
   });
 });

@@ -3,9 +3,11 @@ import { createRoot } from 'react-dom/client'
 import { ClerkProvider, SignedIn, SignedOut, SignIn } from '@clerk/clerk-react'
 import './index.css'
 import App from './App.tsx'
+import SnapshotApp from './SnapshotApp.tsx'
 import ClerkTokenBridge from './components/ClerkTokenBridge.tsx'
 import AccountGate from './components/AccountGate.tsx'
 import { CLERK_ENABLED } from './lib/authToken.ts'
+import { parseSnapshotParams } from './lib/snapshotBoot.ts'
 
 // The publishable key doubles as the feature switch: unset (local dev) renders
 // exactly the pre-auth tree — no provider, no sign-in, no behavior change.
@@ -13,9 +15,15 @@ const clerkKey = (
   import.meta as unknown as { env?: { VITE_CLERK_PUBLISHABLE_KEY?: string } }
 ).env?.VITE_CLERK_PUBLISHABLE_KEY
 
+// The headless snapshot boot (?snapshot=1&broker=..&epic=..) renders OUTSIDE
+// the Clerk tree in all cases — its auth token comes from the URL, not Clerk.
+const snapshotParams = parseSnapshotParams(window.location.search)
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {CLERK_ENABLED && clerkKey ? (
+    {snapshotParams ? (
+      <SnapshotApp />
+    ) : CLERK_ENABLED && clerkKey ? (
       <ClerkProvider publishableKey={clerkKey} afterSignOutUrl="/">
         <ClerkTokenBridge />
         <SignedIn>

@@ -73,6 +73,21 @@ class StateStore:
         conn.commit()
         return conn
 
+    async def get(self, user_id: str, key: str) -> str | None:
+        """One key's raw stored JSON string, or None when absent."""
+        return await asyncio.to_thread(self._get_sync, user_id, key)
+
+    def _get_sync(self, user_id: str, key: str) -> str | None:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT value FROM app_state WHERE user_id = ? AND key = ?",
+                (user_id, key),
+            ).fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+
     async def get_all(self, user_id: str) -> dict[str, str]:
         """Every stored key -> its raw JSON value string for one user (one
         startup snapshot)."""

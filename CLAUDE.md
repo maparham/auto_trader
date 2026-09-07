@@ -83,3 +83,12 @@ fans out to `/ws/state`, web push, and Telegram. `TELEGRAM_BOT_TOKEN` in the
 environment enables the Telegram channel. End-to-end probe:
 `cd backend && python3 -m scripts.alert_probe [--epic EPIC --broker BROKER
 --timeout SECONDS]`.
+
+Telegram alert photos are live chart screenshots: `core/chart_snapshot.py`
+drives a headless Chromium over the frontend's `/?snapshot=1` boot mode,
+reconstructing the user's last-seen view (mirrored `view.<epic>` heartbeat)
+with live data; matplotlib (`core/alert_chart.py`) and text remain fallbacks.
+Needs `FRONTEND_URL` (default `http://localhost:5173`) and Playwright
+Chromium; `SNAPSHOT_DISABLED=1` turns it off. Probe:
+`cd backend && python3 -m scripts.snapshot_probe --epic EPIC`.
+`SNAPSHOT_DISABLED` with any non-empty value disables the feature.

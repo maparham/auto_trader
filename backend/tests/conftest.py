@@ -37,6 +37,37 @@ def _isolated_alert_store(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_state_store(tmp_path, monkeypatch):
+    """StateStore (the localStorage mirror) persists via a module singleton
+    too; point every module that holds a reference to it at a per-test temp
+    store so the suite never reads/writes the ambient backend/app_state.db.
+    Mirrors the RunStore/AlertStore fixtures above. Three separate patch
+    sites, all sharing one instance:
+    - `auto_trader.core.state_store.STATE_STORE` itself, since some readers
+      (e.g. chart_snapshot._state_store(), api/app.py's lifespan) do
+      `from auto_trader.core.state_store import STATE_STORE` freshly inside a
+      function body each call, which resolves against this attribute.
+    - `auto_trader.core.alert_engine.STATE_STORE`, which binds the name at
+      module import time (top-level import), so patching the source module's
+      attribute alone would not reach it.
+    - `auto_trader.api.routers.state.STATE_STORE`, same top-level-import
+      reasoning.
+    A test file may still install its own StateStore(tmp_path) on top of this
+    (e.g. test_api_state_users.py, test_auth_render_token.py) — that's fine,
+    both are isolated instances, just possibly different ones; nothing here
+    depends on which isolated instance wins."""
+    import auto_trader.api.routers.state as state_router
+    import auto_trader.core.alert_engine as alert_engine_mod
+    import auto_trader.core.state_store as state_store_mod
+    from auto_trader.core.state_store import StateStore
+
+    store = StateStore(str(tmp_path / "app_state.db"))
+    monkeypatch.setattr(state_store_mod, "STATE_STORE", store)
+    monkeypatch.setattr(alert_engine_mod, "STATE_STORE", store)
+    monkeypatch.setattr(state_router, "STATE_STORE", store)
+
+
+@pytest.fixture(autouse=True)
 def _registry_for_routes(monkeypatch):
     """Broker-carrying routes resolve the request's data broker through
     deps.resolve_broker (admin gate, Task 4), which needs deps._registry.

@@ -157,17 +157,78 @@ def install_auth(app: FastAPI) -> None:
             return JSONResponse(
                 status_code=401, content={"detail": "missing bearer token"}
             )
+        token = authz[len("Bearer ") :]
+        internal_sub = verify_render_token(token)
+        if internal_sub is not None:
+            # The render token exists solely so the headless snapshot page can
+            # READ as the alerted user; it must never authorize orders/writes,
+            # and it travels in a URL query string (see verify_ws) so it's
+            # more exposed than a header-only bearer token. Restrict it to
+            # safe, read-only methods.
+            if request.method not in ("GET", "HEAD"):
+                return JSONResponse(status_code=401, content={"detail": INVALID_TOKEN_MSG})
+            request.state.user_id = internal_sub
+            request.state.is_admin = False
+            return await call_next(request)
         try:
             # _verify_claims can block on a JWKS HTTP fetch (cold cache, key
             # rotation); keep that off the event loop.
-            claims = await asyncio.to_thread(
-                _verify_claims, authz[len("Bearer ") :]
-            )
+            claims = await asyncio.to_thread(_verify_claims, token)
             request.state.user_id = claims["sub"]
             request.state.is_admin = is_admin_claims(claims)
         except AuthError as e:
             return JSONResponse(status_code=401, content={"detail": str(e)})
         return await call_next(request)
+
+
+# --- internal render token ---------------------------------------------------
+#
+# The snapshot renderer (core/chart_snapshot.py) drives a headless browser that
+# must authenticate as the alerted user in hosted mode. It self-mints a
+# short-TTL HS256 token with a per-process random secret — never exposed, never
+# accepted across restarts. verify paths treat it as an ALTERNATIVE to a Clerk
+# JWT; local dev (auth off) never needs one.
+
+RENDER_TOKEN_ISS = "auto-trader-render"
+_RENDER_TOKEN_TTL = 60  # seconds
+
+_render_token_secret: str | None = None
+
+
+def _render_secret() -> str:
+    global _render_token_secret
+    if _render_token_secret is None:
+        import secrets
+
+        _render_token_secret = secrets.token_hex(32)
+    return _render_token_secret
+
+
+def mint_render_token(user_id: str) -> str:
+    import time
+
+    return jwt.encode(
+        {"sub": user_id, "iss": RENDER_TOKEN_ISS, "exp": int(time.time()) + _RENDER_TOKEN_TTL},
+        _render_secret(),
+        algorithm="HS256",
+    )
+
+
+def verify_render_token(token: str) -> str | None:
+    """User id when `token` is a valid internal render token, else None.
+    Never raises — callers fall through to Clerk verification on None."""
+    try:
+        claims = jwt.decode(
+            token,
+            _render_secret(),
+            algorithms=["HS256"],
+            issuer=RENDER_TOKEN_ISS,
+            options={"require": ["exp", "sub", "iss"]},
+        )
+    except Exception:
+        return None
+    sub = claims.get("sub")
+    return sub if isinstance(sub, str) and sub else None
 
 
 WS_AUTH_CLOSE_CODE = 4401  # same app-defined code routers/agent.py already uses
@@ -185,6 +246,10 @@ async def verify_ws(websocket: WebSocket) -> str | None:
         websocket.state.is_admin = True
         return DEV_USER_ID
     token = websocket.query_params.get("token", "")
+    internal_sub = verify_render_token(token) if token else None
+    if internal_sub is not None:
+        websocket.state.is_admin = False
+        return internal_sub
     if token:
         try:
             claims = await asyncio.to_thread(_verify_claims, token)

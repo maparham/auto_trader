@@ -185,6 +185,70 @@ async def test_no_hooks_still_sends_plain_text(store):
     assert "reply_markup" not in body
 
 
+# ---- live snapshot preferred over matplotlib ----------------------------------
+
+
+@pytest.mark.anyio
+async def test_live_snapshot_preferred(monkeypatch, store):
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+
+    async def fake_live(user_id, payload):
+        assert user_id == "u1"
+        return b"LIVE-PNG"
+
+    monkeypatch.setattr(
+        "auto_trader.core.chart_snapshot.render_live_chart", fake_live
+    )
+    png = await TELEGRAM._render_snapshot("u1", _payload())
+    assert png == b"LIVE-PNG"
+
+
+@pytest.mark.anyio
+async def test_falls_back_to_matplotlib_when_live_none(monkeypatch, store):
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+
+    async def fake_live(user_id, payload):
+        return None
+
+    monkeypatch.setattr(
+        "auto_trader.core.chart_snapshot.render_live_chart", fake_live
+    )
+    png = await TELEGRAM._render_snapshot("u1", _payload())
+    assert png is not None and png != b"LIVE-PNG"  # matplotlib image bytes
+
+
+@pytest.mark.anyio
+async def test_live_snapshot_used_without_hooks(monkeypatch, store):
+    """The live path needs no hooks — only the matplotlib fallback does."""
+    TELEGRAM.configure(TOKEN, store)
+
+    async def fake_live(user_id, payload):
+        return b"LIVE-PNG"
+
+    monkeypatch.setattr(
+        "auto_trader.core.chart_snapshot.render_live_chart", fake_live
+    )
+    png = await TELEGRAM._render_snapshot("u1", _payload())
+    assert png == b"LIVE-PNG"
+
+
+@pytest.mark.anyio
+async def test_live_snapshot_raise_falls_back_to_matplotlib(monkeypatch, store):
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+
+    async def fake_live(user_id, payload):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "auto_trader.core.chart_snapshot.render_live_chart", fake_live
+    )
+    png = await TELEGRAM._render_snapshot("u1", _payload())
+    assert png is not None and png != b"LIVE-PNG"
+
+
 # ---- callbacks ---------------------------------------------------------------
 
 

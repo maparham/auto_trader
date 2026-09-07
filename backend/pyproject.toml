@@ -21,6 +21,7 @@ dependencies = [
     "pyjwt[crypto]>=2.9",
     "pywebpush>=2.0",
     "matplotlib>=3.8",
+    "playwright>=1.45",
 ]
 
 [project.optional-dependencies]
@@ -50,4 +51,9 @@ pythonpath = ["."]
 ignore = [
     "E402",  # app.py imports routers after its app/middleware setup, on purpose
     "E741",  # `l` reads fine as a local for "low" in the OHLC code
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
 ]

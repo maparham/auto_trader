@@ -53,7 +53,6 @@ import { registerCustomOverlays } from "./lib/customOverlays";
 import { accountSnapshotFrom, setAccountSnapshot } from "./lib/accountSnapshot";
 import { installMagnetModifierKeys } from "./lib/magnet";
 import { matchingCellIds } from "./lib/tabSearch";
-import { compositeOverHex } from "./lib/lineStyle";
 import { registerPositionLine } from "./lib/positionLines";
 import type { ChartController } from "./lib/chartController";
 import {
@@ -88,6 +87,7 @@ import {
   snapshotViewChanged,
 } from "./lib/signals";
 import { minPositiveGap } from "./lib/barInterval";
+import { reportView } from "./lib/viewHeartbeat";
 import {
   PERIODS,
   fetchMarketMeta,
@@ -177,7 +177,7 @@ import LayoutManager from "./LayoutManager";
 import { requestSymbolSearch } from "./lib/signals";
 import { autoTfResolution, loadAutoTf, loadSameTab, tradeBoxSpec, type TradeRow } from "./lib/tradeList";
 import type { KLineData } from "klinecharts";
-import { loadSettings, saveSettings, chartColors, type Settings } from "./theme";
+import { applyThemeToDocument, loadSettings, saveSettings, type Settings } from "./theme";
 import { browserTimezone } from "./chart/chartPainters";
 import { useStrategyOverlaySync } from "./chart/useStrategyOverlaySync";
 import TabBar from "./TabBar";
@@ -198,11 +198,6 @@ registerCustomIndicators();
 registerBacktestIndicators();
 registerCustomOverlays();
 registerPositionLine();
-
-// Max effective opacity for the chart-pane background wash in DARK theme. The bg
-// colors/moods are light washes; capping their opacity in dark lets them lift the
-// dark background toward the color instead of replacing it (see the theme effect).
-const DARK_CHART_BG_CAP = 0.15;
 
 // Agent UI Bridge: the app-level actions close over App's handlers, so they're
 // registered from a mount effect rather than agent/index.ts. Module flag guards
@@ -1019,7 +1014,31 @@ export default function App() {
   const onCellReady = (cellId: string, chart: Chart, controller: ChartController) => {
     readyRef.current.set(cellId, { chart, controller });
     bumpReady();
+    reportCellView(cellId);
   };
+
+  // Passive "what is the user looking at" heartbeat (mirrored, for the backend's
+  // headless alert-time chart snapshot — see lib/viewHeartbeat.ts). Debounced and
+  // cheap to over-call, so it's wired at symbol/period/focus/ready — the points
+  // where the view actually changes identity — never on scroll/zoom ticks.
+  // Reads the cell fresh off tabsRef (not a render closure) since it's called
+  // from callbacks defined at various points in the component body.
+  function reportCellView(cellId: string) {
+    const cell = tabsRef.current.flatMap((t) => t.cells).find((c) => c.id === cellId);
+    const entry = readyRef.current.get(cellId);
+    if (!cell || !entry) return;
+    const el = entry.chart.getDom?.() ?? null;
+    reportView({
+      scope: cell.scope,
+      epic: cell.symbol.epic,
+      broker: brokerIdRef.current,
+      resolution: cell.period.resolution,
+      symbol: cell.symbol,
+      barSpace: entry.chart.getBarSpace().bar,
+      width: el?.clientWidth ?? 1280,
+      height: el?.clientHeight ?? 640,
+    });
+  }
 
   // --- Sync indicators (layout toggle): storage-level mirror ------------------
   // Copy `origin`'s persisted indicator state to every other cell of `tab`, then
@@ -1575,6 +1594,7 @@ export default function App() {
     setTabs((ts) =>
       ts.map((t) => (t.id === active.id ? { ...t, activeCellId: cellId } : t)),
     );
+    reportCellView(cellId);
   };
 
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
@@ -1598,33 +1618,10 @@ export default function App() {
   }, [tradeOpen]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = settings.theme;
-    // Chart-pane background override: set the `--chart-bg` var (consumed by
-    // .chart-cell) when a custom color is chosen, else clear it so the cell falls
-    // back to the theme's `--bg`. Opacity composites the color OVER the theme
-    // background (not toward transparent) so it stays opaque — otherwise a low
-    // opacity would reveal the grey grid behind the pane. So opacity 0 = the theme
-    // background, opacity 1 = the full picked color, a clean dim/wash-out knob.
-    //
-    // The picked colors (and every bg "mood" preset) are light washes tuned for the
-    // light theme. In DARK theme a full-opacity light wash would replace the dark
-    // background and leave the chart glaringly light. So cap the effective opacity in
-    // dark (Math.min, never scaling up) — the wash then only lifts the dark bg toward
-    // the color instead of replacing it, dimming toward the active theme. Light is
-    // untouched, so moods look exactly as picked there; a user's own low opacity is
-    // never dimmed twice.
-    if (settings.chartBg) {
-      const op = settings.chartBgOpacity ?? 1;
-      const effOpacity = settings.theme === "dark" ? Math.min(op, DARK_CHART_BG_CAP) : op;
-      const bg = compositeOverHex(
-        settings.chartBg,
-        chartColors[settings.theme].bg,
-        effOpacity,
-      );
-      document.documentElement.style.setProperty("--chart-bg", bg);
-    } else {
-      document.documentElement.style.removeProperty("--chart-bg");
-    }
+    // data-theme + the --chart-bg override, via the shared helper (theme.ts) so
+    // the headless SnapshotApp stamps the identical theme onto its document —
+    // the alert screenshot rendered on the CSS dark default before it did.
+    applyThemeToDocument(settings);
     // Don't re-mirror a change that came FROM a remote sync. persist writes the
     // pushed value to localStorage before calling syncSettingsFromLocal, so if our
     // state already equals localStorage this update is that sync echo — re-saving it
@@ -1768,6 +1765,8 @@ export default function App() {
             if (t && other) replicateRef.current(t, other.id);
           });
         }
+        // tabsRef only settles next microtask (setTabs above is async).
+        queueMicrotask(() => reportCellView(focusedCell.id));
       },
     );
   };
@@ -1790,6 +1789,9 @@ export default function App() {
             },
       ),
     );
+    // tabsRef only settles next microtask (setTabs above is async), so defer
+    // the read-back rather than reporting stale (pre-update) period fields.
+    queueMicrotask(() => reportCellView(cellId));
   };
 
   const setPeriod = (p: Period) => {

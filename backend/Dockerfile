@@ -8,7 +8,7 @@
 # We relocate all four onto the /data volume via the CAPITAL_*_DB_PATH env
 # overrides rather than juggling the working directory, so cwd stays /app and
 # the module-relative strategies dir (/app/strategies) still resolves.
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -23,6 +23,15 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY backend/auto_trader ./auto_trader
 COPY backend/strategies ./strategies
 RUN uv sync --frozen --no-dev
+
+# Headless Chromium for alert-time chart snapshots (core/chart_snapshot.py).
+# --with-deps pulls the distro libs Chromium needs via apt, so the packages it
+# resolves are tied to the base image's Debian release — hence pinning to
+# -bookworm above rather than floating on whatever "slim" currently means.
+# This layer adds roughly half a GB; keep it in its own layer so it's cached
+# independently of the (much smaller, more frequently invalidated) source
+# layers above.
+RUN uv run python -m playwright install --with-deps chromium
 
 # Persist every sqlite file on the mounted volume.
 ENV CAPITAL_TICK_DB_PATH=/data/tick_history.db \
