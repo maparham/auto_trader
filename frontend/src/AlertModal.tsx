@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import Tooltip from "./components/Tooltip";
 import type { AlertCondition, AlertNotifyChannels, AlertTrigger } from "./lib/persist";
+import { openSettings } from "./lib/signals";
 import type { AlertDefaults } from "./theme";
 import {
   CONDITIONS,
@@ -223,6 +224,20 @@ export default function AlertModal({
                     onChange={(e) => setNotify({ ...notify, [ch]: e.target.checked })}
                   />
                   {label}
+                  {/* Deep link to Settings → Alerts, where Telegram gets
+                      linked (and Push enabled). Settings stacks above this
+                      modal (backdrop z 2000 vs 1500), so the draft survives. */}
+                  {ch === "telegram" && (
+                    <Tooltip content="Notification settings — connect Telegram">
+                      <button
+                        type="button"
+                        className="al-settings-link"
+                        onClick={(e) => { e.preventDefault(); openSettings("alerts"); }}
+                      >
+                        ⚙
+                      </button>
+                    </Tooltip>
+                  )}
                 </label>
               ))}
             </div>

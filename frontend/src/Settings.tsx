@@ -29,6 +29,9 @@ interface Props {
   settings: Settings;
   onChange: (s: Settings) => void;
   onClose: () => void;
+  // Deep-link target: which tab to open on (e.g. the alert modal's
+  // "notification settings" shortcut lands on "alerts").
+  initialTab?: Tab;
 }
 
 type Tab = "general" | "alerts" | "trading";
@@ -114,9 +117,9 @@ const TRIGGERS: { value: AlertTrigger; label: string }[] = [
   { value: "every", label: "Every time" },
 ];
 
-export default function SettingsModal({ settings, onChange, onClose }: Props) {
+export default function SettingsModal({ settings, onChange, onClose, initialTab }: Props) {
   const drag = useDraggable();
-  const [tab, setTab] = useState<Tab>("general");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "general");
   useCloseOnEscape(onClose);
 
   const ad = settings.alertDefaults;

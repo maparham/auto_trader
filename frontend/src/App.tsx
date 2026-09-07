@@ -74,6 +74,7 @@ import {
   alertNavHandler,
   bumpAlerts,
   settingsRequest,
+  settingsRequestTab,
   backtestSettingsRequest,
   openBacktestSettings,
   backtestPanelHiddenSignal,
@@ -339,6 +340,8 @@ const readUnseen = () => new Set(load<string[]>(UNSEEN_KEY, []));
 export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
+  // The tab a settings deep link asked for (undefined = the modal's default).
+  const [settingsTab, setSettingsTab] = useState<"general" | "alerts" | "trading" | undefined>();
   // Maximized view: hides the tab bar so the focused tab's chart reclaims that
   // vertical space. The per-chart toolbar stays (it carries the un-maximize
   // toggle + Backtest), so this is the only chrome that survives the switch.
@@ -359,7 +362,15 @@ export default function App() {
     confirmLineEditsSignal.set(settings.trading.confirmLineEdits);
   }, [settings.trading.confirmLineEdits]);
   // Toolbar gear + chart context menu request the Settings modal via a signal.
-  useEffect(() => settingsRequest.subscribe(() => setShowSettings(true)), []);
+  // A deep link (openSettings("alerts")) also names the tab to land on.
+  useEffect(
+    () =>
+      settingsRequest.subscribe(() => {
+        setSettingsTab((settingsRequestTab.value as "general" | "alerts" | "trading" | null) ?? undefined);
+        setShowSettings(true);
+      }),
+    [],
+  );
   // The toolbar Backtest button toggles the docked config panel via a signal.
   // Open-state is device-local so the panel reopens after a reload if it was
   // open (loadBacktestOpen), showing the persisted config/results without re-running.
@@ -2784,7 +2795,8 @@ export default function App() {
         <SettingsModal
           settings={settings}
           onChange={setSettings}
-          onClose={() => setShowSettings(false)}
+          onClose={() => { setShowSettings(false); setSettingsTab(undefined); }}
+          initialTab={settingsTab}
         />
       )}
 

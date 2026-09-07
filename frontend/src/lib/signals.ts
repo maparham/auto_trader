@@ -445,10 +445,15 @@ export function stageChartOrder(o: { epic: string; side: "buy" | "sell"; price: 
   tradePanelOpen.set(true);
 }
 
-// Request to open the app Settings modal. Set by the toolbar gear button and the
-// chart's right-click context menu; read by App, which owns the modal.
+// Request to open the app Settings modal. Set by the toolbar gear button, the
+// chart's right-click context menu, and deep links (the alert modal's
+// "notification settings" shortcut); read by App, which owns the modal.
+// `settingsRequestTab` rides alongside: the tab the modal should open on, or
+// null for the default.
 export const settingsRequest = new Signal<number>(0);
-export function openSettings(): void {
+export const settingsRequestTab = new Signal<string | null>(null);
+export function openSettings(tab?: string): void {
+  settingsRequestTab.set(tab ?? null);
   settingsRequest.set(settingsRequest.value + 1);
 }
 
