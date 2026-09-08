@@ -507,13 +507,46 @@ function partialHeader(res: Response): FillProgress | null {
   };
 }
 
-/** fetchRecent, but keeping the degraded-serve marker (see CandlesResult). */
+// Identical recent-candle requests already in flight, shared instead of
+// re-issued. A chart cell's mount, its HTF indicator loads, and (in dev)
+// StrictMode's double-mount all ask for the same recent window within the same
+// tick — and each backend miss is a full broker round trip, so the duplicates
+// used to double the tab-switch delay's cost for nothing. Keyed by the full
+// request identity; entries are dropped on settle, so this never serves stale
+// data — it only merges truly concurrent requests.
+const inflightRecent = new Map<string, Promise<CandlesResult>>();
+
+/** fetchRecent, but keeping the degraded-serve marker (see CandlesResult).
+ * Concurrent identical calls share one network request; each caller still gets
+ * its own bar objects (the chart annotates bars in place, so a shared array
+ * would leak one cell's mutations into another). */
 export async function fetchRecentWithStatus(
   epic: string,
   resolution: string,
   bars = 500,
   priceSide: PriceSide = "mid",
   brokerId: string = DEFAULT_BROKER,
+): Promise<CandlesResult> {
+  const key = `${brokerId}|${epic}|${resolution}|${bars}|${priceSide}`;
+  let shared = inflightRecent.get(key);
+  if (!shared) {
+    shared = fetchRecentUncoalesced(epic, resolution, bars, priceSide, brokerId);
+    inflightRecent.set(key, shared);
+    // Drop on settle (success OR failure — a cached rejection would block every
+    // retry). The catch keeps the cleanup chain from surfacing as an unhandled
+    // rejection; callers still see the rejection through `shared` itself.
+    shared.finally(() => inflightRecent.delete(key)).catch(() => {});
+  }
+  const r = await shared;
+  return { ...r, bars: r.bars.map((b) => ({ ...b })) };
+}
+
+async function fetchRecentUncoalesced(
+  epic: string,
+  resolution: string,
+  bars: number,
+  priceSide: PriceSide,
+  brokerId: string,
 ): Promise<CandlesResult> {
   const syn = getSynthetic(epic);
   if (syn) {

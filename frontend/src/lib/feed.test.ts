@@ -422,3 +422,73 @@ describe("MTF pin helpers", () => {
     expect(pinBelowChart("NOT_A_TF", "DAY")).toBe(false);
   });
 });
+
+describe("fetchRecentWithStatus in-flight coalescing", () => {
+  const RAW = [{ time: 1752192000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 10 }];
+  const okCandles = () => ({
+    ok: true,
+    status: 200,
+    headers: new Headers(),
+    json: () => Promise.resolve(RAW),
+  });
+
+  it("concurrent identical requests share ONE network call, each getting its own bars", async () => {
+    // StrictMode double-mount (and same-series indicator loads) fire the exact
+    // same recent fetch in the same tick — only one should reach the backend.
+    let release!: (v: unknown) => void;
+    const gate = new Promise((r) => (release = r));
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await gate;
+      return okCandles();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const a = fetchRecentWithStatus("US100", "MINUTE", 500, "mid", "capital");
+    const b = fetchRecentWithStatus("US100", "MINUTE", 500, "mid", "capital");
+    release(null);
+    const [ra, rb] = await Promise.all([a, b]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(ra.bars).toEqual(rb.bars);
+    // Each caller owns its bars: the chart annotates bar objects in place, so a
+    // shared array would leak one cell's mutations into another.
+    ra.bars[0].close = 999;
+    expect(rb.bars[0].close).toBe(1.5);
+  });
+
+  it("does not coalesce requests for different series", async () => {
+    let release!: (v: unknown) => void;
+    const gate = new Promise((r) => (release = r));
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await gate;
+      return okCandles();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const a = fetchRecentWithStatus("US100", "MINUTE", 500, "mid", "capital");
+    const b = fetchRecentWithStatus("US100", "HOUR", 500, "mid", "capital");
+    release(null);
+    await Promise.all([a, b]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a settled request is not reused — the next call fetches fresh", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okCandles());
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchRecentWithStatus("US100", "MINUTE", 500, "mid", "capital");
+    await fetchRecentWithStatus("US100", "MINUTE", 500, "mid", "capital");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a shared failure rejects every waiter and is not cached", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("backend down"))
+      .mockResolvedValue(okCandles());
+    vi.stubGlobal("fetch", fetchMock);
+    const a = fetchRecentWithStatus("US100", "MINUTE", 500, "mid", "capital");
+    const b = fetchRecentWithStatus("US100", "MINUTE", 500, "mid", "capital");
+    await expect(a).rejects.toThrow("backend down");
+    await expect(b).rejects.toThrow("backend down");
+    // The failure must not stick: the next call retries and succeeds.
+    const r = await fetchRecentWithStatus("US100", "MINUTE", 500, "mid", "capital");
+    expect(r.bars.length).toBe(1);
+  });
+});

@@ -16,6 +16,7 @@ import {
   type Period,
 } from "../lib/feed";
 import { coverHistoryRangeParallel } from "../lib/historyPaging";
+import { getCachedBars, mergeFreshWindow, putCachedBars } from "../lib/barCache";
 import { PERF_DIAG_ON, recordTick } from "../lib/perfDiag";
 import { detachedWindows, type DetachedTarget } from "./detachedView";
 import { jumpToLive } from "../lib/liveEdge";
@@ -248,6 +249,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     if (!chart || !dataFacade) return;
     let cancelled = false;
     let retryTimer: number | null = null;
+    // Whether THIS run painted live-series bars (pre-paint or loaded). Gates the
+    // cleanup's bar-cache capture: a replay run's slice or a detached window
+    // must never be stashed as the live series (see barCache.ts).
+    let paintedLiveBars = false;
     // A series switch starts the backoff over; a retry re-run (same series)
     // keeps escalating it. sameSeriesRerun also gates keep-painted-on-empty
     // below: only a re-run of the identical series may leave old bars on screen.
@@ -536,6 +541,29 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // the feature exists to prevent.
       const replay = handle.replayRef.current;
       const replaying = replay?.isActive() ?? false;
+      // Instant pre-paint from the session bar cache: a freshly mounted cell
+      // (tab switch, hydrate remount) otherwise shows a BLANK chart for the
+      // whole recent-history await below — measured 1-2s, the backend refreshes
+      // the live edge from the broker — even though this exact series was on
+      // screen moments ago. Paint the last-known bars now, positioned where the
+      // fresh load will land, and let that load merge over them when it
+      // arrives. Live/native series only: replay owns its own bars, detached
+      // paints a deep window, and a re-run with bars already painted (retry,
+      // TF switch) has nothing to buy.
+      let prePainted = false;
+      if (!replaying && !detachedMode && chart.getDataList().length === 0) {
+        const cached = getCachedBars(seriesKey);
+        if (cached && cached.length > 0) {
+          handle.cursorSecRef.current = Math.floor(cached[0].timestamp / 1000);
+          dataFacade.setBars(cached, !period.liveOnly);
+          if (restoreView && restoreView.barSpace > 0) chart.setBarSpace(restoreView.barSpace);
+          if (centerTargetTs != null) scrollTsToCenter(chart, centerTargetTs);
+          else chart.scrollToRealTime();
+          setHasData(true);
+          prePainted = true;
+          paintedLiveBars = true;
+        }
+      }
       let bars: KLineData[];
       let degraded: string | null = null;
       if (replaying) {
@@ -578,11 +606,26 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           const loaded = await fetchRecentWithStatus(symbol.epic, period.resolution, 500, priceSide, brokerId);
           bars = loaded.bars;
           degraded = loaded.degraded;
+          // Merge over the pre-paint rather than replacing it: the cache may
+          // hold deeper history than the ~500-bar recent window (scroll-back
+          // pages it stashed on the last unmount), and applying the window
+          // alone would visibly SHRINK the chart. Fresh bars win on shared
+          // timestamps, so the live edge is always the backend's answer; a
+          // cache too stale to overlap the fresh window is dropped outright
+          // (mergeFreshWindow — stitching across an unprovable gap is worse).
+          if (prePainted && bars.length > 0) {
+            bars = mergeFreshWindow(handle.chartRef.current?.getDataList() ?? [], bars);
+          }
         } catch (err) {
           console.warn(`[chart] initial load failed for ${symbol.epic}; continuing with no history`, err);
           bars = [];
           if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
         }
+        // This run's painted bars are the live series (loaded now, or kept from
+        // the pre-paint/previous run) — eligible for the unmount bar-cache
+        // capture. On the branches above they are a replay slice or a detached
+        // window and must not be.
+        paintedLiveBars = true;
       }
       if (!cancelled) setDegraded(degraded);
       if (cancelled || !handle.chartRef.current) return;
@@ -656,7 +699,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         // ...and never while DETACHED, for the same reason: entering detached is
         // a same-series re-run, so an empty window read would leave the LIVE
         // bars painted under a view the user thinks is 2021.
-        sameSeriesRerun && !replaying && !detachedMode,
+        // A pre-paint counts as "same series painted": those bars ARE this
+        // series (the cache is keyed on the full series identity), so a failed
+        // refresh keeps them on screen under the stale pill instead of wiping
+        // the just-painted chart back to blank.
+        (sameSeriesRerun || prePainted) && !replaying && !detachedMode,
       );
       if (!keepPainted) {
         // Cursor starts at the oldest loaded bar; scroll-back requests older windows.
@@ -1212,6 +1259,19 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     return () => {
       cancelled = true;
       if (retryTimer != null) window.clearTimeout(retryTimer);
+      // Stash the outgoing series' bars so the next mount of this series
+      // pre-paints instantly instead of waiting out the recent-history fetch.
+      // Read from the FACADE, not the chart: on unmount, ChartCore's init
+      // effect was declared first, so its cleanup (which disposes the chart and
+      // nulls chartRef) has already run by the time this one does — the facade
+      // is a plain object that keeps its last setBars dataset. Only when THIS
+      // run painted live-series bars — a replay run's masked slice or a
+      // detached window must never be stashed as the live series — and never
+      // while a replay session is active (entering one cleans this run up with
+      // the session's bars possibly already applied).
+      if (paintedLiveBars && !(handle.replayRef.current?.isActive() ?? false)) {
+        putCachedBars(seriesKey, dataFacade.getBars());
+      }
       handle.wsRef.current?.close();
       handle.wsRef.current = null;
     };
