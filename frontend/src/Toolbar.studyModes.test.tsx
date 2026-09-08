@@ -12,6 +12,11 @@ installMemStorage();
 
 const { default: Toolbar } = await import("./Toolbar");
 const { ChartController } = await import("./lib/chartController");
+const {
+  getPatternPanelState,
+  resetPatternPanel,
+  armPatternSelect,
+} = await import("./lib/patternPanelStore");
 
 const SYMBOL = { epic: "US100", name: "US 100", status: null, pricePrecision: 1 };
 const PERIOD = { label: "15m", resolution: "MINUTE_15", seconds: 900 };
@@ -66,6 +71,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   controller = new ChartController("cell-a", "tab.test");
+  resetPatternPanel();
 });
 
 afterEach(cleanup);
@@ -173,37 +179,112 @@ describe("the similarity search entry in the toolbar", () => {
   const searchBtn = () =>
     document.querySelector(".toolbar .pattern-range-toggle") as HTMLButtonElement;
 
-  it("arms the range drag in search mode on the focused cell", () => {
-    controller.patternSearchAvailable.set(true);
+  // The button now just opens/closes the panel — it no longer arms the drag
+  // directly (that moved into the panel's own "Select range on chart"
+  // control, wired through armPatternSelect/setPatternArmProvider).
+  it("toggles the pattern panel open and closed, lit while open", () => {
+    paint();
+    expect(searchBtn().className).not.toContain("seg-on");
+    fireEvent.click(searchBtn());
+    expect(getPatternPanelState().open).toBe(true);
+    expect(searchBtn().className).toContain("seg-on");
+    fireEvent.click(searchBtn());
+    expect(getPatternPanelState().open).toBe(false);
+    expect(searchBtn().className).not.toContain("seg-on");
+  });
+
+  // The panel must open even with no eligible chart — the Presets view still
+  // works without a searchable series. Only the arm action is gated.
+  it("is never disabled: the panel opens regardless of chart eligibility", () => {
     paint();
     expect(searchBtn().disabled).toBe(false);
     fireEvent.click(searchBtn());
-    expect(controller.patternRangeArmed.value).toBe(true);
-    expect(controller.patternRangeMode.value).toBe("search");
-    expect(searchBtn().className).toContain("seg-on");
-    // A second click disarms.
-    fireEvent.click(searchBtn());
-    expect(controller.patternRangeArmed.value).toBe(false);
+    expect(getPatternPanelState().open).toBe(true);
   });
 
-  it("re-arms as search when the drag was armed for pattern copy", () => {
+  it("registers the arm bridge, which arms the range drag in search mode on the focused cell", () => {
     controller.patternSearchAvailable.set(true);
+    paint();
+    armPatternSelect();
+    expect(controller.patternRangeArmed.value).toBe(true);
+    expect(controller.patternRangeMode.value).toBe("search");
+  });
+
+  it("mirrors the controller's armed-in-search signal into the store", () => {
+    controller.patternSearchAvailable.set(true);
+    paint();
+    expect(getPatternPanelState().selectArmed).toBe(false);
+    controller.patternRangeMode.set("search");
+    controller.patternRangeArmed.set(true);
+    expect(getPatternPanelState().selectArmed).toBe(true);
+    // Armed for pattern-copy is a different tool, not this signal: disarming
+    // and re-arming in copy mode (the transition the sidebar's copy tool
+    // actually makes) must not mirror as selectArmed.
+    controller.patternRangeArmed.set(false);
     controller.patternRangeMode.set("copy");
     controller.patternRangeArmed.set(true);
-    paint();
-    // Not lit for copy mode: that is the sidebar's pattern-copy tool.
-    expect(searchBtn().className).not.toContain("seg-on");
-    fireEvent.click(searchBtn());
-    expect(controller.patternRangeArmed.value).toBe(true);
-    expect(controller.patternRangeMode.value).toBe("search");
+    expect(getPatternPanelState().selectArmed).toBe(false);
   });
 
-  // Disabled rather than hidden, like Replay: stable chrome.
-  it("is disabled, not absent, on a cell with nothing to search", () => {
-    paint();
-    expect(searchBtn()).not.toBeNull();
-    expect(searchBtn().disabled).toBe(true);
-    fireEvent.click(searchBtn());
+  it("clears the mirrored armed signal when the focused cell goes away", () => {
+    controller.patternSearchAvailable.set(true);
+    const { rerender } = render(
+      <Toolbar
+        controller={controller}
+        symbol={SYMBOL as never}
+        period={PERIOD as never}
+        onSymbol={() => {}}
+        onPeriod={() => {}}
+        brokerId="capital"
+        priceSide={"mid" as never}
+        accounts={[]}
+        onSelectBroker={() => {}}
+        maximized={false}
+        onToggleMaximize={() => {}}
+      />,
+    );
+    controller.patternRangeMode.set("search");
+    controller.patternRangeArmed.set(true);
+    expect(getPatternPanelState().selectArmed).toBe(true);
+    // The focused cell disappears (e.g. its tab closed) — no cell left to
+    // arm, so the mirrored signal must not keep saying "armed".
+    rerender(
+      <Toolbar
+        controller={null}
+        symbol={SYMBOL as never}
+        period={PERIOD as never}
+        onSymbol={() => {}}
+        onPeriod={() => {}}
+        brokerId="capital"
+        priceSide={"mid" as never}
+        accounts={[]}
+        onSelectBroker={() => {}}
+        maximized={false}
+        onToggleMaximize={() => {}}
+      />,
+    );
+    expect(getPatternPanelState().selectArmed).toBe(false);
+  });
+
+  it("unregisters the arm bridge on unmount", () => {
+    controller.patternSearchAvailable.set(true);
+    const { unmount } = render(
+      <Toolbar
+        controller={controller}
+        symbol={SYMBOL as never}
+        period={PERIOD as never}
+        onSymbol={() => {}}
+        onPeriod={() => {}}
+        brokerId="capital"
+        priceSide={"mid" as never}
+        accounts={[]}
+        onSelectBroker={() => {}}
+        maximized={false}
+        onToggleMaximize={() => {}}
+      />,
+    );
+    unmount();
+    armPatternSelect();
     expect(controller.patternRangeArmed.value).toBe(false);
   });
 });

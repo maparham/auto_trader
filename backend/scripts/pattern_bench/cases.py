@@ -315,8 +315,8 @@ def case_extreme_tempo() -> Case:
 def case_expanding_tops() -> Case:
     # The one case whose ground truth is HUMAN-labelled, not by-construction:
     # real windows from a Sept 7 2026 session where the user judged Patterns'
-    # results on an OIL_CRUDE 3m selection (impulse bar, then an expanding
-    # pivot-rich consolidation: swing highs stair-stepping up a tight trendline
+    # results on an OIL_CRUDE 3m selection (impulse bar, then an ascending
+    # broadening formation: swing highs stair-stepping up a tight trendline
     # over a flat-to-slightly-lower floor, ~10 pivots/60 bars). The fixture
     # holds the raw OHLC of the query, the two matches the user endorsed
     # (EURUSD 1W, INTC 1W — same expansion, same busy pivot rhythm) and five
@@ -340,7 +340,7 @@ def case_expanding_tops() -> Case:
     bads = [rescaled(w) for w in fixture["bad"]]
     return _assemble(
         "expanding-tops",
-        "A real expanding pivot-rich consolidation; user-endorsed matches vs the staircase/flat-shelf windows the user rejected.",
+        "A real ascending broadening formation (pivot-rich); user-endorsed matches vs the staircase/flat-shelf windows the user rejected.",
         ts, ohlc, query, goods, bads,
     )
 

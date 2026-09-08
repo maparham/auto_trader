@@ -2698,6 +2698,8 @@ export default function App() {
             timezone={settings.timezone}
             hidden={patternPanelHidden}
             onReveal={revealPatternCell}
+            broker={brokerId}
+            priceSide={settings.priceSide}
           />
           {/* Imported trade list, docked like the pattern panel (workspace-level:
               rows span symbols across tabs). Hidden — state intact — while a

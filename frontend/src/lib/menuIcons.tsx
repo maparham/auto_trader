@@ -99,6 +99,34 @@ export function SimilarSequenceIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// Select range: candles inside a dashed marquee, nothing more — the pattern
+// panel's arm-the-drag control. CopyPatternIcon adds the paste corner (same
+// gesture, different destination), so this stays the plain selection.
+export function SelectRangeIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4.5" width="18" height="15" rx="1.4" strokeDasharray="2.6 2" />
+      <path d="M8 7.5v9M13 8.5v8M18 7v9.5" />
+      <rect x="6.6" y="9.5" width="2.8" height="4.5" rx="0.5" />
+      <rect x="11.6" y="10.5" width="2.8" height="4" rx="0.5" />
+      <rect x="16.6" y="9" width="2.8" height="5.5" rx="0.5" />
+    </svg>
+  );
+}
+
+// Save as preset: a bookmark ribbon holding a swing path — a selected shape
+// filed into the pattern library.
+export function SavePresetIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.5L5 21V4a1 1 0 0 1 1-1Z" />
+      <path d="M8 12l2.5-3.5 2.5 2.5 3-4" opacity="0.85" />
+    </svg>
+  );
+}
+
 // Copy pattern: candles inside a dashed marquee — the drag that lifts a shape
 // off the chart. Sibling to SimilarSequenceIcon, which starts from the same
 // gesture but goes looking for matches instead.

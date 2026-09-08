@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     # links) are persisted. Set CAPITAL_ALERTS_DB_PATH to relocate.
     alerts_db_path: str = "alerts.db"
 
+    # Where user-saved pattern presets are persisted. Set
+    # CAPITAL_PATTERNS_DB_PATH to relocate.
+    patterns_db_path: str = "patterns.db"
+
     # CAPITAL_STREAM_DEBUG=1 turns on a per-second latency summary for the live
     # candle streams (see capital_stream._StreamDebug): tick rate, tick->candle
     # yield ratio, and age_ms = now - tick_timestamp. Verifies that ticks reach

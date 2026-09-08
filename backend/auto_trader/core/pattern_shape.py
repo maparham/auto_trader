@@ -26,7 +26,11 @@ high pivots and low pivots (on a LIGHT fixed 3-bar smoothing — an
 oscillation-rich query's swings vanish under the m/8 kernel) against the
 window's extremes at the same positions. It reads what no pointwise or
 per-pivot-level distance can: whether the consolidation EXPANDS (tops rising
-over a lagging floor) or is a staircase/channel with the same silhouette.
+over a lagging floor — an ascending broadening formation, in chartist
+terms; also traded as the expanding wedge)
+or is a staircase/channel with the same silhouette. The mechanism is generic
+envelope geometry, not broadening-specific: it equally separates contracting
+wedges or parallel channels, always by matching the QUERY's own slopes.
 Ground truth came from a real user-labelled case (expanding-tops, Sept 2026);
 the term lifts its endorsed match from unfound to rank 3 with every other
 benchmark case byte-identical.
@@ -302,7 +306,7 @@ def _window_extremes_at(piv: list[tuple[float, float, int]], zw: np.ndarray) -> 
 # pivots, the window's extremes at the same positions get theirs, and the
 # distance is the mean absolute slope gap. It separates what pointwise and
 # pivot-level distances cannot: an expanding consolidation (tops rising, floor
-# flat — the Sept 2026 expanding-tops case) from a staircase or parallel
+# flat — a broadening formation; the Sept 2026 expanding-tops case) from a staircase or parallel
 # channel with a near-identical silhouette. On the benchmark it lifts that
 # case's user-endorsed EURUSD window from unfound to rank 3 with every other
 # case's ranks byte-identical; 0.2 over 0.1 ranks it 3 vs 4, nothing else

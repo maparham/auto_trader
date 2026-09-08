@@ -66,6 +66,13 @@ import { isDataOnlyBroker, type BrokerAccount } from "./lib/trading";
 import { isSynthetic } from "./lib/syntheticRegistry";
 import { UserButton } from "@clerk/clerk-react";
 import { CLERK_ENABLED } from "./lib/authToken";
+import {
+  getPatternPanelState,
+  setPatternArmProvider,
+  setPatternSelectArmed,
+  subscribePatternPanel,
+  togglePatternPanel,
+} from "./lib/patternPanelStore";
 
 interface DrawMenu {
   x: number;
@@ -154,24 +161,48 @@ export default function Toolbar({
     useCallback((cb) => controller?.replayEntry.subscribe(cb) ?? (() => {}), [controller]),
     () => controller?.replayEntry.value ?? null,
   );
-  // Similarity search arming state, published per cell over the controller like
-  // the other study modes: whether THIS cell can search at all (synthetic
-  // epics, sub-minute intervals and snapshots cannot), and whether the drag is
-  // currently armed in "search" mode (the same signal armed in "copy" mode is
-  // the pattern-copy tool, which stays in the draw sidebar).
-  const patternArmed = useSyncExternalStore(
-    useCallback((cb) => controller?.patternRangeArmed.subscribe(cb) ?? (() => {}), [controller]),
-    () => controller?.patternRangeArmed.value ?? false,
+  // Whether the pattern panel is open (either view) — the toolbar button's lit
+  // state and click target. Arming the drag itself now lives in the panel's
+  // own "Select range on chart" control (armPatternSelect), wired to the
+  // focused cell below.
+  const patternPanelOpen = useSyncExternalStore(
+    subscribePatternPanel,
+    () => getPatternPanelState().open,
   );
-  const patternMode = useSyncExternalStore(
-    useCallback((cb) => controller?.patternRangeMode.subscribe(cb) ?? (() => {}), [controller]),
-    () => controller?.patternRangeMode.value ?? "search",
-  );
-  const patternAvailable = useSyncExternalStore(
-    useCallback((cb) => controller?.patternSearchAvailable.subscribe(cb) ?? (() => {}), [controller]),
-    () => controller?.patternSearchAvailable.value ?? false,
-  );
-  const findingSimilar = patternArmed && patternMode === "search";
+  // Registers this cell's arm action with the pattern panel (a level of
+  // indirection so the panel need not know which cell is focused; reading
+  // patternSearchAvailable fresh at call time is how the arm action stays
+  // gated to a searchable chart — no synthetic epic, sub-minute interval or
+  // snapshot — without the panel needing to know that rule) and mirrors the
+  // controller's armed-in-search signal into the store so the panel's header
+  // can reflect it without holding its own state.
+  useEffect(() => {
+    if (!controller) {
+      // No focused cell to arm: the panel's header must not keep showing a
+      // stale "armed" state left over from whichever cell had focus before.
+      setPatternSelectArmed(false);
+      return;
+    }
+    setPatternArmProvider(() => {
+      if (!controller.patternSearchAvailable.value) return;
+      controller.patternRangeMode.set("search");
+      controller.patternRangeArmed.set(true);
+    });
+    const sync = () =>
+      setPatternSelectArmed(
+        controller.patternRangeArmed.value && controller.patternRangeMode.value === "search",
+      );
+    sync();
+    const un = controller.patternRangeArmed.subscribe(sync);
+    return () => {
+      un();
+      setPatternArmProvider(null);
+      // The mirrored signal belongs to the cell that just lost focus/unmounted
+      // — leaving it true would light the panel's header for a drag that can
+      // no longer happen.
+      setPatternSelectArmed(false);
+    };
+  }, [controller]);
   // Panel open/closed, separate from the heatmap being ON. Turning it on opens
   // the panel (that was the old behaviour, where the panel WAS the on state);
   // clicking away closes the panel and leaves the heatmap painting.
@@ -802,30 +833,16 @@ export default function Toolbar({
         )}
       </div>
 
-      {/* Similarity search: the third study mode. Arms the same range drag the
-          draw sidebar used to own; drag across candles and the results dock as
-          a sidebar. Disabled rather than hidden, like Replay. */}
-      <Tooltip
-        content={
-          !patternAvailable
-            ? "Similarity search needs a searchable chart: not a synthetic symbol, a sub-minute interval or a snapshot."
-            : "Similarity search: drag across candles to find where that shape appeared before (scroll to zoom, right-drag to pan while armed)"
-        }
-      >
+      {/* Similarity + preset pattern search, docked as a panel: this toggles
+          it open/closed. Never disabled — the Presets view works without any
+          eligible chart; only the panel's own "Select range on chart" action
+          (armPatternSelect, wired above) is gated by patternAvailable. */}
+      <Tooltip content="Pattern search: find similar shapes on your charts, or scan for preset patterns">
         <button
-          className={`anchor-btn pattern-range-toggle${findingSimilar ? " seg-on" : ""}`}
-          disabled={!controller || !patternAvailable}
-          aria-pressed={findingSimilar}
-          aria-label="Similarity search"
-          onClick={() => {
-            if (!controller) return;
-            const wasCopying =
-              controller.patternRangeArmed.value && controller.patternRangeMode.value === "copy";
-            // Mode first: arming with a stale "copy" would turn this button
-            // into the copy tool.
-            controller.patternRangeMode.set("search");
-            controller.patternRangeArmed.set(!controller.patternRangeArmed.value || wasCopying);
-          }}
+          className={`anchor-btn pattern-range-toggle${patternPanelOpen ? " seg-on" : ""}`}
+          aria-pressed={patternPanelOpen}
+          aria-label="Pattern search"
+          onClick={togglePatternPanel}
         >
           <SimilarSequenceIcon />
           <span className="tb-label">Patterns</span>

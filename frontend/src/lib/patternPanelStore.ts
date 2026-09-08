@@ -16,6 +16,15 @@ import {
   type PatternSearchResult,
 } from "./patternSearch";
 import { listPatternTargets } from "./patternTargets";
+import {
+  createUserPreset,
+  fetchFamilies,
+  listUserPresets,
+  runPresetScan,
+  type PresetFamily,
+  type PresetScanResult,
+  type UserPreset,
+} from "./presetScan";
 
 const MIN_BARS = 3;
 const MAX_BARS = 1024;
@@ -31,6 +40,12 @@ const MAX_CONCURRENT_SEARCHES = 4;
  *  every open tab (the workspace series App enumerates via the provider). */
 export type PatternScope = "cell" | "all";
 const DEFAULT_SCOPE: PatternScope = "all";
+
+/** Which half of the panel is showing: the drag-driven Similar search, or the
+ *  preset family scan. Both halves of state live in this one store — the
+ *  panel is one workspace-level surface with two views. */
+export type PatternView = "similar" | "presets";
+const DEFAULT_VIEW: PatternView = "similar";
 
 export interface PatternPanelState {
   /** The series the query was dragged on. Null until the first search. */
@@ -48,6 +63,34 @@ export interface PatternPanelState {
   mode: PatternMode;
   forwardBars: number;
   scope: PatternScope;
+
+  /** Whether the panel is open at all (either view). */
+  open: boolean;
+  view: PatternView;
+  /** The preset-families manifest, fetched on open (and retried on the next
+   *  open if that fetch failed). */
+  families: PresetFamily[] | null;
+  /** Set when the families-manifest fetch fails; cleared on the next
+   *  successful fetch. The UI's surface for that failure. */
+  familiesError: string | null;
+  /** The signed-in user's saved presets, fetched on open (and retried on the
+   *  next open if that fetch failed). */
+  userPresets: UserPreset[] | null;
+  /** Family keys (built-in `family` or `user:<id>`) currently checked. */
+  selectedFamilies: string[];
+  /** Per-family parameter OVERRIDES only — unset params use the family's
+   *  server-side defaults. */
+  paramsByFamily: Record<string, Record<string, number>>;
+  presetResult: PresetScanResult | null;
+  presetLoading: boolean;
+  presetError: string | null;
+  /** Key of the last-clicked preset hit row, so the selection survives view
+   *  switches (the Presets view unmounts entirely). Cleared by a new scan:
+   *  the key identifies a row of THIS result set. */
+  presetSelectedHit: string | null;
+  /** Mirrors the active drag-select controller's armed/disarmed signal so the
+   *  Toolbar button can reflect it without holding its own state. */
+  selectArmed: boolean;
 }
 
 const initial: PatternPanelState = {
@@ -55,6 +98,13 @@ const initial: PatternPanelState = {
   result: null, loading: false, error: null,
   range: null, truncatedTo: null,
   mode: DEFAULT_MODE, forwardBars: DEFAULT_FORWARD_BARS, scope: DEFAULT_SCOPE,
+
+  open: false, view: DEFAULT_VIEW,
+  families: null, familiesError: null, userPresets: null,
+  selectedFamilies: [], paramsByFamily: {},
+  presetResult: null, presetLoading: false, presetError: null,
+  presetSelectedHit: null,
+  selectArmed: false,
 };
 
 let state: PatternPanelState = initial;
@@ -75,6 +125,19 @@ let lastRun: {
 // already gated (no synthetic epics, sub-minute or snapshot cells). Called at
 // run time so it always reflects the tabs as they are now.
 let seriesProvider: () => MatchSource[] = () => [];
+// Only the newest preset scan may write state; its own counter so a slow
+// Similar search and a slow preset scan never supersede each other.
+let presetReqId = 0;
+// The families manifest and the user's saved presets are fetched on open.
+// This flag guards against a second open re-fetching WHILE the first fetch is
+// still in flight (or after it already succeeded); it is reset to false in
+// the failure branch of each fetch below, so a fetch that failed IS retried
+// on the next open rather than latching the panel into a permanent no-op.
+let manifestRequested = false;
+// The active drag-select controller (App wires this to whichever chart last
+// registered one); armPatternSelect() is a level of indirection so the panel
+// need not know which cell that is.
+let armProvider: (() => void) | null = null;
 
 function set(patch: Partial<PatternPanelState>): void {
   state = { ...state, ...patch };
@@ -98,6 +161,17 @@ export function setPatternSeriesProvider(fn: () => MatchSource[]): () => void {
   };
 }
 
+/** Resolve the real MatchSource (cellId, tabId, label) for a series by
+ *  epic+resolution, reading the workspace's series provider — the same
+ *  enumeration runPatternSearch and getPresetScanCharts use. Null when no
+ *  open chart (on any tab) shows that series. Preset scan results carry no
+ *  cellId of their own (a preset scan spans every open chart, not one
+ *  origin), so PresetScanView uses this to tag a hit with a real, jumpable
+ *  source instead of a placeholder that breaks cross-tab jumps. */
+export function findPatternSource(epic: string, resolution: string): MatchSource | null {
+  return seriesProvider().find((s) => s.epic === epic && s.resolution === resolution) ?? null;
+}
+
 export interface PatternRunArgs {
   /** The dragging cell's identity; tabId is filled in from the provider when
    *  the workspace enumeration knows this cell. */
@@ -110,6 +184,12 @@ export interface PatternRunArgs {
 }
 
 export function runPatternSearch(args: PatternRunArgs): void {
+  // A drag-search explicitly surfaces the panel — `open` is the ONE signal
+  // WorkspacePatternPanel gates visibility on, so a search that starts while
+  // the panel was never toolbar-opened must open it itself, or the toolbar
+  // button (lit off `open`) and closePatternPanel (which only flips `open`)
+  // both go stale relative to what's actually on screen.
+  set({ open: true });
   const all = seriesProvider();
   // Prefer the provider's entry: it carries the tab the cell lives on, which
   // a foreign-row jump needs to switch there.
@@ -242,11 +322,175 @@ export function dismissPatternPanel(): void {
   });
 }
 
+/** Opens the panel (either view). Lazily kicks off the families manifest and
+ *  user-presets fetch — a second open (or a toggle back in) does not refetch
+ *  while the first fetch is in flight or once it has already succeeded. A
+ *  failed fetch un-latches itself so the NEXT open retries it, and leaves its
+ *  error visible in state rather than swallowing it. */
+export function openPatternPanel(): void {
+  set({ open: true });
+  if (manifestRequested) return;
+  manifestRequested = true;
+  fetchFamilies().then(
+    (families) => set({ families, familiesError: null }),
+    (e: unknown) => {
+      manifestRequested = false;
+      set({ familiesError: e instanceof Error ? e.message : String(e) });
+    },
+  );
+  listUserPresets().then(
+    (userPresets) => set({ userPresets }),
+    () => {
+      manifestRequested = false;
+    },
+  );
+}
+
+/** Just hides the panel; results (Similar and preset) survive so reopening
+ *  finds them intact. Only dismissPatternPanel destroys the Similar result. */
+export function closePatternPanel(): void {
+  set({ open: false });
+}
+
+export function togglePatternPanel(): void {
+  if (state.open) closePatternPanel();
+  else openPatternPanel();
+}
+
+export function setPatternView(v: PatternView): void {
+  set({ view: v });
+}
+
+export function toggleFamily(key: string): void {
+  const selectedFamilies = state.selectedFamilies.includes(key)
+    ? state.selectedFamilies.filter((k) => k !== key)
+    : [...state.selectedFamilies, key];
+  set({ selectedFamilies });
+}
+
+export function setFamilyParam(family: string, name: string, value: number): void {
+  set({
+    paramsByFamily: {
+      ...state.paramsByFamily,
+      [family]: { ...state.paramsByFamily[family], [name]: value },
+    },
+  });
+}
+
+/** Marks a preset hit row as the selected one (sticky: module-level state, so
+ *  it survives the Presets view unmounting on a view switch). */
+export function setPresetSelectedHit(key: string | null): void {
+  set({ presetSelectedHit: key });
+}
+
+/** The deduped chart list a preset scan would send — same dedup rule as the
+ *  Similar search's fan-out (epic|resolution, first one wins). Exported so
+ *  PresetScanView can gate its Scan button on the same set runPresetScanNow
+ *  actually uses, rather than approximating it from the mounted-cell registry
+ *  (which only covers the ACTIVE tab, while this spans every open tab). Not
+ *  reactive on its own — seriesProvider() is a plain function, not a store
+ *  field — so it only reflects the current tab layout on the next render the
+ *  store already causes (a new tab opening elsewhere won't flip the button
+ *  live; acceptable for v1). */
+export function getPresetScanCharts(): { epic: string; resolution: string }[] {
+  const seen = new Set<string>();
+  const charts: { epic: string; resolution: string }[] = [];
+  for (const s of seriesProvider()) {
+    const key = `${s.epic}|${s.resolution}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    charts.push({ epic: s.epic, resolution: s.resolution });
+  }
+  return charts;
+}
+
+export function runPresetScanNow(broker: string, priceSide: string): void {
+  // One scan at a time: a second call while the first is still in flight is
+  // ignored outright, unlike the Similar search which supersedes.
+  if (state.presetLoading) return;
+  const charts = getPresetScanCharts();
+  const families = state.selectedFamilies.map((family) => ({
+    family,
+    params: state.paramsByFamily[family] ?? {},
+  }));
+  const id = ++presetReqId;
+  set({ presetLoading: true, presetError: null });
+  runPresetScan({ charts, families, broker, priceSide }).then(
+    (presetResult) => {
+      if (presetReqId !== id) return;
+      // A fresh result set retires the old row selection with the rows it
+      // pointed into.
+      set({ presetResult, presetLoading: false, presetSelectedHit: null });
+    },
+    (e: unknown) => {
+      if (presetReqId !== id) return;
+      set({ presetError: e instanceof Error ? e.message : String(e), presetLoading: false });
+    },
+  );
+}
+
+/** Saves the LAST Similar-search query (module-level `lastRun`, captured at
+ *  drag time) as a new user preset. Null with presetError set when there is
+ *  nothing to save. */
+export async function savePresetFromLastRun(name: string): Promise<UserPreset | null> {
+  if (!lastRun) {
+    set({ presetError: "run a search before saving it as a preset" });
+    return null;
+  }
+  try {
+    const preset = await createUserPreset({
+      name,
+      epic: lastRun.origin.epic,
+      resolution: lastRun.origin.resolution,
+      bars: lastRun.bars,
+    });
+    await refreshUserPresets();
+    // A prior failed save may have left presetError set; a subsequent
+    // successful one must clear it, or the stale message keeps rendering.
+    set({ presetError: null });
+    return preset;
+  } catch (e) {
+    // presetError is the panel's only error surface for the preset half of
+    // the store — a failed save must land there too, not just reject silently.
+    set({ presetError: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+}
+
+export async function refreshUserPresets(): Promise<void> {
+  try {
+    const userPresets = await listUserPresets();
+    set({ userPresets });
+  } catch {
+    // The manifest fetch is best-effort on open; a failed refresh here
+    // leaves the previous list in place rather than surfacing an error.
+  }
+}
+
+export function setPatternArmProvider(fn: (() => void) | null): void {
+  armProvider = fn;
+}
+
+export function armPatternSelect(): void {
+  if (armProvider) armProvider();
+}
+
+export function setPatternSelectArmed(v: boolean): void {
+  set({ selectArmed: v });
+}
+
 /** Test hook: the store is deliberately module-level, so suites must reset it. */
 export function resetPatternPanel(): void {
   reqId += 1;
+  presetReqId += 1;
   lastRun = null;
   seriesProvider = () => [];
-  state = initial;
+  manifestRequested = false;
+  armProvider = null;
+  // Spread rather than reusing `initial` directly: selectedFamilies and
+  // paramsByFamily are reference types, and toggleFamily/setFamilyParam
+  // always build fresh objects — but a future mutation elsewhere must not be
+  // able to corrupt the shared reset baseline across the whole suite.
+  state = { ...initial, selectedFamilies: [], paramsByFamily: {} };
   listeners.clear();
 }

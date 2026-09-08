@@ -1,18 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  armPatternSelect,
+  closePatternPanel,
   dismissPatternPanel,
+  findPatternSource,
   getPatternPanelState,
+  openPatternPanel,
   resetPatternPanel,
   runPatternSearch,
+  runPresetScanNow,
+  savePresetFromLastRun,
+  setFamilyParam,
+  setPatternArmProvider,
   setPatternForwardBars,
   setPatternMode,
   setPatternScope,
+  setPatternSelectArmed,
   setPatternSeriesProvider,
+  setPatternView,
   subscribePatternPanel,
+  toggleFamily,
+  togglePatternPanel,
 } from "./patternPanelStore";
 import * as api from "./patternSearch";
 import { barsInRange, type MatchSource } from "./patternSearch";
 import { clearPatternTargets } from "./patternTargets";
+import * as presetApi from "./presetScan";
+import type { PresetFamily, PresetScanResult, UserPreset } from "./presetScan";
+
+vi.mock("./presetScan", () => ({
+  fetchFamilies: vi.fn(),
+  runPresetScan: vi.fn(),
+  listUserPresets: vi.fn(),
+  createUserPreset: vi.fn(),
+  renameUserPreset: vi.fn(),
+  deleteUserPreset: vi.fn(),
+}));
 
 const mkBars = (n: number) =>
   Array.from({ length: n }, (_, i) => ({
@@ -46,11 +69,37 @@ const settled = () => vi.waitFor(() => expect(getPatternPanelState().loading).to
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  // presetScan is fully mocked (not spied on the real module, which would
+  // hit the network) — restoreAllMocks does not clear a plain vi.fn()'s call
+  // history or implementation, only spies on real functions, so those need
+  // an explicit reset or calls (and mockResolvedValueOnce leftovers) leak
+  // across tests.
+  vi.mocked(presetApi.fetchFamilies).mockReset();
+  vi.mocked(presetApi.runPresetScan).mockReset();
+  vi.mocked(presetApi.listUserPresets).mockReset();
+  vi.mocked(presetApi.createUserPreset).mockReset();
+  vi.mocked(presetApi.renameUserPreset).mockReset();
+  vi.mocked(presetApi.deleteUserPreset).mockReset();
   // The store and the target registry are module-level on purpose, so tests
   // must reset them or one test's state leaks into the next.
   resetPatternPanel();
   clearPatternTargets();
   setPatternSeriesProvider(() => [SELF]);
+  // Harmless defaults so callers that don't care about the manifest fetch
+  // (most tests) don't have to await a rejected/undefined promise.
+  vi.mocked(presetApi.fetchFamilies).mockResolvedValue([]);
+  vi.mocked(presetApi.listUserPresets).mockResolvedValue([]);
+  vi.mocked(presetApi.runPresetScan).mockResolvedValue({ charts: [], elapsedMs: 1 });
+  vi.mocked(presetApi.createUserPreset).mockResolvedValue({
+    id: "p1", name: "x", epic: "US100", resolution: "MINUTE_5", bars: [], created_at: 1,
+  });
+});
+
+const mkFamily = (family: string): PresetFamily => ({ family, title: family, params: [] });
+
+const presetResult = (n: number): PresetScanResult => ({
+  charts: [{ epic: "US100", resolution: "MINUTE_5", status: "ok", error: null, hits: [] }],
+  elapsedMs: n,
 });
 
 describe("patternPanelStore", () => {
@@ -152,8 +201,10 @@ describe("patternPanelStore", () => {
     run(1_700_000_000_000, 1_700_003_000_000);
     await settled();
     off();
-    // At least the loading flip and the result landing, in order.
-    expect(seen[0]).toBe(true);
+    // A search now notifies for `open: true` FIRST (still not loading yet),
+    // then the loading flip, then the result landing — at least the flip and
+    // the landing must both show up, in order.
+    expect(seen).toContain(true);
     expect(seen[seen.length - 1]).toBe(false);
   });
 
@@ -420,5 +471,322 @@ describe("patternPanelStore", () => {
     expect(st.error).toBeNull();
     expect(st.truncatedTo).toBeNull();
     expect(st.origin).toBeNull();
+  });
+
+  describe("panel open/close/view", () => {
+    // `open` is the single source of visibility: a drag-search must set it
+    // itself, or the toolbar button (lit off `open`) never lights and
+    // closePatternPanel (which only flips `open`) has nothing to undo.
+    it("a drag-search opens the panel even without an explicit openPatternPanel", async () => {
+      expect(getPatternPanelState().open).toBe(false);
+      vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      run(1_700_000_000_000, 1_700_003_000_000);
+      expect(getPatternPanelState().open).toBe(true);
+      await settled();
+      expect(getPatternPanelState().open).toBe(true);
+      closePatternPanel();
+      expect(getPatternPanelState().open).toBe(false);
+    });
+
+    it("opens and closes", () => {
+      expect(getPatternPanelState().open).toBe(false);
+      openPatternPanel();
+      expect(getPatternPanelState().open).toBe(true);
+      closePatternPanel();
+      expect(getPatternPanelState().open).toBe(false);
+    });
+
+    it("toggles", () => {
+      togglePatternPanel();
+      expect(getPatternPanelState().open).toBe(true);
+      togglePatternPanel();
+      expect(getPatternPanelState().open).toBe(false);
+    });
+
+    it("close leaves results intact: only dismiss destroys them", async () => {
+      vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      run(1_700_000_000_000, 1_700_003_000_000);
+      await settled();
+      openPatternPanel();
+      closePatternPanel();
+      expect(getPatternPanelState().result).not.toBeNull();
+    });
+
+    it("fetches the families manifest and user presets once on first open", async () => {
+      vi.mocked(presetApi.fetchFamilies).mockResolvedValue([mkFamily("head-shoulders")]);
+      const presets: UserPreset[] = [
+        { id: "u1", name: "mine", epic: "US100", resolution: "MINUTE_5", bars: [], created_at: 1 },
+      ];
+      vi.mocked(presetApi.listUserPresets).mockResolvedValue(presets);
+      openPatternPanel();
+      await vi.waitFor(() => expect(getPatternPanelState().families).not.toBeNull());
+      expect(getPatternPanelState().families).toEqual([mkFamily("head-shoulders")]);
+      expect(getPatternPanelState().userPresets).toEqual(presets);
+      expect(presetApi.fetchFamilies).toHaveBeenCalledTimes(1);
+      expect(presetApi.listUserPresets).toHaveBeenCalledTimes(1);
+
+      closePatternPanel();
+      openPatternPanel();
+      // Still just one call each — the second open must not refetch.
+      expect(presetApi.fetchFamilies).toHaveBeenCalledTimes(1);
+      expect(presetApi.listUserPresets).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaces a failed families fetch as visible state, not a swallowed error", async () => {
+      vi.mocked(presetApi.fetchFamilies).mockRejectedValue(new Error("network down"));
+      openPatternPanel();
+      await vi.waitFor(() => expect(getPatternPanelState().familiesError).toBe("network down"));
+      expect(getPatternPanelState().families).toBeNull();
+    });
+
+    it("retries a failed families fetch on the next open, and clears the error on success", async () => {
+      vi.mocked(presetApi.fetchFamilies).mockRejectedValueOnce(new Error("network down"));
+      openPatternPanel();
+      await vi.waitFor(() => expect(getPatternPanelState().familiesError).toBe("network down"));
+      expect(presetApi.fetchFamilies).toHaveBeenCalledTimes(1);
+
+      closePatternPanel();
+      vi.mocked(presetApi.fetchFamilies).mockResolvedValueOnce([mkFamily("head-shoulders")]);
+      openPatternPanel();
+      await vi.waitFor(() => expect(getPatternPanelState().families).not.toBeNull());
+      expect(presetApi.fetchFamilies).toHaveBeenCalledTimes(2);
+      expect(getPatternPanelState().families).toEqual([mkFamily("head-shoulders")]);
+      expect(getPatternPanelState().familiesError).toBeNull();
+    });
+
+    it("switches view", () => {
+      expect(getPatternPanelState().view).toBe("similar");
+      setPatternView("presets");
+      expect(getPatternPanelState().view).toBe("presets");
+    });
+  });
+
+  describe("arm bridge", () => {
+    it("arms select through the registered provider, and no-ops without one", () => {
+      expect(() => armPatternSelect()).not.toThrow();
+      const arm = vi.fn();
+      setPatternArmProvider(arm);
+      armPatternSelect();
+      expect(arm).toHaveBeenCalledTimes(1);
+      setPatternArmProvider(null);
+      armPatternSelect();
+      expect(arm).toHaveBeenCalledTimes(1);
+    });
+
+    it("mirrors the controller's armed signal", () => {
+      expect(getPatternPanelState().selectArmed).toBe(false);
+      setPatternSelectArmed(true);
+      expect(getPatternPanelState().selectArmed).toBe(true);
+      setPatternSelectArmed(false);
+      expect(getPatternPanelState().selectArmed).toBe(false);
+    });
+  });
+
+  describe("family selection and param overrides", () => {
+    it("toggles a family key in and out of selectedFamilies", () => {
+      toggleFamily("head-shoulders");
+      expect(getPatternPanelState().selectedFamilies).toEqual(["head-shoulders"]);
+      toggleFamily("user:abc");
+      expect(getPatternPanelState().selectedFamilies).toEqual(["head-shoulders", "user:abc"]);
+      toggleFamily("head-shoulders");
+      expect(getPatternPanelState().selectedFamilies).toEqual(["user:abc"]);
+    });
+
+    it("stores per-family param overrides without clobbering other families", () => {
+      setFamilyParam("head-shoulders", "tolerance", 0.2);
+      setFamilyParam("double-top", "minBars", 5);
+      setFamilyParam("head-shoulders", "minDepth", 3);
+      expect(getPatternPanelState().paramsByFamily).toEqual({
+        "head-shoulders": { tolerance: 0.2, minDepth: 3 },
+        "double-top": { minBars: 5 },
+      });
+    });
+  });
+
+  describe("findPatternSource", () => {
+    it("resolves the real MatchSource for a series the provider knows", () => {
+      setPatternSeriesProvider(() => [SELF, GOLD]);
+      expect(findPatternSource("GOLD", "MINUTE_15")).toEqual(GOLD);
+      expect(findPatternSource("US100", "MINUTE_5")).toEqual(SELF);
+    });
+
+    it("returns null for a series no open chart shows", () => {
+      setPatternSeriesProvider(() => [SELF]);
+      expect(findPatternSource("SILVER", "MINUTE_5")).toBeNull();
+    });
+  });
+
+  describe("runPresetScanNow", () => {
+    it("builds charts from the series provider, deduped by epic|resolution", async () => {
+      setPatternSeriesProvider(() => [SELF, GOLD, { ...SELF, cellId: "cell-9", tabId: "tab-9" }]);
+      vi.mocked(presetApi.runPresetScan).mockResolvedValue(presetResult(5));
+      runPresetScanNow("capital", "bid");
+      await vi.waitFor(() => expect(getPatternPanelState().presetLoading).toBe(false));
+      const req = vi.mocked(presetApi.runPresetScan).mock.calls[0][0];
+      expect(req.charts.map((c) => `${c.epic}|${c.resolution}`).sort()).toEqual(
+        ["GOLD|MINUTE_15", "US100|MINUTE_5"],
+      );
+      expect(req.broker).toBe("capital");
+      expect(req.priceSide).toBe("bid");
+    });
+
+    it("passes selected families with their param overrides", async () => {
+      toggleFamily("head-shoulders");
+      toggleFamily("user:abc");
+      setFamilyParam("head-shoulders", "tolerance", 0.2);
+      vi.mocked(presetApi.runPresetScan).mockResolvedValue(presetResult(5));
+      runPresetScanNow("capital", "bid");
+      await vi.waitFor(() => expect(getPatternPanelState().presetLoading).toBe(false));
+      const req = vi.mocked(presetApi.runPresetScan).mock.calls[0][0];
+      expect(req.families).toEqual([
+        { family: "head-shoulders", params: { tolerance: 0.2 } },
+        { family: "user:abc", params: {} },
+      ]);
+    });
+
+    it("lands the result and clears loading", async () => {
+      let resolve: (r: PresetScanResult) => void = () => {};
+      vi.mocked(presetApi.runPresetScan).mockImplementation(
+        () => new Promise((r) => { resolve = r; }),
+      );
+      runPresetScanNow("capital", "bid");
+      expect(getPatternPanelState().presetLoading).toBe(true);
+      resolve(presetResult(7));
+      await vi.waitFor(() => expect(getPatternPanelState().presetLoading).toBe(false));
+      expect(getPatternPanelState().presetResult).toEqual(presetResult(7));
+      expect(getPatternPanelState().presetError).toBeNull();
+    });
+
+    it("surfaces the server's error message", async () => {
+      vi.mocked(presetApi.runPresetScan).mockRejectedValue(new Error("no families selected"));
+      runPresetScanNow("capital", "bid");
+      await vi.waitFor(() => expect(getPatternPanelState().presetError).toBe("no families selected"));
+      expect(getPatternPanelState().presetLoading).toBe(false);
+    });
+
+    it("ignores a second call while one is already in flight", async () => {
+      let resolve: (r: PresetScanResult) => void = () => {};
+      vi.mocked(presetApi.runPresetScan).mockImplementation(
+        () => new Promise((r) => { resolve = r; }),
+      );
+      runPresetScanNow("capital", "bid");
+      runPresetScanNow("capital", "bid");
+      expect(presetApi.runPresetScan).toHaveBeenCalledTimes(1);
+      resolve(presetResult(1));
+      await vi.waitFor(() => expect(getPatternPanelState().presetLoading).toBe(false));
+    });
+  });
+
+  describe("savePresetFromLastRun", () => {
+    it("resolves null and sets presetError when there is no last run", async () => {
+      const saved = await savePresetFromLastRun("my pattern");
+      expect(saved).toBeNull();
+      expect(getPatternPanelState().presetError).toBeTruthy();
+      expect(presetApi.createUserPreset).not.toHaveBeenCalled();
+    });
+
+    it("creates a preset from the last search's origin and bars, then refreshes the list", async () => {
+      vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      run(1_700_000_000_000, 1_700_001_500_000);
+      await settled();
+      const created: UserPreset = {
+        id: "p9", name: "my pattern", epic: "US100", resolution: "MINUTE_5", bars: [], created_at: 5,
+      };
+      vi.mocked(presetApi.createUserPreset).mockResolvedValue(created);
+      vi.mocked(presetApi.listUserPresets).mockResolvedValue([created]);
+      const saved = await savePresetFromLastRun("my pattern");
+      expect(saved).toEqual(created);
+      const req = vi.mocked(presetApi.createUserPreset).mock.calls[0][0];
+      expect(req.name).toBe("my pattern");
+      expect(req.epic).toBe("US100");
+      expect(req.resolution).toBe("MINUTE_5");
+      expect(req.bars.length).toBeGreaterThan(0);
+      expect(presetApi.listUserPresets).toHaveBeenCalled();
+      expect(getPatternPanelState().userPresets).toEqual([created]);
+    });
+
+    it("clears a stale presetError once a later save succeeds", async () => {
+      vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      run(1_700_000_000_000, 1_700_001_500_000);
+      await settled();
+      // First save fails, leaving presetError set...
+      vi.mocked(presetApi.createUserPreset).mockRejectedValueOnce(new Error("name already taken"));
+      const first = await savePresetFromLastRun("dup");
+      expect(first).toBeNull();
+      expect(getPatternPanelState().presetError).toBe("name already taken");
+      // ...a subsequent successful save must clear it, not leave it rendered.
+      const created: UserPreset = {
+        id: "p10", name: "renamed", epic: "US100", resolution: "MINUTE_5", bars: [], created_at: 6,
+      };
+      vi.mocked(presetApi.createUserPreset).mockResolvedValueOnce(created);
+      const second = await savePresetFromLastRun("renamed");
+      expect(second).toEqual(created);
+      expect(getPatternPanelState().presetError).toBeNull();
+    });
+
+    it("resolves null and sets presetError when the server rejects the save", async () => {
+      vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      run(1_700_000_000_000, 1_700_001_500_000);
+      await settled();
+      vi.mocked(presetApi.createUserPreset).mockRejectedValue(new Error("name already taken"));
+      const saved = await savePresetFromLastRun("dup");
+      expect(saved).toBeNull();
+      expect(getPatternPanelState().presetError).toBe("name already taken");
+    });
+  });
+
+  it("dismissPatternPanel leaves preset state intact", async () => {
+    vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+    run(1_700_000_000_000, 1_700_003_000_000);
+    await settled();
+    vi.mocked(presetApi.runPresetScan).mockResolvedValue(presetResult(3));
+    toggleFamily("head-shoulders");
+    runPresetScanNow("capital", "bid");
+    await vi.waitFor(() => expect(getPatternPanelState().presetLoading).toBe(false));
+    dismissPatternPanel();
+    expect(getPatternPanelState().presetResult).toEqual(presetResult(3));
+    expect(getPatternPanelState().selectedFamilies).toEqual(["head-shoulders"]);
+  });
+
+  it("resetPatternPanel clears the new preset/open/arm state too", async () => {
+    openPatternPanel();
+    await vi.waitFor(() => expect(getPatternPanelState().families).not.toBeNull());
+    // refreshUserPresets has no reqId guard of its own; make sure its promise
+    // has also landed before reset, or a late write could race the assertions.
+    await vi.waitFor(() => expect(getPatternPanelState().userPresets).not.toBeNull());
+    setPatternView("presets");
+    toggleFamily("head-shoulders");
+    setFamilyParam("head-shoulders", "tolerance", 0.5);
+    vi.mocked(presetApi.runPresetScan).mockResolvedValue(presetResult(9));
+    runPresetScanNow("capital", "bid");
+    await vi.waitFor(() => expect(getPatternPanelState().presetLoading).toBe(false));
+    setPatternSelectArmed(true);
+    const arm = vi.fn();
+    setPatternArmProvider(arm);
+
+    resetPatternPanel();
+
+    const st = getPatternPanelState();
+    expect(st.open).toBe(false);
+    expect(st.view).toBe("similar");
+    expect(st.families).toBeNull();
+    expect(st.familiesError).toBeNull();
+    expect(st.userPresets).toBeNull();
+    expect(st.selectedFamilies).toEqual([]);
+    expect(st.paramsByFamily).toEqual({});
+    expect(st.presetResult).toBeNull();
+    expect(st.presetLoading).toBe(false);
+    expect(st.presetError).toBeNull();
+    expect(st.selectArmed).toBe(false);
+    // The arm provider registered before reset must be dropped too.
+    armPatternSelect();
+    expect(arm).not.toHaveBeenCalled();
+
+    // The manifest re-fetches on the next open — reset really cleared the
+    // "requested once" flag, not just the visible state.
+    vi.mocked(presetApi.fetchFamilies).mockClear();
+    openPatternPanel();
+    await vi.waitFor(() => expect(getPatternPanelState().families).not.toBeNull());
+    expect(presetApi.fetchFamilies).toHaveBeenCalledTimes(1);
   });
 });

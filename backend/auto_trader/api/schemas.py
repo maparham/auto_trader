@@ -942,3 +942,67 @@ class PatternSearchResponse(BaseModel):
     cold: bool
 
     model_config = {"populate_by_name": True}
+
+
+# --- pattern presets -----------------------------------------------------------
+
+
+class PatternScanChartDTO(BaseModel):
+    epic: str
+    resolution: str
+
+
+class PatternScanFamilyDTO(BaseModel):
+    # A built-in family key or "user:<preset-id>" for a saved selection.
+    family: str
+    params: dict[str, float] = {}
+
+
+class PatternScanRequest(BaseModel):
+    charts: list[PatternScanChartDTO] = Field(min_length=1, max_length=64)
+    families: list[PatternScanFamilyDTO] = Field(min_length=1, max_length=20)
+    broker: str = ""
+    price_side: str = Field("bid", alias="priceSide", pattern="^(bid|mid|ask)$")
+
+    model_config = {"populate_by_name": True}
+
+
+class PatternHitDTO(BaseModel):
+    family: str  # "user:<id>" for user-preset hits
+    variant: str  # preset name for user-preset hits
+    forming: bool
+    ts: int
+    end_ts: int = Field(serialization_alias="endTs")
+    distance: float
+    direction: int  # +1 up / -1 down / 0 unknown
+    breakout_up_pct: int | None = Field(None, serialization_alias="breakoutUpPct")
+    target: float | None = None
+    tell: str | None = None
+    source: str = ""
+    bars: list[PatternBarDTO]
+
+
+class PatternScanChartResultDTO(BaseModel):
+    epic: str
+    resolution: str
+    status: Literal["ok", "no-history", "too-few-bars", "error"]
+    error: str | None = None
+    hits: list[PatternHitDTO] = []
+
+
+class PatternScanResponse(BaseModel):
+    charts: list[PatternScanChartResultDTO]
+    elapsed_ms: int = Field(serialization_alias="elapsedMs")
+
+    model_config = {"populate_by_name": True}
+
+
+class PatternPresetCreateBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    epic: str
+    resolution: str
+    bars: list[PatternBarDTO] = Field(min_length=3, max_length=1024)
+
+
+class PatternPresetRenameBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)

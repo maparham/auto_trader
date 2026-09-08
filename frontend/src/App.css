@@ -6247,15 +6247,160 @@ span.bt-leg-short { color: var(--neg); }
   border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; cursor: pointer;
 }
 
+/* --- pattern search panel host (Similar/Presets switcher over the below) --- */
+/* .pattern-panel — not .pattern-matches — is the actual docked flex sibling of
+   .chart-cells in main.chart now: it hosts the switcher/close header and the
+   select-range/save-as-preset row above whichever view (Similar's
+   .pattern-matches, or the Presets placeholder) is showing. It carries no
+   width of its own — with no explicit width, a flex:0 0 auto column sizes to
+   its widest child, which is .pattern-matches below (its own fixed/resized
+   width still drives the whole dock's width, same as before this panel
+   existed). */
+.pattern-panel {
+  flex: 0 0 auto; height: 100%; display: flex; flex-direction: column;
+  min-width: 0; background: var(--surface); color: var(--text);
+  border-left: 1px solid var(--border); font-size: 12px;
+}
+.pattern-panel-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border); }
+/* Push the close control to the panel's right edge, same technique as .pm-head
+   below (CloseButton's Tooltip wraps the button in a .tooltip-trigger span). */
+.pattern-panel-head > .tooltip-trigger:has(> .modal-close) { margin-left: auto; }
+.pattern-panel-similar { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.pattern-panel-similar-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.pattern-panel-hint { color: var(--text-dim); font-size: 11px; }
+.pattern-panel-save-input { width: 130px; padding: 3px 6px; font: inherit; color: var(--text);
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; }
+/* The switcher's ON state and the select-range/save-as-preset buttons all get
+   the muted gray treatment — the same quiet fill the toolbar's own
+   .pattern-range-toggle.seg-on uses (see below) — never the generic
+   accent-blue .seg button.seg-on: these are quiet toggles, not the heatmap's
+   persistent-paint ON state. */
+.pattern-panel .seg button.seg-on { background: var(--hover-strong); color: var(--accent); }
+.pattern-panel-similar-head .anchor-btn {
+  background: transparent; color: var(--text); border: none;
+  border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer;
+  transition: background 0.12s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.pattern-panel-similar-head .anchor-btn svg { flex: 0 0 auto; opacity: 0.75; }
+.pattern-panel-similar-head .anchor-btn:hover:not(:disabled) { background: var(--hover); }
+.pattern-panel-similar-head .anchor-btn.seg-on { background: var(--hover-strong); color: var(--accent); }
+.pattern-panel-similar-head .anchor-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* --- preset scan view (Presets tab) ----------------------------------------
+   Same dock as .pattern-matches above, but .pattern-matches isn't rendered
+   here — give the root a comparable width so the panel doesn't collapse to
+   content width and jump when the Similar/Presets switcher is toggled. */
+.preset-scan {
+  width: 400px; flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px; padding: 8px;
+}
+.preset-cards { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset-cards-group { display: flex; flex-direction: column; gap: 6px; }
+.preset-cards-group-title { color: var(--text-dim); font-size: 11px; }
+.preset-card, .preset-card-body {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: transparent; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; width: 84px; font: inherit; cursor: pointer;
+  transition: background 0.12s;
+}
+.preset-card-body { border: none; padding: 0; width: auto; flex: 1 1 auto; }
+.preset-card:hover:not(.preset-card-user) { background: var(--hover); }
+.preset-card-body:hover { background: var(--hover); border-radius: 6px; }
+/* Muted-gray selected treatment, same convention as .pattern-panel .seg
+   button.seg-on above — never solid accent for a persistent toggle. */
+.preset-card.selected { background: var(--hover-strong); color: var(--accent); }
+.preset-card-user { flex-direction: row; width: auto; padding: 4px 6px; gap: 2px; }
+.preset-card-title { font-size: 11px; text-align: center; word-break: break-word; }
+.preset-card-rename { width: 90px; padding: 2px 4px; font: inherit; color: var(--text);
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; }
+.preset-card-actions { display: flex; gap: 2px; }
+.preset-card-actions button {
+  background: transparent; color: var(--text-dim); border: none; cursor: pointer;
+  padding: 2px 4px; border-radius: 4px; font-size: 11px;
+}
+.preset-card-actions button:hover { background: var(--hover); color: var(--text); }
+.preset-glyph { width: 100%; height: 28px; }
+.preset-glyph polyline { fill: none; stroke: currentColor; stroke-width: 3; opacity: 0.75; }
+
+.preset-msg { color: var(--text-dim); font-size: 11px; padding: 2px 0; }
+.preset-msg.preset-err { color: var(--neg); }
+
+.preset-params-group { display: flex; flex-direction: column; gap: 4px;
+  border-top: 1px solid var(--border); padding-top: 8px; }
+.preset-params-title { font-weight: 600; font-size: 11px; }
+.preset-param-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.preset-param-row input[type="number"] { width: 70px; padding: 2px 4px; font: inherit;
+  color: var(--text); background: var(--input-bg); border: 1px solid var(--border);
+  border-radius: 4px; }
+.preset-param-row input[type="range"] { flex: 1 1 auto; }
+.preset-param-val { font-variant-numeric: tabular-nums; color: var(--text-dim); min-width: 2.5em; }
+/* Advanced-params disclosure, same idiom as .wfo-advanced. */
+.preset-advanced { font-size: 11px; }
+.preset-advanced > summary { cursor: pointer; color: var(--text-dim); padding: 2px 0; }
+/* Two fields per row, name stacked over its input: long names like
+   head_prominence don't fit beside a field at half panel width. */
+.preset-advanced-grid { display: grid; grid-template-columns: 1fr 1fr;
+  gap: 6px 12px; margin-top: 4px; }
+.preset-param-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.preset-param-name { color: var(--text-dim); }
+.preset-param-field { display: flex; align-items: center; gap: 4px; }
+.preset-param-field input[type="number"] { flex: 1 1 auto; min-width: 0; width: 100%;
+  padding: 2px 4px; font: inherit; color: var(--text); background: var(--input-bg);
+  border: 1px solid var(--border); border-radius: 4px; }
+/* Sticky row selection: the last-jumped hit keeps the muted highlight (state
+   lives in the store, so it survives Similar<->Presets view switches). */
+.pattern-panel .preset-hit-row.selected { background: var(--hover-strong); }
+
+.preset-scan-btn {
+  align-self: flex-start; background: var(--accent); color: var(--accent-text);
+  border: none; border-radius: 6px; padding: 6px 14px; font: inherit; cursor: pointer;
+}
+.preset-scan-btn:disabled { opacity: 0.5; cursor: default; }
+
+.preset-results { display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid var(--border); padding-top: 8px; }
+.preset-chart-group { display: flex; flex-direction: column; gap: 4px; }
+.preset-chart-head { font-weight: 600; font-size: 11px; }
+.preset-hit-list { display: flex; flex-direction: column; gap: 2px; list-style: none;
+  margin: 0; padding: 0; }
+.preset-hit-row-wrap { display: flex; align-items: center; gap: 4px; }
+.preset-hit-row {
+  flex: 1 1 auto; display: flex; align-items: center; gap: 8px; text-align: left;
+  background: transparent; color: var(--text); border: none; border-radius: 4px;
+  padding: 4px 6px; font: inherit; cursor: pointer;
+}
+.preset-hit-row:hover { background: var(--hover); }
+/* Amber-on-transparent for a forming (not yet confirmed) hit; muted gray once
+   done — the same "notice me, not an alarm" amber as the rest of the app
+   (var(--warn) has no palette entry, so the established #c08a2a fallback). */
+.preset-badge-forming { color: var(--warn, #c08a2a); font-size: 10px; text-transform: uppercase; }
+.preset-badge-done { color: var(--text-dim); font-size: 10px; text-transform: uppercase; }
+.preset-hit-title { font-size: 11px; }
+.preset-hit-family { color: var(--text-dim); }
+.preset-hit-range { color: var(--text-dim); font-size: 10px; }
+.preset-hit-stats { margin-left: auto; display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-variant-numeric: tabular-nums; }
+.preset-hit-tell { display: flex; align-items: center; gap: 2px; color: var(--text-dim); }
+.preset-hit-dist { color: var(--text-dim); }
+.preset-find-similar {
+  background: transparent; color: var(--text-dim); border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 6px; font-size: 10px; cursor: pointer;
+}
+.preset-find-similar:hover { background: var(--hover); color: var(--text); }
+
 /* --- pattern search results ------------------------------------------------ */
 .pattern-matches {
-  /* A docked sidebar, not an overlay: a flex sibling of .chart-wrap inside
-     .chart-cell-split, so the chart yields real layout space and nothing is
-     obstructed. position:relative only to anchor the .pm-resize splitter. */
-  position: relative; flex: 0 0 auto; width: 400px; height: 100%;
+  /* Was the docked sidebar itself; now sits inside .pattern-panel, filling the
+     height left under that panel's header rows. Its own width (fixed default,
+     user-resizable via .pm-resize below) still sets the WHOLE dock's width,
+     since .pattern-panel above has none of its own. position:relative only to
+     anchor the .pm-resize splitter. */
+  position: relative; flex: 1 1 auto; width: 400px; min-height: 0;
   display: flex; flex-direction: column; min-width: 0; overflow: hidden;
-  background: var(--surface); color: var(--text);
-  border-left: 1px solid var(--border); font-size: 12px;
+  background: var(--surface); color: var(--text); font-size: 12px;
 }
 /* The width splitter along the docked panel's left edge. */
 .pm-resize { position: absolute; top: 0; left: 0; width: 6px; height: 100%;

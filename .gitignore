@@ -255,6 +255,11 @@ alerts.db
 alerts.db-wal
 alerts.db-shm
 
+# User pattern-preset store (saved chart selections for the preset scan)
+patterns.db
+patterns.db-wal
+patterns.db-shm
+
 # MetaApi SDK local terminal-state cache (created at runtime by the streaming/RPC
 # connection; per-machine, never source)
 .metaapi/
