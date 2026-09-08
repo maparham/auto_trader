@@ -2039,6 +2039,63 @@ function trendlineIdxMap(
   };
 }
 
+/** Chart index of the candle that traded an HTF bar's extreme — where a pivot
+ * caret (and a line anchor) belongs when the pin is COARSER than the chart. An
+ * HTF bar's high or low usually trades hours after the bar OPENS, and mapping
+ * the bar's index to its start time hung the mark on the open's candle, far
+ * off any price that traded there (a 1D pivot on a 1H chart floated ~900
+ * points below the 00:00 candle). Support snaps to the span's lowest low,
+ * resistance to its highest high; ties keep the first bar, so a flat span
+ * degrades to exactly the old start mapping. Falls back to `toChart` when the
+ * span is not fully loaded (the true extreme may be in the unloaded part), the
+ * index is fractional (a projection, not a bar), or the pin is not coarser
+ * than the chart. */
+function htfExtremeSnap(
+  dataList: KLineData[],
+  mtf: TrendlinesMtf,
+  toChart: (j: number) => number,
+): (j: number, side: TrendSide) => number {
+  const starts = mtf.htfStarts;
+  const htfMs = mtf.htfMs ?? 0;
+  const barMs = chartBarMs(dataList);
+  if (!starts?.length || !(htfMs > barMs) || !(barMs > 0)) return toChart;
+  const n = dataList.length;
+  // Per-frame memo: the same pivot bar is looked up once as a caret and again
+  // as an anchor/touch of every line that uses it.
+  const memo = new Map<number, number>();
+  return (j, side) => {
+    if (!Number.isInteger(j) || j < 0 || j >= starts.length) return toChart(j);
+    const key = j * 2 + (side === "support" ? 0 : 1);
+    const hit = memo.get(key);
+    if (hit !== undefined) return hit;
+    const t0 = starts[j];
+    const t1 = t0 + htfMs;
+    let out = toChart(j);
+    if (dataList[0].timestamp <= t0 && dataList[n - 1].timestamp >= t1 - barMs) {
+      // First chart bar at/after the HTF bar's open (timestamps ascending).
+      let lo = 0;
+      let hi = n;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (dataList[mid].timestamp < t0) lo = mid + 1;
+        else hi = mid;
+      }
+      let best = -1;
+      let bestV = side === "support" ? Infinity : -Infinity;
+      for (let i = lo; i < n && dataList[i].timestamp < t1; i++) {
+        const v = side === "support" ? dataList[i].low : dataList[i].high;
+        if (side === "support" ? v < bestV : v > bestV) {
+          bestV = v;
+          best = i;
+        }
+      }
+      if (best >= 0) out = best;
+    }
+    memo.set(key, out);
+    return out;
+  };
+}
+
 /** Liang-Barsky clip of the segment (x0,y0)-(x1,y1) to the rectangle
  * [xMin,xMax]x[yMin,yMax]; null when they don't intersect.
  *
@@ -2066,7 +2123,7 @@ export { clipSegmentToRect } from "./shared";
 function paintPivotMarks(
   ctx: CanvasRenderingContext2D,
   pivots: TrendPivots,
-  xAt: (j: number) => number,
+  xAt: (j: number, side: TrendSide) => number,
   yOf: (price: number) => number,
   right: number,
   height: number,
@@ -2083,7 +2140,7 @@ function paintPivotMarks(
     const dir = side === "support" ? 1 : -1;
     ctx.beginPath();
     for (const idx of pivots[side]) {
-      const x = xAt(idx);
+      const x = xAt(idx, side);
       // The arms reach TL_PIVOT_ARM either way, so the window is widened by
       // one arm rather than testing the tip alone — otherwise a caret at the
       // very edge is dropped whole when only half of it is off-pane.
@@ -2147,6 +2204,11 @@ function drawTrendlines(
   const axisWidth = chart.getSize(indicator.paneId, "yAxis")?.width ?? 0;
   const tagRight = bounding.width - axisWidth - 4;
   const xAt = (j: number) => xAxis.convertToPixel(toChart(j));
+  // Coarser-pin snap: a bar index that IS a pivot/touch maps to the chart
+  // candle that traded the extreme, not the HTF bar's opening candle.
+  const snap = mtf ? htfExtremeSnap(dataList, mtf, toChart) : null;
+  const xAtPivot = (j: number, side: TrendSide) =>
+    snap ? xAxis.convertToPixel(snap(j, side)) : xAt(j);
   // BEFORE the line early-returns, and that is the point: the pivot filter can
   // admit plenty of pivots on a pane where every line was gated away (strict
   // Min Touches, a short series, an HTF pin with nothing closed yet), and a
@@ -2155,7 +2217,7 @@ function drawTrendlines(
     paintPivotMarks(
       ctx,
       last.pivots,
-      xAt,
+      xAtPivot,
       (price) => yAxis.convertToPixel(price),
       tagRight,
       bounding.height,
@@ -2295,8 +2357,15 @@ function drawTrendlines(
     const { jLeft, jRight } = isPinned
       ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx)
       : natural;
-    const x0 = xAt(jLeft);
-    const x1 = xAt(jRight);
+    // A line endpoint that is one of the line's own touch bars (the anchors
+    // always are) snaps to the extreme's candle; a projected end (a ray's
+    // horizon, an apex) keeps the plain time mapping. Snapped by the LINE's
+    // side: whatever kind of pivot touched, a support line was approached
+    // with lows and a resistance line with highs.
+    const xAtLine = (j: number): number =>
+      line.touchIdxs.includes(j) ? xAtPivot(j, line.side) : xAt(j);
+    const x0 = xAtLine(jLeft);
+    const x1 = xAtLine(jRight);
     if (x1 <= 0 || x0 >= bounding.width) continue;
     const y0 = yAxis.convertToPixel(projectAt(line, jLeft));
     const y1 = yAxis.convertToPixel(projectAt(line, jRight));
@@ -2344,7 +2413,10 @@ function drawTrendlines(
     // as the tag comment below records.
     if (broken) {
       const jBreak = line.brokenIdx as number;
-      const xB = xAt(jBreak);
+      // The break pierces on the BAR'S EXTREME (see the per-bar break test),
+      // so under a coarse pin the chart candle carrying the HTF bar's extreme
+      // is the candle that broke the line — the same snap the pivots use.
+      const xB = xAtPivot(jBreak, line.side);
       const yB = onSegment(xB);
       if (xB >= 0 && xB <= tagRight && yB >= 0 && yB <= bounding.height) {
         ctx.globalAlpha = 1;
@@ -2373,7 +2445,7 @@ function drawTrendlines(
     // panes, and an unclamped y bleeds into them.
     ctx.lineWidth = 1;
     for (const idx of line.touchIdxs) {
-      const xT = xAt(idx);
+      const xT = xAtPivot(idx, line.side);
       const yT = onSegment(xT);
       if (xT < 0 || xT > Math.min(tagRight, x1) || yT < 0 || yT > bounding.height)
         continue;

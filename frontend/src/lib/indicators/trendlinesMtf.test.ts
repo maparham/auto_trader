@@ -170,6 +170,7 @@ function draw(
 ) {
   const segments: Seg[] = [];
   const rings: Array<{ x: number; y: number }> = [];
+  const dots: Array<{ x: number; y: number }> = [];
   let cur = { x: 0, y: 0 };
   let width = 1;
   const ctx = {
@@ -187,7 +188,10 @@ function draw(
     },
     measureText: (t: string) => ({ width: t.length * 6 }),
     fillText: () => {},
-    arc: (x: number, y: number, r: number) => { if (r === 2) rings.push({ x, y }); },
+    arc: (x: number, y: number, r: number) => {
+      if (r === 2) rings.push({ x, y });
+      if (r === 2.5) dots.push({ x, y }); // TL_BREAK_RADIUS
+    },
   };
   const ext = { mtf, dedupe: false, nearPrice: false, ...over };
   const result = TRENDLINES_TEMPLATE.calc!(bars, { calcParams: PARAMS, extendData: ext } as never);
@@ -199,7 +203,7 @@ function draw(
     xAxis: { convertToPixel: (i: number) => i },
     yAxis: { convertToPixel: (p: number) => 400 - p },
   } as never);
-  return { segments, rings };
+  return { segments, rings, dots };
 }
 
 describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
@@ -261,6 +265,69 @@ describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
   it("paints no marks when Show pivots is off", () => {
     const mtf = stash({ htfPivots: HTF_PIVOTS });
     expect(draw(chartBars(), mtf, { showPivots: false }).segments).toHaveLength(1);
+  });
+});
+
+describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", () => {
+  // An HTF bar spans several chart bars, and its high/low usually trades hours
+  // after the bar OPENS. Mapping a pivot to the HTF bar's start put the caret
+  // (and the line anchors) at the open's chart bar, floating far off any
+  // candle. The snap moves them to the chart bar that traded the extreme.
+  it("puts an HTF pivot caret on the chart bar that traded the extreme", () => {
+    const bars = chartBars();
+    // HTF bar 1 spans chart bars 4..7; its 110 high trades at chart bar 6.
+    bars[6] = bar(T0 + 6 * CHART_MS, 110);
+    const { segments } = draw(bars, stash({ htfPivots: HTF_PIVOTS }));
+    const arms = segments.filter(
+      (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
+    );
+    expect(arms).toHaveLength(2);
+    // The tip of each arm sits exactly on the pivot's x.
+    for (const a of arms) expect(a.x0).toBeCloseTo(6, 6);
+  });
+
+  it("puts line anchors and touch rings on the chart bars that traded the extremes", () => {
+    const bars = chartBars();
+    bars[6] = bar(T0 + 6 * CHART_MS, 110); // HTF bar 1's high (anchor 1)
+    bars[13] = bar(T0 + 13 * CHART_MS, 106); // HTF bar 3's high (anchor 2)
+    const { segments, rings } = draw(bars, stash());
+    expect(segments[0].x0).toBeCloseTo(6, 6);
+    expect(segments[0].y0).toBeCloseTo(400 - 110, 6);
+    expect(rings.map((r) => Math.round(r.x))).toEqual([6, 13]);
+  });
+
+  it("puts the break dot on the chart bar that traded the piercing extreme", () => {
+    // The break test pierces on the BAR'S EXTREME (high for resistance), so
+    // the chart candle carrying the HTF bar's high is the candle that broke
+    // the line. HTF bar 5 spans chart bars 20..23 and its high trades at
+    // chart bar 22; the dot used to sit at the span's open, chart bar 20.
+    const bars = chartBars();
+    bars[6] = bar(T0 + 6 * CHART_MS, 110); // anchor 1's extreme
+    bars[13] = bar(T0 + 13 * CHART_MS, 106); // anchor 2's extreme
+    bars[22] = bar(T0 + 22 * CHART_MS, 108); // the pierce, well above the line
+    const broken: TrendLine = { ...htfLine, brokenIdx: 5 };
+    const { dots } = draw(bars, stash({ htfLines: [broken] }));
+    expect(dots).toHaveLength(1);
+    expect(dots[0].x).toBeCloseTo(22, 6);
+  });
+
+  it("falls back to the HTF bar's start when its span is not fully loaded", () => {
+    // 39 chart bars: HTF bar 9's span (chart bars 36..39) misses its last bar,
+    // so the true extreme may be unloaded and the caret stays at the start.
+    const bars = chartBars(39);
+    bars[37] = bar(T0 + 37 * CHART_MS, 120);
+    const pivots: TrendPivots = {
+      resistance: [9],
+      support: [],
+      highs: htfStarts().map((_, i) => (i === 9 ? 120 : 100)),
+      lows: htfStarts().map(() => 100),
+    };
+    const { segments } = draw(bars, stash({ htfPivots: pivots }));
+    const arms = segments.filter(
+      (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
+    );
+    expect(arms).toHaveLength(2);
+    for (const a of arms) expect(a.x0).toBeCloseTo(36, 6);
   });
 });
 
