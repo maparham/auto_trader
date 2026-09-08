@@ -164,6 +164,39 @@ describe("computeSrLevels MTF branch", () => {
     // lastTs names the HTF bar starting t0+4h; its last chart bar is index 7.
     expect(levels[0].lastIdx).toBe(7);
   });
+
+  it("snaps the zone's left edge to the candle whose extreme is nearest the level", () => {
+    // The level's first pivot lives in the HTF bar spanning chart bars 0..3,
+    // and the price that formed it (high 110) traded at chart bar 2 — the
+    // other bars top out at 101. Starting the band at the HTF bar's OPEN
+    // stretched it up to a whole HTF bar left of the wick that created it.
+    const bars = chartBars.slice();
+    bars[2] = bar(109, 2); // high = 110
+    const { levels } = computeSrLevels(bars, CFG, {
+      mtf: {
+        ...mtf,
+        htfLevels: [{ price: 110, halfWidth: 5, touches: 2, firstTs: t0, lastTs: t0 + 4 * H }],
+      },
+    });
+    expect(levels[0].firstIdx).toBe(2);
+  });
+
+  it("keeps the HTF bar's open edge when its span is not fully loaded", () => {
+    // 11 chart bars: the HTF bar opening t0+8h spans chart bars 8..11 but bar
+    // 11 is unloaded, so the true nearest extreme may be missing — the edge
+    // stays at the span's first loaded bar.
+    const bars = chartBars.slice(0, 11);
+    bars[9] = bar(109, 9); // high = 110, would win a snap
+    const { levels } = computeSrLevels(bars, CFG, {
+      mtf: {
+        ...mtf,
+        htfLevels: [
+          { price: 110, halfWidth: 5, touches: 2, firstTs: t0 + 8 * H, lastTs: t0 + 8 * H },
+        ],
+      },
+    });
+    expect(levels[0].firstIdx).toBe(8);
+  });
 });
 
 // The per-bar selection is cached and only rebuilt when the cluster pool moves

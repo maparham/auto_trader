@@ -106,6 +106,36 @@ export function computeSrLevels(
     // touch anchors to the final chart bar of the HTF bar holding that touch's
     // extreme (whose close approximates the HTF close there, for the
     // broken-level check).
+    // The zone's left edge snaps from the HTF bar's OPEN to the chart candle
+    // whose extreme traded nearest the level's price — the wick that formed
+    // the pivot. An HTF bar's extreme usually trades hours after it opens, so
+    // the open-time edge stretched a 1D level up to a day left of the candle
+    // that created it (the same artifact the trendlines' htfExtremeSnap
+    // fixes). A level clusters pivots of both sides, so "nearest" tries the
+    // high and the low; ties keep the first bar, which is exactly the old
+    // edge on a flat span. Falls back to the open when the span is not fully
+    // loaded (the true extreme may be in the unloaded part) or the pin is
+    // not coarser than the chart.
+    const chartMs =
+      mtf.chartMs ?? (ts.length > 1 ? ts[1] - ts[0] : htfMs);
+    const snapFirst = (firstTs: number, price: number, fallback: number): number => {
+      if (!(htfMs > chartMs)) return fallback;
+      const spanEnd = firstTs + htfMs;
+      if (ts[0] > firstTs || ts[ts.length - 1] < spanEnd - chartMs) return fallback;
+      let best = fallback;
+      let bestD = Infinity;
+      for (let i = fallback; i < ts.length && ts[i] < spanEnd; i++) {
+        const d = Math.min(
+          Math.abs(dataList[i].high - price),
+          Math.abs(dataList[i].low - price),
+        );
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      return best;
+    };
     const levels: SrLevel[] = (mtf.htfLevels ?? []).map((lv) => {
       const first = ts.findIndex((t) => t >= lv.firstTs);
       const afterLast = ts.findIndex((t) => t >= lv.lastTs + htfMs);
@@ -113,7 +143,7 @@ export function computeSrLevels(
         price: lv.price,
         halfWidth: lv.halfWidth,
         touches: lv.touches,
-        firstIdx: first < 0 ? 0 : first,
+        firstIdx: snapFirst(lv.firstTs, lv.price, first < 0 ? 0 : first),
         lastIdx: Math.max(0, (afterLast < 0 ? ts.length : afterLast) - 1),
       };
     });
