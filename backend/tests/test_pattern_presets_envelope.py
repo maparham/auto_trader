@@ -39,12 +39,13 @@ CHANNEL = ((0.0, 0.0), (0.12, 0.3), (0.25, 0.1), (0.4, 0.42),
            (0.55, 0.22), (0.72, 0.55), (0.88, 0.35), (1.0, 0.65))
 
 
-def scan(knots, tail=None, **kw):
+def scan(knots, tail=None, params=None, **kw):
     c = path(knots, **kw)
     if tail is not None:
         c = np.concatenate([c, tail(c[-1])])
     b = bars_from_close(c)
-    return find_envelope(series_pivots(b, k=2.0), b[:, 3], atr(b), P), b
+    p = dict(P, **(params or {}))
+    return find_envelope(series_pivots(b, k=2.0), b[:, 3], atr(b), p), b
 
 
 class TestClassification:
@@ -107,6 +108,59 @@ class TestPartialTell:
         inst, _ = scan(MEGAPHONE)
         hits = [i for i in inst if i.variant == "megaphone"]
         assert hits[0].tell is None
+
+
+class TestSwingExpansion:
+    """A broadening formation is monotone expansion by definition (Bulkowski:
+    each touch of a sloping line makes a new extreme), and each leg should
+    grow within a sane band of the one before it (TFlab's 1.2x-2x Fibonacci
+    filter, generalised). The pivot skeleton plus line fit alone misses both:
+    with fit_tol slack, an interior swing can fail to make a new extreme and
+    the run still fits diverging lines."""
+
+    # Second low (0.315) sits ABOVE the first (0.30) while the fit still
+    # reads as a (gently) descending lower line within a loosened fit_tol:
+    # highs expand, lows do not. Detected as a megaphone before the
+    # swing-expansion rule; structurally it is not one.
+    NONMONO = ((0.0, 0.45), (0.12, 0.6), (0.25, 0.30), (0.4, 0.75),
+               (0.55, 0.315), (0.72, 0.9), (0.88, 0.245), (1.0, 0.6))
+    LOOSE = {"fit_tol": 2.0, "flat_slope": 0.02}
+
+    def test_nonmonotone_lows_not_a_megaphone(self):
+        # The full run is rejected (its lows fail monotonicity); the engine
+        # may still report a shorter sub-run as a flat-floored "ascending"
+        # read, which IS the structurally honest label for it. The claim
+        # here is only: this must never be called a megaphone.
+        inst, _ = scan(self.NONMONO, params=self.LOOSE)
+        assert [i for i in inst if i.variant == "megaphone"] == []
+
+    def test_band_off_still_accepts_nonmonotone(self):
+        # swing_expand below 1.0 is unreachable via the schema, but the
+        # grammar treats a permissive band as "rule off"; without it the
+        # same run DOES read as a megaphone, which is the pre-rule bug.
+        loose = dict(self.LOOSE, swing_expand=0.0, swing_expand_max=100.0)
+        inst, _ = scan(self.NONMONO, params=loose)
+        assert any(i.variant == "megaphone" for i in inst)
+
+    def test_swing_expand_floor_rejects_slow_leg(self):
+        # MEGAPHONE's smallest leg ratio is ~1.18; a 1.25 floor kills it.
+        inst, _ = scan(MEGAPHONE, params={"swing_expand": 1.25})
+        assert [i for i in inst if i.family == "broadening"] == []
+
+    def test_swing_expand_cap_rejects_blowoff_leg(self):
+        # Every MEGAPHONE sub-run has a leg ratio above 1.2 (they range
+        # ~1.18-1.43 but no 5+-pivot window avoids the bigger ones), so the
+        # tightest cap rejects the formation outright rather than letting
+        # the engine shrink to a compliant core.
+        inst, _ = scan(MEGAPHONE, params={"swing_expand_max": 1.2})
+        assert [i for i in inst if i.family == "broadening"] == []
+
+    def test_flat_side_exempt(self):
+        # ASC_BROAD's flat floor has leg ratios ~1.0; only the rising top
+        # line is held to the band (its ratios are 1.35+), so a right-angled
+        # broadening still passes a floor that its flat side would fail.
+        inst, _ = scan(ASC_BROAD, params={"swing_expand": 1.2})
+        assert any(i.variant == "ascending" for i in inst)
 
 
 class TestBreakHorizon:

@@ -104,6 +104,34 @@ def _prior_trend_ok(close, f, i0: int, span: int, need: float) -> bool:
     return f * (float(close[i0]) - float(close[i0 - look])) >= need
 
 
+def _swings_expand(run, hs: float, ls: float, p: dict) -> bool:
+    """A broadening formation is monotone expansion by definition: every
+    touch of a sloping line makes a new extreme, and each leg into it grows
+    within a band of the leg before (Bulkowski's higher-highs/lower-lows,
+    plus TFlab's per-swing 1.2x-2x extension filter, loosened). Legs sharing
+    a middle pivot are compared: for lows (l1, h, l2) the ratio is
+    (h-l2)/(h-l1); mirrored for highs. The flat side of a right-angled
+    variant is exempt — its touches are level, not expanding."""
+    lo_ex = p.get("swing_expand", 1.0)
+    hi_ex = p.get("swing_expand_max", 3.0)
+    flat = p["flat_slope"]
+    for j in range(2, len(run)):
+        q0, q1, q2 = run[j - 2], run[j - 1], run[j]
+        if q0.d != q2.d:
+            continue
+        if q2.d > 0:
+            if hs <= flat:
+                continue
+            prev, cur = q0.price - q1.price, q2.price - q1.price
+        else:
+            if ls >= -flat:
+                continue
+            prev, cur = q1.price - q0.price, q1.price - q2.price
+        if prev <= 0 or not lo_ex * prev <= cur <= hi_ex * prev:
+            return False
+    return True
+
+
 def _envelope_variant(hs: float, ls: float, p: dict) -> tuple[str, str] | None:
     """(family, variant) from the two line slopes in ATR-per-bar units, or
     None when the lines neither diverge nor converge enough (a channel)."""
@@ -155,6 +183,8 @@ def find_envelope(piv: list[Pivot], close: np.ndarray, a: float, p: dict) -> lis
                 continue
             fam = _envelope_variant(hi[0] / a, lo[0] / a, p)
             if fam is None:
+                continue
+            if fam[0] == "broadening" and not _swings_expand(run, hi[0] / a, lo[0] / a, p):
                 continue
             last = run[-1].i
             if (hi[0] * last + hi[1]) - (lo[0] * last + lo[1]) < p["min_height"] * a:
@@ -375,11 +405,19 @@ PARAM_SCHEMAS: dict[str, list[dict]] = {
          "help": "how far short of the far line a swing may stop to count as a partial rise/decline"},
         {"name": "break_horizon", "type": "float", "min": 0.2, "max": 3.0, "default": 1.0,
          "help": "how long after the last touch a trendline may break, as a multiple of the pattern span"},
+        {"name": "swing_expand", "type": "float", "min": 1.0, "max": 2.0, "default": 1.0,
+         "help": "each leg into a sloping line must be at least this multiple of the leg before (1.0 = just higher highs / lower lows)"},
+        {"name": "swing_expand_max", "type": "float", "min": 1.2, "max": 5.0, "default": 3.0,
+         "help": "a leg beyond this multiple of the one before is a blow-off move, not orderly broadening"},
     ],
 }
 # Triangles share the envelope engine and its knobs; min_slope_gap reads as
-# min convergence there.
-PARAM_SCHEMAS["triangle"] = PARAM_SCHEMAS["broadening"]
+# min convergence there. The swing-expansion band is broadening-only
+# (converging legs contract), so triangles get the schema without it.
+PARAM_SCHEMAS["triangle"] = [
+    d for d in PARAM_SCHEMAS["broadening"]
+    if d["name"] not in ("swing_expand", "swing_expand_max")
+]
 
 FAMILIES = ["hns", "double", "broadening", "triangle"]
 
