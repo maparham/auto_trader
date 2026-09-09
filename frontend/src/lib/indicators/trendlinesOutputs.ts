@@ -22,9 +22,10 @@ export const MAX_PAIR_PIVOTS = 20;
 /** Live state keeps this multiple of maxLines per side, so a line that is
  * temporarily outranked is not destroyed and can return when it gains a touch.
  * maxLines itself does two things: it sizes that live state through this
- * multiplier, and it sets the per-side FLOOR for the DRAWN set (see
- * selectDrawnLines, which draws that many by proximity and then adds back any
- * line an operand is currently reading).
+ * multiplier (still per side, as a memory bound), and it sets the total FLOOR
+ * for the DRAWN set (see selectDrawnLines, which draws that many by proximity
+ * across both sides and then adds back any line an operand is currently
+ * reading).
  *
  * BE PRECISE ABOUT THE OPERANDS. There is no rank SLICE on the emit path any
  * more — capping there discarded the very line nearest-to-the-close selection

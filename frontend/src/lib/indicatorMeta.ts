@@ -586,7 +586,8 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       {
         ...num(7, "Max Trendlines"),
         tip: [
-          "Max lines drawn per side, nearest to price first, counted after merging.",
+          "Max lines drawn in total, nearest to price first, counted after merging.",
+          "Lines this indicator currently reports always draw, even over the limit.",
           "Raising it also keeps more lines in play, which can change the prices this indicator reports.",
         ],
       },

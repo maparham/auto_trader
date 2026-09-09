@@ -179,16 +179,17 @@ describe("TRENDLINES on DXY monthly", () => {
   // support lines are 1990s geometry projecting to 10.99, 13.28, 31.83 and
   // 57.36 against a close of 99.27: valid, and nowhere near the chart. Drawing
   // the live set would bury the two lines a human reads. So the drawn set is
-  // maxLines per side by proximity (plus the operands' own lines, which on THIS
-  // bar all fall inside that budget), and this is the test that proves the
-  // stale ones are gone.
+  // maxLines by proximity, one budget across both sides (plus the operands'
+  // own lines), and this is the test that proves the stale ones are gone.
   //
-  // With mixedTouches defaulted on (Task 1/2), touches feed rankLines, so rank
-  // order shifted and a 4th support line now makes the budget on this fixture
-  // (measured: 2011-05->2021-01, 2014-05->2021-01, 2023-07->2024-09, and the
-  // unbroken 2011-05->2026-01 operand line at ~96.12). All four are 2011+
-  // geometry projecting within a few points of the ~99.27 close, i.e. exactly
-  // the lines a human would still read off the chart, not a 1990s regression.
+  // With the budget made total rather than per side, the three nearest lines
+  // on this bar are all supports (98.74, 97.83, 100.97 against a 99.27 close),
+  // so the supports take the whole budget and the drawn resistance is the
+  // emitted tl_resistance line alone, joining through the union. The four
+  // drawn supports are the same 2011+ geometry as before (2011-05->2021-01,
+  // 2014-05->2021-01, 2023-07->2024-09, and the unbroken 2011-05->2026-01
+  // operand line at ~96.12): lines a human would still read off the chart,
+  // not a 1990s regression.
   it("draws only the lines in play, not the 1990s geometry", () => {
     const { points, lines } = computeTrendlines(bars, TRENDLINES_DEFAULTS);
     const last = bars.length - 1;
@@ -202,10 +203,9 @@ describe("TRENDLINES on DXY monthly", () => {
     for (const l of drawnSupport) {
       expect(month(bars[l.i1].timestamp) >= "2000-01").toBe(true);
     }
-    expect(drawn.filter((l) => l.side === "resistance")).toHaveLength(3);
-    // The nearest pick per side, pinned. Not the whole six: resistance slot 3
-    // (113.583) beats the first line out (113.587) by 0.004, so pinning all six
-    // would be a hair-trigger on unrelated arithmetic.
+    expect(drawn.filter((l) => l.side === "resistance")).toHaveLength(1);
+    // The nearest pick per side, pinned. Not every projection: pinning the
+    // full drawn list would be a hair-trigger on unrelated arithmetic.
     const nearestOf = (side: string): number =>
       drawn
         .filter((l) => l.side === side)
@@ -227,9 +227,10 @@ describe("TRENDLINES on DXY monthly", () => {
   //
   // Each prefix of the bars is a distinct chart state: what the pane showed the
   // day that bar closed. Emission makes four picks per bar (side x broken) but
-  // the drawn budget is per SIDE, and a broken line sits nearest to price by
-  // construction, so before selectDrawnLines unioned the emitting lines back in
-  // this failed on 193 of 1286 emissions: tl_resistance invisible on 96 states,
+  // the drawn budget is one shared pool, and a broken line sits nearest to
+  // price by construction, so before selectDrawnLines unioned the emitting
+  // lines back in this failed on 193 of 1286 emissions (measured under the
+  // per-side budget of the time): tl_resistance invisible on 96 states,
   // tl_support on 73, tl_broken_resistance on 22, tl_broken_support on 2. An
   // isMajor gate does NOT fix it (measured: 96 -> 96); the union does, and this
   // is the test that keeps it fixed.

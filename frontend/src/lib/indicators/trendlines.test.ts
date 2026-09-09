@@ -801,7 +801,10 @@ describe("selectDrawnLines", () => {
     lastTouchIdx: 10,
   };
 
-  it("keeps the maxLines per side nearest the close, each side capped alone", () => {
+  it("keeps the maxLines nearest the close, one budget across both sides", () => {
+    // near (99) and resNear (101) are both 1 away; mid (90) is 10 away and the
+    // rest further. A per-side budget of 2 would draw four lines here; the
+    // budget is total, so exactly two draw and side does not shield a line.
     const out = selectDrawnLines(
       [far, mid, near, resFar, resNear],
       100,
@@ -810,12 +813,16 @@ describe("selectDrawnLines", () => {
       {},
       null,
     );
-    expect(out).toHaveLength(4);
-    expect(out.filter((l) => l.side === "support")).toEqual([near, mid]);
-    expect(out.filter((l) => l.side === "resistance")).toEqual([
-      resNear,
-      resFar,
-    ]);
+    expect(out).toEqual([near, resNear]);
+  });
+
+  it("lets one side take the whole budget when its lines are nearer", () => {
+    // Both supports sit nearer to the close than the nearest resistance, so
+    // maxLines 2 goes entirely to supports: "the lines nearest to price", not
+    // "some of each side".
+    expect(
+      selectDrawnLines([mid, near, resFar], 100, 100, 2, {}, null),
+    ).toEqual([near, mid]);
   });
 
   it("drops the far line even when it outranks the near one", () => {
@@ -875,9 +882,9 @@ describe("selectDrawnLines", () => {
   // THE UNION. maxLines is a floor for drawing, not a cap: a line an operand is
   // reading is drawn however far down the proximity order it sits, because the
   // chart is the only place a user can audit what a rule is doing. On the DXY
-  // fixture the emit path's four picks (side x broken) against a per-SIDE budget
-  // hid an emitted value on 193 emissions; trendlinesDxy.test.ts pins that at
-  // zero on real data, and these pin the mechanism.
+  // fixture the emit path's four picks (side x broken) against the drawing
+  // budget hid an emitted value on 193 emissions; trendlinesDxy.test.ts pins
+  // that at zero on real data, and these pin the mechanism.
   it("keeps an emitting line that falls outside maxLines", () => {
     // `far` is third by proximity, so maxLines 1 would drop it, but tl_support
     // is reading it.
@@ -949,7 +956,7 @@ describe("selectDrawnLines", () => {
   });
 
   // THE NEAR-PRICE FILTER, which is a DISTANCE cut and so does something
-  // maxLines cannot: the budget keeps a fixed count per side however far away
+  // maxLines cannot: the budget keeps a fixed count however far away
   // they all are. `near` projects to 99 and `mid` to 80 against a close of 100,
   // so a tolerance of 5 admits one and rejects the other with the budget wide
   // open at 9.
@@ -1795,12 +1802,12 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     ).toHaveLength(3);
   });
 
-  // maxLines is the drawn set's FLOOR per side, not a hard cap: the budgeted
-  // lines are chosen by proximity and then whatever an operand is reading joins
-  // them. This fixture shows both halves, because at maxLines 1 the budget
-  // spends its one slot on the live line tl_support reads (the nearest, at
-  // 98.85) and so would hide the BROKEN line tl_broken_support reads (101.8).
-  it("budgets the drawn set at maxLines per side, then adds the operands' lines", () => {
+  // maxLines is the drawn set's FLOOR, not a hard cap: the budgeted lines are
+  // chosen by proximity and then whatever an operand is reading joins them.
+  // This fixture shows both halves, because at maxLines 1 the budget spends
+  // its one slot on the live line tl_support reads (the nearest, at 98.85)
+  // and so would hide the BROKEN line tl_broken_support reads (101.8).
+  it("budgets the drawn set at maxLines, then adds the operands' lines", () => {
     const b = bars();
     const live = computeTrendlines(b, cfg()).lines;
     // Only support lines form on flat highs, so one side carries this fixture.

@@ -755,7 +755,7 @@ function stepTrendlinesBar(
       // Since the emit path stopped capping by rank (see step 4), this is
       // cfg.maxLines' only use INSIDE the detector: it sizes live state via
       // MAX_LIVE_MULT. The other half of its job lives in selectDrawnLines
-      // below, where it is the per-side FLOOR for the drawn set (a line an
+      // below, where it is the total FLOOR for the drawn set (a line an
       // operand is reading is drawn on top of that budget, never instead of
       // it). Ranking is right here and wrong there; that function says why.
       // Rebuilt only when something actually died: this runs at every confirm
@@ -1498,12 +1498,24 @@ function dropDuplicates(
   return out;
 }
 
-/** The DRAWN set: the maxLines per side whose projection at `atIdx` sits
- * nearest to `close`, PLUS whichever lines the emit path is reading at that
- * bar, PLUS the pinned ones (`dedupe.keep`). maxLines is a FLOOR for drawing,
- * not a cap. This is cfg.maxLines' second
+/** The DRAWN set: the maxLines lines, ACROSS BOTH SIDES, whose projection at
+ * `atIdx` sits nearest to `close`, PLUS whichever lines the emit path is
+ * reading at that bar, PLUS the pinned ones (`dedupe.keep`). maxLines is a
+ * FLOOR for drawing, not a cap. This is cfg.maxLines' second
  * job (the first being the MAX_LIVE_MULT sizing of live state inside
  * computeTrendlines).
+ *
+ * ONE budget, not one per side. The budget used to be per side, and "side" is
+ * fixed at detection (which pivots anchor the line), not the line's current
+ * role: a broken support price now trades under acts as resistance yet counted
+ * against the support budget forever, so "1" drew two lines plus the emitted
+ * ones and the setting read as broken. A single nearest-to-price budget means
+ * the number in the panel is the number of lines a user should expect to see,
+ * give or take the emitted/pinned overflow below. One side monopolising the
+ * budget in a strong trend is the intended reading, not a bug: the far side's
+ * lines are the irrelevant ones at that moment, and the near-price cut's
+ * keep-the-nearest-per-side rule still holds one line of each side through
+ * declutter, where blankness would read as breakage.
  *
  * NOT rankLines ORDER, and the disagreement is deliberate — a future reader
  * will notice that the detector ranks and the chart does not. Rank sorts by
@@ -1523,7 +1535,7 @@ function dropDuplicates(
  * must never be off-screen. Proximity looks like it should give that for free
  * (the emit path also picks nearest-to-the-close), but it does not: emission
  * makes FOUR independent picks per bar, one per (side x broken-state), while
- * the budget is maxLines per SIDE. A broken line sits nearest to price by
+ * the budget is maxLines in total. A broken line sits nearest to price by
  * construction — price has just pierced it — so during a break-hold window the
  * broken lines take every slot on a side and evict the unbroken line a rule is
  * actually reading. Measured on the DXY monthly fixture at stock defaults,
@@ -1569,7 +1581,13 @@ export function selectDrawnLines(
    * bury what they check. */
   nearTol = 0,
 ): TrendLine[] {
-  const out: TrendLine[] = [];
+  // Dedupe and the near-price cut run PER SIDE (sides never merge, and the
+  // cut keeps each side's nearest line so declutter cannot blank a side); the
+  // budget then runs over the two survivors' union, nearest to price first.
+  const candidates: (DrawEntry & {
+    wantUnbroken: number | undefined;
+    wantBroken: number | undefined;
+  })[] = [];
   for (const side of SIDES) {
     const wantUnbroken =
       side === "support" ? emitted.tl_support : emitted.tl_resistance;
@@ -1619,23 +1637,32 @@ export function selectDrawnLines(
             return want !== undefined && e.proj === want;
           })
         : kept;
-    // Proximity order throughout: the budgeted head, then any emitting or
-    // PINNED line that fell outside it, appended in the same order.
-    // Deterministic either way, and the ×N tags keep pairing with the
-    // segments they label. Pinned lines get the same pass merging and the
-    // near-price cut give them, and for the same reason: a pin's own handle
-    // is the only control that releases it, so a budget that evicted the line
-    // would strand the pin with nothing to click the moment other lines
-    // crowd closer to price.
-    near.forEach((e, idx) => {
-      if (idx < maxLines || dedupe?.keep.has(e.line)) {
-        out.push(e.line);
-        return;
-      }
-      const want = e.line.brokenIdx !== null ? wantBroken : wantUnbroken;
-      if (want !== undefined && e.proj === want) out.push(e.line);
-    });
+    for (const e of near) candidates.push({ ...e, wantUnbroken, wantBroken });
   }
+  // The same distance-then-rank order the per-side lists used, now across the
+  // union, so the budget really is "the maxLines nearest to price" whichever
+  // side they anchor on. rankLines is a full ordering down to a stored anchor
+  // price, so a cross-side distance tie resolves the same way everywhere.
+  candidates.sort((a, b) =>
+    a.dist !== b.dist ? a.dist - b.dist : rankLines(a.line, b.line),
+  );
+  // Proximity order throughout: the budgeted head, then any emitting or
+  // PINNED line that fell outside it, appended in the same order.
+  // Deterministic either way, and the ×N tags keep pairing with the
+  // segments they label. Pinned lines get the same pass merging and the
+  // near-price cut give them, and for the same reason: a pin's own handle
+  // is the only control that releases it, so a budget that evicted the line
+  // would strand the pin with nothing to click the moment other lines
+  // crowd closer to price.
+  const out: TrendLine[] = [];
+  candidates.forEach((e, idx) => {
+    if (idx < maxLines || dedupe?.keep.has(e.line)) {
+      out.push(e.line);
+      return;
+    }
+    const want = e.line.brokenIdx !== null ? e.wantBroken : e.wantUnbroken;
+    if (want !== undefined && e.proj === want) out.push(e.line);
+  });
   return out;
 }
 
