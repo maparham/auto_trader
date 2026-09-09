@@ -513,12 +513,12 @@ describe("applyTrendlinesTimeframe", () => {
     // no fetch. clearHtfCache first, so a skip cannot be the TTL cache's doing.
     fetchRangeStrict.mockClear();
     clearHtfCache();
-    await refreshMtfIndicators(chart, "EPIC", undefined, 10_000_000_000);
+    await refreshMtfIndicators(chart, "EPIC", undefined, { fromMs: 10_000_000_000, toMs: 10_000_300_000 });
     expect(fetchRangeStrict).not.toHaveBeenCalled();
 
     // Sanity: without the stamp (a reloaded stash) the same refresh fetches.
     delete (ind.extendData.mtf as { coveredFromMs?: number }).coveredFromMs;
-    await refreshMtfIndicators(chart, "EPIC", undefined, 10_000_000_000);
+    await refreshMtfIndicators(chart, "EPIC", undefined, { fromMs: 10_000_000_000, toMs: 10_000_300_000 });
     expect(fetchRangeStrict).toHaveBeenCalled();
   });
 });
@@ -654,6 +654,29 @@ describe("forming-bar mode (waitClose: false)", () => {
     expect(after.htfSeries.at(-1)!).toBeGreaterThan(before.htfSeries.at(-1)!);
   });
 
+  it("preserves coveredFromMs/coveredToMs across a forming re-fold (no refetch, so the reach is unchanged)", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(alignedPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = livelyChart(pinned(false));
+    await applyEma(chart, "MINUTE_15");
+    const before = overrides.at(-1)!.patch.extendData?.mtf as {
+      coveredFromMs?: number;
+      coveredToMs?: number;
+    };
+    expect(before.coveredFromMs).toBeTypeOf("number");
+    expect(before.coveredToMs).toBeTypeOf("number");
+    refreshFormingBar(chart);
+    const after = overrides.at(-1)!.patch.extendData?.mtf as {
+      coveredFromMs?: number;
+      coveredToMs?: number;
+    };
+    // Dropping these on the re-fold makes the coverage guard refetch forever
+    // for a pin at the broker's history edge — the OIL_CRUDE/US100 freeze loop.
+    expect(after.coveredFromMs).toBe(before.coveredFromMs);
+    expect(after.coveredToMs).toBe(before.coveredToMs);
+  });
+
   it("a fetch failure's fallback shape keeps waitClose, so the retry re-enters forming mode", async () => {
     fetchRangeStrict.mockRejectedValue(new Error("candles fetch failed: 503"));
     const { chart, overrides } = livelyChart(pinned(false));
@@ -709,5 +732,236 @@ describe("forming-bar mode (waitClose: false)", () => {
     const n = overrides.length;
     refreshFormingBar(chart);
     expect(overrides.length).toBe(n);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Viewport-scoped coverage: the two-ended interval contract. See
+// docs/superpowers/specs/2026-09-09-viewport-scoped-indicator-coverage-design.md.
+// ---------------------------------------------------------------------------
+const { resolveAskInterval, setViewportReader } = await import("./mtfCoordinator");
+
+describe("resolveAskInterval", () => {
+  const H = HTF_MS;
+  it("no previous interval returns the need", () => {
+    expect(resolveAskInterval(undefined, { fromMs: 10 * H, toMs: 20 * H }, H))
+      .toEqual({ fromMs: 10 * H, toMs: 20 * H });
+    expect(resolveAskInterval({}, { fromMs: 10 * H, toMs: 20 * H }, H))
+      .toEqual({ fromMs: 10 * H, toMs: 20 * H });
+  });
+
+  it("overlapping intervals union (monotone growth, both ends)", () => {
+    const prev = { coveredFromMs: 10 * H, coveredToMs: 20 * H };
+    expect(resolveAskInterval(prev, { fromMs: 5 * H, toMs: 15 * H }, H))
+      .toEqual({ fromMs: 5 * H, toMs: 20 * H });
+    expect(resolveAskInterval(prev, { fromMs: 15 * H, toMs: 30 * H }, H))
+      .toEqual({ fromMs: 10 * H, toMs: 30 * H });
+  });
+
+  it("a disjoint need rebases: the ask is just the need", () => {
+    const prev = { coveredFromMs: 100 * H, coveredToMs: 120 * H };
+    expect(resolveAskInterval(prev, { fromMs: 10 * H, toMs: 20 * H }, H))
+      .toEqual({ fromMs: 10 * H, toMs: 20 * H });
+  });
+
+  it("derives the previous interval from htfStarts when the stamps are absent", () => {
+    const prev = { htfStarts: [10 * H, 11 * H, 12 * H], htfMs: H };
+    // Touches [10H, 13H]: union.
+    expect(resolveAskInterval(prev, { fromMs: 13 * H, toMs: 20 * H }, H))
+      .toEqual({ fromMs: 10 * H, toMs: 20 * H });
+  });
+});
+
+describe("viewport-scoped coverage interval", () => {
+  it("a successful apply stamps BOTH ends of the ask; a failed one stamps neither", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const ok = fakeChart();
+    await applyEma(ok.chart, "MINUTE_15");
+    const mtf = ok.overrides.at(-1)!.patch.extendData?.mtf as {
+      coveredFromMs?: number;
+      coveredToMs?: number;
+    };
+    expect(mtf.coveredFromMs).toBeTypeOf("number");
+    expect(mtf.coveredToMs).toBe(10_000_300_000); // the chart's newest bar
+    clearHtfCache();
+    fetchRangeStrict.mockRejectedValue(new Error("candles fetch failed: 503"));
+    const bad = fakeChart();
+    await applyEma(bad.chart, "MINUTE_15");
+    const badMtf = bad.overrides.at(-1)!.patch.extendData?.mtf as {
+      coveredFromMs?: number;
+      coveredToMs?: number;
+    };
+    expect(badMtf.coveredFromMs).toBeUndefined();
+    expect(badMtf.coveredToMs).toBeUndefined();
+  });
+
+  it("the refresh guard skips a stash covered on both ends and refetches one short on the right", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const ind = {
+      paneId: "candle_pane",
+      name: "ema1",
+      calcParams: [2],
+      extendData: {
+        indType: "EMA",
+        mtf: {
+          timeframe: "MINUTE_15",
+          htfStarts: [9_999_000_000, 9_999_900_000],
+          htfMs: HTF_MS,
+          coveredFromMs: 9_000_000_000,
+          coveredToMs: 10_000_300_000,
+        },
+      },
+    };
+    const chart = {
+      getDataList: () => [bar(10_000_000_000), bar(10_000_300_000)],
+      getIndicators: () => [ind],
+      overrideIndicator: (patch: Override["patch"]) => {
+        ind.extendData = patch.extendData as typeof ind.extendData;
+      },
+    } as unknown as Chart;
+    // Need inside the covered interval on both ends: no fetch.
+    await refreshMtfIndicators(chart, "EPIC", undefined, {
+      fromMs: 10_000_000_000,
+      toMs: 10_000_300_000,
+    });
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
+    // Need reaching further right than the covered ask (plus the one-bucket
+    // slack): refetch.
+    await refreshMtfIndicators(chart, "EPIC", undefined, {
+      fromMs: 10_000_000_000,
+      toMs: 10_000_300_000 + 2 * HTF_MS,
+    });
+    expect(fetchRangeStrict).toHaveBeenCalled();
+  });
+
+  it("with no viewport reader, the fallback covers the full loaded span (old contract)", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = fakeChart();
+    await applyEma(chart, "MINUTE_15");
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as { coveredFromMs?: number };
+    // The ask reached back past the oldest loaded bar (warmup included).
+    expect(mtf.coveredFromMs).toBeLessThan(10_000_000_000);
+  });
+
+  it("a registered viewport reader scopes the ask to the view, not the loaded span", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = fakeChart();
+    setViewportReader(chart, () => ({
+      fromMs: 10_000_200_000,
+      toMs: 10_000_300_000,
+    }));
+    await applyEma(chart, "MINUTE_15");
+    setViewportReader(chart, null);
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as {
+      coveredFromMs?: number;
+      coveredToMs?: number;
+    };
+    // Ask derives from the view's left end, not the (deeper) oldest loaded bar.
+    const deepAsk = 10_000_000_000;
+    expect(mtf.coveredFromMs).toBeGreaterThan(deepAsk - 100 * HTF_MS);
+    expect(mtf.coveredFromMs).toBeLessThan(10_000_200_000);
+    expect(mtf.coveredToMs).toBe(10_000_300_000);
+  });
+
+  it("refreshFormingBar leaves a DETACHED stash alone (interval behind the live edge)", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const stash = {
+      indType: "EMA",
+      mtf: {
+        timeframe: "MINUTE_15",
+        waitClose: false,
+        htfMs: HTF_MS,
+        htfStarts: [9_000_000_000],
+        htfSeries: [1],
+        htfClosed: [bar(9_000_000_000)],
+        coveredToMs: 9_000_900_000, // years behind the 10_000_300_000 live edge
+      },
+    };
+    const { chart, overrides } = fakeChart(stash);
+    refreshFormingBar(chart);
+    expect(overrides).toHaveLength(0); // untouched: no fold onto old geometry
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
+  });
+});
+
+const { stampTrendlinesFloors } = await import("./mtfCoordinator");
+
+describe("stampTrendlinesFloors", () => {
+  const CHART_MS = 300_000;
+  function tlChart(extendData: object) {
+    const f = fakeChart(extendData);
+    setChartIntervalMs(f.chart, CHART_MS);
+    return f;
+  }
+  const view = { fromMs: 10_000_000_000, toMs: 10_000_300_000 };
+
+  it("stamps a floor on a chart-TF trendlines instance, warmup left of the view", () => {
+    const { chart, overrides } = tlChart({ indType: "TRENDLINES" });
+    setViewportReader(chart, () => ({ ...view }));
+    stampTrendlinesFloors(chart);
+    setViewportReader(chart, null);
+    const ext = overrides.at(-1)!.patch.extendData as { tlFloorTs?: number };
+    expect(ext.tlFloorTs).toBeTypeOf("number");
+    expect(ext.tlFloorTs!).toBeLessThan(view.fromMs);
+  });
+
+  it("does not touch a pinned instance", () => {
+    const { chart, overrides } = tlChart({
+      indType: "TRENDLINES",
+      mtf: { timeframe: "MINUTE_15" },
+    });
+    setViewportReader(chart, () => ({ ...view }));
+    stampTrendlinesFloors(chart);
+    setViewportReader(chart, null);
+    expect(overrides).toHaveLength(0);
+  });
+
+  it("skips re-stamping inside the hysteresis band, rebases after a far right jump", () => {
+    const { chart, overrides } = tlChart({ indType: "TRENDLINES" });
+    let v = { ...view };
+    setViewportReader(chart, () => ({ ...v }));
+    stampTrendlinesFloors(chart);
+    const stamps = overrides.length;
+    // A small wobble right: inside FLOOR_REBASE_SCREENS view-widths, no stamp.
+    v = { fromMs: view.fromMs + 100_000, toMs: view.toMs + 100_000 };
+    stampTrendlinesFloors(chart);
+    expect(overrides.length).toBe(stamps);
+    // A far jump right: rebase forward (drops deep-history compute cost).
+    const span = view.toMs - view.fromMs;
+    const firstFloor = (overrides.at(-1)!.patch.extendData as { tlFloorTs?: number })
+      .tlFloorTs!;
+    // Far enough right that wantedFloor clears the hysteresis band even with
+    // the warmup subtracted (warmup is fixed; the jump distance is not).
+    v = { fromMs: view.fromMs + 4_000 * span, toMs: view.toMs + 4_000 * span };
+    stampTrendlinesFloors(chart);
+    setViewportReader(chart, null);
+    expect(overrides.length).toBe(stamps + 1);
+    const ext = overrides.at(-1)!.patch.extendData as { tlFloorTs?: number };
+    expect(ext.tlFloorTs!).toBeGreaterThan(firstFloor);
+  });
+
+  it("moves the floor LEFT whenever the view outruns it", () => {
+    const { chart, overrides } = tlChart({ indType: "TRENDLINES" });
+    let v = { ...view };
+    setViewportReader(chart, () => ({ ...v }));
+    stampTrendlinesFloors(chart);
+    const first = (overrides.at(-1)!.patch.extendData as { tlFloorTs?: number })
+      .tlFloorTs!;
+    v = { fromMs: view.fromMs - 5_000_000, toMs: view.toMs };
+    stampTrendlinesFloors(chart);
+    setViewportReader(chart, null);
+    const second = (overrides.at(-1)!.patch.extendData as { tlFloorTs?: number })
+      .tlFloorTs!;
+    expect(second).toBeLessThan(first);
   });
 });

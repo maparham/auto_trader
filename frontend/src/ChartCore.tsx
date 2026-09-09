@@ -157,7 +157,7 @@ import {
 import type { GoLivePillPos } from "./lib/liveEdge";
 import GoLivePill from "./chart/GoLivePill";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
-import { refreshMtfIndicators, setChartIntervalMs } from "./lib/mtfCoordinator";
+import { refreshMtfIndicators, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, restingLineEndX } from "./lib/positionLines";
 import {
   TradeMarkers,
@@ -533,13 +533,13 @@ export default function ChartCore({
     setChartIntervalMs(chart, declaredIntervalMs(period.resolution));
   }, [period.resolution]);
 
-  const extendMtfCoverage = (explicitOldestMs?: number) => {
+  const extendMtfCoverage = () => {
     const chart = chartRef.current;
     if (!chart) return;
-    const loaded = chart.getDataList()[0]?.timestamp;
-    const oldest = Math.min(explicitOldestMs ?? Infinity, loaded ?? Infinity);
-    if (!Number.isFinite(oldest)) return;
-    void refreshMtfIndicators(chart, epicRef.current, brokerIdRef.current, oldest);
+    // The coordinator derives the needed interval from the viewport reader
+    // registered in the init effect (visible range + margins), so callers no
+    // longer pass an oldest bar: coverage follows the VIEW, not loaded depth.
+    void refreshMtfIndicators(chart, epicRef.current, brokerIdRef.current);
   };
 
   // (ensureCoverageAndFit + ensureAnchorCoverage moved into
@@ -1806,6 +1806,23 @@ export default function ChartCore({
     // Initial declared-interval registration (see the resolution-keyed effect
     // above — it runs before this init on first mount and finds no chart).
     setChartIntervalMs(chart, declaredIntervalMs(period.resolution));
+    // The coordinator's viewport reader: the interval the view needs covered
+    // (visible range plus one screenful each side, right end clamped to now).
+    // Refs, not render-scope props, so the closure never staleness-captures.
+    setViewportReader(chart, () => {
+      const dl = chart.getDataList();
+      const vr = chart.getVisibleRange();
+      const clamp = (i: number) => Math.max(0, Math.min(i, dl.length - 1));
+      const from = dl[clamp(vr.from)]?.timestamp;
+      const to = dl[clamp(vr.to - 1)]?.timestamp;
+      const intervalMs = declaredIntervalMs(resRef.current) ?? 60_000;
+      const screenMs = Math.max(1, vr.to - vr.from) * intervalMs;
+      const now = Date.now();
+      return {
+        fromMs: (from ?? now) - screenMs,
+        toMs: Math.min((to ?? now) + screenMs, now),
+      };
+    });
     // The band height the user last dragged this cell to. Seeded before the first
     // indicator is created, so an inset instance restored from storage paints at the
     // right height on its first frame rather than snapping after it.
@@ -3196,12 +3213,12 @@ export default function ChartCore({
           // dataIndex-only overlay points before the bars land — no wrapping
           // needed here (applyOlderBars covers the INIT-type path).
           done,
-          // Extend any HTF EMA/MA overlay back over the newly-loaded range so
-          // the MTF curve doesn't stop where the older bars begin. `fresh[0]`
-          // is the new global oldest (explicit, because klinecharts may not have
-          // merged the prepend into getDataList yet).
+          // Extend any HTF overlay over the newly-loaded range. Coverage is
+          // viewport-derived now, so no explicit oldest: the post-prepend
+          // onVisibleRangeChange settle re-fires it against the merged view
+          // anyway; this call just starts the fetch a beat earlier.
           onFresh: (fresh) => {
-            extendMtfCoverage(fresh[0].timestamp);
+            extendMtfCoverage();
             // Backtest markers/period bands were drawn against the pre-prepend
             // window — redraw them over the newly-loaded bars (skipped while
             // provably a no-op: run already covered, or not yet reached).
@@ -3543,6 +3560,7 @@ export default function ChartCore({
       controller.coverBacktestTradeTo = null;
       controller.programmaticMove = null;
       registerBacktestPager(chart, null);
+      setViewportReader(chart, null);
       const w = window as unknown as { __charts?: Map<string, Chart> };
       w.__charts?.delete(cellId);
       if (el) dispose(el);
@@ -4491,6 +4509,37 @@ export default function ChartCore({
       chart?.unsubscribeAction('onZoom', scheduleRedraw);
       chart?.unsubscribeAction('onPaneDrag', scheduleRedraw);
     };
+  }, [redraw]);
+
+  // Viewport-scoped indicator coverage trigger: when the visible range settles
+  // somewhere the MTF stashes (or the trendlines compute floor) don't cover,
+  // extend them. onVisibleRangeChange, not onScroll/onZoom, because it also
+  // fires on PROGRAMMATIC moves — a pattern jump, a quick-range fit, a
+  // timeframe restore — which are exactly the moves that used to need explicit
+  // extendMtfCoverage call sites. Debounced: the per-indicator coverage guard
+  // makes a settled view a cheap no-op, but there's no reason to run it per
+  // drag frame.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const onRange = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        t = null;
+        extendMtfCoverage();
+        // Same settle drives the chart-TF trendlines compute floor (the
+        // other half of viewport-scoped indicator cost).
+        const c = chartRef.current;
+        if (c) stampTrendlinesFloors(c);
+      }, 200);
+    };
+    chart.subscribeAction("onVisibleRangeChange", onRange);
+    return () => {
+      if (t) clearTimeout(t);
+      chart.unsubscribeAction("onVisibleRangeChange", onRange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [redraw]);
 
   // The DOM legend's values track the crosshair (TradingView-style): on each

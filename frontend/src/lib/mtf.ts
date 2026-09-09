@@ -63,6 +63,15 @@ export interface MtfSeriesBase {
    * thread on any chart carrying such a pin. Session-only, like htfClosed:
    * persistence keeps timeframe/waitClose alone, so a reload re-walks once. */
   coveredFromMs?: number;
+  /** How far RIGHT the last successful walk asked (its toMs) — the other end
+   * of the covered interval. Under viewport-scoped coverage the stash can be
+   * detached from the live edge (a deep pattern jump covers only the landing
+   * window), and this is what says so: the forming-bar fold and live-tick
+   * refresh are skipped while it sits behind the chart's newest bar. Absent on
+   * pre-field stashes, which were always walked from the live edge, so absence
+   * reads as "reaches the newest fetched bar". Session-only, like
+   * coveredFromMs. */
+  coveredToMs?: number;
 }
 
 export function priceOf(k: KLineData, src: PriceSource): number {

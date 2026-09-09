@@ -20,9 +20,9 @@ import {
   type MaKind,
   type MtfSeriesBase,
 } from "./mtf";
-import { fetchHtfShared, htfKey } from "./htfBarCache";
+import { fetchHtfInterval, htfIntervalKey } from "./htfBarCache";
 import { foldFormingBar, formingOpenMs } from "./mtfForming";
-import { pageHistoryBack } from "./historyPaging";
+import { fetchSpanParallel } from "./historyPaging";
 import { barCloseMs } from "./replayBars";
 import { indTypeOf, templateMaKind, type MaExtend } from "./customIndicators";
 import { computePivotBarsSince } from "./indicators/pivotBarsSince";
@@ -77,12 +77,15 @@ import {
 import { overrideExtend } from "./overrideExtend";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
-// so a wide loaded span needs several pages walked back — kept under the cap.
+// so a wide asked span needs several windows — kept under the cap.
 const HTF_PAGE_BARS = 900;
-// Bound the walk-back so a pathological span can't spin forever; 40 pages of 900
-// bars (36k HTF bars) covers any realistic loaded chart range.
+// Bound the span so a pathological ask can't spin forever; 40 windows of 900
+// bars (36k HTF bars) covers any realistic covered interval.
 const HTF_MAX_PAGES = 40;
-const HTF_MAX_EMPTY = 3; // consecutive empty windows before declaring exhausted
+// Parallel window lanes per span load. Both endpoints are known up front (the
+// same precondition that let coverBacktestTradeTo go parallel), so the walk
+// is round-trip-bound, not data-bound; 6 mirrors the candle jump's lanes.
+const HTF_FETCH_LANES = 6;
 
 // --- fetch-failure retry -------------------------------------------------
 // A failed HTF fetch (broker briefly down or reconnecting — e.g. the backend's
@@ -201,6 +204,147 @@ export function setHtfCursorClamp(
 ): void {
   if (read) htfCursors.set(chart, read);
   else htfCursors.delete(chart);
+}
+
+// --- viewport-scoped coverage ------------------------------------------------
+//
+// The stash contract: cover ONE contiguous interval [coveredFromMs,
+// coveredToMs] containing the VISIBLE range plus warmup and a prefetch margin,
+// not the chart's whole loaded history. Loaded depth stopped being a
+// slow-moving number the day the pattern jump could move it a decade per
+// click; the visible range is what the user actually pays attention to, and
+// candles already stream in on scroll, so indicators doing the same is the
+// consistent behavior. See
+// docs/superpowers/specs/2026-09-09-viewport-scoped-indicator-coverage-design.md.
+
+export interface NeededInterval {
+  fromMs: number;
+  toMs: number;
+}
+
+/** Reads the interval the chart currently NEEDS covered: visible range plus
+ * one screenful each side, right end clamped to now. Registered by ChartCore
+ * (same WeakMap idiom as htfCursors); absent in tests and headless callers,
+ * where the fallback below reproduces the old full-span behavior. */
+const viewportReaders = new WeakMap<Chart, () => NeededInterval>();
+
+export function setViewportReader(
+  chart: Chart,
+  read: (() => NeededInterval) | null,
+): void {
+  if (read) viewportReaders.set(chart, read);
+  else viewportReaders.delete(chart);
+}
+
+function neededOf(chart: Chart): NeededInterval {
+  const read = viewportReaders.get(chart);
+  if (read) return read();
+  // No reader: reproduce the old full-span contract, endpoints from the
+  // chart's own bars (the newest LOADED bar, not the wall clock: a replaying
+  // or historical chart's data can sit far from now, and the old walk always
+  // ended at the newest fetched bar).
+  const d = chart.getDataList();
+  const now = Date.now();
+  return {
+    fromMs: d.length ? d[0].timestamp : now,
+    toMs: d.length ? d[d.length - 1].timestamp : now,
+  };
+}
+
+/** Whether an interval whose ask reaches `askToMs` is DOCKED at the live edge
+ * of this chart (reaches its newest bar, with one HTF bucket of slack: live
+ * ticks advance the chart past the stashed ask inside the still-forming
+ * bucket, and the bucket-crossing refresh re-asks). Detached stashes skip the
+ * forming fold and the live-tick refresh: the live edge is off screen and its
+ * bars are not in the interval. */
+function dockedAt(chart: Chart, askToMs: number, htfMs: number): boolean {
+  const d = chart.getDataList();
+  const newest = d.length ? d[d.length - 1].timestamp : 0;
+  return !newest || askToMs >= newest - (htfMs > 0 ? htfMs : 0);
+}
+
+// How many view-widths to the RIGHT the wanted floor may drift from the
+// stamped one before the floor rebases forward. Left moves always stamp
+// (coverage must lead the view); right moves only rebase past this slack, so
+// ordinary scrolling near the floor never churns recalcs, while returning to
+// the live edge after a deep jump drops the deep-history compute cost.
+const FLOOR_REBASE_SCREENS = 4;
+
+/**
+ * Stamp the viewport-derived compute floor onto every CHART-TIMEFRAME
+ * Trendlines instance (pinned ones are windowed by their HTF stash interval
+ * instead). Called from ChartCore's debounced visible-range settle, next to
+ * the coverage refresh. The floor is the view's left end minus the type's
+ * warmup in chart bars; a changed stamp triggers the instance's recalc, which
+ * rebuilds the detector from the new floor (see createTrendlinesSession).
+ */
+export function stampTrendlinesFloors(chart: Chart): void {
+  const read = viewportReaders.get(chart);
+  const byPane = getIndicatorsByPane(chart);
+  if (!read || !byPane) return;
+  const view = read();
+  const chartMs = chartIntervalOf(chart) ?? 60_000;
+  const viewSpanMs = Math.max(1, view.toMs - view.fromMs);
+  byPane.forEach((nameMap, paneId) => {
+    nameMap.forEach((indUnknown, id) => {
+      const ind = indUnknown as {
+        calcParams?: unknown[];
+        extendData?: TrendlinesExtend & { mtf?: MtfSeriesBase };
+      };
+      if (indTypeOf({ name: id, extendData: ind.extendData }) !== "TRENDLINES")
+        return;
+      if (ind.extendData?.mtf?.timeframe) return;
+      const cfg = parseTrendlinesConfig(ind.calcParams);
+      const wantedFloor = view.fromMs - tlWarmup(cfg) * chartMs;
+      const cur = ind.extendData?.tlFloorTs;
+      const move =
+        cur == null ||
+        wantedFloor < cur ||
+        wantedFloor > cur + FLOOR_REBASE_SCREENS * viewSpanMs;
+      if (!move) return;
+      overrideExtend(
+        chart,
+        paneId,
+        id,
+        { ...(ind.extendData ?? {}), tlFloorTs: wantedFloor },
+        ind.calcParams ?? [],
+      );
+    });
+  });
+}
+
+/**
+ * The interval a fresh walk should ASK for, given what the stash already
+ * covers. Overlapping or touching (within one HTF bucket) intervals UNION, so
+ * coverage grows monotonically and never goes sparse; a disjoint need REBASES
+ * (returns just the need), so a years-deep jump costs the landing window
+ * instead of dragging the whole in-between span in. The needed interval always
+ * carries a screenful margin, which is why plain disjointness is the whole
+ * rebase rule. Exported for tests.
+ */
+export function resolveAskInterval(
+  prev:
+    | Pick<MtfSeriesBase, "coveredFromMs" | "coveredToMs" | "htfStarts" | "htfMs">
+    | undefined,
+  needed: NeededInterval,
+  htfMs: number,
+): NeededInterval {
+  const width = htfMs > 0 ? htfMs : 3_600_000;
+  const starts = prev?.htfStarts;
+  const prevFrom =
+    prev?.coveredFromMs ?? (starts?.length ? starts[0] : undefined);
+  const prevTo =
+    prev?.coveredToMs ??
+    (starts?.length
+      ? starts[starts.length - 1] + (prev?.htfMs ?? width)
+      : undefined);
+  if (prevFrom == null || prevTo == null) return needed;
+  if (needed.toMs < prevFrom - width || needed.fromMs > prevTo + width)
+    return needed; // disjoint: rebase
+  return {
+    fromMs: Math.min(needed.fromMs, prevFrom),
+    toMs: Math.max(needed.toMs, prevTo),
+  };
 }
 
 /** Keep only HTF bars fully CLOSED at the cursor. `cursorMs` 0 = not replaying.
@@ -369,16 +513,19 @@ interface MaConfig {
 }
 
 /**
- * Fetch (and page back over) the higher-timeframe candles an MTF indicator needs
- * to cover the chart's whole loaded span. Shared by every MTF indicator — only
- * the per-indicator series computation differs afterwards.
+ * Fetch the higher-timeframe candles an MTF indicator needs to cover its
+ * NEEDED interval (the visible range plus margins; see NeededInterval). Shared
+ * by every MTF indicator — only the per-indicator series computation differs
+ * afterwards.
  *
  * `warmupBars` is how many HTF bars of history the indicator needs *before* the
- * oldest visible bar so its left edge is populated (MA warmup for EMA/MA; enough
- * pivot history for Pivot Bands). A failed fetch (broker down/reconnecting)
- * never throws — it returns whatever pages already landed with `failed: true`,
- * so the caller can render partial data and schedule a retry, while the base
- * indicator keeps working.
+ * needed interval's left end so its left edge is populated (MA warmup for
+ * EMA/MA; enough pivot history for Pivot Bands). `prev` is the instance's
+ * current stash: the ask is the union with what it already covers (or a rebase
+ * when disjoint — see resolveAskInterval). A failed fetch (broker
+ * down/reconnecting) never throws — it returns whatever spans already landed
+ * with `failed: true`, so the caller can render partial data and schedule a
+ * retry, while the base indicator keeps working.
  */
 async function fetchHtfBars(
   chart: Chart,
@@ -386,8 +533,15 @@ async function fetchHtfBars(
   timeframe: string,
   warmupBars: number,
   brokerId: string | undefined,
-  oldestChartMs: number | undefined,
-): Promise<{ htf: KLineData[]; htfMs: number; failed: boolean }> {
+  needed: NeededInterval,
+  prev: MtfSeriesBase | undefined,
+): Promise<{
+  htf: KLineData[];
+  htfMs: number;
+  failed: boolean;
+  askFromMs: number;
+  askToMs: number;
+}> {
   // nominalBarHours, not a bare RESOLUTION_SECONDS lookup, so a pin ALIAS ("1H")
   // scores the same width here as it does in mtfBucketMs — the two must agree, or
   // an alias would page at the 1h default with htfMs 0, which corrupts the
@@ -395,13 +549,12 @@ async function fetchHtfBars(
   // newest-bar fallback (`timestamp + 0` admits the still-forming bucket).
   const htfSec = (nominalBarHours(timeframe) ?? 0) * 3600;
   const htfMs = htfSec * 1000;
-  // Cover the chart's whole loaded span, not just recent bars: reach back to the
-  // oldest loaded bar (or the explicit scroll-back page's first bar) plus warmup.
-  const data = chart.getDataList();
-  const newestMs = data.length ? data[data.length - 1].timestamp : Date.now();
-  const loadedOldest = data.length ? data[0].timestamp : newestMs;
-  const oldest = Math.min(oldestChartMs ?? loadedOldest, loadedOldest);
-  const fromMs = htfCoverageStartMs(oldest, htfMs, warmupBars);
+  const fromMs = htfCoverageStartMs(needed.fromMs, htfMs, warmupBars);
+  // No wall-clock clamp: the viewport reader already clamps a live chart's
+  // right end to now, a replaying or synthetic chart legitimately asks around
+  // its own bars, and a span past the broker's edge just comes back empty.
+  const toMs = needed.toMs;
+  const ask = resolveAskInterval(prev, { fromMs, toMs }, htfMs);
 
   // THE PANE'S OWN PRICE SIDE, not a hardcoded "mid". Read once here rather than
   // threaded through every apply*/refresh signature, the same way
@@ -416,77 +569,50 @@ async function fetchHtfBars(
   // bars left the line unbroken, drawn solid, still emitting as live support on
   // a chart whose own candles had gone through it.
   //
-  // Hoisted out of fetchOlder because it now also identifies the bars for
-  // sharing: a bid walk and a mid walk are different data and must not pool.
+  // Also identifies the bars for sharing: a bid walk and a mid walk are
+  // different data and must not pool.
   const side = loadSettings().priceSide;
-  const key = htfKey({
-    brokerId,
-    epic,
-    timeframe,
-    priceSide: side,
-    newestMs,
-    htfMs,
-  });
+  const key = htfIntervalKey({ brokerId, epic, timeframe, priceSide: side });
 
-  // One walk per (epic, timeframe, side, live edge), shared by every indicator
-  // pinned to it — see htfBarCache. The clamp below stays per-caller.
-  const shared = await fetchHtfShared(key, fromMs, async (walkFromMs) => {
-    let htf: KLineData[] = [];
-    let failed = false;
-    try {
-      await pageHistoryBack<KLineData>({
-        fromTs: walkFromMs,
-        toTs: newestMs,
+  // One interval store per (broker, epic, timeframe, side), shared by every
+  // indicator pinned to it; only missing spans are fetched — see htfBarCache.
+  // The clamp below stays per-caller.
+  const res = await fetchHtfInterval(
+    key,
+    ask.fromMs,
+    ask.toMs,
+    htfMs,
+    (spanFromMs, spanToMs) =>
+      fetchSpanParallel<KLineData>({
+        fromMs: spanFromMs,
+        toMs: spanToMs,
         resSec: htfSec || 3600,
         pageBars: HTF_PAGE_BARS,
-        maxPages: HTF_MAX_PAGES,
-        maxEmpty: HTF_MAX_EMPTY,
-        isStale: () => false,
-        getData: () => htf,
-        // A non-2xx page marks the whole fetch failed (the rethrow stops the
-        // walk); pages that already landed are kept and rendered.
-        fetchOlder: async (fSec, tSec) => {
-          try {
-            return await fetchRangeStrict(
-              epic,
-              timeframe,
-              fSec,
-              tSec,
-              side,
-              brokerId,
-            );
-          } catch (e) {
-            failed = true;
-            throw e;
-          }
-        },
-        applyData: (merged) => {
-          htf = merged;
-        },
-      });
-    } catch {
-      failed = true;
-    }
-    return { htf, failed };
-  });
+        maxWindows: HTF_MAX_PAGES,
+        concurrency: HTF_FETCH_LANES,
+        fetchWindow: (fSec, tSec) =>
+          fetchRangeStrict(epic, timeframe, fSec, tSec, side, brokerId),
+      }),
+  );
 
   // The no-lookahead clamp, applied HERE because every MTF indicator's apply*
   // funnels through this one fetch — patching each of them separately is how the
   // rule drifts. Read at the END, after the awaits, so a fetch already in flight
   // when a session starts is clamped on resolution too.
   //
-  // PER-CALLER, deliberately: the shared walk caches the raw bars, and two cells
-  // riding the same walk can sit at different replay cursors. Clamping before
+  // PER-CALLER, deliberately: the shared store caches the raw bars, and two cells
+  // riding the same store can sit at different replay cursors. Clamping before
   // the cache would leak one cell's cursor into another's series.
   const cursorMs = htfCursors.get(chart)?.() ?? 0;
   return {
-    htf: clampHtfBars(shared.htf, cursorMs, htfMs),
+    htf: clampHtfBars(res.bars, cursorMs, htfMs),
     htfMs,
-    failed: shared.failed,
-    // The reach this call ASKED for. On a successful walk the caller may stash
-    // it as mtf.coveredFromMs — see that field's doc for why the ask, not the
-    // arrival, is what the coverage guard needs.
-    fromMs,
+    failed: res.failed,
+    // The interval this call ASKED for. On a successful walk the caller
+    // stashes both ends — see MtfSeriesBase.coveredFromMs/coveredToMs for why
+    // the ask, not the arrival, is what the coverage guard needs.
+    askFromMs: res.askFromMs,
+    askToMs: res.askToMs,
   };
 }
 
@@ -506,11 +632,10 @@ export async function applyMaTimeframe(
   // HTF candles are broker-specific (epics aren't portable); fetch from the chart's
   // active broker. Defaults to "capital" via fetchRange when omitted.
   brokerId?: string,
-  // Oldest chart bar (ms) the HTF series must reach back to. Passed explicitly by
-  // the scroll-back loader (the just-fetched older page's first bar); otherwise
-  // read from the chart's current dataList. Drives how far back the HTF series is
-  // paged so the overlay spans the whole loaded range, not just recent bars.
-  oldestChartMs?: number,
+  // The interval the stash must cover (visible range plus margins). Omitted by
+  // settings panels and headless callers: derived from the chart's registered
+  // viewport reader, falling back to the full loaded span.
+  needed?: NeededInterval,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
   const ind = getIndicator(chart, paneId, name) as {
@@ -530,13 +655,15 @@ export async function applyMaTimeframe(
   // warmup never lands on the oldest visible bars.
   const sm = config.options.smoothing;
   const smLen = sm && sm.type !== "none" ? Number(sm.length) || 0 : 0;
-  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
+  const need = needed ?? neededOf(chart);
+  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
     config.length + smLen,
     brokerId,
-    oldestChartMs,
+    need,
+    ind?.extendData?.mtf,
   );
   const proceed = mtfFetchTail(
     chart,
@@ -557,20 +684,26 @@ export async function applyMaTimeframe(
         config,
         timeframe,
         brokerId,
-        oldestChartMs,
+        needed,
       ),
   );
   if (!proceed) return;
-  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
+  // The forming fold only exists DOCKED at the live edge: a detached interval
+  // (deep-history jump) has no bucket adjoining the chart's newest candles to
+  // fold. The pin's waitClose choice must survive the detached shape anyway.
+  const fp =
+    waitClose || !dockedAt(chart, askToMs, htfMs)
+      ? null
+      : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     ...buildMaMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
-    ...(fp?.extra ?? {}),
+    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
     // and the trendlines stamp below): without this every deep history
     // extension re-walked and re-computed this type on EVERY refresh trigger
     // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: fromMs } : {}),
+    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, [config.length]);
 }
@@ -629,7 +762,7 @@ export async function applyPivotBandsTimeframe(
   config: PivotBandsConfig,
   timeframe: string | null,
   brokerId?: string,
-  oldestChartMs?: number,
+  needed?: NeededInterval,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
   const ind = getIndicator(chart, paneId, name) as {
@@ -653,13 +786,15 @@ export async function applyPivotBandsTimeframe(
     return;
   }
 
-  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
+  const need = needed ?? neededOf(chart);
+  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
     pivotWarmup(config.n, config.k),
     brokerId,
-    oldestChartMs,
+    need,
+    ind?.extendData?.mtf,
   );
   const proceed = mtfFetchTail(
     chart,
@@ -680,23 +815,26 @@ export async function applyPivotBandsTimeframe(
         config,
         timeframe,
         brokerId,
-        oldestChartMs,
+        needed,
       ),
   );
   if (!proceed) return;
   // Reuse the exact chart-TF math on the HTF bars: computePivotBands already
   // carries each side's value forward (dense after the first pivot) and bakes in
   // the N-bar confirmation lag, so the aligned series stays gap-free and honest.
-  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
+  const fp =
+    waitClose || !dockedAt(chart, askToMs, htfMs)
+      ? null
+      : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     ...buildPivotBandsMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
-    ...(fp?.extra ?? {}),
+    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
     // and the trendlines stamp below): without this every deep history
     // extension re-walked and re-computed this type on EVERY refresh trigger
     // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: fromMs } : {}),
+    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
   syncPivotBarsSinceCompanion(chart, name);
@@ -753,7 +891,7 @@ export async function applySrLevelsTimeframe(
   config: SrLevelsConfig,
   timeframe: string | null,
   brokerId?: string,
-  oldestChartMs?: number,
+  needed?: NeededInterval,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
   const ind = getIndicator(chart, paneId, name) as {
@@ -776,13 +914,15 @@ export async function applySrLevelsTimeframe(
     return;
   }
 
-  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
+  const need = needed ?? neededOf(chart);
+  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
     srWarmup(config),
     brokerId,
-    oldestChartMs,
+    need,
+    ind?.extendData?.mtf,
   );
   const proceed = mtfFetchTail(
     chart,
@@ -803,22 +943,25 @@ export async function applySrLevelsTimeframe(
         config,
         timeframe,
         brokerId,
-        oldestChartMs,
+        needed,
       ),
   );
   if (!proceed) return;
   // Reuse the exact chart-TF math on the HTF bars: clustering, touch gating and
   // the pivot-confirmation lag are all baked into the stashed series/levels.
-  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
+  const fp =
+    waitClose || !dockedAt(chart, askToMs, htfMs)
+      ? null
+      : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     ...buildSrMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
-    ...(fp?.extra ?? {}),
+    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
     // and the trendlines stamp below): without this every deep history
     // extension re-walked and re-computed this type on EVERY refresh trigger
     // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: fromMs } : {}),
+    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
 }
@@ -886,7 +1029,7 @@ export async function applyTrendlinesTimeframe(
   config: TrendlinesConfig,
   timeframe: string | null,
   brokerId?: string,
-  oldestChartMs?: number,
+  needed?: NeededInterval,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
   const ind = getIndicator(chart, paneId, name) as {
@@ -921,13 +1064,15 @@ export async function applyTrendlinesTimeframe(
     return;
   }
 
-  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
+  const need = needed ?? neededOf(chart);
+  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
     tlWarmup(config),
     brokerId,
-    oldestChartMs,
+    need,
+    ind?.extendData?.mtf,
   );
   const proceed = mtfFetchTail(
     chart,
@@ -948,7 +1093,7 @@ export async function applyTrendlinesTimeframe(
         config,
         timeframe,
         brokerId,
-        oldestChartMs,
+        needed,
       ),
   );
   if (!proceed) return;
@@ -962,7 +1107,10 @@ export async function applyTrendlinesTimeframe(
   // on the chart that no rule can read, and repaint it when the bar finishes).
   const data = chart.getDataList();
   const newestMs = data.length ? data[data.length - 1].timestamp : 0;
-  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
+  const fp =
+    waitClose || !dockedAt(chart, askToMs, htfMs)
+      ? null
+      : prepFormingBars(chart, htf, htfMs);
   const bars = fp
     ? fp.bars
     : newestMs
@@ -971,12 +1119,12 @@ export async function applyTrendlinesTimeframe(
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     ...buildTrendlinesMtf(bars, config, timeframe, htfMs),
-    ...(fp?.extra ?? {}),
+    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask: stamp how far back it ASKED so
     // the refresh pass can call this covered even when the bars stop short
     // (see MtfSeriesBase.coveredFromMs). Never on a failed walk — the retry
     // path owns that, and a transient outage may genuinely have more to give.
-    ...(!failed ? { coveredFromMs: fromMs } : {}),
+    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
 }
@@ -1027,7 +1175,7 @@ export async function applyFvgTimeframe(
   config: FvgConfig,
   timeframe: string | null,
   brokerId?: string,
-  oldestChartMs?: number,
+  needed?: NeededInterval,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
   const ind = getIndicator(chart, paneId, name) as {
@@ -1044,13 +1192,15 @@ export async function applyFvgTimeframe(
     return;
   }
 
-  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
+  const need = needed ?? neededOf(chart);
+  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
     fvgReachBack(config),
     brokerId,
-    oldestChartMs,
+    need,
+    ind?.extendData?.mtf,
   );
   const proceed = mtfFetchTail(
     chart,
@@ -1071,22 +1221,25 @@ export async function applyFvgTimeframe(
         config,
         timeframe,
         brokerId,
-        oldestChartMs,
+        needed,
       ),
   );
   if (!proceed) return;
   // Reuse the exact chart-TF math on the HTF bars: detection, the size filter and
   // wick-driven mitigation are all baked into the stashed series/gaps.
-  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
+  const fp =
+    waitClose || !dockedAt(chart, askToMs, htfMs)
+      ? null
+      : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     ...buildFvgMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
-    ...(fp?.extra ?? {}),
+    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
     // and the trendlines stamp below): without this every deep history
     // extension re-walked and re-computed this type on EVERY refresh trigger
     // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: fromMs } : {}),
+    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
 }
@@ -1144,7 +1297,7 @@ export async function applySlopeTimeframe(
   config: SlopeConfig,
   timeframe: string | null,
   brokerId?: string,
-  oldestChartMs?: number,
+  needed?: NeededInterval,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
   const ind = getIndicator(chart, paneId, name) as {
@@ -1179,7 +1332,8 @@ export async function applySlopeTimeframe(
       ? Number(ext.accelSmoothing.length) || 0
       : 0;
   const n2 = slopePeriodOf(ext.accelPeriod, 3);
-  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
+  const need = needed ?? neededOf(chart);
+  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -1188,7 +1342,8 @@ export async function applySlopeTimeframe(
       smLen +
       (ext.showAccel ? n2 + aSmLen : 0),
     brokerId,
-    oldestChartMs,
+    need,
+    ind?.extendData?.mtf,
   );
   const proceed = mtfFetchTail(
     chart,
@@ -1209,7 +1364,7 @@ export async function applySlopeTimeframe(
         config,
         timeframe,
         brokerId,
-        oldestChartMs,
+        needed,
       ),
   );
   if (!proceed) return;
@@ -1227,16 +1382,19 @@ export async function applySlopeTimeframe(
   // `tf_resolution(pin) or pin`. The infer fallback covers only a resolution
   // name in neither table — which fetchHtfBars above would already have paged
   // at its own 1h default, so there is nothing better to fall back to.
-  const fp = waitClose ? null : prepFormingBars(chart, htf, htfMs);
+  const fp =
+    waitClose || !dockedAt(chart, askToMs, htfMs)
+      ? null
+      : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     ...buildSlopeMtf(fp ? fp.bars : htf, config, ext, timeframe, htfMs),
-    ...(fp?.extra ?? {}),
+    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
     // and the trendlines stamp below): without this every deep history
     // extension re-walked and re-computed this type on EVERY refresh trigger
     // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: fromMs } : {}),
+    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
   // The companion mirrors the parent's extendData (including the MTF stash).
@@ -1372,6 +1530,10 @@ export function refreshFormingBar(chart: Chart): void {
       if (!mtf?.timeframe || mtf.waitClose !== false) return;
       const { htfClosed: closed, htfSeed: seed, htfMs, timeframe } = mtf;
       if (!closed || !timeframe || !(htfMs && htfMs > 0)) return;
+      // A DETACHED stash (deep-history view, interval not reaching the live
+      // edge) has no forming bucket adjoining the chart's newest candles;
+      // folding one would graft live bars onto years-old geometry.
+      if (mtf.coveredToMs != null && !dockedAt(chart, mtf.coveredToMs, htfMs)) return;
 
       const data = chart.getDataList();
       const openMs = formingOpenMs(
@@ -1387,12 +1549,25 @@ export function refreshFormingBar(chart: Chart): void {
       const bars = forming ? [...closed, forming] : closed;
       const extra: Pick<
         MtfSeriesBase,
-        "waitClose" | "formingIdx" | "htfClosed" | "htfSeed"
+        | "waitClose"
+        | "formingIdx"
+        | "htfClosed"
+        | "htfSeed"
+        | "coveredFromMs"
+        | "coveredToMs"
       > = {
         waitClose: false,
         ...(forming ? { formingIdx: bars.length - 1 } : {}),
         htfClosed: closed,
         ...(seed ? { htfSeed: seed } : {}),
+        // Carry the coverage stamps forward: a re-fold recomputes from the
+        // ALREADY-STASHED closed bars (no refetch), so the reach the last walk
+        // asked for is unchanged. Dropping them let the coverage guard read a
+        // stampless stash whose bars stop at the broker's history edge, so
+        // every viewport settle refetched + recomputed the identical answer —
+        // the freeze loop on a forming-mode pin (US100/OIL_CRUDE DAY).
+        ...(mtf.coveredFromMs != null ? { coveredFromMs: mtf.coveredFromMs } : {}),
+        ...(mtf.coveredToMs != null ? { coveredToMs: mtf.coveredToMs } : {}),
       };
 
       const type = indTypeOf({ name: id, extendData: ind.extendData });
@@ -1474,13 +1649,14 @@ export function refreshFormingBar(chart: Chart): void {
  * reloaded MTF indicator renders on the chart timeframe until this refetches.
  * No-op for chart-timeframe indicators.
  *
- * Also called from the scroll-back loader, which passes `oldestChartMs` (the
- * just-loaded older page's first bar). In that mode the epic/config are
- * unchanged, so an indicator whose stashed series already reaches back past the
- * new oldest bar (plus its warmup) is skipped — no redundant refetch per page.
+ * The trigger is the viewport: `needed` is the interval the view requires
+ * covered (visible range plus margins). Omitted, it is derived from the
+ * chart's registered viewport reader, falling back to the full loaded span
+ * (tests, headless callers). An indicator whose stashed interval already
+ * covers the need on BOTH ends is skipped — no redundant refetch per settle.
  */
-// One refresh in flight per (chart, epic, oldest) at a time: the deep-cover
-// path fires extendMtfCoverage from more than one trigger for the same page-in
+// One refresh in flight per (chart, epic, needed interval) at a time: the
+// deep-cover path fires from more than one trigger for the same landing
 // (measured: two identical 23s refreshes side by side after a years-deep
 // pattern jump), and the second run's walks/computes are byte-identical work.
 const refreshInFlight = new WeakMap<Chart, { key: string; done: Promise<void> }>();
@@ -1489,12 +1665,13 @@ export function refreshMtfIndicators(
   chart: Chart,
   epic: string,
   brokerId?: string,
-  oldestChartMs?: number,
+  needed?: NeededInterval,
 ): Promise<void> {
-  const key = `${epic}|${brokerId ?? ""}|${oldestChartMs ?? ""}`;
+  const need = needed ?? neededOf(chart);
+  const key = `${epic}|${brokerId ?? ""}|${need.fromMs}|${need.toMs}`;
   const inFlight = refreshInFlight.get(chart);
   if (inFlight && inFlight.key === key) return inFlight.done;
-  const done = refreshMtfIndicatorsUncoalesced(chart, epic, brokerId, oldestChartMs).finally(
+  const done = refreshMtfIndicatorsUncoalesced(chart, epic, brokerId, need).finally(
     () => {
       if (refreshInFlight.get(chart)?.done === done) refreshInFlight.delete(chart);
     },
@@ -1506,8 +1683,8 @@ export function refreshMtfIndicators(
 async function refreshMtfIndicatorsUncoalesced(
   chart: Chart,
   epic: string,
-  brokerId?: string,
-  oldestChartMs?: number,
+  brokerId: string | undefined,
+  need: NeededInterval,
 ): Promise<void> {
   const byPane = getIndicatorsByPane(chart);
   if (!byPane) return;
@@ -1524,21 +1701,30 @@ async function refreshMtfIndicatorsUncoalesced(
       const tf = (ind.extendData?.mtf as MtfSeriesBase | undefined)?.timeframe;
       if (!tf) return;
 
-      // Scroll-back guard shared by every MTF type: skip the refetch if the
-      // stashed series already reaches the coverage start for the new oldest bar.
+      // Coverage guard shared by every MTF type: skip the refetch if the
+      // stashed interval already covers the needed one on BOTH ends.
       // `warmup` is the type's reach-back margin (MA length; pivot 2N+K).
       const stashed = ind.extendData?.mtf as MtfSeriesBase | undefined;
       const covered = (warmup: number): boolean => {
-        if (oldestChartMs == null) return false;
         if (!stashed?.htfStarts?.length || !stashed.htfMs) return false;
-        const start = htfCoverageStartMs(oldestChartMs, stashed.htfMs, warmup);
-        if (stashed.htfStarts[0] <= start) return true;
-        // The bars stop short of the coverage start, but the last successful
-        // walk already ASKED at least this deep — the broker has nothing more
-        // to give for it, so refetching is the identical answer at full cost
-        // (see MtfSeriesBase.coveredFromMs: the loop this guard used to feed
-        // is what froze a chart whose config out-asked the broker's history).
-        return stashed.coveredFromMs != null && stashed.coveredFromMs <= start;
+        const start = htfCoverageStartMs(need.fromMs, stashed.htfMs, warmup);
+        // Left end: the bars may stop short of the coverage start, but the
+        // last successful walk already ASKED at least this deep — the broker
+        // has nothing more to give for it, so refetching is the identical
+        // answer at full cost (see MtfSeriesBase.coveredFromMs: the loop this
+        // guard used to feed is what froze a chart whose config out-asked the
+        // broker's history).
+        const leftOk =
+          stashed.htfStarts[0] <= start ||
+          (stashed.coveredFromMs != null && stashed.coveredFromMs <= start);
+        // Right end: absent coveredToMs reads as "reaches the newest fetched
+        // bar" (pre-field stashes were always walked from the live edge). One
+        // bucket of slack, since the ask is clamped to now and the forming
+        // bucket is never fetchable as closed.
+        const lastStart = stashed.htfStarts[stashed.htfStarts.length - 1];
+        const rightAsk = stashed.coveredToMs ?? lastStart + stashed.htfMs;
+        const rightOk = rightAsk >= need.toMs - stashed.htfMs;
+        return leftOk && rightOk;
       };
       if (type === "EMA" || type === "MA") {
         const ext = ind.extendData ?? {};
@@ -1563,7 +1749,7 @@ async function refreshMtfIndicatorsUncoalesced(
             },
             tf,
             brokerId,
-            oldestChartMs,
+            need,
           ),
         );
       } else if (type === "PIVOT_BANDS") {
@@ -1582,7 +1768,7 @@ async function refreshMtfIndicatorsUncoalesced(
             { n, k, mode, source },
             tf,
             brokerId,
-            oldestChartMs,
+            need,
           ),
         );
       } else if (type === "SR_LEVELS") {
@@ -1597,7 +1783,7 @@ async function refreshMtfIndicatorsUncoalesced(
             cfg,
             tf,
             brokerId,
-            oldestChartMs,
+            need,
           ),
         );
       } else if (type === "TRENDLINES") {
@@ -1612,7 +1798,7 @@ async function refreshMtfIndicatorsUncoalesced(
             cfg,
             tf,
             brokerId,
-            oldestChartMs,
+            need,
           ),
         );
       } else if (type === "FVG") {
@@ -1627,7 +1813,7 @@ async function refreshMtfIndicatorsUncoalesced(
             cfg,
             tf,
             brokerId,
-            oldestChartMs,
+            need,
           ),
         );
       } else if (type === "SLOPE") {
@@ -1665,7 +1851,7 @@ async function refreshMtfIndicatorsUncoalesced(
             },
             tf,
             brokerId,
-            oldestChartMs,
+            need,
           ),
         );
       }

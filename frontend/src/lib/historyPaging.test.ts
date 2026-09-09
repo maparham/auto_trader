@@ -6,6 +6,7 @@ import {
   type PageHistoryBackArgs,
   type CoverRangeParallelArgs,
   type ScrollbackLoadArgs,
+  fetchSpanParallel,
 } from "./historyPaging";
 
 // Minimal bar factory — pageHistoryBack only reads `.timestamp`.
@@ -575,5 +576,83 @@ describe("coverHistoryRangeParallel", () => {
     expect(timestamps).toContain(91 * MIN);
     expect(timestamps).not.toContain(70 * MIN); // past the cap — caller shows the notice
     expect(h.data[0].timestamp).toBeGreaterThan(70 * MIN);
+  });
+});
+
+describe("fetchSpanParallel", () => {
+  const spanArgs = (
+    fetchWindow: (f: number, t: number) => Promise<{ timestamp: number }[]>,
+  ) => ({
+    fromMs: 0,
+    toMs: 30_000,
+    resSec: 1,
+    pageBars: 10,
+    maxWindows: 10,
+    concurrency: 3,
+    fetchWindow,
+  });
+
+  it("fetches every window and returns ascending deduped bars", async () => {
+    const calls: Array<[number, number]> = [];
+    const r = await fetchSpanParallel(
+      spanArgs(async (f, t) => {
+        calls.push([f, t]);
+        const out: { timestamp: number }[] = [];
+        for (let s = f; s <= t; s++) out.push(bar(s * 1000));
+        return out;
+      }),
+    );
+    expect(r.failed).toBe(false);
+    expect(calls.length).toBeGreaterThan(1);
+    for (let i = 1; i < r.bars.length; i++)
+      expect(r.bars[i].timestamp).toBeGreaterThan(r.bars[i - 1].timestamp);
+    expect(r.bars[0].timestamp).toBe(0);
+    expect(r.bars[r.bars.length - 1].timestamp).toBe(30_000);
+  });
+
+  it("a thrown window keeps only the contiguous newest-side prefix and flags failed", async () => {
+    const r = await fetchSpanParallel(
+      spanArgs(async (f, t) => {
+        if (f < 10) throw new Error("boom"); // the oldest window fails
+        const out: { timestamp: number }[] = [];
+        for (let s = f; s <= t; s++) out.push(bar(s * 1000));
+        return out;
+      }),
+    );
+    expect(r.failed).toBe(true);
+    expect(r.bars.length).toBeGreaterThan(0);
+    expect(r.bars[0].timestamp).toBeGreaterThanOrEqual(10_000);
+  });
+
+  it("empty windows do not break contiguity or flag failure", async () => {
+    const r = await fetchSpanParallel(
+      spanArgs(async (f, t) => {
+        if (f < 10) return []; // history edge: nothing older
+        const out: { timestamp: number }[] = [];
+        for (let s = f; s <= t; s++) out.push(bar(s * 1000));
+        return out;
+      }),
+    );
+    expect(r.failed).toBe(false);
+    expect(r.bars[0].timestamp).toBeGreaterThanOrEqual(10_000);
+  });
+
+  it("an empty span (toMs <= fromMs) returns nothing without fetching", async () => {
+    const calls: Array<[number, number]> = [];
+    const r = await fetchSpanParallel({
+      fromMs: 30_000,
+      toMs: 30_000,
+      resSec: 1,
+      pageBars: 10,
+      maxWindows: 10,
+      concurrency: 3,
+      fetchWindow: async (f, t) => {
+        calls.push([f, t]);
+        return [];
+      },
+    });
+    expect(r.bars).toEqual([]);
+    expect(r.failed).toBe(false);
+    expect(calls).toEqual([]);
   });
 });

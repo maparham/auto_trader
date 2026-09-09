@@ -1,7 +1,9 @@
 import type { KLineData } from "klinecharts";
 import { describe, expect, it } from "vitest";
 import {
+  buildTlState,
   computeTrendlines,
+  createTrendlinesSession,
   dropTrendlineHandles,
   getTrendlineHandles,
   hitAnyTrendlineHandle,
@@ -2721,5 +2723,98 @@ describe("mixed-pivot touches", () => {
     // The walk must actually exercise the feature. If a code change makes this
     // 0, pick a different seed for walk() rather than deleting the assertion.
     expect(extras).toBeGreaterThan(0);
+  });
+});
+
+describe("windowed buildTlState (compute floor)", () => {
+  // A long flat corridor with one early support pair (20/40) and one late pair
+  // (220/240), so a floor between them separates "excluded by the window" from
+  // "fully warmed inside it".
+  const floorBars = (): KLineData[] => {
+    // 280 bars: the early pair stays inside maxProjBars (250) of the end,
+    // so the full run still carries it for the comparison.
+    const bars = flat(280);
+    bars[20] = bar(20, 94, 100.5);
+    bars[40] = bar(40, 94, 100.5);
+    bars[200] = bar(200, 94, 100.5);
+    bars[220] = bar(220, 94, 100.5);
+    return bars;
+  };
+
+  it("startIdx 0 is identical to computeTrendlines", () => {
+    const bars = floorBars();
+    const full = computeTrendlines(bars, cfg());
+    const st = buildTlState(bars, bars.length, cfg(), 0);
+    expect(st.lines).toEqual(full.lines);
+    expect(st.points).toEqual(full.points);
+    expect(st.atr).toEqual(full.atr);
+  });
+
+  it("a floor keeps fully-warmed late lines and drops lines left of it", () => {
+    const bars = floorBars();
+    const full = computeTrendlines(bars, cfg());
+    expect(full.lines.some((l) => l.i1 === 20 && l.i2 === 40)).toBe(true);
+    expect(full.lines.some((l) => l.i1 === 200 && l.i2 === 220)).toBe(true);
+    const st = buildTlState(bars, bars.length, cfg(), 100);
+    expect(st.lines.some((l) => l.i1 === 20 && l.i2 === 40)).toBe(false);
+    const late = st.lines.find((l) => l.i1 === 200 && l.i2 === 220);
+    const twin = full.lines.find((l) => l.i1 === 200 && l.i2 === 220);
+    expect(late).toBeTruthy();
+    // Identical geometry for the shared late line: the floor's warmup margin
+    // is upstream of everything this line reads.
+    expect(late!.p1).toBe(twin!.p1);
+    expect(late!.p2).toBe(twin!.p2);
+    expect(late!.brokenIdx).toBe(twin!.brokenIdx);
+  });
+
+  it("point rows below the floor are empty; ATR warms from the floor", () => {
+    const bars = floorBars();
+    const st = buildTlState(bars, bars.length, cfg(), 100);
+    expect(st.points[99]).toEqual({});
+    expect(st.points[0]).toEqual({});
+    expect(st.atr[100 + 12]).toBeNull(); // inside the windowed ATR warmup
+    expect(st.atr[100 + 13]).not.toBeNull(); // TL_ATR_LEN 14: first value
+    expect(st.atr[50]).toBeNull(); // below the floor: never computed
+  });
+});
+
+describe("session compute floor", () => {
+  const floored = (): KLineData[] => {
+    const bars = flat(280);
+    bars[20] = bar(20, 94, 100.5);
+    bars[40] = bar(40, 94, 100.5);
+    bars[200] = bar(200, 94, 100.5);
+    bars[220] = bar(220, 94, 100.5);
+    return bars;
+  };
+
+  it("computes from the floor: empty rows below, early lines absent", () => {
+    const bars = floored();
+    const session = createTrendlinesSession();
+    const r = session.compute(bars, cfg(), bars[100].timestamp);
+    expect(r.points[99]).toEqual({});
+    expect(r.lines.some((l) => l.i1 === 20 && l.i2 === 40)).toBe(false);
+    expect(r.lines.some((l) => l.i1 === 200 && l.i2 === 220)).toBe(true);
+  });
+
+  it("lowering the floor rebuilds and surfaces earlier lines", () => {
+    const bars = floored();
+    const session = createTrendlinesSession();
+    const high = session.compute(bars, cfg(), bars[100].timestamp);
+    expect(high.lines.some((l) => l.i1 === 20 && l.i2 === 40)).toBe(false);
+    const low = session.compute(bars, cfg(), bars[0].timestamp);
+    expect(low.lines.some((l) => l.i1 === 20 && l.i2 === 40)).toBe(true);
+  });
+
+  it("a stable floor keeps the incremental per-tick path (shared prefix rows)", () => {
+    const bars = floored();
+    const session = createTrendlinesSession();
+    const floorTs = bars[100].timestamp;
+    const r1 = session.compute(bars, cfg(), floorTs);
+    // In-place tick mutation, klinecharts-style: same array identity.
+    bars[bars.length - 1] = bar(279, 99.0, 100.5);
+    const r2 = session.compute(bars, cfg(), floorTs);
+    for (let i = 0; i < bars.length - 1; i++)
+      expect(r2.points[i]).toBe(r1.points[i]); // identity: no rebuild happened
   });
 });

@@ -266,6 +266,73 @@ export async function coverHistoryRangeParallel<T extends BarLike>(
   return "reached";
 }
 
+// A bare parallel span fetch: both endpoints known, no chart to apply into.
+// coverHistoryRangeParallel's sibling for callers that accumulate the bars
+// themselves (the MTF coordinator's HTF interval store): same window
+// arithmetic, same fixed-lane pool, same contiguous-newest-prefix rule on a
+// thrown window. Empty windows are interior gaps or the history edge and never
+// break the chain; only a THROW does, because with known endpoints emptiness
+// is expected and failure is not.
+export interface FetchSpanParallelArgs<T extends BarLike> {
+  fromMs: number; // span left edge (inclusive ask)
+  toMs: number; // span right edge
+  resSec: number; // seconds per bar (window width = pageBars * resSec)
+  pageBars: number; // bars to request per window
+  maxWindows: number; // safety cap on the number of windows
+  concurrency: number; // parallel fetch lanes
+  fetchWindow: (fromSec: number, toSec: number) => Promise<T[]>;
+}
+
+export async function fetchSpanParallel<T extends BarLike>(
+  args: FetchSpanParallelArgs<T>,
+): Promise<{ bars: T[]; failed: boolean }> {
+  const { fromMs, toMs, resSec, pageBars, maxWindows, concurrency, fetchWindow } =
+    args;
+  const fromFloorSec = Math.floor(fromMs / 1000);
+  const windows: { fromSec: number; toSec: number }[] = [];
+  let toSec = Math.floor(toMs / 1000);
+  while (toSec * 1000 > fromMs && windows.length < maxWindows) {
+    const fromSec = Math.max(fromFloorSec, toSec - pageBars * resSec);
+    windows.push({ fromSec, toSec });
+    if (fromSec <= fromFloorSec) break;
+    toSec = fromSec - 1;
+  }
+  if (windows.length === 0) return { bars: [], failed: false };
+  // windows[0] is the NEWEST. `null` result + errored flag tells a thrown
+  // window apart from a genuinely empty one.
+  const results: (T[] | null)[] = new Array(windows.length).fill(null);
+  const errored: boolean[] = new Array(windows.length).fill(false);
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= windows.length) return;
+      try {
+        results[i] = await fetchWindow(windows[i].fromSec, windows[i].toSec);
+      } catch {
+        errored[i] = true;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, windows.length) }, lane),
+  );
+  // Keep the contiguous prefix nearest toMs, up to the first thrown window:
+  // bars past a failure would leave an interior hole the caller cannot see.
+  const firstErr = errored.indexOf(true);
+  const usable = firstErr === -1 ? results : results.slice(0, firstErr);
+  const seen = new Set<number>();
+  const bars: T[] = [];
+  for (let i = usable.length - 1; i >= 0; i--)
+    for (const b of usable[i] ?? [])
+      if (b != null && !seen.has(b.timestamp)) {
+        seen.add(b.timestamp);
+        bars.push(b);
+      }
+  bars.sort((a, b) => a.timestamp - b.timestamp);
+  return { bars, failed: firstErr !== -1 };
+}
+
 // The interactive scroll-back loader: answers ONE klinecharts forward ('older')
 // load. Distinct from pageHistoryBack in two load-bearing ways, both driven by
 // how klinecharts chains loads: it only re-triggers the next forward load when

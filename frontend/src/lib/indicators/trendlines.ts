@@ -424,6 +424,12 @@ export function hasBackClearance(
  * series (a from-scratch run costs ~30ms at BTCUSD 1m bar counts, on EVERY
  * tick, which was the pan/zoom jank). */
 interface TlState {
+  /** First bar index the detector RAN from (the compute floor). 0 for a full
+   * run. Bars below it have empty point rows and null ATR; highs/lows stay
+   * full-length because pivot lookbacks near the floor read below it. The
+   * viewport-scoped calc path picks a floor from the visible range plus
+   * warmup, so a deep jump rebuilds over the landing window, not bar 0. */
+  startIdx: number;
   atr: Array<number | null>;
   highs: number[];
   lows: number[];
@@ -440,15 +446,29 @@ interface TlState {
   points: TrendlinesPoint[];
 }
 
-/** State after the first `m` bars, built from scratch. */
-function buildTlState(
+/** State after the first `m` bars, built from scratch — from `startIdx` on
+ * when a compute floor is set (exported for the calc session and tests).
+ * highs/lows are filled for the WHOLE prefix (pivot lookbacks near the floor
+ * read below it, and the maps are cheap); ATR and the detector loop are
+ * windowed, so rows below the floor stay empty and lines anchored left of it
+ * do not exist — the best-effort semantics shallow broker history already
+ * has. */
+export function buildTlState(
   dataList: KLineData[],
   m: number,
   cfg: TrendlinesConfig,
+  startIdx = 0,
 ): TlState {
   const prefix = m === dataList.length ? dataList : dataList.slice(0, m);
+  const atr: Array<number | null> =
+    startIdx > 0 ? new Array(m).fill(null) : atrSeries(prefix, TL_ATR_LEN);
+  if (startIdx > 0) {
+    const windowed = atrSeries(prefix.slice(startIdx), TL_ATR_LEN);
+    for (let i = 0; i < windowed.length; i++) atr[startIdx + i] = windowed[i];
+  }
   const st: TlState = {
-    atr: atrSeries(prefix, TL_ATR_LEN),
+    startIdx,
+    atr,
     highs: prefix.map((d) => d.high),
     lows: prefix.map((d) => d.low),
     pools: { resistance: [], support: [] },
@@ -456,7 +476,7 @@ function buildTlState(
     lines: [],
     points: Array.from({ length: m }, () => ({})),
   };
-  for (let i = 0; i < m; i++) stepTrendlinesBar(st, prefix, i, cfg);
+  for (let i = startIdx; i < m; i++) stepTrendlinesBar(st, prefix, i, cfg);
   return st;
 }
 
@@ -889,11 +909,12 @@ function tlAtrAt(
   atr: Array<number | null>,
   dataList: KLineData[],
   j: number,
+  startIdx = 0,
 ): number | null {
-  if (j < TL_ATR_LEN - 1) return null;
+  if (j < startIdx + TL_ATR_LEN - 1) return null;
   const prev = j > 0 ? atr[j - 1] : null;
-  if (j === TL_ATR_LEN - 1 || prev === null)
-    return atrSeries(dataList.slice(0, j + 1), TL_ATR_LEN)[j];
+  if (j === startIdx + TL_ATR_LEN - 1 || prev === null)
+    return atrSeries(dataList.slice(startIdx, j + 1), TL_ATR_LEN)[j - startIdx];
   return rmaNext(prev, trueRangeAt(dataList, j), TL_ATR_LEN);
 }
 
@@ -907,7 +928,7 @@ function advanceTlBar(
 ): void {
   st.highs[i] = dataList[i].high;
   st.lows[i] = dataList[i].low;
-  st.atr[i] = tlAtrAt(st.atr, dataList, i);
+  st.atr[i] = tlAtrAt(st.atr, dataList, i, st.startIdx);
   stepTrendlinesBar(st, dataList, i, cfg);
 }
 
@@ -915,12 +936,30 @@ export interface TrendlinesSession {
   compute(
     dataList: KLineData[],
     cfg: TrendlinesConfig,
+    /** Compute floor (ms): the detector runs from the first bar at/after this
+     * timestamp instead of bar 0 — the viewport-scoped path for
+     * chart-timeframe instances. Absent or 0 = full run. */
+    floorTs?: number,
   ): {
     points: TrendlinesPoint[];
     lines: TrendLine[];
     atr: number[];
     pivots: TrendPivots;
   };
+}
+
+/** First index with timestamp >= ts (dataList ascending); 0 for ts<=first. */
+function floorIdxOf(dataList: KLineData[], ts: number | undefined): number {
+  if (!ts || !dataList.length || ts <= dataList[0].timestamp) return 0;
+  let lo = 0;
+  let hi = dataList.length; // may return length: an all-older list gives an
+  // empty window, which buildTlState handles as a no-op loop.
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (dataList[mid].timestamp < ts) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 /** Incremental twin of computeTrendlines, for the live calc path. klinecharts
@@ -951,9 +990,10 @@ export function createTrendlinesSession(): TrendlinesSession {
   let base: TlState | null = null;
   let baseCount = 0;
   let lastBaseTs = 0;
+  let lastFloorIdx = 0;
 
   return {
-    compute(dataList, cfg) {
+    compute(dataList, cfg, floorTs) {
       const n = dataList.length;
       if (n === 0) {
         base = null;
@@ -968,18 +1008,25 @@ export function createTrendlinesSession(): TrendlinesSession {
       // parseTrendlinesConfig builds the object with a fixed key order, so the
       // JSON string is a stable equality key for its 16 numbers.
       const key = JSON.stringify(cfg);
+      // A floor change in EITHER direction rebuilds: left extension needs the
+      // detector re-run from the deeper start (left-to-right state), and a
+      // right rebase deliberately drops deep-history cost. Appends never move
+      // the index (the prefix under a fixed floorTs is untouched).
+      const floorIdx = Math.min(floorIdxOf(dataList, floorTs), n - 1);
       const usable =
         base !== null &&
         dataList === ref &&
         key === cfgKey &&
+        floorIdx === lastFloorIdx &&
         n >= baseCount + 1 &&
         (baseCount === 0 ||
           dataList[baseCount - 1]?.timestamp === lastBaseTs);
       if (!usable) {
-        base = buildTlState(dataList, n - 1, cfg);
+        base = buildTlState(dataList, n - 1, cfg, floorIdx);
         baseCount = n - 1;
         ref = dataList;
         cfgKey = key;
+        lastFloorIdx = floorIdx;
       } else if (baseCount < n - 1) {
         // Bars closed since the last compute (klinecharts appends in place):
         // fold their final values into the base. Their array slots may hold a
@@ -991,6 +1038,7 @@ export function createTrendlinesSession(): TrendlinesSession {
       lastBaseTs = baseCount > 0 ? dataList[baseCount - 1].timestamp : 0;
       const b = base as TlState;
       const fork: TlState = {
+        startIdx: b.startIdx,
         atr: b.atr,
         highs: b.highs,
         lows: b.lows,
@@ -1051,6 +1099,13 @@ export interface TrendlinesMtf extends MtfSeriesBase {
 }
 
 export interface TrendlinesExtend {
+  /** Compute floor (ms) for CHART-TIMEFRAME instances: the detector runs from
+   * the first bar at/after this timestamp instead of bar 0. Stamped by the
+   * coordinator's viewport pass (stampTrendlinesFloors) — monotone-left while
+   * the view explores, rebased right after a far jump back toward the
+   * present. Session-only, never persisted; pinned instances (mtf.timeframe
+   * set) ignore it, their windowing lives in the HTF stash interval. */
+  tlFloorTs?: number;
   /** "ray" keeps going right (default), "segment" stops at the last touch,
    * "extended" also draws back before the first anchor. Backward extension is
    * never readable by an operand: a line emitting values before its first
@@ -2606,15 +2661,16 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   // to run calc but paint nothing of klinecharts' own — the mechanism
   // sessions.ts and proximityHeatmap.ts already use.
   figures: [],
-  // READS calcParams AND extendData.mtf, NOTHING ELSE. Every other key on
-  // extendData is a drawing option, and pulling one in here would make a chart
-  // setting change an emitted value. `mtf` is not one of them: it says which
-  // CANDLES the indicator runs on, so it belongs to the calculation on both
-  // surfaces (parse_trendlines_config reads the same key), and the detector
-  // itself still never sees it — the higher timeframe is computed outside, by
-  // the coordinator, and only aligned here.
+  // READS calcParams, extendData.mtf AND extendData.tlFloorTs, NOTHING ELSE.
+  // Every other key on extendData is a drawing option, and pulling one in here
+  // would make a chart setting change an emitted value. `mtf` and `tlFloorTs`
+  // are not drawing options: they say which CANDLES the indicator runs on, so
+  // they belong to the calculation — the higher timeframe is computed outside,
+  // by the coordinator, and only aligned here; the floor is stamped by the
+  // coordinator's viewport pass (stampTrendlinesFloors).
   calc: (dataList: KLineData[], ind: Indicator) => {
-    const mtf = (ind.extendData as TrendlinesExtend | undefined)?.mtf;
+    const ext = ind.extendData as TrendlinesExtend | undefined;
+    const mtf = ext?.mtf;
     if (mtf?.timeframe && mtf.htfStarts?.length && mtf.htfMs)
       return alignMtfTrendlines(dataList, mtf);
     // One session per indicator instance (klinecharts passes the same object
@@ -2628,6 +2684,7 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     const { points, lines, atr, pivots } = session.compute(
       dataList,
       parseTrendlinesConfig(ind.calcParams),
+      ext?.tlFloorTs,
     );
     // The session already returns a fresh top-level array (prefix rows shared,
     // read-only by contract — see createTrendlinesSession), so replacing the

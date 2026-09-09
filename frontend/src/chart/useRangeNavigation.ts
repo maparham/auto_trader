@@ -50,7 +50,7 @@ export interface RangeNavigationDeps {
   // Pan-only landing for a token asking for fit: "center". Identical to the
   // module import; injectable for tests, like pageHistoryBack above.
   scrollTsToCenter?: typeof scrollTsToCenterImpl;
-  extendMtfCoverage: (explicitOldestMs?: number) => void;
+  extendMtfCoverage: () => void;
   // ChartCore's parallel cover to a KNOWN timestamp (coverBacktestTradeTo).
   // goToRange lands on a match whose time is known up front, so it covers the
   // whole gap in concurrent windows instead of walking it a page at a time.
