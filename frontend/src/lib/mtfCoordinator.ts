@@ -530,7 +530,7 @@ export async function applyMaTimeframe(
   // warmup never lands on the oldest visible bars.
   const sm = config.options.smoothing;
   const smLen = sm && sm.type !== "none" ? Number(sm.length) || 0 : 0;
-  const { htf, htfMs, failed } = await fetchHtfBars(
+  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -566,6 +566,11 @@ export async function applyMaTimeframe(
     chartMs: chartIntervalOf(chart),
     ...buildMaMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
+    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
+    // and the trendlines stamp below): without this every deep history
+    // extension re-walked and re-computed this type on EVERY refresh trigger
+    // — the recurring multi-second freeze after a years-deep pattern jump.
+    ...(!failed ? { coveredFromMs: fromMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, [config.length]);
 }
@@ -648,7 +653,7 @@ export async function applyPivotBandsTimeframe(
     return;
   }
 
-  const { htf, htfMs, failed } = await fetchHtfBars(
+  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -687,6 +692,11 @@ export async function applyPivotBandsTimeframe(
     chartMs: chartIntervalOf(chart),
     ...buildPivotBandsMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
+    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
+    // and the trendlines stamp below): without this every deep history
+    // extension re-walked and re-computed this type on EVERY refresh trigger
+    // — the recurring multi-second freeze after a years-deep pattern jump.
+    ...(!failed ? { coveredFromMs: fromMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
   syncPivotBarsSinceCompanion(chart, name);
@@ -766,7 +776,7 @@ export async function applySrLevelsTimeframe(
     return;
   }
 
-  const { htf, htfMs, failed } = await fetchHtfBars(
+  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -804,6 +814,11 @@ export async function applySrLevelsTimeframe(
     chartMs: chartIntervalOf(chart),
     ...buildSrMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
+    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
+    // and the trendlines stamp below): without this every deep history
+    // extension re-walked and re-computed this type on EVERY refresh trigger
+    // — the recurring multi-second freeze after a years-deep pattern jump.
+    ...(!failed ? { coveredFromMs: fromMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
 }
@@ -1029,7 +1044,7 @@ export async function applyFvgTimeframe(
     return;
   }
 
-  const { htf, htfMs, failed } = await fetchHtfBars(
+  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -1067,6 +1082,11 @@ export async function applyFvgTimeframe(
     chartMs: chartIntervalOf(chart),
     ...buildFvgMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
+    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
+    // and the trendlines stamp below): without this every deep history
+    // extension re-walked and re-computed this type on EVERY refresh trigger
+    // — the recurring multi-second freeze after a years-deep pattern jump.
+    ...(!failed ? { coveredFromMs: fromMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
 }
@@ -1159,7 +1179,7 @@ export async function applySlopeTimeframe(
       ? Number(ext.accelSmoothing.length) || 0
       : 0;
   const n2 = slopePeriodOf(ext.accelPeriod, 3);
-  const { htf, htfMs, failed } = await fetchHtfBars(
+  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -1212,6 +1232,11 @@ export async function applySlopeTimeframe(
     chartMs: chartIntervalOf(chart),
     ...buildSlopeMtf(fp ? fp.bars : htf, config, ext, timeframe, htfMs),
     ...(fp?.extra ?? {}),
+    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
+    // and the trendlines stamp below): without this every deep history
+    // extension re-walked and re-computed this type on EVERY refresh trigger
+    // — the recurring multi-second freeze after a years-deep pattern jump.
+    ...(!failed ? { coveredFromMs: fromMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
   // The companion mirrors the parent's extendData (including the MTF stash).
@@ -1454,7 +1479,31 @@ export function refreshFormingBar(chart: Chart): void {
  * unchanged, so an indicator whose stashed series already reaches back past the
  * new oldest bar (plus its warmup) is skipped — no redundant refetch per page.
  */
-export async function refreshMtfIndicators(
+// One refresh in flight per (chart, epic, oldest) at a time: the deep-cover
+// path fires extendMtfCoverage from more than one trigger for the same page-in
+// (measured: two identical 23s refreshes side by side after a years-deep
+// pattern jump), and the second run's walks/computes are byte-identical work.
+const refreshInFlight = new WeakMap<Chart, { key: string; done: Promise<void> }>();
+
+export function refreshMtfIndicators(
+  chart: Chart,
+  epic: string,
+  brokerId?: string,
+  oldestChartMs?: number,
+): Promise<void> {
+  const key = `${epic}|${brokerId ?? ""}|${oldestChartMs ?? ""}`;
+  const inFlight = refreshInFlight.get(chart);
+  if (inFlight && inFlight.key === key) return inFlight.done;
+  const done = refreshMtfIndicatorsUncoalesced(chart, epic, brokerId, oldestChartMs).finally(
+    () => {
+      if (refreshInFlight.get(chart)?.done === done) refreshInFlight.delete(chart);
+    },
+  );
+  refreshInFlight.set(chart, { key, done });
+  return done;
+}
+
+async function refreshMtfIndicatorsUncoalesced(
   chart: Chart,
   epic: string,
   brokerId?: string,
@@ -1491,7 +1540,6 @@ export async function refreshMtfIndicators(
         // is what froze a chart whose config out-asked the broker's history).
         return stashed.coveredFromMs != null && stashed.coveredFromMs <= start;
       };
-
       if (type === "EMA" || type === "MA") {
         const ext = ind.extendData ?? {};
         const length = Number(ind.calcParams?.[0]) || (type === "EMA" ? 9 : 20);
