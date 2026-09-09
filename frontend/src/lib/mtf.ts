@@ -51,6 +51,18 @@ export interface MtfSeriesBase {
    * bucket's true first trade, and for calendar-bucketed timeframes its
    * timestamp is the authoritative bucket open. Session-only. */
   htfSeed?: KLineData;
+  /** How far back the last SUCCESSFUL walk ASKED to reach (its fromMs) —
+   * distinct from how far the fetched bars actually go. A completed walk has
+   * already returned everything the broker can serve for that ask (it pages
+   * until it reaches, exhausts, or hits the page cap), so re-asking the same
+   * reach cannot do better; the refresh pass's coverage guard treats an ask
+   * that reaches the required coverage start as covered even when the BARS
+   * stop short (shallow broker history, pre-listing gaps). Without it, a
+   * config whose warmup demands more history than exists made every refresh
+   * refetch and recompute the identical answer, forever — a saturated main
+   * thread on any chart carrying such a pin. Session-only, like htfClosed:
+   * persistence keeps timeframe/waitClose alone, so a reload re-walks once. */
+  coveredFromMs?: number;
 }
 
 export function priceOf(k: KLineData, src: PriceSource): number {

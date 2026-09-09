@@ -45,6 +45,7 @@ import {
 } from "./indicators/trendlines";
 import {
   parseTrendlinesConfig,
+  MAX_PAIR_PIVOTS,
   TL_ATR_LEN,
   type TrendlinesConfig,
 } from "./indicators/trendlinesOutputs";
@@ -482,6 +483,10 @@ async function fetchHtfBars(
     htf: clampHtfBars(shared.htf, cursorMs, htfMs),
     htfMs,
     failed: shared.failed,
+    // The reach this call ASKED for. On a successful walk the caller may stash
+    // it as mtf.coveredFromMs — see that field's doc for why the ask, not the
+    // arrival, is what the coverage guard needs.
+    fromMs,
   };
 }
 
@@ -834,13 +839,20 @@ function buildSrMtf(
 // one pivot confirm, and the projection horizon a line stays live for after its
 // last touch. Best-effort like S/R Levels — a shallow HTF history simply yields
 // fewer lines.
+// The pairing term is CAPPED at MAX_PAIR_PIVOTS even though the detector
+// honors the configured width: pairPivots has no upper bound in the settings,
+// and multiplied into a reach-back it turns a large value into a demand for
+// more HTF history than any broker serves (2000 slots asked for ~22k daily
+// bars), which the coverage guard then chased with a refetch + full recompute
+// on every trigger, forever. Best-effort is the contract here, and the cap is
+// what keeps the ASK inside what a walk can actually settle.
 const tlWarmup = (cfg: TrendlinesConfig): number =>
   TL_ATR_LEN +
   2 * cfg.pivotLen +
   cfg.maxProjBars +
   (cfg.maxSpanBars > 0
     ? cfg.maxSpanBars
-    : cfg.pairPivots * (2 * cfg.pivotLen + 1));
+    : Math.min(cfg.pairPivots, MAX_PAIR_PIVOTS) * (2 * cfg.pivotLen + 1));
 
 /**
  * Point Trendlines at a higher timeframe (or back to the chart timeframe when
@@ -894,7 +906,7 @@ export async function applyTrendlinesTimeframe(
     return;
   }
 
-  const { htf, htfMs, failed } = await fetchHtfBars(
+  const { htf, htfMs, failed, fromMs } = await fetchHtfBars(
     chart,
     epic,
     timeframe,
@@ -945,6 +957,11 @@ export async function applyTrendlinesTimeframe(
     chartMs: chartIntervalOf(chart),
     ...buildTrendlinesMtf(bars, config, timeframe, htfMs),
     ...(fp?.extra ?? {}),
+    // A completed walk is final for its ask: stamp how far back it ASKED so
+    // the refresh pass can call this covered even when the bars stop short
+    // (see MtfSeriesBase.coveredFromMs). Never on a failed walk — the retry
+    // path owns that, and a transient outage may genuinely have more to give.
+    ...(!failed ? { coveredFromMs: fromMs } : {}),
   };
   overrideExtend(chart, paneId, name, ext, calcParams);
 }
@@ -1465,10 +1482,14 @@ export async function refreshMtfIndicators(
       const covered = (warmup: number): boolean => {
         if (oldestChartMs == null) return false;
         if (!stashed?.htfStarts?.length || !stashed.htfMs) return false;
-        return (
-          stashed.htfStarts[0] <=
-          htfCoverageStartMs(oldestChartMs, stashed.htfMs, warmup)
-        );
+        const start = htfCoverageStartMs(oldestChartMs, stashed.htfMs, warmup);
+        if (stashed.htfStarts[0] <= start) return true;
+        // The bars stop short of the coverage start, but the last successful
+        // walk already ASKED at least this deep — the broker has nothing more
+        // to give for it, so refetching is the identical answer at full cost
+        // (see MtfSeriesBase.coveredFromMs: the loop this guard used to feed
+        // is what froze a chart whose config out-asked the broker's history).
+        return stashed.coveredFromMs != null && stashed.coveredFromMs <= start;
       };
 
       if (type === "EMA" || type === "MA") {

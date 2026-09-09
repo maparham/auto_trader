@@ -41,7 +41,7 @@ vi.mock("./feed", () => ({
 
 const { applyMaTimeframe, applySlopeTimeframe, applyTrendlinesTimeframe, refreshMtfIndicators, setChartIntervalMs } =
   await import("./mtfCoordinator");
-const { TRENDLINES_DEFAULTS } = await import("./indicators/trendlinesOutputs");
+const { TRENDLINES_DEFAULTS, MAX_PAIR_PIVOTS } = await import("./indicators/trendlinesOutputs");
 const { slopeLineSeries } = await import("./indicators/slope");
 
 const HTF_MS = 900_000;
@@ -442,6 +442,84 @@ describe("applyTrendlinesTimeframe", () => {
       return fetchRangeStrict.mock.calls[0][2] as number;
     };
     expect(await from(0)).toBeLessThan(await from(5));
+  });
+
+  it("caps the pairing term of the warmup reach at MAX_PAIR_PIVOTS", async () => {
+    // pairPivots is a user setting with no upper bound, and with Max Span off
+    // it multiplies straight into the warmup reach: 2000 slots demanded ~22k
+    // HTF bars, which no broker has, so the coverage guard never passed and
+    // every refresh refetched and recomputed forever (the OIL_CRUDE freeze).
+    // The warmup is best-effort by contract, so the reach is capped; the
+    // detector itself still honors the configured pairing width.
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const from = async (pairPivots: number): Promise<number> => {
+      fetchRangeStrict.mockClear();
+      clearHtfCache();
+      await applyTrendlinesTimeframe(
+        fakeChart().chart, "EPIC", "tl1", "candle_pane",
+        { ...TRENDLINES_DEFAULTS, pairPivots, maxSpanBars: 0 }, "MINUTE_15",
+      );
+      return fetchRangeStrict.mock.calls[0][2] as number;
+    };
+    expect(await from(2_000)).toBe(await from(MAX_PAIR_PIVOTS));
+  });
+
+  it("a successful walk is final for its ask: the refresh pass skips instead of refetching a reach the broker cannot serve", async () => {
+    // The broker's history simply stops at brokerStart. The walk pages back,
+    // hits empty windows, and settles with what exists — so the stashed series
+    // can NEVER reach the coverage start the config demands. Before the
+    // coveredFromMs stamp, the scroll-back guard read that as "not covered"
+    // and refetched + recomputed the identical answer on every trigger.
+    const brokerStartSec = 9_500_000;
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(
+        htfPage(Math.max(fromSec as number, brokerStartSec), toSec as number)
+          .filter((b) => b.timestamp >= brokerStartSec * 1000),
+      ),
+    );
+    // maxSpanBars 5000 demands ~4.7e9ms of reach — far past brokerStart.
+    const params = Object.values({ ...TRENDLINES_DEFAULTS, maxSpanBars: 5_000 });
+    const ind = {
+      paneId: "candle_pane",
+      name: "TRENDLINES",
+      calcParams: params,
+      extendData: { indType: "TRENDLINES", mtf: { timeframe: "MINUTE_15" } } as {
+        indType: string;
+        mtf: Record<string, unknown>;
+      },
+    };
+    const chart = {
+      getDataList: () => [bar(10_000_000_000), bar(10_000_300_000)],
+      getIndicators: () => [ind],
+      overrideIndicator: (patch: Override["patch"]) => {
+        const ext = (patch.extendData ?? {}) as Record<string, unknown>;
+        const keys = Object.keys(ext);
+        if (keys.length > 0 && keys.every((k) => ext[k] === null)) return;
+        ind.extendData = patch.extendData as typeof ind.extendData;
+      },
+    } as unknown as Chart;
+
+    await applyTrendlinesTimeframe(
+      chart, "EPIC", "TRENDLINES", "candle_pane",
+      { ...TRENDLINES_DEFAULTS, maxSpanBars: 5_000 }, "MINUTE_15",
+    );
+    const mtf = ind.extendData.mtf as { coveredFromMs?: number; htfStarts?: number[] };
+    expect(mtf.htfStarts?.[0]).toBe(brokerStartSec * 1000); // series stops at the broker's floor
+    expect(mtf.coveredFromMs).toBeLessThan(brokerStartSec * 1000); // but the ASK went deeper
+
+    // The scroll-back refresh for the same span: nothing deeper can arrive, so
+    // no fetch. clearHtfCache first, so a skip cannot be the TTL cache's doing.
+    fetchRangeStrict.mockClear();
+    clearHtfCache();
+    await refreshMtfIndicators(chart, "EPIC", undefined, 10_000_000_000);
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
+
+    // Sanity: without the stamp (a reloaded stash) the same refresh fetches.
+    delete (ind.extendData.mtf as { coveredFromMs?: number }).coveredFromMs;
+    await refreshMtfIndicators(chart, "EPIC", undefined, 10_000_000_000);
+    expect(fetchRangeStrict).toHaveBeenCalled();
   });
 });
 
