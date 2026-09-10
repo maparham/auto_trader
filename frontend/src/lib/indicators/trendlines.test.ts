@@ -30,7 +30,7 @@ import {
   dedupeTolerance,
   selectDrawnLines,
   drawnPivotIdxs,
-  TL_PIVOT_STEM,
+  TL_PIVOT_INSET,
   trendlineDimmed,
   TL_DIM_ALPHA,
   trendlineDimAlpha,
@@ -2933,18 +2933,24 @@ describe("TRENDLINES line-pivot marks", () => {
   const MIXED = [2, 0.25, 0.75, 2, 25, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 0];
   const passing = (calcParams: number[]) =>
     computeTrendlines(bars(), parseTrendlinesConfig(calcParams)).pivots;
-  // A stemmed arrow closes over 7 points, a plain triangle over 3.
-  const STEMMED_EDGES = 7;
-  const PLAIN_EDGES = 3;
+  // Both glyphs are the same triangle: 3 edges each. What separates them is
+  // the INSET — a hollow arrow is stroked one pixel inside the filled one's
+  // outline, so its base is 2px narrower — which is the point of the shape:
+  // a line pivot claims not one pixel more of the pane than a spare one.
+  const EDGES = 3;
+  const PLAIN_BASE = 2 * TL_PIVOT_ARM;
+  const HOLLOW_BASE = 2 * (TL_PIVOT_ARM - TL_PIVOT_INSET);
+  // The base is the only horizontal edge of either triangle.
+  const baseWidth = (sg: Segment) => (sg.y0 === sg.y1 ? Math.abs(sg.x1 - sg.x0) : 0);
 
   it("is off unless asked for: absent key paints exactly what false does", () => {
     expect(paint(LINES, false, "default")).toEqual(paint(LINES, false, false));
     expect(paint(LINES, true, "default")).toEqual(paint(LINES, true, false));
   });
 
-  it("marks the used pivots with a stemmed arrow and leaves the rest alone", () => {
+  it("marks the used pivots with a hollow arrow and leaves the rest alone", () => {
     const linesOnly = paint(LINES, false, false);
-    const stemmed = paint(LINES, false, true).slice(linesOnly.length);
+    const hollow = paint(LINES, false, true).slice(linesOnly.length);
     const used = drawnPivotIdxs(
       computeTrendlines(bars(), parseTrendlinesConfig(LINES)).lines,
     );
@@ -2954,31 +2960,34 @@ describe("TRENDLINES line-pivot marks", () => {
     // way, so every mark still stands on one.
     const marked = [...pv.support, ...pv.resistance].filter((i) => used.has(i));
     expect(marked.length).toBeGreaterThan(0);
-    expect(stemmed).toHaveLength(STEMMED_EDGES * marked.length);
-    // Every mark sits on a used pivot's x, so the stem cannot have wandered.
+    expect(hollow).toHaveLength(EDGES * marked.length);
+    // Every mark sits on a used pivot's x, so none has wandered.
     const xs = new Set(marked.map((i) => view.toX(i)));
-    for (const sg of stemmed)
+    for (const sg of hollow)
       expect([...xs].some((x) => Math.abs(x - sg.x0) <= TL_PIVOT_ARM)).toBe(true);
+    // And every one is the HOLLOW triangle, inset inside the filled outline.
+    const bases = hollow.map(baseWidth).filter((w) => w > 0);
+    expect(bases).toHaveLength(marked.length);
+    for (const w of bases) expect(w).toBeCloseTo(HOLLOW_BASE, 6);
   });
 
-  it("stands the stem outside the head, further from the wick than the tip", () => {
+  it("keeps the filled arrow's footprint exactly, claiming no extra pane", () => {
     const linesOnly = paint(LINES, false, false);
-    const stemmed = paint(LINES, false, true).slice(linesOnly.length);
-    const ys = stemmed.flatMap((sg) => [sg.y0, sg.y1]);
-    const pv = passing(LINES);
-    const used = drawnPivotIdxs(
-      computeTrendlines(bars(), parseTrendlinesConfig(LINES)).lines,
-    );
-    // A support mark hangs BELOW its low (larger y here) and reaches exactly
-    // gap + arm + stem past it. Take the deepest used support pivot's low so
-    // the extreme below is unambiguously its.
-    const sup = pv.support.filter((i) => used.has(i));
-    expect(sup.length).toBeGreaterThan(0);
-    const deepest = Math.max(...sup.map((i) => view.toY(pv.lows[i])));
-    expect(Math.max(...ys)).toBeCloseTo(
-      deepest + TL_PIVOT_GAP + TL_PIVOT_ARM + TL_PIVOT_STEM,
-      6,
-    );
+    const hollow = paint(LINES, false, true).slice(linesOnly.length);
+    const filled = paint(LINES, true, false).slice(linesOnly.length);
+    // The hollow arrows must not reach further from the wick than the filled
+    // ones do — the whole reason the stem was dropped. Compared as the extreme
+    // in each direction over the same pivot set (LINES uses every pivot).
+    const span = (segs: Segment[]) => {
+      const ys = segs.flatMap((sg) => [sg.y0, sg.y1]);
+      return [Math.min(...ys), Math.max(...ys)];
+    };
+    const [hTop, hBot] = span(hollow);
+    const [fTop, fBot] = span(filled);
+    expect(hBot).toBeLessThanOrEqual(fBot);
+    expect(hTop).toBeGreaterThanOrEqual(fTop);
+    // Inset by exactly TL_PIVOT_INSET at the tip, not by an arbitrary margin.
+    expect(hBot).toBeCloseTo(fBot, 6); // the base is shared; only the tip moves
   });
 
   it("takes the plain arrow off a used pivot, keeping it on the others", () => {
@@ -2987,19 +2996,21 @@ describe("TRENDLINES line-pivot marks", () => {
     const split = paint(MIXED, true, true).slice(linesOnly.length);
     const pv = passing(MIXED);
     const marked = pv.support.length + pv.resistance.length;
-    // Show pivots alone: one plain arrow on every passing pivot.
-    expect(all).toHaveLength(PLAIN_EDGES * marked);
-    // With both on, the edge count can only be this if EVERY pivot is marked
-    // exactly once and `onLine` of them took the stemmed glyph. Solved from
-    // the output rather than compared against a recomputed used set: the used
-    // set the pane paints from is the DRAWN lines', which is what the dedupe
-    // and proximity passes left, not every line compute returned.
-    const onLine = (split.length - PLAIN_EDGES * marked) / (STEMMED_EDGES - PLAIN_EDGES);
-    expect(Number.isInteger(onLine)).toBe(true);
-    // Both kinds really are on this pane, or the arithmetic above would hold
-    // just as well on one that painted everything the same way.
+    // Show pivots alone: one filled arrow on every passing pivot.
+    expect(all).toHaveLength(EDGES * marked);
+    // With both on, EVERY pivot is still marked exactly once — the counts are
+    // identical because the two glyphs are the same triangle. What changes is
+    // WHICH triangle: the base widths split the marks into the two kinds.
+    expect(split).toHaveLength(EDGES * marked);
+    const bases = split.map(baseWidth).filter((w) => w > 0);
+    expect(bases).toHaveLength(marked);
+    const onLine = bases.filter((w) => Math.abs(w - HOLLOW_BASE) < 1e-6).length;
+    const spare = bases.filter((w) => Math.abs(w - PLAIN_BASE) < 1e-6).length;
+    // Every mark is one kind or the other, and BOTH are on this pane — or the
+    // split would hold just as well on a pane that painted everything alike.
+    expect(onLine + spare).toBe(marked);
     expect(onLine).toBeGreaterThan(0);
-    expect(onLine).toBeLessThan(marked);
+    expect(spare).toBeGreaterThan(0);
   });
 
   it("marks nothing when no line survived to rest on a pivot", () => {

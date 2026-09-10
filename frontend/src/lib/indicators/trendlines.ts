@@ -1355,7 +1355,7 @@ export interface TrendlinesExtend {
    * Render-only, like everything else in this block. */
   showPivots?: boolean;
   /** Mark the pivots the DRAWN lines actually rest on — every anchor and every
-   * counted touch — with a stemmed arrow, up under a low and down over a high.
+   * counted touch — with a HOLLOW arrow, up under a low and down over a high.
    * OFF by default.
    *
    * The complement of showPivots, not a variant of it. showPivots answers
@@ -1370,11 +1370,14 @@ export interface TrendlinesExtend {
    * nothing. That is the opposite of showPivots' rule directly above, and the
    * difference is the whole reason both settings exist.
    *
-   * A DISTINCT GLYPH, not a weight: the stem is what tells the two marks
-   * apart at a glance. Dimming the unused ones instead was tried and read as
-   * "disabled" rather than "admitted but unused". Where both settings are on,
-   * a used pivot takes the stemmed arrow ONLY — it does not also get the plain
-   * triangle, or the two would overdraw each other on the same swing.
+   * OUTLINE, not a weight and not a bigger glyph. Dimming the unused ones was
+   * tried first and read as "disabled" rather than "admitted but unused". A
+   * stem on the used ones was tried next and was worse: it put half again as
+   * much glyph under the wick, colliding with the line's own anchor ring and
+   * the chart's high/low price label, which sit on exactly the bar a used
+   * pivot sits on. The outline keeps the filled arrow's footprint to the
+   * pixel. Where both settings are on, a used pivot takes the hollow arrow
+   * ONLY — a filled one behind it would fill it back in.
    *
    * Render-only, like everything else in this block. */
   showLinePivots?: boolean;
@@ -1941,13 +1944,19 @@ export const TL_HANDLE_HIT = 8;
  * washes; an outline cannot. */
 export const TL_PIVOT_GAP = 5;
 export const TL_PIVOT_ARM = 5;
-/** The line-pivot arrow (showLinePivots) is the same head with a tail: this
- * much shaft, this half-wide, added beyond the head's base. Same tip, same
- * gap, so the two marks sit at the same distance from the wick and only the
- * stem tells them apart — which is what makes the difference readable when
- * both kinds are on one pane. */
-export const TL_PIVOT_STEM = 5;
-export const TL_PIVOT_STEM_HALF = 1.25;
+/** The line-pivot mark (showLinePivots) is the SAME arrow, hollow: outlined
+ * rather than filled, pulled in by this much so the stroke sits inside the
+ * filled one's footprint instead of straddling its edge.
+ *
+ * IDENTICAL FOOTPRINT, and that is the whole design. The first cut grew a stem
+ * off the base to tell the two apart, which put 15px of glyph under the wick —
+ * straight through the line's own anchor ring and the chart's high/low price
+ * label, on exactly the bar those two also mark. A mark that has to fight the
+ * markings already at the swing is worse than a weaker distinction, so the
+ * difference moved from SIZE to FILL and the mark claims not one pixel more
+ * than the plain one it replaces. */
+export const TL_PIVOT_INSET = 1;
+export const TL_PIVOT_HOLLOW_STROKE = 1.25;
 /** Handles stroke heavier than the 1px line they cap, so a 3px mark reads at
  * all. It is also what tells a handle stroke from a line stroke. */
 export const TL_HANDLE_STROKE = 1.5;
@@ -2425,20 +2434,20 @@ export function drawnPivotIdxs(lines: readonly TrendLine[]): Set<number> {
 /** Paint one arrow per marked pivot, clipped to the pane.
  *
  * TWO KINDS, and a pivot gets exactly one of them. `showLineUsed` puts a
- * STEMMED arrow on every pivot a drawn line rests on; `showAll` puts a plain
- * triangle on the rest. A used pivot never takes both — the plain head would
- * sit under the stemmed one and only thicken it.
+ * HOLLOW arrow on every pivot a drawn line rests on; `showAll` puts a filled
+ * one on the rest. A used pivot never takes both — a filled arrow behind a
+ * hollow one of the same size just fills it back in.
  *
- * The plain triangles are NOT GATED by anything that selects lines (see
+ * The filled arrows are NOT GATED by anything that selects lines (see
  * TrendlinesExtend.showPivots): they answer "what is the pivot filter
  * admitting", which the lines only answer indirectly. The stemmed ones ARE
  * gated by the drawn set, and only them (see showLinePivots). Full opacity for
  * both — there is no line whose dim state a mark could inherit, and dimming
  * the unused ones was tried and reads as "disabled" rather than "unused".
  *
- * ONE FILL PER KIND PER SIDE: fillStyle and the path are context state, so
- * batching keeps the whole pane at four fills however many pivots are on
- * screen.
+ * ONE PAINT PER KIND PER SIDE: the style and the path are context state, so
+ * batching keeps the whole pane at four calls however many pivots are on
+ * screen — two fills for the filled arrows, two strokes for the hollow ones.
  *
  * The pools are in strictly increasing bar order, so the walk stops at the
  * right edge instead of running the whole series: on a zoomed-in pane of a
@@ -2466,22 +2475,29 @@ function paintPivotMarks(
   ctx.rect(0, 0, right, height);
   ctx.clip();
   for (const side of SIDES) {
-    ctx.fillStyle =
+    ctx.fillStyle = ctx.strokeStyle =
       side === "support" ? TL_SUPPORT_COLOR : TL_RESISTANCE_COLOR;
     // Which side of the wick the mark sits on: under a low, over a high. The
     // arrow then points back INTO the wick, so a pane with both sides marked
     // reads without a legend.
     const dir = side === "support" ? 1 : -1;
-    // Stemmed first, so the plain batch below can be the complement of it with
+    // Hollow first, so the filled batch below can be the complement of it with
     // one test rather than two flags per pivot.
-    for (const stemmed of [true, false]) {
-      if (stemmed ? !showLineUsed : !showAll) continue;
+    for (const hollow of [true, false]) {
+      if (hollow ? !showLineUsed : !showAll) continue;
+      // Only the hollow batch strokes, so only it touches lineWidth — the
+      // filled batch leaves the context's width alone.
+      if (hollow) ctx.lineWidth = TL_PIVOT_HOLLOW_STROKE;
+      // Pull the outline IN so the stroke lands inside the filled arrow's
+      // footprint. Stroked on the raw points it would straddle the edge and
+      // read a pixel wider than the filled one beside it.
+      const inset = hollow ? TL_PIVOT_INSET : 0;
       ctx.beginPath();
       for (const idx of pivots[side]) {
-        // The used pivots take the stemmed arrow and NOTHING ELSE: a plain
-        // head under a stemmed one is invisible and only thickens it. When
-        // Show pivots is off, the unused ones simply go unmarked.
-        if ((showLineUsed && used.has(idx)) !== stemmed) continue;
+        // The used pivots take the hollow arrow and NOTHING ELSE: a filled one
+        // behind it would fill it back in. When Show pivots is off, the unused
+        // ones just go unmarked.
+        if ((showLineUsed && used.has(idx)) !== hollow) continue;
         const x = xAt(idx, side);
         // The arms reach TL_PIVOT_ARM either way, so the window is widened by
         // one arm rather than testing the tip alone — otherwise a caret at the
@@ -2503,27 +2519,18 @@ function paintPivotMarks(
         // it marks — up at a low, down at a high. The mark still sits entirely
         // clear of the wick (the tip starts TL_PIVOT_GAP out), so it never
         // overdraws the candle it is pointing at.
-        const yTip = y + dir * TL_PIVOT_GAP;
+        const yTip = y + dir * (TL_PIVOT_GAP + inset);
         const yBase = y + dir * (TL_PIVOT_GAP + TL_PIVOT_ARM);
+        const arm = TL_PIVOT_ARM - inset;
         ctx.moveTo(x, yTip);
-        ctx.lineTo(x - TL_PIVOT_ARM, yBase);
-        if (stemmed) {
-          // Round the head's base back to the shaft and out along it, so the
-          // whole arrow is ONE closed polygon. A separate rectangle for the
-          // shaft would be a second subpath, and a second subpath abutting the
-          // first seams visibly under antialiasing.
-          const yEnd = yBase + dir * TL_PIVOT_STEM;
-          ctx.lineTo(x - TL_PIVOT_STEM_HALF, yBase);
-          ctx.lineTo(x - TL_PIVOT_STEM_HALF, yEnd);
-          ctx.lineTo(x + TL_PIVOT_STEM_HALF, yEnd);
-          ctx.lineTo(x + TL_PIVOT_STEM_HALF, yBase);
-        }
-        ctx.lineTo(x + TL_PIVOT_ARM, yBase);
+        ctx.lineTo(x - arm, yBase);
+        ctx.lineTo(x + arm, yBase);
         ctx.closePath();
       }
-      // One path per side and kind: the marks in a batch share a colour, so
-      // each is a single fill call however many pivots are on screen.
-      ctx.fill();
+      // One path per side and kind: the marks in a batch share a colour and a
+      // weight, so each is a single call however many pivots are on screen.
+      if (hollow) ctx.stroke();
+      else ctx.fill();
     }
   }
   ctx.restore();
