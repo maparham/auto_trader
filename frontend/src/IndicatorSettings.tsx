@@ -696,7 +696,11 @@ export default function IndicatorSettings({
     );
   }
 
-  function controlFor(inp: IndicatorInputDef) {
+  // `chip` is set only by the boolean-PAIR row: a pair of on/off settings
+  // renders as two selectable labels, everything else keeps the tick box it
+  // always had. Scoped that narrowly on purpose — restyling every boolean in
+  // the modal changed panels that never asked for it.
+  function controlFor(inp: IndicatorInputDef, chip = false) {
     // A BOOLEAN stored in a calcParam slot (0 / 1) — TRENDLINES' Mixed
     // touches. The number branch below would render it as a spinner.
     if (inp.source === "calcParam" && inp.index != null && inp.type === "boolean") {
@@ -704,7 +708,17 @@ export default function IndicatorSettings({
       const checked = Number.isFinite(stored)
         ? (stored as number) >= 1
         : ((inp.default as boolean | undefined) ?? false);
-      return boolChip(inp, checked, (next) => setParam(inp.index!, next ? 1 : 0));
+      const set = (next: boolean) => setParam(inp.index!, next ? 1 : 0);
+      return chip ? (
+        boolChip(inp, checked, set)
+      ) : (
+        <input
+          type="checkbox"
+          aria-label={inp.label}
+          checked={checked}
+          onChange={(e) => set(e.target.checked)}
+        />
+      );
     }
     if (inp.source === "calcParam" && inp.index != null) {
       // A slot the saved instance predates reads undefined, which would
@@ -776,10 +790,17 @@ export default function IndicatorSettings({
       );
     }
     if (inp.source === "extend" && inp.field && inp.type === "boolean") {
-      return boolChip(
-        inp,
-        (genExtend[inp.field] ?? inp.default ?? false) as boolean,
-        (next) => setExtendInput(inp.field!, next),
+      const checked = (genExtend[inp.field] ?? inp.default ?? false) as boolean;
+      const set = (next: boolean) => setExtendInput(inp.field!, next);
+      return chip ? (
+        boolChip(inp, checked, set)
+      ) : (
+        <input
+          type="checkbox"
+          aria-label={inp.label}
+          checked={checked}
+          onChange={(e) => set(e.target.checked)}
+        />
       );
     }
     return null;
@@ -1971,7 +1992,7 @@ export default function IndicatorSettings({
                     <div className="ind-pair2-bool">
                       {chunk.map((inp) => (
                         <div className="ind-field" key={inp.key}>
-                          {controlFor(inp)}
+                          {controlFor(inp, true)}
                           {tipFor(inp)}
                         </div>
                       ))}
@@ -2006,19 +2027,8 @@ export default function IndicatorSettings({
                       {labelFor(chunk[0])}
                       {controlFor(chunk[0])}
                     </div>
-                  ) : chunk[0].type === "boolean" ? (
-                    // A LONE switchable label: same chip, just not sharing the
-                    // row. No label column — the chip carries the name — so the
-                    // ⓘ rides beside the chip rather than beside a label that
-                    // is no longer there.
-                    <div className="ind-pair2-bool ind-bool-solo">
-                      <div className="ind-field">
-                        {controlFor(chunk[0])}
-                        {tipFor(chunk[0])}
-                      </div>
-                    </div>
                   ) : (
-                    // Selects share the numbers' two columns, so
+                    // Checkboxes and selects share the numbers' two columns, so
                     // the tab reads as ONE column of controls instead of numbers
                     // at the middle and checkboxes out at the modal's edge. A
                     // `wide` select is the exception: a sentence-long option

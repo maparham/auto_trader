@@ -91,13 +91,11 @@ interface IndicatorMetaDef {
  * the panel. A group left with one member after showWhen filtering renders as
  * an ordinary full-width row.
  *
- * BOOLEANS PAIR WITHOUT A `group`, two to a row, wherever two of them land
- * next to each other. They earn it that a tagged pair does not: a switch and
- * its label take a fraction of a row, so a column of them wastes half the
- * modal and pushes the numbers that DO need the width off the bottom. Nothing
- * to tag per indicator, and nothing to keep in sync — the pairing follows
- * whatever order the meta already declares. A `group` tag still wins where one
- * is set, so a boolean deliberately paired with a non-boolean keeps that pair.
+ * BOOLEAN PAIRS render as selectable labels rather than tick boxes (see the
+ * .ind-pair2-bool branch in IndicatorSettings). A `group` on two booleans is
+ * therefore a LOOK as well as a layout, which is why it stays opt-in per
+ * indicator instead of pairing every adjacent boolean automatically: pairing
+ * them all restyled on/off rows in panels that never asked for it.
  *
  * A boolean opening a SECTION never pairs backwards: the heading belongs to
  * the row it introduces, and a chunk renders its heading from chunk[0], so
@@ -109,16 +107,6 @@ export function groupInputs(
   for (const inp of inputs) {
     const last = out[out.length - 1];
     if (inp.group && last && last.length === 1 && last[0].group === inp.group)
-      last.push(inp);
-    else if (
-      !inp.group &&
-      !inp.section &&
-      inp.type === "boolean" &&
-      last &&
-      last.length === 1 &&
-      !last[0].group &&
-      last[0].type === "boolean"
-    )
       last.push(inp);
     else out.push([inp]);
   }
@@ -900,6 +888,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "boolean",
         source: "extend",
         field: "showPivots",
+        group: "pivotMarks",
         default: true,
         tip: [
           "Marks every swing that passed the pivot settings with a small arrow: up under a low, down over a high.",
@@ -912,6 +901,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "boolean",
         source: "extend",
         field: "showLinePivots",
+        group: "pivotMarks",
         default: false,
         tip: [
           "Marks the swings the drawn lines rest on, anchors and touches, with a stemmed arrow.",
@@ -925,6 +915,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "boolean",
         source: "extend",
         field: "hideBroken",
+        group: "brokenLines",
         default: false,
         tip: "Hides the dashed lines price has already cut through.",
       },
@@ -933,6 +924,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         label: "Dim broken lines",
         type: "boolean",
         source: "extend",
+        group: "brokenLines",
         field: "dimBroken",
         default: false,
         tip: [
