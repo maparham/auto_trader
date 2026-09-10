@@ -914,9 +914,9 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         field: "showLinePivots",
         default: false,
         tip: [
-          "Marks the swings the drawn lines rest on, anchors and touches, with a hollow arrow.",
+          "Marks the swings the drawn lines rest on, anchors and touches, with a stemmed arrow.",
           "Only lines actually on the chart count, so a line dropped by Max lines or Declutter marks nothing.",
-          "With Show pivots on too, a line's pivot takes the hollow arrow instead of the filled one.",
+          "With Show pivots on too, a line's pivot takes the stemmed arrow instead of the plain one.",
         ],
       },
       {
