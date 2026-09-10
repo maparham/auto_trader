@@ -1055,6 +1055,8 @@ export async function applyTrendlinesTimeframe(
     config.minSlopeAtr,
     config.minBackBars,
     config.mixedTouches,
+    config.maxTouchSpacing,
+    config.minTouchSpacing,
   ];
 
   if (!timeframe || timeframe === "chart") {

@@ -59,8 +59,11 @@ TRENDLINES_OUTPUTS: tuple[str, ...] = (
 # [pivot_len, viol_mult, touch_mult, min_touches, min_span_bars, max_proj_bars,
 #  break_hold_bars, max_lines, min_swing_atr, min_swing_reach, pair_pivots,
 #  max_touches, max_span_bars, max_slope_atr, min_slope_atr, min_back_bars,
-#  mixed_touches] — TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.25, 0.75, 2, 20, 250, 30, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 10, 1)
+#  mixed_touches, max_touch_spacing, min_touch_spacing] — TRENDLINES_DEFAULTS
+#  in trendlinesOutputs.ts.
+_DEFAULTS = (
+    5, 0.25, 0.75, 2, 20, 250, 30, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 10, 1, 0, 0,
+)
 
 Side = Literal["support", "resistance"]
 
@@ -102,6 +105,15 @@ class TrendlinesConfig:
     # Count opposite-side pivots as touches (never as anchors). 1 = on, the
     # default; 0 = off restores strict same-side detection.
     mixed_touches: int
+    # Widest stretch of bars allowed between two CONSECUTIVE touches. 0 = no
+    # limit, the default. Not max_span_bars, which bounds the whole first-to-last
+    # distance; this bounds each gap inside it.
+    max_touch_spacing: int
+    # Floor on that same gap, the other end of the Touch Spacing range. 0 = off.
+    # Drops lines whose touches BUNCH. On a two-touch line it is exactly
+    # min_span_bars; it earns its slot at three or more touches and on the mixed
+    # leg. Near-inert below pivot_len unless mixed_touches is on.
+    min_touch_spacing: int
     # Settings-pinned timeframe (extendData.mtf.timeframe, like SR_LEVELS); the
     # evaluator then feeds trendlines_series that timeframe's candles and aligns
     # the result onto the base bars (evaluate.py's pinned-IndicatorRef branch).
@@ -130,6 +142,26 @@ class TrendLine:
     # touch band (mixed touches). Draw-only in the TS; ported so the two
     # TrendLine shapes stay identical.
     first_touch_idx: int
+    # Widest stretch of bars between two CONSECUTIVE touches, what
+    # max_touch_spacing reads. A SCALAR rather than a walk of the touch list,
+    # which is exactly why this port needs no touch_idxs: the TS maintains the
+    # same number the same way, so the two cannot drift.
+    #
+    # Only ever grows, which is what lets over_ceilings SILENCE on it.
+    max_touch_gap: int
+    # Narrowest stretch between two CONSECUTIVE touches, what min_touch_spacing
+    # reads. Only ever SHRINKS, the mirror of max_touch_gap, which is what lets
+    # over_ceilings silence on a floor: unlike min_touches and min_span_bars, a
+    # line under this one can never grow back into it.
+    #
+    # float, not int, ONLY because the no-gap guard in touch_gaps is math.inf;
+    # every real line carries an integer bar count here.
+    min_touch_gap: float
+    # Highest touch bar so far, so a new touch's gap is one subtraction. It
+    # really is the running maximum: step 2a takes only pivots with k > i2 and
+    # pivots confirm in increasing bar order, so every post-seed touch lands to
+    # the right of every touch already recorded.
+    max_touch_idx: int
 
 
 def parse_trendlines_config(calc_params: object, extend_data: object) -> TrendlinesConfig:
@@ -218,6 +250,9 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         # Clamped to {0, 1}; absent means ON — the option ships enabled, like
         # min_back_bars its default is not the off state.
         mixed_touches=min(1, max(0, math.floor(num_at(16, d[16], True)))),
+        # Clamped to 0, not 1, like the other ceilings: 0 is the off state.
+        max_touch_spacing=max(0, math.floor(num_at(17, d[17], True))),
+        min_touch_spacing=max(0, math.floor(num_at(18, d[18], True))),
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
@@ -432,9 +467,35 @@ def is_live(line: TrendLine, i: int, cfg: TrendlinesConfig) -> bool:
     return i - line.last_touch_idx <= cfg.max_proj_bars
 
 
+def touch_gaps(touch_idxs: Sequence[int]) -> tuple[int, float]:
+    """(widest, narrowest) stretch between two consecutive touches, in bars.
+    Mirrors TS touchGaps.
+
+    ONE HELPER, ONE SORT, for both ends of the Touch Spacing range: computing
+    them apart would be two walks that can drift.
+
+    SORTS A COPY, because the caller collects touches in insertion order, not
+    bar order: the retro-count pass records pivots BETWEEN the anchors and the
+    mixed pass ones BEFORE the first anchor, both after i2 is already in.
+
+    Seed-time only. Every touch added later lands to the right of all of them,
+    so the detector maintains both with one subtraction from there on.
+
+    THE TWO GUARDS DIFFER, and that is the point: with fewer than two touches
+    the widest is 0 ("no ceiling crossed") and the narrowest is inf ("no floor
+    crossed"). Zero for both would fail every floor above zero and silence the
+    line. A line always carries its two anchors, so this is a guard, not a case.
+    """
+    if len(touch_idxs) < 2:
+        return 0, math.inf
+    ordered = sorted(touch_idxs)
+    gaps = [b - a for a, b in zip(ordered, ordered[1:])]
+    return max(gaps), min(gaps)
+
+
 def over_ceilings(line: TrendLine, cfg: TrendlinesConfig) -> bool:
-    """Mirrors TS overCeilings: the line has grown past Max Touches or Max Span
-    (0 = no limit on either).
+    """Mirrors TS overCeilings: the line has grown past Max Touches, Max Span or
+    Max Touch Spacing (0 = no limit on any of them).
 
     SILENCES, does not delete: touches and span only ever grow, so a line that
     crossed a ceiling can never come back. is_major stops reading it and the
@@ -449,6 +510,17 @@ def over_ceilings(line: TrendLine, cfg: TrendlinesConfig) -> bool:
     if cfg.max_touches > 0 and line.touches > cfg.max_touches:
         return True
     if cfg.max_span_bars > 0 and line.last_touch_idx - line.i1 > cfg.max_span_bars:
+        return True
+    # Same reasoning as the two above: max_touch_gap only ever grows, so
+    # silencing is safe and deleting at seed time would change which OTHER
+    # lines survive the live cap.
+    if cfg.max_touch_spacing > 0 and line.max_touch_gap > cfg.max_touch_spacing:
+        return True
+    # A FLOOR here rather than in is_major, unlike min_touches and
+    # min_span_bars: min_touch_gap only SHRINKS, so a line under it is
+    # permanently disqualified, which is this function's contract and what makes
+    # it sort last in the live cap instead of holding a slot it can never use.
+    if cfg.min_touch_spacing > 0 and line.min_touch_gap < cfg.min_touch_spacing:
         return True
     return False
 
@@ -585,6 +657,17 @@ def compute_trendlines(
                         (cfg.viol_mult if mixed else cfg.touch_mult) * tol_a,
                     ):
                         line.touches += 1
+                        # O(1) and correct without sorting: k > line.i2 above,
+                        # and pivots confirm in increasing bar order, so k is to
+                        # the right of every touch this line already has. Runs
+                        # for MIXED touches too: an opposite-side pivot is a
+                        # touch like any other, so it is spacing like any other.
+                        gap = k - line.max_touch_idx
+                        if gap > line.max_touch_gap:
+                            line.max_touch_gap = gap
+                        if gap < line.min_touch_gap:
+                            line.min_touch_gap = gap
+                        line.max_touch_idx = k
                         # An opposite-side touch NEVER extends coverage.
                         if line.side == side:
                             line.last_touch_idx = k
@@ -613,6 +696,13 @@ def compute_trendlines(
                         last_touch_idx=k,
                         broken_idx=None,
                         first_touch_idx=i1,
+                        # The anchor gap is a fresh pair's only gap, so it is
+                        # both ends for now. The retro and mixed passes below can
+                        # only SPLIT it, so both are recomputed once after them
+                        # rather than maintained through them.
+                        max_touch_gap=k - i1,
+                        min_touch_gap=k - i1,
+                        max_touch_idx=k,
                     )
                     # Slope first: one comparison, where the validation below
                     # walks every bar back to i1. Seed time is the only time it
@@ -654,6 +744,12 @@ def compute_trendlines(
                     # pool[q], so the window (i1, k) starts at q + 1 and ends at
                     # the first entry reaching k; scanning the whole pool meant
                     # a walk that grew with the series, per candidate.
+                    # The bars that touched, for the seed spacing below. The TS
+                    # reads its touch_idxs here; this port keeps the list local
+                    # because nothing after seed time needs it (see
+                    # max_touch_idx) and TrendLine deliberately carries no
+                    # touch list of its own.
+                    seed_touches = [i1, k]
                     for q2 in range(q + 1, len(pool)):
                         pj = pool[q2]
                         if pj >= k:
@@ -665,6 +761,7 @@ def compute_trendlines(
                             cand, pj, vals[pj], cfg.viol_mult * tol_p, cfg.touch_mult * tol_p
                         ):
                             cand.touches += 1
+                            seed_touches.append(pj)
                     # Mixed touches BEFORE the first anchor: opposite-side
                     # pivots in the band over [i1 - max_proj_bars, i1). NOT
                     # pierce-tested — geometry, not a guarantee (design doc).
@@ -686,8 +783,14 @@ def compute_trendlines(
                                 cand, pj, opp_vals[pj], cfg.touch_mult * tol_p, cfg.viol_mult * tol_p
                             ):
                                 cand.touches += 1
+                                seed_touches.append(pj)
                                 if pj < cand.first_touch_idx:
                                     cand.first_touch_idx = pj
+                    # Recomputed once, now that every seed-time touch is in.
+                    # MUST SORT: the retro entries sit between the anchors and
+                    # the mixed ones before i1, so the list is not in bar order.
+                    cand.max_touch_gap, cand.min_touch_gap = touch_gaps(seed_touches)
+                    cand.max_touch_idx = cand.i2
                     lines.append(cand)
                 pool.append(k)
 

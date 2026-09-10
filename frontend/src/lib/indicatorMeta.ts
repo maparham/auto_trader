@@ -173,6 +173,7 @@ const TL_DEFAULT_PARAMS: number[] = [
   TL.maxProjBars, TL.breakHoldBars, TL.maxLines, TL.minSwingAtr,
   TL.minSwingReach, TL.pairPivots, TL.maxTouches, TL.maxSpanBars,
   TL.maxSlopeAtr, TL.minSlopeAtr, TL.minBackBars, TL.mixedTouches,
+  TL.maxTouchSpacing, TL.minTouchSpacing,
 ];
 
 // A preset = the defaults with a sparse patch (by slot index) on top, so the
@@ -723,6 +724,45 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: [
           "Max bars a line may span before it stops counting. Empty: no limit.",
           "Helps when only recent structure matters and a line reaching back years is noise.",
+        ],
+      },
+      {
+        ...num(18, "Min Touch Spacing", { min: 0 }),
+        group: "spacing",
+        default: 0,
+        suffix: "bars",
+        range: {
+          // ONE WORD, like Touches, Span and Slope beside it. The range row
+          // gives its label a narrow fixed column, and "Touch Spacing"
+          // ellipsised to "Touch Spac..." there. The two inputs keep their full
+          // names as their own labels, which is what the tip title and the
+          // accessible names read.
+          label: "Spacing",
+          tip: [
+            "How far apart two touches in a row must be, at least and at most.",
+            "Span bounds the whole line; this bounds each gap inside it.",
+            "The floor drops lines whose touches bunch together instead of testing the line at separate times.",
+            "The cap drops lines whose touches sit far apart, like a pair anchored months before its next touch.",
+            "Mixed touches count too, so a far-back opposite pivot can trip the cap.",
+            "Empty right box: no limit.",
+          ],
+        },
+        tip: [
+          "Min bars between two touches in a row.",
+          "Drops lines whose touches bunch together rather than testing the line at separate times.",
+          "Below Min Pivot Length it does little unless Mix Low and High Pivots is on.",
+        ],
+      },
+      {
+        ...num(17, "Max Touch Spacing", { min: 0 }),
+        group: "spacing",
+        default: 0,
+        unbounded: true,
+        suffix: "bars",
+        tip: [
+          "Max bars between two touches in a row. Empty: no limit.",
+          "Drops lines whose touches sit far apart, like a pair anchored months before its next touch.",
+          "Mixed touches count too, so a far-back opposite pivot can trip it.",
         ],
       },
       {

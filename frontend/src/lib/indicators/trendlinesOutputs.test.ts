@@ -41,6 +41,8 @@ describe("constants and defaults", () => {
       minSlopeAtr: 0,
       minBackBars: 10,
       mixedTouches: 1,
+      maxTouchSpacing: 0,
+      minTouchSpacing: 0,
     });
   });
 });
@@ -51,7 +53,7 @@ describe("parseTrendlinesConfig", () => {
   });
 
   it("reads params positionally", () => {
-    const cfg = parseTrendlinesConfig([9, 0.5, 1.5, 3, 40, 100, 10, 2, 0.8, 12, 40, 6, 90, 0.3, 0.02, 25]);
+    const cfg = parseTrendlinesConfig([9, 0.5, 1.5, 3, 40, 100, 10, 2, 0.8, 12, 40, 6, 90, 0.3, 0.02, 25, 1, 35, 4]);
     expect(cfg).toEqual({
       pivotLen: 9,
       violMult: 0.5,
@@ -70,7 +72,29 @@ describe("parseTrendlinesConfig", () => {
       minSlopeAtr: 0.02,
       minBackBars: 25,
       mixedTouches: 1,
+      maxTouchSpacing: 35,
+      minTouchSpacing: 4,
     });
+  });
+
+  // Off by default and floored to 0, like the other ceilings: a chart saved
+  // before slot 17 existed reads undefined here and gets no limit.
+  it("defaults Max Touch Spacing off and clamps it to zero", () => {
+    expect(parseTrendlinesConfig([]).maxTouchSpacing).toBe(0);
+    const base = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 1];
+    for (const [raw, want] of [[30, 30], [30.9, 30], [0, 0], [-2, 0]] as const)
+      expect(parseTrendlinesConfig([...base, raw]).maxTouchSpacing).toBe(want);
+    expect(parseTrendlinesConfig([...base, "x"]).maxTouchSpacing).toBe(0);
+  });
+
+  // The FLOOR, slot 18, same clamping. Off by default like the ceiling, so the
+  // pair as a whole is inert until a user opens the range.
+  it("defaults Min Touch Spacing off and clamps it to zero", () => {
+    expect(parseTrendlinesConfig([]).minTouchSpacing).toBe(0);
+    const base = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 1, 0];
+    for (const [raw, want] of [[6, 6], [6.9, 6], [0, 0], [-2, 0]] as const)
+      expect(parseTrendlinesConfig([...base, raw]).minTouchSpacing).toBe(want);
+    expect(parseTrendlinesConfig([...base, "x"]).minTouchSpacing).toBe(0);
   });
 
   // The ONLY gate whose default is not off: it closes a hole in seeding rather

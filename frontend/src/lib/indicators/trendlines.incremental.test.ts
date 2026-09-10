@@ -111,6 +111,36 @@ describe("createTrendlinesSession", () => {
     expect(second.points[bars.length - 1]).not.toBe(first.points[bars.length - 1]);
   });
 
+  // THE FORK COPIES THE SPACING SCALARS. cloneTrendLine spreads, so they ride
+  // along for free — and that is exactly why this needs its own test: a future
+  // rewrite that lists fields explicitly (the way touchIdxs already has to,
+  // being an array) would drop them silently, and `undefined > n` is false, so
+  // the ceiling would quietly stop firing on the live chart while every
+  // from-scratch test stayed green.
+  it("carries touch spacing through the fork, with the ceiling ON", () => {
+    const bars = synthBars(400);
+    const gated = parseTrendlinesConfig([
+      5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 1, 30,
+    ]);
+    expect(gated.maxTouchSpacing).toBe(30);
+    const session = createTrendlinesSession();
+    const rand = lcg(11);
+    for (let i = 0; i < 25; i++) {
+      if (i > 0) tick(bars, rand);
+      const inc = session.compute(bars, gated);
+      const ref = computeTrendlines(bars, gated);
+      expect(inc.lines).toEqual(ref.lines);
+      expect(inc.points).toEqual(ref.points);
+    }
+    // Not vacuous twice over: lines exist, and the ceiling actually bites on
+    // this walk rather than passing because nothing reached it.
+    const { lines, points } = computeTrendlines(bars, gated);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.some((l) => l.maxTouchGap > 30)).toBe(true);
+    const ungated = computeTrendlines(bars, parseTrendlinesConfig(undefined));
+    expect(JSON.stringify(points)).not.toBe(JSON.stringify(ungated.points));
+  });
+
   it("matches computeTrendlines when bars are appended in place", () => {
     const all = synthBars(450);
     const bars = all.slice(0, 400);

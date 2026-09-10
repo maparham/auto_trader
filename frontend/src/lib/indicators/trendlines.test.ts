@@ -4,6 +4,7 @@ import {
   buildTlState,
   computeTrendlines,
   createTrendlinesSession,
+  touchGaps,
   dropTrendlineHandles,
   getTrendlineHandles,
   hitAnyTrendlineHandle,
@@ -58,6 +59,11 @@ const res: TrendLine = {
   lastTouchIdx: 10,
   brokenIdx: null,
   firstTouchIdx: 0,
+  // The anchor gap, which is what those two touches alone span. Fixtures that
+  // move their anchors and care about spacing override it.
+  maxTouchGap: 10,
+  minTouchGap: 10,
+  maxTouchIdx: 10,
 };
 
 // A support line rising 1.0 per bar from 50 at bar 0 to 60 at bar 10.
@@ -156,6 +162,9 @@ describe("pierces", () => {
       touches: 2,
       touchIdxs: [0, 3],
       lastTouchIdx: 3,
+      maxTouchGap: 3,
+      minTouchGap: 3,
+      maxTouchIdx: 3,
       brokenIdx: null,
       firstTouchIdx: 0,
     };
@@ -630,6 +639,141 @@ describe("computeTrendlines", () => {
       cfg({ minTouches: 3, maxTouches: 2 }),
     );
     expect(lines.some((l) => l.touches >= 3)).toBe(true);
+  });
+
+  it("silences a line whose touches sit further apart than Max Touch Spacing", () => {
+    // One pair, 40 bars apart and nothing in between, so the spacing IS the
+    // anchor gap.
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[60] = bar(60, 94, 100.5);
+    const emits = (c: TrendlinesConfig) =>
+      computeTrendlines(bars, c).points.some((p) => p.tl_support !== undefined);
+    expect(emits(cfg())).toBe(true);
+    expect(emits(cfg({ maxTouchSpacing: 40 }))).toBe(true);
+    expect(emits(cfg({ maxTouchSpacing: 39 }))).toBe(false);
+    // Silenced, not deleted, like the two ceilings above it.
+    const { lines } = computeTrendlines(bars, cfg({ maxTouchSpacing: 39 }));
+    expect(lines.some((l) => l.maxTouchGap === 40)).toBe(true);
+  });
+
+  // THE SORT, and the reason widestTouchGap copies before it. A touch BETWEEN
+  // the anchors splits the anchor gap in two, so this line is well spaced even
+  // though its span is unchanged. touchIdxs holds [20, 60, 40] in insertion
+  // order (the retro pass appends after i2), so an implementation that walked
+  // it as-is would measure 40 and -20, report the anchor gap unsplit, and
+  // reject exactly the line the setting exists to keep.
+  it("measures the gap between touches in BAR order, not insertion order", () => {
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 92, 100.5);
+    bars[60] = bar(60, 94, 100.5);
+    const line = computeTrendlines(bars, cfg({ minTouches: 3 })).lines.find(
+      (l) => l.i1 === 20 && l.i2 === 60,
+    );
+    expect(line).toBeDefined();
+    // The premise: recorded out of order, with the mid touch last.
+    expect((line as TrendLine).touchIdxs).toEqual([20, 60, 40]);
+    expect((line as TrendLine).maxTouchGap).toBe(20);
+    const emits = (c: TrendlinesConfig) =>
+      computeTrendlines(bars, c).points.some((p) => p.tl_support !== undefined);
+    // 20 admits it; the anchor gap of 40 would not have.
+    expect(emits(cfg({ minTouches: 3, maxTouchSpacing: 20 }))).toBe(true);
+    expect(emits(cfg({ minTouches: 3, maxTouchSpacing: 19 }))).toBe(false);
+  });
+
+  it("keeps measuring spacing as touches arrive after the seed", () => {
+    // Anchors 20 bars apart, then a third touch 40 bars after the second: the
+    // widest gap is that late one, not the anchor pair.
+    const bars = flat(120);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 92, 100.5);
+    bars[80] = bar(80, 96, 100.5);
+    const line = computeTrendlines(bars, cfg({ minTouches: 3 })).lines.find(
+      (l) => l.i1 === 20 && l.i2 === 40,
+    );
+    expect(line).toBeDefined();
+    expect((line as TrendLine).touchIdxs).toEqual([20, 40, 80]);
+    expect((line as TrendLine).maxTouchGap).toBe(40);
+    // maxTouchIdx tracks the newest touch, which is what makes that O(1).
+    expect((line as TrendLine).maxTouchIdx).toBe(80);
+  });
+
+  // THE FLOOR, and the case that proves it is not just Min Span wearing a new
+  // label. On a TWO-touch line the two are the same number: a fresh pair has
+  // one gap, i2 - i1, and minSpanBars measures lastTouchIdx - i1. So the test
+  // that discriminates is a line with a LONG span whose touches BUNCH: 20 and
+  // 22 sit two bars apart inside a 60-bar span, so Min Span waves it through
+  // and the floor rejects it.
+  it("drops a line whose touches bunch, where Min Span cannot", () => {
+    const bars = flat(100);
+    bars[20] = bar(20, 90, 100.5);
+    bars[22] = bar(22, 90.1, 100.5);
+    bars[80] = bar(80, 93, 100.5);
+    const line = computeTrendlines(
+      bars,
+      cfg({ pivotLen: 1, minTouches: 3 }),
+    ).lines.find((l) => l.touchIdxs.includes(20) && l.touchIdxs.includes(22));
+    expect(line).toBeDefined();
+    // The premise: a long span carrying a two-bar gap.
+    const l = line as TrendLine;
+    expect(l.lastTouchIdx - l.i1).toBeGreaterThan(50);
+    expect(l.minTouchGap).toBe(2);
+    const emits = (c: TrendlinesConfig) =>
+      computeTrendlines(bars, c).points.some(
+        (p) => p.tl_support !== undefined,
+      );
+    const base = { pivotLen: 1, minTouches: 3 } as Partial<TrendlinesConfig>;
+    expect(emits(cfg({ ...base, minTouchSpacing: 2 }))).toBe(true);
+    expect(emits(cfg({ ...base, minTouchSpacing: 3 }))).toBe(false);
+    // Min Span cannot express that: the span clears any floor the bunched pair
+    // would need, so raising it only removes the line for the wrong reason.
+    expect(emits(cfg({ ...base, minSpanBars: 50 }))).toBe(true);
+  });
+
+  // THE GUARD THAT MUST NOT BE ZERO. touchGaps reports no-gap as widest 0 and
+  // narrowest Infinity, because a floor compares the other way round: 0 would
+  // be under every floor above zero and would silence every line that took the
+  // guard path.
+  it("reports no gap as 0 widest and Infinity narrowest, never 0 for both", () => {
+    expect(touchGaps([])).toEqual({ widest: 0, narrowest: Infinity });
+    expect(touchGaps([7])).toEqual({ widest: 0, narrowest: Infinity });
+    expect(touchGaps([10, 50])).toEqual({ widest: 40, narrowest: 40 });
+    // Out of bar order, the way the detector records them.
+    expect(touchGaps([10, 50, 30])).toEqual({ widest: 20, narrowest: 20 });
+    expect(touchGaps([10, 12, 50])).toEqual({ widest: 38, narrowest: 2 });
+  });
+
+  it("shrinks the narrowest gap as touches arrive after the seed", () => {
+    // Anchors 40 apart, then a touch 2 bars after the second: the floor sees
+    // that new gap even though the seed had nothing narrow in it.
+    const bars = flat(120);
+    bars[20] = bar(20, 90, 100.5);
+    bars[60] = bar(60, 94, 100.5);
+    bars[62] = bar(62, 94.3, 100.5);
+    const line = computeTrendlines(
+      bars,
+      cfg({ pivotLen: 1, minTouches: 3 }),
+    ).lines.find((l) => l.i1 === 20 && l.i2 === 60);
+    expect(line).toBeDefined();
+    expect((line as TrendLine).touchIdxs).toEqual([20, 60, 62]);
+    expect((line as TrendLine).minTouchGap).toBe(2);
+    expect((line as TrendLine).maxTouchGap).toBe(40);
+  });
+
+  it("is off at 0, so a chart saved before the param existed is unchanged", () => {
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[60] = bar(60, 94, 100.5);
+    const emits = (c: TrendlinesConfig) =>
+      computeTrendlines(bars, c).points.some((p) => p.tl_support !== undefined);
+    expect(emits(cfg({ maxTouchSpacing: 0 }))).toBe(true);
+    expect(parseTrendlinesConfig([]).maxTouchSpacing).toBe(0);
+    expect(parseTrendlinesConfig([]).minTouchSpacing).toBe(0);
+    // Absent slots 17 and 18 read the defaults, which ARE the off state.
+    const old = parseTrendlinesConfig([5, 0.25, 0.75, 2, 20, 250, 30, 3]);
+    expect(old.maxTouchSpacing).toBe(0);
+    expect(old.minTouchSpacing).toBe(0);
   });
 
   // THE INVARIANT: one recorded index per touch, anchors included, so the ×N
@@ -2179,6 +2323,8 @@ describe("lineExtent with mixed touches", () => {
     side: "support", i1: 100, p1: 50, i2: 140, p2: 60,
     touches: 3, touchIdxs: [80, 100, 140], lastTouchIdx: 140,
     firstTouchIdx: 80, brokenIdx: null,
+    // 80 -> 100 -> 140 in bar order: the widest gap is the last leg.
+    maxTouchGap: 40, minTouchGap: 20, maxTouchIdx: 140,
   };
   it("stopping modes start at firstTouchIdx, extended runs maxProjBars before it", () => {
     const cfg = { ...TRENDLINES_DEFAULTS, mixedTouches: 1 };

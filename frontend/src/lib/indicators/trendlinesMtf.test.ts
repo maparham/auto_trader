@@ -43,6 +43,9 @@ const htfLine: TrendLine = {
   lastTouchIdx: 3,
   brokenIdx: null,
   firstTouchIdx: 1,
+  maxTouchGap: 2,
+  minTouchGap: 2,
+  maxTouchIdx: 3,
 };
 
 /** One resistance pivot at HTF bar 1, which turned at 110 — a price no CHART
@@ -368,6 +371,9 @@ describe("TRENDLINES_TEMPLATE.draw under a pin FINER than the chart", () => {
     lastTouchIdx: 18,
     brokenIdx: null,
     firstTouchIdx: 6,
+    maxTouchGap: 12,
+    minTouchGap: 12,
+    maxTouchIdx: 18,
   };
   const ltfStash = (): TrendlinesMtf => ({
     timeframe: "MINUTE_15",

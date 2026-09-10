@@ -37,7 +37,8 @@ from auto_trader.indicators.trendlines import (
 
 def _res() -> TrendLine:
     return TrendLine(side="resistance", i1=0, p1=100.0, i2=10, p2=90.0,
-                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0,
+                     max_touch_gap=10, min_touch_gap=10, max_touch_idx=10)
 
 
 # --------------------------------------------------------------------------
@@ -64,7 +65,8 @@ def test_min_swing_atr_defaults_off_and_keeps_a_zero():
 def test_within_slope():
     # Rise 10 over span 10 = 1.0 per bar; at ATR 2 that is 0.5 ATR per bar.
     line = TrendLine(side="support", i1=0, p1=100.0, i2=10, p2=110.0,
-                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0,
+                     max_touch_gap=10, min_touch_gap=10, max_touch_idx=10)
     assert within_slope(line, 2.0, 0.0) is True  # off
     assert within_slope(line, 2.0, 0.5) is True
     assert within_slope(line, 2.0, 0.49) is False
@@ -76,7 +78,8 @@ def test_within_slope():
 
 def test_above_slope():
     line = TrendLine(side="support", i1=0, p1=100.0, i2=10, p2=110.0,
-                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0,
+                     max_touch_gap=10, min_touch_gap=10, max_touch_idx=10)
     assert above_slope(line, 2.0, 0.0) is True  # off
     assert above_slope(line, 2.0, 0.5) is True
     assert above_slope(line, 2.0, 0.51) is False
@@ -145,6 +148,107 @@ def test_max_span_bars_silences_a_long_line():
     assert any(line.last_touch_idx - line.i1 >= 40 for line in lines)
 
 
+def test_max_touch_spacing_defaults_off_and_clamps_to_zero():
+    assert parse_trendlines_config([], {}).max_touch_spacing == 0
+    base = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 1]
+    for raw, want in ((30, 30), (30.9, 30), (0, 0), (-2, 0), ("x", 0)):
+        assert parse_trendlines_config([*base, raw], {}).max_touch_spacing == want
+
+
+def test_max_touch_spacing_silences_a_widely_spaced_line():
+    """One pair 40 bars apart with nothing between, so the spacing IS the
+    anchor gap. Mirrors the TS test of the same name."""
+    bars = flat(80)
+    bars[20] = bar(20, 90, 100.5)
+    bars[60] = bar(60, 94, 100.5)
+
+    def emits(c) -> bool:
+        points, _ = compute_trendlines(bars, c)
+        return any(p.get("tl_support") is not None for p in points)
+
+    assert emits(cfg()) is True
+    assert emits(cfg(max_touch_spacing=40)) is True
+    assert emits(cfg(max_touch_spacing=39)) is False
+    # Silenced, not deleted, like the ceilings above.
+    _, lines = compute_trendlines(bars, cfg(max_touch_spacing=39))
+    assert any(line.max_touch_gap == 40 for line in lines)
+
+
+def test_max_touch_spacing_measures_gaps_in_bar_order():
+    """A touch BETWEEN the anchors splits the anchor gap, so a line can be
+    well spaced with its span unchanged. The port collects touches out of bar
+    order (retro pivots after i2, mixed ones before i1), so this is the catch
+    for an implementation that forgot to sort."""
+    bars = flat(80)
+    bars[20] = bar(20, 90, 100.5)
+    bars[40] = bar(40, 92, 100.5)
+    bars[60] = bar(60, 94, 100.5)
+    _, lines = compute_trendlines(bars, cfg(min_touches=3))
+    line = next(x for x in lines if x.i1 == 20 and x.i2 == 60)
+    assert line.max_touch_gap == 20  # not the 40-bar anchor gap
+
+    def emits(c) -> bool:
+        points, _ = compute_trendlines(bars, c)
+        return any(p.get("tl_support") is not None for p in points)
+
+    assert emits(cfg(min_touches=3, max_touch_spacing=20)) is True
+    assert emits(cfg(min_touches=3, max_touch_spacing=19)) is False
+
+
+def test_max_touch_spacing_tracks_touches_after_the_seed():
+    """The widest gap can open after seeding, which is what max_touch_idx
+    makes an O(1) update rather than a re-walk."""
+    bars = flat(120)
+    bars[20] = bar(20, 90, 100.5)
+    bars[40] = bar(40, 92, 100.5)
+    bars[80] = bar(80, 96, 100.5)
+    _, lines = compute_trendlines(bars, cfg(min_touches=3))
+    line = next(x for x in lines if x.i1 == 20 and x.i2 == 40)
+    assert line.max_touch_gap == 40
+    assert line.max_touch_idx == 80
+
+
+def test_min_touch_spacing_defaults_off_and_clamps_to_zero():
+    assert parse_trendlines_config([], {}).min_touch_spacing == 0
+    base = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 1, 0]
+    for raw, want in ((6, 6), (6.9, 6), (0, 0), (-2, 0), ("x", 0)):
+        assert parse_trendlines_config([*base, raw], {}).min_touch_spacing == want
+
+
+def test_min_touch_spacing_drops_a_line_whose_touches_bunch():
+    """The case that proves the floor is not min_span_bars renamed: on a
+    two-touch line the two ARE the same number, so it takes a long span with a
+    bunched pair inside it to tell them apart. Mirrors the TS test."""
+    bars = flat(100)
+    bars[20] = bar(20, 90, 100.5)
+    bars[22] = bar(22, 90.1, 100.5)
+    bars[80] = bar(80, 93, 100.5)
+    _, lines = compute_trendlines(bars, cfg(pivot_len=1, min_touches=3))
+    line = next(x for x in lines if x.min_touch_gap == 2)
+    assert line.last_touch_idx - line.i1 > 50
+
+    def emits(c) -> bool:
+        points, _ = compute_trendlines(bars, c)
+        return any(p.get("tl_support") is not None for p in points)
+
+    assert emits(cfg(pivot_len=1, min_touches=3, min_touch_spacing=2)) is True
+    assert emits(cfg(pivot_len=1, min_touches=3, min_touch_spacing=3)) is False
+    # min_span_bars cannot express it: the span clears any floor the bunched
+    # pair would need.
+    assert emits(cfg(pivot_len=1, min_touches=3, min_span_bars=50)) is True
+
+
+def test_min_touch_gap_shrinks_as_touches_arrive():
+    bars = flat(120)
+    bars[20] = bar(20, 90, 100.5)
+    bars[60] = bar(60, 94, 100.5)
+    bars[62] = bar(62, 94.3, 100.5)
+    _, lines = compute_trendlines(bars, cfg(pivot_len=1, min_touches=3))
+    line = next(x for x in lines if x.i1 == 20 and x.i2 == 60)
+    assert line.min_touch_gap == 2
+    assert line.max_touch_gap == 40
+
+
 def test_max_slope_atr_defaults_off_and_takes_zero():
     assert parse_trendlines_config([], {}).max_slope_atr == 0.0
     base = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0]
@@ -181,7 +285,8 @@ def test_has_back_clearance_reads_only_bars_before_the_first_anchor():
     vals[12] = 95.0
     atr: list[float | None] = [1.0] * 20
     line = TrendLine(side="support", i1=4, p1=90.0, i2=12, p2=95.0,
-                     touches=2, last_touch_idx=12, broken_idx=None, first_touch_idx=4)
+                     touches=2, last_touch_idx=12, broken_idx=None, first_touch_idx=4,
+                     max_touch_gap=8, min_touch_gap=8, max_touch_idx=12)
     assert _has_back_clearance(line, vals, atr, 0.25, 0) is True
     assert _has_back_clearance(line, vals, atr, 0.25, 4) is True
     # Only four bars exist to the left, so a fifth cannot be demonstrated:
@@ -396,7 +501,8 @@ def test_zero_tolerance_is_exact_containment():
 
 def test_rank_key_prefers_more_touches_then_longer_span():
     base = TrendLine(side="support", i1=0, p1=100.0, i2=10, p2=100.0,
-                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0,
+                     max_touch_gap=10, min_touch_gap=10, max_touch_idx=10)
     strong = replace(base, touches=3)
     assert rank_key(strong) < rank_key(base)
     longer = replace(base, last_touch_idx=40)
@@ -405,7 +511,8 @@ def test_rank_key_prefers_more_touches_then_longer_span():
 
 def test_rank_key_breaks_every_remaining_tie():
     base = TrendLine(side="support", i1=0, p1=100.0, i2=10, p2=100.0,
-                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0)
+                     touches=2, last_touch_idx=10, broken_idx=None, first_touch_idx=0,
+                     max_touch_gap=10, min_touch_gap=10, max_touch_idx=10)
     a = replace(base, last_touch_idx=20)
     b = replace(base, last_touch_idx=10, i1=-10)
     # same touches, same span (20-0 vs 10-(-10)) -> newer last_touch_idx wins

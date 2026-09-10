@@ -108,6 +108,38 @@ export interface TrendLine {
    * seed time. DRAW-ONLY, like touchIdxs: no gate reads it, so it cannot move
    * an emitted value — it is where the drawn segment starts. */
   firstTouchIdx: number;
+  /** Widest stretch of bars between two CONSECUTIVE touches, in bar order.
+   * What `maxTouchSpacing` reads.
+   *
+   * A SCALAR RATHER THAN A WALK OF touchIdxs, and that is what keeps this a
+   * gate instead of draw state: touchIdxs is draw-only by contract (no gate
+   * reads it, the Python twin does not carry it), so the number a ceiling
+   * needs has to be maintained here and ported. Both runtimes compute it the
+   * same way, so it cannot drift.
+   *
+   * ONLY EVER GROWS, which is what lets overCeilings SILENCE on it: a line
+   * that crossed the ceiling can never come back. Gaps close only if a touch
+   * lands INSIDE an existing one, and no touch ever does — see maxTouchIdx. */
+  maxTouchGap: number;
+  /** Narrowest stretch of bars between two CONSECUTIVE touches, in bar order.
+   * What `minTouchSpacing` reads: touches bunched together are one test of the
+   * line dressed up as several.
+   *
+   * ONLY EVER SHRINKS, the mirror of maxTouchGap, and that is what lets
+   * overCeilings silence on a FLOOR — normally a floor is re-checkable and
+   * belongs in isMajor beside minTouches and minSpanBars, which a line can
+   * still grow into. This one it cannot: every new touch adds a gap and can
+   * only lower the narrowest, never raise it. */
+  minTouchGap: number;
+  /** The highest bar in touchIdxs, so a new touch's gap is one subtraction.
+   *
+   * IT REALLY IS THE RUNNING MAXIMUM, and the whole O(1) update rests on it:
+   * step 2a takes only pivots with `k > line.i2`, and pivots confirm in
+   * increasing bar order, so every touch added after seed time lands strictly
+   * to the RIGHT of every touch already recorded. Retro touches (between the
+   * anchors) and mixed backward touches (before i1) are both seed-time only,
+   * which is why the seed sorts once and nothing after it has to. */
+  maxTouchIdx: number;
 }
 
 /** The line's price at bar j. The ONLY division in this module: its output is
@@ -210,7 +242,58 @@ export function overCeilings(line: TrendLine, cfg: TrendlinesConfig): boolean {
   if (cfg.maxTouches > 0 && line.touches > cfg.maxTouches) return true;
   if (cfg.maxSpanBars > 0 && line.lastTouchIdx - line.i1 > cfg.maxSpanBars)
     return true;
+  // Belongs here rather than beside the slope gates for the same reason the two
+  // above do: maxTouchGap only ever grows, so a line that crossed it can never
+  // re-qualify, and SILENCING keeps it in live state where the pierce and touch
+  // passes still see it. Deleting at seed time would also change which OTHER
+  // lines survive the live cap, since ceiling-failed lines sort last there.
+  if (cfg.maxTouchSpacing > 0 && line.maxTouchGap > cfg.maxTouchSpacing)
+    return true;
+  // A FLOOR, in the function about ceilings, and deliberately so. Every other
+  // floor (minTouches, minSpanBars) lives in isMajor because its quantity GROWS
+  // and a line can qualify later. minTouchGap only shrinks, so a line under it
+  // is permanently disqualified — which is this function's actual contract, and
+  // which is also what makes it sort last in the live cap instead of holding a
+  // slot it can never use.
+  if (cfg.minTouchSpacing > 0 && line.minTouchGap < cfg.minTouchSpacing)
+    return true;
   return false;
+}
+
+/** Widest and narrowest stretch between two consecutive touches, in bars.
+ *
+ * ONE HELPER, ONE SORT, for both ends of the Touch Spacing range: computing
+ * them apart would be two walks that can drift, and the Python twin mirrors
+ * this single function.
+ *
+ * SORTS A COPY, because `touchIdxs` is in insertion order and not bar order:
+ * the retro-count pass appends pivots that sit BETWEEN the anchors, and the
+ * mixed pass appends ones BEFORE the first anchor, both after i2 is already in
+ * the array. Sorting in place would reorder the marks the chart paints.
+ *
+ * Seed-time only. Every touch added later lands to the right of all of them,
+ * so the detector maintains both numbers with one subtraction from there on.
+ *
+ * THE TWO GUARDS ARE NOT THE SAME VALUE, and that asymmetry is the point.
+ * With fewer than two touches there is no gap to measure, so `widest` is 0
+ * ("no ceiling crossed") and `narrowest` is Infinity ("no floor crossed").
+ * Zero for both would fail EVERY floor above zero and silence the line. A line
+ * always carries its two anchors, so this is a guard rather than a case, but a
+ * guard that silences everything is the kind that hides for a year. */
+export function touchGaps(touchIdxs: readonly number[]): {
+  widest: number;
+  narrowest: number;
+} {
+  if (touchIdxs.length < 2) return { widest: 0, narrowest: Infinity };
+  const sorted = [...touchIdxs].sort((a, b) => a - b);
+  let widest = 0;
+  let narrowest = Infinity;
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i] - sorted[i - 1];
+    if (gap > widest) widest = gap;
+    if (gap < narrowest) narrowest = gap;
+  }
+  return { widest, narrowest };
 }
 
 /** Major means: enough touches, enough span, and covering this bar. This is now
@@ -636,6 +719,15 @@ function stepTrendlinesBar(
           ) {
             line.touches += 1;
             line.touchIdxs.push(k);
+            // O(1) and correct without sorting: `k > line.i2` above, and pivots
+            // confirm in increasing bar order, so k is to the right of every
+            // touch this line already has, adding exactly one new gap. Runs for
+            // MIXED touches too — an opposite-side pivot is a touch the chart
+            // rings and the ×N tag counts, so it is spacing like any other.
+            const gap = k - line.maxTouchIdx;
+            if (gap > line.maxTouchGap) line.maxTouchGap = gap;
+            if (gap < line.minTouchGap) line.minTouchGap = gap;
+            line.maxTouchIdx = k;
             // An opposite-side touch NEVER extends coverage: lastTouchIdx
             // feeds isLive and the span gates, and mixed touches must change
             // touches and the drawn start, nothing else.
@@ -673,6 +765,14 @@ function stepTrendlinesBar(
             lastTouchIdx: k,
             brokenIdx: null,
             firstTouchIdx: i1,
+            // The anchor gap is the only gap a fresh pair has, so it is both
+            // ends of the range for now. The retro and mixed passes below can
+            // only SPLIT it (they add touches strictly inside it or before
+            // i1), so both are recomputed once after both passes rather than
+            // maintained through them.
+            maxTouchGap: k - i1,
+            minTouchGap: k - i1,
+            maxTouchIdx: k,
           };
           // Slope first: it is one comparison, where the validation below walks
           // every bar back to i1. Seed time is the only time it needs asking,
@@ -765,6 +865,16 @@ function stepTrendlinesBar(
               }
             }
           }
+          // Recomputed once, now that every seed-time touch is in. MUST SORT:
+          // touchIdxs is in insertion order, so the retro entries (between the
+          // anchors) and the mixed ones (before i1) both sit AFTER i2 in the
+          // array. Walking it as-is gives negative differences and would report
+          // the anchor gap unsplit, rejecting exactly the well-spaced lines
+          // this setting exists to keep.
+          const seedGaps = touchGaps(cand.touchIdxs);
+          cand.maxTouchGap = seedGaps.widest;
+          cand.minTouchGap = seedGaps.narrowest;
+          cand.maxTouchIdx = cand.i2;
           lines.push(cand);
         }
         pool.push(k);

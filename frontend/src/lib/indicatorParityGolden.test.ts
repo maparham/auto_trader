@@ -136,6 +136,9 @@ describe("indicator parity golden fixture", () => {
       // 0 to keep every existing golden series byte-identical; a later task
       // wires the real value.
       mixedTouches: 0,
+      // Off, like every other ceiling here: its own pair is TL_SPACING_* below.
+      maxTouchSpacing: 0,
+      minTouchSpacing: 0,
     };
     const tlPoints = computeTrendlines(candles, TL_CFG).points;
     // The SAME config with the swing-size gate ON. Parity for that gate cannot
@@ -195,6 +198,26 @@ describe("indicator parity golden fixture", () => {
     const tlMixedOffPoints = computeTrendlines(candles, {
       ...TL_CFG, mixedTouches: 0, minTouches: 3,
     }).points;
+    // And TOUCH SPACING, the gap ceiling. Off at 0 like the others, so it needs
+    // its own series or a port that ignored the param would still match. 20
+    // bites against minSpanBars 10 on this walk: it is wide enough that plenty
+    // of pairs clear it and narrow enough that the far-apart ones go. Runs with
+    // mixedTouches 1 as well, because mixed touches count toward spacing and
+    // that coupling is the part most likely to be ported wrong.
+    const tlSpacingPoints = computeTrendlines(candles, {
+      ...TL_CFG, maxTouchSpacing: 20,
+    }).points;
+    const tlSpacingMixedPoints = computeTrendlines(candles, {
+      ...TL_CFG, maxTouchSpacing: 20, mixedTouches: 1, minTouches: 3,
+    }).points;
+    // And the FLOOR end of the same range, which is a different gate rather
+    // than the same one reversed: it reads the NARROWEST gap where the cap
+    // reads the widest. 8 against pivotLen 3 bites here (two same-side pivots
+    // can sit 4 apart, so a floor above that removes real lines) while staying
+    // clear of the pivotLen no-op zone.
+    const tlSpacingMinPoints = computeTrendlines(candles, {
+      ...TL_CFG, minTouchSpacing: 8,
+    }).points;
 
     const series: Record<string, Array<number | null>> = {
       EMA_9: toNull(ema9Base),
@@ -240,6 +263,12 @@ describe("indicator parity golden fixture", () => {
       TL_MIXED_RESISTANCE: toNull(tlMixedPoints.map((p) => p.tl_resistance ?? null)),
       TL_MIXED_OFF_SUPPORT: toNull(tlMixedOffPoints.map((p) => p.tl_support ?? null)),
       TL_MIXED_OFF_RESISTANCE: toNull(tlMixedOffPoints.map((p) => p.tl_resistance ?? null)),
+      TL_SPACING_SUPPORT: toNull(tlSpacingPoints.map((p) => p.tl_support ?? null)),
+      TL_SPACING_RESISTANCE: toNull(tlSpacingPoints.map((p) => p.tl_resistance ?? null)),
+      TL_SPACING_MIXED_SUPPORT: toNull(tlSpacingMixedPoints.map((p) => p.tl_support ?? null)),
+      TL_SPACING_MIXED_RESISTANCE: toNull(tlSpacingMixedPoints.map((p) => p.tl_resistance ?? null)),
+      TL_SPACING_MIN_SUPPORT: toNull(tlSpacingMinPoints.map((p) => p.tl_support ?? null)),
+      TL_SPACING_MIN_RESISTANCE: toNull(tlSpacingMinPoints.map((p) => p.tl_resistance ?? null)),
     };
 
     const fixture = {
@@ -268,6 +297,14 @@ describe("indicator parity golden fixture", () => {
     // series (4, then 5) or set touchMult 1.5 in both, until it bites —
     // never assert on only one side of the pair.
     expect(JSON.stringify(tlMixedPoints)).not.toBe(JSON.stringify(tlMixedOffPoints));
+    // Same guard for the spacing ceiling: it must MOVE something against the
+    // base series, or Python could ignore slot 17 and still match. If this
+    // fails, lower maxTouchSpacing (15, then 10) until it bites.
+    expect(JSON.stringify(tlSpacingPoints)).not.toBe(JSON.stringify(tlPoints));
+    // The floor must bite too, and must not merely reproduce the cap's series:
+    // they read opposite ends of the same sorted gap list.
+    expect(JSON.stringify(tlSpacingMinPoints)).not.toBe(JSON.stringify(tlPoints));
+    expect(JSON.stringify(tlSpacingMinPoints)).not.toBe(JSON.stringify(tlSpacingPoints));
 
     mkdirSync(dirname(OUT), { recursive: true });
     writeFileSync(OUT, JSON.stringify(fixture));

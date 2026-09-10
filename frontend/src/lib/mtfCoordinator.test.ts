@@ -57,7 +57,12 @@ const htfPage = (fromSec: number, toSec: number): KLineData[] => {
 };
 
 interface Override {
-  patch: { name: string; paneId?: string; extendData?: { mtf?: Record<string, unknown> } };
+  patch: {
+    name: string;
+    paneId?: string;
+    extendData?: { mtf?: Record<string, unknown> };
+    calcParams?: number[];
+  };
   paneId: string;
 }
 
@@ -349,6 +354,25 @@ describe("applyTrendlinesTimeframe", () => {
     expect(fetchRangeStrict).not.toHaveBeenCalled();
   });
 
+  // EVERY param reaches the pane, not just the ones someone remembered. This
+  // builder lists the config fields BY HAND, so a param added to
+  // TrendlinesConfig and forgotten here reads undefined at its slot, parses to
+  // its default, and the pinned pane silently detects on a setting the user
+  // never chose. Length plus the tail value catches both a missed field and one
+  // appended in the wrong order.
+  it("writes every calcParam slot, so a new param cannot be dropped", async () => {
+    const { chart, overrides } = fakeChart({ mtf: { timeframe: "MINUTE_15", htfStarts: [1] } });
+    await applyTrendlinesTimeframe(
+      chart, "EPIC", "tl1", "candle_pane",
+      { ...TRENDLINES_DEFAULTS, maxTouchSpacing: 30, minTouchSpacing: 4 }, null,
+    );
+    const params = overrides[0].patch.calcParams ?? [];
+    expect(params).toHaveLength(Object.keys(TRENDLINES_DEFAULTS).length);
+    expect(params).toEqual(
+      Object.values({ ...TRENDLINES_DEFAULTS, maxTouchSpacing: 30, minTouchSpacing: 4 }),
+    );
+  });
+
   it("stashes the HTF series and lines, from CLOSED bars only", async () => {
     fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
       Promise.resolve(htfPage(fromSec as number, toSec as number)),
@@ -402,9 +426,14 @@ describe("applyTrendlinesTimeframe", () => {
     expect(fetchRangeStrict).toHaveBeenCalled();
   });
 
-  it("pins mixedTouches as the 17th key of TRENDLINES_DEFAULTS (insertion order feeds HTF calcParams)", () => {
-    expect(Object.values(TRENDLINES_DEFAULTS)).toHaveLength(17);
-    expect(Object.values(TRENDLINES_DEFAULTS)[16]).toBe(1);
+  it("pins the key ORDER of TRENDLINES_DEFAULTS (insertion order feeds HTF calcParams)", () => {
+    // The object's own key order IS the calcParams order here, so a param
+    // inserted anywhere but the end would shift every slot after it and the
+    // HTF pane would silently detect on the wrong settings.
+    expect(Object.values(TRENDLINES_DEFAULTS)).toHaveLength(19);
+    expect(Object.values(TRENDLINES_DEFAULTS)[16]).toBe(1); // mixedTouches
+    expect(Object.values(TRENDLINES_DEFAULTS)[17]).toBe(0); // maxTouchSpacing
+    expect(Object.values(TRENDLINES_DEFAULTS)[18]).toBe(0); // minTouchSpacing
   });
 
   it("fetches the HTF candles on the PANE'S price side, not a hardcoded mid", async () => {

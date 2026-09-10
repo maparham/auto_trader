@@ -193,6 +193,7 @@ describe("Inputs tab renders a control for every declared input", () => {
     for (const label of [
       "Max Trendlines",
       "Min Back Clearance",
+      "Max Touch Spacing",
       "Merge Lines within",
       "Declutter",
       "Extend",

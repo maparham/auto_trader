@@ -105,6 +105,33 @@ export interface TrendlinesConfig {
   // default; 0 = off restores the strict same-side detector. Stored as a
   // number because calcParams carry numbers; every reader tests > 0.
   mixedTouches: number;
+  // Widest stretch of bars allowed between two CONSECUTIVE touches. 0 = no
+  // limit, the default.
+  //
+  // NOT maxSpanBars, which bounds the whole first-to-last distance: a line
+  // touched every 40 bars for 200 and one with two touches 200 apart have the
+  // same span and different spacing. NOT maxProjBars either, which measures
+  // forward from the last touch to the current bar.
+  //
+  // Its dominant effect is on the ANCHOR gap (i1 to i2), because gaps after
+  // the seed are already bounded: a line is pruned once
+  // i - lastTouchIdx > maxProjBars, so no later touch can open one wider than
+  // that. Pairing distance had no setting of its own before this.
+  maxTouchSpacing: number;
+  // Floor on that same gap, the other end of the Touch Spacing range. 0 = off,
+  // the default. Drops lines whose touches BUNCH: three pivots within a few
+  // bars are one test of the line, not three.
+  //
+  // ON A TWO-TOUCH LINE IT IS minSpanBars, exactly: a fresh same-side pair has
+  // one gap, i2 - i1, and minSpanBars measures lastTouchIdx - i1. It earns its
+  // slot at three or more touches, and on the mixed leg (i1 back to
+  // firstTouchIdx), which minSpanBars never measures.
+  //
+  // Near-inert below pivotLen with Mixed touches off, like minSwingReach: two
+  // same-side pivots cannot sit closer than that, each being the extreme of its
+  // own window. Opposite-side pivots can sit one bar apart, so mixed touches
+  // are where a small floor actually bites.
+  minTouchSpacing: number;
 }
 
 export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
@@ -125,12 +152,18 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   minSlopeAtr: 0,
   minBackBars: 10,
   mixedTouches: 1,
+  maxTouchSpacing: 0,
+  // APPENDED, not inserted beside maxTouchSpacing, however much the UI pairs
+  // them: this object's key ORDER is the calcParams order (mtfCoordinator
+  // builds the HTF params from Object.values), so inserting would shift every
+  // slot after it and silently repoint every saved chart's settings.
+  minTouchSpacing: 0,
 };
 
 /** calcParams order: [pivotLen, violMult, touchMult, minTouches, minSpanBars,
  * maxProjBars, breakHoldBars, maxLines, minSwingAtr, minSwingReach,
  * pairPivots, maxTouches, maxSpanBars, maxSlopeAtr, minSlopeAtr, minBackBars,
- * mixedTouches].
+ * mixedTouches, maxTouchSpacing, minTouchSpacing].
  * Mirrored by backend trendlines.parse_trendlines_config — keep in sync.
  *
  * violMult, touchMult and minSwingAtr take ZERO (exact containment on the
@@ -200,6 +233,10 @@ export function parseTrendlinesConfig(calcParams: unknown): TrendlinesConfig {
     // default, which is ON — like minBackBars, the default is not the off
     // state, and that is intended.
     mixedTouches: Math.min(1, Math.max(0, Math.floor(numAt(16, d.mixedTouches, true)))),
+    // Clamped to 0, not 1, like the other ceilings: 0 is the off state, and 1
+    // would be unreachable through intAt.
+    maxTouchSpacing: Math.max(0, Math.floor(numAt(17, d.maxTouchSpacing, true))),
+    minTouchSpacing: Math.max(0, Math.floor(numAt(18, d.minTouchSpacing, true))),
   };
 }
 
