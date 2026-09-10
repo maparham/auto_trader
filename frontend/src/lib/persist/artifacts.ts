@@ -471,7 +471,7 @@ export interface SavedDrawingConfig {
   line?: { color?: string; size?: number; style?: LineType };
   // Rectangle fill + border (klinecharts polygon styles). Only rect drawings set it.
   polygon?: { color?: string; borderColor?: string; borderSize?: number };
-  // Fib retracement level/extend/… config. Only fibonacciLine drawings set it.
+  // Fib level/extend/… config. Only fibonacciLine + fibChannel drawings set it.
   fib?: FibConfig;
   // Pattern-overlay look (shape/opacity/colour/score). Only patternGhost sets it.
   ghostStyle?: GhostStyle;

@@ -45,6 +45,7 @@ import { RESOLUTION_SECONDS } from "./feed";
 import { timeRangeSpan } from "./timeRangeMetrics";
 import type { ChartDataFacade } from "../chart/chartDataFacade";
 import { type FibConfig, asFibConfig } from "./fibConfig";
+import { isFibOverlay } from "./drawTools";
 import { type TradeConfig, type TradePoint, asTradeConfig, defaultStopPrice, flipTradeLeg, normalizeTradePoints, syncTradePoints } from "./tradePlan";
 import { TRADE_BOX } from "./tradeOverlay";
 import {
@@ -128,7 +129,7 @@ export interface DrawingExtra {
   text?: string;
   showMiddle?: boolean;
   priceLabels?: boolean;
-  // Fib retracement level/extend/… config (custom fibonacciLine overlay only).
+  // Fib level/extend/… config (the custom fibonacciLine + fibChannel overlays).
   fib?: FibConfig;
   // The copied candles a pattern-overlay ("ghost") draws and scores, plus the
   // market and timeframe they came from (custom patternGhost overlay only).
@@ -2342,7 +2343,7 @@ export class OverlayManager {
         size: line.size ?? 1,
         style: line.style ?? 'solid',
       },
-      ...(live.name === "fibonacciLine" ? { fib: asFibConfig(extra.fib) } : {}),
+      ...(isFibOverlay(live.name) ? { fib: asFibConfig(extra.fib) } : {}),
       ...(live.name === GHOST_NAME ? { ghostStyle: asGhostStyle(extra.ghostStyle) } : {}),
       ...(isTradeDrawing(live.name) ? { trade: asTradeConfig(extra.trade) } : {}),
       showMiddle: extra.showMiddle,

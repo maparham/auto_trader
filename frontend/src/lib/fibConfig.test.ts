@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { asFibConfig, defaultFibConfig, fibLevelSegments, type FibConfig } from "./fibConfig";
+import {
+  asFibConfig,
+  defaultFibConfig,
+  fibChannelSegments,
+  fibLevelSegments,
+  type FibConfig,
+} from "./fibConfig";
 
 // Anchors: point0 first click at (x:100, y:200, price 90), point1 at (x:300, y:0, price 110).
 // Like the built-in, level 0 sits at point1 (the second click) and level 1 at point0.
@@ -130,5 +136,155 @@ describe("fibLevelSegments off-pane clamping", () => {
       expect(Math.abs(s.x1)).toBeLessThan(10_000);
       expect(Math.abs(s.x2)).toBeLessThan(10_000);
     }
+  });
+});
+
+// Fib channel anchors: base line point0(0,100) → point1(200,100+? ) — use a
+// sloped base so the clip has to move y. point2 sets the parallel line.
+const chCoords = [
+  { x: 100, y: 200 }, // base start
+  { x: 300, y: 100 }, // base end (slope -0.5 per px)
+  { x: 100, y: 100 }, // third anchor: 100px ABOVE the base at x=100 ⇒ gap -100
+] as const;
+const chSeg = (cfg: FibConfig, boundingWidth = 400) =>
+  fibChannelSegments({ cfg, coordinates: [...chCoords], boundingWidth, boundingHeight: 300 });
+
+describe("fibChannelSegments", () => {
+  it("returns nothing before the third anchor exists", () => {
+    expect(
+      fibChannelSegments({
+        cfg: base(),
+        coordinates: chCoords.slice(0, 2),
+        boundingWidth: 400,
+        boundingHeight: 300,
+      }),
+    ).toEqual([]);
+  });
+
+  it("puts level 0 on the base line and level 1 on the parallel through point2", () => {
+    const segs = chSeg(base());
+    const l0 = segs.find((s) => s.level === 0)!;
+    const l1 = segs.find((s) => s.level === 1)!;
+    expect([l0.x1, l0.y1, l0.x2, l0.y2]).toEqual([100, 200, 300, 100]);
+    expect([l1.x1, l1.y1, l1.x2, l1.y2]).toEqual([100, 100, 300, 0]);
+  });
+
+  it("keeps every level parallel to the base (same slope, interpolated offset)", () => {
+    const segs = chSeg(base());
+    const slope = (s: (typeof segs)[number]) => (s.y2 - s.y1) / (s.x2 - s.x1);
+    for (const s of segs) expect(slope(s)).toBeCloseTo(-0.5, 10);
+    const l05 = segs.find((s) => s.level === 0.5)!;
+    expect(l05.y1).toBe(150); // halfway between the base (200) and the parallel (100)
+  });
+
+  it("labels with the ratio alone — a sloped line has no single price", () => {
+    expect(chSeg(base()).map((s) => s.label)).toContain("0.618");
+    expect(chSeg(base()).every((s) => !s.label.includes("("))).toBe(true);
+  });
+
+  it("reverse swaps the base and parallel lines", () => {
+    const segs = chSeg(base({ reverse: true }));
+    expect(segs.find((s) => s.level === 0)!.y1).toBe(100); // now the parallel
+    expect(segs.find((s) => s.level === 1)!.y1).toBe(200); // now the base
+  });
+
+  it("extends to the pane edges along the line, recomputing y (no shear)", () => {
+    const segs = chSeg(base({ extend: "both" }));
+    const l0 = segs.find((s) => s.level === 0)!;
+    expect([l0.x1, l0.y1]).toEqual([0, 250]); // base extrapolated back to x=0
+    expect([l0.x2, l0.y2]).toEqual([400, 50]); // …and out to the right edge
+  });
+
+  it("extend:right only widens the right end", () => {
+    const l0 = chSeg(base({ extend: "right" })).find((s) => s.level === 0)!;
+    expect([l0.x1, l0.y1]).toEqual([100, 200]);
+    expect(l0.x2).toBe(400);
+  });
+
+  it("clamps a far off-pane anchor to the pad, with the y that belongs there", () => {
+    const far = [
+      { x: -50000, y: 200 },
+      { x: 300, y: 100 },
+      { x: 300, y: 0 },
+    ];
+    const l0 = fibChannelSegments({
+      cfg: base(),
+      coordinates: far,
+      boundingWidth: 400,
+      boundingHeight: 300,
+    }).find((s) => s.level === 0)!;
+    expect(l0.x1).toBe(-2000); // -DRAW_CLIP_PAD
+    // slope = (100-200)/(300 - -50000); y at x=-2000 stays on the line
+    const slope = (100 - 200) / (300 + 50000);
+    expect(l0.y1).toBeCloseTo(200 + slope * (-2000 + 50000), 6);
+  });
+
+  it("clips a near-vertical channel to the padded pane instead of shooting y off", () => {
+    // Base anchors 2px apart in x, 300 apart in y ⇒ slope 150. A padded x alone
+    // would put y in the hundreds of thousands.
+    const steep = [
+      { x: 100, y: 0 },
+      { x: 102, y: 300 },
+      { x: 100, y: 40 },
+    ];
+    const segs = fibChannelSegments({
+      cfg: base(),
+      coordinates: steep,
+      boundingWidth: 400,
+      boundingHeight: 300,
+    });
+    expect(segs.length).toBeGreaterThan(0);
+    for (const s of segs) {
+      for (const y of [s.y1, s.y2]) {
+        expect(y).toBeGreaterThanOrEqual(-2000);
+        expect(y).toBeLessThanOrEqual(300 + 2000);
+      }
+    }
+  });
+
+  it("drops a level whose whole span sits off the padded pane", () => {
+    // Horizontal base far above the pane; the parallel is far above too, so every
+    // level is out of the box.
+    const above = [
+      { x: 100, y: -900000 },
+      { x: 300, y: -900000 },
+      { x: 200, y: -900010 },
+    ];
+    expect(
+      fibChannelSegments({
+        cfg: base(),
+        coordinates: above,
+        boundingWidth: 400,
+        boundingHeight: 300,
+      }),
+    ).toEqual([]);
+  });
+
+  it("draws nothing for a vertical base (both anchors on one candle)", () => {
+    const vertical = [
+      { x: 200, y: 50 },
+      { x: 200, y: 250 },
+      { x: 260, y: 150 },
+    ];
+    for (const extend of ["none", "both"] as const) {
+      expect(
+        fibChannelSegments({
+          cfg: base({ extend }),
+          coordinates: vertical,
+          boundingWidth: 400,
+          boundingHeight: 300,
+        }),
+      ).toEqual([]);
+    }
+  });
+
+  it("carries per-level color and width/dash overrides through", () => {
+    const cfg = base({
+      levels: [{ value: 0.5, enabled: true, color: "#abcdef", size: 3, style: "dashed" }],
+    });
+    const [s] = chSeg(cfg);
+    expect(s.color).toBe("#abcdef");
+    expect(s.size).toBe(3);
+    expect(s.style).toBe("dashed");
   });
 });

@@ -13,7 +13,7 @@ class MemStorage {
 }
 (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
 
-const { DRAW_TOOLS, toolLabel } = await import("./drawTools");
+const { DRAW_TOOLS, toolLabel, isFibOverlay } = await import("./drawTools");
 const P = await import("./persist");
 
 describe("draw-tool registry", () => {
@@ -21,9 +21,16 @@ describe("draw-tool registry", () => {
     expect(DRAW_TOOLS.map((t) => t.name)).toEqual([
       "segment", "rayLine", "straightLine",
       "horizontalStraightLine", "verticalStraightLine", "rect", "priceLine",
-      "priceChannelLine", "fibonacciLine", "timeRange", "recurringRange",
+      "priceChannelLine", "fibonacciLine", "fibChannel", "timeRange", "recurringRange",
       "tradeBox",
     ]);
+  });
+
+  it("groups both fib tools under the shared FibConfig gate", () => {
+    expect(isFibOverlay("fibonacciLine")).toBe(true);
+    expect(isFibOverlay("fibChannel")).toBe(true);
+    expect(isFibOverlay("segment")).toBe(false);
+    expect(toolLabel("fibChannel")).toBe("Fib channel");
   });
 
   it("labels the trade tool", () => {

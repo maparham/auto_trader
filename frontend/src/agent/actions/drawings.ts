@@ -92,7 +92,7 @@ export function registerDrawingActions(): void {
   registerAction({
     name: "drawing.add",
     description:
-      "Draw on the focused chart with a sidebar tool (horizontalStraightLine for S/R levels, segment for trend lines, rect for zones, fibonacciLine for fibs). points: [{timestamp (ms, seconds accepted), value}]; horizontal lines need [{value}]; tradeBox takes [entry, target, stop] (stop optional — a 1:2 one is seeded; target above the entry is a long, below is a short). text sets the label, color sets the line color (hex). Returns the drawing id.",
+      "Draw on the focused chart with a sidebar tool (horizontalStraightLine for S/R levels, segment for trend lines, rect for zones, fibonacciLine for fibs, fibChannel for a sloped fib channel: two points set the base line, a third sets the parallel width). points: [{timestamp (ms, seconds accepted), value}]; horizontal lines need [{value}]; tradeBox takes [entry, target, stop] (stop optional — a 1:2 one is seeded; target above the entry is a long, below is a short). text sets the label, color sets the line color (hex). Returns the drawing id.",
     kind: "write",
     params: {
       type: "object",

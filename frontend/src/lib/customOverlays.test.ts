@@ -367,6 +367,32 @@ describe("line drawings keep their stroke geometry near the pane", () => {
     near(lineCoords(rayLine, [{ x: 400, y: 100 }, { x: 401, y: 500 }]));
   });
 
+  it("fibChannel: a near-vertical channel's levels stay near-pane", async () => {
+    const { fibChannel } = await import("./customOverlays");
+    const create = fibChannel.createPointFigures as (p: unknown) => unknown;
+    const figs = create({
+      // Base anchors 1px apart in x, 400 apart in y; third anchor sets the width.
+      coordinates: [{ x: 400, y: 0 }, { x: 401, y: 400 }, { x: 400, y: 60 }],
+      bounding: B,
+      overlay: { extendData: {} },
+    }) as Array<{ type: string; attrs: { coordinates?: Array<{ x: number; y: number }> } }>;
+    const lines = figs.filter((f) => f.type === "line");
+    expect(lines.length).toBeGreaterThan(1);
+    for (const l of lines) near(l.attrs.coordinates);
+  });
+
+  it("fibChannel: draws the base line alone until the third anchor lands", async () => {
+    const { fibChannel } = await import("./customOverlays");
+    const create = fibChannel.createPointFigures as (p: unknown) => unknown;
+    const figs = create({
+      coordinates: [{ x: 100, y: 300 }, { x: 300, y: 100 }],
+      bounding: B,
+      overlay: { extendData: {} },
+    }) as Array<{ type: string; attrs: { coordinates?: Array<{ x: number; y: number }> } }>;
+    expect(figs).toHaveLength(1);
+    expect(figs[0].attrs.coordinates).toEqual([{ x: 100, y: 300 }, { x: 300, y: 100 }]);
+  });
+
   it("segment: anchors panned/zoomed far off-pane are clipped", async () => {
     const { segment } = await import("./customOverlays");
     near(lineCoords(segment, [{ x: -60_000, y: -50_000 }, { x: 60_000, y: 50_000 }]));

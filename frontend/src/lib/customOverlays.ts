@@ -22,7 +22,7 @@ import type {
   Bounding,
 } from "klinecharts";
 import { asDrawingExtra } from "./overlays";
-import { asFibConfig, fibLevelSegments } from "./fibConfig";
+import { asFibConfig, fibChannelSegments, fibLevelSegments } from "./fibConfig";
 import { measureMetrics } from "./measureMetrics";
 import { slopeMetrics } from "./slopeMetrics";
 import { slopeHandles } from "./slopeHandles";
@@ -317,6 +317,110 @@ const fibonacciLine: OverlayTemplate = {
           attrs: {
             x: atEdge ? bounding.width - 2 : s.x2 + 4,
             y: s.y - 2,
+            text: s.label,
+            align: atEdge ? "right" : "left",
+            baseline: "bottom",
+          },
+          styles: {
+            color: s.color,
+            size: 12,
+            family: "-apple-system, system-ui, sans-serif",
+            backgroundColor: "transparent",
+            borderColor: "transparent",
+            borderSize: 0,
+            paddingLeft: 0,
+            paddingRight: 0,
+            paddingTop: 0,
+            paddingBottom: 0,
+          },
+          ignoreEvent: true,
+        });
+      }
+    }
+    return figures;
+  },
+};
+
+// fibChannel: TV-style Fib Channel. Three anchors — point0→point1 is the base
+// line (level 0), point2 sets the parallel line through it (level 1) — and every
+// level is a line PARALLEL to the base, so the geometry (fibChannelSegments)
+// returns two endpoints per level rather than the retracement's single y.
+// Shares FibConfig on extendData.fib with fibonacciLine, so the same settings
+// panel drives both; `trendLine` here draws the dashed width connector from the
+// base's second anchor to the third, and labels are the ratio alone (a sloped
+// line has no single price).
+export const fibChannel: OverlayTemplate = {
+  name: "fibChannel",
+  totalStep: 4,
+  needDefaultPointFigure: true,
+  needDefaultXAxisFigure: true,
+  needDefaultYAxisFigure: true,
+  createPointFigures: (params) => {
+    const { overlay, coordinates, bounding } = params;
+    if (coordinates.length < 2) return [];
+    const cfg = asFibConfig((overlay.extendData as { fib?: unknown } | undefined)?.fib);
+    const line = (overlay.styles?.line ?? {}) as {
+      size?: number;
+      style?: string;
+      dashedValue?: number[];
+    };
+    const figures: OverlayFigure[] = [];
+    // While the user is still placing the third anchor, show the base line alone
+    // so the drag has something to aim with.
+    if (coordinates.length < 3) {
+      return [
+        {
+          type: "line",
+          attrs: { coordinates: [coordinates[0], coordinates[1]] },
+          styles: {
+            color: cfg.levels[0]?.color ?? "#787b86",
+            size: line.size ?? 1,
+            style: line.style ?? "solid",
+            dashedValue: line.dashedValue ?? [4, 4],
+          },
+        },
+      ];
+    }
+    const segs = fibChannelSegments({
+      cfg,
+      coordinates,
+      boundingWidth: bounding.width,
+      boundingHeight: bounding.height,
+    });
+    if (cfg.trendLine) {
+      // Width connector: anchor 1 → anchor 2, the gap every level is scaled from.
+      figures.push({
+        type: "line",
+        attrs: { coordinates: [coordinates[1], coordinates[2]] },
+        styles: { color: "#787b86", size: 1, style: "dashed", dashedValue: [4, 4] },
+        ignoreEvent: true, // the level lines + handles are the drag targets
+      });
+    }
+    for (const s of segs) {
+      figures.push({
+        type: "line",
+        attrs: {
+          coordinates: [
+            { x: s.x1, y: s.y1 },
+            { x: s.x2, y: s.y2 },
+          ],
+        },
+        styles: {
+          color: s.color,
+          size: s.size ?? line.size ?? 1,
+          style: s.style ?? line.style ?? "solid",
+          dashedValue: line.dashedValue ?? [4, 4],
+        },
+      });
+      if (cfg.labels) {
+        // Label at the right end of the level, just above it; hug the pane edge
+        // when the span reaches it so the text never clips off-screen.
+        const atEdge = s.x2 >= bounding.width - 1;
+        figures.push({
+          type: "text",
+          attrs: {
+            x: atEdge ? bounding.width - 2 : s.x2 + 4,
+            y: s.y2 - 2,
             text: s.label,
             align: atEdge ? "right" : "left",
             baseline: "bottom",
@@ -1016,6 +1120,7 @@ export function registerCustomOverlays(): void {
   registerOverlay(straightLine);
   registerOverlay(rect);
   registerOverlay(fibonacciLine);
+  registerOverlay(fibChannel);
   registerOverlay(measure);
   registerOverlay(slope);
   registerOverlay(rangeBand);

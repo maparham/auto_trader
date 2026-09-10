@@ -31,6 +31,7 @@ import Tooltip from "./components/Tooltip";
 import { useMaskedReplay } from "./lib/useMaskedReplay";
 import { maskedTimeLabel } from "./lib/timeFormat";
 import { type FibConfig, asFibConfig } from "./lib/fibConfig";
+import { isFibOverlay } from "./lib/drawTools";
 import { asGhostStyle, type GhostStyle } from "./lib/patternGhost";
 import { asTradeConfig, TRADE_DEFAULTS, type TradeConfig } from "./lib/tradePlan";
 import {
@@ -75,6 +76,7 @@ const TITLES: Record<string, string> = {
   priceLine: "Price line",
   priceChannelLine: "Parallel channel",
   fibonacciLine: "Fib retracement",
+  fibChannel: "Fib channel",
   patternGhost: "Pattern overlay",
   tradeBox: "Trade box",
 };
@@ -116,7 +118,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const title = TITLES[name] ?? "Drawing";
   const isTrend = TREND.has(name);
   const isRect = name === "rect";
-  const isFib = name === "fibonacciLine";
+  const isFib = isFibOverlay(name);
   // The pattern overlay derives its whole geometry from the copied candles, so
   // none of the generic line/text controls apply to it: it gets its own Style
   // tab (shape, colour, opacity, score) and no Text tab at all.
@@ -149,7 +151,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
   const [text, setText] = useState<string>(extra0.text ?? "");
   const [showMiddle, setShowMiddle] = useState<boolean>(extra0.showMiddle ?? false);
   const [vis, setVis] = useState<VisibilityModel>(extra0.visibility ?? defaultVisibility());
-  // Fib retracement config (fibonacciLine only) — levels/extend/reverse/trend/labels.
+  // Fib config (fibonacciLine + fibChannel) — levels/extend/reverse/trend/labels.
   const [fib, setFib] = useState<FibConfig>(() => asFibConfig(extra0.fib));
   // Pattern overlay look (patternGhost only).
   const [ghostStyle, setGhostStyleState] = useState<GhostStyle>(() => asGhostStyle(extra0.ghostStyle));
@@ -363,7 +365,7 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
         overlays.setPriceLabels(curId, oExtra.priceLabels ?? true);
         overlays.setText(curId, oExtra.text ?? "");
         overlays.setShowMiddle(curId, oExtra.showMiddle ?? false);
-        if (o.name === "fibonacciLine") overlays.setFibConfig(curId, asFibConfig(oExtra.fib));
+        if (isFibOverlay(o.name)) overlays.setFibConfig(curId, asFibConfig(oExtra.fib));
         if (o.name === "patternGhost") overlays.setGhostStyle(curId, asGhostStyle(oExtra.ghostStyle));
         if (o.name === TRADE_NAME) overlays.setTradeConfig(curId, asTradeConfig(oExtra.trade));
         overlays.setVisible(curId, o.visible);
@@ -790,7 +792,9 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                       checked={fib.trendLine}
                       onChange={(e) => applyFib({ ...fib, trendLine: e.target.checked })}
                     />
-                    <span>Trend line</span>
+                    {/* Same flag, different line: the retracement's dashed
+                        anchor-to-anchor connector, the channel's width leg. */}
+                    <span>{name === "fibChannel" ? "Width line" : "Trend line"}</span>
                   </label>
                   <label className="ind-check">
                     <input

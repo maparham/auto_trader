@@ -19,6 +19,7 @@ export const DRAW_TOOLS: DrawTool[] = [
   { name: "priceLine", label: "Price line" },
   { name: "priceChannelLine", label: "Parallel channel" },
   { name: "fibonacciLine", label: "Fib retracement" },
+  { name: "fibChannel", label: "Fib channel" },
   { name: "timeRange", label: "Time range" },
   // Not a klinecharts overlay: the gesture appends a recurring-range window to
   // the cell's Time Highlight indicator (DrawSidebar arms a signal, like
@@ -39,4 +40,11 @@ const BY_NAME = new Map(DRAW_TOOLS.map((t) => [t.name, t]));
 
 export function toolLabel(name: string): string {
   return BY_NAME.get(name)?.label ?? EXTRA_LABELS[name] ?? name;
+}
+
+// The two fib tools share one FibConfig on extendData.fib (levels/extend/reverse/
+// trendLine/labels) and therefore one settings section. Every name gate that used
+// to test `=== "fibonacciLine"` goes through here.
+export function isFibOverlay(name: string): boolean {
+  return name === "fibonacciLine" || name === "fibChannel";
 }

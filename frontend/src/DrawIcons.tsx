@@ -97,6 +97,19 @@ const GLYPHS: Record<string, () => ReactNode> = {
       <Dot x={15} y={15.5} />
     </svg>
   ),
+  // Fib channel: the same stacked levels, but SLOPED — a base line, a parallel
+  // above it, and the interpolated level between. Two anchors on the base, one
+  // on the parallel (the width).
+  fibChannel: () => (
+    <svg {...S}>
+      <line x1="3" y1="16.5" x2="17" y2="11.5" />
+      <line x1="3" y1="12" x2="17" y2="7" />
+      <line x1="3" y1="7.5" x2="17" y2="2.5" />
+      <Dot x={5} y={15.8} />
+      <Dot x={15} y={12.2} />
+      <Dot x={5} y={6.8} />
+    </svg>
+  ),
   // Time range: a full-height vertical band (two edges) marking a time span.
   timeRange: () => (
     <svg {...S}>
