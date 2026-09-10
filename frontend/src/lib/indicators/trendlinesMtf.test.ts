@@ -175,6 +175,7 @@ function draw(
   const rings: Array<{ x: number; y: number }> = [];
   const dots: Array<{ x: number; y: number }> = [];
   let cur = { x: 0, y: 0 };
+  let start = { x: 0, y: 0 };
   let width = 1;
   const ctx = {
     font: "", textBaseline: "", textAlign: "", strokeStyle: "", fillStyle: "",
@@ -183,11 +184,19 @@ function draw(
     set lineWidth(v: number) { width = v; },
     save: () => {}, restore: () => {}, beginPath: () => {}, stroke: () => {},
     setLineDash: () => {}, fill: () => {},
-    moveTo: (x: number, y: number) => { cur = { x, y }; },
+    rect: () => {}, clip: () => {},
+    moveTo: (x: number, y: number) => { cur = { x, y }; start = { x, y }; },
     lineTo: (x: number, y: number) => {
       // The handle glyph strokes heavier than the line; only the lines matter here.
       if (width === 1) segments.push({ x0: cur.x, y0: cur.y, x1: x, y1: y });
       cur = { x, y };
+    },
+    // The pivot marks are FILLED triangles, so their closing edge exists only
+    // as a closePath. Recorded like any other edge, or a caret would read as
+    // two edges here and three on the canvas.
+    closePath: () => {
+      if (width === 1) segments.push({ x0: cur.x, y0: cur.y, x1: start.x, y1: start.y });
+      cur = { ...start };
     },
     measureText: (t: string) => ({ width: t.length * 6 }),
     fillText: () => {},
@@ -252,7 +261,8 @@ describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
       chartBars(),
       stash({ htfPivots: HTF_PIVOTS }),
     );
-    // One line (the fixture's) plus the caret's two arms.
+    // One line (the fixture's) plus the caret's two slanted edges. The base
+    // edge spans BOTH arms, so this filter keeps only the slanted pair.
     const arms = segments.filter(
       (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
     );
@@ -285,8 +295,10 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
       (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
     );
     expect(arms).toHaveLength(2);
-    // The tip of each arm sits exactly on the pivot's x.
-    for (const a of arms) expect(a.x0).toBeCloseTo(6, 6);
+    // The tip is shared by both slanted edges — one leaves it, the closing one
+    // returns to it — so test the endpoint that IS the tip, not always x0.
+    for (const a of arms)
+      expect(Math.min(Math.abs(a.x0 - 6), Math.abs(a.x1 - 6))).toBeCloseTo(0, 6);
   });
 
   it("puts line anchors and touch rings on the chart bars that traded the extremes", () => {
@@ -330,7 +342,8 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
       (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
     );
     expect(arms).toHaveLength(2);
-    for (const a of arms) expect(a.x0).toBeCloseTo(36, 6);
+    for (const a of arms)
+      expect(Math.min(Math.abs(a.x0 - 36), Math.abs(a.x1 - 36))).toBeCloseTo(0, 6);
   });
 });
 

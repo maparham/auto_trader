@@ -453,6 +453,14 @@ export function aboveSlope(
   return Math.abs(rise) >= mult * atrAt * span;
 }
 
+/** How short a window the reversal stop may leave before it stops meaning
+ * anything and the full walk is used instead. A FLAT COUNT for the same reason
+ * the setting itself is one, and deliberately not a user setting: too high
+ * behaves like no reversal stop at all, too low hands a free pass to any line
+ * that starts a few bars after a turn. Not exposed until a chart argues for a
+ * different number. */
+export const MIN_BACK_WINDOW = 8;
+
 /** True when the `bars` bars immediately before i1 all sit on the line's own
  * side of it, within the same Max Pierce tolerance the forward pass uses.
  *
@@ -464,17 +472,40 @@ export function aboveSlope(
  * the trend: zero bars of clearance behind its first anchor.
  *
  * It does not merely delete. The freed pairing slots refill, so the detector
- * picks a BETTER FIRST ANCHOR for the same trend: on that chart the 572-bar
- * line became a 2021-anchored line with 151 bars of clearance, ending at the
- * same pivot.
+ * picks a BETTER FIRST ANCHOR for the same trend: on that chart (measured
+ * BEFORE the reversal stop below existed) the 572-bar line became a
+ * 2021-anchored line with 151 bars of clearance, ending at the same pivot.
  *
  * A FLAT BAR COUNT, not a fraction of the span. The ratio version rejected a
  * 3-touch line with 14 bars of clearance purely for being long.
  *
+ * THE WALK STOPS AT THE REVERSAL. `oppTurns` is the opposite side's confirmed
+ * fractals, so for a support it is the highs: the last one before i1 is the
+ * top that started the leg this line belongs to. Bars before it belong to the
+ * PREVIOUS move, and asking a line to clear them is asking it to be a good
+ * line for a trend it was never drawn on. A support that falls away from a
+ * peak projects backward UP into the old rally and pierces every bar of it,
+ * which is why the setting was unusable above small values.
+ *
+ * ONLY EVER LOOSENS, and the proof is one line: `from` is always >= i1 - bars,
+ * so the new walk is a SUBSET of the strict one, and no pierce in a superset
+ * means no pierce in a subset. That matters because pivots alternate, so an
+ * opposite turn often sits a bar or two behind i1; truncating there would
+ * delete lines whose full walk was clean. Hence the fallback: a window the
+ * reversal cuts below MIN_BACK_WINDOW has demonstrated nothing, so it reverts
+ * to the full walk rather than deciding on three bars.
+ *
  * Runs off the start of the series by REJECTING, the same way isPivotAt and
  * hasSwingReach do: a line anchored fewer than `bars` from bar 0 has not
  * demonstrated the clearance, and letting the short window pass would make the
- * gate weakest exactly where the sample is thinnest.
+ * gate weakest exactly where the sample is thinnest. Asked BEFORE the turn
+ * lookup on purpose, so a nearby reversal cannot rescue a line there.
+ *
+ * NON-REPAINTING, still. `turns[side].push(k)` at bar i pushes k = i - pivotLen
+ * and this bar's seeds have i2 = k with i1 < i2, so every turn index < i1 was
+ * confirmed strictly before now. The `< i1` test is also what makes the answer
+ * independent of SIDES iteration order: the k pushed this bar can never satisfy
+ * it.
  *
  * A bar whose ATR has not warmed up cannot be tested, so it counts as
  * surviving, which is what the forward pass does with the same bar.
@@ -489,10 +520,24 @@ export function hasBackClearance(
   atr: ReadonlyArray<number | null>,
   violMult: number,
   bars: number,
+  oppTurns: ReadonlyArray<number>,
 ): boolean {
   if (bars <= 0) return true;
   if (line.i1 - bars < 0) return false;
-  for (let j = line.i1 - 1; j >= line.i1 - bars; j--) {
+  // Backward: turns are appended in bar order, and the answer is the LAST one
+  // before i1. Scans only the turns between i1 and now, which is bounded by
+  // how far back the pairing window reaches, not by series length.
+  let turnIdx = -1;
+  for (let q = oppTurns.length - 1; q >= 0; q--) {
+    if (oppTurns[q] < line.i1) {
+      turnIdx = oppTurns[q];
+      break;
+    }
+  }
+  const stop = Math.max(line.i1 - bars, turnIdx);
+  const from =
+    line.i1 - stop >= Math.min(bars, MIN_BACK_WINDOW) ? stop : line.i1 - bars;
+  for (let j = line.i1 - 1; j >= from; j--) {
     const tolJ = atr[j];
     if (tolJ === null) continue;
     if (pierces(line, j, vals[j], violMult * tolJ)) return false;
@@ -692,6 +737,11 @@ function stepTrendlinesBar(
         if (!hasSwingReach(vals, k, side, cfg.minSwingReach)) continue;
         const pool = pools[side];
         const price = vals[k];
+        // Hoisted out of the candidate loop below: the ARRAY is the same for
+        // every candidate this bar, only the i1 each one searches back from
+        // differs. This is the side's own reversals: for a support line, the
+        // highs.
+        const oppTurns = turns[side === "resistance" ? "support" : "resistance"];
 
         // 2a. Test the new pivot against every existing line on this side.
         for (const line of lines) {
@@ -788,7 +838,16 @@ function stepTrendlinesBar(
           // is the only time either needs asking, and this one reads ONLY bars
           // before i1, so it is fixed the moment the line is defined and cannot
           // repaint.
-          if (!hasBackClearance(cand, vals, atr, cfg.violMult, cfg.minBackBars))
+          if (
+            !hasBackClearance(
+              cand,
+              vals,
+              atr,
+              cfg.violMult,
+              cfg.minBackBars,
+              oppTurns,
+            )
+          )
             continue;
           // Validate over (i1, c]: bars between the anchors AND the bars since
           // the second anchor, which are real bars that could already have
@@ -1844,13 +1903,20 @@ export const TL_HANDLE_RADIUS = 3;
 export const TL_BREAK_RADIUS = 2.5;
 export const TL_TOUCH_RADIUS = 2;
 export const TL_HANDLE_HIT = 8;
-/** The pivot mark: a caret pointing AWAY from price (up over a resistance
- * pivot's high, down under a support pivot's low), sitting this many pixels
- * clear of the wick with arms this long. A caret rather than a third circle —
+/** The pivot mark: an arrow pointing AT price (UP under a support pivot's low,
+ * DOWN over a resistance pivot's high), sitting this many pixels
+ * clear of the wick with arms this long. An arrow rather than a third circle —
  * the break dot and the touch ring already own that shape, and a mark that
- * belongs to no line must not read as one that does. */
-export const TL_PIVOT_GAP = 4;
-export const TL_PIVOT_ARM = 3;
+ * belongs to no line must not read as one that does.
+ *
+ * FILLED and this size because a 1px open caret 6px wide is not legible where
+ * it actually lands: a pivot mark sits on the swing extreme, which is exactly
+ * where the pane is busiest — the built-in high/low price mark and its label,
+ * an FVG band edge, the touch rings. A pale FVG band in the SAME hue swallowed
+ * an open teal caret entirely. Solid saturated fill separates from those
+ * washes; an outline cannot. */
+export const TL_PIVOT_GAP = 5;
+export const TL_PIVOT_ARM = 5;
 /** Handles stroke heavier than the 1px line they cap, so a 3px mark reads at
  * all. It is also what tells a handle stroke from a line stroke. */
 export const TL_HANDLE_STROKE = 1.5;
@@ -2321,14 +2387,21 @@ function paintPivotMarks(
   height: number,
 ): void {
   ctx.save();
-  ctx.lineWidth = 1;
   ctx.globalAlpha = 1;
   ctx.setLineDash([]);
+  // CLIP instead of clipSegmentToRect: the glyph is a filled triangle now, and
+  // clipping a fill edge-by-edge would need polygon clipping, not the segment
+  // clip the line strokes use. Same outcome — the part that fits is painted,
+  // nothing bleeds into the neighbouring pane.
+  ctx.beginPath();
+  ctx.rect(0, 0, right, height);
+  ctx.clip();
   for (const side of SIDES) {
-    ctx.strokeStyle =
+    ctx.fillStyle =
       side === "support" ? TL_SUPPORT_COLOR : TL_RESISTANCE_COLOR;
-    // Up over a high, down under a low: the caret points the way the swing
-    // turned, so a pane with both sides marked reads without a legend.
+    // Which side of the wick the mark sits on: under a low, over a high. The
+    // arrow then points back INTO the wick, so a pane with both sides marked
+    // reads without a legend.
     const dir = side === "support" ? 1 : -1;
     ctx.beginPath();
     for (const idx of pivots[side]) {
@@ -2348,18 +2421,20 @@ function paintPivotMarks(
       // on. Clipping (the same treatment the line strokes get) keeps the part
       // that fits and lets nothing bleed into the neighbouring pane.
       if (y < 0 || y > height) continue;
-      const yTip = y + dir * (TL_PIVOT_GAP + TL_PIVOT_ARM);
-      const yArm = y + dir * TL_PIVOT_GAP;
-      for (const arm of [-TL_PIVOT_ARM, TL_PIVOT_ARM]) {
-        const seg = clipSegmentToRect(x, yTip, x + arm, yArm, 0, 0, right, height);
-        if (!seg) continue;
-        ctx.moveTo(seg[0], seg[1]);
-        ctx.lineTo(seg[2], seg[3]);
-      }
+      // Tip TOWARDS price, base away from it: an arrow pointing AT the swing
+      // it marks — up at a low, down at a high. The mark still sits entirely
+      // clear of the wick (the tip starts TL_PIVOT_GAP out), so it never
+      // overdraws the candle it is pointing at.
+      const yTip = y + dir * TL_PIVOT_GAP;
+      const yBase = y + dir * (TL_PIVOT_GAP + TL_PIVOT_ARM);
+      ctx.moveTo(x, yTip);
+      ctx.lineTo(x - TL_PIVOT_ARM, yBase);
+      ctx.lineTo(x + TL_PIVOT_ARM, yBase);
+      ctx.closePath();
     }
-    // One path per side: the carets share a colour and a width, so the whole
-    // side is a single stroke call however many pivots are on screen.
-    ctx.stroke();
+    // One path per side: the marks share a colour, so the whole side is a
+    // single fill call however many pivots are on screen.
+    ctx.fill();
   }
   ctx.restore();
 }

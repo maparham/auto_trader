@@ -428,25 +428,25 @@ describe("hasBackClearance", () => {
   const line: TrendLine = { ...sup, i1: 4, p1: 90, i2: 12, p2: 95 };
 
   it("passes everything at zero", () => {
-    expect(hasBackClearance(line, vals, atr, 0.25, 0)).toBe(true);
+    expect(hasBackClearance(line, vals, atr, 0.25, 0, [])).toBe(true);
   });
 
   it("reads only the bars before the FIRST anchor", () => {
-    expect(hasBackClearance(line, vals, atr, 0.25, 4)).toBe(true);
+    expect(hasBackClearance(line, vals, atr, 0.25, 4, [])).toBe(true);
   });
 
   it("rejects rather than truncating when it runs off the start", () => {
     // Same as isPivotAt and hasSwingReach: a window that does not fit is not a
     // smaller window, and the gate must not go weakest where the sample is
     // thinnest.
-    expect(hasBackClearance(line, vals, atr, 0.25, 5)).toBe(false);
+    expect(hasBackClearance(line, vals, atr, 0.25, 5, [])).toBe(false);
   });
 
   it("stops at the first bar that pierces the back-projection", () => {
     const pierced = [...vals];
     pierced[2] = 80;
-    expect(hasBackClearance(line, pierced, atr, 0.25, 1)).toBe(true);
-    expect(hasBackClearance(line, pierced, atr, 0.25, 2)).toBe(false);
+    expect(hasBackClearance(line, pierced, atr, 0.25, 1, [])).toBe(true);
+    expect(hasBackClearance(line, pierced, atr, 0.25, 2, [])).toBe(false);
   });
 
   it("counts an untestable bar as surviving", () => {
@@ -456,7 +456,67 @@ describe("hasBackClearance", () => {
     pierced[2] = 80;
     const cold = [...atr];
     cold[2] = null;
-    expect(hasBackClearance(line, pierced, cold, 0.25, 4)).toBe(true);
+    expect(hasBackClearance(line, pierced, cold, 0.25, 4, [])).toBe(true);
+  });
+});
+
+describe("hasBackClearance stops at the reversal", () => {
+  // A support that falls away from a peak. Bars 0..19 climb into a top at 19,
+  // then a leg down: lows at 30 and 60 anchor a line whose backward projection
+  // rises through the old rally and pierces every bar of it.
+  const vals = Array.from({ length: 80 }, (_, i) =>
+    i <= 19 ? 60 + i * 2 : 98 - (i - 19) * 0.6,
+  );
+  const atr: Array<number | null> = Array.from({ length: 80 }, () => 1);
+  const line: TrendLine = {
+    ...sup,
+    i1: 30,
+    p1: vals[30],
+    i2: 60,
+    p2: vals[60],
+  };
+
+  it("rejects on the old move when nothing marks the reversal", () => {
+    // The behaviour before this change, still reachable when the compute floor
+    // means no turn was ever recorded that far back.
+    expect(hasBackClearance(line, vals, atr, 0.25, 25, [])).toBe(false);
+  });
+
+  it("passes once the top is known, on the leg's own bars alone", () => {
+    expect(hasBackClearance(line, vals, atr, 0.25, 25, [19])).toBe(true);
+  });
+
+  it("takes the LAST turn before i1, not the first", () => {
+    // An older top must not widen the window back into the previous move.
+    expect(hasBackClearance(line, vals, atr, 0.25, 25, [3, 19])).toBe(true);
+    // A turn at or after i1 is not this line's reversal and is ignored.
+    expect(hasBackClearance(line, vals, atr, 0.25, 25, [19, 30, 44])).toBe(true);
+  });
+
+  it("still rejects when the leg's own bars pierce", () => {
+    // The junk-line case: the reversal stop is not a free pass, only a shorter
+    // window. Nothing about bar 29 belongs to the previous move.
+    const pierced = [...vals];
+    pierced[29] = 40;
+    expect(hasBackClearance(line, pierced, atr, 0.25, 25, [19])).toBe(false);
+  });
+
+  it("falls back to the full walk when the turn is too close to i1", () => {
+    // Pivots alternate, so an opposite turn often sits a bar or two behind i1.
+    // Deciding on that window would DELETE lines the full walk clears, so the
+    // short window is discarded rather than trusted. Both calls below therefore
+    // give the same answer the strict walk gives.
+    const flat = Array.from({ length: 80 }, () => 100);
+    flat[30] = 90;
+    flat[60] = 95;
+    const clean: TrendLine = { ...sup, i1: 30, p1: 90, i2: 60, p2: 95 };
+    expect(hasBackClearance(clean, flat, atr, 0.25, 25, [28])).toBe(true);
+    expect(hasBackClearance(line, vals, atr, 0.25, 25, [28])).toBe(false);
+  });
+
+  it("never rescues a line that runs off the start of the series", () => {
+    const early: TrendLine = { ...sup, i1: 12, p1: vals[12], i2: 60, p2: vals[60] };
+    expect(hasBackClearance(early, vals, atr, 0.25, 25, [4])).toBe(false);
   });
 });
 
@@ -1616,6 +1676,7 @@ function record(
   // really is drawn heavier than the line it caps.
   const handleStrokes: Segment[] = [];
   let cur = { x: 0, y: 0 };
+  let start = { x: 0, y: 0 };
   let dashed = false;
   const ctx = {
     font: "",
@@ -1634,6 +1695,7 @@ function record(
     },
     moveTo: (x: number, y: number) => {
       cur = { x, y };
+      start = { x, y };
     },
     lineTo: (x: number, y: number) => {
       const seg = { x0: cur.x, y0: cur.y, x1: x, y1: y, dashed, alpha: ctx.globalAlpha };
@@ -1641,6 +1703,17 @@ function record(
       else segments.push(seg);
       cur = { x, y };
     },
+    // The pivot marks are FILLED triangles, so their closing edge exists only
+    // as a closePath. Recorded like any other edge, or a caret would read as
+    // two edges here and three on the canvas.
+    closePath: () => {
+      const seg = { x0: cur.x, y0: cur.y, x1: start.x, y1: start.y, dashed, alpha: ctx.globalAlpha };
+      if (ctx.lineWidth === TL_HANDLE_STROKE) handleStrokes.push(seg);
+      else segments.push(seg);
+      cur = { ...start };
+    },
+    rect: () => {},
+    clip: () => {},
     measureText: (t: string) => ({ width: t.length * 6 }),
     fillText: (text: string, x: number, y: number) => {
       tags.push({ text, x, y });
@@ -2755,8 +2828,9 @@ describe("TRENDLINES pivot marks", () => {
     const pv = passing(LINES);
     const total = pv.support.length + pv.resistance.length;
     expect(total).toBeGreaterThan(0);
-    // Two arms per caret, and nothing else changed: the lines are untouched.
-    expect(on).toHaveLength(off.length + 2 * total);
+    // Three edges per filled caret, and nothing else changed: the lines are
+    // untouched.
+    expect(on).toHaveLength(off.length + 3 * total);
   });
 
   it("marks the pivots even where no line survived to be drawn", () => {
@@ -2766,29 +2840,31 @@ describe("TRENDLINES pivot marks", () => {
     const pv = passing(NO_LINES);
     const total = pv.support.length + pv.resistance.length;
     expect(total).toBeGreaterThan(0);
-    expect(paint(NO_LINES, "default")).toHaveLength(2 * total);
+    expect(paint(NO_LINES, "default")).toHaveLength(3 * total);
   });
 
-  it("points the caret away from price, clear of the wick", () => {
+  it("points the arrow at price, clear of the wick", () => {
     const marks = paint(NO_LINES, true);
     const pv = passing(NO_LINES);
-    // Each arm is drawn from the tip outwards, so it clips independently at
-    // the pane edge.
+    // A filled triangle: tip TOWARDS price and TL_PIVOT_GAP clear of the wick,
+    // base the width of both arms further out. Three edges, in path order.
     const caret = (idx: number, price: number, dir: 1 | -1) => {
       const x = view.toX(idx);
-      const yArm = view.toY(price) + dir * TL_PIVOT_GAP;
-      const yTip = view.toY(price) + dir * (TL_PIVOT_GAP + TL_PIVOT_ARM);
-      return [-TL_PIVOT_ARM, TL_PIVOT_ARM].map((arm) => ({
-        x0: x,
-        y0: yTip,
-        x1: x + arm,
-        y1: yArm,
-        dashed: false,
-        alpha: 1,
-      }));
+      const yTip = view.toY(price) + dir * TL_PIVOT_GAP;
+      const yBase = view.toY(price) + dir * (TL_PIVOT_GAP + TL_PIVOT_ARM);
+      const pts = [
+        { x, y: yTip },
+        { x: x - TL_PIVOT_ARM, y: yBase },
+        { x: x + TL_PIVOT_ARM, y: yBase },
+      ];
+      return pts.map((p, i) => {
+        const q = pts[(i + 1) % pts.length];
+        return { x0: p.x, y0: p.y, x1: q.x, y1: q.y, dashed: false, alpha: 1 };
+      });
     };
-    // Down under a low, up over a high. Measured against the PIVOT's own
-    // price, which is the swing's extreme, not the line's projection.
+    // UP under a low, DOWN over a high — the arrow points at the swing.
+    // Measured against the PIVOT's own price, which is the swing's extreme,
+    // not the line's projection.
     const sup = pv.support[0];
     const res = pv.resistance[0];
     for (const arm of caret(sup, pv.lows[sup], 1))
