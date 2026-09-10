@@ -2,7 +2,7 @@
 // PositionLines reconcile + tradeLineSpecs (pending-merge, labels, draggability).
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { PositionLines, tradeLineSpecs, bracketLabels, restingLineEndX, DRAFT_LABEL_X_FALLBACK, type LineSpec } from "./positionLines";
+import { PositionLines, tradeLineSpecs, bracketLabels, tradeLineSpanX, DRAFT_LABEL_X_FALLBACK, type LineSpec } from "./positionLines";
 import type { TradeView } from "./trading";
 
 interface Call {
@@ -35,7 +35,7 @@ function fakeChart(bars: { timestamp: number }[] = []) {
 }
 
 function spec(over: Partial<LineSpec> = {}): LineSpec {
-  return { key: "k1", level: 100, color: "#000", label: "L", draggable: false, restKind: "full", ...over };
+  return { key: "k1", level: 100, color: "#000", label: "L", draggable: false, ...over };
 }
 
 function trade(over: Partial<TradeView> = {}): TradeView {
@@ -214,6 +214,12 @@ describe("tradeLineSpecs", () => {
     expect(specs.map((s) => s.key)).toEqual(["draft:price", "draft:stop", "draft:tp"]);
     expect(specs.every((s) => s.draggable)).toBe(true);
     expect(specs[0].label).toBe("Buy limit 1 @ 99.00");
+    // Every draft line must be EMPHASIZED, or tradeLineSpanX returns null and the
+    // overlay draws nothing: the order you are staging would be invisible.
+    expect(specs.every((s) => s.emphasized === true)).toBe(true);
+    expect(
+      specs.every((s) => tradeLineSpanX({ emphasized: s.emphasized ?? false, width: 800 })),
+    ).toBe(true);
   });
 
   // A staged draft is a REAL broker order waiting on Submit. Drawn on a
@@ -442,40 +448,13 @@ describe("tradeLineSpecs", () => {
     expect(specs.find((s) => s.key === "D2:price")?.selected).toBe(false);
   });
 
-  it("a position entry line is bar-anchored to its open time; SL/TP are stubs", () => {
-    const specs = tradeLineSpecs({
-      ...base,
-      trades: [trade({ openedAt: 1_700_000_000_000, stop: 95, takeProfit: 105 })],
-    });
-    const price = specs.find((s) => s.key === "D1:price");
-    expect(price?.restKind).toBe("bar");
-    expect(price?.entryTs).toBe(1_700_000_000_000);
-    expect(specs.find((s) => s.key === "D1:stop")?.restKind).toBe("stub");
-    expect(specs.find((s) => s.key === "D1:tp")?.restKind).toBe("stub");
-  });
-
-  it("a position with no open time falls back to a stub entry (can't anchor)", () => {
-    const specs = tradeLineSpecs({ ...base, trades: [trade({ openedAt: null })] });
-    expect(specs[0].restKind).toBe("stub");
-    expect(specs[0].entryTs).toBeUndefined();
-  });
-
-  it("a resting order's entry spans the pane (full), not bar-anchored", () => {
-    const specs = tradeLineSpecs({
-      ...base,
-      trades: [trade({ kind: "order", openedAt: 1_700_000_000_000 })],
-    });
-    expect(specs[0].restKind).toBe("full");
-    expect(specs[0].entryTs).toBeUndefined();
-  });
-
-  it("draft lines always span the pane (full)", () => {
+  it("a draft emits an entry, a stop and a target line", () => {
     const specs = tradeLineSpecs({
       ...base,
       trades: [],
       draft: { epic: "EURUSD", side: "buy", quantity: 1, type: "limit", price: 99, stop: 98, takeProfit: 101, expiresAt: null },
     });
-    expect(specs.every((s) => s.restKind === "full")).toBe(true);
+    expect(specs.map((s) => s.level)).toEqual([99, 98, 101]);
   });
 
   it("emphasized is set by hover, select, or an active drag", () => {
@@ -499,7 +478,6 @@ describe("tradeLineSpecs", () => {
     const merged = specs[0];
     expect(merged.color).toBe("#f23645"); // STOP_COLOR — the stop is the live constraint
     expect(merged.draggable).toBe(false); // display-only; un-breakeven via the form
-    expect(merged.restKind).toBe("bar"); // keeps the entry-candle anchor + dot
     expect(merged.label).toBe("Long 2 @ 100.00 · BE");
   });
 
@@ -541,7 +519,6 @@ describe("tradeLineSpecs", () => {
     const merged = specs[0];
     expect(merged.color).toBe("#089981"); // TP_COLOR — the target is the merged level
     expect(merged.draggable).toBe(false); // display-only; un-breakeven via the form
-    expect(merged.restKind).toBe("bar"); // keeps the entry-candle anchor + dot
     expect(merged.label).toBe("Long 2 @ 100.00 · BE");
   });
 
@@ -575,33 +552,23 @@ describe("tradeLineSpecs", () => {
   });
 });
 
-describe("restingLineEndX", () => {
+// A trade line is chart ink for a trade you are ENGAGED with: hovered, selected,
+// or being dragged. At rest the axis-docked pill (chart/TradePills.tsx) says the
+// level and the entry glyph (lib/tradeMarkers.ts) says where the position opened,
+// so the line itself is redundant clutter and is not drawn at all.
+describe("tradeLineSpanX", () => {
   const W = 1000;
 
-  it("spans the pane when emphasized or restKind full", () => {
-    expect(restingLineEndX({ restKind: "bar", emphasized: true, entryX: 400, width: W })).toEqual({ endX: W, dotX: null });
-    expect(restingLineEndX({ restKind: "full", emphasized: false, entryX: null, width: W })).toEqual({ endX: W, dotX: null });
+  it("spans the pane while the trade is engaged", () => {
+    expect(tradeLineSpanX({ emphasized: true, width: W })).toEqual({ startX: 0, endX: W });
   });
 
-  it("stubs a stub line, no dot", () => {
-    expect(restingLineEndX({ restKind: "stub", emphasized: false, entryX: null, width: W })).toEqual({ endX: 136, dotX: null });
+  it("draws nothing at rest", () => {
+    expect(tradeLineSpanX({ emphasized: false, width: W })).toBeNull();
   });
 
-  it("ends a bar line at its entry candle with a dot when on-body", () => {
-    expect(restingLineEndX({ restKind: "bar", emphasized: false, entryX: 400, width: W })).toEqual({ endX: 400, dotX: 400 });
-  });
-
-  it("degrades to a stub (no dot) when the entry candle is off the left edge", () => {
-    expect(restingLineEndX({ restKind: "bar", emphasized: false, entryX: -50, width: W })).toEqual({ endX: 136, dotX: null });
-  });
-
-  it("stays full-width (no dot) when the entry candle is off the right edge", () => {
-    // Viewing history from before the entry: everything visible predates it.
-    expect(restingLineEndX({ restKind: "bar", emphasized: false, entryX: 1200, width: W })).toEqual({ endX: W, dotX: null });
-  });
-
-  it("falls back to a stub when a bar line has no resolvable entry x", () => {
-    expect(restingLineEndX({ restKind: "bar", emphasized: false, entryX: null, width: W })).toEqual({ endX: 136, dotX: null });
+  it("draws nothing at rest even on a degenerate pane", () => {
+    expect(tradeLineSpanX({ emphasized: false, width: 0 })).toBeNull();
   });
 });
 
@@ -641,43 +608,46 @@ describe("bracketLabels", () => {
   });
 });
 
-describe("PositionLines bar anchoring", () => {
-  const barSpec = (over: Partial<LineSpec> = {}) =>
-    spec({ restKind: "bar", entryTs: 1_000, ...over });
-
-  it("adds a second, bar-snapped point for a bar-anchored spec", () => {
-    // Bars at 900 / 1000 / 1100; entry at 1050 sits in the bar that CONTAINS it (1000),
-    // matching how the entry marker anchors (barIndexForTs, not nearest).
+// A trade line is one value-only point and nothing else. It used to carry a second,
+// bar-snapped point so a resting line could stop at its entry candle; that truncation
+// went away when lines became engaged-only, and the per-render scan over every loaded
+// candle that fed it went with it. Pinned here so neither creeps back.
+describe("PositionLines point geometry", () => {
+  it("draws one value-only point, with no bar anchor", () => {
     const chart = fakeChart([{ timestamp: 900 }, { timestamp: 1000 }, { timestamp: 1100 }]);
     const lines = new PositionLines(chart.chart, 5);
-    lines.render([barSpec({ entryTs: 1050 })]);
+    lines.render([spec()]);
     const create = chart.calls.find((c) => c.fn === "create");
-    const arg = create?.arg as { points: { value?: number; timestamp?: number }[]; extendData: { hasBar: boolean } };
-    expect(arg.points).toHaveLength(2);
-    expect(arg.points[1].timestamp).toBe(1000);
-    expect(arg.extendData.hasBar).toBe(true);
-  });
-
-  it("falls back to a single point (stub) when the entry predates the loaded window", () => {
-    const chart = fakeChart([{ timestamp: 1000 }, { timestamp: 1100 }]);
-    const lines = new PositionLines(chart.chart, 5);
-    lines.render([barSpec({ entryTs: 500 })]); // older than oldest loaded bar (1000)
-    const create = chart.calls.find((c) => c.fn === "create");
-    const arg = create?.arg as { points: unknown[]; extendData: { hasBar: boolean } };
+    const arg = create?.arg as { points: { value?: number; timestamp?: number }[] };
     expect(arg.points).toHaveLength(1);
-    expect(arg.extendData.hasBar).toBe(false);
+    expect(arg.points[0]).toEqual({ value: 100 });
   });
 
-  it("re-reconciles when the snapped entry bar changes (scroll pages it in)", () => {
+  it("never reads the candle list to place a line", () => {
+    const chart = fakeChart([{ timestamp: 900 }, { timestamp: 1000 }]);
+    let reads = 0;
+    const bars = [{ timestamp: 900 }, { timestamp: 1000 }];
+    (chart.chart as unknown as { getDataList: () => unknown }).getDataList = () => {
+      reads += 1;
+      return bars;
+    };
+    const lines = new PositionLines(chart.chart, 5);
+    lines.render([spec()]);
+    expect(reads).toBe(0);
+  });
+
+  it("does not re-reconcile when the candle window scrolls under an unchanged line", () => {
     const chart = fakeChart([{ timestamp: 1000 }, { timestamp: 1100 }]);
     const lines = new PositionLines(chart.chart, 5);
-    lines.render([barSpec({ entryTs: 500 })]); // off-window → stub
+    lines.render([spec()]);
     chart.calls.length = 0;
-    // Same spec, but now the entry bar is loaded → the sig must change and override.
-    const chart2Bars = [{ timestamp: 400 }, { timestamp: 500 }, { timestamp: 1000 }];
-    (chart.chart as unknown as { getDataList: () => unknown }).getDataList = () => chart2Bars;
-    lines.render([barSpec({ entryTs: 500 })]);
-    expect(chart.calls.filter((c) => c.fn === "override")).toHaveLength(1);
+    (chart.chart as unknown as { getDataList: () => unknown }).getDataList = () => [
+      { timestamp: 400 },
+      { timestamp: 500 },
+      { timestamp: 1000 },
+    ];
+    lines.render([spec()]);
+    expect(chart.calls.filter((c) => c.fn === "override")).toHaveLength(0);
   });
 });
 

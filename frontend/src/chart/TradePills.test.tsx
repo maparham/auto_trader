@@ -192,6 +192,10 @@ describe("TradePills overlap vertical spread", () => {
   });
 
   it("shows a leader tick from the pill's edge to its line, only when the line clears the pill body", () => {
+    // jsdom has no layout, so the faces report width 0 and the tick would fail closed
+    // (see the placement test below) — give them a width so the display logic runs.
+    const spy = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(90);
+    try {
     // Four pills on one line → rows 64/88/112/136 around mean 100. The outer rows'
     // lines fall outside their 22px bodies (tick shown, edge→line); the inner rows
     // still cover the line (no tick). A far pill is undisplaced (no tick).
@@ -213,6 +217,33 @@ describe("TradePills overlap vertical spread", () => {
     expect(leaders[3].style.top).toBe("100px");
     expect(leaders[3].style.height).toBe("25px");
     expect(leaders[4].style.display).toBe("none"); // undisplaced pill
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("stands the leader tick clear of the pill it belongs to, not under it", () => {
+    // The pills dock right-edge flush against the axis and are opaque, so a tick
+    // parked AT the axis is hidden behind its own pill and ties nothing to
+    // anything. It belongs just outside the pill's left edge — which means
+    // measuring the face, since a compact and an expanded face differ in width.
+    const spy = vi
+      .spyOn(HTMLElement.prototype, "offsetWidth", "get")
+      .mockReturnValue(90);
+    try {
+      const container = cascadeRender([
+        { ...pill("A", "price"), y: 100 },
+        { ...pill("B", "price"), y: 100 },
+        { ...pill("C", "price"), y: 100 },
+        { ...pill("D", "price"), y: 100 },
+      ], { hoveredPillKey: "A:price", axisWidth: 60 });
+      const leaders = Array.from(container.querySelectorAll<HTMLElement>(".tp-leader"));
+      const shown = leaders.filter((l) => l.style.display !== "none");
+      expect(shown.length).toBeGreaterThan(0);
+      for (const l of shown) expect(l.style.right).toBe("152px"); // 60 axis + 90 face + 2
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("merges a neighbour that a spread column would collide with", () => {

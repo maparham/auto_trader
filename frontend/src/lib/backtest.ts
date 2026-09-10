@@ -22,6 +22,7 @@ import {
 } from "klinecharts";
 import { runBacktest, runExprBacktest, type BacktestRequest, type ExprBacktestRequest, type Marker } from "../api";
 import { toast } from "./notify";
+import { chartColors } from "../theme";
 import { applyVisibleRangeKeepStart, scrollTsToCenter } from "./chartSync";
 import {
   backtestResultSignal,
@@ -406,6 +407,70 @@ function asMarkerExtra(v: unknown): MarkerExtra {
   return (typeof v === "object" && v !== null ? v : { label: "", win: null }) as MarkerExtra;
 }
 
+/** Gap between the candle's extreme and the glyph's apex, so it reads off the wick. */
+export const LIVE_GLYPH_GAP = 6;
+/** Apex-to-base height of the arrow. */
+export const LIVE_GLYPH_H = 11;
+/** Half the arrow's base width. */
+export const LIVE_GLYPH_HALF_W = 6;
+/** Outline weight — the glyph sits ON a candle, and a same-hued body against a
+ *  same-hued candle disappears; the border is what keeps its silhouette. */
+const LIVE_GLYPH_BORDER = 1.5;
+
+/** The chart's backdrop, which is what the glyph's outline cuts it out of. Reads the
+ *  custom `--chart-bg` wash when one is set (applyThemeToDocument writes it INLINE, so
+ *  this stays a property read — no getComputedStyle on a per-frame path) and falls back
+ *  to the theme's own background. A fixed colour would separate the glyph in one theme
+ *  and do nothing in the other. */
+function chartBackdrop(): string {
+  const root = document.documentElement;
+  const custom = root.style.getPropertyValue("--chart-bg").trim();
+  if (custom) return custom;
+  return chartColors[root.dataset.theme === "light" ? "light" : "dark"].bg;
+}
+
+/** The always-on live trade glyph: an arrow whose APEX points at its candle, plus a
+ *  transparent finger-sized hit target over it (klinecharts' hit test on a small
+ *  polygon is unreliable — same trick as the signal glyph).
+ *
+ *  Since trade lines are drawn only while a trade is engaged, this arrow is the sole
+ *  standing mark of where a position opened, so it is sized and outlined to be read
+ *  at a glance rather than to stay discreet. `dir` is +1 below the candle, -1 above.
+ */
+export function liveMarkerGlyph(o: {
+  x: number;
+  y: number;
+  dir: 1 | -1;
+  color: string;
+}): OverlayFigure[] {
+  const { x, y, dir, color } = o;
+  const tip = y + dir * LIVE_GLYPH_GAP;
+  const base = tip + dir * LIVE_GLYPH_H;
+  return [
+    {
+      type: "circle",
+      attrs: { x, y: tip + dir * (LIVE_GLYPH_H / 2), r: LIVE_GLYPH_H },
+      styles: { style: 'fill', color: "rgba(0,0,0,0)" },
+    },
+    {
+      type: "polygon",
+      attrs: {
+        coordinates: [
+          { x, y: tip },
+          { x: x - LIVE_GLYPH_HALF_W, y: base },
+          { x: x + LIVE_GLYPH_HALF_W, y: base },
+        ],
+      },
+      styles: {
+        style: 'stroke_fill',
+        color,
+        borderColor: chartBackdrop(),
+        borderSize: LIVE_GLYPH_BORDER,
+      },
+    },
+  ];
+}
+
 const markerOverlay: OverlayTemplate = {
   name: MARKER_OVERLAY,
   totalStep: 2,
@@ -430,26 +495,7 @@ const markerOverlay: OverlayTemplate = {
       // klinecharts' hit test on a tiny polygon is unreliable (same trick as the
       // signal glyph). Colour: entry = neutral blue, exit = win/loss.
       const glyphColor = win == null ? ACCENT_COLOR : win ? BUY_COLOR : SELL_COLOR;
-      const tip = coordinates[0].y + dir * 7; // 7px gap from the wick
-      const base = tip + dir * 8;
-      return [
-        {
-          type: "circle",
-          attrs: { x: startX, y: tip + dir * 4, r: 9 },
-          styles: { style: 'fill', color: "rgba(0,0,0,0)" },
-        },
-        {
-          type: "polygon",
-          attrs: {
-            coordinates: [
-              { x: startX, y: tip },
-              { x: startX - 4, y: base },
-              { x: startX + 4, y: base },
-            ],
-          },
-          styles: { style: 'fill', color: glyphColor },
-        },
-      ];
+      return liveMarkerGlyph({ x: startX, y: coordinates[0].y, dir, color: glyphColor });
     }
 
     // Backtest fills: a compact arrow + always-on label pill hugging the fill.

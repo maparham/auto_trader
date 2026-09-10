@@ -55,8 +55,6 @@ export type TradeLinePx = {
   level: number;
   draggable: boolean;
   y: number | undefined;
-  restKind: "bar" | "stub" | "full";
-  entryTs: number | undefined;
   emphasized: boolean;
 };
 

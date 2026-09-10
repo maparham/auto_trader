@@ -167,7 +167,7 @@ import {
 import GoLivePill from "./chart/GoLivePill";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
 import { refreshMtfIndicators, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
-import { PositionLines, tradeLineSpecs, DRAFT_ID, restingLineEndX } from "./lib/positionLines";
+import { PositionLines, tradeLineSpecs, DRAFT_ID, tradeLineSpanX } from "./lib/positionLines";
 import {
   TradeMarkers,
   entryMarkerSpecs,
@@ -2088,8 +2088,6 @@ export default function ChartCore({
           y: first(
             c.convertToPixel([{ value: s.level }], { paneId: "candle_pane", absolute: true }),
           ).y,
-          restKind: s.restKind,
-          entryTs: s.entryTs,
           emphasized: s.emphasized ?? false,
         };
       });
@@ -2118,21 +2116,14 @@ export default function ChartCore({
       if (!c) return null;
       const mainW = c.getSize("candle_pane", 'main')?.width ?? Infinity;
       if (x > mainW) return null;
-      const bars = c.getDataList() ?? [];
-      const oldestTs = bars.length ? bars[0].timestamp : null;
       let best: { id: string; field: TradeLineField; d: number } | null = null;
       for (const t of tradeLinePixels()) {
         if (t.id === DRAFT_ID || t.y == null) continue;
         const d = Math.abs(t.y - y);
         if (d > HIT_TOLERANCE_PX || (best && d >= best.d)) continue;
-        // Entry-candle x (only for a bar line whose entry is within the loaded window —
-        // mirrors PositionLines.render's off-window→stub fallback).
-        const entryX =
-          t.restKind === "bar" && t.entryTs != null && oldestTs != null && t.entryTs >= oldestTs
-            ? first(c.convertToPixel([{ timestamp: t.entryTs }], { paneId: "candle_pane", absolute: true })).x ?? null
-            : null;
-        const { endX } = restingLineEndX({ restKind: t.restKind, emphasized: t.emphasized, entryX, width: mainW });
-        if (x > endX + HIT_TOLERANCE_PX) continue; // past the drawn line → not a hit
+        // No line is drawn for a trade at rest, so there is nothing to click there
+        // either — the pill is the resting affordance (see tradeLineSpanX).
+        if (!tradeLineSpanX({ emphasized: t.emphasized, width: mainW })) continue;
         best = { id: t.id, field: t.field, d };
       }
       return best ? { id: best.id, field: best.field } : null;

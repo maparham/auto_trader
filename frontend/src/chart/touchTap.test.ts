@@ -5,6 +5,7 @@
 // those gestures counts as a tap rather than a pan, a pinch or a long press.
 import { describe, it, expect } from "vitest";
 import {
+  type TapState,
   TAP_MOVE_PX,
   TAP_MS,
   tapStart,
@@ -25,19 +26,19 @@ describe("touchTap gesture predicate", () => {
   });
 
   it("rejects a drag: a pan past the slop budget is not a tap", () => {
-    let s = tapStart(100, 200, 1_000);
+    let s: TapState | null = tapStart(100, 200, 1_000);
     s = tapMove(s, 100 + TAP_MOVE_PX + 1, 200);
     expect(isTap(s, 1_100)).toBe(false);
   });
 
   it("tolerates the finger wobble inside the slop budget", () => {
-    let s = tapStart(100, 200, 1_000);
+    let s: TapState | null = tapStart(100, 200, 1_000);
     s = tapMove(s, 100 + TAP_MOVE_PX - 1, 200);
     expect(isTap(s, 1_100)).toBe(true);
   });
 
   it("measures slop on both axes, not just x", () => {
-    let s = tapStart(100, 200, 1_000);
+    let s: TapState | null = tapStart(100, 200, 1_000);
     s = tapMove(s, 100, 200 + TAP_MOVE_PX + 1);
     expect(isTap(s, 1_100)).toBe(false);
   });
@@ -48,13 +49,13 @@ describe("touchTap gesture predicate", () => {
   });
 
   it("rejects a pinch: a second finger cancels the gesture outright", () => {
-    let s = tapStart(100, 200, 1_000);
+    let s: TapState | null = tapStart(100, 200, 1_000);
     s = tapSecondFinger(s);
     expect(isTap(s, 1_050)).toBe(false);
   });
 
   it("stays cancelled after the second finger lifts and the hand stills", () => {
-    let s = tapStart(100, 200, 1_000);
+    let s: TapState | null = tapStart(100, 200, 1_000);
     s = tapSecondFinger(s);
     s = tapMove(s, 100, 200);
     expect(isTap(s, 1_050)).toBe(false);

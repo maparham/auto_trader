@@ -6108,9 +6108,10 @@ span.bt-leg-short { color: var(--neg); }
    inside .chart-wrap, not just the canvases. The cell's axis chrome lives at
    right: 0 in the same stacking context and would otherwise paint the LIVE PRICE
    on top of the curtain — exactly the lookahead this hides: .ba-tag 44,
-   .alert-tag 45/48, .alert-pill + .tp-leader 46, .price-tag 47, .trade-pill
-   47/48/49, .axis-plus 49, and .chart-legend 50, which is the highest. 55 clears
-   50; .replay-start-panel then has to clear 55 (it is at 60) or the panel
+   .alert-tag 45, .alert-pill + .tp-leader 46, .trade-pill 47/48/49,
+   .price-tag + .chart-legend 50, the SELECTED .alert-tag/.alert-pill 51, and
+   .axis-plus 52, which is the highest. 55 clears 52;
+   .replay-start-panel then has to clear 55 (it is at 60) or the panel
    vanishes under the curtain whenever the pointer sits left of centre. */
 .replay-curtain {
   position: absolute; top: 0; right: 0; bottom: 0; z-index: 55;

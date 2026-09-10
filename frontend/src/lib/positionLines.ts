@@ -20,7 +20,6 @@ import type {
 import { tradeLabel, isBreakeven, isBreakevenTarget, type TradeView } from "./trading";
 import { isReplayTradeId } from "./replayLedger";
 import type { PendingEdit, DraftOrder } from "./signals";
-import { barIndexForTs } from "./backtest";
 
 export interface LineSpec {
   key: string; // stable per line, e.g. `${tradeId}:stop`
@@ -38,13 +37,6 @@ export interface LineSpec {
   // Drawn click-selected (solid, sticky) — a stronger emphasis than hover. When both
   // are true, selected wins.
   selected?: boolean;
-  // How far the line extends at REST (declutter): "bar" ends it at the entry candle
-  // (needs `entryTs`), "stub" tucks it under the left pill, "full" spans the pane.
-  // Any emphasis (hover/select/drag) overrides this to full width regardless.
-  restKind: "bar" | "stub" | "full";
-  // Raw entry time (ms) for a "bar" line — the drawer snaps it to the containing
-  // candle and truncates the resting line there. Ignored for stub/full.
-  entryTs?: number;
   // Pill anchor x (px from the pane's left edge); unset → far-left (6). Draft lines
   // set it (chartGeometry draftLabelX) so their pills sit with the bracket spine,
   // which now tracks the right price axis rather than a fixed left column (real
@@ -185,11 +177,6 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         highlight,
         selected,
         emphasized,
-        // A filled position's entry line ends at its entry candle (declutter); a
-        // resting order's entry is a live level you watch price approach, so it
-        // spans the pane. A position with no open time can't be anchored → stub.
-        restKind: t.kind === "order" ? "full" : t.openedAt != null ? "bar" : "stub",
-        entryTs: t.kind === "position" ? t.openedAt ?? undefined : undefined,
         onDragEnd: (lvl) => o.onDrag(t.id, "price", lvl),
       });
     }
@@ -203,7 +190,6 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         highlight,
         selected,
         emphasized,
-        restKind: "stub",
         onDragEnd: (lvl) => o.onDrag(t.id, "stop", lvl),
       });
     }
@@ -217,7 +203,6 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         highlight,
         selected,
         emphasized,
-        restKind: "stub",
         onDragEnd: (lvl) => o.onDrag(t.id, "takeProfit", lvl),
       });
     }
@@ -246,7 +231,12 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         side: d.side,
         label: `${verb} limit ${d.quantity} @ ${fmt(d.price)}`,
         draggable: true,
-        restKind: "full",
+        // ALWAYS emphasized: the declutter rule (draw only what you are engaged
+        // with) is about resting positions, which have an axis pill and an entry
+        // glyph to speak for them. A draft has neither — it is the order you are
+        // currently placing, and its canvas label is the only place its levels
+        // are stated. Unemphasized it would render nothing at all.
+        emphasized: true,
         labelX: o.draftLabelX ?? DRAFT_LABEL_X_FALLBACK,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "price", lvl),
       });
@@ -258,7 +248,12 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         color: STOP_COLOR,
         label: `SL ${fmt(d.stop)}`,
         draggable: true,
-        restKind: "full",
+        // ALWAYS emphasized: the declutter rule (draw only what you are engaged
+        // with) is about resting positions, which have an axis pill and an entry
+        // glyph to speak for them. A draft has neither — it is the order you are
+        // currently placing, and its canvas label is the only place its levels
+        // are stated. Unemphasized it would render nothing at all.
+        emphasized: true,
         labelX: o.draftLabelX ?? DRAFT_LABEL_X_FALLBACK,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "stop", lvl),
       });
@@ -270,7 +265,12 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         color: TP_COLOR,
         label: `TP ${fmt(d.takeProfit)}`,
         draggable: true,
-        restKind: "full",
+        // ALWAYS emphasized: the declutter rule (draw only what you are engaged
+        // with) is about resting positions, which have an axis pill and an entry
+        // glyph to speak for them. A draft has neither — it is the order you are
+        // currently placing, and its canvas label is the only place its levels
+        // are stated. Unemphasized it would render nothing at all.
+        emphasized: true,
         labelX: o.draftLabelX ?? DRAFT_LABEL_X_FALLBACK,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "takeProfit", lvl),
       });
@@ -285,13 +285,8 @@ interface LineExtra {
   side?: "buy" | "sell";
   highlight?: boolean;
   selected?: boolean;
-  restKind?: "bar" | "stub" | "full";
   emphasized?: boolean;
   labelX?: number;
-  // Whether the overlay carries a second, bar-anchored point (its x = the entry
-  // candle). Set alongside restKind "bar"; when absent the "bar" line falls back to
-  // a stub (entry candle not resolvable — e.g. older than the loaded window).
-  hasBar?: boolean;
 }
 
 function asLineExtra(v: unknown): LineExtra {
@@ -300,38 +295,27 @@ function asLineExtra(v: unknown): LineExtra {
     : { label: "", color: "#888", highlight: false, selected: false };
 }
 
-// Resting lines stop here (px from the pane's left edge), tucked UNDER the always-on
-// DOM pill (anchored at ChartCore TRADE_PILL_LEFT=106) so no ink pokes into the chart
-// body. Erring short of a pill's right edge is safe — the opaque pill hides the stub;
-// overshooting past it would re-introduce the clutter we're removing.
-const RESTING_STUB_X = 136;
-
-/** Where a trade line stops (px from the pane's left edge) and, for a bar-anchored
- *  entry, where its terminal dot sits. The SINGLE source of the resting extent, shared
- *  by the canvas overlay (what's drawn) and ChartCore's click hit-test (what's
- *  clickable) so the two can't drift. Emphasis and "full" lines span the pane; a "stub"
- *  tucks under the left pill; a "bar" line ends at its entry candle (`entryX`), clamped
- *  to [stub, width] so an entry scrolled off-left degrades to a stub and one off-right
- *  (viewing history before the entry) stays full — with a dot only when the candle is
- *  truly on-body. */
-export function restingLineEndX(o: {
-  restKind: "bar" | "stub" | "full";
+/** The span a trade line occupies (px from the pane's left edge), or null when it
+ *  must not be drawn at all. The SINGLE source of that decision, shared by the canvas
+ *  overlay (what's drawn) and ChartCore's click hit-test (what's clickable) so the two
+ *  can't drift.
+ *
+ *  A line is ink for a trade you are ENGAGED with — hovered, click-selected, or being
+ *  dragged. At rest there is nothing to draw: the axis-docked pill already states the
+ *  level and the entry glyph already marks the candle the position opened on, so a
+ *  line per level would be pure clutter across the chart body. Engaged, it spans the
+ *  pane so the pill's row reads all the way across. */
+export function tradeLineSpanX(o: {
   emphasized: boolean;
-  entryX: number | null; // entry-candle x; null if not bar-anchored or unresolvable
   width: number;
-}): { endX: number; dotX: number | null } {
-  const { restKind, emphasized, entryX, width } = o;
-  if (emphasized || restKind === "full") return { endX: width, dotX: null };
-  if (restKind === "bar" && entryX != null && Number.isFinite(entryX)) {
-    const endX = Math.min(Math.max(entryX, RESTING_STUB_X), width);
-    const dotX = entryX >= RESTING_STUB_X && entryX <= width ? entryX : null;
-    return { endX, dotX };
-  }
-  return { endX: Math.min(RESTING_STUB_X, width), dotX: null };
+}): { startX: number; endX: number } | null {
+  return o.emphasized ? { startX: 0, endX: o.width } : null;
 }
 
-// One-point horizontal line spanning the chart width, with a left-anchored label
-// just above it. The single point fixes the y (price); x runs edge to edge.
+// One-point horizontal line spanning the chart width, drawn only while its trade is
+// engaged (tradeLineSpanX). The single point fixes the y (price); x runs edge to edge.
+// Only a DRAFT carries a label here — real trades pass hideTradeLabels and let their
+// axis-docked pill say it (chart/TradePills.tsx).
 const tradeLine: OverlayTemplate = {
   name: "tradeLine",
   totalStep: 2,
@@ -355,22 +339,14 @@ const tradeLine: OverlayTemplate = {
     // selected/dragged or steal clicks from the chart underneath.
     const grabbable = overlay.lock === false;
     const width = bounding.width;
-    // Resting extent (declutter). Emphasis (hover/select/drag) and "full" lines span
-    // the pane; a "stub" tucks under the left pill; a "bar" line ends at its entry
-    // candle — with a terminal dot when that candle is actually in the chart body.
-    // The entry x can land negative (scrolled off left) or past the pane (viewing
-    // history before the entry); clamp to [stub, width] so it degrades to a stub or
-    // full segment at the edges, and only dot when the candle is truly on-body.
-    const { endX, dotX } = restingLineEndX({
-      restKind: extra.restKind ?? "full",
-      emphasized: extra.emphasized ?? false,
-      entryX: extra.hasBar ? coordinates[1]?.x ?? null : null,
-      width,
-    });
+    // Declutter: nothing is drawn unless the trade is engaged (see tradeLineSpanX).
+    const span = tradeLineSpanX({ emphasized: extra.emphasized ?? false, width });
+    if (!span) return [];
+    const { startX, endX } = span;
     const figures: OverlayFigure[] = [
       {
         type: "line",
-        attrs: { coordinates: [{ x: 0, y }, { x: endX, y }] },
+        attrs: { coordinates: [{ x: startX, y }, { x: endX, y }] },
         // Emphasised (hovered OR selected) lines stay dashed but draw thicker (2px)
         // so the row↔line link reads at a glance; the rest are thin (1px). Selection
         // looks identical to hover on the chart — it just persists after the cursor
@@ -384,16 +360,6 @@ const tradeLine: OverlayTemplate = {
         ignoreEvent: !grabbable,
       },
     ];
-    // Terminal dot marking the entry candle — reads the truncation as intentional
-    // ("the line ends where I got in") rather than a clipped/broken line.
-    if (dotX != null) {
-      figures.push({
-        type: "circle",
-        attrs: { x: dotX, y, r: 2.5 },
-        styles: { style: "fill", color: extra.color },
-        ignoreEvent: true,
-      });
-    }
     if (extra.label) {
       // A ∧/∨ chevron prefixed inside the pill marks the side on entry/limit lines
       // (buy = up, sell = down); SL/TP lines carry no side, so no chevron.
@@ -466,21 +432,8 @@ export class PositionLines {
     return Number(level.toFixed(this.precision));
   }
 
-  // The bar (ms) an entry line truncates at — the snapped candle for a "bar" spec, or
-  // null when it isn't bar-anchored or the entry predates the loaded window (stub
-  // fallback). Folded into the sig so a scroll that pages the entry candle in/out
-  // re-reconciles the overlay's points. `barTimes` is built ONCE per render() and passed
-  // in — render runs on every mousemove during a line drag, so a per-spec bars.map()
-  // over thousands of candles would churn a fresh array each call.
-  private anchorTs(s: LineSpec, barTimes: number[]): number | null {
-    if (s.restKind !== "bar" || s.entryTs == null) return null;
-    if (barTimes.length === 0 || s.entryTs < barTimes[0]) return null; // off-window → stub
-    const idx = barIndexForTs(barTimes, s.entryTs);
-    return idx < 0 ? null : barTimes[idx];
-  }
-
-  private sig(s: LineSpec, anchorTs: number | null): string {
-    return `${s.level}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.restKind}|${s.emphasized ?? false}|${anchorTs ?? ""}|${s.labelX ?? ""}`;
+  private sig(s: LineSpec): string {
+    return `${s.level}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.emphasized ?? false}|${s.labelX ?? ""}`;
   }
 
   private onMoveEnd = (e: OverlayEvent<unknown>): boolean => {
@@ -504,32 +457,21 @@ export class PositionLines {
   /** Reconcile drawn lines to `specs`. */
   render(specs: LineSpec[]): void {
     const seen = new Set<string>();
-    // Snapped once for every bar-anchored spec this render (not per spec) — and only
-    // built when at least one spec needs it (skips the getDataList map for order/draft-
-    // only renders).
-    const barTimes = specs.some((s) => s.restKind === "bar" && s.entryTs != null)
-      ? (this.chart.getDataList() ?? []).map((b) => b.timestamp)
-      : [];
     for (const spec of specs) {
       seen.add(spec.key);
-      const anchorTs = this.anchorTs(spec, barTimes);
-      const sig = this.sig(spec, anchorTs);
-      // Point[0] (value-only) fixes the price row and drives drag/hit-test. A
-      // bar-anchored entry adds point[1] at the entry candle so the overlay can
-      // truncate there — reprojected natively on pan/zoom (no per-frame loop).
-      const points =
-        anchorTs != null
-          ? [{ value: spec.level }, { timestamp: anchorTs, value: spec.level }]
-          : [{ value: spec.level }];
+      const sig = this.sig(spec);
+      // ONE value-only point: it fixes the price row and drives drag/hit-test, and the
+      // line spans the pane from it. (There used to be a second, bar-anchored point so
+      // a resting line could truncate at its entry candle — that truncation is gone
+      // now that lines draw only while engaged, and with it the per-render bar scan.)
+      const points = [{ value: spec.level }];
       const extendData = {
         label: spec.label,
         color: spec.color,
         side: spec.side,
         highlight: spec.highlight ?? false,
         selected: spec.selected ?? false,
-        restKind: spec.restKind,
         emphasized: spec.emphasized ?? false,
-        hasBar: anchorTs != null,
         labelX: spec.labelX,
       };
       const existing = this.lines.get(spec.key);

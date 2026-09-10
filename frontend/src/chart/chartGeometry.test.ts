@@ -79,7 +79,7 @@ describe("tradeSpineX", () => {
   it("follows an expanded pill further left as it grows", () => {
     const compact = tradeSpineX({ paneWidth: 1000, pillWidths: [70] });
     const expanded = tradeSpineX({ paneWidth: 1000, pillWidths: [240] });
-    expect(expanded).toBeLessThan(compact);
+    expect(expanded).toBeLessThan(compact as number);
     expect(expanded).toBe(1000 - 240 - TRADE_SPINE_GAP);
   });
 

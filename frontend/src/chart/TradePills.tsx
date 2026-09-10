@@ -208,7 +208,8 @@ export default function TradePills({
   // Overlap declutter — vertical spread: pills whose 22px bodies collide vertically form
   // a cluster and spread into a one-per-row column (24px pitch) centred on the cluster's
   // mean y, all at the shared anchor x. No horizontal run, every pill fully readable.
-  // Each displaced pill gets a thin leader tick just left of its edge tying it back to
+  // Each displaced pill gets a thin leader tick just inside the axis, at its right
+  // edge (the pills dock there), tying it back to
   // its true line y. Written to the DOM after every render (React re-renders reset
   // `top`, then this pass reapplies); a sweep over the y-sorted pills chains clusters
   // transitively: each pill within a pill-height of the previous one joins the cluster.
@@ -248,6 +249,13 @@ export default function TradePills({
         }
       }
     }
+    // Measure BEFORE writing: the leader tick needs each face's width, and reading
+    // offsetWidth after a style write forces a synchronous layout — interleaved, that
+    // is one reflow per pill, on an effect that runs every render (so every tick).
+    const faceW = new Map<string, number>();
+    for (const c of clusters) {
+      for (const e of c) faceW.set(e.key, tradePillNodesRef.current.get(e.key)?.offsetWidth ?? 0);
+    }
     for (const c of clusters) {
       const start = startOf(c);
       c.forEach((e, i) => {
@@ -256,14 +264,21 @@ export default function TradePills({
         if (node) node.style.top = `${rowY}px`;
         // Leader tick: pill edge → true line y, shown only when the line falls OUTSIDE
         // the pill's own 22px body (a line still under the pill needs no pointer).
+        // It stands just clear of the pill's LEFT edge: the faces are opaque and dock
+        // flush to the axis, so a tick at the axis would hide behind its own pill and
+        // tie nothing to anything. The face is measured because compact and expanded
+        // widths differ (and change as a pill engages).
         const leader = leaderNodesRef.current.get(e.key);
         if (leader) {
           const d = Math.abs(rowY - e.y);
-          if (d <= HALF + 2) {
+          const w = faceW.get(e.key) ?? 0;
+          // No measured face means no known left edge — a tick placed by guess would
+          // land back under the pill, tying nothing to anything, so draw none.
+          if (d <= HALF + 2 || w <= 0) {
             leader.style.display = "none";
           } else {
             leader.style.display = "";
-            leader.style.right = `${axisWidth + 2}px`;
+            leader.style.right = `${axisWidth + w + 2}px`;
             leader.style.top = `${rowY < e.y ? rowY + HALF : e.y}px`;
             leader.style.height = `${d - HALF}px`;
           }
