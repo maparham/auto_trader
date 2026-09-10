@@ -15,6 +15,21 @@ import { isSynthetic } from "./lib/syntheticRegistry";
 import { catalogueMatches, matchingTabIds } from "./lib/tabSearch";
 import { fetchAllMarkets, type Instrument } from "./lib/feed";
 
+// Where the floating clone of the dragged chip sits for a given cursor point:
+// the grab offset, clamped to the tab bar (the chip rides the bar only). The
+// document listener that moves the clone and the merge hit test must agree on
+// this, or a merge would trigger somewhere other than where the chip is drawn.
+function floatPos(
+  g: { grabDx: number; grabDy: number; bounds: { minX: number; maxX: number; minY: number; maxY: number } },
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  return {
+    x: Math.min(Math.max(clientX - g.grabDx, g.bounds.minX), g.bounds.maxX),
+    y: Math.min(Math.max(clientY - g.grabDy, g.bounds.minY), g.bounds.maxY),
+  };
+}
+
 // Must match .tab-bar-tabs { gap } in App.css — the flow simulation that
 // slides chips apart uses it to predict where each chip lands.
 const TAB_GAP = 6;
@@ -158,13 +173,18 @@ export default function TabBar({
   // Drag-to-reorder state. The dragged tab is tracked by ID, not index (see
   // the effect below); `target` is where a drop right now would land — an
   // insertion slot (chips slide apart to preview it) or a merge into a chip
-  // (highlight, middle ~40% of the chip, exactly the old zone). Geometry is
+  // (highlight, only when the dragged chip lands squarely on it). Geometry is
   // measured ONCE at dragstart into dragGeom: the preview transforms change
   // getBoundingClientRect, so live measurement would feed back into itself.
   // `anim` gates the transform transition, so a committed drop can apply the
   // real new order without every chip animating its transform back to zero.
   const [dragId, setDragId] = useState<string | null>(null);
   const [target, setTarget] = useState<DragTarget | null>(null);
+  // The insertion slot the slide-apart preview is drawn for. It survives a
+  // merge hover (the gap stays open while a chip is highlighted) so the drawn
+  // geometry never snaps back under the cursor — a snap-back would re-hit-test
+  // somewhere else and flip the target on every dragover.
+  const [previewTo, setPreviewTo] = useState<number | null>(null);
   const [anim, setAnim] = useState(false);
   const barRef = useRef<HTMLDivElement | null>(null);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
@@ -204,6 +224,7 @@ export default function TabBar({
   const cancelDrag = useCallback(() => {
     setDragId(null);
     setTarget(null);
+    setPreviewTo(null);
     dragGeom.current = null;
     onDragActive(null);
     if (animTimer.current != null) clearTimeout(animTimer.current);
@@ -238,8 +259,7 @@ export default function TabBar({
       const g = dragGeom.current;
       const el = floatRef.current;
       if (g == null || el == null) return;
-      const x = Math.min(Math.max(e.clientX - g.grabDx, g.bounds.minX), g.bounds.maxX);
-      const y = Math.min(Math.max(e.clientY - g.grabDy, g.bounds.minY), g.bounds.maxY);
+      const { x, y } = floatPos(g, e.clientX, e.clientY);
       el.style.transform = `translate(${x}px, ${y}px) scale(1.05)`;
     };
     document.addEventListener("dragover", move);
@@ -363,6 +383,7 @@ export default function TabBar({
     if (committed) {
       setDragId(null);
       setTarget(null);
+      setPreviewTo(null);
       clearAnimTimer();
       setAnim(false);
       dragGeom.current = null;
@@ -379,13 +400,13 @@ export default function TabBar({
   // where it would sit with the dragged chip moved there. null = no shifts
   // (no drag, or hovering a merge target).
   const deltas =
-    fromIdx !== -1 && target?.kind === "insert" && dragGeom.current != null
+    fromIdx !== -1 && target != null && previewTo != null && dragGeom.current != null
       ? previewDeltas(
           dragGeom.current.rects,
           dragGeom.current.containerWidth,
           TAB_GAP,
           fromIdx,
-          target.index,
+          previewTo,
         )
       : null;
 
@@ -425,9 +446,27 @@ export default function TabBar({
           }
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
-          const next = dropTarget(g.rects, e.clientX, e.clientY, fromIdx, (i) =>
-            tabs[i] != null && canMerge(draggedTab.id, tabs[i].id),
+          // A merge is judged on the floating chip's own rect (where the user
+          // sees it) against the chips as drawn, so it takes near-perfect
+          // alignment; `deltas` is the translate the chips currently carry.
+          const src = g.rects[fromIdx];
+          const pos = src != null ? floatPos(g, e.clientX, e.clientY) : null;
+          const next = dropTarget(
+            g.rects,
+            e.clientX,
+            e.clientY,
+            fromIdx,
+            (i) => tabs[i] != null && canMerge(draggedTab.id, tabs[i].id),
+            {
+              drag:
+                src != null && pos != null
+                  ? { left: pos.x, top: pos.y, width: src.width, height: src.height }
+                  : null,
+              deltas,
+              current: target,
+            },
           );
+          if (next.kind === "insert") setPreviewTo(next.index);
           setTarget((cur) =>
             cur != null && cur.kind === next.kind && cur.index === next.index
               ? cur
@@ -444,6 +483,7 @@ export default function TabBar({
           if (bar == null) return;
           if (rt != null && bar.contains(rt)) return;
           setTarget(null);
+          setPreviewTo(null);
         }}
         onDrop={(e) => {
           e.preventDefault();
