@@ -287,21 +287,60 @@ def test_has_back_clearance_reads_only_bars_before_the_first_anchor():
     line = TrendLine(side="support", i1=4, p1=90.0, i2=12, p2=95.0,
                      touches=2, last_touch_idx=12, broken_idx=None, first_touch_idx=4,
                      max_touch_gap=8, min_touch_gap=8, max_touch_idx=12)
-    assert _has_back_clearance(line, vals, atr, 0.25, 0) is True
-    assert _has_back_clearance(line, vals, atr, 0.25, 4) is True
+    assert _has_back_clearance(line, vals, atr, 0.25, 0, []) is True
+    assert _has_back_clearance(line, vals, atr, 0.25, 4, []) is True
     # Only four bars exist to the left, so a fifth cannot be demonstrated:
     # rejected, the way _is_pivot_at and _has_swing_reach reject off the start.
-    assert _has_back_clearance(line, vals, atr, 0.25, 5) is False
+    assert _has_back_clearance(line, vals, atr, 0.25, 5, []) is False
     # A bar BELOW the line's back-projection pierces it and stops the count.
     pierced = list(vals)
     pierced[2] = 80.0
-    assert _has_back_clearance(line, pierced, atr, 0.25, 1) is True
-    assert _has_back_clearance(line, pierced, atr, 0.25, 2) is False
+    assert _has_back_clearance(line, pierced, atr, 0.25, 1, []) is True
+    assert _has_back_clearance(line, pierced, atr, 0.25, 2, []) is False
     # An unwarmed ATR cannot be tested, so that bar counts as surviving, which
     # is what the forward validation pass does with the same bar.
     cold: list[float | None] = list(atr)
     cold[2] = None
-    assert _has_back_clearance(line, pierced, cold, 0.25, 4) is True
+    assert _has_back_clearance(line, pierced, cold, 0.25, 4, []) is True
+
+
+def test_has_back_clearance_stops_at_the_reversal():
+    from auto_trader.indicators.trendlines import _has_back_clearance
+
+    # Mirrors the TS suite: bars 0..19 climb into a top at 19, then a leg down.
+    # The support anchored at 30 and 60 projects backward UP through the old
+    # rally and pierces every bar of it.
+    vals = [60.0 + i * 2 if i <= 19 else 98.0 - (i - 19) * 0.6 for i in range(80)]
+    atr: list[float | None] = [1.0] * 80
+    line = TrendLine(side="support", i1=30, p1=vals[30], i2=60, p2=vals[60],
+                     touches=2, last_touch_idx=60, broken_idx=None, first_touch_idx=30,
+                     max_touch_gap=30, min_touch_gap=30, max_touch_idx=60)
+    # No turn recorded: the behaviour before this change.
+    assert _has_back_clearance(line, vals, atr, 0.25, 25, []) is False
+    # The top is known, so the walk covers this leg's bars only.
+    assert _has_back_clearance(line, vals, atr, 0.25, 25, [19]) is True
+    # The LAST turn before i1 wins, and turns at or after i1 are ignored.
+    assert _has_back_clearance(line, vals, atr, 0.25, 25, [3, 19]) is True
+    assert _has_back_clearance(line, vals, atr, 0.25, 25, [19, 30, 44]) is True
+    # Not a free pass: a pierce inside the leg still rejects.
+    pierced = list(vals)
+    pierced[29] = 40.0
+    assert _has_back_clearance(line, pierced, atr, 0.25, 25, [19]) is False
+    # A turn too close to i1 leaves a window that proves nothing, so the full
+    # walk is used instead. That is what keeps this change loosening-only.
+    flat = [100.0] * 80
+    flat[30] = 90.0
+    flat[60] = 95.0
+    clean = TrendLine(side="support", i1=30, p1=90.0, i2=60, p2=95.0,
+                      touches=2, last_touch_idx=60, broken_idx=None, first_touch_idx=30,
+                      max_touch_gap=30, min_touch_gap=30, max_touch_idx=60)
+    assert _has_back_clearance(clean, flat, atr, 0.25, 25, [28]) is True
+    assert _has_back_clearance(line, vals, atr, 0.25, 25, [28]) is False
+    # Off the start of the series still rejects; a turn cannot rescue it.
+    early = TrendLine(side="support", i1=12, p1=vals[12], i2=60, p2=vals[60],
+                      touches=2, last_touch_idx=60, broken_idx=None, first_touch_idx=12,
+                      max_touch_gap=48, min_touch_gap=48, max_touch_idx=60)
+    assert _has_back_clearance(early, vals, atr, 0.25, 25, [4]) is False
 
 
 def test_min_back_bars_rejects_a_pair_whose_wrong_side_is_in_the_past():
