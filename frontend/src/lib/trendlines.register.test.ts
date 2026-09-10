@@ -69,6 +69,7 @@ describe("TRENDLINES registration", () => {
       ["Extend"],
       ["Declutter"],
       ["Show pivots"],
+      ["Mark line pivots"],
       ["Hide broken lines"],
       ["Dim broken lines"],
       ["Dim opacity"],

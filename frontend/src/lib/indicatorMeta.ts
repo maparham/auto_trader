@@ -880,8 +880,21 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         field: "showPivots",
         default: true,
         tip: [
-          "Marks every swing that passed the pivot settings with a small caret: up over a high, down under a low.",
+          "Marks every swing that passed the pivot settings with a small arrow: up under a low, down over a high.",
           "This is the raw input the lines are built from, so it shows exactly what the pivot settings admit, including pivots no drawn line uses.",
+        ],
+      },
+      {
+        key: "showLinePivots",
+        label: "Mark line pivots",
+        type: "boolean",
+        source: "extend",
+        field: "showLinePivots",
+        default: false,
+        tip: [
+          "Marks the swings the drawn lines rest on, anchors and touches, with a stemmed arrow.",
+          "Only lines actually on the chart count, so a line dropped by Max lines or Declutter marks nothing.",
+          "With Show pivots on too, a line's pivot takes the stemmed arrow instead of the plain one.",
         ],
       },
       {

@@ -1354,6 +1354,30 @@ export interface TrendlinesExtend {
    *
    * Render-only, like everything else in this block. */
   showPivots?: boolean;
+  /** Mark the pivots the DRAWN lines actually rest on — every anchor and every
+   * counted touch — with a stemmed arrow, up under a low and down over a high.
+   * OFF by default.
+   *
+   * The complement of showPivots, not a variant of it. showPivots answers
+   * "what is the pivot filter admitting"; this answers "which of those turns
+   * built something you can see". A pane with a loose filter marks dozens of
+   * swings and only a handful of them carry a line, and until now nothing on
+   * the chart said which.
+   *
+   * GATED BY THE DRAWN SET, deliberately, and this is the one place the marks
+   * DO follow the lines' gate: the mark exists to point at a line on screen,
+   * so a mark for a line maxLines or Declutter threw away would point at
+   * nothing. That is the opposite of showPivots' rule directly above, and the
+   * difference is the whole reason both settings exist.
+   *
+   * A DISTINCT GLYPH, not a weight: the stem is what tells the two marks
+   * apart at a glance. Dimming the unused ones instead was tried and read as
+   * "disabled" rather than "admitted but unused". Where both settings are on,
+   * a used pivot takes the stemmed arrow ONLY — it does not also get the plain
+   * triangle, or the two would overdraw each other on the same swing.
+   *
+   * Render-only, like everything else in this block. */
+  showLinePivots?: boolean;
   /** Drop the broken lines from the chart entirely. Defaults to OFF, because a
    * broken line is where a retest happens and the break-hold window exists to
    * keep it visible for exactly that.
@@ -1917,6 +1941,13 @@ export const TL_HANDLE_HIT = 8;
  * washes; an outline cannot. */
 export const TL_PIVOT_GAP = 5;
 export const TL_PIVOT_ARM = 5;
+/** The line-pivot arrow (showLinePivots) is the same head with a tail: this
+ * much shaft, this half-wide, added beyond the head's base. Same tip, same
+ * gap, so the two marks sit at the same distance from the wick and only the
+ * stem tells them apart — which is what makes the difference readable when
+ * both kinds are on one pane. */
+export const TL_PIVOT_STEM = 5;
+export const TL_PIVOT_STEM_HALF = 1.25;
 /** Handles stroke heavier than the 1px line they cap, so a 3px mark reads at
  * all. It is also what tells a handle stroke from a line stroke. */
 export const TL_HANDLE_STROKE = 1.5;
@@ -2367,12 +2398,47 @@ function htfExtremeSnap(
  * clipping is visually exact. */
 export { clipSegmentToRect } from "./shared";
 
-/** Paint one caret per filter-passing pivot, clipped to the pane.
+/** Bar indices any DRAWN line rests on — its anchors and all of its touches.
  *
- * NOT GATED by anything that selects lines (see TrendlinesExtend.showPivots):
- * the marks answer "what is the pivot filter admitting", which the lines only
- * answer indirectly. Full opacity for the same reason — there is no line whose
- * dim state they could inherit.
+ * ONE SET ACROSS BOTH SIDES, not a set per side, because a touch is not always
+ * same-side: with Mixed touches on, a resistance line counts the LOW of an
+ * opposite-side pivot. Splitting by side would then leave a support pivot a
+ * drawn line is visibly resting on marked as unused, the exact opposite of
+ * what the mark is for. The cost of the flat set is the lone-spike bar that is
+ * BOTH a strict high and a strict low pivot: one line resting on its high
+ * marks its low as used too. That bar is rare and it does carry a line, so the
+ * flat set is the better error.
+ *
+ * touchIdxs carries the anchors too (a line's touch list opens with i1 and
+ * i2), so the anchors are in by construction; they are added anyway rather
+ * than relying on that invariant from another module. */
+export function drawnPivotIdxs(lines: readonly TrendLine[]): Set<number> {
+  const used = new Set<number>();
+  for (const line of lines) {
+    used.add(line.i1);
+    used.add(line.i2);
+    for (const idx of line.touchIdxs) used.add(idx);
+  }
+  return used;
+}
+
+/** Paint one arrow per marked pivot, clipped to the pane.
+ *
+ * TWO KINDS, and a pivot gets exactly one of them. `showLineUsed` puts a
+ * STEMMED arrow on every pivot a drawn line rests on; `showAll` puts a plain
+ * triangle on the rest. A used pivot never takes both — the plain head would
+ * sit under the stemmed one and only thicken it.
+ *
+ * The plain triangles are NOT GATED by anything that selects lines (see
+ * TrendlinesExtend.showPivots): they answer "what is the pivot filter
+ * admitting", which the lines only answer indirectly. The stemmed ones ARE
+ * gated by the drawn set, and only them (see showLinePivots). Full opacity for
+ * both — there is no line whose dim state a mark could inherit, and dimming
+ * the unused ones was tried and reads as "disabled" rather than "unused".
+ *
+ * ONE FILL PER KIND PER SIDE: fillStyle and the path are context state, so
+ * batching keeps the whole pane at four fills however many pivots are on
+ * screen.
  *
  * The pools are in strictly increasing bar order, so the walk stops at the
  * right edge instead of running the whole series: on a zoomed-in pane of a
@@ -2385,14 +2451,17 @@ function paintPivotMarks(
   yOf: (price: number) => number,
   right: number,
   height: number,
+  used: ReadonlySet<number>,
+  showAll: boolean,
+  showLineUsed: boolean,
 ): void {
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.setLineDash([]);
-  // CLIP instead of clipSegmentToRect: the glyph is a filled triangle now, and
-  // clipping a fill edge-by-edge would need polygon clipping, not the segment
-  // clip the line strokes use. Same outcome — the part that fits is painted,
-  // nothing bleeds into the neighbouring pane.
+  // CLIP instead of clipSegmentToRect: the glyphs are filled now, and clipping
+  // a fill edge-by-edge would need polygon clipping, not the segment clip the
+  // line strokes use. Same outcome — the part that fits is painted, nothing
+  // bleeds into the neighbouring pane.
   ctx.beginPath();
   ctx.rect(0, 0, right, height);
   ctx.clip();
@@ -2403,38 +2472,59 @@ function paintPivotMarks(
     // arrow then points back INTO the wick, so a pane with both sides marked
     // reads without a legend.
     const dir = side === "support" ? 1 : -1;
-    ctx.beginPath();
-    for (const idx of pivots[side]) {
-      const x = xAt(idx, side);
-      // The arms reach TL_PIVOT_ARM either way, so the window is widened by
-      // one arm rather than testing the tip alone — otherwise a caret at the
-      // very edge is dropped whole when only half of it is off-pane.
-      if (x < -TL_PIVOT_ARM) continue;
-      if (x > right + TL_PIVOT_ARM) break;
-      const y = yOf(pivotPrice(pivots, side, idx));
-      // The PIVOT's own y decides whether its mark exists at all: the mark
-      // belongs to a swing, and a swing scrolled out of the pane's price range
-      // has nothing to mark. The GLYPH is then clipped rather than dropped —
-      // on a live pane the y-axis autoscales to the visible extremes, so the
-      // highest swing high sits at the top edge and its caret hangs just over
-      // it. Dropping there would hide the mark on exactly the pivot the eye is
-      // on. Clipping (the same treatment the line strokes get) keeps the part
-      // that fits and lets nothing bleed into the neighbouring pane.
-      if (y < 0 || y > height) continue;
-      // Tip TOWARDS price, base away from it: an arrow pointing AT the swing
-      // it marks — up at a low, down at a high. The mark still sits entirely
-      // clear of the wick (the tip starts TL_PIVOT_GAP out), so it never
-      // overdraws the candle it is pointing at.
-      const yTip = y + dir * TL_PIVOT_GAP;
-      const yBase = y + dir * (TL_PIVOT_GAP + TL_PIVOT_ARM);
-      ctx.moveTo(x, yTip);
-      ctx.lineTo(x - TL_PIVOT_ARM, yBase);
-      ctx.lineTo(x + TL_PIVOT_ARM, yBase);
-      ctx.closePath();
+    // Stemmed first, so the plain batch below can be the complement of it with
+    // one test rather than two flags per pivot.
+    for (const stemmed of [true, false]) {
+      if (stemmed ? !showLineUsed : !showAll) continue;
+      ctx.beginPath();
+      for (const idx of pivots[side]) {
+        // The used pivots take the stemmed arrow and NOTHING ELSE: a plain
+        // head under a stemmed one is invisible and only thickens it. When
+        // Show pivots is off, the unused ones simply go unmarked.
+        if ((showLineUsed && used.has(idx)) !== stemmed) continue;
+        const x = xAt(idx, side);
+        // The arms reach TL_PIVOT_ARM either way, so the window is widened by
+        // one arm rather than testing the tip alone — otherwise a caret at the
+        // very edge is dropped whole when only half of it is off-pane.
+        if (x < -TL_PIVOT_ARM) continue;
+        if (x > right + TL_PIVOT_ARM) break;
+        const y = yOf(pivotPrice(pivots, side, idx));
+        // The PIVOT's own y decides whether its mark exists at all: the mark
+        // belongs to a swing, and a swing scrolled out of the pane's price
+        // range has nothing to mark. The GLYPH is then clipped rather than
+        // dropped — on a live pane the y-axis autoscales to the visible
+        // extremes, so the highest swing high sits at the top edge and its
+        // caret hangs just over it. Dropping there would hide the mark on
+        // exactly the pivot the eye is on. Clipping (the same treatment the
+        // line strokes get) keeps the part that fits and lets nothing bleed
+        // into the neighbouring pane.
+        if (y < 0 || y > height) continue;
+        // Tip TOWARDS price, base away from it: an arrow pointing AT the swing
+        // it marks — up at a low, down at a high. The mark still sits entirely
+        // clear of the wick (the tip starts TL_PIVOT_GAP out), so it never
+        // overdraws the candle it is pointing at.
+        const yTip = y + dir * TL_PIVOT_GAP;
+        const yBase = y + dir * (TL_PIVOT_GAP + TL_PIVOT_ARM);
+        ctx.moveTo(x, yTip);
+        ctx.lineTo(x - TL_PIVOT_ARM, yBase);
+        if (stemmed) {
+          // Round the head's base back to the shaft and out along it, so the
+          // whole arrow is ONE closed polygon. A separate rectangle for the
+          // shaft would be a second subpath, and a second subpath abutting the
+          // first seams visibly under antialiasing.
+          const yEnd = yBase + dir * TL_PIVOT_STEM;
+          ctx.lineTo(x - TL_PIVOT_STEM_HALF, yBase);
+          ctx.lineTo(x - TL_PIVOT_STEM_HALF, yEnd);
+          ctx.lineTo(x + TL_PIVOT_STEM_HALF, yEnd);
+          ctx.lineTo(x + TL_PIVOT_STEM_HALF, yBase);
+        }
+        ctx.lineTo(x + TL_PIVOT_ARM, yBase);
+        ctx.closePath();
+      }
+      // One path per side and kind: the marks in a batch share a colour, so
+      // each is a single fill call however many pivots are on screen.
+      ctx.fill();
     }
-    // One path per side: the marks share a colour, so the whole side is a
-    // single fill call however many pivots are on screen.
-    ctx.fill();
   }
   ctx.restore();
 }
@@ -2476,20 +2566,38 @@ function drawTrendlines(
   const snap = mtf ? htfExtremeSnap(dataList, mtf, toChart) : null;
   const xAtPivot = (j: number, side: TrendSide) =>
     snap ? xAxis.convertToPixel(snap(j, side)) : xAt(j);
-  // BEFORE the line early-returns, and that is the point: the pivot filter can
-  // admit plenty of pivots on a pane where every line was gated away (strict
-  // Min Touches, a short series, an HTF pin with nothing closed yet), and a
-  // mark that vanished there would read as the setting being broken.
-  if ((ext?.showPivots ?? true) && last?.pivots)
-    paintPivotMarks(
-      ctx,
-      last.pivots,
-      xAtPivot,
-      (price) => yAxis.convertToPixel(price),
-      tagRight,
-      bounding.height,
-    );
+  // A CLOSURE called on every exit, not a call in one place, and that is the
+  // point twice over:
+  //
+  //  - it has to run even when no line survived. The pivot filter can admit
+  //    plenty of pivots on a pane where every line was gated away (strict Min
+  //    Touches, a short series, an HTF pin with nothing closed yet), and a
+  //    mark that vanished there would read as the setting being broken. Those
+  //    paths pass an EMPTY used set: no line is drawn, so no pivot is used,
+  //    so every mark is a plain triangle — which is what that pane means.
+  //  - the stemmed marks can only be chosen once `drawn` exists, and `drawn`
+  //    is selected far below. Painting after the strokes also puts the marks
+  //    ON TOP of the lines rather than under them, which is the right order
+  //    for a glyph whose whole job is to be seen at the swing.
+  const showAll = ext?.showPivots ?? true;
+  const showLineUsed = ext?.showLinePivots ?? false;
+  const paintMarks = (used: ReadonlySet<number>): void => {
+    if ((showAll || showLineUsed) && last?.pivots)
+      paintPivotMarks(
+        ctx,
+        last.pivots,
+        xAtPivot,
+        (price) => yAxis.convertToPixel(price),
+        tagRight,
+        bounding.height,
+        used,
+        showAll,
+        showLineUsed,
+      );
+  };
+  const NO_PIVOTS_USED: ReadonlySet<number> = new Set<number>();
   if (!last?.lines?.length) {
+    paintMarks(NO_PIVOTS_USED);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
     return true;
   }
@@ -2497,6 +2605,7 @@ function drawTrendlines(
   // Under a pin, no HTF bar has closed inside the loaded window yet: there is
   // nothing to measure the lines at, so draw none rather than measure at -1.
   if (lastIdx < 0) {
+    paintMarks(NO_PIVOTS_USED);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
     return true;
   }
@@ -2542,6 +2651,7 @@ function drawTrendlines(
       isMajor(l, lastIdx, cfg) && !(hideBroken && l.brokenIdx !== null),
   );
   if (!eligible.length) {
+    paintMarks(NO_PIVOTS_USED);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
     return true;
   }
@@ -2814,6 +2924,10 @@ function drawTrendlines(
     ctx.fillText(label, xTag, yTag);
   }
   ctx.restore();
+  // Last, so the marks sit over the strokes, and keyed on the set the pane
+  // actually drew — not `eligible`, which still holds lines the dedupe and
+  // proximity passes threw away.
+  paintMarks(drawnPivotIdxs(drawn));
   setTrendlineHandles(chart, indicator.paneId, indicator.name, handles);
   return true;
 }

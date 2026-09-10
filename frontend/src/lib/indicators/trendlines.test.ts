@@ -29,6 +29,8 @@ import {
   rankLines,
   dedupeTolerance,
   selectDrawnLines,
+  drawnPivotIdxs,
+  TL_PIVOT_STEM,
   trendlineDimmed,
   TL_DIM_ALPHA,
   trendlineDimAlpha,
@@ -1660,6 +1662,10 @@ function record(
   // "default" omits the key, which is how the test for the default-on
   // behaviour exercises the draw path's own fallback.
   showPivots: boolean | "default" = false,
+  // The line-pivot marks (showLinePivots). OFF by default here AND in the app,
+  // so "default" and false coincide; the key is still omitted on "default" so
+  // the draw path's own fallback is what the default test exercises.
+  showLinePivots: boolean | "default" = false,
 ): Painted {
   const segments: Segment[] = [];
   const tags: Tag[] = [];
@@ -1740,6 +1746,7 @@ function record(
     ...(declutter ? { declutter } : {}),
     ...(dim ?? {}),
     ...(showPivots === "default" ? {} : { showPivots }),
+    ...(showLinePivots === "default" ? {} : { showLinePivots }),
     hideBroken,
   };
   const result = TRENDLINES_TEMPLATE.calc!(bars, {
@@ -2798,6 +2805,7 @@ describe("TRENDLINES pivot marks", () => {
   const paint = (
     calcParams: number[],
     showPivots: boolean | "default",
+    showLinePivots: boolean | "default" = false,
   ): Segment[] =>
     record(
       bars(),
@@ -2811,6 +2819,7 @@ describe("TRENDLINES pivot marks", () => {
       undefined,
       undefined,
       showPivots,
+      showLinePivots,
     ).segments;
   const passing = (calcParams: number[]) =>
     computeTrendlines(bars(), parseTrendlinesConfig(calcParams)).pivots;
@@ -2871,6 +2880,135 @@ describe("TRENDLINES pivot marks", () => {
       expect(marks).toContainEqual(arm);
     for (const arm of caret(res, pv.highs[res], -1))
       expect(marks).toContainEqual(arm);
+  });
+});
+
+// "Mark line pivots": the complement of Show pivots. Show pivots says what the
+// FILTER admitted; this says which of those the DRAWN lines rest on.
+describe("TRENDLINES line-pivot marks", () => {
+  const bars = (): KLineData[] => {
+    const out = flat(80);
+    out[20] = bar(20, 90, 100.5);
+    out[40] = bar(40, 94, 100.5);
+    out[60] = bar(60, 96, 100.5);
+    out[30] = bar(30, 99.5, 110);
+    out[50] = bar(50, 99.5, 108);
+    return out;
+  };
+  const view: View = {
+    width: 900,
+    height: 400,
+    axis: 60,
+    toX: (i) => i * 10,
+    toY: (p) => (110 - p) * 15 + 40,
+  };
+  const paint = (
+    calcParams: number[],
+    showPivots: boolean | "default",
+    showLinePivots: boolean | "default",
+  ): Segment[] =>
+    record(
+      bars(),
+      calcParams,
+      undefined,
+      view,
+      undefined,
+      false,
+      false,
+      false,
+      undefined,
+      undefined,
+      showPivots,
+      showLinePivots,
+    ).segments;
+  const LINES = [2, 0.25, 0.75, 2, 5, 250, 30, 3];
+  // Min Touches one above anything this fixture reaches: not a line survives,
+  // so nothing can be "used" and the stemmed batch must come out empty.
+  const NO_LINES = [2, 0.25, 0.75, 4, 5, 250, 30, 3];
+  // Min Span 25 with Mixed touches OFF (slot 16). The two highs are 20 bars
+  // apart, so no resistance line can span them, and with mixed touches off no
+  // support line can count them either: they pass the pivot filter with
+  // nothing resting on them, which is exactly the pane this setting exists
+  // for. Slots 8..15 hold their defaults.
+  const MIXED = [2, 0.25, 0.75, 2, 25, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 0];
+  const passing = (calcParams: number[]) =>
+    computeTrendlines(bars(), parseTrendlinesConfig(calcParams)).pivots;
+  // A stemmed arrow closes over 7 points, a plain triangle over 3.
+  const STEMMED_EDGES = 7;
+  const PLAIN_EDGES = 3;
+
+  it("is off unless asked for: absent key paints exactly what false does", () => {
+    expect(paint(LINES, false, "default")).toEqual(paint(LINES, false, false));
+    expect(paint(LINES, true, "default")).toEqual(paint(LINES, true, false));
+  });
+
+  it("marks the used pivots with a stemmed arrow and leaves the rest alone", () => {
+    const linesOnly = paint(LINES, false, false);
+    const stemmed = paint(LINES, false, true).slice(linesOnly.length);
+    const used = drawnPivotIdxs(
+      computeTrendlines(bars(), parseTrendlinesConfig(LINES)).lines,
+    );
+    const pv = passing(LINES);
+    // Only the pivots a line rests on, and only those the pivot pools hold —
+    // a line's touch can be an opposite-side pivot, but it is a pivot either
+    // way, so every mark still stands on one.
+    const marked = [...pv.support, ...pv.resistance].filter((i) => used.has(i));
+    expect(marked.length).toBeGreaterThan(0);
+    expect(stemmed).toHaveLength(STEMMED_EDGES * marked.length);
+    // Every mark sits on a used pivot's x, so the stem cannot have wandered.
+    const xs = new Set(marked.map((i) => view.toX(i)));
+    for (const sg of stemmed)
+      expect([...xs].some((x) => Math.abs(x - sg.x0) <= TL_PIVOT_ARM)).toBe(true);
+  });
+
+  it("stands the stem outside the head, further from the wick than the tip", () => {
+    const linesOnly = paint(LINES, false, false);
+    const stemmed = paint(LINES, false, true).slice(linesOnly.length);
+    const ys = stemmed.flatMap((sg) => [sg.y0, sg.y1]);
+    const pv = passing(LINES);
+    const used = drawnPivotIdxs(
+      computeTrendlines(bars(), parseTrendlinesConfig(LINES)).lines,
+    );
+    // A support mark hangs BELOW its low (larger y here) and reaches exactly
+    // gap + arm + stem past it. Take the deepest used support pivot's low so
+    // the extreme below is unambiguously its.
+    const sup = pv.support.filter((i) => used.has(i));
+    expect(sup.length).toBeGreaterThan(0);
+    const deepest = Math.max(...sup.map((i) => view.toY(pv.lows[i])));
+    expect(Math.max(...ys)).toBeCloseTo(
+      deepest + TL_PIVOT_GAP + TL_PIVOT_ARM + TL_PIVOT_STEM,
+      6,
+    );
+  });
+
+  it("takes the plain arrow off a used pivot, keeping it on the others", () => {
+    const linesOnly = paint(MIXED, false, false);
+    const all = paint(MIXED, true, false).slice(linesOnly.length);
+    const split = paint(MIXED, true, true).slice(linesOnly.length);
+    const pv = passing(MIXED);
+    const marked = pv.support.length + pv.resistance.length;
+    // Show pivots alone: one plain arrow on every passing pivot.
+    expect(all).toHaveLength(PLAIN_EDGES * marked);
+    // With both on, the edge count can only be this if EVERY pivot is marked
+    // exactly once and `onLine` of them took the stemmed glyph. Solved from
+    // the output rather than compared against a recomputed used set: the used
+    // set the pane paints from is the DRAWN lines', which is what the dedupe
+    // and proximity passes left, not every line compute returned.
+    const onLine = (split.length - PLAIN_EDGES * marked) / (STEMMED_EDGES - PLAIN_EDGES);
+    expect(Number.isInteger(onLine)).toBe(true);
+    // Both kinds really are on this pane, or the arithmetic above would hold
+    // just as well on one that painted everything the same way.
+    expect(onLine).toBeGreaterThan(0);
+    expect(onLine).toBeLessThan(marked);
+  });
+
+  it("marks nothing when no line survived to rest on a pivot", () => {
+    const linesOnly = paint(NO_LINES, false, false);
+    expect(linesOnly).toHaveLength(0);
+    expect(paint(NO_LINES, false, true)).toHaveLength(0);
+    // Show pivots still paints its own, unchanged: the two settings are
+    // independent, and an empty used set cannot subtract from it.
+    expect(paint(NO_LINES, true, true)).toEqual(paint(NO_LINES, true, false));
   });
 });
 
