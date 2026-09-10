@@ -149,12 +149,21 @@ import {
   HIT_TOLERANCE_PX,
   type LineCache,
   hitTestCache,
+  draftLabelX,
 } from "./chart/chartGeometry";
 import {
   browserTimezone,
   first,
 } from "./chart/chartPainters";
 import type { GoLivePillPos } from "./lib/liveEdge";
+import {
+  tapStart,
+  tapMove,
+  tapSecondFinger,
+  isTap,
+  clickSuppressed,
+  type TapState,
+} from "./chart/touchTap";
 import GoLivePill from "./chart/GoLivePill";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
 import { refreshMtfIndicators, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
@@ -224,13 +233,11 @@ const DEFAULT_BAR_SPACE = 8;
 // when AVWAP is selected, draggable left/right to re-anchor (TradingView-style).
 const ANCHOR_GRAB_PX = 11; // mousedown hit radius (forgiving)
 
-// TradingView-style position furniture, left→right: %/R:R badges · connector spine
-// + per-line circle handles · always-on pills. The spine sits IN from the left edge
-// so the badges have room on its left; pills sit just to its right. Shared by the DOM
-// pills (TRADE_PILL_LEFT) and the canvas spine/handles/badges (TRADE_SPINE_X).
-const TRADE_SPINE_X = 92;
-const TRADE_PILL_LEFT = TRADE_SPINE_X + 14; // pills anchored just right of the spine
-
+// TradingView-style position furniture, now anchored to the RIGHT price axis,
+// left→right: %/R:R badges · connector spine + per-line circle handles · the
+// axis-docked pills. The spine's x is measured per paint from the subject trade's
+// rendered pill faces (chartGeometry tradeSpineX), so it clears them whether they
+// are compact or expanded; the badges then have room on its left.
 
 interface Props {
   // Identity + storage scope for this cell (one tab can hold several cells).
@@ -809,8 +816,8 @@ export default function ChartCore({
   const lineCacheRef = useRef<LineCache[]>([]);
   // The H position bracket: a split-colour spine linking the SELECTED trade's (or the
   // staged draft's) entry to its SL/TP, with %/R:R badges. Its own canvas so it can be
-  // repainted cheaply without touching the heavier selection/redraw layer. The spine is
-  // pinned at TRADE_SPINE_X (a fixed left column, in from the edge), appears on hover
+  // repainted cheaply without touching the heavier selection/redraw layer. The spine
+  // tracks the axis-docked pill column (tradeSpineX), appears on hover
   // (grey) / selection (position side colour, selected handle filled), with the %/R:R
   // badges to ITS LEFT. `bracketShownRef` clears it exactly once on the active→idle
   // transition so the common nothing-active move costs ~nothing.
@@ -1073,6 +1080,9 @@ export default function ChartCore({
   const [cursorMode, setCursorMode] = useState<"" | "cur-pointer" | "cur-default" | "cur-grab" | "cur-grabbing" | "cur-ns">("");
   const cursorModeRef = useRef<"" | "cur-pointer" | "cur-default" | "cur-grab" | "cur-grabbing" | "cur-ns">("");
   // Live price label + candle countdown, anchored at the last close on the axis.
+  // Width of the price-axis column, measured by the redraw loop — the trade
+  // pills dock right-edge flush against the axis border.
+  const [axisW, setAxisW] = useState(0);
   const [priceTag, setPriceTag] = useState<{
     y: number;
     price: number;
@@ -1122,14 +1132,24 @@ export default function ChartCore({
       breakevenField?: "stop" | "takeProfit";
     }>
   >([]);
-  // Shared x for the trade pill, frozen at selection so the buttons sit still. null
-  // until a trade is selected (mirrors pillLeftRef's "don't snap to 0" intent).
-  const tradePillLeftRef = useRef<number | null>(null);
   // Live trade-pill DOM nodes keyed "tradeId:field". The pill body is pointer-events:
   // none (see .trade-pill) so it can't carry its own cursor/click — instead the chart's
   // mousemove/click handlers rect-test the cursor against these nodes to show the hand
   // cursor over a pill and let a click anywhere on the pill select its line.
   const tradePillNodesRef = useRef(new Map<string, HTMLDivElement>());
+  // Pill anchor x for the DRAFT lines. A draft carries no DOM pill, so its canvas
+  // labels take the slot the real pills occupy, keeping them with the bracket spine
+  // that now tracks the right price axis. Measured per build: the pane width moves
+  // with the window and the axis width.
+  const draftLabelXRef = useRef(0);
+  const currentDraftLabelX = () => {
+    const mainW = chartRef.current?.getSize("candle_pane", "main")?.width ?? 0;
+    if (mainW > 0) draftLabelXRef.current = draftLabelX(mainW);
+    return draftLabelXRef.current || undefined;
+  };
+  // Last measured pill-face widths, keyed like the nodes — so a re-render that
+  // leaves every face the same width skips the bracket repaint.
+  const pillFaceWidthsRef = useRef(new Map<string, number>());
   // The pill (if any) under the given viewport point, as its line's id + field.
   const tradePillHitTest = (
     clientX: number,
@@ -1239,15 +1259,6 @@ export default function ChartCore({
     [positionPill],
   );
 
-  // Anchor the active line's pill at its OWN label's spot (the far-left edge, where the
-  // line draws its `TP …`/`SL …` label). Selecting a line then suppresses that canvas
-  // label (see tradeLineSpecs `selectedField`) and shows the pill IN ITS PLACE — the
-  // label "grows" into the richer, actionable pill rather than a second pill dropping
-  // near the cursor and covering it (Idea C). 0 matches the label's background left edge
-  // (drawn at x:6 with paddingLeft:6).
-  const freezeTradePillX = useCallback(() => {
-    tradePillLeftRef.current = 0;
-  }, []);
 
   // "+" axis affordance: positioned imperatively on mousemove (no per-move state).
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -1743,6 +1754,25 @@ export default function ChartCore({
     [],
   );
 
+  // Repaint the bracket once the pill faces are laid out, and only when a width
+  // actually moved: selection paints the bracket synchronously from the
+  // tradeLineUiSignal subscriber, i.e. BEFORE React commits the expanded face, so
+  // the spine would otherwise keep the compact width and end up under its own pill.
+  // Defined AFTER `handle` on purpose — this reads paintBracketRef.
+  const handlePillFacesLaidOut = useCallback(() => {
+    const prev = pillFaceWidthsRef.current;
+    const next = new Map<string, number>();
+    let changed = false;
+    for (const [key, node] of tradePillNodesRef.current) {
+      const w = node.offsetWidth;
+      next.set(key, w);
+      if (prev.get(key) !== w) changed = true;
+    }
+    if (!changed && prev.size !== next.size) changed = true;
+    pillFaceWidthsRef.current = next;
+    if (changed) paintBracketRef.current();
+  }, []);
+
   // Range coverage/fit + quick-range/go-to-date callbacks. The hook also assigns
   // the two coverage walks onto handle.ensureCoverageAndFitRef /
   // handle.ensureAnchorCoverageRef (in render, before any effect runs) so
@@ -1877,9 +1907,22 @@ export default function ChartCore({
     //     indicator's legend row, or near ANY indicator's curve (sub-panes
     //     included), selects it (hollow handles appear); a click on empty chart
     //     space deselects. Keyed by pane+name (v1 is one-instance-per-name).
+    // Touch taps never reach onClick on their own: klinecharts' canvas consumes
+    // the touch sequence, so Chrome emits no synthetic mousedown/mousemove/click
+    // over the chart (measured on a Pixel: a tap gives pointerdown/touchstart/
+    // pointerup/touchend and nothing else). Without this the axis-docked trade
+    // pills can never be selected on a phone, so they stay compact forever and a
+    // collapsed cluster can never be opened. onTouchUp below replays a real tap
+    // through this same handler; `tap`/`lastTapT` are its gesture state.
+    let tap: TapState | null = null;
+    let lastTapT: number | null = null;
     const onClick = (e: MouseEvent) => {
       const c = chartRef.current;
       if (!c) return;
+      // A tap we already handled must not run twice if the browser does deliver a
+      // click behind it after all: selection is a toggle, so the second pass would
+      // undo the first.
+      if (e.type === "click" && clickSuppressed(lastTapT, e.timeStamp)) return;
       // Swallow the click that closes an anchor drag, so it doesn't deselect AVWAP.
       if (justDraggedRef.current) {
         justDraggedRef.current = false;
@@ -2026,6 +2069,7 @@ export default function ChartCore({
         levelsDraggable: true,
         onDrag: () => {},
         draft: draftRef.current,
+        draftLabelX: currentDraftLabelX(),
         // Must match the drawing pass below, or the hit-test would offer a grab
         // handle on a draft line that is not on screen.
         replaying: handle.replayRef.current?.isActive() ?? false,
@@ -3105,9 +3149,37 @@ export default function ChartCore({
     const unsubTimeRangeArm = timeRangeArmed.subscribe(onRangeToolArm(setTimeRangeArmedUi));
     const unsubRecurringArm = recurringHighlightArmed.subscribe(onRangeToolArm(setRecurringArmedUi));
 
+    // Tap -> the click path. Only a still, prompt, single-finger press counts: a
+    // pan, a pinch or a long press must not select (see chart/touchTap.ts). These
+    // are passive observers — they never preventDefault, so klinecharts keeps its
+    // own pan/zoom gestures intact.
+    const onTouchDown = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      tap = tap ? tapSecondFinger(tap) : tapStart(e.clientX, e.clientY, e.timeStamp);
+    };
+    const onTouchMove = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      tap = tapMove(tap, e.clientX, e.clientY);
+    };
+    const onTouchUp = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      const hit = isTap(tap, e.timeStamp);
+      tap = null;
+      if (!hit) return;
+      lastTapT = e.timeStamp;
+      onClick(e); // PointerEvent IS a MouseEvent — same clientX/clientY/target
+    };
+    const onTouchCancel = () => {
+      tap = null;
+    };
+
     if (chart) {
       chart.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current, candleHiddenRef.current));
       el.addEventListener("click", onClick);
+      el.addEventListener("pointerdown", onTouchDown, true);
+      el.addEventListener("pointermove", onTouchMove, true);
+      el.addEventListener("pointerup", onTouchUp, true);
+      el.addEventListener("pointercancel", onTouchCancel, true);
       el.addEventListener("dblclick", onDblClick); // alert-line -> edit; curve -> settings
       el.addEventListener("contextmenu", onContextMenu); // right-click -> Paste menu
       // Measure ruler FIRST among the capture-phase mousedowns: a Shift press flips
@@ -3293,6 +3365,7 @@ export default function ChartCore({
                 levelsDraggable: true,
                 onDrag,
                 draft: draftRef.current,
+                draftLabelX: currentDraftLabelX(),
                 // A replaying cell draws no REAL draft order (positionLines).
                 replaying: handle.replayRef.current?.isActive() ?? false,
                 hidden: new Set(tradeUiRef.current.hidden),
@@ -3418,13 +3491,6 @@ export default function ChartCore({
           if (selectedIndicator.value) selectedIndicator.set(null);
         }
         drawPositions();
-        // Re-anchor / show / hide the active-line pill when the selected TRADE or the
-        // focused LINE changes — not on every hover tick. Freeze the pill's x at the
-        // cursor only on a new trade selection; clear it on deselect.
-        if (selectedChanged) {
-          if (ui.selected) freezeTradePillX();
-          else tradePillLeftRef.current = null;
-        }
         if (selectedChanged || fieldChanged) handle.redrawRef.current();
         // Keep the focused pill (z-order) in sync when selection changes without a mouse
         // move — e.g. selecting a trade from its dock row. Selected line wins, else hover.
@@ -3526,6 +3592,10 @@ export default function ChartCore({
       releaseBacktestPanel(chart);
       teardownArtifacts(chart);
       el.removeEventListener("click", onClick);
+      el.removeEventListener("pointerdown", onTouchDown, true);
+      el.removeEventListener("pointermove", onTouchMove, true);
+      el.removeEventListener("pointerup", onTouchUp, true);
+      el.removeEventListener("pointercancel", onTouchCancel, true);
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
       el.removeEventListener("mousedown", onZoomDown, true);
@@ -4375,7 +4445,7 @@ export default function ChartCore({
   legendBarIdxRef.current = legendBarIdx;
 
   // Paint the position CONNECTOR for the active trade/draft on its own canvas: a fixed
-  // left-column spine linking the line's entry/SL/TP with a circle handle on each, and
+  // spine linking the line's entry/SL/TP with a circle handle on each, and
   // the %/R:R badges to its LEFT. Cheap and React-free, so it runs on every mousemove
   // (hover gate) and from `redraw` (so it stays glued to its lines through scroll/zoom/
   // ticks and line drags). Appears on HOVER (grey spine, hovered handle outlined in its
@@ -4391,6 +4461,7 @@ export default function ChartCore({
     setAskTag,
     setAlertTags,
     setTradePills,
+    setAxisW,
     setLegendRows,
     setSubPaneLegends,
     setInsetLegend,
@@ -4400,6 +4471,7 @@ export default function ChartCore({
     containerRef,
     wrapRef,
     pillClipRef,
+    tradePillNodesRef,
     bracketCanvasRef,
     maCanvasRef,
     sepCanvasRef,
@@ -5656,7 +5728,13 @@ export default function ChartCore({
         hoveredPillKey={hoveredPillKey}
         focusedPillKey={focusedPillKey}
         selectedTradeId={selectedTradeId}
-        tradePillLeft={TRADE_PILL_LEFT}
+        axisWidth={axisW}
+        // The bracket spine is placed by measuring these pills, but a selection
+        // repaints it synchronously from the tradeLineUiSignal subscriber, i.e.
+        // BEFORE React commits the expanded face. Repaint again once the faces are
+        // laid out, and only when a width actually moved, so the common case (a
+        // re-render that changes no face) costs one Map walk and no paint.
+        onFacesLaidOut={handlePillFacesLaidOut}
         // While replaying, the pills act on the cell's ledger instead of the
         // account: dragging a stop and applying it must move a line in a local
         // book, never send a dealing request for a position that exists only here.

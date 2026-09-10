@@ -46,8 +46,9 @@ export interface LineSpec {
   // candle and truncates the resting line there. Ignored for stub/full.
   entryTs?: number;
   // Pill anchor x (px from the pane's left edge); unset → far-left (6). Draft lines
-  // set DRAFT_LABEL_X so their pills clear the bracket badge/spine column, which
-  // otherwise paints over them (real trades blank canvas labels for DOM pills).
+  // set it (chartGeometry draftLabelX) so their pills sit with the bracket spine,
+  // which now tracks the right price axis rather than a fixed left column (real
+  // trades blank canvas labels and render DOM pills there instead).
   labelX?: number;
   // Fully revealed (full width + end marker suppressed) — hover, click-select, or an
   // active drag of this trade. Precomputed by the caller since drag state lives there.
@@ -107,16 +108,20 @@ export interface SpecBuildOpts {
   // just the line — used when the always-on DOM pills render those labels instead, so
   // the two don't double up. Draft labels are unaffected (the draft has no DOM pill).
   hideTradeLabels?: boolean;
+  // Pill anchor x for the DRAFT lines, from chartGeometry draftLabelX (needs the
+  // live pane width, which only the chart knows). Omitted → the far-left fallback.
+  draftLabelX?: number;
 }
 
 export const DRAFT_ID = "draft";
 
-// Where a DRAFT line's canvas pill anchors: just right of the bracket spine
-// (ChartCore TRADE_SPINE_X=92), the same slot the always-on DOM pills use for real
-// trades (TRADE_PILL_LEFT). The bracket's %/R:R badges live LEFT of the spine on a
-// canvas above this one — a far-left draft pill would sit under them and show only
-// a clipped sliver.
-export const DRAFT_LABEL_X = 106;
+// Where a DRAFT line's canvas pill anchors when the caller cannot measure the pane:
+// the far-left default. The real value comes from the caller as `draftLabelX` and
+// tracks the bracket spine at the right price axis (chartGeometry draftLabelX) —
+// the same slot the always-on DOM pills occupy for real trades. The bracket's %/R:R
+// badges live LEFT of the spine on a canvas above this one, so a draft pill parked
+// away from that column would sit under them and show only a clipped sliver.
+export const DRAFT_LABEL_X_FALLBACK = 6;
 
 /** Build the flat LineSpec list for all trades on `epic`, merging pending drags
  *  over server levels (so a dragged line doesn't snap back on the next poll). */
@@ -242,7 +247,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         label: `${verb} limit ${d.quantity} @ ${fmt(d.price)}`,
         draggable: true,
         restKind: "full",
-        labelX: DRAFT_LABEL_X,
+        labelX: o.draftLabelX ?? DRAFT_LABEL_X_FALLBACK,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "price", lvl),
       });
     }
@@ -254,7 +259,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         label: `SL ${fmt(d.stop)}`,
         draggable: true,
         restKind: "full",
-        labelX: DRAFT_LABEL_X,
+        labelX: o.draftLabelX ?? DRAFT_LABEL_X_FALLBACK,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "stop", lvl),
       });
     }
@@ -266,7 +271,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         label: `TP ${fmt(d.takeProfit)}`,
         draggable: true,
         restKind: "full",
-        labelX: DRAFT_LABEL_X,
+        labelX: o.draftLabelX ?? DRAFT_LABEL_X_FALLBACK,
         onDragEnd: (lvl) => o.onDrag(DRAFT_ID, "takeProfit", lvl),
       });
     }

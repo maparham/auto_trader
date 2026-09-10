@@ -27,6 +27,34 @@ export const DOT_RADIUS = 3.5; // selection marker radius
 // when AVWAP is selected, draggable left/right to re-anchor (TradingView-style).
 export const ANCHOR_HANDLE_R = 6; // drawn radius
 
+// Trade bracket spine geometry. The spine used to be pinned in a fixed LEFT column;
+// now that the trade pills dock against the right price axis, it tracks that column
+// instead — the bracket only ever paints for the trade whose pills are engaged (and
+// therefore expanded), so a fixed inset would land underneath its own pill face.
+export const TRADE_SPINE_GAP = 14; // clearance between the spine and the pill's left edge
+export const TRADE_SPINE_FALLBACK_W = 78; // assumed pill width when none is measurable (draft)
+export const TRADE_SPINE_MIN_X = 12; // never off the pane's left edge — the badges draw left of it
+
+/** x (px, from the candle pane's left edge) of the trade bracket's spine: a gap left
+ *  of the widest currently-rendered pill face of the subject trade. Zero-width nodes
+ *  (pre-layout) don't count; null when the pane is too narrow to hold a spine. */
+export function tradeSpineX(o: { paneWidth: number; pillWidths: number[] }): number | null {
+  if (o.paneWidth <= 0) return null;
+  const measured = o.pillWidths.filter((w) => w > 0);
+  const pillW = measured.length ? Math.max(...measured) : TRADE_SPINE_FALLBACK_W;
+  return Math.max(TRADE_SPINE_MIN_X, o.paneWidth - pillW - TRADE_SPINE_GAP);
+}
+
+/** x (px, from the candle pane's left edge) for a DRAFT line's canvas label. A draft
+ *  has no DOM pill, so its spine takes the fallback inset and its label takes the slot
+ *  a real trade's pill would occupy — keeping the staged order's caliper and its
+ *  labels in one column instead of at opposite edges. 6 (the far-left default) while
+ *  the pane is not measurable yet. */
+export function draftLabelX(paneWidth: number): number {
+  const spine = tradeSpineX({ paneWidth, pillWidths: [] });
+  return spine == null ? 6 : spine + TRADE_SPINE_GAP;
+}
+
 // A selectable indicator line resolved to pixel coordinates for the current
 // view. One entry per `type:"line"` figure — an indicator can plot several
 // (e.g. MACD's DIF/DEA). Each point keeps its bar timestamp `t` so the dot

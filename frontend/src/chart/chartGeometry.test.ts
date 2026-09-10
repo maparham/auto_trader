@@ -12,7 +12,7 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-import { buildLineCache } from "./chartGeometry";
+import { buildLineCache, tradeSpineX, draftLabelX, TRADE_SPINE_GAP, TRADE_SPINE_FALLBACK_W, TRADE_SPINE_MIN_X } from "./chartGeometry";
 
 interface FakeInd {
   paneId: string;
@@ -67,5 +67,53 @@ describe("buildLineCache", () => {
       ]),
     );
     expect(cache.map((l) => l.name)).toEqual(["EMA#a1"]);
+  });
+});
+
+describe("tradeSpineX", () => {
+  it("places the spine a gap left of the widest pill face", () => {
+    // widest compact pill 70px → spine clears it by TRADE_SPINE_GAP
+    expect(tradeSpineX({ paneWidth: 1000, pillWidths: [70, 62] })).toBe(1000 - 70 - TRADE_SPINE_GAP);
+  });
+
+  it("follows an expanded pill further left as it grows", () => {
+    const compact = tradeSpineX({ paneWidth: 1000, pillWidths: [70] });
+    const expanded = tradeSpineX({ paneWidth: 1000, pillWidths: [240] });
+    expect(expanded).toBeLessThan(compact);
+    expect(expanded).toBe(1000 - 240 - TRADE_SPINE_GAP);
+  });
+
+  it("falls back to the default inset when nothing is measurable (e.g. a draft)", () => {
+    expect(tradeSpineX({ paneWidth: 1000, pillWidths: [] })).toBe(1000 - TRADE_SPINE_FALLBACK_W - TRADE_SPINE_GAP);
+  });
+
+  it("ignores zero-width nodes (pre-layout) rather than hugging the axis", () => {
+    expect(tradeSpineX({ paneWidth: 1000, pillWidths: [0, 0] })).toBe(1000 - TRADE_SPINE_FALLBACK_W - TRADE_SPINE_GAP);
+  });
+
+  it("keeps the spine on the pane when a pill is wider than the pane", () => {
+    // badges draw LEFT of the spine, so it must never be pushed off the left edge
+    expect(tradeSpineX({ paneWidth: 200, pillWidths: [400] })).toBe(TRADE_SPINE_MIN_X);
+  });
+
+  it("returns null for a pane too narrow to hold the spine at all", () => {
+    expect(tradeSpineX({ paneWidth: 0, pillWidths: [70] })).toBeNull();
+  });
+});
+
+describe("draftLabelX", () => {
+  it("anchors a draft's canvas label just right of the spine it has no DOM pill for", () => {
+    // Draft lines carry no DOM pill, so the spine falls back to the default inset;
+    // the label then takes the slot a real trade's pill would occupy.
+    const spine = tradeSpineX({ paneWidth: 1000, pillWidths: [] })!;
+    expect(draftLabelX(1000)).toBe(spine + TRADE_SPINE_GAP);
+  });
+
+  it("tracks the pane width so the draft label stays with its spine", () => {
+    expect(draftLabelX(1200)).toBeGreaterThan(draftLabelX(800));
+  });
+
+  it("falls back to the far-left slot when the pane is not measurable yet", () => {
+    expect(draftLabelX(0)).toBe(6);
   });
 });

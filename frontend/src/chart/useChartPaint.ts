@@ -57,11 +57,12 @@ import { type AlertCondition, type AlertTrigger } from "../lib/persist";
 import { type ExitCluster } from "../lib/tradeMarkers";
 import type { CurveLabelsHandle } from "../CurveLabels";
 import type { ChartHandle } from "./chartHandle";
+import { tradeSpineX } from "./chartGeometry";
 
 // Module-const from ChartCore (.ba-tag height; stacks bid/ask clear of the price pill).
 const BA_TAG_H = 18;
-// Module-consts from ChartCore: the trade-line spine geometry.
-const TRADE_SPINE_X = 92;
+// Module-const from ChartCore: the trade-line handle radius. The spine's x is no
+// longer a constant — it tracks the axis-docked pill column (see tradeSpineX).
 const TRADE_HANDLE_R = 4.5;
 
 // The alert-tag element type (mirrors ChartCore's setAlertTags state element).
@@ -110,6 +111,8 @@ export interface ChartPaintDeps {
   setAskTag: React.Dispatch<React.SetStateAction<BaTag>>;
   setAlertTags: React.Dispatch<React.SetStateAction<AlertTag[]>>;
   setTradePills: React.Dispatch<React.SetStateAction<TradePill[]>>;
+  /** Width of the price-axis column — the trade pills dock against its left edge. */
+  setAxisW: React.Dispatch<React.SetStateAction<number>>;
   setLegendRows: React.Dispatch<React.SetStateAction<LegendRow[]>>;
   setSubPaneLegends: React.Dispatch<React.SetStateAction<SubPaneLegendData[]>>;
   // The inset band's legend card and its geometry (the card's position, and where
@@ -127,6 +130,9 @@ export interface ChartPaintDeps {
   // redraw sizes its height to the candle pane so its overflow:hidden clips a
   // level below the visible range off the pane edge, not into the sub-panes.
   pillClipRef: React.RefObject<HTMLDivElement | null>;
+  // Live trade-pill DOM nodes keyed "tradeId:field" — paintBracket measures the
+  // subject trade's rendered faces to place the spine just left of them.
+  tradePillNodesRef: React.MutableRefObject<Map<string, HTMLDivElement>>;
   bracketCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   sepCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   selCanvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -177,6 +183,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     setAskTag,
     setAlertTags,
     setTradePills,
+    setAxisW,
     setLegendRows,
     setSubPaneLegends,
     setInsetLegend,
@@ -186,6 +193,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     containerRef,
     wrapRef,
     pillClipRef,
+    tradePillNodesRef,
     bracketCanvasRef,
     sepCanvasRef,
     selCanvasRef,
@@ -272,6 +280,9 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     let entry: number | null = null, stop: number | null = null, tp: number | null = null;
     let selectMode = false; // neutral-coloured (selected/draft) vs grey (hover)
     let activeField: TradeLineField | null = null; // filled (select) / outlined (hover) handle
+    // Whose pills the spine must clear. Stays null for a draft: it has no DOM pill,
+    // so the spine falls back to the default inset from the axis.
+    let subjectId: string | null = null;
     if (draft && draft.epic === epic) {
       stop = draft.stop ?? null;
       tp = draft.takeProfit ?? null;
@@ -288,6 +299,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       const id = dragId ?? selId ?? hovId;
       const t = id ? tradesRef.current.find((x) => x.id === id && x.epic === epic) : null;
       if (t) {
+        subjectId = t.id;
         const merged = mergeTradeLevels(t, pendingRef.current[t.id] ?? {});
         entry = merged.price ?? t.priceLevel;
         stop = merged.stop;
@@ -343,7 +355,22 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // number doesn't already show), so the two accent colours read as accents, not blocks.
     const GREY = "#8a93a0", NEUTRAL = "#6b7280", SIDE = NEUTRAL;
     const roleOf = (f: TradeLineField) => (f === "stop" ? "#f23645" : f === "tp" ? "#089981" : NEUTRAL);
-    const bx = TRADE_SPINE_X + 0.5; // crisp 1.5px stroke
+    // The spine tracks the axis-docked pill column: measure the subject trade's
+    // rendered faces (compact at rest, wider once expanded) and sit a gap to their
+    // left, so the caliper and its badges never draw under their own pills.
+    const mainW = chart.getSize("candle_pane", "main")?.width ?? 0;
+    const pillWidths: number[] = [];
+    if (subjectId != null) {
+      for (const [key, node] of tradePillNodesRef.current) {
+        if (key.slice(0, key.lastIndexOf(":")) === subjectId) pillWidths.push(node.offsetWidth);
+      }
+    }
+    const spineX = tradeSpineX({ paneWidth: mainW || w, pillWidths });
+    if (spineX == null) {
+      ctx.restore(); // release the candle-pane clip
+      return;
+    }
+    const bx = spineX + 0.5; // crisp 1.5px stroke
     const lines = ([
       ["price", yOf(entry)],
       ["stop", yOf(stop)],
@@ -376,7 +403,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       ctx.save();
       ctx.font = '600 10px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
       const pw = Math.round(ctx.measureText(text).width) + 10, ph = 15;
-      const left = Math.round(TRADE_SPINE_X - 10 - pw), top = Math.round(y - ph / 2);
+      const left = Math.round(spineX - 10 - pw), top = Math.round(y - ph / 2);
       ctx.beginPath();
       if (typeof ctx.roundRect === "function") ctx.roundRect(left, top, pw, ph, 3);
       else ctx.rect(left, top, pw, ph);
@@ -407,7 +434,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     for (const [field, y] of handleOrder) {
       const outline = selectMode ? SIDE : field === activeField ? roleOf(field) : GREY;
       ctx.beginPath();
-      ctx.arc(TRADE_SPINE_X, y, TRADE_HANDLE_R, 0, Math.PI * 2);
+      ctx.arc(spineX, y, TRADE_HANDLE_R, 0, Math.PI * 2);
       ctx.lineWidth = 1;
       ctx.strokeStyle = outline;
       // Hollow (surface backdrop) at rest; the selected/focused handle fills solid neutral.
@@ -636,6 +663,13 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       // clip would hide every pill/tag, so fall back to 100% (full height, no clip).
       const paneH = chart.getSize("candle_pane", 'main')?.height;
       clip.style.height = paneH && paneH > 0 ? `${paneH}px` : "100%";
+    }
+    // Price-axis column width, for the axis-docked trade pills. getSize can
+    // transiently report 0 pre-layout; keep the last good value then.
+    {
+      const mainW = chart.getSize("candle_pane", "main")?.width ?? 0;
+      const totalW = containerRef.current?.clientWidth ?? 0;
+      if (mainW > 0 && totalW > mainW) setAxisW(totalW - mainW);
     }
     // Round the pixel y: these pills center with transform: translateY(-50%) over
     // an even height, so a fractional top would land their text on half-pixels

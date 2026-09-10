@@ -40,7 +40,14 @@ interface TradePillsProps {
   // The click-SELECTED trade (not hover): its whole pill group carries a persistent
   // selected style, tying the spine/bracket to its pills when neighbours overlap.
   selectedTradeId: string | null;
-  tradePillLeft: number;
+  /** Width of the price-axis column: the pills dock right-edge flush against it. */
+  axisWidth: number;
+  /** Called after every layout pass, once the pill faces have their final widths.
+   *  The bracket spine is placed by measuring those faces, but selection repaints it
+   *  synchronously from a signal subscriber — before React commits the expanded face
+   *  — so without this the spine would keep the compact width and end up underneath
+   *  its own pill. */
+  onFacesLaidOut?: () => void;
   /** Where Apply / Close / Cancel go. Defaults to the account's HTTP dealing
    * calls; a replaying cell passes ledger-backed implementations instead. */
   actions?: {
@@ -50,7 +57,27 @@ interface TradePillsProps {
   };
 }
 
-const cash = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+const PILL_H = 22; // .trade-pill height (App.css)
+const ROW = 24; // vertical pitch inside a spread column
+
+// Transitive collision chaining over y-sorted pills: each pill within a pill
+// height of the previous one joins the cluster. Used twice — at render time to
+// decide which clusters COLLAPSE into a summary pill, and by the layout pass to
+// spread whatever actually rendered.
+function chainClusters<T extends { y: number }>(sorted: T[]): T[][] {
+  const clusters: T[][] = [];
+  let cluster: T[] = [];
+  for (const e of sorted) {
+    if (cluster.length && e.y - cluster[cluster.length - 1].y >= PILL_H) {
+      clusters.push(cluster);
+      cluster = [];
+    }
+    cluster.push(e);
+  }
+  if (cluster.length) clusters.push(cluster);
+  return clusters;
+}
+
 const signed = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
 const fmtDateTime = (ms: number) => new Date(ms).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 
@@ -65,50 +92,6 @@ const fmtDateTime = (ms: number) => new Date(ms).toLocaleString([], { dateStyle:
 function timeLabelFor(masked: MaskedReplay): (ms: number) => string {
   if (!masked) return fmtDateTime;
   return (ms: number) => maskedTimeLabel(masked.startMs, ms, masked.clock, masked.timezone);
-}
-
-interface DetailRow {
-  label: string;
-  value: string;
-  tone?: "pos" | "neg";
-}
-
-// Every detail of the position / order behind a pill, in the reading order the dock
-// uses. Conditioned by kind: uPnL is a position's alone, the expiry an order's; the
-// price the order pill dropped from its face resurfaces here in full.
-function tradeDetailRows(t: TradeView, prec: number, fmtTime: (ms: number) => string): DetailRow[] {
-  const px = (n: number) => n.toFixed(prec);
-  const rows: DetailRow[] = [];
-  rows.push({ label: "Quantity", value: String(t.quantity) });
-  rows.push({ label: t.kind === "order" ? "Limit" : "Avg fill", value: px(t.priceLevel) });
-  if (t.stop != null) rows.push({ label: "Stop loss", value: px(t.stop) });
-  if (t.takeProfit != null) rows.push({ label: "Take profit", value: px(t.takeProfit) });
-  if (t.kind === "position" && t.upnl != null)
-    rows.push({ label: "Unrealised P/L", value: signed(t.upnl), tone: t.upnl >= 0 ? "pos" : "neg" });
-  if (t.leverage != null) rows.push({ label: "Leverage", value: `${t.leverage}:1` });
-  if (t.margin != null) rows.push({ label: "Margin", value: cash(t.margin) });
-  if (t.openedAt != null)
-    rows.push({ label: t.kind === "order" ? "Placed" : "Opened", value: fmtTime(t.openedAt) });
-  if (t.kind === "order")
-    rows.push({ label: "Expires", value: t.expiresAt != null ? fmtTime(t.expiresAt) : "GTC" });
-  if (t.source === "strategy") rows.push({ label: "Source", value: "Strategy" });
-  return rows;
-}
-
-// The details grid the pill's ⓘ tooltip shows — the same shared-tooltip idiom as
-// every other ⓘ in the app, so the card only appears when the icon is hovered
-// instead of ambushing the whole pill.
-function detailsContent(trade: TradeView, prec: number, fmtTime: (ms: number) => string) {
-  return (
-    <dl className="pill-tip-grid">
-      {tradeDetailRows(trade, prec, fmtTime).map((r) => (
-        <div className="pill-tip-row" key={r.label}>
-          <dt>{r.label}</dt>
-          <dd className={r.tone ? `pill-tip-${r.tone}` : undefined}>{r.value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
 }
 
 /**
@@ -129,7 +112,8 @@ export default function TradePills({
   hoveredPillKey,
   focusedPillKey,
   selectedTradeId,
-  tradePillLeft,
+  axisWidth,
+  onFacesLaidOut,
   actions,
 }: TradePillsProps) {
   // Is THIS cell replaying? Asked at CLICK time (a Set lookup), not captured at
@@ -198,6 +182,29 @@ export default function TradePills({
   const hoveredTradeId = tradeIdOf(hoveredPillKey);
   // Leader-tick nodes keyed like the pills; geometry is written by the layout pass.
   const leaderNodesRef = useRef(new Map<string, HTMLDivElement>());
+  // A pill is ENGAGED when it must show (or be reachable at) its full face: its
+  // trade selected, itself hovered/focused, or a drag staged on its line.
+  const pillEngaged = (p: TradePillItem) => {
+    const key = `${p.tradeId}:${p.field}`;
+    return p.tradeId === selectedTradeId || key === hoveredPillKey || key === focusedPillKey || p.changed;
+  };
+  // Colliding pills collapse into ONE summary pill (count + net P/L) unless the
+  // cluster is engaged — then its members render individually and the layout pass
+  // spreads them. Clustered at render (not in the effect) because collapsing
+  // changes WHAT renders, not just where.
+  const renderClusters = chainClusters([...pills].sort((a, b) => a.y - b.y));
+  const visible: Array<
+    | { kind: "pill"; pill: TradePillItem }
+    | { kind: "summary"; members: TradePillItem[]; key: string; y: number }
+  > = [];
+  for (const c of renderClusters) {
+    if (c.length > 1 && !c.some(pillEngaged)) {
+      const mean = c.reduce((s2, e) => s2 + e.y, 0) / c.length;
+      visible.push({ kind: "summary", members: c, key: `${c[0].tradeId}:${c[0].field}`, y: mean });
+    } else {
+      for (const m of c) visible.push({ kind: "pill", pill: m });
+    }
+  }
   // Overlap declutter — vertical spread: pills whose 22px bodies collide vertically form
   // a cluster and spread into a one-per-row column (24px pitch) centred on the cluster's
   // mean y, all at the shared anchor x. No horizontal run, every pill fully readable.
@@ -206,30 +213,22 @@ export default function TradePills({
   // `top`, then this pass reapplies); a sweep over the y-sorted pills chains clusters
   // transitively: each pill within a pill-height of the previous one joins the cluster.
   useLayoutEffect(() => {
-    const PILL_H = 22; // .trade-pill height (App.css)
     const HALF = PILL_H / 2;
-    const ROW = 24; // vertical pitch inside a spread column
     type Entry = { key: string; y: number };
-    const sorted: Entry[] = pills
-      .map((p) => ({ key: `${p.tradeId}:${p.field}`, y: p.y }))
-      .sort((a, b) => a.y - b.y);
-    const clusters: Entry[][] = [];
-    let cluster: Entry[] = [];
-    for (const e of sorted) {
-      if (cluster.length && e.y - cluster[cluster.length - 1].y >= PILL_H) {
-        clusters.push(cluster);
-        cluster = [];
-      }
-      cluster.push(e);
-    }
-    if (cluster.length) clusters.push(cluster);
+    // Already y-sorted: `visible` is built from y-sorted render clusters, and a
+    // collapsed summary's mean lies inside its members' span.
+    const sorted: Entry[] = visible.map((v) =>
+      v.kind === "pill" ? { key: `${v.pill.tradeId}:${v.pill.field}`, y: v.pill.y } : { key: v.key, y: v.y },
+    );
+    const clusters = chainClusters(sorted);
     // Keep the column on the pane: clamp its top edge, and its bottom edge when the
     // clip container's height is known (jsdom has no layout — offsetParent is null).
     const paneH = sorted.length
       ? tradePillNodesRef.current.get(sorted[0].key)?.offsetParent?.clientHeight ?? 0
       : 0;
+    // Also the singleton path (mean = its own y, zero rows of spread): a lone row
+    // still clamps, so a collapsed summary near the pane edge stays fully on it.
     const startOf = (c: Entry[]) => {
-      if (c.length === 1) return c[0].y;
       const mean = c.reduce((s, e) => s + e.y, 0) / c.length;
       let start = mean - ((c.length - 1) * ROW) / 2;
       if (paneH > 0) start = Math.min(start, paneH - HALF - (c.length - 1) * ROW);
@@ -252,7 +251,7 @@ export default function TradePills({
     for (const c of clusters) {
       const start = startOf(c);
       c.forEach((e, i) => {
-        const rowY = c.length === 1 ? e.y : start + i * ROW;
+        const rowY = start + i * ROW;
         const node = tradePillNodesRef.current.get(e.key);
         if (node) node.style.top = `${rowY}px`;
         // Leader tick: pill edge → true line y, shown only when the line falls OUTSIDE
@@ -264,19 +263,55 @@ export default function TradePills({
             leader.style.display = "none";
           } else {
             leader.style.display = "";
-            leader.style.left = `${tradePillLeft - 5}px`;
+            leader.style.right = `${axisWidth + 2}px`;
             leader.style.top = `${rowY < e.y ? rowY + HALF : e.y}px`;
             leader.style.height = `${d - HALF}px`;
           }
         }
       });
     }
+    // Faces are final now: let the bracket re-measure them.
+    onFacesLaidOut?.();
   });
   return (
     <>
-      {pills.map((p) => {
+      {visible.map((v) => {
+        if (v.kind === "summary") {
+          const withPl = v.members.filter((m) => m.pl != null);
+          const net = withPl.length ? withPl.reduce((s2, m) => s2 + (m.pl as number), 0) : null;
+          return (
+            <div
+              key={`cluster:${v.key}`}
+              // Registered under the FIRST member's key: ChartCore's rect hit-test
+              // then hovers/selects that member, which engages the cluster and
+              // expands it into its individual pills.
+              ref={(node) => {
+                if (node) tradePillNodesRef.current.set(v.key, node);
+                else tradePillNodesRef.current.delete(v.key);
+              }}
+              className={`trade-pill tp-cluster${selectedTradeId != null ? " dimmed" : ""}`}
+              style={{
+                top: v.y,
+                right: axisWidth,
+                "--pill": "#5d6673", // mixed roles → neutral frame
+                ...(net != null ? { "--pnl": net >= 0 ? "#089981" : "#f23645" } : {}),
+              } as React.CSSProperties}
+            >
+              <span className="tp-label">{v.members.length}×</span>
+              {net != null && <span className="tp-pnl">{signed(net)}</span>}
+            </div>
+          );
+        }
+        const p = v.pill;
         const prec = precisionRef.current;
         const isEntry = p.field === "price";
+        const pillKey = `${p.tradeId}:${p.field}`;
+        // Compact by default (axis-docked summary: side+qty and P/L only). The FULL
+        // face — price, BE chip, details ⓘ and the action buttons — appears while the
+        // pill is engaged: its trade selected, the pill hovered/focused, or a drag
+        // staged (Apply/Discard must stay reachable without a hover).
+        const expanded =
+          p.tradeId === selectedTradeId || pillKey === hoveredPillKey || pillKey === focusedPillKey || p.changed;
         const pendKey = p.field === "tp" ? "takeProfit" : p.field; // pendingEdits key
         const sign = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
         // A hairline chip with a hierarchy inside the line (see App.css): a small uppercase
@@ -338,15 +373,35 @@ export default function TradePills({
               if (node) tradePillNodesRef.current.set(key, node);
               else tradePillNodesRef.current.delete(key);
             }}
-            className={`trade-pill tp-line-${p.field}${p.tradeId === selectedTradeId ? " selected" : ""}${selectedTradeId != null && p.tradeId !== selectedTradeId ? " dimmed" : ""}${p.tradeId === focusedTradeId || p.tradeId === hoveredTradeId ? " raised" : ""}${`${p.tradeId}:${p.field}` === hoveredPillKey ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
+            className={`trade-pill tp-line-${p.field}${expanded ? "" : " compact"}${p.tradeId === selectedTradeId ? " selected" : ""}${selectedTradeId != null && p.tradeId !== selectedTradeId ? " dimmed" : ""}${p.tradeId === focusedTradeId || p.tradeId === hoveredTradeId ? " raised" : ""}${`${p.tradeId}:${p.field}` === hoveredPillKey ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
             style={{
               top: p.y,
-              left: tradePillLeft,
+              right: axisWidth,
               "--pill": roleColor,
               // Entry P/L number is coloured by sign; SL/TP body falls back to the frame.
               ...(isEntry && pnlColor ? { "--pnl": pnlColor } : {}),
             } as React.CSSProperties}
           >
+            {!expanded ? (
+              /* Compact face: the price is readable off the axis right beside the
+                 pill, so only the role and the money show — "L5 +39.30" on an entry,
+                 "SL −12.40" on an exit, the expiry/GTC on a resting order. */
+              <>
+                <span className="tp-label">{isEntry ? `${p.side === "buy" ? "L" : "S"}${p.qty}` : labelText}</span>
+                {isOrderEntry ? (
+                  p.expiresAt != null ? (
+                    <span className="tp-expiry">{expiryText}</span>
+                  ) : (
+                    <span className="tp-gtc">GTC</span>
+                  )
+                ) : isEntry ? (
+                  bodyPnl != null && <span className="tp-pnl">{bodyPnl}</span>
+                ) : (
+                  p.pl != null && <span className="tp-plhint">{sign(p.pl)}</span>
+                )}
+              </>
+            ) : (
+              <>
             <span className="tp-label">{labelText}</span>
             {isEntry && <span className="tp-qty">{p.qty}</span>}
             {isOrderEntry ? (
@@ -380,30 +435,6 @@ export default function TradePills({
             {!isEntry && p.pl != null && (
               <span className="tp-plhint" title="P&L if this level is hit">{sign(p.pl)}</span>
             )}
-            {/* ⓘ — the full details card, shown only while the icon itself is hovered
-                (the shared-tooltip idiom) instead of ambushing the whole pill. */}
-            {(() => {
-              const t = tradesRef.current.find((x) => x.id === p.tradeId);
-              return t ? (
-                <Tooltip title={`${tradeLabel(t.kind, t.side)} · ${t.epic}`} content={detailsContent(t, prec, fmtTime)}>
-                  <button
-                    type="button"
-                    className="tp-btn tp-info"
-                    aria-label="Trade details"
-                    // The rest of the pill selects on click (canvas hit-test); the ⓘ is
-                    // its own DOM target, so mirror that instead of swallowing the click
-                    // — including the canvas path's replay gate on opening the ticket.
-                    onClick={() => setTradeSelected(p.tradeId, p.field, opensTicket())}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <circle cx="12" cy="12" r="9" />
-                      <line x1="12" y1="11" x2="12" y2="16" />
-                      <line x1="12" y1="7.5" x2="12.01" y2="7.5" />
-                    </svg>
-                  </button>
-                </Tooltip>
-              ) : null;
-            })()}
             {p.changed && (
               <>
                 <Tooltip content="Apply changes">
@@ -508,6 +539,8 @@ export default function TradePills({
               </button>
               </Tooltip>
             ))}
+              </>
+            )}
           </div>
           </Fragment>
         );

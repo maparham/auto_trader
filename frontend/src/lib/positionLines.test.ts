@@ -2,7 +2,7 @@
 // PositionLines reconcile + tradeLineSpecs (pending-merge, labels, draggability).
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { PositionLines, tradeLineSpecs, bracketLabels, restingLineEndX, DRAFT_LABEL_X, type LineSpec } from "./positionLines";
+import { PositionLines, tradeLineSpecs, bracketLabels, restingLineEndX, DRAFT_LABEL_X_FALLBACK, type LineSpec } from "./positionLines";
 import type { TradeView } from "./trading";
 
 interface Call {
@@ -309,11 +309,42 @@ describe("tradeLineSpecs", () => {
     });
     const drafts = specs.filter((s) => s.key.startsWith("draft:"));
     expect(drafts).toHaveLength(3);
-    // Right of the spine/badge column (spine x = 92) — matches the DOM pill anchor.
-    expect(DRAFT_LABEL_X).toBe(106);
-    expect(drafts.map((s) => s.labelX)).toEqual([DRAFT_LABEL_X, DRAFT_LABEL_X, DRAFT_LABEL_X]);
+    // No draftLabelX supplied here → every draft line takes the far-left fallback.
+    expect(drafts.map((s) => s.labelX)).toEqual([
+      DRAFT_LABEL_X_FALLBACK,
+      DRAFT_LABEL_X_FALLBACK,
+      DRAFT_LABEL_X_FALLBACK,
+    ]);
     // Real trade lines keep the default far-left pill anchor (labelX unset).
     expect(specs.filter((s) => !s.key.startsWith("draft:")).every((s) => s.labelX === undefined)).toBe(true);
+  });
+
+  it("anchors every draft line's pill at the caller's draftLabelX", () => {
+    // The chart measures its pane and passes the spine-tracking x; all three draft
+    // lines must take it, or the staged order's labels scatter away from its caliper.
+    const specs = tradeLineSpecs({
+      trades: [],
+      pending: {},
+      epic: "EURUSD",
+      precision: 5,
+      levelsDraggable: true,
+      onDrag: () => {},
+      replaying: false,
+      draftLabelX: 812,
+      draft: {
+        epic: "EURUSD",
+        side: "buy",
+        quantity: 1,
+        type: "limit",
+        price: 99,
+        stop: 98,
+        takeProfit: 101,
+        expiresAt: null,
+      },
+    });
+    const drafts = specs.filter((s) => s.key.startsWith("draft:"));
+    expect(drafts).toHaveLength(3);
+    expect(drafts.map((s) => s.labelX)).toEqual([812, 812, 812]);
   });
 
   it("a market draft has no entry line (fills at market)", () => {

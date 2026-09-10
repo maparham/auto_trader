@@ -3084,10 +3084,11 @@
 .price-tag {
   /* Width is set imperatively (ChartCore) to the price-axis column width so the
      pill fills the column and never spills left into the chart. */
-  /* z-index 47 keeps the live price label above the alert axis tag (45) and the
-     descriptive alert pill (46) so it's never hidden when an alert level lands at
-     the same price — the live price is the authoritative read and stays on top. */
-  position: absolute; right: 0; z-index: 47; transform: translateY(-50%);
+  /* z-index 50 keeps the live price label above the alert axis tag (45), the
+     descriptive alert pill (46) and every trade-pill layer (47-49) so it's never
+     hidden by anything docked at the axis — the live price is the authoritative
+     read and stays on top. */
+  position: absolute; right: 0; z-index: 50; transform: translateY(-50%);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 40px; padding: 0 6px; border-radius: 3px; pointer-events: none; overflow: hidden;
   background: var(--accent); color: var(--accent-text);
@@ -3148,9 +3149,9 @@
 .alert-tag .at-bell { display: inline-flex; align-items: center; color: #f5a623; }
 .alert-tag .at-bell svg { display: block; }
 /* While its line is click-selected the alert axis tag rises above the live price
-   label (47) so the selected alert reads clearly; otherwise it stays at 45, below
+   label (50) so the selected alert reads clearly; otherwise it stays at 45, below
    the price label, which always wins. Mirrors .alert-pill.selected. */
-.alert-tag.selected { z-index: 48; }
+.alert-tag.selected { z-index: 51; }
 
 /* TV-style descriptive pill on the alert line (hover/selected). Unlike the
    axis tag this is interactive (delete button), so it opts back into pointer
@@ -3167,17 +3168,21 @@
    descriptive pill (with the reachable delete/toggle controls) rises above the
    live price label (47). A merely-hovered pill stays at 46 — below the price
    label — so a passing cursor never hides the live price. */
-.alert-pill.selected { z-index: 48; }
+.alert-pill.selected { z-index: 51; }
 /* Drag affordance: hovering an alert line shows the up/down-arrow resize cursor
    over the canvas, signalling the line drags vertically (klinecharts sets an
    inline crosshair cursor, so override with !important). */
 .chart-wrap.alert-hover canvas { cursor: ns-resize !important; }
-/* Always-on position pill. Selecting a line just adds buttons to the SAME pill — no
-   second pill stacked on top. A hairline surface chip with a hierarchy INSIDE the line:
-   a small uppercase role tag (eyebrow), the price as the hero in tabular mono, then the
-   signed P/L. --pill is the role colour (SL red, TP green, entry a neutral slate) set
-   inline per pill; it tints the border and the eyebrow only, never a fill. Sits just
-   above the hovered alert pill (47). */
+/* Always-on position pill, docked right-edge flush against the price axis (inline
+   `right:` = the axis column width). Compact at rest (role + money only); engaging it
+   (hover / selection / staged drag) expands the SAME pill leftward into the full face —
+   price, BE chip, details, buttons. A hairline surface chip with a hierarchy INSIDE the
+   line: a small uppercase role tag (eyebrow), the price as the hero in tabular mono, then
+   the signed P/L. --pill is the role colour (SL red, TP green, entry a neutral slate) set
+   inline per pill; it tints the border and the eyebrow only, never a fill. Sits above
+   the cursor-following alert pill (46) — the docked trade pills are persistent UI, the
+   alert pill moves with the cursor — while the whole pill layer stays BELOW the
+   last-price gutter pill (50), which always reads. */
 .trade-pill {
   position: absolute; z-index: 47; transform: translateY(-50%);
   display: inline-flex; align-items: center; gap: 6px;
@@ -3201,7 +3206,7 @@
 .trade-pill.dimmed { opacity: .55; }
 .trade-pill.dimmed.hovering { opacity: 1; }
 /* Leader tick: hairline tying a vertically-displaced pill (overlap spread) back to its
-   true line. Sits just left of the pill column, under the pills (z below 47). */
+   true line. Sits just inside the pill's docked right edge, under the pills. */
 .tp-leader {
   position: absolute; width: 0; z-index: 46; pointer-events: none;
   border-left: 1px solid var(--text-faint); opacity: .5;
@@ -3219,7 +3224,8 @@
 }
 /* The WHOLE pill group of the selected trade — and of a hovered pill's trade — rises
    above resting pills (47), so a selected position's entry/SL/TP win overlaps against
-   neighbouring trades' pills as one unit (and hovering its TP/SL raises the group too). */
+   neighbouring trades' pills as one unit (and hovering its TP/SL raises the group too).
+   Every pill state stays under the last-price gutter pill (50). */
 .trade-pill.raised { z-index: 48; }
 /* Hover A — subtle lift: soft shadow + stronger border; the close button flushes red.
    Driven by the .hovering class (added while the pill's line is hovered). Tops even a
@@ -3228,6 +3234,9 @@
 /* The pill of the focused LINE (selected field, or the hovered one) wins overlaps
    within its own raised group so a stack of close levels stays readable. */
 .trade-pill.focused { z-index: 49; }
+/* Collapsed cluster: several colliding resting pills as one summary — "3×" and the
+   net P/L. Neutral frame (mixed roles); engaging any member expands the cluster. */
+.trade-pill.tp-cluster .tp-label { text-transform: none; letter-spacing: .02em; font-size: 10px; }
 /* Eyebrow tag — TP / SL / the side word (Long, Short, Sell limit…), small + uppercase +
    letter-spaced, in the role colour. The one place hue lives besides the border. */
 .trade-pill .tp-label {
@@ -3406,12 +3415,12 @@
    "+" is a circle sitting in the chart area; the price label fills the price-axis
    column to its right. The circle's right edge lands on the column's left border
    (its width is set imperatively to the axis width in ChartCore onMove). */
-/* z-index 49 keeps the cursor-following "+" price label above the live price tag
-   (47) and the selected alert tag/pill (48): it tracks the pointer, so it must
+/* z-index 52 keeps the cursor-following "+" price label above the live price tag
+   (50) and the selected alert tag/pill (51): it tracks the pointer, so it must
    never be obstructed by a static axis label parked at the same price (TV-style —
    the cursor's price label always reads on top of the fixed last-price label). */
 .axis-plus {
-  position: absolute; right: 0; z-index: 49; transform: translateY(-50%);
+  position: absolute; right: 0; z-index: 52; transform: translateY(-50%);
   display: flex; align-items: center; cursor: pointer;
   /* Even height so translateY(-50%) stays on whole pixels (crisp price label). */
   height: 22px;
