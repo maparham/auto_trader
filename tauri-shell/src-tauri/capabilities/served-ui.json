@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/macOS-schema.json",
+  "identifier": "served-ui",
+  "description": "Shell commands reachable from the locally served trading UI, which is a remote origin as far as the ACL is concerned.",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://localhost:*",
+      "http://127.0.0.1:*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "allow-ping",
+    "allow-get-settings",
+    "allow-set-settings",
+    "allow-target-url",
+    "allow-notify-native",
+    "allow-set-status"
+  ]
+}

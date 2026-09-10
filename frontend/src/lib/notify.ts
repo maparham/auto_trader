@@ -5,6 +5,8 @@
 // while a tab is open and after the user grants permission, so we also keep the
 // in-page toast as an always-visible fallback and play a sound on every fire.
 
+import { inShell, shellInvoke } from "./shellBridge";
+
 export type NotifyPermission = "default" | "granted" | "denied" | "unsupported";
 
 // Ask for notification permission. Must be called from a user gesture (e.g. the
@@ -25,6 +27,18 @@ export async function ensureNotifyPermission(): Promise<NotifyPermission> {
 // keeps it re-alerting (sound/banner) on each replacement. Without a tag, each
 // call gets a distinct banner as before.
 export function notify(title: string, body: string, onClick?: () => void, tag?: string): void {
+  // Inside the native shell the Web Notification API is unreliable in WKWebView
+  // and the window is usually hidden, so the banner goes through the shell's
+  // notification plugin instead. The in-page toast and ping are unaffected.
+  //
+  // Two deliberate reductions vs. the browser path, both accepted for now:
+  // `onClick` cannot ride along (clicking the banner just shows the window), and
+  // `tag`/`renotify` are dropped, so a repeat fire stacks a second banner in
+  // Notification Center instead of replacing the first.
+  if (inShell()) {
+    void shellInvoke("notify_native", { title, body });
+    return;
+  }
   if ("Notification" in window && Notification.permission === "granted") {
     try {
       const n = new Notification(title, {

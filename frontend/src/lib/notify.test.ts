@@ -175,3 +175,36 @@ describe("notify OS banner tag", () => {
     expect(seen[1].opts.renotify).toBe(true);
   });
 });
+
+// The native-shell contract: inside the Tauri shell the window is usually
+// hidden and the Web Notification API is unreliable in WKWebView, so banners go
+// through the shell command instead. A plain browser must be untouched.
+describe("notify in the native shell", () => {
+  afterEach(() => {
+    delete (window as unknown as Record<string, unknown>).__TAURI__;
+  });
+
+  it("routes through the shell command and skips the Web Notification", () => {
+    const invoke = vi.fn().mockResolvedValue(null);
+    (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke } };
+    const ctor = vi.fn();
+    vi.stubGlobal("Notification", Object.assign(ctor, { permission: "granted" }));
+
+    notify("US100", "crossed 20000");
+
+    expect(invoke).toHaveBeenCalledWith("notify_native", {
+      title: "US100",
+      body: "crossed 20000",
+    });
+    expect(ctor).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Web Notification path in a plain browser", () => {
+    const ctor = vi.fn();
+    vi.stubGlobal("Notification", Object.assign(ctor, { permission: "granted" }));
+
+    notify("US100", "crossed 20000");
+
+    expect(ctor).toHaveBeenCalledTimes(1);
+  });
+});

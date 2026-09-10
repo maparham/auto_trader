@@ -12,13 +12,6 @@ remove it from here (git history and the memory index track shipped features).
   MetaApi. Design-only so far — no plan file, no implementation yet.
   [spec](superpowers/specs/2026-07-11-mt5-selfhosted-http-broker-design.md)
 
-- **Tauri menu-bar Mac app** — thin always-on native shell that loads the
-  existing localhost UI so the browser-driven live engine can't be closed by
-  accident. Menu-bar tray icon + status glyph, ⌘⌥T hotkey, close/⌘W/⌘Q all hide
-  (tray Quit only), user-settable URL + Settings window, launch-at-login, native
-  alert toasts, unread badge, connection splash, App-Nap prevention.
-  [spec](superpowers/specs/2026-07-08-tauri-menubar-wrapper-design.md)
-
 ## In progress
 
 - **Slim large modules** — split the 10 biggest modules into focused files.

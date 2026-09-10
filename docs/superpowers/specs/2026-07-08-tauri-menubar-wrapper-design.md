@@ -1,7 +1,7 @@
 # Tauri menu-bar wrapper for the auto_trader UI
 
 **Date:** 2026-07-08
-**Status:** Design — pending implementation plan
+**Status:** Shipped 2026-09-11 (plan: `docs/superpowers/plans/2026-09-10-tauri-menubar-shell.md`)
 
 ## Problem
 

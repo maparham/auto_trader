@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auto Trader</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f6f7;
+        --fg: #16181d;
+        --muted: #6b7280;
+        --line: #d6d8dd;
+        --field: #ffffff;
+        --accent: #863bff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c1e24;
+          --fg: #e9eaee;
+          --muted: #9aa0ab;
+          --line: #33363e;
+          --field: #24272e;
+        }
+      }
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      }
+      .spinner {
+        width: 26px;
+        height: 26px;
+        border: 2px solid var(--line);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .title { font-size: 15px; font-weight: 600; }
+      .url { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .note { color: var(--muted); max-width: 380px; text-align: center; }
+      button {
+        padding: 6px 14px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--field);
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="spinner"></div>
+    <div class="title">Waiting for the trading UI</div>
+    <div class="url" id="url"></div>
+    <div class="note">Start the backend and the Vite dev server; this window connects on its own.</div>
+    <button id="retry">Retry now</button>
+
+    <script>
+      const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
+      const urlEl = document.getElementById("url");
+      let target = null;
+      let timer = null;
+
+      async function probe() {
+        if (!target) return;
+        try {
+          // no-cors: we only care whether anything answers, not what it said.
+          await fetch(target, { mode: "no-cors", cache: "no-store" });
+          window.location.replace(target);
+        } catch (e) {
+          /* still down; the interval tries again */
+        }
+      }
+
+      invoke("target_url").then((u) => {
+        target = u;
+        urlEl.textContent = u;
+        probe();
+        timer = setInterval(probe, 2000);
+      });
+
+      document.getElementById("retry").addEventListener("click", probe);
+    </script>
+  </body>
+</html>

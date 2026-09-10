@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auto Trader Settings</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f6f7;
+        --fg: #16181d;
+        --muted: #6b7280;
+        --line: #d6d8dd;
+        --field: #ffffff;
+        --accent: #863bff;
+        --danger: #d0342c;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c1e24;
+          --fg: #e9eaee;
+          --muted: #9aa0ab;
+          --line: #33363e;
+          --field: #24272e;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 18px 20px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      }
+      label { display: block; font-weight: 600; margin-bottom: 6px; }
+      .hint { color: var(--muted); font-weight: 400; }
+      input[type="text"] {
+        width: 100%;
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--field);
+        color: inherit;
+        font: inherit;
+      }
+      input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+      .row { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+      .actions { display: flex; align-items: center; gap: 10px; margin-top: 20px; }
+      button {
+        padding: 6px 14px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--field);
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      #status { color: var(--muted); min-height: 18px; }
+      #status.error { color: var(--danger); }
+    </style>
+  </head>
+  <body>
+    <label for="url">UI address <span class="hint">the page the shell loads</span></label>
+    <input id="url" type="text" spellcheck="false" autocomplete="off" placeholder="http://localhost:5173" />
+
+    <div class="row">
+      <input id="autostart" type="checkbox" />
+      <label for="autostart" style="margin: 0; font-weight: 400">Launch at login</label>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="save">Save</button>
+      <span id="status"></span>
+    </div>
+
+    <script>
+      const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
+      const urlEl = document.getElementById("url");
+      const autoEl = document.getElementById("autostart");
+      const statusEl = document.getElementById("status");
+
+      function say(text, isError) {
+        statusEl.textContent = text;
+        statusEl.className = isError ? "error" : "";
+      }
+
+      invoke("get_settings").then((s) => {
+        urlEl.value = s.url;
+        autoEl.checked = s.autostart;
+      });
+
+      document.getElementById("save").addEventListener("click", async () => {
+        say("Saving");
+        try {
+          await invoke("set_settings", { url: urlEl.value, autostart: autoEl.checked });
+          say("Saved. The window reloaded on the new address.");
+        } catch (e) {
+          say(String(e), true);
+        }
+      });
+
+      urlEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") document.getElementById("save").click();
+      });
+    </script>
+  </body>
+</html>

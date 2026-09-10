@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/macOS-schema.json",
+  "identifier": "default",
+  "description": "Shell commands reachable from the bundled shell pages (settings, splash).",
+  "windows": [
+    "main",
+    "settings"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-ping",
+    "allow-get-settings",
+    "allow-set-settings",
+    "allow-target-url",
+    "allow-notify-native",
+    "allow-set-status",
+    "window-state:default",
+    "global-shortcut:default",
+    "store:default",
+    "autostart:default",
+    "notification:default"
+  ]
+}
