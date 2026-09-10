@@ -655,6 +655,35 @@ export default function IndicatorSettings({
     );
   }
 
+  // A boolean rendered as a SELECTABLE LABEL: the name is the control, pressed
+  // when on. The checkbox is still the element under it (hidden), so the role,
+  // the accessible name and the keyboard behaviour are the native ones and the
+  // <label> wrapper is what makes the whole chip a hit area.
+  function boolChip(
+    inp: IndicatorInputDef,
+    checked: boolean,
+    onChange: (next: boolean) => void,
+  ) {
+    return (
+      <label className={`ind-bool-chip${checked ? " on" : ""}`}>
+        <input
+          type="checkbox"
+          aria-label={inp.label}
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span>{inp.label}</span>
+      </label>
+    );
+  }
+
+  // The ⓘ alone, for the rows whose label is inside the control (the boolean
+  // chips): the tip has to sit OUTSIDE the hit area, or reading it would
+  // toggle the setting.
+  function tipFor(inp: IndicatorInputDef) {
+    return inp.tip ? <InfoTip title={inp.label} text={inp.tip} /> : null;
+  }
+
   // Wraps a control with its unit, so the unit reads as part of the field
   // rather than as part of the label.
   function withSuffix(inp: IndicatorInputDef, control: React.ReactNode) {
@@ -675,14 +704,7 @@ export default function IndicatorSettings({
       const checked = Number.isFinite(stored)
         ? (stored as number) >= 1
         : ((inp.default as boolean | undefined) ?? false);
-      return (
-        <input
-          type="checkbox"
-          aria-label={inp.label}
-          checked={checked}
-          onChange={(e) => setParam(inp.index!, e.target.checked ? 1 : 0)}
-        />
-      );
+      return boolChip(inp, checked, (next) => setParam(inp.index!, next ? 1 : 0));
     }
     if (inp.source === "calcParam" && inp.index != null) {
       // A slot the saved instance predates reads undefined, which would
@@ -754,13 +776,10 @@ export default function IndicatorSettings({
       );
     }
     if (inp.source === "extend" && inp.field && inp.type === "boolean") {
-      return (
-        <input
-          type="checkbox"
-          aria-label={inp.label}
-          checked={(genExtend[inp.field] ?? inp.default ?? false) as boolean}
-          onChange={(e) => setExtendInput(inp.field!, e.target.checked)}
-        />
+      return boolChip(
+        inp,
+        (genExtend[inp.field] ?? inp.default ?? false) as boolean,
+        (next) => setExtendInput(inp.field!, next),
       );
     }
     return null;
@@ -1943,6 +1962,20 @@ export default function IndicatorSettings({
                         )}
                       </span>
                     </div>
+                  ) : chunk.length === 2 && chunk[0].type === "boolean" ? (
+                    // A pair of SWITCHES: two to a row, each label beside its
+                    // own switch rather than above it. A switch is small enough
+                    // that a half-width cell still holds "label ......... [on]"
+                    // whole, so the two stay visibly attached — which is the
+                    // objection that kept a solo checkbox out of .ind-pair2.
+                    <div className="ind-pair2-bool">
+                      {chunk.map((inp) => (
+                        <div className="ind-field" key={inp.key}>
+                          {controlFor(inp)}
+                          {tipFor(inp)}
+                        </div>
+                      ))}
+                    </div>
                   ) : chunk.length > 1 ? (
                     // Related pair: two to a row, each label stacked above its
                     // own control. Halves the width a label gets, which is why
@@ -1973,8 +2006,19 @@ export default function IndicatorSettings({
                       {labelFor(chunk[0])}
                       {controlFor(chunk[0])}
                     </div>
+                  ) : chunk[0].type === "boolean" ? (
+                    // A LONE switchable label: same chip, just not sharing the
+                    // row. No label column — the chip carries the name — so the
+                    // ⓘ rides beside the chip rather than beside a label that
+                    // is no longer there.
+                    <div className="ind-pair2-bool ind-bool-solo">
+                      <div className="ind-field">
+                        {controlFor(chunk[0])}
+                        {tipFor(chunk[0])}
+                      </div>
+                    </div>
                   ) : (
-                    // Checkboxes and selects share the numbers' two columns, so
+                    // Selects share the numbers' two columns, so
                     // the tab reads as ONE column of controls instead of numbers
                     // at the middle and checkboxes out at the modal's edge. A
                     // `wide` select is the exception: a sentence-long option

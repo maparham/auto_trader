@@ -2626,6 +2626,60 @@
    under the left edge of their label, rather than stretching to half the row. */
 .ind-pair2 > .ind-field select { width: 100%; }
 .ind-pair2 > .ind-field input[type="number"] { width: 64px; }
+/* A pair of BOOLEANS on one row. Not .ind-pair2: that stacks the label above
+   its control, which is right for a number or a select and wrong for a switch,
+   where the label has to stay beside the thing it labels. Each cell is
+   label-left / switch-right, so a half-width cell still reads as one control
+   with one name — the association the solo-checkbox row was protecting when it
+   refused to sit at the half-way mark. */
+.ind-pair2-bool { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; align-items: center; }
+.ind-pair2-bool > .ind-field {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+/* The chip takes the cell; the ⓘ keeps its own width beside it, outside the
+   hit area, so reading the tip cannot toggle the setting. */
+.ind-pair2-bool > .ind-field > .ind-bool-chip { flex: 1 1 auto; min-width: 0; }
+/* A LONE chip has no partner to line up with, so it takes the width its own
+   label needs instead of half the modal — which is what truncated "Mix Low and
+   Highs" to "Mix Low and Hig…" while the other half of the row sat empty. */
+.ind-bool-solo { grid-template-columns: 1fr; }
+.ind-bool-solo > .ind-field > .ind-bool-chip { flex: 0 1 auto; }
+
+/* SELECTABLE LABELS, not tick boxes: the label IS the control. A boolean here
+   has nothing to fill in — it is on or it is off — so a chip that looks
+   pressed when on says it in one glyph instead of a name plus a box to read
+   together. The checkbox stays in the DOM, visually hidden, so the control
+   keeps its native role, its label association and its keyboard behaviour.
+
+   The ON fill is a quiet gray, NOT var(--accent): these sit on for whole
+   sessions, and a saturated fill on a control that is always on shouts. The
+   accent stays for transient and primary actions, and for the focus ring. */
+.ind-bool-chip {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); font-size: 12px; line-height: 1.2;
+  cursor: pointer; user-select: none;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.ind-bool-chip > span {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The checkbox itself: off-screen rather than display:none, so it stays
+   focusable and keeps carrying the accessible name. */
+.ind-bool-chip > input[type="checkbox"] {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; border: 0; overflow: hidden; clip-path: inset(50%);
+}
+.ind-bool-chip:hover { color: var(--text); background: var(--hover); }
+.ind-bool-chip.on {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text) 22%, transparent);
+  color: var(--text); font-weight: 600;
+}
+.ind-bool-chip:has(> input:focus-visible) { outline: 1px solid var(--accent); outline-offset: 2px; }
+.ind-bool-chip:has(> input:disabled) { opacity: 0.45; cursor: default; }
+
 /* A select whose options are sentences rather than words (TRENDLINES' Extend):
    it takes the whole row rather than truncating inside a fixed width. */
 .ind-row select.ind-select-fill, .ind-row .sel-trigger.ind-select-fill { width: auto; flex: 1 1 auto; min-width: 0; }
@@ -2869,9 +2923,34 @@
   margin-top: 4px; color: var(--text-faint); font-size: 11px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase;
 }
-.ind-check { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
-.ind-check input { cursor: pointer; }
-.ind-check-disabled { color: var(--text-faint); cursor: not-allowed; }
+/* The hand-built panels' on/off rows: the same selectable label the
+   meta-driven ones render (.ind-bool-chip). Shared here as a CSS rule rather
+   than by rewriting seventeen call sites, which works because the markup is
+   already the same shape — a <label> wrapping the checkbox and its text. One
+   modal must not show two kinds of on/off control. */
+.ind-check {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  align-self: flex-start;
+  padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); font-size: 12px; line-height: 1.2;
+  cursor: pointer; user-select: none;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.ind-check > input[type="checkbox"] {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; border: 0; overflow: hidden; clip-path: inset(50%);
+}
+.ind-check:hover { color: var(--text); background: var(--hover); }
+.ind-check:has(> input:checked) {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text) 22%, transparent);
+  color: var(--text); font-weight: 600;
+}
+.ind-check:has(> input:focus-visible) { outline: 1px solid var(--accent); outline-offset: 2px; }
+.ind-check-disabled, .ind-check-disabled:hover {
+  color: var(--text-faint); cursor: not-allowed; background: transparent;
+}
 .ind-check-disabled input { cursor: not-allowed; }
 
 /* Slope indicator: the configured MA lengths (Inputs tab) as compact chips that

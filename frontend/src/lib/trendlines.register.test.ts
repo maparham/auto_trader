@@ -68,10 +68,11 @@ describe("TRENDLINES registration", () => {
       ["Max Projection", "Max Break Hold"],
       ["Extend"],
       ["Declutter"],
-      ["Show pivots"],
-      ["Mark line pivots"],
-      ["Hide broken lines"],
-      ["Dim broken lines"],
+      // Booleans pair without a `group` tag (see groupInputs): two switchable
+      // labels take a fraction of a row, so a column of them would waste half
+      // the modal.
+      ["Show pivots", "Mark line pivots"],
+      ["Hide broken lines", "Dim broken lines"],
       ["Dim opacity"],
       ["Dim after touching"],
       ["Dim if untouched for"],

@@ -89,7 +89,19 @@ interface IndicatorMetaDef {
  *
  * Consecutive, not "all with this group", so a group cannot silently reorder
  * the panel. A group left with one member after showWhen filtering renders as
- * an ordinary full-width row. */
+ * an ordinary full-width row.
+ *
+ * BOOLEANS PAIR WITHOUT A `group`, two to a row, wherever two of them land
+ * next to each other. They earn it that a tagged pair does not: a switch and
+ * its label take a fraction of a row, so a column of them wastes half the
+ * modal and pushes the numbers that DO need the width off the bottom. Nothing
+ * to tag per indicator, and nothing to keep in sync — the pairing follows
+ * whatever order the meta already declares. A `group` tag still wins where one
+ * is set, so a boolean deliberately paired with a non-boolean keeps that pair.
+ *
+ * A boolean opening a SECTION never pairs backwards: the heading belongs to
+ * the row it introduces, and a chunk renders its heading from chunk[0], so
+ * absorbing it into the row above would move the heading up with it. */
 export function groupInputs(
   inputs: IndicatorInputDef[],
 ): IndicatorInputDef[][] {
@@ -97,6 +109,16 @@ export function groupInputs(
   for (const inp of inputs) {
     const last = out[out.length - 1];
     if (inp.group && last && last.length === 1 && last[0].group === inp.group)
+      last.push(inp);
+    else if (
+      !inp.group &&
+      !inp.section &&
+      inp.type === "boolean" &&
+      last &&
+      last.length === 1 &&
+      !last[0].group &&
+      last[0].type === "boolean"
+    )
       last.push(inp);
     else out.push([inp]);
   }
@@ -892,9 +914,9 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         field: "showLinePivots",
         default: false,
         tip: [
-          "Marks the swings the drawn lines rest on, anchors and touches, with a stemmed arrow.",
+          "Marks the swings the drawn lines rest on, anchors and touches, with a hollow arrow.",
           "Only lines actually on the chart count, so a line dropped by Max lines or Declutter marks nothing.",
-          "With Show pivots on too, a line's pivot takes the stemmed arrow instead of the plain one.",
+          "With Show pivots on too, a line's pivot takes the hollow arrow instead of the filled one.",
         ],
       },
       {
