@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod appnap;
+mod browser_auth;
 mod settings;
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -184,6 +185,7 @@ fn main() {
     tauri::Builder::default()
         .manage(Unread::default())
         .manage(SplashUrl(std::sync::Mutex::new(None)))
+        .manage(browser_auth::PendingAuth::default())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
@@ -191,7 +193,8 @@ fn main() {
             None,
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![ping, get_settings, set_settings, target_url, notify_native, set_status])
+        .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![ping, get_settings, set_settings, target_url, notify_native, set_status, browser_auth::browser_sign_in])
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             appnap::hold_activity_assertion();

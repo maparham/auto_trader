@@ -41,7 +41,8 @@ tauri-shell/
     src/main.rs        tray, hotkey, close-to-hide, settings commands, badge
     src/settings.rs    the persisted URL + autostart pair
     src/appnap.rs      the process-lifetime activity assertion
-    capabilities/      default.json (bundled pages) + served-ui.json (the Vite origin)
+    src/browser_auth.rs the loopback listener + state nonce for browser sign-in
+    capabilities/      default.json (bundled pages) + served-ui.json (the served UI origins)
     Info.plist         NSAppSleepDisabled, merged into the bundle
 ```
 
@@ -55,7 +56,45 @@ build directory, and the LaunchAgent would point into it otherwise.
 
 Adding a command takes three edits, not one: `generate_handler!`, the
 `commands(&[...])` list in `build.rs` (app commands have no ACL entry without
-it), and an `allow-<command>` line in both capability files.
+it), and an `allow-<command>` line in both capability files. `browser_sign_in`
+(see below) is wired through all three.
+
+## Browser sign-in
+
+Against the hosted app (https://chartkar.app), Google sign-in inside the
+WKWebView is painful: WKWebView shares no session with Chrome, so credentials
+must be typed by hand, and Google often rejects OAuth in embedded webviews
+outright. The signed-out screen shows a "Sign in with your browser" button
+(only when running inside the shell) that hands the flow to Chrome, where the
+user is likely already signed in.
+
+The flow is an OAuth-style loopback handoff (RFC 8252 shape, the pattern
+Claude CLI and gcloud use), with a Clerk single-use sign-in token standing in
+for the authorization code:
+
+1. The button invokes `browser_sign_in`, which starts a one-shot listener on
+   `127.0.0.1:<random port>`, generates an `OsRng` state nonce, and opens the
+   default browser at `<configured-origin>/?shell_auth=1&port=<port>&state=<nonce>`.
+2. In Chrome that URL boots a handoff page. Once signed in, it POSTs to
+   `/api/auth/shell-token` for a single-use, 5-minute Clerk sign-in token and
+   top-level-redirects it to `http://127.0.0.1:<port>/callback?ticket=..&state=..`.
+   A top-level redirect, not a fetch: navigating https to a loopback http
+   address is not blocked by mixed-content rules, a fetch would be.
+3. The listener checks `state`. A wrong value gets a 403 and the listener
+   keeps waiting, so a stray request can't burn the slot out from under the
+   real callback. A newer sign-in attempt supersedes an older one via a
+   compare-and-claim on the pending slot, so only the latest attempt can act.
+   The listener has a 2 minute deadline; past it, the slot is released and the
+   button can be clicked again.
+4. On a matching `state`, the listener replies with a small "Signed in" page,
+   navigates the main window to `<configured-url>?__clerk_ticket=<token>`, and
+   focuses it. The webview's `ShellTicketSignIn` consumes the ticket
+   explicitly and signs in.
+
+`served-ui.json`'s remote urls now also include `https://chartkar.app` and
+`https://www.chartkar.app` (this also fixed native banners and the tray glyph
+being dead against the hosted app, which previously matched only the
+localhost patterns).
 
 ## Keys and gestures
 
@@ -100,3 +139,11 @@ Still to check by hand, since they need a real person at the keyboard:
 - Launch at login across an actual reboot.
 - App Nap over a 15 minute idle stretch: hide the window with the engine armed,
   then confirm the live log timestamps stayed evenly spaced.
+- Browser sign-in end-to-end against chartkar.app: click "Sign in with your
+  browser", confirm Chrome opens the handoff page, and confirm the shell lands
+  signed in.
+- Browser sign-in with Chrome signed out: confirm the normal Clerk sign-in
+  shows first, and the handoff still completes after signing in there.
+- Browser sign-in listener timeout: click the button, wait past 2 minutes
+  without completing the Chrome side, and confirm the button can be clicked
+  again afterward.

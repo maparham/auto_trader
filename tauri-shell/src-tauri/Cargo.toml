@@ -16,7 +16,9 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-store = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
 url = "2"
+rand = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

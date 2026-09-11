@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ClerkProvider, SignedIn, SignedOut, SignIn } from '@clerk/clerk-react'
+import { ClerkProvider, SignedIn, SignedOut } from '@clerk/clerk-react'
 import './index.css'
 import App from './App.tsx'
 import SnapshotApp from './SnapshotApp.tsx'
@@ -8,8 +8,11 @@ import MobileApp from './mobile/MobileApp.tsx'
 import AdminApp from './admin/AdminApp.tsx'
 import ClerkTokenBridge from './components/ClerkTokenBridge.tsx'
 import AccountGate from './components/AccountGate.tsx'
+import ShellAuthHandoff from './components/ShellAuthHandoff.tsx'
+import ShellTicketSignIn from './components/ShellTicketSignIn.tsx'
 import { CLERK_ENABLED } from './lib/authToken.ts'
 import { parseSnapshotParams } from './lib/snapshotBoot.ts'
+import { parseShellAuthParams } from './lib/shellAuthBoot.ts'
 import { shouldBootMobile } from './lib/mobileBoot.ts'
 import { shouldBootAdmin } from './lib/adminBoot.ts'
 import { startShellStatusMirror } from './lib/shellStatus.ts'
@@ -23,6 +26,10 @@ const clerkKey = (
 // The headless snapshot boot (?snapshot=1&broker=..&epic=..) renders OUTSIDE
 // the Clerk tree in all cases — its auth token comes from the URL, not Clerk.
 const snapshotParams = parseSnapshotParams(window.location.search)
+
+// The shell browser-auth handoff boot (?shell_auth=1&port=..&state=..): a
+// Chrome tab opened by the native shell to mint and forward a sign-in ticket.
+const shellAuthParams = parseShellAuthParams(window.location.search)
 
 // Decided once so both the Clerk-enabled and no-Clerk fallback branches agree.
 const bootMobile = shouldBootMobile()
@@ -44,14 +51,16 @@ createRoot(document.getElementById('root')!).render(
       <ClerkProvider publishableKey={clerkKey} afterSignOutUrl="/">
         <ClerkTokenBridge />
         <SignedIn>
-          <AccountGate>
-            {bootAdmin ? <AdminApp /> : bootMobile ? <MobileApp /> : <App />}
-          </AccountGate>
+          {shellAuthParams ? (
+            <ShellAuthHandoff params={shellAuthParams} />
+          ) : (
+            <AccountGate>
+              {bootAdmin ? <AdminApp /> : bootMobile ? <MobileApp /> : <App />}
+            </AccountGate>
+          )}
         </SignedIn>
         <SignedOut>
-          <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh' }}>
-            <SignIn />
-          </div>
+          <ShellTicketSignIn />
         </SignedOut>
       </ClerkProvider>
     ) : bootAdmin ? (
