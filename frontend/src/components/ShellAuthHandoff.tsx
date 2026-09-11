@@ -45,8 +45,8 @@ export default function ShellAuthHandoff({ params }: { params: ShellAuthParams }
     <div style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
       <div style={{ textAlign: "center", maxWidth: 420 }}>
         {error
-          ? `Handoff failed: ${error}. Close this tab and click the sign-in button in Auto Trader again.`
-          : "Signing in to Auto Trader..."}
+          ? `Handoff failed: ${error}. Close this tab and click the sign-in button in Chartkar again.`
+          : "Signing in to Chartkar..."}
       </div>
     </div>
   );

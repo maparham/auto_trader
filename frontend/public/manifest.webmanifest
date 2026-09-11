@@ -1,6 +1,6 @@
 {
-  "name": "Auto Trader",
-  "short_name": "AutoTrader",
+  "name": "Chartkar",
+  "short_name": "Chartkar",
   "start_url": "/?m=1",
   "display": "standalone",
   "background_color": "#101418",

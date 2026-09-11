@@ -1,4 +1,4 @@
-// Typed client for the Auto Trader backend.
+// Typed client for the Chartkar backend.
 
 import type { Costs, SlippageModel, RiskConfig, ScalingConfig, RecurrenceMask } from "./lib/backtestConfig";
 import { API_BASE as BASE, apiFetch, errorDetail } from "./lib/http";

@@ -1,4 +1,4 @@
-# Auto Trader shell
+# Chartkar shell
 
 A thin macOS menu-bar app that hosts the existing auto_trader UI in a WKWebView,
 so the browser-driven live engine cannot be killed by a stray Cmd-W or a closed
@@ -50,7 +50,7 @@ Settings live in `~/Library/Application Support/com.mahan.autotrader.shell/setti
 
 Launch at login registers the binary that is running when the shell starts, and
 re-registers it on every launch, so a dev-build registration cannot survive into
-the shipped app. Copy `Auto Trader.app` out of `target/release/bundle/macos/`
+the shipped app. Copy `Chartkar.app` out of `target/release/bundle/macos/`
 into `/Applications` and launch it once from there: `cargo clean` deletes the
 build directory, and the LaunchAgent would point into it otherwise.
 

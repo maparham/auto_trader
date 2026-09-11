@@ -175,7 +175,7 @@ fn open_settings(app: &tauri::AppHandle) {
         "settings",
         tauri::WebviewUrl::App("settings.html".into()),
     )
-    .title("Auto Trader Settings")
+    .title("Chartkar Settings")
     .inner_size(460.0, 260.0)
     .resizable(false)
     .build();
@@ -245,7 +245,7 @@ fn main() {
             let hide_item = MenuItemBuilder::with_id("hide-window", "Hide Window")
                 .accelerator("CmdOrCtrl+Q")
                 .build(app)?;
-            let app_menu = SubmenuBuilder::new(app, "Auto Trader")
+            let app_menu = SubmenuBuilder::new(app, "Chartkar")
                 .about(Some(AboutMetadata::default()))
                 .separator()
                 .item(&hide_item)

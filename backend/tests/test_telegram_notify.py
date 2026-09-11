@@ -348,7 +348,7 @@ def test_telegram_test_endpoint_sends_and_404s_when_unlinked(clerk, routed_store
     assert res.status_code == 204
     assert route.called
     body = json.loads(route.calls.last.request.content)
-    assert body == {"chat_id": "chat-1", "text": "🔔 Test alert from Auto Trader"}
+    assert body == {"chat_id": "chat-1", "text": "🔔 Test alert from Chartkar"}
 
 
 # --- token scrubbing (finding 1) -------------------------------------------

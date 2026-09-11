@@ -225,7 +225,7 @@ async def telegram_test(request: Request) -> None:
     chat_id = await ALERT_STORE.get_telegram(user)
     if chat_id is None:
         raise HTTPException(404, "telegram not linked")
-    await TELEGRAM.send(chat_id, "🔔 Test alert from Auto Trader")
+    await TELEGRAM.send(chat_id, "🔔 Test alert from Chartkar")
 
 
 @router.get("/api/alerts/push/vapid")

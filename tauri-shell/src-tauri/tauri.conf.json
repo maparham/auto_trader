@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Auto Trader",
+  "productName": "Chartkar",
   "version": "0.1.0",
   "identifier": "com.mahan.autotrader.shell",
   "build": {
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Auto Trader",
+        "title": "Chartkar",
         "url": "splash.html",
         "width": 1440,
         "height": 900,

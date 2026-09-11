@@ -20,9 +20,9 @@ const DEADLINE: Duration = Duration::from_secs(120);
 const POLL: Duration = Duration::from_millis(100);
 
 const RESPONSE_OK: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
-<!doctype html><meta charset=\"utf-8\"><title>Auto Trader</title>\
+<!doctype html><meta charset=\"utf-8\"><title>Chartkar</title>\
 <body style=\"font:14px -apple-system,sans-serif;display:grid;place-items:center;height:100vh\">\
-Signed in. You can close this tab and return to Auto Trader.</body>";
+Signed in. You can close this tab and return to Chartkar.</body>";
 
 const RESPONSE_FORBIDDEN: &str = "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nforbidden";
 

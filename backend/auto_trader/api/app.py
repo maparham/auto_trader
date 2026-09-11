@@ -187,7 +187,7 @@ async def lifespan(app: FastAPI):
         deps._registry = None
 
 
-app = FastAPI(title="Auto Trader API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Chartkar API", version="0.1.0", lifespan=lifespan)
 
 # Clerk auth. Installed BEFORE CORSMiddleware so CORS wraps it (Starlette
 # stacks later-added middleware outside earlier ones) and auth 401s carry
