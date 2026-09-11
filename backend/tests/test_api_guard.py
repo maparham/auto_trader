@@ -86,8 +86,8 @@ def test_cors_origins_env_extends_allowlist(monkeypatch):
     from auto_trader.api.guard import cors_origins
 
     monkeypatch.setenv(
-        "CORS_ORIGINS", "https://demo.pages.dev, https://trader.rahkar.pro/"
+        "CORS_ORIGINS", "https://demo.pages.dev, https://chartkar.app/"
     )
     origins = cors_origins()
     assert origins[:2] == ["http://localhost:5173", "http://127.0.0.1:5173"]
-    assert origins[2:] == ["https://demo.pages.dev", "https://trader.rahkar.pro"]
+    assert origins[2:] == ["https://demo.pages.dev", "https://chartkar.app"]

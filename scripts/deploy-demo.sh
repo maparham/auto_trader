@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Deploy the authenticated hosted app (https://trader.rahkar.pro) in one go:
+# Deploy the authenticated hosted app (https://chartkar.app) in one go:
 #   backend  -> Lightsail box (systemd auto-trader-demo, uvicorn on 127.0.0.1:8010,
-#               reached via the aws-vps Cloudflare Tunnel as trader-api.rahkar.pro)
-#   frontend -> Cloudflare Pages project auto-trader-demo (trader.rahkar.pro +
-#               auto-trader-demo.pages.dev)
+#               reached via the aws-vps Cloudflare Tunnel as api.chartkar.app)
+#   frontend -> Cloudflare Pages project auto-trader-demo (chartkar.app,
+#               www.chartkar.app + auto-trader-demo.pages.dev; the old
+#               trader.rahkar.pro 301s to chartkar.app via a Cloudflare
+#               redirect rule)
 #
 # Builds from committed HEAD via a temporary worktree, NEVER from the working
 # tree — concurrent sessions share this checkout, so the working tree may hold
@@ -23,8 +25,8 @@ HOST="ec2-user@3.139.146.5"
 SSH_KEY="$HOME/.ssh/id_ed25519"
 SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes)
 PAGES_PROJECT="auto-trader-demo"
-API_BASE="https://trader-api.rahkar.pro"
-CLERK_PK="pk_live_Y2xlcmsudHJhZGVyLnJhaGthci5wcm8k"
+API_BASE="https://api.chartkar.app"
+CLERK_PK="pk_live_Y2xlcmsuY2hhcnRrYXIuYXBwJA"
 
 DO_FRONTEND=1
 DO_BACKEND=1
@@ -124,10 +126,10 @@ curl -sf -m 15 "$API_BASE/health" >/dev/null || { echo "FAIL: $API_BASE/health" 
 BROKERS_CODE="$(curl -s -m 15 -o /dev/null -w '%{http_code}' "$API_BASE/api/brokers")"
 [ "$BROKERS_CODE" = 401 ] || { echo "FAIL: unauthenticated /api/brokers returned $BROKERS_CODE (want 401 — is the box env hosted-mode?)" >&2; exit 1; }
 CORS="$(curl -s -m 15 -o /dev/null -w '%{http_code}' -X OPTIONS \
-  -H 'Origin: https://trader.rahkar.pro' -H 'Access-Control-Request-Method: GET' \
+  -H 'Origin: https://chartkar.app' -H 'Access-Control-Request-Method: GET' \
   "$API_BASE/api/brokers")"
 [ "$CORS" = 200 ] || { echo "FAIL: CORS preflight returned $CORS" >&2; exit 1; }
-SITE="$(curl -s -m 15 -o /dev/null -w '%{http_code}' https://trader.rahkar.pro/)"
+SITE="$(curl -s -m 15 -o /dev/null -w '%{http_code}' https://chartkar.app/)"
 [ "$SITE" = 200 ] || { echo "FAIL: site returned $SITE" >&2; exit 1; }
 
-echo "==> deployed $HEAD_SHA — https://trader.rahkar.pro"
+echo "==> deployed $HEAD_SHA — https://chartkar.app"
