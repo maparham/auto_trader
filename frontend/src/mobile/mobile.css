@@ -13,6 +13,13 @@
   position: relative;
 }
 
+/* When the tab bar is unmounted (chrome hidden), it stops contributing its
+   bottom safe-area padding. .m-body takes it over so the chart's time axis
+   and the drawing FAB don't land under a home indicator / gesture band. */
+.m-body--no-tabbar {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 .m-tabbar {
   display: flex;
   border-top: 1px solid var(--border);
@@ -105,6 +112,23 @@
   flex: 1;
   min-height: 0;
   position: relative;
+}
+
+/* Chart-only mode: the one way back. Top-left, because bottom-right is the
+   drawing FAB's corner and the right edge now carries the trade pills. */
+.m-chart-restore {
+  position: absolute;
+  top: calc(8px + env(safe-area-inset-top));
+  left: calc(8px + env(safe-area-inset-left));
+  z-index: 60;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: var(--panel-bg, rgba(128, 128, 128, 0.35));
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
 }
 
 /* Task 8: touch drawing tool strip. FAB floats bottom-right inside the chart

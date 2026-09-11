@@ -14,6 +14,7 @@ import MobileModals from "./MobileModals";
 import MobileSettingsSheet from "./MobileSettingsSheet";
 import { initMobileAccount, mobileTabSignal, type MobileTab } from "./mobileChartState";
 import { isWorkspaceKey, bumpMobileWorkspace } from "./mobileWorkspace";
+import { initViewMode, mobileViewMode, setChromeHidden } from "./mobileViewMode";
 import "./mobile.css";
 
 const TABS: { id: MobileTab; label: string }[] = [
@@ -29,6 +30,10 @@ export default function MobileApp() {
   const tab = useSyncExternalStore(
     (fn) => mobileTabSignal.subscribe(fn),
     () => mobileTabSignal.value,
+  );
+  const viewMode = useSyncExternalStore(
+    (fn) => mobileViewMode.subscribe(fn),
+    () => mobileViewMode.value,
   );
 
   useEffect(() => {
@@ -66,6 +71,22 @@ export default function MobileApp() {
     }
   }, []);
 
+  // Tears the view mode down when full screen ends outside our control (an
+  // Android back gesture, Escape), so the app never strands a landscape flag.
+  useEffect(() => initViewMode(), []);
+
+  // Chart-only describes the chart. If something moves the active tab away
+  // from "chart" while chrome is hidden (the price-axis menu can stage a
+  // draft order and route to Trade even with the chrome hidden), end the mode
+  // instead of stranding the user off-chart with no tab bar and no top bar.
+  // setChromeHidden(false) already forwards to exit landscape too, which is
+  // what we want here.
+  useEffect(() => {
+    if (tab !== "chart" && mobileViewMode.value.chromeHidden) {
+      void setChromeHidden(false);
+    }
+  }, [tab]);
+
   // Offline banner: reflect the browser's online/offline signal so a user on
   // a flaky mobile connection knows why data looks stale, instead of the app
   // silently going quiet.
@@ -97,7 +118,16 @@ export default function MobileApp() {
   return (
     <div className="m-app">
       {offline && <div className="m-offline">Offline — reconnecting…</div>}
-      <div className="m-body">
+      <div className={viewMode.chromeHidden ? "m-body m-body--no-tabbar" : "m-body"}>
+        {viewMode.chromeHidden && (
+          <button
+            className="m-chart-restore"
+            aria-label="Show controls"
+            onClick={() => void setChromeHidden(false)}
+          >
+            ⤢
+          </button>
+        )}
         {/* Kept mounted (display:none when inactive) so the chart's websocket
             survives tab switches instead of reconnecting every time. */}
         <div data-tab="chart" style={{ display: tab === "chart" ? undefined : "none", height: "100%" }}>
@@ -119,24 +149,26 @@ export default function MobileApp() {
           </div>
         )}
       </div>
-      <nav className="m-tabbar">
-        {TABS.map((t) => (
+      {!viewMode.chromeHidden && (
+        <nav className="m-tabbar">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={tab === t.id ? "active" : ""}
+              onClick={() => mobileTabSignal.set(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
           <button
-            key={t.id}
-            className={tab === t.id ? "active" : ""}
-            onClick={() => mobileTabSignal.set(t.id)}
+            className="m-tabbar-settings"
+            aria-label="Settings"
+            onClick={() => setSettingsOpen(true)}
           >
-            {t.label}
+            ⚙
           </button>
-        ))}
-        <button
-          className="m-tabbar-settings"
-          aria-label="Settings"
-          onClick={() => setSettingsOpen(true)}
-        >
-          ⚙
-        </button>
-      </nav>
+        </nav>
+      )}
       {settingsOpen && <MobileSettingsSheet onClose={() => setSettingsOpen(false)} />}
       <MobileModals />
     </div>

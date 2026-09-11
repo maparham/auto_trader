@@ -23,6 +23,7 @@ import {
   mobileSettingsVersion,
   mobileSymbol,
 } from "./mobileChartState";
+import { mobileViewMode, setChromeHidden, setLandscape } from "./mobileViewMode";
 
 export default function MobileChartView({ active = true }: { active?: boolean }) {
   const symbol = useSyncExternalStore(
@@ -52,6 +53,10 @@ export default function MobileChartView({ active = true }: { active?: boolean })
   useSyncExternalStore(
     (fn) => mobileSettingsVersion.subscribe(fn),
     () => mobileSettingsVersion.value,
+  );
+  const viewMode = useSyncExternalStore(
+    (fn) => mobileViewMode.subscribe(fn),
+    () => mobileViewMode.value,
   );
 
   // Returning from display:none (tab switch back to Chart): klinecharts
@@ -86,25 +91,45 @@ export default function MobileChartView({ active = true }: { active?: boolean })
 
   return (
     <div className="m-chart-view">
-      <div className="m-chart-topbar">
-        <button className="m-chart-broker" onClick={() => setBrokerSheetOpen(true)}>
-          {brokerLabel(broker)} ▾
-        </button>
-        <button className="m-chart-symbol" onClick={() => requestSymbolSearch()}>
-          {symbol?.name ?? "Select market…"}
-        </button>
-        {booted && (
-          <button className="m-chart-period" onClick={() => setPeriodSheetOpen(true)}>
-            {period!.label}
+      {!viewMode.chromeHidden && (
+        <div className="m-chart-topbar">
+          <button className="m-chart-broker" onClick={() => setBrokerSheetOpen(true)}>
+            {brokerLabel(broker)} ▾
           </button>
-        )}
-        {booted && (
-          <button className="m-chart-indicators" onClick={() => setIndicatorsSheetOpen(true)}>
-            Indicators
+          <button className="m-chart-symbol" onClick={() => requestSymbolSearch()}>
+            {symbol?.name ?? "Select market…"}
           </button>
-        )}
-      </div>
-      <MobileChartStrip />
+          {booted && (
+            <button className="m-chart-period" onClick={() => setPeriodSheetOpen(true)}>
+              {period!.label}
+            </button>
+          )}
+          {booted && (
+            <button className="m-chart-indicators" onClick={() => setIndicatorsSheetOpen(true)}>
+              Indicators
+            </button>
+          )}
+          {booted && (
+            <button
+              className="m-chart-viewmode"
+              aria-label="Chart only"
+              onClick={() => void setChromeHidden(true)}
+            >
+              ⤢
+            </button>
+          )}
+          {booted && (
+            <button
+              className="m-chart-viewmode"
+              aria-label="Landscape"
+              onClick={() => void setLandscape(true)}
+            >
+              ⟳
+            </button>
+          )}
+        </div>
+      )}
+      {!viewMode.chromeHidden && <MobileChartStrip />}
       <div className="m-chart-body">
         {booted && (
           <ChartCore

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { installMemStorage } from "../lib/testMemStorage";
 import { brokerRoot } from "../lib/persist";
+import { mobileViewMode, setScreenAdapter } from "./mobileViewMode";
 
 installMemStorage();
 afterEach(cleanup);
@@ -76,5 +77,53 @@ describe("MobileChartView", () => {
     saveSettings({ ...loadSettings(), theme: next });
     mobileSettingsVersion.set(mobileSettingsVersion.value + 1);
     await waitFor(() => expect(screen.getByTestId("chartcore").dataset.theme).toBe(next));
+  });
+});
+
+describe("MobileChartView chrome-only mode", () => {
+  beforeEach(() => {
+    mobileViewMode.set({ chromeHidden: false, landscape: false });
+  });
+
+  it("drops the top bar and the chart strip when the chrome is hidden", async () => {
+    const { container } = render(<MobileChartView />);
+    expect(container.querySelector(".m-chart-topbar")).not.toBeNull();
+    await act(async () => {
+      mobileViewMode.set({ chromeHidden: true, landscape: false });
+    });
+    expect(container.querySelector(".m-chart-topbar")).toBeNull();
+  });
+});
+
+describe("MobileChartView view-mode controls", () => {
+  beforeEach(() => {
+    mobileViewMode.set({ chromeHidden: false, landscape: false });
+  });
+
+  it("hides the chrome from the chart-only control", async () => {
+    render(<MobileChartView />);
+    // Both chips live inside the `booted` guard, and boot resolves a heartbeat
+    // from storage asynchronously, so wait for the chart the way the existing
+    // tests in this file do.
+    await waitFor(() => expect(screen.getByTestId("chartcore")).toBeTruthy());
+    await userEvent.click(screen.getByLabelText("Chart only"));
+    expect(mobileViewMode.value).toEqual({ chromeHidden: true, landscape: false });
+  });
+
+  it("enters landscape from the landscape control", async () => {
+    const calls: string[] = [];
+    setScreenAdapter({
+      requestFullscreen: async () => void calls.push("requestFullscreen"),
+      exitFullscreen: async () => void calls.push("exitFullscreen"),
+      isFullscreen: () => true,
+      lockLandscape: async () => void calls.push("lockLandscape"),
+      unlockOrientation: () => void calls.push("unlockOrientation"),
+      onFullscreenChange: () => () => {},
+    });
+    render(<MobileChartView />);
+    await waitFor(() => expect(screen.getByTestId("chartcore")).toBeTruthy());
+    await userEvent.click(screen.getByLabelText("Landscape"));
+    expect(calls).toEqual(["requestFullscreen", "lockLandscape"]);
+    expect(mobileViewMode.value.landscape).toBe(true);
   });
 });
