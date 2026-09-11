@@ -94,7 +94,8 @@
         say("Saving");
         try {
           await invoke("set_settings", { url: urlEl.value, autostart: autoEl.checked });
-          say("Saved. The window reloaded on the new address.");
+          say("Saved.");
+          await window.__TAURI__.window.getCurrentWindow().close();
         } catch (e) {
           say(String(e), true);
         }
