@@ -449,6 +449,23 @@ class AlertEngine:
             if any(row.get("active", 1) for _, row in entries)
         }
 
+    def feeds_status(self) -> list[dict]:
+        """Admin-console view of the live feeds: one row per registered
+        (broker, epic) with whether its task is running and how many alerts
+        ride it. Read-only; never mutates engine state."""
+        rows = []
+        for (broker, epic), entries in sorted(self._registry.items()):
+            task = self._feed_tasks.get((broker, epic))
+            rows.append(
+                {
+                    "broker": broker,
+                    "epic": epic,
+                    "running": bool(task and not task.done()),
+                    "alerts": len(entries),
+                }
+            )
+        return rows
+
     # ---- price side (mirrored frontend setting) ----
 
     def price_side_for(self, user_id: str) -> str:

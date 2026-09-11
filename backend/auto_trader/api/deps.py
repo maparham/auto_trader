@@ -95,6 +95,13 @@ def require_admin(request: Request) -> None:
         raise HTTPException(403, "dealing requires admin access")
 
 
+def require_admin_console(request: Request) -> None:
+    """Router-level dependency for /api/admin/*. Deliberately separate from
+    require_admin: that one's 403 copy is pinned by the dealing tests."""
+    if not request_is_admin(request):
+        raise HTTPException(403, "admin access required")
+
+
 def broker_query(request: Request, broker: str = Query("")) -> str:
     """The ?broker= param as a route dependency: resolves the default and
     enforces the admin gate (see resolve_broker)."""

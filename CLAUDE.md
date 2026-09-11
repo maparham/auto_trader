@@ -92,3 +92,18 @@ Needs `FRONTEND_URL` (default `http://localhost:5173`) and Playwright
 Chromium; `SNAPSHOT_DISABLED=1` turns it off. Probe:
 `cd backend && python3 -m scripts.snapshot_probe --epic EPIC`.
 `SNAPSHOT_DISABLED` with any non-empty value disables the feature.
+
+## Admin console
+
+`/admin` is a read-only operator page (Clerk users, system health, per-user
+usage counts, recent logs). Every panel reads a gated `/api/admin/*` endpoint;
+the gate is `deps.require_admin_console` (403 `admin access required`), which
+is separate from the dealing gate on purpose. Admin identity is unchanged:
+`ADMIN_EMAILS` / `ADMIN_USER_IDS`, with dev mode always admin.
+
+The Users panel needs `CLERK_SECRET_KEY` (Clerk Backend API, backend only);
+without it the endpoint answers `configured: false` and the panel says so.
+Logs come from an in-process ring buffer (`core/log_buffer.py`), so they cover
+the current process only and reset on restart. Cross-user queries live in
+`core/admin_usage.py` and must not be imported anywhere else.
+

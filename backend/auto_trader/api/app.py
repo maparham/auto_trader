@@ -32,7 +32,7 @@ from . import deps
 from .auth import install_auth
 from .guard import cors_origins, install_guards
 from .mcp_server import mcp_http_app, mcp_session
-from .routers import agent, alerts, backtest, charts, compute, costs, expr, markets, mt5, patterns, pattern_presets, state, strategy, stream, trading, strategies
+from .routers import admin, agent, alerts, backtest, charts, compute, costs, expr, markets, mt5, patterns, pattern_presets, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +85,13 @@ def _configure_logging() -> None:
         app_log.addHandler(handler)
         app_log.setLevel(logging.INFO)
         app_log.propagate = False  # the handler above logs it; don't double via root
+    # Feed the admin console's Logs panel. Installed last so it sees records
+    # only after the redaction filter is attached to the upstream handlers.
+    from auto_trader.core.log_buffer import install as install_log_buffer
+
+    # The redaction filter must ride the buffer's own handler: it is attached
+    # to the LOGGERS, not to the stream handlers that carry the filter above.
+    install_log_buffer(_TokenRedactionFilter())
 
 
 @asynccontextmanager
@@ -215,7 +222,7 @@ async def _track_activity(request, call_next):
 # unless the corresponding env flags are set, which happens only on the remote host.
 install_guards(app)
 
-for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, agent, patterns, pattern_presets, alerts):
+for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, agent, patterns, pattern_presets, alerts, admin):
     app.include_router(_module.router)
 
 # MCP endpoint for the Agent UI Bridge. Mounted LAST so it never shadows API

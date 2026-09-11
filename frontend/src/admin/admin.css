@@ -1,0 +1,40 @@
+.admin-page { min-height: 100vh; background: var(--bg); color: var(--text);
+  font: 13px/1.5 system-ui, sans-serif; padding: 0 0 48px; }
+.admin-header { display: flex; align-items: center; gap: 12px;
+  padding: 12px 20px; border-bottom: 1px solid var(--border);
+  background: var(--surface); position: sticky; top: 0; z-index: 2; }
+.admin-header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+.admin-header .spacer { flex: 1; }
+.admin-who { color: var(--text-dim); }
+.admin-body { display: flex; flex-direction: column; gap: 16px;
+  padding: 16px 20px; max-width: 1200px; margin: 0 auto; }
+.admin-card { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; overflow: hidden; }
+.admin-card > header { display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.admin-card > header h2 { font-size: 13px; margin: 0; font-weight: 600; }
+.admin-card > header .stamp { margin-left: auto; color: var(--text-faint);
+  font-size: 11px; }
+.admin-card .content { padding: 12px 14px; overflow-x: auto; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.admin-table th { text-align: left; color: var(--text-dim); font-weight: 500;
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; cursor: pointer; }
+.admin-table td { padding: 6px 10px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; }
+.admin-table tr:last-child td { border-bottom: none; }
+.admin-mono { font-family: var(--mono); font-size: 11px; }
+.admin-dim { color: var(--text-dim); }
+.admin-error { color: var(--neg); }
+.admin-btn { background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px;
+  cursor: pointer; text-decoration: none; }
+.admin-btn:hover { background: var(--hover); }
+.admin-logs { font-family: var(--mono); font-size: 11px; max-height: 340px;
+  overflow: auto; }
+/* Tracebacks arrive as one record with embedded newlines; keep them readable. */
+.admin-logs > div { white-space: pre-wrap; padding: 1px 0; }
+/* A busy box can run 30+ feeds; keep the Health card scannable. */
+.admin-scroll { max-height: 260px; overflow: auto; }
+.admin-logs .lvl-ERROR, .admin-logs .lvl-CRITICAL { color: var(--neg); }
+.admin-logs .lvl-WARNING { color: #d9a441; }

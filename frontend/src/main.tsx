@@ -5,11 +5,13 @@ import './index.css'
 import App from './App.tsx'
 import SnapshotApp from './SnapshotApp.tsx'
 import MobileApp from './mobile/MobileApp.tsx'
+import AdminApp from './admin/AdminApp.tsx'
 import ClerkTokenBridge from './components/ClerkTokenBridge.tsx'
 import AccountGate from './components/AccountGate.tsx'
 import { CLERK_ENABLED } from './lib/authToken.ts'
 import { parseSnapshotParams } from './lib/snapshotBoot.ts'
 import { shouldBootMobile } from './lib/mobileBoot.ts'
+import { shouldBootAdmin } from './lib/adminBoot.ts'
 import { startShellStatusMirror } from './lib/shellStatus.ts'
 
 // The publishable key doubles as the feature switch: unset (local dev) renders
@@ -25,6 +27,11 @@ const snapshotParams = parseSnapshotParams(window.location.search)
 // Decided once so both the Clerk-enabled and no-Clerk fallback branches agree.
 const bootMobile = shouldBootMobile()
 
+// The admin console at /admin. Unlike the snapshot boot it renders INSIDE the
+// Clerk tree (it needs ClerkTokenBridge to have run so apiFetch carries a
+// token), and the path wins over the mobile boot.
+const bootAdmin = shouldBootAdmin()
+
 // Colour the native shell's menu-bar glyph by live-engine status. No-op in a
 // plain browser.
 startShellStatusMirror()
@@ -38,7 +45,7 @@ createRoot(document.getElementById('root')!).render(
         <ClerkTokenBridge />
         <SignedIn>
           <AccountGate>
-            {bootMobile ? <MobileApp /> : <App />}
+            {bootAdmin ? <AdminApp /> : bootMobile ? <MobileApp /> : <App />}
           </AccountGate>
         </SignedIn>
         <SignedOut>
@@ -47,6 +54,8 @@ createRoot(document.getElementById('root')!).render(
           </div>
         </SignedOut>
       </ClerkProvider>
+    ) : bootAdmin ? (
+      <AdminApp />
     ) : bootMobile ? (
       <MobileApp />
     ) : (

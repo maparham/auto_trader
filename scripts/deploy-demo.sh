@@ -15,6 +15,11 @@
 # CLERK_AUTHORIZED_PARTIES. VITE_CLERK_PUBLISHABLE_KEY is baked into the
 # frontend build. The preflight check fails the deploy if Clerk vars are missing.
 #
+# Optional box env: CLERK_SECRET_KEY — backend only, powers the admin console
+# Users panel (/admin). Without it the panel reports "Clerk not configured".
+# It must never reach the browser; the frontend build below fails closed if a
+# secret key ever appears in the bundle.
+#
 # Prereqs: `wrangler login` (pages:write), ssh access via ~/.ssh/id_ed25519.
 #
 # Usage: scripts/deploy-demo.sh [--frontend-only | --backend-only]
@@ -114,6 +119,11 @@ if [ "$DO_FRONTEND" = 1 ]; then
     || { echo "API base not found in bundle — build misconfigured" >&2; exit 1; }
   grep -rq "$CLERK_PK" "$WT/frontend/dist/assets" \
     || { echo "Clerk publishable key not found in bundle — build misconfigured" >&2; exit 1; }
+  # The Clerk BACKEND secret must never ship to the browser. Fail closed.
+  if grep -rqE 'sk_(live|test)_' "$WT/frontend/dist"; then
+    echo "FATAL: a Clerk secret key appears in the frontend bundle" >&2
+    exit 1
+  fi
   printf '/* /index.html 200\n' > "$WT/frontend/dist/_redirects"
 
   echo "==> frontend: wrangler pages deploy ($PAGES_PROJECT)"

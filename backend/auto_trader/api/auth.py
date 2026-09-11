@@ -144,6 +144,7 @@ def install_auth(app: FastAPI) -> None:
         if not auth_enabled():
             request.state.user_id = DEV_USER_ID
             request.state.is_admin = True
+            request.state.claims = {}
             return await call_next(request)
         path = request.url.path
         # The MCP bridge is local-only; in hosted mode it does not exist.
@@ -169,6 +170,7 @@ def install_auth(app: FastAPI) -> None:
                 return JSONResponse(status_code=401, content={"detail": INVALID_TOKEN_MSG})
             request.state.user_id = internal_sub
             request.state.is_admin = False
+            request.state.claims = {}
             return await call_next(request)
         try:
             # _verify_claims can block on a JWKS HTTP fetch (cold cache, key
@@ -176,6 +178,8 @@ def install_auth(app: FastAPI) -> None:
             claims = await asyncio.to_thread(_verify_claims, token)
             request.state.user_id = claims["sub"]
             request.state.is_admin = is_admin_claims(claims)
+            # The admin console reads the `email` claim from here (whoami).
+            request.state.claims = claims
         except AuthError as e:
             return JSONResponse(status_code=401, content={"detail": str(e)})
         return await call_next(request)

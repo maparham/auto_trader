@@ -66,6 +66,7 @@ import { isDataOnlyBroker, type BrokerAccount } from "./lib/trading";
 import { isSynthetic } from "./lib/syntheticRegistry";
 import { UserButton } from "@clerk/clerk-react";
 import { CLERK_ENABLED } from "./lib/authToken";
+import { useIsAdmin } from "./admin/useIsAdmin";
 import {
   getPatternPanelState,
   setPatternArmProvider,
@@ -109,6 +110,18 @@ interface Props {
   onToggleMaximize: () => void;
 }
 
+/** 16px sliders glyph for the Admin item in the Clerk account menu. Sized and
+ *  coloured by Clerk's own menu styles (currentColor). */
+function AdminMenuIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <path d="M2 4.5h8M12.5 4.5H14M2 11.5h1.5M5.5 11.5H14" />
+      <circle cx="11" cy="4.5" r="1.6" />
+      <circle cx="4.5" cy="11.5" r="1.6" />
+    </svg>
+  );
+}
+
 export default function Toolbar({
   controller,
   symbol,
@@ -130,6 +143,10 @@ export default function Toolbar({
   const overlays = controller?.overlays ?? null;
 
   // instrument search (TV-style modal, opened by clicking the symbol name)
+  // Adds the Admin entry to the Clerk account menu. Probes only in hosted
+  // mode; a non-admin's 403 leaves it hidden.
+  const isAdmin = useIsAdmin(CLERK_ENABLED);
+
   const [symModalOpen, setSymModalOpen] = useState(false);
 
   // indicator menu. Add-only (TradingView-style): clicking a type ALWAYS adds a new
@@ -883,7 +900,19 @@ export default function Toolbar({
 
       {CLERK_ENABLED && (
         <div className="clerk-user" style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
-          <UserButton />
+          <UserButton>
+            {/* Operator console. Only rendered for an account the backend
+                confirms as admin; the page itself is gated server-side too. */}
+            {isAdmin && (
+              <UserButton.MenuItems>
+                <UserButton.Link
+                  label="Admin"
+                  labelIcon={<AdminMenuIcon />}
+                  href="/admin"
+                />
+              </UserButton.MenuItems>
+            )}
+          </UserButton>
         </div>
       )}
 
