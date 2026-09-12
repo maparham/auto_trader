@@ -20,10 +20,12 @@ vi.mock("@clerk/clerk-react", () => ({
 }));
 
 import AccountGate from "./AccountGate";
+import { impersonatedUserId, setImpersonatedUserId } from "../lib/impersonation";
 
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  setImpersonatedUserId(null);
 });
 
 const seed = () => {
@@ -56,4 +58,23 @@ it("first sign-in on this browser (no stamp): wipes and stamps", () => {
   render(<AccountGate><div data-testid="app" /></AccountGate>);
   expect(localStorage.getItem("auto-trader.b.capital.layouts")).toBeNull();
   expect(localStorage.getItem("auto-trader.lastUserId")).toBe("user_a");
+});
+
+it("real account switch (stamp present and different): clears a stale impersonation flag", () => {
+  seed();
+  localStorage.setItem("auto-trader.lastUserId", "user_b");
+  setImpersonatedUserId("user_target");
+  render(<AccountGate><div data-testid="app" /></AccountGate>);
+  expect(impersonatedUserId()).toBeNull();
+});
+
+it("post-enter-impersonation boot (no prior stamp): does NOT clear the flag", () => {
+  // enterImpersonation's reload leaves the Clerk user unchanged, so there is
+  // no stamp yet on this render for it to differ from. A naive fix that
+  // clears the flag whenever prev !== user.id (with no PRESENT check) would
+  // wipe it here too, breaking every impersonation session immediately.
+  seed();
+  setImpersonatedUserId("user_target");
+  render(<AccountGate><div data-testid="app" /></AccountGate>);
+  expect(impersonatedUserId()).toBe("user_target");
 });

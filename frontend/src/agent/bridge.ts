@@ -4,6 +4,7 @@
 // implementation plan and mirrored in backend/auto_trader/api/agent_bridge.py.
 import { API_BASE } from "../lib/http";
 import { getAuthToken, hasTokenGetter } from "../lib/authToken";
+import { withImpersonation } from "../lib/impersonation";
 import {
   ActionError, getAction, invokeAction, listActions, validateArgs,
 } from "./registry";
@@ -138,7 +139,9 @@ export function startAgentBridge(wsUrl?: string): () => void {
     if (stopped) return;
     const dial = (token: string | null) => {
       ws = new WebSocket(
-        token ? `${url}?token=${encodeURIComponent(token)}` : url,
+        withImpersonation(
+          token ? `${url}?token=${encodeURIComponent(token)}` : url,
+        ),
       );
       ws.onopen = () => {
         // Only reset retryMs after connection has been stable for 5s

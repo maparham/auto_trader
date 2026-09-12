@@ -16,6 +16,8 @@
 
 import type { JSX, ReactNode } from "react";
 import Tooltip from "./Tooltip";
+import DemoCta from "../DemoCta";
+import { isDemoMode } from "../lib/demoMode";
 
 import type { BacktestRunMode as RunMode } from "../lib/persist/defaults";
 
@@ -102,13 +104,16 @@ export function RunBar(props: {
       <span className="bt-sweep-foot-info">{sweepInfo}</span>
       <div className="bt-run-cluster">
         {runClusterLead}
-        {onRun && (
+        {/* Demo visitors browse canned results; running is the sign-up hook. */}
+        {onRun && (isDemoMode() ? (
+          <DemoCta inline label="Sign up to run backtests" />
+        ) : (
           <Tooltip content={runDisabledReason ?? undefined}>
             <button className="bt-run-btn" onClick={onRun} disabled={runDisabled}>
               {runLabel}
             </button>
           </Tooltip>
-        )}
+        ))}
       </div>
     </>
   );

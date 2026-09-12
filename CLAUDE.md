@@ -107,3 +107,94 @@ Logs come from an in-process ring buffer (`core/log_buffer.py`), so they cover
 the current process only and reset on restart. Cross-user queries live in
 `core/admin_usage.py` and must not be imported anywhere else.
 
+### Impersonation
+
+An admin can view the app read-only as any Clerk user. The admin's own token
+stays the credential: the target id rides in the `X-Impersonate-User` header
+(HTTP) or the `impersonate` query param (WebSocket), and
+`auth.resolve_impersonation` swaps the identity at both call sites, forces
+`is_admin` false and refuses every method outside GET/HEAD. Nothing is minted,
+so ending a session is dropping the header.
+
+Every identity-stamping branch in the HTTP middleware (Clerk claims, the
+internal render-token path, the signed-out demo principal) stamps
+`request.state.impersonator`, and every branch besides the Clerk-claims one
+refuses an `X-Impersonate-User` header outright rather than acting on it, so
+none of the other "act as someone else" mechanisms can stack with real
+impersonation. `POST /api/admin/impersonate` validates the target against
+Clerk and writes the audit start line; the target id is percent-encoded into
+the Clerk API URL so it cannot be used to steer that request elsewhere.
+
+Because `is_admin` is false for the duration, `/api/admin/*` refuses an
+impersonating session: the exit control is pure client state
+(`components/ImpersonationBanner.tsx`). The frontend keeps the target in
+`sessionStorage` via `lib/impersonation.ts`, which every transport reads;
+entering and exiting wipe the local workspace (`lib/workspaceKeys.ts`) and
+hard-reload, because the workspace keys are broker-keyed rather than
+user-keyed. `workspaceKeys.ts` is a separate leaf module (no imports of its
+own) purely to avoid an import cycle: `persist/core` imports `impersonation`
+for the mirror gate, and `impersonation` needs the wipe, so the wipe cannot
+live in `persist/core` or `AccountGate` without reopening that cycle;
+`persist/core` re-exports `PREFIX` so its existing importers see no change.
+Persist stops mirroring writes to the backend while impersonating
+(`mirrorEnabled = !isImpersonating()`).
+
+Audit lines go to the `auto_trader.impersonation` logger: an INFO start line
+per session, a throttled INFO summary while active, and an unthrottled
+WARNING for every refusal, including `verify_ws` refusing a non-admin's
+`impersonate=` query param. Logged header/param values are truncated to
+`MAX_LOGGED_VALUE_LEN` (200 chars) because refusal logging is unthrottled and,
+on the demo-principal branch, reachable with no credential at all. These
+lines reach stdout, so journald keeps them across a restart; the Logs panel
+shows them from the ring buffer, which does not.
+
+In local dev (`CLERK_JWKS_URL` unset) auth is off and every request is the
+fixed dev user with `is_admin` true; the impersonation header is never even
+read, so impersonation only exists in hosted mode.
+
+Cross-tab seam: the `/ws/state` push handler in `lib/persist/core.ts` applies
+a remote push with a direct `localStorage.setItem`, bypassing `mirrorEnabled`
+on purpose to avoid an echo loop. localStorage is shared across every tab of
+the app, but the impersonation flag lives in sessionStorage, which is
+per-tab. A second tab that is not impersonating (mirroring still on) sits on
+the same localStorage keys the impersonated tab is writing, and will mirror
+the target's data into the admin's own backend record. Entering only reloads
+the current tab. The confirm dialog in `admin/UsersPanel.tsx` tells the
+operator to close other tabs first; that is the whole mitigation. Namespacing
+localStorage by user would close this properly but is out of scope for this
+feature; do not "simplify" the push handler to always honor `mirrorEnabled`
+without re-reading this note, since that reopens the echo loop it was written
+to avoid.
+
+See docs/superpowers/specs/2026-09-12-user-impersonation-design.md.
+
+## Public demo
+
+Signed-out visitors get the real app on whatever layout an admin last
+published, dukascopy only; drawings and indicators stay editable but are
+session-local, round-tripping through localStorage instead of the backend.
+In hosted mode, an unauthenticated request that matches a narrow GET-only
+allowlist (`api/demo_access.py`:
+candles, markets, brokers, market details, the demo snapshot) runs as the
+shared `demo` principal instead of getting a 401; every other route keeps
+its normal auth, so `POST /api/admin/demo/publish` and `/api/alerts` still
+401 with no token. Any non-dukascopy broker on an allowlisted path is
+refused with a scoping message, not a generic 403. A per-IP token bucket in
+`api/demo_limit.py` throttles the surface, tunable without a restart via
+`DEMO_RATE_PER_MIN` (default 120) and `DEMO_RATE_BURST` (default 40).
+
+Publishing happens from Settings > Public demo, admin-only: it bundles the
+current layout, watchlist and a list of named backtests into a payload and
+writes it as a new row in `core/demo_store.py`, an append-only, versioned
+store (its own SQLite file, path from `DEMO_DB`) where the latest row always
+wins and
+rollback is just republishing an older payload. On the frontend, `DemoApp`
+is what `SignedOut` boots instead of the sign-in card; it seeds the
+published layout (falling back to App's own default chart when nothing has
+been published yet) and flips a one-way `isDemoMode()` latch before `App`
+mounts. `?sign_in=1` bypasses `DemoApp` and reaches the sign-in card
+directly. Demo sessions never touch `/api/state` or dial `/ws/state`;
+`isDemoMode()` gates both out of `persist/core.ts`, so drawing and indicator
+edits round-trip through localStorage only and survive a reload without ever
+reaching the backend.
+

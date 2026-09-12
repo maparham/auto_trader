@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+from urllib.parse import quote
 
 import httpx
 
@@ -58,6 +59,29 @@ def map_user(raw: dict) -> dict:
         "banned": bool(raw.get("banned", False)),
         "locked": bool(raw.get("locked", False)),
     }
+
+
+async def get_user(user_id: str) -> dict | None:
+    """One mapped user, or None when Clerk does not know the id. Raises
+    RuntimeError when the secret is unset, so a caller that REQUIRES a real
+    answer cannot mistake 'not configured' for 'no such user'."""
+    secret = _secret()
+    if not secret:
+        raise RuntimeError("Clerk secret not configured")
+    headers = {"Authorization": f"Bearer {secret}"}
+    async with httpx.AsyncClient(
+        timeout=TIMEOUT_SECONDS, transport=_transport()
+    ) as client:
+        res = await client.get(
+            f"{API_BASE}/users/{quote(user_id, safe='')}", headers=headers
+        )
+    if res.status_code == 404:
+        return None
+    if res.status_code >= 400:
+        # Status only. The body can echo request details, and the secret must
+        # never reach the client or the log.
+        raise RuntimeError(f"Clerk API returned {res.status_code}")
+    return map_user(res.json())
 
 
 async def list_users(limit: int = 50, offset: int = 0, query: str = "") -> dict:

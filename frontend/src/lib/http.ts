@@ -1,4 +1,5 @@
 import { getAuthToken, hasTokenGetter } from "./authToken";
+import { IMPERSONATE_HEADER, impersonatedUserId } from "./impersonation";
 
 // Shared HTTP plumbing for the FastAPI backend: the single base-URL definition
 // and the response-error extractor, so every caller (api / feed / trading /
@@ -71,19 +72,31 @@ export function apiFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
+  const asUser = impersonatedUserId();
   // No getter registered (local dev, most tests): dial fetch directly and
   // synchronously — no `await getAuthToken()` microtask in between — so this
   // really IS fetch, not just "fetch a tick later with no header."
-  if (!hasTokenGetter()) return fetch(input, init);
+  if (!hasTokenGetter()) {
+    if (!asUser) return fetch(input, init);
+    const headers = new Headers(init?.headers);
+    headers.set(IMPERSONATE_HEADER, asUser);
+    return fetch(input, { ...init, headers });
+  }
   return (async () => {
     // getAuthToken() (Clerk's getToken()) can reject (network blip, torn-down
     // session): fall back to a tokenless request and let the backend's 401
     // (and the retry machinery around callers) take over — same stance as the
     // three WebSocket dialers (feed / persist / agent bridge).
     const token = await getAuthToken().catch(() => null);
-    if (!token) return fetch(input, init);
+    if (!token) {
+      if (!asUser) return fetch(input, init);
+      const headers = new Headers(init?.headers);
+      headers.set(IMPERSONATE_HEADER, asUser);
+      return fetch(input, { ...init, headers });
+    }
     const headers = new Headers(init?.headers);
     headers.set("Authorization", `Bearer ${token}`);
+    if (asUser) headers.set(IMPERSONATE_HEADER, asUser);
     const res = await fetch(input, { ...init, headers });
     if (res.status !== 401) return res;
     // A 401 is not always a dead session: the backend deliberately maps
@@ -96,6 +109,7 @@ export function apiFetch(
     if (fresh) {
       const retryHeaders = new Headers(init?.headers);
       retryHeaders.set("Authorization", `Bearer ${fresh}`);
+      if (asUser) retryHeaders.set(IMPERSONATE_HEADER, asUser);
       const retry = await fetch(input, { ...init, headers: retryHeaders });
       if (retry.status !== 401) return retry;
       onUnauthorized?.();

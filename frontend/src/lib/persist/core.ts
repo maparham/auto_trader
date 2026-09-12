@@ -6,8 +6,11 @@
 import { defaultBrokerId } from "../brokerDefaults";
 import { API_BASE, apiFetch } from "../http";
 import { CLERK_ENABLED, getAuthToken, hasTokenGetter } from "../authToken";
+import { isDemoMode } from "../demoMode";
+import { isImpersonating, withImpersonation } from "../impersonation";
+import { PREFIX } from "../workspaceKeys";
 
-export const PREFIX = "auto-trader";
+export { PREFIX };
 
 // --- per-broker workspace isolation ------------------------------------------
 //
@@ -26,14 +29,23 @@ export const PREFIX = "auto-trader";
 //  - GLOBAL PREFERENCES (settings, indicator defaults/presets, favourites) -> shared.
 //
 // `persistBroker` names the broker whose App-owned roots read/write.
-// INVARIANT — SINGLE WRITER: it is assigned in EXACTLY TWO places — the eager init
-// just below (module load) and App's broker-switch handler via setPersistBroker().
-// The whole correctness argument rests on this; do NOT add a third writer. App-level
-// roots are only ever mutated through App's controlled flow, which swaps the visible
-// tabs and persistBroker TOGETHER in one handler — so the persistence namespace
-// always tracks the CONTENT owner, never the transient UI selection mid-switch. The
-// one root written from a remounting chart subtree is ALERTS, so those take an
-// EXPLICIT `broker` argument instead of reading persistBroker (see alert helpers).
+// INVARIANT - SINGLE WRITER (mid-switch): it is assigned in exactly two
+// places for a LIVE session, the eager init just below (module load) and
+// App's broker-switch handler via setPersistBroker(). The whole correctness
+// argument for App's roots rests on this; do NOT add a third writer there.
+// App-level roots are only ever mutated through App's controlled flow, which
+// swaps the visible tabs and persistBroker TOGETHER in one handler, so the
+// persistence namespace always tracks the CONTENT owner, never the transient
+// UI selection mid-switch. The one root written from a remounting chart
+// subtree is ALERTS, so those take an EXPLICIT `broker` argument instead of
+// reading persistBroker (see alert helpers).
+//
+// DemoApp.tsx is a third writer, and that's fine: it calls
+// setPersistBroker("dukascopy") once at boot, before any tabs, chart
+// subtrees, or App-owned roots exist to be mid-switch about. The mid-switch
+// hazard this invariant guards against (a write landing under the wrong
+// broker while App's tabs and persistBroker briefly disagree) cannot occur
+// before App has ever mounted.
 function brokerFromActiveAccount(): string {
   // App persists the active account as "{broker}:{env}": sessionStorage is THIS
   // browser tab's selection; the bare localStorage key is the last-used seed
@@ -222,6 +234,9 @@ const CLIENT_ID =
 const remoteEcho = new Map<string, string>();
 
 function mirrorSet(key: string, value: string): void {
+  // Anonymous demo boot: never talk to the backend mirror, no matter what
+  // mirrorEnabled says.
+  if (isDemoMode()) return;
   // Guards the environment fetch is delegated through, not the apiFetch call
   // below directly — apiFetch always resolves to fetch (bare, or with an
   // auth header attached), so "no global fetch" still means "can't mirror."
@@ -251,6 +266,8 @@ function mirrorSet(key: string, value: string): void {
 }
 
 export function mirrorDelete(key: string): void {
+  // Anonymous demo boot: never talk to the backend mirror.
+  if (isDemoMode()) return;
   // Same guard shape as mirrorSet: it's checking the environment fetch
   // (which apiFetch delegates to) is available, not gating apiFetch itself.
   if (!mirrorEnabled || typeof fetch === "undefined") return;
@@ -427,6 +444,9 @@ export function sessionRemove(key: string): void {
 // state to re-render); false if nothing changed or the backend was unreachable
 // (graceful offline — keep working off localStorage).
 export async function hydrateFromBackend(): Promise<boolean> {
+  // Anonymous demo boot: no backend account to hydrate from, and mirroring
+  // must stay off for the rest of the session, so bail before any fetch.
+  if (isDemoMode()) return false;
   if (typeof fetch === "undefined") return false;
   let snapshot: Record<string, unknown>;
   try {
@@ -445,7 +465,13 @@ export async function hydrateFromBackend(): Promise<boolean> {
   }
   // Backend reachable and snapshot in hand: from here on, mirror every write up.
   // (Flipped BEFORE the writes below so seedBackendFromLocal's PUTs go through.)
-  mirrorEnabled = true;
+  //
+  // ...unless we are viewing the app as another user. Impersonation is
+  // read-only server-side, so every mirrored write would 403; worse, the local
+  // store currently holds THEIR workspace, so a mirror that did succeed would
+  // write it into the admin's own account. Gated here rather than in
+  // mirrorSet/mirrorDelete because this is the one flag both read.
+  mirrorEnabled = !isImpersonating();
 
   const keys = Object.keys(snapshot);
   if (keys.length === 0) {
@@ -576,6 +602,8 @@ export function registerAlertsRouter(
 export function subscribeToBackendUpdates(
   onChange: (key: string) => void,
 ): () => void {
+  // Anonymous demo boot: no account to sync, so never dial /ws/state.
+  if (isDemoMode()) return () => {};
   if (typeof WebSocket === "undefined") return () => {};
   const url = `${API_BASE.replace(/^http/, "ws")}/ws/state`;
   let ws: WebSocket | null = null;
@@ -586,7 +614,9 @@ export function subscribeToBackendUpdates(
     if (closed) return;
     const dial = (token: string | null) => {
       ws = new WebSocket(
-        token ? `${url}?token=${encodeURIComponent(token)}` : url,
+        withImpersonation(
+          token ? `${url}?token=${encodeURIComponent(token)}` : url,
+        ),
       );
       ws.onopen = () => {
         // A RECONNECT (not the first dial) means we were offline for a stretch:

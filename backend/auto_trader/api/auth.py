@@ -22,6 +22,10 @@ from fastapi import FastAPI, Request, WebSocket
 from jwt import PyJWKClient
 from starlette.responses import JSONResponse
 
+from auto_trader.api.demo_access import DEMO_USER_ID, demo_path_allowed
+from auto_trader.api.demo_limit import client_key, demo_rate_ok
+from auto_trader.core import impersonation_audit
+
 JWKS_URL_ENV = "CLERK_JWKS_URL"
 AUTHORIZED_PARTIES_ENV = "CLERK_AUTHORIZED_PARTIES"
 ADMIN_EMAILS_ENV = "ADMIN_EMAILS"
@@ -78,6 +82,48 @@ def is_admin_claims(claims: dict) -> bool:
         return True
     sub = claims.get("sub")
     return isinstance(sub, str) and sub in _csv_env(ADMIN_USER_IDS_ENV)
+
+
+IMPERSONATE_HEADER = "X-Impersonate-User"
+IMPERSONATE_PARAM = "impersonate"
+
+# Impersonation never authorizes a write. The admin's own token is still the
+# credential on the wire, so a mutating method would be indistinguishable from
+# the admin acting on their own account at the storage layer.
+_IMPERSONATION_SAFE_METHODS = ("GET", "HEAD")
+
+
+class ImpersonationError(Exception):
+    """An impersonation attempt that must be refused. `message` is safe to
+    return to the client: it names the rule, never the caller or the target."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def resolve_impersonation(
+    claims: dict, raw_target: str, method: str
+) -> tuple[str, bool, str | None]:
+    """Resolve the effective identity for a verified caller.
+
+    Returns (user_id, is_admin, impersonator). With no target this is the
+    caller's own identity unchanged. With a target it is the target, with
+    is_admin forced False (so /api/admin/* refuses the session) and the real
+    admin id carried through for the audit trail.
+
+    A non-admin naming a target is an error, never a silent fallback to self:
+    a bug that quietly served the caller their own data would look like a
+    working feature right up until it served the wrong user's."""
+    real_sub = claims.get("sub", "")
+    target = (raw_target or "").strip()
+    if not target:
+        return real_sub, is_admin_claims(claims), None
+    if not is_admin_claims(claims):
+        raise ImpersonationError("impersonation requires admin access")
+    if method.upper() not in _IMPERSONATION_SAFE_METHODS:
+        raise ImpersonationError("impersonation is read-only")
+    return target, False, real_sub
 
 
 def _verify_claims(token: str) -> dict:
@@ -144,7 +190,9 @@ def install_auth(app: FastAPI) -> None:
         if not auth_enabled():
             request.state.user_id = DEV_USER_ID
             request.state.is_admin = True
+            request.state.is_demo = False
             request.state.claims = {}
+            request.state.impersonator = None
             return await call_next(request)
         path = request.url.path
         # The MCP bridge is local-only; in hosted mode it does not exist.
@@ -155,6 +203,35 @@ def install_auth(app: FastAPI) -> None:
             return await call_next(request)
         authz = request.headers.get("authorization", "")
         if not authz.startswith("Bearer "):
+            # Signed-out visitor: the demo principal covers a narrow GET-only
+            # allowlist (see demo_access.py); everything else keeps the 401.
+            if demo_path_allowed(request.method, path):
+                demo_target = request.headers.get(IMPERSONATE_HEADER, "").strip()
+                if demo_target:
+                    # The demo principal can never be admin, same as the
+                    # render-token branch below: refuse rather than silently
+                    # ignore the header. Reachable with no credential at all
+                    # and ahead of demo_rate_ok below, so cap what we log.
+                    impersonation_audit.log_rejected(
+                        "demo principal",
+                        DEMO_USER_ID,
+                        demo_target[: impersonation_audit.MAX_LOGGED_VALUE_LEN],
+                    )
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "impersonation requires admin access"},
+                    )
+                client_ip = client_key(request)
+                if not demo_rate_ok(client_ip):
+                    return JSONResponse(
+                        status_code=429, content={"detail": "demo rate limit"}
+                    )
+                request.state.user_id = DEMO_USER_ID
+                request.state.is_admin = False
+                request.state.is_demo = True
+                request.state.claims = {}
+                request.state.impersonator = None
+                return await call_next(request)
             return JSONResponse(
                 status_code=401, content={"detail": "missing bearer token"}
             )
@@ -168,20 +245,48 @@ def install_auth(app: FastAPI) -> None:
             # safe, read-only methods.
             if request.method not in ("GET", "HEAD"):
                 return JSONResponse(status_code=401, content={"detail": INVALID_TOKEN_MSG})
+            render_target = request.headers.get(IMPERSONATE_HEADER, "").strip()
+            if render_target:
+                impersonation_audit.log_rejected(
+                    "render token",
+                    internal_sub,
+                    render_target[: impersonation_audit.MAX_LOGGED_VALUE_LEN],
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "impersonation requires admin access"},
+                )
             request.state.user_id = internal_sub
             request.state.is_admin = False
+            request.state.is_demo = False
             request.state.claims = {}
+            request.state.impersonator = None
             return await call_next(request)
+        raw_target = request.headers.get(IMPERSONATE_HEADER, "")
         try:
             # _verify_claims can block on a JWKS HTTP fetch (cold cache, key
             # rotation); keep that off the event loop.
             claims = await asyncio.to_thread(_verify_claims, token)
-            request.state.user_id = claims["sub"]
-            request.state.is_admin = is_admin_claims(claims)
+            user_id, is_admin, impersonator = resolve_impersonation(
+                claims, raw_target, request.method
+            )
+            request.state.user_id = user_id
+            request.state.is_admin = is_admin
+            request.state.is_demo = False
+            request.state.impersonator = impersonator
             # The admin console reads the `email` claim from here (whoami).
             request.state.claims = claims
+            if impersonator:
+                impersonation_audit.log_request(impersonator, user_id, request.url.path)
         except AuthError as e:
             return JSONResponse(status_code=401, content={"detail": str(e)})
+        except ImpersonationError as e:
+            impersonation_audit.log_rejected(
+                e.message,
+                claims.get("sub", "?") if isinstance(claims, dict) else "?",
+                raw_target[: impersonation_audit.MAX_LOGGED_VALUE_LEN],
+            )
+            return JSONResponse(status_code=403, content={"detail": e.message})
         return await call_next(request)
 
 
@@ -248,18 +353,40 @@ async def verify_ws(websocket: WebSocket) -> str | None:
     handshake denial."""
     if not auth_enabled():
         websocket.state.is_admin = True
+        websocket.state.impersonator = None
         return DEV_USER_ID
     token = websocket.query_params.get("token", "")
+    target = websocket.query_params.get(IMPERSONATE_PARAM, "").strip()
     internal_sub = verify_render_token(token) if token else None
     if internal_sub is not None:
-        websocket.state.is_admin = False
-        return internal_sub
-    if token:
+        # Same stacking refusal as the HTTP path. A WS has no status code to
+        # return, so this closes rather than 403s.
+        if not target:
+            websocket.state.is_admin = False
+            websocket.state.impersonator = None
+            return internal_sub
+        else:
+            impersonation_audit.log_rejected(
+                "render token",
+                internal_sub,
+                target[: impersonation_audit.MAX_LOGGED_VALUE_LEN],
+            )
+    elif token:
         try:
             claims = await asyncio.to_thread(_verify_claims, token)
-            websocket.state.is_admin = is_admin_claims(claims)
-            return claims["sub"]
+            user_id, is_admin, impersonator = resolve_impersonation(claims, target, "GET")
+            websocket.state.is_admin = is_admin
+            websocket.state.impersonator = impersonator
+            if impersonator:
+                impersonation_audit.log_request(impersonator, user_id, websocket.url.path)
+            return user_id
         except AuthError:
             pass
+        except ImpersonationError as e:
+            impersonation_audit.log_rejected(
+                e.message,
+                claims.get("sub", "?") if isinstance(claims, dict) else "?",
+                target[: impersonation_audit.MAX_LOGGED_VALUE_LEN],
+            )
     await websocket.close(code=WS_AUTH_CLOSE_CODE)
     return None

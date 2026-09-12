@@ -66,6 +66,7 @@ import { isDataOnlyBroker, type BrokerAccount } from "./lib/trading";
 import { isSynthetic } from "./lib/syntheticRegistry";
 import { UserButton } from "@clerk/clerk-react";
 import { CLERK_ENABLED } from "./lib/authToken";
+import { isDemoMode } from "./lib/demoMode";
 import { useIsAdmin } from "./admin/useIsAdmin";
 import {
   getPatternPanelState,
@@ -146,6 +147,9 @@ export default function Toolbar({
   // Adds the Admin entry to the Clerk account menu. Probes only in hosted
   // mode; a non-admin's 403 leaves it hidden.
   const isAdmin = useIsAdmin(CLERK_ENABLED);
+  // Heatmap is an admin-only tool: hidden from demo visitors and hosted
+  // non-admin users. Local dev (auth off) reports admin, so it stays visible.
+  const showHeatmap = useIsAdmin(!isDemoMode());
 
   const [symModalOpen, setSymModalOpen] = useState(false);
 
@@ -597,7 +601,7 @@ export default function Toolbar({
       {/* Synthetic charts are alert-free: history-only, so a price alert on them
           would never fire. Hide the divider along with the button so no orphan
           separator remains. */}
-      {!isSynthetic(symbol.epic) && (
+      {!isSynthetic(symbol.epic) && !isDemoMode() && (
         <>
           <span className="tb-div" aria-hidden="true" />
 
@@ -805,6 +809,7 @@ export default function Toolbar({
           too, which is what the old chart-pinned control did (there the panel WAS
           the on state) — the difference is that clicking away now closes the
           panel and leaves the heatmap painting. */}
+      {showHeatmap && (
       <div className="menu heatmap-split" ref={heatMenuRef}>
         <Tooltip content="Rule proximity heatmap">
           <button
@@ -849,6 +854,7 @@ export default function Toolbar({
           </div>
         )}
       </div>
+      )}
 
       {/* Similarity + preset pattern search, docked as a panel: this toggles
           it open/closed. Never disabled — the Presets view works without any
@@ -869,6 +875,8 @@ export default function Toolbar({
       {/* Backtest + Live sit together here (kept off the tab bar so they survive
           maximized view): backtest a rule strategy, then arm the same strategy
           live against a broker account. controller/period/symbol are in scope. */}
+      {/* Visible in demo too: the panel inside shows the published canned
+          results, and every Run control in there is a sign-up CTA. */}
       <BacktestButton
         controller={controller}
         period={period}

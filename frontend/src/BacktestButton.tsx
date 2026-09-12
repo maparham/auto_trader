@@ -86,6 +86,7 @@ import { sweepContext } from "./lib/sweepMemory";
 import { loadHoldout, splitHoldout } from "./lib/holdout";
 import { stopResumedSweep } from "./lib/sweepResume";
 import { startBacktestProgressPoller } from "./lib/backtestProgress";
+import { setLastBacktestResult } from "./lib/lastBacktestResult";
 import type { BacktestRequest, ExprBacktestRequest, ExprRow, SweepRow } from "./api";
 import { collectExprInstances, exprInstancesFor, exprWarmupByRef, missingExprInstances } from "./lib/exprInstances";
 import { liveExprInstances } from "./lib/indicators";
@@ -836,6 +837,10 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // The summary chip is driven by the signal subscription above, so just
       // publish the result (rehydrate uses the same publish path).
       backtestResultSignal.set(res);
+      // Remember it past any later clear/switch (see lastBacktestResult.ts) so
+      // the admin's "capture current result" demo-publishing tool can still
+      // find it once the panel itself has moved on.
+      setLastBacktestResult(res);
       // Announce the COMPLETION separately, adjacent to the publish so the
       // pairing stays local. Rehydrate shares the publish path above but must
       // not look like a new run to consumers that record one (PresetsTab), and

@@ -16,6 +16,7 @@ vi.mock("./lib/feed", async () => {
       { epic: "DXY", name: "US Dollar Index", status: "TRADEABLE", type: "INDICES" },
     ]),
     fetchFavorites: vi.fn().mockResolvedValue([]),
+    fetchMarketMeta: vi.fn().mockResolvedValue({ pricePrecision: null, closed: null, nextOpen: null }),
     searchInstruments: vi.fn().mockResolvedValue([]),
     addFavorite: vi.fn().mockResolvedValue(undefined),
     removeFavorite: vi.fn().mockResolvedValue(undefined),

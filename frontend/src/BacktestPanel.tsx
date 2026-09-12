@@ -35,6 +35,10 @@ import { useBarTimeLabel } from "./lib/useMaskedReplay";
 import BacktestAnalysisPanel from "./BacktestAnalysisPanel";
 import { formatDayWindow } from "./lib/backtestSchedule";
 import { formatPeriodDateRange } from "./lib/backtestPeriods";
+import { isDemoMode } from "./lib/demoMode";
+import { getDemoSnapshot } from "./lib/demoSnapshot";
+import DemoCta from "./DemoCta";
+import type { StoredBacktestResult } from "./lib/persist";
 
 // Module-singleton signal — the subscribe fn never changes, so memoize it (matches
 // Toolbar's useSyncExternalStore pattern) instead of resubscribing on every render.
@@ -146,6 +150,55 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
   const [tab, setTab] = useState<Tab>("overview");
   const [sort, setSort] = useState<{ key: keyof TradeRow; dir: SortDir }>({ key: "i", dir: "asc" });
 
+  // Demo mode: browse the published canned backtests instead of running a
+  // live one. The picker just pushes the chosen result onto the SAME signal
+  // a live run publishes to (see BacktestButton), so everything below (the
+  // empty state, the summary row, Overview/Trades/Analysis) renders it
+  // through the exact same path unmodified.
+  const demo = isDemoMode();
+  const demoBacktests = useMemo(
+    () => (demo ? getDemoSnapshot()?.backtests ?? [] : []),
+    [demo],
+  );
+  // Selected by INDEX, not name: published backtests can share a name (the
+  // admin-side staging list doesn't enforce global uniqueness against past
+  // versions), and a name-keyed selection would make two same-named entries
+  // indistinguishable and collide as React list keys.
+  const [demoSelectedIndex, setDemoSelectedIndex] = useState<number | null>(null);
+  const selectDemoBacktest = (index: number, cannedResult: unknown) => {
+    setDemoSelectedIndex(index);
+    backtestResultSignal.set(cannedResult as unknown as StoredBacktestResult);
+  };
+  // Land on the first published backtest so a fresh demo visitor sees a real
+  // result immediately rather than an empty "pick one" state.
+  useEffect(() => {
+    if (!demo || demoSelectedIndex != null || demoBacktests.length === 0) return;
+    selectDemoBacktest(0, demoBacktests[0].result);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demo, demoBacktests, demoSelectedIndex]);
+  const demoRow = demo ? (
+    <div className="bt-results-messages bt-demo-row">
+      {demoBacktests.length === 0 ? (
+        <span className="bt-notice">No demo backtests published</span>
+      ) : (
+        <div className="seg" role="tablist" aria-label="Demo backtests">
+          {demoBacktests.map((b, i) => (
+            <button
+              key={i}
+              className={demoSelectedIndex === i ? "seg-on" : ""}
+              role="tab"
+              aria-selected={demoSelectedIndex === i}
+              onClick={() => selectDemoBacktest(i, b.result)}
+            >
+              {b.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <DemoCta inline label="Sign up to run your own" />
+    </div>
+  ) : null;
+
   // Continuous scroll: Overview / Trades / Analysis are stacked sections in one
   // scroll pane, mirroring the config pane's Period→Costs scroll-tabs. The strip
   // jumps to a section and highlights whichever is at the top (scrollspy);
@@ -205,9 +258,12 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
   if (result == null) {
     return (
       <div className="bt-results">
+        {demoRow}
         {msgRow}
         <div className="bt-results-empty">
-          {running && progress ? (
+          {demo ? (
+            demoBacktests.length === 0 ? null : "Pick a demo backtest above to see results."
+          ) : running && progress ? (
             <span className="bt-progress">
               <span>
                 {progress.phase === "download"
@@ -369,6 +425,7 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
 
   return (
     <div className="bt-results">
+      {demoRow}
       {summaryRow}
       {msgRow}
       <div className="bt-results-head">

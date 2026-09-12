@@ -1,4 +1,11 @@
-.app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+/* flex: 1 1 auto (not height: 100vh) so the optional impersonation banner
+   above it (a flex sibling under #root, see index.css) can take its own
+   space without pushing the total past the viewport height. With no banner
+   this is still exactly 100vh: .app is #root's only child, and #root itself
+   is html/body-height: 100%. min-height: 0 is required for a flex column
+   child to actually shrink to the remainder instead of overflowing by its
+   content's natural (unconstrained) height. */
+.app { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; width: 100vw; }
 .toolbar {
   display: flex; align-items: center; gap: 4px; flex-wrap: nowrap;
   padding: 4px 10px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px;
@@ -587,6 +594,20 @@
 .tab-bar-actions .tabbar-action.gear { color: var(--text); }
 .tab-bar-actions .tabbar-action.gear:hover { color: var(--text); }
 .tab-bar-actions .layout-glyph { display: block; }
+/* Demo-mode sign-up nudge: same tabbar-action shape as the button it stands in
+   for (the broker selector), but text-only so it never reads as a live
+   control. Muted gray, never a solid accent fill. */
+.tab-bar-actions .tabbar-action.demo-cta {
+  text-decoration: none; font-weight: 500;
+}
+/* Inline variant for locked panel bodies (e.g. the backtest Run button). */
+.demo-cta-inline {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--hover); color: var(--text-dim); text-decoration: none;
+  border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: 500;
+  transition: background 0.12s, color 0.12s;
+}
+.demo-cta-inline:hover { background: var(--hover-strong); color: var(--text); }
 /* The picker/layout dropdowns open below the bar; right-aligned so they don't
    spill off the right edge where the actions sit. */
 .tab-bar-actions .menu { display: inline-flex; }

@@ -20,6 +20,7 @@ from typing import TypeVar
 from fastapi import HTTPException, Query, Request
 
 from auto_trader.api.auth import auth_enabled
+from auto_trader.api.demo_access import is_demo_request
 from auto_trader.api.guard import COMPUTE_ONLY_ENV
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.brokers.capital_stream import SECONDS_INTERVALS
@@ -78,8 +79,14 @@ def request_is_admin(obj) -> bool:
 
 def resolve_broker(request: Request, broker_id: str) -> str:
     """Resolve a caller-supplied broker id (possibly empty) to a data broker
-    this request may use; 403 for non-admin access to a restricted broker."""
+    this request may use; 403 for non-admin access to a restricted broker.
+    The anonymous demo principal is pinned to dukascopy outright."""
     assert _registry is not None, "registry not initialised"
+    if is_demo_request(request):
+        bid = broker_id or "dukascopy"
+        if bid != "dukascopy":
+            raise HTTPException(403, "demo access is limited to dukascopy")
+        return bid
     if request_is_admin(request):
         return broker_id or _registry.default_data_id()
     bid = broker_id or _registry.default_data_id(unrestricted_only=True)

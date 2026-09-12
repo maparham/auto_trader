@@ -1,7 +1,8 @@
-"""Read-only admin console API (/api/admin/*).
+"""Admin console API (/api/admin/*).
 
 Every route is gated by deps.require_admin_console at the router level. The
-console is read-only by design: nothing here mutates Clerk, user data or jobs.
+console is read-only except for /impersonate, which validates a target and
+writes an audit line; it mutates nothing else.
 
 See docs/superpowers/specs/2026-09-11-admin-console-design.md.
 """
@@ -10,9 +11,10 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
-from auto_trader.core import clerk_admin
+from auto_trader.core import clerk_admin, impersonation_audit
 from auto_trader.core.admin_health import collect_health
 from auto_trader.core.admin_usage import collect_usage
 from auto_trader.core.log_buffer import LOG_BUFFER
@@ -74,3 +76,28 @@ async def users(
     """Clerk users, read-only. Always 200: an unset secret or an upstream
     failure is reported in the body so the panel can say what is wrong."""
     return await clerk_admin.list_users(limit=limit, offset=offset, query=query)
+
+
+class ImpersonateRequest(BaseModel):
+    user_id: str
+
+
+@router.post("/impersonate")
+async def impersonate(req: ImpersonateRequest, request: Request) -> dict:
+    """Start an impersonation session against `user_id`.
+
+    This mints nothing and stores nothing. The browser does the impersonating
+    by sending X-Impersonate-User on its own admin token. What this endpoint
+    buys is a validated target (a typo cannot start a broken session) and the
+    authoritative start-of-session line in the audit log."""
+    target = req.user_id.strip()
+    if not target:
+        raise HTTPException(422, "user_id is required")
+    try:
+        user = await clerk_admin.get_user(target)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    if user is None:
+        raise HTTPException(404, f"no such user '{target}'")
+    impersonation_audit.log_start(current_user(request), target)
+    return {"user": user}

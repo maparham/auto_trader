@@ -12,6 +12,13 @@
 
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
+/* #root holds the impersonation banner (when present) stacked above the
+   page's own top-level view (.app/.admin-page/etc). Flex column + the view
+   taking the remainder (see .app's flex sizing in App.css) means an optional
+   sibling above it changes nothing about a fixed 100vh height fighting the
+   viewport: with no banner, the single child still fills #root exactly as a
+   bare height:100vh would. */
+#root { display: flex; flex-direction: column; }
 
 /* Theme variables. Dark is the default; [data-theme="light"] overrides. */
 :root {
@@ -210,4 +217,35 @@ body {
 .chart-detached-btn:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* Admin impersonation. Deliberately loud: this is a safety affordance, not a
+   preference toggle, and the one thing worse than not knowing you are
+   impersonating is thinking you are not. */
+.impersonation-banner {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 12px;
+  font-size: 13px;
+  background: #b45309;
+  color: #fff;
+}
+
+.impersonation-banner button {
+  padding: 2px 10px;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.impersonation-banner button:hover {
+  background: rgba(255, 255, 255, 0.3);
 }

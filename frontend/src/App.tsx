@@ -38,6 +38,8 @@ import Snackbar from "./Snackbar";
 import OrderTicket from "./OrderTicket";
 import PositionsPanel from "./PositionsPanel";
 import SnapshotGallery from "./SnapshotGallery";
+import DemoCta from "./DemoCta";
+import { isDemoMode } from "./lib/demoMode";
 import { writeSnapshotToScope } from "./lib/snapshots";
 import { saveSnapshotOfChart } from "./lib/snapshotSave";
 import { notify, playPing, toast } from "./lib/notify";
@@ -535,9 +537,13 @@ export default function App() {
   const [accounts, setAccounts] = useState<BrokerAccount[]>([]);
   const [activeAccount, setActiveAccount] = useState<TradeAccount>(
     () =>
-      sessionGet("activeAccount") ??
-      localStorage.getItem("activeAccount") ??
-      DEFAULT_ACCOUNT,
+      // The public demo is pinned to the credential-free dukascopy feed; any
+      // stored account belongs to a signed-in session and must not leak in.
+      isDemoMode()
+        ? "dukascopy:data"
+        : (sessionGet("activeAccount") ??
+          localStorage.getItem("activeAccount") ??
+          DEFAULT_ACCOUNT),
   );
   const brokerId = brokerOf(activeAccount);
 
@@ -593,7 +599,11 @@ export default function App() {
       .then((info) => {
         if (!alive) return;
         setAccounts(info.exec);
-        if (info.exec.length && !info.exec.some((a) => a.key === activeAccount)) {
+        if (
+          !isDemoMode() &&
+          info.exec.length &&
+          !info.exec.some((a) => a.key === activeAccount)
+        ) {
           setActiveAccount(info.exec[0].key);
         }
       })
@@ -2014,6 +2024,20 @@ export default function App() {
     requestSymbolSearch();
   };
 
+  // Demo fallback: with nothing published (or a payload holding no tabs) a
+  // signed-out visitor would land on the blank "No charts open" state. Open one
+  // default chart instead, without the symbol-search popup addTab triggers.
+  useEffect(() => {
+    if (!isDemoMode()) return;
+    setTabs((ts) => {
+      if (ts.length) return ts;
+      const t = makeTab(DEFAULT_SYMBOL, DEFAULT_PERIOD);
+      setActiveId(t.id);
+      return [t];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Tab-bar search catalogue fallback picked a symbol no open tab holds: open
   // it directly in a new tab (no symbol-search modal detour) on the default
   // interval, and record it as recently opened like any other pick.
@@ -2573,11 +2597,13 @@ export default function App() {
                 bar. Lives here (not the chart toolbar) because switching broker swaps
                 the WHOLE workspace — a workspace-scope action; the toolbar holds only
                 chart-scope actions. */}
-            <BrokerSelector
-              accounts={accounts}
-              activeBroker={brokerId}
-              onChange={selectBroker}
-            />
+            {isDemoMode() ? <DemoCta /> : (
+              <BrokerSelector
+                accounts={accounts}
+                activeBroker={brokerId}
+                onChange={selectBroker}
+              />
+            )}
           </>
         }
       />
@@ -2715,7 +2741,7 @@ export default function App() {
           )}
         </main>
         {/* Panel is toggled by the toolbar bell; closed = chart uses full width. */}
-        {panelOpen && symbol && !isSynthetic(symbol.epic) && (
+        {!isDemoMode() && panelOpen && symbol && !isSynthetic(symbol.epic) && (
           <AlertsSidebar
             controller={focusedController}
             epic={symbol.epic}
@@ -2729,7 +2755,7 @@ export default function App() {
         {/* Order ticket (paper): compose a new order for the focused symbol. The
             open book lives in the bottom dock, not here. Toggled by the toolbar's
             trade button. */}
-        {tradeOpen && symbol && !isSynthetic(symbol.epic) && !isDataOnlyBroker(brokerId) && (
+        {!isDemoMode() && tradeOpen && symbol && !isSynthetic(symbol.epic) && !isDataOnlyBroker(brokerId) && (
           <aside className="trade-sidebar">
             <OrderTicket
               epic={symbol.epic}
@@ -2762,7 +2788,7 @@ export default function App() {
         )}
         {/* Live trading: a separate docked surface from the backtest, so trading
             real money is never confused with testing. */}
-        {showLive && symbol && period && !isDataOnlyBroker(brokerId) && (
+        {!isDemoMode() && showLive && symbol && period && !isDataOnlyBroker(brokerId) && (
           <LiveTradingPanel
             epic={symbol.epic}
             resolution={period.resolution}
@@ -2779,21 +2805,23 @@ export default function App() {
           shown (the book is global, independent of the order ticket) but
           collapsible to its header bar. Double-clicking a row focuses that symbol's
           chart and opens its edit ticket in the (revealed) sidebar. */}
-      <div className={`trading-dock${dockMaximized ? " maximized" : ""}`}>
-        <PositionsPanel
-          account={activeAccount}
-          accounts={accounts}
-          onAccountChange={setActiveAccount}
-          accountSummary={accountSummary}
-          focusedEpic={symbol?.epic}
-          precisionFor={precisionForEpic}
-          trading={settings.trading}
-          confirmLineEdits={settings.trading.confirmLineEdits}
-          onJumpToEpic={jumpToEpic}
-          maximized={dockMaximized}
-          onToggleMaximize={() => setDockMaximized((m) => !m)}
-        />
-      </div>
+      {!isDemoMode() && (
+        <div className={`trading-dock${dockMaximized ? " maximized" : ""}`}>
+          <PositionsPanel
+            account={activeAccount}
+            accounts={accounts}
+            onAccountChange={setActiveAccount}
+            accountSummary={accountSummary}
+            focusedEpic={symbol?.epic}
+            precisionFor={precisionForEpic}
+            trading={settings.trading}
+            confirmLineEdits={settings.trading.confirmLineEdits}
+            onJumpToEpic={jumpToEpic}
+            maximized={dockMaximized}
+            onToggleMaximize={() => setDockMaximized((m) => !m)}
+          />
+        </div>
+      )}
 
       {showSettings && (
         <SettingsModal
@@ -2804,7 +2832,7 @@ export default function App() {
         />
       )}
 
-      {alertReq && symbol && (
+      {!isDemoMode() && alertReq && symbol && (
         <AlertModal
           epic={symbol.epic}
           price={alertReq.price}
@@ -2818,7 +2846,8 @@ export default function App() {
         />
       )}
 
-      {alertEdit &&
+      {!isDemoMode() &&
+        alertEdit &&
         symbol &&
         (() => {
           // Prefill from the focused cell's live overlay. If gone (e.g. deleted), close.
@@ -2858,7 +2887,8 @@ export default function App() {
       {/* Global alert edit: the all-symbols panel rows edit alerts whose chart may
           not be open, so this reads/writes storage directly (no overlay/controller).
           bumpAlerts() makes every open cell + the engine reconcile the change. */}
-      {alertGlobalEdit &&
+      {!isDemoMode() &&
+        alertGlobalEdit &&
         (() => {
           const a = loadStoredAlert(alertGlobalEdit.epic, alertGlobalEdit.savedId, brokerId);
           if (!a) {
@@ -2937,7 +2967,7 @@ export default function App() {
         />
       )}
 
-      {snapGalleryOpen && (
+      {!isDemoMode() && snapGalleryOpen && (
         <SnapshotGallery
           onRestore={restoreSnapshot}
           onClose={() => snapshotsGalleryOpen.set(false)}

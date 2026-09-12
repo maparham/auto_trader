@@ -10,6 +10,8 @@ import { API_BASE as BASE, apiFetch, errorDetail } from "./http";
 import { getAuthToken, hasTokenGetter } from "./authToken";
 import { PERF_DIAG_ON, recordBars, recordFetch } from "./perfDiag";
 import { getSynthetic, isSynthetic } from "./syntheticRegistry";
+import { withImpersonation } from "./impersonation";
+import { isDemoMode } from "./demoMode";
 // Pin aliases ("4H") only — the canonical table below is this file's own.
 import { tfSeconds } from "./expr/catalog";
 
@@ -832,6 +834,16 @@ export function openLive(
     onStatus?.("down");
     return { close: () => {} };
   }
+  if (isDemoMode()) {
+    // Demo runs pinned to dukascopy (supports_streaming=False: no upstream tick
+    // feed exists at all), and the demo principal carries no auth token, so a
+    // dial here would only ever get closed 4401 by verify_ws and retry forever
+    // with backoff, spamming hosted logs. Short-circuit exactly like the
+    // synthetic case above: no dial, no retry loop, chart stays on its fetched
+    // candles.
+    onStatus?.("down");
+    return { close: () => {} };
+  }
   const wsBase = BASE.replace(/^http/, "ws");
   const url = `${wsBase}/ws/candles?epic=${encodeURIComponent(epic)}&resolution=${resolution}&priceSide=${priceSide}&broker=${encodeURIComponent(brokerId)}`;
   let ws: WebSocket | null = null;
@@ -844,7 +856,9 @@ export function openLive(
     onStatus?.("connecting");
     const dial = (token: string | null) => {
       ws = new WebSocket(
-        token ? `${url}&token=${encodeURIComponent(token)}` : url,
+        withImpersonation(
+          token ? `${url}&token=${encodeURIComponent(token)}` : url,
+        ),
       );
       ws.onopen = () => {
         // Deliberately do NOT reset `retry` here: the handshake succeeding proves

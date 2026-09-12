@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import Card from "./Card";
 import InfoTip from "../components/InfoTip";
-import { fetchUsers, type ClerkUser, type UsersPage } from "./api";
+import { fetchUsers, startImpersonation, type ClerkUser, type UsersPage } from "./api";
 import { formatTime } from "./format";
+import { enterImpersonation } from "../lib/impersonation";
 
 export default function UsersPanel({
   refreshKey,
@@ -17,6 +18,29 @@ export default function UsersPanel({
   const [stamp, setStamp] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [term, setTerm] = useState("");
+  const [impersonateError, setImpersonateError] = useState<string | null>(null);
+
+  async function viewAs(user: ClerkUser) {
+    const who = user.email ?? user.id;
+    const ok = confirm(
+      `View the app as ${who}?\n\n` +
+        "Read-only: you will not be able to change their data.\n\n" +
+        "This clears this browser's local workspace state. Your saved layouts " +
+        "come back from the server when you exit, but unsaved scratch state and " +
+        "the layout this device had open do not.\n\n" +
+        "Close any other open tabs of this app first: another tab will keep " +
+        "syncing your own workspace, and it will sync the target's data instead " +
+        "while you are viewing as them.",
+    );
+    if (!ok) return;
+    setImpersonateError(null);
+    try {
+      const res = await startImpersonation(user.id);
+      enterImpersonation(res.user.id, res.user.email);
+    } catch (e) {
+      setImpersonateError(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   // Debounce the search box: Clerk's API is rate limited.
   useEffect(() => {
@@ -80,6 +104,7 @@ export default function UsersPanel({
           <div className="admin-dim" style={{ marginBottom: 8 }}>
             {page ? `${page.users.length} shown of ${page.total}` : ""}
           </div>
+          {impersonateError && <p className="admin-error">{impersonateError}</p>}
           <table className="admin-table">
             <thead>
               <tr>
@@ -89,6 +114,7 @@ export default function UsersPanel({
                 <th>Created</th>
                 <th>Last active</th>
                 <th>State</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -100,6 +126,15 @@ export default function UsersPanel({
                   <td>{formatTime(u.createdAt)}</td>
                   <td>{formatTime(u.lastActiveAt)}</td>
                   <td>{u.banned ? "banned" : u.locked ? "locked" : "active"}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="admin-view-as"
+                      onClick={() => void viewAs(u)}
+                    >
+                      View as
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

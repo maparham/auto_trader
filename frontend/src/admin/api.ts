@@ -105,3 +105,15 @@ export const fetchLogs = (limit = 200, level = "DEBUG") =>
   get<{ records: LogRecord[]; capacity: number }>(
     `/api/admin/logs?limit=${limit}&level=${level}`,
   );
+
+export async function startImpersonation(
+  userId: string,
+): Promise<{ user: ClerkUser }> {
+  const res = await apiFetch(`${API_BASE}/api/admin/impersonate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  if (!res.ok) throw new AdminHttpError(res.status, await errorDetail(res));
+  return (await res.json()) as { user: ClerkUser };
+}

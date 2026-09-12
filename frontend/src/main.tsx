@@ -8,11 +8,14 @@ import MobileApp from './mobile/MobileApp.tsx'
 import AdminApp from './admin/AdminApp.tsx'
 import ClerkTokenBridge from './components/ClerkTokenBridge.tsx'
 import AccountGate from './components/AccountGate.tsx'
+import ImpersonationBanner from './components/ImpersonationBanner.tsx'
 import ShellAuthHandoff from './components/ShellAuthHandoff.tsx'
 import ShellTicketSignIn from './components/ShellTicketSignIn.tsx'
+import DemoApp from './DemoApp.tsx'
 import { CLERK_ENABLED } from './lib/authToken.ts'
 import { parseSnapshotParams } from './lib/snapshotBoot.ts'
 import { parseShellAuthParams } from './lib/shellAuthBoot.ts'
+import { shouldShowSignIn } from './lib/demoBoot.ts'
 import { shouldBootMobile } from './lib/mobileBoot.ts'
 import { shouldBootAdmin } from './lib/adminBoot.ts'
 import { startShellStatusMirror } from './lib/shellStatus.ts'
@@ -55,12 +58,17 @@ createRoot(document.getElementById('root')!).render(
             <ShellAuthHandoff params={shellAuthParams} />
           ) : (
             <AccountGate>
+              <ImpersonationBanner />
               {bootAdmin ? <AdminApp /> : bootMobile ? <MobileApp /> : <App />}
             </AccountGate>
           )}
         </SignedIn>
         <SignedOut>
-          <ShellTicketSignIn />
+          {shellAuthParams || shouldShowSignIn(window.location.search) ? (
+            <ShellTicketSignIn />
+          ) : (
+            <DemoApp />
+          )}
         </SignedOut>
       </ClerkProvider>
     ) : bootAdmin ? (

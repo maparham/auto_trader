@@ -22,6 +22,7 @@ import { loadRecentSymbols, pushRecentSymbol } from "./lib/persist";
 import { brokerLabel } from "./lib/trading";
 import { activeSymbolFragment, insertSymbol, isSyntheticExpr, parseSymbols } from "./lib/syntheticExpr";
 import { registerSynthetic } from "./lib/syntheticRegistry";
+import { isDemoMode } from "./lib/demoMode";
 
 interface Props {
   // Null when no market is selected yet (mobile boot on a broker with no
@@ -82,7 +83,11 @@ const SPREAD_OPS: { label: string; token: string; name: string }[] = [
 export default function SymbolSearchModal({ current, brokerId, onPick, onClose }: Props) {
   const [showOps, setShowOps] = useState(false);
   const [query, setQuery] = useState("");
-  const [cat, setCat] = useState("recent"); // opening view
+  // Demo's opening view is "all" instead of "recent": the curated watchlist is
+  // small and a signed-out visitor has no recently-picked symbols yet, so
+  // "recent" would open empty.
+  // Demo visitors have no recents yet, so open on the browsable catalogue.
+  const [cat, setCat] = useState(() => (isDemoMode() ? "all" : "recent"));
   const [all, setAll] = useState<Instrument[]>([]);
   const [favorites, setFavorites] = useState<Instrument[]>([]);
   const [catalogueLoading, setCatalogueLoading] = useState(true);
@@ -131,6 +136,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
 
   // Load the active broker's catalogue + favorites (both cached per broker for the
   // session). Reloads if the broker changes while the modal is open.
+  //
   useEffect(() => {
     let alive = true;
     setCatalogueLoading(true);
@@ -436,7 +442,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
                       ? "No favorites yet — search above, then tap the ☆ on any symbol."
                       : cat === "recent"
                         ? "No recently opened symbols yet."
-                        : "Nothing to browse here — search by name above."}
+                        : "Nothing to browse here. Search by name above."}
                 </li>
               )}
             </>

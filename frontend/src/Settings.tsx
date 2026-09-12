@@ -1,9 +1,19 @@
 // App settings modal. Tabbed: "General" (theme + time formatting) and "Alerts"
 // (defaults a freshly-created alert inherits). Structured so more tabs/rows drop in.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import CloseButton from "./CloseButton";
 import NotificationSettings from "./NotificationSettings";
+import { isDemoMode } from "./lib/demoMode";
+import { useIsAdmin } from "./admin/useIsAdmin";
+import { getLastBacktestResult } from "./lib/lastBacktestResult";
+import {
+  publishDemo,
+  listDemoVersions,
+  rollbackDemo,
+  fetchCurrentDemo,
+  type DemoVersionRow,
+} from "./lib/demoPublish";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import type {
@@ -34,7 +44,7 @@ interface Props {
   initialTab?: Tab;
 }
 
-type Tab = "general" | "alerts" | "trading";
+type Tab = "general" | "alerts" | "trading" | "demo";
 
 const THEMES: Theme[] = ["dark", "light"];
 const CLOCKS: { value: Clock; label: string }[] = [
@@ -121,6 +131,11 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
   const drag = useDraggable();
   const [tab, setTab] = useState<Tab>(initialTab ?? "general");
   useCloseOnEscape(onClose);
+  // Same authority the Clerk account menu's Admin entry uses (Toolbar.tsx):
+  // the server is the only source of truth on admin-ness. Skipped entirely in
+  // demo mode so an anonymous visitor's Settings never probes /api/admin/*
+  // with no session.
+  const isAdmin = useIsAdmin(!isDemoMode());
 
   const ad = settings.alertDefaults;
   const setAd = (patch: Partial<AlertDefaults>) =>
@@ -133,6 +148,111 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
   const tr = settings.trading;
   const setTr = (patch: Partial<typeof tr>) =>
     onChange({ ...settings, trading: { ...tr, ...patch } });
+
+  // Public demo publishing (admin-only, see the "demo" tab below). watchlist
+  // is edited as free text and parsed on publish/blur; staged holds captured
+  // backtests until Publish sends them along with the CURRENT workspace
+  // layout (demoPublish.ts's publishDemo captures that itself). Publish
+  // REPLACES the whole published payload server-side, so opening the tab
+  // prefills watchlist/staged from whatever is currently live
+  // (fetchCurrentDemo) rather than starting blank. Otherwise Publish would
+  // silently wipe anything published in an earlier session.
+  const [demoWatchlist, setDemoWatchlist] = useState("");
+  const [demoCaptureName, setDemoCaptureName] = useState("");
+  const [demoStaged, setDemoStaged] = useState<{ name: string; result: unknown }[]>([]);
+  const [demoCaptureNotice, setDemoCaptureNotice] = useState<string | null>(null);
+  const [demoEditingVersion, setDemoEditingVersion] = useState<number | null>(null);
+  const [demoLoadError, setDemoLoadError] = useState<string | null>(null);
+  const [demoLoaded, setDemoLoaded] = useState(false);
+  const [demoPublishing, setDemoPublishing] = useState(false);
+  const [demoPublishError, setDemoPublishError] = useState<string | null>(null);
+  const [demoPublishedVersion, setDemoPublishedVersion] = useState<number | null>(null);
+  const [demoVersions, setDemoVersions] = useState<DemoVersionRow[] | null>(null);
+  const [demoVersionsError, setDemoVersionsError] = useState<string | null>(null);
+  const [demoRollingBack, setDemoRollingBack] = useState<number | null>(null);
+
+  const loadDemoVersions = () => {
+    listDemoVersions()
+      .then((vs) => {
+        setDemoVersions(vs);
+        setDemoVersionsError(null);
+      })
+      .catch((e) => setDemoVersionsError(e instanceof Error ? e.message : String(e)));
+  };
+
+  useEffect(() => {
+    if (tab !== "demo" || !isAdmin || demoLoaded) return;
+    setDemoLoaded(true);
+    loadDemoVersions();
+    fetchCurrentDemo()
+      .then((current) => {
+        setDemoEditingVersion(current?.version ?? null);
+        setDemoWatchlist(current ? current.watchlist.join(", ") : "");
+        setDemoStaged(current?.backtests ?? []);
+        setDemoLoadError(null);
+      })
+      .catch((e) => setDemoLoadError(e instanceof Error ? e.message : String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, isAdmin, demoLoaded]);
+
+  const captureDemoBacktest = () => {
+    const result = getLastBacktestResult();
+    if (result == null) {
+      setDemoCaptureNotice("No completed backtest result to capture. Run one first.");
+      return;
+    }
+    const name = demoCaptureName.trim();
+    if (!name) {
+      setDemoCaptureNotice("Name the backtest before capturing it.");
+      return;
+    }
+    if (demoStaged.some((b) => b.name === name)) {
+      setDemoCaptureNotice("A staged backtest already has that name. Use a different name.");
+      return;
+    }
+    setDemoStaged((prev) => [...prev, { name, result }]);
+    setDemoCaptureName("");
+    setDemoCaptureNotice(null);
+  };
+
+  const publishDemoStaged = () => {
+    const seen = new Set<string>();
+    let duplicate = false;
+    for (const b of demoStaged) {
+      if (seen.has(b.name)) {
+        duplicate = true;
+        break;
+      }
+      seen.add(b.name);
+    }
+    if (duplicate) {
+      setDemoPublishError("Two staged backtests share a name. Rename one before publishing.");
+      return;
+    }
+    const watchlist = demoWatchlist
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setDemoPublishing(true);
+    setDemoPublishError(null);
+    publishDemo({ watchlist, backtests: demoStaged })
+      .then((version) => {
+        setDemoPublishedVersion(version);
+        setDemoEditingVersion(version);
+        loadDemoVersions();
+      })
+      .catch((e) => setDemoPublishError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setDemoPublishing(false));
+  };
+
+  const rollBackDemo = (version: number) => {
+    setDemoRollingBack(version);
+    setDemoVersionsError(null);
+    rollbackDemo(version)
+      .then(() => loadDemoVersions())
+      .catch((e) => setDemoVersionsError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setDemoRollingBack(null));
+  };
 
   return (
     <div className="modal-backdrop modal-backdrop--clear" onMouseDown={onClose}>
@@ -147,6 +267,7 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
             ["general", "General"],
             ["alerts", "Alerts"],
             ["trading", "Trading"],
+            ...(isAdmin ? ([["demo", "Public demo"]] as [Tab, string][]) : []),
           ] as [Tab, string][]).map(([t, label]) => (
             <button
               key={t}
@@ -518,7 +639,7 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
               can override this in its own settings.
             </div>
 
-            <NotificationSettings />
+            {!isDemoMode() && <NotificationSettings />}
           </>
         )}
 
@@ -591,6 +712,104 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
                 />
               </div>
             ))}
+          </>
+        )}
+
+        {tab === "demo" && isAdmin && (
+          <>
+            {demoLoadError ? (
+              <div className="setting-hint bt-error">{demoLoadError}</div>
+            ) : (
+              <div className="setting-hint">
+                {demoEditingVersion != null
+                  ? `Editing published v${demoEditingVersion}.`
+                  : "Nothing published yet."}
+              </div>
+            )}
+
+            <div className="setting-sub">Watchlist</div>
+            <div className="setting-hint">
+              Comma-separated epics the demo shows. Each one must resolve on
+              dukascopy or publishing is rejected.
+            </div>
+            <div className="setting-row">
+              <label>Epics</label>
+              <input
+                className="num-input"
+                value={demoWatchlist}
+                placeholder="US100, EURUSD"
+                onChange={(e) => setDemoWatchlist(e.target.value)}
+              />
+            </div>
+
+            <div className="setting-sub">Backtests</div>
+            <div className="setting-hint">
+              Captures the most recently completed backtest result from this
+              session (even if the panel has since cleared it). Layout is
+              captured from THIS browser's current workspace when you publish,
+              so make sure it is showing what you want the demo to open with.
+            </div>
+            <div className="setting-row">
+              <label>Name</label>
+              <input
+                className="num-input"
+                value={demoCaptureName}
+                placeholder="NQ breakout"
+                onChange={(e) => setDemoCaptureName(e.target.value)}
+              />
+              <button type="button" onClick={captureDemoBacktest}>
+                Capture current result
+              </button>
+            </div>
+            {demoCaptureNotice && <div className="setting-hint bt-notice">{demoCaptureNotice}</div>}
+            {demoStaged.map((b, i) => (
+              <div className="setting-row" key={`${b.name}-${i}`}>
+                <label>{b.name}</label>
+                <button
+                  type="button"
+                  onClick={() => setDemoStaged((prev) => prev.filter((_, j) => j !== i))}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+
+            <div className="setting-row">
+              <button type="button" onClick={publishDemoStaged} disabled={demoPublishing}>
+                {demoPublishing ? "Publishing…" : "Publish"}
+              </button>
+              {demoPublishedVersion != null && !demoPublishError && (
+                <span className="setting-hint">Published version {demoPublishedVersion}.</span>
+              )}
+            </div>
+            {demoPublishError && <div className="setting-hint bt-error">{demoPublishError}</div>}
+
+            <div className="setting-sub">Published versions</div>
+            {demoVersionsError && <div className="setting-hint bt-error">{demoVersionsError}</div>}
+            {demoVersions == null && !demoVersionsError && (
+              <div className="setting-hint">Loading…</div>
+            )}
+            {demoVersions != null && demoVersions.length === 0 && (
+              <div className="setting-hint">Nothing published yet.</div>
+            )}
+            {demoVersions != null &&
+              demoVersions.map((v) => (
+                <div className="setting-row" key={v.version}>
+                  <label>
+                    v{v.version}
+                    {v.publishedBy ? ` · ${v.publishedBy}` : ""}
+                    {" · "}
+                    {new Date(v.createdAt).toLocaleString()}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => rollBackDemo(v.version)}
+                    disabled={demoRollingBack === v.version}
+                  >
+                    {demoRollingBack === v.version ? "Rolling back…" : "Roll back"}
+                  </button>
+                </div>
+              ))}
           </>
         )}
       </div>
