@@ -5,10 +5,12 @@ mod browser_auth;
 mod settings;
 
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use tauri::image::Image;
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WindowEvent};
 
 /// Smoke command: the served UI calls this to prove the bridge is alive.
@@ -52,20 +54,6 @@ fn show_window(app: &tauri::AppHandle) {
 fn hide_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
-    }
-}
-
-/// Tray left-click: hide when it is already the frontmost window, show otherwise.
-fn toggle_window(app: &tauri::AppHandle) {
-    let Some(w) = app.get_webview_window("main") else {
-        return;
-    };
-    let visible = w.is_visible().unwrap_or(false);
-    let focused = w.is_focused().unwrap_or(false);
-    if visible && focused {
-        let _ = w.hide();
-    } else {
-        show_window(app);
     }
 }
 
@@ -245,10 +233,14 @@ fn main() {
             let hide_item = MenuItemBuilder::with_id("hide-window", "Hide Window")
                 .accelerator("CmdOrCtrl+Q")
                 .build(app)?;
+            let reload_item = MenuItemBuilder::with_id("reload-ui", "Reload")
+                .accelerator("CmdOrCtrl+R")
+                .build(app)?;
             let app_menu = SubmenuBuilder::new(app, "Chartkar")
                 .about(Some(AboutMetadata::default()))
                 .separator()
                 .item(&hide_item)
+                .item(&reload_item)
                 .hide()
                 .hide_others()
                 .separator()
@@ -267,7 +259,19 @@ fn main() {
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| {
                 if event.id() == "hide-window" {
+                    // Chrome-style double-press quit: one Cmd+Q hides the
+                    // window (the engine keeps running); a second within 2s
+                    // really quits.
+                    static LAST_Q: Mutex<Option<Instant>> = Mutex::new(None);
+                    let now = Instant::now();
+                    let mut last = LAST_Q.lock().unwrap();
+                    if last.is_some_and(|t| now.duration_since(t) < Duration::from_secs(2)) {
+                        app.exit(0);
+                    }
+                    *last = Some(now);
                     hide_window(app);
+                } else if event.id() == "reload-ui" {
+                    reload_ui(app);
                 }
             });
 
@@ -300,7 +304,7 @@ fn main() {
                 .icon(Image::from_bytes(include_bytes!("../icons/tray-idle.png"))?)
                 .icon_as_template(false)
                 .menu(&tray_menu)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_window(app),
                     "hide" => hide_window(app),
@@ -308,16 +312,6 @@ fn main() {
                     "settings" => open_settings(app),
                     "quit" => app.exit(0),
                     _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        toggle_window(tray.app_handle());
-                    }
                 })
                 .build(app)?;
 
