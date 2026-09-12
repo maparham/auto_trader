@@ -232,6 +232,11 @@ app_state.db
 app_state.db-wal
 app_state.db-shm
 
+# Published public-demo snapshot store
+demo_store.db
+demo_store.db-wal
+demo_store.db-shm
+
 # Backtest run store
 backtest_runs.db
 backtest_runs.db-wal
