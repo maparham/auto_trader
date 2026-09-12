@@ -17,6 +17,7 @@ import {
   tradeListPanelOpen,
   tradePanelOpen,
   livePanelOpen,
+  toggleSidePanel,
 } from "./lib/signals";
 import {
   loadFavoriteResolutions,
@@ -421,7 +422,7 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
       <Tooltip content="Show live trading panel">
         <button
           className={`anchor-btn live-toggle${liveOpen ? " on" : ""}`}
-          onClick={() => livePanelOpen.set(!livePanelOpen.value)}
+          onClick={() => toggleSidePanel("live")}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
             stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
@@ -437,7 +438,7 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
       <Tooltip content="Toggle trade list panel">
         <button
           className={`anchor-btn trade-list-toggle${tradeListOpen ? " on" : ""}`}
-          onClick={() => tradeListPanelOpen.set(!tradeListPanelOpen.value)}
+          onClick={() => toggleSidePanel("tradeList")}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
             stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
@@ -452,7 +453,7 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
       <Tooltip content="Show alerts panel">
         <button
           className={`anchor-btn alerts-toggle${panelOpen ? " on" : ""}`}
-          onClick={() => alertsPanelOpen.set(!alertsPanelOpen.value)}
+          onClick={() => toggleSidePanel("alerts")}
         >
           <BellIcon size={16} />
         </button>
@@ -464,7 +465,7 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
       <Tooltip content="Show trading panel">
         <button
           className={`anchor-btn trade-toggle${tradeOpen ? " on" : ""}`}
-          onClick={() => tradePanelOpen.set(!tradePanelOpen.value)}
+          onClick={() => toggleSidePanel("trade")}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
             stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"

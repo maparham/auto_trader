@@ -27,6 +27,18 @@ Note: `~126` standalone native `title=` sites elsewhere in the app have not yet
 been migrated onto `Tooltip` — that's tracked follow-up work, not a pattern to
 copy in new code.
 
+### Side panels
+
+Only one right-docked side panel is open at a time (patterns, trade list,
+alerts, order ticket, backtest config, live trading). Each one registers a
+closer with `frontend/src/lib/sidePanels.ts` and calls `claimSidePanel(id)` on
+the way open, so a new panel closes whichever was open. Use
+`toggleSidePanel(id)` from `lib/signals.ts` for the four signal-backed panels
+rather than flipping their signals directly. Claims are inert until App calls
+`endSidePanelRestore()`, because the backtest and live panels persist their
+open-state and a boot-time cross-close would overwrite the saved flag; when
+both are saved open, live wins and backtest just starts closed.
+
 ## Agent UI Bridge
 
 MCP agents can drive the running UI: connect to `http://localhost:8000/mcp`

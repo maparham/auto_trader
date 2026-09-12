@@ -25,6 +25,7 @@ import {
   type PresetScanResult,
   type UserPreset,
 } from "./presetScan";
+import { claimSidePanel, registerSidePanel } from "./sidePanels";
 
 const MIN_BARS = 3;
 const MAX_BARS = 1024;
@@ -189,6 +190,7 @@ export function runPatternSearch(args: PatternRunArgs): void {
   // the panel was never toolbar-opened must open it itself, or the toolbar
   // button (lit off `open`) and closePatternPanel (which only flips `open`)
   // both go stale relative to what's actually on screen.
+  claimSidePanel("patterns");
   set({ open: true });
   const all = seriesProvider();
   // Prefer the provider's entry: it carries the tab the cell lives on, which
@@ -328,6 +330,9 @@ export function dismissPatternPanel(): void {
  *  failed fetch un-latches itself so the NEXT open retries it, and leaves its
  *  error visible in state rather than swallowing it. */
 export function openPatternPanel(): void {
+  // Only one side panel at a time: taking the dock closes whichever other
+  // right-docked panel was open (lib/sidePanels.ts).
+  claimSidePanel("patterns");
   set({ open: true });
   if (manifestRequested) return;
   manifestRequested = true;
@@ -351,6 +356,7 @@ export function openPatternPanel(): void {
 export function closePatternPanel(): void {
   set({ open: false });
 }
+registerSidePanel("patterns", closePatternPanel);
 
 export function togglePatternPanel(): void {
   if (state.open) closePatternPanel();

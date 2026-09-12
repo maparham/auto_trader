@@ -9,6 +9,8 @@
 // the Signal class is exported for that.
 
 import type { GhostPattern } from "./patternGhost";
+import { claimSidePanel, registerSidePanel } from "./sidePanels";
+import type { SidePanelId } from "./sidePanels";
 
 type Listener<T> = (value: T) => void;
 
@@ -382,7 +384,7 @@ export function setTradeSelected(id: string | null, field: TradeLineField = "pri
   if (idChanged) {
     editTradeSignal.set(id);
     if (id == null) tradePanelOpen.set(false);
-    else if (openPanel) tradePanelOpen.set(true);
+    else if (openPanel) openSidePanelSignal(tradePanelOpen, "trade");
   }
 }
 // Dock-row click — selects/deselects the whole trade (its entry line's pill shows).
@@ -406,7 +408,7 @@ export function openTradeEditor(id: string, field: TradeLineField): void {
   setTradeSelected(id, field, true);
   // Force open even if setTradeSelected's early-return or openPanel=false left it closed.
   editTradeSignal.set(id);
-  tradePanelOpen.set(true);
+  openSidePanelSignal(tradePanelOpen, "trade");
 }
 
 // A new order being STAGED on the chart before submit (limit orders always; a
@@ -442,7 +444,7 @@ export function stageChartOrder(o: { epic: string; side: "buy" | "sell"; price: 
     takeProfit: null,
     expiresAt: null,
   });
-  tradePanelOpen.set(true);
+  openSidePanelSignal(tradePanelOpen, "trade");
 }
 
 // Request to open the app Settings modal. Set by the toolbar gear button, the
@@ -744,7 +746,31 @@ export function requestSymbolSearch(): void {
 // from the backtest so "testing" is never confused with "trading real money".
 export const livePanelOpen = new Signal<boolean>(false);
 export function openLivePanel(): void {
-  livePanelOpen.set(true);
+  openSidePanelSignal(livePanelOpen, "live");
+}
+
+// Only one right-docked side panel may be open at a time (see lib/sidePanels.ts):
+// opening one closes the rest. These four panels are plain signals, so they share
+// one open helper; the backtest panel (App state) and the pattern panel (its own
+// store) register themselves the same way.
+function openSidePanelSignal(sig: Signal<boolean>, id: SidePanelId): void {
+  claimSidePanel(id);
+  sig.set(true);
+}
+registerSidePanel("alerts", () => alertsPanelOpen.set(false));
+registerSidePanel("trade", () => tradePanelOpen.set(false));
+registerSidePanel("tradeList", () => tradeListPanelOpen.set(false));
+registerSidePanel("live", () => livePanelOpen.set(false));
+
+/** Toolbar toggles: flipping a closed panel open claims the dock from the others. */
+export function toggleSidePanel(id: "alerts" | "trade" | "tradeList" | "live"): void {
+  const sig =
+    id === "alerts" ? alertsPanelOpen
+    : id === "trade" ? tradePanelOpen
+    : id === "tradeList" ? tradeListPanelOpen
+    : livePanelOpen;
+  if (sig.value) sig.set(false);
+  else openSidePanelSignal(sig, id);
 }
 
 // "Go live →" from the backtest modal: carries a COPY of the current backtest

@@ -8,6 +8,7 @@ import DrawSidebar from "./DrawSidebar";
 import WorkspacePatternPanel from "./WorkspacePatternPanel";
 import TradeListPanel from "./TradeListPanel";
 import { setPatternSeriesProvider } from "./lib/patternPanelStore";
+import { claimSidePanel, endSidePanelRestore, registerSidePanel } from "./lib/sidePanels";
 import { anyCellInReadout, subscribeReplayingCells } from "./lib/replayingCells";
 import LayoutPicker from "./LayoutPicker";
 import BrokerSelector from "./BrokerSelector";
@@ -371,13 +372,28 @@ export default function App() {
   // The toolbar Backtest button toggles the docked config panel via a signal.
   // Open-state is device-local so the panel reopens after a reload if it was
   // open (loadBacktestOpen), showing the persisted config/results without re-running.
-  const [showBacktestCfg, setShowBacktestCfg] = useState(loadBacktestOpen);
+  // Both this panel and the Live panel persist their open-state, so a reload can
+  // find both saved open — which the one-panel-at-a-time rule forbids. Live wins
+  // (it may have an armed strategy behind it) and the backtest panel just starts
+  // closed; its saved flag is left alone rather than overwritten, so the panel
+  // comes back on the next reload where live isn't restored.
+  const [showBacktestCfg, setShowBacktestCfg] = useState(
+    () => loadBacktestOpen() && !loadLiveOpen(),
+  );
   const showBacktestCfgRef = useRef(showBacktestCfg);
   showBacktestCfgRef.current = showBacktestCfg;
   const openBacktestCfg = (open: boolean) => {
+    // Taking the dock closes whichever other side panel was open.
+    if (open) claimSidePanel("backtest");
     setShowBacktestCfg(open);
     saveBacktestOpen(open);
   };
+  // The backtest panel's open-state is component state, so its "close yourself"
+  // callback has to be registered from here (lib/sidePanels.ts). Registered once
+  // with the first render's openBacktestCfg, which is safe because everything that
+  // closure touches is render-stable (the setState setter plus two module-level
+  // functions) — keep it that way or this registration goes stale.
+  useEffect(() => registerSidePanel("backtest", () => openBacktestCfg(false)), []);
   useEffect(() => backtestSettingsRequest.subscribe(() => {
     // Toggle — but an open-yet-hidden overlay (chart interaction / range pick
     // tucked it away) re-reveals instead of closing: the panel isn't on screen,
@@ -400,6 +416,9 @@ export default function App() {
       saveLiveOpen(v);
     });
   }, []);
+  // Persisted open-states are restored above; from here on, opening one side
+  // panel closes the others.
+  useEffect(() => endSidePanelRestore(), []);
   const [alertReq, setAlertReq] = useState(alertModalRequest.value);
   useEffect(() => alertModalRequest.subscribe(setAlertReq), []);
   const [alertEdit, setAlertEdit] = useState(alertEditRequest.value);
