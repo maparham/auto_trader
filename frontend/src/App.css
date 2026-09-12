@@ -6332,7 +6332,6 @@ span.bt-leg-short { color: var(--neg); }
 .pattern-panel-similar { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .pattern-panel-similar-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
   border-bottom: 1px solid var(--border); flex: 0 0 auto; }
-.pattern-panel-hint { color: var(--text-dim); font-size: 11px; }
 .pattern-panel-save-input { width: 130px; padding: 3px 6px; font: inherit; color: var(--text);
   background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; }
 /* The switcher's ON state and the select-range/save-as-preset buttons all get

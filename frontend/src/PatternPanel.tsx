@@ -119,13 +119,8 @@ export default function PatternPanel(props: Props) {
               onClick={armPatternSelect}
             >
               <SelectRangeIcon size={14} />
-              {st.selectArmed ? "drag over the pattern on the chart…" : "Select range on chart"}
+              {st.selectArmed ? "drag on the chart" : "Select range on chart"}
             </button>
-            {st.selectArmed && (
-              <span className="pattern-panel-hint">
-                drag across candles on any chart to search
-              </span>
-            )}
             {saving ? (
               <input
                 autoFocus
