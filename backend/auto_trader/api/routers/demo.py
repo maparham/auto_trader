@@ -34,7 +34,10 @@ async def demo_snapshot() -> dict:
 
 class PublishBody(BaseModel):
     layout: dict
-    watchlist: list[str]
+    # Optional: nothing in the demo UI reads the published watchlist any more
+    # (the symbol modal browses the whole dukascopy catalogue), so an empty
+    # list is a perfectly good publish. Non-empty lists are still validated.
+    watchlist: list[str] = []
     backtests: list[dict] = []
 
 
@@ -44,7 +47,7 @@ class RollbackBody(BaseModel):
 
 async def _validate_watchlist(epics: list[str]) -> None:
     if not epics:
-        raise HTTPException(422, "watchlist must not be empty")
+        return
     from .. import deps
 
     broker = deps.get_data("dukascopy")
@@ -59,6 +62,11 @@ async def _validate_watchlist(epics: list[str]) -> None:
 
 @admin_router.post("/publish")
 async def publish(body: PublishBody, request: Request) -> dict:
+    # An empty layout means the admin's workspace had no saved named layout to
+    # capture; publishing it would leave visitors on the built-in fallback
+    # chart with no error to explain why.
+    if not body.layout:
+        raise HTTPException(422, "layout is empty: save the workspace layout, then publish")
     await _validate_watchlist(body.watchlist)
     payload = json.dumps(
         {"layout": body.layout, "watchlist": body.watchlist, "backtests": body.backtests}

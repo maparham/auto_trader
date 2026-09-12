@@ -48,18 +48,30 @@ def test_publish_then_fetch_roundtrip():
     assert snap["payload"]["watchlist"] == ["US100", "EURUSD"]
 
 
-def test_publish_rejects_empty_watchlist():
+def test_publish_accepts_empty_watchlist():
+    # Nothing in the demo UI reads the watchlist any more, so it is optional.
     r = client.post(
         "/api/admin/demo/publish",
-        json={"layout": {}, "watchlist": [], "backtests": []},
+        json={"layout": {"tabs": []}, "watchlist": [], "backtests": []},
+    )
+    assert r.status_code == 200
+    assert client.get("/api/demo/snapshot").json()["payload"]["watchlist"] == []
+
+
+def test_publish_rejects_empty_layout():
+    # Publishing nothing would strand visitors on the fallback chart silently.
+    r = client.post(
+        "/api/admin/demo/publish",
+        json={"layout": {}, "watchlist": ["US100"], "backtests": []},
     )
     assert r.status_code == 422
+    assert "layout is empty" in r.json()["detail"]
 
 
 def test_publish_rejects_unknown_epic():
     r = client.post(
         "/api/admin/demo/publish",
-        json={"layout": {}, "watchlist": ["NOPE"], "backtests": []},
+        json={"layout": {"tabs": []}, "watchlist": ["NOPE"], "backtests": []},
     )
     assert r.status_code == 422
     assert "NOPE" in r.json()["detail"]
@@ -80,7 +92,7 @@ def test_rollback():
 def test_versions_listing():
     client.post(
         "/api/admin/demo/publish",
-        json={"layout": {}, "watchlist": ["US100"], "backtests": []},
+        json={"layout": {"tabs": []}, "watchlist": ["US100"], "backtests": []},
     )
     vs = client.get("/api/admin/demo/versions").json()["versions"]
     assert vs[0]["version"] == 1

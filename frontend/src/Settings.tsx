@@ -14,6 +14,7 @@ import {
   fetchCurrentDemo,
   type DemoVersionRow,
 } from "./lib/demoPublish";
+import { captureDemoLayout } from "./lib/demoSnapshot";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import type {
@@ -216,6 +217,16 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
   };
 
   const publishDemoStaged = () => {
+    // captureDemoLayout() reads the SAVED named layouts, so a workspace that
+    // was only rearranged (never saved) captures as nothing. Publishing that
+    // "succeeds" and strands visitors on the built-in fallback chart, so stop
+    // here with copy that says what to do instead.
+    if (Object.keys(captureDemoLayout()).length === 0) {
+      setDemoPublishError(
+        "No saved layout to publish. Save the current workspace as a layout, make it the default, then publish.",
+      );
+      return;
+    }
     const seen = new Set<string>();
     let duplicate = false;
     for (const b of demoStaged) {
@@ -727,17 +738,18 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
               </div>
             )}
 
-            <div className="setting-sub">Watchlist</div>
+            <div className="setting-sub">Watchlist (optional)</div>
             <div className="setting-hint">
-              Comma-separated epics the demo shows. Each one must resolve on
-              dukascopy or publishing is rejected.
+              Comma-separated epics, for the record. The demo browses the whole
+              dukascopy catalogue either way. Leave it blank, or list epics that
+              resolve on dukascopy (unknown ones are rejected).
             </div>
             <div className="setting-row">
               <label>Epics</label>
               <input
                 className="num-input"
                 value={demoWatchlist}
-                placeholder="US100, EURUSD"
+                placeholder="e.g. US100, EURUSD"
                 onChange={(e) => setDemoWatchlist(e.target.value)}
               />
             </div>
