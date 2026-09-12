@@ -1,7 +1,7 @@
 // App settings modal. Tabbed: "General" (theme + time formatting) and "Alerts"
 // (defaults a freshly-created alert inherits). Structured so more tabs/rows drop in.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import CloseButton from "./CloseButton";
 import NotificationSettings from "./NotificationSettings";
 import { isDemoMode } from "./lib/demoMode";
@@ -14,7 +14,7 @@ import {
   fetchCurrentDemo,
   type DemoVersionRow,
 } from "./lib/demoPublish";
-import { captureDemoLayout } from "./lib/demoSnapshot";
+import { describeDemoLayout } from "./lib/demoSnapshot";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import type {
@@ -171,6 +171,12 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
   const [demoVersions, setDemoVersions] = useState<DemoVersionRow[] | null>(null);
   const [demoVersionsError, setDemoVersionsError] = useState<string | null>(null);
   const [demoRollingBack, setDemoRollingBack] = useState<number | null>(null);
+  // Recomputed whenever the tab is (re)opened: it reads localStorage, and the
+  // admin may have saved a layout since the modal last rendered.
+  const demoLayout = useMemo(
+    () => (tab === "demo" && isAdmin ? describeDemoLayout() : { count: 0, defaultName: null }),
+    [tab, isAdmin],
+  );
 
   const loadDemoVersions = () => {
     listDemoVersions()
@@ -221,9 +227,18 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
     // was only rearranged (never saved) captures as nothing. Publishing that
     // "succeeds" and strands visitors on the built-in fallback chart, so stop
     // here with copy that says what to do instead.
-    if (Object.keys(captureDemoLayout()).length === 0) {
+    if (demoLayout.count === 0) {
       setDemoPublishError(
-        "No saved layout to publish. Save the current workspace as a layout, make it the default, then publish.",
+        "No saved layout to publish. Save the current workspace as a layout, then set it as the default.",
+      );
+      return;
+    }
+    // A fresh visitor browser has no activeLayoutId, so App's startup falls
+    // through to defaultLayoutId (see resolveStartup). Publishing layouts with
+    // no default lands them on the built-in fallback chart instead.
+    if (demoLayout.defaultName == null) {
+      setDemoPublishError(
+        "No default layout. Star the layout the demo should open with, then publish.",
       );
       return;
     }
@@ -729,25 +744,57 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
         {tab === "demo" && isAdmin && (
           <>
             {demoLoadError ? (
-              <div className="setting-hint bt-error">{demoLoadError}</div>
+              <div className="setting-hint demo-note bt-error">{demoLoadError}</div>
             ) : (
-              <div className="setting-hint">
+              <div className="setting-hint demo-note">
                 {demoEditingVersion != null
                   ? `Editing published v${demoEditingVersion}.`
                   : "Nothing published yet."}
               </div>
             )}
 
-            <div className="setting-sub">Watchlist (optional)</div>
-            <div className="setting-hint">
-              Comma-separated epics, for the record. The demo browses the whole
-              dukascopy catalogue either way. Leave it blank, or list epics that
-              resolve on dukascopy (unknown ones are rejected).
-            </div>
+            <div className="setting-sub">Layout</div>
             <div className="setting-row">
-              <label>Epics</label>
+              <label className="label-info">
+                This browser
+                <InfoTip
+                  title="What gets published"
+                  text={[
+                    "Publishing captures this browser's saved layouts.",
+                    "Visitors open whichever one is your default.",
+                    "Switch the workspace to Dukascopy first.",
+                  ]}
+                />
+              </label>
+              {demoLayout.count === 0 ? (
+                <span className="demo-stat demo-stat-warn">No saved layout</span>
+              ) : demoLayout.defaultName == null ? (
+                <span className="demo-stat demo-stat-warn">
+                  {demoLayout.count} {demoLayout.count === 1 ? "layout" : "layouts"}, no default
+                </span>
+              ) : (
+                <span className="demo-stat">
+                  {demoLayout.count} {demoLayout.count === 1 ? "layout" : "layouts"} · default:{" "}
+                  {demoLayout.defaultName}
+                </span>
+              )}
+            </div>
+
+            <div className="setting-sub">Watchlist</div>
+            <div className="setting-row">
+              <label className="label-info">
+                Epics (optional)
+                <InfoTip
+                  title="Watchlist"
+                  text={[
+                    "Comma-separated, kept on the published record.",
+                    "The demo browses the whole Dukascopy catalogue anyway.",
+                    "Epics that do not resolve are rejected.",
+                  ]}
+                />
+              </label>
               <input
-                className="num-input"
+                className="num-input demo-text-input"
                 value={demoWatchlist}
                 placeholder="e.g. US100, EURUSD"
                 onChange={(e) => setDemoWatchlist(e.target.value)}
@@ -755,27 +802,33 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
             </div>
 
             <div className="setting-sub">Backtests</div>
-            <div className="setting-hint">
-              Captures the most recently completed backtest result from this
-              session (even if the panel has since cleared it). Layout is
-              captured from THIS browser's current workspace when you publish,
-              so make sure it is showing what you want the demo to open with.
-            </div>
             <div className="setting-row">
-              <label>Name</label>
+              <label className="label-info">
+                Name
+                <InfoTip
+                  title="Canned backtests"
+                  text={[
+                    "Stages the last completed run from this session.",
+                    "Visitors browse staged runs in the Backtest panel.",
+                    "Publishing with none is fine.",
+                  ]}
+                />
+              </label>
               <input
-                className="num-input"
+                className="num-input demo-text-input"
                 value={demoCaptureName}
-                placeholder="NQ breakout"
+                placeholder="e.g. NQ breakout"
                 onChange={(e) => setDemoCaptureName(e.target.value)}
               />
               <button type="button" onClick={captureDemoBacktest}>
-                Capture current result
+                Capture
               </button>
             </div>
-            {demoCaptureNotice && <div className="setting-hint bt-notice">{demoCaptureNotice}</div>}
+            {demoCaptureNotice && (
+              <div className="setting-hint demo-note bt-notice">{demoCaptureNotice}</div>
+            )}
             {demoStaged.map((b, i) => (
-              <div className="setting-row" key={`${b.name}-${i}`}>
+              <div className="setting-row demo-staged-row" key={`${b.name}-${i}`}>
                 <label>{b.name}</label>
                 <button
                   type="button"
@@ -786,27 +839,38 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
               </div>
             ))}
 
-            <div className="setting-row">
-              <button type="button" onClick={publishDemoStaged} disabled={demoPublishing}>
+            <div className="setting-row demo-publish-row">
+              {demoPublishedVersion != null && !demoPublishError ? (
+                <span className="setting-hint">Published version {demoPublishedVersion}.</span>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                className="demo-publish"
+                onClick={publishDemoStaged}
+                disabled={demoPublishing}
+              >
                 {demoPublishing ? "Publishing…" : "Publish"}
               </button>
-              {demoPublishedVersion != null && !demoPublishError && (
-                <span className="setting-hint">Published version {demoPublishedVersion}.</span>
-              )}
             </div>
-            {demoPublishError && <div className="setting-hint bt-error">{demoPublishError}</div>}
+            {demoPublishError && (
+              <div className="setting-hint demo-note bt-error">{demoPublishError}</div>
+            )}
 
             <div className="setting-sub">Published versions</div>
-            {demoVersionsError && <div className="setting-hint bt-error">{demoVersionsError}</div>}
+            {demoVersionsError && (
+              <div className="setting-hint demo-note bt-error">{demoVersionsError}</div>
+            )}
             {demoVersions == null && !demoVersionsError && (
-              <div className="setting-hint">Loading…</div>
+              <div className="setting-hint demo-note">Loading…</div>
             )}
             {demoVersions != null && demoVersions.length === 0 && (
-              <div className="setting-hint">Nothing published yet.</div>
+              <div className="setting-hint demo-note">Nothing published yet.</div>
             )}
             {demoVersions != null &&
               demoVersions.map((v) => (
-                <div className="setting-row" key={v.version}>
+                <div className="setting-row demo-ver-row" key={v.version}>
                   <label>
                     v{v.version}
                     {v.publishedBy ? ` · ${v.publishedBy}` : ""}

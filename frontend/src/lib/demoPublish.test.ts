@@ -69,12 +69,12 @@ describe("publishDemo", () => {
 });
 
 describe("listDemoVersions", () => {
-  it("GETs and returns the versions array", async () => {
-    const versions = [{ version: 2, publishedBy: "a@b.com", createdAt: 1, size: 10 }];
+  it("GETs the versions array, converting createdAt seconds to ms", async () => {
+    const versions = [{ version: 2, publishedBy: "a@b.com", createdAt: 1789221839, size: 10 }];
     apiFetch.mockResolvedValue(jsonRes(200, { versions }));
     const { listDemoVersions } = await import("./demoPublish");
 
-    expect(await listDemoVersions()).toEqual(versions);
+    expect(await listDemoVersions()).toEqual([{ ...versions[0], createdAt: 1789221839000 }]);
     expect(apiFetch).toHaveBeenCalledWith("http://localhost:8000/api/admin/demo/versions");
   });
 });

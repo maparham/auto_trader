@@ -101,3 +101,28 @@ export function seedDemoLayout(layout: Record<string, string>): void {
     }
   }
 }
+
+/** What captureDemoLayout() would publish, for the admin editor's "what gets
+ *  published" line: how many saved layouts the active broker has, and the name
+ *  of the one visitors would open (App's startup falls back to defaultLayoutId
+ *  in a fresh browser). count 0 means there is nothing worth publishing. */
+export interface DemoLayoutSummary {
+  count: number;
+  defaultName: string | null;
+}
+
+export function describeDemoLayout(): DemoLayoutSummary {
+  const captured = captureDemoLayout();
+  const raw = captured[LAYOUTS_SUFFIX];
+  if (raw == null) return { count: 0, defaultName: null };
+  try {
+    const list = JSON.parse(raw) as Array<{ id: string; name?: string }>;
+    if (!Array.isArray(list)) return { count: 0, defaultName: null };
+    const defRaw = captured[DEFAULT_LAYOUT_SUFFIX];
+    const defId = defRaw != null ? (JSON.parse(defRaw) as string) : null;
+    const hit = defId ? list.find((l) => l.id === defId) : undefined;
+    return { count: list.length, defaultName: hit?.name ?? null };
+  } catch {
+    return { count: 0, defaultName: null };
+  }
+}

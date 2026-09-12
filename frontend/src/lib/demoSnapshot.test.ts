@@ -6,6 +6,7 @@ installMemStorage();
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   captureDemoLayout,
+  describeDemoLayout,
   fetchDemoSnapshot,
   getDemoSnapshot,
   seedDemoLayout,
@@ -109,5 +110,27 @@ describe("seedDemoLayout / captureDemoLayout", () => {
     } finally {
       setPersistBroker("dukascopy");
     }
+  });
+});
+
+describe("describeDemoLayout", () => {
+  it("counts saved layouts and names the default", () => {
+    localStorage.setItem(
+      "auto-trader.b.dukascopy.layouts",
+      '[{"id":"a","name":"Demo"},{"id":"b","name":"Scratch"}]',
+    );
+    localStorage.setItem("auto-trader.b.dukascopy.defaultLayoutId", '"b"');
+    expect(describeDemoLayout()).toEqual({ count: 2, defaultName: "Scratch" });
+  });
+
+  it("reports no default when nothing points at a saved layout", () => {
+    localStorage.setItem("auto-trader.b.dukascopy.layouts", '[{"id":"a","name":"Demo"}]');
+    expect(describeDemoLayout()).toEqual({ count: 1, defaultName: null });
+  });
+
+  it("counts nothing when the index is missing or malformed", () => {
+    expect(describeDemoLayout()).toEqual({ count: 0, defaultName: null });
+    localStorage.setItem("auto-trader.b.dukascopy.layouts", "not json");
+    expect(describeDemoLayout()).toEqual({ count: 0, defaultName: null });
   });
 });

@@ -6834,3 +6834,21 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
    nothing to jump to, so the row doesn't pretend to be clickable. */
 .tl-table tr.tl-dead { opacity: 0.45; cursor: default; }
 .tl-table tr.tl-dead:hover { background: none; }
+
+/* Settings > Public demo (admin). Every explanation lives in an InfoTip so the
+   rows stay one line each; .setting-hint has no horizontal padding of its own,
+   so standalone notes here get .demo-note to line up with the rows above. */
+.demo-note { padding: 0 16px 6px; }
+.demo-text-input { width: 200px; text-align: left; font-variant-numeric: normal; }
+.demo-stat { color: var(--text); font-size: 13px; }
+/* No --warn token in the palette; same fallback hex as the backtest presets. */
+.demo-stat-warn { color: var(--warn, #c08a2a); }
+.demo-staged-row, .demo-ver-row { padding-top: 8px; padding-bottom: 8px; }
+.demo-ver-row label { font-size: 12px; }
+.demo-publish-row { padding-top: 8px; }
+.demo-publish {
+  background: var(--accent, #2962ff); border: 1px solid var(--accent, #2962ff); color: #fff;
+  min-width: 96px;
+}
+.demo-publish:hover:not(:disabled) { filter: brightness(1.08); }
+.demo-publish:disabled { opacity: 0.5; cursor: default; filter: none; }

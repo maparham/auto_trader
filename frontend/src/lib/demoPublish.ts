@@ -10,6 +10,9 @@ import { captureDemoLayout } from "./demoSnapshot";
 export interface DemoVersionRow {
   version: number;
   publishedBy: string | null;
+  /** Epoch MILLISECONDS. The store keeps seconds (demo_store.py), so
+   *  listDemoVersions converts on the way in and callers can hand this
+   *  straight to `new Date(...)`. */
   createdAt: number;
   size: number;
 }
@@ -73,7 +76,8 @@ export async function listDemoVersions(): Promise<DemoVersionRow[]> {
   const res = await apiFetch(`${API_BASE}/api/admin/demo/versions`);
   if (!res.ok) throw new Error(await errorDetail(res, `list failed (${res.status})`));
   const json = await res.json();
-  return (json.versions ?? []) as DemoVersionRow[];
+  const rows = (json.versions ?? []) as DemoVersionRow[];
+  return rows.map((r) => ({ ...r, createdAt: r.createdAt * 1000 }));
 }
 
 export async function rollbackDemo(version: number): Promise<number> {
