@@ -852,7 +852,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "select",
         source: "extend",
         field: "extend",
-        default: "ray",
+        default: "lastbar",
         wide: true,
         options: [
           { value: "ray", label: "→  Extend right" },
@@ -870,7 +870,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "select",
         source: "extend",
         field: "declutter",
-        default: "near",
+        default: "off",
         wide: true,
         options: [
           { value: "off", label: "Off" },
@@ -889,7 +889,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         source: "extend",
         field: "showPivots",
         group: "pivotMarks",
-        default: true,
+        default: false,
         tip: [
           "Marks every swing that passed the pivot settings with a small arrow: up under a low, down over a high.",
           "This is the raw input the lines are built from, so it shows exactly what the pivot settings admit, including pivots no drawn line uses.",
@@ -902,7 +902,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         source: "extend",
         field: "showLinePivots",
         group: "pivotMarks",
-        default: false,
+        default: true,
         tip: [
           "Marks the swings the drawn lines rest on, anchors and touches, with a stemmed arrow.",
           "Only lines actually on the chart count, so a line dropped by Max lines or Declutter marks nothing.",

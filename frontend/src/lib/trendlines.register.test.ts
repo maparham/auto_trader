@@ -84,9 +84,9 @@ describe("TRENDLINES registration", () => {
     const d = resolveInputs("TRENDLINES", undefined).find((i) => i.key === "declutter");
     expect(d?.type).toBe("select");
     expect(d?.options?.map((o) => o.value)).toEqual(["off", "near", "pivot"]);
-    // The near-price cut was the old checkbox's default, so it stays the
-    // select's: switching the control must not change what a pane draws.
-    expect(d?.default).toBe("near");
+    // Decluttering now starts off: the pane draws every line it found until
+    // the user asks for a cut.
+    expect(d?.default).toBe("off");
   });
 
   it("gives Pivot Size a default, since older charts have no slot 8", () => {
