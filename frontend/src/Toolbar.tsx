@@ -876,7 +876,11 @@ export default function Toolbar({
           maximized view): backtest a rule strategy, then arm the same strategy
           live against a broker account. controller/period/symbol are in scope. */}
       {/* Visible in demo too: the panel inside shows the published canned
-          results, and every Run control in there is a sign-up CTA. */}
+          results, and every Run control in there is a sign-up CTA. In demo the
+          clerk-user block below (whose auto margin normally owns the right
+          edge) is skipped, so the slack-soaking spacer sits here instead and
+          pins this tail cluster to the far right. */}
+      {isDemoMode() && <span style={{ marginLeft: "auto" }} aria-hidden="true" />}
       <BacktestButton
         controller={controller}
         period={period}
@@ -906,7 +910,7 @@ export default function Toolbar({
         />
       )}
 
-      {CLERK_ENABLED && (
+      {CLERK_ENABLED && !isDemoMode() && (
         <div className="clerk-user" style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
           <UserButton>
             {/* Operator console. Only rendered for an account the backend
