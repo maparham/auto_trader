@@ -47,11 +47,6 @@ MAX_PAIR_PIVOTS = 20
 # temporarily outranked is not destroyed and can return when it gains a touch.
 MAX_LIVE_MULT = 4
 
-# How short a window the back-clearance reversal stop may leave before it stops
-# meaning anything and the full walk is used instead. Mirrors TS
-# MIN_BACK_WINDOW; deliberately not a user setting.
-MIN_BACK_WINDOW = 8
-
 # Name transliterates the TS TRENDLINES_OUTPUTS exactly, like every other symbol
 # in this feature — grep for one and you find both.
 TRENDLINES_OUTPUTS: tuple[str, ...] = (
@@ -435,7 +430,6 @@ def _has_back_clearance(
     atr: Sequence[float | None],
     viol_mult: float,
     bars: int,
-    opp_turns: Sequence[int],
 ) -> bool:
     """Mirrors TS hasBackClearance.
 
@@ -451,28 +445,12 @@ def _has_back_clearance(
     series the way _is_pivot_at and _has_swing_reach do. A bar whose ATR has not
     warmed up cannot be tested, so it counts as surviving, exactly as the
     forward pass treats it. At most `bars` iterations, which is why it is asked
-    before the O(span) forward walk.
-
-    THE WALK STOPS AT THE REVERSAL. `opp_turns` is the opposite side's confirmed
-    fractals, so for a support it is the highs: the last one before i1 is the
-    top that started this line's leg, and bars before it belong to the previous
-    move. ONLY EVER LOOSENS, because `start` is always >= i1 - bars, making the
-    new walk a subset of the strict one. A window the reversal cuts below
-    MIN_BACK_WINDOW reverts to the full walk rather than deciding on three
-    bars, which is what keeps that subset property true when a turn happens to
-    sit a bar or two behind i1."""
+    before the O(span) forward walk."""
     if bars <= 0:
         return True
     if line.i1 - bars < 0:
         return False
-    turn_idx = -1
-    for q in range(len(opp_turns) - 1, -1, -1):
-        if opp_turns[q] < line.i1:
-            turn_idx = opp_turns[q]
-            break
-    stop = max(line.i1 - bars, turn_idx)
-    start = stop if line.i1 - stop >= min(bars, MIN_BACK_WINDOW) else line.i1 - bars
-    for j in range(line.i1 - 1, start - 1, -1):
+    for j in range(line.i1 - 1, line.i1 - bars - 1, -1):
         tol_j = atr[j]
         if tol_j is None:
             continue
@@ -651,11 +629,6 @@ def compute_trendlines(
                     continue
                 pool = pools[side]
                 price = vals[k]
-                # Hoisted out of the candidate loop below: the LIST is the same
-                # for every candidate this bar, only the i1 each searches back
-                # from differs. This side's own reversals: for a support, the
-                # highs.
-                opp_turns = turns["support" if side == "resistance" else "resistance"]
 
                 # 2a. Test the new pivot against every existing line on this
                 #     side. NOTE the tolerance comes from atr[k], NOT `a`: k can
@@ -747,7 +720,7 @@ def compute_trendlines(
                     # O(span). Reads ONLY bars before i1, so it is fixed the
                     # moment the line is defined and cannot repaint.
                     if not _has_back_clearance(
-                        cand, vals, atr, cfg.viol_mult, cfg.min_back_bars, opp_turns
+                        cand, vals, atr, cfg.viol_mult, cfg.min_back_bars
                     ):
                         continue
                     # Validate over (i1, c]: bars between the anchors AND the

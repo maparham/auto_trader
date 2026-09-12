@@ -453,14 +453,6 @@ export function aboveSlope(
   return Math.abs(rise) >= mult * atrAt * span;
 }
 
-/** How short a window the reversal stop may leave before it stops meaning
- * anything and the full walk is used instead. A FLAT COUNT for the same reason
- * the setting itself is one, and deliberately not a user setting: too high
- * behaves like no reversal stop at all, too low hands a free pass to any line
- * that starts a few bars after a turn. Not exposed until a chart argues for a
- * different number. */
-export const MIN_BACK_WINDOW = 8;
-
 /** True when the `bars` bars immediately before i1 all sit on the line's own
  * side of it, within the same Max Pierce tolerance the forward pass uses.
  *
@@ -472,40 +464,17 @@ export const MIN_BACK_WINDOW = 8;
  * the trend: zero bars of clearance behind its first anchor.
  *
  * It does not merely delete. The freed pairing slots refill, so the detector
- * picks a BETTER FIRST ANCHOR for the same trend: on that chart (measured
- * BEFORE the reversal stop below existed) the 572-bar line became a
- * 2021-anchored line with 151 bars of clearance, ending at the same pivot.
+ * picks a BETTER FIRST ANCHOR for the same trend: on that chart the 572-bar
+ * line became a 2021-anchored line with 151 bars of clearance, ending at the
+ * same pivot.
  *
  * A FLAT BAR COUNT, not a fraction of the span. The ratio version rejected a
  * 3-touch line with 14 bars of clearance purely for being long.
  *
- * THE WALK STOPS AT THE REVERSAL. `oppTurns` is the opposite side's confirmed
- * fractals, so for a support it is the highs: the last one before i1 is the
- * top that started the leg this line belongs to. Bars before it belong to the
- * PREVIOUS move, and asking a line to clear them is asking it to be a good
- * line for a trend it was never drawn on. A support that falls away from a
- * peak projects backward UP into the old rally and pierces every bar of it,
- * which is why the setting was unusable above small values.
- *
- * ONLY EVER LOOSENS, and the proof is one line: `from` is always >= i1 - bars,
- * so the new walk is a SUBSET of the strict one, and no pierce in a superset
- * means no pierce in a subset. That matters because pivots alternate, so an
- * opposite turn often sits a bar or two behind i1; truncating there would
- * delete lines whose full walk was clean. Hence the fallback: a window the
- * reversal cuts below MIN_BACK_WINDOW has demonstrated nothing, so it reverts
- * to the full walk rather than deciding on three bars.
- *
  * Runs off the start of the series by REJECTING, the same way isPivotAt and
  * hasSwingReach do: a line anchored fewer than `bars` from bar 0 has not
  * demonstrated the clearance, and letting the short window pass would make the
- * gate weakest exactly where the sample is thinnest. Asked BEFORE the turn
- * lookup on purpose, so a nearby reversal cannot rescue a line there.
- *
- * NON-REPAINTING, still. `turns[side].push(k)` at bar i pushes k = i - pivotLen
- * and this bar's seeds have i2 = k with i1 < i2, so every turn index < i1 was
- * confirmed strictly before now. The `< i1` test is also what makes the answer
- * independent of SIDES iteration order: the k pushed this bar can never satisfy
- * it.
+ * gate weakest exactly where the sample is thinnest.
  *
  * A bar whose ATR has not warmed up cannot be tested, so it counts as
  * surviving, which is what the forward pass does with the same bar.
@@ -520,24 +489,10 @@ export function hasBackClearance(
   atr: ReadonlyArray<number | null>,
   violMult: number,
   bars: number,
-  oppTurns: ReadonlyArray<number>,
 ): boolean {
   if (bars <= 0) return true;
   if (line.i1 - bars < 0) return false;
-  // Backward: turns are appended in bar order, and the answer is the LAST one
-  // before i1. Scans only the turns between i1 and now, which is bounded by
-  // how far back the pairing window reaches, not by series length.
-  let turnIdx = -1;
-  for (let q = oppTurns.length - 1; q >= 0; q--) {
-    if (oppTurns[q] < line.i1) {
-      turnIdx = oppTurns[q];
-      break;
-    }
-  }
-  const stop = Math.max(line.i1 - bars, turnIdx);
-  const from =
-    line.i1 - stop >= Math.min(bars, MIN_BACK_WINDOW) ? stop : line.i1 - bars;
-  for (let j = line.i1 - 1; j >= from; j--) {
+  for (let j = line.i1 - 1; j >= line.i1 - bars; j--) {
     const tolJ = atr[j];
     if (tolJ === null) continue;
     if (pierces(line, j, vals[j], violMult * tolJ)) return false;
@@ -737,11 +692,6 @@ function stepTrendlinesBar(
         if (!hasSwingReach(vals, k, side, cfg.minSwingReach)) continue;
         const pool = pools[side];
         const price = vals[k];
-        // Hoisted out of the candidate loop below: the ARRAY is the same for
-        // every candidate this bar, only the i1 each one searches back from
-        // differs. This is the side's own reversals: for a support line, the
-        // highs.
-        const oppTurns = turns[side === "resistance" ? "support" : "resistance"];
 
         // 2a. Test the new pivot against every existing line on this side.
         for (const line of lines) {
@@ -838,16 +788,7 @@ function stepTrendlinesBar(
           // is the only time either needs asking, and this one reads ONLY bars
           // before i1, so it is fixed the moment the line is defined and cannot
           // repaint.
-          if (
-            !hasBackClearance(
-              cand,
-              vals,
-              atr,
-              cfg.violMult,
-              cfg.minBackBars,
-              oppTurns,
-            )
-          )
+          if (!hasBackClearance(cand, vals, atr, cfg.violMult, cfg.minBackBars))
             continue;
           // Validate over (i1, c]: bars between the anchors AND the bars since
           // the second anchor, which are real bars that could already have
