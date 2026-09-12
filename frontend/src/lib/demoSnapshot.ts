@@ -4,7 +4,8 @@
 // this endpoint is public and unauthenticated, and the demo boot must not
 // depend on Clerk having minted a token yet.
 import { API_BASE } from "./http";
-import { root, familyRoot } from "./persist/core";
+import { PREFIX, root, familyRoot } from "./persist/core";
+import { readScopeContent } from "./persist/transfer";
 
 // `layout` is a map of workspace-persist SUFFIX -> raw JSON string, exactly
 // as persist/core's root()/familyRoot() key builders address them (see
@@ -60,10 +61,43 @@ const LAYOUTS_SUFFIX = "layouts";
 const DEFAULT_LAYOUT_SUFFIX = "defaultLayoutId";
 const layoutBodySuffix = (id: string) => `layout.${id}`;
 
+// A layout body is only the skeleton (tabs, cells, symbols, periods). What a
+// chart actually SHOWS - drawings, indicators, indicatorConfig, avwap anchors,
+// per-cell view flags - lives under the cell's own scope, which is NOT broker
+// keyed (see persist/core's "what is and isn't broker-scoped"). Those entries
+// ride in the same map behind this marker: `scope:<scope>.<suffix>` addresses
+// `${PREFIX}.<scope>.<suffix>` verbatim. Payloads published before this existed
+// simply carry none, so they seed exactly as they used to.
+const SCOPE_MARK = "scope:";
+// Scope content a DEMO visitor must not inherit. A `backtest.<epic>` pointer
+// names a run id in the admin's backend; the demo principal cannot fetch
+// /api/backtest at all (see api/demo_access.py), so seeding one buys a failed
+// request per chart. Sweeps are the same story, and snapshotMeta belongs to the
+// gallery, which demo hides.
+const SKIPPED_SCOPE_SUFFIXES = ["backtest.", "sweep.", "snapshotMeta"];
+
+function scopeSuffixWanted(suffix: string): boolean {
+  return !SKIPPED_SCOPE_SUFFIXES.some((s) => suffix.startsWith(s));
+}
+
 // defaultLayoutId is per-feed (root()); the index and each layout body are
 // shared across a broker family (familyRoot()) - see persist/core.ts.
 function keyForSuffix(suffix: string): string {
+  if (suffix.startsWith(SCOPE_MARK)) return `${PREFIX}.${suffix.slice(SCOPE_MARK.length)}`;
   return suffix === DEFAULT_LAYOUT_SUFFIX ? root(suffix) : familyRoot(suffix);
+}
+
+/** Every cell scope named by a layout body, in order. */
+function scopesOfBody(raw: string): string[] {
+  try {
+    const ws = JSON.parse(raw) as { tabs?: Array<{ cells?: Array<{ scope?: string }> }> };
+    const out: string[] = [];
+    for (const t of ws.tabs ?? [])
+      for (const c of t.cells ?? []) if (c.scope) out.push(c.scope);
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /** Read the ACTIVE persist broker's layout keys back out of localStorage, as
@@ -81,7 +115,11 @@ export function captureDemoLayout(): Record<string, string> {
     for (const { id } of list) {
       const suffix = layoutBodySuffix(id);
       const raw = localStorage.getItem(keyForSuffix(suffix));
-      if (raw != null) out[suffix] = raw;
+      if (raw == null) continue;
+      out[suffix] = raw;
+      for (const scope of scopesOfBody(raw))
+        for (const [s, v] of Object.entries(readScopeContent(scope)))
+          if (scopeSuffixWanted(s)) out[`${SCOPE_MARK}${scope}.${s}`] = v;
     }
   } catch {
     /* malformed index: publish just what parsed above */
@@ -102,27 +140,42 @@ export function seedDemoLayout(layout: Record<string, string>): void {
   }
 }
 
-/** What captureDemoLayout() would publish, for the admin editor's "what gets
- *  published" line: how many saved layouts the active broker has, and the name
- *  of the one visitors would open (App's startup falls back to defaultLayoutId
- *  in a fresh browser). count 0 means there is nothing worth publishing. */
+/** What captureDemoLayout() would publish, for the admin editor's summary row:
+ *  how many saved layouts the active broker has, the name of the one visitors
+ *  would open (App's startup falls back to defaultLayoutId in a fresh browser),
+ *  how many scope entries the DEFAULT layout's cells contributed (drawings,
+ *  indicators, view flags), and the payload's size in bytes.
+ *
+ *  `scopeItems` is the one that catches a hollow publish: a body saved before
+ *  the admin drew anything, or a live workspace that was never saved back into
+ *  its layout, captures tabs with no content under them. */
 export interface DemoLayoutSummary {
   count: number;
   defaultName: string | null;
+  scopeItems: number;
+  bytes: number;
 }
 
 export function describeDemoLayout(): DemoLayoutSummary {
   const captured = captureDemoLayout();
+  const bytes = JSON.stringify(captured).length;
   const raw = captured[LAYOUTS_SUFFIX];
-  if (raw == null) return { count: 0, defaultName: null };
+  if (raw == null) return { count: 0, defaultName: null, scopeItems: 0, bytes: 0 };
   try {
     const list = JSON.parse(raw) as Array<{ id: string; name?: string }>;
-    if (!Array.isArray(list)) return { count: 0, defaultName: null };
+    if (!Array.isArray(list)) return { count: 0, defaultName: null, scopeItems: 0, bytes };
     const defRaw = captured[DEFAULT_LAYOUT_SUFFIX];
     const defId = defRaw != null ? (JSON.parse(defRaw) as string) : null;
     const hit = defId ? list.find((l) => l.id === defId) : undefined;
-    return { count: list.length, defaultName: hit?.name ?? null };
+    const body = defId ? captured[layoutBodySuffix(defId)] : undefined;
+    const defScopes = body ? scopesOfBody(body) : [];
+    const scopeItems = Object.keys(captured).filter(
+      (k) =>
+        k.startsWith(SCOPE_MARK) &&
+        defScopes.some((sc) => k.startsWith(`${SCOPE_MARK}${sc}.`)),
+    ).length;
+    return { count: list.length, defaultName: hit?.name ?? null, scopeItems, bytes };
   } catch {
-    return { count: 0, defaultName: null };
+    return { count: 0, defaultName: null, scopeItems: 0, bytes };
   }
 }

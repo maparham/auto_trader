@@ -114,23 +114,91 @@ describe("seedDemoLayout / captureDemoLayout", () => {
 });
 
 describe("describeDemoLayout", () => {
-  it("counts saved layouts and names the default", () => {
+  const body = (tabId: string) =>
+    JSON.stringify({
+      tabs: [{ id: tabId, cells: [{ id: "c0", scope: `tab.${tabId}` }] }],
+      activeTabId: tabId,
+    });
+
+  it("counts saved layouts, names the default, and sizes its content", () => {
     localStorage.setItem(
       "auto-trader.b.dukascopy.layouts",
       '[{"id":"a","name":"Demo"},{"id":"b","name":"Scratch"}]',
     );
     localStorage.setItem("auto-trader.b.dukascopy.defaultLayoutId", '"b"');
-    expect(describeDemoLayout()).toEqual({ count: 2, defaultName: "Scratch" });
+    localStorage.setItem("auto-trader.b.dukascopy.layout.a", body("T1"));
+    localStorage.setItem("auto-trader.b.dukascopy.layout.b", body("T2"));
+    // Content under the DEFAULT layout's cell counts; the other layout's does not.
+    localStorage.setItem("auto-trader.tab.T2.drawings.US100", "[1]");
+    localStorage.setItem("auto-trader.tab.T2.indicators", '["EMA"]');
+    localStorage.setItem("auto-trader.tab.T1.drawings.US100", "[1]");
+
+    const d = describeDemoLayout();
+    expect(d.count).toBe(2);
+    expect(d.defaultName).toBe("Scratch");
+    expect(d.scopeItems).toBe(2);
+    expect(d.bytes).toBeGreaterThan(0);
   });
 
   it("reports no default when nothing points at a saved layout", () => {
     localStorage.setItem("auto-trader.b.dukascopy.layouts", '[{"id":"a","name":"Demo"}]');
-    expect(describeDemoLayout()).toEqual({ count: 1, defaultName: null });
+    expect(describeDemoLayout()).toMatchObject({ count: 1, defaultName: null, scopeItems: 0 });
   });
 
   it("counts nothing when the index is missing or malformed", () => {
-    expect(describeDemoLayout()).toEqual({ count: 0, defaultName: null });
+    expect(describeDemoLayout()).toMatchObject({ count: 0, defaultName: null, scopeItems: 0 });
     localStorage.setItem("auto-trader.b.dukascopy.layouts", "not json");
-    expect(describeDemoLayout()).toEqual({ count: 0, defaultName: null });
+    expect(describeDemoLayout()).toMatchObject({ count: 0, defaultName: null, scopeItems: 0 });
+  });
+});
+
+describe("scope content round-trip", () => {
+  const layoutBody = JSON.stringify({
+    tabs: [
+      {
+        id: "T1",
+        cells: [
+          { id: "c0", scope: "tab.T1" },
+          { id: "c1", scope: "tab.T1.cell.c1" },
+        ],
+      },
+    ],
+    activeTabId: "T1",
+  });
+
+  const seedAdminWorkspace = () => {
+    localStorage.setItem("auto-trader.b.dukascopy.layouts", '[{"id":"a","name":"Demo"}]');
+    localStorage.setItem("auto-trader.b.dukascopy.defaultLayoutId", '"a"');
+    localStorage.setItem("auto-trader.b.dukascopy.layout.a", layoutBody);
+    localStorage.setItem("auto-trader.tab.T1.drawings.US100", '[{"name":"ray"}]');
+    localStorage.setItem("auto-trader.tab.T1.indicators", '["EMA"]');
+    localStorage.setItem("auto-trader.tab.T1.cell.c1.indicatorConfig", '{"EMA":{}}');
+  };
+
+  it("captures each cell's drawings and indicators, and seeds them back verbatim", () => {
+    seedAdminWorkspace();
+    const captured = captureDemoLayout();
+    expect(captured["scope:tab.T1.drawings.US100"]).toBe('[{"name":"ray"}]');
+    expect(captured["scope:tab.T1.indicators"]).toBe('["EMA"]');
+    expect(captured["scope:tab.T1.cell.c1.indicatorConfig"]).toBe('{"EMA":{}}');
+
+    localStorage.clear();
+    setPersistBroker("dukascopy");
+    seedDemoLayout(captured);
+    expect(localStorage.getItem("auto-trader.tab.T1.drawings.US100")).toBe('[{"name":"ray"}]');
+    expect(localStorage.getItem("auto-trader.tab.T1.indicators")).toBe('["EMA"]');
+    expect(localStorage.getItem("auto-trader.tab.T1.cell.c1.indicatorConfig")).toBe('{"EMA":{}}');
+  });
+
+  it("leaves out run pointers and gallery metadata a visitor cannot fetch", () => {
+    seedAdminWorkspace();
+    localStorage.setItem("auto-trader.tab.T1.backtest.US100", '"run-1"');
+    localStorage.setItem("auto-trader.tab.T1.sweep.US100", '"sweep-1"');
+    localStorage.setItem("auto-trader.tab.T1.snapshotMeta", "{}");
+
+    const captured = captureDemoLayout();
+    expect(Object.keys(captured).filter((k) => k.includes("backtest."))).toEqual([]);
+    expect(Object.keys(captured).filter((k) => k.includes("sweep."))).toEqual([]);
+    expect(Object.keys(captured).filter((k) => k.includes("snapshotMeta"))).toEqual([]);
   });
 });

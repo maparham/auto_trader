@@ -15,6 +15,14 @@ import {
   type DemoVersionRow,
 } from "./lib/demoPublish";
 import { describeDemoLayout } from "./lib/demoSnapshot";
+
+// Demo layout payload ceilings, in bytes of captured JSON. A visitor's
+// localStorage holds roughly 5 MB and seedDemoLayout cannot report a quota
+// failure, so warn well before that and refuse past WARN's double.
+const DEMO_BYTES_WARN = 1_500_000;
+const DEMO_BYTES_MAX = 3_000_000;
+const fmtBytes = (n: number) =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : `${Math.round(n / 1000)} KB`;
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import type {
@@ -171,6 +179,9 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
   const [demoVersions, setDemoVersions] = useState<DemoVersionRow[] | null>(null);
   const [demoVersionsError, setDemoVersionsError] = useState<string | null>(null);
   const [demoRollingBack, setDemoRollingBack] = useState<number | null>(null);
+  // Set by the first refusal of a content-less layout; a second Publish click
+  // goes through (see publishDemoStaged).
+  const [demoBareOk, setDemoBareOk] = useState(false);
   // Recomputed whenever the tab is (re)opened: it reads localStorage, and the
   // admin may have saved a layout since the modal last rendered.
   const demoLayout = useMemo(
@@ -239,6 +250,26 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
     if (demoLayout.defaultName == null) {
       setDemoPublishError(
         "No default layout. Star the layout the demo should open with, then publish.",
+      );
+      return;
+    }
+    // Drawings and indicators live under each cell's scope, and only get
+    // captured for cells the SAVED body names. A default layout with none is
+    // usually a workspace that was rearranged but never saved back, so say so
+    // once; a second click publishes the bare layout anyway.
+    if (demoLayout.scopeItems === 0 && !demoBareOk) {
+      setDemoBareOk(true);
+      setDemoPublishError(
+        "The default layout has no drawings or indicators saved on it. Save the layout again from the workspace you want, or click Publish once more to publish it bare.",
+      );
+      return;
+    }
+    // The visitor's browser seeds this into localStorage, which holds about
+    // 5 MB; seedDemoLayout swallows a quota failure per key, so an oversized
+    // payload would half-seed in silence.
+    if (demoLayout.bytes > DEMO_BYTES_MAX) {
+      setDemoPublishError(
+        `Layout is ${fmtBytes(demoLayout.bytes)}, over the ${fmtBytes(DEMO_BYTES_MAX)} limit. Publish a layout with fewer charts or drawings.`,
       );
       return;
     }
@@ -760,8 +791,9 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
                 <InfoTip
                   title="What gets published"
                   text={[
-                    "Publishing captures this browser's saved layouts.",
-                    "Visitors open whichever one is your default.",
+                    "This browser's saved layouts, and the default one opens.",
+                    "Drawings and indicators ride along, per chart.",
+                    "Items counts what the default layout carries.",
                     "Switch the workspace to Dukascopy first.",
                   ]}
                 />
@@ -773,9 +805,15 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
                   {demoLayout.count} {demoLayout.count === 1 ? "layout" : "layouts"}, no default
                 </span>
               ) : (
-                <span className="demo-stat">
-                  {demoLayout.count} {demoLayout.count === 1 ? "layout" : "layouts"} · default:{" "}
-                  {demoLayout.defaultName}
+                <span
+                  className={
+                    demoLayout.scopeItems === 0 || demoLayout.bytes > DEMO_BYTES_WARN
+                      ? "demo-stat demo-stat-warn"
+                      : "demo-stat"
+                  }
+                >
+                  {demoLayout.defaultName} · {demoLayout.scopeItems} saved{" "}
+                  {demoLayout.scopeItems === 1 ? "item" : "items"} · {fmtBytes(demoLayout.bytes)}
                 </span>
               )}
             </div>

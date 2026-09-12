@@ -196,11 +196,22 @@ refused with a scoping message, not a generic 403. A per-IP token bucket in
 `DEMO_RATE_PER_MIN` (default 120) and `DEMO_RATE_BURST` (default 40).
 
 Publishing happens from Settings > Public demo, admin-only: it bundles the
-current layout, watchlist and a list of named backtests into a payload and
-writes it as a new row in `core/demo_store.py`, an append-only, versioned
+current layout, an optional watchlist and a list of named backtests into a
+payload and writes it as a new row in `core/demo_store.py`, an append-only,
+versioned
 store (its own SQLite file, path from `DEMO_DB`) where the latest row always
 wins and
-rollback is just republishing an older payload. On the frontend, `DemoApp`
+rollback is just republishing an older payload. "The layout" is the saved
+layout INDEX, the DEFAULT pointer and each layout BODY, plus every cell's
+scope content (drawings, indicators, indicatorConfig, avwap, view flags)
+under a `scope:` marker key that `demoSnapshot.ts` maps back to the
+unprefixed `auto-trader.<scope>.<suffix>` keys; run pointers
+(`backtest.`/`sweep.`) and `snapshotMeta` are deliberately dropped, since a
+demo visitor cannot fetch them. Publishing is refused with no saved layout,
+with no default layout (a visitor's fresh browser falls through to
+`defaultLayoutId`), and over a size ceiling the visitor's localStorage
+cannot hold; a default layout carrying no scope content warns once and
+publishes on a second click. On the frontend, `DemoApp`
 is what `SignedOut` boots instead of the sign-in card; it seeds the
 published layout (falling back to App's own default chart when nothing has
 been published yet) and flips a one-way `isDemoMode()` latch before `App`

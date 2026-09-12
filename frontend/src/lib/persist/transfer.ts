@@ -29,7 +29,7 @@ export interface LayoutExportV1 {
 // scope (`tab.<id>`) prefix-matches its nested cell scopes (`tab.<id>.cell.*`),
 // so nested keys are EXCLUDED here — each cell contributes its own scope entry
 // (the same rule copyScopeContent applies).
-function readScopeContent(scope: string): Record<string, string> {
+export function readScopeContent(scope: string): Record<string, string> {
   const head = `${PREFIX}.${scope}.`;
   const nested = `${head}cell.`;
   const out: Record<string, string> = {};
