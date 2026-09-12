@@ -43,7 +43,7 @@ import {
 import type { OpenStrategyTrade } from "./replayReveal";
 import type { WfoScheme, TradeZone as TradeZoneWire } from "../api";
 import { buildSignalGlyphs, isEntryFill } from "./signalGlyphs";
-import { tradeZones } from "./tradeZones";
+import { tradeZones, zoneLabels } from "./tradeZones";
 import { minPositiveGap } from "./barInterval";
 import { RESOLUTION_SECONDS } from "./feed";
 import {
@@ -901,9 +901,17 @@ const ZONE_OVERLAY = "tradeZone";
 interface ZoneExtra {
   hasReward: boolean;
   hasRisk: boolean;
+  // A band drawn from the trade's realized excursion (MAE/MFE) rather than a
+  // stop/target the strategy set — see tradeZones.ts. Rendered with a dashed
+  // edge so it cannot be read as a level the strategy planned.
+  rewardRealized: boolean;
+  riskRealized: boolean;
   stopMoved: boolean;
   rewardPct: number | null;
   riskPct: number | null;
+  // Pill texts, precomputed by zoneLabels so the realized tagging lives in one
+  // pure, tested place instead of being re-derived inside createPointFigures.
+  labels: { risk: string | null; reward: string | null; rr: string | null };
   rr: number | null;
   win: boolean;
 }
@@ -991,6 +999,26 @@ const tradeZoneOverlay: OverlayTemplate = {
         ignoreEvent: true,
       });
     }
+    // A realized band gets a dashed edge at its level; a planned bracket's
+    // edge stays implied by the fill, exactly as before. Together with the
+    // MAE/MFE pill tag this is what keeps "what the trade did" visually
+    // distinct from "what the strategy set".
+    if (z.hasReward && z.rewardRealized) {
+      figures.push({
+        type: "line",
+        attrs: { coordinates: [{ x: c0.x, y: c2.y }, { x: c1.x, y: c2.y }] },
+        styles: { style: 'dashed', dashedValue: [4, 4], color: `${BUY_COLOR}80`, size: 1 },
+        ignoreEvent: true,
+      });
+    }
+    if (z.hasRisk && z.riskRealized) {
+      figures.push({
+        type: "line",
+        attrs: { coordinates: [{ x: c0.x, y: c3.y }, { x: c1.x, y: c3.y }] },
+        styles: { style: 'dashed', dashedValue: [4, 4], color: `${SELL_COLOR}80`, size: 1 },
+        ignoreEvent: true,
+      });
+    }
     if (z.stopMoved) {
       figures.push({
         type: "line",
@@ -1017,14 +1045,22 @@ const tradeZoneOverlay: OverlayTemplate = {
     figures.push({ type: "circle", attrs: { x: c0.x, y: c0.y, r: 3 }, styles: { style: 'fill', color: ACCENT_COLOR }, ignoreEvent: true });
     figures.push({ type: "circle", attrs: { x: c5.x, y: c5.y, r: 3 }, styles: { style: 'fill', color: z.win ? BUY_COLOR : SELL_COLOR }, ignoreEvent: true });
     // Labels: R:R centered above the entry line; +reward%/-risk% at the TP/SL edges.
-    if (z.rr != null) {
-      figures.push(pillFigure((c0.x + c1.x) / 2, rrY, `R:R 1:${z.rr.toFixed(2)}`, ACCENT_COLOR, "center"));
+    // zoneExtra always fills `labels` (it is recomputed from the trade on every
+    // draw), so this fallback only covers an overlay whose extendData somehow
+    // arrived without them — cheaper than dropping the pills entirely.
+    const labels = z.labels ?? {
+      risk: z.riskPct == null ? null : `-${z.riskPct.toFixed(1)}%`,
+      reward: z.rewardPct == null ? null : `+${z.rewardPct.toFixed(1)}%`,
+      rr: z.rr == null ? null : `R:R 1:${z.rr.toFixed(2)}`,
+    };
+    if (labels.rr != null) {
+      figures.push(pillFigure((c0.x + c1.x) / 2, rrY, labels.rr, ACCENT_COLOR, "center"));
     }
-    if (z.hasReward && z.rewardPct != null) {
-      figures.push(pillFigure(edgeX, c2.y, `+${z.rewardPct.toFixed(1)}%`, BUY_COLOR, edgeAlign));
+    if (z.hasReward && labels.reward != null) {
+      figures.push(pillFigure(edgeX, c2.y, labels.reward, BUY_COLOR, edgeAlign));
     }
-    if (z.hasRisk && z.riskPct != null) {
-      figures.push(pillFigure(edgeX, c3.y, `-${z.riskPct.toFixed(1)}%`, SELL_COLOR, edgeAlign));
+    if (z.hasRisk && labels.risk != null) {
+      figures.push(pillFigure(edgeX, c3.y, labels.risk, SELL_COLOR, edgeAlign));
     }
     return figures;
   },
@@ -1348,10 +1384,13 @@ function zoneExtra(t: Trade): ZoneExtra {
   return {
     hasReward: z.hasReward,
     hasRisk: z.hasRisk,
+    rewardRealized: z.rewardRealized,
+    riskRealized: z.riskRealized,
     stopMoved: z.stopMoved,
     rewardPct: z.rewardPct,
     riskPct: z.riskPct,
     rr: z.rr,
+    labels: zoneLabels(z),
     win: t.pnl >= 0,
   };
 }
@@ -1402,8 +1441,8 @@ function zonePoints(
   return [
     { timestamp: entryTs, value: t.entry_price },
     { timestamp: windowEnd, value: t.entry_price },
-    { timestamp: entryTs, value: z.hasReward ? (t.target as number) : t.entry_price },
-    { timestamp: entryTs, value: z.hasRisk ? (t.stop_initial as number) : t.entry_price },
+    { timestamp: entryTs, value: z.rewardLevel ?? t.entry_price },
+    { timestamp: entryTs, value: z.riskLevel ?? t.entry_price },
     { timestamp: entryTs, value: z.stopMoved ? (t.stop_final as number) : t.entry_price },
     { timestamp: exitPointTs, value: t.exit_price },
   ];
