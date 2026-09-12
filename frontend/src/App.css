@@ -4085,6 +4085,19 @@
 .pill-tip-row dd.pill-tip-pos { color: #089981; }
 .pill-tip-row dd.pill-tip-neg { color: #f23645; }
 
+/* <TipIcon>: the ⓘ that rides inside a tab and carries that tab's tooltip.
+   Faint until pointed at, so a row of them reads as one quiet control strip
+   rather than as five icons competing with the labels. */
+.tip-icon { display: inline-flex; align-items: center; color: var(--text-faint); }
+/* Any tab carrying one becomes a flex row so the glyph centers against the
+   label instead of riding the text baseline. */
+.seg button:has(> .tooltip-trigger > .tip-icon),
+.bt-htabs button:has(> .tooltip-trigger > .tip-icon) {
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.tip-icon:hover { color: var(--text); }
+.seg button.seg-on .tip-icon, .bt-htabs button.on .tip-icon { color: currentColor; opacity: 0.65; }
+
 /* the invisible inline wrapper around a trigger — must have a box so its
    getBoundingClientRect() anchors the bubble; adds no visual footprint. */
 .tooltip-trigger { display: inline-flex; }

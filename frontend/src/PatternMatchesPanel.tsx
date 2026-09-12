@@ -5,6 +5,7 @@ import CloseButton from "./CloseButton";
 import { CopyPatternIcon } from "./lib/menuIcons";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
+import TipIcon from "./components/TipIcon";
 import { SortHeader } from "./PositionsPanel";
 import {
   avgDistance,
@@ -219,12 +220,17 @@ export default function PatternMatchesPanel(props: Props) {
         {/* Spelled-out aria labels, not the visible word: "Close" alone reads
             identically to the panel's own close button. */}
         <div className="seg pm-seg" role="group" aria-label="Metric">
-          {([["shape", "Shape", "Match the overall price shape"],
-             ["ohlc", "Candles", "Match whole candles"],
-             ["close", "Close", "Match closing prices only"],
-             ["dtw", "DTW", "Match with time warping"],
-             ["all", "All", "Combine every metric into one ranking"]] as const).map(
-            ([m, label, described]) => (
+          {([["shape", "Shape", "Match the overall price shape",
+              "Matches the overall price shape."],
+             ["ohlc", "Candles", "Match whole candles",
+              "Matches whole candles: body, wick and colour."],
+             ["close", "Close", "Match closing prices only",
+              "Matches the closing-price path only, ignoring wicks."],
+             ["dtw", "DTW", "Match with time warping",
+              "Lets time flex, so the same move at a different pace still matches."],
+             ["all", "All", "Combine every metric into one ranking",
+              "Runs every metric and ranks by their combined result."]] as const).map(
+            ([m, label, described, tip]) => (
               <button
                 key={m}
                 type="button"
@@ -234,6 +240,7 @@ export default function PatternMatchesPanel(props: Props) {
                 onClick={() => props.onModeChange(m)}
               >
                 {label}
+                <TipIcon text={tip} />
               </button>
             ),
           )}

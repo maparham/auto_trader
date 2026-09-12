@@ -16,6 +16,7 @@
 
 import type { JSX, ReactNode } from "react";
 import Tooltip from "./Tooltip";
+import TipIcon from "./TipIcon";
 import DemoCta from "../DemoCta";
 import { isDemoMode } from "../lib/demoMode";
 
@@ -32,41 +33,40 @@ export function ModeSeg(props: {
   const { mode, onSelectMode, modeBadge, wfoBadge } = props;
   return (
     <span className="seg bt-mode-seg" role="group" aria-label="Run mode">
-      <Tooltip content="Run a single backtest. Sweep setup stays configured but inert.">
-        <button
-          type="button"
-          className={mode === "backtest" ? "seg-on" : ""}
-          aria-pressed={mode === "backtest"}
-          onClick={() => onSelectMode("backtest")}
-        >
-          Backtest
-        </button>
-      </Tooltip>
-      <Tooltip content="Sweep the toggled fields across their ranges, one run per combination.">
-        <button
-          type="button"
-          className={mode === "sweep" ? "seg-on" : ""}
-          aria-pressed={mode === "sweep"}
-          onClick={() => onSelectMode("sweep")}
-        >
-          Sweep
-          {/* A sweep stays visible from Backtest mode: progress while one
-              runs in the background, else the configured combo count
-              (redundant with the counter when Sweep mode is on). */}
-          {modeBadge}
-        </button>
-      </Tooltip>
-      <Tooltip content="Walk-forward optimization: pick parameters on train windows, verify out-of-sample">
-        <button
-          type="button"
-          className={mode === "walkforward" ? "seg-on" : ""}
-          aria-pressed={mode === "walkforward"}
-          onClick={() => onSelectMode("walkforward")}
-        >
-          Walk-fwd
-          {wfoBadge}
-        </button>
-      </Tooltip>
+      {/* Each mode's explanation hangs off its own ⓘ, not the whole tab, so
+          sweeping across the switch to pick a mode stays quiet. */}
+      <button
+        type="button"
+        className={mode === "backtest" ? "seg-on" : ""}
+        aria-pressed={mode === "backtest"}
+        onClick={() => onSelectMode("backtest")}
+      >
+        Backtest
+        <TipIcon text="Runs one backtest on the settings below." />
+      </button>
+      <button
+        type="button"
+        className={mode === "sweep" ? "seg-on" : ""}
+        aria-pressed={mode === "sweep"}
+        onClick={() => onSelectMode("sweep")}
+      >
+        Sweep
+        {/* A sweep stays visible from Backtest mode: progress while one
+            runs in the background, else the configured combo count
+            (redundant with the counter when Sweep mode is on). */}
+        {modeBadge}
+        <TipIcon text="Evaluates combinations composed from user selected ranges." />
+      </button>
+      <button
+        type="button"
+        className={mode === "walkforward" ? "seg-on" : ""}
+        aria-pressed={mode === "walkforward"}
+        onClick={() => onSelectMode("walkforward")}
+      >
+        Walk-fwd
+        {wfoBadge}
+        <TipIcon text="Optimizes on train windows, evaluates on test windows rolling forward." />
+      </button>
     </span>
   );
 }

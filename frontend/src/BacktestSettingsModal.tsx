@@ -11,6 +11,7 @@ import NumberField from "./components/NumberField";
 import RunBar, { ModeSeg } from "./components/RunBar";
 import RuleExpressionInput from "./components/RuleExpressionInput";
 import RulePalette from "./components/RulePalette";
+import TipIcon from "./components/TipIcon";
 import Tooltip from "./components/Tooltip";
 import RangeCalendarPopover from "./RangeCalendarPopover";
 import { msToLocalInput, localInputToMs } from "./lib/alertUi";
@@ -168,13 +169,17 @@ const RANGE_MODES: { value: RangeMode; label: string }[] = [
 // pane that you switch to and cannot drift into by scrolling.
 type ScrollTab = "period" | "strategy" | "costs" | "results";
 type BacktestTab = ScrollTab | "presets";
-const SCROLL_TABS: { value: ScrollTab; label: string }[] = [
-  { value: "period", label: "Period" },
-  { value: "strategy", label: "Strategy" },
-  { value: "costs", label: "Costs" },
-  { value: "results", label: "Results" },
+const SCROLL_TABS: { value: ScrollTab; label: string; tip: string }[] = [
+  { value: "period", label: "Period", tip: "The date range to test and how much history warms up the indicators." },
+  { value: "strategy", label: "Strategy", tip: "Entry and exit rules, position size, stops and targets." },
+  { value: "costs", label: "Costs", tip: "Spread, commission and slippage applied to every fill." },
+  { value: "results", label: "Results", tip: "Metrics, equity curve and the trade list from the last run." },
 ];
-const PRESETS_TAB = { value: "presets", label: "Presets" } as const;
+const PRESETS_TAB = {
+  value: "presets",
+  label: "Presets",
+  tip: "Saved configurations: load one, or save the current settings to reuse later.",
+} as const;
 
 // Which suggestion-chip unit each range tab shows (Bars shows none).
 const CHIP_UNIT: Partial<Record<RangeMode, "day" | "week" | "month" | "year">> = {
@@ -230,10 +235,10 @@ function withEnd(w: DayTimeWindow | undefined, endMin: number): DayTimeWindow {
   return { startMin: w?.startMin ?? 0, endMin };
 }
 
-const HISTORY_DEPTHS: { value: HistoryDepth; label: string }[] = [
-  { value: "full", label: "Full" },
-  { value: "bars", label: "N bars" },
-  { value: "minimal", label: "Auto-shortest" },
+const HISTORY_DEPTHS: { value: HistoryDepth; label: string; tip: string }[] = [
+  { value: "full", label: "Full", tip: "Loads years of history. Slow; only when warm-up cannot size itself." },
+  { value: "bars", label: "N bars", tip: "Loads the bar count you set before the window." },
+  { value: "minimal", label: "Auto-shortest", tip: "Loads just enough to warm up your indicators. Fastest." },
 ];
 
 const STOP_KINDS: { value: StopKind; label: string }[] = [
@@ -2271,6 +2276,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                 onClick={() => jumpToTab(t.value)}
               >
                 {t.label}
+                <TipIcon text={t.tip} />
               </button>
             ))}
           </nav>
@@ -2796,6 +2802,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                   onClick={() => setRange({ history: h.value })}
                 >
                   {h.label}
+                  <TipIcon text={h.tip} />
                 </button>
               ))}
             </div>
