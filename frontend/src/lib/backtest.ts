@@ -122,6 +122,28 @@ export function aggPillLabel(longs: number, shorts: number, net: number): string
   return count >= 2 ? `${glyph} ${count} · ${netStr}` : `${glyph} ${netStr}`;
 }
 
+// Vertical distance between stacked pills on one bar: the default overlay text
+// pill is 12px text + 4px vertical padding + 1px border each way (~22px tall),
+// so this step clears it with no overlap.
+export const MARKER_PILL_STACK_STEP = 22;
+
+/** Stack index for a fill marker's pill: 0 for the first marker on a bar+side,
+ * then counting up per collision. Two fills can share a candle AND a placement
+ * (a short's ▼ S+ entry on the bar a prior short's B- exit filled) — without
+ * stacking, both pills render centered at the same x/y and the wider one peeks
+ * out half-clipped behind the other. The caller passes one shared `counts` map
+ * per draw pass; keys are the snapped bar time + placement. */
+export function nextMarkerStack(
+  counts: Map<string, number>,
+  ts: number,
+  placement: "above" | "below",
+): number {
+  const key = `${ts}|${placement}`;
+  const n = counts.get(key) ?? 0;
+  counts.set(key, n + 1);
+  return n;
+}
+
 /** Which side of the candle a fill marker should hang from so it clears the
  * body. The arrow always pins to the exact fill price, so the pill has to be
  * offset AWAY from the body: if the fill sits in the lower half of the candle
@@ -402,6 +424,10 @@ interface MarkerExtra {
   // gap off the candle's extreme; its label is a DOM pill revealed on hover
   // (tradeMarkerHoverSignal), so the always-on furniture never covers candles.
   style?: "backtest" | "live";
+  // Collision rank on this bar+placement (see nextMarkerStack): each level
+  // pushes the pill one MARKER_PILL_STACK_STEP further from the candle. Absent
+  // (older persisted overlays, live style) → 0.
+  stack?: number;
 }
 function asMarkerExtra(v: unknown): MarkerExtra {
   return (typeof v === "object" && v !== null ? v : { label: "", win: null }) as MarkerExtra;
@@ -479,7 +505,7 @@ const markerOverlay: OverlayTemplate = {
   needDefaultYAxisFigure: false,
   createPointFigures: ({ overlay, coordinates }) => {
     if (coordinates.length < 1) return [];
-    const { label, win, placement, style } = asMarkerExtra(overlay.extendData);
+    const { label, win, placement, style, stack } = asMarkerExtra(overlay.extendData);
     const startX = coordinates[0].x;
     // "below" mirrors the historical "above" geometry through the anchor: the
     // arrow/pill grow downward and the pill's baseline flips so it hangs under
@@ -525,7 +551,10 @@ const markerOverlay: OverlayTemplate = {
         type: "text",
         attrs: {
           x: startX,
-          y: arrowEndY,
+          // A colliding pill (same bar, same side — see nextMarkerStack) steps
+          // one pill-height further from the candle per stack level, so both
+          // labels stay readable instead of overprinting.
+          y: arrowEndY + dir * (stack ?? 0) * MARKER_PILL_STACK_STEP,
           text: label,
           align: "center",
           baseline: placement === "below" ? "top" : "bottom",
@@ -1708,6 +1737,10 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
     // shown cell's markers inert instead of cross-talking into another chart's
     // trade indices — a backtest can be rendered in more than one cell at once.
     ensureMarkerOverlayRegistered();
+    // Pill collision counter per snapped bar + placement (see nextMarkerStack):
+    // markers iterate in fill order, so the earlier fill keeps the candle-hugging
+    // spot and later same-bar fills stack outward.
+    const pillStacks = new Map<string, number>();
     for (const m of result.markers) {
       // Skip fills outside the loaded bar window: on a finer timeframe the
       // backtest may predate the (much shorter) loaded history, and snapNearestBar
@@ -1745,6 +1778,7 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
         }
         return false;
       };
+      const pillPlacement = bar ? markerPlacement(m.price, bar.high, bar.low) : "above";
       const id = chart.createOverlay({
         name: MARKER_OVERLAY,
         points: [{ timestamp: snappedTs, value: m.price }],
@@ -1752,7 +1786,8 @@ function drawMarkers(chart: Chart, result: StoredBacktestResult, artifacts: Back
         extendData: {
           label: markerPillLabel(m.side, m.leg, m.reason),
           win: idx !== undefined ? result.trades[idx].pnl >= 0 : null,
-          placement: bar ? markerPlacement(m.price, bar.high, bar.low) : "above",
+          placement: pillPlacement,
+          stack: nextMarkerStack(pillStacks, snappedTs, pillPlacement),
         } satisfies MarkerExtra,
         // v10 deletes an overlay on right-click unless the handler calls
         // e.preventDefault() (lock:true does NOT protect it) — without this a

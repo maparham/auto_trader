@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { markerLabel, markerPlacement, entryDirection, markerPillLabel, aggPillLabel } from "./backtest";
+import {
+  markerLabel,
+  markerPlacement,
+  entryDirection,
+  markerPillLabel,
+  aggPillLabel,
+  nextMarkerStack,
+} from "./backtest";
 
 describe("markerLabel", () => {
   it("labels opens with + and closes with -, by leg", () => {
@@ -62,6 +69,24 @@ describe("aggPillLabel", () => {
     expect(aggPillLabel(2, 1, 4.5)).toBe("▲2 ▼1 · +4.5");   // small net → 1 dp
     expect(aggPillLabel(1, 3, -5)).toBe("▲1 ▼3 · −5.0");    // small net → 1 dp
     expect(aggPillLabel(5, 5, 23.7)).toBe("▲5 ▼5 · +24");   // |net| ≥ 10 → integer
+  });
+});
+
+describe("nextMarkerStack", () => {
+  it("counts up per same bar+placement, so colliding pills stack instead of overprinting", () => {
+    const counts = new Map<string, number>();
+    // A short's ▼ S+ entry and a prior short's B- exit on the same bar, same side.
+    expect(nextMarkerStack(counts, 1000, "above")).toBe(0);
+    expect(nextMarkerStack(counts, 1000, "above")).toBe(1);
+    expect(nextMarkerStack(counts, 1000, "above")).toBe(2);
+  });
+
+  it("keeps independent counters per bar and per placement", () => {
+    const counts = new Map<string, number>();
+    expect(nextMarkerStack(counts, 1000, "above")).toBe(0);
+    expect(nextMarkerStack(counts, 1000, "below")).toBe(0); // other side: no collision
+    expect(nextMarkerStack(counts, 2000, "above")).toBe(0); // other bar: no collision
+    expect(nextMarkerStack(counts, 1000, "above")).toBe(1);
   });
 });
 
