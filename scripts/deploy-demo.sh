@@ -54,8 +54,8 @@ esac
 echo "==> preflight: box env must be hosted-mode (Clerk vars present)"
 rc=0
 "${SSH[@]}" "$HOST" '
-  grep -q "^CLERK_JWKS_URL=" /etc/auto-trader/demo.env \
-    && grep -q "^CLERK_AUTHORIZED_PARTIES=" /etc/auto-trader/demo.env
+  sudo grep -q "^CLERK_JWKS_URL=" /etc/auto-trader/demo.env \
+    && sudo grep -q "^CLERK_AUTHORIZED_PARTIES=" /etc/auto-trader/demo.env
 ' || rc=$?
 if [ "$rc" -eq 1 ]; then
   echo "FAIL: /etc/auto-trader/demo.env is missing CLERK_JWKS_URL / CLERK_AUTHORIZED_PARTIES — add them first (see docs/superpowers/specs/2026-09-02-hosted-deployment-design.md §5)" >&2
@@ -84,13 +84,13 @@ if [ "$DO_BACKEND" = 1 ] && [ -f "$LOCAL_ENV" ] \
 fi
 
 rc=0
-"${SSH[@]}" "$HOST" 'grep -Eiq "^[a-z_]*(capital|mt5|metaapi|oanor)[a-z0-9_]*=|^ig_" /etc/auto-trader/demo.env' || rc=$?
+"${SSH[@]}" "$HOST" 'sudo grep -Eiq "^[a-z_]*(capital|mt5|metaapi|oanor)[a-z0-9_]*=|^ig_" /etc/auto-trader/demo.env' || rc=$?
 # A deploy that is about to PUSH creds needs the same gate as a box that
 # already holds them — otherwise syncing would quietly bypass this check.
 if [ "$rc" -eq 1 ] && [ "$SYNC_CREDS" = 1 ]; then rc=0; fi
 if [ "$rc" -eq 0 ]; then
   rc2=0
-  "${SSH[@]}" "$HOST" 'grep -Eq "^ADMIN_EMAILS=..*|^ADMIN_USER_IDS=..*" /etc/auto-trader/demo.env' || rc2=$?
+  "${SSH[@]}" "$HOST" 'sudo grep -Eq "^ADMIN_EMAILS=..*|^ADMIN_USER_IDS=..*" /etc/auto-trader/demo.env' || rc2=$?
   if [ "$rc2" -eq 1 ]; then
     echo "FAIL: broker credentials present in /etc/auto-trader/demo.env but no ADMIN_EMAILS/ADMIN_USER_IDS — add the admin gate first (see docs/superpowers/specs/2026-09-03-admin-gated-brokers-design.md §6)" >&2
     exit 1
@@ -132,7 +132,7 @@ if [ "$DO_BACKEND" = 1 ]; then
       trap "rm -f $incoming $merged" EXIT
       cat > "$incoming"
       keys="$(sed -n "s/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p" "$incoming" | sort -u)"
-      cp /etc/auto-trader/demo.env "$merged"
+      sudo cat /etc/auto-trader/demo.env > "$merged"
       for k in $keys; do
         grep -v "^$k=" "$merged" > "$merged.tmp" || true
         mv "$merged.tmp" "$merged"
