@@ -4666,10 +4666,10 @@
 
 /* Quick publish (admin): confirm bar + result line at the menu's foot. */
 .layout-mgr-publish {
-  display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12.5px;
+  display: flex; flex-direction: column; gap: 6px; padding: 6px 12px; font-size: 12.5px;
 }
-.layout-mgr-publish-text { flex: 1; color: var(--text-dim); }
-.layout-mgr-publish-btns { display: flex; gap: 6px; }
+.layout-mgr-publish-text { color: var(--text-dim); }
+.layout-mgr-publish-btns { display: flex; gap: 6px; justify-content: flex-end; }
 .layout-mgr-publish-btns button {
   padding: 3px 10px; font-size: 12px; border: 1px solid var(--border);
   border-radius: 5px; background: var(--surface); color: var(--text-dim); cursor: pointer;
