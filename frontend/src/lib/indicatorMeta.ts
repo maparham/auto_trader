@@ -8,7 +8,7 @@
 // reshape. Anything not listed here falls back to generic numeric inputs read
 // from the live indicator's calcParams (see `resolveInputs`).
 
-import { TRENDLINES_DEFAULTS } from "./indicators/trendlinesOutputs";
+import { TRENDLINES_DEFAULTS, TRENDLINES_EXTEND_DEFAULTS } from "./indicators/trendlinesOutputs";
 
 type IndicatorInputType = "number" | "select" | "boolean";
 
@@ -889,7 +889,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         source: "extend",
         field: "showPivots",
         group: "pivotMarks",
-        default: false,
+        default: TRENDLINES_EXTEND_DEFAULTS.showPivots,
         tip: [
           "Marks every swing that passed the pivot settings with a small arrow: up under a low, down over a high.",
           "This is the raw input the lines are built from, so it shows exactly what the pivot settings admit, including pivots no drawn line uses.",
@@ -902,7 +902,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         source: "extend",
         field: "showLinePivots",
         group: "pivotMarks",
-        default: true,
+        default: TRENDLINES_EXTEND_DEFAULTS.showLinePivots,
         tip: [
           "Marks the swings the drawn lines rest on, anchors and touches, with a stemmed arrow.",
           "Only lines actually on the chart count, so a line dropped by Max lines or Declutter marks nothing.",

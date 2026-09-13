@@ -160,6 +160,19 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   minTouchSpacing: 0,
 };
 
+/** Defaults for the render-only extendData flags, for the case nothing is
+ * stored under the key — a freshly added instance, whose extendData is just
+ * `{indType}` until the settings modal writes to it.
+ *
+ * ONE source for the draw path and indicatorMeta's `default`, because they had
+ * already drifted: the meta defaults were flipped without the `??` fallbacks
+ * below the chart, so a fresh pane drew plain pivot arrows the panel said were
+ * off. Add a flag here and read it on both sides. */
+export const TRENDLINES_EXTEND_DEFAULTS = {
+  showPivots: false,
+  showLinePivots: true,
+} as const;
+
 /** calcParams order: [pivotLen, violMult, touchMult, minTouches, minSpanBars,
  * maxProjBars, breakHoldBars, maxLines, minSwingAtr, minSwingReach,
  * pairPivots, maxTouches, maxSpanBars, maxSlopeAtr, minSlopeAtr, minBackBars,

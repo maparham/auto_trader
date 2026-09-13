@@ -42,6 +42,7 @@ import {
   parseTrendlinesConfig,
   TL_ATR_LEN,
   TRENDLINES_DEFAULTS,
+  TRENDLINES_EXTEND_DEFAULTS,
   type TrendlinesConfig,
 } from "./trendlinesOutputs";
 
@@ -1283,7 +1284,7 @@ export interface TrendlinesExtend {
   /** Mark every pivot that passed the PIVOT FILTER with a small caret just
    * outside its wick — the confirmed fractal turns that also cleared Min Pivot
    * Size and Min Pivot Reach, which is the set that may seed or touch a line.
-   * ON by default.
+   * OFF by default.
    *
    * DELIBERATELY OUTSIDE the "one gate for both surfaces" rule the drawn LINES
    * follow. maxLines, Declutter, Hide broken and the isMajor floors all choose
@@ -1297,7 +1298,7 @@ export interface TrendlinesExtend {
   showPivots?: boolean;
   /** Mark the pivots the DRAWN lines actually rest on — every anchor and every
    * counted touch — with a stemmed arrow, up under a low and down over a high.
-   * OFF by default.
+   * ON by default.
    *
    * The complement of showPivots, not a variant of it. showPivots answers
    * "what is the pivot filter admitting"; this answers "which of those turns
@@ -2536,8 +2537,8 @@ function drawTrendlines(
   //    is selected far below. Painting after the strokes also puts the marks
   //    ON TOP of the lines rather than under them, which is the right order
   //    for a glyph whose whole job is to be seen at the swing.
-  const showAll = ext?.showPivots ?? true;
-  const showLineUsed = ext?.showLinePivots ?? false;
+  const showAll = ext?.showPivots ?? TRENDLINES_EXTEND_DEFAULTS.showPivots;
+  const showLineUsed = ext?.showLinePivots ?? TRENDLINES_EXTEND_DEFAULTS.showLinePivots;
   const paintMarks = (used: ReadonlySet<number>): void => {
     if ((showAll || showLineUsed) && last?.pivots)
       paintPivotMarks(

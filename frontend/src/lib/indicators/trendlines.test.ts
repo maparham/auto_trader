@@ -1600,12 +1600,12 @@ function record(
   // OFF by default here, ON in the app — the same deal dedupe and nearPrice
   // have, and for the same reason: the carets are strokes, so with them on
   // every segment count below would be counting pivots as well as lines.
-  // "default" omits the key, which is how the test for the default-on
+  // "default" omits the key, which is how the test for the default-off
   // behaviour exercises the draw path's own fallback.
   showPivots: boolean | "default" = false,
-  // The line-pivot marks (showLinePivots). OFF by default here AND in the app,
-  // so "default" and false coincide; the key is still omitted on "default" so
-  // the draw path's own fallback is what the default test exercises.
+  // The line-pivot marks (showLinePivots). OFF by default here but ON in the
+  // app, the mirror of showPivots above; "default" omits the key so the draw
+  // path's own fallback is what the default test exercises.
   showLinePivots: boolean | "default" = false,
 ): Painted {
   const segments: Segment[] = [];
@@ -2769,12 +2769,12 @@ describe("TRENDLINES pivot marks", () => {
   // which is the case the marks have to keep working in.
   const NO_LINES = [2, 0.25, 0.75, 4, 5, 250, 30, 3];
 
-  it("marks every passing pivot by default, and stops when switched off", () => {
+  it("marks every passing pivot when asked, and not by default", () => {
     const off = paint(LINES, false);
     const on = paint(LINES, true);
-    // Absent key === on: the meta row's default and the draw path's fallback
-    // have to agree, or the panel shows a ticked box over an unmarked pane.
-    expect(paint(LINES, "default")).toEqual(on);
+    // Absent key === off: the meta row's default and the draw path's fallback
+    // have to agree, or the panel shows an unticked box over a marked pane.
+    expect(paint(LINES, "default")).toEqual(off);
     const pv = passing(LINES);
     const total = pv.support.length + pv.resistance.length;
     expect(total).toBeGreaterThan(0);
@@ -2790,7 +2790,10 @@ describe("TRENDLINES pivot marks", () => {
     const pv = passing(NO_LINES);
     const total = pv.support.length + pv.resistance.length;
     expect(total).toBeGreaterThan(0);
-    expect(paint(NO_LINES, "default")).toHaveLength(3 * total);
+    expect(paint(NO_LINES, true)).toHaveLength(3 * total);
+    // ...but only when asked: the absent key is off, on this pane like any
+    // other.
+    expect(paint(NO_LINES, "default")).toHaveLength(0);
   });
 
   it("points the arrow at price, clear of the wick", () => {
@@ -2878,9 +2881,9 @@ describe("TRENDLINES line-pivot marks", () => {
   const STEMMED_EDGES = 7;
   const PLAIN_EDGES = 3;
 
-  it("is off unless asked for: absent key paints exactly what false does", () => {
-    expect(paint(LINES, false, "default")).toEqual(paint(LINES, false, false));
-    expect(paint(LINES, true, "default")).toEqual(paint(LINES, true, false));
+  it("is on unless switched off: absent key paints exactly what true does", () => {
+    expect(paint(LINES, false, "default")).toEqual(paint(LINES, false, true));
+    expect(paint(LINES, true, "default")).toEqual(paint(LINES, true, true));
   });
 
   it("marks the used pivots with a stemmed arrow and leaves the rest alone", () => {

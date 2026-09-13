@@ -260,6 +260,7 @@ describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
     const { segments } = draw(
       chartBars(),
       stash({ htfPivots: HTF_PIVOTS }),
+      { showPivots: true, showLinePivots: false },
     );
     // One line (the fixture's) plus the caret's two slanted edges. The base
     // edge spans BOTH arms, so this filter keeps only the slanted pair.
@@ -275,9 +276,10 @@ describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
     }
   });
 
-  it("paints no marks when Show pivots is off", () => {
+  it("paints no marks with both pivot-mark settings off", () => {
     const mtf = stash({ htfPivots: HTF_PIVOTS });
-    expect(draw(chartBars(), mtf, { showPivots: false }).segments).toHaveLength(1);
+    const off = { showPivots: false, showLinePivots: false };
+    expect(draw(chartBars(), mtf, off).segments).toHaveLength(1);
   });
 });
 
@@ -290,7 +292,10 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
     const bars = chartBars();
     // HTF bar 1 spans chart bars 4..7; its 110 high trades at chart bar 6.
     bars[6] = bar(T0 + 6 * CHART_MS, 110);
-    const { segments } = draw(bars, stash({ htfPivots: HTF_PIVOTS }));
+    const { segments } = draw(bars, stash({ htfPivots: HTF_PIVOTS }), {
+      showPivots: true,
+      showLinePivots: false,
+    });
     const arms = segments.filter(
       (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
     );
@@ -337,7 +342,10 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
       highs: htfStarts().map((_, i) => (i === 9 ? 120 : 100)),
       lows: htfStarts().map(() => 100),
     };
-    const { segments } = draw(bars, stash({ htfPivots: pivots }));
+    const { segments } = draw(bars, stash({ htfPivots: pivots }), {
+      showPivots: true,
+      showLinePivots: false,
+    });
     const arms = segments.filter(
       (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
     );

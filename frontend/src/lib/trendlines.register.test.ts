@@ -14,7 +14,9 @@ const { BASE_TEMPLATES, OVERLAY_INDICATORS } = await import("./customIndicators"
 // exported surface.
 const { indicatorInfo, resolveInputs, groupInputs } = await import("./indicatorMeta");
 const { EXPR_INSTANCE_TYPES, exprInstancesFor, exprWarmupByRef } = await import("./exprInstances");
-const { TRENDLINES_OUTPUTS } = await import("./indicators/trendlinesOutputs");
+const { TRENDLINES_OUTPUTS, TRENDLINES_EXTEND_DEFAULTS } = await import(
+  "./indicators/trendlinesOutputs"
+);
 
 describe("TRENDLINES registration", () => {
   it("has a base template", () => {
@@ -78,6 +80,21 @@ describe("TRENDLINES registration", () => {
       ["Dim if untouched for"],
       ["Merge Lines within"],
     ]);
+  });
+
+  // A fresh instance stores no extendData beyond indType, so what it DRAWS is
+  // the draw path's own `??` fallback while what the panel SHOWS is the meta
+  // row's `default`. They were allowed to drift once (the defaults were
+  // flipped in the meta alone, so a new pane painted plain pivot arrows over
+  // an unticked "Show pivots"); both now read TRENDLINES_EXTEND_DEFAULTS, and
+  // this is the assertion that keeps them there.
+  it("takes its render-only boolean defaults from the shared constant", () => {
+    const inputs = resolveInputs("TRENDLINES", undefined);
+    for (const [field, want] of Object.entries(TRENDLINES_EXTEND_DEFAULTS)) {
+      const row = inputs.find((i) => i.field === field);
+      expect(row?.source).toBe("extend");
+      expect(row?.default).toBe(want);
+    }
   });
 
   it("offers the two decluttering rules as ONE choice, never both at once", () => {
