@@ -31,9 +31,13 @@ export default function DemoApp({ preview = false }: { preview?: boolean } = {})
   useEffect(() => {
     let cancelled = false;
     setDemoMode();
-    setPersistBroker("dukascopy");
     fetchDemoSnapshot().then((snapshot) => {
       if (cancelled) return;
+      // The published payload names the broker it was captured for (yfinance
+      // for new publishes); the persist broker must point there BEFORE the
+      // seed so the layout keys land under the right broker family. No
+      // snapshot (nothing published / fetch failed) keeps the old pin.
+      setPersistBroker(snapshot?.broker ?? "dukascopy");
       if (snapshot) seedDemoLayout(snapshot.layout);
       setReady(true);
     });

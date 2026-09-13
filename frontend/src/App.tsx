@@ -41,6 +41,7 @@ import PositionsPanel from "./PositionsPanel";
 import SnapshotGallery from "./SnapshotGallery";
 import DemoCta from "./DemoCta";
 import { isDemoMode } from "./lib/demoMode";
+import { getDemoSnapshot } from "./lib/demoSnapshot";
 import { writeSnapshotToScope } from "./lib/snapshots";
 import { saveSnapshotOfChart } from "./lib/snapshotSave";
 import { notify, playPing, toast } from "./lib/notify";
@@ -556,10 +557,13 @@ export default function App() {
   const [accounts, setAccounts] = useState<BrokerAccount[]>([]);
   const [activeAccount, setActiveAccount] = useState<TradeAccount>(
     () =>
-      // The public demo is pinned to the credential-free dukascopy feed; any
-      // stored account belongs to a signed-in session and must not leak in.
+      // The public demo is pinned to the published snapshot's credential-free
+      // data feed (yfinance for new publishes, dukascopy before the broker
+      // field existed); any stored account belongs to a signed-in session and
+      // must not leak in. DemoApp resolves the snapshot before App mounts, so
+      // the synchronous read is settled here.
       isDemoMode()
-        ? "dukascopy:data"
+        ? `${getDemoSnapshot()?.broker ?? "dukascopy"}:data`
         : (sessionGet("activeAccount") ??
           localStorage.getItem("activeAccount") ??
           DEFAULT_ACCOUNT),
@@ -638,8 +642,14 @@ export default function App() {
   // Persist the active account and point the shared trades poll at it, so the
   // positions/orders dock follows the selection.
   useEffect(() => {
-    sessionSet("activeAccount", activeAccount); // this tab's truth (guarded write)
-    localStorage.setItem("activeAccount", activeAccount); // seed for future tabs
+    // A demo session's pin (`${broker}:data`) must not become the seed a
+    // signed-in tab opens on: these keys are NOT workspace-prefixed, so the
+    // admin's ?demo=preview tab would otherwise leak them past the preview
+    // namespace into the real ones. The pin is derived, never persisted.
+    if (!isDemoMode()) {
+      sessionSet("activeAccount", activeAccount); // this tab's truth (guarded write)
+      localStorage.setItem("activeAccount", activeAccount); // seed for future tabs
+    }
     // Always point the trades feed at the current account, INCLUDING a data-only
     // source: setTradesAccount clears the prior broker's trades synchronously, so
     // switching to Dukascopy can't leave a stale (and interactable) position lingering
@@ -650,11 +660,13 @@ export default function App() {
     // switches back to this broker). Re-read the map from disk first: sibling tabs
     // write this shared device-local map too, and every write is flushed immediately,
     // so disk is never behind — only this tab's own entry comes from memory.
-    lastAccountByBroker.current = {
-      ...loadLastAccountByBroker(),
-      [brokerId]: activeAccount,
-    };
-    saveLastAccountByBroker(lastAccountByBroker.current);
+    if (!isDemoMode()) {
+      lastAccountByBroker.current = {
+        ...loadLastAccountByBroker(),
+        [brokerId]: activeAccount,
+      };
+      saveLastAccountByBroker(lastAccountByBroker.current);
+    }
   }, [activeAccount, brokerId]);
 
   // Real per-account balance/currency for the dock's stats strip — a LIVE account

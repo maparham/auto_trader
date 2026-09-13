@@ -784,7 +784,7 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
                     "This browser's saved layouts, and the default one opens.",
                     "Drawings and indicators ride along, per chart.",
                     "Items counts what the default layout carries.",
-                    "Switch the workspace to Dukascopy first.",
+                    "Captured from the active broker's workspace.",
                   ]}
                 />
               </label>
@@ -808,6 +808,21 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
               )}
             </div>
 
+            <div className="setting-row">
+              <label className="label-info">
+                Data source
+                <InfoTip
+                  title="Visitors chart Yahoo Finance"
+                  text={[
+                    "Published charts serve free Yahoo Finance data.",
+                    "Each chart's symbol is remapped to its Yahoo equivalent.",
+                    "Symbols with no match block the publish, with a list.",
+                  ]}
+                />
+              </label>
+              <span className="demo-stat">Yahoo Finance</span>
+            </div>
+
             <div className="setting-sub">Watchlist</div>
             <div className="setting-row">
               <label className="label-info">
@@ -816,7 +831,7 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
                   title="Watchlist"
                   text={[
                     "Comma-separated, kept on the published record.",
-                    "The demo browses the whole Dukascopy catalogue anyway.",
+                    "The demo browses the whole Yahoo catalogue anyway.",
                     "Epics that do not resolve are rejected.",
                   ]}
                 />

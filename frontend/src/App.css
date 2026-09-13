@@ -3712,6 +3712,9 @@
 .cl-sym-eye.cl-hidden { color: var(--accent); }
 .cl-sym-eye.cl-hidden:hover { color: var(--accent); }
 .cl-meta { color: var(--text-dim); }
+/* Demo mode names its data source in the legend; the dotted underline says
+   "hover me" without stealing contrast from the OHLC row. */
+.cl-demo-src { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
 .cl-ohlc-item { display: inline-flex; align-items: center; gap: 3px; }
 .cl-ohlc-label { color: var(--text-dim); }
 .cl-ohlc-val { font-variant-numeric: tabular-nums; }

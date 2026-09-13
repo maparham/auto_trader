@@ -102,6 +102,9 @@ const BROKER_LABELS: Record<string, string> = {
   "ig-live": "IG (live)",
   // Read-only deep-history source (Dukascopy). Charts/backtests only, no dealing.
   dukascopy: "Dukascopy (history)",
+  // Read-only Yahoo Finance history (stocks/ETFs/FX/crypto/indices). Serves the
+  // public demo; charts/backtests only, no dealing.
+  yfinance: "Yahoo Finance",
   // Read-only Iranian bazaar rates + gold (oanor.com). Charts/backtests only.
   oanor: "oanor (IRR bazaar)",
   // Read-only Nobitex crypto/IRR pairs (USDT/IRR = live rial-dollar proxy).

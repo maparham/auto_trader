@@ -77,15 +77,25 @@ def request_is_admin(obj) -> bool:
     return bool(getattr(obj.state, "is_admin", False))
 
 
+# The credential-free data brokers the anonymous demo principal may touch.
+# Dukascopy is the historical default (payloads published before the broker
+# field existed serve on it); yfinance is what new publishes target because it
+# covers stocks/ETFs, which dukascopy does not. Both are read-only data
+# brokers with no account behind them.
+DEMO_BROKERS = frozenset({"dukascopy", "yfinance"})
+
+
 def resolve_broker(request: Request, broker_id: str) -> str:
     """Resolve a caller-supplied broker id (possibly empty) to a data broker
     this request may use; 403 for non-admin access to a restricted broker.
-    The anonymous demo principal is pinned to dukascopy outright."""
+    The anonymous demo principal is pinned to the DEMO_BROKERS allowlist."""
     assert _registry is not None, "registry not initialised"
     if is_demo_request(request):
         bid = broker_id or "dukascopy"
-        if bid != "dukascopy":
-            raise HTTPException(403, "demo access is limited to dukascopy")
+        if bid not in DEMO_BROKERS:
+            raise HTTPException(
+                403, "demo access is limited to dukascopy and yfinance"
+            )
         return bid
     if request_is_admin(request):
         return broker_id or _registry.default_data_id()

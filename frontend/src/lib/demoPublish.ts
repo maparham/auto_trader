@@ -8,6 +8,13 @@
 // for the exact request/response shapes this mirrors.
 import { API_BASE, apiFetch, errorDetail } from "./http";
 import { captureDemoLayout } from "./demoSnapshot";
+import { remapDemoLayout, remapWatchlist } from "./demoRemap";
+import { fetchAllMarkets, type Instrument } from "./feed";
+
+// The data broker new publishes serve visitors on. yfinance because it is
+// credential-free AND covers stocks/ETFs; payloads published before the
+// broker field existed default to dukascopy server-side.
+export const DEMO_PUBLISH_BROKER = "yfinance";
 
 export interface DemoLive {
   version: number;
@@ -56,12 +63,28 @@ export async function fetchCurrentDemo(): Promise<CurrentDemo | null> {
 
 /** Publish the CURRENT workspace layout (whatever persist broker is active in
  *  this session) plus the given watchlist/backtests as a new demo version.
- *  Throws with the server's message on a 422 (e.g. an epic that doesn't
- *  resolve, or an empty watchlist) so the caller can show it verbatim. */
+ *  The captured layout is remapped onto the yfinance catalogue first (see
+ *  demoRemap.ts) and the publish is refused - by throwing, so the panel shows
+ *  the message - when any chart or watchlist symbol has no yfinance
+ *  equivalent. Also throws with the server's message on a 422. */
 export async function publishDemo(opts: PublishDemoOpts): Promise<number> {
+  const catalogue = new Map<string, Instrument>(
+    (await fetchAllMarkets(DEMO_PUBLISH_BROKER)).map((i) => [i.epic, i]),
+  );
+  if (catalogue.size === 0)
+    throw new Error("could not load the Yahoo Finance catalogue; try again");
+  const { layout, unmapped } = remapDemoLayout(captureDemoLayout(), catalogue);
+  const wl = remapWatchlist(opts.watchlist, catalogue);
+  const bad = [...new Set([...unmapped, ...wl.unmapped])];
+  if (bad.length)
+    throw new Error(
+      `not available on Yahoo Finance: ${bad.join(", ")}. ` +
+        "Remove those charts or watchlist symbols, then publish.",
+    );
   const body = {
-    layout: captureDemoLayout(),
-    watchlist: opts.watchlist,
+    layout,
+    broker: DEMO_PUBLISH_BROKER,
+    watchlist: wl.epics,
     backtests: opts.backtests,
   };
   const res = await apiFetch(`${API_BASE}/api/admin/demo/publish`, {

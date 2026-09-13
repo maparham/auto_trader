@@ -73,7 +73,7 @@ def test_dev_mode_unchanged(monkeypatch):
     assert r.json() == {"user": "dev", "demo": False}
 
 
-# --- resolve_broker: demo pinned to dukascopy --------------------------------
+# --- resolve_broker: demo pinned to the credential-free allowlist ------------
 
 
 class _FakeData:
@@ -89,17 +89,21 @@ def _demo_request() -> Request:
     return req
 
 
-def test_resolve_broker_demo_is_dukascopy_only(monkeypatch):
+def test_resolve_broker_demo_allowlist(monkeypatch):
+    # Demo may use both credential-free data brokers (dukascopy stays the
+    # default for pre-broker-field payloads; yfinance is what new publishes
+    # target). Anything else, including registered live brokers, is a 403.
     from auto_trader.api import deps
     from auto_trader.brokers.registry import BrokerRegistry
 
     reg = BrokerRegistry()
-    for bid in ("dukascopy", "yfinance"):
+    for bid in ("dukascopy", "yfinance", "capital"):
         reg.add_data(bid, _FakeData())
     monkeypatch.setattr(deps, "_registry", reg, raising=True)
     monkeypatch.setenv("CLERK_JWKS_URL", "https://x.example/jwks.json")
     assert deps.resolve_broker(_demo_request(), "") == "dukascopy"
     assert deps.resolve_broker(_demo_request(), "dukascopy") == "dukascopy"
+    assert deps.resolve_broker(_demo_request(), "yfinance") == "yfinance"
     with pytest.raises(Exception) as ei:
-        deps.resolve_broker(_demo_request(), "yfinance")
+        deps.resolve_broker(_demo_request(), "capital")
     assert getattr(ei.value, "status_code", None) == 403

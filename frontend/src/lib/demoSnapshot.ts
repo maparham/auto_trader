@@ -14,6 +14,11 @@ import { readScopeContent } from "./persist/transfer";
 // here is just writing those same keys forward into a fresh browser.
 export type DemoSnapshot = {
   version: number;
+  /** Data broker the demo serves on ("yfinance" for new publishes; payloads
+   *  from before the field existed fall back to "dukascopy"). DemoApp points
+   *  the persist broker here BEFORE seeding, and App pins the demo account to
+   *  `${broker}:data`. */
+  broker: string;
   layout: Record<string, string>;
   watchlist: string[];
   backtests: { name: string; result: Record<string, unknown> }[];
@@ -33,6 +38,7 @@ export async function fetchDemoSnapshot(): Promise<DemoSnapshot | null> {
     const payload = body.payload as Record<string, unknown>;
     const snapshot: DemoSnapshot = {
       version: body.version,
+      broker: typeof payload.broker === "string" ? payload.broker : "dukascopy",
       layout: (payload.layout as Record<string, string>) ?? {},
       watchlist: Array.isArray(payload.watchlist) ? (payload.watchlist as string[]) : [],
       backtests: Array.isArray(payload.backtests)

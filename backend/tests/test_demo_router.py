@@ -77,6 +77,44 @@ def test_publish_rejects_unknown_epic():
     assert "NOPE" in r.json()["detail"]
 
 
+def test_publish_carries_broker_and_defaults_to_dukascopy():
+    # New publishes name the broker visitors are served on; a body without the
+    # field (anything published before it existed) stays on dukascopy.
+    r = client.post(
+        "/api/admin/demo/publish",
+        json={"layout": {"tabs": []}, "broker": "yfinance", "watchlist": [], "backtests": []},
+    )
+    assert r.status_code == 200
+    assert client.get("/api/demo/snapshot").json()["payload"]["broker"] == "yfinance"
+
+    r = client.post(
+        "/api/admin/demo/publish",
+        json={"layout": {"tabs": []}, "watchlist": [], "backtests": []},
+    )
+    assert r.status_code == 200
+    assert client.get("/api/demo/snapshot").json()["payload"]["broker"] == "dukascopy"
+
+
+def test_publish_rejects_non_demo_broker():
+    r = client.post(
+        "/api/admin/demo/publish",
+        json={"layout": {"tabs": []}, "broker": "capital", "watchlist": [], "backtests": []},
+    )
+    assert r.status_code == 422
+    assert "demo broker" in r.json()["detail"]
+
+
+def test_publish_validates_watchlist_against_named_broker():
+    # US100 resolves on dukascopy's curated catalogue; NOPE does not. The
+    # validation runs against the broker the body names, not a hardcoded one.
+    r = client.post(
+        "/api/admin/demo/publish",
+        json={"layout": {"tabs": []}, "broker": "dukascopy", "watchlist": ["NOPE"]},
+    )
+    assert r.status_code == 422
+    assert "dukascopy" in r.json()["detail"] and "NOPE" in r.json()["detail"]
+
+
 def test_latest_publish_wins():
     # There is one live demo: publishing again replaces what visitors see.
     # (The older rows survive in the store, but nothing reads them any more.)

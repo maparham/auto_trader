@@ -39,11 +39,24 @@ describe("fetchDemoSnapshot", () => {
     const snapshot = await fetchDemoSnapshot();
     expect(snapshot).toEqual({
       version: 3,
+      broker: "dukascopy", // payloads without the field stay on dukascopy
       layout: { layouts: '[{"id":"a","name":"Demo"}]' },
       watchlist: ["US100", "EURUSD"],
       backtests: [{ name: "trend", result: { pnl: 1 } }],
     });
     expect(getDemoSnapshot()).toEqual(snapshot);
+  });
+
+  it("carries the payload's broker when named", async () => {
+    const body = {
+      version: 4,
+      payload: { broker: "yfinance", layout: {}, watchlist: [], backtests: [] },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(body) }),
+    );
+    expect((await fetchDemoSnapshot())?.broker).toBe("yfinance");
   });
 
   it("returns null on a 404 (nothing published)", async () => {

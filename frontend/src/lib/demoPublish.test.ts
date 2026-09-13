@@ -24,6 +24,16 @@ vi.mock("./demoSnapshot", () => ({
   captureDemoLayout: () => ({ layouts: "[]" }),
 }));
 
+// The yfinance catalogue the remap resolves against (see demoRemap.test.ts
+// for the remap's own behavior; here it only needs to pass symbols through).
+vi.mock("./feed", () => ({
+  fetchAllMarkets: async () => [
+    { epic: "US100", name: "Nasdaq 100", status: null, pricePrecision: 1 },
+    { epic: "EURUSD", name: "EUR/USD", status: null, pricePrecision: 5 },
+    { epic: "XAUUSD", name: "Gold (COMEX)", status: null, pricePrecision: 3 },
+  ],
+}));
+
 function jsonRes(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -53,18 +63,36 @@ describe("publishDemo", () => {
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toEqual({
       layout: { layouts: "[]" },
+      broker: "yfinance",
       watchlist: ["US100", "EURUSD"],
       backtests: [{ name: "NQ breakout", result: { trades: [] } }],
     });
   });
 
-  it("throws the server's 422 message", async () => {
-    apiFetch.mockResolvedValue(jsonRes(422, { detail: "unknown epic NOPE" }));
+  it("remaps aliased watchlist epics onto the yfinance names", async () => {
+    apiFetch.mockResolvedValue(jsonRes(200, { version: 1 }));
+    const { publishDemo } = await import("./demoPublish");
+
+    await publishDemo({ watchlist: ["GOLD"], backtests: [] });
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body).watchlist).toEqual(["XAUUSD"]);
+  });
+
+  it("refuses (before any POST) a watchlist symbol with no yfinance match", async () => {
     const { publishDemo } = await import("./demoPublish");
 
     await expect(
       publishDemo({ watchlist: ["NOPE"], backtests: [] }),
-    ).rejects.toThrow("unknown epic NOPE");
+    ).rejects.toThrow("not available on Yahoo Finance: NOPE");
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
+  it("throws the server's 422 message", async () => {
+    apiFetch.mockResolvedValue(jsonRes(422, { detail: "layout is empty" }));
+    const { publishDemo } = await import("./demoPublish");
+
+    await expect(
+      publishDemo({ watchlist: ["US100"], backtests: [] }),
+    ).rejects.toThrow("layout is empty");
   });
 });
 

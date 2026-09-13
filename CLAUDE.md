@@ -183,7 +183,24 @@ See docs/superpowers/specs/2026-09-12-user-impersonation-design.md.
 ## Public demo
 
 Signed-out visitors get the real app on whatever layout an admin last
-published, dukascopy only; drawings and indicators stay editable but are
+published, served on the credential-free broker the payload names: new
+publishes always target yfinance (Yahoo Finance covers the stocks/ETFs
+dukascopy lacks), payloads from before the `broker` field existed fall back
+to dukascopy. `deps.resolve_broker` allowlists exactly that pair
+(`DEMO_BROKERS`) for the demo principal. Publishing captures the ACTIVE
+broker's workspace and remaps every chart onto the yfinance catalogue
+(`lib/demoRemap.ts`): cell symbols in the layout bodies AND the epic-bearing
+scope-key suffixes (`drawings.<epic>`, `avwap.<epic>[.<id>]`) move together,
+or drawings would silently detach from their renamed charts; an alias table
+covers Capital's GOLD/SILVER names. A chart or watchlist symbol with no
+yfinance match refuses the whole publish with a symbol list; a stale
+epic-keyed scope entry no cell shows is just dropped. Demo visitors see the
+source named in the chart legend ("Yahoo Finance", BROKER_LABELS in
+lib/trading.ts) with a demo-only tooltip about delays/adjustment/intraday
+caps, and demo sessions never persist their account pin (`activeAccount`
+keys are not workspace-prefixed, so a `?demo=preview` tab would otherwise
+leak `yfinance:data` into the admin's real seed). Drawings and indicators
+stay editable but are
 session-local, round-tripping through localStorage instead of the backend.
 In hosted mode, an unauthenticated request that matches a narrow GET-only
 allowlist (`api/demo_access.py`:

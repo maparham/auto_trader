@@ -16,6 +16,7 @@ import { type Chart, type Indicator, type KLineData } from "klinecharts";
 import type { ChartController } from "./lib/chartController";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
+import { isDemoMode } from "./lib/demoMode";
 import {
   indTypeOf,
   prevHlDegenerateInfo,
@@ -473,7 +474,24 @@ export default function ChartLegend({
         </Tooltip>
         <span className="cl-meta">
           · {ctx.period}
-          {ctx.broker ? ` · ${ctx.broker}` : ""}
+          {ctx.broker && isDemoMode() ? (
+            // Demo visitors chart free Yahoo Finance data; make the source and
+            // its limits discoverable right where the source is named.
+            <Tooltip
+              title="Data source"
+              content={[
+                "Yahoo Finance: free historical prices.",
+                "Quotes can be delayed; prices are split and dividend adjusted.",
+                "Intraday history is capped (1m about 29 days, 1h about 2 years).",
+              ]}
+            >
+              <span className="cl-demo-src"> · {ctx.broker}</span>
+            </Tooltip>
+          ) : ctx.broker ? (
+            ` · ${ctx.broker}`
+          ) : (
+            ""
+          )}
         </span>
         {(["O", "H", "L", "C"] as const).map((k) => (
           <span className="cl-ohlc-item" key={k}>
