@@ -84,6 +84,16 @@ class OanorBroker(MarketDataBroker):
 
     supports_streaming = False
 
+    # Symbol-search chips over the `category` the upstream /v1/symbols feed
+    # reports (the 21-symbol catalogue uses exactly these four). A category we
+    # don't know stays browsable under All rather than being mislabelled.
+    CATEGORIES = [
+        {"key": "currency", "label": "Currencies", "types": ["currency"], "row": "IRR rate"},
+        {"key": "gold", "label": "Gold", "types": ["gold"], "row": "gold"},
+        {"key": "coin", "label": "Coins", "types": ["coin"], "row": "gold coin"},
+        {"key": "crypto", "label": "Crypto", "types": ["crypto"], "row": "crypto"},
+    ]
+
     def __init__(self, api_key: str, base_url: str = _BASE_URL) -> None:
         self._client = httpx.AsyncClient(
             base_url=base_url,

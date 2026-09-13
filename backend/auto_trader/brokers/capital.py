@@ -78,6 +78,16 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
     supports_streaming = True
     SESSION_TTL = SESSION_TTL
 
+    # Symbol-search chips. Capital stamps its own `instrumentType` straight onto
+    # each market row, so the types here are Capital's vocabulary verbatim.
+    CATEGORIES = [
+        {"key": "SHARES", "label": "Stocks", "types": ["SHARES"], "row": "stock cfd"},
+        {"key": "CURRENCIES", "label": "Forex", "types": ["CURRENCIES"], "row": "forex cfd"},
+        {"key": "CRYPTOCURRENCIES", "label": "Crypto", "types": ["CRYPTOCURRENCIES"], "row": "crypto cfd"},
+        {"key": "INDICES", "label": "Indices", "types": ["INDICES"], "row": "index cfd"},
+        {"key": "COMMODITIES", "label": "Commodities", "types": ["COMMODITIES"], "row": "commodity cfd"},
+    ]
+
     def __init__(
         self,
         api_key: str | None = None,

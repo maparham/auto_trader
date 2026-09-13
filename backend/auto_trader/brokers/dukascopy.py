@@ -140,6 +140,13 @@ class DukascopyBroker(MarketDataBroker):
 
     supports_streaming = False
 
+    # Symbol-search chips for the curated catalogue's own `kind` vocabulary.
+    CATEGORIES = [
+        {"key": "fx", "label": "Forex", "types": ["fx"], "row": "forex"},
+        {"key": "index", "label": "Indices", "types": ["index"], "row": "index"},
+        {"key": "commodity", "label": "Commodities", "types": ["metal"], "row": "commodity"},
+    ]
+
     async def get_candles(
         self,
         epic: str,

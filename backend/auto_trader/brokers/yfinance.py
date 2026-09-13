@@ -230,6 +230,21 @@ def _fetch_history(ticker: str, interval: str, start: datetime, end: datetime):
         return yf.utils.empty_df()
 
 
+# Yahoo's search results report a `quoteType` ("EQUITY", "CURRENCY", ...), a
+# different vocabulary from the curated catalogue's `kind`. Map it over, or a
+# searched row lands on a type no category chip claims. Unknown types fall back
+# to "stock", which is what the search path assumed before this map existed.
+_KIND_FOR_QUOTE_TYPE = {
+    "equity": "stock",
+    "etf": "etf",
+    "mutualfund": "fund",
+    "index": "index",
+    "currency": "fx",
+    "cryptocurrency": "crypto",
+    "future": "commodity",
+}
+
+
 def _search_yahoo(query: str, limit: int) -> list[dict]:
     """Synchronous Yahoo symbol search, module-level so tests can monkeypatch.
     Returns yfinance Search quote dicts (symbol/shortname/quoteType/...)."""
@@ -241,6 +256,23 @@ class YFinanceBroker(MarketDataBroker):
     no quote. price_side ignored (last-trade data, treated as mid)."""
 
     supports_streaming = False
+
+    # Symbol-search chips over this broker's own `kind` vocabulary (see
+    # InstrumentInfo.kind and _KIND_FOR_QUOTE_TYPE). Nothing here is a CFD, so
+    # the row phrases say "stock"/"etf", not "stock cfd".
+    CATEGORIES = [
+        {"key": "stock", "label": "Stocks", "types": ["stock"], "row": "stock"},
+        {"key": "etf", "label": "ETFs", "types": ["etf", "fund"], "row": "fund"},
+        {"key": "fx", "label": "Forex", "types": ["fx"], "row": "forex"},
+        {"key": "crypto", "label": "Crypto", "types": ["crypto"], "row": "crypto"},
+        {"key": "index", "label": "Indices", "types": ["index"], "row": "index"},
+        {
+            "key": "commodity",
+            "label": "Commodities",
+            "types": ["commodity", "metal"],
+            "row": "commodity",
+        },
+    ]
 
     async def get_candles(
         self,
@@ -354,9 +386,11 @@ class YFinanceBroker(MarketDataBroker):
                 if not symbol or symbol in seen:
                     continue
                 seen.add(symbol)
-                kind = (quote.get("quoteType") or "").lower() or "stock"
+                kind = _KIND_FOR_QUOTE_TYPE.get(
+                    (quote.get("quoteType") or "").lower(), "stock"
+                )
                 # FX pairs need pip-level precision or the axis hides moves.
-                precision = 5 if kind == "currency" else _DEFAULT_PRECISION
+                precision = 5 if kind == "fx" else _DEFAULT_PRECISION
                 rows.append(
                     self._market_row(
                         symbol,

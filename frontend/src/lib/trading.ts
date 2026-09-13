@@ -132,6 +132,23 @@ export function noteDataOnlyBrokers(exec: BrokerAccount[] | undefined): void {
 export function isDataOnlyBroker(brokerId: string): boolean {
   return dataOnlyBrokers.has(brokerId);
 }
+// Symbol-search category chips per broker, declared backend-side over each
+// broker's own market-row `type` vocabulary (Capital's "SHARES", Yahoo's
+// "stock"/"etf"). The modal renders exactly these, so the chips can never again
+// filter on a vocabulary the broker doesn't emit. Fed by fetchBrokers /
+// cachedBrokers, mirroring backendLabels; a broker that declares nothing gets no
+// type chips.
+let backendCategories: Record<string, MarketCategory[]> = {};
+export function noteBrokerCategories(
+  categories: Record<string, MarketCategory[]> | undefined,
+): void {
+  if (categories) backendCategories = categories;
+}
+/** The broker's declared symbol-search categories, or [] if it declares none. */
+export function brokerCategories(brokerId: string): MarketCategory[] {
+  return backendCategories[brokerId] ?? [];
+}
+
 // Whether /api/brokers reported this account as admin (hosted: credentialed
 // brokers + dealing unlocked; dev mode: always true). Fed by fetchBrokers /
 // cachedBrokers, mirroring backendLabels — UI cues only, the backend enforces.
@@ -185,11 +202,22 @@ export interface BrokerAccount {
   // for charts/backtests, but not tradeable. Absent on real trading accounts.
   dataOnly?: boolean;
 }
+/** One symbol-search chip: which market-row `type` values it covers, plus the
+ * muted phrase shown on a row of that type ("stock cfd", "etf"). */
+export interface MarketCategory {
+  key: string;
+  label: string;
+  types: string[];
+  row?: string;
+}
 export interface BrokerInfo {
   data: string[];
   exec: BrokerAccount[];
   // Sparse broker-reported display names by broker id (see noteBrokerLabels).
   labels?: Record<string, string>;
+  // Symbol-search chips by broker id (see noteBrokerCategories). Sparse: only
+  // brokers that declare any appear.
+  categories?: Record<string, MarketCategory[]>;
   // Hosted only: whether this account passes the backend's admin gate.
   isAdmin?: boolean;
 }
@@ -210,6 +238,7 @@ export function cachedBrokers(): BrokerInfo | null {
     const info = raw ? (JSON.parse(raw) as BrokerInfo) : null;
     if (info) {
       noteBrokerLabels(info.labels);
+      noteBrokerCategories(info.categories);
       noteDataOnlyBrokers(info.exec);
       noteIsAdmin(info.isAdmin);
     }
@@ -236,6 +265,7 @@ export async function fetchBrokers(): Promise<BrokerInfo> {
     if (!res.ok) throw new Error(`brokers failed (${res.status})`);
     const info = (await res.json()) as BrokerInfo;
     noteBrokerLabels(info.labels);
+    noteBrokerCategories(info.categories);
     noteDataOnlyBrokers(info.exec);
     noteIsAdmin(info.isAdmin);
     try {

@@ -139,6 +139,11 @@ class NobitexBroker(MarketDataBroker):
 
     supports_streaming = False
 
+    # Every Nobitex market is a crypto pair, so one chip covers the catalogue.
+    CATEGORIES = [
+        {"key": "crypto", "label": "Crypto", "types": ["crypto"], "row": "crypto"},
+    ]
+
     def __init__(self, base_url: str = _BASE_URL) -> None:
         self._client = httpx.AsyncClient(base_url=base_url, timeout=20.0)
         self._throttle = asyncio.Lock()

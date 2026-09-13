@@ -143,6 +143,16 @@ class IGBroker(SessionAuthBroker, MarketDataBroker):
     supports_streaming = True
     SESSION_TTL = SESSION_TTL
 
+    # Symbol-search chips. IG's market rows carry its own `instrumentType`, which
+    # shares Capital's vocabulary for the five categories we chip on.
+    CATEGORIES = [
+        {"key": "SHARES", "label": "Stocks", "types": ["SHARES"], "row": "stock cfd"},
+        {"key": "CURRENCIES", "label": "Forex", "types": ["CURRENCIES"], "row": "forex cfd"},
+        {"key": "CRYPTOCURRENCIES", "label": "Crypto", "types": ["CRYPTOCURRENCIES"], "row": "crypto cfd"},
+        {"key": "INDICES", "label": "Indices", "types": ["INDICES"], "row": "index cfd"},
+        {"key": "COMMODITIES", "label": "Commodities", "types": ["COMMODITIES"], "row": "commodity cfd"},
+    ]
+
     def __init__(self, side: str) -> None:
         self._side = side  # "demo" | "live"
         self._api_key, self._identifier, self._password = ig_settings.creds(side)

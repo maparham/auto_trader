@@ -2,7 +2,8 @@
 // symbol name in the toolbar. Replaces the old always-on inline search input.
 //
 // Data model: the full instrument catalogue (~4000) is fetched once and cached;
-// category chips filter it client-side by instrumentType. The modal opens on the
+// category chips filter it client-side by the row's `type`, using the chip list
+// the active broker declares (GET /api/brokers). The modal opens on the
 // RECENT list (recently-opened symbols). Typing runs a live keyword search instead.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,7 +20,12 @@ import Tooltip from "./components/Tooltip";
 import SymbolIcon from "./SymbolIcon";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { loadRecentSymbols, pushRecentSymbol } from "./lib/persist";
-import { brokerLabel } from "./lib/trading";
+import {
+  brokerCategories,
+  brokerLabel,
+  fetchBrokers,
+  type MarketCategory,
+} from "./lib/trading";
 import { activeSymbolFragment, insertSymbol, isSyntheticExpr, parseSymbols } from "./lib/syntheticExpr";
 import { registerSynthetic } from "./lib/syntheticRegistry";
 import { isDemoMode } from "./lib/demoMode";
@@ -35,36 +41,26 @@ interface Props {
   onClose: () => void;
 }
 
-// Category chips. "favorites"/"all" are special; the rest filter by the market's
-// Capital.com instrumentType. Order/labels mirror TradingView.
-const CHIPS: { key: string; label: string; type?: string }[] = [
+// The three views every broker has. The type chips after them come from the
+// broker itself (GET /api/brokers -> categories), because the `type` on a market
+// row is the broker's own vocabulary: Capital says "SHARES", Yahoo says "stock".
+// Hardcoding one broker's words here is what left every chip empty on the others.
+const BASE_CHIPS: { key: string; label: string }[] = [
   { key: "recent", label: "Recent" },
   { key: "favorites", label: "Favorites" },
   { key: "all", label: "All" },
-  { key: "SHARES", label: "Stocks", type: "SHARES" },
-  { key: "CURRENCIES", label: "Forex", type: "CURRENCIES" },
-  { key: "CRYPTOCURRENCIES", label: "Crypto", type: "CRYPTOCURRENCIES" },
-  { key: "INDICES", label: "Indices", type: "INDICES" },
-  { key: "COMMODITIES", label: "Commodities", type: "COMMODITIES" },
 ];
 
-// Muted type phrase on each row, TradingView-style ("commodity cfd", "stock").
-// All Capital.com instruments are CFDs, so the suffix matches their UI.
-function typeLabel(type: string | null | undefined): string {
-  switch (type) {
-    case "SHARES":
-      return "stock cfd";
-    case "CURRENCIES":
-      return "forex cfd";
-    case "CRYPTOCURRENCIES":
-      return "crypto cfd";
-    case "INDICES":
-      return "index cfd";
-    case "COMMODITIES":
-      return "commodity cfd";
-    default:
-      return type ? `${type.toLowerCase()} cfd` : "cfd";
-  }
+// Muted type phrase on each row, TradingView-style ("commodity cfd", "etf"). The
+// broker's category declaration carries the phrase; an undeclared type falls back
+// to the raw word so a row is never labelled as something it isn't.
+function typeLabel(
+  type: string | null | undefined,
+  cats: MarketCategory[],
+): string {
+  if (!type) return "";
+  const hit = cats.find((c) => c.types.includes(type));
+  return hit?.row ?? hit?.label.toLowerCase() ?? type.toLowerCase();
 }
 
 // TradingView-style "spread operators" revealed by the input's toggle. `token` is
@@ -88,6 +84,23 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
   // "recent" would open empty.
   // Demo visitors have no recents yet, so open on the browsable catalogue.
   const [cat, setCat] = useState(() => (isDemoMode() ? "all" : "recent"));
+  // The active broker's declared type chips. Seeded from the cached /api/brokers
+  // payload so the chips render immediately, then refreshed from a live fetch —
+  // on a first-ever visit there is no cache yet and the modal can open before the
+  // boot fetch lands, which would otherwise show no type chips at all.
+  const [categories, setCategories] = useState<MarketCategory[]>(() =>
+    brokerCategories(brokerId),
+  );
+  const chips = useMemo(
+    () => [...BASE_CHIPS, ...categories.map((c) => ({ key: c.key, label: c.label }))],
+    [categories],
+  );
+  // Switching brokers (or a late categories fetch) can strip the chip that is
+  // currently selected — Capital's "SHARES" doesn't exist on Yahoo. Fall back to
+  // "all" rather than leaving the view filtering on a key nothing matches.
+  useEffect(() => {
+    if (!chips.some((c) => c.key === cat)) setCat("all");
+  }, [chips, cat]);
   const [all, setAll] = useState<Instrument[]>([]);
   const [favorites, setFavorites] = useState<Instrument[]>([]);
   const [catalogueLoading, setCatalogueLoading] = useState(true);
@@ -139,6 +152,20 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
   //
   useEffect(() => {
     let alive = true;
+    const known = brokerCategories(brokerId);
+    setCategories(known);
+    // Only on a first-ever visit (no cached /api/brokers payload yet, and the
+    // boot fetch hasn't landed) do we fetch: otherwise this would be a network
+    // call every time the modal opens, for data that changes on deploy.
+    if (known.length === 0) {
+      void fetchBrokers()
+        .then(() => {
+          if (alive) setCategories(brokerCategories(brokerId));
+        })
+        .catch(() => {
+          /* chips are a browsing aid, not a gate — All + search still work */
+        });
+    }
     setCatalogueLoading(true);
     void Promise.all([fetchAllMarkets(brokerId), fetchFavorites(brokerId)]).then(
       ([a, f]) => {
@@ -209,8 +236,9 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
         .filter((m): m is Instrument => m !== undefined);
     }
     if (cat === "all") return all;
-    return all.filter((m) => m.type === cat);
-  }, [query, term, searchHits, cat, all, favorites, recentEpics]);
+    const types = categories.find((c) => c.key === cat)?.types ?? [];
+    return all.filter((m) => m.type != null && types.includes(m.type));
+  }, [query, term, searchHits, cat, categories, all, favorites, recentEpics]);
 
   const loading = term ? searching : catalogueLoading;
 
@@ -366,7 +394,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
         </div>
 
         <div className="symsearch-cats">
-          {CHIPS.map((c) => (
+          {chips.map((c) => (
             <button
               key={c.key}
               className={!query.trim() && cat === c.key ? "on" : ""}
@@ -405,7 +433,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
               <SymbolIcon epic={m.epic} type={m.type} className="ss-icon" />
               <span className="ss-epic">{m.epic}</span>
               <span className="ss-name">{m.name}</span>
-              <span className="ss-type">{typeLabel(m.type)}</span>
+              <span className="ss-type">{typeLabel(m.type, categories)}</span>
               <span className="ss-exch">{brokerLabel(brokerId).toUpperCase()}</span>
               <span className="ss-badge" aria-hidden="true">
                 {brokerId.charAt(0).toUpperCase()}

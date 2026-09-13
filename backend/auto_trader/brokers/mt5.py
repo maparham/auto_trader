@@ -292,6 +292,17 @@ class MT5Broker(MarketDataBroker):
 
     supports_streaming = True
 
+    # Symbol-search chips. MetaApi reports bare symbol strings, so _classify_symbol
+    # maps them onto this vocabulary; keep the two in step (an unclassified symbol
+    # returns None and stays under All).
+    CATEGORIES = [
+        {"key": "SHARES", "label": "Stocks", "types": ["SHARES"], "row": "stock"},
+        {"key": "CURRENCIES", "label": "Forex", "types": ["CURRENCIES"], "row": "forex"},
+        {"key": "CRYPTOCURRENCIES", "label": "Crypto", "types": ["CRYPTOCURRENCIES"], "row": "crypto"},
+        {"key": "INDICES", "label": "Indices", "types": ["INDICES"], "row": "index"},
+        {"key": "COMMODITIES", "label": "Commodities", "types": ["COMMODITIES"], "row": "commodity"},
+    ]
+
     # Per-call wall-clock budget for an RPC read/trade. Short so a wedged socket
     # surfaces as "reconnecting" in seconds rather than hanging the SDK's 60s
     # request timeout. Candle history uses a SEPARATE account path

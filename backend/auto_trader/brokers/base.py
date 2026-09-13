@@ -94,6 +94,16 @@ class MarketDataBroker(ABC):
     # Override per broker that has a searchable catalogue + watchlist. The
     # defaults let a data-only broker register and chart without a catalogue.
 
+    # Symbol-search category chips, declared by the broker that owns the
+    # catalogue vocabulary. Each entry is {key, label, types: [...]}, where
+    # `types` are the literal `type` values this broker stamps on its market
+    # rows. The frontend renders exactly these chips after Recent/Favorites/All,
+    # so a broker whose rows use its own vocabulary (yfinance's "fx"/"etf",
+    # Capital's "CURRENCIES") gets working chips without the modal knowing
+    # anything about it. Declaring nothing means no type chips at all — five
+    # chips that filter to zero was the bug this replaced.
+    CATEGORIES: list[dict] = []
+
     async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
         """Keyword instrument search → [{epic, name, status, type}], tradeable first."""
         return []

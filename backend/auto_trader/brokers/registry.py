@@ -104,6 +104,15 @@ class BrokerRegistry:
                 for broker_id, broker in self.data.items()
                 if broker_id in data_ids and (label := getattr(broker, "display_name", None))
             },
+            # Symbol-search category chips, declared by each broker over its own
+            # market-row `type` vocabulary (see MarketDataBroker.CATEGORIES). The
+            # modal renders exactly what it gets here, so a broker with no
+            # declaration shows no type chips instead of five dead ones.
+            "categories": {
+                broker_id: categories
+                for broker_id, broker in self.data.items()
+                if broker_id in data_ids and (categories := getattr(broker, "CATEGORIES", None))
+            },
             "exec": exec_items
             # Data-only brokers (a read-only history source like dukascopy, with no
             # executor) get a synthetic pseudo-account so the account-keyed frontend
