@@ -21,6 +21,12 @@ strategies, paper trade, and set price alerts.
 - An order ticket and paper trading
 - A public demo mode for signed-out visitors, using free Dukascopy data
 
+## Screenshots
+
+| Chart with indicators | Backtest results | Price alert |
+| --- | --- | --- |
+| ![Chart with indicators](docs/readme-screens/chart-indicators.jpg) | ![Backtest results](docs/readme-screens/backtest-results.jpg) | ![Create alert](docs/readme-screens/create-alert.jpg) |
+
 ## Layout
 
 ```
