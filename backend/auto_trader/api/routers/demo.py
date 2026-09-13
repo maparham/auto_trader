@@ -2,7 +2,11 @@
 
 GET /api/demo/snapshot is reachable anonymously through the demo allowlist
 (api/demo_access.py); the admin surface is gated exactly like the admin
-console. Rollback republishes as a NEW version so history stays append-only.
+console. The store stays append-only (every publish is a new row, latest
+wins), but the admin panel no longer surfaces that history: there is one live
+demo, replaced by the next publish. `GET /versions` remains so the panel can
+show when the live one went out; there is deliberately no rollback endpoint,
+because an "undo" the UI cannot reach is just an unused attack surface.
 See docs/superpowers/specs/2026-09-12-public-demo-page-design.md.
 """
 
@@ -41,10 +45,6 @@ class PublishBody(BaseModel):
     backtests: list[dict] = []
 
 
-class RollbackBody(BaseModel):
-    version: int
-
-
 async def _validate_watchlist(epics: list[str]) -> None:
     if not epics:
         return
@@ -79,11 +79,3 @@ async def publish(body: PublishBody, request: Request) -> dict:
 async def versions() -> dict:
     return {"versions": await get_demo_store().versions()}
 
-
-@admin_router.post("/rollback")
-async def rollback(body: RollbackBody, request: Request) -> dict:
-    payload = await get_demo_store().get(body.version)
-    if payload is None:
-        raise HTTPException(404, f"no demo version {body.version}")
-    version = await get_demo_store().publish(payload, current_user(request))
-    return {"version": version}

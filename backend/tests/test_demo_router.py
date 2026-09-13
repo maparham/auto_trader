@@ -1,4 +1,4 @@
-"""Demo router: public snapshot + admin publish/versions/rollback.
+"""Demo router: public snapshot + admin publish/versions.
 
 Runs in dev mode (auth disabled), so every request lands as admin — see
 tests/test_api_wfo.py and friends for the same module-level TestClient
@@ -77,16 +77,19 @@ def test_publish_rejects_unknown_epic():
     assert "NOPE" in r.json()["detail"]
 
 
-def test_rollback():
+def test_latest_publish_wins():
+    # There is one live demo: publishing again replaces what visitors see.
+    # (The older rows survive in the store, but nothing reads them any more.)
     for i in (1, 2):
         client.post(
             "/api/admin/demo/publish",
             json={"layout": {"v": i}, "watchlist": ["US100"], "backtests": []},
         )
-    r = client.post("/api/admin/demo/rollback", json={"version": 1})
-    assert r.status_code == 200 and r.json()["version"] == 3
-    assert client.get("/api/demo/snapshot").json()["payload"]["layout"] == {"v": 1}
-    assert client.post("/api/admin/demo/rollback", json={"version": 99}).status_code == 404
+    assert client.get("/api/demo/snapshot").json()["payload"]["layout"] == {"v": 2}
+
+
+def test_rollback_endpoint_is_gone():
+    assert client.post("/api/admin/demo/rollback", json={"version": 1}).status_code == 404
 
 
 def test_versions_listing():

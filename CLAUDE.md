@@ -200,8 +200,11 @@ current layout, an optional watchlist and a list of named backtests into a
 payload and writes it as a new row in `core/demo_store.py`, an append-only,
 versioned
 store (its own SQLite file, path from `DEMO_DB`) where the latest row always
-wins and
-rollback is just republishing an older payload. "The layout" is the saved
+wins. There is exactly ONE live demo and publishing replaces it: the panel
+shows when the live one went out and nothing else. The older rows survive on
+disk for hand recovery, but no UI and no endpoint reads them (a version list
+whose "roll back" appended yet another version read as a bug, so both the
+list and `POST /rollback` are gone). "The layout" is the saved
 layout INDEX, the DEFAULT pointer and each layout BODY, plus every cell's
 scope content (drawings, indicators, indicatorConfig, avwap, view flags)
 under a `scope:` marker key that `demoSnapshot.ts` maps back to the

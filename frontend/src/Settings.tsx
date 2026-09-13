@@ -9,10 +9,9 @@ import { useIsAdmin } from "./admin/useIsAdmin";
 import { getLastBacktestResult } from "./lib/lastBacktestResult";
 import {
   publishDemo,
-  listDemoVersions,
-  rollbackDemo,
+  fetchDemoLive,
   fetchCurrentDemo,
-  type DemoVersionRow,
+  type DemoLive,
 } from "./lib/demoPublish";
 import { describeDemoLayout } from "./lib/demoSnapshot";
 
@@ -170,15 +169,16 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
   const [demoCaptureName, setDemoCaptureName] = useState("");
   const [demoStaged, setDemoStaged] = useState<{ name: string; result: unknown }[]>([]);
   const [demoCaptureNotice, setDemoCaptureNotice] = useState<string | null>(null);
-  const [demoEditingVersion, setDemoEditingVersion] = useState<number | null>(null);
+  // There is one live demo, replaced by the next publish - no version history
+  // in this panel (an append-only list with a "roll back" that appended yet
+  // another row read as a bug). This is the newest store row, purely so the
+  // panel can say when what visitors see went out.
+  const [demoLive, setDemoLive] = useState<DemoLive | null>(null);
   const [demoLoadError, setDemoLoadError] = useState<string | null>(null);
   const [demoLoaded, setDemoLoaded] = useState(false);
   const [demoPublishing, setDemoPublishing] = useState(false);
   const [demoPublishError, setDemoPublishError] = useState<string | null>(null);
-  const [demoPublishedVersion, setDemoPublishedVersion] = useState<number | null>(null);
-  const [demoVersions, setDemoVersions] = useState<DemoVersionRow[] | null>(null);
-  const [demoVersionsError, setDemoVersionsError] = useState<string | null>(null);
-  const [demoRollingBack, setDemoRollingBack] = useState<number | null>(null);
+  const [demoJustPublished, setDemoJustPublished] = useState(false);
   // Set by the first refusal of a content-less layout; a second Publish click
   // goes through (see publishDemoStaged).
   const [demoBareOk, setDemoBareOk] = useState(false);
@@ -189,22 +189,21 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
     [tab, isAdmin],
   );
 
-  const loadDemoVersions = () => {
-    listDemoVersions()
-      .then((vs) => {
-        setDemoVersions(vs);
-        setDemoVersionsError(null);
+  const loadDemoLive = () => {
+    fetchDemoLive()
+      .then((live) => {
+        setDemoLive(live);
+        setDemoLoadError(null);
       })
-      .catch((e) => setDemoVersionsError(e instanceof Error ? e.message : String(e)));
+      .catch((e) => setDemoLoadError(e instanceof Error ? e.message : String(e)));
   };
 
   useEffect(() => {
     if (tab !== "demo" || !isAdmin || demoLoaded) return;
     setDemoLoaded(true);
-    loadDemoVersions();
+    loadDemoLive();
     fetchCurrentDemo()
       .then((current) => {
-        setDemoEditingVersion(current?.version ?? null);
         setDemoWatchlist(current ? current.watchlist.join(", ") : "");
         setDemoStaged(current?.backtests ?? []);
         setDemoLoadError(null);
@@ -293,22 +292,12 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
     setDemoPublishing(true);
     setDemoPublishError(null);
     publishDemo({ watchlist, backtests: demoStaged })
-      .then((version) => {
-        setDemoPublishedVersion(version);
-        setDemoEditingVersion(version);
-        loadDemoVersions();
+      .then(() => {
+        setDemoJustPublished(true);
+        loadDemoLive();
       })
       .catch((e) => setDemoPublishError(e instanceof Error ? e.message : String(e)))
       .finally(() => setDemoPublishing(false));
-  };
-
-  const rollBackDemo = (version: number) => {
-    setDemoRollingBack(version);
-    setDemoVersionsError(null);
-    rollbackDemo(version)
-      .then(() => loadDemoVersions())
-      .catch((e) => setDemoVersionsError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setDemoRollingBack(null));
   };
 
   return (
@@ -778,8 +767,8 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
               <div className="setting-hint demo-note bt-error">{demoLoadError}</div>
             ) : (
               <div className="setting-hint demo-note">
-                {demoEditingVersion != null
-                  ? `Editing published v${demoEditingVersion}.`
+                {demoLive != null
+                  ? `Live: published ${new Date(demoLive.createdAt).toLocaleString()}. Publishing replaces it.`
                   : "Nothing published yet."}
               </div>
             )}
@@ -878,8 +867,8 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
             ))}
 
             <div className="setting-row demo-publish-row">
-              {demoPublishedVersion != null && !demoPublishError ? (
-                <span className="setting-hint">Published version {demoPublishedVersion}.</span>
+              {demoJustPublished && !demoPublishError ? (
+                <span className="setting-hint">Published. Visitors see it now.</span>
               ) : (
                 <span />
               )}
@@ -896,34 +885,6 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
               <div className="setting-hint demo-note bt-error">{demoPublishError}</div>
             )}
 
-            <div className="setting-sub">Published versions</div>
-            {demoVersionsError && (
-              <div className="setting-hint demo-note bt-error">{demoVersionsError}</div>
-            )}
-            {demoVersions == null && !demoVersionsError && (
-              <div className="setting-hint demo-note">Loading…</div>
-            )}
-            {demoVersions != null && demoVersions.length === 0 && (
-              <div className="setting-hint demo-note">Nothing published yet.</div>
-            )}
-            {demoVersions != null &&
-              demoVersions.map((v) => (
-                <div className="setting-row demo-ver-row" key={v.version}>
-                  <label>
-                    v{v.version}
-                    {v.publishedBy ? ` · ${v.publishedBy}` : ""}
-                    {" · "}
-                    {new Date(v.createdAt).toLocaleString()}
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => rollBackDemo(v.version)}
-                    disabled={demoRollingBack === v.version}
-                  >
-                    {demoRollingBack === v.version ? "Rolling back…" : "Roll back"}
-                  </button>
-                </div>
-              ))}
           </>
         )}
       </div>

@@ -1,18 +1,20 @@
 // Admin-only demo publishing: POST the current workspace layout (captured the
 // same way demoSnapshot.ts's captureDemoLayout does) plus a watchlist and a
-// set of named canned backtests to `/api/admin/demo/publish`, list published
-// versions, and roll back to one. Settings' "Public demo" section is the only
-// caller. See auto_trader/api's demo router (backend/tests/test_demo_router.py)
+// set of named canned backtests to `/api/admin/demo/publish`, and read back
+// which publish is currently live. Settings' "Public demo" section is the only
+// caller. There is ONE live demo: publishing replaces it. The store still
+// keeps a row per publish, but no UI offers a rollback, so this module reads
+// only the newest row (see fetchDemoLive). See auto_trader/api's demo router (backend/tests/test_demo_router.py)
 // for the exact request/response shapes this mirrors.
 import { API_BASE, apiFetch, errorDetail } from "./http";
 import { captureDemoLayout } from "./demoSnapshot";
 
-export interface DemoVersionRow {
+export interface DemoLive {
   version: number;
   publishedBy: string | null;
   /** Epoch MILLISECONDS. The store keeps seconds (demo_store.py), so
-   *  listDemoVersions converts on the way in and callers can hand this
-   *  straight to `new Date(...)`. */
+   *  fetchDemoLive converts on the way in and callers can hand this straight
+   *  to `new Date(...)`. */
   createdAt: number;
   size: number;
 }
@@ -72,21 +74,14 @@ export async function publishDemo(opts: PublishDemoOpts): Promise<number> {
   return json.version as number;
 }
 
-export async function listDemoVersions(): Promise<DemoVersionRow[]> {
+/** The publish visitors are currently served, or null when nothing has been
+ *  published. `/versions` answers newest-first, so the live one is row 0; the
+ *  rest of the list is history the panel deliberately does not show. */
+export async function fetchDemoLive(): Promise<DemoLive | null> {
   const res = await apiFetch(`${API_BASE}/api/admin/demo/versions`);
-  if (!res.ok) throw new Error(await errorDetail(res, `list failed (${res.status})`));
+  if (!res.ok) throw new Error(await errorDetail(res, `read failed (${res.status})`));
   const json = await res.json();
-  const rows = (json.versions ?? []) as DemoVersionRow[];
-  return rows.map((r) => ({ ...r, createdAt: r.createdAt * 1000 }));
-}
-
-export async function rollbackDemo(version: number): Promise<number> {
-  const res = await apiFetch(`${API_BASE}/api/admin/demo/rollback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ version }),
-  });
-  if (!res.ok) throw new Error(await errorDetail(res, `rollback failed (${res.status})`));
-  const json = await res.json();
-  return json.version as number;
+  const rows = (json.versions ?? []) as DemoLive[];
+  const live = rows[0];
+  return live ? { ...live, createdAt: live.createdAt * 1000 } : null;
 }

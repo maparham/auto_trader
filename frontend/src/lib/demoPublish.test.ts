@@ -1,5 +1,5 @@
 // @vitest-environment node
-// publishDemo / listDemoVersions / rollbackDemo: thin POST/GET wrappers around
+// publishDemo / fetchDemoLive / fetchCurrentDemo: thin POST/GET wrappers around
 // the admin demo router (see backend/tests/test_demo_router.py for the wire
 // shapes). apiFetch and captureDemoLayout are mocked so these tests exercise
 // only this module's request-building and response-parsing.
@@ -68,14 +68,24 @@ describe("publishDemo", () => {
   });
 });
 
-describe("listDemoVersions", () => {
-  it("GETs the versions array, converting createdAt seconds to ms", async () => {
-    const versions = [{ version: 2, publishedBy: "a@b.com", createdAt: 1789221839, size: 10 }];
+describe("fetchDemoLive", () => {
+  it("returns the newest row only, converting createdAt seconds to ms", async () => {
+    const versions = [
+      { version: 2, publishedBy: "a@b.com", createdAt: 1789221839, size: 10 },
+      { version: 1, publishedBy: "a@b.com", createdAt: 1789000000, size: 9 },
+    ];
     apiFetch.mockResolvedValue(jsonRes(200, { versions }));
-    const { listDemoVersions } = await import("./demoPublish");
+    const { fetchDemoLive } = await import("./demoPublish");
 
-    expect(await listDemoVersions()).toEqual([{ ...versions[0], createdAt: 1789221839000 }]);
+    expect(await fetchDemoLive()).toEqual({ ...versions[0], createdAt: 1789221839000 });
     expect(apiFetch).toHaveBeenCalledWith("http://localhost:8000/api/admin/demo/versions");
+  });
+
+  it("returns null when nothing has been published", async () => {
+    apiFetch.mockResolvedValue(jsonRes(200, { versions: [] }));
+    const { fetchDemoLive } = await import("./demoPublish");
+
+    expect(await fetchDemoLive()).toBeNull();
   });
 });
 
@@ -102,17 +112,5 @@ describe("fetchCurrentDemo", () => {
     const { fetchCurrentDemo } = await import("./demoPublish");
 
     expect(await fetchCurrentDemo()).toBeNull();
-  });
-});
-
-describe("rollbackDemo", () => {
-  it("POSTs {version} and resolves the new version", async () => {
-    apiFetch.mockResolvedValue(jsonRes(200, { version: 4 }));
-    const { rollbackDemo } = await import("./demoPublish");
-
-    expect(await rollbackDemo(1)).toBe(4);
-    const [url, init] = apiFetch.mock.calls[0];
-    expect(url).toBe("http://localhost:8000/api/admin/demo/rollback");
-    expect(JSON.parse(init.body)).toEqual({ version: 1 });
   });
 });
