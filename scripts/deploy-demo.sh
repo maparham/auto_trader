@@ -15,6 +15,15 @@
 # CLERK_AUTHORIZED_PARTIES. VITE_CLERK_PUBLISHABLE_KEY is baked into the
 # frontend build. The preflight check fails the deploy if Clerk vars are missing.
 #
+# Broker credentials are SYNCED to the box from backend/.env on every backend
+# deploy (see "backend: sync broker credentials" below), so rotating a key means
+# editing backend/.env and re-running this script — never hand-editing
+# /etc/auto-trader/demo.env. Only the broker-credential keys are touched; the
+# box's hosted-only settings (Clerk, ADMIN_*, CORS_ORIGINS, FRONTEND_URL) are
+# never read from the local file and never removed. Local-only infrastructure
+# (COMPUTE_*, TELEGRAM_*) is deliberately NOT synced: those point at this
+# laptop / would change what the box does, not how it authenticates.
+#
 # Optional box env: CLERK_SECRET_KEY — backend only, powers the admin console
 # Users panel (/admin). Without it the panel reports "Clerk not configured".
 # It must never reach the browser; the frontend build below fails closed if a
@@ -63,8 +72,22 @@ echo "==> preflight: broker credentials (if any) must be admin-gated"
 # dealing to every signed-in user, so that combination fails the deploy.
 # The cred regex matches env ASSIGNMENTS only (comments legitimately mention
 # broker names); keep it in sync with config.py's env_prefix set.
+ROOT="$(git rev-parse --show-toplevel)"
+# Broker-credential keys this script owns on the box. Keep in sync with
+# config.py's env_prefix set (and with the cred regex just below).
+CRED_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|OANOR_[A-Z_]*)='
+LOCAL_ENV="$ROOT/backend/.env"
+SYNC_CREDS=0
+if [ "$DO_BACKEND" = 1 ] && [ -f "$LOCAL_ENV" ] \
+   && grep -Eq "$CRED_KEYS.+" "$LOCAL_ENV"; then
+  SYNC_CREDS=1
+fi
+
 rc=0
 "${SSH[@]}" "$HOST" 'grep -Eiq "^[a-z_]*(capital|mt5|metaapi|oanor)[a-z0-9_]*=|^ig_" /etc/auto-trader/demo.env' || rc=$?
+# A deploy that is about to PUSH creds needs the same gate as a box that
+# already holds them — otherwise syncing would quietly bypass this check.
+if [ "$rc" -eq 1 ] && [ "$SYNC_CREDS" = 1 ]; then rc=0; fi
 if [ "$rc" -eq 0 ]; then
   rc2=0
   "${SSH[@]}" "$HOST" 'grep -Eq "^ADMIN_EMAILS=..*|^ADMIN_USER_IDS=..*" /etc/auto-trader/demo.env' || rc2=$?
@@ -80,7 +103,6 @@ elif [ "$rc" -ne 1 ]; then
   exit 1
 fi
 
-ROOT="$(git rev-parse --show-toplevel)"
 HEAD_SHA="$(git -C "$ROOT" rev-parse --short HEAD)"
 WT="$(mktemp -d)/demo-deploy"
 cleanup() { git -C "$ROOT" worktree remove --force "$WT" 2>/dev/null || true; }
@@ -95,6 +117,34 @@ if [ "$DO_BACKEND" = 1 ]; then
     --exclude '__pycache__' --exclude '*.db' --exclude '.pytest_cache' \
     -e "ssh -i $SSH_KEY -o BatchMode=yes" \
     "$WT/backend/" "$HOST:/opt/auto-trader/backend/"
+
+  if [ "$SYNC_CREDS" = 1 ]; then
+    echo "==> backend: sync broker credentials -> $HOST:/etc/auto-trader/demo.env"
+    # Values travel over stdin, never on the remote command line (argv is world
+    # readable via ps on the box). The remote side rewrites the file in place:
+    # every line for a synced KEY is dropped (which also collapses the
+    # duplicate assignments a hand-edit can leave behind) and the incoming
+    # values are appended; every other line is preserved byte for byte.
+    grep -E "$CRED_KEYS.+" "$LOCAL_ENV" \
+      | "${SSH[@]}" "$HOST" '
+      set -e
+      incoming="$(mktemp)"; merged="$(mktemp)"
+      trap "rm -f $incoming $merged" EXIT
+      cat > "$incoming"
+      keys="$(sed -n "s/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p" "$incoming" | sort -u)"
+      cp /etc/auto-trader/demo.env "$merged"
+      for k in $keys; do
+        grep -v "^$k=" "$merged" > "$merged.tmp" || true
+        mv "$merged.tmp" "$merged"
+      done
+      cat "$incoming" >> "$merged"
+      sudo cp /etc/auto-trader/demo.env /etc/auto-trader/demo.env.bak
+      sudo chmod 600 /etc/auto-trader/demo.env.bak  # a NEW file: umask, not 600
+      sudo cp "$merged" /etc/auto-trader/demo.env
+      sudo chmod 600 /etc/auto-trader/demo.env
+      echo "    synced: $(echo $keys | tr "\n" " ")"
+    '
+  fi
 
   echo "==> backend: pip install + restart auto-trader-demo"
   "${SSH[@]}" "$HOST" '

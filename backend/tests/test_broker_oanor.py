@@ -40,8 +40,11 @@ def test_rows_to_candles_ascending_closed_only():
     # 06-10 is still forming at noon UTC → dropped; remainder ascending
     assert [c.time.day for c in candles] == [8, 9]
     c = candles[-1]
+    # open/close come back swapped on purpose: oanor's "open" is the day's LAST
+    # price and its "close" the first (its own `change` field is computed off
+    # "open"). Read literally, every candle drew inverted.
     assert (c.open, c.high, c.low, c.close, c.volume) == (
-        1785100.0, 1785200.0, 1757800.0, 1758050.0, 0.0)
+        1758050.0, 1785200.0, 1757800.0, 1785100.0, 0.0)
 
 
 def test_rows_to_candles_drops_zero_and_missing_ohlc():
@@ -122,12 +125,14 @@ def test_get_recent_candles_tails_count(monkeypatch, broker):
     assert [c.time.day for c in candles] == [8, 9]
 
 
-def test_get_quote_returns_close_as_mid(monkeypatch, broker):
+def test_get_quote_returns_the_last_price_as_mid(monkeypatch, broker):
     payload = {"status": "ok", "success": True,
                "data": {"symbol": "usd", "close": 1758050, "open": 1785100,
                         "high": 1785200, "low": 1757800, "date": "2026/06/10"}}
     calls = _patch_api(monkeypatch, [payload])
-    assert asyncio.run(broker.get_quote("usd")) == (1758050.0, 1758050.0)
+    # oanor's "open" is the day's LAST price (see _rows_to_candles), so that is
+    # the live level — "close" would be the day's opening rate.
+    assert asyncio.run(broker.get_quote("usd")) == (1785100.0, 1785100.0)
     assert calls == [("/v1/price", {"symbol": "usd"})]
 
 

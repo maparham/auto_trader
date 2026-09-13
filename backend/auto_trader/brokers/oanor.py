@@ -46,17 +46,24 @@ def _rows_to_candles(rows: list[dict], now: datetime | None = None) -> list[Cand
 
     Rows with missing/zero OHLC are dropped (upstream padding, not real
     sessions), as is any bar whose day hasn't completed yet — only closed bars
-    may reach the candle cache."""
+    may reach the candle cache.
+
+    NOTE the deliberate open/close swap: oanor's `open` is the day's LAST
+    price and its `close` is the day's FIRST. Two independent checks say so —
+    the feed's own `change` field equals open_t - open_{t-1} exactly, and
+    reading the fields literally triples the mean overnight gap
+    (|open_t - close_{t-1}|: 35.5k as-is vs 11.7k swapped, usd/IRR). Taken at
+    face value it inverted every candle: a rising market drew red."""
     if now is None:
         now = datetime.now(timezone.utc)
     out: list[Candle] = []
     for row in rows:
         try:
             t = _parse_date(row["date"])
-            o = float(row["open"])
+            o = float(row["close"])  # see the note above: labels are swapped
             h = float(row["high"])
             low = float(row["low"])
-            c = float(row["close"])
+            c = float(row["open"])
         except (KeyError, TypeError, ValueError):
             continue
         if not (o and h and low and c):
@@ -156,11 +163,15 @@ class OanorBroker(MarketDataBroker):
         return candles[-count:]
 
     async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
-        """Latest bazaar price as (close, close): the feed publishes one rate,
+        """Latest bazaar price as (last, last): the feed publishes one rate,
         no bid/ask spread. Lets watchlists show a live-ish IRR level; fills
-        simulated off it carry no spread cost."""
+        simulated off it carry no spread cost.
+
+        The latest price is the field oanor labels `open` — see the swap note
+        on _rows_to_candles. Reading `close` here reported the day's OPENING
+        rate as the live level."""
         payload = await self._get("/v1/price", {"symbol": epic})
-        close = (payload.get("data") or {}).get("close")
+        close = (payload.get("data") or {}).get("open")
         if not close:
             return (None, None)
         return (float(close), float(close))
