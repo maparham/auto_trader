@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-// The layout menu's admin-only quick publish: a per-row action that publishes
-// just that layout as the public demo, behind an inline confirm (publishing
-// replaces the live demo, so a stray click must not fire it).
+// The layout menu's admin-only quick publish: a top-level action that
+// publishes the ACTIVE layout as the public demo, behind an inline confirm
+// (publishing replaces the live demo, so a stray click must not fire it).
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installMemStorage } from "./lib/testMemStorage";
@@ -66,11 +66,11 @@ function renderMgr() {
 }
 
 describe("layout menu quick publish", () => {
-  it("publishes the row's layout after an inline confirm", async () => {
+  it("publishes the active layout after an inline confirm", async () => {
     publishDemoLayoutOnly.mockResolvedValue(7);
     renderMgr();
 
-    fireEvent.click(screen.getByLabelText("Publish Alpha as demo"));
+    fireEvent.click(screen.getByText("Publish as public demo…"));
     expect(publishDemoLayoutOnly).not.toHaveBeenCalled(); // confirm first
     expect(screen.getByText('Replace the live demo with "Alpha"?')).toBeTruthy();
 
@@ -81,7 +81,7 @@ describe("layout menu quick publish", () => {
 
   it("cancel closes the confirm without publishing", () => {
     renderMgr();
-    fireEvent.click(screen.getByLabelText("Publish Alpha as demo"));
+    fireEvent.click(screen.getByText("Publish as public demo…"));
     fireEvent.click(screen.getByText("Cancel"));
     expect(screen.queryByText('Replace the live demo with "Alpha"?')).toBeNull();
     expect(publishDemoLayoutOnly).not.toHaveBeenCalled();
@@ -92,7 +92,7 @@ describe("layout menu quick publish", () => {
       new Error("not available on Yahoo Finance: NOPE"),
     );
     renderMgr();
-    fireEvent.click(screen.getByLabelText("Publish Alpha as demo"));
+    fireEvent.click(screen.getByText("Publish as public demo…"));
     fireEvent.click(screen.getByText("Publish"));
     expect(await screen.findByText(/not available on Yahoo Finance: NOPE/)).toBeTruthy();
   });
@@ -100,6 +100,6 @@ describe("layout menu quick publish", () => {
   it("is hidden for non-admins", () => {
     isAdmin = false;
     renderMgr();
-    expect(screen.queryByLabelText("Publish Alpha as demo")).toBeNull();
+    expect(screen.queryByText("Publish as public demo…")).toBeNull();
   });
 });

@@ -329,6 +329,18 @@ export default function LayoutManager({
                 }}
               />
             </li>
+            {canPublish && active && (
+              <li
+                className="layout-mgr-action"
+                onClick={() => {
+                  setPubConfirm(active);
+                  setPubMsg(null);
+                }}
+              >
+                <span className="layout-mgr-action-icon">🌐</span>
+                <span className="layout-mgr-action-text">Publish as public demo…</span>
+              </li>
+            )}
             {importError && (
               <li className="layout-mgr-action layout-mgr-import-error">
                 <span className="layout-mgr-action-icon">⚠</span>
@@ -410,22 +422,6 @@ export default function LayoutManager({
                           ⇩
                         </button>
                       </Tooltip>
-                      {canPublish && (
-                        <Tooltip
-                          content={["Publish as the public demo", "Replaces the live demo"]}
-                        >
-                          <button
-                            className="act"
-                            aria-label={`Publish ${l.name} as demo`}
-                            onClick={() => {
-                              setPubConfirm(l);
-                              setPubMsg(null);
-                            }}
-                          >
-                            🌐
-                          </button>
-                        </Tooltip>
-                      )}
                       <Tooltip content="Delete">
                         <button
                           className="act"
