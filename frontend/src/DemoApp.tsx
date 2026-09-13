@@ -3,6 +3,7 @@ import App from "./App";
 import { setDemoMode } from "./lib/demoMode";
 import { setPersistBroker } from "./lib/persist/core";
 import { fetchDemoSnapshot, seedDemoLayout } from "./lib/demoSnapshot";
+import { exitDemoPreview } from "./lib/demoPreview";
 
 /** Signed-out visitors boot the real app in a read-only demo instead of the
  *  sign-in card. `setDemoMode()` / `setPersistBroker()` run at the top of the
@@ -14,11 +15,17 @@ import { fetchDemoSnapshot, seedDemoLayout } from "./lib/demoSnapshot";
  *  `if (!ready) return null` gate below keeps `<App />` from mounting (and
  *  touching persistence) before it does.
  *
+ *  `preview` is the admin's "View" button from Settings > Public demo: the
+ *  same component in a SIGNED-IN tab, so an admin can see what visitors get
+ *  without signing out. Safe because the preview tab boots on its own key
+ *  namespace (lib/demoPreview.ts) and demo mode keeps the backend mirror off,
+ *  so the seeded layout cannot touch the admin's real workspace.
+ *
  *  A published demo snapshot (backend `/api/demo/snapshot`) seeds a curated
  *  layout before `<App />` mounts. No snapshot yet (never published, or the
  *  fetch failed) still renders the app - it just opens on App's own default
  *  single chart instead of a curated one. */
-export default function DemoApp() {
+export default function DemoApp({ preview = false }: { preview?: boolean } = {}) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -36,5 +43,17 @@ export default function DemoApp() {
   }, []);
 
   if (!ready) return null; // same treatment AccountGate uses while its gate is pending
-  return <App />;
+  return (
+    <>
+      {preview && (
+        <div className="demo-preview-bar">
+          <span>Previewing the public demo as a signed-out visitor sees it.</span>
+          <button type="button" onClick={exitDemoPreview}>
+            Exit preview
+          </button>
+        </div>
+      )}
+      <App />
+    </>
+  );
 }

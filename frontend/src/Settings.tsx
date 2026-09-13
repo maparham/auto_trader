@@ -14,6 +14,7 @@ import {
   type DemoLive,
 } from "./lib/demoPublish";
 import { describeDemoLayout } from "./lib/demoSnapshot";
+import { enterDemoPreview } from "./lib/demoPreview";
 
 // Demo layout payload ceilings, in bytes of captured JSON. A visitor's
 // localStorage holds roughly 5 MB and seedDemoLayout cannot report a quota
@@ -872,6 +873,13 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
               ) : (
                 <span />
               )}
+              {/* Opens the live demo in this tab, on its own key namespace,
+                  so the admin never has to sign out to check a publish. */}
+              <Tooltip content={demoLive == null ? "Nothing published yet" : undefined}>
+                <button type="button" onClick={enterDemoPreview} disabled={demoLive == null}>
+                  View
+                </button>
+              </Tooltip>
               <button
                 type="button"
                 className="demo-publish"

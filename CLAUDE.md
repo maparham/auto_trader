@@ -219,7 +219,15 @@ is what `SignedOut` boots instead of the sign-in card; it seeds the
 published layout (falling back to App's own default chart when nothing has
 been published yet) and flips a one-way `isDemoMode()` latch before `App`
 mounts. `?sign_in=1` bypasses `DemoApp` and reaches the sign-in card
-directly. Demo sessions never touch `/api/state` or dial `/ws/state`;
+directly, and `?demo=preview` (Settings > Public demo > View) boots the same
+`DemoApp` for a SIGNED-IN admin, so checking a publish no longer means
+signing out. That is only safe because `lib/demoPreview.ts` moves the whole
+workspace namespace aside for the tab: `workspaceKeys.ts` picks
+`auto-trader-preview` over `auto-trader` when the param is present, decided
+at module-init time from the URL so every `${PREFIX}.x` constant in the app
+agrees. Seeding the demo layout therefore cannot land on the admin's real
+keys, exiting just deletes the preview namespace, and demo mode keeps the
+backend mirror off throughout. Demo sessions never touch `/api/state` or dial `/ws/state`;
 `isDemoMode()` gates both out of `persist/core.ts`, so drawing and indicator
 edits round-trip through localStorage only and survive a reload without ever
 reaching the backend.

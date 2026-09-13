@@ -16,6 +16,7 @@ import { CLERK_ENABLED } from './lib/authToken.ts'
 import { parseSnapshotParams } from './lib/snapshotBoot.ts'
 import { parseShellAuthParams } from './lib/shellAuthBoot.ts'
 import { shouldShowSignIn } from './lib/demoBoot.ts'
+import { isDemoPreview } from './lib/demoPreview.ts'
 import { shouldBootMobile } from './lib/mobileBoot.ts'
 import { shouldBootAdmin } from './lib/adminBoot.ts'
 import { startShellStatusMirror } from './lib/shellStatus.ts'
@@ -37,6 +38,13 @@ const shellAuthParams = parseShellAuthParams(window.location.search)
 // Decided once so both the Clerk-enabled and no-Clerk fallback branches agree.
 const bootMobile = shouldBootMobile()
 
+// ?demo=preview: an admin looking at the published demo from a signed-in tab
+// (Settings > Public demo > View). It renders the visitor's DemoApp, but on
+// its own workspace key namespace - see lib/demoPreview.ts. Deliberately
+// OUTSIDE AccountGate: the preview has no account state to gate, and staying
+// out keeps it from hydrating the signed-in workspace it is standing in for.
+const bootDemoPreview = isDemoPreview()
+
 // The admin console at /admin. Unlike the snapshot boot it renders INSIDE the
 // Clerk tree (it needs ClerkTokenBridge to have run so apiFetch carries a
 // token), and the path wins over the mobile boot.
@@ -56,6 +64,8 @@ createRoot(document.getElementById('root')!).render(
         <SignedIn>
           {shellAuthParams ? (
             <ShellAuthHandoff params={shellAuthParams} />
+          ) : bootDemoPreview ? (
+            <DemoApp preview />
           ) : (
             <AccountGate>
               <ImpersonationBanner />
@@ -71,6 +81,8 @@ createRoot(document.getElementById('root')!).render(
           )}
         </SignedOut>
       </ClerkProvider>
+    ) : bootDemoPreview ? (
+      <DemoApp preview />
     ) : bootAdmin ? (
       <AdminApp />
     ) : bootMobile ? (

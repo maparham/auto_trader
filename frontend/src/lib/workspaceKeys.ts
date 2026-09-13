@@ -1,9 +1,15 @@
-// The workspace key namespace, and the one way to clear it. A leaf module with
-// no imports of its own, deliberately: persist/core imports impersonation (for
-// the mirror gate) and impersonation needs the wipe, so parking the wipe in
-// either of them would close an import cycle.
+// The workspace key namespace, and the one way to clear it. Imports nothing
+// but demoPreview (itself a leaf), deliberately: persist/core imports
+// impersonation (for the mirror gate) and impersonation needs the wipe, so
+// parking the wipe in either of them would close an import cycle.
+import { isDemoPreview, PREVIEW_PREFIX } from "./demoPreview";
 
-export const PREFIX = "auto-trader";
+/** Every workspace key hangs off this. An admin previewing the public demo
+ *  gets a namespace of its own so the seeded demo layout cannot land on top
+ *  of their real one; see demoPreview.ts. Decided once at module init from
+ *  the URL, so the many `const KEY = `${PREFIX}.x`` constants around the app
+ *  are correct no matter what order modules load in. */
+export const PREFIX = isDemoPreview() ? PREVIEW_PREFIX : "auto-trader";
 
 /** Remove every namespaced workspace key from localStorage.
  *

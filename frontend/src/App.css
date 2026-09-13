@@ -6843,12 +6843,25 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
 .demo-stat { color: var(--text); font-size: 13px; }
 /* No --warn token in the palette; same fallback hex as the backtest presets. */
 .demo-stat-warn { color: var(--warn, #c08a2a); }
-.demo-staged-row, .demo-ver-row { padding-top: 8px; padding-bottom: 8px; }
-.demo-ver-row label { font-size: 12px; }
-.demo-publish-row { padding-top: 8px; }
+.demo-staged-row { padding-top: 8px; padding-bottom: 8px; }
+/* View sits left of Publish, so the row needs its own gap between them. */
+.demo-publish-row { padding-top: 8px; gap: 8px; }
 .demo-publish {
   background: var(--accent, #2962ff); border: 1px solid var(--accent, #2962ff); color: #fff;
   min-width: 96px;
 }
 .demo-publish:hover:not(:disabled) { filter: brightness(1.08); }
 .demo-publish:disabled { opacity: 0.5; cursor: default; filter: none; }
+
+/* The admin preview of the published demo (?demo=preview). Sits above the app
+   rather than over it, so nothing in the visitor view is covered up. */
+.demo-preview-bar {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 6px 12px; font-size: 13px;
+  background: var(--warn, #c08a2a); color: #fff;
+}
+.demo-preview-bar button {
+  background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.5); color: #fff;
+  padding: 2px 10px; border-radius: 4px; cursor: pointer;
+}
+.demo-preview-bar button:hover { background: rgba(0, 0, 0, 0.32); }
