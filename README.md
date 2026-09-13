@@ -3,6 +3,8 @@
 An intraday trading app with a TradingView-style chart. You can backtest
 strategies, paper trade, and set price alerts.
 
+Built with heavy use of LLM tools throughout the development process.
+
 - **Backend**: Python (FastAPI + asyncio). Broker adapters, a backtest engine,
   strategies, and a server-side alert engine. A strategy runs the same way in
   backtest, paper, and live mode; only the data source and order executor
