@@ -57,19 +57,11 @@ fn hide_window(app: &tauri::AppHandle) {
     }
 }
 
-/// Colour the menu-bar glyph by live-engine state: green armed, red lost lease,
-/// grey otherwise. Called by the web app on each transition.
+/// The menu-bar glyph is a single static template image; it no longer changes
+/// with live-engine state. The command stays registered because the web app
+/// still invokes it on every transition (lib/shellStatus.ts).
 #[tauri::command]
-fn set_status(app: tauri::AppHandle, state: String) {
-    let bytes: &[u8] = match state.as_str() {
-        "live" => include_bytes!("../icons/tray-live.png"),
-        "error" => include_bytes!("../icons/tray-error.png"),
-        _ => include_bytes!("../icons/tray-idle.png"),
-    };
-    if let (Some(tray), Ok(img)) = (app.tray_by_id("main-tray"), Image::from_bytes(bytes)) {
-        let _ = tray.set_icon(Some(img));
-    }
-}
+fn set_status(_app: tauri::AppHandle, _state: String) {}
 
 /// Post a real macOS banner. The web app calls this instead of the Web
 /// Notification API when it detects the shell: the window is normally hidden,
@@ -301,8 +293,8 @@ fn main() {
                 .build()?;
 
             TrayIconBuilder::with_id("main-tray")
-                .icon(Image::from_bytes(include_bytes!("../icons/tray-idle.png"))?)
-                .icon_as_template(false)
+                .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+                .icon_as_template(true)
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
