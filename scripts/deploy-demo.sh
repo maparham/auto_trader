@@ -133,8 +133,13 @@ fi
 
 echo "==> smoke test"
 curl -sf -m 15 "$API_BASE/health" >/dev/null || { echo "FAIL: $API_BASE/health" >&2; exit 1; }
+# /api/brokers is on the public-demo GET allowlist (api/demo_access.py), so it
+# answers 200 as the shared demo principal. Prove hosted-mode auth is on with a
+# route that is NOT allowlisted.
+AUTH_CODE="$(curl -s -m 15 -o /dev/null -w '%{http_code}' "$API_BASE/api/state")"
+[ "$AUTH_CODE" = 401 ] || { echo "FAIL: unauthenticated /api/state returned $AUTH_CODE (want 401 — is the box env hosted-mode?)" >&2; exit 1; }
 BROKERS_CODE="$(curl -s -m 15 -o /dev/null -w '%{http_code}' "$API_BASE/api/brokers")"
-[ "$BROKERS_CODE" = 401 ] || { echo "FAIL: unauthenticated /api/brokers returned $BROKERS_CODE (want 401 — is the box env hosted-mode?)" >&2; exit 1; }
+[ "$BROKERS_CODE" = 200 ] || { echo "FAIL: demo /api/brokers returned $BROKERS_CODE (want 200)" >&2; exit 1; }
 CORS="$(curl -s -m 15 -o /dev/null -w '%{http_code}' -X OPTIONS \
   -H 'Origin: https://chartkar.app' -H 'Access-Control-Request-Method: GET' \
   "$API_BASE/api/brokers")"
