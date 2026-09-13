@@ -6,6 +6,7 @@ installMemStorage();
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   captureDemoLayout,
+  captureDemoLayoutFor,
   describeDemoLayout,
   fetchDemoSnapshot,
   getDemoSnapshot,
@@ -123,6 +124,32 @@ describe("seedDemoLayout / captureDemoLayout", () => {
     } finally {
       setPersistBroker("dukascopy");
     }
+  });
+});
+
+describe("captureDemoLayoutFor", () => {
+  it("shrinks the index to the one layout, points the default at it, and keeps its scope content", () => {
+    const body = JSON.stringify({ tabs: [{ cells: [{ scope: "tab.TB" }] }] });
+    seedDemoLayout({
+      layouts: '[{"id":"a","name":"A"},{"id":"b","name":"B"}]',
+      defaultLayoutId: '"a"',
+      "layout.a": '{"tabs":[],"activeTabId":""}',
+      "layout.b": body,
+      "scope:tab.TB.drawings": "[1]",
+    });
+    expect(captureDemoLayoutFor("b")).toEqual({
+      layouts: '[{"id":"b","name":"B"}]',
+      defaultLayoutId: '"b"',
+      "layout.b": body,
+      "scope:tab.TB.drawings": "[1]",
+    });
+  });
+
+  it("returns null for an id the saved index does not carry", () => {
+    seedDemoLayout({ layouts: '[{"id":"a","name":"A"}]' });
+    expect(captureDemoLayoutFor("zzz")).toBeNull();
+    localStorage.clear();
+    expect(captureDemoLayoutFor("a")).toBeNull();
   });
 });
 

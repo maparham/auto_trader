@@ -7,7 +7,7 @@
 // only the newest row (see fetchDemoLive). See auto_trader/api's demo router (backend/tests/test_demo_router.py)
 // for the exact request/response shapes this mirrors.
 import { API_BASE, apiFetch, errorDetail } from "./http";
-import { captureDemoLayout } from "./demoSnapshot";
+import { captureDemoLayout, captureDemoLayoutFor } from "./demoSnapshot";
 import { remapDemoLayout, remapWatchlist } from "./demoRemap";
 import { fetchAllMarkets, type Instrument } from "./feed";
 
@@ -68,12 +68,34 @@ export async function fetchCurrentDemo(): Promise<CurrentDemo | null> {
  *  the message - when any chart or watchlist symbol has no yfinance
  *  equivalent. Also throws with the server's message on a 422. */
 export async function publishDemo(opts: PublishDemoOpts): Promise<number> {
+  return remapAndPublish(captureDemoLayout(), opts);
+}
+
+/** Publish ONE saved layout as the demo (the layout menu's per-row action):
+ *  the payload's index carries just that layout, pointed at as the default,
+ *  so a visitor boots straight into it. The live demo's watchlist and canned
+ *  backtests are carried forward unchanged - this flow only swaps the layout;
+ *  Settings > Public demo stays the place to edit those. */
+export async function publishDemoLayoutOnly(id: string): Promise<number> {
+  const captured = captureDemoLayoutFor(id);
+  if (!captured) throw new Error("layout not found; save it first");
+  const live = await fetchCurrentDemo();
+  return remapAndPublish(captured, {
+    watchlist: live?.watchlist ?? [],
+    backtests: live?.backtests ?? [],
+  });
+}
+
+async function remapAndPublish(
+  captured: Record<string, string>,
+  opts: PublishDemoOpts,
+): Promise<number> {
   const catalogue = new Map<string, Instrument>(
     (await fetchAllMarkets(DEMO_PUBLISH_BROKER)).map((i) => [i.epic, i]),
   );
   if (catalogue.size === 0)
     throw new Error("could not load the Yahoo Finance catalogue; try again");
-  const { layout, unmapped } = remapDemoLayout(captureDemoLayout(), catalogue);
+  const { layout, unmapped } = remapDemoLayout(captured, catalogue);
   const wl = remapWatchlist(opts.watchlist, catalogue);
   const bad = [...new Set([...unmapped, ...wl.unmapped])];
   if (bad.length)

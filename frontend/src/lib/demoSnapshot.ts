@@ -133,6 +133,36 @@ export function captureDemoLayout(): Record<string, string> {
   return out;
 }
 
+/** Like captureDemoLayout, but limited to ONE saved layout (the layout menu's
+ *  per-row "Publish as demo"): the index shrinks to just that row and
+ *  defaultLayoutId points at it, so a visitor boots straight into it. Null
+ *  when the id is not in the saved index. */
+export function captureDemoLayoutFor(id: string): Record<string, string> | null {
+  const layoutsRaw = localStorage.getItem(keyForSuffix(LAYOUTS_SUFFIX));
+  if (layoutsRaw == null) return null;
+  let meta: { id: string } | undefined;
+  try {
+    const list = JSON.parse(layoutsRaw) as Array<{ id: string }>;
+    meta = Array.isArray(list) ? list.find((l) => l.id === id) : undefined;
+  } catch {
+    return null;
+  }
+  if (!meta) return null;
+  const out: Record<string, string> = {
+    [LAYOUTS_SUFFIX]: JSON.stringify([meta]),
+    [DEFAULT_LAYOUT_SUFFIX]: JSON.stringify(id),
+  };
+  const bodySuffix = layoutBodySuffix(id);
+  const raw = localStorage.getItem(keyForSuffix(bodySuffix));
+  if (raw != null) {
+    out[bodySuffix] = raw;
+    for (const scope of scopesOfBody(raw))
+      for (const [s, v] of Object.entries(readScopeContent(scope)))
+        if (scopeSuffixWanted(s)) out[`${SCOPE_MARK}${scope}.${s}`] = v;
+  }
+  return out;
+}
+
 /** Write a published `layout` map into localStorage under whichever broker
  *  persist/core's persistBroker currently points at. DemoApp calls
  *  setPersistBroker("dukascopy") first. */

@@ -22,6 +22,10 @@ vi.mock("./http", () => ({
 
 vi.mock("./demoSnapshot", () => ({
   captureDemoLayout: () => ({ layouts: "[]" }),
+  captureDemoLayoutFor: (id: string) =>
+    id === "L1"
+      ? { layouts: '[{"id":"L1","name":"Alpha"}]', defaultLayoutId: '"L1"' }
+      : null,
 }));
 
 // The yfinance catalogue the remap resolves against (see demoRemap.test.ts
@@ -93,6 +97,52 @@ describe("publishDemo", () => {
     await expect(
       publishDemo({ watchlist: ["US100"], backtests: [] }),
     ).rejects.toThrow("layout is empty");
+  });
+});
+
+describe("publishDemoLayoutOnly", () => {
+  it("publishes the single-layout capture, carrying the live watchlist/backtests forward", async () => {
+    apiFetch.mockImplementation(async (url: string) =>
+      url.endsWith("/api/demo/snapshot")
+        ? jsonRes(200, {
+            version: 5,
+            payload: { watchlist: ["GOLD"], backtests: [{ name: "A", result: {} }] },
+          })
+        : jsonRes(200, { version: 6 }),
+    );
+    const { publishDemoLayoutOnly } = await import("./demoPublish");
+
+    expect(await publishDemoLayoutOnly("L1")).toBe(6);
+    const post = apiFetch.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(post).toBeTruthy();
+    expect(JSON.parse(post![1].body)).toEqual({
+      layout: { layouts: '[{"id":"L1","name":"Alpha"}]', defaultLayoutId: '"L1"' },
+      broker: "yfinance",
+      watchlist: ["XAUUSD"], // the live demo's GOLD, remapped like any publish
+      backtests: [{ name: "A", result: {} }],
+    });
+  });
+
+  it("treats no published demo (404) as empty watchlist and backtests", async () => {
+    apiFetch.mockImplementation(async (url: string) =>
+      url.endsWith("/api/demo/snapshot")
+        ? jsonRes(404, { detail: "nothing published" })
+        : jsonRes(200, { version: 1 }),
+    );
+    const { publishDemoLayoutOnly } = await import("./demoPublish");
+
+    expect(await publishDemoLayoutOnly("L1")).toBe(1);
+    const post = apiFetch.mock.calls.find(([, init]) => init?.method === "POST");
+    const body = JSON.parse(post![1].body);
+    expect(body.watchlist).toEqual([]);
+    expect(body.backtests).toEqual([]);
+  });
+
+  it("throws before any request when the layout is not saved", async () => {
+    const { publishDemoLayoutOnly } = await import("./demoPublish");
+
+    await expect(publishDemoLayoutOnly("NOPE")).rejects.toThrow("layout not found");
+    expect(apiFetch).not.toHaveBeenCalled();
   });
 });
 

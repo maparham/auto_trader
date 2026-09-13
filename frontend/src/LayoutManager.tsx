@@ -10,6 +10,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
+import { useIsAdmin } from "./admin/useIsAdmin";
+import { isDemoMode } from "./lib/demoMode";
+import { publishDemoLayoutOnly } from "./lib/demoPublish";
 import {
   exportLayout,
   loadLayouts,
@@ -71,8 +74,14 @@ export default function LayoutManager({
   const [showSaveAs, setShowSaveAs] = useState(false);
   const [importError, setImportError] = useState(false);
   const [localRev, setLocalRev] = useState(0);
+  const [pubConfirm, setPubConfirm] = useState<LayoutMeta | null>(null);
+  const [pubBusy, setPubBusy] = useState(false);
+  const [pubMsg, setPubMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Admin-only quick publish (probes /api/admin/whoami on first open). Hidden
+  // in demo/preview tabs: their workspace namespace is not the real one.
+  const canPublish = useIsAdmin(open) && !isDemoMode();
 
   const layouts = useMemo<LayoutMeta[]>(
     () => loadLayouts(),
@@ -93,6 +102,8 @@ export default function LayoutManager({
         setEditing(null);
         setShowSaveAs(false);
         setImportError(false);
+        setPubConfirm(null);
+        setPubMsg(null);
       }
     };
     document.addEventListener("mousedown", onDown);
@@ -128,6 +139,21 @@ export default function LayoutManager({
     setEditing(null);
     setShowSaveAs(false);
     setImportError(false);
+    setPubConfirm(null);
+    setPubMsg(null);
+  };
+
+  const doPublish = async (l: LayoutMeta) => {
+    setPubBusy(true);
+    try {
+      await publishDemoLayoutOnly(l.id);
+      setPubMsg({ ok: true, text: `Live demo is now "${l.name}".` });
+      setPubConfirm(null);
+    } catch (e) {
+      setPubMsg({ ok: false, text: e instanceof Error ? e.message : "publish failed" });
+    } finally {
+      setPubBusy(false);
+    }
   };
 
   // A chosen file either becomes a new layout (App switches to it) or lights
@@ -384,6 +410,22 @@ export default function LayoutManager({
                           ⇩
                         </button>
                       </Tooltip>
+                      {canPublish && (
+                        <Tooltip
+                          content={["Publish as the public demo", "Replaces the live demo"]}
+                        >
+                          <button
+                            className="act"
+                            aria-label={`Publish ${l.name} as demo`}
+                            onClick={() => {
+                              setPubConfirm(l);
+                              setPubMsg(null);
+                            }}
+                          >
+                            🌐
+                          </button>
+                        </Tooltip>
+                      )}
                       <Tooltip content="Delete">
                         <button
                           className="act"
@@ -404,6 +446,38 @@ export default function LayoutManager({
 
           {layouts.length === 0 && (
             <div className="layout-mgr-empty">No saved layouts</div>
+          )}
+
+          {/* ── Quick publish confirm/result (admin only) ── */}
+          {pubConfirm && (
+            <>
+              <div className="layout-mgr-divider" />
+              <div className="layout-mgr-publish">
+                <span className="layout-mgr-publish-text">
+                  Replace the live demo with "{pubConfirm.name}"?
+                </span>
+                <span className="layout-mgr-publish-btns">
+                  <button
+                    className="layout-mgr-publish-go"
+                    disabled={pubBusy}
+                    onClick={() => void doPublish(pubConfirm)}
+                  >
+                    {pubBusy ? "Publishing…" : "Publish"}
+                  </button>
+                  <button disabled={pubBusy} onClick={() => setPubConfirm(null)}>
+                    Cancel
+                  </button>
+                </span>
+              </div>
+            </>
+          )}
+          {pubMsg && (
+            <>
+              {!pubConfirm && <div className="layout-mgr-divider" />}
+              <div className={`layout-mgr-publish-msg${pubMsg.ok ? "" : " err"}`}>
+                {pubMsg.text}
+              </div>
+            </>
           )}
         </div>
       )}

@@ -226,6 +226,13 @@ refused with a scoping message, not a generic 403. A per-IP token bucket in
 `api/demo_limit.py` throttles the surface, tunable without a restart via
 `DEMO_RATE_PER_MIN` (default 120) and `DEMO_RATE_BURST` (default 40).
 
+Besides Settings > Public demo, the layout dropdown carries an admin-only
+per-row quick publish (`LayoutManager.tsx`, 🌐 icon, inline confirm): it
+publishes JUST that layout via `publishDemoLayoutOnly` /
+`captureDemoLayoutFor` (index shrunk to that one row, default pointer set to
+it) and carries the live demo's watchlist and canned backtests forward
+unchanged, so the Settings panel stays the only place those are edited.
+
 Publishing happens from Settings > Public demo, admin-only: it bundles the
 current layout, an optional watchlist and a list of named backtests into a
 payload and writes it as a new row in `core/demo_store.py`, an append-only,
