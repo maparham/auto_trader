@@ -6643,7 +6643,10 @@ span.bt-leg-short { color: var(--neg); }
    come from lib/liveEdge.goLivePillStyle). Only rendered while the newest bar
    is off-screen, so it costs no chrome once you are back at the live edge. */
 .chart-golive {
-  position: absolute; z-index: 11;
+  /* Above every in-cell overlay (trade pills, alert pills/tags, the live price
+     label — 51 at most), because it is the only way back to the live edge and a
+     pill stack parked at the right axis would otherwise bury it. */
+  position: absolute; z-index: 52;
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 9px; cursor: pointer;
   font-size: 11.5px; font-weight: 500; color: var(--text-dim);

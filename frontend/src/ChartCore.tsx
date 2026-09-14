@@ -5252,8 +5252,8 @@ export default function ChartCore({
           pointerEvents: "none",
         }}
       />
-      {/* "Back to live" pill (z-index 11 via .chart-golive: above the overlay
-          canvases, below the no-data banner, and the only element in that stack
+      {/* "Back to live" pill (z-index 52 via .chart-golive: above the overlay
+          canvases AND every in-cell pill, and the only element in that stack
           taking pointer events — the canvases stay click-through so the draw
           tools underneath keep working). A separate component owning its own
           onVisibleRangeChange subscription: its label changes on nearly every
