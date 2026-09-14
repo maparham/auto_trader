@@ -1105,9 +1105,12 @@ export function addIndicatorInstance(
   scope: string,
   epic: string,
   type: string,
-  opts?: { config?: SavedIndicatorConfig; forceHidden?: boolean; resolution?: string },
+  opts?: { config?: SavedIndicatorConfig; forceHidden?: boolean; resolution?: string; inset?: boolean },
 ): IndicatorInstance | null {
   const inst: IndicatorInstance = { id: mintInstanceId(chart, type), type };
+  // Gated on capability here too (applyIndicator re-checks), so a caller asking
+  // for inset on a type we do not own is inert rather than a lie on the instance.
+  if (opts?.inset && INSET_CAPABLE.has(type)) inst.inset = true;
   if (!applyIndicator(chart, scope, epic, inst, { config: opts?.config, forceHidden: opts?.forceHidden }))
     return null;
   if (opts?.resolution) applySlopeBarHours(chart, opts.resolution);

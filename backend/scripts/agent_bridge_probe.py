@@ -7,6 +7,7 @@ http://localhost:5173) so a tab is connected. Run:
     cd backend && python3 -m scripts.agent_bridge_probe [--run]
     cd backend && python3 -m scripts.agent_bridge_probe --invoke order.place \
         --args '{"epic": "CS.D.EURUSD.MINI.IP", "side": "buy", "quantity": 1, "type": "market"}'
+    cd backend && python3 -m scripts.agent_bridge_probe --screenshot /tmp/chart.png
 
 With no tab connected the ui_* tools return tool errors ("no UI session
 connected: open the app in a browser"); the probe prints them and carries on.
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 from typing import Any
 
@@ -84,7 +86,32 @@ def show(name: str, res: Any) -> Any:
     return payload(res)
 
 
-async def main(url: str, run: bool, invoke: str | None, args_json: str) -> None:
+async def _screenshot(client: Client, path: str) -> None:
+    """Call ui_screenshot, decode the image block, write it to `path`."""
+    res = await client.call_tool("ui_screenshot", {})
+    print(f"\n== ui_screenshot{' [tool error]' if getattr(res, 'is_error', False) else ''} ==")
+    if getattr(res, "is_error", False):
+        for text in _blocks(res) or ["(no content)"]:
+            print(text)
+        return
+    content = getattr(res, "content", None) or []
+    image = next((c for c in content if getattr(c, "type", None) == "image"), None)
+    if image is None:
+        print("(no image block in result)")
+        for text in _blocks(res) or ["(no content)"]:
+            print(text)
+        return
+    data = base64.b64decode(image.data)
+    with open(path, "wb") as f:
+        f.write(data)
+    print(f"wrote {path} ({len(data)} bytes, {image.mimeType})")
+    for text in _blocks(res):
+        print(text)
+
+
+async def main(
+    url: str, run: bool, invoke: str | None, args_json: str, screenshot: str | None
+) -> None:
     print(f"connecting to {url}")
     async with Client(url) as client:
         tools = await client.list_tools()
@@ -106,6 +133,9 @@ async def main(url: str, run: bool, invoke: str | None, args_json: str) -> None:
         if run:
             res = await client.call_tool("ui_invoke", {"action": "backtest.run", "args": {}})
             await _follow(client, show("ui_invoke backtest.run", res), res)
+
+        if screenshot:
+            await _screenshot(client, screenshot)
 
 
 async def _follow(client: Client, body: Any, res: Any, max_polls: int = 60) -> None:
@@ -139,5 +169,13 @@ if __name__ == "__main__":
     ap.add_argument("--run", action="store_true", help="also trigger backtest.run")
     ap.add_argument("--invoke", help="invoke an arbitrary action by name (e.g. order.place)")
     ap.add_argument("--args", default="{}", help="JSON args for --invoke")
+    ap.add_argument(
+        "--screenshot",
+        nargs="?",
+        const="chart.png",
+        default=None,
+        metavar="PATH",
+        help="call ui_screenshot and write the PNG to PATH (default chart.png)",
+    )
     ns = ap.parse_args()
-    asyncio.run(main(ns.url, ns.run, ns.invoke, ns.args))
+    asyncio.run(main(ns.url, ns.run, ns.invoke, ns.args, ns.screenshot))

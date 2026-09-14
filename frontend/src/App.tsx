@@ -28,6 +28,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import AgentConfirmHost from "./agent/AgentConfirmHost";
 import { initAgentBridge } from "./agent";
 import { setFocusedDrawingsProvider } from "./agent/actions/drawings";
+import { setFocusedChartProvider } from "./agent/actions/chart";
 import { registerAction } from "./agent/registry";
 import SaveDefaultTemplateModal from "./SaveDefaultTemplateModal";
 import BacktestClusterPopover from "./BacktestClusterPopover";
@@ -2501,6 +2502,20 @@ export default function App() {
     setFocusedDrawingsProvider(() =>
       focusedController && focusedCell && symbol
         ? { overlays: focusedController.overlays, epic: symbol.epic, cellId: focusedCell.id }
+        : null,
+    );
+    setFocusedChartProvider(() =>
+      focusedController && focusedController.chart && focusedCell && symbol
+        ? {
+            chart: focusedController.chart,
+            controller: focusedController,
+            scope: focusedController.scope,
+            epic: symbol.epic,
+            cellId: focusedCell.id,
+            resolution: focusedCell.period.resolution,
+            broker: brokerId,
+            setPeriod,
+          }
         : null,
     );
   });

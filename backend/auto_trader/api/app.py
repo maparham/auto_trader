@@ -31,6 +31,7 @@ from auto_trader.core.tick_store import TICK_STORE
 from . import deps
 from .auth import install_auth
 from .guard import cors_origins, install_guards
+from . import mcp_server
 from .mcp_server import mcp_http_app, mcp_session
 from .routers import admin, agent, alerts, backtest, charts, compute, costs, demo, expr, markets, mt5, patterns, pattern_presets, shell_auth, state, strategy, stream, trading, strategies
 
@@ -229,6 +230,7 @@ app.include_router(demo.admin_router)
 # MCP endpoint for the Agent UI Bridge. Mounted LAST so it never shadows API
 # routes; the guard middleware wraps mounts too, so REQUIRE_API_TOKEN covers it.
 app.mount("/mcp", mcp_http_app())
+mcp_server.configure_direct_tools(app)
 
 
 @app.middleware("http")

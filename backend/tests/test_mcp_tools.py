@@ -138,7 +138,8 @@ def test_mcp_lists_the_ui_tools_and_survives_a_second_startup():
         r = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
                    headers=h)
     assert sorted(set(re.findall(r'"name":\s?"(ui_\w+)"', r.text))) == [
-        "ui_actions", "ui_invoke", "ui_read_state", "ui_sessions", "ui_wait",
+        "ui_actions", "ui_invoke", "ui_read_state", "ui_screenshot",
+        "ui_sessions", "ui_wait",
     ]
 
 

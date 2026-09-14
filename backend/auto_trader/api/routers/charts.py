@@ -11,6 +11,7 @@ from auto_trader.core.candle_aggregate import DERIVED, is_derived
 from auto_trader.core.candle_cache import CANDLE_CACHE, active_backfills
 from auto_trader.core.models import Candle, Resolution
 from auto_trader.core.synthetic import SyntheticError, combine, symbols, parse
+from auto_trader.indicators.series_api import compute_indicator_series
 
 from .. import deps
 from ..deps import _parse_resolution, broker_query
@@ -108,6 +109,34 @@ async def candles(
     if not loaded and from_ts is None and resolution not in SECONDS_INTERVALS:
         raise HTTPException(404, f"no data for epic '{epic}' (unknown epic or no history)")
     return [_candle_dto(c) for c in loaded]
+
+
+@router.get("/api/indicators/series")
+async def indicator_series(
+    epic: str,
+    resolution: str = Query(Resolution.MINUTE_5.value),
+    indicator: str = Query(...),
+    length: int | None = Query(None),
+    bars: int = Query(500, ge=1, le=1000),
+    from_ts: int | None = Query(None),
+    to_ts: int | None = Query(None),
+    broker_id: str = Depends(broker_query),
+) -> dict:
+    """Named indicator series over candles (agent-facing). params today:
+    length for EMA/SMA/RSI/ATR; registry indicators use their defaults."""
+    loaded = await deps._fetch_symbol_candles(
+        broker_id, epic, resolution, bars, from_ts, to_ts, "mid",
+        degraded={}, budget_s=CHART_FILL_BUDGET_S, partial={},
+        max_fill_chunks=CHART_PASSTHROUGH_MAX_FILL_CHUNKS,
+    )
+    if not loaded:
+        raise HTTPException(404, f"no data for epic '{epic}'")
+    params = {"length": length} if length is not None else {}
+    try:
+        res = compute_indicator_series(loaded, indicator, params, resolution)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return {"epic": epic, "resolution": resolution, **res}
 
 
 @router.get("/api/candles/synthetic", response_model=list[CandleDTO])

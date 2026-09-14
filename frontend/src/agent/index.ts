@@ -5,6 +5,8 @@ import { registerBacktestActions } from "./actions/backtest";
 import { registerSweepActions } from "./actions/sweep";
 import { registerDealingActions } from "./actions/dealing";
 import { registerDrawingActions } from "./actions/drawings";
+import { registerChartActions } from "./actions/chart";
+import { registerIndicatorActions } from "./actions/indicators";
 
 let initialized = false;
 
@@ -30,6 +32,8 @@ export function initAgentBridge(): void {
     registerSweepActions();
     registerDealingActions();
     registerDrawingActions();
+    registerChartActions();
+    registerIndicatorActions();
   } catch (e) {
     console.debug("agent: actions already registered (HMR?)", e);
   }

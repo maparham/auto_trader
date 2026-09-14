@@ -44,20 +44,34 @@ both are saved open, live wins and backtest just starts closed.
 MCP agents can drive the running UI: connect to `http://localhost:8000/mcp`
 (streamable HTTP). The endpoint only accepts requests whose Host header is
 `localhost`, `127.0.0.1` or `[::1]` on any port (the MCP SDK's DNS-rebinding
-protection), so it is local-only by design: any other Host gets a 421. Tools:
-`ui_sessions`,
-`ui_actions` (self-describing manifest), `ui_invoke`, `ui_wait`,
-`ui_read_state`. Requires the app open in a browser (the bridge executes
-actions in the live tab); no tab connected gives a clear error ("no UI session
-connected: open the app in a browser"). The 15 registered actions today:
-`backtest.*` (config.get, config.set, run, cancel, result, progress), `sweep.*`
-(start, cancel, rows), dealing (`order.place`, `position.close`,
-`order.cancel`), `market.select`, `tab.list`, `panel.backtest.open`. The dealing
-actions require an in-browser Approve click. The
-frontend bridge is on in dev builds and off in production unless
-`VITE_AGENT_BRIDGE=1`. End-to-end probe:
-`cd backend && python3 -m scripts.agent_bridge_probe [--url URL] [--run]
-[--invoke ACTION --args JSON]`.
+protection), so it is local-only by design: any other Host gets a 421.
+
+UI tools (need a connected browser tab): `ui_sessions`, `ui_actions`
+(self-describing manifest), `ui_invoke`, `ui_wait`, `ui_read_state`,
+`ui_screenshot` (returns the focused chart as an image plus a text line
+naming epic/resolution/cell; pairs with `chart.state` for the numbers behind
+the pixels). No tab connected gives a clear error ("no UI session connected:
+open the app in a browser"). The 27 registered actions today, by group:
+`backtest.*` (config.get, config.set, run, cancel, result, progress),
+`sweep.*` (start, cancel, rows), dealing (`order.place`, `position.close`,
+`order.cancel`), `drawing.*` (list, add, remove, clear), `chart.*` (state,
+screenshot, timeframe.set, range.set), `indicator.*` (list, add, set,
+remove), and app shell (`market.select`, `tab.list`,
+`panel.backtest.open`). The dealing actions require an in-browser Approve
+click. The frontend bridge is on in dev builds and off in production unless
+`VITE_AGENT_BRIDGE=1`.
+
+Direct tools (no tab needed; call the app in-process): `ta_candles`,
+`ta_indicator_series`, `ta_pattern_search`, `ta_pattern_scan`,
+`ta_pattern_families`, `wf_run`, `wf_status`, `wf_cancel`, `wf_fold`,
+`runs_list`, `run_get`. These hit the FastAPI app directly over an ASGI
+transport, attaching the API token when one is configured, so they work
+without a browser at all.
+
+End-to-end probe: `cd backend && python3 -m scripts.agent_bridge_probe
+[--url URL] [--run] [--invoke ACTION --args JSON] [--screenshot [PATH]]`.
+`--screenshot` (default path `chart.png`) calls `ui_screenshot`, decodes the
+image block, and writes it to PATH.
 
 ### How to run a backtest through the bridge (agent recipe)
 
@@ -84,6 +98,22 @@ frontend bridge is on in dev builds and off in production unless
 7. One backtest or sweep at a time: a second `run`/`sweep.start` while one
    is in flight is rejected. `ui_read_state` only works for read-kind
    actions (NOT_READ_ACTION otherwise); use `ui_invoke` for writes.
+
+### How to analyse a chart visually (agent recipe)
+
+1. `ui_invoke("market.select", {"epic": "US100"})` to focus the chart, then
+   `ui_invoke("chart.timeframe.set", {"resolution": "HOUR_4"})` for the
+   timeframe under review.
+2. `ui_invoke("indicator.add", {"type": "RSI", "calcParams": [14]})` to add
+   the indicator pane needed for the read.
+3. `ui_read_state("chart.state")` for the numbers (candles, indicator
+   values, visible range) and `ui_screenshot` for the picture; read both
+   together rather than guessing the layout from one alone. `ui_screenshot`
+   fails with TAB_HIDDEN when the app's browser tab is backgrounded; ask the
+   user to focus the tab and retry.
+4. Iterate: adjust the timeframe, swap or remove indicators
+   (`indicator.set`, `indicator.remove`), re-screenshot, until the view
+   answers the question.
 
 ## Symbol search categories
 
