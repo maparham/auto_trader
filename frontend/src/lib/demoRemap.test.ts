@@ -1,7 +1,8 @@
 // @vitest-environment node
 // Publish-time remap of a captured demo layout onto the yfinance catalogue:
 // cell symbols inside layout bodies, epic-bearing scope keys (drawings/avwap),
-// and the hand-typed watchlist. See demoRemap.ts.
+// and the hand-typed watchlist. Best-effort: unknown symbols pass through
+// verbatim (yfinance charts them as raw Yahoo tickers). See demoRemap.ts.
 import { describe, expect, it } from "vitest";
 import type { Instrument } from "./feed";
 import { mapEpicToYfinance, remapDemoLayout, remapWatchlist } from "./demoRemap";
@@ -28,7 +29,7 @@ describe("remapDemoLayout", () => {
   const body = (cells: object[]) => JSON.stringify({ tabs: [{ cells }] });
 
   it("replaces cell symbols with the catalogue row and re-keys drawings/avwap", () => {
-    const { layout, unmapped } = remapDemoLayout(
+    const layout = remapDemoLayout(
       {
         layouts: '[{"id":"a","name":"Demo"}]',
         "layout.a": body([
@@ -42,7 +43,6 @@ describe("remapDemoLayout", () => {
       CATALOGUE,
     );
 
-    expect(unmapped).toEqual([]);
     const cell = JSON.parse(layout["layout.a"]).tabs[0].cells[0];
     expect(cell.symbol).toEqual({
       epic: "XAUUSD",
@@ -57,21 +57,20 @@ describe("remapDemoLayout", () => {
     expect(layout["scope:tab.T1.drawings.GOLD"]).toBeUndefined();
   });
 
-  it("reports unmappable CELL symbols but silently drops stale scope keys", () => {
-    const { layout, unmapped } = remapDemoLayout(
+  it("passes unmapped cell symbols and scope keys through verbatim", () => {
+    const layout = remapDemoLayout(
       {
-        "layout.a": body([{ id: "c0", scope: "tab.T1", symbol: { epic: "NATURALGAS" } }]),
-        // A drawing for an epic no cell shows any more must not block publish.
-        "scope:tab.T1.drawings.SOMETHING_OLD": "[]",
+        "layout.a": body([{ id: "c0", scope: "tab.T1", symbol: { epic: "NKE" } }]),
+        "scope:tab.T1.drawings.NKE": "[]",
       },
       CATALOGUE,
     );
-    expect(unmapped).toEqual(["NATURALGAS"]);
-    expect(layout["scope:tab.T1.drawings.SOMETHING_OLD"]).toBeUndefined();
+    expect(JSON.parse(layout["layout.a"]).tabs[0].cells[0].symbol).toEqual({ epic: "NKE" });
+    expect(layout["scope:tab.T1.drawings.NKE"]).toBe("[]");
   });
 
   it("copies malformed bodies and non-layout keys through untouched", () => {
-    const { layout } = remapDemoLayout(
+    const layout = remapDemoLayout(
       { "layout.a": "not json", defaultLayoutId: '"a"' },
       CATALOGUE,
     );
@@ -81,10 +80,11 @@ describe("remapDemoLayout", () => {
 });
 
 describe("remapWatchlist", () => {
-  it("maps, dedupes, and reports the misses", () => {
-    expect(remapWatchlist(["GOLD", "XAUUSD", "US100", "NOPE"], CATALOGUE)).toEqual({
-      epics: ["XAUUSD", "US100"],
-      unmapped: ["NOPE"],
-    });
+  it("maps known names, keeps unknown ones verbatim, and dedupes", () => {
+    expect(remapWatchlist(["GOLD", "XAUUSD", "US100", "NKE"], CATALOGUE)).toEqual([
+      "XAUUSD",
+      "US100",
+      "NKE",
+    ]);
   });
 });

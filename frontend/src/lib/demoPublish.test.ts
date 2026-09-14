@@ -20,6 +20,11 @@ vi.mock("./http", () => ({
   },
 }));
 
+let persistBroker = "dukascopy";
+vi.mock("./persist/core", () => ({
+  getPersistBroker: () => persistBroker,
+}));
+
 vi.mock("./demoSnapshot", () => ({
   captureDemoLayout: () => ({ layouts: "[]" }),
   captureDemoLayoutFor: (id: string) =>
@@ -48,6 +53,7 @@ function jsonRes(status: number, body: unknown): Response {
 
 afterEach(() => {
   apiFetch.mockReset();
+  persistBroker = "dukascopy";
 });
 
 describe("publishDemo", () => {
@@ -81,13 +87,25 @@ describe("publishDemo", () => {
     expect(JSON.parse(apiFetch.mock.calls[0][1].body).watchlist).toEqual(["XAUUSD"]);
   });
 
-  it("refuses (before any POST) a watchlist symbol with no yfinance match", async () => {
+  it("keeps a watchlist symbol outside the catalogue verbatim (Yahoo charts raw tickers)", async () => {
+    apiFetch.mockResolvedValue(jsonRes(200, { version: 2 }));
     const { publishDemo } = await import("./demoPublish");
 
-    await expect(
-      publishDemo({ watchlist: ["NOPE"], backtests: [] }),
-    ).rejects.toThrow("not available on Yahoo Finance: NOPE");
-    expect(apiFetch).not.toHaveBeenCalled();
+    await publishDemo({ watchlist: ["NKE", "GOLD"], backtests: [] });
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body).watchlist).toEqual(["NKE", "XAUUSD"]);
+  });
+
+  it("skips the remap entirely when publishing FROM a yfinance workspace", async () => {
+    persistBroker = "yfinance";
+    apiFetch.mockResolvedValue(jsonRes(200, { version: 3 }));
+    const { publishDemo } = await import("./demoPublish");
+
+    await publishDemo({ watchlist: ["GOLD", "NKE", "NKE"], backtests: [] });
+    const body = JSON.parse(apiFetch.mock.calls[0][1].body);
+    // GOLD is NOT aliased here: on a yfinance workspace the epics are already
+    // Yahoo's, so they publish exactly as charted (deduped only).
+    expect(body.watchlist).toEqual(["GOLD", "NKE"]);
+    expect(body.layout).toEqual({ layouts: "[]" });
   });
 
   it("throws the server's 422 message", async () => {

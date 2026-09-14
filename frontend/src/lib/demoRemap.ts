@@ -9,10 +9,11 @@
 //
 // Mapping rule: a small alias table for source-broker names that differ from
 // the canonical epics (Capital.com's spot metals), then identity against the
-// yfinance catalogue. A cell symbol that maps to nothing is reported in
-// `unmapped` so the caller can refuse the publish with a symbol list; an
-// unmappable scope KEY is just dropped (stale drawings for an epic no cell
-// shows should not block publishing).
+// yfinance catalogue. Best-effort by design: anything with no known mapping
+// is passed through VERBATIM, never refused - yfinance treats unknown epics
+// as raw Yahoo tickers, so a searched symbol (NKE) publishes fine and a
+// genuinely untranslatable epic degrades to an empty chart the admin can see
+// in preview.
 import type { Instrument } from "./feed";
 
 // Source-broker epic -> canonical yfinance epic, where the names differ.
@@ -29,12 +30,6 @@ export function mapEpicToYfinance(
   catalogue: Map<string, Instrument>,
 ): Instrument | null {
   return catalogue.get(EPIC_ALIASES[epic] ?? epic) ?? null;
-}
-
-export interface DemoRemapResult {
-  layout: Record<string, string>;
-  /** Cell-symbol epics with no yfinance equivalent, in first-seen order. */
-  unmapped: string[];
 }
 
 const SCOPE_MARK = "scope:";
@@ -62,13 +57,13 @@ function splitEpic(
 function remapScopeKey(
   suffix: string,
   catalogue: Map<string, Instrument>,
-): string | null {
+): string {
   for (const mark of EPIC_SUFFIX_MARKS) {
     const at = suffix.indexOf(mark);
     if (at < 0) continue;
     const head = suffix.slice(0, at + mark.length);
     const hit = splitEpic(suffix.slice(at + mark.length), catalogue);
-    if (!hit) return null; // unmappable epic-bearing key: drop it
+    if (!hit) return suffix; // no known mapping: keep the key as-is
     return `${head}${hit.mapped.epic}${hit.tail ? `.${hit.tail}` : ""}`;
   }
   return suffix; // no epic in this key
@@ -81,22 +76,17 @@ interface CellShape {
 /** Rewrite a captured layout map onto the yfinance catalogue. Layout bodies
  *  get their cell symbols replaced by the catalogue row (epic, display name,
  *  precision all move together); epic-keyed scope entries are re-keyed the
- *  same way. Entries that don't parse are copied through untouched - they
- *  degrade for a visitor exactly the way stale localStorage always has. */
+ *  same way. Symbols with no mapping, and entries that don't parse, are
+ *  copied through untouched - they degrade for a visitor exactly the way
+ *  stale localStorage always has. */
 export function remapDemoLayout(
   layout: Record<string, string>,
   catalogue: Map<string, Instrument>,
-): DemoRemapResult {
+): Record<string, string> {
   const out: Record<string, string> = {};
-  const unmapped: string[] = [];
-  const noteUnmapped = (epic: string) => {
-    if (!unmapped.includes(epic)) unmapped.push(epic);
-  };
-
   for (const [key, raw] of Object.entries(layout)) {
     if (key.startsWith(SCOPE_MARK)) {
-      const remapped = remapScopeKey(key.slice(SCOPE_MARK.length), catalogue);
-      if (remapped != null) out[`${SCOPE_MARK}${remapped}`] = raw;
+      out[`${SCOPE_MARK}${remapScopeKey(key.slice(SCOPE_MARK.length), catalogue)}`] = raw;
       continue;
     }
     if (!key.startsWith("layout.")) {
@@ -111,29 +101,25 @@ export function remapDemoLayout(
           if (typeof epic !== "string") continue;
           const inst = mapEpicToYfinance(epic, catalogue);
           if (inst) c.symbol = { ...inst };
-          else noteUnmapped(epic);
         }
       out[key] = JSON.stringify(body);
     } catch {
       out[key] = raw;
     }
   }
-  return { layout: out, unmapped };
+  return out;
 }
 
-/** Remap a hand-typed watchlist the same way. Unmappable entries are
- *  reported, not dropped - the caller refuses the publish. */
+/** Remap a hand-typed watchlist the same way: known names are translated,
+ *  everything else is kept verbatim, and duplicates collapse. */
 export function remapWatchlist(
   epics: string[],
   catalogue: Map<string, Instrument>,
-): { epics: string[]; unmapped: string[] } {
+): string[] {
   const out: string[] = [];
-  const unmapped: string[] = [];
   for (const epic of epics) {
-    const inst = mapEpicToYfinance(epic, catalogue);
-    if (inst) {
-      if (!out.includes(inst.epic)) out.push(inst.epic);
-    } else if (!unmapped.includes(epic)) unmapped.push(epic);
+    const mapped = mapEpicToYfinance(epic, catalogue)?.epic ?? epic;
+    if (!out.includes(mapped)) out.push(mapped);
   }
-  return { epics: out, unmapped };
+  return out;
 }

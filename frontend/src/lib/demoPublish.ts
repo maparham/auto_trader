@@ -8,6 +8,7 @@
 // for the exact request/response shapes this mirrors.
 import { API_BASE, apiFetch, errorDetail } from "./http";
 import { captureDemoLayout, captureDemoLayoutFor } from "./demoSnapshot";
+import { getPersistBroker } from "./persist/core";
 import { remapDemoLayout, remapWatchlist } from "./demoRemap";
 import { fetchAllMarkets, type Instrument } from "./feed";
 
@@ -63,10 +64,10 @@ export async function fetchCurrentDemo(): Promise<CurrentDemo | null> {
 
 /** Publish the CURRENT workspace layout (whatever persist broker is active in
  *  this session) plus the given watchlist/backtests as a new demo version.
- *  The captured layout is remapped onto the yfinance catalogue first (see
- *  demoRemap.ts) and the publish is refused - by throwing, so the panel shows
- *  the message - when any chart or watchlist symbol has no yfinance
- *  equivalent. Also throws with the server's message on a 422. */
+ *  When publishing from a non-yfinance workspace the captured layout is
+ *  best-effort remapped onto the yfinance catalogue first (see demoRemap.ts);
+ *  no symbol ever blocks a publish. Throws with the server's message on a
+ *  422. */
 export async function publishDemo(opts: PublishDemoOpts): Promise<number> {
   return remapAndPublish(captureDemoLayout(), opts);
 }
@@ -90,23 +91,26 @@ async function remapAndPublish(
   captured: Record<string, string>,
   opts: PublishDemoOpts,
 ): Promise<number> {
-  const catalogue = new Map<string, Instrument>(
-    (await fetchAllMarkets(DEMO_PUBLISH_BROKER)).map((i) => [i.epic, i]),
-  );
-  if (catalogue.size === 0)
-    throw new Error("could not load the Yahoo Finance catalogue; try again");
-  const { layout, unmapped } = remapDemoLayout(captured, catalogue);
-  const wl = remapWatchlist(opts.watchlist, catalogue);
-  const bad = [...new Set([...unmapped, ...wl.unmapped])];
-  if (bad.length)
-    throw new Error(
-      `not available on Yahoo Finance: ${bad.join(", ")}. ` +
-        "Remove those charts or watchlist symbols, then publish.",
+  // A yfinance workspace needs no remapping: every epic it holds already
+  // charts on Yahoo, INCLUDING searched tickers outside the broker's built-in
+  // catalogue (get_market_meta passes unknown epics through verbatim). Other
+  // brokers' workspaces get a best-effort translation - known names are
+  // rewritten, unknown ones pass through as raw Yahoo tickers; a symbol is
+  // NEVER a reason to refuse a publish. A catalogue that fails to load just
+  // means nothing gets translated this time.
+  let layout = captured;
+  let watchlist = [...new Set(opts.watchlist)];
+  if (getPersistBroker() !== DEMO_PUBLISH_BROKER) {
+    const catalogue = new Map<string, Instrument>(
+      (await fetchAllMarkets(DEMO_PUBLISH_BROKER).catch(() => [])).map((i) => [i.epic, i]),
     );
+    layout = remapDemoLayout(captured, catalogue);
+    watchlist = remapWatchlist(opts.watchlist, catalogue);
+  }
   const body = {
     layout,
     broker: DEMO_PUBLISH_BROKER,
-    watchlist: wl.epics,
+    watchlist,
     backtests: opts.backtests,
   };
   const res = await apiFetch(`${API_BASE}/api/admin/demo/publish`, {

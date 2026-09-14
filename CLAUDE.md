@@ -202,13 +202,15 @@ publishes always target yfinance (Yahoo Finance covers the stocks/ETFs
 dukascopy lacks), payloads from before the `broker` field existed fall back
 to dukascopy. `deps.resolve_broker` allowlists exactly that pair
 (`DEMO_BROKERS`) for the demo principal. Publishing captures the ACTIVE
-broker's workspace and remaps every chart onto the yfinance catalogue
-(`lib/demoRemap.ts`): cell symbols in the layout bodies AND the epic-bearing
-scope-key suffixes (`drawings.<epic>`, `avwap.<epic>[.<id>]`) move together,
-or drawings would silently detach from their renamed charts; an alias table
-covers Capital's GOLD/SILVER names. A chart or watchlist symbol with no
-yfinance match refuses the whole publish with a symbol list; a stale
-epic-keyed scope entry no cell shows is just dropped. Demo visitors see the
+broker's workspace; a NON-yfinance workspace is best-effort remapped onto
+the yfinance catalogue (`lib/demoRemap.ts`): cell symbols in the layout
+bodies AND the epic-bearing scope-key suffixes (`drawings.<epic>`,
+`avwap.<epic>[.<id>]`) move together, or drawings would silently detach from
+their renamed charts; an alias table covers Capital's GOLD/SILVER names.
+No symbol ever blocks a publish: anything without a mapping passes through
+VERBATIM (yfinance charts unknown epics as raw Yahoo tickers, so searched
+symbols like NKE work; a genuinely untranslatable epic degrades to an empty
+chart). A yfinance workspace skips the remap entirely. Demo visitors see the
 source named in the chart legend ("Yahoo Finance", BROKER_LABELS in
 lib/trading.ts) with a demo-only tooltip about delays/adjustment/intraday
 caps, and demo sessions never persist their account pin (`activeAccount`
