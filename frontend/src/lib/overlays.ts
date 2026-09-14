@@ -227,8 +227,13 @@ const alertPriceLine: OverlayTemplate = {
   createPointFigures: ({ overlay, coordinates, bounding }) => {
     const c = coordinates[0];
     if (!c) return [];
+    // Hovered/selected (applyAlertLineWeight sets extendData.fullWidth): span the
+    // whole pane so the level is readable across all history; the anchor dot
+    // below stays at the creation bar. Resting: start at the anchor.
+    const fullWidth = (overlay.extendData as { fullWidth?: boolean } | null)?.fullWidth === true;
+    const start = fullWidth ? { x: 0, y: c.y } : c;
     const figures: OverlayFigure[] = [
-      { type: "line", attrs: { coordinates: [c, { x: bounding.width, y: c.y }] } },
+      { type: "line", attrs: { coordinates: [start, { x: bounding.width, y: c.y }] } },
     ];
     const line = overlay.styles?.line;
     if (overlay.points[0]?.timestamp != null && c.x > 0) {
@@ -711,6 +716,11 @@ export class OverlayManager {
     this.chart?.overrideOverlay({
       id,
       styles: { line: { size: emphasized ? ALERT_LINE_SELECTED_SIZE : ALERT_LINE_SIZE } },
+      // While emphasized, alertPriceLine extends a startAtCreation line across
+      // the whole pane (the anchor dot stays put) so the full level is readable;
+      // resting restores the from-creation span. Alerts carry no other
+      // extendData, so wholesale replacement here is safe.
+      extendData: { fullWidth: emphasized },
     });
   }
 
