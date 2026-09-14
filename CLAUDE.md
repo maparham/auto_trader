@@ -61,6 +61,15 @@ remove), and app shell (`market.select`, `tab.list`,
 click. The frontend bridge is on in dev builds and off in production unless
 `VITE_AGENT_BRIDGE=1`.
 
+Browser tab control (macOS local dev only; AppleScript drives Chrome from
+the backend): `ui_open_tab` opens the app (or focuses an existing tab),
+`ui_focus_tab` raises the Chartkar tab, `ui_close_tab` closes it (refuses
+when several are open). Recovery chain for a hidden tab: TAB_HIDDEN from
+`ui_screenshot`, then `ui_focus_tab`, then retry. First use needs the macOS
+automation permission for whatever app hosts the backend process; a pending
+permission dialog surfaces as a 15 s osascript timeout with a hint. Hosted
+mode refuses these tools.
+
 Direct tools (no tab needed; call the app in-process): `ta_candles`,
 `ta_indicator_series`, `ta_pattern_search`, `ta_pattern_scan`,
 `ta_pattern_families`, `wf_run`, `wf_status`, `wf_cancel`, `wf_fold`,
@@ -75,8 +84,9 @@ image block, and writes it to PATH.
 
 ### How to run a backtest through the bridge (agent recipe)
 
-1. `ui_sessions` to confirm a tab is connected (empty list: ask the user to
-   open http://localhost:5173).
+1. `ui_sessions` to confirm a tab is connected (empty list: `ui_open_tab`
+   opens one on macOS local dev, then poll `ui_sessions` until the bridge
+   connects; elsewhere ask the user to open http://localhost:5173).
 2. `ui_actions` for the live manifest; every action carries its JSON schema.
    Invalid args come back with the expected schema, so self-correct from the
    error rather than guessing.
