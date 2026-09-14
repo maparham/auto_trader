@@ -15,14 +15,22 @@
 # CLERK_AUTHORIZED_PARTIES. VITE_CLERK_PUBLISHABLE_KEY is baked into the
 # frontend build. The preflight check fails the deploy if Clerk vars are missing.
 #
-# Broker credentials are SYNCED to the box from backend/.env on every backend
-# deploy (see "backend: sync broker credentials" below), so rotating a key means
-# editing backend/.env and re-running this script — never hand-editing
-# /etc/auto-trader/demo.env. Only the broker-credential keys are touched; the
-# box's hosted-only settings (Clerk, ADMIN_*, CORS_ORIGINS, FRONTEND_URL) are
-# never read from the local file and never removed. Local-only infrastructure
-# (COMPUTE_*, TELEGRAM_*) is deliberately NOT synced: those point at this
-# laptop / would change what the box does, not how it authenticates.
+# Broker credentials and TELEGRAM_BOT_TOKEN are SYNCED to the box from
+# backend/.env on every backend deploy (see "backend: sync credentials" below,
+# and SYNC_KEYS), so rotating a key means editing backend/.env and re-running
+# this script — never hand-editing /etc/auto-trader/demo.env. Only those keys
+# are touched, and only the ones actually present in the local file; the box's
+# hosted-only settings (Clerk, ADMIN_*, CORS_ORIGINS, FRONTEND_URL) are never
+# read from the local file and never removed. COMPUTE_* is deliberately NOT
+# synced: it points at this laptop.
+#
+# TELEGRAM_BOT_TOKEN enables Telegram alert delivery for hosted users, and is
+# currently the SAME bot as the laptop's. The backend long-polls getUpdates and
+# only one process may poll a token, so a local backend run with that line
+# active STEALS /start link codes from the hosted app. Comment it out in
+# backend/.env while working locally: the sync skips absent keys, so the box
+# keeps the value it already has. A second BotFather bot for prod would end the
+# conflict for good.
 #
 # Optional box env: CLERK_SECRET_KEY — backend only, powers the admin console
 # Users panel (/admin). Without it the panel reports "Clerk not configured".
@@ -76,11 +84,22 @@ ROOT="$(git rev-parse --show-toplevel)"
 # Broker-credential keys this script owns on the box. Keep in sync with
 # config.py's env_prefix set (and with the cred regex just below).
 CRED_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|OANOR_[A-Z_]*)='
+# Every key this script pushes to the box. A SUPERSET of CRED_KEYS, and
+# deliberately a separate variable: CRED_KEYS also decides whether the
+# admin-gate check below applies (a deploy that pushes broker creds needs the
+# gate), so folding a non-broker key into it would let a Telegram-only .env
+# waive that gate.
+SYNC_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|OANOR_[A-Z_]*|TELEGRAM_BOT_TOKEN)='
 LOCAL_ENV="$ROOT/backend/.env"
 SYNC_CREDS=0
 if [ "$DO_BACKEND" = 1 ] && [ -f "$LOCAL_ENV" ] \
    && grep -Eq "$CRED_KEYS.+" "$LOCAL_ENV"; then
   SYNC_CREDS=1
+fi
+DO_SYNC=0
+if [ "$DO_BACKEND" = 1 ] && [ -f "$LOCAL_ENV" ] \
+   && grep -Eq "$SYNC_KEYS.+" "$LOCAL_ENV"; then
+  DO_SYNC=1
 fi
 
 rc=0
@@ -118,14 +137,17 @@ if [ "$DO_BACKEND" = 1 ]; then
     -e "ssh -i $SSH_KEY -o BatchMode=yes" \
     "$WT/backend/" "$HOST:/opt/auto-trader/backend/"
 
-  if [ "$SYNC_CREDS" = 1 ]; then
-    echo "==> backend: sync broker credentials -> $HOST:/etc/auto-trader/demo.env"
+  if [ "$DO_SYNC" = 1 ]; then
+    echo "==> backend: sync credentials -> $HOST:/etc/auto-trader/demo.env"
     # Values travel over stdin, never on the remote command line (argv is world
     # readable via ps on the box). The remote side rewrites the file in place:
     # every line for a synced KEY is dropped (which also collapses the
     # duplicate assignments a hand-edit can leave behind) and the incoming
     # values are appended; every other line is preserved byte for byte.
-    grep -E "$CRED_KEYS.+" "$LOCAL_ENV" \
+    #
+    # Only keys PRESENT in the local file are touched, so commenting one out
+    # locally leaves the box's existing value alone rather than clearing it.
+    grep -E "$SYNC_KEYS.+" "$LOCAL_ENV" \
       | "${SSH[@]}" "$HOST" '
       set -e
       incoming="$(mktemp)"; merged="$(mktemp)"

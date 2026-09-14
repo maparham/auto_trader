@@ -2448,8 +2448,28 @@
   color: var(--text); font-weight: 600;
 }
 .notif-toggle-btn:disabled { opacity: 0.6; cursor: default; }
-.notif-tg-actions { display: flex; align-items: center; gap: 6px; }
+.notif-tg-actions {
+  display: flex; align-items: center; justify-content: flex-end;
+  flex-wrap: wrap; gap: 6px;
+}
+.notif-toggle-btn { white-space: nowrap; }
+/* "Waiting for Telegram…" while a link code is live: its own line under the
+   buttons, so a two-button row never has to give up width for it. */
+.notif-tg-waiting { flex-basis: 100%; text-align: right; margin-top: 0; }
 .notif-toggle-pill { cursor: default; }
+/* Telegram link QR: its own full-width block under the row rather than a popover,
+   since the row's right edge has no space for a ~150px plate. The code keeps a
+   white plate in both themes (see QrCode.tsx) so a scanner sees the contrast it
+   expects; the white rounds off against the panel instead of ending square. */
+.notif-tg-qr {
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 16px 16px; margin-top: -6px;
+}
+.notif-tg-qr .qr-code {
+  flex: none; border-radius: 4px; border: 1px solid var(--border); background: #fff;
+}
+.notif-tg-qr-text { color: var(--text-dim); font-size: 12px; }
+.notif-tg-qr-text .setting-hint { margin-top: 4px; }
 .modal-foot {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 12px 16px; border-top: 1px solid var(--border);
