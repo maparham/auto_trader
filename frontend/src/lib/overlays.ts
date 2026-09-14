@@ -13,7 +13,8 @@
 
 import type { LineType } from "klinecharts";
 import type { PolygonType } from "klinecharts";
-import type { Chart, KLineData, Overlay, OverlayEvent, DeepPartial, OverlayStyle, OverlayMode } from "klinecharts";
+import type { Chart, KLineData, Overlay, OverlayEvent, OverlayFigure, OverlayTemplate, DeepPartial, OverlayStyle, OverlayMode } from "klinecharts";
+import { registerOverlay } from "klinecharts";
 import { effectiveMagnetMode, magnetSignal, magnetInvertSignal, MAGNET_SENSITIVITY } from "./magnet";
 import {
   loadDrawings,
@@ -192,11 +193,10 @@ function sameAlertCfg(cfg: AlertConfig, a: SavedAlert): boolean {
 const ALERT_LINE_COLOR = "#f5a623";
 const ALERT_LINE_SIZE = 1;
 const ALERT_LINE_SELECTED_SIZE = 2; // slightly thicker while click-selected
-// Dashed alert line (distinct from the dotted last-price line). klinecharts'
-// built-in `priceLine` overlay also draws a value `text` figure at the left end of
-// the line (hardcoded in its createPointFigures, not gated by needDefaultYAxisFigure)
-// — we render our own TV-style axis tag on the right instead, so make that built-in
-// left label fully transparent to suppress it.
+// Dashed alert line (distinct from the dotted last-price line). We render our
+// own TV-style axis tag on the right, so the text style is fully transparent to
+// suppress klinecharts' default click-selected y-axis value pill (gated by
+// needDefaultYAxisFigure, styled by `text`).
 const HIDDEN_TEXT = {
   color: "transparent",
   backgroundColor: "transparent",
@@ -207,6 +207,46 @@ const ALERT_LINE_STYLE: DeepPartial<OverlayStyle> = {
   line: { color: ALERT_LINE_COLOR, style: 'dashed', dashedValue: [4, 4], size: ALERT_LINE_SIZE },
   text: HIDDEN_TEXT,
 };
+
+// Alert lines default to starting at the alert's creation bar (see alertPoints),
+// so mid-pane the dashed stroke just begins — a bare cut edge that reads as a
+// paint glitch. `alertPriceLine` is the built-in `priceLine`'s line figure
+// (identical geometry: point x to the right edge) plus a small filled dot at the
+// anchor, marking the start as intentional. Differences from the built-in: the
+// hardcoded value `text` figure at the left end is dropped (it was painted with
+// HIDDEN_TEXT anyway). The dot only appears when the line is actually anchored
+// to a bar — a value-only point (startAtCreation off / legacy createdAt 0)
+// resolves to x=0 and spans the pane — and is skipped at x<=0, where a
+// clamped older-than-history anchor reads as full-width too.
+const alertPriceLine: OverlayTemplate = {
+  name: "alertPriceLine",
+  totalStep: 2,
+  needDefaultPointFigure: true,
+  needDefaultXAxisFigure: true,
+  needDefaultYAxisFigure: true,
+  createPointFigures: ({ overlay, coordinates, bounding }) => {
+    const c = coordinates[0];
+    if (!c) return [];
+    const figures: OverlayFigure[] = [
+      { type: "line", attrs: { coordinates: [c, { x: bounding.width, y: c.y }] } },
+    ];
+    const line = overlay.styles?.line;
+    if (overlay.points[0]?.timestamp != null && c.x > 0) {
+      figures.push({
+        type: "circle",
+        // Scales with the selected-state line thickness (r 3 idle, 4 selected).
+        attrs: { x: c.x, y: c.y, r: 2 + (line?.size ?? ALERT_LINE_SIZE) },
+        styles: { style: "fill", color: line?.color ?? ALERT_LINE_COLOR },
+        // Don't let the dot swallow drags meant for the line.
+        ignoreEvent: true,
+      });
+    }
+    return figures;
+  },
+};
+// Module-scope on purpose: alerts materialize in every boot mode that imports
+// this manager (App, SnapshotApp), not only where registerCustomOverlays runs.
+registerOverlay(alertPriceLine);
 
 // Built-in default look for a fresh rectangle (no saved default yet): translucent
 // accent fill + solid border. Reuses the app accent used by rangeBand. Overridable
@@ -1184,7 +1224,7 @@ export class OverlayManager {
             const rounded = this.roundLevel(raw);
             // ALWAYS restore the alert's OWN point, not just when rounding moved
             // it: klinecharts writes dataIndex+timestamp into the point on any
-            // drag, and the built-in priceLine then draws from whatever bar the
+            // drag, and alertPriceLine then draws from whatever bar the
             // drop landed on — pan away and the dashed line runs from an
             // arbitrarily distant x on every frame. alertPoints re-stamps the
             // creation time (or drops the timestamp entirely) so the x-start stays
@@ -2454,7 +2494,7 @@ export class OverlayManager {
     return newId;
   }
 
-  // Create a configured price alert (from the modal). Draggable priceLine that mints
+  // Create a configured price alert (from the modal). Draggable alertPriceLine that mints
   // a fresh stable id now, so it keeps one identity across drags and edits. The write
   // is a by-id storage intent (addStoredAlert), NOT a persist() of the chart snapshot;
   // the line is then materialised through the same single draw path rehydrate/reconcile
@@ -2719,7 +2759,7 @@ export class OverlayManager {
     };
   }
 
-  // The point an alert line is drawn from. klinecharts' built-in priceLine runs its
+  // The point an alert line is drawn from. alertPriceLine (like the built-in priceLine) runs its
   // line from the point's x to the right edge, and a point carrying only a `value`
   // resolves to x=0 — so a value-only point spans the whole pane, while a point
   // stamped with the creation time starts the line there ("alerts don't concern the
@@ -2758,7 +2798,7 @@ export class OverlayManager {
     if (existing != null) return existing;
     // Respect the session eye toggle: an alert added/reconciled while "Hide alert
     // lines" is on must materialize hidden, not flash visible.
-    const id = this.create("alert", "priceLine", [{ value: a.level }], ALERT_LINE_STYLE, undefined, {
+    const id = this.create("alert", "alertPriceLine", [{ value: a.level }], ALERT_LINE_STYLE, undefined, {
       visible: !this.alertsHidden,
     });
     if (!id) return null;

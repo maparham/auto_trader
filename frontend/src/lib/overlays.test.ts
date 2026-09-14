@@ -545,7 +545,7 @@ describe("OverlayManager alert lookup + selection survives rehydrate (sidebar na
 describe("OverlayManager global alerts shared across same-epic cells", () => {
   const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const priceLines = (c: FakeChart) => [...c.overlays.values()].filter((o: any) => o.name === "priceLine");
+  const priceLines = (c: FakeChart) => [...c.overlays.values()].filter((o: any) => o.name === "alertPriceLine");
 
   function twoCells() {
     const ca = new FakeChart();
@@ -672,7 +672,7 @@ describe("OverlayManager symbol-change persist guard", () => {
 describe("OverlayManager reconcile re-entrancy (self-triggered alerts signal)", () => {
   const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const priceLines = (c: FakeChart) => [...c.overlays.values()].filter((o: any) => o.name === "priceLine");
+  const priceLines = (c: FakeChart) => [...c.overlays.values()].filter((o: any) => o.name === "alertPriceLine");
 
   it("removing multiple alerts via a wired signal terminates and doesn't resurrect storage", () => {
     const { chart, m } = setup();
@@ -727,7 +727,7 @@ describe("OverlayManager alert-write decoupling (persist is drawings-only)", () 
     const unsub = alertsChanged.subscribe(() => m.reconcileAlerts());
     const ovId = m.addAlert(100, cfg)!;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const lines = [...chart.overlays.values()].filter((o: any) => o.name === "priceLine");
+    const lines = [...chart.overlays.values()].filter((o: any) => o.name === "alertPriceLine");
     unsub();
     expect(lines).toHaveLength(1);
     expect(ovById(chart, ovId)).not.toBeNull();
