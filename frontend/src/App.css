@@ -3140,6 +3140,12 @@
   margin: 1px -4px 0 0; width: 16px; height: 16px; border-radius: 3px; flex-shrink: 0;
 }
 .toast-close:hover { background: var(--border); color: var(--text); }
+/* Age of the toast ("3m ago") — stays empty (and hidden) for the first minute. */
+.toast-age {
+  flex-shrink: 0; align-self: center; font-size: 11px; color: var(--text-faint);
+  white-space: nowrap;
+}
+.toast-age:empty { display: none; }
 /* Repeat-fire count on a coalesced alert toast (same alert fired ×N). */
 .toast-count {
   flex-shrink: 0; align-self: center; padding: 1px 6px; border-radius: 9px;

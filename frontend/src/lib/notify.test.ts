@@ -25,10 +25,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Remove the container BEFORE draining timers: the shared age ticker keeps
+  // rescheduling while any toast is on screen, and only stops itself once it
+  // finds the container empty — runAllTimers would otherwise never terminate.
+  document.getElementById("toast-container")?.remove();
   vi.runAllTimers();
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  document.getElementById("toast-container")?.remove();
 });
 
 describe("toast visibility lifecycle", () => {
@@ -142,6 +145,27 @@ describe("toast visibility lifecycle", () => {
     expect(toasts.length).toBe(1);
     expect(toasts[0].querySelector(".toast-msg")!.textContent).toBe("second");
     expect(toasts[0].querySelector(".toast-count")).toBeNull();
+  });
+
+  it("shows its age once a minute old, updating as time passes", () => {
+    toast("old alert", { duration: null });
+    const age = document.querySelector(".toast-age")!;
+    // Fresh toast: no age label yet.
+    expect(age.textContent).toBe("");
+    vi.advanceTimersByTime(3 * 60_000);
+    expect(age.textContent).toBe("3m ago");
+    vi.advanceTimersByTime(2 * 60 * 60_000);
+    expect(age.textContent).toBe("2h ago");
+  });
+
+  it("a coalescing re-fire resets the age (content just refreshed)", () => {
+    toast("v1", { key: "k", duration: null });
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(document.querySelector(".toast-age")!.textContent).toBe("5m ago");
+    toast("v2", { key: "k", duration: null });
+    expect(document.querySelector(".toast-age")!.textContent).toBe("");
+    vi.advanceTimersByTime(60_000);
+    expect(document.querySelector(".toast-age")!.textContent).toBe("1m ago");
   });
 
   it("clickable toast: click runs the handler and dismisses immediately", () => {

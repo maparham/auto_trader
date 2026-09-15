@@ -121,6 +121,49 @@ export function dismissToast(key: string): void {
   if (el) dismissers.get(el)?.();
 }
 
+// --- Toast age ("3m ago") ---------------------------------------------------
+// Toasts can sit on screen for a long time (sticky alert toasts, transients
+// held behind a hidden tab), so each one shows how old it is once it has been
+// up for a minute. One shared ticker refreshes every label and stops itself
+// when the last toast is gone; hidden tabs throttle intervals, so the labels
+// are also refreshed the moment the tab becomes visible again.
+const AGE_TICK_MS = 30_000;
+let ageTimer: ReturnType<typeof setInterval> | null = null;
+
+function ageLabel(born: number): string {
+  const m = Math.floor((Date.now() - born) / 60_000);
+  if (m < 1) return "";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`;
+}
+
+function refreshAges(): void {
+  const box = document.getElementById("toast-container");
+  const toasts = box?.querySelectorAll<HTMLElement>(".toast") ?? [];
+  if (toasts.length === 0) {
+    if (ageTimer !== null) {
+      clearInterval(ageTimer);
+      ageTimer = null;
+    }
+    return;
+  }
+  for (const t of toasts) {
+    const age = t.querySelector(".toast-age");
+    if (age) age.textContent = ageLabel(Number(t.dataset.born));
+  }
+}
+
+function startAgeTicker(): void {
+  if (ageTimer === null) ageTimer = setInterval(refreshAges, AGE_TICK_MS);
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshAges();
+  });
+}
+
 function container(): HTMLElement {
   let el = document.getElementById("toast-container");
   if (!el) {
@@ -161,6 +204,10 @@ export function toast(
       const count = Number(live.dataset.count ?? "1") + 1;
       live.dataset.count = String(count);
       live.querySelector(".toast-msg")!.textContent = message;
+      // The content just refreshed, so the age restarts from this fire.
+      live.dataset.born = String(Date.now());
+      const age = live.querySelector(".toast-age");
+      if (age) age.textContent = "";
       let badge = live.querySelector(".toast-count");
       if (!badge) {
         badge = document.createElement("span");
@@ -183,6 +230,11 @@ export function toast(
   msg.className = "toast-msg";
   msg.textContent = message;
   el.appendChild(msg);
+  el.dataset.born = String(Date.now());
+  const age = document.createElement("span");
+  age.className = "toast-age"; // empty until the toast is a minute old
+  el.appendChild(age);
+  startAgeTicker();
   let onVis: (() => void) | null = null;
   const dismiss = () => {
     if (el.classList.contains("closing")) return; // already fading out
