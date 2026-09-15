@@ -93,7 +93,7 @@ function armReady(chart: Chart, desc: ViewDescriptor, level: number | null) {
   // Every failure path must end at fail() — Task 5's renderer only advances on
   // __snapshotReady === true or a string __snapshotError, so an uncaught throw
   // here (e.g. from a setTimeout tick) would silently hang it for the full
-  // 10s budget instead of falling back fast.
+  // 30s budget instead of falling back fast.
   try {
     try {
       chart.setBarSpace(desc.barSpace);
@@ -109,7 +109,8 @@ function armReady(chart: Chart, desc: ViewDescriptor, level: number | null) {
       });
     }
     // Ready = data present and stable for 600ms (candles + indicators settled),
-    // or error after 9s (inside the renderer's 10s budget).
+    // or error after 25s (inside the renderer's 30s budget; cold hosted candle
+    // fetches through capital-live can take well over 10s).
     const start = performance.now();
     let lastLen = -1;
     let stableSince = performance.now();
@@ -128,7 +129,7 @@ function armReady(chart: Chart, desc: ViewDescriptor, level: number | null) {
           window.__snapshotReady = true;
           return;
         }
-        if (performance.now() - start > 9000) return fail("timed out waiting for data");
+        if (performance.now() - start > 25000) return fail("timed out waiting for data");
         setTimeout(tick, 150);
       } catch (e) {
         fail(String(e));

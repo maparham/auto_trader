@@ -22,9 +22,16 @@ import urllib.parse
 
 log = logging.getLogger(__name__)
 
-_TIMEOUT_S = 10.0
+# Whole-render budget: browser launch + page load + candle fetches + settle.
+# Cold capital-live fetches on the hosted box routinely exceed 10s, which made
+# every live snapshot time out and fall back to matplotlib; the page's own
+# data wait (SnapshotApp) gives up at 25s, inside this cap.
+_TIMEOUT_S = 30.0
 _MAX_CONCURRENT = 2
-_DEVICE_SCALE = 2  # crisp Telegram photo
+# Scale 1, not 2: the hosted box is memory-tight and a 2x raster of a
+# ~1668x866 viewport is a large chunk of Chromium's footprint; Telegram
+# compresses photos anyway.
+_DEVICE_SCALE = 1
 
 _semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
 _browser = None  # playwright Browser, lazily launched
@@ -77,7 +84,9 @@ async def render_live_chart(user_id: str, payload: dict) -> bytes | None:
             _render_guarded(url, width, height), timeout=_TIMEOUT_S
         )
     except Exception as exc:
-        log.warning("chart snapshot failed, falling back: %s", exc)
+        # repr, not str: asyncio.TimeoutError stringifies to "" and the line
+        # used to read "falling back: " with no cause at all.
+        log.warning("chart snapshot failed, falling back: %r", exc)
         return None
 
 
