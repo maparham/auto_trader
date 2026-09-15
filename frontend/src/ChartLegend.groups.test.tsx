@@ -32,12 +32,13 @@ function renderLegend(
   onToggleVisible = vi.fn(),
   getChart: () => import("klinecharts").Chart | null = () => null,
   onRemove = vi.fn(),
+  onCopyGroup = vi.fn(),
 ) {
   const noop = () => {};
   render(
     <ChartLegend
       getChart={getChart}
-      controller={new ChartController()}
+      controller={new ChartController("cell-1", "scope-1")}
       ctx={{
         symbol: "OIL_CRUDE",
         period: "1H",
@@ -58,6 +59,7 @@ function renderLegend(
       onToggleVisible={onToggleVisible}
       onOpenSettings={noop}
       onRemove={onRemove}
+      onCopyGroup={onCopyGroup}
       onSelectRow={noop}
       onOpenDetails={noop}
       onChangeSymbol={noop}
@@ -68,7 +70,7 @@ function renderLegend(
       onStartReorder={noop}
     />,
   );
-  return { onToggleVisible, onRemove };
+  return { onToggleVisible, onRemove, onCopyGroup };
 }
 
 const fvgs = [
@@ -178,9 +180,28 @@ describe("the group eye hides and shows every member at once", () => {
   });
 });
 
+describe("the group copy hands every member's name to one clipboard call", () => {
+  // The chevron is button 0, the eye 1, the copy 2, the trash 3.
+  const copy = () => groupHeader().querySelectorAll("button")[2];
+
+  it("copies all members (including hidden ones) in a single call", () => {
+    const mixed = [fvgs[0], { ...fvgs[1], visible: false }, fvgs[2]];
+    const { onCopyGroup } = renderLegend(mixed);
+    fireEvent.click(copy());
+    expect(onCopyGroup).toHaveBeenCalledTimes(1);
+    expect(onCopyGroup).toHaveBeenCalledWith(["FVG", "FVG2", "FVG3"]);
+  });
+
+  it("does not collapse the group as a side effect of the click", () => {
+    renderLegend(fvgs);
+    fireEvent.click(copy());
+    expect(document.querySelectorAll(".cl-group-rows .cl-ind")).toHaveLength(3);
+  });
+});
+
 describe("the group trash removes every member", () => {
-  // The chevron is button 0, the eye 1, the trash 2.
-  const trash = () => groupHeader().querySelectorAll("button")[2];
+  // The chevron is button 0, the eye 1, the copy 2, the trash 3.
+  const trash = () => groupHeader().querySelectorAll("button")[3];
 
   it("removes all members on one click", () => {
     const { onRemove } = renderLegend(fvgs);

@@ -136,6 +136,9 @@ export interface Props {
   onToggleVisible: (name: string) => void;
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
+  // Copy a same-type GROUP's members (all their live configs) to the clipboard
+  // as one payload, so paste recreates the whole group.
+  onCopyGroup: (names: string[]) => void;
   // Click a row body to select the indicator (TradingView-style), like a curve click.
   onSelectRow: (name: string, figureKey?: string) => void;
   // Click the ⓘ button to open the instrument-details modal (TradingView-style).
@@ -191,6 +194,15 @@ const ICON_ARROW_DOWN = (
 const ICON_CHEVRON_UP = (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M6 15l6-6 6 6" />
+  </svg>
+);
+// Copy (two offset sheets) — SVG like the ⋯ button (the Material Symbols subset
+// lacks content_copy); same paths as MenuIcons.copy so the menus and the legend
+// agree on what "copy" looks like.
+const ICON_COPY = (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
   </svg>
 );
 
@@ -266,6 +278,7 @@ export default function ChartLegend({
   onToggleVisible,
   onOpenSettings,
   onRemove,
+  onCopyGroup,
   onSelectRow,
   onOpenMenu,
   onOpenDetails,
@@ -320,6 +333,9 @@ export default function ChartLegend({
   const removeGroup = (rows: LegendRow[]) => {
     for (const row of rows) onRemove(row.name);
   };
+  // One clipboard write for the whole group — per-row onCopy calls would each
+  // overwrite the previous member, leaving only the last one copied.
+  const copyGroup = (rows: LegendRow[]) => onCopyGroup(rows.map((r) => r.name));
 
   // Imperatively set the displayed values for the bar at dataIndex (or the last
   // bar when null/out of range). Mirrors candleLegend's old formula: change is vs
@@ -540,6 +556,7 @@ export default function ChartLegend({
               onToggleCollapsed={() => toggleGroupCollapsed(entry.indType)}
               onToggleGroupVisible={() => toggleGroupVisible(entry.rows)}
               onRemoveGroup={() => removeGroup(entry.rows)}
+              onCopyGroup={() => copyGroup(entry.rows)}
               selectedName={selectedName}
               highlightedName={highlightedName}
               figureValuesRef={figureValuesRef}
@@ -807,12 +824,12 @@ function IndicatorRow({
 // shows every member at once — the same `.cl-icons` reveal-on-hover the member
 // rows use, so it doesn't compete visually with them when idle.
 function IndicatorGroup({
-  indType,
   rows,
   collapsed,
   onToggleCollapsed,
   onToggleGroupVisible,
   onRemoveGroup,
+  onCopyGroup,
   selectedName,
   highlightedName,
   figureValuesRef,
@@ -829,6 +846,7 @@ function IndicatorGroup({
   onToggleCollapsed: () => void;
   onToggleGroupVisible: () => void;
   onRemoveGroup: () => void;
+  onCopyGroup: () => void;
   selectedName: string | null;
   highlightedName: string | null;
   figureValuesRef: RefObject<Map<string, HTMLSpanElement>>;
@@ -871,6 +889,17 @@ function IndicatorGroup({
               }}
             >
               {anyVisible ? ICON_EYE : ICON_EYE_OFF}
+            </button>
+          </Tooltip>
+          <Tooltip content={`Copy all ${rows.length}`}>
+            <button
+              className="cl-icon cl-icon-svg cl-icon-stroke"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopyGroup();
+              }}
+            >
+              {ICON_COPY}
             </button>
           </Tooltip>
           <Tooltip content={`Remove all ${rows.length}`}>

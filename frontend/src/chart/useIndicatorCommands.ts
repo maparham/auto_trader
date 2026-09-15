@@ -211,6 +211,29 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     );
   }, [liveIndicatorConfig, refuseCopyWhileMasked]);
 
+  // Copy a whole legend GROUP (every same-type instance) as one clipboard payload.
+  // Same envelope tag as the single copy, but with an `items` list; paste recreates
+  // every member (pasteIndicator handles both shapes).
+  const copyIndicatorGroup = useCallback(
+    (names: string[]) => {
+      if (refuseCopyWhileMasked()) return;
+      const snaps = names
+        .map((n) => liveIndicatorConfig(paneIdOf(n), n))
+        .filter((s): s is NonNullable<typeof s> => s != null);
+      if (!snaps.length) return;
+      const payload = {
+        __autoTraderIndicator: 1 as const,
+        items: snaps.map((s) => ({ type: s.type, config: s.config })),
+      };
+      const json = JSON.stringify(payload, null, 2);
+      navigator.clipboard?.writeText(json).then(
+        () => toast(`Copied ${snaps.length} ${snaps[0].label} settings`),
+        () => toast("Copy failed (clipboard blocked)"),
+      );
+    },
+    [liveIndicatorConfig, paneIdOf, refuseCopyWhileMasked],
+  );
+
   // Duplicate: a second instance of this indicator with the SAME live settings,
   // without going through the clipboard (so it neither needs clipboard permission
   // nor clobbers what the user has copied). Same add path as Paste, so the copy
@@ -239,22 +262,35 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       toast("Paste failed (clipboard blocked)");
       return;
     }
-    let parsed: { __autoTraderIndicator?: number; type?: string; config?: SavedIndicatorConfig };
+    let parsed: {
+      __autoTraderIndicator?: number;
+      type?: string;
+      config?: SavedIndicatorConfig;
+      items?: { type?: string; config?: SavedIndicatorConfig }[];
+    };
     try {
       parsed = JSON.parse(text);
     } catch {
       toast("Clipboard has no indicator to paste");
       return;
     }
-    if (parsed.__autoTraderIndicator !== 1 || !parsed.type) {
+    // A single copy carries type/config at the top level; a group copy carries
+    // an `items` list. Normalise both into one list and add each in turn.
+    const items = Array.isArray(parsed.items)
+      ? parsed.items.filter((it): it is { type: string; config?: SavedIndicatorConfig } => !!it?.type)
+      : parsed.type
+        ? [{ type: parsed.type, config: parsed.config }]
+        : [];
+    if (parsed.__autoTraderIndicator !== 1 || !items.length) {
       toast("Clipboard has no indicator to paste");
       return;
     }
-    if (!addFromConfig(parsed.type, parsed.config)) {
-      toast(`Can't paste ${parsed.type}`);
+    const added = items.filter((it) => addFromConfig(it.type, it.config));
+    if (!added.length) {
+      toast(`Can't paste ${items[0].type}`);
       return;
     }
-    toast(`Pasted ${parsed.type}`);
+    toast(added.length === 1 ? `Pasted ${added[0].type}` : `Pasted ${added.length} ${added[0].type}`);
   }, [addFromConfig]);
 
   // Ctrl/Cmd+C: copy the SELECTED indicator (if any). Returns true when it acted, so
@@ -604,6 +640,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     onLegendRemove,
     onLegendSelectRow,
     copyIndicator,
+    copyIndicatorGroup,
     duplicateIndicator,
     pasteIndicator,
     copySelectedIndicator,

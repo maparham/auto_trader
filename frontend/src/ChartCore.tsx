@@ -4839,6 +4839,7 @@ export default function ChartCore({
     onLegendOpenSettings,
     onLegendRemove,
     onLegendSelectRow,
+    copyIndicatorGroup,
     pasteIndicator,
     copySelectedIndicator,
     copySelectedDrawing,
@@ -5416,6 +5417,7 @@ export default function ChartCore({
         onToggleVisible={onLegendToggleVisible}
         onOpenSettings={onLegendOpenSettings}
         onRemove={onLegendRemove}
+        onCopyGroup={copyIndicatorGroup}
         onSelectRow={onLegendSelectRow}
         onOpenMenu={onLegendOpenMenu}
         onMove={reorderPaneByName}

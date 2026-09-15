@@ -144,6 +144,50 @@ describe("drawing copy on a blind replay cell", () => {
   });
 });
 
+// The legend group header's copy button: every member's live config in ONE
+// clipboard payload (items list), so paste recreates the whole group.
+describe("group copy", () => {
+  const ema = (name: string, period: number) => ({
+    name,
+    paneId: "candle_pane",
+    shortName: "EMA",
+    calcParams: [period],
+    visible: true,
+    styles: { lines: [{ color: "#fff", size: 1 }] },
+    extendData: { indType: "EMA" },
+  });
+  const chart = () => {
+    const inds = [ema("EMA", 50), ema("EMA2", 200)];
+    return {
+      getIndicators: (f?: { paneId?: string; name?: string }) =>
+        f ? inds.filter((i) => i.paneId === f.paneId && i.name === f.name) : inds,
+    } as unknown as NonNullable<ChartHandle["chartRef"]["current"]>;
+  };
+  const groupCommands = () => {
+    const handle = makeHandle();
+    (handle.chartRef as { current: unknown }).current = chart();
+    return renderHook(() => useIndicatorCommands(handle, DEPS)).result.current;
+  };
+
+  it("writes one payload carrying every member's type and config", () => {
+    groupCommands().copyIndicatorGroup(["EMA", "EMA2"]);
+    expect(writeText).toHaveBeenCalledOnce();
+    const payload = JSON.parse(writeText.mock.calls[0][0]);
+    expect(payload.__autoTraderIndicator).toBe(1);
+    expect(payload.items.map((it: { type: string }) => it.type)).toEqual(["EMA", "EMA"]);
+    expect(payload.items.map((it: { config: { calcParams: number[] } }) => it.config.calcParams)).toEqual([
+      [50],
+      [200],
+    ]);
+  });
+
+  it("writes nothing while this cell is masked", () => {
+    arm();
+    groupCommands().copyIndicatorGroup(["EMA", "EMA2"]);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+});
+
 describe("indicator copy on a blind replay cell", () => {
   // An indicator config can carry a bar timestamp of its own (PREV_HL's anchor),
   // so it goes through the same gate.
