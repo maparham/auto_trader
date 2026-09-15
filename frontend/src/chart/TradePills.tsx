@@ -182,11 +182,15 @@ export default function TradePills({
   const hoveredTradeId = tradeIdOf(hoveredPillKey);
   // Leader-tick nodes keyed like the pills; geometry is written by the layout pass.
   const leaderNodesRef = useRef(new Map<string, HTMLDivElement>());
-  // A pill is ENGAGED when it must show (or be reachable at) its full face: its
-  // trade selected, itself hovered/focused, or a drag staged on its line.
+  // A pill is ENGAGED — its cluster expands into the spread column — only while
+  // it is hovered or a drag is staged on its line (Apply/Discard must stay
+  // reachable without a hover). Selection/focus deliberately do NOT engage:
+  // pills hold their exact price levels at rest, so a selected trade inside a
+  // cluster stays merged in the aggregate until the pointer visits it; the
+  // aggregate carries the selected style instead (see the summary below).
   const pillEngaged = (p: TradePillItem) => {
     const key = `${p.tradeId}:${p.field}`;
-    return p.tradeId === selectedTradeId || key === hoveredPillKey || key === focusedPillKey || p.changed;
+    return key === hoveredPillKey || p.changed;
   };
   // Colliding pills collapse into ONE summary pill (count + net P/L) unless the
   // cluster is engaged — then its members render individually and the layout pass
@@ -294,6 +298,11 @@ export default function TradePills({
         if (v.kind === "summary") {
           const withPl = v.members.filter((m) => m.pl != null);
           const net = withPl.length ? withPl.reduce((s2, m) => s2 + (m.pl as number), 0) : null;
+          // Selection no longer expands the cluster, so the aggregate itself wears
+          // the selected style when it holds the selected trade's pill — the bracket
+          // spine has to visibly tie to SOMETHING while the group is merged. Other
+          // trades' aggregates dim like resting pills do.
+          const holdsSelected = selectedTradeId != null && v.members.some((m) => m.tradeId === selectedTradeId);
           return (
             <div
               key={`cluster:${v.key}`}
@@ -304,7 +313,7 @@ export default function TradePills({
                 if (node) tradePillNodesRef.current.set(v.key, node);
                 else tradePillNodesRef.current.delete(v.key);
               }}
-              className={`trade-pill tp-cluster${selectedTradeId != null ? " dimmed" : ""}`}
+              className={`trade-pill tp-cluster${holdsSelected ? " selected raised" : selectedTradeId != null ? " dimmed" : ""}`}
               style={{
                 top: v.y,
                 right: axisWidth,

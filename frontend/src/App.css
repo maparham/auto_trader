@@ -3328,8 +3328,10 @@
 /* The pill of the focused LINE (selected field, or the hovered one) wins overlaps
    within its own raised group so a stack of close levels stays readable. */
 .trade-pill.focused { z-index: 49; }
-/* Collapsed cluster: several colliding resting pills as one summary — "3×" and the
-   net P/L. Neutral frame (mixed roles); engaging any member expands the cluster. */
+/* Collapsed cluster: several colliding pills as one summary — "3×" and the net
+   P/L — held at the cluster's true price mean. Neutral frame (mixed roles).
+   Only hovering a member (or a staged drag) spreads it; a selected trade inside
+   stays merged, the aggregate wearing the .selected border instead. */
 .trade-pill.tp-cluster .tp-label { text-transform: none; letter-spacing: .02em; font-size: 10px; }
 /* Eyebrow tag — TP / SL / the side word (Long, Short, Sell limit…), small + uppercase +
    letter-spaced, in the role colour. The one place hue lives besides the border. */

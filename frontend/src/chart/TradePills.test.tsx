@@ -56,11 +56,13 @@ const pill = (tradeId: string, field: TradePillItem["field"]): TradePillItem => 
   changed: false,
 });
 
+// Non-colliding levels: these fixtures assert per-pill classes, so nothing may
+// merge into an aggregate (overlap behaviour has its own suites below).
 const PILLS: TradePillItem[] = [
-  pill("A", "price"),
-  pill("A", "tp"),
-  pill("B", "price"),
-  pill("B", "tp"),
+  { ...pill("A", "price"), y: 40 },
+  { ...pill("A", "tp"), y: 80 },
+  { ...pill("B", "price"), y: 120 },
+  { ...pill("B", "tp"), y: 160 },
 ];
 
 function renderPills(over: Partial<Parameters<typeof TradePills>[0]> = {}) {
@@ -384,17 +386,44 @@ describe("TradePills cluster collapse", () => {
     expect(summary.textContent).toBe("2×");
   });
 
-  it("expands into individual pills while the cluster holds the selected trade", () => {
+  it("stays collapsed while the cluster holds the selected trade, carrying the selected style", () => {
+    // Selection no longer forces a spread: pills hold their exact levels at rest,
+    // and the aggregate wears the selected border so the bracket spine still reads
+    // as tied to something.
     const container = cascadeRender(
       [
         { ...pill("A", "price"), y: 100 },
         { ...pill("B", "price"), y: 110 },
       ],
-      { selectedTradeId: "A" },
+      { selectedTradeId: "A", focusedPillKey: "A:price" },
+    );
+    const summary = container.querySelector<HTMLElement>(".tp-cluster")!;
+    expect(summary).not.toBeNull();
+    expect(summary.className).toContain("selected");
+    expect(summary.className).not.toContain("dimmed");
+    expect(summary.style.top).toBe("105px"); // still at the cluster mean y
+  });
+
+  it("expands into individual pills only while a member is hovered", () => {
+    const container = cascadeRender(
+      [
+        { ...pill("A", "price"), y: 100 },
+        { ...pill("B", "price"), y: 110 },
+      ],
+      { selectedTradeId: "A", hoveredPillKey: "A:price" },
     );
     expect(container.querySelector(".tp-cluster")).toBeNull();
     const tops = Array.from(container.querySelectorAll<HTMLElement>(".trade-pill")).map((n) => n.style.top);
     expect(tops).toEqual(["93px", "117px"]);
+  });
+
+  it("keeps a cluster expanded while a member has a staged drag (Apply must stay reachable)", () => {
+    const container = cascadeRender([
+      { ...pill("A", "price"), y: 100, changed: true },
+      { ...pill("B", "price"), y: 110 },
+    ]);
+    expect(container.querySelector(".tp-cluster")).toBeNull();
+    expect(container.querySelectorAll(".trade-pill")).toHaveLength(2);
   });
 
   it("registers the summary under its first member's key so hover/click hit-tests reach it", () => {
