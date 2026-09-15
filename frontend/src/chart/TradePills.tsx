@@ -19,6 +19,10 @@ export interface TradePillItem {
   level: number;
   expiresAt: number | null; // resting order: good-till-date epoch ms; null = GTC
   pl: number | null; // entry: uPnL; SL/TP: P/L if that level is hit
+  // SL/TP only: side-aware % price move from entry to this level (TP in profit is
+  // positive). The COMPACT face shows this instead of the money figure; null on
+  // entry pills (and on a zero entry level, where no percent is computable).
+  pct: number | null;
   changed: boolean; // this line has an un-applied drag → show Apply/Discard
   // entry pill only: which level merged into the entry at breakeven (SL or TP sits
   // at entry) → show a "BE" chip; the field says which pending edit Discard clears.
@@ -420,6 +424,10 @@ export default function TradePills({
                   )
                 ) : isEntry ? (
                   bodyPnl != null && <span className="tp-pnl">{bodyPnl}</span>
+                ) : p.pct != null ? (
+                  /* Percent move from entry: the compact face answers "how far is this
+                     level" — the money-if-hit stays on the expanded face. */
+                  <span className="tp-plhint">{sign(p.pct)}%</span>
                 ) : (
                   p.pl != null && <span className="tp-plhint">{sign(p.pl)}</span>
                 )}

@@ -90,6 +90,7 @@ type TradePill = {
   qty: number;
   level: number;
   pl: number | null;
+  pct: number | null; // SL/TP: side-aware % price move entry → level; null on entry pills
   changed: boolean;
   expiresAt: number | null; // resting order good-till-date epoch ms; null = GTC/position
   breakevenField?: "stop" | "takeProfit";
@@ -832,6 +833,10 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         const dir = t.side === "buy" ? 1 : -1;
         // P/L a level would realise if price reached it (from the fixed open level).
         const plAt = (lvl: number) => dir * t.quantity * (lvl - t.priceLevel);
+        // Side-aware % price move from entry to a level (a profitable TP is positive
+        // for both sides). Quantity- and leverage-independent by design — the compact
+        // pill answers "how far is this level", not "what does it pay".
+        const pctAt = (lvl: number) => (t.priceLevel !== 0 ? (dir * (lvl - t.priceLevel)) / t.priceLevel * 100 : null);
         const common = { tradeId: t.id, kind: t.kind, side: t.side, qty: t.quantity, expiresAt: t.expiresAt };
         const yP = yOf(priceLvl);
         // Entry pill carries live uPnL for an open position; a resting order has none.
@@ -839,14 +844,14 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // the merged level's own pill is suppressed at breakeven, so its Apply/Discard
         // affordance must surface here, or a dragged-to-entry SL/TP would strand un-commit-able.
         if (yP != null)
-          pills.push({ ...common, field: "price", y: yP, level: priceLvl, pl: t.kind === "position" ? t.upnl : null, changed: pend.price !== undefined || (beField != null && pend[beField] !== undefined), breakevenField: beField });
+          pills.push({ ...common, field: "price", y: yP, level: priceLvl, pl: t.kind === "position" ? t.upnl : null, pct: null, changed: pend.price !== undefined || (beField != null && pend[beField] !== undefined), breakevenField: beField });
         if (merged.stop != null && !stopBE) {
           const y = yOf(merged.stop);
-          if (y != null) pills.push({ ...common, field: "stop", y, level: merged.stop, pl: plAt(merged.stop), changed: pend.stop !== undefined });
+          if (y != null) pills.push({ ...common, field: "stop", y, level: merged.stop, pl: plAt(merged.stop), pct: pctAt(merged.stop), changed: pend.stop !== undefined });
         }
         if (merged.takeProfit != null && !tpBE) {
           const y = yOf(merged.takeProfit);
-          if (y != null) pills.push({ ...common, field: "tp", y, level: merged.takeProfit, pl: plAt(merged.takeProfit), changed: pend.takeProfit !== undefined });
+          if (y != null) pills.push({ ...common, field: "tp", y, level: merged.takeProfit, pl: plAt(merged.takeProfit), pct: pctAt(merged.takeProfit), changed: pend.takeProfit !== undefined });
         }
       }
     }

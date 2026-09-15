@@ -1125,6 +1125,7 @@ export default function ChartCore({
       qty: number;
       level: number;
       pl: number | null; // entry: uPnL; SL/TP: P/L if that level is hit
+      pct: number | null; // SL/TP: side-aware % price move entry → level; null on entry pills
       changed: boolean; // this line has an un-applied drag → show Apply/Discard
       expiresAt: number | null; // resting order good-till-date epoch ms; null = GTC/position
       // entry pill only: which level merged into the entry at breakeven (SL or TP sits

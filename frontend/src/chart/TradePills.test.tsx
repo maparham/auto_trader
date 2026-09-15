@@ -53,6 +53,7 @@ const pill = (tradeId: string, field: TradePillItem["field"]): TradePillItem => 
   level: 1.2345,
   expiresAt: null,
   pl: null,
+  pct: null,
   changed: false,
 });
 
@@ -302,15 +303,34 @@ describe("TradePills compact axis-docked face", () => {
     expect(container.querySelector<HTMLElement>(".trade-pill")!.textContent).toContain("S2");
   });
 
-  it("renders a resting SL pill compact: tag + P/L-if-hit, no remove button", () => {
+  it("renders a resting SL pill compact: tag + percent move from entry, no remove button", () => {
     const { container } = renderPills({
-      pills: [{ ...pill("A", "stop"), pl: -12.4 }],
+      pills: [{ ...pill("A", "stop"), pl: -12.4, pct: -1.234 }],
     });
     const node = container.querySelector<HTMLElement>(".trade-pill")!;
     expect(node.textContent).toContain("SL");
-    expect(node.textContent).toContain("\u221212.40");
+    expect(node.textContent).toContain("\u22121.23%"); // percent, not money
+    expect(node.textContent).not.toContain("12.40");
     expect(node.querySelector(".tp-remove")).toBeNull();
     expect(node.querySelector(".tp-price")).toBeNull();
+  });
+
+  it("falls back to the money figure on a compact SL/TP when no percent is computable", () => {
+    const { container } = renderPills({
+      pills: [{ ...pill("A", "tp"), pl: 24.6, pct: null }],
+    });
+    expect(container.querySelector<HTMLElement>(".trade-pill")!.textContent).toContain("+24.60");
+  });
+
+  it("keeps the absolute P/L-if-hit on the EXPANDED SL/TP face", () => {
+    const { container } = renderPills({
+      pills: [{ ...pill("A", "stop"), pl: -12.4, pct: -1.234 }],
+      tradesRef: { current: [tradeView()] },
+      hoveredPillKey: "A:stop",
+    });
+    const node = container.querySelector<HTMLElement>(".trade-pill")!;
+    expect(node.className).not.toContain("compact");
+    expect(node.textContent).toContain("\u221212.40");
   });
 
   it("renders a resting order entry compact with its GTC status", () => {
