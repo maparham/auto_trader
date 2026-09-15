@@ -77,6 +77,15 @@ def request_is_admin(obj) -> bool:
     return bool(getattr(obj.state, "is_admin", False))
 
 
+def request_is_render(obj) -> bool:
+    """True when this Request OR WebSocket authenticated with the internal
+    render token (headless snapshot page). The auth layer bounds that
+    principal to GET/HEAD with is_admin False; this flag only widens
+    resolve_broker so the page can READ restricted-broker market data —
+    the alerted user's chart is usually on one."""
+    return bool(getattr(obj.state, "is_render", False))
+
+
 # The credential-free data brokers the anonymous demo principal may touch.
 # Dukascopy is the historical default (payloads published before the broker
 # field existed serve on it); yfinance is what new publishes target because it
@@ -100,7 +109,7 @@ def resolve_broker(request: Request, broker_id: str) -> str:
     if request_is_admin(request):
         return broker_id or _registry.default_data_id()
     bid = broker_id or _registry.default_data_id(unrestricted_only=True)
-    if _registry.is_restricted(bid):
+    if _registry.is_restricted(bid) and not request_is_render(request):
         raise HTTPException(403, f"broker '{bid}' requires admin access")
     return bid
 

@@ -85,6 +85,32 @@ def test_middleware_rejects_render_token_on_write(clerk):
     assert r.json() == {"detail": auth.INVALID_TOKEN_MSG}
 
 
+def test_render_token_passes_restricted_broker_gate(clerk):
+    # The heartbeat the snapshot page rebuilds is usually on a credentialed
+    # broker (capital-live). The render principal is deliberately non-admin,
+    # but it must still pass resolve_broker's restricted gate for reads, or
+    # hosted snapshots can never fetch the candles of the very chart they
+    # exist to screenshot (they 403'd and fell back to matplotlib for weeks).
+    tok = auth.mint_render_token("user-42")
+    r = client.get(
+        "/api/candles?epic=X&resolution=HOUR&broker=capital-live",
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    # capital-live isn't registered in tests, so passing the gate surfaces as
+    # 404 (unknown broker) rather than the admin-access 403.
+    assert r.status_code != 403
+
+
+def test_clerk_non_admin_still_blocked_on_restricted_broker(clerk):
+    tok = clerk_fake.make_token(sub="user_plain")
+    r = client.get(
+        "/api/candles?epic=X&resolution=HOUR&broker=capital-live",
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    assert r.status_code == 403
+    assert "requires admin access" in r.json()["detail"]
+
+
 def test_middleware_render_token_is_never_admin(clerk):
     # /api/brokers reflects request.state.is_admin as `isAdmin` in its
     # response body, giving an observable seam for the middleware's admin

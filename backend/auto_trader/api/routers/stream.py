@@ -87,7 +87,11 @@ async def ws_candles(websocket: WebSocket) -> None:
         )
         await websocket.close()
         return
-    if not admin and deps._registry.is_restricted(broker_id):
+    if (
+        not admin
+        and not deps.request_is_render(websocket)
+        and deps._registry.is_restricted(broker_id)
+    ):
         await websocket.send_json(
             {
                 "type": "error",

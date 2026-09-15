@@ -258,6 +258,11 @@ def install_auth(app: FastAPI) -> None:
                 )
             request.state.user_id = internal_sub
             request.state.is_admin = False
+            # is_render lets deps.resolve_broker grant READ access to
+            # restricted data brokers (the alerted user's chart is usually on
+            # one); dealing and /api/admin/* stay refused via is_admin False,
+            # and the GET/HEAD gate above bounds it to reads.
+            request.state.is_render = True
             request.state.is_demo = False
             request.state.claims = {}
             request.state.impersonator = None
@@ -363,6 +368,7 @@ async def verify_ws(websocket: WebSocket) -> str | None:
         # return, so this closes rather than 403s.
         if not target:
             websocket.state.is_admin = False
+            websocket.state.is_render = True  # see the HTTP render branch
             websocket.state.impersonator = None
             return internal_sub
         else:
