@@ -1080,6 +1080,58 @@ export async function fetchActiveBackfills(): Promise<BackfillProgress[]> {
   }
 }
 
+// --- admin history download ---------------------------------------------------
+// Deep cache-warm for one series, admin-only (the backend 403s everyone else).
+// The job's `resolution` is the BASE series actually downloaded: a MONTH chart
+// reports DAY, so match jobs to a chart by broker+epic, not by resolution.
+export type HistoryJob = {
+  broker: string; epic: string; resolution: string; priceSide: string;
+  status: "running" | "done" | "error" | "cancelled";
+  result: string | null; error: string | null;
+  pct: number | null; oldestTs: number | null; targetOldestTs: number;
+  bars: number; elapsedS: number;
+};
+
+export async function startHistoryDownload(req: {
+  broker: string; epic: string; resolution: string; priceSide?: string;
+  years: number | null;
+}): Promise<HistoryJob> {
+  const res = await apiFetch(
+    `${BASE}/api/candle-cache/backfill?broker=${encodeURIComponent(req.broker)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        epic: req.epic, resolution: req.resolution,
+        priceSide: req.priceSide ?? "mid", years: req.years,
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(await errorDetail(res, `history download failed (${res.status})`));
+  return res.json();
+}
+
+export async function fetchHistoryJobs(): Promise<HistoryJob[]> {
+  try {
+    const res = await apiFetch(`${BASE}/api/candle-cache/backfill/jobs`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function cancelHistoryDownload(req: {
+  broker: string; epic: string; resolution: string; priceSide?: string;
+}): Promise<void> {
+  const qs = new URLSearchParams({
+    broker: req.broker, epic: req.epic, resolution: req.resolution,
+    priceSide: req.priceSide ?? "mid",
+  });
+  const res = await apiFetch(`${BASE}/api/candle-cache/backfill?${qs}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await errorDetail(res, `cancel failed (${res.status})`));
+}
+
 export async function fetchBacktestProgress(
   id: string,
 ): Promise<{ stage: string; done: number; total: number } | null> {

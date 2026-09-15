@@ -964,6 +964,7 @@ class CandleCache:
         max_bars_per_step: int = 1000,
         max_empty_gap_seconds: int = 5 * 86_400,
         now: float | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> str:
         """Walk coverage's `oldest` watermark down toward `target_oldest_ts` (or the
         broker's retention floor), storing every closed bar found.
@@ -979,7 +980,11 @@ class CandleCache:
         Holds the per-key lock across the whole walk (serialized with window()/recent()).
         A first-ever deep backfill can hold it for the run; live bars keep flowing over
         the stream meanwhile, and recent() bridges any gap once the lock frees. Returns
-        "cold" (no coverage yet), "target", "floor", or "error" (a fetch raised)."""
+        "cold" (no coverage yet), "target", "floor", or "error" (a fetch raised).
+
+        `on_progress(cursor_ts, bars_stored)` fires after every step — stored chunks
+        AND proven-empty windows (bars_stored=0), so a deep pre-history scan is still
+        visibly moving. Called with the lock held: it must be cheap and non-raising."""
         if await asyncio.to_thread(self._backfill_reached_floor, key):
             return "floor"
         now_s = now if now is not None else time.time()
@@ -1007,6 +1012,8 @@ class CandleCache:
                     # real bar. A long-enough continuous empty run is the broker floor.
                     empty_span += oldest - step_start
                     oldest = step_start
+                    if on_progress is not None:
+                        on_progress(oldest, 0)
                     if empty_span >= max_empty_gap_seconds:
                         await asyncio.to_thread(self._set_backfill_floor, key)
                         return "floor"
@@ -1017,6 +1024,8 @@ class CandleCache:
                 # new_oldest as the hi arg leaves newest intact (new_oldest < newest).
                 await asyncio.to_thread(self._extend_coverage, key, new_oldest, new_oldest)
                 oldest = new_oldest
+                if on_progress is not None:
+                    on_progress(oldest, len(closed))
             return "target"
 
 

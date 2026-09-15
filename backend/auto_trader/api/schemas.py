@@ -50,6 +50,31 @@ class BackfillProgressDTO(BaseModel):
     at: str
 
 
+class HistoryDownloadRequest(BaseModel):
+    """Start an admin history download for one series. `years` bounds the
+    depth; None means all available history (walk to the broker floor)."""
+    epic: str
+    resolution: str
+    priceSide: str = "mid"
+    years: int | None = Field(None, ge=1, le=100)
+
+
+class HistoryJobDTO(BaseModel):
+    """One admin history-download job (running or recently finished)."""
+    broker: str
+    epic: str
+    resolution: str  # BASE resolution actually downloaded (derived TFs map down)
+    priceSide: str
+    status: str      # running | done | error | cancelled
+    result: str | None   # backfill outcome when done: target | floor
+    error: str | None
+    pct: float | None    # None while unknown, and for all-history jobs
+    oldestTs: int | None
+    targetOldestTs: int
+    bars: int
+    elapsedS: float
+
+
 class CandleCacheGlobalStatsDTO(BaseModel):
     total_hits: int
     total_misses: int

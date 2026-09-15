@@ -188,6 +188,15 @@ import {
 } from "./lib/trading";
 import ContextMenu, { type MenuItem } from "./ContextMenu";
 import { limitOrderItems } from "./lib/chartOrderMenu";
+import {
+  historyDownloadItems,
+  historyDurationItems,
+  historyJobLabel,
+} from "./lib/historyDownloadMenu";
+import { watchHistoryDownload } from "./lib/historyDownload";
+import { useIsAdmin } from "./admin/useIsAdmin";
+import { isDemoMode } from "./lib/demoMode";
+import { cancelHistoryDownload, startHistoryDownload, type HistoryJob } from "./api";
 import { MenuIcons } from "./lib/menuIcons";
 import { hitSlopeHandle, type SlopeGrab } from "./lib/slopeHandles";
 import { snapSlopeEndpoint } from "./lib/slopeMagnet";
@@ -1300,6 +1309,48 @@ export default function ChartCore({
   // chart only" and "Stretch to fill height" toggles (see onContextMenu, which opens
   // it over the axis strip).
   const [axisMenu, setAxisMenu] = useState<{ x: number; y: number } | null>(null);
+  // Admin-only "Download history" flow: the chart menu's entry swaps in this
+  // duration chooser, and the chosen depth starts a backend job whose progress
+  // is polled into `histJob` (the pill near the top-left corner). Admin-ness is
+  // server-decided (whoami); non-admins never see the entry.
+  const isAdmin = useIsAdmin(!isDemoMode());
+  const [histMenu, setHistMenu] = useState<{ x: number; y: number } | null>(null);
+  const [histJob, setHistJob] = useState<HistoryJob | null>(null);
+  const [histPolling, setHistPolling] = useState(false);
+  useEffect(() => {
+    if (!histPolling) return;
+    return watchHistoryDownload({ broker: brokerId, epic: symbol.epic }, (job) => {
+      setHistJob(job);
+      if (job !== null && job.status !== "running") setHistPolling(false);
+    });
+  }, [histPolling, brokerId, symbol.epic]);
+  // A finished pill (done/error/cancelled) lingers briefly, then clears itself.
+  useEffect(() => {
+    if (!histJob || histJob.status === "running") return;
+    const t = setTimeout(() => setHistJob(null), 6000);
+    return () => clearTimeout(t);
+  }, [histJob]);
+  const startHistory = useCallback(
+    (years: number | null) => {
+      startHistoryDownload({
+        broker: brokerId, epic: symbol.epic, resolution: period.resolution,
+        priceSide, years,
+      })
+        .then((job) => {
+          setHistJob(job);
+          setHistPolling(true);
+        })
+        .catch((e) => toast(e instanceof Error ? e.message : "history download failed"));
+    },
+    [brokerId, symbol.epic, period.resolution, priceSide],
+  );
+  const cancelHistory = useCallback(() => {
+    cancelHistoryDownload({
+      broker: brokerId, epic: symbol.epic, resolution: period.resolution, priceSide,
+    }).catch(() => {
+      /* job already finished: the next poll shows its terminal state */
+    });
+  }, [brokerId, symbol.epic, period.resolution, priceSide]);
   // Reflect the persisted toggle so the menu's checkmark stays in sync across cells.
   const [scaleOnly, setScaleOnly] = useState(scalePriceOnly.value);
   // The value only changes via toggleScalePriceOnly (a user action after mount), so
@@ -5561,9 +5612,41 @@ export default function ChartCore({
                 }),
             },
             { label: "Settings", icon: MenuIcons.settings, onClick: () => openSettings() },
+            // Admin-only deep cache-warm for this series; opens the duration
+            // chooser below at the same spot.
+            ...historyDownloadItems({
+              isAdmin,
+              synthetic: isSynthetic(symbol.epic),
+              liveOnly: Boolean(period.liveOnly),
+              running: histJob?.status === "running",
+              openDurations: () => setHistMenu({ x: chartMenu.x, y: chartMenu.y }),
+              cancel: cancelHistory,
+            }),
           ]}
           onClose={() => setChartMenu(null)}
         />
+      )}
+
+      {histMenu && (
+        <ContextMenu
+          x={histMenu.x}
+          y={histMenu.y}
+          items={historyDurationItems(startHistory)}
+          onClose={() => setHistMenu(null)}
+        />
+      )}
+
+      {histJob && (
+        <div className={`hist-dl-pill ${histJob.status}`}>
+          <span>{historyJobLabel(histJob)}</span>
+          {histJob.status === "running" && (
+            <Tooltip content="Cancel download">
+              <button className="hist-dl-cancel" onClick={cancelHistory}>
+                ×
+              </button>
+            </Tooltip>
+          )}
+        </div>
       )}
 
       {axisMenu && (

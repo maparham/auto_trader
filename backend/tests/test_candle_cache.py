@@ -978,6 +978,47 @@ def test_backfill_stops_at_target_without_floor(tmp_path):
     assert cache._backfill_reached_floor(KEY) is False  # target, not floor
 
 
+def test_backfill_reports_progress_per_stored_chunk(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(1000, 1.0)], cutoff_ts=100_000)  # oldest = 1000
+    src = _RangeSource(have_ts=list(range(100, 1000, 60)))  # bars all the way down
+    seen: list[tuple[int, int]] = []
+    status = asyncio.run(
+        cache.backfill_below(
+            KEY, 60, src.range,
+            target_oldest_ts=700, max_bars_per_step=2, now=100_000,
+            on_progress=lambda oldest, bars: seen.append((oldest, bars)),
+        )
+    )
+    assert status == "target"
+    assert seen, "on_progress never called"
+    olds = [o for o, _ in seen]
+    assert olds == sorted(olds, reverse=True)  # cursor only descends
+    assert olds[-1] == 700                     # last report reaches the target
+    assert all(b > 0 for _, b in seen)         # every step here stored bars
+
+
+def test_backfill_reports_progress_across_empty_windows(tmp_path):
+    # Empty (proven-bar-free) windows advance the cursor without storing bars;
+    # the walk must still report that movement (bars=0) or a deep pre-history
+    # scan looks frozen to the job watching it.
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(1200, 1.0)], cutoff_ts=100_000)  # oldest = 1200
+    have = [700, 760, 820, 1000, 1060, 1120]  # interior gap 820..1000
+    src = _RangeSource(have_ts=have)
+    seen: list[tuple[int, int]] = []
+    asyncio.run(
+        cache.backfill_below(
+            KEY, 60, src.range,
+            target_oldest_ts=0, max_bars_per_step=2, max_empty_gap_seconds=600,
+            now=100_000,
+            on_progress=lambda oldest, bars: seen.append((oldest, bars)),
+        )
+    )
+    assert any(b == 0 for _, b in seen)  # empty windows reported too
+    assert any(b > 0 for _, b in seen)
+
+
 def test_backfill_noop_after_floor(tmp_path):
     cache = CandleCache(str(tmp_path / "c.db"))
     cache._store_closed(KEY, [_c(400, 1.0)], cutoff_ts=10_000)

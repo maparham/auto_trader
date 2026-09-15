@@ -3181,6 +3181,28 @@
    EVEN heights (40px with countdown / 20px without): the pill centers with
    transform: translateY(-50%), so an odd/fractional height would put -50% on a
    half-pixel and blur the text. Fixed even heights keep -50% an integer. */
+/* Admin history-download progress pill. Top-CENTER, same chrome family as
+   .chart-history-jump: the legend's indicator rows own the top-left corner and
+   grow downward, so any fixed offset there ends up under them. Muted surface,
+   not accent: a background task's status, not a call to action. */
+.hist-dl-pill {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 52;
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+  white-space: nowrap;
+}
+.hist-dl-pill.error { color: var(--neg); }
+.hist-dl-pill.done { color: var(--pos); }
+.hist-dl-pill .hist-dl-cancel {
+  background: transparent; border: none; padding: 0 2px; cursor: pointer;
+  color: var(--text-faint); font-size: 13px; line-height: 1;
+}
+.hist-dl-pill .hist-dl-cancel:hover { color: var(--text); }
+
 .price-tag {
   /* Width is set imperatively (ChartCore) to the price-axis column width so the
      pill fills the column and never spills left into the chart. */
