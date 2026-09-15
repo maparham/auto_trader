@@ -165,6 +165,8 @@ import {
   type TapState,
 } from "./chart/touchTap";
 import GoLivePill from "./chart/GoLivePill";
+import HistoryJumpPill from "./chart/HistoryJumpPill";
+import { beginHistoryJump } from "./lib/historyJump";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
 import { refreshMtfIndicators, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, tradeLineSpanX } from "./lib/positionLines";
@@ -3538,12 +3540,19 @@ export default function ChartCore({
       // Let the backtest trades panel page an out-of-window trade in before
       // scrolling to it (see coverBacktestTradeTo). Registered per-chart so the
       // panel's selection subscription — which only holds the Chart — can reach it.
-      controller.coverBacktestTradeTo = (fromTs) => coverBacktestTradeTo(fromTs);
+      // Wrapped in a history-jump notice so the cell shows a passive "Loading
+      // history…" pill while the walk runs — outside callers (backtest rows,
+      // the trade-list jump) get feedback without knowing this cell exists.
+      const coverWithJumpNotice = (fromTs: number) => {
+        const jump = beginHistoryJump(cellId);
+        return coverBacktestTradeTo(fromTs, { onWindowPartial: jump.update }).finally(jump.end);
+      };
+      controller.coverBacktestTradeTo = coverWithJumpNotice;
       // Let outside chrome move this cell's view without the scroll listener
       // reading it as a user gesture (see programmaticMove). No caller today —
       // the unpinned backtest panel used to shift the chart and no longer may.
       controller.programmaticMove = programmaticMove;
-      registerBacktestPager(chart, (fromTs) => coverBacktestTradeTo(fromTs));
+      registerBacktestPager(chart, coverWithJumpNotice);
       // Hydrate this cell's saved indicators synchronously on chart-ready (they
       // recalc once data arrives). Done here — not after the async data fetch — so
       // the focused Toolbar reflects them immediately on mount / tab switch, and
@@ -5273,6 +5282,7 @@ export default function ChartCore({
         containerRef={containerRef}
         onGoLive={goLive}
       />
+      <HistoryJumpPill cellId={cellId} />
       {/* Data-unavailable banner: no candles after a grace period (broker maintenance,
           auth failure, offline, or an unknown epic). Generic on purpose — a 401 can't
           be told apart from expired creds, so we don't claim a specific cause. */}

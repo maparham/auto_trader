@@ -6684,6 +6684,25 @@ span.bt-leg-short { color: var(--neg); }
 .chart-golive:hover { color: var(--text); border-color: var(--accent); }
 .chart-golive-label { font-variant-numeric: tabular-nums; }
 
+/* History-jump pill: passive "Loading history…" while a jump-to-point
+   (backtest trade, trade-list row, pattern match) backfills older candles.
+   Same chrome family as .chart-golive, muted and non-interactive. The fade-in
+   delay keeps an already-covered jump from flashing it for a frame. */
+.chart-history-jump {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 52; pointer-events: none;
+  padding: 4px 11px;
+  font-size: 11.5px; font-weight: 500; color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+  opacity: 0;
+  animation: history-jump-in 0.15s ease-out 0.3s forwards;
+}
+@keyframes history-jump-in {
+  to { opacity: 1; }
+}
+
 /* Trade-review tour card (TradeReviewCard): floating, draggable panel for
    stepping through one cohort of the active backtest's trades. Shares the
    signal-popover term classes for the Entry rules table. */

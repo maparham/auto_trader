@@ -30,6 +30,7 @@ import { shouldDetach, type DetachedTarget } from "./detachedView";
 import { loadDrawings } from "../lib/persist";
 import { getBacktestCoverageFromTs, reanchorBacktestMarkers } from "../lib/backtest";
 import { toast } from "../lib/notify";
+import { beginHistoryJump } from "../lib/historyJump";
 import { readVisibleRange, scrollTsToCenter as scrollTsToCenterImpl } from "../lib/chartSync";
 import { browserTimezone } from "./chartPainters";
 import type { Instrument } from "../lib/feed";
@@ -522,6 +523,10 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
     // cover stale instead of racing it — two several-hundred-window fetch
     // storms at once, on a panel built for clicking through results.
     handle.pendingRangeRef.current = token;
+    // Passive on-chart pill for the whole wait (cover + sequential tail): the
+    // silent seconds between clicking a match and the chart moving read as a
+    // broken jump. Superseded automatically by the next click's own begin.
+    const jump = beginHistoryJump(cellId);
     void (async () => {
       // Cover to the token's PADDED left edge, not the match's own first bar:
       // anything the parallel cover leaves uncovered, the sequential walk in
@@ -543,6 +548,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
         },
         onWindowPartial: (p) => {
           if (!filling.best || p.done > filling.best.done) filling.best = p;
+          jump.update(p);
         },
       });
       if (handle.pendingRangeRef.current !== token) return; // a newer click owns the chart
@@ -598,7 +604,7 @@ export function useRangeNavigation(handle: ChartHandle, deps: RangeNavigationDep
           `[chart] go-to-range covered only back to ${debugTs(oldest.timestamp)}, short of ${debugTs(wantedMs)}${fetchFailed ? " (a window fetch failed)" : ""}`,
         );
       }
-    })();
+    })().finally(jump.end);
   };
 
   // Calendar "go to date": land on the chosen date (or datetime) at the current

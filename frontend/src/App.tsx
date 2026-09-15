@@ -46,6 +46,7 @@ import { getDemoSnapshot } from "./lib/demoSnapshot";
 import { writeSnapshotToScope } from "./lib/snapshots";
 import { saveSnapshotOfChart } from "./lib/snapshotSave";
 import { notify, playPing, toast } from "./lib/notify";
+import { beginHistoryJump } from "./lib/historyJump";
 import { registerCustomIndicators } from "./lib/customIndicators";
 import {
   coverBacktestHistory,
@@ -1310,6 +1311,12 @@ export default function App() {
     const epoch = tradeBoxEpochRef.current;
     const t = p.trade;
     const DAY_S = 86_400;
+    // Passive "Loading history…" pill on the target cell for the whole jump —
+    // the daily-bar fetch, the auto-TF settle poll AND the history cover can
+    // add up to many silent seconds. The cover walk begins its own (superseding)
+    // notice via the chart's pager wrapper, so ending here after the cover is a
+    // no-op in the common case; the explicit ends cover the pre-cover bailouts.
+    const jump = beginHistoryJump(p.cellId);
     void (async () => {
       // Daily bars over the trade's life (± a few days of context): they shape
       // the sketched stop (just past the extreme the price actually reached)
@@ -1327,13 +1334,13 @@ export default function App() {
       } catch {
         /* stop falls back to the entry/exit extreme */
       }
-      if (epoch !== tradeBoxEpochRef.current) return; // a newer click superseded this one
+      if (epoch !== tradeBoxEpochRef.current) return jump.end(); // a newer click superseded this one
       // Re-check the cell still shows OUR symbol: a symbol switch during the
       // fetch doesn't bump the epoch (only trade-list clicks do), and placing
       // now would persist the box into the new symbol's drawings — orphaned
       // there forever, since the pointer below records the OLD epic.
       const liveEntry = readyRef.current.get(p.cellId);
-      if (!liveEntry || liveEntry.controller.overlays.getHydratedEpic() !== p.epic) return;
+      if (!liveEntry || liveEntry.controller.overlays.getHydratedEpic() !== p.epic) return jump.end();
       const spec = tradeBoxSpec(t, bars);
       // Auto TF (panel toggle, default on): a box under 5 bars at the cell's
       // current interval reads as a sliver — drop to the coarsest interval that
@@ -1411,9 +1418,9 @@ export default function App() {
         DAY_S * 1000;
       const pad = Math.max((to - from) * 0.6, 10 * finalResMs);
       const tryScroll = (attempt: number) => {
-        if (epoch !== tradeBoxEpochRef.current) return; // superseded
+        if (epoch !== tradeBoxEpochRef.current) return jump.end(); // superseded
         const live = readyRef.current.get(p.cellId);
-        if (!live) return; // cell closed while we waited
+        if (!live) return jump.end(); // cell closed while we waited
         const data = live.chart.getDataList();
         // Spacing check: after a TF switch the OLD interval's (finer, hence
         // closer-together) bars are still on the chart for a beat — scrolling
@@ -1435,6 +1442,7 @@ export default function App() {
         // scroll lands on real bars. A failed/absent walk still scrolls —
         // applyVisibleRange clamps to whatever is loaded.
         void coverBacktestHistory(live.chart, from - pad).then(() => {
+          jump.end();
           if (epoch !== tradeBoxEpochRef.current) return;
           const cur = readyRef.current.get(p.cellId);
           if (cur) applyVisibleRange(cur.chart, from - pad, to + pad);
