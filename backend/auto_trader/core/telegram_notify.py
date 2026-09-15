@@ -64,6 +64,12 @@ _CONDITION_LABELS = {
     "less": "below",
 }
 
+# Broker `side` -> (icon, word) for the open-position caption lines.
+_SIDE_LABELS = {
+    "BUY": ("🟢", "Long"),
+    "SELL": ("🔴", "Short"),
+}
+
 _TIMEFRAME_LABELS = {
     "MINUTE": "1m", "MINUTE_5": "5m", "MINUTE_15": "15m", "MINUTE_30": "30m",
     "HOUR": "1h", "HOUR_4": "4h", "DAY": "1D", "WEEK": "1W",
@@ -260,11 +266,12 @@ class TelegramNotify:
         lines = []
         for p in positions:
             side = str(p.get("side", "")).upper()
+            icon, word = _SIDE_LABELS.get(side, ("📊", side))
             pnl = p.get("upnl")
-            pnl_txt = f" → {pnl:+,.2f}" if isinstance(pnl, (int, float)) else ""
+            pnl_txt = f" · P&L {pnl:+,.2f}" if isinstance(pnl, (int, float)) else ""
             env = f" ({p['env']})" if p.get("env") else ""
             lines.append(
-                f"📊 You are {side} {p.get('quantity')} @ "
+                f"{icon} {word} {p.get('quantity')} from "
                 f"{p.get('open_level'):.{precision}f}{pnl_txt}{env}"
             )
         return lines

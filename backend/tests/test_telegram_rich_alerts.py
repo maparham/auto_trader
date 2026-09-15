@@ -165,7 +165,7 @@ async def test_position_lines_in_caption(store):
     await TELEGRAM.notifier("alice", _payload())
 
     body = json.loads(text.calls.last.request.content)
-    assert "📊 You are BUY 2.0 @ 99.50 → +21.50 (demo)" in body["text"]
+    assert "🟢 Long 2.0 from 99.50 · P&L +21.50 (demo)" in body["text"]
 
 
 @respx.mock
