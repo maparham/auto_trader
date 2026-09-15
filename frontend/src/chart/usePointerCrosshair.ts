@@ -374,9 +374,16 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
         if (snapActiveRef.current) { overlays.setSuppressNativeLine(false); snapActiveRef.current = false; }
         return;
       }
-      const snapAlertId = snapTarget && !snapTarget.isTrade ? snapTarget.alertId ?? null : null;
+      // A trade pill is an opaque chip on top of everything (same rule as the
+      // trade-line band above): inside its rect no alert line beneath may take
+      // the hover — neither via this snap auto-hover nor via klinecharts' native
+      // onMouseEnter, which still fires because the pill is pointer-events:none.
+      const snapAlertId =
+        !overTradePillNow && snapTarget && !snapTarget.isTrade ? snapTarget.alertId ?? null : null;
       if (snapAlertId) {
         if (overlays.getHoveredAlertId() !== snapAlertId) overlays.hoverAlert(snapAlertId);
+      } else if (overTradePillNow && overlays.getHoveredAlertId() != null) {
+        overlays.hoverAlert(null);
       } else if (snapHoverRef.current && overlays.getHoveredAlertId() === snapHoverRef.current) {
         overlays.hoverAlert(null);
       }
@@ -434,7 +441,10 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // which stays 0), so derive the candle pane's bottom edge as top + height.
       const cb = c.getSize("candle_pane", 'root');
       const candleBottom = cb ? cb.top + cb.height : null;
-      if (x > mainW || (candleBottom != null && y > candleBottom)) {
+      // Also hidden inside a trade pill's rect: the pill face (and its buttons) is
+      // the interaction surface there, and the snapped "+" + axis price box would
+      // sit right on top of it. The bare line outside the pill keeps the readout.
+      if (x > mainW || (candleBottom != null && y > candleBottom) || overTradePillNow) {
         btn.style.display = "none";
         setPlusCrosshair(null);
         return;
