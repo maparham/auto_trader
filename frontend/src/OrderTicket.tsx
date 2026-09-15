@@ -115,6 +115,23 @@ export default function OrderTicket({
   const [positions, setPositions] = useState<TradeView[]>([]);
   const [editId, setEditId] = useState<string | null>(editTradeSignal.value);
   const flash = useRef<number | undefined>(undefined);
+  // Real-money confirm is a two-step arm on the action button, NOT window.confirm:
+  // the Tauri shell renders in WKWebView (wry), which never shows JS dialogs, so
+  // confirm() silently returns false there and the button would look dead.
+  const [armed, setArmed] = useState(false);
+  const armTimer = useRef<number | undefined>(undefined);
+  const disarm = () => {
+    window.clearTimeout(armTimer.current);
+    setArmed(false);
+  };
+
+  // An armed confirm is for one exact order: any change to its shape (or the
+  // account it would hit) drops back to the unarmed button.
+  useEffect(() => {
+    disarm();
+    return () => window.clearTimeout(armTimer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [side, quantity, epic, orderType, account]);
 
   const isLimit = orderType === "limit";
   const round = (n: number) => Number(n.toFixed(precision));
@@ -326,8 +343,13 @@ export default function OrderTicket({
       return;
     }
     const realMoney = isRealMoneyAccount(account);
-    if (realMoney && !confirm(`Place a REAL-money ${side.toUpperCase()} of ${qty} ${epic}?`))
+    if (realMoney && !armed) {
+      setArmed(true);
+      window.clearTimeout(armTimer.current);
+      armTimer.current = window.setTimeout(() => setArmed(false), 5000);
       return;
+    }
+    disarm();
     submittingRef.current = true;
     setBusy(true);
     setMsg(null);
@@ -561,12 +583,14 @@ export default function OrderTicket({
       )}
 
       <button
-        className={`ot-action ot-action-${side}`}
+        className={`ot-action ot-action-${side}${armed ? " ot-action-armed" : ""}`}
         disabled={busy}
         onClick={submit}
       >
-        <span className="ot-action-verb">{actionWord}</span>
-        <span className="ot-action-detail">{actionDetail}</span>
+        <span className="ot-action-verb">{armed ? `Confirm ${actionWord}` : actionWord}</span>
+        <span className="ot-action-detail">
+          {armed ? `real money · ${actionDetail}` : actionDetail}
+        </span>
       </button>
 
       <div className={`ot-msg${msg ? " show" : ""}`}>{msg ?? ""}</div>

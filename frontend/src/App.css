@@ -4864,6 +4864,8 @@
 .ot-action-sell { background: var(--neg); }
 .ot-action-verb { font-size: 15px; font-weight: 600; }
 .ot-action-detail { font-size: 11px; opacity: 0.9; }
+/* real-money two-step confirm: first click arms, second deals (auto-disarms) */
+.ot-action-armed { outline: 2px solid #fff; outline-offset: -3px; }
 
 .ot-msg {
   min-height: 14px; font-size: 11px; color: var(--text-dim);
