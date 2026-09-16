@@ -381,20 +381,21 @@
   min-height: 34px; padding-left: 8px; margin-left: 4px;
   border-left: 1px solid var(--border);
 }
-/* Find-open-symbol control pinned at the end of the strip, OUTSIDE .tab-bar-tabs
-   so it never wraps to a second row when the chips wrap — it holds its own slot,
-   sized to one tab row like .tab-bar-actions. */
+/* Find-open-symbol control, last item INSIDE .tab-bar-tabs so it flows with the
+   chips: it sits just after the last tab (and the + button) and rides down to the
+   LAST row when the strip wraps, instead of holding a fixed slot by the first. */
 .tab-bar-search {
   display: flex; align-items: center; flex: none;
-  min-height: 34px; padding-left: 6px;
   position: relative; /* anchors the catalogue-fallback dropdown */
 }
 /* Catalogue-fallback dropdown under the search input: the query matched no open
    tab, so it lists full-catalogue symbols to open as a new tab. Same surface
-   grammar as .ctxmenu; right-anchored so it can't run off the window edge from
-   its end-of-strip slot. */
+   grammar as .ctxmenu; LEFT-anchored because the control now flows after the last
+   tab, so its slot can sit anywhere from the bar's left edge rightwards. Hanging
+   the list leftwards from there would run it off screen with only a tab or two
+   open; the strip ends at .tab-bar-actions, so there is always room to its right. */
 .tab-search-dropdown {
-  position: absolute; top: 100%; right: 0; z-index: 1000;
+  position: absolute; top: 100%; left: 0; z-index: 1000;
   width: max-content; min-width: 220px; max-width: 320px; padding: 6px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 8px 28px var(--shadow); font-size: 12px;

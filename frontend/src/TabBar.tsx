@@ -634,9 +634,8 @@ export default function TabBar({
           +
         </button>
       </Tooltip>
-      </div>
-      {/* Pinned outside .tab-bar-tabs so it never wraps to a second row with the
-          scrolling/wrapping chip strip — it stays put at the strip's end. */}
+      {/* Last item INSIDE the wrapping chip strip, so it rides at the end of
+          the LAST tab row rather than holding a fixed slot beside the first. */}
       <div className="tab-bar-search" ref={searchBoxRef}>
         {searchOpen ? (
           <input
@@ -714,6 +713,7 @@ export default function TabBar({
             )}
           </div>
         )}
+      </div>
       </div>
       {trailing && <div className="tab-bar-actions">{trailing}</div>}
       {ctxMenu && tabs.length > 1 && (
