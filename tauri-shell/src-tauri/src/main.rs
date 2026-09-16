@@ -222,6 +222,26 @@ fn open_settings(app: &tauri::AppHandle) {
     .build();
 }
 
+/// The Dock tile. macOS 26 draws every icon that comes from the bundle, .icns
+/// and asset catalog alike, on a rounded compatibility plate, so the artwork's
+/// own transparency never reaches the Dock. An image set on the running
+/// NSApplication is drawn as-is, which makes this the only way the tile can be
+/// the bare candle mark. Tauri's own call is dev-only, so release builds set
+/// it here. icons/icon.png is that artwork; regenerate it with
+/// scripts/gen-macos-icon.py.
+#[cfg(target_os = "macos")]
+fn set_dock_icon() {
+    use objc2::{AllocAnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let data = NSData::with_bytes(include_bytes!("../icons/icon.png"));
+    if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
+        unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image)) };
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(Unread::default())
@@ -238,6 +258,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![ping, get_settings, set_settings, target_url, notify_native, set_status, browser_auth::browser_sign_in])
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            set_dock_icon();
+
             appnap::hold_activity_assertion();
 
             // Remember where the window booted (the splash) before it navigates

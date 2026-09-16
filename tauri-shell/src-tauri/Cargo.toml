@@ -22,7 +22,9 @@ rand = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSError"] }
+objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSError", "NSData"] }
+# The Dock tile is set at runtime (see set_dock_icon in main.rs).
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder", "NSImage"] }
 # Modern notification path: tauri-plugin-notification's macOS backend still posts
 # through the long-deprecated NSUserNotificationCenter, which current macOS
 # silently drops (show() returns Ok, nothing appears, the app never registers in
