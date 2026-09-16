@@ -42,7 +42,7 @@ import { getIndicator, getIndicatorsByPane } from "../lib/indicators";
 import { slopeThresholdLevel, type SlopeExtend, type SlopeThreshold } from "../lib/indicators/slope";
 import { ALERT_SNAP_PX, selectedAvwapId } from "./chartGeometry";
 import { first } from "./chartPainters";
-import { clampLevelToPrice, getLivePrice } from "../lib/trading";
+import { clampLevelToPrice, clampStopToEntry, getLivePrice } from "../lib/trading";
 import type { SelectedIndicator } from "../lib/chartController";
 import type { OverlayManager } from "../lib/overlays";
 import type { ChartHandle } from "./chartHandle";
@@ -351,6 +351,14 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
             level = Number(
               clampLevelToPrice(hit.field, trade.side, reference, level, tick).toFixed(precisionRef.current),
             );
+          }
+          // A POSITION's stop has a second, INCLUSIVE bound: its own entry. Past that
+          // it sits on the profit side and is no longer a stop loss, so the line stops
+          // dead at the fill rather than crossing it. Applied outside the reference
+          // guard above — it holds with or without a live price — and only to a
+          // position (a working order's stop measures from its unfilled limit).
+          if (trade.kind === "position" && hit.field === "stop") {
+            level = clampStopToEntry(trade.side, trade.priceLevel, level, precisionRef.current);
           }
         }
         const pendKey = hit.field === "tp" ? "takeProfit" : hit.field;

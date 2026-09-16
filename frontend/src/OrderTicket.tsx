@@ -18,6 +18,8 @@ import {
   applyEditedLevels,
   mergeTradeLevels,
   clampLevelToPrice,
+  clampStopToEntry,
+  stopPastEntry,
   breakevenEligible,
   breakevenTargetEligible,
   getLivePrice,
@@ -673,10 +675,16 @@ function EditTicket({
     const reference = isOrder ? ref : latest;
     const base = reference ?? ref;
     const up = kind === "tp" ? long : !long;
-    const v = round(up ? base * (1 + DEFAULT_BRACKET) : base * (1 - DEFAULT_BRACKET));
-    if (reference == null) return v; // position with no live price → skip the clamp
-    const tick = Number((10 ** -precision).toFixed(precision));
-    return round(clampLevelToPrice(kind === "sl" ? "stop" : "tp", trade.side, reference, v, tick));
+    let v = round(up ? base * (1 + DEFAULT_BRACKET) : base * (1 - DEFAULT_BRACKET));
+    if (reference != null) {
+      const tick = Number((10 ** -precision).toFixed(precision));
+      v = round(clampLevelToPrice(kind === "sl" ? "stop" : "tp", trade.side, reference, v, tick));
+    }
+    // A position in profit measures its default stop from a market that has already
+    // run past the fill, so the % offset can land on the profit side — pull it back
+    // to the entry, the same bound dragging enforces.
+    if (kind === "sl" && !isOrder) v = clampStopToEntry(trade.side, trade.priceLevel, v, precision);
+    return v;
   }
   function toggleExit(kind: "tp" | "sl", on: boolean) {
     patch(
@@ -708,7 +716,12 @@ function EditTicket({
     const below = field === "stop" ? long : !long;
     return below ? level < latest : level > latest;
   };
-  const stopValid = sideValid("stop", stop);
+  // Second rule for an open position's stop: it may not sit past the ENTRY, where it
+  // stops being a stop LOSS (long at or below the fill, short at or above). Dragging
+  // clamps to this; a typed value flags red and blocks Update, like the price rule.
+  const stopBeyondEntry =
+    !isOrder && stop != null && stopPastEntry(trade.side, trade.priceLevel, stop, precision);
+  const stopValid = sideValid("stop", stop) && !stopBeyondEntry;
   // "Set to breakeven": stage SL exactly at the fill (rounded to precision). Offered
   // only for an in-profit open position whose rounded entry is a valid stop (see
   // breakevenEligible) — so clicking can never stage a stop the broker would reject.
@@ -721,8 +734,9 @@ function EditTicket({
   const canBreakevenTarget = breakevenTargetEligible(trade, latest, precision);
   const setBreakevenTarget = () => patch({ takeProfit: round(trade.priceLevel) });
   const tpValid = sideValid("tp", tp);
-  const levelError =
-    latest == null
+  const levelError = stopBeyondEntry
+    ? `Stop loss must be ${long ? "below" : "above"} the entry price (${trade.priceLevel.toFixed(precision)})`
+    : latest == null
       ? null
       : !stopValid
         ? `Stop loss must be ${long ? "below" : "above"} the current price (${latest.toFixed(precision)})`
@@ -815,6 +829,10 @@ function EditTicket({
           value={stop}
           pct={pct(stop)}
           invalid={!stopValid}
+          // A position's stop may not step past its entry (see stopPastEntry); a
+          // working order's measures from its own unfilled limit, so no bound.
+          min={!isOrder && !long ? round(trade.priceLevel) : undefined}
+          max={!isOrder && long ? round(trade.priceLevel) : undefined}
           onToggle={(on) => toggleExit("sl", on)}
           onChange={(v) => setExit("sl", v)}
           onBreakeven={canBreakeven ? setBreakeven : undefined}
@@ -848,6 +866,8 @@ function ExitRow({
   value,
   pct,
   invalid = false,
+  min,
+  max,
   onToggle,
   onChange,
   onBreakeven,
@@ -858,6 +878,12 @@ function ExitRow({
   value: number | null;
   pct: number | null;
   invalid?: boolean;
+  // Hard bounds for the native stepper arrows (a browser refuses to step past
+  // them). TYPING can still land outside, which `invalid` + the message below the
+  // form catch — this only stops a click from walking the value somewhere the
+  // form would then reject.
+  min?: number;
+  max?: number;
   onToggle: (on: boolean) => void;
   onChange: (v: string) => void;
   // When set, an inline "Set Breakeven" button sits next to the toggle — offered
@@ -892,6 +918,8 @@ function ExitRow({
           className="ot-input num"
           type="number"
           step="any"
+          min={min}
+          max={max}
           disabled={!on}
           value={on && value != null ? value : ""}
           placeholder="—"

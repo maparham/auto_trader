@@ -10,6 +10,8 @@ installMemStorage();
 
 const {
   clampLevelToPrice,
+  clampStopToEntry,
+  stopPastEntry,
   brokerLabel,
   noteBrokerLabels,
   isCapital,
@@ -63,6 +65,30 @@ describe("clampLevelToPrice", () => {
   it("working long SL is measured from the limit, not the market", () => {
     const LIMIT = 100;
     expect(clampLevelToPrice("stop", "buy", LIMIT, 101, TICK)).toBe(99.99);
+  });
+});
+
+describe("clampStopToEntry", () => {
+  // The entry bound is INCLUSIVE — a stop exactly at the fill is breakeven.
+  it("long stop past the entry is pulled back to it", () => {
+    expect(clampStopToEntry("buy", PRICE, 101, 2)).toBe(100);
+  });
+  it("long stop below the entry is left alone", () => {
+    expect(clampStopToEntry("buy", PRICE, 95, 2)).toBe(95);
+  });
+  it("short stop past the entry is pulled back to it", () => {
+    expect(clampStopToEntry("sell", PRICE, 99, 2)).toBe(100);
+  });
+  it("short stop above the entry is left alone", () => {
+    expect(clampStopToEntry("sell", PRICE, 105, 2)).toBe(105);
+  });
+  it("a stop exactly at the entry survives untouched (breakeven)", () => {
+    expect(clampStopToEntry("buy", PRICE, 100, 2)).toBe(100);
+    expect(clampStopToEntry("sell", PRICE, 100, 2)).toBe(100);
+  });
+  it("measures from the entry ROUNDED to precision, like Set Breakeven stages it", () => {
+    expect(clampStopToEntry("buy", 100.004, 100, 2)).toBe(100);
+    expect(stopPastEntry("buy", 100.004, 100, 2)).toBe(false);
   });
 });
 

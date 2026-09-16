@@ -687,6 +687,33 @@ export function clampLevelToPrice(
   return below ? Math.min(level, reference - tick) : Math.max(level, reference + tick);
 }
 
+/** True when an open position's stop sits PAST its own entry — on the profit side,
+ *  where it is no longer a stop LOSS. A long's stop belongs at or below its fill, a
+ *  short's at or above. The entry is rounded to `precision` first so this agrees with
+ *  what "Set Breakeven" stages (see breakevenEligible, which rounds the same way). */
+export function stopPastEntry(
+  side: OrderSide,
+  entry: number,
+  level: number,
+  precision: number,
+): boolean {
+  const be = Number(entry.toFixed(precision));
+  return side === "buy" ? level > be : level < be;
+}
+
+/** Pull a stop back to the entry when it sits past it (see stopPastEntry). The bound
+ *  is INCLUSIVE — a stop exactly at entry is breakeven and must survive untouched —
+ *  unlike clampLevelToPrice's one-tick-past-the-market bound. Only meaningful for an
+ *  OPEN POSITION: a working order's SL measures from its own unfilled limit. */
+export function clampStopToEntry(
+  side: OrderSide,
+  entry: number,
+  level: number,
+  precision: number,
+): number {
+  return stopPastEntry(side, entry, level, precision) ? Number(entry.toFixed(precision)) : level;
+}
+
 /** True when a level sits at the entry (within one tick) — the shared core of both
  *  breakeven states (SL-at-entry and TP-at-entry), where that level's line and the
  *  entry line would render on the same price row and collapse into one. */
