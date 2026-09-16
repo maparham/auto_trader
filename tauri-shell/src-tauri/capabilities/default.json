@@ -1,11 +1,20 @@
 {
   "$schema": "../gen/schemas/macOS-schema.json",
   "identifier": "default",
-  "description": "Shell commands reachable from the bundled shell pages (settings, splash).",
+  "description": "Shell commands reachable from the bundled shell pages (settings, splash) AND from the loaded app itself. Without `remote`, IPC (window.__TAURI__) only exists on the bundled tauri:// pages — the real frontend at localhost:5173 or chartkar.app is a remote URL, so inShell() was false there and notify_native was never reachable from the app.",
   "windows": [
     "main",
     "settings"
   ],
+  "local": true,
+  "remote": {
+    "urls": [
+      "http://localhost:*",
+      "http://127.0.0.1:*",
+      "https://chartkar.app",
+      "http://chartkar.app"
+    ]
+  },
   "permissions": [
     "core:default",
     "core:window:allow-close",

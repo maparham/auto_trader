@@ -63,19 +63,80 @@ fn hide_window(app: &tauri::AppHandle) {
 #[tauri::command]
 fn set_status(_app: tauri::AppHandle, _state: String) {}
 
+/// Modern macOS notifications (UNUserNotificationCenter). The notification
+/// PLUGIN's macOS backend goes through the long-deprecated
+/// NSUserNotificationCenter: on current macOS the call returns Ok while the
+/// system silently drops it, and the app never even registers in
+/// System Settings > Notifications. Requires a signed .app bundle (ad-hoc is
+/// enough locally); a bare `cargo run` binary cannot register and the calls
+/// fail with a nil-bundle error.
+#[cfg(target_os = "macos")]
+mod mac_notify {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use block2::RcBlock;
+    use objc2::runtime::Bool;
+    use objc2_foundation::{NSError, NSString};
+    use objc2_user_notifications::{
+        UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest,
+        UNUserNotificationCenter,
+    };
+
+    /// Ask macOS for authorization; the FIRST call shows the system prompt.
+    /// Repeat calls are no-ops, so it also runs before every post as a heal.
+    pub fn request_authorization() {
+        {
+            let center = UNUserNotificationCenter::currentNotificationCenter();
+            let opts = UNAuthorizationOptions::Alert
+                | UNAuthorizationOptions::Sound
+                | UNAuthorizationOptions::Badge;
+            let done = RcBlock::new(|granted: Bool, err: *mut NSError| { eprintln!("shell: notify auth: granted={:?} err={}", granted, if err.is_null() { "none".into() } else { unsafe { (*err).localizedDescription().to_string() } }); });
+            center.requestAuthorizationWithOptions_completionHandler(opts, &done);
+        }
+    }
+
+    pub fn post(title: &str, body: &str) {
+        {
+            let center = UNUserNotificationCenter::currentNotificationCenter();
+            let content = UNMutableNotificationContent::new();
+            content.setTitle(&NSString::from_str(title));
+            content.setBody(&NSString::from_str(body));
+            // Unique id per post so banners stack rather than replace.
+            static SEQ: AtomicU64 = AtomicU64::new(0);
+            let id = format!("chartkar-alert-{}", SEQ.fetch_add(1, Ordering::Relaxed));
+            let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+                &NSString::from_str(&id),
+                &content,
+                None,
+            );
+            // Delivery errors surface only in this async callback; nothing
+            // useful to return to the caller, so they are dropped.
+            let done = RcBlock::new(|err: *mut NSError| { eprintln!("shell: notify post: err={}", if err.is_null() { "none".into() } else { unsafe { (*err).localizedDescription().to_string() } }); });
+            center.addNotificationRequest_withCompletionHandler(&request, Some(&done));
+        }
+    }
+}
+
 /// Post a real macOS banner. The web app calls this instead of the Web
 /// Notification API when it detects the shell: the window is normally hidden,
 /// and a hidden WKWebView's own notifications are unreliable.
 #[tauri::command]
 fn notify_native(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-
-    app.notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show()
-        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    {
+        mac_notify::request_authorization();
+        mac_notify::post(&title, &body);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        use tauri_plugin_notification::NotificationExt;
+        app.notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+            .map_err(|e| e.to_string())?;
+    }
 
     // Only alerts the user could not see should accumulate.
     let hidden = app
@@ -269,6 +330,9 @@ fn main() {
 
             // Ask once at launch, so a banner fired hours later is not the first
             // time macOS has heard of us.
+            #[cfg(target_os = "macos")]
+            mac_notify::request_authorization();
+            #[cfg(not(target_os = "macos"))]
             {
                 use tauri_plugin_notification::{NotificationExt, PermissionState};
                 let granted = app
