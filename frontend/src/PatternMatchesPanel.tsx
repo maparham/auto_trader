@@ -79,6 +79,8 @@ interface Props {
    *  layout. Changing it re-runs the last range, like the metric. */
   scope: PatternScope;
   onScopeChange: (scope: PatternScope) => void;
+  sameResolution: boolean;
+  onSameResolutionChange: (v: boolean) => void;
 }
 
 function stamp(ts: number, timezone: string): string {
@@ -271,10 +273,24 @@ export default function PatternMatchesPanel(props: Props) {
             ),
           )}
         </div>
+        {/* Narrows the all-charts fan-out to the query chart's own timeframe.
+            Inert in cell scope (one series either way), so it sits disabled
+            there rather than looking live. */}
+        <button
+          type="button"
+          className={"pm-tf-only" + (props.sameResolution ? " seg-on" : "")}
+          aria-label="Search only charts on the query chart's timeframe"
+          aria-pressed={props.sameResolution}
+          disabled={props.scope === "cell"}
+          onClick={() => props.onSameResolutionChange(!props.sameResolution)}
+        >
+          Same timeframe
+        </button>
         <InfoTip
           title="Search scope"
           text={[
             "All charts also scans every other chart in every open tab, ranking the finds in one list.",
+            "Same timeframe keeps that fan-out on the query chart's own resolution.",
             "Shapes are scale-normalized, so distances compare across symbols and timeframes.",
             "Clicking a row from a chart on another tab switches to that tab and jumps there.",
           ]}

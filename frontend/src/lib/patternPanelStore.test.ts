@@ -14,6 +14,7 @@ import {
   setPatternArmProvider,
   setPatternForwardBars,
   setPatternMode,
+  setPatternSameResolution,
   setPatternScope,
   setPatternSelectArmed,
   setPatternSeriesProvider,
@@ -401,6 +402,31 @@ describe("patternPanelStore", () => {
       setPatternScope("all");
       await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(3));
       expect(getPatternPanelState().scope).toBe("all");
+    });
+
+    it("same-timeframe keeps the fan-out on the query chart's resolution, and flipping it re-runs", async () => {
+      const spy = vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));
+      // GOLD is 15m (filtered out); the 5m sibling shares the origin's
+      // resolution and is searched.
+      const sibling: MatchSource = {
+        cellId: "cell-4", tabId: "tab-4", epic: "DAX", resolution: "MINUTE_5", label: "5m",
+      };
+      workspace(GOLD, sibling);
+      setPatternSameResolution(true);
+      run(1_700_000_000_000, 1_700_001_500_000);
+      await settled();
+      expect(spy.mock.calls.map((c) => `${c[0].epic}|${c[0].resolution}`).sort()).toEqual([
+        "DAX|MINUTE_5", "US100|MINUTE_5",
+      ]);
+      // Turning it back off re-runs the SAME query, now including GOLD.
+      setPatternSameResolution(false);
+      await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(5));
+      expect(spy.mock.calls.slice(2).map((c) => c[0].epic).sort()).toEqual(["DAX", "GOLD", "US100"]);
+      expect(getPatternPanelState().sameResolution).toBe(false);
+    });
+
+    it("defaults to every timeframe", () => {
+      expect(getPatternPanelState().sameResolution).toBe(false);
     });
 
     it("a one-chart workspace in all scope behaves like a plain search", async () => {

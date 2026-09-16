@@ -41,6 +41,7 @@ const props = {
   mode: "ohlc" as const, onModeChange: vi.fn(),
   forwardBars: 20, onForwardBarsChange: vi.fn(),
   scope: "all" as const, onScopeChange: vi.fn(),
+  sameResolution: false, onSameResolutionChange: vi.fn(),
 };
 
 // This repo runs vitest WITHOUT jest globals, so Testing Library's automatic
@@ -724,6 +725,20 @@ describe("resizing", () => {
       const cell = screen.getByRole("button", { name: /only this chart/i });
       fireEvent.click(cell);
       expect(props.onScopeChange).toHaveBeenCalledWith("cell");
+    });
+
+    it("offers the same-timeframe toggle and reports a change", () => {
+      render(<PatternMatchesPanel {...props} result={result()} loading={false} error={null} />);
+      fireEvent.click(screen.getByRole("button", { name: /query chart's timeframe/i }));
+      expect(props.onSameResolutionChange).toHaveBeenCalledWith(true);
+    });
+
+    it("disables the same-timeframe toggle in cell scope, where it cannot narrow anything", () => {
+      render(
+        <PatternMatchesPanel {...props} scope="cell" result={result()} loading={false} error={null} />,
+      );
+      const btn = screen.getByRole("button", { name: /query chart's timeframe/i }) as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
     });
 
     it("tags each row with the chart its match came from when results span charts", () => {

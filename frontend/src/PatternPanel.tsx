@@ -4,7 +4,7 @@
 // panel, a segmented switcher at the top picks which half shows; switching
 // never touches either half's state, which lives entirely in
 // lib/patternPanelStore.
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import CloseButton from "./CloseButton";
 import PatternMatchesPanel from "./PatternMatchesPanel";
 import PresetScanView from "./PresetScanView";
@@ -62,6 +62,8 @@ interface Props {
   onForwardBarsChange: (bars: number) => void;
   scope: PatternScope;
   onScopeChange: (scope: PatternScope) => void;
+  sameResolution: boolean;
+  onSameResolutionChange: (v: boolean) => void;
   onCopy: (match: PatternMatch) => void;
   onJump: (match: PatternMatch) => void;
   onDismiss: () => void;
@@ -74,6 +76,18 @@ export default function PatternPanel(props: Props) {
   // close/reopen.
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
+
+  // Opening the panel FRESH arms the drag straight away: the Similar view is
+  // useless until a range has been picked, so making the user find and click
+  // "Select range on chart" first is pure ceremony. Mount-only, and guarded on
+  // `origin` (the "a search has run" field Save-as-preset already keys on), so
+  // reopening the panel on an existing result never re-arms, and the Presets
+  // view (which mounts this panel too) is left alone. The panel unmounts on
+  // close (WorkspacePatternPanel gates on `open`), so mount IS "opened".
+  useEffect(() => {
+    const st0 = getPatternPanelState();
+    if (st0.view === "similar" && !st0.origin) armPatternSelect();
+  }, []);
 
   const confirmSave = async () => {
     const trimmed = name.trim();
@@ -115,7 +129,7 @@ export default function PatternPanel(props: Props) {
           <div className="pattern-panel-similar-head">
             <button
               type="button"
-              className={`anchor-btn${st.selectArmed ? " seg-on" : ""}`}
+              className={`anchor-btn pattern-select-range${st.selectArmed ? " seg-on" : ""}`}
               onClick={armPatternSelect}
             >
               <SelectRangeIcon size={14} />
@@ -172,6 +186,8 @@ export default function PatternPanel(props: Props) {
             onForwardBarsChange={props.onForwardBarsChange}
             scope={props.scope}
             onScopeChange={props.onScopeChange}
+            sameResolution={props.sameResolution}
+            onSameResolutionChange={props.onSameResolutionChange}
             onCopy={props.onCopy}
             onJump={props.onJump}
             onDismiss={props.onDismiss}

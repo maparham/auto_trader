@@ -64,6 +64,10 @@ export interface PatternPanelState {
   mode: PatternMode;
   forwardBars: number;
   scope: PatternScope;
+  /** All-charts scope only: restrict the fan-out to charts on the SAME
+   *  resolution as the query chart. Off by default (every open chart, every
+   *  timeframe, which is what "All charts" meant before this flag). */
+  sameResolution: boolean;
 
   /** Whether the panel is open at all (either view). */
   open: boolean;
@@ -99,6 +103,7 @@ const initial: PatternPanelState = {
   result: null, loading: false, error: null,
   range: null, truncatedTo: null,
   mode: DEFAULT_MODE, forwardBars: DEFAULT_FORWARD_BARS, scope: DEFAULT_SCOPE,
+  sameResolution: false,
 
   open: false, view: DEFAULT_VIEW,
   families: null, familiesError: null, userPresets: null,
@@ -244,6 +249,10 @@ function doRun(range: { fromMs: number; toMs: number }): void {
   const sources = [origin];
   if (state.scope === "all") {
     for (const s of seriesProvider()) {
+      // Before the dedup below on purpose: a series skipped for its timeframe
+      // must not claim its key, or turning the flag back off could find the
+      // key already taken by a search that never ran it.
+      if (state.sameResolution && s.resolution !== origin.resolution) continue;
       const key = `${s.epic}|${s.resolution}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -312,9 +321,14 @@ export function setPatternScope(next: PatternScope): void {
   if (lastRun && state.range) doRun(state.range);
 }
 
-/** The panel's ✕ — the ONE way a result list is destroyed. mode, forwardBars
- *  and scope survive: they are how the user wants to search, not part of the
- *  result being cleared. */
+export function setPatternSameResolution(next: boolean): void {
+  set({ sameResolution: next });
+  if (lastRun && state.range) doRun(state.range);
+}
+
+/** The panel's ✕ — the ONE way a result list is destroyed. mode, forwardBars,
+ *  scope and sameResolution survive: they are how the user wants to search,
+ *  not part of the result being cleared. */
 export function dismissPatternPanel(): void {
   reqId += 1;
   lastRun = null;

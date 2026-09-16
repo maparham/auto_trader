@@ -15,6 +15,7 @@ import {
   getPatternPanelState,
   setPatternForwardBars,
   setPatternMode,
+  setPatternSameResolution,
   setPatternScope,
   subscribePatternPanel,
 } from "./lib/patternPanelStore";
@@ -145,6 +146,8 @@ export default function WorkspacePatternPanel({ timezone, hidden, onReveal, brok
       onForwardBarsChange={setPatternForwardBars}
       scope={st.scope}
       onScopeChange={setPatternScope}
+      sameResolution={st.sameResolution}
+      onSameResolutionChange={setPatternSameResolution}
       onCopy={onCopy}
       onJump={onJump}
       onDismiss={onDismiss}

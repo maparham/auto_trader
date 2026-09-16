@@ -6449,12 +6449,21 @@ span.bt-leg-short { color: var(--neg); }
    persistent-paint ON state. */
 .pattern-panel .seg button.seg-on { background: var(--hover-strong); color: var(--accent); }
 .pattern-panel-similar-head .anchor-btn {
-  background: transparent; color: var(--text); border: none;
-  border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer;
-  transition: background 0.12s;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 10px; font: inherit; font-weight: 500;
+  cursor: pointer; transition: background 0.12s, border-color 0.12s;
   display: inline-flex; align-items: center; gap: 6px;
 }
-.pattern-panel-similar-head .anchor-btn svg { flex: 0 0 auto; opacity: 0.75; }
+.pattern-panel-similar-head .anchor-btn svg { flex: 0 0 auto; }
+/* Select-range is the ONE thing to do in an empty Similar view (and the panel
+   arms it on a fresh open), so it reads as the view's primary control: accent
+   text and border at rest, where Save-as-preset stays neutral. The ARMED state
+   below keeps the muted gray fill the switcher uses — a lit control, not a
+   solid accent-blue one. */
+.pattern-panel-similar-head .anchor-btn.pattern-select-range {
+  color: var(--accent); border-color: var(--accent);
+}
 .pattern-panel-similar-head .anchor-btn:hover:not(:disabled) { background: var(--hover); }
 .pattern-panel-similar-head .anchor-btn.seg-on { background: var(--hover-strong); color: var(--accent); }
 .pattern-panel-similar-head .anchor-btn:disabled { opacity: 0.5; cursor: default; }
@@ -6592,6 +6601,16 @@ span.bt-leg-short { color: var(--neg); }
 .pm-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   padding: 5px 8px; border-bottom: 1px solid var(--border); }
 .pm-seg button { padding: 2px 7px; font: inherit; }
+/* "Same timeframe": a standalone persistent toggle sitting next to the scope
+   switcher, so it borrows that chip shape. ON is the muted gray fill the rest
+   of this panel uses for a lit toggle, never solid accent blue. Disabled in
+   cell scope, where one series is searched either way. */
+.pm-tf-only { padding: 2px 7px; font: inherit; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; transition: background 0.12s; }
+.pm-tf-only:hover:not(:disabled) { background: var(--hover); }
+.pm-tf-only.seg-on { background: var(--hover-strong); color: var(--accent); }
+.pm-tf-only:disabled { opacity: 0.5; cursor: default; }
 .pm-horizon { display: flex; align-items: center; gap: 5px; margin-left: auto;
   color: var(--text-dim); }
 .pm-horizon select { padding: 2px 4px; font: inherit; color: var(--text);

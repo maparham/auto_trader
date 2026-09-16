@@ -50,6 +50,8 @@ const props = {
   onForwardBarsChange: vi.fn(),
   scope: "all" as const,
   onScopeChange: vi.fn(),
+  sameResolution: false,
+  onSameResolutionChange: vi.fn(),
   onCopy: vi.fn(),
   onJump: vi.fn(),
   onDismiss: vi.fn(),
@@ -109,8 +111,27 @@ describe("PatternPanel", () => {
     const arm = vi.fn();
     setPatternArmProvider(arm);
     render(<PatternPanel {...props} result={null} loading={false} error={null} truncatedTo={null} />);
+    // One call already happened on mount (the fresh-open auto-arm below).
+    arm.mockClear();
     screen.getByText("Select range on chart").click();
     expect(arm).toHaveBeenCalledOnce();
+  });
+
+  it("arms the drag automatically when the panel opens with no prior search", () => {
+    const arm = vi.fn();
+    setPatternArmProvider(arm);
+    render(<PatternPanel {...props} result={null} loading={false} error={null} truncatedTo={null} />);
+    expect(arm).toHaveBeenCalledOnce();
+  });
+
+  it("does not re-arm when reopening on an existing result", async () => {
+    render(<Host />);
+    await search();
+    cleanup();
+    const arm = vi.fn();
+    setPatternArmProvider(arm);
+    render(<PatternPanel {...props} result={null} loading={false} error={null} truncatedTo={null} />);
+    expect(arm).not.toHaveBeenCalled();
   });
 
   it("save-as-preset is disabled without a result", () => {
