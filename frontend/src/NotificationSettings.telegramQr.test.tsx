@@ -11,13 +11,14 @@ const LINK = "https://t.me/test_bot?start=";
 
 const getTelegramStatus = vi.fn();
 const startTelegramLink = vi.fn();
+const pollTelegramLink = vi.fn((..._a: unknown[]) => () => {});
 
 vi.mock("./lib/telegramClient", () => ({
   getTelegramStatus: (...a: unknown[]) => getTelegramStatus(...a),
   startTelegramLink: (...a: unknown[]) => startTelegramLink(...a),
   unlinkTelegram: vi.fn(),
   sendTelegramTest: vi.fn(),
-  pollTelegramLink: () => () => {},
+  pollTelegramLink: (...a: unknown[]) => pollTelegramLink(...a),
 }));
 vi.mock("./lib/pushClient", () => ({
   pushSupported: () => false,
@@ -32,6 +33,7 @@ beforeEach(() => {
   getTelegramStatus.mockReset().mockResolvedValue({ linked: false, enabled: true });
   let n = 0;
   startTelegramLink.mockReset().mockImplementation(() => Promise.resolve(`${LINK}code${++n}`));
+  pollTelegramLink.mockClear();
   vi.stubGlobal("open", vi.fn());
 });
 
@@ -80,10 +82,15 @@ describe("Telegram QR", () => {
     );
   });
 
-  it("offers no QR button once the account is linked", async () => {
+  it("still offers the QR once the account is linked (relink a second phone)", async () => {
     getTelegramStatus.mockResolvedValue({ linked: true, enabled: true });
     render(<NotificationSettings />);
     await screen.findByText("Connected");
-    expect(screen.queryByRole("button", { name: "Show QR" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Show QR" }));
+    await screen.findByRole("button", { name: "Hide QR" });
+    expect(startTelegramLink).toHaveBeenCalledTimes(1);
+    // No poll: status already says linked, so a tick would hide the QR again.
+    expect(pollTelegramLink).not.toHaveBeenCalled();
+    expect(screen.queryByText("Waiting for Telegram…")).toBeNull();
   });
 });

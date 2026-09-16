@@ -2456,7 +2456,17 @@
 /* "Waiting for Telegram…" while a link code is live: its own line under the
    buttons, so a two-button row never has to give up width for it. */
 .notif-tg-waiting { flex-basis: 100%; text-align: right; margin-top: 0; }
-.notif-toggle-pill { cursor: default; }
+/* Linked state lives with the label, not in the button group: a status
+   styled as a button read as a fourth action and pushed Show QR onto a
+   second line. A --pos dot says "live" without a fill or a border. */
+.notif-tg-label { display: flex; flex-direction: column; gap: 3px; }
+.notif-tg-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-dim); font-size: 12px;
+}
+.notif-tg-status::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--pos);
+}
 /* Telegram link QR: its own full-width block under the row rather than a popover,
    since the row's right edge has no space for a ~150px plate. The code keeps a
    white plate in both themes (see QrCode.tsx) so a scanner sees the contrast it

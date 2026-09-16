@@ -126,7 +126,11 @@ export default function NotificationSettings() {
     setTgBusy(true);
     try {
       setTgQrUrl(await ensureLinkUrl());
-      startLinkPoll();
+      // The status endpoint only reports linked yes/no, so an already-linked
+      // account has nothing to poll for: the first tick would read `linked`
+      // and hide the QR a second after it appeared. Leave it up until the
+      // user hides it (or the code's TTL passes).
+      if (!tgLinked) startLinkPoll();
     } catch {
       // No QR to show; the button stays actionable to retry.
     } finally {
@@ -213,17 +217,21 @@ export default function NotificationSettings() {
       )}
       {tgReady && (
         <div className="setting-row">
-          <label className="label-info">
-            Telegram
-            <InfoTip text="Alerts delivered as Telegram DMs from the bot, even when this tab is closed." />
-          </label>
+          <div className="notif-tg-label">
+            <label className="label-info">
+              Telegram
+              <InfoTip text="Alerts delivered as Telegram DMs from the bot, even when this tab is closed." />
+            </label>
+            {tgEnabled && tgLinked && (
+              <span className="notif-tg-status">Connected</span>
+            )}
+          </div>
           {!tgEnabled ? (
             <span className="setting-hint">
               Set TELEGRAM_BOT_TOKEN on the backend to enable.
             </span>
           ) : tgLinked ? (
             <div className="notif-tg-actions">
-              <span className="notif-toggle-btn on notif-toggle-pill">Connected</span>
               <button
                 type="button"
                 className="notif-toggle-btn"
@@ -240,6 +248,18 @@ export default function NotificationSettings() {
               >
                 Disconnect
               </button>
+              <button
+                type="button"
+                className={`notif-toggle-btn${tgQrUrl ? " on" : ""}`}
+                disabled={tgBusy}
+                onClick={() => void toggleTelegramQr()}
+                aria-pressed={tgQrUrl !== null}
+              >
+                {tgQrUrl ? "Hide QR" : "Show QR"}
+              </button>
+              {/* Kept while connected so a second phone can be linked without
+                  disconnecting first. Redeeming the code re-points the
+                  account at whichever chat scanned it. */}
             </div>
           ) : (
             <div className="notif-tg-actions">
