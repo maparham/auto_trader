@@ -45,6 +45,7 @@ import {
 } from "./indicators/trendlines";
 import {
   parseTrendlinesConfig,
+  trendlinesOutputs,
   MAX_PAIR_PIVOTS,
   TL_ATR_LEN,
   type TrendlinesConfig,
@@ -1037,27 +1038,10 @@ export async function applyTrendlinesTimeframe(
   } | null;
   const waitClose = readWaitClose(ind);
   const ext: TrendlinesExtend = { ...(ind?.extendData ?? {}) };
-  const calcParams = [
-    config.pivotLen,
-    config.violMult,
-    config.touchMult,
-    config.minTouches,
-    config.minSpanBars,
-    config.maxProjBars,
-    config.breakHoldBars,
-    config.maxLines,
-    config.minSwingAtr,
-    config.minSwingReach,
-    config.pairPivots,
-    config.maxTouches,
-    config.maxSpanBars,
-    config.maxSlopeAtr,
-    config.minSlopeAtr,
-    config.minBackBars,
-    config.mixedTouches,
-    config.maxTouchSpacing,
-    config.minTouchSpacing,
-  ];
+  // Object.values ORDER IS the calcParams order (TrendlinesConfig's key order
+  // mirrors the slot order documented in trendlinesOutputs.ts), so a param
+  // added to the interface reaches the pane with no line to update here.
+  const calcParams = Object.values(config);
 
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
@@ -1144,10 +1128,8 @@ function buildTrendlinesMtf(
     timeframe,
     htfStarts: bars.map((b) => b.timestamp),
     htfMs,
-    htfSupport: points.map((p) => p.tl_support),
-    htfResistance: points.map((p) => p.tl_resistance),
-    htfBrokenSupport: points.map((p) => p.tl_broken_support),
-    htfBrokenResistance: points.map((p) => p.tl_broken_resistance),
+    htfOutputs: trendlinesOutputs(config),
+    htfPoints: points,
     htfLines: lines,
     htfPivots: pivots,
     htfAtr: atr[atr.length - 1],

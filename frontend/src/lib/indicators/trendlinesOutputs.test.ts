@@ -1,282 +1,100 @@
 import { describe, expect, it } from "vitest";
 import {
-  MAX_LIVE_MULT,
+  MAX_MAX_LINES,
   MAX_PAIR_PIVOTS,
-  TL_ATR_LEN,
-  TRENDLINES_DEFAULTS,
-  TRENDLINES_OUTPUTS,
   parseTrendlinesConfig,
+  TL_ATR_LEN,
+  TL_NEAREST,
+  tlOutputName,
+  TRENDLINES_DEFAULTS,
+  trendlinesOutputs,
   trendlinesWarmup,
 } from "./trendlinesOutputs";
 
-describe("constants and defaults", () => {
-  // These pin the VALUES only. MAX_LIVE_MULT is load-bearing (it decides which
-  // lines survive, so it changes emitted values), and a suite that only checked
-  // the number here would stay green if the cap were deleted outright. Its
-  // BEHAVIOUR is pinned in trendlinesDxy.test.ts: the per-side live count is
-  // bounded by MAX_LIVE_MULT x maxLines, and maxLines 2 vs 3 changes an emitted
-  // value on 87 bars of that fixture.
-  it("pins the exported constants", () => {
-    expect(TL_ATR_LEN).toBe(14);
-    expect(MAX_PAIR_PIVOTS).toBe(20);
-    expect(MAX_LIVE_MULT).toBe(4);
+describe("TRENDLINES_DEFAULTS", () => {
+  it("pins the calcParams slot order", () => {
+    expect(Object.keys(TRENDLINES_DEFAULTS)).toEqual([
+      "pivotLen", "touchMult", "minTouches", "minSpanBars", "maxProjBars", "maxLines",
+      "minSwingAtr", "minSwingReach", "pairPivots", "maxTouches", "maxSpanBars",
+      "maxSlopeAtr", "minSlopeAtr", "maxTouchSpacing", "minTouchSpacing",
+      "minCrossings", "maxCrossings", "pierceMult", "minBackBars",
+    ]);
   });
-
-  it("pins all default values", () => {
-    expect(TRENDLINES_DEFAULTS).toEqual({
-      pivotLen: 5,
-      violMult: 0.25,
-      touchMult: 0.75,
-      minTouches: 2,
-      minSpanBars: 20,
-      maxProjBars: 250,
-      breakHoldBars: 30,
-      maxLines: 3,
-      minSwingAtr: 0,
-      minSwingReach: 0,
-      pairPivots: MAX_PAIR_PIVOTS,
-      maxTouches: 0,
-      maxSpanBars: 0,
-      maxSlopeAtr: 0,
-      minSlopeAtr: 0,
-      minBackBars: 10,
-      mixedTouches: 1,
-      maxTouchSpacing: 0,
-      minTouchSpacing: 0,
-    });
+  it("shares one pool, so pairing reaches 40 pivots back", () => {
+    expect(MAX_PAIR_PIVOTS).toBe(40);
+    expect(TRENDLINES_DEFAULTS.pairPivots).toBe(40);
   });
 });
 
 describe("parseTrendlinesConfig", () => {
-  it("takes every default from an empty params list", () => {
+  it("returns the defaults for an empty or non-array input", () => {
     expect(parseTrendlinesConfig([])).toEqual(TRENDLINES_DEFAULTS);
+    expect(parseTrendlinesConfig(undefined)).toEqual(TRENDLINES_DEFAULTS);
+    expect(parseTrendlinesConfig("junk")).toEqual(TRENDLINES_DEFAULTS);
   });
-
-  it("reads params positionally", () => {
-    const cfg = parseTrendlinesConfig([9, 0.5, 1.5, 3, 40, 100, 10, 2, 0.8, 12, 40, 6, 90, 0.3, 0.02, 25, 1, 35, 4]);
-    expect(cfg).toEqual({
-      pivotLen: 9,
-      violMult: 0.5,
-      touchMult: 1.5,
-      minTouches: 3,
-      minSpanBars: 40,
-      maxProjBars: 100,
-      breakHoldBars: 10,
-      maxLines: 2,
-      minSwingAtr: 0.8,
-      minSwingReach: 12,
-      pairPivots: 40,
-      maxTouches: 6,
-      maxSpanBars: 90,
-      maxSlopeAtr: 0.3,
-      minSlopeAtr: 0.02,
-      minBackBars: 25,
-      mixedTouches: 1,
-      maxTouchSpacing: 35,
-      minTouchSpacing: 4,
+  it("reads every slot in order", () => {
+    const p = [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12];
+    expect(parseTrendlinesConfig(p)).toEqual({
+      pivotLen: 4, touchMult: 0.5, minTouches: 3, minSpanBars: 30, maxProjBars: 100,
+      maxLines: 9, minSwingAtr: 3, minSwingReach: 6, pairPivots: 25, maxTouches: 7,
+      maxSpanBars: 300, maxSlopeAtr: 0.2, minSlopeAtr: 0.01, maxTouchSpacing: 60,
+      minTouchSpacing: 3, minCrossings: 1, maxCrossings: 4, pierceMult: 0.4,
+      minBackBars: 12,
     });
   });
-
-  // Off by default and floored to 0, like the other ceilings: a chart saved
-  // before slot 17 existed reads undefined here and gets no limit.
-  it("defaults Max Touch Spacing off and clamps it to zero", () => {
-    expect(parseTrendlinesConfig([]).maxTouchSpacing).toBe(0);
-    const base = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 1];
-    for (const [raw, want] of [[30, 30], [30.9, 30], [0, 0], [-2, 0]] as const)
-      expect(parseTrendlinesConfig([...base, raw]).maxTouchSpacing).toBe(want);
-    expect(parseTrendlinesConfig([...base, "x"]).maxTouchSpacing).toBe(0);
+  it("keeps zero on the >= 0 params and floors the integers", () => {
+    const c = parseTrendlinesConfig([2.9, 0, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(c.pivotLen).toBe(2);
+    expect(c.touchMult).toBe(0);
+    expect(c.minTouches).toBe(2); // clamped to the two anchors
+    expect(c.minSpanBars).toBe(TRENDLINES_DEFAULTS.minSpanBars); // 0 fails > 0
+    expect(c.maxLines).toBe(TRENDLINES_DEFAULTS.maxLines);
+    expect(c.minSwingAtr).toBe(0);
+    expect(c.maxTouches).toBe(0);
+    expect(c.minCrossings).toBe(0);
+    expect(c.maxCrossings).toBe(0);
+    expect(c.pierceMult).toBe(0);
+    expect(c.minBackBars).toBe(0);
   });
 
-  // The FLOOR, slot 18, same clamping. Off by default like the ceiling, so the
-  // pair as a whole is inert until a user opens the range.
-  it("defaults Min Touch Spacing off and clamps it to zero", () => {
-    expect(parseTrendlinesConfig([]).minTouchSpacing).toBe(0);
-    const base = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 1, 0];
-    for (const [raw, want] of [[6, 6], [6.9, 6], [0, 0], [-2, 0]] as const)
-      expect(parseTrendlinesConfig([...base, raw]).minTouchSpacing).toBe(want);
-    expect(parseTrendlinesConfig([...base, "x"]).minTouchSpacing).toBe(0);
+  // A pierce is a full touch and a gap only a half, so the two tolerances ship
+  // with different defaults: no gap at all, a quarter ATR of pierce.
+  it("defaults Max Touch Gap to zero and Max Pierce to a quarter ATR", () => {
+    expect(TRENDLINES_DEFAULTS.touchMult).toBe(0);
+    expect(TRENDLINES_DEFAULTS.pierceMult).toBe(0.25);
+    expect(parseTrendlinesConfig([5]).pierceMult).toBe(0.25);
   });
-
-  // The ONLY gate whose default is not off: it closes a hole in seeding rather
-  // than expressing a taste, so charts saved before it existed move under it.
-  // A NEGATIVE falls back to that default rather than to 0, unlike the gates
-  // that default to 0 and land there either way: only an explicit 0 is off.
-  it("defaults Min Back Clearance on and clamps it to zero", () => {
-    expect(parseTrendlinesConfig([]).minBackBars).toBe(10);
-    const base = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0];
-    for (const [raw, want] of [[25, 25], [25.9, 25], [0, 0], [-2, 10]] as const)
-      expect(parseTrendlinesConfig([...base, raw]).minBackBars).toBe(want);
-    expect(parseTrendlinesConfig([...base, "x"]).minBackBars).toBe(10);
+  // A pane saved under the OLD calcParams layout reads its Max Projection into
+  // slot 5. Each unit is a rule operand plus MAX_LIVE_MULT live lines, so the
+  // parser caps it rather than minting 251 operands on a pane nobody touched.
+  it("clamps Max Trendlines to the ceiling", () => {
+    expect(parseTrendlinesConfig([5, 0.75, 2, 20, 250, 250]).maxLines).toBe(50);
+    expect(MAX_MAX_LINES).toBe(50);
+    // Anything under the ceiling is untouched, the goldens' 3 included.
+    expect(parseTrendlinesConfig([5, 0.75, 2, 20, 250, 3]).maxLines).toBe(3);
   });
-
-  // violMult zero is the STRICTEST setting (exact containment, no pierce
-  // allowed), not a "filter off" switch. Coercing it back to the default would
-  // silently swap strict containment for tolerant containment with no error.
-  it("keeps a zero violMult", () => {
-    expect(parseTrendlinesConfig([5, 0]).violMult).toBe(0);
-  });
-
-  // Number(null) is 0, which passes violMult's `>= 0` rule, so violMult becomes
-  // 0 (strictest). Python's float(None) raises TypeError, returning the default
-  // 0.25 instead. Same asymmetry for "", [] and other non-numeric strings.
-  // `false` is NOT one of them: float(False) == 0.0 does not raise, so the two
-  // runtimes agree there. This divergence is deliberate and caught here.
-  it("coerces null to zero violMult, not the default", () => {
-    expect(parseTrendlinesConfig([5, null]).violMult).toBe(0);
-  });
-
-  // minSwingAtr's default IS zero, so this pins the `>= 0` rule rather than a
-  // value: on a `> 0` rule a stored 0 would take the default, which happens to
-  // be 0 too, and the test would pass while the setting could never be turned
-  // off once raised. Reading it back from a non-default config is what shows
-  // the difference.
-  it("keeps a zero minSwingAtr, so the gate can be switched off", () => {
-    const on = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 1.5];
-    expect(parseTrendlinesConfig(on).minSwingAtr).toBe(1.5);
-    expect(parseTrendlinesConfig([...on.slice(0, 8), 0]).minSwingAtr).toBe(0);
-  });
-
-  it("rejects a negative or junk minSwingAtr back to the default", () => {
-    const at = (v: unknown) =>
-      parseTrendlinesConfig([5, 0.25, 0.75, 2, 20, 250, 30, 3, v]).minSwingAtr;
-    expect(at(-1)).toBe(0);
-    expect(at("x")).toBe(0);
-    expect(at(undefined)).toBe(0);
-  });
-
-  // Floored to an integer and clamped to 0, NOT to 1 like the other integer
-  // params: intAt's floor of 1 would make the off state unreachable.
-  it("floors minSwingReach and clamps it to zero, not one", () => {
-    const at = (v: unknown) =>
-      parseTrendlinesConfig([5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, v])
-        .minSwingReach;
-    expect(at(12.9)).toBe(12);
-    expect(at(0)).toBe(0);
-    expect(at(-4)).toBe(0);
-    expect(at("x")).toBe(0);
-  });
-
-  it("defaults pairPivots to the constant and clamps it to at least one", () => {
-    // intAt, so a 0-wide window (which could pair with nothing, and no line
-    // could ever form) falls back to the default rather than sticking.
-    const at = (v: unknown) =>
-      parseTrendlinesConfig([5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, v])
-        .pairPivots;
-    expect(parseTrendlinesConfig([]).pairPivots).toBe(MAX_PAIR_PIVOTS);
-    expect(at(60)).toBe(60);
-    expect(at(5.9)).toBe(5);
-    expect(at(0)).toBe(MAX_PAIR_PIVOTS);
-    expect(at(-3)).toBe(MAX_PAIR_PIVOTS);
-  });
-
-  it("defaults maxTouches off and clamps it to zero, not one", () => {
-    const at = (v: unknown) =>
-      parseTrendlinesConfig([5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, v])
-        .maxTouches;
-    expect(parseTrendlinesConfig([]).maxTouches).toBe(0);
-    expect(at(5)).toBe(5);
-    expect(at(5.9)).toBe(5);
-    expect(at(0)).toBe(0);
-    expect(at(-2)).toBe(0);
-    expect(at("x")).toBe(0);
-  });
-
-  it("defaults maxSpanBars off and clamps it to zero, not one", () => {
-    const at = (v: unknown) =>
-      parseTrendlinesConfig([5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, v])
-        .maxSpanBars;
-    expect(parseTrendlinesConfig([]).maxSpanBars).toBe(0);
-    expect(at(40)).toBe(40);
-    expect(at(40.9)).toBe(40);
-    expect(at(0)).toBe(0);
-    expect(at(-2)).toBe(0);
-    expect(at("x")).toBe(0);
-  });
-
-  it("defaults maxSlopeAtr off and takes a zero", () => {
-    const at = (v: unknown) =>
-      parseTrendlinesConfig([5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, v])
-        .maxSlopeAtr;
-    expect(parseTrendlinesConfig([]).maxSlopeAtr).toBe(0);
-    expect(at(0.25)).toBe(0.25);
-    expect(at(0)).toBe(0);
-    expect(at(-1)).toBe(0);
-    expect(at("x")).toBe(0);
-  });
-
-  it("defaults minSlopeAtr off and takes a zero", () => {
-    const at = (v: unknown) =>
-      parseTrendlinesConfig([
-        5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, v,
-      ]).minSlopeAtr;
-    expect(parseTrendlinesConfig([]).minSlopeAtr).toBe(0);
-    expect(at(0.05)).toBe(0.05);
-    expect(at(0)).toBe(0);
-    expect(at(-1)).toBe(0);
-    expect(at("x")).toBe(0);
-  });
-
-  // ZERO STICKS, like violMult's: it is the strictest touch rule (no gap short
-  // of the line tolerated at all), not an off switch, so coercing it back to
-  // the default would silently restore a 0.75 ATR band the user just cleared.
-  // A NEGATIVE still falls back — there is no meaning below zero.
-  it("keeps a zero touchMult and rejects a negative back to the default", () => {
-    expect(parseTrendlinesConfig([5, 0.25, 0]).touchMult).toBe(0);
-    expect(parseTrendlinesConfig([5, 0.25, -1]).touchMult).toBe(0.75);
-  });
-
-  it("floors the integer params and rejects junk", () => {
-    const cfg = parseTrendlinesConfig([5.9, 0.25, 0.75, 2.7, "x", null, 30, 3]);
-    expect(cfg.pivotLen).toBe(5);
-    expect(cfg.minTouches).toBe(2);
-    expect(cfg.minSpanBars).toBe(TRENDLINES_DEFAULTS.minSpanBars);
-    expect(cfg.maxProjBars).toBe(TRENDLINES_DEFAULTS.maxProjBars);
-  });
-
-  it("survives a non-array", () => {
-    expect(parseTrendlinesConfig(undefined)).toEqual(TRENDLINES_DEFAULTS);
-  });
-
-  it("clamps minTouches to at least 2", () => {
-    expect(parseTrendlinesConfig([5, 0.25, 0.75, 1]).minTouches).toBe(2);
-  });
-
-  it("clamps integer params to at least 1", () => {
-    expect(parseTrendlinesConfig([0.5]).pivotLen).toBe(1);
+  it("sends negatives and junk to the default", () => {
+    const c = parseTrendlinesConfig([-1, -1, "x", null, [], {}, NaN]);
+    expect(c).toEqual(TRENDLINES_DEFAULTS);
   });
 });
 
-describe("mixedTouches (calcParams[16])", () => {
-  const BASE = [5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10];
-  it("defaults ON, including for a chart saved before the param existed", () => {
-    expect(TRENDLINES_DEFAULTS.mixedTouches).toBe(1);
-    expect(parseTrendlinesConfig([]).mixedTouches).toBe(1);
-    expect(parseTrendlinesConfig(BASE).mixedTouches).toBe(1); // 16 params, slot absent
+describe("trendlinesOutputs", () => {
+  it("names one ranked output per Max Trendlines slot, then the nearest", () => {
+    const cfg = { ...TRENDLINES_DEFAULTS, maxLines: 3 };
+    expect(trendlinesOutputs(cfg)).toEqual(["tl_1", "tl_2", "tl_3", TL_NEAREST]);
+    expect(tlOutputName(7)).toBe("tl_7");
+    expect(TL_NEAREST).toBe("tl_nearest");
   });
-  it("honours an explicit 0 as OFF", () => {
-    expect(parseTrendlinesConfig([...BASE, 0]).mixedTouches).toBe(0);
-  });
-  it("clamps to {0, 1} and sends junk to the default", () => {
-    expect(parseTrendlinesConfig([...BASE, 3]).mixedTouches).toBe(1);
-    expect(parseTrendlinesConfig([...BASE, 0.4]).mixedTouches).toBe(0); // floor first
-    expect(parseTrendlinesConfig([...BASE, -1]).mixedTouches).toBe(1); // fails >= 0 → default
-    expect(parseTrendlinesConfig([...BASE, "junk"]).mixedTouches).toBe(1);
+  it("grows with the setting", () => {
+    expect(trendlinesOutputs({ ...TRENDLINES_DEFAULTS, maxLines: 1 })).toEqual(["tl_1", TL_NEAREST]);
+    expect(trendlinesOutputs({ ...TRENDLINES_DEFAULTS, maxLines: 9 })).toHaveLength(10);
   });
 });
 
-describe("outputs and warm-up", () => {
-  it("names the four operands in pane order", () => {
-    expect(TRENDLINES_OUTPUTS).toEqual([
-      "tl_support",
-      "tl_resistance",
-      "tl_broken_support",
-      "tl_broken_resistance",
-    ]);
-  });
-
-  // ATR must be warm, two pivots must confirm, and they must span the minimum.
-  it("floors warm-up at ATR + two confirms + the minimum span", () => {
-    expect(trendlinesWarmup(TRENDLINES_DEFAULTS)).toBe(14 + 2 * 5 + 20);
-    expect(trendlinesWarmup({ ...TRENDLINES_DEFAULTS, pivotLen: 9 })).toBe(14 + 18 + 20);
+describe("trendlinesWarmup", () => {
+  it("is ATR warm-up plus two pivot confirms plus the minimum span", () => {
+    expect(trendlinesWarmup(TRENDLINES_DEFAULTS)).toBe(TL_ATR_LEN + 2 * 5 + 20);
+    expect(trendlinesWarmup({ ...TRENDLINES_DEFAULTS, pivotLen: 3, minSpanBars: 10 })).toBe(TL_ATR_LEN + 6 + 10);
   });
 });

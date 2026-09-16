@@ -108,6 +108,64 @@ describe("runtime state is stripped from the envelope", () => {
     });
   });
 
+  it("drops the trendlines per-HTF-bar rows but keeps the pinned timeframe", () => {
+    const live = [
+      {
+        id: "TL",
+        type: "TRENDLINES",
+        calcParams: [],
+        extendData: {
+          mtf: {
+            timeframe: "DAY",
+            htfStarts: [1, 2, 3],
+            htfMs: 86_400_000,
+            htfOutputs: ["tl_1", "tl_nearest"],
+            htfPoints: [{ tl_1: 1, tl_nearest: 1 }],
+            htfLines: [],
+            htfPivots: { highs: [], lows: [] },
+            htfAtr: 1,
+          },
+        },
+      },
+    ];
+    const out = decodeRuleClipboard(encodeRuleClipboard([{ expr: "TL.tl_1 > 0" }], live));
+    const ext = out!.indicators.TL.extendData as Record<string, unknown>;
+    const mtf = ext.mtf as Record<string, unknown>;
+    expect(mtf.timeframe).toBe("DAY");
+    expect(mtf).not.toHaveProperty("htfOutputs");
+    expect(mtf).not.toHaveProperty("htfPoints");
+    expect(mtf).not.toHaveProperty("htfStarts");
+    expect(mtf).not.toHaveProperty("htfLines");
+    expect(mtf).not.toHaveProperty("htfPivots");
+    expect(mtf).not.toHaveProperty("htfAtr");
+  });
+
+  it("drops the S/R Levels per-HTF-bar series but keeps the pinned timeframe", () => {
+    const live = [
+      {
+        id: "SR",
+        type: "SR_LEVELS",
+        calcParams: [],
+        extendData: {
+          mtf: {
+            timeframe: "DAY",
+            htfStarts: [1, 2, 3],
+            htfMs: 86_400_000,
+            htfSupport: [1, 2, 3],
+            htfResistance: [4, 5, 6],
+          },
+        },
+      },
+    ];
+    const out = decodeRuleClipboard(encodeRuleClipboard([{ expr: "SR.support > 0" }], live));
+    const ext = out!.indicators.SR.extendData as Record<string, unknown>;
+    const mtf = ext.mtf as Record<string, unknown>;
+    expect(mtf.timeframe).toBe("DAY");
+    expect(mtf).not.toHaveProperty("htfSupport");
+    expect(mtf).not.toHaveProperty("htfResistance");
+    expect(mtf).not.toHaveProperty("htfStarts");
+  });
+
   it("ships the pane's appearance (visible + line styles) when captured", () => {
     const live = [{ id: "ATR1", type: "ATR", calcParams: [14], extendData: {} }];
     const appearance = {

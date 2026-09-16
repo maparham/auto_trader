@@ -119,7 +119,7 @@ describe("Inputs tab renders a control for every declared input", () => {
     const rows = [...document.querySelectorAll(".ind-group, .ind-row, .ind-pair2")];
     const i = rows.indexOf(head);
     expect(i).toBeGreaterThan(0);
-    expect(rows[i + 1].textContent).toContain("Extend right");
+    expect(rows[i + 1].textContent).toContain("End at last bar");
   });
 
   // The solo numbers used to push their control to the modal's right edge while
@@ -127,7 +127,7 @@ describe("Inputs tab renders a control for every declared input", () => {
   // column of numbers zig-zagged.
   it("lays a solo number on the same two columns as a pair", () => {
     open();
-    const box = screen.getByLabelText("Min Back Clearance");
+    const box = screen.getByLabelText("Max Projection");
     const row = box.closest(".ind-row");
     expect(row?.className).toContain("ind-row-cols");
     // The tip rides beside the LABEL like on every other row, so the icons sit
@@ -192,7 +192,7 @@ describe("Inputs tab renders a control for every declared input", () => {
     // Every label in the Inputs tab must have something focusable beside it.
     for (const label of [
       "Max Trendlines",
-      "Min Back Clearance",
+      "Max Touch Gap",
       "Max Touch Spacing",
       "Merge Lines within",
       "Declutter",
@@ -302,9 +302,9 @@ describe("min/max range rows", () => {
     const { cpWrites } = openRecording();
     const box = screen.getByLabelText("Max Span") as HTMLInputElement;
     fireEvent.change(box, { target: { value: "120" } });
-    expect(cpWrites.at(-1)![12]).toBe(120);
+    expect(cpWrites.at(-1)![10]).toBe(120);
     fireEvent.change(box, { target: { value: "" } });
-    expect(cpWrites.at(-1)![12]).toBe(0);
+    expect(cpWrites.at(-1)![10]).toBe(0);
     expect(box.value).toBe("");
   });
 });
@@ -324,11 +324,11 @@ describe("preset select", () => {
     fireEvent.click(screen.getByLabelText("Preset"));
     fireEvent.click(screen.getByRole("option", { name: "Clean" }));
     const cp = cpWrites.at(-1)!;
-    expect(cp[7]).toBe(2); // maxLines
-    expect(cp[3]).toBe(3); // minTouches
-    expect(cp[4]).toBe(40); // minSpanBars
-    expect(cp[8]).toBe(0.75); // minSwingAtr
-    expect(cp[15]).toBe(10); // minBackBars untouched: still the default
+    expect(cp[5]).toBe(2); // maxLines
+    expect(cp[2]).toBe(3); // minTouches
+    expect(cp[3]).toBe(40); // minSpanBars
+    expect(cp[6]).toBe(0.75); // minSwingAtr
+    expect(cp[10]).toBe(0); // maxSpanBars untouched: still the default
     expect(screen.getByLabelText("Preset").textContent).toContain("Clean");
   });
 

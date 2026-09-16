@@ -39,6 +39,10 @@ export interface IndicatorInputDef {
   // Render this control at the row's full remaining width rather than the fixed
   // 130px. For a select whose options are sentences, not words.
   wide?: boolean;
+  // A solo control that sits under the RIGHT half of a paired row above it
+  // (the column an ind-pair2's second field uses) instead of the shared 138px
+  // column, so a lone number directly below a pair reads as its third member.
+  halfCol?: boolean;
   // A unit shown to the RIGHT of the control instead of inside the label. Keeps
   // the label to the thing being set and the unit next to the number it applies
   // to, which is also what makes a paired label short enough to fit.
@@ -178,13 +182,7 @@ const SLOPE_UNIT_OPTIONS: Array<{ value: string; label: string }> =
 // trendlinesOutputs.ts and mirrored by the backend parser). Built from
 // TRENDLINES_DEFAULTS by name so the two cannot drift apart silently.
 const TL = TRENDLINES_DEFAULTS;
-const TL_DEFAULT_PARAMS: number[] = [
-  TL.pivotLen, TL.violMult, TL.touchMult, TL.minTouches, TL.minSpanBars,
-  TL.maxProjBars, TL.breakHoldBars, TL.maxLines, TL.minSwingAtr,
-  TL.minSwingReach, TL.pairPivots, TL.maxTouches, TL.maxSpanBars,
-  TL.maxSlopeAtr, TL.minSlopeAtr, TL.minBackBars, TL.mixedTouches,
-  TL.maxTouchSpacing, TL.minTouchSpacing,
-];
+const TL_DEFAULT_PARAMS = Object.values(TL) as number[];
 
 // A preset = the defaults with a sparse patch (by slot index) on top, so the
 // unmentioned params reset to their defaults and the chips are deterministic.
@@ -199,9 +197,9 @@ function tlPreset(name: string, patch: Record<number, number>) {
 const TRENDLINES_PRESETS: IndicatorPresets = {
   base: TL_DEFAULT_PARAMS,
   options: [
-    tlPreset("Clean", { 7: 2, 3: 3, 4: 40, 8: 0.75 }),
+    tlPreset("Clean", { 5: 2, 2: 3, 3: 40, 6: 0.75 }),
     tlPreset("Balanced", {}),
-    tlPreset("Busy", { 7: 8, 4: 10 }),
+    tlPreset("Busy", { 5: 8, 3: 10 }),
   ],
 };
 
@@ -564,12 +562,14 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   // TRENDLINES. Two gates decide whether a line is MAJOR (readable by a rule):
   // Min Touches and Min Span. Max Lines is not a third gate, but it is NOT
   // operand-neutral either: the emit path reads the live pool, and that pool is
-  // capped at MAX_LIVE_MULT * maxLines per side by rank, so raising maxLines
-  // widens the candidate set. Measured on the DXY fixture, maxLines 2 vs 3
-  // changes the emitted value on 87 bars. The Max Lines tip must say that and
-  // must never claim the operands are unaffected.
+  // capped at MAX_LIVE_MULT * maxLines IN TOTAL (no per-side split) by the
+  // survival order, so raising maxLines widens the candidate set. Re-measured
+  // on the DXY fixture for the sideless detector, maxLines 2 vs 3 changes the
+  // emitted row on 422 of 490 bars, and tl_nearest specifically on 130. The
+  // Max Lines tip must say that and must never claim the operands are
+  // unaffected.
   //
-  // Min Swing Size gates HARDER than any of them: it decides what counts as a
+  // Min Pivot Size gates HARDER than any of them: it decides what counts as a
   // swing at all, so a rejected bar seeds no line and joins no pool. Default 0
   // (off), so nothing already saved moves. Measured on the same DXY fixture at
   // otherwise-default config, of 51 pivots it keeps 49 at 0.5, 40 at 0.75, 25
@@ -577,17 +577,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   // 490 bars. 1.5 already starves the pane (it emits on 133 bars where the
   // others all emit on 442), so the useful band is 0.5 to 1.0.
   //
-  // Min Back Clearance is the only gate here that ships ON (10 bars), because
-  // it fixes a hole rather than adding taste: seeding validates a candidate
-  // over (i1, i] and never looks BEFORE i1, so a pair whose angle has nothing
-  // to do with the trend passes as long as its wrong side is in the past.
-  // Saved charts DO move under it. It does not merely delete: the freed pairing
-  // slots refill, so the detector picks a better first anchor for the same
-  // trend. Measured on the DXY monthly fixture at otherwise-default config, the
-  // live set goes 22 -> 23 lines while the worst clearance goes 5 bars -> 10,
-  // and an emitted value moves on 239 of 490 bars.
-  //
-  // Min Swing Reach is the same gate on the TIME axis: a swing can be deep and
+  // Min Pivot Reach is the same gate on the TIME axis: a swing can be deep and
   // brief (a spike) or long and shallow (a drift), and one setting rejects
   // each. It reads LEFT reach only, because right reach keeps growing after
   // the pivot confirms and gating on it would repaint. Also default 0, and a
@@ -595,10 +585,10 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   TRENDLINES: {
     inputs: [
       {
-        ...num(7, "Max Trendlines"),
+        ...num(5, "Max Trendlines"),
         tip: [
-          "Max lines drawn in total, nearest to price first, counted after merging.",
-          "Lines this indicator currently reports always draw, even over the limit.",
+          "Lines drawn and reported, strongest first: most touches, then longest, then fewest crossings.",
+          "Each drawn line is also a rule operand (tl_1 .. tl_N).",
           "Raising it also keeps more lines in play, which can change the prices this indicator reports.",
         ],
       },
@@ -617,22 +607,22 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(10, "Max Pivot Pairs"),
+        ...num(8, "Max Pivot Pairs"),
         group: "pivot",
         suffix: "pairs",
-        default: 20,
+        default: 40,
         tip: [
-          "How many earlier pivots a new pivot tries to pair a line with.",
+          "How many earlier pivots a new pivot tries to pair a line with, highs and lows together.",
           "Counted in pivots, not bars, so filtering pivots out lets the same slots reach further back.",
         ],
       },
       {
-        ...num(8, "Min Pivot Size", { min: 0, step: 0.1 }),
+        ...num(6, "Min Pivot Size", { min: 0, step: 0.1 }),
         group: "size",
         suffix: "ATR",
-        // Charts created before this param existed store only eight
-        // calcParams, so the slot reads undefined and the box would render
-        // empty. Same 0 parseTrendlinesConfig already substitutes.
+        // Charts created before this param existed store fewer calcParams, so
+        // the slot reads undefined and the box would render empty. Same 0
+        // parseTrendlinesConfig already substitutes.
         default: 0,
         tip: [
           "Min height of the swing from a pivot back to the last pivot on the other side, in ATR(14).",
@@ -640,7 +630,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(9, "Min Pivot Reach", { min: 0 }),
+        ...num(7, "Min Pivot Reach", { min: 0 }),
         group: "size",
         suffix: "bars",
         default: 0,
@@ -650,35 +640,38 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(1, "Max Pierce", { min: 0, step: 0.05 }),
+        ...num(1, "Max Touch Gap", { min: 0, step: 0.05 }),
         section: "Line Fit",
         group: "tol",
         suffix: "ATR",
+        default: 0,
         tip: [
-          "How far a wick may poke past a line without breaking it, in ATR(14).",
-          "Zero: any poke through breaks the line.",
+          "How far a pivot may stop short of a line and still count as a half touch, in ATR(14).",
+          "Zero: a pivot must reach the line.",
         ],
       },
       {
-        ...num(2, "Max Touch Gap", { min: 0, step: 0.05 }),
+        ...num(17, "Max Pierce", { min: 0, step: 0.05 }),
         group: "tol",
         suffix: "ATR",
+        default: 0.25,
         tip: [
-          "How far a pivot may stop short of a line and still count as a touch, in ATR(14).",
-          "Zero: only a pivot that reaches the line counts.",
+          "How far a pivot may poke through a line and still count as a full touch, in ATR(14).",
+          "A touch that pierces counts 1, one that stops short counts a half.",
         ],
       },
       {
-        ...num(15, "Min Back Clearance"),
-        default: 10,
+        ...num(18, "Back Clearance", { min: 0 }),
+        default: TL.minBackBars,
+        halfCol: true,
         suffix: "bars",
         tip: [
-          "Bars before a line's first anchor that price must leave clear, on the line's own side.",
-          "Zero accepts any pair, even a line starting at a pivot the trend had already left behind.",
+          "Bars before a line's first anchor over which the close must stay on one side of the line.",
+          "Rejects a line that price was already crossing before it started. Zero: off.",
         ],
       },
       {
-        ...num(3, "Min Touches", { min: 2 }),
+        ...num(2, "Min Touches", { min: 2 }),
         section: "Filters",
         group: "major",
         suffix: "pivots",
@@ -697,7 +690,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(11, "Max Touches", { min: 0 }),
+        ...num(9, "Max Touches", { min: 0 }),
         group: "major",
         default: 0,
         unbounded: true,
@@ -708,7 +701,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(4, "Min Span"),
+        ...num(3, "Min Span"),
         group: "span",
         suffix: "bars",
         range: {
@@ -726,7 +719,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(12, "Max Span", { min: 0 }),
+        ...num(10, "Max Span", { min: 0 }),
         group: "span",
         default: 0,
         unbounded: true,
@@ -737,7 +730,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(18, "Min Touch Spacing", { min: 0 }),
+        ...num(14, "Min Touch Spacing", { min: 0 }),
         group: "spacing",
         default: 0,
         suffix: "bars",
@@ -753,18 +746,16 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
             "Span bounds the whole line; this bounds each gap inside it.",
             "The floor drops lines whose touches bunch together instead of testing the line at separate times.",
             "The cap drops lines whose touches sit far apart, like a pair anchored months before its next touch.",
-            "Mixed touches count too, so a far-back opposite pivot can trip the cap.",
             "Empty right box: no limit.",
           ],
         },
         tip: [
           "Min bars between two touches in a row.",
           "Drops lines whose touches bunch together rather than testing the line at separate times.",
-          "Below Min Pivot Length it does little unless Mix Low and High Pivots is on.",
         ],
       },
       {
-        ...num(17, "Max Touch Spacing", { min: 0 }),
+        ...num(13, "Max Touch Spacing", { min: 0 }),
         group: "spacing",
         default: 0,
         unbounded: true,
@@ -772,11 +763,10 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: [
           "Max bars between two touches in a row. Empty: no limit.",
           "Drops lines whose touches sit far apart, like a pair anchored months before its next touch.",
-          "Mixed touches count too, so a far-back opposite pivot can trip it.",
         ],
       },
       {
-        ...num(14, "Min Slope", { min: 0, step: 0.01 }),
+        ...num(12, "Min Slope", { min: 0, step: 0.01 }),
         group: "slope",
         default: 0,
         suffix: "ATR/bar",
@@ -795,7 +785,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(13, "Max Slope", { min: 0, step: 0.01 }),
+        ...num(11, "Max Slope", { min: 0, step: 0.01 }),
         group: "slope",
         default: 0,
         unbounded: true,
@@ -806,39 +796,34 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        key: "mixedTouches",
-        label: "Mix Low and High Pivots",
-        type: "boolean",
-        source: "calcParam",
-        index: 16,
-        default: true,
-        // `wide` so the full label shows: the shared two-column row ellipsises
-        // it, and a checkbox needs no control column anyway.
-        wide: true,
-        tip: [
-          "Support lines normally count only lows, resistance lines only highs.",
-          "With this on, the opposite pivot also counts as a touch when it lands near the line. It confirms lines but never starts one.",
-          "Near means within Max Pierce past the line, or Max Touch Gap short of it.",
-          "The line draws from its earliest touch.",
-        ],
+        ...num(15, "Min Crossings", { min: 0 }),
+        group: "cross",
+        default: 0,
+        suffix: "times",
+        range: {
+          label: "Crossings",
+          tip: [
+            "How many times the close must have crossed the line, at least and at most.",
+            "A line price never crosses is a clean trend edge; one it crosses often is a pivot line price keeps returning to.",
+            "Empty right box: no limit.",
+          ],
+        },
+        tip: ["Min times the close must have crossed the line. Zero: no floor."],
       },
       {
-        ...num(5, "Max Projection"),
+        ...num(16, "Max Crossings", { min: 0 }),
+        group: "cross",
+        default: 0,
+        unbounded: true,
+        suffix: "times",
+        tip: ["Max times the close may have crossed the line. Empty: no limit."],
+      },
+      {
+        ...num(4, "Max Projection"),
         section: "Lifetime",
-        group: "life",
         suffix: "bars",
         tip: [
-          "Bars an unbroken line keeps running past its last touch before it retires.",
-          "Once price breaks a line, Max Break Hold takes over.",
-        ],
-      },
-      {
-        ...num(6, "Max Break Hold"),
-        group: "life",
-        suffix: "bars",
-        tip: [
-          "Bars a broken line stays on the chart, dashed, after price cuts through it.",
-          "Long enough to watch for a retest.",
+          "Bars a line keeps running past its last touch before it retires.",
         ],
       },
       {
@@ -859,7 +844,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
           { value: "extended", label: "↔  Extended both ways" },
           { value: "lastbar", label: "⇥  End at last bar" },
           { value: "segment", label: "•–•  Segment, stops at last touch" },
-          { value: "apex", label: ">  Apex, stops at opposite line" },
           { value: "cross", label: "×  Cross, stops at any line" },
         ],
         tip: "Where a line stops on the right, and whether it runs back before its first anchor.",
@@ -879,7 +863,8 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
         tip: [
           "Only lines near price: removes distant lines.",
-          "One line per pivot: keeps just the nearest line where several pass through the same swing.",
+          "One line per pivot: keeps just the strongest line where several pass through the same swing.",
+          "Drawing only. A line hidden here still reports its price to a rule.",
         ],
       },
       {
@@ -910,29 +895,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        key: "hideBroken",
-        label: "Hide broken lines",
-        type: "boolean",
-        source: "extend",
-        field: "hideBroken",
-        group: "brokenLines",
-        default: false,
-        tip: "Hides the dashed lines price has already cut through.",
-      },
-      {
-        key: "dimBroken",
-        label: "Dim broken lines",
-        type: "boolean",
-        source: "extend",
-        group: "brokenLines",
-        field: "dimBroken",
-        default: false,
-        tip: [
-          "Fades a broken line as well as dashing it.",
-          "Off by default: the dashes and break dot already mark it, and a broken line is exactly where a retest happens.",
-        ],
-      },
-      {
         key: "dimOpacity",
         label: "Dim opacity",
         type: "number",
@@ -945,7 +907,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         suffix: "%",
         tip: [
           "How faded a dimmed line paints, for every reason a line dims.",
-          "Floored at 10%: hiding lines is the job of Declutter and Hide broken lines.",
+          "Floored at 10%: hiding lines is the job of Declutter.",
         ],
       },
       {
@@ -1011,14 +973,15 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         step: 0.25,
         suffix: "ATR",
         tip: [
-          "One pivot often starts several near-identical lines; this keeps the closest and frees slots for lines with a different shape.",
+          "One pivot often starts several near-identical lines; this keeps the strongest and frees slots for lines with a different shape.",
           "Distance is measured at the last bar. Zero merges nothing.",
+          "Drawing only. A line merged away still reports its price to a rule.",
         ],
       },
     ],
     presets: TRENDLINES_PRESETS,
     title: "Trendlines",
-    desc: "Sloping support and resistance drawn from confirmed pivot highs and lows, keeping only the lines no candle has cut through. The lines nearest price are drawn and tagged with how many times price touched them. A broken line turns dashed and marks where it broke, so you can watch for a retest. Pivots confirm a few bars late, so nothing repaints.",
+    desc: "Sloping lines through confirmed swing highs and lows, in any mix: a line is two significant swings that later swings land on. Price may cross a line; the count of crossings is shown beside the touch count and can be filtered. The strongest lines are drawn and tagged. Pivots confirm a few bars late, so nothing repaints.",
   },
   SESSIONS: {
     inputs: [],

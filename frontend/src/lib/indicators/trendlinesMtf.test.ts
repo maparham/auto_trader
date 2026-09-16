@@ -31,29 +31,32 @@ const chartBars = (n = 40): KLineData[] =>
 const htfStarts = (n = 10): number[] =>
   Array.from({ length: n }, (_, i) => T0 + i * HTF_MS);
 
-/** A resistance line on the HTF bars: 110 at HTF bar 1, falling 2 per HTF bar. */
+/** A descending line on the HTF bars: 110 at HTF bar 1, falling 2 per HTF bar,
+ * anchored on two highs. */
 const htfLine: TrendLine = {
-  side: "resistance",
   i1: 1,
   p1: 110,
+  k1: "high",
   i2: 3,
   p2: 106,
+  k2: "high",
   touches: 2,
   touchIdxs: [1, 3],
+  touchKinds: ["high", "high"],
   lastTouchIdx: 3,
-  brokenIdx: null,
-  firstTouchIdx: 1,
+  crossings: 0,
+  lastSign: 0,
   maxTouchGap: 2,
   minTouchGap: 2,
   maxTouchIdx: 3,
 };
 
-/** One resistance pivot at HTF bar 1, which turned at 110 — a price no CHART
- * bar ever traded at (they are all 100), so a mark painted at the chart bar's
+/** One high pivot at HTF bar 1, which turned at 110, a price no CHART bar
+ * ever traded at (they are all 100), so a mark painted at the chart bar's
  * own high would be visibly wrong. */
 const HTF_PIVOTS: TrendPivots = {
-  resistance: [1],
-  support: [],
+  idxs: [1],
+  kinds: ["high"],
   highs: htfStarts().map((_, i) => (i === 1 ? 110 : 100)),
   lows: htfStarts().map(() => 100),
 };
@@ -62,7 +65,8 @@ const stash = (over: Partial<TrendlinesMtf> = {}): TrendlinesMtf => ({
   timeframe: "HOUR",
   htfStarts: htfStarts(),
   htfMs: HTF_MS,
-  htfResistance: htfStarts().map((_, i) => 110 - 2 * (i - 1)),
+  htfOutputs: ["tl_1"],
+  htfPoints: htfStarts().map((_, i) => ({ tl_1: 110 - 2 * (i - 1) })),
   htfLines: [htfLine],
   htfAtr: 2,
   ...over,
@@ -71,7 +75,7 @@ const stash = (over: Partial<TrendlinesMtf> = {}): TrendlinesMtf => ({
 // Every gate wide open except the ones the fixture needs, so a line two HTF
 // bars long is major: the defaults ask for 20 bars of span, which no small
 // fixture can reach in HTF bars.
-const PARAMS = [1, 0.25, 0.75, 2, 1, 250, 30, 20, 0, 0, 20, 0, 0, 0, 0, 0];
+const PARAMS = [1, 0.75, 2, 1, 250, 20, 0, 0, 20, 0, 0, 0, 0];
 
 describe("alignMtfTrendlines", () => {
   it("hands each chart bar the newest HTF bar that had CLOSED by then", () => {
@@ -80,12 +84,30 @@ describe("alignMtfTrendlines", () => {
     // HTF bar 0 opens at T0 and closes an hour later, i.e. at chart bar 4. The
     // first four chart bars are inside it and must see nothing: a value there
     // would be this bar's own future.
-    expect(out.slice(0, 4).map((p) => p.tl_resistance)).toEqual([
+    expect(out.slice(0, 4).map((p) => p.tl_1)).toEqual([
       undefined, undefined, undefined, undefined,
     ]);
-    expect(out[4].tl_resistance).toBe(112); // HTF bar 0's value
-    expect(out[7].tl_resistance).toBe(112); // still inside HTF bar 1
-    expect(out[8].tl_resistance).toBe(110); // HTF bar 1 has closed
+    expect(out[4].tl_1).toBe(112); // HTF bar 0's value
+    expect(out[7].tl_1).toBe(112); // still inside HTF bar 1
+    expect(out[8].tl_1).toBe(110); // HTF bar 1 has closed
+  });
+
+  it("aligns every output the stash names, not just the first", () => {
+    const bars = chartBars(12);
+    const twoOutputs = stash({
+      htfOutputs: ["tl_1", "tl_nearest"],
+      htfPoints: htfStarts().map((_, i) => ({
+        tl_1: 110 - 2 * (i - 1),
+        tl_nearest: 200 + i,
+      })),
+    });
+    const out = alignMtfTrendlines(bars, twoOutputs);
+    // HTF bar 0's row (index 0) is the newest closed one at chart bar 4.
+    expect(out[4].tl_1).toBe(112);
+    expect(out[4].tl_nearest).toBe(200);
+    // HTF bar 1 closes at chart bar 8.
+    expect(out[8].tl_1).toBe(110);
+    expect(out[8].tl_nearest).toBe(201);
   });
 
   it("carries the lines, the HTF ATR and the HTF bar the last row read", () => {
@@ -107,10 +129,10 @@ describe("alignMtfTrendlines", () => {
     // chart bars 36-39 sit inside it and must read ITS value, not bar 8's.
     const out = alignMtfTrendlines(chartBars(), stash({ formingIdx: 9 }));
     const resAt9 = 110 - 2 * (9 - 1); // the series value stashed for entry 9
-    expect(out[36].tl_resistance).toBe(resAt9);
-    expect(out[39].tl_resistance).toBe(resAt9);
+    expect(out[36].tl_1).toBe(resAt9);
+    expect(out[39].tl_1).toBe(resAt9);
     // History keeps waitClose: bar 8 still reads HTF bar 1, not bar 2.
-    expect(out[8].tl_resistance).toBe(110);
+    expect(out[8].tl_1).toBe(110);
     // The draw path measures at the forming bar — the whole point: line ends
     // reach the newest candle.
     expect(out[out.length - 1].lineIdx).toBe(9);
@@ -147,7 +169,7 @@ describe("TRENDLINES_TEMPLATE.calc under a pin", () => {
       extendData: { mtf: stash() },
     } as never) as TrendlinesCalcPoint[];
     expect(out[out.length - 1].lines).toEqual([htfLine]);
-    expect(out[out.length - 1].tl_resistance).toBe(96); // HTF bar 8
+    expect(out[out.length - 1].tl_1).toBe(96); // HTF bar 8
   });
 
   it("ignores a stash with no series behind it", () => {
@@ -173,7 +195,6 @@ function draw(
 ) {
   const segments: Seg[] = [];
   const rings: Array<{ x: number; y: number }> = [];
-  const dots: Array<{ x: number; y: number }> = [];
   let cur = { x: 0, y: 0 };
   let start = { x: 0, y: 0 };
   let width = 1;
@@ -202,7 +223,6 @@ function draw(
     fillText: () => {},
     arc: (x: number, y: number, r: number) => {
       if (r === 2) rings.push({ x, y });
-      if (r === 2.5) dots.push({ x, y }); // TL_BREAK_RADIUS
     },
   };
   const ext = { mtf, dedupe: false, nearPrice: false, ...over };
@@ -215,7 +235,7 @@ function draw(
     xAxis: { convertToPixel: (i: number) => i },
     yAxis: { convertToPixel: (p: number) => 400 - p },
   } as never);
-  return { segments, rings, dots };
+  return { segments, rings };
 }
 
 describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
@@ -316,29 +336,14 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
     expect(rings.map((r) => Math.round(r.x))).toEqual([6, 13]);
   });
 
-  it("puts the break dot on the chart bar that traded the piercing extreme", () => {
-    // The break test pierces on the BAR'S EXTREME (high for resistance), so
-    // the chart candle carrying the HTF bar's high is the candle that broke
-    // the line. HTF bar 5 spans chart bars 20..23 and its high trades at
-    // chart bar 22; the dot used to sit at the span's open, chart bar 20.
-    const bars = chartBars();
-    bars[6] = bar(T0 + 6 * CHART_MS, 110); // anchor 1's extreme
-    bars[13] = bar(T0 + 13 * CHART_MS, 106); // anchor 2's extreme
-    bars[22] = bar(T0 + 22 * CHART_MS, 108); // the pierce, well above the line
-    const broken: TrendLine = { ...htfLine, brokenIdx: 5 };
-    const { dots } = draw(bars, stash({ htfLines: [broken] }));
-    expect(dots).toHaveLength(1);
-    expect(dots[0].x).toBeCloseTo(22, 6);
-  });
-
   it("falls back to the HTF bar's start when its span is not fully loaded", () => {
     // 39 chart bars: HTF bar 9's span (chart bars 36..39) misses its last bar,
     // so the true extreme may be unloaded and the caret stays at the start.
     const bars = chartBars(39);
     bars[37] = bar(T0 + 37 * CHART_MS, 120);
     const pivots: TrendPivots = {
-      resistance: [9],
-      support: [],
+      idxs: [9],
+      kinds: ["high"],
       highs: htfStarts().map((_, i) => (i === 9 ? 120 : 100)),
       lows: htfStarts().map(() => 100),
     };
@@ -360,7 +365,7 @@ describe("lineKey under a pin", () => {
     const bars = chartBars();
     const starts = htfStarts();
     expect(lineKey(htfLine, bars, starts)).toBe(
-      `resistance:${starts[1]}:${starts[3]}`,
+      `${starts[1]}:${starts[3]}`,
     );
     // Without the HTF timestamps the same line keys off chart bars 1 and 3,
     // which is a different line entirely — and a pin that silently rebinds.
@@ -382,16 +387,18 @@ describe("TRENDLINES_TEMPLATE.draw under a pin FINER than the chart", () => {
   /** Anchors at 15m bars 6 and 18: T0+1.5h and T0+4.5h, i.e. the MIDDLES of
    * chart bars 1 and 4. */
   const ltfLine: TrendLine = {
-    side: "resistance",
     i1: 6,
     p1: 110,
+    k1: "high",
     i2: 18,
     p2: 106,
+    k2: "high",
     touches: 2,
     touchIdxs: [6, 18],
+    touchKinds: ["high", "high"],
     lastTouchIdx: 18,
-    brokenIdx: null,
-    firstTouchIdx: 6,
+    crossings: 0,
+    lastSign: 0,
     maxTouchGap: 12,
     minTouchGap: 12,
     maxTouchIdx: 18,
@@ -400,7 +407,8 @@ describe("TRENDLINES_TEMPLATE.draw under a pin FINER than the chart", () => {
     timeframe: "MINUTE_15",
     htfStarts: ltfStarts(),
     htfMs: LTF_MS,
-    htfResistance: ltfStarts().map((_, i) => 110 - (i - 6) / 3),
+    htfOutputs: ["tl_1"],
+    htfPoints: ltfStarts().map((_, i) => ({ tl_1: 110 - (i - 6) / 3 })),
     htfLines: [ltfLine],
     htfAtr: 2,
   });

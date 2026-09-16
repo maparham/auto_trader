@@ -26,7 +26,7 @@ import {
 } from "./lib/indicatorMeta";
 import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, setMtfWaitClose } from "./lib/mtfCoordinator";
 import { parseTrendlinesConfig } from "./lib/indicators/trendlinesOutputs";
-import { declutterMode, type TrendlinesExtend } from "./lib/indicators/trendlines";
+import { declutterMode, TL_LINE_COLOR, type TrendlinesExtend } from "./lib/indicators/trendlines";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -446,6 +446,11 @@ export default function IndicatorSettings({
   // --- FVG: zone colors + fill opacity (draw-only, on extendData.zoneStyle) ---
   const [fvgZone, setFvgZone] = useState<FvgZoneStyle>(() =>
     fvgZoneStyleOf((ind?.extendData ?? {}) as FvgExtend),
+  );
+
+  // --- TRENDLINES: line colour (draw-only, on extendData.lineColor) ---
+  const [trendlineColor, setTrendlineColor] = useState<string>(
+    () => (ind?.extendData as TrendlinesExtend | undefined)?.lineColor ?? TL_LINE_COLOR,
   );
 
   // --- PREV_HL: per-instance timezone override + per-boundary length/agg (Inputs) ---
@@ -1017,6 +1022,11 @@ export default function IndicatorSettings({
     if (isFvg && JSON.stringify(fvgZone) !== JSON.stringify(FVG_ZONE_STYLE_DEFAULTS)) {
       extendData.zoneStyle = fvgZone;
     }
+    if (isTrendlines && trendlineColor !== TL_LINE_COLOR) {
+      // Draw-only; persist only when it differs from the shared default so a
+      // plain instance carries no `lineColor` key.
+      extendData.lineColor = trendlineColor;
+    }
     if (isAvwap) {
       avwapConfig(extendData, avwapSource, bandMode, bands);
     }
@@ -1092,7 +1102,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, waitClose, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt, slopeColor]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, waitClose, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, trendlineColor, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt, slopeColor]);
 
   // Flip the pin's "Wait for timeframe closes" choice: write the flag onto
   // the live indicator FIRST (every apply* reads it from there), then rebuild
@@ -1329,6 +1339,14 @@ export default function IndicatorSettings({
       name,
       extendData: { ...((live?.extendData as object) ?? {}), zoneStyle: next },
     });
+  }
+
+  // Trendlines line colour: draw-only (strokes, rings, handles, tags, pivot
+  // marks all read it), so a plain extendData override is the whole live-update
+  // path via overrideExtend — never a recompute.
+  function patchTrendlineColor(hex: string): void {
+    setTrendlineColor(hex);
+    overrideExtend(chart, paneId, name, { lineColor: hex });
   }
 
   // Pivots High/Low connector: draw-only, so a plain extendData override (merged
@@ -2023,7 +2041,7 @@ export default function IndicatorSettings({
                     // mid-row while "Reference name" kept its beside the
                     // label). A long label ellipsises rather than clipping the
                     // icon; the tooltip carries the full wording.
-                    <div className="ind-row ind-row-cols">
+                    <div className={chunk[0].halfCol ? "ind-row ind-row-cols ind-row-half" : "ind-row ind-row-cols"}>
                       {labelFor(chunk[0])}
                       {controlFor(chunk[0])}
                     </div>
@@ -2864,6 +2882,26 @@ export default function IndicatorSettings({
                         opacity={fvgZone.opacity}
                         onOpacity={(a) => patchFvgZone({ opacity: a })}
                       />
+                    </div>
+                  </div>
+                </>
+              )}
+              {/* Trendlines: one colour for every line, touch ring, pin handle
+                  and ×N tag (draw-only, extendData.lineColor). No opacity row:
+                  dimming is already a separate control (Dim opacity, Inputs tab). */}
+              {isTrendlines && (
+                <>
+                  <div className="ind-group">Line</div>
+                  <div className="ind-row ind-style-row">
+                    <span className="ind-row-head">
+                      <label>Line colour</label>
+                      <InfoTip
+                        title="Line colour"
+                        text={["Colour of the lines, touch rings, handles and tags."]}
+                      />
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker color={trendlineColor} onColor={patchTrendlineColor} />
                     </div>
                   </div>
                 </>

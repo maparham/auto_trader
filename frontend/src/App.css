@@ -2639,6 +2639,10 @@
    ordinary as "Spike Window". */
 .ind-row.ind-row-cols { display: grid; grid-template-columns: minmax(0, 1fr) 138px; gap: 16px; align-items: center; }
 .ind-row.ind-row-cols > :last-child { justify-self: start; }
+/* Opt-in (indicatorMeta's `halfCol`): the control takes the SAME column as the
+   second field of an .ind-pair2 above it, so a lone number under a pair lines
+   its box up with the pair's right box. Same 1fr 1fr split and 16px gap. */
+.ind-row.ind-row-cols.ind-row-half { grid-template-columns: 1fr 1fr; }
 /* The ⓘ rides beside the label on these rows like everywhere else, so the
    icons sit in one left-hand column with the labels instead of scattering out
    past the controls. Half a row does not always hold the label AND the tip

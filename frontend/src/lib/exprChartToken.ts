@@ -35,7 +35,7 @@
 import { slopeLengths, slopeOutputs } from "./indicators/slopeOutputs";
 import { atrOutputs } from "./atr";
 import { FVG_OUTPUTS } from "./indicators/fvgOutputs";
-import { TRENDLINES_OUTPUTS } from "./indicators/trendlinesOutputs";
+import { parseTrendlinesConfig, trendlinesOutputs } from "./indicators/trendlinesOutputs";
 import { PIVOT_BANDS_OUTPUTS } from "./indicators/pivotBandsOutputs";
 import { PIVOT_ANALYSIS_OUTPUTS } from "./indicators/pivotAnalysisOutputs";
 import { SR_LEVELS_OUTPUTS } from "./indicators/srLevelsOutputs";
@@ -154,21 +154,20 @@ export function chartIndicatorToExprToken(
         : FVG_OUTPUTS[0];
       return `${id}.${output}`;
     }
-    // TRENDLINES reads exactly like FVG: four FIXED output names, so no retune
-    // can invalidate a ref (the params reshape the same four series). It has no
-    // chart figures at all — the pane declares `figures: []` and paints its own
-    // canvas — so in practice every click arrives without a figureKey and takes
-    // TRENDLINES_OUTPUTS[0], tl_support. The key is still honoured when one is
-    // passed, so a future legend that names the outputs needs no change here.
-    // Falling through to `default` instead would toast "no expression
-    // equivalent" on a pane that exposes four operands.
+    // TRENDLINES's outputs are CONFIG-DRIVEN: one ranked operand per Max
+    // Trendlines slot (tl_1..tl_maxLines), then tl_nearest. It has no chart
+    // figures at all, the pane declares `figures: []` and paints its own
+    // canvas, so in practice every click arrives without a figureKey and takes
+    // outs[0], tl_1. The key is still honoured when one is a live output name,
+    // so a future legend that names the outputs needs no change here. Falling
+    // through to `default` instead would toast "no expression equivalent" on a
+    // pane that exposes real operands.
     case "TRENDLINES": {
       const id = opts?.instanceId;
       if (!id) return null;
+      const outs = trendlinesOutputs(parseTrendlinesConfig(calcParams));
       const key = opts?.figureKey;
-      const output = (TRENDLINES_OUTPUTS as readonly string[]).includes(key ?? "")
-        ? (key as string)
-        : TRENDLINES_OUTPUTS[0];
+      const output = key && outs.includes(key) ? key : outs[0];
       return `${id}.${output}`;
     }
     // PIVOT_BANDS reads exactly like FVG/TRENDLINES: two FIXED output names

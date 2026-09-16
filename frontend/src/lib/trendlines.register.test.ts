@@ -14,7 +14,7 @@ const { BASE_TEMPLATES, OVERLAY_INDICATORS } = await import("./customIndicators"
 // exported surface.
 const { indicatorInfo, resolveInputs, groupInputs } = await import("./indicatorMeta");
 const { EXPR_INSTANCE_TYPES, exprInstancesFor, exprWarmupByRef } = await import("./exprInstances");
-const { TRENDLINES_OUTPUTS, TRENDLINES_EXTEND_DEFAULTS } = await import(
+const { trendlinesOutputs, TRENDLINES_DEFAULTS, TRENDLINES_EXTEND_DEFAULTS } = await import(
   "./indicators/trendlinesOutputs"
 );
 
@@ -36,14 +36,12 @@ describe("TRENDLINES registration", () => {
 
   it("has settings metadata for all nineteen params, the merge tolerance and the extend select", () => {
     const inputs = resolveInputs("TRENDLINES", undefined);
-    // Nineteen calcParams (eighteen numbers plus the Mixed touches boolean)
-    // plus the merge tolerance, which is a number on extendData rather than a
-    // calcParam because merging never moves an emitted value. It is also the
-    // merge switch: 0 merges nothing, which is why there is no checkbox beside
-    // it, and the two dim thresholds, which choose an opacity and so are
-    // render-only for the same reason.
-    expect(inputs.filter((i) => i.type === "number")).toHaveLength(22);
+    // Nineteen calcParams (all numbers now that Mixed touches is gone) plus
+    // the merge tolerance, which is a number on extendData rather than a
+    // calcParam because merging never moves an emitted value, and the two dim
+    // thresholds, which choose an opacity and so are render-only too.
     expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(19);
+    expect(inputs.filter((i) => i.type === "number")).toHaveLength(23);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
     // metadata, so assert the named title too or this test passes on a miss.
@@ -58,23 +56,20 @@ describe("TRENDLINES registration", () => {
       ["Max Trendlines"],
       ["Min Pivot Length", "Max Pivot Pairs"],
       ["Min Pivot Size", "Min Pivot Reach"],
-      ["Max Pierce", "Max Touch Gap"],
-      ["Min Back Clearance"],
+      ["Max Touch Gap", "Max Pierce"],
+      ["Back Clearance"],
       ["Min Touches", "Max Touches"],
       ["Min Span", "Max Span"],
-      // Its own range row, like Span and Touches: a floor and its ceiling over
-      // one quantity, rendered under the single "Touch Spacing" label.
       ["Min Touch Spacing", "Max Touch Spacing"],
       ["Min Slope", "Max Slope"],
-      ["Mix Low and High Pivots"],
-      ["Max Projection", "Max Break Hold"],
+      ["Min Crossings", "Max Crossings"],
+      ["Max Projection"],
       ["Extend"],
       ["Declutter"],
       // Booleans pair without a `group` tag (see groupInputs): two switchable
       // labels take a fraction of a row, so a column of them would waste half
       // the modal.
       ["Show pivots", "Mark line pivots"],
-      ["Hide broken lines", "Dim broken lines"],
       ["Dim opacity"],
       ["Dim after touching"],
       ["Dim if untouched for"],
@@ -106,25 +101,31 @@ describe("TRENDLINES registration", () => {
     expect(d?.default).toBe("off");
   });
 
-  it("gives Pivot Size a default, since older charts have no slot 8", () => {
-    // Instances created before the param existed store eight calcParams, so
-    // calcParams[8] is undefined and the modal renders inp.default rather than
+  it("gives Pivot Size a default, since older charts have no slot 6", () => {
+    // Instances created before the param existed store fewer calcParams, so
+    // calcParams[6] is undefined and the modal renders inp.default rather than
     // an empty box. Same 0 parseTrendlinesConfig substitutes, so what is shown
     // is what the indicator is actually doing.
     const swing = resolveInputs("TRENDLINES", undefined).find(
-      (i) => i.index === 8,
+      (i) => i.index === 6,
     );
     expect(swing?.label).toBe("Min Pivot Size");
     expect(swing?.suffix).toBe("ATR");
     expect(swing?.default).toBe(0);
   });
 
-  it("is a referenceable expression instance exposing four outputs", () => {
+  it("is a referenceable expression instance exposing tl_1..tl_N and tl_nearest", () => {
     expect(EXPR_INSTANCE_TYPES.has("TRENDLINES")).toBe(true);
     const live = [{ id: "tl1", type: "TRENDLINES", calcParams: [], extendData: {} }];
     const [inst] = exprInstancesFor(live as never);
-    expect(inst.outputs).toEqual([...TRENDLINES_OUTPUTS]);
+    expect(inst.outputs).toEqual(trendlinesOutputs(TRENDLINES_DEFAULTS));
+    expect(inst.outputs).toEqual(["tl_1", "tl_2", "tl_3", "tl_nearest"]);
     expect(inst.timeframe).toBeNull();
+
+    const nine = exprInstancesFor([
+      { id: "t", type: "TRENDLINES", calcParams: [5, 0.75, 2, 20, 250, 9], extendData: {} },
+    ] as never)[0];
+    expect(nine.outputs).toHaveLength(10);
   });
 
   it("reports its timeframe pin, so a rule reads the higher timeframe's lines", () => {
@@ -141,7 +142,7 @@ describe("TRENDLINES registration", () => {
     const live = [{ id: "tl1", type: "TRENDLINES", calcParams: [], extendData: {} }];
     const warmup = exprWarmupByRef(live as never);
     // ATR(14) + two pivotLen(5) confirms + minSpanBars(20).
-    expect(warmup("tl1", "tl_support")).toBe(14 + 10 + 20);
+    expect(warmup("tl1", "tl_1")).toBe(14 + 10 + 20);
     expect(warmup("tl1", "not_an_output")).toBe(0);
   });
 });

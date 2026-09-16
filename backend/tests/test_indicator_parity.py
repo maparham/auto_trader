@@ -118,290 +118,54 @@ def test_fvg(golden):
         assert_series_equal(fvg_series(cfg, output, candles, 1.0), expected, key)
 
 
+_TL_BASE = dict(
+    pivot_len=3, touch_mult=0.75, min_touches=2, min_span_bars=10, max_proj_bars=60,
+    max_lines=3, min_swing_atr=0.0, min_swing_reach=0, pair_pivots=40, max_touches=0,
+    max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, max_touch_spacing=0,
+    min_touch_spacing=0, min_crossings=0, max_crossings=0, pierce_mult=0.25,
+    min_back_bars=0,
+)
+
+# Mirrors TL_VARIANTS in indicatorParityGolden.test.ts VALUE FOR VALUE.
+_TL_VARIANTS = {
+    "SWING": dict(min_swing_atr=2.0),
+    "REACH": dict(min_swing_reach=12),
+    "PAIR": dict(pair_pivots=5),
+    "CAP": dict(max_touches=3),
+    "SPAN": dict(max_span_bars=40),
+    "SLOPE": dict(max_slope_atr=0.1),
+    "FLAT": dict(min_slope_atr=0.05),
+    "SPACING": dict(max_touch_spacing=30),
+    "SPACING_MIN": dict(min_touch_spacing=4, min_touches=3),
+    "CROSS_MIN": dict(min_crossings=2),
+    "CROSS_MAX": dict(max_crossings=1),
+    "GAP0": dict(touch_mult=0.0),
+    "PIERCE": dict(pierce_mult=1.0),
+    "BACK": dict(min_back_bars=10),
+}
+
+
 def test_trendlines(golden):
     from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
 
     candles, _, series = golden
-    # Mirrors the generator config in indicatorParityGolden.test.ts VALUE FOR
-    # VALUE. If the two drift, this compares two different indicators and
-    # passes or fails for the wrong reason.
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0, max_touch_spacing=0, min_touch_spacing=0,
-    )
-    for output, key in (
-        ("tl_support", "TL_SUPPORT"),
-        ("tl_resistance", "TL_RESISTANCE"),
-        ("tl_broken_support", "TL_BROKEN_SUPPORT"),
-        ("tl_broken_resistance", "TL_BROKEN_RESISTANCE"),
-    ):
+    cfg = TrendlinesConfig(**_TL_BASE)
+    for output, key in (("tl_1", "TL_1"), ("tl_2", "TL_2"), ("tl_3", "TL_3"), ("tl_nearest", "TL_NEAREST")):
         expected = series[key]
-        # Guard against a vacuous golden: the synthetic walk must form lines,
-        # break them, and hold the broken ones. An all-None series would pass
-        # against a port that returns nothing.
         assert any(v is not None for v in expected), f"{key}: golden is all-None"
         assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
 
 
-def test_trendlines_min_swing_atr(golden):
-    """The SAME config with the swing-size gate on.
-
-    Not foldable into the series above: at min_swing_atr 0 the gate returns
-    before it reads a bar, so a port with the arithmetic wrong still matches
-    there. This is the only case that ports the cross-multiplied depth test.
-    """
+@pytest.mark.parametrize("name", sorted(_TL_VARIANTS))
+def test_trendlines_variant(golden, name):
     from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
 
     candles, _, series = golden
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=2.0, min_swing_reach=0, pair_pivots=20, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0, max_touch_spacing=0, min_touch_spacing=0,
-    )
-    for output, key in (
-        ("tl_support", "TL_SWING_SUPPORT"),
-        ("tl_resistance", "TL_SWING_RESISTANCE"),
-    ):
+    cfg = TrendlinesConfig(**{**_TL_BASE, **_TL_VARIANTS[name]})
+    for output, key in (("tl_1", f"TL_{name}_1"), ("tl_nearest", f"TL_{name}_NEAREST")):
         expected = series[key]
         assert any(v is not None for v in expected), f"{key}: golden is all-None"
-        # And it must differ from the ungated series, or the gate is inert and
-        # this test would pass against a port that ignores min_swing_atr.
-        base = series[key.replace("TL_SWING_", "TL_")]
-        assert expected != base, f"{key}: identical to the ungated series"
         assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-
-
-def test_trendlines_min_swing_reach(golden):
-    """The same config with the LEFT-REACH gate on. Separate for the same
-    reason as the size gate: at 0 it returns before reading a bar. 12 bites
-    where pivot_len 3 does not."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=12, pair_pivots=20, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0, max_touch_spacing=0, min_touch_spacing=0,
-    )
-    for output, key in (
-        ("tl_support", "TL_REACH_SUPPORT"),
-        ("tl_resistance", "TL_REACH_RESISTANCE"),
-    ):
-        expected = series[key]
-        assert any(v is not None for v in expected), f"{key}: golden is all-None"
-        base = series[key.replace("TL_REACH_", "TL_")]
-        assert expected != base, f"{key}: identical to the ungated series"
-        assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-
-
-def test_trendlines_pair_pivots(golden):
-    """The pairing window at 5 instead of 20. Unlike the two gates this param
-    has no off switch to short-circuit, but the base series uses exactly the old
-    hard-coded 20, so a port that ignored it entirely would still match there."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=5, max_touches=0, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0, max_touch_spacing=0, min_touch_spacing=0,
-    )
-    for output, key in (
-        ("tl_support", "TL_PAIR_SUPPORT"),
-        ("tl_resistance", "TL_PAIR_RESISTANCE"),
-    ):
-        expected = series[key]
-        assert any(v is not None for v in expected), f"{key}: golden is all-None"
-        base = series[key.replace("TL_PAIR_", "TL_")]
-        assert expected != base, f"{key}: identical to the default window"
-        assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-
-
-def test_trendlines_max_touches(golden):
-    """The touch CEILING, the mirror of min_touches. At 0 the gate
-    short-circuits, so the base series proves nothing about it."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=3, max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0, max_touch_spacing=0, min_touch_spacing=0,
-    )
-    for output, key in (
-        ("tl_support", "TL_CAP_SUPPORT"),
-        ("tl_resistance", "TL_CAP_RESISTANCE"),
-    ):
-        expected = series[key]
-        assert any(v is not None for v in expected), f"{key}: golden is all-None"
-        base = series[key.replace("TL_CAP_", "TL_")]
-        assert expected != base, f"{key}: identical to the uncapped series"
-        assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-
-
-def test_trendlines_max_span_bars(golden):
-    """The span CEILING, the mirror of min_span_bars. At 0 it is inert, so the
-    base series proves nothing about it."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-        max_span_bars=40, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0, max_touch_spacing=0, min_touch_spacing=0,
-    )
-    for output, key in (
-        ("tl_support", "TL_SPAN_SUPPORT"),
-        ("tl_resistance", "TL_SPAN_RESISTANCE"),
-    ):
-        expected = series[key]
-        assert any(v is not None for v in expected), f"{key}: golden is all-None"
-        base = series[key.replace("TL_SPAN_", "TL_")]
-        assert expected != base, f"{key}: identical to the uncapped series"
-        assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-
-
-def test_trendlines_max_slope_atr(golden):
-    """The STEEPNESS ceiling. Inert at 0, so the base series covers none of it."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-        max_span_bars=0, max_slope_atr=0.1, min_slope_atr=0.0, min_back_bars=0, mixed_touches=0, max_touch_spacing=0, min_touch_spacing=0,
-    )
-    for output, key in (
-        ("tl_support", "TL_SLOPE_SUPPORT"),
-        ("tl_resistance", "TL_SLOPE_RESISTANCE"),
-    ):
-        expected = series[key]
-        assert any(v is not None for v in expected), f"{key}: golden is all-None"
-        base = series[key.replace("TL_SLOPE_", "TL_")]
-        assert expected != base, f"{key}: identical to the uncapped series"
-        assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-
-
-def test_trendlines_min_slope_atr(golden):
-    """The steepness FLOOR, which drops near-horizontal lines the ceiling keeps."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-        max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.05, min_back_bars=0, mixed_touches=0, max_touch_spacing=0, min_touch_spacing=0,
-    )
-    for output, key in (
-        ("tl_support", "TL_FLAT_SUPPORT"),
-        ("tl_resistance", "TL_FLAT_RESISTANCE"),
-    ):
-        expected = series[key]
-        assert any(v is not None for v in expected), f"{key}: golden is all-None"
-        base = series[key.replace("TL_FLAT_", "TL_")]
-        assert expected != base, f"{key}: identical to the unfloored series"
-        assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-
-
-def test_trendlines_min_back_bars(golden):
-    """The BACKWARD clearance gate: bars before the first anchor that must sit
-    on the line's own side of it. Seeding never looked before i1, so a pair
-    whose angle has nothing to do with the trend passed as long as its wrong
-    side was in the past."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-        max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=15, mixed_touches=0, max_touch_spacing=0, min_touch_spacing=0,
-    )
-    for output, key in (
-        ("tl_support", "TL_BACK_SUPPORT"),
-        ("tl_resistance", "TL_BACK_RESISTANCE"),
-    ):
-        expected = series[key]
-        assert any(v is not None for v in expected), f"{key}: golden is all-None"
-        base = series[key.replace("TL_BACK_", "TL_")]
-        assert expected != base, f"{key}: identical to the ungated series"
-        assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-
-
-def test_trendlines_mixed_touches(golden):
-    """The mixed-touch pair: same walk, min_touches 3, option on vs off. The
-    generator asserts the two differ, so a port that ignores the param fails
-    one of them."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    for prefix, mixed in (("TL_MIXED", 1), ("TL_MIXED_OFF", 0)):
-        cfg = TrendlinesConfig(
-            pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=3,
-            min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-            min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-            max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
-            mixed_touches=mixed, max_touch_spacing=0, min_touch_spacing=0,
-        )
-        for output, key in (
-            ("tl_support", f"{prefix}_SUPPORT"),
-            ("tl_resistance", f"{prefix}_RESISTANCE"),
-        ):
-            expected = series[key]
-            assert any(v is not None for v in expected), f"{key}: golden is all-None"
-            assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-    # And the pair must actually differ on BOTH sides, mirroring the
-    # generator's own guard — otherwise a port that ignores mixed_touches
-    # would still pass the inert side's half of the coverage above. On this
-    # walk support differs on 64 bars and resistance on 22; neither is inert.
-    assert series["TL_MIXED_SUPPORT"] != series["TL_MIXED_OFF_SUPPORT"], (
-        "TL_MIXED_SUPPORT: identical to TL_MIXED_OFF_SUPPORT, mixed_touches gate is vacuous"
-    )
-    assert series["TL_MIXED_RESISTANCE"] != series["TL_MIXED_OFF_RESISTANCE"], (
-        "TL_MIXED_RESISTANCE: identical to TL_MIXED_OFF_RESISTANCE, mixed_touches gate is vacuous"
-    )
-
-
-def test_trendlines_max_touch_spacing(golden):
-    """The GAP ceiling: the widest stretch of bars between two consecutive
-    touches. Distinct from max_span_bars, which bounds the whole first-to-last
-    distance, so a line touched every few bars for a long time passes this and
-    a two-anchor pair far apart does not.
-
-    Two series, because mixed touches count toward spacing: the second pins
-    that coupling, which is the part most likely to be ported wrong (the TS
-    must sort the touch list at seed time, since mixed pivots sit before the
-    first anchor and retro ones between the anchors)."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    for prefix, mixed, min_touches in (
-        ("TL_SPACING", 0, 2),
-        ("TL_SPACING_MIXED", 1, 3),
-    ):
-        cfg = TrendlinesConfig(
-            pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=min_touches,
-            min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-            min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-            max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
-            mixed_touches=mixed, max_touch_spacing=20, min_touch_spacing=0,
-        )
-        for output, key in (
-            ("tl_support", f"{prefix}_SUPPORT"),
-            ("tl_resistance", f"{prefix}_RESISTANCE"),
-        ):
-            expected = series[key]
-            assert any(v is not None for v in expected), f"{key}: golden is all-None"
-            assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-    # Must MOVE something against the ungated series, mirroring the generator's
-    # own guard, or a port that ignored slot 17 would still pass above.
-    assert series["TL_SPACING_SUPPORT"] != series["TL_SUPPORT"], (
-        "TL_SPACING_SUPPORT: identical to the ungated series, max_touch_spacing is vacuous"
-    )
 
 
 def test_trendlines_touch_gaps_sorts_and_guards():
@@ -427,36 +191,6 @@ def test_trendlines_touch_gaps_sorts_and_guards():
     # Guards, not cases: a line always carries its two anchors.
     assert touch_gaps([7]) == (0, math.inf)
     assert touch_gaps([]) == (0, math.inf)
-
-
-def test_trendlines_min_touch_spacing(golden):
-    """The FLOOR end of the Touch Spacing range: the narrowest gap between two
-    consecutive touches. A different gate from the cap rather than the same one
-    reversed, so it needs its own series."""
-    from auto_trader.indicators.trendlines import TrendlinesConfig, trendlines_series
-
-    candles, _, series = golden
-    cfg = TrendlinesConfig(
-        pivot_len=3, viol_mult=0.25, touch_mult=0.75, min_touches=2,
-        min_span_bars=10, max_proj_bars=60, break_hold_bars=30, max_lines=3,
-        min_swing_atr=0.0, min_swing_reach=0, pair_pivots=20, max_touches=0,
-        max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, min_back_bars=0,
-        mixed_touches=0, max_touch_spacing=0, min_touch_spacing=8,
-    )
-    for output, key in (
-        ("tl_support", "TL_SPACING_MIN_SUPPORT"),
-        ("tl_resistance", "TL_SPACING_MIN_RESISTANCE"),
-    ):
-        expected = series[key]
-        assert any(v is not None for v in expected), f"{key}: golden is all-None"
-        assert_series_equal(trendlines_series(cfg, output, candles, 1.0), expected, key)
-    # Bites, and is not the cap's series wearing another name.
-    assert series["TL_SPACING_MIN_SUPPORT"] != series["TL_SUPPORT"], (
-        "TL_SPACING_MIN_SUPPORT: identical to the ungated series, the floor is vacuous"
-    )
-    assert series["TL_SPACING_MIN_SUPPORT"] != series["TL_SPACING_SUPPORT"], (
-        "TL_SPACING_MIN_SUPPORT: identical to the CAP's series; the two ends are not the same gate"
-    )
 
 
 def test_avwap(golden):

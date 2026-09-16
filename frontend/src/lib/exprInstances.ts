@@ -18,7 +18,7 @@ import { FVG_OUTPUTS, fvgWarmup, parseFvgConfig } from "./indicators/fvgOutputs"
 import type { FvgExtend } from "./indicators/fvg"; // erased at build; no runtime edge
 import type { TrendlinesExtend } from "./indicators/trendlines"; // erased at build; no runtime edge
 import {
-  TRENDLINES_OUTPUTS,
+  trendlinesOutputs,
   parseTrendlinesConfig,
   trendlinesWarmup,
 } from "./indicators/trendlinesOutputs";
@@ -277,10 +277,10 @@ export function exprWarmupByRef(
     // Every TRENDLINES output shares one floor (ATR warm-up + the two pivot
     // confirms + the minimum span); an output this pane does not expose costs 0.
     // Unlike FVG's, this floor depends on the pane's params.
-    if (inst.type === "TRENDLINES")
-      return (TRENDLINES_OUTPUTS as readonly string[]).includes(output)
-        ? trendlinesWarmup(parseTrendlinesConfig(inst.calcParams))
-        : 0;
+    if (inst.type === "TRENDLINES") {
+      const cfg = parseTrendlinesConfig(inst.calcParams);
+      return trendlinesOutputs(cfg).includes(output) ? trendlinesWarmup(cfg) : 0;
+    }
     // Every PIVOT_BANDS/PIVOT_ANALYSIS output shares one floor (the fractal
     // confirm lag N); an output this pane does not expose costs 0, like the
     // other branches. Both floors depend on the pane's params.
@@ -360,14 +360,11 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
       const ext = (inst.extendData ?? {}) as TrendlinesExtend;
       out.push({
         id: inst.id,
-        outputs: [...TRENDLINES_OUTPUTS],
+        outputs: trendlinesOutputs(cfg),
         timeframe: ext.mtf?.timeframe ?? null,
-        // The output names say which side; what they cannot say is how
-        // selective the pane is — the SLOPE/ATR detail convention. The three
-        // shown are the pane's ONLY gates on what a rule can read: maxLines
-        // caps the DRAWN set and is deliberately absent, since naming it here
-        // would read as "the operand only sees the top N".
-        detail: `pivot ${cfg.pivotLen} · span ${cfg.minSpanBars}+ · touches ${cfg.minTouches}+`,
+        // The output names say which rank; what they cannot say is how
+        // selective the pane is, the SLOPE/ATR detail convention.
+        detail: `pivot ${cfg.pivotLen} · span ${cfg.minSpanBars}+ · touches ${cfg.minTouches}+ · ${cfg.maxLines} ranked`,
       });
       continue;
     }

@@ -118,106 +118,47 @@ describe("indicator parity golden fixture", () => {
     const fvgPoints = computeFvg(candles, { minSize: 0.25, maxBars: 500, maxGaps: 10 }).points;
 
     // TRENDLINES: config mirrored by test_indicator_parity.test_trendlines
-    // VALUE FOR VALUE. pivotLen 3 and minSpanBars 10 keep this walk producing
-    // lines on both sides rather than a handful, so the pierce gate, the touch
-    // band, the per-bar break path and the break-hold window all get exercised.
-    // maxProjBars 60 (vs the 250 default) is deliberately close to
-    // breakHoldBars 30 on a 500-bar walk: it makes unbroken lines actually
-    // reach their projection limit and expire, a branch a 250-bar window would
-    // barely touch here, while still leaving ~420 non-null bars per side.
+    // VALUE FOR VALUE. pivotLen 3 / minSpanBars 10 keep this 500-bar walk
+    // producing many lines; maxProjBars 60 makes lines actually expire.
+    // touchMult is pinned at 0.75 rather than taken from the defaults (now 0)
+    // so half touches are live in the BASE and the GAP0 variant still bites.
     const TL_CFG = {
-      pivotLen: 3, violMult: 0.25, touchMult: 0.75, minTouches: 2,
-      minSpanBars: 10, maxProjBars: 60, breakHoldBars: 30, maxLines: 3,
-      minSwingAtr: 0, minSwingReach: 0, pairPivots: 20, maxTouches: 0, maxSpanBars: 0, maxSlopeAtr: 0, minSlopeAtr: 0,
-      // 0, NOT the shipped default of 10: every series below this one is about
-      // some other gate, and letting the clearance gate ride along would make
-      // them all move whenever it changes. Its own pair is TL_BACK_* below.
+      pivotLen: 3, touchMult: 0.75, minTouches: 2, minSpanBars: 10, maxProjBars: 60,
+      maxLines: 3, minSwingAtr: 0, minSwingReach: 0, pairPivots: 40, maxTouches: 0,
+      maxSpanBars: 0, maxSlopeAtr: 0, minSlopeAtr: 0, maxTouchSpacing: 0,
+      minTouchSpacing: 0, minCrossings: 0, maxCrossings: 0, pierceMult: 0.25,
       minBackBars: 0,
-      // 0 to keep every existing golden series byte-identical; a later task
-      // wires the real value.
-      mixedTouches: 0,
-      // Off, like every other ceiling here: its own pair is TL_SPACING_* below.
-      maxTouchSpacing: 0,
-      minTouchSpacing: 0,
     };
     const tlPoints = computeTrendlines(candles, TL_CFG).points;
-    // The SAME config with the swing-size gate ON. Parity for that gate cannot
-    // ride on the series above: at minSwingAtr 0 isSignificantSwing returns
-    // before it reads a single bar, so a port that got the arithmetic wrong
-    // would still match. 2 was picked by measuring: on this walk it moves an
-    // emitted value on 254 of 500 bars and moves BOTH sides, where 0.6 left
-    // tl_support byte-identical and the guard below would have failed.
-    const tlSwingPoints = computeTrendlines(candles, {
-      ...TL_CFG, minSwingAtr: 2,
-    }).points;
-    // And again with the REACH gate, for the same reason: at 0 it returns
-    // before it reads a bar. 12 bites where pivotLen 3 does not (anything at or
-    // below pivotLen is a no-op by construction).
-    const tlReachPoints = computeTrendlines(candles, {
-      ...TL_CFG, minSwingReach: 12,
-    }).points;
-    // And the pairing window at 5 instead of 20. Unlike the two gates this one
-    // has no off switch to short-circuit, but the base series uses exactly the
-    // old hard-coded 20, so a port that ignored the param entirely would still
-    // match there.
-    const tlPairPoints = computeTrendlines(candles, {
-      ...TL_CFG, pairPivots: 5,
-    }).points;
-    // And the touch CEILING. 3 bites on this walk: plenty of lines here collect
-    // a third and fourth touch, and at 0 the gate short-circuits.
-    const tlCapPoints = computeTrendlines(candles, {
-      ...TL_CFG, maxTouches: 3,
-    }).points;
-    // And the span CEILING, against minSpanBars 10 on a 500-bar walk.
-    const tlSpanPoints = computeTrendlines(candles, {
-      ...TL_CFG, maxSpanBars: 40,
-    }).points;
-    // And the STEEPNESS ceiling.
-    const tlSlopePoints = computeTrendlines(candles, {
-      ...TL_CFG, maxSlopeAtr: 0.1,
-    }).points;
-    // And the steepness FLOOR, which drops the near-horizontal lines the
-    // ceiling keeps.
-    const tlFlatPoints = computeTrendlines(candles, {
-      ...TL_CFG, minSlopeAtr: 0.05,
-    }).points;
-    // And the BACKWARD clearance gate, which is off at 0 like the others. 15
-    // was picked by sweeping: it moves tl_support on 96 bars and tl_resistance
-    // on 129, where 3 moves NEITHER (nothing on this walk anchors that close
-    // behind) and 30 starves both sides down to ~310 non-null bars.
-    const tlBackPoints = computeTrendlines(candles, {
-      ...TL_CFG, minBackBars: 15,
-    }).points;
-    // MIXED TOUCHES, paired with its own off state at minTouches 3: at the
-    // default minTouches 2 every line already qualifies, so extra touches
-    // often move nothing — a third touch that only mixed detection finds is
-    // what makes a line major in one series and absent in the other.
-    const tlMixedPoints = computeTrendlines(candles, {
-      ...TL_CFG, mixedTouches: 1, minTouches: 3,
-    }).points;
-    const tlMixedOffPoints = computeTrendlines(candles, {
-      ...TL_CFG, mixedTouches: 0, minTouches: 3,
-    }).points;
-    // And TOUCH SPACING, the gap ceiling. Off at 0 like the others, so it needs
-    // its own series or a port that ignored the param would still match. 20
-    // bites against minSpanBars 10 on this walk: it is wide enough that plenty
-    // of pairs clear it and narrow enough that the far-apart ones go. Runs with
-    // mixedTouches 1 as well, because mixed touches count toward spacing and
-    // that coupling is the part most likely to be ported wrong.
-    const tlSpacingPoints = computeTrendlines(candles, {
-      ...TL_CFG, maxTouchSpacing: 20,
-    }).points;
-    const tlSpacingMixedPoints = computeTrendlines(candles, {
-      ...TL_CFG, maxTouchSpacing: 20, mixedTouches: 1, minTouches: 3,
-    }).points;
-    // And the FLOOR end of the same range, which is a different gate rather
-    // than the same one reversed: it reads the NARROWEST gap where the cap
-    // reads the widest. 8 against pivotLen 3 bites here (two same-side pivots
-    // can sit 4 apart, so a floor above that removes real lines) while staying
-    // clear of the pivotLen no-op zone.
-    const tlSpacingMinPoints = computeTrendlines(candles, {
-      ...TL_CFG, minTouchSpacing: 8,
-    }).points;
+    // One variant per gate, each against its own off state in TL_CFG, so a port
+    // that ignored a param would fail exactly one pair.
+    const TL_VARIANTS: Record<string, Partial<typeof TL_CFG>> = {
+      SWING: { minSwingAtr: 2 },
+      REACH: { minSwingReach: 12 },
+      PAIR: { pairPivots: 5 },
+      CAP: { maxTouches: 3 },
+      SPAN: { maxSpanBars: 40 },
+      SLOPE: { maxSlopeAtr: 0.1 },
+      FLAT: { minSlopeAtr: 0.05 },
+      SPACING: { maxTouchSpacing: 30 },
+      SPACING_MIN: { minTouchSpacing: 4, minTouches: 3 },
+      CROSS_MIN: { minCrossings: 2 },
+      CROSS_MAX: { maxCrossings: 1 },
+      // The two halves of the touch rule, each against its own base value:
+      // no gap allowed at all, and a pierce band four times as wide.
+      GAP0: { touchMult: 0 },
+      PIERCE: { pierceMult: 1.0 },
+      BACK: { minBackBars: 10 },
+    };
+    const tlVariantSeries: Record<string, Array<number | null>> = {};
+    for (const [name, patch] of Object.entries(TL_VARIANTS)) {
+      const pts = computeTrendlines(candles, { ...TL_CFG, ...patch }).points;
+      tlVariantSeries[`TL_${name}_1`] = toNull(pts.map((p) => p.tl_1 ?? null));
+      tlVariantSeries[`TL_${name}_NEAREST`] = toNull(pts.map((p) => p.tl_nearest ?? null));
+      // Each variant must MOVE something against the base, or the Python port
+      // could ignore the param and still pass.
+      expect(JSON.stringify(pts), name).not.toBe(JSON.stringify(tlPoints));
+    }
 
     const series: Record<string, Array<number | null>> = {
       EMA_9: toNull(ema9Base),
@@ -239,36 +180,11 @@ describe("indicator parity golden fixture", () => {
       FVG_BULL_BOTTOM: toNull(fvgPoints.map((p) => p.bullBottom ?? null)),
       FVG_BEAR_TOP: toNull(fvgPoints.map((p) => p.bearTop ?? null)),
       FVG_BEAR_BOTTOM: toNull(fvgPoints.map((p) => p.bearBottom ?? null)),
-      TL_SUPPORT: toNull(tlPoints.map((p) => p.tl_support ?? null)),
-      TL_RESISTANCE: toNull(tlPoints.map((p) => p.tl_resistance ?? null)),
-      TL_BROKEN_SUPPORT: toNull(tlPoints.map((p) => p.tl_broken_support ?? null)),
-      TL_BROKEN_RESISTANCE: toNull(tlPoints.map((p) => p.tl_broken_resistance ?? null)),
-      TL_SWING_SUPPORT: toNull(tlSwingPoints.map((p) => p.tl_support ?? null)),
-      TL_SWING_RESISTANCE: toNull(tlSwingPoints.map((p) => p.tl_resistance ?? null)),
-      TL_REACH_SUPPORT: toNull(tlReachPoints.map((p) => p.tl_support ?? null)),
-      TL_REACH_RESISTANCE: toNull(tlReachPoints.map((p) => p.tl_resistance ?? null)),
-      TL_PAIR_SUPPORT: toNull(tlPairPoints.map((p) => p.tl_support ?? null)),
-      TL_PAIR_RESISTANCE: toNull(tlPairPoints.map((p) => p.tl_resistance ?? null)),
-      TL_CAP_SUPPORT: toNull(tlCapPoints.map((p) => p.tl_support ?? null)),
-      TL_CAP_RESISTANCE: toNull(tlCapPoints.map((p) => p.tl_resistance ?? null)),
-      TL_SPAN_SUPPORT: toNull(tlSpanPoints.map((p) => p.tl_support ?? null)),
-      TL_SPAN_RESISTANCE: toNull(tlSpanPoints.map((p) => p.tl_resistance ?? null)),
-      TL_SLOPE_SUPPORT: toNull(tlSlopePoints.map((p) => p.tl_support ?? null)),
-      TL_SLOPE_RESISTANCE: toNull(tlSlopePoints.map((p) => p.tl_resistance ?? null)),
-      TL_FLAT_SUPPORT: toNull(tlFlatPoints.map((p) => p.tl_support ?? null)),
-      TL_FLAT_RESISTANCE: toNull(tlFlatPoints.map((p) => p.tl_resistance ?? null)),
-      TL_BACK_SUPPORT: toNull(tlBackPoints.map((p) => p.tl_support ?? null)),
-      TL_BACK_RESISTANCE: toNull(tlBackPoints.map((p) => p.tl_resistance ?? null)),
-      TL_MIXED_SUPPORT: toNull(tlMixedPoints.map((p) => p.tl_support ?? null)),
-      TL_MIXED_RESISTANCE: toNull(tlMixedPoints.map((p) => p.tl_resistance ?? null)),
-      TL_MIXED_OFF_SUPPORT: toNull(tlMixedOffPoints.map((p) => p.tl_support ?? null)),
-      TL_MIXED_OFF_RESISTANCE: toNull(tlMixedOffPoints.map((p) => p.tl_resistance ?? null)),
-      TL_SPACING_SUPPORT: toNull(tlSpacingPoints.map((p) => p.tl_support ?? null)),
-      TL_SPACING_RESISTANCE: toNull(tlSpacingPoints.map((p) => p.tl_resistance ?? null)),
-      TL_SPACING_MIXED_SUPPORT: toNull(tlSpacingMixedPoints.map((p) => p.tl_support ?? null)),
-      TL_SPACING_MIXED_RESISTANCE: toNull(tlSpacingMixedPoints.map((p) => p.tl_resistance ?? null)),
-      TL_SPACING_MIN_SUPPORT: toNull(tlSpacingMinPoints.map((p) => p.tl_support ?? null)),
-      TL_SPACING_MIN_RESISTANCE: toNull(tlSpacingMinPoints.map((p) => p.tl_resistance ?? null)),
+      TL_1: toNull(tlPoints.map((p) => p.tl_1 ?? null)),
+      TL_2: toNull(tlPoints.map((p) => p.tl_2 ?? null)),
+      TL_3: toNull(tlPoints.map((p) => p.tl_3 ?? null)),
+      TL_NEAREST: toNull(tlPoints.map((p) => p.tl_nearest ?? null)),
+      ...tlVariantSeries,
     };
 
     const fixture = {
@@ -291,20 +207,6 @@ describe("indicator parity golden fixture", () => {
     for (const v of series.RSI_14) if (v !== null) expect(v).toBeGreaterThanOrEqual(0);
     for (const key of ["ATR_14", "ATR_14_SMA", "ATR_14_EMA", "ATR_14_WMA"] as const)
       for (const v of series[key]) if (v !== null) expect(v).toBeGreaterThan(0);
-
-    // The pair must actually differ, or the Python port could ignore the
-    // param and still pass. If this fails, raise minTouches in BOTH mixed
-    // series (4, then 5) or set touchMult 1.5 in both, until it bites —
-    // never assert on only one side of the pair.
-    expect(JSON.stringify(tlMixedPoints)).not.toBe(JSON.stringify(tlMixedOffPoints));
-    // Same guard for the spacing ceiling: it must MOVE something against the
-    // base series, or Python could ignore slot 17 and still match. If this
-    // fails, lower maxTouchSpacing (15, then 10) until it bites.
-    expect(JSON.stringify(tlSpacingPoints)).not.toBe(JSON.stringify(tlPoints));
-    // The floor must bite too, and must not merely reproduce the cap's series:
-    // they read opposite ends of the same sorted gap list.
-    expect(JSON.stringify(tlSpacingMinPoints)).not.toBe(JSON.stringify(tlPoints));
-    expect(JSON.stringify(tlSpacingMinPoints)).not.toBe(JSON.stringify(tlSpacingPoints));
 
     mkdirSync(dirname(OUT), { recursive: true });
     writeFileSync(OUT, JSON.stringify(fixture));

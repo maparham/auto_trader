@@ -9,7 +9,7 @@ import type { Indicator } from "klinecharts";
 import {
   computeTrendlines,
   createTrendlinesSession,
-  pivotPrice,
+  pivotPriceAt,
   TRENDLINES_TEMPLATE,
   type TrendlinesCalcPoint,
 } from "./trendlines";
@@ -87,13 +87,16 @@ describe("createTrendlinesSession", () => {
     // Not vacuous: the fixture actually produces lines.
     expect(computeTrendlines(bars, cfg).lines.length).toBeGreaterThan(0);
     const pv = computeTrendlines(bars, cfg).pivots;
-    expect(pv.support.length).toBeGreaterThan(0);
-    expect(pv.resistance.length).toBeGreaterThan(0);
+    expect(pv.idxs.length).toBeGreaterThan(0);
+    expect(pv.kinds).toContain("high");
+    expect(pv.kinds).toContain("low");
     // The marks carry the prices the swings turned at, which is what the draw
     // path paints against instead of re-reading the chart's own bars.
-    for (const i of pv.support) expect(pivotPrice(pv, "support", i)).toBe(bars[i].low);
-    for (const i of pv.resistance)
-      expect(pivotPrice(pv, "resistance", i)).toBe(bars[i].high);
+    for (let q = 0; q < pv.idxs.length; q++) {
+      const idx = pv.idxs[q];
+      const expected = pv.kinds[q] === "high" ? bars[idx].high : bars[idx].low;
+      expect(pivotPriceAt(pv, q)).toBe(expected);
+    }
   });
 
   it("reuses prefix point rows by identity across ticks (proves the fast path ran)", () => {
@@ -119,8 +122,12 @@ describe("createTrendlinesSession", () => {
   // from-scratch test stayed green.
   it("carries touch spacing through the fork, with the ceiling ON", () => {
     const bars = synthBars(400);
+    // calcParams order: [pivotLen, touchMult, minTouches, minSpanBars,
+    // maxProjBars, maxLines, minSwingAtr, minSwingReach, pairPivots,
+    // maxTouches, maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing,
+    // minTouchSpacing, minCrossings, maxCrossings].
     const gated = parseTrendlinesConfig([
-      5, 0.25, 0.75, 2, 20, 250, 30, 3, 0, 0, 20, 0, 0, 0, 0, 10, 1, 30,
+      5, 0.75, 2, 20, 250, 10, 0, 0, 20, 0, 0, 0, 0, 30, 0, 0, 0,
     ]);
     expect(gated.maxTouchSpacing).toBe(30);
     const session = createTrendlinesSession();
@@ -182,7 +189,6 @@ describe("createTrendlinesSession", () => {
     session.compute(bars, cfg);
     const cfg2 = parseTrendlinesConfig([
       3, // pivotLen changed
-      TRENDLINES_DEFAULTS.violMult,
       TRENDLINES_DEFAULTS.touchMult,
     ]);
     const inc = session.compute(bars, cfg2);
@@ -215,9 +221,9 @@ describe("createTrendlinesSession", () => {
     expect(last.atr).toEqual(ref.atr[ref.atr.length - 1]);
     expect(last.lineIdx).toBe(bars.length - 1);
     expect(second.slice(0, -1)).toEqual(ref.points.slice(0, -1));
-    expect(last.tl_support).toEqual(ref.points[ref.points.length - 1].tl_support);
-    expect(last.tl_resistance).toEqual(
-      ref.points[ref.points.length - 1].tl_resistance,
+    expect(last.tl_1).toEqual(ref.points[ref.points.length - 1].tl_1);
+    expect(last.tl_nearest).toEqual(
+      ref.points[ref.points.length - 1].tl_nearest,
     );
     // Two indicator instances must not share a session (independent charts).
     const ind2 = { calcParams: [], extendData: undefined } as unknown as Indicator;
@@ -232,7 +238,7 @@ describe("createTrendlinesSession", () => {
       points: [],
       lines: [],
       atr: [],
-      pivots: { resistance: [], support: [], highs: [], lows: [] },
+      pivots: { idxs: [], kinds: [], highs: [], lows: [] },
     });
     const bars = synthBars(10);
     const rand = lcg(4);

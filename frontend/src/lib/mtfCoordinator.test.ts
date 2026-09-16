@@ -383,17 +383,17 @@ describe("applyTrendlinesTimeframe", () => {
       timeframe: string;
       htfStarts: number[];
       htfMs: number;
-      htfResistance: unknown[];
-      htfBrokenSupport: unknown[];
+      htfOutputs: string[];
+      htfPoints: unknown[];
       htfLines: unknown[];
     };
     expect(mtf.timeframe).toBe("MINUTE_15");
     expect(mtf.htfMs).toBe(HTF_MS);
     expect(mtf.htfStarts.length).toBeGreaterThan(0);
-    // One value per HTF bar, on every one of the four operand series: calc
-    // aligns them by index against htfStarts.
-    expect(mtf.htfResistance).toHaveLength(mtf.htfStarts.length);
-    expect(mtf.htfBrokenSupport).toHaveLength(mtf.htfStarts.length);
+    // One row per HTF bar, covering every ranked output: calc aligns them by
+    // index against htfStarts.
+    expect(mtf.htfOutputs.length).toBeGreaterThan(0);
+    expect(mtf.htfPoints).toHaveLength(mtf.htfStarts.length);
     // The forming HTF bar is never usable to an operand, so it must not seed or
     // break a line either. The chart's newest bar is the cut.
     const newest = chart.getDataList().at(-1)!.timestamp;
@@ -431,9 +431,9 @@ describe("applyTrendlinesTimeframe", () => {
     // inserted anywhere but the end would shift every slot after it and the
     // HTF pane would silently detect on the wrong settings.
     expect(Object.values(TRENDLINES_DEFAULTS)).toHaveLength(19);
-    expect(Object.values(TRENDLINES_DEFAULTS)[16]).toBe(1); // mixedTouches
-    expect(Object.values(TRENDLINES_DEFAULTS)[17]).toBe(0); // maxTouchSpacing
-    expect(Object.values(TRENDLINES_DEFAULTS)[18]).toBe(0); // minTouchSpacing
+    expect(Object.values(TRENDLINES_DEFAULTS)[15]).toBe(0); // minCrossings
+    expect(Object.values(TRENDLINES_DEFAULTS)[16]).toBe(0); // maxCrossings
+    expect(Object.values(TRENDLINES_DEFAULTS)[17]).toBe(0.25); // pierceMult
   });
 
   it("fetches the HTF candles on the PANE'S price side, not a hardcoded mid", async () => {
@@ -646,14 +646,14 @@ describe("forming-bar mode (waitClose: false)", () => {
     const mtf = overrides.at(-1)!.patch.extendData?.mtf as {
       formingIdx?: number;
       htfStarts: number[];
-      htfSupport: unknown[];
+      htfPoints: unknown[];
     };
     const newest = chart.getDataList().at(-1)!.timestamp;
     // Last entry IS the forming bucket (still open at the newest chart bar)…
     expect(mtf.formingIdx).toBe(mtf.htfStarts.length - 1);
     expect(mtf.htfStarts.at(-1)! + HTF_MS).toBeGreaterThan(newest);
-    // …and the operand series cover it.
-    expect(mtf.htfSupport).toHaveLength(mtf.htfStarts.length);
+    // …and the operand rows cover it.
+    expect(mtf.htfPoints).toHaveLength(mtf.htfStarts.length);
   });
 
   it("refreshFormingBar re-folds from the chart's candles without a refetch", async () => {

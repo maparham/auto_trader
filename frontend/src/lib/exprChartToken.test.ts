@@ -201,29 +201,29 @@ describe("FVG panes", () => {
 const TL_PARAMS = [5, 0.25, 0.75, 2, 20, 250, 30, 3];
 
 describe("TRENDLINES panes", () => {
-  it("falls back to tl_support for a row click with no figure", () => {
+  it("falls back to tl_1 for a row click with no figure", () => {
     expect(chartIndicatorToExprToken("TRENDLINES", TL_PARAMS, {}, { instanceId: "TRENDLINES" })).toBe(
-      "TRENDLINES.tl_support",
+      "TRENDLINES.tl_1",
     );
     expect(
       chartIndicatorToExprToken("TRENDLINES", TL_PARAMS, {}, { instanceId: "TRENDLINES#a1b" }),
-    ).toBe("TRENDLINES#a1b.tl_support");
+    ).toBe("TRENDLINES#a1b.tl_1");
   });
 
   it("emits a named output when one is passed", () => {
     expect(
       chartIndicatorToExprToken("TRENDLINES", TL_PARAMS, {}, {
         instanceId: "TRENDLINES",
-        figureKey: "tl_broken_resistance",
+        figureKey: "tl_nearest",
       }),
-    ).toBe("TRENDLINES.tl_broken_resistance");
+    ).toBe("TRENDLINES.tl_nearest");
     // An unknown key behaves like absence, as the option doc promises.
     expect(
       chartIndicatorToExprToken("TRENDLINES", TL_PARAMS, {}, {
         instanceId: "TRENDLINES",
-        figureKey: "nope",
+        figureKey: "tl_support",
       }),
-    ).toBe("TRENDLINES.tl_support");
+    ).toBe("TRENDLINES.tl_1");
   });
 
   it("refuses without an instance id — there is nothing to reference", () => {
@@ -235,7 +235,7 @@ describe("TRENDLINES panes", () => {
       chartIndicatorToExprToken("TRENDLINES", [9, 0, 1.5, 3, 40, 100, 10, 6], { extend: "segment" }, {
         instanceId: "TRENDLINES",
       }),
-    ).toBe("TRENDLINES.tl_support");
+    ).toBe("TRENDLINES.tl_1");
   });
 });
 

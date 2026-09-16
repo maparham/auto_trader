@@ -46,13 +46,16 @@ const MTF_RUNTIME_KEYS = [
   "htfSeriesByLine",
   "htfMaBaseByLine",
   "htfAccelByLine",
-  // Trendlines: the four operand series, the detected line list and the HTF ATR
-  // the merge tolerances are measured in.
+  // S/R Levels: the per-HTF-bar nearest support and resistance series.
   "htfSupport",
   "htfResistance",
-  "htfBrokenSupport",
-  "htfBrokenResistance",
+  // Trendlines: the config-driven operand rows, the detected line list, the
+  // per-HTF-bar pivot arrays and the HTF ATR the merge tolerances are
+  // measured in.
+  "htfOutputs",
+  "htfPoints",
   "htfLines",
+  "htfPivots",
   "htfAtr",
   // Forming-bar mode's per-session fold state (waitClose itself is CONFIG and
   // ships): the flag and inputs are re-derived by the coordinator on the
