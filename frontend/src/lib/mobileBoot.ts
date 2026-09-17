@@ -27,9 +27,14 @@ export function shouldBootMobile(): boolean {
   } catch {
     /* storage unavailable */
   }
+  // Width OR height: a phone held sideways is ~900px wide but ~400px tall,
+  // and a load in that posture (Chrome restoring a discarded tab, a link
+  // opened while rotated) must still boot the mobile shell.
   const coarseSmall =
     typeof window.matchMedia === "function" &&
-    window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+    window.matchMedia(
+      "(pointer: coarse) and ((max-width: 768px) or (max-height: 768px))",
+    ).matches;
   const d = decideMobileBoot(window.location.search, stored, coarseSmall);
   if (d.persist) {
     try {

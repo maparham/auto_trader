@@ -125,11 +125,16 @@
   height: 32px;
   border: none;
   border-radius: 8px;
-  background: var(--panel-bg, rgba(128, 128, 128, 0.35));
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   color: var(--text);
   font-size: 15px;
   line-height: 1;
 }
+/* The legend shares that corner; drop it below the button so the way back
+   is never buried under the symbol and OHLC rows. */
+.m-body--no-tabbar .chart-legend:not(.sub-pane-legend) { top: 44px; }
 
 /* Task 8: touch drawing tool strip. FAB floats bottom-right inside the chart
    body (already above the tab bar, which is a sibling outside .m-chart-view);
@@ -156,16 +161,20 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 64px;
+  bottom: 0;
   z-index: 50;
   display: flex;
   gap: 6px;
   overflow-x: auto;
+  scrollbar-width: none;
   padding: 8px 12px;
   background: var(--bg);
   border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
 }
+.m-drawbar-strip::-webkit-scrollbar { display: none; }
+/* The strip docks to the chart-body floor; while it is open the FAB rides
+   above it instead of sitting in a gap of exposed time axis below it. */
+.m-chart-body:has(> .m-drawbar-strip) .m-drawbar-fab { bottom: 76px; }
 
 .m-drawbar-tool {
   flex: 0 0 auto;
@@ -375,3 +384,20 @@ body.m-mobile .chart-golive[data-pos="axis"] {
   top: 30px !important;
   bottom: auto !important;
 }
+
+/* OHLC legend line: at 411px the symbol + interval + O/H/L/C + change run to
+   ~410px against a legend capped at 70% of the pane, so the tail rode over
+   the price axis. Cap the legend short of the axis and let the line wrap. */
+body.m-mobile .chart-legend { max-width: calc(100% - 64px); }
+body.m-mobile .cl-row.cl-ohlc {
+  flex-wrap: wrap; height: auto; min-height: 18px; row-gap: 2px;
+}
+
+/* Symbol search rows: the desktop min-widths (epic 128 + type 92 + broker 96)
+   plus icon, gaps and padding add up past the sheet, so the list scrolled
+   sideways. Drop the fixed columns and the broker tag (the sheet title
+   already names the broker). */
+body.m-mobile .symsearch-results li { gap: 10px; padding: 10px 12px; }
+body.m-mobile .ss-epic { min-width: 0; }
+body.m-mobile .ss-type { min-width: 0; }
+body.m-mobile .ss-exch { display: none; }

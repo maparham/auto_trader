@@ -4934,6 +4934,10 @@
 
 /* order type tabs */
 .ot-types { display: flex; border-bottom: 1px solid var(--border); }
+/* Each tab sits inside a Tooltip trigger span; the span must stretch or the
+   tabs collapse to their text and read as one word. */
+.ot-types > .tooltip-trigger { flex: 1; display: flex; }
+.ot-types > .tooltip-trigger > .ot-type-tab { width: 100%; }
 .ot-type-tab {
   flex: 1; background: transparent; border: none; padding: 7px 0; cursor: pointer;
   font-size: 12px; color: var(--text-dim); border-bottom: 2px solid transparent;
