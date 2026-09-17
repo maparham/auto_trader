@@ -369,19 +369,31 @@
   flex-shrink: 0; padding: 0 6px; min-height: 34px;
   background: var(--bg);
 }
-/* The tabs sit on ONE row and scroll horizontally once they outgrow it, so the
-   bar never grows taller and the chart keeps its height however many tabs are
-   open. The scrollbar is hidden (wheel, trackpad and drag still scroll; the
-   active tab is scrolled into view by TabBar) and a fade on each edge says
-   there is more that way. + and search sit in a fixed tail after the strip. */
+/* Two strip layouts, picked in Appearance > Tabs (Settings.tabStrip; TabBar
+   stamps .strip-rows / .strip-scroll on .tab-bar).
+
+   ROWS (default): the tabs WRAP onto as many rows as needed so every tab is
+   always visible at full size. The bar grows taller as rows are added (it's
+   flex-shrink:0 in the column layout, so it pushes the chart down); + and Find
+   symbol ride at the end of the LAST row; the trailing workspace actions stay
+   pinned top-right. */
 .tab-bar-tabs {
-  display: flex; align-items: center; flex-wrap: nowrap; gap: 6px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   flex: 1; min-width: 0; min-height: 34px;
-  overflow-x: auto; overflow-y: hidden;
-  scrollbar-width: none;
+  /* Vertical padding gives wrapped rows breathing room and keeps the first/last
+     rows off the bar's top/bottom edges. */
   padding: 4px 0 4px 6px;
 }
-.tab-bar-tabs::-webkit-scrollbar { display: none; }
+/* SCROLL: one row that scrolls sideways once the tabs outgrow it, so the bar
+   never grows taller. The scrollbar is hidden (wheel, trackpad and drag still
+   scroll; TabBar scrolls the active tab and the first search hit into view)
+   and a fade on each edge says there is more that way. */
+.strip-scroll .tab-bar-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+}
+.strip-scroll .tab-bar-tabs::-webkit-scrollbar { display: none; }
 /* Edge fades: TabBar stamps data-more-left / data-more-right from scroll
    position, and the mask hides whichever edge still has chips beyond it. */
 .tab-bar-tabs[data-more-right] {
@@ -396,11 +408,14 @@
   -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
   mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
 }
-/* + and Find symbol, OUTSIDE the scroller so the search dropdown is never
-   clipped by its overflow and both stay reachable however far the strip is
-   scrolled. */
+/* + and Find symbol. Inside the wrapping strip in rows mode (flows after the
+   last chip); a fixed slot after the scroller in scroll mode, so the search
+   dropdown is never clipped by its overflow and both stay reachable however
+   far the strip is scrolled. */
 .tab-bar-tail {
   display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.strip-scroll .tab-bar-tail {
   min-height: 34px; padding: 4px 0 4px 2px;
 }
 /* Workspace-level controls (Backtest, named layouts, split picker, theme) pinned
@@ -411,15 +426,17 @@
   min-height: 34px; padding-left: 8px; margin-left: 4px;
   border-left: 1px solid var(--border);
 }
-/* Find-open-symbol control, in the fixed .tab-bar-tail after the scroller. */
+/* Find-open-symbol control, inside .tab-bar-tail (see above). */
 .tab-bar-search {
   display: flex; align-items: center; flex: none;
   position: relative; /* anchors the catalogue-fallback dropdown */
 }
 /* Catalogue-fallback dropdown under the search input: the query matched no open
    tab, so it lists full-catalogue symbols to open as a new tab. Same surface
-   grammar as .ctxmenu; LEFT-anchored: the tail sits just before the wide
-   .tab-bar-actions cluster, so there is always room to its right. */
+   grammar as .ctxmenu; LEFT-anchored: in rows mode the tail can sit anywhere
+   from the bar's left edge rightwards (it flows after the last chip), and
+   hanging the list leftwards would run it off screen with a tab or two open;
+   the strip ends at .tab-bar-actions, so there is always room to its right. */
 .tab-search-dropdown {
   position: absolute; top: 100%; left: 0; z-index: 1000;
   width: max-content; min-width: 220px; max-width: 320px; padding: 6px;

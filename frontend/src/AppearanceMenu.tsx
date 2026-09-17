@@ -8,7 +8,7 @@
 // the result to the `--chart-bg` CSS variable.
 
 import { useEffect, useRef, useState } from "react";
-import type { Settings, Theme } from "./theme";
+import type { Settings, TabStrip, Theme } from "./theme";
 import ColorLineStylePicker from "./ColorLineStylePicker";
 import Tooltip from "./components/Tooltip";
 import {
@@ -30,6 +30,20 @@ interface Props {
 const THEMES: { value: Theme; label: string }[] = [
   { value: "light", label: "☀️ Light" },
   { value: "dark", label: "🌙 Dark" },
+];
+
+// Tab strip layout once the tabs outgrow one row (theme.ts TabStrip).
+const STRIPS: { value: TabStrip; label: string; tip: string[] }[] = [
+  {
+    value: "rows",
+    label: "Rows",
+    tip: ["Tabs wrap onto as many rows as needed", "Every tab stays visible"],
+  },
+  {
+    value: "scroll",
+    label: "One row",
+    tip: ["Tabs stay on one row and scroll sideways", "Find symbol and [ ] reach hidden tabs"],
+  },
 ];
 
 export default function AppearanceMenu({ settings, onChange }: Props) {
@@ -87,6 +101,20 @@ export default function AppearanceMenu({ settings, onChange }: Props) {
               >
                 {t.label}
               </button>
+            ))}
+          </div>
+
+          <div className="appr-label">Tabs</div>
+          <div className="seg appr-theme">
+            {STRIPS.map((s) => (
+              <Tooltip key={s.value} content={s.tip} placement="left">
+                <button
+                  className={settings.tabStrip === s.value ? "seg-on" : ""}
+                  onClick={() => onChange({ ...settings, tabStrip: s.value })}
+                >
+                  {s.label}
+                </button>
+              </Tooltip>
             ))}
           </div>
 

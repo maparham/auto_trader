@@ -13,6 +13,7 @@ import ContextMenu from "./ContextMenu";
 import MergeTabsMenu from "./MergeTabsMenu";
 import { isSynthetic } from "./lib/syntheticRegistry";
 import { catalogueMatches, matchingTabIds } from "./lib/tabSearch";
+import type { TabStrip } from "./theme";
 import { fetchAllMarkets, type Instrument } from "./lib/feed";
 
 // Where the floating clone of the dragged chip sits for a given cursor point:
@@ -149,6 +150,8 @@ interface Props {
   // picking one opens it as a new tab. The catalogue is broker-specific.
   brokerId: string;
   onOpenSymbol: (s: Instrument) => void;
+  // Strip layout (Settings / Appearance): wrapping rows or one scrolling row.
+  strip?: TabStrip;
 }
 
 export default function TabBar({
@@ -168,8 +171,10 @@ export default function TabBar({
   onSearchQuery,
   brokerId,
   onOpenSymbol,
+  strip = "rows",
 }: Props) {
   const searchHits = matchingTabIds(tabs, searchQuery);
+  const scrolls = strip === "scroll";
   // Drag-to-reorder state. The dragged tab is tracked by ID, not index (see
   // the effect below); `target` is where a drop right now would land — an
   // insertion slot (chips slide apart to preview it) or a merge into a chip
@@ -341,6 +346,24 @@ export default function TabBar({
       alive = false;
     };
   }, [searchOpen, brokerId]);
+
+  // A query that matches open tabs scrolls the first match into view: the
+  // highlight is useless on a chip that sits off the edge of a scrolling
+  // strip. In rows mode every chip is already visible, so this is a no-op.
+  const firstHit = tabs.find((t) => searchHits.has(t.id))?.id ?? null;
+  useEffect(() => {
+    if (firstHit == null) return;
+    const bar = barRef.current;
+    const chip = bar == null
+      ? null
+      : Array.from(bar.querySelectorAll<HTMLElement>(":scope > .tab")).find(
+          (c) => c.dataset.tabId === firstHit,
+        );
+    if (chip != null && typeof chip.scrollIntoView === "function") {
+      chip.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+    updateEdges();
+  }, [firstHit, updateEdges]);
 
   // The fallback dropdown shows only when the query matches NO open tab.
   const fallbackOpen =
@@ -517,8 +540,100 @@ export default function TabBar({
       : "Market closed"
     : null;
 
+  // + and Find symbol. In rows mode they ride INSIDE the wrapping strip, at
+  // the end of the last row; in scroll mode they sit in a fixed slot after the
+  // scroller, so they stay reachable at any scroll position and the search
+  // dropdown is never clipped by the scroller's overflow.
+  const tail = (
+    <div className="tab-bar-tail">
+    <Tooltip content="New tab">
+      <button className="tab-add" onClick={onAdd}>
+        +
+      </button>
+    </Tooltip>
+    <div className="tab-bar-search" ref={searchBoxRef}>
+      {searchOpen ? (
+        <input
+          ref={searchRef}
+          className="tab-search-input"
+          placeholder="Find symbol…"
+          aria-label="Find open symbol"
+          value={searchQuery}
+          onChange={(e) => onSearchQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") closeSearch();
+            if (!fallbackOpen || fallbackHits.length === 0) return;
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setFallbackIdx((i) => Math.min(i + 1, fallbackHits.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setFallbackIdx((i) => Math.max(i - 1, 0));
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              const hit = fallbackHits[fallbackIdx] ?? fallbackHits[0];
+              if (hit != null) pickFallback(hit);
+            }
+          }}
+          autoFocus
+        />
+      ) : (
+        <Tooltip content="Find open symbol (Ctrl/Cmd+F)">
+          <button
+            className="tab-search"
+            aria-label="Find open symbol"
+            onClick={() => setSearchOpen(true)}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                 stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+          </button>
+        </Tooltip>
+      )}
+      {/* Catalogue fallback: no open tab matched, so offer the full symbol
+          list. Inside .tab-bar-search (and so .tab-bar) on purpose: the
+          outside-click closer above treats clicks here as in-search. */}
+      {fallbackOpen && (
+        <div className="tab-search-dropdown" role="listbox" aria-label="All symbols">
+          <div className="tab-search-dropdown-head">No open tab matches</div>
+          {catalogueLoading && catalogue.length === 0 ? (
+            <div className="tab-search-dropdown-empty">Loading…</div>
+          ) : fallbackHits.length === 0 ? (
+            <div className="tab-search-dropdown-empty">
+              No symbols match “{searchQuery.trim()}”.
+            </div>
+          ) : (
+            <>
+              <div className="tab-search-dropdown-label">All symbols</div>
+              {fallbackHits.map((m, i) => (
+                <button
+                  key={m.epic}
+                  type="button"
+                  role="option"
+                  aria-selected={i === fallbackIdx}
+                  className={
+                    "tab-search-dropdown-row" + (i === fallbackIdx ? " on" : "")
+                  }
+                  onMouseEnter={() => setFallbackIdx(i)}
+                  onClick={() => pickFallback(m)}
+                >
+                  <SymbolIcon epic={m.epic} type={m.type} className="ss-icon" />
+                  <span className="tab-search-dropdown-epic">{m.epic}</span>
+                  <span className="tab-search-dropdown-name">{m.name}</span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+    </div>
+  );
+
   return (
-    <div className="tab-bar">
+    <div className={`tab-bar strip-${strip}`}>
       {/* Tabs scroll horizontally on overflow; the trailing actions stay pinned. */}
       <div
         className={"tab-bar-tabs" + (anim ? " drag-anim" : "")}
@@ -700,9 +815,11 @@ export default function TabBar({
               rects,
               ids: tabs.map((t) => t.id),
               scrollLeft: bar.scrollLeft,
-              // The strip is a single scrolling row (App.css), so the flow
-              // simulation must never wrap a chip onto a second row.
-              containerWidth: Number.POSITIVE_INFINITY,
+              // Rows: -6 for .tab-bar-tabs' padding-left (App.css), since
+              // clientWidth includes it but the flow simulation lays chips out
+              // from the content box. Scroll: one row, so the simulation must
+              // never wrap a chip.
+              containerWidth: scrolls ? Number.POSITIVE_INFINITY : bar.clientWidth - 6,
               grabDx: e.clientX - rects[i].left,
               grabDy: e.clientY - rects[i].top,
               bounds: {
@@ -753,95 +870,9 @@ export default function TabBar({
         </div>
         );
       })}
+      {!scrolls && tail}
       </div>
-      {/* Fixed tail AFTER the scroller: + and Find symbol stay put however far
-          the strip is scrolled, and the search dropdown is never clipped by
-          the scroller's overflow. */}
-      <div className="tab-bar-tail">
-      <Tooltip content="New tab">
-        <button className="tab-add" onClick={onAdd}>
-          +
-        </button>
-      </Tooltip>
-      <div className="tab-bar-search" ref={searchBoxRef}>
-        {searchOpen ? (
-          <input
-            ref={searchRef}
-            className="tab-search-input"
-            placeholder="Find symbol…"
-            aria-label="Find open symbol"
-            value={searchQuery}
-            onChange={(e) => onSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") closeSearch();
-              if (!fallbackOpen || fallbackHits.length === 0) return;
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setFallbackIdx((i) => Math.min(i + 1, fallbackHits.length - 1));
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setFallbackIdx((i) => Math.max(i - 1, 0));
-              } else if (e.key === "Enter") {
-                e.preventDefault();
-                const hit = fallbackHits[fallbackIdx] ?? fallbackHits[0];
-                if (hit != null) pickFallback(hit);
-              }
-            }}
-            autoFocus
-          />
-        ) : (
-          <Tooltip content="Find open symbol (Ctrl/Cmd+F)">
-            <button
-              className="tab-search"
-              aria-label="Find open symbol"
-              onClick={() => setSearchOpen(true)}
-            >
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-                   stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-3.5-3.5" />
-              </svg>
-            </button>
-          </Tooltip>
-        )}
-        {/* Catalogue fallback: no open tab matched, so offer the full symbol
-            list. Inside .tab-bar-search (and so .tab-bar) on purpose: the
-            outside-click closer above treats clicks here as in-search. */}
-        {fallbackOpen && (
-          <div className="tab-search-dropdown" role="listbox" aria-label="All symbols">
-            <div className="tab-search-dropdown-head">No open tab matches</div>
-            {catalogueLoading && catalogue.length === 0 ? (
-              <div className="tab-search-dropdown-empty">Loading…</div>
-            ) : fallbackHits.length === 0 ? (
-              <div className="tab-search-dropdown-empty">
-                No symbols match “{searchQuery.trim()}”.
-              </div>
-            ) : (
-              <>
-                <div className="tab-search-dropdown-label">All symbols</div>
-                {fallbackHits.map((m, i) => (
-                  <button
-                    key={m.epic}
-                    type="button"
-                    role="option"
-                    aria-selected={i === fallbackIdx}
-                    className={
-                      "tab-search-dropdown-row" + (i === fallbackIdx ? " on" : "")
-                    }
-                    onMouseEnter={() => setFallbackIdx(i)}
-                    onClick={() => pickFallback(m)}
-                  >
-                    <SymbolIcon epic={m.epic} type={m.type} className="ss-icon" />
-                    <span className="tab-search-dropdown-epic">{m.epic}</span>
-                    <span className="tab-search-dropdown-name">{m.name}</span>
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-      </div>
+      {scrolls && tail}
       {trailing && <div className="tab-bar-actions">{trailing}</div>}
       {ctxMenu && tabs.length > 1 && (
         <ContextMenu

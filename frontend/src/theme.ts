@@ -77,8 +77,16 @@ export interface AlertDefaults {
   startAtCreation: boolean;
 }
 
+// How the tab strip lays out once the tabs outgrow one row: "rows" wraps them
+// onto as many rows as needed (every tab visible, the bar grows taller);
+// "scroll" keeps one row that scrolls sideways (the bar stays 34px, hidden
+// tabs reachable by scroll, search and the [ / ] keys).
+export type TabStrip = "rows" | "scroll";
+
 export interface Settings {
   theme: Theme;
+  // Tab strip layout, see TabStrip. Default rows.
+  tabStrip: TabStrip;
   // IANA timezone name (e.g. "America/New_York") the chart's time axis renders
   // in, or "" to follow the browser's local timezone (klinecharts' default).
   timezone: string;
@@ -200,6 +208,7 @@ const DEFAULT_BID_ASK_STYLE: BidAskStyle = {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
+  tabStrip: "rows",
   timezone: "",
   clock: "24h",
   dateFormat: "ymd",

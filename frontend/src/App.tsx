@@ -2621,6 +2621,7 @@ export default function App() {
         onSearchQuery={setTabSearchQuery}
         brokerId={brokerId}
         onOpenSymbol={openSymbolTab}
+        strip={settings.tabStrip}
         trailing={
           <>
             <LayoutManager
