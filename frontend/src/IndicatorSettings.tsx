@@ -25,7 +25,11 @@ import {
   type IndicatorInputDef,
 } from "./lib/indicatorMeta";
 import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, refreshMtfOnVisibilityChange, setMtfWaitClose } from "./lib/mtfCoordinator";
-import { parseTrendlinesConfig } from "./lib/indicators/trendlinesOutputs";
+import {
+  legacyNearPrice,
+  parseTrendlinesConfig,
+  TL_NEAR_PRICE_ATR,
+} from "./lib/indicators/trendlinesOutputs";
 import { declutterMode, TL_LINE_COLOR, type TrendlinesExtend } from "./lib/indicators/trendlines";
 import {
   slopeLengths,
@@ -256,7 +260,19 @@ export default function IndicatorSettings({
   });
 
   const [tab, setTab] = useState<Tab>("inputs");
-  const [calcParams, setCalcParams] = useState<number[]>(original.current.calcParams);
+  const [calcParams, setCalcParams] = useState<number[]>(() => {
+    const cp = original.current.calcParams;
+    // A Trendlines pane saved with "Only lines near price" (retired) keeps
+    // that cut as Max Distance 5 ATR: the same rule parseTrendlinesConfig
+    // applies for the chart, so the box shows what the pane draws. Only when
+    // slot 19 is absent; a present slot is what the user set since.
+    if (isTrendlines && cp[19] === undefined && legacyNearPrice(original.current.extendData)) {
+      const next = cp.slice();
+      next[19] = TL_NEAR_PRICE_ATR;
+      return next;
+    }
+    return cp;
+  });
   // Intent, not the live effective flag: `ind.visible` can be false merely because
   // the interval filter (applyIndicatorIntervalVisibility) hid it on this
   // timeframe. Read the persisted intent (extendData.userVisible) first, falling
@@ -590,6 +606,9 @@ export default function IndicatorSettings({
     // pane is not drawing.
     if (isTrendlines && genExt0.declutter === undefined)
       init.declutter = declutterMode(genExt0 as TrendlinesExtend);
+    // "near" itself is retired: it reads as "off" and its cut now lives in the
+    // Max Distance params (see the calcParams migration below).
+    if (isTrendlines && genExt0.declutter === "near") init.declutter = "off";
     // Same story one row down: "Merge similar lines" was a checkbox beside the
     // tolerance, and the tolerance IS the switch (0 merges nothing). A pane
     // saved with that box UNTICKED opens on 0, which is what it draws.
@@ -1199,7 +1218,7 @@ export default function IndicatorSettings({
       epic,
       name,
       paneId,
-      parseTrendlinesConfig(nextCp ?? calcParams),
+      parseTrendlinesConfig(nextCp ?? calcParams, ind?.extendData),
       tf === "chart" ? null : tf,
       brokerId,
     );

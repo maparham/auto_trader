@@ -218,51 +218,41 @@ describe("TRENDLINES on DXY monthly", () => {
   // WHAT THE PANE ACTUALLY SHOWS. computeTrendlines keeps MAX_LIVE_MULT x
   // maxLines lines alive IN TOTAL, which on this fixture at the pane default is
   // 48, and their projections on the last bar run from -58.9 to 207.5 against a
-  // close of 99.27: valid geometry, and nowhere near the chart. Drawing the
-  // live set would bury the lines a human reads. The drawn set is rank order,
-  // merged, then cut by distance to price (TL_NEAR_PRICE_ATR x ATR, 13.55
-  // here), then budgeted at maxLines.
+  // close of 99.27: valid geometry, and nowhere near the chart. Max Distance
+  // is the cut for that, and it runs INSIDE the calc: a candidate too far from
+  // the close on its confirm bar is never built, and a live line is dropped
+  // the bar it strays. The drawn set is then rank order, merged, budgeted.
   it("draws only the lines in play, not the 1990s geometry", () => {
-    const { lines, atr } = computeTrendlines(bars, TRENDLINES_DEFAULTS);
+    const { lines } = computeTrendlines(bars, TRENDLINES_DEFAULTS);
     const last = bars.length - 1;
     const close = bars[last].close;
-    const a = atr[last] as number;
     expect(lines.length).toBeGreaterThan(20); // the live set really is crowded
-    const drawn = selectDrawnLines(
-      lines,
-      last,
-      close,
-      TRENDLINES_DEFAULTS.maxLines,
-      { tol: a * TL_DEDUPE_ATR, keep: new Set() },
-      a * TL_NEAR_PRICE_ATR,
-    );
-    const projections = drawn.map((l) => projectAt(l, last));
-    expect(drawn.length).toBeGreaterThan(0);
-    expect(drawn.length).toBeLessThan(lines.length);
-    // Every drawn anchor is 2000 or later: no 1990s line resurfaces.
-    for (const l of drawn) expect(month(bars[l.i1].timestamp) >= "2000-01").toBe(true);
-    // The far-off-screen projections are IN the live set and NOT drawn. Pinned
-    // by value, so a drift in the geometry shows up here as a real failure
-    // rather than a vacuously empty filter.
-    // Re-measured when the touch rule split into Max Touch Gap and Max Pierce:
-    // 13.277 took 10.987's place in the live set, the other five are unchanged.
-    for (const stale of [13.277, 15.777, 31.833, 57.364, 61.796, 207.503]) {
+    const stale = [13.277, 15.777, 31.833, 57.364, 61.796, 207.503];
+    // Pinned by value, so a drift in the geometry shows up here as a real
+    // failure rather than a vacuously empty filter. Re-measured when the touch
+    // rule split into Max Touch Gap and Max Pierce: 13.277 took 10.987's place
+    // in the live set, the other five are unchanged.
+    for (const v of stale) {
       expect(
-        lines.some((l) => Math.abs(projectAt(l, last) - stale) < 0.01),
-        `live set lost the ${stale} line`,
+        lines.some((l) => Math.abs(projectAt(l, last) - v) < 0.01),
+        `live set lost the ${v} line`,
       ).toBe(true);
-      expect(projections.some((p) => Math.abs(p - stale) < 0.01)).toBe(false);
     }
-    // Nothing drawn strays past the near-price cut except the TOP-RANKED line,
-    // which is kept unconditionally so the pane never blanks. Being an operand
-    // is no longer an exemption: the user asked to declutter, and the operand
-    // still emits its value whether or not its line is on the chart.
-    projections.forEach((p, i) => {
-      expect(
-        i === 0 || Math.abs(p - close) <= a * TL_NEAR_PRICE_ATR,
-        `drawn line ${i} at ${p} is past the near-price cut`,
-      ).toBe(true);
+    const cut = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxDistAtr: TL_NEAR_PRICE_ATR });
+    const a = cut.atr[last] as number;
+    expect(cut.lines.length).toBeGreaterThan(0);
+    expect(cut.lines.length).toBeLessThan(lines.length);
+    const projections = cut.lines.map((l) => projectAt(l, last));
+    for (const v of stale) expect(projections.some((p) => Math.abs(p - v) < 0.01)).toBe(false);
+    // Every live line is within the cut at the last bar, and every drawn
+    // anchor is 2000 or later: no 1990s line resurfaces.
+    for (const p of projections) expect(Math.abs(p - close)).toBeLessThanOrEqual(a * TL_NEAR_PRICE_ATR);
+    const drawn = selectDrawnLines(cut.lines, last, close, TRENDLINES_DEFAULTS.maxLines, {
+      tol: a * TL_DEDUPE_ATR,
+      keep: new Set(),
     });
+    expect(drawn.length).toBeGreaterThan(0);
+    for (const l of drawn) expect(month(bars[l.i1].timestamp) >= "2000-01").toBe(true);
   });
 
   // maxLines is not just a drawing budget: it sizes live state, so it changes

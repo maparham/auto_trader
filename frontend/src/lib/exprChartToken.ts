@@ -165,7 +165,7 @@ export function chartIndicatorToExprToken(
     case "TRENDLINES": {
       const id = opts?.instanceId;
       if (!id) return null;
-      const outs = trendlinesOutputs(parseTrendlinesConfig(calcParams));
+      const outs = trendlinesOutputs(parseTrendlinesConfig(calcParams, extendData));
       const key = opts?.figureKey;
       const output = key && outs.includes(key) ? key : outs[0];
       return `${id}.${output}`;

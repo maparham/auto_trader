@@ -17,7 +17,7 @@ describe("TRENDLINES_DEFAULTS", () => {
       "pivotLen", "touchMult", "minTouches", "minSpanBars", "maxProjBars", "maxLines",
       "minSwingAtr", "minSwingReach", "pairPivots", "maxTouches", "maxSpanBars",
       "maxSlopeAtr", "minSlopeAtr", "maxTouchSpacing", "minTouchSpacing",
-      "minCrossings", "maxCrossings", "pierceMult", "minBackBars",
+      "minCrossings", "maxCrossings", "pierceMult", "minBackBars", "maxDistAtr", "maxDistPct",
     ]);
   });
   it("shares one pool, so pairing reaches 40 pivots back", () => {
@@ -33,14 +33,28 @@ describe("parseTrendlinesConfig", () => {
     expect(parseTrendlinesConfig("junk")).toEqual(TRENDLINES_DEFAULTS);
   });
   it("reads every slot in order", () => {
-    const p = [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12];
+    const p = [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5];
     expect(parseTrendlinesConfig(p)).toEqual({
       pivotLen: 4, touchMult: 0.5, minTouches: 3, minSpanBars: 30, maxProjBars: 100,
       maxLines: 9, minSwingAtr: 3, minSwingReach: 6, pairPivots: 25, maxTouches: 7,
       maxSpanBars: 300, maxSlopeAtr: 0.2, minSlopeAtr: 0.01, maxTouchSpacing: 60,
       minTouchSpacing: 3, minCrossings: 1, maxCrossings: 4, pierceMult: 0.4,
-      minBackBars: 12,
+      minBackBars: 12, maxDistAtr: 2.5, maxDistPct: 1.5,
     });
+  });
+  // "Only lines near price" was a draw-time rule at a fixed TL_NEAR_PRICE_ATR
+  // (5). A pane that CHOSE it keeps that cut as Max Distance; a present slot
+  // (even 0) wins over the legacy flag, and a pane that never chose it stays
+  // off. Mirrored by the Python parser.
+  it("migrates a saved near-price declutter onto Max Distance", () => {
+    expect(parseTrendlinesConfig([], { declutter: "near" }).maxDistAtr).toBe(5);
+    expect(parseTrendlinesConfig([], { nearPrice: true }).maxDistAtr).toBe(5);
+    expect(parseTrendlinesConfig([], { declutter: "off", nearPrice: true }).maxDistAtr).toBe(0);
+    expect(parseTrendlinesConfig([], {}).maxDistAtr).toBe(0);
+    expect(parseTrendlinesConfig([]).maxDistAtr).toBe(0);
+    const twenty = Array.from({ length: 20 }, (_, i) => i);
+    expect(parseTrendlinesConfig(twenty, { declutter: "near" }).maxDistAtr).toBe(19);
+    expect(parseTrendlinesConfig([...Array(19).fill(5), 0], { declutter: "near" }).maxDistAtr).toBe(0);
   });
   it("keeps zero on the >= 0 params and floors the integers", () => {
     const c = parseTrendlinesConfig([2.9, 0, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -55,6 +69,8 @@ describe("parseTrendlinesConfig", () => {
     expect(c.maxCrossings).toBe(0);
     expect(c.pierceMult).toBe(0);
     expect(c.minBackBars).toBe(0);
+    expect(c.maxDistAtr).toBe(0);
+    expect(c.maxDistPct).toBe(0);
   });
 
   // A pierce is a full touch and a gap only a half, so the two tolerances ship

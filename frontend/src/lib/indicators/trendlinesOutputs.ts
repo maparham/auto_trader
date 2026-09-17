@@ -102,6 +102,15 @@ export interface TrendlinesConfig {
   // Runs off the start of the series by REJECTING: a line anchored fewer than
   // this many bars from bar 0 has not demonstrated the clearance.
   minBackBars: number;
+  // How far a line may project from the close, in ATR(14) at that bar and as
+  // a percent of that close, each 0 = off, each applied on its own: a line
+  // beyond EITHER cut goes. Runs INSIDE the calc, on two paths: a candidate
+  // too far on its confirm bar is rejected before the back-clearance and
+  // crossing walks are paid for, and a live line is dropped on the first bar
+  // it strays past the cut, for good. It is a calc rule, so it changes what
+  // emits, not only what draws: a rule reading tl_1 sees the cut too.
+  maxDistAtr: number;
+  maxDistPct: number;
 }
 
 /** KEY ORDER IS THE calcParams ORDER (mtfCoordinator builds HTF params from
@@ -127,7 +136,16 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   maxCrossings: 0,
   pierceMult: 0.25,
   minBackBars: 0,
+  maxDistAtr: 0,
+  maxDistPct: 0,
 };
+
+/** The distance "Only lines near price" used to draw at, in ATR(14): the
+ * Max Distance a pane that chose that rule migrates onto (see
+ * parseTrendlinesConfig). Merging above half of it could join a line at the
+ * close with one at the far edge of the band, which is why TL_DEDUPE_ATR
+ * stays under it. */
+export const TL_NEAR_PRICE_ATR = 5;
 
 /** Defaults for the render-only extendData flags. ONE source for the draw
  * path and indicatorMeta's `default`. */
@@ -139,8 +157,15 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
 /** calcParams order: [pivotLen, touchMult, minTouches, minSpanBars,
  * maxProjBars, maxLines, minSwingAtr, minSwingReach, pairPivots, maxTouches,
  * maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing, minTouchSpacing,
- * minCrossings, maxCrossings, pierceMult, minBackBars]. Mirrored by backend
- * parse_trendlines_config.
+ * minCrossings, maxCrossings, pierceMult, minBackBars, maxDistAtr,
+ * maxDistPct]. Mirrored by backend parse_trendlines_config.
+ *
+ * `extendData` is read for ONE thing: a pane saved before the two Max
+ * Distance slots existed with "Only lines near price" chosen (`declutter:
+ * "near"`, or the checkbox-era `nearPrice: true` with no `declutter`) keeps
+ * that cut as Max Distance TL_NEAR_PRICE_ATR. Only when slot 19 is ABSENT: a
+ * present slot, 0 included, is what the user set since. The settings modal
+ * rewrites both on its next save, so the flag retires on its own.
  *
  * touchMult, pierceMult and minSwingAtr take ZERO (no gap allowed; only an
  * extreme exactly on the line pierces; swing gate off),
@@ -152,9 +177,14 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  * Number coercion: null, "" and [] coerce via Number() to 0, which passes the
  * `>= 0` rule; Python's float() raises for all three and returns the default.
  * That divergence is deliberate and tested on both sides. */
-export function parseTrendlinesConfig(calcParams: unknown): TrendlinesConfig {
+export function parseTrendlinesConfig(
+  calcParams: unknown,
+  extendData?: unknown,
+): TrendlinesConfig {
   const p = Array.isArray(calcParams) ? calcParams : [];
   const d = TRENDLINES_DEFAULTS;
+  const maxDistAtrDefault =
+    p[19] === undefined && legacyNearPrice(extendData) ? TL_NEAR_PRICE_ATR : d.maxDistAtr;
   const numAt = (i: number, def: number, allowZero: boolean): number => {
     const v = Number(p[i]);
     return Number.isFinite(v) && (allowZero ? v >= 0 : v > 0) ? v : def;
@@ -181,7 +211,19 @@ export function parseTrendlinesConfig(calcParams: unknown): TrendlinesConfig {
     maxCrossings: zeroInt(16, d.maxCrossings),
     pierceMult: numAt(17, d.pierceMult, true),
     minBackBars: zeroInt(18, d.minBackBars),
+    maxDistAtr: numAt(19, maxDistAtrDefault, true),
+    maxDistPct: numAt(20, d.maxDistPct, true),
   };
+}
+
+/** True when a pane's extendData says it was drawing "Only lines near price":
+ * the retired `declutter: "near"`, or the older checkbox (`nearPrice: true`)
+ * with no `declutter` written over it. */
+export function legacyNearPrice(extendData: unknown): boolean {
+  if (!extendData || typeof extendData !== "object") return false;
+  const ext = extendData as { declutter?: unknown; nearPrice?: unknown };
+  if (ext.declutter !== undefined) return ext.declutter === "near";
+  return ext.nearPrice === true;
 }
 
 /** Bars before the first line can possibly exist: ATR(14) warm-up, plus the

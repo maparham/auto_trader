@@ -278,7 +278,7 @@ export function exprWarmupByRef(
     // confirms + the minimum span); an output this pane does not expose costs 0.
     // Unlike FVG's, this floor depends on the pane's params.
     if (inst.type === "TRENDLINES") {
-      const cfg = parseTrendlinesConfig(inst.calcParams);
+      const cfg = parseTrendlinesConfig(inst.calcParams, inst.extendData);
       return trendlinesOutputs(cfg).includes(output) ? trendlinesWarmup(cfg) : 0;
     }
     // Every PIVOT_BANDS/PIVOT_ANALYSIS output shares one floor (the fractal
@@ -356,7 +356,7 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
       continue;
     }
     if (inst.type === "TRENDLINES") {
-      const cfg = parseTrendlinesConfig(inst.calcParams);
+      const cfg = parseTrendlinesConfig(inst.calcParams, inst.extendData);
       const ext = (inst.extendData ?? {}) as TrendlinesExtend;
       out.push({
         id: inst.id,

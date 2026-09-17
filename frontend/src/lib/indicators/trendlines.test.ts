@@ -661,6 +661,70 @@ describe("computeTrendlines", () => {
 // AFTER i2), so a walk over it as given would measure negative gaps and report
 // the anchor gap unsplit, rejecting exactly the well-spaced lines the Spacing
 // settings exist to keep.
+describe("computeTrendlines max distance", () => {
+  // Flat bars close at 100 with ATR 1, so an ATR cut and a percent cut read
+  // in the same units here: 1 ATR is 1% of price.
+  //
+  // A rising line through two swing LOWS at 90 and 94 projects to 94.4 on its
+  // confirm bar (42): 5.6 ATR and 5.6% under the close. The cut runs BEFORE
+  // the back-clearance and crossing walks, so a candidate that is too far on
+  // the day it would be born is never built at all.
+  const farLows = () => {
+    const bars = flat(60);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 94, 100.5);
+    return bars;
+  };
+  const has = (lines: TrendLine[], i1: number, i2: number) =>
+    lines.some((l) => l.i1 === i1 && l.i2 === i2);
+
+  it("does not seed a candidate beyond the ATR cut", () => {
+    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 3 })).lines, 20, 40)).toBe(false);
+    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 6 })).lines, 20, 40)).toBe(true);
+  });
+
+  it("does not seed a candidate beyond the percent cut", () => {
+    expect(has(computeTrendlines(farLows(), cfg({ maxDistPct: 5 })).lines, 20, 40)).toBe(false);
+    expect(has(computeTrendlines(farLows(), cfg({ maxDistPct: 6 })).lines, 20, 40)).toBe(true);
+  });
+
+  it("applies the two cuts separately: the tighter one decides", () => {
+    // 6 ATR alone keeps it; adding 5% removes it, and the other way round.
+    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 6, maxDistPct: 5 })).lines, 20, 40)).toBe(false);
+    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 3, maxDistPct: 6 })).lines, 20, 40)).toBe(false);
+    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 6, maxDistPct: 6 })).lines, 20, 40)).toBe(true);
+  });
+
+  it("zero is off on both", () => {
+    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 0, maxDistPct: 0 })).lines, 20, 40)).toBe(true);
+  });
+
+  // A rising line through two swing HIGHS at 101 and 103 (0.1 per bar) sits
+  // 3.2 above the close on its confirm bar and runs away from flat price after
+  // that: 5 above at bar 60. A live line is dropped on the first bar it
+  // strays past the cut, and dropped for good.
+  const runaway = (n: number) => {
+    const bars = flat(n);
+    bars[20] = bar(20, 99.5, 101);
+    bars[40] = bar(40, 99.5, 103);
+    return bars;
+  };
+
+  it("drops a live line once it runs past the cut", () => {
+    const c = cfg({ maxDistAtr: 4 });
+    expect(has(computeTrendlines(runaway(45), c).lines, 20, 40)).toBe(true);
+    expect(has(computeTrendlines(runaway(61), c).lines, 20, 40)).toBe(false);
+    // Off: Max Projection alone decides, and the line is still there.
+    expect(has(computeTrendlines(runaway(61), cfg()).lines, 20, 40)).toBe(true);
+  });
+
+  it("stops emitting the dropped line", () => {
+    const { points } = computeTrendlines(runaway(61), cfg({ maxDistAtr: 4 }));
+    expect(points[44].tl_1).toBeDefined();
+    expect(points[60].tl_1).toBeUndefined();
+  });
+});
+
 describe("touchGaps", () => {
   it("measures the gaps in BAR order, not insertion order", () => {
     expect(touchGaps([10, 50])).toEqual({ widest: 40, narrowest: 40 });
@@ -765,10 +829,6 @@ describe("selectDrawnLines", () => {
   it("keeps a pinned line whatever its rank", () => {
     expect(selectDrawnLines(lines, 50, 79, 1, { tol: 0, keep: new Set([weak]) })).toEqual([strong, weak]);
   });
-  it("cuts lines far from price when nearTol is set, never the first", () => {
-    // close 79: weak (80) is 1 away, strong (100) 21, mid (90) 11.
-    expect(selectDrawnLines(lines, 50, 79, 3, null, 5)).toEqual([strong, weak]);
-  });
   it("merges near-twins through a shared pivot before the budget", () => {
     const twin = { ...mid, i1: 0, p1: 90, i2: 40, p2: 90.5, touches: 3 };
     const out = selectDrawnLines([strong, mid, twin], 50, 79, 3, { tol: 1, keep: new Set() });
@@ -794,14 +854,6 @@ describe("selectDrawnLines", () => {
     ).toEqual([strong, pair]);
   });
 
-  it("the near-price cut removes a far line that is itself an emitted operand", () => {
-    // Premise again: uncut, all three draw, so `mid` is an emitted rank.
-    expect(selectDrawnLines(lines, 50, 79, 3, null)).toEqual([strong, mid, weak]);
-    // close 79, tolerance 5: mid projects to 90, eleven away, and goes. strong
-    // is 21 away and stays only because index 0 is kept unconditionally, so the
-    // pane never blanks.
-    expect(selectDrawnLines(lines, 50, 79, 3, null, 5)).toEqual([strong, weak]);
-  });
 });
 
 describe("selectDrawnLines dedup", () => {
@@ -1541,31 +1593,23 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     }
   });
 
-  // The DRAW PATH's own default, which is what makes the filter reach a user:
-  // selectDrawnLines takes the tolerance as an argument and defaults it to OFF,
-  // so an untouched chart getting the filter is a fact about this path alone.
-  // What the cut does with the lines it is given is covered precisely by the
-  // selectDrawnLines tests above; this one is about the default. This
-  // fixture's small line count means the cut has no visible effect here, so
-  // only the key-fallback (absent means on) is worth pinning at this level.
-  it("treats an absent near-price key as on, the same as an explicit true", () => {
+  // "Only lines near price" is retired and its cut lives in the calc as Max
+  // Distance (calcParams 19/20). A pane saved with the checkbox-era
+  // `nearPrice: true` and NO slot 19 keeps the cut through the parser's
+  // migration, which is what makes the old choice survive a reload; an
+  // absent key is off, because a pane that never chose the rule gets no cut.
+  it("keeps the cut for a saved checkbox-era near-price pane, and none for an absent key", () => {
     const b = flat(80);
+    // A distant pair 8+ ATR under the close and a near pair 1 ATR under it.
     b[20] = bar(20, 90, 100.5);
     b[40] = bar(40, 91, 100.5);
     b[62] = bar(62, 99, 100.5);
     b[70] = bar(70, 99.2, 100.5);
     const cp = params(8);
     const on = record(b, cp, undefined, undefined, undefined, false, true);
-    const fallback = record(
-      b,
-      cp,
-      undefined,
-      undefined,
-      undefined,
-      false,
-      "default",
-    );
-    expect(fallback.segments).toEqual(on.segments);
+    const off = record(b, cp, undefined, undefined, undefined, false, "default");
+    expect(on.segments.length).toBeGreaterThan(0);
+    expect(on.segments.length).toBeLessThan(off.segments.length);
   });
 
   // maxLines is the drawn set's CAP as well as the operand count: the drawn

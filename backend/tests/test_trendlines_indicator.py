@@ -65,6 +65,7 @@ def test_defaults_from_empty_params():
             c.max_lines) == (5, 0.0, 2, 20, 250, 3)
     assert c.pierce_mult == 0.25
     assert c.min_back_bars == 0
+    assert (c.max_dist_atr, c.max_dist_pct) == (0.0, 0.0)
     assert c.pair_pivots == MAX_PAIR_PIVOTS == 40
     assert (c.min_crossings, c.max_crossings) == (0, 0)
     assert c.timeframe is None
@@ -72,12 +73,26 @@ def test_defaults_from_empty_params():
 
 def test_reads_every_slot_in_order():
     c = parse_trendlines_config(
-        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12], {})
+        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5], {})
     assert (c.pivot_len, c.touch_mult, c.min_touches, c.min_span_bars, c.max_proj_bars, c.max_lines,
             c.min_swing_atr, c.min_swing_reach, c.pair_pivots, c.max_touches, c.max_span_bars,
             c.max_slope_atr, c.min_slope_atr, c.max_touch_spacing, c.min_touch_spacing,
-            c.min_crossings, c.max_crossings, c.pierce_mult, c.min_back_bars) == (
-        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12)
+            c.min_crossings, c.max_crossings, c.pierce_mult, c.min_back_bars,
+            c.max_dist_atr, c.max_dist_pct) == (
+        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5)
+
+
+def test_a_saved_near_price_declutter_migrates_to_five_atr():
+    # "Only lines near price" was a draw-time rule at a fixed TL_NEAR_PRICE_ATR.
+    # A pane that CHOSE it keeps that cut as Max Distance; the slot being
+    # present (even 0) wins over the legacy flag, and a pane that never chose
+    # it stays off.
+    assert parse_trendlines_config([], {"declutter": "near"}).max_dist_atr == 5.0
+    assert parse_trendlines_config([], {"nearPrice": True}).max_dist_atr == 5.0
+    assert parse_trendlines_config([], {"declutter": "off", "nearPrice": True}).max_dist_atr == 0.0
+    assert parse_trendlines_config([], {}).max_dist_atr == 0.0
+    assert parse_trendlines_config(list(range(20)), {"declutter": "near"}).max_dist_atr == 19.0
+    assert parse_trendlines_config([5] * 19 + [0], {"declutter": "near"}).max_dist_atr == 0.0
 
 
 def test_max_lines_is_clamped_to_the_ceiling():
@@ -438,3 +453,52 @@ def test_resolves_through_the_request_path():
     assert inst.type == "TRENDLINES"
     assert inst.config == parse_trendlines_config([], {})  # `extend` changed nothing
     assert inst.spec.outputs(inst.config) == ("tl_1", "tl_2", "tl_3", TL_NEAREST)
+
+
+# ---------------------------------------------------------------- max distance
+# Mirrors "computeTrendlines max distance" in trendlines.test.ts: flat bars
+# close at 100 with ATR 1, so 1 ATR is 1% of price here.
+
+def _far_lows() -> list[Candle]:
+    bars = flat(60)
+    bars[20] = bar(20, 90, 100.5)
+    bars[40] = bar(40, 94, 100.5)
+    return bars
+
+
+def _has(lines: list[TrendLine], i1: int, i2: int) -> bool:
+    return any(line.i1 == i1 and line.i2 == i2 for line in lines)
+
+
+def test_max_distance_does_not_seed_a_candidate_beyond_the_atr_cut():
+    assert not _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=3))[1], 20, 40)
+    assert _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=6))[1], 20, 40)
+
+
+def test_max_distance_does_not_seed_a_candidate_beyond_the_percent_cut():
+    assert not _has(compute_trendlines(_far_lows(), cfg(max_dist_pct=5))[1], 20, 40)
+    assert _has(compute_trendlines(_far_lows(), cfg(max_dist_pct=6))[1], 20, 40)
+
+
+def test_max_distance_cuts_are_separate_and_the_tighter_decides():
+    assert not _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=6, max_dist_pct=5))[1], 20, 40)
+    assert not _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=3, max_dist_pct=6))[1], 20, 40)
+    assert _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=6, max_dist_pct=6))[1], 20, 40)
+    assert _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=0, max_dist_pct=0))[1], 20, 40)
+
+
+def _runaway(n: int) -> list[Candle]:
+    bars = flat(n)
+    bars[20] = bar(20, 99.5, 101)
+    bars[40] = bar(40, 99.5, 103)
+    return bars
+
+
+def test_max_distance_drops_a_live_line_once_it_runs_past_the_cut():
+    c = cfg(max_dist_atr=4)
+    assert _has(compute_trendlines(_runaway(45), c)[1], 20, 40)
+    assert not _has(compute_trendlines(_runaway(61), c)[1], 20, 40)
+    assert _has(compute_trendlines(_runaway(61), cfg())[1], 20, 40)
+    points, _ = compute_trendlines(_runaway(61), c)
+    assert "tl_1" in points[44]
+    assert "tl_1" not in points[60]

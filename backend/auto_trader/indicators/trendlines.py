@@ -50,9 +50,13 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 # [pivot_len, touch_mult, min_touches, min_span_bars, max_proj_bars, max_lines,
 #  min_swing_atr, min_swing_reach, pair_pivots, max_touches, max_span_bars,
 #  max_slope_atr, min_slope_atr, max_touch_spacing, min_touch_spacing,
-#  min_crossings, max_crossings, pierce_mult, min_back_bars]: TRENDLINES_DEFAULTS
-#  in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0)
+#  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
+#  max_dist_pct]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0)
+# The distance "Only lines near price" drew at, in ATR(14): what a pane saved
+# with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
+# trendlinesOutputs.ts.
+TL_NEAR_PRICE_ATR = 5.0
 
 
 def tl_output_name(rank: int) -> str:
@@ -85,6 +89,12 @@ class TrendlinesConfig:
     # Bars before i1 over which the close must stay on one side of the line.
     # 0 = off; runs off the start of the series by rejecting.
     min_back_bars: int = 0
+    # How far a line may project from the close, in ATR(14) at that bar and as
+    # a percent of that close; each 0 = off, each applied on its own. Runs
+    # INSIDE the calc (a candidate too far on its confirm bar is never built;
+    # a live line past the cut is dropped for good), so it changes what emits.
+    max_dist_atr: float = 0.0
+    max_dist_pct: float = 0.0
     timeframe: str | None = None
 
 
@@ -114,14 +124,19 @@ def trendlines_outputs(cfg: TrendlinesConfig) -> tuple[str, ...]:
 
 
 def parse_trendlines_config(calc_params: object, extend_data: object) -> TrendlinesConfig:
-    """Mirrors TS parseTrendlinesConfig. `mtf.timeframe` is the ONE extendData
-    key read. Number coercion diverges from the TS on None, "" and [] (float()
-    raises, Number() gives 0); deliberate and tested on both sides."""
+    """Mirrors TS parseTrendlinesConfig. extendData is read for `mtf.timeframe`
+    and for the Max Distance migration: a pane saved before slots 19/20
+    existed with "Only lines near price" chosen (`declutter: "near"`, or the
+    checkbox-era `nearPrice: True` with no `declutter`) keeps that cut as
+    max_dist_atr TL_NEAR_PRICE_ATR, only while slot 19 is ABSENT. Number
+    coercion diverges from the TS on None, "" and [] (float() raises,
+    Number() gives 0); deliberate and tested on both sides."""
     p: list[Any] = list(calc_params) if isinstance(calc_params, (list, tuple)) else []
     d = _DEFAULTS
     ext = extend_data if isinstance(extend_data, dict) else {}
     mtf = ext.get("mtf") if isinstance(ext.get("mtf"), dict) else {}
     tf = mtf.get("timeframe")
+    max_dist_atr_default = TL_NEAR_PRICE_ATR if len(p) <= 19 and _legacy_near_price(ext) else d[19]
 
     def num_at(i: int, default: float, allow_zero: bool) -> float:
         try:
@@ -158,8 +173,35 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         max_crossings=zero_int(16, d[16]),
         pierce_mult=num_at(17, d[17], True),
         min_back_bars=zero_int(18, d[18]),
+        max_dist_atr=num_at(19, max_dist_atr_default, True),
+        max_dist_pct=num_at(20, d[20], True),
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
+
+
+def _legacy_near_price(ext: dict[str, Any]) -> bool:
+    """Mirrors TS legacyNearPrice."""
+    if "declutter" in ext:
+        return ext["declutter"] == "near"
+    return ext.get("nearPrice") is True
+
+
+def max_distance_tol(cfg: TrendlinesConfig, atr_i: float, close: float) -> float:
+    """Mirrors TS maxDistanceTol: the price distance past which a line is too
+    far from this bar's close, math.inf when both cuts are off. The two cuts
+    apply on their own, so the tighter one is the band."""
+    tol = math.inf
+    if cfg.max_dist_atr > 0:
+        tol = cfg.max_dist_atr * atr_i
+    if cfg.max_dist_pct > 0:
+        pct = abs(close) * (cfg.max_dist_pct / 100)
+        if pct < tol:
+            tol = pct
+    return tol
+
+
+def within_distance(line: TrendLine, j: int, close: float, tol: float) -> bool:
+    return abs(project_at(line, j) - close) <= tol
 
 
 def project_at(line: TrendLine, j: int) -> float:
@@ -389,6 +431,7 @@ def compute_trendlines(
         # 2. Confirm-bar work for the pivot at k = i - pivot_len.
         k = i - cfg.pivot_len
         if k >= 0 and a is not None:
+            dist_tol = max_distance_tol(cfg, a, closes[i])
             for kind in KINDS:
                 vals = highs if kind == "high" else lows
                 if not _is_pivot_at(vals, k, cfg.pivot_len, cfg.pivot_len, kind):
@@ -445,6 +488,8 @@ def compute_trendlines(
                             continue
                         if not above_slope(cand, atr_k, cfg.min_slope_atr):
                             continue
+                    if dist_tol != math.inf and not within_distance(cand, i, closes[i], dist_tol):
+                        continue
                     if not has_back_clearance(cand, closes, cfg.min_back_bars):
                         continue
                     for j in range(i1 + 1, i + 1):
@@ -475,8 +520,13 @@ def compute_trendlines(
 
             # 3. Prune the dead, then cap live state by the SURVIVAL order IN
             #    TOTAL (survival_key, not rank_key: see its docstring).
-            if any(not is_live(line, i, cfg) for line in lines):
-                lines = [line for line in lines if is_live(line, i, cfg)]
+            def keep(line: TrendLine) -> bool:
+                return is_live(line, i, cfg) and (
+                    dist_tol == math.inf or within_distance(line, i, closes[i], dist_tol)
+                )
+
+            if any(not keep(line) for line in lines):
+                lines = [line for line in lines if keep(line)]
             cap = MAX_LIVE_MULT * cfg.max_lines
             if len(lines) > cap:
                 lines.sort(key=lambda line: (over_ceilings(line, cfg), survival_key(line)))

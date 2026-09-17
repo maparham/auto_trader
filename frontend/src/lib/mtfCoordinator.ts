@@ -300,7 +300,7 @@ export function stampTrendlinesFloors(chart: Chart): void {
       // floor stamp would only churn overrides. refreshMtfOnVisibilityChange
       // re-stamps on unhide, before the view's next settle.
       if (ind.visible === false) return;
-      const cfg = parseTrendlinesConfig(ind.calcParams);
+      const cfg = parseTrendlinesConfig(ind.calcParams, ind.extendData);
       const wantedFloor = view.fromMs - tlWarmup(cfg) * chartMs;
       const cur = ind.extendData?.tlFloorTs;
       const move =
@@ -1608,7 +1608,7 @@ export function refreshFormingBar(chart: Chart): void {
       } else if (type === "TRENDLINES") {
         built = buildTrendlinesMtf(
           bars,
-          parseTrendlinesConfig(ind.calcParams),
+          parseTrendlinesConfig(ind.calcParams, ind.extendData),
           timeframe,
           htfMs,
         );
@@ -1889,7 +1889,7 @@ async function refreshMtfIndicatorsUncoalesced(
           ),
         );
       } else if (type === "TRENDLINES") {
-        const cfg = parseTrendlinesConfig(ind.calcParams);
+        const cfg = parseTrendlinesConfig(ind.calcParams, ind.extendData);
         if (covered(tlWarmup(cfg))) return;
         jobs.push(
           applyTrendlinesTimeframe(

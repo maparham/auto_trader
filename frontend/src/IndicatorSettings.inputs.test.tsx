@@ -9,11 +9,11 @@ afterEach(cleanup);
 // A chart carrying one live TRENDLINES instance, which is all the Inputs tab
 // reads. klinecharts itself is not mocked: the modal only calls getIndicators
 // and overrideIndicator on this object.
-function chartWith(extendData: object) {
+function chartWith(extendData: object, calcParams = [...Object.values(TRENDLINES_DEFAULTS)]) {
   const ind = {
     paneId: "candle_pane",
     name: "TRENDLINES",
-    calcParams: [...Object.values(TRENDLINES_DEFAULTS)],
+    calcParams,
     extendData: { indType: "TRENDLINES", ...extendData },
     figures: [],
     styles: {},
@@ -72,10 +72,10 @@ function openRecording(extendData: object = {}) {
   return rec;
 }
 
-function open(extendData: object = {}) {
+function open(extendData: object = {}, calcParams?: number[]) {
   render(
     <IndicatorSettings
-      chart={chartWith(extendData)}
+      chart={chartWith(extendData, calcParams)}
       scope="tab.test"
       epic="US100"
       brokerId="capital"
@@ -228,25 +228,32 @@ describe("Calculation group", () => {
 describe("Declutter select", () => {
   // A SelectMenu (button + popover), not a native <select>, so what is asserted
   // is the trigger's text: the label of the option in force.
-  it("opens on the near-price rule by default", () => {
+  it("opens on Off by default", () => {
     open();
-    expect(screen.getByLabelText("Declutter").textContent).toContain(
-      "Only lines near price",
-    );
-  });
-
-  it("opens on Off for a pane saved before the select existed", () => {
-    // It was an "Only lines near price" checkbox; a pane that stored it
-    // UNTICKED must not silently regain the filter when the modal opens.
-    open({ nearPrice: false });
     expect(screen.getByLabelText("Declutter").textContent).toContain("Off");
   });
 
-  it("keeps a saved choice over both defaults", () => {
+  it("keeps a saved choice", () => {
     open({ declutter: "pivot", nearPrice: false });
     expect(screen.getByLabelText("Declutter").textContent).toContain(
       "One line per pivot",
     );
+  });
+
+  // "Only lines near price" was a draw-time rule at a fixed 5 ATR. A pane
+  // that chose it opens on Off with Max Distance carrying the cut, so the
+  // modal shows what the pane now draws.
+  it("migrates a saved near-price rule onto Max Distance", () => {
+    // Nineteen slots: the pane predates the Max Distance params, which is the
+    // only way a saved "near" can exist.
+    open({ declutter: "near" }, Object.values(TRENDLINES_DEFAULTS).slice(0, 19));
+    expect(screen.getByLabelText("Declutter").textContent).toContain("Off");
+    expect((screen.getByLabelText("Max Distance (×ATR)") as HTMLInputElement).value).toBe("5");
+  });
+
+  it("leaves Max Distance off for a pane that never chose near-price", () => {
+    open({ nearPrice: false });
+    expect((screen.getByLabelText("Max Distance (×ATR)") as HTMLInputElement).value).toBe("0");
   });
 });
 
@@ -256,14 +263,12 @@ describe("the merge tolerance under One line per pivot", () => {
     expect(screen.queryByLabelText("Merge Lines within")).toBeNull();
   });
 
-  it("brings it back on the other two choices", () => {
-    open({ declutter: "near" });
+  it("brings it back on Off", () => {
+    open({ declutter: "off" });
     expect(screen.getByLabelText("Merge Lines within")).toBeTruthy();
   });
 
   it("shows it for a pane saved before the select existed", () => {
-    // The legacy fallback resolves to "off"/"near", never to "pivot", so a
-    // guard reading the raw stored value would blank the row here.
     open({ nearPrice: false });
     expect(screen.getByLabelText("Merge Lines within")).toBeTruthy();
   });

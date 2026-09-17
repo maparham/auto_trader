@@ -45,6 +45,7 @@ import {
   MAX_LIVE_MULT,
   parseTrendlinesConfig,
   TL_ATR_LEN,
+  TL_NEAR_PRICE_ATR,
   TL_NEAREST,
   tlOutputName,
   TRENDLINES_DEFAULTS,
@@ -53,6 +54,8 @@ import {
 } from "./trendlinesOutputs";
 
 export type PivotKind = "high" | "low";
+
+export { TL_NEAR_PRICE_ATR };
 
 /** The pivots that PASSED the pivot filter, ONE POOL for both kinds in confirm
  * order (high before low when one bar is both). `idxs[q]` is the bar,
@@ -103,6 +106,20 @@ export interface TrendLine {
   maxTouchGap: number; // widest gap between consecutive touches; only grows
   minTouchGap: number; // narrowest; only shrinks
   maxTouchIdx: number; // running maximum of touchIdxs
+}
+
+/** The kind that touched at slot `t`, or null when the line carries no kinds.
+ *
+ * touchKinds is DRAW-ONLY and younger than the stashes it rides in: an MTF
+ * stash persisted before it existed restores with touchIdxs and no touchKinds
+ * at all. Reading the array directly threw there, and ONE throw inside the
+ * draw loop aborts the whole pane's draw, so the chart stopped repainting
+ * entirely (pan and zoom moved the time axis and nothing else) and a reload
+ * restored the same stash. A missing kind only costs the extreme snap, so it
+ * falls back to the plain time mapping rather than taking the pane down.
+ */
+function touchKindAt(line: TrendLine, t: number): PivotKind | null {
+  return (line.touchKinds as PivotKind[] | undefined)?.[t] ?? null;
 }
 
 /** The line's price at bar j. The ONLY division in this module. */
@@ -544,6 +561,27 @@ function pivotsOf(st: TlState): TrendPivots {
   return { idxs: st.pool.idxs, kinds: st.pool.kinds, highs: st.highs, lows: st.lows };
 }
 
+/** The price distance past which a line is too far from bar i's close, or
+ * Infinity when neither Max Distance cut is on. The ATR cut and the percent
+ * cut are applied on their own, so the tighter of the two is the band. The
+ * ATR half needs a warmed ATR, which every caller here has (the confirm-bar
+ * block runs only when atr[i] is non-null). Ported to Python as
+ * max_distance_tol. */
+export function maxDistanceTol(cfg: TrendlinesConfig, atrI: number, close: number): number {
+  let tol = Infinity;
+  if (cfg.maxDistAtr > 0) tol = cfg.maxDistAtr * atrI;
+  if (cfg.maxDistPct > 0) {
+    const pct = Math.abs(close) * (cfg.maxDistPct / 100);
+    if (pct < tol) tol = pct;
+  }
+  return tol;
+}
+
+/** True when the line projects within `tol` of `close` at bar j. */
+function withinDistance(line: TrendLine, j: number, close: number, tol: number): boolean {
+  return Math.abs(projectAt(line, j) - close) <= tol;
+}
+
 /** One bar of the detector. Reads/writes state only at indices <= i (causal),
  * which the incremental session relies on. Ported line for line to Python. */
 function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void {
@@ -559,6 +597,9 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
   // 2. CONFIRM-BAR work for the pivot at bar k = i - pivotLen.
   const k = i - cfg.pivotLen;
   if (k >= 0 && a !== null) {
+    // Max Distance, measured at THIS bar's close: the only price the calc can
+    // see without lookahead. Infinity when both cuts are off.
+    const distTol = maxDistanceTol(cfg, a, closes[i]);
     for (const kind of KINDS) {
       const vals = kind === "high" ? highs : lows;
       if (!isPivotAt(vals, k, cfg.pivotLen, cfg.pivotLen, kind, true)) continue;
@@ -626,6 +667,11 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
           if (!withinSlope(cand, atrK, cfg.maxSlopeAtr)) continue;
           if (!aboveSlope(cand, atrK, cfg.minSlopeAtr)) continue;
         }
+        // Max Distance next, also one comparison, and BEFORE the two walks
+        // below: a candidate too far from price on the day it would be born
+        // is never built, so the O(span) work is not paid for a line the cut
+        // would drop on this same bar anyway.
+        if (distTol !== Infinity && !withinDistance(cand, i, closes[i], distTol)) continue;
         // Back clearance next, still before the crossing walk: bounded by
         // minBackBars where the walk is O(span). It reads ONLY bars before
         // i1, so it is fixed the moment the line is defined and cannot repaint.
@@ -664,11 +710,15 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
       pool.kinds.push(kind);
     }
 
-    // 3. Prune the dead, then cap live state by the SURVIVAL order, IN TOTAL
+    // 3. Prune the dead and the far (Max Distance: a line past the cut at
+    //    this close leaves for good; it re-enters only if later pivots seed
+    //    it again), then cap live state by the SURVIVAL order, IN TOTAL
     //    (compareSurvival, not rankLines: see its comment). Ceiling-failed
     //    lines still sort last: they can never re-qualify, and the survival
     //    order would otherwise hand them the front of the queue.
-    if (lines.some((l) => !isLive(l, i, cfg))) lines = lines.filter((l) => isLive(l, i, cfg));
+    const keep = (l: TrendLine) =>
+      isLive(l, i, cfg) && (distTol === Infinity || withinDistance(l, i, closes[i], distTol));
+    if (lines.some((l) => !keep(l))) lines = lines.filter(keep);
     const cap = MAX_LIVE_MULT * cfg.maxLines;
     if (lines.length > cap) {
       lines.sort(
@@ -892,9 +942,8 @@ export interface TrendlinesMtf extends MtfSeriesBase {
   htfPoints?: TrendlinesPoint[]; // one calc row per HTF bar
   htfLines?: TrendLine[]; // live lines at the last closed HTF bar
   htfPivots?: TrendPivots; // filter-passing pivots, in HTF bar indices
-  /** ATR(14) on the HTF bars. The merge and near-price tolerances are
-   * ATR-denominated, so the chart's own ATR would scale both by the ratio
-   * between the timeframes. */
+  /** ATR(14) on the HTF bars. The merge tolerance is ATR-denominated, so the
+   * chart's own ATR would scale it by the ratio between the timeframes. */
   htfAtr?: number;
 }
 
@@ -937,15 +986,13 @@ export interface TrendlinesExtend {
    * origin. One number cannot be right for both, which is the case a setting
    * exists for. */
   dedupeAtr?: number;
-  /** Which decluttering rule the pane runs, AT MOST ONE at a time. Defaults to
-   * "near".
+  /** Which decluttering rule the pane runs. Defaults to "off".
    *
-   * "near": draw only the lines projecting within TL_NEAR_PRICE_ATR of the
-   * close at the last bar (plus the nearest on each side, whatever its
-   * distance, and the lines an operand reads or a pin holds). The complaint it
-   * answers: a pivot seeds lines in every direction, and the ones that missed
-   * run away from price for as long as maxProjBars keeps them alive, filling
-   * the pane with geometry that has nothing to do with where price is.
+   * "near" is RETIRED, read but never written: it drew only the lines within
+   * TL_NEAR_PRICE_ATR of the close at the last bar. That job moved into the
+   * calc as the two Max Distance params (calcParams 19 and 20), and a pane
+   * saved with "near" migrates onto Max Distance 5 ATR in
+   * parseTrendlinesConfig; declutterMode reads it as "off".
    *
    * "pivot": keep ONE line where several run through the same pivot, the one
    * closest to price, however far apart they sit. This is the merge pass with
@@ -964,9 +1011,8 @@ export interface TrendlinesExtend {
    * and selectDrawnLines draws it anyway if it does. */
   declutter?: "off" | "near" | "pivot";
   /** LEGACY spelling of `declutter`, from when near-price was a checkbox and
-   * the only rule. Read only when `declutter` is absent, so a pane that stored
-   * `false` opens and draws as "off" instead of silently regaining the filter.
-   * Never written. */
+   * the only rule. Read only by the Max Distance migration (legacyNearPrice
+   * in trendlinesOutputs) when `declutter` is absent. Never written. */
   nearPrice?: boolean;
   /** Mark every pivot that passed the PIVOT FILTER with a small caret just
    * outside its wick — the confirmed fractal turns that also cleared Min Pivot
@@ -1145,19 +1191,6 @@ export type TrendlinesCalcPoint = TrendlinesPoint & {
  * Merging stays predictable instead. */
 export const TL_DEDUPE_ATR = 1;
 
-/** How far from the close a line may project at the last bar and still be
- * drawn, in ATR(14), when the near-price filter is on.
- *
- * A CONSTANT, exactly like TL_DEDUPE_ATR and for the same reason: "near price"
- * is a yes-or-no a user should not have to tune, and a second numeric field
- * that quietly empties the pane when set wrong is worse than a fixed answer.
- * Five ATR is roughly where a level stops being reachable inside the horizon a
- * trader is looking at.
- *
- * Measured on a US100 daily chart at stock defaults, 20 drawn lines projected
- * between 0.01 and 31 ATR from the close; five keeps the four a human would
- * point at. */
-export const TL_NEAR_PRICE_ATR = 5;
 
 /** The dedup pass's inputs. `tol` is a price distance (0 or NaN turns merging
  * off, which is what an unwarmed ATR gives on the first TL_ATR_LEN bars).
@@ -1178,10 +1211,8 @@ export interface TrendlineDedupe {
  * the select cannot open on one rule and draw another. */
 export function declutterMode(
   ext: Pick<TrendlinesExtend, "declutter" | "nearPrice"> | undefined,
-): "off" | "near" | "pivot" {
-  const m = ext?.declutter;
-  if (m === "off" || m === "near" || m === "pivot") return m;
-  return (ext?.nearPrice ?? true) ? "near" : "off";
+): "off" | "pivot" {
+  return ext?.declutter === "pivot" ? "pivot" : "off";
 }
 
 /** DEFAULT alpha a dimmed line paints at, and the floor the panel's percent is
@@ -1381,8 +1412,8 @@ function dropDuplicates(
  * job is to show the geometry in play, not only the ranked numbers.
  *
  * The drawn set is INDEPENDENT OF THE EXTEND MODE on purpose: rank and the
- * near-price cut never look at how far a line is drawn, only at its
- * projection at `atIdx`. Switching extend must change how far lines run and
+ * merge pass never look at how far a line is drawn, only at its projection
+ * at `atIdx`. Switching extend must change how far lines run and
  * nothing else, so which lines appear, like which values emit, must not move.
  *
  * Draw-time only, so the Python port has no counterpart. */
@@ -1392,9 +1423,6 @@ export function selectDrawnLines(
   close: number,
   maxLines: number,
   dedupe: TrendlineDedupe | null,
-  /** Price distance beyond which a line is too far from the close to draw.
-   * 0 turns the filter off, which is also what an unwarmed ATR gives. */
-  nearTol = 0,
 ): TrendLine[] {
   const ranked: DrawEntry[] = lines
     .map((l) => {
@@ -1403,15 +1431,8 @@ export function selectDrawnLines(
     })
     .sort((x, y) => rankLines(x.line, y.line));
   const kept = dedupe ? dropDuplicates(ranked, dedupe) : ranked;
-  // Distance cut: keeps the top-ranked line always, so the pane never blanks.
-  const near =
-    nearTol > 0
-      ? kept.filter(
-          (e, idx) => idx === 0 || e.dist <= nearTol || dedupe?.keep.has(e.line),
-        )
-      : kept;
   const out: TrendLine[] = [];
-  near.forEach((e, idx) => {
+  kept.forEach((e, idx) => {
     if (idx < maxLines || dedupe?.keep.has(e.line)) out.push(e.line);
   });
   return out;
@@ -2060,7 +2081,7 @@ function drawTrendlines(
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
     return true;
   }
-  const cfg = parseTrendlinesConfig(indicator.calcParams);
+  const cfg = parseTrendlinesConfig(indicator.calcParams, indicator.extendData);
   const ext = indicator.extendData as TrendlinesExtend | undefined;
   // Resolved ONCE per draw: every stroke and fill below (lines, rings,
   // handles, tags, pivot marks) reads this instead of the shared default, so
@@ -2192,24 +2213,10 @@ function drawTrendlines(
     declutter === "pivot"
       ? Infinity
       : dedupeTolerance(last.atr, ext?.dedupe ?? true, ext?.dedupeAtr);
-  // Same shape as the dedup tolerance, and 0 on the same unwarmed-ATR path:
-  // with no ATR there is no scale to call anything near, and the filter is off
-  // rather than arbitrary.
-  const nearTol =
-    declutter === "near" && Number.isFinite(last.atr)
-      ? (last.atr as number) * TL_NEAR_PRICE_ATR
-      : 0;
-  const drawn = selectDrawnLines(
-    eligible,
-    lastIdx,
-    lastClose,
-    cfg.maxLines,
-    {
-      tol: dedupeTol,
-      keep: pinnedLines,
-    },
-    nearTol,
-  );
+  const drawn = selectDrawnLines(eligible, lastIdx, lastClose, cfg.maxLines, {
+    tol: dedupeTol,
+    keep: pinnedLines,
+  });
   const handles: TrendlineHandle[] = [];
   // The bar index sitting at the pane's right edge, so a pinned line reaches it
   // at any zoom. The index-to-pixel map is linear (klinecharts multiplies by a
@@ -2256,7 +2263,7 @@ function drawTrendlines(
     // kind of pivot touched there.
     const kindAt = (j: number): PivotKind | null => {
       const t = line.touchIdxs.indexOf(j);
-      return t >= 0 ? line.touchKinds[t] : null;
+      return t >= 0 ? touchKindAt(line, t) : null;
     };
     const xAtLine = (j: number): number => {
       const kd = kindAt(j);
@@ -2315,7 +2322,8 @@ function drawTrendlines(
     ctx.lineWidth = 1;
     for (let t = 0; t < line.touchIdxs.length; t++) {
       const idx = line.touchIdxs[t];
-      const xT = xAtPivot(idx, line.touchKinds[t]);
+      const kd = touchKindAt(line, t);
+      const xT = kd ? xAtPivot(idx, kd) : xAt(idx);
       const yT = onSegment(xT);
       if (xT < 0 || xT > Math.min(tagRight, x1) || yT < 0 || yT > bounding.height)
         continue;
@@ -2463,7 +2471,7 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     }
     const { points, lines, atr, pivots } = session.compute(
       dataList,
-      parseTrendlinesConfig(ind.calcParams),
+      parseTrendlinesConfig(ind.calcParams, ext),
       ext?.tlFloorTs,
     );
     // The session already returns a fresh top-level array (prefix rows shared,

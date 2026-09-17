@@ -819,6 +819,26 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: ["Max times the close may have crossed the line. Empty: no limit."],
       },
       {
+        ...num(19, "Max Distance (×ATR)", { min: 0, step: 0.25 }),
+        group: "dist",
+        default: TL.maxDistAtr,
+        tip: [
+          "How far a line may sit from the current close, in ATR(14). Zero: off.",
+          "A line beyond it is never built, and a live line that drifts past it is dropped.",
+          "Applies with the % cut below: a line has to pass both.",
+        ],
+      },
+      {
+        ...num(20, "Max Distance (%)", { min: 0, step: 0.25 }),
+        group: "dist",
+        default: TL.maxDistPct,
+        tip: [
+          "How far a line may sit from the current close, as a percent of it. Zero: off.",
+          "Same rule as the ATR cut, in price terms, so it holds across timeframes.",
+          "Dropped lines stop reporting to rules too.",
+        ],
+      },
+      {
         ...num(4, "Max Projection"),
         section: "Lifetime",
         suffix: "bars",
@@ -858,13 +878,12 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         wide: true,
         options: [
           { value: "off", label: "Off" },
-          { value: "near", label: "Only lines near price" },
           { value: "pivot", label: "One line per pivot" },
         ],
         tip: [
-          "Only lines near price: removes distant lines.",
           "One line per pivot: keeps just the strongest line where several pass through the same swing.",
           "Drawing only. A line hidden here still reports its price to a rule.",
+          "To drop distant lines, use Max Distance under Filters.",
         ],
       },
       {
@@ -963,8 +982,8 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         //
         // "One line per pivot" IS this pass with no tolerance at all, so under
         // it the box is inert: hidden rather than left there doing nothing. It
-        // comes back with the other two choices.
-        showWhen: { field: "declutter", equals: ["off", "near"] },
+        // comes back on Off.
+        showWhen: { field: "declutter", equals: ["off"] },
         type: "number",
         source: "extend",
         field: "dedupeAtr",

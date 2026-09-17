@@ -34,14 +34,14 @@ describe("TRENDLINES registration", () => {
     expect(OVERLAY_INDICATORS.has("TRENDLINES")).toBe(true);
   });
 
-  it("has settings metadata for all nineteen params, the merge tolerance and the extend select", () => {
+  it("has settings metadata for all twenty-one params, the merge tolerance and the extend select", () => {
     const inputs = resolveInputs("TRENDLINES", undefined);
-    // Nineteen calcParams (all numbers now that Mixed touches is gone) plus
+    // Twenty-one calcParams (all numbers now that Mixed touches is gone) plus
     // the merge tolerance, which is a number on extendData rather than a
     // calcParam because merging never moves an emitted value, and the two dim
     // thresholds, which choose an opacity and so are render-only too.
-    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(19);
-    expect(inputs.filter((i) => i.type === "number")).toHaveLength(23);
+    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(21);
+    expect(inputs.filter((i) => i.type === "number")).toHaveLength(25);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
     // metadata, so assert the named title too or this test passes on a miss.
@@ -63,6 +63,7 @@ describe("TRENDLINES registration", () => {
       ["Min Touch Spacing", "Max Touch Spacing"],
       ["Min Slope", "Max Slope"],
       ["Min Crossings", "Max Crossings"],
+      ["Max Distance (×ATR)", "Max Distance (%)"],
       ["Max Projection"],
       ["Extend"],
       ["Declutter"],
@@ -92,10 +93,10 @@ describe("TRENDLINES registration", () => {
     }
   });
 
-  it("offers the two decluttering rules as ONE choice, never both at once", () => {
+  it("offers one decluttering rule; near-price moved to the Max Distance cuts", () => {
     const d = resolveInputs("TRENDLINES", undefined).find((i) => i.key === "declutter");
     expect(d?.type).toBe("select");
-    expect(d?.options?.map((o) => o.value)).toEqual(["off", "near", "pivot"]);
+    expect(d?.options?.map((o) => o.value)).toEqual(["off", "pivot"]);
     // Decluttering now starts off: the pane draws every line it found until
     // the user asks for a cut.
     expect(d?.default).toBe("off");
