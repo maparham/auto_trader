@@ -39,7 +39,7 @@ vi.mock("./feed", () => ({
   nominalBarHours: (res: string) => (RES_SECONDS[res] ? RES_SECONDS[res] / 3600 : null),
 }));
 
-const { applyMaTimeframe, applySlopeTimeframe, applyTrendlinesTimeframe, refreshMtfIndicators, setChartIntervalMs } =
+const { applyMaTimeframe, applySlopeTimeframe, applyTrendlinesTimeframe, refreshMtfIndicators, refreshMtfOnVisibilityChange, setChartIntervalMs } =
   await import("./mtfCoordinator");
 const { TRENDLINES_DEFAULTS, MAX_PAIR_PIVOTS } = await import("./indicators/trendlinesOutputs");
 const { slopeLineSeries } = await import("./indicators/slope");
@@ -920,6 +920,123 @@ describe("viewport-scoped coverage interval", () => {
     refreshFormingBar(chart);
     expect(overrides).toHaveLength(0); // untouched: no fold onto old geometry
     expect(fetchRangeStrict).not.toHaveBeenCalled();
+  });
+});
+
+// A hidden indicator draws nothing, so it fetches nothing: an HTF walk is the
+// most expensive thing the refresh pass does. The catch is that the stash it
+// leaves behind can go stale under it (a symbol switch while hidden), so the
+// skip is recorded and the coverage guard refuses a flagged stash.
+describe("hidden indicators", () => {
+  function hidableEma(visible: boolean, stashEpic?: string) {
+    const ind = {
+      paneId: "candle_pane",
+      name: "ema1",
+      visible,
+      calcParams: [2],
+      extendData: {
+        indType: "EMA",
+        mtf: {
+          timeframe: "MINUTE_15",
+          htfStarts: [9_999_000_000, 9_999_900_000],
+          htfMs: HTF_MS,
+          coveredFromMs: 9_000_000_000,
+          coveredToMs: 10_000_300_000,
+          ...(stashEpic ? { epic: stashEpic } : {}),
+        } as Record<string, unknown>,
+      },
+    };
+    const chart = {
+      getDataList: () => [bar(10_000_000_000), bar(10_000_300_000)],
+      getIndicators: () => [ind],
+      overrideIndicator: (patch: Override["patch"]) => {
+        const ext = (patch.extendData ?? {}) as Record<string, unknown>;
+        const keys = Object.keys(ext);
+        // overrideExtend's clearing call (see fakeChart): carries no value.
+        if (keys.length > 0 && keys.every((k) => ext[k] === null)) return;
+        ind.extendData = { ...ind.extendData, ...ext } as typeof ind.extendData;
+      },
+    } as unknown as Chart;
+    return { ind, chart };
+  }
+
+  const NEED = { fromMs: 10_000_000_000, toMs: 10_000_300_000 };
+
+  it("skips the HTF fetch while hidden and flags the stash it left behind", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const { ind, chart } = hidableEma(false);
+    // A need the stash does NOT cover on the right: a visible instance would
+    // refetch here, which is what makes the skip the thing under test.
+    await refreshMtfIndicators(chart, "EPIC", undefined, {
+      ...NEED,
+      toMs: NEED.toMs + 4 * HTF_MS,
+    });
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
+    expect(ind.extendData.mtf.skippedHidden).toBe(true);
+  });
+
+  it("hide and show on the same symbol costs no refetch", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    // The stash says which epic it was fetched for, and it is this one: the
+    // skipped passes changed nothing about it, so the covered interval stands.
+    const { ind, chart } = hidableEma(false, "EPIC");
+    await refreshMtfIndicators(chart, "EPIC", undefined, NEED);
+    ind.visible = true;
+    const done = refreshMtfOnVisibilityChange(chart);
+    await vi.advanceTimersByTimeAsync(0);
+    await done;
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
+  });
+
+  it("refetches on unhide when the skipped stash belongs to another symbol", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    // Hidden through a symbol switch: the interval still covers the need, but
+    // these are the OLD epic's bars and the refresh that would have replaced
+    // them is the one that was skipped.
+    const { ind, chart } = hidableEma(false, "OTHER");
+    await refreshMtfIndicators(chart, "EPIC", undefined, NEED);
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
+    expect(ind.extendData.mtf.skippedHidden).toBe(true);
+    ind.visible = true;
+    const done = refreshMtfOnVisibilityChange(chart);
+    await vi.advanceTimersByTimeAsync(0);
+    await done;
+    expect(fetchRangeStrict).toHaveBeenCalled();
+    expect(ind.extendData.mtf.skippedHidden).toBeUndefined();
+    expect(ind.extendData.mtf.epic).toBe("EPIC");
+  });
+
+  it("coalesces the burst of calls a sweep makes into one pass", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const { ind, chart } = hidableEma(false, "OTHER");
+    await refreshMtfIndicators(chart, "EPIC", undefined, NEED);
+    ind.visible = true;
+    const all = [
+      refreshMtfOnVisibilityChange(chart),
+      refreshMtfOnVisibilityChange(chart),
+      refreshMtfOnVisibilityChange(chart),
+    ];
+    // One pass for the whole burst: the later calls ride the pending promise.
+    expect(all[1]).toBe(all[0]);
+    expect(all[2]).toBe(all[0]);
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.all(all);
+    const afterFirst = fetchRangeStrict.mock.calls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+    // And once the catch-up has run, further visibility churn is free again:
+    // the stash is unflagged and covers the need.
+    const again = refreshMtfOnVisibilityChange(chart);
+    await vi.advanceTimersByTimeAsync(0);
+    await again;
+    expect(fetchRangeStrict.mock.calls.length).toBe(afterFirst);
   });
 });
 

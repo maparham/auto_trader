@@ -130,6 +130,23 @@ describe("chart.state", () => {
     // the live edge (16..19, which slice(-4) on the full result would give).
     expect(res.indicatorValues["RSI#a1"]).toEqual([{ value: 6 }, { value: 7 }, { value: 8 }, { value: 9 }]);
   });
+
+  it("reports no values for a HIDDEN indicator", async () => {
+    // A hidden instance stopped computing (indicators/hiddenCalc.ts), so its rows
+    // are frozen at the moment of the eye click -- and a symbol or timeframe
+    // switch since then leaves them describing a different series. Reporting them
+    // would hand an agent another chart's numbers.
+    const bars = fakeBars(20);
+    const result = bars.map((_, i) => ({ value: i }));
+    const chart = fakeChart(bars, {
+      indicators: [{ paneId: "candle_pane", name: "RSI#a1", result, visible: false }],
+    });
+    provide(chart, fakeController(chart));
+    const res = (await invokeAction("chart.state", { bars: 4 }, ctx)) as {
+      indicatorValues: Record<string, unknown[]>;
+    };
+    expect(res.indicatorValues).toEqual({});
+  });
 });
 
 describe("chart.screenshot", () => {

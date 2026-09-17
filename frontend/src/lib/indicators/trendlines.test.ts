@@ -1,5 +1,6 @@
 import type { KLineData } from "klinecharts";
 import { describe, expect, it } from "vitest";
+import { hiddenAware } from "./hiddenCalc";
 import {
   buildTlState,
   computeTrendlines,
@@ -1071,6 +1072,52 @@ describe("TRENDLINES_TEMPLATE", () => {
     expect(rows).toHaveLength(60);
     expect(rows[rows.length - 1].lines).toBeDefined();
     expect(rows[0].lines).toBeUndefined();
+  });
+
+  // A hidden instance is dead weight: klinecharts re-runs calc on EVERY tick
+  // regardless of `visible` (it gates the draw pass alone), and this detector is
+  // the most expensive calc on the chart.
+  it("computes nothing while the indicator is hidden", () => {
+    const bars = flat(60);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 94, 100.5);
+    const prior = [{ timestamp: 1 }] as unknown as TrendlinesCalcPoint[];
+    const rows = hiddenAware(TRENDLINES_TEMPLATE).calc!(bars, {
+      calcParams: [2, 0.75, 2, 5, 250, 3],
+      extendData: {},
+      visible: false,
+      result: prior,
+    } as never) as TrendlinesCalcPoint[];
+    // The PRIOR rows, by identity: calcImp reassigns whatever calc returns, so
+    // returning the same array leaves .result untouched. Returning [] instead
+    // would wipe an indicator that is merely out of sight.
+    expect(rows).toBe(prior);
+  });
+
+  // The other half of the gate: unhiding has to produce the same rows an
+  // always-visible instance would have. klinecharts recalcs on any
+  // overrideIndicator (its deep-cloned _prevIndicator makes the default
+  // shouldUpdate's `prev.figures !== current.figures` always true), so the eye
+  // click itself is the trigger -- no stale pane after a hidden stretch.
+  it("catches up to a visible twin's rows once shown again", () => {
+    const bars = flat(60);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 94, 100.5);
+    const params = [2, 0.75, 2, 5, 250, 3];
+    const calc = hiddenAware(TRENDLINES_TEMPLATE).calc!;
+    const hidden = { calcParams: params, extendData: {}, visible: false, result: [] };
+    const shown = { calcParams: params, extendData: {}, visible: true, result: [] };
+    // Ticks arrive while it is hidden: same instance object each time, which is
+    // what the per-instance session cache is keyed on.
+    for (let i = 10; i <= 60; i += 10) {
+      calc(bars.slice(0, i), hidden as never);
+      calc(bars.slice(0, i), shown as never);
+    }
+    hidden.visible = true;
+    const after = calc(bars, hidden as never) as TrendlinesCalcPoint[];
+    const twin = calc(bars, shown as never) as TrendlinesCalcPoint[];
+    expect(after.filter((p) => p.tl_1 !== undefined).length).toBeGreaterThan(5);
+    expect(after).toEqual(twin);
   });
 
   // THE constraint that makes `extend` safe to expose. Decluttering the chart

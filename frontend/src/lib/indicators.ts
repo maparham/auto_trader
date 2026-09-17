@@ -37,6 +37,7 @@ import { RESOLUTION_SECONDS } from "./feed";
 import type { SlopeExtend } from "./indicators/slope";
 import type { PivotBandsExtend } from "./indicators/pivotBands"; // erased at build; no runtime edge
 import { INSET_CAPABLE, insetTemplate } from "./indicators/inset";
+import { hiddenAware } from "./indicators/hiddenCalc";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
 import { dropTrendlineHandles } from "./indicators/trendlines";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
@@ -500,7 +501,10 @@ function registerInstanceTemplate(
     const base = (inset ? insetTemplate(type) : null) ?? BASE_TEMPLATES[type];
     const lines = base.styles?.lines;
     registerIndicator({
-      ...base,
+      // A hidden instance computes nothing (see hiddenCalc.ts). Wrapped here as
+      // well as in registerCustomIndicators because an INSTANCE registers its own
+      // template, inset variants included.
+      ...hiddenAware(base),
       name: id,
       figures: base.figures ? base.figures.map((f) => ({ ...f })) : base.figures,
       styles: base.styles

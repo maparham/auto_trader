@@ -32,6 +32,7 @@ import { INSET_CAPABLE, isInsetInstance, withInset } from "../lib/indicators/ins
 import { indTypeOf } from "../lib/customIndicators";
 import { saveIndicators, saveIndicatorVisible, type SavedIndicatorConfig } from "../lib/persist";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "../lib/visibility";
+import { refreshMtfOnVisibilityChange } from "../lib/mtfCoordinator";
 import { indicatorSettingsRequest } from "../lib/signals";
 import { toast } from "../lib/notify";
 import { MenuIcons } from "../lib/menuIcons";
@@ -102,6 +103,10 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       extendData: ext,
       visible: next && isVisibleOnResolution(vis, period.resolution),
     });
+    // A hidden indicator computes nothing and fetches no HTF bars, so showing one
+    // has to ask the coordinator for the work it skipped. Coalesced and
+    // coverage-guarded, so the hide direction can call it just the same.
+    void refreshMtfOnVisibilityChange(c);
     handle.redrawRef.current();
   }, [paneIdOf, period.resolution]);
   const onLegendOpenSettings = useCallback((name: string) => {
@@ -425,6 +430,8 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // body reads in the same sequence as onLegendToggleVisible.
     mirrorAccelCompanion(c, name, { extendData: ext, visible });
     mirrorPivotBarsSinceCompanion(c, name, { extendData: ext, visible });
+    // See onLegendToggleVisible: catch up the compute/fetch a hidden instance skipped.
+    void refreshMtfOnVisibilityChange(c);
     handle.redrawRef.current();
     // period.resolution is read above, so it has to be a dependency (the legend eye
     // path lists it for the same reason); an empty array would freeze it at the
@@ -480,6 +487,8 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       // that says hidden. syncIndicatorsFromStorage re-asserts it after its own
       // teardown + rehydrate rebuild for exactly this reason.
       applyIndicatorVisibility(c, period.resolution, controller.indicatorsHidden.value);
+      // ...and catch up whatever that sweep just revealed (see the eye handlers).
+      void refreshMtfOnVisibilityChange(c);
       // A recreate mints a new paneId, so a selection pointing at this instance
       // (or at a pane the recreate reshuffled) must be re-resolved — same reason
       // reorderPaneByName does it below.

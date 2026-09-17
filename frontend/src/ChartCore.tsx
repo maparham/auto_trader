@@ -168,7 +168,7 @@ import GoLivePill from "./chart/GoLivePill";
 import HistoryJumpPill from "./chart/HistoryJumpPill";
 import { beginHistoryJump } from "./lib/historyJump";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
-import { refreshMtfIndicators, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
+import { refreshMtfIndicators, refreshMtfOnVisibilityChange, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, tradeLineSpanX } from "./lib/positionLines";
 import {
   TradeMarkers,
@@ -4414,8 +4414,12 @@ export default function ChartCore({
   //    changes, same idiom as the scroll-back fetcher above (~2204).
   useEffect(() => {
     const unsubAll = controller.indicatorsHidden.subscribe(() => {
-      if (chartRef.current)
-        applyIndicatorVisibility(chartRef.current, resRef.current, controller.indicatorsHidden.value);
+      if (!chartRef.current) return;
+      applyIndicatorVisibility(chartRef.current, resRef.current, controller.indicatorsHidden.value);
+      // A hidden indicator computes nothing and fetches no HTF bars, so lifting
+      // the master switch has to ask the coordinator for the skipped work. The
+      // call is coalesced and coverage-guarded, so the hide direction is free.
+      void refreshMtfOnVisibilityChange(chartRef.current);
     });
     const unsubSub = controller.subPanesHidden.subscribe((hidden) => {
       const c = chartRef.current;

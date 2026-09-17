@@ -299,7 +299,15 @@ function indicatorValuesFor(
   const start = Math.max(0, end - count);
   for (const inst of controller.indicators.value) {
     for (const [, inds] of panes ?? []) {
-      const ind = inds.get(inst.id) as { result?: unknown[] } | undefined;
+      const ind = inds.get(inst.id) as
+        | { visible?: boolean; result?: unknown[] }
+        | undefined;
+      // A HIDDEN instance stopped computing when it left the screen (see
+      // indicators/hiddenCalc.ts), so its rows are frozen at the eye click --
+      // and a symbol or timeframe switch since then leaves them describing
+      // another series entirely. Report nothing rather than another chart's
+      // numbers; the legend blanks the same rows for the same reason.
+      if (ind?.visible === false) break;
       if (ind?.result?.length) {
         out[inst.id] = ind.result.slice(start, end);
         break;

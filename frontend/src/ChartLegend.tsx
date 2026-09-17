@@ -378,16 +378,23 @@ export default function ChartLegend({
     const allPanes = getIndicatorsByPane(chart);
     for (const inds of allPanes?.values() ?? []) {
       for (const [name, ind] of inds) {
+        // A HIDDEN indicator stopped computing when it left the screen (see
+        // indicators/hiddenCalc.ts), so its rows end wherever the eye click did:
+        // printing them would show a correct number on old bars and "n/a" at the
+        // live edge. Blank the readout instead -- the row keeps its name and
+        // params, and the values come back with the indicator.
+        const hidden = ind.visible === false;
         const result = ind.result as Array<Record<string, number | undefined>> | undefined;
-        const row = result?.[idx];
+        const row = hidden ? undefined : result?.[idx];
         for (const fig of legendFiguresOf(ind)) {
           const span = figureValuesRef.current.get(`${name}|${fig.key}`);
           if (!span) continue;
           const v = row?.[fig.key];
           // Optional unit suffix a figure can carry (e.g. ATR%'s "%").
           const suffix = (fig as { suffix?: string }).suffix ?? "";
-          span.textContent =
-            typeof v === "number" && Number.isFinite(v)
+          span.textContent = hidden
+            ? ""
+            : typeof v === "number" && Number.isFinite(v)
               ? fmtNum(v, legendPrecisionOf(ind) ?? prec) + suffix
               : "n/a";
         }

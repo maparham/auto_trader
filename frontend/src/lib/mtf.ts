@@ -72,6 +72,18 @@ export interface MtfSeriesBase {
    * reads as "reaches the newest fetched bar". Session-only, like
    * coveredFromMs. */
   coveredToMs?: number;
+  /** The epic the stashed bars were fetched for, stamped beside chartMs by every
+   * apply. A stash outlives a symbol switch (persistence keeps only the
+   * timeframe, and the switch REFRESHES rather than recreates the indicator), so
+   * this is what says whose bars these are. Session-only. */
+  epic?: string;
+  /** Set when a refresh pass SKIPPED this instance because the indicator was
+   * hidden (see refreshMtfIndicators). While it stands, the coverage guard
+   * accepts the stash only if `epic` and `chartMs` still match the chart -- the
+   * skipped passes are exactly the ones that would have replaced bars belonging
+   * to another symbol or another chart timeframe. A refetch writes a fresh mtf
+   * object, which drops the flag. Session-only. */
+  skippedHidden?: boolean;
 }
 
 export function priceOf(k: KLineData, src: PriceSource): number {

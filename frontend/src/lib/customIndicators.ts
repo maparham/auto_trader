@@ -7,6 +7,7 @@
 // re-exports every public symbol from the sub-modules, then reconstructs
 // BASE_TEMPLATES from the exported per-type template partials.
 import { registerIndicator, type IndicatorTemplate } from "klinecharts";
+import { hiddenAware } from "./indicators/hiddenCalc";
 
 export * from "./indicators/shared";
 export * from "./indicators/ma";
@@ -103,9 +104,11 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
 export function registerCustomIndicators(): void {
   registerSessionsAxis();
   for (const [type, tmpl] of Object.entries(BASE_TEMPLATES)) {
-    registerIndicator({ ...tmpl, name: type });
+    // hiddenAware here and at registerInstanceTemplate (lib/indicators.ts) are the
+    // only two doors a custom template goes through, so this is the whole gate.
+    registerIndicator({ ...hiddenAware(tmpl), name: type });
   }
-  registerIndicator({ ...PROXIMITY_HEATMAP_TEMPLATE, name: "ProximityHeatmap" });
+  registerIndicator({ ...hiddenAware(PROXIMITY_HEATMAP_TEMPLATE), name: "ProximityHeatmap" });
 }
 
 // Indicators that overlay the price (candle) pane rather than a sub-pane.

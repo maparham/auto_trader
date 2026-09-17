@@ -289,12 +289,17 @@ export function stampTrendlinesFloors(chart: Chart): void {
   byPane.forEach((nameMap, paneId) => {
     nameMap.forEach((indUnknown, id) => {
       const ind = indUnknown as {
+        visible?: boolean;
         calcParams?: unknown[];
         extendData?: TrendlinesExtend & { mtf?: MtfSeriesBase };
       };
       if (indTypeOf({ name: id, extendData: ind.extendData }) !== "TRENDLINES")
         return;
       if (ind.extendData?.mtf?.timeframe) return;
+      // A hidden instance computes nothing (see TRENDLINES_TEMPLATE.calc), so a
+      // floor stamp would only churn overrides. refreshMtfOnVisibilityChange
+      // re-stamps on unhide, before the view's next settle.
+      if (ind.visible === false) return;
       const cfg = parseTrendlinesConfig(ind.calcParams);
       const wantedFloor = view.fromMs - tlWarmup(cfg) * chartMs;
       const cur = ind.extendData?.tlFloorTs;
@@ -698,6 +703,7 @@ export async function applyMaTimeframe(
       : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
+    epic,
     ...buildMaMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
@@ -829,6 +835,7 @@ export async function applyPivotBandsTimeframe(
       : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
+    epic,
     ...buildPivotBandsMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
@@ -956,6 +963,7 @@ export async function applySrLevelsTimeframe(
       : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
+    epic,
     ...buildSrMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
@@ -1104,6 +1112,7 @@ export async function applyTrendlinesTimeframe(
       : htf;
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
+    epic,
     ...buildTrendlinesMtf(bars, config, timeframe, htfMs),
     ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask: stamp how far back it ASKED so
@@ -1217,6 +1226,7 @@ export async function applyFvgTimeframe(
       : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
+    epic,
     ...buildFvgMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
     ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
@@ -1372,6 +1382,7 @@ export async function applySlopeTimeframe(
       : prepFormingBars(chart, htf, htfMs);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
+    epic,
     ...buildSlopeMtf(fp ? fp.bars : htf, config, ext, timeframe, htfMs),
     ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
@@ -1507,9 +1518,13 @@ export function refreshFormingBar(chart: Chart): void {
   byPane.forEach((nameMap, paneId) => {
     nameMap.forEach((indUnknown, id) => {
       const ind = indUnknown as {
+        visible?: boolean;
         calcParams?: unknown[];
         extendData?: MaExtend & PivotBandsExtend & SlopeExtend;
       };
+      // Nothing on screen: skip the fold + recompute. The next refresh after
+      // the indicator reappears rebuilds the series from fetched bars anyway.
+      if (ind.visible === false) return;
       const mtf = ind.extendData?.mtf as MtfSeriesBase | undefined;
       if (!mtf?.timeframe || mtf.waitClose !== false) return;
       const { htfClosed: closed, htfSeed: seed, htfMs, timeframe } = mtf;
@@ -1616,7 +1631,12 @@ export function refreshFormingBar(chart: Chart): void {
         );
       }
       if (!built) return;
-      ext.mtf = { chartMs: chartIntervalOf(chart), ...built, ...extra } as typeof ext.mtf;
+      ext.mtf = {
+        chartMs: chartIntervalOf(chart),
+        epic: mtf.epic, // a fold never changes whose bars these are
+        ...built,
+        ...extra,
+      } as typeof ext.mtf;
       overrideExtend(chart, paneId, id, ext, ind.calcParams ?? []);
       // The companions mirror the parent's extendData, forming bar included.
       if (type === "PIVOT_BANDS") syncPivotBarsSinceCompanion(chart, id);
@@ -1645,12 +1665,19 @@ export function refreshFormingBar(chart: Chart): void {
 // pattern jump), and the second run's walks/computes are byte-identical work.
 const refreshInFlight = new WeakMap<Chart, { key: string; done: Promise<void> }>();
 
+// The symbol the last refresh ran for, per chart. refreshMtfOnVisibilityChange
+// has no caller-supplied epic (a legend eye click knows nothing about the feed),
+// and every path that puts MTF data on a chart comes through refreshMtfIndicators
+// first, so recording it here is enough and costs ChartCore no plumbing.
+const chartSymbols = new WeakMap<Chart, { epic: string; brokerId?: string }>();
+
 export function refreshMtfIndicators(
   chart: Chart,
   epic: string,
   brokerId?: string,
   needed?: NeededInterval,
 ): Promise<void> {
+  chartSymbols.set(chart, { epic, brokerId });
   const need = needed ?? neededOf(chart);
   const key = `${epic}|${brokerId ?? ""}|${need.fromMs}|${need.toMs}`;
   const inFlight = refreshInFlight.get(chart);
@@ -1661,6 +1688,68 @@ export function refreshMtfIndicators(
     },
   );
   refreshInFlight.set(chart, { key, done });
+  return done;
+}
+
+// Coalesces the burst of calls a single gesture makes: the sidebar's master eye
+// and a resolution switch sweep every indicator on the chart one by one.
+const visibilityRefreshes = new WeakMap<Chart, Promise<void>>();
+
+/**
+ * Catch up the MTF work that was skipped while indicators were hidden. Call it
+ * after ANY write to an indicator's `visible` flag (the legend eye, the settings
+ * modal, the master-hide sweep) -- hiding is as fine a trigger as unhiding,
+ * since the pass is coverage-guarded and no-ops when nothing needs fetching.
+ *
+ * Deliberately NOT coalesced against the viewport-settle refresh: an in-flight
+ * pass skipped the instance that just reappeared, so this one has to run after
+ * it rather than ride on it.
+ */
+export function refreshMtfOnVisibilityChange(chart: Chart): Promise<void> {
+  // SYNCHRONOUSLY, before the caller's redraw: a chart-timeframe Trendlines needs
+  // its compute floor back BEFORE the recalc that the caller's visible-write just
+  // scheduled, or that recalc runs against the floor the view had when the
+  // indicator was hidden. The stamp pass skips hidden instances and otherwise only
+  // runs on a view settle, so this is the one chance to get there first.
+  // Ahead of the coalescing check, not inside it: a sweep writes every visible
+  // flag before its one call lands here, but two separate toggles inside the same
+  // timer window each need their own stamp. Re-stamping is cheap -- an unmoved
+  // floor writes nothing.
+  stampTrendlinesFloors(chart);
+  const pending = visibilityRefreshes.get(chart);
+  if (pending) return pending;
+  const done = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      visibilityRefreshes.delete(chart);
+      const sym = chartSymbols.get(chart);
+      const run = (): Promise<void> =>
+        sym
+          ? refreshMtfIndicatorsUncoalesced(
+              chart,
+              sym.epic,
+              sym.brokerId,
+              neededOf(chart),
+            )
+          : Promise.resolve();
+      const inFlight = refreshInFlight.get(chart)?.done;
+      const chained = inFlight ? inFlight.then(run, run) : run();
+      void chained
+        .catch(() => {})
+        .then(() => {
+          // A stash that came back COVERED skipped the refetch, so its forming
+          // bar is as old as the moment the indicator was hidden -- and on a
+          // closed market no tick will ever fold it. Re-fold from the stashed
+          // closed bars: no fetch, and a no-op for waitClose stashes.
+          try {
+            refreshFormingBar(chart);
+          } catch {
+            // torn down mid-flight
+          }
+          resolve();
+        });
+    }, 0);
+  });
+  visibilityRefreshes.set(chart, done);
   return done;
 }
 
@@ -1678,20 +1767,49 @@ async function refreshMtfIndicatorsUncoalesced(
       // `id` is the instance id (klinecharts name); branch on the real TYPE.
       const ind = indUnknown as {
         name?: string;
+        visible?: boolean;
         calcParams?: unknown[];
         extendData?: MaExtend & PivotBandsExtend & SlopeExtend;
       };
       const type = indTypeOf({ name: id, extendData: ind.extendData });
-      const tf = (ind.extendData?.mtf as MtfSeriesBase | undefined)?.timeframe;
+      const stash = ind.extendData?.mtf as MtfSeriesBase | undefined;
+      const tf = stash?.timeframe;
       if (!tf) return;
+
+      // A HIDDEN instance fetches nothing: an HTF walk is the most expensive
+      // thing this pass does and nothing is on screen to spend it on. The skip
+      // is recorded on the stash because the bars it leaves behind may belong
+      // to a different epic or chart timeframe by the time the indicator comes
+      // back -- the coverage guard below refuses a flagged stash outright, and
+      // refreshMtfOnVisibilityChange runs this pass again on unhide.
+      if (ind.visible === false) {
+        if (!stash.skippedHidden)
+          overrideExtend(
+            chart,
+            paneId,
+            id,
+            { mtf: { ...stash, skippedHidden: true } },
+            ind.calcParams ?? [],
+          );
+        return;
+      }
 
       // Coverage guard shared by every MTF type: skip the refetch if the
       // stashed interval already covers the needed one on BOTH ends.
       // `warmup` is the type's reach-back margin (MA length; pivot 2N+K).
-      const stashed = ind.extendData?.mtf as MtfSeriesBase | undefined;
       const covered = (warmup: number): boolean => {
-        if (!stashed?.htfStarts?.length || !stashed.htfMs) return false;
-        const start = htfCoverageStartMs(need.fromMs, stashed.htfMs, warmup);
+        if (!stash?.htfStarts?.length || !stash.htfMs) return false;
+        // Left behind by a refresh that skipped this instance while it was
+        // hidden. Those are the passes that would have replaced the bars, so the
+        // interval alone proves nothing: accept the stash only while it is still
+        // demonstrably THIS symbol's, on THIS chart timeframe. A pre-epic stash
+        // (undefined) can't prove it and refetches once.
+        if (
+          stash.skippedHidden &&
+          !(stash.epic === epic && stash.chartMs === chartIntervalOf(chart))
+        )
+          return false;
+        const start = htfCoverageStartMs(need.fromMs, stash.htfMs, warmup);
         // Left end: the bars may stop short of the coverage start, but the
         // last successful walk already ASKED at least this deep — the broker
         // has nothing more to give for it, so refetching is the identical
@@ -1699,15 +1817,15 @@ async function refreshMtfIndicatorsUncoalesced(
         // guard used to feed is what froze a chart whose config out-asked the
         // broker's history).
         const leftOk =
-          stashed.htfStarts[0] <= start ||
-          (stashed.coveredFromMs != null && stashed.coveredFromMs <= start);
+          stash.htfStarts[0] <= start ||
+          (stash.coveredFromMs != null && stash.coveredFromMs <= start);
         // Right end: absent coveredToMs reads as "reaches the newest fetched
         // bar" (pre-field stashes were always walked from the live edge). One
         // bucket of slack, since the ask is clamped to now and the forming
         // bucket is never fetchable as closed.
-        const lastStart = stashed.htfStarts[stashed.htfStarts.length - 1];
-        const rightAsk = stashed.coveredToMs ?? lastStart + stashed.htfMs;
-        const rightOk = rightAsk >= need.toMs - stashed.htfMs;
+        const lastStart = stash.htfStarts[stash.htfStarts.length - 1];
+        const rightAsk = stash.coveredToMs ?? lastStart + stash.htfMs;
+        const rightOk = rightAsk >= need.toMs - stash.htfMs;
         return leftOk && rightOk;
       };
       if (type === "EMA" || type === "MA") {

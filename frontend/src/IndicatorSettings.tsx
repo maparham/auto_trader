@@ -24,7 +24,7 @@ import {
   SMOOTHING_TYPES,
   type IndicatorInputDef,
 } from "./lib/indicatorMeta";
-import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, setMtfWaitClose } from "./lib/mtfCoordinator";
+import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, refreshMtfOnVisibilityChange, setMtfWaitClose } from "./lib/mtfCoordinator";
 import { parseTrendlinesConfig } from "./lib/indicators/trendlinesOutputs";
 import { declutterMode, TL_LINE_COLOR, type TrendlinesExtend } from "./lib/indicators/trendlines";
 import {
@@ -1498,6 +1498,9 @@ export default function IndicatorSettings({
     if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
     if (isPivotBands)
       mirrorPivotBarsSinceCompanion(chart, name, { extendData: ext, visible: effVisible });
+    // A hidden indicator skips its calc and its HTF fetch, so a visibility change
+    // has to ask the coordinator for the work that was skipped.
+    void refreshMtfOnVisibilityChange(chart);
   }
 
   // Per-timeframe visibility grid (VisibilityTab onChange): persists the model AND
@@ -1512,6 +1515,8 @@ export default function IndicatorSettings({
     if (isSlope) mirrorAccelCompanion(chart, name, { extendData: ext, visible: effVisible });
     if (isPivotBands)
       mirrorPivotBarsSinceCompanion(chart, name, { extendData: ext, visible: effVisible });
+    // Same catch-up as toggleVisible: this grid can unhide on the current timeframe.
+    void refreshMtfOnVisibilityChange(chart);
   }
 
   // Show/hide this indicator's value in the legend. Stored on extendData

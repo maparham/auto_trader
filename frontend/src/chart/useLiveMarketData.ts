@@ -910,6 +910,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // Guard: the sidebar "Hide indicators" master switch overrides this re-derive —
       // while it's on, re-assert all-hidden instead of un-hiding.
       applyIndicatorVisibility(handle.chartRef.current, period.resolution, controller.indicatorsHidden.value);
+      // A switch can REVEAL an indicator its visibility model hid on the previous
+      // timeframe, and a hidden one skipped its HTF fetch (see
+      // refreshMtfOnVisibilityChange). No catch-up call belongs here: the
+      // unconditional refreshMtfIndicators further down this same effect runs
+      // after this sweep, so it already sees the revealed instance as visible.
       // Same reasoning, same call site: every live Slope's barHours must track the
       // CURRENT resolution (nominal, never inferred) so the pane and the backend rule
       // path agree bar-for-bar. Runs here — not from applyIndicator — because the

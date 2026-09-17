@@ -2445,6 +2445,10 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   // by the coordinator, and only aligned here; the floor is stamped by the
   // coordinator's viewport pass (stampTrendlinesFloors).
   calc: (dataList: KLineData[], ind: Indicator) => {
+    // No visibility check here: a hidden instance never reaches this function at
+    // all, because registration wraps every custom template in hiddenAware (see
+    // indicators/hiddenCalc.ts). The session cache below survives that in its
+    // WeakMap, so the catch-up after an unhide is incremental.
     const ext = ind.extendData as TrendlinesExtend | undefined;
     const mtf = ext?.mtf;
     if (mtf?.timeframe && mtf.htfStarts?.length && mtf.htfMs)
