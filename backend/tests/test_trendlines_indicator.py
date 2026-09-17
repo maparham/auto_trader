@@ -22,6 +22,7 @@ from auto_trader.indicators.trendlines import (
     has_back_clearance,
     touch_weight,
     is_major,
+    merge_lines,
     over_ceilings,
     parse_trendlines_config,
     project_at,
@@ -67,7 +68,7 @@ def test_defaults_from_empty_params():
     assert c.pierce_mult == 0.25
     assert c.min_back_bars == 0
     assert (c.max_dist_atr, c.max_dist_pct) == (0.0, 0.0)
-    assert (c.merge_atr, c.one_per_pivot) == (1.0, 0)
+    assert (c.merge_atr, c.one_per_pivot, c.merge_pct) == (1.0, 0, 0.0)
     assert c.pair_pivots == MAX_PAIR_PIVOTS == 40
     assert (c.min_crossings, c.max_crossings) == (0, 0)
     assert c.timeframe is None
@@ -75,13 +76,13 @@ def test_defaults_from_empty_params():
 
 def test_reads_every_slot_in_order():
     c = parse_trendlines_config(
-        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1], {})
+        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3], {})
     assert (c.pivot_len, c.touch_mult, c.min_touches, c.min_span_bars, c.max_proj_bars, c.max_lines,
             c.min_swing_atr, c.min_swing_reach, c.pair_pivots, c.max_touches, c.max_span_bars,
             c.max_slope_atr, c.min_slope_atr, c.max_touch_spacing, c.min_touch_spacing,
             c.min_crossings, c.max_crossings, c.pierce_mult, c.min_back_bars,
-            c.max_dist_atr, c.max_dist_pct, c.merge_atr, c.one_per_pivot) == (
-        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1)
+            c.max_dist_atr, c.max_dist_pct, c.merge_atr, c.one_per_pivot, c.merge_pct) == (
+        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3)
 
 
 def test_render_only_merge_settings_migrate_onto_slots_21_and_22():
@@ -434,6 +435,36 @@ def test_merge_runs_in_the_emit_step():
     assert on[TL_NEAREST] == on["tl_1"]
     pivot = compute_trendlines(_fan(), cfg(merge_atr=0, one_per_pivot=1))[0][79]
     assert "tl_1" in pivot and "tl_2" not in pivot
+    # The percent band reads the same way: 1% of 100 is the 1 ATR the fan
+    # merges at; 0.1% is too tight for the 0.74 gap the wide pair has at 79.
+    pct = compute_trendlines(_fan(), cfg(merge_atr=0, merge_pct=1))[0][79]
+    assert "tl_1" in pct and "tl_2" not in pct
+    tight = compute_trendlines(_fan(), cfg(merge_atr=0, merge_pct=0.1))[0][79]
+    assert "tl_2" in tight
+
+
+def test_merge_is_about_the_same_trend_not_a_shared_pivot():
+    """Two parallel lines out of different swings, 0.5 apart the whole way,
+    merge; two lines that only meet at the current bar do not."""
+    a = TrendLine(i1=0, p1=90.0, k1="low", i2=50, p2=94.0, k2="low", touches=3,
+                  last_touch_idx=50, crossings=0, last_sign=0, max_touch_gap=50,
+                  min_touch_gap=50, max_touch_idx=50, touch_idxs=[0, 50])
+    parallel = TrendLine(i1=10, p1=91.3, k1="low", i2=60, p2=95.3, k2="low", touches=2,
+                         last_touch_idx=60, crossings=0, last_sign=0, max_touch_gap=50,
+                         min_touch_gap=50, max_touch_idx=60, touch_idxs=[10, 60])
+    crossing = TrendLine(i1=20, p1=70.0, k1="low", i2=60, p2=84.0, k2="low", touches=2,
+                         last_touch_idx=60, crossings=0, last_sign=0, max_touch_gap=40,
+                         min_touch_gap=40, max_touch_idx=60, touch_idxs=[20, 60])
+    assert abs(project_at(crossing, 100) - project_at(a, 100)) < 0.01
+    assert merge_lines([a, parallel, crossing], 100, 1.0) == [a, crossing]
+    # One per pivot ignores distance and asks only about a shared pivot.
+    twin = replace_line(a, i1=0, p1=90.0, i2=50, p2=99.0, touch_idxs=[0, 50])
+    assert merge_lines([a, twin, parallel], 100, math.inf) == [a, parallel]
+
+
+def replace_line(line: TrendLine, **over) -> TrendLine:
+    from dataclasses import replace as _replace
+    return _replace(line, **over)
 
 
 def test_stops_projecting_past_max_proj_bars():

@@ -34,15 +34,15 @@ describe("TRENDLINES registration", () => {
     expect(OVERLAY_INDICATORS.has("TRENDLINES")).toBe(true);
   });
 
-  it("has settings metadata for all twenty-three params and the extend select", () => {
+  it("has settings metadata for all twenty-four params and the extend select", () => {
     const inputs = resolveInputs("TRENDLINES", undefined);
-    // Twenty-three calcParams: twenty-two numbers plus the One line per pivot
-    // boolean. The merge tolerance is a calcParam because a merged-away line
+    // Twenty-four calcParams: twenty-three numbers plus the One line per
+    // pivot boolean. The merge tolerance is a calcParam because a merged-away line
     // must stop reporting to rules, which only the calc can arrange. The
     // extra numbers are the two dim thresholds and the dim opacity, which
     // choose an alpha and so are render-only.
-    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(23);
-    expect(inputs.filter((i) => i.type === "number")).toHaveLength(25);
+    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(24);
+    expect(inputs.filter((i) => i.type === "number")).toHaveLength(26);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
     // metadata, so assert the named title too or this test passes on a miss.
@@ -75,7 +75,7 @@ describe("TRENDLINES registration", () => {
       ["Dim after touching"],
       ["Dim if untouched for"],
       ["One line per pivot"],
-      ["Merge Lines within"],
+      ["Merge Lines within", "Merge Lines within (%)"],
     ]);
   });
 

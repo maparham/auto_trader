@@ -215,9 +215,9 @@ describe("One line per pivot", () => {
     expect((screen.getByLabelText("One line per pivot") as HTMLInputElement).checked).toBe(false);
   });
 
-  it("leaves Max Distance off for a pane that never chose near-price", () => {
+  it("leaves Max Distance off (an empty box) for a pane that never chose near-price", () => {
     open({ nearPrice: false });
-    expect((screen.getByLabelText("Max Distance (×ATR)") as HTMLInputElement).value).toBe("0");
+    expect((screen.getByLabelText("Max Distance (×ATR)") as HTMLInputElement).value).toBe("");
   });
 });
 
@@ -240,9 +240,9 @@ describe("the merge tolerance", () => {
     expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("2.5");
   });
 
-  it("migrates the unticked checkbox to zero", () => {
+  it("migrates the unticked checkbox to off, an empty box", () => {
     open({ dedupe: false }, Object.values(TRENDLINES_DEFAULTS).slice(0, 21));
-    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("0");
+    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("");
   });
 });
 

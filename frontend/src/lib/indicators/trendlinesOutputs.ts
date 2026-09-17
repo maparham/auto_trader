@@ -109,12 +109,15 @@ export interface TrendlinesConfig {
   // to it, but while it is far it neither draws nor reports to a rule.
   maxDistAtr: number;
   maxDistPct: number;
-  // The merge pass, IN THE CALC: two majors through the same pivot that
-  // project within this many ATR(14) of each other on a bar are one line,
-  // and the better-ranked survives. 0 = off. Runs in the emit step, so a
-  // merged-away line neither draws nor reports to a rule: the drawn set IS
-  // the emitted set.
+  // The merge pass, IN THE CALC: two majors that stay within this band of
+  // each other over the whole stretch they both exist (checked where the
+  // younger starts and at the current bar; straight lines make that the
+  // whole stretch) are one line, and the better-ranked survives. The band
+  // is the tighter of mergeAtr x ATR(14) and mergePct % of the close, each
+  // 0 = off. Runs in the emit step, so a merged-away line neither draws nor
+  // reports to a rule: the drawn set IS the emitted set.
   mergeAtr: number;
+  mergePct: number;
   // 1: the merge pass with no tolerance at all, sharing a pivot alone
   // decides. Same place, same consequence for rules. 0 = off.
   onePerPivot: number;
@@ -147,6 +150,7 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   maxDistPct: 0,
   mergeAtr: 1,
   onePerPivot: 0,
+  mergePct: 0,
 };
 
 /** DEFAULT merge tolerance, in ATR(14): the value the mergeAtr slot starts
@@ -176,7 +180,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  * maxProjBars, maxLines, minSwingAtr, minSwingReach, pairPivots, maxTouches,
  * maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing, minTouchSpacing,
  * minCrossings, maxCrossings, pierceMult, minBackBars, maxDistAtr,
- * maxDistPct, mergeAtr, onePerPivot]. Mirrored by backend
+ * maxDistPct, mergeAtr, onePerPivot, mergePct]. Mirrored by backend
  * parse_trendlines_config.
  *
  * `extendData` is read ONLY to migrate panes saved before slots 19 to 22
@@ -242,6 +246,7 @@ export function parseTrendlinesConfig(
     maxDistPct: numAt(20, d.maxDistPct, true),
     mergeAtr: numAt(21, mergeAtrDefault, true),
     onePerPivot: numAt(22, onePerPivotDefault, true) >= 1 ? 1 : 0,
+    mergePct: numAt(23, d.mergePct, true),
   };
 }
 

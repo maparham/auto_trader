@@ -823,8 +823,9 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ...num(19, "Max Distance (×ATR)", { min: 0, step: 0.25 }),
         group: "dist",
         default: TL.maxDistAtr,
+        unbounded: true,
         tip: [
-          "How far a line may sit from the current close, in ATR(14). Zero: off.",
+          "How far a line may sit from the current close, in ATR(14). Empty: no limit.",
           "A line beyond it is never built, and a live line that drifts past it is dropped.",
           "Applies with the % cut below: a line has to pass both.",
         ],
@@ -833,8 +834,9 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ...num(20, "Max Distance (%)", { min: 0, step: 0.25 }),
         group: "dist",
         default: TL.maxDistPct,
+        unbounded: true,
         tip: [
-          "How far a line may sit from the current close, as a percent of it. Zero: off.",
+          "How far a line may sit from the current close, as a percent of it. Empty: no limit.",
           "Same rule as the ATR cut, in price terms, so it holds across timeframes.",
           "Dropped lines stop reporting to rules too.",
         ],
@@ -965,21 +967,29 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
       {
         ...num(21, "Merge Lines within", { min: 0, step: 0.25 }),
-        // The label runs to a phrase the number completes ("Merge Lines
-        // within 1 ATR"), so `wide` keeps its ⓘ beside the label rather than at
-        // the end of the row (see controlFor's number branch). The control
-        // still sits in the same column as every other one.
-        wide: true,
+        group: "merge",
         // The tolerance IS the switch: 0 merges nothing. "One line per pivot"
-        // IS this pass with no tolerance at all, so under it the box is
-        // inert: hidden rather than left there doing nothing.
+        // replaces this pass with the shared-pivot test, so under it both
+        // boxes are inert: hidden rather than left there doing nothing.
         showWhen: { field: "p22", equals: [0] },
         default: TL.mergeAtr,
+        unbounded: true,
         suffix: "ATR",
         tip: [
-          "One pivot often starts several near-identical lines; this keeps the strongest and frees slots for lines with a different shape.",
-          "Distance is measured at each bar. Zero merges nothing.",
-          "A merged line leaves the chart and stops reporting to rules.",
+          "Two lines that stay this close the whole time they both exist show one trend, so only the stronger is kept.",
+          "Close and almost parallel merges; lines that only cross today do not.",
+          "A merged line leaves the chart and stops reporting to rules. Empty: off.",
+        ],
+      },
+      {
+        ...num(23, "Merge Lines within (%)", { min: 0, step: 0.25 }),
+        group: "merge",
+        showWhen: { field: "p22", equals: [0] },
+        default: TL.mergePct,
+        unbounded: true,
+        tip: [
+          "Same rule, as a percent of price. The tighter of the two boxes is the band.",
+          "Empty: off.",
         ],
       },
     ],

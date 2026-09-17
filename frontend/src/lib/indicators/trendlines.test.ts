@@ -35,6 +35,7 @@ import {
   selectDrawnLines,
   mergeTolerance,
   maxDistanceTol,
+  sameTrend,
   withinDistance,
   drawnPivotIdxs,
   TL_PIVOT_STEM,
@@ -631,7 +632,7 @@ describe("computeTrendlines", () => {
     const { points, lines, atr } = computeTrendlines(fan(), c);
     const eligible = lines.filter((l) => isMajor(l, 79, c));
     const drawn = selectDrawnLines(eligible, 79, 100, c.maxLines, {
-      tol: mergeTolerance(c, atr[79]),
+      tol: mergeTolerance(c, atr[79], 100),
       keep: new Set(),
     });
     expect(drawn.map((l) => projectAt(l, 79))).toEqual(
@@ -1006,46 +1007,45 @@ describe("selectDrawnLines dedup", () => {
     ).toHaveLength(1);
   });
 
-  it("leaves two lines alone when they share no pivot, however close", () => {
-    // Identical projection at the last bar, but grown from different swings.
-    // Merging on closeness alone would swallow unrelated levels.
+  it("leaves two lines alone that only cross today, however close they land", () => {
+    // Identical projection at the last bar, but far apart where the younger
+    // one started: two trends meeting, not one trend drawn twice.
     const other: TrendLine = { ...sup, i1: 20, p1: 70, i2: 60, p2: 84, touchIdxs: [20, 60] };
     expect(projectAt(other, 100)).toBeCloseTo(98, 6);
     expect(
       selectDrawnLines([fanA, other], 100, 100, 3, { tol: 1, keep: NONE }),
     ).toHaveLength(2);
-  });
-
-  // The BAR decides it, and a differing recorded price does not save a line
-  // from merging. Two lines cannot honestly touch one bar at two prices: a
-  // bar has one high and one low, and a touch is recorded only within a
-  // tolerance of it. This fixture is therefore impossible in production, and
-  // the rule that merges it is the same one that catches the real case,
-  // where a swing anchors one line and is a mid-line touch of the rest.
-  it("treats the same bar as shared even at a different recorded price", () => {
-    const sameBar: TrendLine = {
-      ...sup,
-      i1: 0,
-      p1: 70,
-      i2: 50,
-      p2: 84,
-      touchIdxs: [0, 50],
-    };
+    // Sharing a bar does not change that: fanA and this line both start at
+    // bar 0, twenty points apart, and only converge on today's bar.
+    const sameBar: TrendLine = { ...sup, i1: 0, p1: 70, i2: 50, p2: 84, touchIdxs: [0, 50] };
     expect(projectAt(sameBar, 100)).toBeCloseTo(98, 6);
     expect(
-      selectDrawnLines(
-        [fanA, sameBar],
-        100,
-        100,
-        3,
-        { tol: 1, keep: NONE },
-      ),
-    ).toHaveLength(1);
+      selectDrawnLines([fanA, sameBar], 100, 100, 3, { tol: 1, keep: NONE }),
+    ).toHaveLength(2);
   });
 
-  // The real shape this pass was missing: neither line is anchored where the
-  // other one is, they only both TOUCH the same swing.
-  it("merges two lines that only touch the same pivot, neither anchored on it", () => {
+  // THE RULE: the same trend drawn twice. Close where the younger line starts
+  // and close today, so close everywhere between; a shared pivot is neither
+  // needed nor enough.
+  it("merges two near-parallel lines out of different swings", () => {
+    const parallel: TrendLine = {
+      ...sup,
+      i1: 10,
+      p1: 91.3,
+      i2: 60,
+      p2: 95.3,
+      touches: 2,
+      touchIdxs: [10, 60],
+      lastTouchIdx: 60,
+    };
+    expect(sameTrend(fanA, parallel, 100, 1)).toBe(true);
+    expect(sameTrend(fanA, parallel, 100, 0.4)).toBe(false);
+    expect(
+      selectDrawnLines([fanA, parallel], 100, 100, 3, { tol: 1, keep: NONE }),
+    ).toEqual([fanA]);
+  });
+
+  it("merges two lines that touch the same pivot and run together", () => {
     const a: TrendLine = {
       ...sup,
       i1: 0,
@@ -1129,19 +1129,24 @@ describe("selectDrawnLines dedup", () => {
     expect(
       selectDrawnLines([fanA, fanB], 100, 100, 3, { tol: 0, keep: NONE }),
     ).toHaveLength(2);
-    expect(mergeTolerance(cfg(), undefined)).toBe(0);
-    expect(mergeTolerance(cfg(), null)).toBe(0);
-    expect(mergeTolerance(cfg(), NaN)).toBe(0);
-    expect(mergeTolerance(cfg({ mergeAtr: 0 }), 4)).toBe(0);
-    expect(mergeTolerance(cfg(), 4)).toBe(4 * TL_DEDUPE_ATR);
+    expect(mergeTolerance(cfg(), undefined, 100)).toBe(0);
+    expect(mergeTolerance(cfg(), null, 100)).toBe(0);
+    expect(mergeTolerance(cfg(), NaN, 100)).toBe(0);
+    expect(mergeTolerance(cfg({ mergeAtr: 0 }), 4, 100)).toBe(0);
+    expect(mergeTolerance(cfg(), 4, 100)).toBe(4 * TL_DEDUPE_ATR);
   });
 
-  // THE SLOT. mergeAtr scales the bar's ATR; One line per pivot needs no ATR
-  // at all (sharing a pivot alone decides), so it is Infinity even unwarmed.
-  it("takes the tolerance from the config", () => {
-    expect(mergeTolerance(cfg({ mergeAtr: 2 }), 4)).toBe(8);
-    expect(mergeTolerance(cfg({ onePerPivot: 1 }), 4)).toBe(Infinity);
-    expect(mergeTolerance(cfg({ onePerPivot: 1, mergeAtr: 0 }), undefined)).toBe(Infinity);
+  // THE SLOTS. mergeAtr scales the bar's ATR, mergePct the close, and the
+  // tighter one is the band; One line per pivot needs no scale at all
+  // (sharing a pivot alone decides), so it is Infinity even unwarmed.
+  it("takes the band from the config, the tighter of ATR and percent", () => {
+    expect(mergeTolerance(cfg({ mergeAtr: 2 }), 4, 100)).toBe(8);
+    expect(mergeTolerance(cfg({ mergeAtr: 0, mergePct: 2 }), 4, 100)).toBe(2);
+    expect(mergeTolerance(cfg({ mergeAtr: 2, mergePct: 2 }), 4, 100)).toBe(2);
+    expect(mergeTolerance(cfg({ mergeAtr: 2, mergePct: 10 }), 4, 100)).toBe(8);
+    expect(mergeTolerance(cfg({ mergeAtr: 0, mergePct: 2 }), undefined, 100)).toBe(2);
+    expect(mergeTolerance(cfg({ onePerPivot: 1 }), 4, 100)).toBe(Infinity);
+    expect(mergeTolerance(cfg({ onePerPivot: 1, mergeAtr: 0 }), undefined, 100)).toBe(Infinity);
   });
 
   // THE DEFAULT, pinned with the ceiling that bounds it. It was raised to 2.5

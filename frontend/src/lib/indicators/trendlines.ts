@@ -746,7 +746,7 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
       isMajor(l, i, cfg),
   );
   majors.sort(rankLines);
-  const drawn = mergeLines(majors, i, mergeTolerance(cfg, a), undefined, cfg.maxLines);
+  const drawn = mergeLines(majors, i, mergeTolerance(cfg, a, close), undefined, cfg.maxLines);
   let nearestV = 0;
   let nearestD = Infinity;
   const shown = Math.min(drawn.length, cfg.maxLines);
@@ -1252,16 +1252,40 @@ export function trendlineDimmed(
   );
 }
 
-/** The merge pass's price tolerance on a bar: Infinity under One line per
- * pivot (sharing a pivot alone decides, no scale needed), mergeAtr times the
- * bar's ATR(14) otherwise, and 0 (off) while the ATR is unwarmed or the
- * tolerance is 0. ONE reader for the emit step and the draw path, which is
- * what keeps the drawn set the emitted set. Ported to Python as
- * merge_tolerance. */
-export function mergeTolerance(cfg: TrendlinesConfig, atr: number | null | undefined): number {
+/** The merge pass's price band on a bar: Infinity under One line per pivot
+ * (sharing a pivot alone decides, no scale needed); otherwise the tighter of
+ * mergeAtr times the bar's ATR(14) and mergePct percent of the close, each
+ * skipped at 0 (and the ATR half while unwarmed); 0 (off) when neither is
+ * on. ONE reader for the emit step and the draw path, which is what keeps
+ * the drawn set the emitted set. Ported to Python as merge_tolerance. */
+export function mergeTolerance(
+  cfg: TrendlinesConfig,
+  atr: number | null | undefined,
+  close: number,
+): number {
   if (cfg.onePerPivot >= 1) return Infinity;
-  if (!(cfg.mergeAtr > 0) || typeof atr !== "number" || !Number.isFinite(atr)) return 0;
-  return cfg.mergeAtr * atr;
+  let tol = Infinity;
+  if (cfg.mergeAtr > 0 && typeof atr === "number" && Number.isFinite(atr)) tol = cfg.mergeAtr * atr;
+  if (cfg.mergePct > 0) {
+    const pct = Math.abs(close) * (cfg.mergePct / 100);
+    if (pct < tol) tol = pct;
+  }
+  return tol === Infinity ? 0 : tol;
+}
+
+/** True when two lines stay within `tol` of each other over the whole
+ * stretch they both exist: the same trend, drawn twice. Both are straight,
+ * so their gap is linear and is largest at one end of the stretch; the two
+ * ends are enough. The stretch runs from the bar the YOUNGER line starts
+ * (before it, that line does not exist to compare) to `atIdx`. Lines that
+ * meet only today but were far apart earlier are different trends that
+ * happen to cross, and stay. */
+export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number): boolean {
+  const start = Math.max(a.i1, b.i1);
+  return (
+    Math.abs(projectAt(a, atIdx) - projectAt(b, atIdx)) <= tol &&
+    Math.abs(projectAt(a, start) - projectAt(b, start)) <= tol
+  );
 }
 
 
@@ -1269,8 +1293,15 @@ export function mergeTolerance(cfg: TrendlinesConfig, atr: number | null | undef
  * first of each group. RUNS IN THE CALC (the emit step) and again in the draw
  * path with the pinned lines exempt; ported to Python as merge_lines.
  *
- * TWO LINES ARE ONE WHEN THEY RUN THROUGH THE SAME PIVOT and project within
- * `tol` of each other at `atIdx`. Both halves are load-bearing:
+ * TWO LINES ARE ONE WHEN THEY SHOW THE SAME TREND: close to each other, and
+ * close the whole time they both exist (sameTrend), whether or not they
+ * share a pivot. Two near-parallel lines a few points apart out of
+ * different swings are one line to the eye and are merged; two lines that
+ * only cross today were far apart before and are not. Under One line per
+ * pivot (tol Infinity) the test is the older one instead: sharing a pivot
+ * alone decides (sharesPivot), whatever the distance.
+ *
+ * The shared-pivot reasoning below is kept for that mode:
  *
  * The shared pivot is what makes this a FAN test rather than a "these two
  * levels look similar" test. A pivot is not consumed by the line that first
@@ -1349,7 +1380,9 @@ export function mergeLines(
     // line away would leave a pin with nothing to click.
     const twin =
       !keep?.has(line) &&
-      out.some((k, idx) => sharesPivot(k, line) && Math.abs(proj[idx] - p) <= tol);
+      (tol === Infinity
+        ? out.some((k) => sharesPivot(k, line))
+        : out.some((k, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(k, line, atIdx, tol)));
     if (!twin) {
       out.push(line);
       proj.push(p);
@@ -2177,7 +2210,7 @@ function drawTrendlines(
   // The same tolerance the emit step merged at on this bar, so the drawn set
   // is the emitted set (plus pins).
   const drawn = selectDrawnLines(eligible, lastIdx, lastClose, cfg.maxLines, {
-    tol: mergeTolerance(cfg, last.atr),
+    tol: mergeTolerance(cfg, last.atr, lastClose),
     keep: pinnedLines,
   });
   const handles: TrendlineHandle[] = [];
