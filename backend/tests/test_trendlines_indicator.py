@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from auto_trader.core.models import Candle
+from auto_trader.indicators.core import atr_series
 from auto_trader.indicators.registry import SERIES_INDICATORS, resolve_instances
 from auto_trader.indicators.trendlines import (
     MAX_LIVE_MULT,
@@ -287,7 +288,9 @@ def test_a_fresh_long_uncrossed_line_survives_the_cap():
     def deep(line: TrendLine) -> bool:
         return line.i1 == 20 and line.i2 == 160
 
-    _, allx = compute_trendlines(bars, replace(c, max_lines=100_000))
+    # Merge off: the emit-step merge walk is quadratic in what it keeps, and
+    # this budget keeps everything.
+    _, allx = compute_trendlines(bars, replace(c, max_lines=100_000, merge_atr=0))
     born = next(line for line in allx if deep(line))
     assert born.touches == 2 and born.crossings == 0
     crowd = [line for line in allx if line.touches > 2 and line.crossings > 0]
@@ -511,21 +514,33 @@ def _has(lines: list[TrendLine], i1: int, i2: int) -> bool:
     return any(line.i1 == i1 and line.i2 == i2 for line in lines)
 
 
-def test_max_distance_does_not_seed_a_candidate_beyond_the_atr_cut():
-    assert not _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=3))[1], 20, 40)
-    assert _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=6))[1], 20, 40)
-
-
-def test_max_distance_does_not_seed_a_candidate_beyond_the_percent_cut():
-    assert not _has(compute_trendlines(_far_lows(), cfg(max_dist_pct=5))[1], 20, 40)
-    assert _has(compute_trendlines(_far_lows(), cfg(max_dist_pct=6))[1], 20, 40)
+def test_max_distance_keeps_a_far_line_live_and_emits_it_only_within_the_cut():
+    # The spike bars lift ATR(14) well above 1 for a while, so the ATR case
+    # reads its expectation off the ATR series bar by bar (mirrors the TS).
+    bars = _far_lows() + flat(20, 60)
+    c = cfg(max_dist_atr=0.5)
+    points, lines = compute_trendlines(bars, c)
+    line = next(l for l in lines if l.i1 == 20 and l.i2 == 40)
+    atr = atr_series(bars, TL_ATR_LEN)
+    hidden = shown = 0
+    for i in range(42, 80):
+        within = abs(project_at(line, i) - 100) <= 0.5 * atr[i]
+        assert ("tl_1" in points[i]) == within, i
+        if within:
+            shown += 1
+        else:
+            hidden += 1
+    assert hidden > 0 and shown > 0
+    pct, _ = compute_trendlines(_far_lows(), cfg(max_dist_pct=3))
+    assert "tl_1" not in pct[52] and "tl_1" in pct[55]
 
 
 def test_max_distance_cuts_are_separate_and_the_tighter_decides():
-    assert not _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=6, max_dist_pct=5))[1], 20, 40)
-    assert not _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=3, max_dist_pct=6))[1], 20, 40)
-    assert _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=6, max_dist_pct=6))[1], 20, 40)
-    assert _has(compute_trendlines(_far_lows(), cfg(max_dist_atr=0, max_dist_pct=0))[1], 20, 40)
+    assert "tl_1" in compute_trendlines(_far_lows(), cfg(max_dist_atr=6))[0][42]
+    assert "tl_1" not in compute_trendlines(_far_lows(), cfg(max_dist_atr=6, max_dist_pct=3))[0][42]
+    assert "tl_1" not in compute_trendlines(_far_lows(), cfg(max_dist_atr=0.5, max_dist_pct=6))[0][42]
+    assert "tl_1" in compute_trendlines(_far_lows(), cfg(max_dist_atr=6, max_dist_pct=6))[0][42]
+    assert "tl_1" in compute_trendlines(_far_lows(), cfg(max_dist_atr=0, max_dist_pct=0))[0][42]
 
 
 def _runaway(n: int) -> list[Candle]:
@@ -535,11 +550,11 @@ def _runaway(n: int) -> list[Candle]:
     return bars
 
 
-def test_max_distance_drops_a_live_line_once_it_runs_past_the_cut():
-    c = cfg(max_dist_atr=4)
-    assert _has(compute_trendlines(_runaway(45), c)[1], 20, 40)
-    assert not _has(compute_trendlines(_runaway(61), c)[1], 20, 40)
-    assert _has(compute_trendlines(_runaway(61), cfg())[1], 20, 40)
-    points, _ = compute_trendlines(_runaway(61), c)
+def test_max_distance_stops_emitting_a_line_past_the_cut_without_dropping_it():
+    points, lines = compute_trendlines(_runaway(61), cfg(max_dist_atr=4))
     assert "tl_1" in points[44]
     assert "tl_1" not in points[60]
+    assert _has(lines, 20, 40)
+    assert "tl_1" in compute_trendlines(_runaway(61), cfg())[0][60]
+
+

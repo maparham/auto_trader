@@ -13,11 +13,13 @@ import { isPivotAt } from "./pivots";
 import {
   computeTrendlines,
   isMajor,
+  maxDistanceTol,
   projectAt,
   selectDrawnLines,
   TL_DEDUPE_ATR,
   TL_NEAR_PRICE_ATR,
   type TrendLine,
+  withinDistance,
 } from "./trendlines";
 import { TRENDLINES_DEFAULTS } from "./trendlinesOutputs";
 import fixture from "./trendlinesDxy.fixture.json";
@@ -240,16 +242,22 @@ describe("TRENDLINES on DXY monthly", () => {
         `live set lost the ${v} line`,
       ).toBe(true);
     }
-    const cut = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxDistAtr: TL_NEAR_PRICE_ATR });
+    const c = { ...TRENDLINES_DEFAULTS, maxDistAtr: TL_NEAR_PRICE_ATR };
+    const cut = computeTrendlines(bars, c);
     const a = cut.atr[last] as number;
-    expect(cut.lines.length).toBeGreaterThan(0);
-    expect(cut.lines.length).toBeLessThan(lines.length);
-    const projections = cut.lines.map((l) => projectAt(l, last));
+    // The live set is untouched by the cut: it gates which lines take part
+    // on a bar, and the far ones are still live for the day price returns.
+    expect(cut.lines.length).toBe(lines.length);
+    const tol = maxDistanceTol(c, a, close);
+    const near = cut.lines.filter((l) => withinDistance(l, last, close, tol));
+    expect(near.length).toBeGreaterThan(0);
+    expect(near.length).toBeLessThan(lines.length);
+    const projections = near.map((l) => projectAt(l, last));
     for (const v of stale) expect(projections.some((p) => Math.abs(p - v) < 0.01)).toBe(false);
-    // Every live line is within the cut at the last bar, and every drawn
+    // Every line in play is within the cut at the last bar, and every drawn
     // anchor is 2000 or later: no 1990s line resurfaces.
     for (const p of projections) expect(Math.abs(p - close)).toBeLessThanOrEqual(a * TL_NEAR_PRICE_ATR);
-    const drawn = selectDrawnLines(cut.lines, last, close, TRENDLINES_DEFAULTS.maxLines, {
+    const drawn = selectDrawnLines(near, last, close, TRENDLINES_DEFAULTS.maxLines, {
       tol: a * TL_DEDUPE_ATR,
       keep: new Set(),
     });
@@ -293,6 +301,9 @@ describe("TRENDLINES on DXY monthly", () => {
       // built across the whole series, not just the survivors.
       maxLines: 100_000,
       maxProjBars: 100_000,
+      // Merge off: the emit-step merge walk is quadratic in what it keeps,
+      // and this budget keeps everything.
+      mergeAtr: 0,
     });
     expect(lines.length).toBeGreaterThan(20);
     for (const l of lines) {

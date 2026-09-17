@@ -34,6 +34,8 @@ import {
   compareSurvival,
   selectDrawnLines,
   mergeTolerance,
+  maxDistanceTol,
+  withinDistance,
   drawnPivotIdxs,
   TL_PIVOT_STEM,
   TL_PIVOT_USED_GAP,
@@ -677,7 +679,7 @@ describe("computeTrendlines", () => {
 
     // Non-vacuous: uncapped, the crowd is far bigger than the cap and most of
     // it has MORE touches than the newborn line and at least one crossing.
-    const all = computeTrendlines(bars, { ...c, maxLines: 100_000 }).lines;
+    const all = computeTrendlines(bars, { ...c, maxLines: 100_000, mergeAtr: 0 }).lines;
     expect(all.find(deep)!.touches).toBe(2);
     expect(all.find(deep)!.crossings).toBe(0);
     expect(all.filter((l) => l.touches > 2 && l.crossings > 0).length).toBeGreaterThan(
@@ -708,10 +710,10 @@ describe("computeTrendlines max distance", () => {
   // Flat bars close at 100 with ATR 1, so an ATR cut and a percent cut read
   // in the same units here: 1 ATR is 1% of price.
   //
-  // A rising line through two swing LOWS at 90 and 94 projects to 94.4 on its
-  // confirm bar (42): 5.6 ATR and 5.6% under the close. The cut runs BEFORE
-  // the back-clearance and crossing walks, so a candidate that is too far on
-  // the day it would be born is never built at all.
+  // A rising line through two swing LOWS at 90 and 94 (0.2 per bar) projects
+  // to 94.4 on its confirm bar (42): 5.6 under the close, and it closes in
+  // by 0.2 a bar, inside 3 by bar 55. THE LINE IS BUILT AND STAYS LIVE
+  // THROUGHOUT; the cut only decides which bars it takes part on.
   const farLows = () => {
     const bars = flat(60);
     bars[20] = bar(20, 90, 100.5);
@@ -721,31 +723,50 @@ describe("computeTrendlines max distance", () => {
   const has = (lines: TrendLine[], i1: number, i2: number) =>
     lines.some((l) => l.i1 === i1 && l.i2 === i2);
 
-  it("does not seed a candidate beyond the ATR cut", () => {
-    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 3 })).lines, 20, 40)).toBe(false);
-    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 6 })).lines, 20, 40)).toBe(true);
+  // The spike bars at 20 and 40 lift ATR(14) well above 1 for a while, so the
+  // ATR case reads its expectation off the ATR series bar by bar rather than
+  // off the round numbers the percent case can use.
+  it("keeps a far line live, and emits it only on the bars it is within the ATR cut", () => {
+    const c = cfg({ maxDistAtr: 0.5 });
+    const { lines, points, atr } = computeTrendlines(flat(80).map((b, i) => farLows()[i] ?? b), c);
+    const line = lines.find((l) => l.i1 === 20 && l.i2 === 40)!;
+    expect(line).toBeDefined();
+    let hidden = 0;
+    let shown = 0;
+    for (let i = 42; i < 80; i++) {
+      const within = Math.abs(projectAt(line, i) - 100) <= 0.5 * atr[i];
+      expect(points[i].tl_1 !== undefined, `bar ${i}`).toBe(within);
+      if (within) shown++;
+      else hidden++;
+    }
+    expect(hidden).toBeGreaterThan(0);
+    expect(shown).toBeGreaterThan(0);
   });
 
-  it("does not seed a candidate beyond the percent cut", () => {
-    expect(has(computeTrendlines(farLows(), cfg({ maxDistPct: 5 })).lines, 20, 40)).toBe(false);
-    expect(has(computeTrendlines(farLows(), cfg({ maxDistPct: 6 })).lines, 20, 40)).toBe(true);
+  it("the percent cut reads the same way", () => {
+    const { points } = computeTrendlines(farLows(), cfg({ maxDistPct: 3 }));
+    expect(points[52].tl_1).toBeUndefined();
+    expect(points[55].tl_1).toBeDefined();
   });
 
   it("applies the two cuts separately: the tighter one decides", () => {
-    // 6 ATR alone keeps it; adding 5% removes it, and the other way round.
-    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 6, maxDistPct: 5 })).lines, 20, 40)).toBe(false);
-    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 3, maxDistPct: 6 })).lines, 20, 40)).toBe(false);
-    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 6, maxDistPct: 6 })).lines, 20, 40)).toBe(true);
+    // At bar 42 the line is 5.6 away and ATR is about 9, so a wide ATR cut
+    // admits it while a 3% cut does not, and a tight 0.5 ATR cut (about 4.6)
+    // holds it back under a 6% cut that would admit it.
+    expect(computeTrendlines(farLows(), cfg({ maxDistAtr: 6 })).points[42].tl_1).toBeDefined();
+    expect(computeTrendlines(farLows(), cfg({ maxDistAtr: 6, maxDistPct: 3 })).points[42].tl_1).toBeUndefined();
+    expect(computeTrendlines(farLows(), cfg({ maxDistAtr: 0.5, maxDistPct: 6 })).points[42].tl_1).toBeUndefined();
+    expect(computeTrendlines(farLows(), cfg({ maxDistAtr: 6, maxDistPct: 6 })).points[42].tl_1).toBeDefined();
   });
 
   it("zero is off on both", () => {
-    expect(has(computeTrendlines(farLows(), cfg({ maxDistAtr: 0, maxDistPct: 0 })).lines, 20, 40)).toBe(true);
+    expect(computeTrendlines(farLows(), cfg({ maxDistAtr: 0, maxDistPct: 0 })).points[42].tl_1).toBeDefined();
   });
 
   // A rising line through two swing HIGHS at 101 and 103 (0.1 per bar) sits
   // 3.2 above the close on its confirm bar and runs away from flat price after
-  // that: 5 above at bar 60. A live line is dropped on the first bar it
-  // strays past the cut, and dropped for good.
+  // that: 5 above at bar 60. It leaves the emitted set the bar it strays past
+  // the cut and is STILL LIVE, so price coming back would find it.
   const runaway = (n: number) => {
     const bars = flat(n);
     bars[20] = bar(20, 99.5, 101);
@@ -753,18 +774,21 @@ describe("computeTrendlines max distance", () => {
     return bars;
   };
 
-  it("drops a live line once it runs past the cut", () => {
-    const c = cfg({ maxDistAtr: 4 });
-    expect(has(computeTrendlines(runaway(45), c).lines, 20, 40)).toBe(true);
-    expect(has(computeTrendlines(runaway(61), c).lines, 20, 40)).toBe(false);
-    // Off: Max Projection alone decides, and the line is still there.
-    expect(has(computeTrendlines(runaway(61), cfg()).lines, 20, 40)).toBe(true);
-  });
-
-  it("stops emitting the dropped line", () => {
-    const { points } = computeTrendlines(runaway(61), cfg({ maxDistAtr: 4 }));
+  it("stops emitting a line while it is past the cut, without dropping it", () => {
+    const { lines, points } = computeTrendlines(runaway(61), cfg({ maxDistAtr: 4 }));
     expect(points[44].tl_1).toBeDefined();
     expect(points[60].tl_1).toBeUndefined();
+    expect(has(lines, 20, 40)).toBe(true);
+    // Off: Max Projection alone decides.
+    expect(computeTrendlines(runaway(61), cfg()).points[60].tl_1).toBeDefined();
+  });
+
+  it("gates the drawn set the same way", () => {
+    const c = cfg({ maxDistAtr: 4 });
+    const { lines, atr } = computeTrendlines(runaway(61), c);
+    const tol = maxDistanceTol(c, atr[60], 100);
+    expect(lines.filter((l) => withinDistance(l, 60, 100, tol))).toHaveLength(0);
+    expect(lines.filter((l) => withinDistance(l, 44, 100, maxDistanceTol(c, atr[44], 100)))).toHaveLength(1);
   });
 });
 

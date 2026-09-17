@@ -91,9 +91,9 @@ class TrendlinesConfig:
     # 0 = off; runs off the start of the series by rejecting.
     min_back_bars: int = 0
     # How far a line may project from the close, in ATR(14) at that bar and as
-    # a percent of that close; each 0 = off, each applied on its own. Runs
-    # INSIDE the calc (a candidate too far on its confirm bar is never built;
-    # a live line past the cut is dropped for good), so it changes what emits.
+    # a percent of that close; each 0 = off, each applied on its own. A
+    # per-bar gate in the emit step: a far line stays live but emits nothing
+    # until price is back within the cut (mirrors the TS).
     max_dist_atr: float = 0.0
     max_dist_pct: float = 0.0
     # The merge pass, in the emit step: two majors through the same pivot
@@ -235,15 +235,19 @@ def shares_pivot(a: TrendLine, b: TrendLine) -> bool:
     return any(i in b.touch_idxs for i in a.touch_idxs)
 
 
-def merge_lines(ranked: list[TrendLine], at_idx: int, tol: float) -> list[TrendLine]:
+def merge_lines(
+    ranked: list[TrendLine], at_idx: int, tol: float, limit: float = math.inf
+) -> list[TrendLine]:
     """Mirrors TS mergeLines (no pin exemption here: pins are draw-time UI).
     Walks rank order, keeping a line unless it shares a pivot with a kept one
-    and projects within tol of it at at_idx."""
+    and projects within tol of it at at_idx; stops at `limit` survivors."""
     if not tol > 0:
         return ranked
     out: list[TrendLine] = []
     proj: list[float] = []
     for line in ranked:
+        if len(out) >= limit:
+            break
         p = project_at(line, at_idx)
         twin = any(
             shares_pivot(k, line) and abs(proj[idx] - p) <= tol for idx, k in enumerate(out)
@@ -254,12 +258,13 @@ def merge_lines(ranked: list[TrendLine], at_idx: int, tol: float) -> list[TrendL
     return out
 
 
-def max_distance_tol(cfg: TrendlinesConfig, atr_i: float, close: float) -> float:
+def max_distance_tol(cfg: TrendlinesConfig, atr_i: float | None, close: float) -> float:
     """Mirrors TS maxDistanceTol: the price distance past which a line is too
-    far from this bar's close, math.inf when both cuts are off. The two cuts
-    apply on their own, so the tighter one is the band."""
+    far from this bar's close to take part, math.inf when both cuts are off.
+    The two cuts apply on their own, so the tighter one is the band; the ATR
+    half waits for a warmed ATR."""
     tol = math.inf
-    if cfg.max_dist_atr > 0:
+    if cfg.max_dist_atr > 0 and atr_i is not None and math.isfinite(atr_i):
         tol = cfg.max_dist_atr * atr_i
     if cfg.max_dist_pct > 0:
         pct = abs(close) * (cfg.max_dist_pct / 100)
@@ -499,7 +504,6 @@ def compute_trendlines(
         # 2. Confirm-bar work for the pivot at k = i - pivot_len.
         k = i - cfg.pivot_len
         if k >= 0 and a is not None:
-            dist_tol = max_distance_tol(cfg, a, closes[i])
             for kind in KINDS:
                 vals = highs if kind == "high" else lows
                 if not _is_pivot_at(vals, k, cfg.pivot_len, cfg.pivot_len, kind):
@@ -558,8 +562,6 @@ def compute_trendlines(
                             continue
                         if not above_slope(cand, atr_k, cfg.min_slope_atr):
                             continue
-                    if dist_tol != math.inf and not within_distance(cand, i, closes[i], dist_tol):
-                        continue
                     if not has_back_clearance(cand, closes, cfg.min_back_bars):
                         continue
                     for j in range(i1 + 1, i + 1):
@@ -589,26 +591,29 @@ def compute_trendlines(
 
             # 3. Prune the dead, then cap live state by the SURVIVAL order IN
             #    TOTAL (survival_key, not rank_key: see its docstring).
-            def keep(line: TrendLine) -> bool:
-                return is_live(line, i, cfg) and (
-                    dist_tol == math.inf or within_distance(line, i, closes[i], dist_tol)
-                )
-
-            if any(not keep(line) for line in lines):
-                lines = [line for line in lines if keep(line)]
+            if any(not is_live(line, i, cfg) for line in lines):
+                lines = [line for line in lines if is_live(line, i, cfg)]
             cap = MAX_LIVE_MULT * cfg.max_lines
             if len(lines) > cap:
                 lines.sort(key=lambda line: (over_ceilings(line, cfg), survival_key(line)))
                 lines = lines[:cap]
 
-        # 4. Emit the ranked majors, MERGED at this bar's tolerance (the pass
-        #    the draw path runs), cut to max_lines; tl_nearest is the nearest
-        #    AMONG THOSE. A line not on the chart reports nothing.
+        # 4. Emit the ranked majors within Max Distance of this close, MERGED
+        #    at this bar's tolerance (the pass the draw path runs), cut to
+        #    max_lines; tl_nearest is the nearest AMONG THOSE. A line not on
+        #    the chart reports nothing.
         close = closes[i]
         point: dict[str, float] = {}
-        majors = [line for line in lines if is_live(line, i, cfg) and is_major(line, i, cfg)]
+        dist_tol = max_distance_tol(cfg, a, close)
+        majors = [
+            line
+            for line in lines
+            if (dist_tol == math.inf or within_distance(line, i, close, dist_tol))
+            and is_live(line, i, cfg)
+            and is_major(line, i, cfg)
+        ]
         majors.sort(key=rank_key)
-        drawn = merge_lines(majors, i, merge_tolerance(cfg, a))
+        drawn = merge_lines(majors, i, merge_tolerance(cfg, a), cfg.max_lines)
         nearest_v = 0.0
         nearest_d = math.inf
         shown = min(len(drawn), cfg.max_lines)

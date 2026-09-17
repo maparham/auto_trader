@@ -104,11 +104,9 @@ export interface TrendlinesConfig {
   minBackBars: number;
   // How far a line may project from the close, in ATR(14) at that bar and as
   // a percent of that close, each 0 = off, each applied on its own: a line
-  // beyond EITHER cut goes. Runs INSIDE the calc, on two paths: a candidate
-  // too far on its confirm bar is rejected before the back-clearance and
-  // crossing walks are paid for, and a live line is dropped on the first bar
-  // it strays past the cut, for good. It is a calc rule, so it changes what
-  // emits, not only what draws: a rule reading tl_1 sees the cut too.
+  // beyond EITHER cut is out. A PER-BAR GATE in the calc's emit step (see
+  // maxDistanceTol): the line stays live and is back the bar price returns
+  // to it, but while it is far it neither draws nor reports to a rule.
   maxDistAtr: number;
   maxDistPct: number;
   // The merge pass, IN THE CALC: two majors through the same pivot that

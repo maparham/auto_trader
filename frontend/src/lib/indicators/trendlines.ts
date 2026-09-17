@@ -562,15 +562,26 @@ function pivotsOf(st: TlState): TrendPivots {
   return { idxs: st.pool.idxs, kinds: st.pool.kinds, highs: st.highs, lows: st.lows };
 }
 
-/** The price distance past which a line is too far from bar i's close, or
- * Infinity when neither Max Distance cut is on. The ATR cut and the percent
- * cut are applied on their own, so the tighter of the two is the band. The
- * ATR half needs a warmed ATR, which every caller here has (the confirm-bar
- * block runs only when atr[i] is non-null). Ported to Python as
- * max_distance_tol. */
-export function maxDistanceTol(cfg: TrendlinesConfig, atrI: number, close: number): number {
+/** The price distance past which a line is too far from bar i's close to
+ * take part, or Infinity when neither Max Distance cut is on. The ATR cut
+ * and the percent cut are applied on their own, so the tighter of the two
+ * is the band; the ATR half waits for a warmed ATR. Ported to Python as
+ * max_distance_tol.
+ *
+ * A VISIBILITY GATE, PER BAR, NOT A PRUNE. A line past the cut on a bar is
+ * left out of that bar's emitted set (and so off the chart), and is back the
+ * bar price returns to it. It stays live meanwhile. The first cut of this
+ * feature dropped such a line for good, and on any real history that
+ * emptied the pane at every setting: price wanders more than a few ATR from
+ * every line sooner or later, so by the last bar nothing had survived. */
+export function maxDistanceTol(
+  cfg: TrendlinesConfig,
+  atrI: number | null | undefined,
+  close: number,
+): number {
   let tol = Infinity;
-  if (cfg.maxDistAtr > 0) tol = cfg.maxDistAtr * atrI;
+  if (cfg.maxDistAtr > 0 && typeof atrI === "number" && Number.isFinite(atrI))
+    tol = cfg.maxDistAtr * atrI;
   if (cfg.maxDistPct > 0) {
     const pct = Math.abs(close) * (cfg.maxDistPct / 100);
     if (pct < tol) tol = pct;
@@ -579,7 +590,7 @@ export function maxDistanceTol(cfg: TrendlinesConfig, atrI: number, close: numbe
 }
 
 /** True when the line projects within `tol` of `close` at bar j. */
-function withinDistance(line: TrendLine, j: number, close: number, tol: number): boolean {
+export function withinDistance(line: TrendLine, j: number, close: number, tol: number): boolean {
   return Math.abs(projectAt(line, j) - close) <= tol;
 }
 
@@ -598,9 +609,6 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
   // 2. CONFIRM-BAR work for the pivot at bar k = i - pivotLen.
   const k = i - cfg.pivotLen;
   if (k >= 0 && a !== null) {
-    // Max Distance, measured at THIS bar's close: the only price the calc can
-    // see without lookahead. Infinity when both cuts are off.
-    const distTol = maxDistanceTol(cfg, a, closes[i]);
     for (const kind of KINDS) {
       const vals = kind === "high" ? highs : lows;
       if (!isPivotAt(vals, k, cfg.pivotLen, cfg.pivotLen, kind, true)) continue;
@@ -668,11 +676,6 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
           if (!withinSlope(cand, atrK, cfg.maxSlopeAtr)) continue;
           if (!aboveSlope(cand, atrK, cfg.minSlopeAtr)) continue;
         }
-        // Max Distance next, also one comparison, and BEFORE the two walks
-        // below: a candidate too far from price on the day it would be born
-        // is never built, so the O(span) work is not paid for a line the cut
-        // would drop on this same bar anyway.
-        if (distTol !== Infinity && !withinDistance(cand, i, closes[i], distTol)) continue;
         // Back clearance next, still before the crossing walk: bounded by
         // minBackBars where the walk is O(span). It reads ONLY bars before
         // i1, so it is fixed the moment the line is defined and cannot repaint.
@@ -711,15 +714,11 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
       pool.kinds.push(kind);
     }
 
-    // 3. Prune the dead and the far (Max Distance: a line past the cut at
-    //    this close leaves for good; it re-enters only if later pivots seed
-    //    it again), then cap live state by the SURVIVAL order, IN TOTAL
+    // 3. Prune the dead, then cap live state by the SURVIVAL order, IN TOTAL
     //    (compareSurvival, not rankLines: see its comment). Ceiling-failed
     //    lines still sort last: they can never re-qualify, and the survival
     //    order would otherwise hand them the front of the queue.
-    const keep = (l: TrendLine) =>
-      isLive(l, i, cfg) && (distTol === Infinity || withinDistance(l, i, closes[i], distTol));
-    if (lines.some((l) => !keep(l))) lines = lines.filter(keep);
+    if (lines.some((l) => !isLive(l, i, cfg))) lines = lines.filter((l) => isLive(l, i, cfg));
     const cap = MAX_LIVE_MULT * cfg.maxLines;
     if (lines.length > cap) {
       lines.sort(
@@ -729,17 +728,25 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
     }
   }
 
-  // 4. Emit: the live majors in rank order, MERGED (mergeLines at this bar's
-  //    tolerance, the same pass the draw path runs), fill tl_1..tl_maxLines;
-  //    the one nearest the close AMONG THOSE fills tl_nearest (ties to the
-  //    better rank, since the walk is in rank order and only a STRICTLY nearer
-  //    line displaces). Only lines on the chart take part in a rule: a line
-  //    merged away, or ranked past the drawn budget, reports nothing.
+  // 4. Emit: the live majors WITHIN MAX DISTANCE of this bar's close (the
+  //    distance gate goes first, one comparison per line, before anything
+  //    dearer), in rank order, MERGED (mergeLines at this bar's tolerance,
+  //    the same pass the draw path runs), fill tl_1..tl_maxLines; the one
+  //    nearest the close AMONG THOSE fills tl_nearest (ties to the better
+  //    rank, since the walk is in rank order and only a STRICTLY nearer line
+  //    displaces). Only lines on the chart take part in a rule: a line too
+  //    far, merged away, or ranked past the drawn budget reports nothing.
   const close = closes[i];
   const point: TrendlinesPoint = {};
-  const majors = lines.filter((l) => isLive(l, i, cfg) && isMajor(l, i, cfg));
+  const distTol = maxDistanceTol(cfg, a, close);
+  const majors = lines.filter(
+    (l) =>
+      (distTol === Infinity || withinDistance(l, i, close, distTol)) &&
+      isLive(l, i, cfg) &&
+      isMajor(l, i, cfg),
+  );
   majors.sort(rankLines);
-  const drawn = mergeLines(majors, i, mergeTolerance(cfg, a));
+  const drawn = mergeLines(majors, i, mergeTolerance(cfg, a), undefined, cfg.maxLines);
   let nearestV = 0;
   let nearestD = Infinity;
   const shown = Math.min(drawn.length, cfg.maxLines);
@@ -1327,11 +1334,15 @@ export function mergeLines(
   atIdx: number,
   tol: number,
   keep?: ReadonlySet<TrendLine>,
+  /** Stop once this many survivors are in: the emit step needs only the
+   * first maxLines, and the walk is quadratic in what it keeps. */
+  limit = Infinity,
 ): TrendLine[] {
   if (!(tol > 0)) return ranked;
   const out: TrendLine[] = [];
   const proj: number[] = [];
   for (const line of ranked) {
+    if (out.length >= limit) break;
     const p = projectAt(line, atIdx);
     // PINNED LINES ONLY are exempt. A pin is stored by lineKey and its only
     // control is the handle painted at the line's end, so merging a pinned
@@ -2145,7 +2156,14 @@ function drawTrendlines(
   // emission needs isLive && isMajor, so an emitting line passes this by
   // construction. `lastIdx` is the bar the whole draw path measures at (the
   // same one selectDrawnLines projects to), not a per-line bar.
-  const eligible = last.lines.filter((l) => isMajor(l, lastIdx, cfg));
+  // Max Distance first, exactly as the emit step gates it, so a far line is
+  // off the chart on the same bars it reports nothing.
+  const distTol = maxDistanceTol(cfg, last.atr, lastClose);
+  const eligible = last.lines.filter(
+    (l) =>
+      (distTol === Infinity || withinDistance(l, lastIdx, lastClose, distTol)) &&
+      isMajor(l, lastIdx, cfg),
+  );
   if (!eligible.length) {
     paintMarks(NO_PIVOTS_USED);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
