@@ -210,6 +210,13 @@
 .draw-sidebar .ds-row.pattern-clip-opt .ds-label { padding-right: 2px; }
 .draw-sidebar .ds-row.pattern-clip-opt.is-armed .ds-label,
 .draw-sidebar .ds-row.pattern-clip-opt.is-armed .ds-glyph { color: var(--accent); }
+/* Measure-tools flyout (measure + slope): same checkless grammar, tinted while
+   the tool is armed. */
+.draw-sidebar .ds-row.measure-opt { gap: 4px; padding: 0 6px; min-height: 32px; }
+.draw-sidebar .ds-row.measure-opt .ds-glyph { width: 20px; }
+.draw-sidebar .ds-row.measure-opt .ds-label { padding-right: 2px; }
+.draw-sidebar .ds-row.measure-opt.is-armed .ds-label,
+.draw-sidebar .ds-row.measure-opt.is-armed .ds-glyph { color: var(--accent); }
 
 /* Multi-chart layout grid (TradingView-style split). Fills .chart; each cell is an
    independent ChartCore. Thin separators between cells; the focused cell carries a

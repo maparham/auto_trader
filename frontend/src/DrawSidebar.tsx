@@ -2,7 +2,9 @@
 // the FOCUSED cell's OverlayManager — same contract as Toolbar. Top→bottom:
 // favorites zone (starred tools, one-click), the single "Drawing tools"
 // button (click = arm the last-used tool; hover-caret = flyout listing all
-// 8 tools flat, no groups), measure + magnet (relocated from the toolbar),
+// 8 tools flat, no groups), a "Measure tools" button in the same shape
+// (measure + slope behind one trigger), zoom-to-range, pattern clipboard,
+// magnet (the measure and magnet pair relocated from the toolbar),
 // then the bulk cluster (hide-all eye / lock-all padlock / delete-all).
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getSupportedOverlays } from "klinecharts";
@@ -120,6 +122,17 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
     setSloping(controller.slopeArmed.value);
     return controller.slopeArmed.subscribe(setSloping);
   }, [controller]);
+  // "Measure tools" family menu (measure + slope behind one trigger).
+  const [measureMenuOpen, setMeasureMenuOpen] = useState(false);
+  const measureMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!measureMenuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (!measureMenuRef.current?.contains(e.target as Node)) setMeasureMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [measureMenuOpen]);
   // Zoom-to-range tool mirror (same optional-chain HMR-safe pattern as measure).
   const [zooming, setZooming] = useState(controller?.zoomRangeArmed?.value ?? false);
   useEffect(() => {
@@ -203,17 +216,18 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
   // focus; the chart's own Esc handling (measure/drawing cancel) lives on the
   // focused .chart-wrap and is unaffected unless focus sits inside the chart.
   useEffect(() => {
-    if (!openFly && !magnetOpen && !eyeOpen && !patternMenuOpen) return;
+    if (!openFly && !magnetOpen && !eyeOpen && !patternMenuOpen && !measureMenuOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       setOpenFly(false);
       setMagnetOpen(false);
       setEyeOpen(false);
       setPatternMenuOpen(false);
+      setMeasureMenuOpen(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [openFly, magnetOpen, eyeOpen, patternMenuOpen]);
+  }, [openFly, magnetOpen, eyeOpen, patternMenuOpen, measureMenuOpen]);
 
   // Only tools klinecharts actually supports (same guard the old dropdown had).
   // recurringRange is signal-armed (no overlay behind it), so it's always in.
@@ -246,6 +260,27 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
     setLastUsed(next);
     saveLastDrawTools(next);
     setOpenFly(false);
+  }
+
+  // Which of the two measure tools the family button arms, remembered
+  // device-local beside the last-used drawing tool.
+  const measureTool = lastUsed.measure === "slope" ? "slope" : "measure";
+
+  // Arming one disarms the other: they are two readings of the same drag, and
+  // leaving both live would have a click start two overlays at once.
+  function armMeasureTool(name: "measure" | "slope") {
+    const armed = name === "slope" ? controller?.slopeArmed : controller?.measureArmed;
+    const other = name === "slope" ? controller?.measureArmed : controller?.slopeArmed;
+    if (armed) {
+      const next = !armed.value;
+      if (next) other?.set(false);
+      armed.set(next);
+      if (next) controller?.focusChart?.();
+    }
+    const nextLast = { ...lastUsed, measure: name };
+    setLastUsed(nextLast);
+    saveLastDrawTools(nextLast);
+    setMeasureMenuOpen(false);
   }
 
   function toggleFav(name: string) {
@@ -389,41 +424,79 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
 
       <span className="ds-div" aria-hidden="true" />
 
-      {/* Measure ruler (moved from the toolbar; same signal contract). */}
-      <Tooltip
-        placement="right"
-        title="Measure"
-        content={["Click a start point, then an end point.", "Shift-drag also works."]}
-      >
-        <button
-          className={"ds-btn measure-toggle" + (measuring ? " on" : "")}
-          disabled={!controller?.measureArmed}
-          onClick={() => controller?.measureArmed?.set(!controller.measureArmed.value)}
+      {/* Measure + Slope share one "Measure tools" family, the same shape the
+          Drawing tools button uses: the icon arms the last-used of the two, the
+          caret lists both. Two permanent buttons for two rarely-simultaneous
+          tools cost a rail slot each and said nothing about what they do; the
+          rows carry that. Each row's ⓘ keeps the per-tool help that used to
+          live on the button's hover tooltip. */}
+      <div className="ds-family" ref={measureMenuRef}>
+        <Tooltip
+          placement="right"
+          // The flyout opens exactly where this bubble sits (same reason as the
+          // pattern clipboard's), so the hover tooltip stands down while it's up.
+          disabled={measureMenuOpen}
+          title={measureTool === "slope" ? "Slope" : "Measure"}
+          content={
+            measureTool === "slope"
+              ? ["Click a start point, then an end point.", "Caret: pick Measure instead."]
+              : ["Click a start point, then an end point.", "Caret: pick Slope instead."]
+          }
         >
-          <RulerIcon />
-        </button>
-      </Tooltip>
-
-      {/* Slope tool: click start, click end, then it stays live (drag ends / middle /
-          rotate knob). The tooltip spells out what the angle number means, since it's a
-          fixed rate (1%/bar = 45°), not the line's on-screen tilt. */}
-      <Tooltip
-        placement="right"
-        title="Slope"
-        content={[
-          "Click a start point, then an end point.",
-          "Then drag either end, drag the middle to slide it, or drag the knob to rotate (hold Shift to snap 15°).",
-          "The angle is a fixed rate: 1%/bar = 45°, the same on every symbol and zoom level.",
-        ]}
-      >
+          <button
+            className={"ds-btn measure-family-toggle" + (measuring || sloping ? " on" : "")}
+            disabled={!controller?.measureArmed && !controller?.slopeArmed}
+            onClick={() => armMeasureTool(measureTool)}
+          >
+            {measureTool === "slope" ? <SlopeIcon /> : <RulerIcon />}
+          </button>
+        </Tooltip>
         <button
-          className={"ds-btn slope-toggle" + (sloping ? " on" : "")}
-          disabled={!controller?.slopeArmed}
-          onClick={() => controller?.slopeArmed?.set(!controller.slopeArmed.value)}
+          className={"ds-caret" + (measureMenuOpen ? " on" : "")}
+          title="Measure tools…"
+          aria-label="Open measure tools menu"
+          aria-expanded={measureMenuOpen}
+          onClick={() => setMeasureMenuOpen((v) => !v)}
         >
-          <SlopeIcon />
+          <svg viewBox="0 0 24 24" width="8" height="8" fill="none"
+            stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
+            <path d="m9 6 6 6-6 6" />
+          </svg>
         </button>
-      </Tooltip>
+        {measureMenuOpen && (
+          <DsFlyout>
+            <div className="ds-fly-section">Measure tools</div>
+            <ul>
+              <li
+                className={"ds-row measure-opt" + (measuring ? " is-armed" : "")}
+                onClick={() => armMeasureTool("measure")}
+              >
+                <span className="ds-glyph"><RulerIcon /></span>
+                <span className="ds-label">Measure</span>
+                <InfoTip
+                  title="Measure"
+                  text={["Click a start point, then an end point.", "Shift-drag also works."]}
+                />
+              </li>
+              <li
+                className={"ds-row measure-opt" + (sloping ? " is-armed" : "")}
+                onClick={() => armMeasureTool("slope")}
+              >
+                <span className="ds-glyph"><SlopeIcon /></span>
+                <span className="ds-label">Slope</span>
+                <InfoTip
+                  title="Slope"
+                  text={[
+                    "Click a start point, then an end point.",
+                    "Then drag either end, drag the middle to slide it, or drag the knob to rotate (hold Shift to snap 15°).",
+                    "The angle is a fixed rate: 1%/bar = 45°, the same on every symbol and zoom level.",
+                  ]}
+                />
+              </li>
+            </ul>
+          </DsFlyout>
+        )}
+      </div>
 
       {/* Zoom to range: drag a band, drop one timeframe lower centered on it. */}
       <Tooltip
