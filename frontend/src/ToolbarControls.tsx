@@ -13,12 +13,14 @@ import {
   type Period,
 } from "./lib/feed";
 import {
+  alertsChanged,
   alertsPanelOpen,
   tradeListPanelOpen,
   tradePanelOpen,
   livePanelOpen,
   toggleSidePanel,
 } from "./lib/signals";
+import { loadTriggered, loadTriggeredSeen } from "./lib/alertsApi";
 import {
   loadFavoriteResolutions,
   saveFavoriteResolutions,
@@ -99,7 +101,8 @@ export function IntervalControls({
   // clicking the toggle stays "inside" and doesn't fight the button's own onClick.
   useEffect(() => {
     if (!intervalOpen) return;
-    const onDown = (e: MouseEvent) => {
+    // globalThis.MouseEvent: the bare name is React's synthetic type here.
+    const onDown = (e: globalThis.MouseEvent) => {
       const t = e.target as Node;
       if (intervalMenuRef.current && !intervalMenuRef.current.contains(t))
         setIntervalOpen(false);
@@ -401,8 +404,71 @@ export function HistoryControls({ controller }: { controller: ChartController | 
   );
 }
 
-// The app-level panel toggles (live trading / alerts / trading dock) — global
-// panels beside the chart, safe in every toolbar variant.
+// The app-level panel toggles (live trading / trade list / alerts / order
+// ticket): global panels beside the chart, safe in every toolbar variant.
+// Rendered as ONE segmented group because they are one radio set: only a
+// single right-docked panel fits beside the chart, so opening any of them
+// closes whichever was open (lib/sidePanels.ts). The group styling says that
+// where four loose icons could not.
+//
+// Tight bars swap the group for a single "Panels" trigger whose face is the
+// open panel's icon (or a generic sidebar glyph); CSS picks which of the two
+// renderings shows, off the toolbar's container width.
+type PanelId = "live" | "tradeList" | "alerts" | "trade";
+
+function LiveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m10.14 0-2.83-2.83M9.76 9.76 6.93 6.93" />
+    </svg>
+  );
+}
+function TradeListIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M4 5h16M4 12h16M4 19h16M4 5v0M8 5v0" />
+      <path d="M4 5h2M4 12h2M4 19h2" strokeWidth="3" />
+    </svg>
+  );
+}
+function TicketIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
+    </svg>
+  );
+}
+// Generic face for the collapsed trigger when no panel is open: a right dock.
+function SidebarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M15 4v16" />
+    </svg>
+  );
+}
+
+// Unseen alert firings: firings newer than the last time the History tab was
+// viewed. Same rule the alerts sidebar uses for its own History badge, so the
+// two never disagree.
+function useUnseenAlerts(): number {
+  const [n, setN] = useState(() => countUnseen());
+  useEffect(() => alertsChanged.subscribe(() => setN(countUnseen())), []);
+  return n;
+}
+function countUnseen(): number {
+  const seen = loadTriggeredSeen();
+  return loadTriggered().filter((t) => t.time > seen).length;
+}
+
 export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
   const [panelOpen, setPanelOpen] = useState(alertsPanelOpen.value);
   useEffect(() => alertsPanelOpen.subscribe(setPanelOpen), []);
@@ -412,70 +478,98 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
   useEffect(() => livePanelOpen.subscribe(setLiveOpen), []);
   const [tradeListOpen, setTradeListOpen] = useState(tradeListPanelOpen.value);
   useEffect(() => tradeListPanelOpen.subscribe(setTradeListOpen), []);
+  const unseen = useUnseenAlerts();
+
+  // Tight-bar menu.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: globalThis.MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
+
+  // One row per panel, in bar order. Hidden for a data-only source (Dukascopy
+  // history): there is no account to trade or arm against, so the two dealing
+  // panels go.
+  const panels: { id: PanelId; label: string; tip: string; icon: JSX.Element; on: boolean; cls: string }[] = [
+    ...(dataOnly ? [] : [{
+      id: "live" as const, label: "Live trading", tip: "Show live trading panel",
+      icon: <LiveIcon />, on: liveOpen, cls: "live-toggle",
+    }]),
+    {
+      id: "tradeList" as const, label: "Trade list", tip: "Toggle trade list panel",
+      icon: <TradeListIcon />, on: tradeListOpen, cls: "trade-list-toggle",
+    },
+    {
+      id: "alerts" as const, label: "Alerts", tip: "Show alerts panel",
+      icon: <BellIcon size={16} />, on: panelOpen, cls: "alerts-toggle",
+    },
+    ...(dataOnly ? [] : [{
+      id: "trade" as const, label: "Order ticket", tip: "Show trading panel",
+      icon: <TicketIcon />, on: tradeOpen, cls: "trade-toggle",
+    }]),
+  ];
+  const active = panels.find((p) => p.on) ?? null;
+  const badge = unseen > 0 ? (
+    <span className="tb-badge" aria-label={`${unseen} new alert firings`}>
+      {unseen > 99 ? "99+" : unseen}
+    </span>
+  ) : null;
 
   return (
-    <>
-      {/* Live trading panel toggle — arm rule strategies against a demo/live
-          broker account. Hidden for a data-only source (Dukascopy history): there
-          is no account to trade or arm against. */}
-      {!dataOnly && (
-      <Tooltip content="Show live trading panel">
+    <div className="menu panels-cluster" ref={menuRef}>
+      <div className="panel-toggles" role="group" aria-label="Side panels">
+        {panels.map((p) => (
+          <Tooltip key={p.id} content={p.tip}>
+            <button
+              className={`anchor-btn ${p.cls}${p.on ? " on" : ""}`}
+              aria-pressed={p.on}
+              onClick={() => toggleSidePanel(p.id)}
+            >
+              {p.icon}
+              {p.id === "alerts" && badge}
+            </button>
+          </Tooltip>
+        ))}
+      </div>
+
+      <Tooltip content={active ? `Panels (${active.label} open)` : "Panels"}>
         <button
-          className={`anchor-btn live-toggle${liveOpen ? " on" : ""}`}
-          onClick={() => toggleSidePanel("live")}
+          className={`anchor-btn panels-menu-btn${active ? " on" : ""}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((v) => !v)}
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            aria-hidden="true">
-            <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m10.14 0-2.83-2.83M9.76 9.76 6.93 6.93" />
-          </svg>
+          {active ? active.icon : <SidebarIcon />}
+          <Caret />
+          {badge}
         </button>
       </Tooltip>
+      {menuOpen && (
+        <div className="dropdown dropdown-right panels-dropdown" role="menu">
+          <ul>
+            {panels.map((p) => (
+              <li
+                key={p.id}
+                role="menuitemradio"
+                aria-checked={p.on}
+                className={`study-item${p.on ? " on" : ""}`}
+                onClick={() => { toggleSidePanel(p.id); setMenuOpen(false); }}
+              >
+                <span className="tmpl-ic">{p.icon}</span>
+                <span className="ind-name">{p.label}</span>
+                {p.id === "alerts" && unseen > 0 && <span className="study-hint">{unseen} new</span>}
+                {p.on && <span className="study-check" aria-hidden="true">✓</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
-
-      {/* Trade-list panel toggle: imported closed-trades sheet, rows jump to
-          the trade's chart with a trade box sketched over its span. */}
-      <Tooltip content="Toggle trade list panel">
-        <button
-          className={`anchor-btn trade-list-toggle${tradeListOpen ? " on" : ""}`}
-          onClick={() => toggleSidePanel("tradeList")}
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            aria-hidden="true">
-            <path d="M4 5h16M4 12h16M4 19h16M4 5v0M8 5v0" />
-            <path d="M4 5h2M4 12h2M4 19h2" strokeWidth="3" />
-          </svg>
-        </button>
-      </Tooltip>
-
-      {/* Alerts panel toggle (bell). */}
-      <Tooltip content="Show alerts panel">
-        <button
-          className={`anchor-btn alerts-toggle${panelOpen ? " on" : ""}`}
-          onClick={() => toggleSidePanel("alerts")}
-        >
-          <BellIcon size={16} />
-        </button>
-      </Tooltip>
-
-      {/* Trading panel toggle (order ticket + positions). Hidden for a data-only
-          source: nothing to trade. */}
-      {!dataOnly && (
-      <Tooltip content="Show trading panel">
-        <button
-          className={`anchor-btn trade-toggle${tradeOpen ? " on" : ""}`}
-          onClick={() => toggleSidePanel("trade")}
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            aria-hidden="true">
-            <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
-          </svg>
-        </button>
-      </Tooltip>
-      )}
-    </>
+    </div>
   );
 }
 

@@ -10,6 +10,10 @@ import { installMemStorage } from "./lib/testMemStorage";
 
 installMemStorage();
 
+// The heatmap is an admin-only tool (Toolbar gates it on useIsAdmin, which
+// probes /whoami). Answer "admin" here so the split control renders at all.
+vi.mock("./admin/useIsAdmin", () => ({ useIsAdmin: () => true }));
+
 const { default: Toolbar } = await import("./Toolbar");
 const { ChartController } = await import("./lib/chartController");
 const {

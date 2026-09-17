@@ -27,6 +27,50 @@ export function BellIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// The four study-mode glyphs, shared by the toolbar's inline buttons and the
+// tight-bar "Study" menu (and its trigger face), so the same mode reads the
+// same everywhere. 2px stroke like the toolbar's other 15px glyphs.
+function study(children: ReactNode, size: number, className?: string) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width={size} height={size} fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      {children}
+    </svg>
+  );
+}
+// Rewind: two left-pointing triangles, playing the chart from a point in the
+// PAST, not plain playback.
+export function ReplayIcon({ size = 15, className }: { size?: number; className?: string }) {
+  return study(<><path d="M12 5v14L3 12z" /><path d="M22 5v14L13 12z" /></>, size, className);
+}
+// Rewind clock: run a strategy over past bars.
+export function BacktestIcon({ size = 15, className }: { size?: number; className?: string }) {
+  return study(
+    <><path d="M3 12a9 9 0 1 0 2.6-6.3" /><path d="M3 4v4h4" /><path d="M12 7.5v5l3.5 2" /></>,
+    size, className,
+  );
+}
+// Cell grid: the rule-proximity heatmap's tiles.
+export function HeatmapIcon({ size = 15, className }: { size?: number; className?: string }) {
+  return study(
+    <>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.2" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.2" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.2" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.2" />
+    </>,
+    size, className,
+  );
+}
+// Generic "study" face for the collapsed menu when no mode is on: a flask.
+export function StudyIcon({ size = 15, className }: { size?: number; className?: string }) {
+  return study(
+    <><path d="M9 3h6" /><path d="M10 3v6.5L4.5 19a1.5 1.5 0 0 0 1.3 2.2h12.4a1.5 1.5 0 0 0 1.3-2.2L14 9.5V3" /><path d="M7.5 15h9" /></>,
+    size, className,
+  );
+}
+
 // Warning triangle shared by the legend's amber ⚠ badge and Tooltip's caveat
 // note. Sized per caller; currentColor so each context sets the amber (or not).
 // The dot is filled rather than stroked so it stays a dot at 11-13px.

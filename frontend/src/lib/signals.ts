@@ -501,6 +501,11 @@ export const backtestProgressSignal = new Signal<BacktestProgress | null>(null);
 // closing/reopening it. Reset by the panel on unmount.
 export const backtestPanelHiddenSignal = new Signal<boolean>(false);
 
+// True while the backtest panel is docked open. App owns the state (it is
+// component state there); this mirror lets the toolbar's Backtest button show
+// the same "open" mark as the other side-panel toggles.
+export const backtestPanelOpenSignal = new Signal<boolean>(false);
+
 // The current stall-window label for the active run (backtest/sweep/WFO), or
 // null when idle or when a moving progress bar has taken over. Set in
 // BacktestButton's run handler; read by the result panels. Values are stage keys

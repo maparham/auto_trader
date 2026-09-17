@@ -3053,16 +3053,8 @@
   border-radius: 6px 0 0 6px; padding-right: 4px;
   display: inline-flex; align-items: center; gap: 6px;
 }
-/* ON is a filled pill: the heatmap repaints the whole candle pane, so the
-   control that did it should be unmistakable at a glance. */
-.toolbar .heatmap-toggle.seg-on { background: var(--accent); color: var(--accent-text); }
-.toolbar .heatmap-toggle.seg-on:hover:not(:disabled) { background: var(--accent); }
-/* Armed like a drawing tool, styled like one: the same quiet fill and accent
-   content the draw sidebar's armed tools use, not the Heatmap's solid accent
-   (that marks a persistent paint being ON, this marks a one-shot drag). */
-.toolbar .pattern-range-toggle.seg-on,
-.toolbar .pattern-range-toggle.seg-on:hover:not(:disabled) {
-  background: var(--hover-strong); color: var(--accent); }
+/* ON states for the heatmap face and the Patterns toggle: see the shared
+   `.study-modes .anchor-btn.seg-on` rule (one muted look for all four modes). */
 .toolbar .anchor-btn.heatmap-caret {
   border-radius: 0 6px 6px 0; padding: 5px 3px;
   display: inline-flex; align-items: center;
@@ -4488,16 +4480,68 @@
 /* Theme toggle: a visible round bordered icon button (more noticeable than a
    bare borderless emoji), pinned to the far right. Keeps the gray hover. */
 .toolbar .theme-toggle,
-.toolbar .alerts-toggle,
 .toolbar .maximize-toggle {
   display: inline-flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; padding: 0; font-size: 16px; line-height: 1;
   border: 1px solid var(--border); border-radius: 50%;
   background: var(--surface-2);
 }
-/* Right-aligned cluster: Backtest is the first item pushed to the far right, so
-   it + the bell + the maximize toggle group together at the bar's end. */
-.toolbar .backtest { margin-left: auto; }
+/* Right-aligned cluster: the study-modes wrapper is the first item pushed to
+   the far right, so it, the panel group and Maximize sit together at the end.
+   `.menu` for the dropdown anchoring; the two dropdowns inside (heatmap
+   settings, tight-bar Study menu) hang off its right edge. */
+.toolbar .study-modes {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 2px;
+}
+/* Study-mode ON state, one look for all four (Replay running, Patterns or
+   Backtest docked, Heatmap painting): the app's quiet persistent-toggle
+   state, gray fill + accent glyph. Never a solid accent block. */
+.toolbar .study-modes .anchor-btn.on,
+.toolbar .study-modes .anchor-btn.on:hover:not(:disabled),
+.toolbar .study-modes .anchor-btn.seg-on,
+.toolbar .study-modes .anchor-btn.seg-on:hover:not(:disabled) {
+  background: var(--hover-strong); color: var(--accent);
+}
+/* Tight-bar triggers (Study, Panels): hidden until the container query below
+   swaps them in for the inline controls. */
+/* Specificity note: `.menu > .tooltip-trigger > button` sets display on every
+   menu trigger, so these need the wrapper class to win. */
+.toolbar .study-modes .study-menu-btn,
+.toolbar .panels-cluster .panels-menu-btn { display: none; align-items: center; gap: 6px; }
+.toolbar .study-menu-btn .tb-label { display: inline; }
+.toolbar .study-menu-btn .tb-caret,
+.toolbar .panels-menu-btn .tb-caret { color: var(--text-dim); font-size: 10px; }
+.toolbar .panels-menu-btn { position: relative; padding: 5px 6px 5px 8px; }
+.toolbar .study-dropdown,
+.toolbar .panels-dropdown { min-width: 200px; }
+/* Menu rows shared by the Study and Panels menus: icon, name, optional muted
+   hint ("running", "3 new"), trailing check on the active one. */
+.dropdown li.study-item .ind-name { flex: 1; }
+.dropdown li.study-item .study-hint { color: var(--text-faint); font-size: 11px; }
+.dropdown li.study-item .study-check { color: var(--accent); font-size: 12px; }
+.dropdown li.study-item.on .tmpl-ic { color: var(--accent); }
+.dropdown li.study-item.disabled { color: var(--text-faint); cursor: default; }
+.dropdown li.study-item.disabled:hover { background: transparent; color: var(--text-faint); }
+.dropdown li.study-item.disabled .tmpl-ic { color: var(--text-faint); }
+/* Unseen alert firings: a small accent count pinned to the bell's corner (and
+   to the collapsed Panels trigger). Same rule as the sidebar's History badge. */
+.toolbar .tb-badge {
+  position: absolute; top: -4px; right: -2px;
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--accent-text);
+  font-size: 9.5px; font-weight: 700; line-height: 1; letter-spacing: 0;
+  pointer-events: none;
+}
+/* Tightest bars: each group folds into its menu. Below the label-drop (1200),
+   so the bar degrades in steps: labels first, then the groups. */
+@container toolbar (max-width: 1000px) {
+  .toolbar .study-modes .study-inline,
+  .toolbar .study-modes .backtest { display: none; }
+  .toolbar .panels-cluster .panel-toggles { display: none; }
+  .toolbar .study-modes .study-menu-btn,
+  .toolbar .panels-cluster .panels-menu-btn { display: inline-flex; }
+}
 /* Trigger button: icon + label + caret inline (the icon inherits the dimmed/
    accent treatment from .tmpl-ic; caret matches the symbol button's). */
 .toolbar .tmpl-menu button { display: inline-flex; align-items: center; gap: 6px; }
@@ -4507,16 +4551,39 @@
 /* Right-aligned dropdown (opens toward the bar's left so it doesn't spill off the
    right edge); shared by the template + layout pickers. */
 .dropdown-right { left: auto; right: 0; }
-.toolbar .alerts-toggle,
 .toolbar .maximize-toggle { color: var(--text-dim); }
-.toolbar .alerts-toggle svg,
 .toolbar .maximize-toggle svg { display: block; }
 .toolbar .theme-toggle:hover:not(:disabled),
-.toolbar .alerts-toggle:hover:not(:disabled),
 .toolbar .maximize-toggle:hover:not(:disabled) { background: var(--hover-strong); border-color: var(--text-dim); }
-/* Active (panel open / maximized): accent fill so it reads as "on". */
-.toolbar .alerts-toggle.on,
+/* Active (maximized): accent fill so it reads as "on". */
 .toolbar .maximize-toggle.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+
+/* Side-panel toggles (live / trade list / alerts / ticket): one bordered
+   segmented control, because they ARE one radio set: a single right-docked
+   panel fits beside the chart, so opening one closes the rest. Squares of the
+   same size with hairline seams, no per-button chrome (the bell used to be a
+   round bordered button, the only one of the four, and read as unrelated). */
+.toolbar .panel-toggles {
+  display: inline-flex; align-items: stretch;
+  border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  background: var(--surface-2);
+}
+.toolbar .panel-toggles .anchor-btn {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0; border-radius: 0;
+  color: var(--text-dim); transition: background 0.12s, color 0.12s;
+}
+.toolbar .panel-toggles .anchor-btn svg { display: block; }
+/* Each button sits in Tooltip's trigger span, so the seams go on the spans. */
+.toolbar .panel-toggles .tooltip-trigger { display: inline-flex; }
+.toolbar .panel-toggles .tooltip-trigger + .tooltip-trigger { border-left: 1px solid var(--border); }
+.toolbar .panel-toggles .anchor-btn:hover:not(:disabled) { background: var(--hover-strong); color: var(--text); }
+.toolbar .panel-toggles .tb-badge { top: 1px; right: 1px; }
+/* Open panel: the app's quiet persistent-toggle state (gray fill, accent
+   glyph), never a solid accent block. */
+.toolbar .panel-toggles .anchor-btn.on,
+.toolbar .panel-toggles .anchor-btn.on:hover:not(:disabled) { background: var(--hover-strong); color: var(--accent); }
 /* Crosshair cue while picking an AVWAP anchor bar. */
 .anchoring, .anchoring canvas { cursor: crosshair !important; }
 

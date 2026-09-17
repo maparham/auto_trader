@@ -81,6 +81,7 @@ import {
   settingsRequest,
   settingsRequestTab,
   backtestSettingsRequest,
+  backtestPanelOpenSignal,
   openBacktestSettings,
   backtestPanelHiddenSignal,
   requestBacktestRun,
@@ -390,8 +391,11 @@ export default function App() {
     // Taking the dock closes whichever other side panel was open.
     if (open) claimSidePanel("backtest");
     setShowBacktestCfg(open);
+    backtestPanelOpenSignal.set(open);
     saveBacktestOpen(open);
   };
+  // Restored open-state reaches the toolbar's Backtest button the same way.
+  useEffect(() => { backtestPanelOpenSignal.set(showBacktestCfg); }, []);
   // The backtest panel's open-state is component state, so its "close yourself"
   // callback has to be registered from here (lib/sidePanels.ts). Registered once
   // with the first render's openBacktestCfg, which is safe because everything that

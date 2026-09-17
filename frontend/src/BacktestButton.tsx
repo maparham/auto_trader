@@ -17,6 +17,7 @@ import {
 } from "./lib/backtest";
 import type { ChartController } from "./lib/chartController";
 import Tooltip from "./components/Tooltip";
+import { BacktestIcon } from "./lib/menuIcons";
 import { fetchRangeWithStatus, RESOLUTION_SECONDS, type Period } from "./lib/feed";
 import { cachedRunNotice, emptyRangeError, warmupError } from "./lib/backtestDataHealth";
 import type { PriceSide } from "./theme";
@@ -45,6 +46,7 @@ import {
 } from "./lib/persist";
 import {
   openBacktestSettings,
+  backtestPanelOpenSignal,
   backtestRunRequest,
   backtestClearRequest,
   backtestResultSignal,
@@ -108,6 +110,10 @@ interface Props {
 export default function BacktestButton({ controller, period, epic, brokerId, priceSide }: Props) {
   const chart = controller?.chart ?? null;
   const [running, setRunning] = useState(false);
+  // Panel open-state, mirrored from App: the button marks "open" like the
+  // other side-panel toggles do, so the bar shows which surface is docked.
+  const [panelOpen, setPanelOpen] = useState(backtestPanelOpenSignal.value);
+  useEffect(() => backtestPanelOpenSignal.subscribe(setPanelOpen), []);
   const [error, setError] = useState<string | null>(null);
 
   // The transient run error belongs to a specific run; drop it when the symbol or
@@ -904,17 +910,11 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
     <div className="backtest">
       <Tooltip content={running ? "Backtest running…" : "Open or close the backtest panel"}>
         <button
-          className={`anchor-btn backtest-toggle${running ? " on" : ""}`}
+          className={`anchor-btn backtest-toggle study-inline${panelOpen || running ? " on" : ""}`}
+          aria-pressed={panelOpen}
           onClick={openBacktestSettings}
         >
-          {/* Rewind clock: replay history — run a strategy over past bars. */}
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            aria-hidden="true">
-            <path d="M3 12a9 9 0 1 0 2.6-6.3" />
-            <path d="M3 4v4h4" />
-            <path d="M12 7.5v5l3.5 2" />
-          </svg>
+          <BacktestIcon />
           <span className="tb-label">Backtest</span>
         </button>
       </Tooltip>

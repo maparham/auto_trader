@@ -89,7 +89,9 @@ export default function SnapshotToolbar({
           there is never a second poller. */}
       <ComputeHostButton />
 
+      <span className="tb-div" aria-hidden="true" />
       <PanelToggles />
+      <span className="tb-div" aria-hidden="true" />
       <MaximizeToggle maximized={maximized} onToggleMaximize={onToggleMaximize} />
     </header>
   );

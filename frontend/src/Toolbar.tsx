@@ -17,6 +17,8 @@ import HeatmapPanel from "./HeatmapPanel";
 import { EQUITY_INDICATOR, isChartReplaying } from "./lib/backtest";
 import {
   alertModalRequest,
+  backtestPanelOpenSignal,
+  openBacktestSettings,
   symbolSearchRequest,
   drawingSettingsRequest,
   saveDefaultTemplateRequest,
@@ -47,7 +49,42 @@ import type { ChartController } from "./lib/chartController";
 import ContextMenu from "./ContextMenu";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
-import { SimilarSequenceIcon, MenuIcons } from "./lib/menuIcons";
+import {
+  SimilarSequenceIcon, MenuIcons, ReplayIcon, BacktestIcon, HeatmapIcon, StudyIcon,
+} from "./lib/menuIcons";
+import type { ReactNode } from "react";
+
+// One row of the tight-bar Study menu. `on` marks a mode that is currently
+// active (its panel docked / paint on) with a trailing check.
+function StudyItem({
+  icon, label, hint, on, disabled, disabledReason, onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  hint?: string;
+  on?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
+  onClick: () => void;
+}) {
+  const row = (
+    <li
+      role="menuitemcheckbox"
+      aria-checked={Boolean(on)}
+      aria-disabled={disabled}
+      className={`study-item${disabled ? " disabled" : ""}${on ? " on" : ""}`}
+      onClick={() => { if (!disabled) onClick(); }}
+    >
+      <span className="tmpl-ic">{icon}</span>
+      <span className="ind-name">{label}</span>
+      {hint && <span className="study-hint">{hint}</span>}
+      {on && <span className="study-check" aria-hidden="true">✓</span>}
+    </li>
+  );
+  return disabled && disabledReason ? (
+    <Tooltip content={disabledReason} placement="left">{row}</Tooltip>
+  ) : row;
+}
 import {
   Caret,
   SymbolChip,
@@ -228,6 +265,10 @@ export default function Toolbar({
   // the panel (that was the old behaviour, where the panel WAS the on state);
   // clicking away closes the panel and leaves the heatmap painting.
   const [heatOpen, setHeatOpen] = useState(false);
+  // Tight-bar "Study" menu (the four study modes behind one trigger).
+  const [studyOpen, setStudyOpen] = useState(false);
+  const [backtestOpen, setBacktestOpen] = useState(backtestPanelOpenSignal.value);
+  useEffect(() => backtestPanelOpenSignal.subscribe(setBacktestOpen), []);
 
   // drawing right-click context menu (Lock/Settings/Delete etc — the tools that
   // CREATE drawings now live in DrawSidebar; this menu still fires from the chart).
@@ -243,18 +284,42 @@ export default function Toolbar({
   // Close dropdowns on click outside. The ref wraps button+dropdown, so clicking
   // the toggle stays "inside" and doesn't fight the button's own onClick.
   useEffect(() => {
-    if (!indOpen && !tmplOpen && !heatOpen) return;
+    if (!indOpen && !tmplOpen && !heatOpen && !studyOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (indOpen && indMenuRef.current && !indMenuRef.current.contains(t)) setIndOpen(false);
       if (tmplOpen && tmplMenuRef.current && !tmplMenuRef.current.contains(t))
         setTmplOpen(false);
-      if (heatOpen && heatMenuRef.current && !heatMenuRef.current.contains(t))
-        setHeatOpen(false);
+      // Both study-cluster dropdowns share the cluster wrapper as their boundary.
+      if (heatMenuRef.current && !heatMenuRef.current.contains(t)) {
+        if (heatOpen) setHeatOpen(false);
+        if (studyOpen) setStudyOpen(false);
+      }
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [indOpen, tmplOpen, heatOpen]);
+  }, [indOpen, tmplOpen, heatOpen, studyOpen]);
+
+  // Shared by the inline heatmap face and the Study menu item.
+  const toggleHeatmap = () => {
+    if (!heatmap) return;
+    const next = !heatmap.on;
+    heatmap.setOn(next);
+    setHeatOpen(next);
+  };
+  const replayTip = !replayEntry?.available
+    ? "Bar replay needs a chart with history: not a sub-minute interval, and not a saved snapshot."
+    : replayEntry.active
+      ? "A replay session is already running on this chart."
+      : "Bar replay: play the chart forward from a point in the past";
+  // Which study mode is on, for the collapsed trigger's face. First wins when
+  // several are (replay + heatmap can coexist); the menu shows each one.
+  const activeStudy: "replay" | "patterns" | "backtest" | "heatmap" | null =
+    replayEntry?.active ? "replay"
+      : patternPanelOpen ? "patterns"
+      : backtestOpen ? "backtest"
+      : heatmap?.on ? "heatmap"
+      : null;
 
   // Right-clicking any overlay (drawn live or rehydrated) opens our context menu.
   // Bound to the FOCUSED cell's overlay manager; re-bind when focus changes.
@@ -609,7 +674,7 @@ export default function Toolbar({
               an inline SVG (currentColor) so it stays monochrome, not a colored emoji. */}
           <Tooltip content="Create a price alert">
           <button
-            className="anchor-btn icon-btn"
+            className="anchor-btn icon-btn alert-btn"
             onClick={() => {
               // This click is a user gesture: unlock audio so later (programmatic)
               // pings can sound, and request OS-notification permission. Surface the
@@ -768,93 +833,39 @@ export default function Toolbar({
 
       <span className="tb-div" aria-hidden="true" />
 
-      {/* The two chart STUDY MODES, sitting with Backtest: all three are ways of
-          studying the strategy rather than of drawing on the chart. Both used to
-          be pinned over the focused cell's price axis, one copy per cell in a
-          split; here there is one of each, acting on whichever cell has focus. */}
+      {/* The four STUDY MODES (Replay, Patterns, Backtest, Heatmap): ways of
+          studying the strategy rather than of drawing on the chart. There is
+          ONE of each, acting on whichever cell has focus. Together they are the
+          right-hand cluster: the wrapper carries the slack-soaking auto margin.
+
+          Two renderings share this wrapper and CSS picks one by toolbar width:
+          the inline buttons, and (tight bars) a single "Study" menu listing the
+          same four actions. The heatmap settings dropdown hangs off the wrapper
+          rather than off the inline split control, so it opens in both modes.
+          The wrapper is also the outside-click boundary for both dropdowns. */}
+      {/* Visible in demo too: the panel inside shows the published canned
+          results, and every Run control in there is a sign-up CTA. In demo the
+          clerk-user block below (whose auto margin normally owns the right
+          edge) is skipped, so the slack-soaking spacer sits here instead and
+          pins this tail cluster to the far right. */}
+      {isDemoMode() && <span style={{ marginLeft: "auto" }} aria-hidden="true" />}
+      <div className="menu study-modes" ref={heatMenuRef}>
 
       {/* Bar replay: play the chart forward from a point in the past. Disabled
           rather than hidden — the toolbar is stable chrome, and a control that
           vanishes reads as a bug. The two refusals are different facts, so they
           say different things. */}
-      <Tooltip
-        content={
-          !replayEntry?.available
-            ? "Bar replay needs a chart with history: not a sub-minute interval, and not a saved snapshot."
-            : replayEntry.active
-              ? "A replay session is already running on this chart."
-              : "Bar replay: play the chart forward from a point in the past"
-        }
-      >
+      <Tooltip content={replayTip}>
         <button
           type="button"
-          className="anchor-btn replay-toggle"
+          className="anchor-btn replay-toggle study-inline"
           disabled={!replayEntry?.available || replayEntry.active}
           onClick={() => replayEntry?.enter()}
         >
-          {/* Rewind glyph: two left-pointing triangles — playing the chart
-              from a point in the PAST, not plain playback. */}
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            aria-hidden="true">
-            <path d="M12 5v14L3 12z" />
-            <path d="M22 5v14L13 12z" />
-          </svg>
+          <ReplayIcon />
           <span className="tb-label">Replay</span>
         </button>
       </Tooltip>
-
-      {/* Rule-proximity heatmap: a split control. The face toggles the paint on
-          and off; the caret opens its settings. Turning it ON opens the settings
-          too, which is what the old chart-pinned control did (there the panel WAS
-          the on state) — the difference is that clicking away now closes the
-          panel and leaves the heatmap painting. */}
-      {showHeatmap && (
-      <div className="menu heatmap-split" ref={heatMenuRef}>
-        <Tooltip content="Rule proximity heatmap">
-          <button
-            className={`anchor-btn heatmap-toggle${heatmap?.on ? " seg-on" : ""}`}
-            disabled={!heatmap}
-            onClick={() => {
-              if (!heatmap) return;
-              const next = !heatmap.on;
-              heatmap.setOn(next);
-              setHeatOpen(next);
-            }}
-          >
-            {/* Cell-grid icon: only shown when the tight-toolbar rules hide the
-                labels, so this button keeps a face. */}
-            <svg className="heatmap-ic" viewBox="0 0 24 24" width="15" height="15" fill="none"
-              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-              aria-hidden="true">
-              <rect x="3.5" y="3.5" width="7" height="7" rx="1.2" />
-              <rect x="13.5" y="3.5" width="7" height="7" rx="1.2" />
-              <rect x="3.5" y="13.5" width="7" height="7" rx="1.2" />
-              <rect x="13.5" y="13.5" width="7" height="7" rx="1.2" />
-            </svg>
-            <span className="tb-label">Heatmap</span>
-          </button>
-        </Tooltip>
-        <Tooltip content="Heatmap settings">
-          <button
-            className="anchor-btn heatmap-caret"
-            disabled={!heatmap}
-            onClick={() => setHeatOpen((v) => !v)}
-          >
-            <Caret />
-          </button>
-        </Tooltip>
-        {heatOpen && heatmap && (
-          <div className="dropdown dropdown-right heatmap-dropdown">
-            <HeatmapPanel
-              view={heatmap.view}
-              onChange={heatmap.setView}
-              belowBase={heatmap.belowBase}
-            />
-          </div>
-        )}
-      </div>
-      )}
 
       {/* Similarity + preset pattern search, docked as a panel: this toggles
           it open/closed. Never disabled — the Presets view works without any
@@ -862,7 +873,7 @@ export default function Toolbar({
           (armPatternSelect, wired above) is gated by patternAvailable. */}
       <Tooltip content="Pattern search: find similar shapes on your charts, or scan for preset patterns">
         <button
-          className={`anchor-btn pattern-range-toggle${patternPanelOpen ? " seg-on" : ""}`}
+          className={`anchor-btn pattern-range-toggle study-inline${patternPanelOpen ? " seg-on" : ""}`}
           aria-pressed={patternPanelOpen}
           aria-label="Pattern search"
           onClick={togglePatternPanel}
@@ -875,12 +886,6 @@ export default function Toolbar({
       {/* Backtest + Live sit together here (kept off the tab bar so they survive
           maximized view): backtest a rule strategy, then arm the same strategy
           live against a broker account. controller/period/symbol are in scope. */}
-      {/* Visible in demo too: the panel inside shows the published canned
-          results, and every Run control in there is a sign-up CTA. In demo the
-          clerk-user block below (whose auto margin normally owns the right
-          edge) is skipped, so the slack-soaking spacer sits here instead and
-          pins this tail cluster to the far right. */}
-      {isDemoMode() && <span style={{ marginLeft: "auto" }} aria-hidden="true" />}
       <BacktestButton
         controller={controller}
         period={period}
@@ -889,8 +894,118 @@ export default function Toolbar({
         priceSide={priceSide}
       />
 
+      {/* Rule-proximity heatmap: a split control. The face toggles the paint on
+          and off; the caret opens its settings. Turning it ON opens the settings
+          too, which is what the old chart-pinned control did (there the panel WAS
+          the on state) — the difference is that clicking away now closes the
+          panel and leaves the heatmap painting. Admin-only, so it sits LAST:
+          its presence must not shift the three everyone sees. */}
+      {showHeatmap && (
+      <div className="heatmap-split study-inline">
+        <Tooltip content="Rule proximity heatmap">
+          <button
+            className={`anchor-btn heatmap-toggle${heatmap?.on ? " seg-on" : ""}`}
+            aria-pressed={Boolean(heatmap?.on)}
+            disabled={!heatmap}
+            onClick={toggleHeatmap}
+          >
+            {/* Cell-grid icon: only shown when the tight-toolbar rules hide the
+                labels, so this button keeps a face. */}
+            <HeatmapIcon className="heatmap-ic" />
+            <span className="tb-label">Heatmap</span>
+          </button>
+        </Tooltip>
+        <Tooltip content="Heatmap settings">
+          <button
+            className="anchor-btn heatmap-caret"
+            disabled={!heatmap}
+            onClick={() => setHeatOpen((v) => !v)}
+          >
+            <Caret />
+          </button>
+        </Tooltip>
+      </div>
+      )}
+
+      {/* Tight bars: the same four actions behind one trigger. The trigger's
+          face is the mode currently on (or the generic study glyph), so the
+          collapsed bar still says what is running. */}
+      <Tooltip content="Study tools: Replay, Patterns, Backtest, Heatmap">
+        <button
+          className={`anchor-btn study-menu-btn${activeStudy ? " on" : ""}`}
+          aria-haspopup="menu"
+          aria-expanded={studyOpen}
+          onClick={() => setStudyOpen((v) => !v)}
+        >
+          {activeStudy === "replay" ? <ReplayIcon />
+            : activeStudy === "patterns" ? <SimilarSequenceIcon />
+            : activeStudy === "backtest" ? <BacktestIcon />
+            : activeStudy === "heatmap" ? <HeatmapIcon />
+            : <StudyIcon />}
+          <span className="tb-label">Study</span>
+          <Caret />
+        </button>
+      </Tooltip>
+      {studyOpen && (
+        <div className="dropdown dropdown-right study-dropdown" role="menu">
+          <ul>
+            <StudyItem
+              icon={<ReplayIcon />}
+              label="Replay"
+              hint={replayEntry?.active ? "running" : undefined}
+              disabled={!replayEntry?.available || Boolean(replayEntry?.active)}
+              disabledReason={replayTip}
+              onClick={() => { replayEntry?.enter(); setStudyOpen(false); }}
+            />
+            <StudyItem
+              icon={<SimilarSequenceIcon />}
+              label="Patterns"
+              on={patternPanelOpen}
+              onClick={() => { togglePatternPanel(); setStudyOpen(false); }}
+            />
+            <StudyItem
+              icon={<BacktestIcon />}
+              label="Backtest"
+              on={backtestOpen}
+              onClick={() => { openBacktestSettings(); setStudyOpen(false); }}
+            />
+            {showHeatmap && (
+              <>
+                <li className="sep" />
+                <StudyItem
+                  icon={<HeatmapIcon />}
+                  label="Heatmap"
+                  on={Boolean(heatmap?.on)}
+                  disabled={!heatmap}
+                  onClick={() => { toggleHeatmap(); setStudyOpen(false); }}
+                />
+                <StudyItem
+                  icon={MenuIcons.settings}
+                  label="Heatmap settings"
+                  disabled={!heatmap}
+                  onClick={() => { setStudyOpen(false); setHeatOpen(true); }}
+                />
+              </>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {heatOpen && heatmap && (
+        <div className="dropdown dropdown-right heatmap-dropdown">
+          <HeatmapPanel
+            view={heatmap.view}
+            onChange={heatmap.setView}
+            belowBase={heatmap.belowBase}
+          />
+        </div>
+      )}
+      </div>
+
+      {/* Side-panel toggles: a distinct group from the study modes before them,
+          hence the divider. */}
+      <span className="tb-div" aria-hidden="true" />
       <PanelToggles dataOnly={isDataOnlyBroker(brokerId)} />
-      <MaximizeToggle maximized={maximized} onToggleMaximize={onToggleMaximize} />
 
       {symModalOpen && (
         <SymbolSearchModal
@@ -928,6 +1043,10 @@ export default function Toolbar({
         </div>
       )}
 
+      {/* Maximize is a VIEW control, not a feature: it lives at the bar's far
+          edge, past the account avatar, so it never reads as a fifth panel. */}
+      <span className="tb-div" aria-hidden="true" />
+      <MaximizeToggle maximized={maximized} onToggleMaximize={onToggleMaximize} />
     </header>
   );
 }
