@@ -17,7 +17,7 @@ describe("TRENDLINES_DEFAULTS", () => {
       "pivotLen", "touchMult", "minTouches", "minSpanBars", "maxProjBars", "maxLines",
       "minSwingAtr", "minSwingReach", "pairPivots", "maxTouches", "maxSpanBars",
       "maxSlopeAtr", "minSlopeAtr", "maxTouchSpacing", "minTouchSpacing",
-      "minCrossings", "maxCrossings", "pierceMult", "minBackBars", "maxDistAtr", "maxDistPct",
+      "minCrossings", "maxCrossings", "pierceMult", "minBackBars", "maxDistAtr", "maxDistPct", "mergeAtr", "onePerPivot",
     ]);
   });
   it("shares one pool, so pairing reaches 40 pivots back", () => {
@@ -33,13 +33,13 @@ describe("parseTrendlinesConfig", () => {
     expect(parseTrendlinesConfig("junk")).toEqual(TRENDLINES_DEFAULTS);
   });
   it("reads every slot in order", () => {
-    const p = [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5];
+    const p = [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1];
     expect(parseTrendlinesConfig(p)).toEqual({
       pivotLen: 4, touchMult: 0.5, minTouches: 3, minSpanBars: 30, maxProjBars: 100,
       maxLines: 9, minSwingAtr: 3, minSwingReach: 6, pairPivots: 25, maxTouches: 7,
       maxSpanBars: 300, maxSlopeAtr: 0.2, minSlopeAtr: 0.01, maxTouchSpacing: 60,
       minTouchSpacing: 3, minCrossings: 1, maxCrossings: 4, pierceMult: 0.4,
-      minBackBars: 12, maxDistAtr: 2.5, maxDistPct: 1.5,
+      minBackBars: 12, maxDistAtr: 2.5, maxDistPct: 1.5, mergeAtr: 0.75, onePerPivot: 1,
     });
   });
   // "Only lines near price" was a draw-time rule at a fixed TL_NEAR_PRICE_ATR
@@ -57,7 +57,7 @@ describe("parseTrendlinesConfig", () => {
     expect(parseTrendlinesConfig([...Array(19).fill(5), 0], { declutter: "near" }).maxDistAtr).toBe(0);
   });
   it("keeps zero on the >= 0 params and floors the integers", () => {
-    const c = parseTrendlinesConfig([2.9, 0, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    const c = parseTrendlinesConfig([2.9, 0, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     expect(c.pivotLen).toBe(2);
     expect(c.touchMult).toBe(0);
     expect(c.minTouches).toBe(2); // clamped to the two anchors
@@ -71,6 +71,23 @@ describe("parseTrendlinesConfig", () => {
     expect(c.minBackBars).toBe(0);
     expect(c.maxDistAtr).toBe(0);
     expect(c.maxDistPct).toBe(0);
+    expect(c.mergeAtr).toBe(0);
+    expect(c.onePerPivot).toBe(0);
+  });
+  // The merge tolerance and One line per pivot were render-only extendData
+  // settings. A pane saved with them, and no slot 21/22, keeps them; a
+  // present slot wins; and anything else is the default.
+  it("migrates the render-only merge settings onto slots 21 and 22", () => {
+    expect(parseTrendlinesConfig([], { dedupeAtr: 2.5 }).mergeAtr).toBe(2.5);
+    expect(parseTrendlinesConfig([], { dedupe: false }).mergeAtr).toBe(0);
+    expect(parseTrendlinesConfig([], { dedupe: false, dedupeAtr: 2 }).mergeAtr).toBe(0);
+    expect(parseTrendlinesConfig([], { dedupeAtr: -1 }).mergeAtr).toBe(1);
+    expect(parseTrendlinesConfig([], {}).mergeAtr).toBe(1);
+    expect(parseTrendlinesConfig([...Array(21).fill(5), 0.5], { dedupeAtr: 2.5 }).mergeAtr).toBe(0.5);
+    expect(parseTrendlinesConfig([], { declutter: "pivot" }).onePerPivot).toBe(1);
+    expect(parseTrendlinesConfig([], { declutter: "off" }).onePerPivot).toBe(0);
+    expect(parseTrendlinesConfig([...Array(22).fill(5), 0], { declutter: "pivot" }).onePerPivot).toBe(0);
+    expect(parseTrendlinesConfig([...Array(22).fill(5), 3]).onePerPivot).toBe(1);
   });
 
   // A pierce is a full touch and a gap only a half, so the two tolerances ship

@@ -45,6 +45,7 @@ import {
   MAX_LIVE_MULT,
   parseTrendlinesConfig,
   TL_ATR_LEN,
+  TL_DEDUPE_ATR,
   TL_NEAR_PRICE_ATR,
   TL_NEAREST,
   tlOutputName,
@@ -728,25 +729,30 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
     }
   }
 
-  // 4. Emit: the live majors in rank order fill tl_1..tl_maxLines; the one
-  //    nearest the close fills tl_nearest (ties to the better rank, since the
-  //    walk is in rank order and only a STRICTLY nearer line displaces).
+  // 4. Emit: the live majors in rank order, MERGED (mergeLines at this bar's
+  //    tolerance, the same pass the draw path runs), fill tl_1..tl_maxLines;
+  //    the one nearest the close AMONG THOSE fills tl_nearest (ties to the
+  //    better rank, since the walk is in rank order and only a STRICTLY nearer
+  //    line displaces). Only lines on the chart take part in a rule: a line
+  //    merged away, or ranked past the drawn budget, reports nothing.
   const close = closes[i];
   const point: TrendlinesPoint = {};
   const majors = lines.filter((l) => isLive(l, i, cfg) && isMajor(l, i, cfg));
   majors.sort(rankLines);
+  const drawn = mergeLines(majors, i, mergeTolerance(cfg, a));
   let nearestV = 0;
   let nearestD = Infinity;
-  for (let r = 0; r < majors.length; r++) {
-    const v = projectAt(majors[r], i);
-    if (r < cfg.maxLines) point[tlOutputName(r + 1) as `tl_${number}`] = v;
+  const shown = Math.min(drawn.length, cfg.maxLines);
+  for (let r = 0; r < shown; r++) {
+    const v = projectAt(drawn[r], i);
+    point[tlOutputName(r + 1) as `tl_${number}`] = v;
     const d = Math.abs(v - close);
     if (d < nearestD) {
       nearestD = d;
       nearestV = v;
     }
   }
-  if (majors.length) point.tl_nearest = nearestV;
+  if (shown) point.tl_nearest = nearestV;
   points[i] = point;
   st.lines = lines;
 }
@@ -968,47 +974,18 @@ export interface TrendlinesExtend {
    * moves with maxLines and with proximity order. That is fine here and only
    * here: this is the draw path, and no operand reads it. */
   extend?: "ray" | "segment" | "extended" | "cross" | "lastbar";
-  /** LEGACY off switch for the merge pass, read but no longer written: the
-   * panel dropped the checkbox once it was clear that `dedupeAtr: 0` says the
-   * same thing (dropDuplicates returns everything at tol 0). Kept as a reader
-   * so a pane saved with the box unticked stays unmerged; the settings modal
-   * opens such a pane on tolerance 0 and clears the flag. */
+  /** LEGACY, read only by the mergeAtr migration (legacyMergeAtr in
+   * trendlinesOutputs): the old "Merge similar lines" checkbox, false meaning
+   * a 0 tolerance. Never written. */
   dedupe?: boolean;
-  /** How far apart two lines through the same pivot may project at the last bar
-   * and still merge, in ATR(14). Absent takes TL_DEDUPE_ATR; 0 IS THE OFF
-   * SWITCH, and is the only one the panel offers.
-   *
-   * A FIELD, after two rounds of arguing it should stay a constant. What
-   * settled it was the two charts disagreeing: the DXY monthly fixture wants a
-   * wider tolerance to collapse its fans, and a live US100 daily pane wants a
-   * narrower one, because there every merge is between lines that begin months
-   * apart and converge on one later pivot rather than a fan off a shared
-   * origin. One number cannot be right for both, which is the case a setting
-   * exists for. */
+  /** LEGACY, read only by the mergeAtr migration: the merge tolerance from
+   * when the pass was render-only. It is calcParams slot 21 now (mergeAtr),
+   * because a merged-away line must not report to a rule, and only the calc
+   * can arrange that. Never written. */
   dedupeAtr?: number;
-  /** Which decluttering rule the pane runs. Defaults to "off".
-   *
-   * "near" is RETIRED, read but never written: it drew only the lines within
-   * TL_NEAR_PRICE_ATR of the close at the last bar. That job moved into the
-   * calc as the two Max Distance params (calcParams 19 and 20), and a pane
-   * saved with "near" migrates onto Max Distance 5 ATR in
-   * parseTrendlinesConfig; declutterMode reads it as "off".
-   *
-   * "pivot": keep ONE line where several run through the same pivot, the one
-   * closest to price, however far apart they sit. This is the merge pass with
-   * its tolerance removed rather than a new rule, so the two exemptions still
-   * hold (a line an operand reads, a pinned line) — but unlike merging it does
-   * NOT wait on a non-zero `dedupeAtr`, because picking it here is the explicit
-   * instruction that a tolerance only implies. What it answers is the fan no
-   * tolerance a pane can afford would collapse: three lines through one swing
-   * low, 18 and 27 points apart at the last bar, need ~8.5 ATR to merge and
-   * that number would swallow half the pane elsewhere. The cost belongs to
-   * whoever picks it: a shared pivot sometimes joins two genuinely different
-   * levels (a year-long support that happens to touch the same swing as a
-   * three-week one), and this always keeps the nearer.
-   *
-   * Render-only like the rest of this block: a line hidden here still emits,
-   * and selectDrawnLines draws it anyway if it does. */
+  /** LEGACY, read only by the migrations in trendlinesOutputs: the
+   * render-only Declutter select. "near" became Max Distance TL_NEAR_PRICE_ATR
+   * (slot 19); "pivot" became onePerPivot (slot 22). Never written. */
   declutter?: "off" | "near" | "pivot";
   /** LEGACY spelling of `declutter`, from when near-price was a checkbox and
    * the only rule. Read only by the Max Distance migration (legacyNearPrice
@@ -1149,7 +1126,9 @@ export type TrendlinesCalcPoint = TrendlinesPoint & {
   lineIdx?: number;
 };
 
-/** How far apart two lines THROUGH THE SAME PIVOT may project at the last bar
+/** (Historical note on the merge tolerance, now the mergeAtr calcParam whose
+ * default is TL_DEDUPE_ATR in trendlinesOutputs.ts.)
+ * How far apart two lines THROUGH THE SAME PIVOT may project at the last bar
  * and still count as one line, in ATR(14).
  *
  * WAS 1 ATR, on the reasoning that a gap smaller than a typical bar's range is
@@ -1165,7 +1144,7 @@ export type TrendlinesCalcPoint = TrendlinesPoint & {
  * nothing (5.72 lines per bar to 5.46) because the freed slots refill.
  *
  * As generous as it is only because the shared-pivot requirement carries the
- * real weight (see dropDuplicates). A tolerance this wide applied to any two
+ * real weight (see mergeLines). A tolerance this wide applied to any two
  * lines would swallow unrelated levels.
  *
  * THAT REQUIREMENT HAS ITSELF LOOSENED, so the two changes compound and the
@@ -1189,7 +1168,7 @@ export type TrendlinesCalcPoint = TrendlinesPoint & {
  * thins the chart, which is the kind of double duty this file has documented at
  * length elsewhere (see maxLines) precisely because it keeps surprising people.
  * Merging stays predictable instead. */
-export const TL_DEDUPE_ATR = 1;
+export { TL_DEDUPE_ATR };
 
 
 /** The dedup pass's inputs. `tol` is a price distance (0 or NaN turns merging
@@ -1206,15 +1185,6 @@ export interface TrendlineDedupe {
 
 /** The dedup tolerance for a bar's ATR, or 0 when merging is off or the ATR
  * has not warmed up yet. */
-/** The pane's decluttering rule, with the legacy `nearPrice` checkbox folded
- * in. ONE reader for the chart and the settings modal, so a pane that predates
- * the select cannot open on one rule and draw another. */
-export function declutterMode(
-  ext: Pick<TrendlinesExtend, "declutter" | "nearPrice"> | undefined,
-): "off" | "pivot" {
-  return ext?.declutter === "pivot" ? "pivot" : "off";
-}
-
 /** DEFAULT alpha a dimmed line paints at, and the floor the panel's percent is
  * read against.
  *
@@ -1235,7 +1205,7 @@ export const TL_DIM_ALPHA = 0.6;
  * line is what Declutter is for — a fade that can reach invisible would hide
  * one with no row saying so. Anything not a finite number
  * (an older pane with no such key, a hand-written payload) takes the default,
- * the same fallback dedupeTolerance uses for its multiple. */
+ * the same fallback the merge tolerance used for its multiple. */
 export function trendlineDimAlpha(
   ext: Pick<TrendlinesExtend, "dimOpacity"> | undefined,
 ): number {
@@ -1252,7 +1222,7 @@ export function trendlineDimAlpha(
  * a 0 and a hand-written payload all read as off — the file's standing off
  * switch idiom.
  *
- * A PURE PREDICATE beside declutterMode, and for the same reason: the draw
+ * A PURE PREDICATE beside mergeTolerance, and for the same reason: the draw
  * path is canvas paint, so a rule buried in it cannot be tested, and any
  * second surface that wants to explain the fade must be able to ask. */
 export function trendlineDimmed(
@@ -1275,32 +1245,22 @@ export function trendlineDimmed(
   );
 }
 
-export function dedupeTolerance(
-  atr: number | undefined,
-  /** LEGACY `dedupe` flag — false only on a pane saved while the old checkbox
-   * existed, and equivalent to a 0 tolerance. Nothing writes it any more. */
-  on: boolean,
-  /** ATR multiple from the panel, and the ONLY off switch it offers. Anything
-   * not a finite number >= 0 (an older chart with no such key, a hand-written
-   * payload) falls back to the default; an explicit 0 is honoured and turns
-   * merging off. */
-  mult: number | undefined = TL_DEDUPE_ATR,
-): number {
-  const m =
-    typeof mult === "number" && Number.isFinite(mult) && mult >= 0
-      ? mult
-      : TL_DEDUPE_ATR;
-  return on && Number.isFinite(atr) ? (atr as number) * m : 0;
+/** The merge pass's price tolerance on a bar: Infinity under One line per
+ * pivot (sharing a pivot alone decides, no scale needed), mergeAtr times the
+ * bar's ATR(14) otherwise, and 0 (off) while the ATR is unwarmed or the
+ * tolerance is 0. ONE reader for the emit step and the draw path, which is
+ * what keeps the drawn set the emitted set. Ported to Python as
+ * merge_tolerance. */
+export function mergeTolerance(cfg: TrendlinesConfig, atr: number | null | undefined): number {
+  if (cfg.onePerPivot >= 1) return Infinity;
+  if (!(cfg.mergeAtr > 0) || typeof atr !== "number" || !Number.isFinite(atr)) return 0;
+  return cfg.mergeAtr * atr;
 }
 
-interface DrawEntry {
-  line: TrendLine;
-  proj: number;
-  dist: number;
-}
 
 /** Drops the near-duplicates from an already rank-sorted list, keeping the
- * first of each group.
+ * first of each group. RUNS IN THE CALC (the emit step) and again in the draw
+ * path with the pinned lines exempt; ported to Python as merge_lines.
  *
  * TWO LINES ARE ONE WHEN THEY RUN THROUGH THE SAME PIVOT and project within
  * `tol` of each other at `atIdx`. Both halves are load-bearing:
@@ -1325,10 +1285,9 @@ interface DrawEntry {
  * are the same level is a question about where price is now, not about where
  * they will be 250 bars from now.
  *
- * NEVER drops a line an operand is reading. The guarantee upstream is exact
- * (the emitted number IS projectAt on that bar), and a near-duplicate is by
- * definition not exact, so a merged-away emitter would break it. Never drops a
- * PINNED line either: its handle is the only control that can release the pin. */
+ * A MERGED-AWAY LINE EMITS NOTHING. This pass runs before tl_1..tl_N are
+ * filled, so a rule only ever reads a line that is on the chart. Never drops
+ * a PINNED line: its handle is the only control that can release the pin. */
 function sharesPivot(a: TrendLine, b: TrendLine): boolean {
   // Bar AND price, though in practice the bar decides it: an anchor's price is
   // that bar's high or low, so the same bar at the same kind is the same
@@ -1363,24 +1322,27 @@ function sharesPivot(a: TrendLine, b: TrendLine): boolean {
   return a.touchIdxs.some((i) => b.touchIdxs.includes(i));
 }
 
-function dropDuplicates(
-  entries: DrawEntry[],
-  dedupe: TrendlineDedupe,
-): DrawEntry[] {
-  const { tol, keep } = dedupe;
-  if (!(tol > 0)) return entries;
-  const out: DrawEntry[] = [];
-  for (const e of entries) {
+export function mergeLines(
+  ranked: TrendLine[],
+  atIdx: number,
+  tol: number,
+  keep?: ReadonlySet<TrendLine>,
+): TrendLine[] {
+  if (!(tol > 0)) return ranked;
+  const out: TrendLine[] = [];
+  const proj: number[] = [];
+  for (const line of ranked) {
+    const p = projectAt(line, atIdx);
     // PINNED LINES ONLY are exempt. A pin is stored by lineKey and its only
-    // control is the handle painted at the line's end, so merging a pinned line
-    // away would leave a pin with nothing to click. Being an operand the emit
-    // path reads is NOT an exemption: merging is a thing the user asked for.
+    // control is the handle painted at the line's end, so merging a pinned
+    // line away would leave a pin with nothing to click.
     const twin =
-      !keep.has(e.line) &&
-      out.some(
-        (k) => sharesPivot(k.line, e.line) && Math.abs(k.proj - e.proj) <= tol,
-      );
-    if (!twin) out.push(e);
+      !keep?.has(line) &&
+      out.some((k, idx) => sharesPivot(k, line) && Math.abs(proj[idx] - p) <= tol);
+    if (!twin) {
+      out.push(line);
+      proj.push(p);
+    }
   }
   return out;
 }
@@ -1396,27 +1358,22 @@ function dropDuplicates(
  * "the real lines" and is also what the detector itself already sorts by
  * (rankLines), so the pane and the emit path agree on which lines matter.
  *
- * SO THE DRAWN SET IS THE EMITTED SET, until the user says otherwise. Same
- * lines, same order, same cut: `maxLines` sizes both, and with Declutter off
- * and no merge tolerance every `tl_k` on that bar has its line on the chart.
- *
- * DECLUTTER AND MERGE ARE THE EXCEPTION, deliberately. Both act on the DRAWN
- * set only, and both can hide a line an operand is reading: that is what
- * asking for fewer lines means, and the user asked for it on this pane. The
- * operand still emits its value either way, so a rule never changes because
- * the chart got tidier. Only a PINNED line is exempt from the two cuts, and
- * only because a pin's sole control is the handle drawn at its end.
- *
- * The converse never held and still does not: the drawn set can contain lines
- * no operand reads (below minSpanBars, under minTouches), because the chart's
- * job is to show the geometry in play, not only the ranked numbers.
+ * SO THE DRAWN SET IS THE EMITTED SET. Same lines, same order, same merge
+ * pass (mergeLines at the same tolerance), same budget: every `tl_k` on the
+ * last bar has its line on the chart, and a line that is not on the chart
+ * reports nothing to a rule. The ONE exception is a PINNED line, which draws
+ * past the budget and survives merging because its handle is the only
+ * control that can release the pin; a pin is session UI the calc cannot
+ * see, so such a line is visible without emitting. Never the other way
+ * round.
  *
  * The drawn set is INDEPENDENT OF THE EXTEND MODE on purpose: rank and the
  * merge pass never look at how far a line is drawn, only at its projection
  * at `atIdx`. Switching extend must change how far lines run and
  * nothing else, so which lines appear, like which values emit, must not move.
  *
- * Draw-time only, so the Python port has no counterpart. */
+ * The merge itself is mirrored in Python (merge_lines, in the emit step);
+ * this budgeting wrapper with its pin exemption is draw-time only. */
 export function selectDrawnLines(
   lines: TrendLine[],
   atIdx: number,
@@ -1424,16 +1381,12 @@ export function selectDrawnLines(
   maxLines: number,
   dedupe: TrendlineDedupe | null,
 ): TrendLine[] {
-  const ranked: DrawEntry[] = lines
-    .map((l) => {
-      const proj = projectAt(l, atIdx);
-      return { line: l, proj, dist: Math.abs(proj - close) };
-    })
-    .sort((x, y) => rankLines(x.line, y.line));
-  const kept = dedupe ? dropDuplicates(ranked, dedupe) : ranked;
+  void close;
+  const ranked = lines.slice().sort(rankLines);
+  const kept = dedupe ? mergeLines(ranked, atIdx, dedupe.tol, dedupe.keep) : ranked;
   const out: TrendLine[] = [];
-  kept.forEach((e, idx) => {
-    if (idx < maxLines || dedupe?.keep.has(e.line)) out.push(e.line);
+  kept.forEach((line, idx) => {
+    if (idx < maxLines || dedupe?.keep.has(line)) out.push(line);
   });
   return out;
 }
@@ -2203,18 +2156,10 @@ function drawTrendlines(
   const pinnedLines = new Set(
     pins.size ? eligible.filter((l) => pins.has(lineKey(l, dataList, starts))) : [],
   );
-  // "One line per pivot" is the merge pass with no tolerance at all: sharing a
-  // pivot alone decides it. dropDuplicates walks RANK order, so the survivor
-  // among twins is the better-ranked one, and it needs no ATR to say so, which
-  // is why this branch does not go through dedupeTolerance and its
-  // unwarmed-ATR off switch.
-  const declutter = declutterMode(ext);
-  const dedupeTol =
-    declutter === "pivot"
-      ? Infinity
-      : dedupeTolerance(last.atr, ext?.dedupe ?? true, ext?.dedupeAtr);
+  // The same tolerance the emit step merged at on this bar, so the drawn set
+  // is the emitted set (plus pins).
   const drawn = selectDrawnLines(eligible, lastIdx, lastClose, cfg.maxLines, {
-    tol: dedupeTol,
+    tol: mergeTolerance(cfg, last.atr),
     keep: pinnedLines,
   });
   const handles: TrendlineHandle[] = [];

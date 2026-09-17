@@ -32,8 +32,8 @@ import {
   projectAt,
   rankLines,
   compareSurvival,
-  dedupeTolerance,
   selectDrawnLines,
+  mergeTolerance,
   drawnPivotIdxs,
   TL_PIVOT_STEM,
   TL_PIVOT_USED_GAP,
@@ -580,18 +580,61 @@ describe("computeTrendlines", () => {
     bars[40] = bar(40, 94, 100.5); // rising line, projects ABOVE the close later
     bars[25] = bar(25, 99.5, 108);
     bars[45] = bar(45, 99.5, 104); // falling line
-    const c = { ...cfg(), maxLines: 2 };
+    // Merge off, so the drawn set is the top maxLines majors by rank.
+    const c = { ...cfg(), maxLines: 2, mergeAtr: 0 };
     const { points, lines } = computeTrendlines(bars, c);
     const last = points[79];
     const majors = lines.filter((l) => isMajor(l, 79, c)).sort(rankLines);
-    expect(majors.length).toBeGreaterThanOrEqual(2);
+    expect(majors.length).toBeGreaterThanOrEqual(3);
     expect(last.tl_1).toBe(projectAt(majors[0], 79));
     expect(last.tl_2).toBe(projectAt(majors[1], 79));
     expect(last.tl_3).toBeUndefined();
     const close = bars[79].close;
-    const nearest = majors.reduce((b, l) =>
-      Math.abs(projectAt(l, 79) - close) < Math.abs(projectAt(b, 79) - close) ? l : b);
+    const dist = (l: TrendLine) => Math.abs(projectAt(l, 79) - close);
+    // tl_nearest is the nearest AMONG THE DRAWN lines: only what is on the
+    // chart takes part in a rule, and a third major ranked past the budget
+    // is not on the chart, however close it sits.
+    const nearest = majors.slice(0, 2).reduce((b, l) => (dist(l) < dist(b) ? l : b));
     expect(last.tl_nearest).toBe(projectAt(nearest, 79));
+    expect(Math.min(...majors.slice(2).map(dist))).toBeLessThan(dist(nearest));
+  });
+
+  // Three lows at 20 (90), 40 (94) and 60 (98.5): the pairs 20-40, 20-60 and
+  // 40-60 seed three lines that project within 1 ATR of each other at bar 79
+  // and share pivots, so the merge pass keeps one. Mirrored in Python.
+  const fan = () => {
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 94, 100.5);
+    bars[60] = bar(60, 98.5, 100.5);
+    return bars;
+  };
+
+  it("merges in the emit step: a merged-away line reports nothing", () => {
+    const off = computeTrendlines(fan(), cfg({ mergeAtr: 0 })).points[79];
+    expect(off.tl_1).toBeDefined();
+    expect(off.tl_2).toBeDefined();
+    expect(off.tl_3).toBeDefined();
+    const on = computeTrendlines(fan(), cfg()).points[79];
+    expect(on.tl_1).toBeDefined();
+    expect(on.tl_2).toBeUndefined();
+    expect(on.tl_nearest).toBe(on.tl_1);
+    const pivot = computeTrendlines(fan(), cfg({ mergeAtr: 0, onePerPivot: 1 })).points[79];
+    expect(pivot.tl_1).toBeDefined();
+    expect(pivot.tl_2).toBeUndefined();
+  });
+
+  it("the drawn set IS the emitted set under merging", () => {
+    const c = cfg();
+    const { points, lines, atr } = computeTrendlines(fan(), c);
+    const eligible = lines.filter((l) => isMajor(l, 79, c));
+    const drawn = selectDrawnLines(eligible, 79, 100, c.maxLines, {
+      tol: mergeTolerance(c, atr[79]),
+      keep: new Set(),
+    });
+    expect(drawn.map((l) => projectAt(l, 79))).toEqual(
+      [points[79].tl_1, points[79].tl_2, points[79].tl_3].filter((v) => v !== undefined),
+    );
   });
 
   it("stops projecting past Max Projection", () => {
@@ -1062,27 +1105,19 @@ describe("selectDrawnLines dedup", () => {
     expect(
       selectDrawnLines([fanA, fanB], 100, 100, 3, { tol: 0, keep: NONE }),
     ).toHaveLength(2);
-    expect(dedupeTolerance(undefined, true)).toBe(0);
-    expect(dedupeTolerance(NaN, true)).toBe(0);
-    expect(dedupeTolerance(4, false)).toBe(0);
-    expect(dedupeTolerance(4, true)).toBe(4 * TL_DEDUPE_ATR);
+    expect(mergeTolerance(cfg(), undefined)).toBe(0);
+    expect(mergeTolerance(cfg(), null)).toBe(0);
+    expect(mergeTolerance(cfg(), NaN)).toBe(0);
+    expect(mergeTolerance(cfg({ mergeAtr: 0 }), 4)).toBe(0);
+    expect(mergeTolerance(cfg(), 4)).toBe(4 * TL_DEDUPE_ATR);
   });
 
-  // THE FIELD. An explicit 0 is honoured (it means off, like the switch), but
-  // anything that is not a finite number >= 0 falls back to the default rather
-  // than turning merging off by accident: a chart saved before the field
-  // existed has no key at all, and undefined * atr is NaN, which no comparison
-  // is ever <= so nothing would merge.
-  it("takes the tolerance from the panel, and falls back rather than breaking", () => {
-    expect(dedupeTolerance(4, true, 2)).toBe(8);
-    expect(dedupeTolerance(4, true, 0)).toBe(0);
-    expect(dedupeTolerance(4, true, undefined)).toBe(4 * TL_DEDUPE_ATR);
-    expect(dedupeTolerance(4, true, NaN)).toBe(4 * TL_DEDUPE_ATR);
-    expect(dedupeTolerance(4, true, -1)).toBe(4 * TL_DEDUPE_ATR);
-    // The LEGACY flag still wins, so a pane saved while the "Merge similar
-    // lines" checkbox existed and was unticked stays unmerged. Nothing writes
-    // it any more: 0 above is the switch the panel offers.
-    expect(dedupeTolerance(4, false, 2)).toBe(0);
+  // THE SLOT. mergeAtr scales the bar's ATR; One line per pivot needs no ATR
+  // at all (sharing a pivot alone decides), so it is Infinity even unwarmed.
+  it("takes the tolerance from the config", () => {
+    expect(mergeTolerance(cfg({ mergeAtr: 2 }), 4)).toBe(8);
+    expect(mergeTolerance(cfg({ onePerPivot: 1 }), 4)).toBe(Infinity);
+    expect(mergeTolerance(cfg({ onePerPivot: 1, mergeAtr: 0 }), undefined)).toBe(Infinity);
   });
 
   // THE DEFAULT, pinned with the ceiling that bounds it. It was raised to 2.5

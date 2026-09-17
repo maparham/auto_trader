@@ -179,14 +179,16 @@ describe("TRENDLINES on DXY monthly", () => {
     expect(close - proj).toBeLessThan(3.5);
   });
 
-  // The nearest-to-close operand covers both EXPECTED lines' neighbourhood: a
-  // sanity range check that the detector is reading real, current geometry
-  // rather than stale far-off-screen lines.
-  it("emits a tl_nearest value in the high 90s on the last bar", () => {
+  // The nearest-to-close operand reads real, current geometry rather than
+  // stale far-off-screen lines: within a few points under the close. It is
+  // the nearest AMONG THE DRAWN lines (the merged top maxLines), which is why
+  // the band is wider than the hand-drawn lines' own neighbourhood.
+  it("emits a tl_nearest value a few points under the close on the last bar", () => {
     const { points } = computeTrendlines(bars, CFG);
     const last = points[points.length - 1];
-    expect(last.tl_nearest).toBeGreaterThan(96);
-    expect(last.tl_nearest).toBeLessThan(100);
+    const close = bars[bars.length - 1].close;
+    expect(last.tl_nearest).toBeLessThan(close);
+    expect(close - (last.tl_nearest as number)).toBeLessThan(5);
   });
 
   // THE CEILINGS USED TO STARVE THE LIVE SET. The cap's first key is
@@ -265,10 +267,12 @@ describe("TRENDLINES on DXY monthly", () => {
     const three = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 3 }).points;
     const differing = two.filter((p, i) => JSON.stringify(p) !== JSON.stringify(three[i]));
     expect(differing).toHaveLength(422);
-    // A named bar, so a drift is diagnosable rather than just red: at 1994-07
-    // the third live line displaces what tl_nearest reads.
-    expect(two[104].tl_nearest).toBeCloseTo(94.965, 3);
-    expect(three[104].tl_nearest).toBeCloseTo(93.934, 3);
+    // A named bar, so a drift is diagnosable rather than just red: at 1995-03
+    // the third drawn line is the nearest, and tl_nearest reads only the
+    // drawn set, so the two-line pane reports a farther line there.
+    expect(month(bars[112].timestamp)).toBe("1995-03");
+    expect(two[112].tl_nearest).toBeCloseTo(96.327, 3);
+    expect(three[112].tl_nearest).toBeCloseTo(70.29, 3);
   });
 
   // The invariant that lets the seed loop carry no duplicate check: a line is

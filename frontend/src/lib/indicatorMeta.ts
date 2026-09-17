@@ -53,7 +53,8 @@ export interface IndicatorInputDef {
   // it with them.
   section?: string;
   // Optional conditional visibility: only render this input when another input's
-  // (extend-stored) value is one of `equals`. Used e.g. to hide Pivot Bands'
+  // value is one of `equals` (an extend field by `field`, or a calcParam
+  // input by its key, read as 0/1 for a boolean). Used e.g. to hide Pivot Bands'
   // "Window (K)" unless Mode is "avg". Honored by the generic Inputs renderer.
   showWhen?: { field: string; equals: Array<string | number> };
   // Carried by the FIRST member of a grouped pair whose two inputs are the min
@@ -869,24 +870,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Where a line stops on the right, and whether it runs back before its first anchor.",
       },
       {
-        key: "declutter",
-        label: "Declutter",
-        type: "select",
-        source: "extend",
-        field: "declutter",
-        default: "off",
-        wide: true,
-        options: [
-          { value: "off", label: "Off" },
-          { value: "pivot", label: "One line per pivot" },
-        ],
-        tip: [
-          "One line per pivot: keeps just the strongest line where several pass through the same swing.",
-          "Drawing only. A line hidden here still reports its price to a rule.",
-          "To drop distant lines, use Max Distance under Filters.",
-        ],
-      },
-      {
         key: "showPivots",
         label: "Show pivots",
         type: "boolean",
@@ -969,32 +952,34 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        key: "dedupeAtr",
-        label: "Merge Lines within",
+        key: "p22",
+        label: "One line per pivot",
+        type: "boolean",
+        source: "calcParam",
+        index: 22,
+        default: false,
+        tip: [
+          "Where several lines pass through the same swing, keeps just the strongest.",
+          "A line removed here leaves the chart and stops reporting to rules.",
+        ],
+      },
+      {
+        ...num(21, "Merge Lines within", { min: 0, step: 0.25 }),
         // The label runs to a phrase the number completes ("Merge Lines
         // within 1 ATR"), so `wide` keeps its ⓘ beside the label rather than at
         // the end of the row (see controlFor's number branch). The control
         // still sits in the same column as every other one.
         wide: true,
-        // The tolerance IS the switch: 0 merges nothing, which is why the
-        // "Merge similar lines" checkbox that used to sit beside this box is
-        // gone (it wrote the same off state twice).
-        //
-        // "One line per pivot" IS this pass with no tolerance at all, so under
-        // it the box is inert: hidden rather than left there doing nothing. It
-        // comes back on Off.
-        showWhen: { field: "declutter", equals: ["off"] },
-        type: "number",
-        source: "extend",
-        field: "dedupeAtr",
-        default: 1,
-        min: 0,
-        step: 0.25,
+        // The tolerance IS the switch: 0 merges nothing. "One line per pivot"
+        // IS this pass with no tolerance at all, so under it the box is
+        // inert: hidden rather than left there doing nothing.
+        showWhen: { field: "p22", equals: [0] },
+        default: TL.mergeAtr,
         suffix: "ATR",
         tip: [
           "One pivot often starts several near-identical lines; this keeps the strongest and frees slots for lines with a different shape.",
-          "Distance is measured at the last bar. Zero merges nothing.",
-          "Drawing only. A line merged away still reports its price to a rule.",
+          "Distance is measured at each bar. Zero merges nothing.",
+          "A merged line leaves the chart and stops reporting to rules.",
         ],
       },
     ],

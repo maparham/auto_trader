@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from auto_trader.core.models import Candle
@@ -51,8 +51,9 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 #  min_swing_atr, min_swing_reach, pair_pivots, max_touches, max_span_bars,
 #  max_slope_atr, min_slope_atr, max_touch_spacing, min_touch_spacing,
 #  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
-#  max_dist_pct]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0)
+#  max_dist_pct, merge_atr, one_per_pivot]: TRENDLINES_DEFAULTS in
+#  trendlinesOutputs.ts.
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 1.0, 0)
 # The distance "Only lines near price" drew at, in ATR(14): what a pane saved
 # with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
 # trendlinesOutputs.ts.
@@ -95,6 +96,12 @@ class TrendlinesConfig:
     # a live line past the cut is dropped for good), so it changes what emits.
     max_dist_atr: float = 0.0
     max_dist_pct: float = 0.0
+    # The merge pass, in the emit step: two majors through the same pivot
+    # projecting within merge_atr x ATR(14) of each other are one line and
+    # the better-ranked survives; one_per_pivot (1) drops the tolerance so
+    # sharing a pivot alone decides. A merged-away line emits nothing.
+    merge_atr: float = 1.0
+    one_per_pivot: int = 0
     timeframe: str | None = None
 
 
@@ -102,7 +109,8 @@ class TrendlinesConfig:
 class TrendLine:
     """Two anchor pivots; the line NEVER rotates. k1/k2 say which extreme each
     anchor is; no gate reads them (kept so the two TrendLine shapes match).
-    No touch_idxs here: draw-only in the TS."""
+    touch_idxs is what shares_pivot reads: every bar counted as a touch, the
+    anchors included, in the order they were recorded (mirrors the TS)."""
 
     i1: int
     p1: float
@@ -117,6 +125,7 @@ class TrendLine:
     max_touch_gap: int
     min_touch_gap: float  # float only because the no-gap guard is math.inf
     max_touch_idx: int
+    touch_idxs: list[int] = field(default_factory=list)
 
 
 def trendlines_outputs(cfg: TrendlinesConfig) -> tuple[str, ...]:
@@ -125,10 +134,12 @@ def trendlines_outputs(cfg: TrendlinesConfig) -> tuple[str, ...]:
 
 def parse_trendlines_config(calc_params: object, extend_data: object) -> TrendlinesConfig:
     """Mirrors TS parseTrendlinesConfig. extendData is read for `mtf.timeframe`
-    and for the Max Distance migration: a pane saved before slots 19/20
-    existed with "Only lines near price" chosen (`declutter: "near"`, or the
-    checkbox-era `nearPrice: True` with no `declutter`) keeps that cut as
-    max_dist_atr TL_NEAR_PRICE_ATR, only while slot 19 is ABSENT. Number
+    and for the migrations of panes saved before slots 19 to 22 existed,
+    each only while its slot is ABSENT: "Only lines near price" (`declutter:
+    "near"`, or the checkbox-era `nearPrice: True` with no `declutter`) is
+    max_dist_atr TL_NEAR_PRICE_ATR; the render-only merge tolerance
+    (`dedupeAtr`, or `dedupe: False` meaning 0) is merge_atr; `declutter:
+    "pivot"` is one_per_pivot. Number
     coercion diverges from the TS on None, "" and [] (float() raises,
     Number() gives 0); deliberate and tested on both sides."""
     p: list[Any] = list(calc_params) if isinstance(calc_params, (list, tuple)) else []
@@ -137,6 +148,9 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
     mtf = ext.get("mtf") if isinstance(ext.get("mtf"), dict) else {}
     tf = mtf.get("timeframe")
     max_dist_atr_default = TL_NEAR_PRICE_ATR if len(p) <= 19 and _legacy_near_price(ext) else d[19]
+    legacy_merge = _legacy_merge_atr(ext) if len(p) <= 21 else None
+    merge_atr_default = d[21] if legacy_merge is None else legacy_merge
+    one_per_pivot_default = 1 if len(p) <= 22 and ext.get("declutter") == "pivot" else d[22]
 
     def num_at(i: int, default: float, allow_zero: bool) -> float:
         try:
@@ -175,6 +189,8 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         min_back_bars=zero_int(18, d[18]),
         max_dist_atr=num_at(19, max_dist_atr_default, True),
         max_dist_pct=num_at(20, d[20], True),
+        merge_atr=num_at(21, merge_atr_default, True),
+        one_per_pivot=1 if num_at(22, one_per_pivot_default, True) >= 1 else 0,
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
@@ -184,6 +200,58 @@ def _legacy_near_price(ext: dict[str, Any]) -> bool:
     if "declutter" in ext:
         return ext["declutter"] == "near"
     return ext.get("nearPrice") is True
+
+
+def _legacy_merge_atr(ext: dict[str, Any]) -> float | None:
+    """Mirrors TS legacyMergeAtr."""
+    if ext.get("dedupe") is False:
+        return 0.0
+    v = ext.get("dedupeAtr")
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v) if math.isfinite(v) and v >= 0 else None
+
+
+def merge_tolerance(cfg: TrendlinesConfig, atr_i: float | None) -> float:
+    """Mirrors TS mergeTolerance: math.inf under one_per_pivot, merge_atr x
+    ATR otherwise, 0 (off) with no ATR or no tolerance."""
+    if cfg.one_per_pivot >= 1:
+        return math.inf
+    if not cfg.merge_atr > 0 or atr_i is None or not math.isfinite(atr_i):
+        return 0.0
+    return cfg.merge_atr * atr_i
+
+
+def shares_pivot(a: TrendLine, b: TrendLine) -> bool:
+    """Mirrors TS sharesPivot: a shared anchor (bar and price, any of the four
+    pairings) or any shared touch bar."""
+    if (
+        (a.i1 == b.i1 and a.p1 == b.p1)
+        or (a.i2 == b.i2 and a.p2 == b.p2)
+        or (a.i1 == b.i2 and a.p1 == b.p2)
+        or (a.i2 == b.i1 and a.p2 == b.p1)
+    ):
+        return True
+    return any(i in b.touch_idxs for i in a.touch_idxs)
+
+
+def merge_lines(ranked: list[TrendLine], at_idx: int, tol: float) -> list[TrendLine]:
+    """Mirrors TS mergeLines (no pin exemption here: pins are draw-time UI).
+    Walks rank order, keeping a line unless it shares a pivot with a kept one
+    and projects within tol of it at at_idx."""
+    if not tol > 0:
+        return ranked
+    out: list[TrendLine] = []
+    proj: list[float] = []
+    for line in ranked:
+        p = project_at(line, at_idx)
+        twin = any(
+            shares_pivot(k, line) and abs(proj[idx] - p) <= tol for idx, k in enumerate(out)
+        )
+        if not twin:
+            out.append(line)
+            proj.append(p)
+    return out
 
 
 def max_distance_tol(cfg: TrendlinesConfig, atr_i: float, close: float) -> float:
@@ -459,6 +527,7 @@ def compute_trendlines(
                         )
                         if w > 0:
                             line.touches += w
+                            line.touch_idxs.append(k)
                             gap = k - line.max_touch_idx
                             if gap > line.max_touch_gap:
                                 line.max_touch_gap = gap
@@ -479,6 +548,7 @@ def compute_trendlines(
                         i1=i1, p1=p1, k1=k1, i2=k, p2=price, k2=kind, touches=2.0,
                         last_touch_idx=k, crossings=0, last_sign=0,
                         max_touch_gap=k - i1, min_touch_gap=k - i1, max_touch_idx=k,
+                        touch_idxs=[i1, k],
                     )
                     if cfg.max_slope_atr > 0 or cfg.min_slope_atr > 0:
                         atr_k = atr[k]
@@ -494,7 +564,6 @@ def compute_trendlines(
                         continue
                     for j in range(i1 + 1, i + 1):
                         step_crossing(cand, j, closes[j])
-                    seed_touches = [i1, k]
                     for q2 in range(q + 1, len(pool_idxs)):
                         pj = pool_idxs[q2]
                         if pj >= k:
@@ -511,8 +580,8 @@ def compute_trendlines(
                         )
                         if w > 0:
                             cand.touches += w
-                            seed_touches.append(pj)
-                    cand.max_touch_gap, cand.min_touch_gap = touch_gaps(seed_touches)
+                            cand.touch_idxs.append(pj)
+                    cand.max_touch_gap, cand.min_touch_gap = touch_gaps(cand.touch_idxs)
                     cand.max_touch_idx = cand.i2
                     lines.append(cand)
                 pool_idxs.append(k)
@@ -532,22 +601,25 @@ def compute_trendlines(
                 lines.sort(key=lambda line: (over_ceilings(line, cfg), survival_key(line)))
                 lines = lines[:cap]
 
-        # 4. Emit ranked outputs and the nearest to the close.
+        # 4. Emit the ranked majors, MERGED at this bar's tolerance (the pass
+        #    the draw path runs), cut to max_lines; tl_nearest is the nearest
+        #    AMONG THOSE. A line not on the chart reports nothing.
         close = closes[i]
         point: dict[str, float] = {}
         majors = [line for line in lines if is_live(line, i, cfg) and is_major(line, i, cfg)]
         majors.sort(key=rank_key)
+        drawn = merge_lines(majors, i, merge_tolerance(cfg, a))
         nearest_v = 0.0
         nearest_d = math.inf
-        for r, line in enumerate(majors):
-            v = project_at(line, i)
-            if r < cfg.max_lines:
-                point[tl_output_name(r + 1)] = v
+        shown = min(len(drawn), cfg.max_lines)
+        for r in range(shown):
+            v = project_at(drawn[r], i)
+            point[tl_output_name(r + 1)] = v
             d = abs(v - close)
             if d < nearest_d:
                 nearest_d = d
                 nearest_v = v
-        if majors:
+        if shown:
             point[TL_NEAREST] = nearest_v
         points[i] = point
 

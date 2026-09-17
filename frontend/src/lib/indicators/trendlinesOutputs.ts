@@ -111,6 +111,15 @@ export interface TrendlinesConfig {
   // emits, not only what draws: a rule reading tl_1 sees the cut too.
   maxDistAtr: number;
   maxDistPct: number;
+  // The merge pass, IN THE CALC: two majors through the same pivot that
+  // project within this many ATR(14) of each other on a bar are one line,
+  // and the better-ranked survives. 0 = off. Runs in the emit step, so a
+  // merged-away line neither draws nor reports to a rule: the drawn set IS
+  // the emitted set.
+  mergeAtr: number;
+  // 1: the merge pass with no tolerance at all, sharing a pivot alone
+  // decides. Same place, same consequence for rules. 0 = off.
+  onePerPivot: number;
 }
 
 /** KEY ORDER IS THE calcParams ORDER (mtfCoordinator builds HTF params from
@@ -138,7 +147,18 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   minBackBars: 0,
   maxDistAtr: 0,
   maxDistPct: 0,
+  mergeAtr: 1,
+  onePerPivot: 0,
 };
+
+/** DEFAULT merge tolerance, in ATR(14): the value the mergeAtr slot starts
+ * on. Measured on a US100 daily pane (see the note above TL_DEDUPE_ATR's
+ * former home in trendlines.ts): every merge from 0.25 to 3 joined lines
+ * beginning months apart that converge on a later pivot, and 1 is where
+ * that stops swallowing distinct levels. Kept under half of
+ * TL_NEAR_PRICE_ATR, or a line at the close could merge with one at the far
+ * edge of that band. */
+export const TL_DEDUPE_ATR = 1;
 
 /** The distance "Only lines near price" used to draw at, in ATR(14): the
  * Max Distance a pane that chose that rule migrates onto (see
@@ -158,14 +178,20 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  * maxProjBars, maxLines, minSwingAtr, minSwingReach, pairPivots, maxTouches,
  * maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing, minTouchSpacing,
  * minCrossings, maxCrossings, pierceMult, minBackBars, maxDistAtr,
- * maxDistPct]. Mirrored by backend parse_trendlines_config.
+ * maxDistPct, mergeAtr, onePerPivot]. Mirrored by backend
+ * parse_trendlines_config.
  *
- * `extendData` is read for ONE thing: a pane saved before the two Max
- * Distance slots existed with "Only lines near price" chosen (`declutter:
- * "near"`, or the checkbox-era `nearPrice: true` with no `declutter`) keeps
- * that cut as Max Distance TL_NEAR_PRICE_ATR. Only when slot 19 is ABSENT: a
- * present slot, 0 included, is what the user set since. The settings modal
- * rewrites both on its next save, so the flag retires on its own.
+ * `extendData` is read ONLY to migrate panes saved before slots 19 to 22
+ * existed, and only while the slot in question is ABSENT (a present slot, 0
+ * included, is what the user set since):
+ *  - "Only lines near price" (`declutter: "near"`, or the checkbox-era
+ *    `nearPrice: true` with no `declutter`) becomes Max Distance
+ *    TL_NEAR_PRICE_ATR (slot 19).
+ *  - the render-only merge tolerance (`dedupeAtr`, or the older `dedupe:
+ *    false` meaning 0) becomes mergeAtr (slot 21).
+ *  - `declutter: "pivot"` becomes onePerPivot (slot 22).
+ * The settings modal writes every slot on its next save, so the old keys
+ * retire on their own.
  *
  * touchMult, pierceMult and minSwingAtr take ZERO (no gap allowed; only an
  * extreme exactly on the line pierces; swing gate off),
@@ -185,6 +211,9 @@ export function parseTrendlinesConfig(
   const d = TRENDLINES_DEFAULTS;
   const maxDistAtrDefault =
     p[19] === undefined && legacyNearPrice(extendData) ? TL_NEAR_PRICE_ATR : d.maxDistAtr;
+  const mergeAtrDefault = p[21] === undefined ? (legacyMergeAtr(extendData) ?? d.mergeAtr) : d.mergeAtr;
+  const onePerPivotDefault =
+    p[22] === undefined && legacyOnePerPivot(extendData) ? 1 : d.onePerPivot;
   const numAt = (i: number, def: number, allowZero: boolean): number => {
     const v = Number(p[i]);
     return Number.isFinite(v) && (allowZero ? v >= 0 : v > 0) ? v : def;
@@ -213,7 +242,30 @@ export function parseTrendlinesConfig(
     minBackBars: zeroInt(18, d.minBackBars),
     maxDistAtr: numAt(19, maxDistAtrDefault, true),
     maxDistPct: numAt(20, d.maxDistPct, true),
+    mergeAtr: numAt(21, mergeAtrDefault, true),
+    onePerPivot: numAt(22, onePerPivotDefault, true) >= 1 ? 1 : 0,
   };
+}
+
+/** The merge tolerance a pane stored while it was render-only: `dedupeAtr`
+ * (a finite number >= 0), or 0 for the older "Merge similar lines" checkbox
+ * saved unticked (`dedupe: false`). Undefined when neither was written. */
+export function legacyMergeAtr(extendData: unknown): number | undefined {
+  if (!extendData || typeof extendData !== "object") return undefined;
+  const ext = extendData as { dedupe?: unknown; dedupeAtr?: unknown };
+  if (ext.dedupe === false) return 0;
+  const v = ext.dedupeAtr;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
+}
+
+/** True when a pane's extendData says "One line per pivot" was chosen while
+ * Declutter was a render-only select. */
+export function legacyOnePerPivot(extendData: unknown): boolean {
+  return (
+    !!extendData &&
+    typeof extendData === "object" &&
+    (extendData as { declutter?: unknown }).declutter === "pivot"
+  );
 }
 
 /** True when a pane's extendData says it was drawing "Only lines near price":

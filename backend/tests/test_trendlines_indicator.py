@@ -66,6 +66,7 @@ def test_defaults_from_empty_params():
     assert c.pierce_mult == 0.25
     assert c.min_back_bars == 0
     assert (c.max_dist_atr, c.max_dist_pct) == (0.0, 0.0)
+    assert (c.merge_atr, c.one_per_pivot) == (1.0, 0)
     assert c.pair_pivots == MAX_PAIR_PIVOTS == 40
     assert (c.min_crossings, c.max_crossings) == (0, 0)
     assert c.timeframe is None
@@ -73,13 +74,25 @@ def test_defaults_from_empty_params():
 
 def test_reads_every_slot_in_order():
     c = parse_trendlines_config(
-        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5], {})
+        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1], {})
     assert (c.pivot_len, c.touch_mult, c.min_touches, c.min_span_bars, c.max_proj_bars, c.max_lines,
             c.min_swing_atr, c.min_swing_reach, c.pair_pivots, c.max_touches, c.max_span_bars,
             c.max_slope_atr, c.min_slope_atr, c.max_touch_spacing, c.min_touch_spacing,
             c.min_crossings, c.max_crossings, c.pierce_mult, c.min_back_bars,
-            c.max_dist_atr, c.max_dist_pct) == (
-        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5)
+            c.max_dist_atr, c.max_dist_pct, c.merge_atr, c.one_per_pivot) == (
+        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1)
+
+
+def test_render_only_merge_settings_migrate_onto_slots_21_and_22():
+    assert parse_trendlines_config([], {"dedupeAtr": 2.5}).merge_atr == 2.5
+    assert parse_trendlines_config([], {"dedupe": False, "dedupeAtr": 2}).merge_atr == 0.0
+    assert parse_trendlines_config([], {"dedupeAtr": -1}).merge_atr == 1.0
+    assert parse_trendlines_config([], {"dedupeAtr": True}).merge_atr == 1.0
+    assert parse_trendlines_config([5] * 21 + [0.5], {"dedupeAtr": 2.5}).merge_atr == 0.5
+    assert parse_trendlines_config([], {"declutter": "pivot"}).one_per_pivot == 1
+    assert parse_trendlines_config([], {"declutter": "off"}).one_per_pivot == 0
+    assert parse_trendlines_config([5] * 22 + [0], {"declutter": "pivot"}).one_per_pivot == 0
+    assert parse_trendlines_config([5] * 22 + [3], {}).one_per_pivot == 1
 
 
 def test_a_saved_near_price_declutter_migrates_to_five_atr():
@@ -379,17 +392,45 @@ def test_emits_ranked_outputs_and_the_nearest():
     bars[40] = bar(40, 94, 100.5)
     bars[25] = bar(25, 99.5, 108)
     bars[45] = bar(45, 99.5, 104)
-    c = cfg(max_lines=2)
+    # Merge off, so the drawn set is the top max_lines majors by rank.
+    c = cfg(max_lines=2, merge_atr=0)
     points, lines = compute_trendlines(bars, c)
     majors = sorted((l for l in lines if is_major(l, 79, c)), key=rank_key)
-    assert len(majors) >= 2
+    assert len(majors) >= 3
     last = points[79]
     assert last["tl_1"] == project_at(majors[0], 79)
     assert last["tl_2"] == project_at(majors[1], 79)
     assert "tl_3" not in last
     close = bars[79].close
-    nearest = min(majors, key=lambda l: (abs(project_at(l, 79) - close), rank_key(l)))
+    # tl_nearest is the nearest AMONG THE DRAWN lines: only what is on the
+    # chart takes part in a rule, and a third major ranked past the budget is
+    # not on the chart.
+    drawn = majors[:2]
+    nearest = min(drawn, key=lambda l: (abs(project_at(l, 79) - close), rank_key(l)))
     assert last[TL_NEAREST] == project_at(nearest, 79)
+    third = min(majors[2:], key=lambda l: abs(project_at(l, 79) - close))
+    assert abs(project_at(third, 79) - close) < abs(project_at(nearest, 79) - close)
+
+
+def _fan() -> list[Candle]:
+    """Three lows at 20 (90), 40 (94) and 60 (98.5): the pairs 20-40, 20-60
+    and 40-60 seed three lines that project within 1 ATR of each other at
+    bar 79 and share pivots, so the merge pass keeps one (mirrors the TS)."""
+    bars = flat(80)
+    bars[20] = bar(20, 90, 100.5)
+    bars[40] = bar(40, 94, 100.5)
+    bars[60] = bar(60, 98.5, 100.5)
+    return bars
+
+
+def test_merge_runs_in_the_emit_step():
+    off = compute_trendlines(_fan(), cfg(merge_atr=0))[0][79]
+    assert {"tl_1", "tl_2", "tl_3"} <= set(off)
+    on = compute_trendlines(_fan(), cfg())[0][79]
+    assert "tl_1" in on and "tl_2" not in on
+    assert on[TL_NEAREST] == on["tl_1"]
+    pivot = compute_trendlines(_fan(), cfg(merge_atr=0, one_per_pivot=1))[0][79]
+    assert "tl_1" in pivot and "tl_2" not in pivot
 
 
 def test_stops_projecting_past_max_proj_bars():

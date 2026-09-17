@@ -101,7 +101,7 @@ describe("Inputs tab renders a control for every declared input", () => {
   });
 
   it("shows the saved value rather than the default when there is one", () => {
-    open({ dedupeAtr: 0.5 });
+    open({}, [...Object.values(TRENDLINES_DEFAULTS).slice(0, 21), 0.5]);
     expect(
       (screen.getByLabelText("Merge Lines within") as HTMLInputElement).value,
     ).toBe("0.5");
@@ -157,36 +157,6 @@ describe("Inputs tab renders a control for every declared input", () => {
     expect(row!.querySelector(".ind-cols-control")).toBeNull();
   });
 
-  // The "Merge similar lines" checkbox that used to sit beside this box is gone
-  // (tolerance 0 says the same thing), so a pane saved with it UNTICKED has to
-  // land on 0 — anything else opens on a rule the pane is not drawing.
-  it("opens a legacy unticked merge switch on tolerance 0", () => {
-    open({ dedupe: false, dedupeAtr: 1 });
-    expect(
-      (screen.getByLabelText("Merge Lines within") as HTMLInputElement).value,
-    ).toBe("0");
-  });
-
-  // ...and the stale flag leaves the live instance, or it keeps forcing the
-  // tolerance to 0 and a number typed here would draw nothing until a reload.
-  it("clears the legacy flag off the live instance", () => {
-    const { chart, writes } = chartRecording({ dedupe: false });
-    render(
-      <IndicatorSettings
-        chart={chart}
-        scope="tab.test"
-        epic="US100"
-        brokerId="capital"
-        chartResolution="DAY"
-        paneId="candle_pane"
-        name="TRENDLINES"
-        cellId="cell.test"
-        onClose={vi.fn()}
-      />,
-    );
-    expect(writes.some((w) => w.dedupe === true)).toBe(true);
-  });
-
   it("leaves no declared input without a control", () => {
     open();
     // Every label in the Inputs tab must have something focusable beside it.
@@ -195,7 +165,7 @@ describe("Inputs tab renders a control for every declared input", () => {
       "Max Touch Gap",
       "Max Touch Spacing",
       "Merge Lines within",
-      "Declutter",
+      "One line per pivot",
       "Extend",
     ])
       expect(screen.getByLabelText(label), `${label} has no control`).toBeTruthy();
@@ -225,30 +195,24 @@ describe("Calculation group", () => {
   });
 });
 
-describe("Declutter select", () => {
-  // A SelectMenu (button + popover), not a native <select>, so what is asserted
-  // is the trigger's text: the label of the option in force.
-  it("opens on Off by default", () => {
+describe("One line per pivot", () => {
+  it("opens unticked by default", () => {
     open();
-    expect(screen.getByLabelText("Declutter").textContent).toContain("Off");
+    expect((screen.getByLabelText("One line per pivot") as HTMLInputElement).checked).toBe(false);
   });
 
-  it("keeps a saved choice", () => {
-    open({ declutter: "pivot", nearPrice: false });
-    expect(screen.getByLabelText("Declutter").textContent).toContain(
-      "One line per pivot",
-    );
+  // The Declutter select was render-only; "One line per pivot" is calcParam
+  // slot 22 now, so a merged-away line stops reporting to rules. A pane saved
+  // with the select's "pivot" (and no slot 22) opens ticked.
+  it("migrates a saved pivot declutter onto the slot", () => {
+    open({ declutter: "pivot" }, Object.values(TRENDLINES_DEFAULTS).slice(0, 21));
+    expect((screen.getByLabelText("One line per pivot") as HTMLInputElement).checked).toBe(true);
   });
 
-  // "Only lines near price" was a draw-time rule at a fixed 5 ATR. A pane
-  // that chose it opens on Off with Max Distance carrying the cut, so the
-  // modal shows what the pane now draws.
   it("migrates a saved near-price rule onto Max Distance", () => {
-    // Nineteen slots: the pane predates the Max Distance params, which is the
-    // only way a saved "near" can exist.
     open({ declutter: "near" }, Object.values(TRENDLINES_DEFAULTS).slice(0, 19));
-    expect(screen.getByLabelText("Declutter").textContent).toContain("Off");
     expect((screen.getByLabelText("Max Distance (×ATR)") as HTMLInputElement).value).toBe("5");
+    expect((screen.getByLabelText("One line per pivot") as HTMLInputElement).checked).toBe(false);
   });
 
   it("leaves Max Distance off for a pane that never chose near-price", () => {
@@ -257,20 +221,28 @@ describe("Declutter select", () => {
   });
 });
 
-describe("the merge tolerance under One line per pivot", () => {
-  it("hides it, because that choice runs the merge with no tolerance", () => {
-    open({ declutter: "pivot" });
+describe("the merge tolerance", () => {
+  it("hides under One line per pivot, because that choice runs the merge with no tolerance", () => {
+    open({}, [...Object.values(TRENDLINES_DEFAULTS).slice(0, 22), 1]);
     expect(screen.queryByLabelText("Merge Lines within")).toBeNull();
   });
 
-  it("brings it back on Off", () => {
-    open({ declutter: "off" });
-    expect(screen.getByLabelText("Merge Lines within")).toBeTruthy();
+  it("shows otherwise, carrying its default", () => {
+    open();
+    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("1");
   });
 
-  it("shows it for a pane saved before the select existed", () => {
-    open({ nearPrice: false });
-    expect(screen.getByLabelText("Merge Lines within")).toBeTruthy();
+  // The tolerance lived on extendData while merging was render-only. A pane
+  // saved with a number there, or with the older checkbox unticked, opens on
+  // that value in the slot.
+  it("migrates the render-only tolerance onto slot 21", () => {
+    open({ dedupeAtr: 2.5 }, Object.values(TRENDLINES_DEFAULTS).slice(0, 21));
+    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("2.5");
+  });
+
+  it("migrates the unticked checkbox to zero", () => {
+    open({ dedupe: false }, Object.values(TRENDLINES_DEFAULTS).slice(0, 21));
+    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("0");
   });
 });
 

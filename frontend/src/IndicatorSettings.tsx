@@ -26,11 +26,13 @@ import {
 } from "./lib/indicatorMeta";
 import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, refreshMtfOnVisibilityChange, setMtfWaitClose } from "./lib/mtfCoordinator";
 import {
+  legacyMergeAtr,
   legacyNearPrice,
+  legacyOnePerPivot,
   parseTrendlinesConfig,
   TL_NEAR_PRICE_ATR,
 } from "./lib/indicators/trendlinesOutputs";
-import { declutterMode, TL_LINE_COLOR, type TrendlinesExtend } from "./lib/indicators/trendlines";
+import { TL_LINE_COLOR, type TrendlinesExtend } from "./lib/indicators/trendlines";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -262,16 +264,20 @@ export default function IndicatorSettings({
   const [tab, setTab] = useState<Tab>("inputs");
   const [calcParams, setCalcParams] = useState<number[]>(() => {
     const cp = original.current.calcParams;
-    // A Trendlines pane saved with "Only lines near price" (retired) keeps
-    // that cut as Max Distance 5 ATR: the same rule parseTrendlinesConfig
-    // applies for the chart, so the box shows what the pane draws. Only when
-    // slot 19 is absent; a present slot is what the user set since.
-    if (isTrendlines && cp[19] === undefined && legacyNearPrice(original.current.extendData)) {
-      const next = cp.slice();
-      next[19] = TL_NEAR_PRICE_ATR;
-      return next;
+    // A Trendlines pane saved before slots 19 to 22 existed migrates its
+    // render-only settings onto them, by the same rules parseTrendlinesConfig
+    // applies for the chart, so each box shows what the pane draws. Only an
+    // ABSENT slot migrates; a present one is what the user set since.
+    if (!isTrendlines) return cp;
+    const ext = original.current.extendData;
+    const next = cp.slice();
+    if (cp[19] === undefined && legacyNearPrice(ext)) next[19] = TL_NEAR_PRICE_ATR;
+    if (cp[21] === undefined) {
+      const merge = legacyMergeAtr(ext);
+      if (merge !== undefined) next[21] = merge;
     }
-    return cp;
+    if (cp[22] === undefined && legacyOnePerPivot(ext)) next[22] = 1;
+    return next;
   });
   // Intent, not the live effective flag: `ind.visible` can be false merely because
   // the interval filter (applyIndicatorIntervalVisibility) hid it on this
@@ -599,36 +605,8 @@ export default function IndicatorSettings({
         init[inp.field] = genExt0[inp.field] ?? inp.default;
       }
     }
-    // Trendlines' Declutter select replaced an "Only lines near price"
-    // checkbox, so a pane saved with that box UNTICKED must open on "Off"
-    // rather than on the select's default. declutterMode is the one reader the
-    // chart uses too, which is what stops the modal from showing a rule the
-    // pane is not drawing.
-    if (isTrendlines && genExt0.declutter === undefined)
-      init.declutter = declutterMode(genExt0 as TrendlinesExtend);
-    // "near" itself is retired: it reads as "off" and its cut now lives in the
-    // Max Distance params (see the calcParams migration below).
-    if (isTrendlines && genExt0.declutter === "near") init.declutter = "off";
-    // Same story one row down: "Merge similar lines" was a checkbox beside the
-    // tolerance, and the tolerance IS the switch (0 merges nothing). A pane
-    // saved with that box UNTICKED opens on 0, which is what it draws.
-    if (isTrendlines && genExt0.dedupe === false) init.dedupeAtr = 0;
     return init;
   });
-  // ...and the stale flag has to leave the LIVE instance too, or it keeps
-  // forcing the tolerance to 0 (that is how the chart reads it, for panes that
-  // never open this modal) and a number typed above would draw nothing until
-  // the next reload. The saved snapshot loses the key on its own: the modal
-  // rebuilds extendData from the declared inputs, and `dedupe` is no longer
-  // one of them.
-  const dedupeMigrated = useRef(false);
-  useEffect(() => {
-    if (!isTrendlines || dedupeMigrated.current) return;
-    if (genExt0.dedupe === false) {
-      dedupeMigrated.current = true;
-      overrideExtend(chart, paneId, name, { dedupe: true });
-    }
-  }, [isTrendlines, genExt0.dedupe, chart, paneId, name]);
   function setExtendInput(field: string, value: unknown) {
     const next = { ...genExtend, [field]: value };
     setGenExtend(next);
@@ -659,10 +637,26 @@ export default function IndicatorSettings({
   // as a normal full-width row rather than an empty grid cell.
   function visibleInput(inp: IndicatorInputDef): boolean {
     if (!inp.showWhen) return true;
-    const ctrl = inputs.find(
-      (d) => d.source === "extend" && d.field === inp.showWhen!.field,
+    const want = inp.showWhen.field;
+    const ctrl = inputs.find((d) =>
+      d.source === "extend" ? d.field === want : d.key === want,
     );
-    const cur = genExtend[inp.showWhen.field] ?? ctrl?.default;
+    if (ctrl?.source === "calcParam" && ctrl.index != null) {
+      // A calcParam controller reads its live slot, 0/1 for a boolean, and
+      // the meta default where the saved instance predates the slot.
+      const stored = calcParams[ctrl.index];
+      const cur = Number.isFinite(stored)
+        ? ctrl.type === "boolean"
+          ? (stored as number) >= 1
+            ? 1
+            : 0
+          : stored
+        : ctrl.type === "boolean"
+          ? (ctrl.default ? 1 : 0)
+          : ctrl.default;
+      return inp.showWhen.equals.includes(cur as string | number);
+    }
+    const cur = genExtend[want] ?? ctrl?.default;
     return inp.showWhen.equals.includes(cur as string | number);
   }
 
