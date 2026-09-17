@@ -508,6 +508,12 @@
    a transform flash. */
 .tab.dragging { opacity: 0; }
 .tab-bar-tabs.drag-anim .tab { transition: transform 150ms ease; }
+/* Keyboard focus. The chips carry role="tab" and a roving tabindex, so Left /
+   Right (and bare [ / ]) walk the strip; without a visible ring that walk is
+   invisible. Only :focus-visible, so a mouse click never paints it. */
+.tab:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
 /* Whole-chip highlight while hovering a merge drop (center zone of the chip). */
 .tab.drop-merge { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* The cursor-following clone of the grabbed chip. Fixed at the viewport

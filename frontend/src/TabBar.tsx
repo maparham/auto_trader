@@ -385,6 +385,56 @@ export default function TabBar({
     return () => document.removeEventListener("click", onClick);
   }, [searchOpen, closeSearch]);
 
+  // Move the selection `delta` tabs along and focus the chip that lands there,
+  // so a keyboard walk moves focus and selection together (the roving-tabindex
+  // pattern a role="tablist" implies). Clamped, not wrapped: running off the
+  // end should stop, not jump back to the other side of the strip.
+  const stepTab = useCallback(
+    (delta: number) => {
+      const from = tabs.findIndex((t) => t.id === activeId);
+      if (from === -1) return;
+      const to = Math.min(Math.max(from + delta, 0), tabs.length - 1);
+      const next = tabs[to];
+      if (next == null || next.id === activeId) return;
+      onSelect(next.id);
+      // The chip for the new id doesn't exist as the focused one until React
+      // re-renders, so focus it on the next frame. The activeId effect above
+      // has already scrolled it into view by then.
+      requestAnimationFrame(() => {
+        const bar = barRef.current;
+        const chip = bar == null
+          ? null
+          : Array.from(bar.querySelectorAll<HTMLElement>(":scope > .tab")).find(
+              (c) => c.dataset.tabId === next.id,
+            );
+        chip?.focus();
+      });
+    },
+    [tabs, activeId, onSelect],
+  );
+
+  // Bare [ / ] step through the tabs. Every conventional tab-cycling chord
+  // (Ctrl+Tab, Ctrl+PageUp/Down, Cmd+Alt+Arrow) is claimed by the browser
+  // itself and can't be intercepted by a page, so this uses single keys —
+  // suppressed whenever an editable element has focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "[" && e.key !== "]") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (
+        el != null &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      stepTab(e.key === "]" ? 1 : -1);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [stepTab]);
+
   // Ctrl/Cmd+F opens (or re-focuses) the search instead of the browser find.
   // Suppressed while another editable element has focus so in-app text fields
   // keep their native find/typing behavior.
@@ -597,6 +647,20 @@ export default function TabBar({
           // undo snackbar positions itself under the merged tab).
           data-tab-id={t.id}
           aria-selected={t.id === activeId}
+          // Roving tabindex: only the selected chip is in the tab order, and
+          // Left/Right walk the strip from there. Without this the chips carry
+          // role="tab" but can't take focus at all, so the tablist promises
+          // keyboard navigation it doesn't deliver.
+          tabIndex={t.id === activeId ? 0 : -1}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowRight") stepTab(1);
+            else if (e.key === "ArrowLeft") stepTab(-1);
+            else if (e.key === "Home") stepTab(-tabs.length);
+            else if (e.key === "End") stepTab(tabs.length);
+            else if (e.key === "Enter" || e.key === " ") onSelect(t.id);
+            else return;
+            e.preventDefault();
+          }}
           className={[
             "tab",
             t.id === activeId ? "on" : "",
