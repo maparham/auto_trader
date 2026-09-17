@@ -187,6 +187,42 @@ export default function TabBar({
   const [previewTo, setPreviewTo] = useState<number | null>(null);
   const [anim, setAnim] = useState(false);
   const barRef = useRef<HTMLDivElement | null>(null);
+  // Edge fades (App.css reads data-more-left / data-more-right off the strip):
+  // stamped straight onto the DOM from scroll and resize rather than through
+  // state, since the value changes on every scrolled pixel.
+  const updateEdges = useCallback(() => {
+    const bar = barRef.current;
+    if (bar == null) return;
+    const left = bar.scrollLeft > 1;
+    const right = bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 1;
+    if (left) bar.setAttribute("data-more-left", "");
+    else bar.removeAttribute("data-more-left");
+    if (right) bar.setAttribute("data-more-right", "");
+    else bar.removeAttribute("data-more-right");
+  }, []);
+  useEffect(() => {
+    updateEdges();
+    const bar = barRef.current;
+    if (bar == null || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(updateEdges);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [updateEdges, tabs]);
+  // Selecting a tab (click, keyboard, a cross-window push) brings it into
+  // view; otherwise a tab activated off-screen leaves the strip looking as if
+  // nothing is selected.
+  useEffect(() => {
+    const bar = barRef.current;
+    const chip = bar == null
+      ? null
+      : Array.from(bar.querySelectorAll<HTMLElement>(":scope > .tab")).find(
+          (c) => c.dataset.tabId === activeId,
+        );
+    if (chip != null && typeof chip.scrollIntoView === "function") {
+      chip.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+    updateEdges();
+  }, [activeId, updateEdges]);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
   const floatRef = useRef<HTMLDivElement | null>(null);
   const dragGeom = useRef<{
@@ -195,6 +231,13 @@ export default function TabBar({
     // this (a cross-window state push replaced the array mid-drag), the cached
     // rects/indices no longer describe the DOM — abort rather than mis-target.
     ids: string[];
+    // scrollLeft AT dragstart. The rects below are viewport coordinates, but
+    // the strip scrolls (Chrome auto-scrolls a scrollable container during a
+    // native drag, and the wheel handler is live throughout), which slides
+    // every chip sideways under the cached rects. Hit-testing shifts them by
+    // the scroll since this mark, or a drop past the boundary lands on the
+    // wrong slot.
+    scrollLeft: number;
     containerWidth: number;
     grabDx: number;
     grabDy: number;
@@ -431,6 +474,16 @@ export default function TabBar({
         className={"tab-bar-tabs" + (anim ? " drag-anim" : "")}
         role="tablist"
         ref={barRef}
+        onScroll={updateEdges}
+        onWheel={(e) => {
+          // A mouse wheel only gives vertical deltas; turn them into strip
+          // scroll so the wheel reaches hidden tabs without a shift key.
+          // Trackpads send deltaX and scroll natively, so leave those alone.
+          const bar = e.currentTarget;
+          if (e.deltaX === 0 && e.deltaY !== 0 && bar.scrollWidth > bar.clientWidth) {
+            bar.scrollLeft += e.deltaY;
+          }
+        }}
         onDragOver={(e) => {
           // Track where a drop would land, working entirely off the rects
           // cached at dragstart. A foreign drag (no chip dragstart happened
@@ -446,13 +499,20 @@ export default function TabBar({
           }
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
+          // Where the chips are NOW: the cached rects slid left by whatever
+          // the strip has scrolled since dragstart.
+          const scrolled = e.currentTarget.scrollLeft - g.scrollLeft;
+          const rects =
+            scrolled === 0
+              ? g.rects
+              : g.rects.map((r) => ({ ...r, left: r.left - scrolled }));
           // A merge is judged on the floating chip's own rect (where the user
           // sees it) against the chips as drawn, so it takes near-perfect
           // alignment; `deltas` is the translate the chips currently carry.
-          const src = g.rects[fromIdx];
+          const src = rects[fromIdx];
           const pos = src != null ? floatPos(g, e.clientX, e.clientY) : null;
           const next = dropTarget(
-            g.rects,
+            rects,
             e.clientX,
             e.clientY,
             fromIdx,
@@ -575,10 +635,10 @@ export default function TabBar({
             dragGeom.current = {
               rects,
               ids: tabs.map((t) => t.id),
-              // -6 for .tab-bar-tabs' padding-left (App.css) — clientWidth
-              // includes it, but the flow simulation lays chips out from the
-              // content box, so leaving it in overestimates where a chip wraps.
-              containerWidth: bar.clientWidth - 6,
+              scrollLeft: bar.scrollLeft,
+              // The strip is a single scrolling row (App.css), so the flow
+              // simulation must never wrap a chip onto a second row.
+              containerWidth: Number.POSITIVE_INFINITY,
               grabDx: e.clientX - rects[i].left,
               grabDy: e.clientY - rects[i].top,
               bounds: {
@@ -629,13 +689,16 @@ export default function TabBar({
         </div>
         );
       })}
+      </div>
+      {/* Fixed tail AFTER the scroller: + and Find symbol stay put however far
+          the strip is scrolled, and the search dropdown is never clipped by
+          the scroller's overflow. */}
+      <div className="tab-bar-tail">
       <Tooltip content="New tab">
         <button className="tab-add" onClick={onAdd}>
           +
         </button>
       </Tooltip>
-      {/* Last item INSIDE the wrapping chip strip, so it rides at the end of
-          the LAST tab row rather than holding a fixed slot beside the first. */}
       <div className="tab-bar-search" ref={searchBoxRef}>
         {searchOpen ? (
           <input
