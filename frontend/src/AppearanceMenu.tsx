@@ -36,12 +36,12 @@ const THEMES: { value: Theme; label: string }[] = [
 const STRIPS: { value: TabStrip; label: string; tip: string[] }[] = [
   {
     value: "rows",
-    label: "Rows",
+    label: "Multi-row",
     tip: ["Tabs wrap onto as many rows as needed", "Every tab stays visible"],
   },
   {
     value: "scroll",
-    label: "One row",
+    label: "Single row",
     tip: ["Tabs stay on one row and scroll sideways", "Find symbol and [ ] reach hidden tabs"],
   },
 ];
@@ -104,7 +104,7 @@ export default function AppearanceMenu({ settings, onChange }: Props) {
             ))}
           </div>
 
-          <div className="appr-label">Tabs</div>
+          <div className="appr-label">Tab overflow</div>
           <div className="seg appr-theme">
             {STRIPS.map((s) => (
               <Tooltip key={s.value} content={s.tip} placement="left">
