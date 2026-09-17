@@ -666,7 +666,9 @@
 
 /* Appearance menu (theme + editable background "moods"), right-aligned under the
    bar like the other cluster dropdowns. */
-.tab-bar-actions .appearance-dropdown { left: auto; right: 0; min-width: 244px; }
+/* Sized to its content: the widest row is a mood label plus swatch and check,
+   and the two segments stretch to match, so no fixed minimum is needed. */
+.tab-bar-actions .appearance-dropdown { left: auto; right: 0; min-width: 0; width: max-content; }
 .appr-label {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-faint); padding: 4px 6px 2px;
