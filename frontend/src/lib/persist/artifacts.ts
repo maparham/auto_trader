@@ -16,6 +16,7 @@ import { PREFIX, ns, root, load, save, saveLocal, removeKeyEverywhere } from "./
 import { emitLayoutChanged } from "./layoutEvents";
 import { downsampleEquity, EQUITY_PERSIST_CAP } from "../equityDownsample";
 import { historyCapture } from "../history";
+import { stripMtfRuntime } from "../mtfRuntime";
 
 // --- drawings (overlays the user drew) ---------------------------------------
 
@@ -484,14 +485,28 @@ export interface SavedDrawingConfig {
 
 const indicatorCfgKey = (scope: string) => ns(scope, "indicatorConfig");
 
+// `mtf` carries the user's pin (timeframe + waitClose) AND, if an older build
+// wrote one, the coordinator's computed stash. sanitizeConfig keeps the pin and
+// drops the stash. It runs on BOTH sides of storage: on write so no new bloat
+// lands, and on read so a config already carrying a stash is harmless before
+// migrateIndicatorConfigs gets to rewrite it (and stays harmless if the backend
+// mirror pushes a pre-migration copy back into this tab).
+function sanitizeConfig(cfg: SavedIndicatorConfig): SavedIndicatorConfig {
+  if (!cfg?.extendData) return cfg;
+  const extendData = stripMtfRuntime(cfg.extendData);
+  return extendData === cfg.extendData ? cfg : { ...cfg, extendData };
+}
+
 export function loadIndicatorConfigs(scope: string): Record<string, SavedIndicatorConfig> {
-  return load<Record<string, SavedIndicatorConfig>>(indicatorCfgKey(scope), {});
+  const all = load<Record<string, SavedIndicatorConfig>>(indicatorCfgKey(scope), {});
+  for (const id of Object.keys(all)) all[id] = sanitizeConfig(all[id]);
+  return all;
 }
 // Full replace — the settings modal always supplies a complete snapshot. `id` is
 // the instance id.
 export function saveIndicatorConfig(scope: string, id: string, cfg: SavedIndicatorConfig): void {
   const all = loadIndicatorConfigs(scope);
-  all[id] = cfg;
+  all[id] = sanitizeConfig(cfg);
   historyCapture(scope, indicatorCfgKey(scope), all);
   save(indicatorCfgKey(scope), all);
   emitLayoutChanged(scope);
@@ -506,7 +521,11 @@ export function saveIndicatorConfig(scope: string, id: string, cfg: SavedIndicat
 export function saveIndicatorVisible(scope: string, id: string, visible: boolean): void {
   const all = loadIndicatorConfigs(scope);
   const prev = all[id];
-  all[id] = { ...prev, visible, extendData: { ...prev?.extendData, userVisible: visible } };
+  all[id] = sanitizeConfig({
+    ...prev,
+    visible,
+    extendData: { ...prev?.extendData, userVisible: visible },
+  });
   historyCapture(scope, indicatorCfgKey(scope), all);
   save(indicatorCfgKey(scope), all);
   emitLayoutChanged(scope);
@@ -522,10 +541,76 @@ export function patchIndicatorExtend(
 ): void {
   const all = loadIndicatorConfigs(scope);
   const prev = all[id];
-  all[id] = { ...prev, extendData: { ...prev?.extendData, ...patch } };
+  all[id] = sanitizeConfig({ ...prev, extendData: { ...prev?.extendData, ...patch } });
   historyCapture(scope, indicatorCfgKey(scope), all);
   save(indicatorCfgKey(scope), all);
   emitLayoutChanged(scope);
+}
+
+// One-time sweep of the stashes older builds persisted, so the bytes actually
+// leave storage rather than waiting for each config's next write. Writes go
+// through save(), so the cleaned value reaches the backend too. Call AFTER
+// hydrateFromBackend, like pruneLegacyGlobalWorkspace and for the same reason:
+// the mirror holds the same stale bytes, and a pre-hydrate sweep would clean
+// localStorage only for the snapshot to put them straight back. The sentinel is
+// saved (not set directly) so it survives hydrate's delete-absent pass.
+//
+// Three key shapes carry a SavedIndicatorConfig: the per-cell map
+// (`<scope>.indicatorConfig`), the per-symbol templates (`<broker>.template.<epic>`)
+// and the global default template. Nothing else is touched.
+const MTF_STASH_MIGRATION_KEY = `${PREFIX}.migratedMtfStashes`;
+
+function sanitizeConfigMap(map: unknown): { next: unknown; changed: boolean } {
+  if (typeof map !== "object" || map === null) return { next: map, changed: false };
+  const out = { ...(map as Record<string, SavedIndicatorConfig>) };
+  let changed = false;
+  for (const id of Object.keys(out)) {
+    const clean = sanitizeConfig(out[id]);
+    if (clean !== out[id]) {
+      out[id] = clean;
+      changed = true;
+    }
+  }
+  return { next: changed ? out : map, changed };
+}
+
+export function migrateIndicatorConfigStashes(): void {
+  try {
+    if (localStorage.getItem(MTF_STASH_MIGRATION_KEY) != null) return;
+  } catch {
+    return; // no localStorage (test/node) → nothing to sweep
+  }
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(`${PREFIX}.`)) continue;
+      if (
+        k.endsWith(".indicatorConfig") ||
+        k.includes(".template.") ||
+        k.endsWith(".defaultTemplate")
+      )
+        keys.push(k);
+    }
+    for (const key of keys) {
+      const raw = load<unknown>(key, null);
+      if (raw === null) continue;
+      if (key.endsWith(".indicatorConfig")) {
+        const { next, changed } = sanitizeConfigMap(raw);
+        if (changed) save(key, next);
+        continue;
+      }
+      // A template wraps the same map under `indicatorConfigs`.
+      const t = raw as { indicatorConfigs?: unknown };
+      if (typeof t !== "object" || !t.indicatorConfigs) continue;
+      const { next, changed } = sanitizeConfigMap(t.indicatorConfigs);
+      if (changed) save(key, { ...t, indicatorConfigs: next });
+    }
+  } catch {
+    /* a mid-sweep failure leaves the sentinel unset, so the next load retries */
+    return;
+  }
+  save(MTF_STASH_MIGRATION_KEY, true);
 }
 
 // Drop a removed instance's config so it doesn't leak storage (instances are now

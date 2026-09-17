@@ -170,6 +170,7 @@ import {
   loadDrawings,
   saveDrawings,
   pushRecentSymbol,
+  migrateIndicatorConfigStashes,
   type ChartTab,
   type LayoutKind,
   type Workspace,
@@ -897,6 +898,13 @@ export default function App() {
       // The working tab set now lives in the layout body / scratch; drop the
       // abandoned per-broker `.tabs` roots (localStorage + backend).
       pruneLegacyTabsKeys();
+      // One-time cleanup of the computed MTF stashes older builds persisted
+      // alongside each indicator's settings. The coordinator recomputes them
+      // anyway, and a stash written before the detector's shape changed is what
+      // froze charts in Sept 2026 (a throw in the trendlines draw loop stops the
+      // pane repainting). After hydrate so the rewrites reach the backend
+      // instead of being re-seeded by it.
+      migrateIndicatorConfigStashes();
       // Expire stale backtest results. Safe here (unlike a liveness-based prune)
       // because expiry is by timestamp: a cell mounting alongside this can only
       // write a FRESH result, which by definition isn't stale. Runs after hydrate

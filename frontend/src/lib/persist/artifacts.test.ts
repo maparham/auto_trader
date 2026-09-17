@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { installMemStorage } from "../testMemStorage";
 
 installMemStorage();
-const { saveBacktestResult, loadBacktestResult, loadSweepResultId, saveSweepResultId, clearSweepResultId, matchBacktestKey, matchSweepPointerKey, loadInsetBand, saveInsetBand, pruneStaleBacktests, BACKTEST_TTL_MS } =
+const { saveBacktestResult, loadBacktestResult, loadSweepResultId, saveSweepResultId, clearSweepResultId, matchBacktestKey, matchSweepPointerKey, loadInsetBand, saveInsetBand, pruneStaleBacktests, BACKTEST_TTL_MS, loadIndicatorConfigs, saveIndicatorConfig, migrateIndicatorConfigStashes } =
   await import("./artifacts");
 const { save } = await import("./core");
 const { EQUITY_PERSIST_CAP } = await import("../equityDownsample");
@@ -210,5 +210,65 @@ describe("backtest result expiry", () => {
     saveBacktestResult("tab.old", "US100", bigResult(10), undefined, now - BACKTEST_TTL_MS - 1);
     saveBacktestResult("tab.new", "EURUSD", bigResult(10), undefined, now);
     expect(localStorage.getItem("auto-trader.tab.old.backtest.US100")).toBeNull();
+  });
+});
+
+
+// The coordinator's computed MTF stash is not settings and must never reach
+// storage: it is recomputed on load, it is orders of magnitude bigger than the
+// config around it (a single symbol template reached 1.27 MB in the field), and
+// because its shape follows the detector, a stash written by an older build
+// restores objects the current draw path does not recognise. That is what froze
+// charts in Sept 2026. Only the pin itself (timeframe/waitClose) survives.
+describe("MTF stash never reaches persisted indicator config", () => {
+  const stashed = {
+    calcParams: [14],
+    extendData: {
+      mtf: {
+        timeframe: "DAY",
+        waitClose: false,
+        htfLines: [{ i1: 1, touchIdxs: [1, 3] }],
+        htfPoints: [1, 2, 3],
+        htfStarts: [1, 2, 3],
+        coveredFromMs: 1,
+      },
+      declutter: true,
+    },
+  };
+  const pinOnly = { timeframe: "DAY", waitClose: false };
+
+  it("strips the stash on write, keeping the pin and the rest of extendData", () => {
+    saveIndicatorConfig("tab.A", "TRENDLINES", stashed);
+    const saved = JSON.parse(localStorage.getItem("auto-trader.tab.A.indicatorConfig")!);
+    expect(saved.TRENDLINES.extendData.mtf).toEqual(pinOnly);
+    expect(saved.TRENDLINES.extendData.declutter).toBe(true);
+    expect(saved.TRENDLINES.calcParams).toEqual([14]);
+  });
+
+  it("strips a stash an older build already wrote, on read", () => {
+    save("auto-trader.tab.A.indicatorConfig", { TRENDLINES: stashed });
+    expect(loadIndicatorConfigs("tab.A").TRENDLINES.extendData!.mtf).toEqual(pinOnly);
+  });
+
+  it("rewrites the stored bytes once, across configs and templates", () => {
+    save("auto-trader.tab.A.indicatorConfig", { TRENDLINES: stashed });
+    save("auto-trader.b.capital-live.template.DXY", {
+      epic: "DXY",
+      indicatorConfigs: { TRENDLINES: stashed },
+      drawings: [],
+    });
+    migrateIndicatorConfigStashes();
+    const cfg = JSON.parse(localStorage.getItem("auto-trader.tab.A.indicatorConfig")!);
+    const tpl = JSON.parse(localStorage.getItem("auto-trader.b.capital-live.template.DXY")!);
+    expect(cfg.TRENDLINES.extendData.mtf).toEqual(pinOnly);
+    expect(tpl.indicatorConfigs.TRENDLINES.extendData.mtf).toEqual(pinOnly);
+    expect(tpl.epic).toBe("DXY"); // the rest of the template is untouched
+    // Sentinel-gated: a second run is a no-op even if a stash reappears.
+    save("auto-trader.tab.A.indicatorConfig", { TRENDLINES: stashed });
+    migrateIndicatorConfigStashes();
+    expect(
+      JSON.parse(localStorage.getItem("auto-trader.tab.A.indicatorConfig")!).TRENDLINES.extendData
+        .mtf.htfLines,
+    ).toHaveLength(1);
   });
 });

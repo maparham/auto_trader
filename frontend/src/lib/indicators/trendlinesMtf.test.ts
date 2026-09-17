@@ -430,3 +430,28 @@ describe("TRENDLINES_TEMPLATE.draw under a pin FINER than the chart", () => {
     expect(segments[0].x1).toBeGreaterThan(9);
   });
 });
+
+// A stash persisted before `touchKinds` existed (Sept 2026, "sideless
+// trendlines") restores lines that carry touchIdxs and no touchKinds at all.
+// The draw path reads the kinds to snap an HTF extreme onto its chart candle;
+// reading them off `undefined` threw, and ONE throw here aborts the whole
+// pane's draw loop, so the chart stopped repainting entirely (pan and zoom
+// moved the time axis and nothing else) and a reload restored the same stash.
+// A missing kind is not worth a frame for: fall back to the plain time mapping.
+describe("TRENDLINES_TEMPLATE.draw with a pre-touchKinds stash", () => {
+  const kindless = (): TrendlinesMtf => {
+    const line = { ...htfLine } as Partial<TrendLine>;
+    delete line.touchKinds;
+    return stash({ htfLines: [line as TrendLine] });
+  };
+
+  it("draws the line instead of throwing", () => {
+    expect(() => draw(chartBars(), kindless())).not.toThrow();
+    expect(draw(chartBars(), kindless()).segments).toHaveLength(1);
+  });
+
+  it("still rings every touch, on the unsnapped bar", () => {
+    const { rings } = draw(chartBars(), kindless(), { showPivots: false });
+    expect(rings).toHaveLength(htfLine.touchIdxs.length);
+  });
+});

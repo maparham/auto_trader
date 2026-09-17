@@ -14,6 +14,7 @@ import {
   type ExprInstancePayload,
   type LiveInstance,
 } from "./exprInstances";
+import { stripMtfRuntime } from "./mtfRuntime";
 import type { SavedIndicatorConfig } from "./persist";
 
 /** A pane's display dressing, shipped alongside its computational config so a
@@ -32,50 +33,17 @@ export interface RuleClipboardPayload {
   indicators: Record<string, PortableInstancePayload>;
 }
 
-// The extendData keys that are RUNTIME state, not authored settings: barHours is
-// re-derived from the chart's resolution (applySlopeBarHours), and the mtf stash
-// (per-bar HTF series) belongs to the source chart's epic/data window — normal
-// persistence deliberately saves only `mtf.timeframe` (see refreshMtfIndicators),
-// and shipping the arrays would both bloat the envelope by orders of magnitude
-// and render the SOURCE epic's series on the target until a refetch.
-const MTF_RUNTIME_KEYS = [
-  "htfStarts",
-  "htfSeries",
-  "htfSmoothing",
-  "htfMs",
-  "htfSeriesByLine",
-  "htfMaBaseByLine",
-  "htfAccelByLine",
-  // S/R Levels: the per-HTF-bar nearest support and resistance series.
-  "htfSupport",
-  "htfResistance",
-  // Trendlines: the config-driven operand rows, the detected line list, the
-  // per-HTF-bar pivot arrays and the HTF ATR the merge tolerances are
-  // measured in.
-  "htfOutputs",
-  "htfPoints",
-  "htfLines",
-  "htfPivots",
-  "htfAtr",
-  // Forming-bar mode's per-session fold state (waitClose itself is CONFIG and
-  // ships): the flag and inputs are re-derived by the coordinator on the
-  // target, and htfClosed is a whole candle array besides.
-  "formingIdx",
-  "htfClosed",
-  "htfSeed",
-] as const;
+// The runtime (non-authored) extendData state lives in lib/mtfRuntime: the mtf
+// stash (per-bar HTF series) belongs to the source chart's epic/data window, so
+// shipping the arrays would both bloat the envelope by orders of magnitude and
+// render the SOURCE epic's series on the target until a refetch. barHours is
+// re-derived from the chart's resolution (applySlopeBarHours).
 
 /** extendData with runtime-derived state stripped — what the envelope ships. */
 export function portableExtend(extendData: unknown): Record<string, unknown> {
   if (typeof extendData !== "object" || extendData === null) return {};
-  const out = { ...(extendData as Record<string, unknown>) };
+  const out = { ...stripMtfRuntime(extendData as Record<string, unknown>) };
   delete out.barHours;
-  const mtf = out.mtf;
-  if (typeof mtf === "object" && mtf !== null) {
-    const m = { ...(mtf as Record<string, unknown>) };
-    for (const k of MTF_RUNTIME_KEYS) delete m[k];
-    out.mtf = m;
-  }
   return out;
 }
 
