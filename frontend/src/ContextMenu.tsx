@@ -35,11 +35,19 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
       if (e.button === 2) return;
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
+    // A tap on the chart canvas never yields a mousedown (klinecharts consumes
+    // the touch sequence), so on a phone the menu could only be closed by
+    // picking an item. Watch the touch itself too.
+    const onTouch = (e: TouchEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("mousedown", onDoc);
+    document.addEventListener("touchstart", onTouch, true);
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("touchstart", onTouch, true);
       document.removeEventListener("keydown", onKey);
     };
   }, [onClose]);
