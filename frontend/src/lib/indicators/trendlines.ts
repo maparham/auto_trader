@@ -451,7 +451,9 @@ export function hasSwingReach(
   return true;
 }
 
-/** True when the line is no steeper than `mult` ATRs of price per bar.
+/** True when the line's SIGNED slope is at most `mult` ATRs of price per bar.
+ * Rising is positive, falling is negative, so a negative ceiling keeps only
+ * falling lines at least that steep. 0 means no ceiling.
  *
  * A line's slope is fixed the moment it is defined and never rotates, so this
  * is checked once at seed time rather than every bar: a candidate that fails
@@ -466,7 +468,7 @@ export function hasSwingReach(
  * and the useless steep one at 0.16.
  *
  * PARITY: a boolean that gates SET MEMBERSHIP, so no quotient. Rather than
- * comparing |p2 - p1| / span against the threshold, both sides multiply through
+ * comparing (p2 - p1) / span against the threshold, both sides multiply through
  * by span, an exact positive integer, which is the same inequality with one
  * rounding source removed. */
 export function withinSlope(
@@ -474,13 +476,15 @@ export function withinSlope(
   atrAt: number,
   mult: number,
 ): boolean {
-  if (mult <= 0) return true;
+  if (mult === 0) return true;
   const span = line.i2 - line.i1;
   const rise = line.p2 - line.p1;
-  return Math.abs(rise) <= mult * atrAt * span;
+  return rise <= mult * atrAt * span;
 }
 
-/** True when the line is at least `mult` ATRs of price per bar steep.
+/** True when the line's SIGNED slope is at least `mult` ATRs of price per bar.
+ * A positive floor keeps only rising lines; a negative floor also admits
+ * falling lines no steeper than that. 0 means no floor.
  *
  * The mirror of withinSlope, and asked at the same moment for the same reason.
  * A line flat enough to be a horizontal shelf is not a trendline: SR_LEVELS
@@ -490,10 +494,10 @@ export function aboveSlope(
   atrAt: number,
   mult: number,
 ): boolean {
-  if (mult <= 0) return true;
+  if (mult === 0) return true;
   const span = line.i2 - line.i1;
   const rise = line.p2 - line.p1;
-  return Math.abs(rise) >= mult * atrAt * span;
+  return rise >= mult * atrAt * span;
 }
 
 /** Mutable detector state after some prefix of bars has been processed. The
@@ -670,7 +674,7 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
         };
         // Slope first: one comparison, asked once because the line never
         // rotates.
-        if (cfg.maxSlopeAtr > 0 || cfg.minSlopeAtr > 0) {
+        if (cfg.maxSlopeAtr !== 0 || cfg.minSlopeAtr !== 0) {
           const atrK = atr[k];
           if (atrK === null) continue;
           if (!withinSlope(cand, atrK, cfg.maxSlopeAtr)) continue;

@@ -42,6 +42,15 @@ describe("parseTrendlinesConfig", () => {
       minBackBars: 12, maxDistAtr: 2.5, maxDistPct: 1.5, mergeAtr: 0.75, onePerPivot: 1, mergePct: 0.3,
     });
   });
+  // Slope is SIGNED (rising +, falling -), so its two slots are the only ones
+  // that accept a negative number; 0 stays the off sentinel on both.
+  it("accepts a negative slope floor and ceiling", () => {
+    const p = [...Array(11).fill(0), -0.3, -0.6];
+    const c = parseTrendlinesConfig(p);
+    expect(c.maxSlopeAtr).toBe(-0.3);
+    expect(c.minSlopeAtr).toBe(-0.6);
+    expect(parseTrendlinesConfig([...Array(11).fill(0), NaN, "x"]).minSlopeAtr).toBe(0);
+  });
   // "Only lines near price" was a draw-time rule at a fixed TL_NEAR_PRICE_ATR
   // (5). A pane that CHOSE it keeps that cut as Max Distance; a present slot
   // (even 0) wins over the legacy flag, and a pane that never chose it stays

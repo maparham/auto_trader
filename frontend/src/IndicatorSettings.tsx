@@ -760,7 +760,7 @@ export default function IndicatorSettings({
           // An `unbounded` param stores 0 for "no limit": the box shows that
           // state as empty behind an ∞ placeholder, and clearing it writes the
           // same 0 back — the sentinel never changes, only how it reads.
-          placeholder={inp.unbounded ? "∞" : undefined}
+          placeholder={inp.unbounded ? (inp.placeholder ?? "∞") : undefined}
           value={inp.unbounded && stored === 0 ? "" : stored}
           onChange={(e) =>
             setParam(

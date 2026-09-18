@@ -77,8 +77,8 @@ class TrendlinesConfig:
     pair_pivots: int  # earlier pivots of either kind a new pivot pairs with
     max_touches: int  # 0 = no limit
     max_span_bars: int  # 0 = no limit
-    max_slope_atr: float  # 0 = no limit
-    min_slope_atr: float  # 0 = no floor
+    max_slope_atr: float  # SIGNED (rising +, falling -); 0 = no limit
+    min_slope_atr: float  # signed; 0 = no floor
     max_touch_spacing: int  # 0 = no limit
     min_touch_spacing: int  # 0 = off
     min_crossings: int  # floor; a line can grow into it
@@ -164,6 +164,14 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
             return default
         return v if (v >= 0 if allow_zero else v > 0) else default
 
+    def signed_at(i: int, default: float) -> float:
+        # A signed slot: any finite number, negative included; 0 stays off.
+        try:
+            v = float(p[i])
+        except (IndexError, OverflowError, TypeError, ValueError):
+            return default
+        return v if math.isfinite(v) else default
+
     def int_at(i: int, default: float) -> int:
         return max(1, math.floor(num_at(i, default, False)))
 
@@ -182,8 +190,8 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         pair_pivots=int_at(8, d[8]),
         max_touches=zero_int(9, d[9]),
         max_span_bars=zero_int(10, d[10]),
-        max_slope_atr=num_at(11, d[11], True),
-        min_slope_atr=num_at(12, d[12], True),
+        max_slope_atr=signed_at(11, d[11]),
+        min_slope_atr=signed_at(12, d[12]),
         max_touch_spacing=zero_int(13, d[13]),
         min_touch_spacing=zero_int(14, d[14]),
         min_crossings=zero_int(15, d[15]),
@@ -368,15 +376,17 @@ def has_back_clearance(line: TrendLine, closes: Sequence[float], bars: int) -> b
 
 
 def within_slope(line: TrendLine, atr_at: float, mult: float) -> bool:
-    if mult <= 0:
+    """Signed slope (rising +, falling -) at most mult ATR/bar; 0 = off."""
+    if mult == 0:
         return True
-    return abs(line.p2 - line.p1) <= mult * atr_at * (line.i2 - line.i1)
+    return (line.p2 - line.p1) <= mult * atr_at * (line.i2 - line.i1)
 
 
 def above_slope(line: TrendLine, atr_at: float, mult: float) -> bool:
-    if mult <= 0:
+    """Signed slope at least mult ATR/bar; 0 = off."""
+    if mult == 0:
         return True
-    return abs(line.p2 - line.p1) >= mult * atr_at * (line.i2 - line.i1)
+    return (line.p2 - line.p1) >= mult * atr_at * (line.i2 - line.i1)
 
 
 def rank_key(line: TrendLine) -> tuple[float, int, int, int, int, float]:
@@ -579,7 +589,7 @@ def compute_trendlines(
                         max_touch_gap=k - i1, min_touch_gap=k - i1, max_touch_idx=k,
                         touch_idxs=[i1, k],
                     )
-                    if cfg.max_slope_atr > 0 or cfg.min_slope_atr > 0:
+                    if cfg.max_slope_atr != 0 or cfg.min_slope_atr != 0:
                         atr_k = atr[k]
                         if atr_k is None:
                             continue

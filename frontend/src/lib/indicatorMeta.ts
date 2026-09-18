@@ -67,6 +67,9 @@ export interface IndicatorInputDef {
   // with an "∞" placeholder instead of a literal 0, and store 0 when cleared.
   // Display-only — the stored sentinel does not change.
   unbounded?: boolean;
+  // Placeholder for the empty `unbounded` box when "∞" is the wrong picture,
+  // e.g. "-∞" on the low side of a signed range.
+  placeholder?: string;
 }
 
 // A named one-click starting point for an indicator's calcParams. `calcParams`
@@ -767,33 +770,35 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(12, "Min Slope", { min: 0, step: 0.01 }),
+        ...num(12, "Min Slope", { step: 0.01 }),
         group: "slope",
         default: 0,
+        unbounded: true,
+        placeholder: "-∞",
         suffix: "ATR/bar",
         range: {
           label: "Slope",
           tip: [
-            "How steep a line must be and may be, in ATR(14) of price per bar.",
-            "Zero floor accepts even flat lines; horizontal shelves are better drawn by S/R Levels.",
+            "Signed slope a line must stay within, in ATR(14) of price per bar. Rising is positive, falling negative.",
+            "Empty box: no bound on that side. 0 is the same as empty, so a floor of 0.01 is how to keep only rising lines.",
+            "-0.5 to 0.5 caps steepness both ways; 0.01 to 0.5 keeps rising lines only; -0.5 to -0.01 keeps falling lines only.",
             "A line too steep outruns price and is never touched again, the classic fan off one sharp pivot.",
-            "Empty right box: no limit.",
           ],
         },
         tip: [
-          "Min steepness a line must have, in ATR(14) of price per bar. Zero: no floor.",
-          "A line flat enough to be a horizontal shelf is not a trendline; the S/R Levels indicator draws those properly.",
+          "Lowest signed slope a line may have, in ATR(14) of price per bar. Empty or 0: no floor.",
+          "A positive floor keeps only rising lines; a negative floor also admits falling lines no steeper than that.",
         ],
       },
       {
-        ...num(11, "Max Slope", { min: 0, step: 0.01 }),
+        ...num(11, "Max Slope", { step: 0.01 }),
         group: "slope",
         default: 0,
         unbounded: true,
         suffix: "ATR/bar",
         tip: [
-          "Max steepness a line may have, in ATR(14) of price per bar. Empty: no limit.",
-          "A line too steep outruns price and is never touched again, the classic fan off one sharp pivot.",
+          "Highest signed slope a line may have, in ATR(14) of price per bar. Empty or 0: no ceiling.",
+          "A negative ceiling keeps only falling lines; a positive one caps how steeply a line may rise.",
         ],
       },
       {

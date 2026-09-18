@@ -413,44 +413,88 @@ describe("isSignificantSwing", () => {
 });
 
 describe("withinSlope", () => {
-  // Rise 10 over span 10 = 1.0 per bar; at ATR 2 that is 0.5 ATR per bar.
+  // Rise 10 over span 10 = 1.0 per bar; at ATR 2 that is +0.5 ATR per bar.
   const line: TrendLine = { ...sup, p1: 100, p2: 110 };
+  const down: TrendLine = { ...line, p2: 90 };
 
   it("passes everything at zero", () => {
     expect(withinSlope(line, 2, 0)).toBe(true);
+    expect(withinSlope(down, 2, 0)).toBe(true);
   });
 
-  it("compares steepness in ATR per bar", () => {
+  it("compares the SIGNED slope in ATR per bar", () => {
     expect(withinSlope(line, 2, 0.5)).toBe(true);
     expect(withinSlope(line, 2, 0.49)).toBe(false);
+    // A falling line is below any positive ceiling, however small.
+    expect(withinSlope(down, 2, 0.01)).toBe(true);
   });
 
-  it("ignores direction, only steepness", () => {
-    const down = { ...line, p2: 90 };
-    expect(withinSlope(down, 2, 0.5)).toBe(true);
-    expect(withinSlope(down, 2, 0.49)).toBe(false);
+  it("keeps only falling lines under a negative ceiling", () => {
+    expect(withinSlope(down, 2, -0.5)).toBe(true);
+    expect(withinSlope(down, 2, -0.51)).toBe(false);
+    expect(withinSlope(line, 2, -0.01)).toBe(false);
   });
 });
 
 describe("aboveSlope", () => {
   const line: TrendLine = { ...sup, p1: 100, p2: 110 };
+  const down: TrendLine = { ...line, p2: 90 };
 
   it("passes everything at zero", () => {
     expect(aboveSlope(line, 2, 0)).toBe(true);
+    expect(aboveSlope(down, 2, 0)).toBe(true);
   });
 
   it("is the mirror of withinSlope at the same threshold", () => {
     // Both true exactly at the boundary, so a band of [x, x] admits only a
-    // line at exactly that steepness rather than nothing at all.
+    // line at exactly that slope rather than nothing at all.
     expect(aboveSlope(line, 2, 0.5)).toBe(true);
     expect(withinSlope(line, 2, 0.5)).toBe(true);
     expect(aboveSlope(line, 2, 0.51)).toBe(false);
   });
 
-  it("ignores direction, only steepness", () => {
-    const down = { ...line, p2: 90 };
-    expect(aboveSlope(down, 2, 0.5)).toBe(true);
-    expect(aboveSlope(down, 2, 0.51)).toBe(false);
+  it("drops falling lines under a positive floor, caps them under a negative one", () => {
+    expect(aboveSlope(down, 2, 0.01)).toBe(false);
+    expect(aboveSlope(down, 2, -0.5)).toBe(true);
+    expect(aboveSlope(down, 2, -0.49)).toBe(false);
+  });
+});
+
+describe("signed slope range at seed time", () => {
+  // Three rising lows (or their mirror, three falling highs) in a flat
+  // corridor; every line the fixture seeds runs the one way.
+  const rising = () => {
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[40] = bar(40, 94, 100.5);
+    bars[60] = bar(60, 98.5, 100.5);
+    return bars;
+  };
+  const falling = () => {
+    const bars = flat(80);
+    bars[20] = bar(20, 99.5, 110);
+    bars[40] = bar(40, 99.5, 106);
+    bars[60] = bar(60, 99.5, 101.5);
+    return bars;
+  };
+  const last = (bars: KLineData[], over: Partial<TrendlinesConfig>) =>
+    computeTrendlines(bars, cfg({ mergeAtr: 0, ...over })).points[79];
+
+  it("a positive floor keeps rising lines and drops falling ones", () => {
+    expect(last(rising(), { minSlopeAtr: 0.01 }).tl_1).toBeDefined();
+    expect(last(falling(), { minSlopeAtr: 0.01 }).tl_1).toBeUndefined();
+  });
+
+  it("a negative ceiling keeps falling lines and drops rising ones", () => {
+    expect(last(falling(), { maxSlopeAtr: -0.01 }).tl_1).toBeDefined();
+    expect(last(rising(), { maxSlopeAtr: -0.01 }).tl_1).toBeUndefined();
+  });
+
+  it("a symmetric band caps steepness both ways", () => {
+    expect(last(rising(), { minSlopeAtr: -0.5, maxSlopeAtr: 0.5 }).tl_1).toBeDefined();
+    expect(last(falling(), { minSlopeAtr: -0.5, maxSlopeAtr: 0.5 }).tl_1).toBeDefined();
+    expect(last(rising(), { minSlopeAtr: -0.05, maxSlopeAtr: 0.05 }).tl_1).toBeUndefined();
+    expect(last(falling(), { minSlopeAtr: -0.05, maxSlopeAtr: 0.05 }).tl_1).toBeUndefined();
   });
 });
 

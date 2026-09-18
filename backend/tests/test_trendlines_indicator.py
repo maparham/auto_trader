@@ -85,6 +85,12 @@ def test_reads_every_slot_in_order():
         4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3)
 
 
+def test_slope_slots_are_signed():
+    c = parse_trendlines_config([0] * 11 + [-0.3, -0.6], {})
+    assert (c.max_slope_atr, c.min_slope_atr) == (-0.3, -0.6)
+    assert parse_trendlines_config([0] * 11 + [float("nan"), "x"], {}).min_slope_atr == 0.0
+
+
 def test_render_only_merge_settings_migrate_onto_slots_21_and_22():
     assert parse_trendlines_config([], {"dedupeAtr": 2.5}).merge_atr == 2.5
     assert parse_trendlines_config([], {"dedupe": False, "dedupeAtr": 2}).merge_atr == 0.0
@@ -589,3 +595,36 @@ def test_max_distance_stops_emitting_a_line_past_the_cut_without_dropping_it():
     assert "tl_1" in compute_trendlines(_runaway(61), cfg())[0][60]
 
 
+
+
+# ---------------------------------------------------------------- signed slope
+
+def _rising() -> list[Candle]:
+    bars = flat(80)
+    bars[20] = bar(20, 90, 100.5)
+    bars[40] = bar(40, 94, 100.5)
+    bars[60] = bar(60, 98.5, 100.5)
+    return bars
+
+
+def _falling() -> list[Candle]:
+    bars = flat(80)
+    bars[20] = bar(20, 99.5, 110)
+    bars[40] = bar(40, 99.5, 106)
+    bars[60] = bar(60, 99.5, 101.5)
+    return bars
+
+
+def _last(bars, **over):
+    return compute_trendlines(bars, cfg(merge_atr=0, **over))[0][79]
+
+
+def test_signed_slope_range_mirrors_the_ts():
+    assert _last(_rising(), min_slope_atr=0.01).get("tl_1") is not None
+    assert _last(_falling(), min_slope_atr=0.01).get("tl_1") is None
+    assert _last(_falling(), max_slope_atr=-0.01).get("tl_1") is not None
+    assert _last(_rising(), max_slope_atr=-0.01).get("tl_1") is None
+    assert _last(_rising(), min_slope_atr=-0.5, max_slope_atr=0.5).get("tl_1") is not None
+    assert _last(_falling(), min_slope_atr=-0.5, max_slope_atr=0.5).get("tl_1") is not None
+    assert _last(_rising(), min_slope_atr=-0.05, max_slope_atr=0.05).get("tl_1") is None
+    assert _last(_falling(), min_slope_atr=-0.05, max_slope_atr=0.05).get("tl_1") is None

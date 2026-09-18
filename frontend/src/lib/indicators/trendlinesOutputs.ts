@@ -79,8 +79,8 @@ export interface TrendlinesConfig {
   pairPivots: number; // earlier pivots (either kind) a new pivot pairs with
   maxTouches: number; // upper bound on touches; 0 = no limit
   maxSpanBars: number; // upper bound on span; 0 = no limit
-  maxSlopeAtr: number; // ceiling on steepness, ATR(14) per bar; 0 = no limit
-  minSlopeAtr: number; // floor on steepness, same units; 0 = no floor
+  maxSlopeAtr: number; // ceiling on SIGNED slope (rising +, falling -), ATR(14) per bar; 0 = no limit
+  minSlopeAtr: number; // floor on signed slope, same units; 0 = no floor
   maxTouchSpacing: number; // widest gap between consecutive touches; 0 = no limit
   minTouchSpacing: number; // narrowest such gap; 0 = off
   // How many times the close must have changed side of the line, at least
@@ -220,6 +220,13 @@ export function parseTrendlinesConfig(
     const v = Number(p[i]);
     return Number.isFinite(v) && (allowZero ? v >= 0 : v > 0) ? v : def;
   };
+  // A SIGNED slot: any finite number, negative included. 0 stays the off
+  // sentinel, which is why the Slope range cannot express "rise >= 0" exactly;
+  // 0.01 is the practical spelling and the tip says so.
+  const signedAt = (i: number, def: number): number => {
+    const v = Number(p[i]);
+    return Number.isFinite(v) ? v : def;
+  };
   const intAt = (i: number, def: number): number => Math.max(1, Math.floor(numAt(i, def, false)));
   const zeroInt = (i: number, def: number): number => Math.max(0, Math.floor(numAt(i, def, true)));
   return {
@@ -234,8 +241,8 @@ export function parseTrendlinesConfig(
     pairPivots: intAt(8, d.pairPivots),
     maxTouches: zeroInt(9, d.maxTouches),
     maxSpanBars: zeroInt(10, d.maxSpanBars),
-    maxSlopeAtr: numAt(11, d.maxSlopeAtr, true),
-    minSlopeAtr: numAt(12, d.minSlopeAtr, true),
+    maxSlopeAtr: signedAt(11, d.maxSlopeAtr),
+    minSlopeAtr: signedAt(12, d.minSlopeAtr),
     maxTouchSpacing: zeroInt(13, d.maxTouchSpacing),
     minTouchSpacing: zeroInt(14, d.minTouchSpacing),
     minCrossings: zeroInt(15, d.minCrossings),

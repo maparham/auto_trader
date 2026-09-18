@@ -275,6 +275,19 @@ describe("min/max range rows", () => {
     expect((screen.getByLabelText("Min Touches") as HTMLInputElement).value).toBe("2");
   });
 
+  // Slope is signed, so BOTH its boxes are open-ended: the low side reads as
+  // -∞ rather than a literal 0 that looks like "no falling lines".
+  it("shows the signed Slope range as -∞ to ∞ at the defaults and takes a negative", () => {
+    const { cpWrites } = openRecording();
+    const lo = screen.getByLabelText("Min Slope") as HTMLInputElement;
+    const hi = screen.getByLabelText("Max Slope") as HTMLInputElement;
+    expect([lo.value, lo.placeholder]).toEqual(["", "-∞"]);
+    expect([hi.value, hi.placeholder]).toEqual(["", "∞"]);
+    expect(lo.min).toBe("");
+    fireEvent.change(lo, { target: { value: "-0.5" } });
+    expect(cpWrites.at(-1)![12]).toBe(-0.5);
+  });
+
   it("stores the same 0 sentinel when the box is cleared", () => {
     const { cpWrites } = openRecording();
     const box = screen.getByLabelText("Max Span") as HTMLInputElement;
