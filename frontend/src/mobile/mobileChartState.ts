@@ -7,6 +7,7 @@ import type { Chart } from "klinecharts";
 import type { ChartController } from "../lib/chartController";
 import { DEFAULT_BROKER, periodByResolution, type Instrument, type Period } from "../lib/feed";
 import { initialMarket, mobileDrawScope } from "../lib/mobileScope";
+import { resolveDescriptor } from "../lib/snapshotBoot";
 import {
   DEFAULT_ACCOUNT,
   brokerOf,
@@ -50,6 +51,17 @@ export function setMobileSymbol(
     epic: symbol.epic,
     scope: scope ?? mobileDrawScope(broker, symbol.epic),
   });
+  // Each symbol reopens on the timeframe it was last viewed at, on any device:
+  // the view heartbeat (lib/viewHeartbeat.ts) records it per symbol, and the
+  // mobile chart writes one too (MobileChartView). A strip chip passes its
+  // cell's scope and sets that cell's period itself, so it is left alone.
+  if (scope) return;
+  const d = resolveDescriptor(broker, symbol.epic);
+  if (d) {
+    mobilePeriod.set(periodByResolution(d.resolution) ?? { resolution: d.resolution, label: d.resolution });
+  } else if (!mobilePeriod.value) {
+    mobilePeriod.set(periodByResolution("MINUTE_5")!);
+  }
 }
 
 // --- broker account -----------------------------------------------------------

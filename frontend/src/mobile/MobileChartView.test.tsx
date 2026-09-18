@@ -21,7 +21,8 @@ vi.mock("../lib/feed", async (importOriginal) => ({
 }));
 
 import MobileChartView from "./MobileChartView";
-import { mobileSymbol, mobilePeriod, mobileSettingsVersion, mobileChartCtx } from "./mobileChartState";
+import { mobileSymbol, mobilePeriod, mobileSettingsVersion, mobileChartCtx, setMobileSymbol } from "./mobileChartState";
+import { flushViewHeartbeat } from "../lib/viewHeartbeat";
 import { DEFAULT_BROKER, PERIODS } from "../lib/feed";
 import { loadSettings, saveSettings } from "../theme";
 
@@ -54,6 +55,31 @@ describe("MobileChartView", () => {
     const other = PERIODS.find((p) => p.resolution !== "MINUTE_5")!;
     await userEvent.click(screen.getByRole("button", { name: other.label }));
     expect(mobilePeriod.value?.resolution).toBe(other.resolution);
+  });
+
+  it("remembers the timeframe per symbol across reopen", async () => {
+    render(<MobileChartView />);
+    await waitFor(() => screen.getByTestId("chartcore"));
+    act(() => {
+      mobileChartCtx.set({
+        chart: { getBarSpace: () => ({ bar: 8 }), getDom: () => null } as never,
+        controller: { overlays: { getSelectedDrawingId: () => null, addDrawing: () => {} } } as never,
+      });
+    });
+    const hour = PERIODS.find((p) => p.resolution === "HOUR")!;
+    act(() => mobilePeriod.set(hour));
+    flushViewHeartbeat();
+    const saved = JSON.parse(localStorage.getItem(brokerRoot(DEFAULT_BROKER, "view.US100"))!);
+    expect(saved.resolution).toBe("HOUR");
+    expect(saved.scope).toBe("tab.t.cell.c");
+
+    // Another symbol, then back: US100 reopens on the hour, the newcomer keeps
+    // the current period since it has never been viewed.
+    act(() => setMobileSymbol({ epic: "US500", name: "US 500" } as never, DEFAULT_BROKER));
+    expect(mobilePeriod.value?.resolution).toBe("HOUR");
+    act(() => mobilePeriod.set(PERIODS.find((p) => p.resolution === "MINUTE_5")!));
+    act(() => setMobileSymbol({ epic: "US100", name: "US 100" } as never, DEFAULT_BROKER));
+    expect(mobilePeriod.value?.resolution).toBe("HOUR");
   });
 
   it("kicks a chart resize when the tab becomes visible again", async () => {

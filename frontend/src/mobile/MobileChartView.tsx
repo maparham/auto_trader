@@ -25,6 +25,7 @@ import {
 } from "./mobileChartState";
 import { mobileViewMode, setChromeHidden, setLandscape } from "./mobileViewMode";
 import { MaximizeIcon, RestoreIcon, RotateIcon } from "./viewModeIcons";
+import { reportView } from "../lib/viewHeartbeat";
 
 export default function MobileChartView({ active = true }: { active?: boolean }) {
   const symbol = useSyncExternalStore(
@@ -59,6 +60,28 @@ export default function MobileChartView({ active = true }: { active?: boolean })
     (fn) => mobileViewMode.subscribe(fn),
     () => mobileViewMode.value,
   );
+  const ctx = useSyncExternalStore(
+    (fn) => mobileChartCtx.subscribe(fn),
+    () => mobileChartCtx.value,
+  );
+  // The same per-symbol view heartbeat the desktop writes, so a timeframe
+  // picked here is what this symbol reopens on next time (setMobileSymbol
+  // restores it) and the alert snapshot sees what the phone saw. Debounced
+  // inside reportView; fires on the identity changes only, never on scroll.
+  useEffect(() => {
+    if (!ctx || !symbol || !period || !scope || scope.epic !== symbol.epic) return;
+    const el = ctx.chart.getDom?.() ?? null;
+    reportView({
+      scope: scope.scope,
+      epic: symbol.epic,
+      broker,
+      resolution: period.resolution,
+      symbol,
+      barSpace: ctx.chart.getBarSpace?.().bar ?? 8,
+      width: el?.clientWidth ?? 390,
+      height: el?.clientHeight ?? 500,
+    });
+  }, [ctx, symbol, period, scope, broker]);
 
   // Returning from display:none (tab switch back to Chart): klinecharts
   // measured a zero-size container while hidden, which mispositions axis
