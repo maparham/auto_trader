@@ -110,6 +110,16 @@ describe("MobileChartView view-mode controls", () => {
     expect(mobileViewMode.value).toEqual({ chromeHidden: true, landscape: false });
   });
 
+  it("restores the chrome from the same control once hidden", async () => {
+    render(<MobileChartView />);
+    await waitFor(() => expect(screen.getByTestId("chartcore")).toBeTruthy());
+    await userEvent.click(screen.getByLabelText("Chart only"));
+    expect(screen.queryByLabelText("Chart only")).toBeNull();
+    await userEvent.click(screen.getByLabelText("Show controls"));
+    expect(mobileViewMode.value.chromeHidden).toBe(false);
+    expect(screen.queryByLabelText("Show controls")).toBeNull();
+  });
+
   it("enters landscape from the landscape control", async () => {
     const calls: string[] = [];
     setScreenAdapter({

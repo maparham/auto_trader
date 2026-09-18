@@ -126,11 +126,9 @@
   position: relative;
 }
 
-/* Chart-only mode: the one way back. It keeps the topbar icon's place on the
-   right edge, so leaving and returning is the same spot, and sits inside the
-   price axis column (51px wide) where no candle, legend or drawing lives.
-   Same chip styling as the topbar buttons: the icon the user tapped simply
-   moved down into the axis. */
+/* Maximize / restore: one control in two states, parked at the top of the
+   price axis column (51px wide) in both, where no candle, legend or drawing
+   lives. Same chip styling as the topbar buttons. */
 .m-chart-restore {
   position: absolute;
   top: calc(4px + env(safe-area-inset-top));
@@ -147,8 +145,6 @@
   background: var(--bg);
   color: var(--text);
 }
-/* The go-live pill shares the axis top; step it under the button. */
-body.m-mobile .m-body--no-tabbar .chart-golive[data-pos="axis"] { top: 38px !important; }
 
 /* Task 8: touch drawing tool strip. FAB floats bottom-right inside the chart
    body (already above the tab bar, which is a sibling outside .m-chart-view);
@@ -391,11 +387,11 @@ body.m-mobile .cl-row > .cl-fig + .cl-fig { margin-left: 5px; }
    axis-parked go-live pill can't live there without sliding underneath it.
    Move it to the top edge instead, clear of BOTH the FAB and (unlike the
    `topRight` placement MobileChartView avoids) the full-width OHLC legend
-   line: 4px top + 18px row height (see .chart-legend/.cl-row above) plus an
-   8px gap. `!important` is required to win over the inline bottom/right the
+   line, and under the maximize/restore chip (4px top + 28px tall) plus a
+   6px gap. `!important` is required to win over the inline bottom/right the
    component sets from goLivePillStyle's axis branch. */
 body.m-mobile .chart-golive[data-pos="axis"] {
-  top: 30px !important;
+  top: 38px !important;
   bottom: auto !important;
 }
 

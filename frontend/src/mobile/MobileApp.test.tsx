@@ -86,33 +86,6 @@ describe("MobileApp chrome-only mode", () => {
     expect(container.querySelector(".m-tabbar")).toBeNull();
   });
 
-  it("leaves one way back: a restore control", async () => {
-    render(<MobileApp />);
-    expect(screen.queryByLabelText("Show controls")).toBeNull();
-    await act(async () => {
-      mobileViewMode.set({ chromeHidden: true, landscape: false });
-    });
-    await userEvent.click(screen.getByLabelText("Show controls"));
-    expect(mobileViewMode.value.chromeHidden).toBe(false);
-  });
-
-  it("keeps the restore control outside the chart tab, so hiding the chart tab cannot hide it", async () => {
-    const { container } = render(<MobileApp />);
-    await waitFor(() => expect(container.querySelector(".m-tabbar")).not.toBeNull());
-    await act(async () => {
-      mobileViewMode.set({ chromeHidden: true, landscape: false });
-    });
-    const restore = screen.getByLabelText("Show controls");
-    const chartTab = container.querySelector('[data-tab="chart"]');
-    expect(chartTab).not.toBeNull();
-    // The chart tab is the only one kept mounted (display:none) when inactive,
-    // so it's the one case where a nested control could still be "hidden" by
-    // its ancestor rather than unmounted. A restore control nested in there
-    // would take the last way out with it. jsdom has no layout, so containment
-    // is the assertion that can see this, not visibility.
-    expect(chartTab!.contains(restore)).toBe(false);
-  });
-
   it("ends chart-only when something navigates away from the chart", async () => {
     const { container } = render(<MobileApp />);
     await waitFor(() => expect(container.querySelector(".m-tabbar")).not.toBeNull());

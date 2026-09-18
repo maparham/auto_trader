@@ -24,7 +24,7 @@ import {
   mobileSymbol,
 } from "./mobileChartState";
 import { mobileViewMode, setChromeHidden, setLandscape } from "./mobileViewMode";
-import { MaximizeIcon } from "./viewModeIcons";
+import { MaximizeIcon, RestoreIcon } from "./viewModeIcons";
 
 export default function MobileChartView({ active = true }: { active?: boolean }) {
   const symbol = useSyncExternalStore(
@@ -119,19 +119,21 @@ export default function MobileChartView({ active = true }: { active?: boolean })
               ⟳
             </button>
           )}
-          {booted && (
-            <button
-              className="m-chart-viewmode"
-              aria-label="Chart only"
-              onClick={() => void setChromeHidden(true)}
-            >
-              <MaximizeIcon />
-            </button>
-          )}
         </div>
       )}
       {!viewMode.chromeHidden && <MobileChartStrip />}
       <div className="m-chart-body">
+        {/* One control, two states, one spot: top of the price axis, where no
+            candle, legend or drawing lives. Restore ends landscape too. */}
+        {booted && (
+          <button
+            className="m-chart-restore"
+            aria-label={viewMode.chromeHidden ? "Show controls" : "Chart only"}
+            onClick={() => void setChromeHidden(!viewMode.chromeHidden)}
+          >
+            {viewMode.chromeHidden ? <RestoreIcon /> : <MaximizeIcon />}
+          </button>
+        )}
         {booted && (
           <ChartCore
             key={broker + ":" + scope!.scope + ":" + symbol!.epic}

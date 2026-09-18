@@ -15,7 +15,6 @@ import MobileSettingsSheet from "./MobileSettingsSheet";
 import { initMobileAccount, mobileTabSignal, type MobileTab } from "./mobileChartState";
 import { isWorkspaceKey, bumpMobileWorkspace } from "./mobileWorkspace";
 import { initViewMode, mobileViewMode, setChromeHidden } from "./mobileViewMode";
-import { RestoreIcon } from "./viewModeIcons";
 import "./mobile.css";
 
 const TABS: { id: MobileTab; label: string }[] = [
@@ -120,15 +119,6 @@ export default function MobileApp() {
     <div className="m-app">
       {offline && <div className="m-offline">Offline — reconnecting…</div>}
       <div className={viewMode.chromeHidden ? "m-body m-body--no-tabbar" : "m-body"}>
-        {viewMode.chromeHidden && (
-          <button
-            className="m-chart-restore"
-            aria-label="Show controls"
-            onClick={() => void setChromeHidden(false)}
-          >
-            <RestoreIcon />
-          </button>
-        )}
         {/* Kept mounted (display:none when inactive) so the chart's websocket
             survives tab switches instead of reconnecting every time. */}
         <div data-tab="chart" style={{ display: tab === "chart" ? undefined : "none", height: "100%" }}>
