@@ -171,7 +171,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
           {PERIODS.map((p) => (
             <button
               key={p.resolution}
-              className="m-sheet-row"
+              className={`m-sheet-row${p.resolution === period?.resolution ? " m-sheet-row-on" : ""}`}
               onClick={() => {
                 mobilePeriod.set(p);
                 setPeriodSheetOpen(false);

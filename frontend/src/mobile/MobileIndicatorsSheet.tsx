@@ -16,9 +16,31 @@ import {
   isMintedInstanceId,
 } from "../lib/indicators";
 import { indicatorInfo } from "../lib/indicatorMeta";
+import { periodByResolution } from "../lib/feed";
 import { saveIndicators } from "../lib/persist";
 import { EQUITY_INDICATOR } from "../lib/backtest";
 import { indicatorSettingsRequest } from "../lib/signals";
+
+// The legend's "(0.25,500,10,1D)" tail for an instance, so two rows of the same
+// type (three FVGs pinned to different timeframes) stay tellable apart. Reads
+// the live klinecharts indicator; "" while the chart is not up yet.
+function paramsOf(chart: Parameters<typeof getIndicatorsByPane>[0] | undefined, inst: { id: string; type: string }): string {
+  if (!chart || typeof chart.getIndicators !== "function") return "";
+  let ind: { calcParams?: unknown[]; extendData?: unknown; figures?: unknown[] } | undefined;
+  for (const inds of getIndicatorsByPane(chart).values()) {
+    const hit = inds.get(inst.id);
+    if (hit) { ind = hit; break; }
+  }
+  if (!ind || inst.type === "AVWAP") return "";
+  const mtfRes = (ind.extendData as { mtf?: { timeframe?: string | null } } | undefined)?.mtf?.timeframe;
+  const tf = mtfRes && mtfRes !== "chart" ? periodByResolution(mtfRes)?.label ?? mtfRes : "";
+  // Same rule as the legend: a figure-less indicator that hides its legend value
+  // (Trendlines, with sixteen numbers) shows only the timeframe it is pinned to.
+  const hideValue = (ind.extendData as { hideLegendValue?: boolean } | undefined)?.hideLegendValue ?? false;
+  const tfOnly = hideValue && !(ind.figures?.length);
+  const parts = tfOnly ? (tf ? [tf] : []) : [...(ind.calcParams ?? []), ...(tf ? [tf] : [])];
+  return parts.length ? `(${parts.join(",")})` : "";
+}
 
 // Resolve the pane an instance lives on (candle pane for overlays, its own
 // sub-pane for RSI/MACD/etc.) — mirrors useIndicatorCommands.ts's paneIdOf.
@@ -101,7 +123,12 @@ export default function MobileIndicatorsSheet({ onClose }: { onClose: () => void
       <div className="m-ind-list">
         {indicators.map((inst) => (
           <div className="m-ind-row" key={inst.id}>
-            <span className="m-ind-row-title">{indicatorInfo(inst.type).title}</span>
+            <span className="m-ind-row-title">
+              {indicatorInfo(inst.type).title}
+              {paramsOf(ctx?.chart, inst) && (
+                <span className="m-ind-row-params">{paramsOf(ctx?.chart, inst)}</span>
+              )}
+            </span>
             <button
               className="m-ind-row-btn"
               onClick={() =>

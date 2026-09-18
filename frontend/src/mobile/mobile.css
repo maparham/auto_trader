@@ -401,3 +401,6 @@ body.m-mobile .symsearch-results li { gap: 10px; padding: 10px 12px; }
 body.m-mobile .ss-epic { min-width: 0; }
 body.m-mobile .ss-type { min-width: 0; }
 body.m-mobile .ss-exch { display: none; }
+
+/* Indicator row: the legend's param/timeframe tail in a dimmer, smaller run. */
+.m-ind-row-params { color: var(--text-dim); font-size: 12px; margin-left: 6px; }
