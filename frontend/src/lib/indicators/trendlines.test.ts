@@ -664,7 +664,7 @@ describe("computeTrendlines", () => {
     expect(off.tl_1).toBeDefined();
     expect(off.tl_2).toBeDefined();
     expect(off.tl_3).toBeDefined();
-    const on = computeTrendlines(fan(), cfg()).points[79];
+    const on = computeTrendlines(fan(), cfg({ mergeAtr: 1 })).points[79];
     expect(on.tl_1).toBeDefined();
     expect(on.tl_2).toBeUndefined();
     expect(on.tl_nearest).toBe(on.tl_1);
@@ -1218,7 +1218,7 @@ describe("selectDrawnLines dedup", () => {
     expect(mergeTolerance(cfg({ mergeAtr: 2, mergePct: 2 }), 4, 100)).toBe(2);
     expect(mergeTolerance(cfg({ mergeAtr: 2, mergePct: 10 }), 4, 100)).toBe(8);
     expect(mergeTolerance(cfg({ mergeAtr: 0, mergePct: 2 }), undefined, 100)).toBe(2);
-    expect(mergeTolerance(cfg({ maxPerPivot: 1 }), 4, 100)).toBe(4);
+    expect(mergeTolerance(cfg({ maxPerPivot: 1 }), 4, 100)).toBe(4 * TL_DEDUPE_ATR);
     expect(mergeTolerance(cfg({ maxPerPivot: 1, mergeAtr: 0 }), undefined, 100)).toBe(0);
   });
 
@@ -2500,7 +2500,9 @@ describe("TRENDLINES pivot marks", () => {
   });
 
   it("points the arrow at price, clear of the wick", () => {
-    const marks = paint(NO_LINES, true);
+    // The recorder stamps each edge with the stroke width; a fill's edges
+    // carry whatever width was last set, which is not what this pins.
+    const marks = paint(NO_LINES, true).map(({ width: _w, ...m }) => m);
     const pv = passing(NO_LINES);
     // A filled triangle: tip TOWARDS price and TL_PIVOT_GAP clear of the wick,
     // base the width of both arms further out. Three edges, in path order.
