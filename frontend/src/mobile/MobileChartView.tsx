@@ -24,6 +24,7 @@ import {
   mobileSymbol,
 } from "./mobileChartState";
 import { mobileViewMode, setChromeHidden, setLandscape } from "./mobileViewMode";
+import { MaximizeIcon } from "./viewModeIcons";
 
 export default function MobileChartView({ active = true }: { active?: boolean }) {
   const symbol = useSyncExternalStore(
@@ -124,7 +125,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
               aria-label="Chart only"
               onClick={() => void setChromeHidden(true)}
             >
-              ⤢
+              <MaximizeIcon />
             </button>
           )}
         </div>

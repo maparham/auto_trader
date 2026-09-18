@@ -15,6 +15,7 @@ import MobileSettingsSheet from "./MobileSettingsSheet";
 import { initMobileAccount, mobileTabSignal, type MobileTab } from "./mobileChartState";
 import { isWorkspaceKey, bumpMobileWorkspace } from "./mobileWorkspace";
 import { initViewMode, mobileViewMode, setChromeHidden } from "./mobileViewMode";
+import { RestoreIcon } from "./viewModeIcons";
 import "./mobile.css";
 
 const TABS: { id: MobileTab; label: string }[] = [
@@ -125,7 +126,7 @@ export default function MobileApp() {
             aria-label="Show controls"
             onClick={() => void setChromeHidden(false)}
           >
-            ⤢
+            <RestoreIcon />
           </button>
         )}
         {/* Kept mounted (display:none when inactive) so the chart's websocket
