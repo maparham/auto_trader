@@ -284,7 +284,7 @@ describe("min/max range rows", () => {
       expect(row!.contains(screen.getByLabelText(pctLabel))).toBe(true);
       expect(row!.querySelector(".ind-range-dash")).toBeNull();
       const units = [...row!.querySelectorAll(".ind-suffix")].map((s) => s.textContent);
-      expect(units).toEqual(["×ATR", "%"]);
+      expect(units).toEqual(["ATR", "%"]);
     }
   });
 

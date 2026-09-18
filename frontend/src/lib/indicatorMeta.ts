@@ -835,7 +835,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         group: "dist",
         default: TL.maxDistAtr,
         unbounded: true,
-        suffix: "×ATR",
+        suffix: "ATR",
         range: {
           label: "Max Distance",
           dual: true,
@@ -990,7 +990,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         // The tolerance IS the switch: 0 merges nothing.
         default: TL.mergeAtr,
         unbounded: true,
-        suffix: "×ATR",
+        suffix: "ATR",
         range: {
           label: "Merge Lines within",
           dual: true,
