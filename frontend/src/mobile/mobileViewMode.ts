@@ -45,9 +45,35 @@ const domScreen: ScreenAdapter = {
   lockLandscape: async () => {
     // Typed loosely: lock() is absent from lib.dom in some TS versions and
     // absent from Safari at runtime.
-    const o = screen.orientation as unknown as { lock?: (s: string) => Promise<void> };
+    const o = screen.orientation as unknown as {
+      lock?: (s: string) => Promise<void>;
+      type?: string;
+      addEventListener?: (t: string, fn: () => void) => void;
+      removeEventListener?: (t: string, fn: () => void) => void;
+    };
     if (!o?.lock) throw new Error("orientation lock unsupported");
-    await o.lock("landscape");
+    // Android Chrome never settles lock()'s promise when the lock causes a
+    // real rotation (it settles only when the screen is already landscape).
+    // Awaiting it alone leaves the mode half-applied: the screen turns, the
+    // chrome stays, and the next tap "finishes" the job. So the lock counts
+    // as done on the first of: the promise settling, the orientation change
+    // event, or a short deadline.
+    const lock = o.lock("landscape");
+    if (o.type?.startsWith("landscape")) return lock;
+    await new Promise<void>((resolve, reject) => {
+      const done = () => {
+        o.removeEventListener?.("change", done);
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(done, 1500);
+      o.addEventListener?.("change", done);
+      lock.then(done, (e) => {
+        o.removeEventListener?.("change", done);
+        clearTimeout(timer);
+        reject(e);
+      });
+    });
   },
   unlockOrientation: () => {
     const o = screen.orientation as unknown as { unlock?: () => void };
