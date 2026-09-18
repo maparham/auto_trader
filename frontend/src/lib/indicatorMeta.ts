@@ -62,7 +62,11 @@ export interface IndicatorInputDef {
   // pair into a single "label [min] – [max] unit" row under this label and tip
   // instead of two labeled fields. The members keep their own labels for
   // aria/screen readers, and render as ordinary rows if the pair ever splits.
-  range?: { label: string; tip: string | string[] };
+  //
+  // `dual` is the other shape one concept takes: the SAME cut measured two
+  // ways (Max Distance in ATR and in percent). No dash, and each box keeps
+  // its own unit after it: "label [a] ×ATR [b] %".
+  range?: { label: string; tip: string | string[]; dual?: true };
   // The stored value 0 means "no limit" for this input: render an empty box
   // with an "∞" placeholder instead of a literal 0, and store 0 when cleared.
   // Display-only — the stored sentinel does not change.
@@ -831,6 +835,16 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         group: "dist",
         default: TL.maxDistAtr,
         unbounded: true,
+        suffix: "×ATR",
+        range: {
+          label: "Max Distance",
+          dual: true,
+          tip: [
+            "How far a line may sit from the current close, in ATR(14) and as a percent of it. Empty: no limit.",
+            "A line beyond either is never built, and a live line that drifts past is dropped.",
+            "The percent cut holds across timeframes. Dropped lines stop reporting to rules too.",
+          ],
+        },
         tip: [
           "How far a line may sit from the current close, in ATR(14). Empty: no limit.",
           "A line beyond it is never built, and a live line that drifts past it is dropped.",
@@ -842,6 +856,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         group: "dist",
         default: TL.maxDistPct,
         unbounded: true,
+        suffix: "%",
         tip: [
           "How far a line may sit from the current close, as a percent of it. Empty: no limit.",
           "Same rule as the ATR cut, in price terms, so it holds across timeframes.",
@@ -975,7 +990,17 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         // The tolerance IS the switch: 0 merges nothing.
         default: TL.mergeAtr,
         unbounded: true,
-        suffix: "ATR",
+        suffix: "×ATR",
+        range: {
+          label: "Merge Lines within",
+          dual: true,
+          tip: [
+            "Two lines that stay this close the whole time they both exist show one trend, so only the stronger is kept.",
+            "In ATR(14) and as a percent of price; the tighter of the two is the band.",
+            "Close and almost parallel merges; lines that only cross today do not.",
+            "A merged line leaves the chart and stops reporting to rules. Empty: off.",
+          ],
+        },
         tip: [
           "Two lines that stay this close the whole time they both exist show one trend, so only the stronger is kept.",
           "Close and almost parallel merges; lines that only cross today do not.",
@@ -987,6 +1012,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         group: "merge",
         default: TL.mergePct,
         unbounded: true,
+        suffix: "%",
         tip: [
           "Same rule, as a percent of price. The tighter of the two boxes is the band.",
           "Empty: off.",

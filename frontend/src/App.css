@@ -2721,6 +2721,10 @@
 .ind-range { gap: 6px; }
 .ind-range input[type="number"] { width: 56px; }
 .ind-range-dash { color: var(--text-dim); }
+/* The dual shape ("[a] ×ATR [b] %") nests each box in its own .ind-control-row
+   so the unit stays glued to its number; the outer gap separates the two. */
+.ind-range > .ind-control-row { gap: 4px; }
+.ind-range > .ind-control-row + .ind-control-row { margin-left: 4px; }
 
 /* A related PAIR of inputs on one row, each label stacked above its own
    control (indicatorMeta's `group`). The column is half a row wide, so a

@@ -32,7 +32,7 @@ import {
   parseTrendlinesConfig,
   TL_NEAR_PRICE_ATR,
 } from "./lib/indicators/trendlinesOutputs";
-import { TL_LINE_COLOR, type TrendlinesExtend } from "./lib/indicators/trendlines";
+import { TL_LINE_COLOR, trendlineStyleOf, type TrendlinesExtend } from "./lib/indicators/trendlines";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -190,6 +190,21 @@ interface Props {
 }
 
 type Tab = "inputs" | "divergence" | "slope" | "style" | "visibility";
+
+
+/** The Trendlines Style-tab draft: the resolved style of the instance, every
+ * field present. Persisted back as the sparse extendData keys (see
+ * trendlineExtendOf) so an untouched pane carries none of them. */
+type TrendlineStyleDraft = ReturnType<typeof trendlineStyleOf>;
+
+function trendlineExtendOf(d: TrendlineStyleDraft): Partial<TrendlinesExtend> {
+  const out: Partial<TrendlinesExtend> = {};
+  if (d.color !== TL_LINE_COLOR) out.lineColor = d.color;
+  if (d.width !== 1) out.lineWidth = d.width;
+  if (d.style !== "solid") out.lineStyle = d.style;
+  if (d.opacity !== 1) out.lineOpacity = d.opacity;
+  return out;
+}
 
 export default function IndicatorSettings({
   chart,
@@ -493,9 +508,10 @@ export default function IndicatorSettings({
     fvgZoneStyleOf((ind?.extendData ?? {}) as FvgExtend),
   );
 
-  // --- TRENDLINES: line colour (draw-only, on extendData.lineColor) ---
-  const [trendlineColor, setTrendlineColor] = useState<string>(
-    () => (ind?.extendData as TrendlinesExtend | undefined)?.lineColor ?? TL_LINE_COLOR,
+  // --- TRENDLINES: line colour / width / dash / opacity (draw-only, on
+  // extendData.lineColor / lineWidth / lineStyle / lineOpacity) ---
+  const [trendlineStyle, setTrendlineStyle] = useState<TrendlineStyleDraft>(() =>
+    trendlineStyleOf(ind?.extendData as TrendlinesExtend | undefined),
   );
 
   // --- PREV_HL: per-instance timezone override + per-boundary length/agg (Inputs) ---
@@ -1055,10 +1071,10 @@ export default function IndicatorSettings({
     if (isFvg && JSON.stringify(fvgZone) !== JSON.stringify(FVG_ZONE_STYLE_DEFAULTS)) {
       extendData.zoneStyle = fvgZone;
     }
-    if (isTrendlines && trendlineColor !== TL_LINE_COLOR) {
-      // Draw-only; persist only when it differs from the shared default so a
-      // plain instance carries no `lineColor` key.
-      extendData.lineColor = trendlineColor;
+    if (isTrendlines) {
+      // Draw-only; each key persists only when it differs from the default so
+      // a plain instance carries none of them.
+      Object.assign(extendData, trendlineExtendOf(trendlineStyle));
     }
     if (isAvwap) {
       avwapConfig(extendData, avwapSource, bandMode, bands);
@@ -1135,7 +1151,7 @@ export default function IndicatorSettings({
     if (originalCfg.current === null) originalCfg.current = cfg;
     saveIndicatorConfig(scope, name, cfg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, waitClose, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, trendlineColor, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt, slopeColor]);
+  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, waitClose, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, trendlineStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt, slopeColor]);
 
   // Flip the pin's "Wait for timeframe closes" choice: write the flag onto
   // the live indicator FIRST (every apply* reads it from there), then rebuild
@@ -1377,9 +1393,17 @@ export default function IndicatorSettings({
   // Trendlines line colour: draw-only (strokes, rings, handles, tags, pivot
   // marks all read it), so a plain extendData override is the whole live-update
   // path via overrideExtend — never a recompute.
-  function patchTrendlineColor(hex: string): void {
-    setTrendlineColor(hex);
-    overrideExtend(chart, paneId, name, { lineColor: hex });
+  function patchTrendlineStyle(patch: Partial<TrendlineStyleDraft>): void {
+    const next = { ...trendlineStyle, ...patch };
+    setTrendlineStyle(next);
+    // Every key goes on the live override, default or not, so that resetting
+    // a field back to its default clears the earlier override too.
+    overrideExtend(chart, paneId, name, {
+      lineColor: next.color,
+      lineWidth: next.width,
+      lineStyle: next.style,
+      lineOpacity: next.opacity,
+    });
   }
 
   // Pivots High/Low connector: draw-only, so a plain extendData override (merged
@@ -2031,11 +2055,22 @@ export default function IndicatorSettings({
                         />
                       </span>
                       <span className="ind-control-row ind-range">
-                        {controlFor({ ...chunk[0], suffix: undefined })}
-                        <span className="ind-range-dash">–</span>
-                        {controlFor({ ...chunk[1], suffix: undefined })}
-                        {chunk[0].suffix && (
-                          <span className="ind-suffix">{chunk[0].suffix}</span>
+                        {chunk[0].range.dual ? (
+                          // One cut measured two ways: each box keeps its own
+                          // unit, and there is no dash between them.
+                          <>
+                            {controlFor(chunk[0])}
+                            {controlFor(chunk[1])}
+                          </>
+                        ) : (
+                          <>
+                            {controlFor({ ...chunk[0], suffix: undefined })}
+                            <span className="ind-range-dash">–</span>
+                            {controlFor({ ...chunk[1], suffix: undefined })}
+                            {chunk[0].suffix && (
+                              <span className="ind-suffix">{chunk[0].suffix}</span>
+                            )}
+                          </>
                         )}
                       </span>
                     </div>
@@ -2932,14 +2967,27 @@ export default function IndicatorSettings({
                   <div className="ind-group">Line</div>
                   <div className="ind-row ind-style-row">
                     <span className="ind-row-head">
-                      <label>Line colour</label>
+                      <label>Trendline</label>
                       <InfoTip
-                        title="Line colour"
-                        text={["Colour of the lines, touch rings, handles and tags."]}
+                        title="Trendline"
+                        text={[
+                          "Colour applies to the lines, touch rings, handles and tags.",
+                          "Width and dash style apply to the line only.",
+                          "Opacity fades the whole line group.",
+                        ]}
                       />
                     </span>
                     <div className="ind-line-controls">
-                      <ColorLineStylePicker color={trendlineColor} onColor={patchTrendlineColor} />
+                      <ColorLineStylePicker
+                        color={trendlineStyle.color}
+                        onColor={(hex) => patchTrendlineStyle({ color: hex })}
+                        opacity={trendlineStyle.opacity}
+                        onOpacity={(a) => patchTrendlineStyle({ opacity: a })}
+                        size={trendlineStyle.width}
+                        onSize={(w) => patchTrendlineStyle({ width: w })}
+                        lineStyle={trendlineStyle.style}
+                        onLineStyle={(st) => patchTrendlineStyle({ style: st })}
+                      />
                     </div>
                   </div>
                 </>

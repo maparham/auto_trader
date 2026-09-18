@@ -229,13 +229,13 @@ describe("Max lines per pivot", () => {
 describe("the merge tolerance", () => {
   it("stays shown under a per-pivot cap, since the two cuts compose", () => {
     open({}, [...Object.values(TRENDLINES_DEFAULTS).slice(0, 22), 1]);
-    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("1");
+    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("0.25");
     expect((screen.getByLabelText("Max lines per pivot") as HTMLInputElement).value).toBe("1");
   });
 
   it("shows otherwise, carrying its default", () => {
     open();
-    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("1");
+    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("0.25");
   });
 
   // The tolerance lived on extendData while merging was render-only. A pane
@@ -267,6 +267,24 @@ describe("min/max range rows", () => {
       expect(row, `${label} has no range row`).toBeTruthy();
       expect(row!.contains(screen.getByLabelText(minLabel))).toBe(true);
       expect(row!.contains(screen.getByLabelText(maxLabel))).toBe(true);
+    }
+  });
+
+  // Max Distance and Merge Lines are ONE cut measured two ways (ATR and
+  // percent), so each is a single row too: no dash, each box keeps its unit.
+  it("puts the ATR and percent boxes of one cut on one row, each with its unit", () => {
+    open();
+    for (const [label, atrLabel, pctLabel] of [
+      ["Max Distance", "Max Distance (×ATR)", "Max Distance (%)"],
+      ["Merge Lines within", "Merge Lines within", "Merge Lines within (%)"],
+    ]) {
+      const row = screen.getByText(label).closest(".ind-range-row");
+      expect(row, `${label} has no range row`).toBeTruthy();
+      expect(row!.contains(screen.getByLabelText(atrLabel))).toBe(true);
+      expect(row!.contains(screen.getByLabelText(pctLabel))).toBe(true);
+      expect(row!.querySelector(".ind-range-dash")).toBeNull();
+      const units = [...row!.querySelectorAll(".ind-suffix")].map((s) => s.textContent);
+      expect(units).toEqual(["×ATR", "%"]);
     }
   });
 
