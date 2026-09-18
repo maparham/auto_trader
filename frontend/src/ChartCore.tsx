@@ -2260,6 +2260,16 @@ export default function ChartCore({
     const onContextMenu = (e: MouseEvent) => {
       const c = chartRef.current;
       if (!c) return;
+      // A long press on a phone is the crosshair gesture: klinecharts places the
+      // crosshair after a 500ms hold and the finger then drags it around, the
+      // touch stand-in for moving the mouse. Android Chrome fires contextmenu on
+      // that same hold, so opening the Paste/Settings menu here would cover the
+      // crosshair the user just asked for. Swallow it (and the native menu). The
+      // menu's actions stay reachable from the mobile settings sheet.
+      if ((e as PointerEvent).pointerType === "touch") {
+        e.preventDefault();
+        return;
+      }
       // If the right-click landed on an overlay (drawing OR alert line), klinecharts
       // has already fired its onRightClick on this gesture's mousedown (→ the
       // Toolbar's Lock/Settings/Delete menu). Yield: don't ALSO open the chart menu
