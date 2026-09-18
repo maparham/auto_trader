@@ -225,7 +225,9 @@ const TL_DEFAULT_PARAMS = Object.values(TL) as number[];
 // (Max Trendlines, Max per pivot), how much a line must earn its place (Min
 // Touches, Min Span), how coarse the swings are (Pivot Length) and how close
 // two lines may run before the weaker goes (Merge, ATR). Step 3 IS the
-// defaults, so a pane that never touched the slider sits there.
+// defaults, so a pane that never touched the slider sits there. The right
+// two steps keep a merge band and a per-pivot cap: measured on US100 4h,
+// merge 0 or a loose cap drew each extra line twice, a hair apart.
 //                                    maxLines perPivot touches span pivot merge
 const TRENDLINES_PRESETS: IndicatorPresets = {
   base: TL_DEFAULT_PARAMS,
@@ -234,8 +236,8 @@ const TRENDLINES_PRESETS: IndicatorPresets = {
     { name: "Minimal", values: [1, 1, 3, 60, 8, 1] },
     { name: "Few", values: [2, 1, 3, 40, 6, 0.5] },
     { name: "Default", values: [3, 0, 2, 20, 5, 0.25] },
-    { name: "More", values: [6, 2, 2, 12, 4, 0.25] },
-    { name: "Dense", values: [12, 0, 2, 8, 3, 0] },
+    { name: "More", values: [6, 1, 2, 12, 4, 0.5] },
+    { name: "Dense", values: [12, 2, 2, 8, 3, 0.25] },
   ],
 };
 
