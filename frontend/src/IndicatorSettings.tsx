@@ -21,6 +21,8 @@ import {
   groupInputs,
   isMovingAverage,
   presetsFor,
+  presetStepOf,
+  withPresetStep,
   SMOOTHING_TYPES,
   type IndicatorInputDef,
 } from "./lib/indicatorMeta";
@@ -1476,24 +1478,23 @@ export default function IndicatorSettings({
     }
   }
 
-  // --- Preset chips (only TRENDLINES declares any today) ---
-  // One click writes the preset's FULL calcParams, so params a preset doesn't
-  // mention land on their defaults and the chips stay deterministic.
+  // --- Lines slider (only TRENDLINES declares one today) ---
+  // One axis over a few slots, least lines first. Which step is in force is
+  // read by VALUE on the swept slots (so it survives reopen); a manual edit
+  // to any of them reads as Custom, and the thumb then stays where it was.
   const inputPresets = presetsFor(type);
-  // Which chip is in force, by VALUE comparison (so it survives reopen): the
-  // live params — slots a saved chart predates filled from the defaults — must
-  // match a preset on every slot. No match reads as Custom.
-  const activePreset = useMemo(() => {
-    if (!inputPresets) return null;
-    const cur = inputPresets.base.map((d, i) =>
-      Number.isFinite(calcParams[i]) ? calcParams[i] : d,
-    );
-    return (
-      inputPresets.options.find((o) => o.calcParams.every((v, i) => v === cur[i]))
-        ?.name ?? null
-    );
-  }, [inputPresets, calcParams]);
-  function applyPreset(nextCp: number[]) {
+  const activeStep = useMemo(
+    () => (inputPresets ? presetStepOf(inputPresets, calcParams) : null),
+    [inputPresets, calcParams],
+  );
+  const [customThumb, setCustomThumb] = useState<number>(() =>
+    inputPresets ? Math.floor((inputPresets.steps.length - 1) / 2) : 0,
+  );
+  const thumb = activeStep ?? customThumb;
+  function applyStep(i: number) {
+    if (!inputPresets) return;
+    setCustomThumb(i);
+    const nextCp = withPresetStep(inputPresets, calcParams, i);
     setCalcParams(nextCp);
     apply({ calcParams: nextCp });
     // Same contract as setParam's per-slot write: every trendline param feeds
@@ -2000,35 +2001,39 @@ export default function IndicatorSettings({
                 </div>
               )}
               {inputPresets && (
-                // One-click starting points above the individual params. The
-                // select shows which preset is in force by VALUE, so any edit
-                // that leaves the preset's numbers behind reads as Custom —
-                // an out-of-list state the menu only offers while it is true.
-                <div className="ind-row ind-row-cols">
+                // One drag from a couple of strong lines to a busy chart. The
+                // slider sets a few params at once; the rest keep whatever
+                // the user set, and editing one of the swept params reads as
+                // Custom until the thumb moves again.
+                <div className="ind-row ind-row-cols ind-lines-row">
                   <span className="ind-row-head">
-                    <label>Preset</label>
+                    <label>Lines</label>
                     <InfoTip
-                      title="Preset"
-                      text="One-click starting points: Clean draws fewer, stricter lines; Busy keeps more. Picking one resets every calculation input to that preset's values, and editing any of them switches to Custom."
+                      title="Lines"
+                      text={[
+                        "Fewer, stricter lines on the left; more, looser ones on the right.",
+                        "Each step sets Max Trendlines, Max per pivot, Min Touches, Min Span, Pivot Length and Merge together.",
+                        "Everything else keeps your values. Editing one of those six reads as Custom.",
+                      ]}
                     />
                   </span>
-                  <SelectMenu
-                    ariaLabel="Preset"
-                    value={activePreset ?? "Custom"}
-                    options={[
-                      ...inputPresets.options.map((p) => ({
-                        value: p.name,
-                        label: p.name,
-                      })),
-                      ...(activePreset === null
-                        ? [{ value: "Custom", label: "Custom" }]
-                        : []),
-                    ]}
-                    onChange={(v) => {
-                      const p = inputPresets.options.find((o) => o.name === v);
-                      if (p) applyPreset([...p.calcParams]);
-                    }}
-                  />
+                  <span className="ind-control-row ind-lines-slider">
+                    <input
+                      type="range"
+                      aria-label="Lines"
+                      min={0}
+                      max={inputPresets.steps.length - 1}
+                      step={1}
+                      value={thumb}
+                      onChange={(e) => applyStep(Number(e.target.value))}
+                    />
+                    <span
+                      className={"ind-lines-step" + (activeStep === null ? " is-custom" : "")}
+                      data-testid="lines-step"
+                    >
+                      {activeStep === null ? "Custom" : inputPresets.steps[activeStep].name}
+                    </span>
+                  </span>
                 </div>
               )}
               {groupInputs(inputs.filter(visibleInput)).map((chunk) => (

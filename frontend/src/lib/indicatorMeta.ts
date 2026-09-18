@@ -79,11 +79,38 @@ export interface IndicatorInputDef {
 // A named one-click starting point for an indicator's calcParams. `calcParams`
 // is the FULL array (every slot), so applying a preset is deterministic:
 // params a preset doesn't care about land on their defaults.
+/** A one-axis sweep over a FEW calcParam slots: each step names a value for
+ * every slot in `slots`, and the slider only ever writes those slots, so a
+ * user's other edits (pierce, slopes, distance, style) survive a drag. */
 export interface IndicatorPresets {
   // Full default calcParams, used to fill slots a saved chart predates when
-  // matching the live values against an option.
+  // matching the live values against a step.
   base: number[];
-  options: Array<{ name: string; calcParams: number[] }>;
+  // The slots the sweep writes, in the order each step's `values` lists them.
+  slots: number[];
+  // Least lines first.
+  steps: Array<{ name: string; values: number[] }>;
+}
+
+/** The step the live params sit on, matched on the swept slots only (a slot
+ * a saved chart predates reads as its default), or null for Custom. */
+export function presetStepOf(presets: IndicatorPresets, calcParams: number[]): number | null {
+  const cur = presets.slots.map((slot) =>
+    Number.isFinite(calcParams[slot]) ? calcParams[slot] : presets.base[slot],
+  );
+  const i = presets.steps.findIndex((s) => s.values.every((v, j) => v === cur[j]));
+  return i === -1 ? null : i;
+}
+
+/** calcParams with step `i` written onto the swept slots and nothing else
+ * touched; slots the list predates fill from the defaults first so the array
+ * has no holes. */
+export function withPresetStep(presets: IndicatorPresets, calcParams: number[], i: number): number[] {
+  const next = presets.base.map((d, k) => (Number.isFinite(calcParams[k]) ? calcParams[k] : d));
+  presets.slots.forEach((slot, j) => {
+    next[slot] = presets.steps[i].values[j];
+  });
+  return next;
 }
 
 interface IndicatorMetaDef {
@@ -194,22 +221,21 @@ const SLOPE_UNIT_OPTIONS: Array<{ value: string; label: string }> =
 const TL = TRENDLINES_DEFAULTS;
 const TL_DEFAULT_PARAMS = Object.values(TL) as number[];
 
-// A preset = the defaults with a sparse patch (by slot index) on top, so the
-// unmentioned params reset to their defaults and the chips are deterministic.
-function tlPreset(name: string, patch: Record<number, number>) {
-  return { name, calcParams: TL_DEFAULT_PARAMS.map((v, i) => patch[i] ?? v) };
-}
-
-// Chip values: Balanced IS the defaults; Clean tightens the MAJOR gates (fewer,
-// stricter lines — Min Swing Size 0.75 sits mid-way in the useful 0.5–1.0 band
-// measured on the DXY fixture, see the TRENDLINES comment below); Busy loosens
-// them and raises the per-side cap.
+// The Lines slider, least to most: each step sets how many lines are kept
+// (Max Trendlines, Max per pivot), how much a line must earn its place (Min
+// Touches, Min Span), how coarse the swings are (Pivot Length) and how close
+// two lines may run before the weaker goes (Merge, ATR). Step 3 IS the
+// defaults, so a pane that never touched the slider sits there.
+//                                    maxLines perPivot touches span pivot merge
 const TRENDLINES_PRESETS: IndicatorPresets = {
   base: TL_DEFAULT_PARAMS,
-  options: [
-    tlPreset("Clean", { 5: 2, 2: 3, 3: 40, 6: 0.75 }),
-    tlPreset("Balanced", {}),
-    tlPreset("Busy", { 5: 8, 3: 10 }),
+  slots: [5, 22, 2, 3, 0, 21],
+  steps: [
+    { name: "Minimal", values: [1, 1, 3, 60, 8, 1] },
+    { name: "Few", values: [2, 1, 3, 40, 6, 0.5] },
+    { name: "Default", values: [3, 0, 2, 20, 5, 0.25] },
+    { name: "More", values: [6, 2, 2, 12, 4, 0.25] },
+    { name: "Dense", values: [12, 0, 2, 8, 3, 0] },
   ],
 };
 

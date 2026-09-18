@@ -97,7 +97,7 @@ describe("Inputs tab renders a control for every declared input", () => {
     const box = screen.getByLabelText("Merge Lines within");
     expect(box).toBeTruthy();
     expect((box as HTMLInputElement).type).toBe("number");
-    expect((box as HTMLInputElement).value).toBe("1");
+    expect((box as HTMLInputElement).value).toBe("0.25");
   });
 
   it("shows the saved value rather than the default when there is one", () => {
@@ -143,16 +143,16 @@ describe("Inputs tab renders a control for every declared input", () => {
     ).not.toContain("ind-row-cols");
   });
 
-  // The two merge tolerances (ATR and percent) share one paired row, each
-  // label stacked over its own box, and the per-pivot cap above them is a
-  // solo number row with its control in the shared second column.
+  // The two merge tolerances (ATR and percent) share one dual range row,
+  // ATR box then % box, and the per-pivot cap above them is a solo number
+  // row with its control in the shared second column.
   it("pairs the two merge tolerances, with the per-pivot cap on its own row above", () => {
     open();
     const atr = screen.getByLabelText("Merge Lines within");
     const pct = screen.getByLabelText("Merge Lines within (%)");
-    const pair = atr.closest(".ind-pair2");
+    const pair = atr.closest(".ind-range");
     expect(pair).toBeTruthy();
-    expect(pct.closest(".ind-pair2")).toBe(pair);
+    expect(pct.closest(".ind-range")).toBe(pair);
     const cap = screen.getByLabelText("Max lines per pivot").closest(".ind-row");
     expect(cap?.className).toContain("ind-row-cols");
     expect(cap!.querySelector(".ind-info")).toBeTruthy();
@@ -352,39 +352,52 @@ describe("min/max range rows", () => {
   });
 });
 
-describe("preset select", () => {
-  // A SelectMenu, like Declutter: what is asserted is the trigger's text — the
-  // preset in force, resolved by VALUE comparison so it survives reopen.
-  it("opens on Balanced for a pane at the defaults", () => {
+describe("lines slider", () => {
+  const step = () => screen.getByTestId("lines-step").textContent;
+  const slide = (to: number) =>
+    fireEvent.change(screen.getByLabelText("Lines"), { target: { value: String(to) } });
+
+  // The step in force is resolved by VALUE on the swept slots, so it survives
+  // reopen; a pane at the defaults sits on the middle step.
+  it("opens on Default for a pane at the defaults", () => {
     open();
-    expect(screen.getByLabelText("Preset").textContent).toContain("Balanced");
+    expect(step()).toBe("Default");
+    expect((screen.getByLabelText("Lines") as HTMLInputElement).value).toBe("2");
   });
 
-  // A preset writes the FULL calcParams, so the params it doesn't mention land
-  // on their defaults and the option means the same thing on every chart.
-  it("applies Clean's values on pick", () => {
+  // A step writes ONLY its six slots; a slot outside the sweep keeps what the
+  // user had, and one the saved list predates fills from the defaults.
+  it("writes the six swept slots and nothing else", () => {
     const { cpWrites } = openRecording();
-    fireEvent.click(screen.getByLabelText("Preset"));
-    fireEvent.click(screen.getByRole("option", { name: "Clean" }));
+    fireEvent.change(screen.getByLabelText("Max Pierce"), { target: { value: "0.5" } });
+    slide(0);
     const cp = cpWrites.at(-1)!;
-    expect(cp[5]).toBe(2); // maxLines
+    expect(cp[5]).toBe(1); // maxLines
+    expect(cp[22]).toBe(1); // maxPerPivot
     expect(cp[2]).toBe(3); // minTouches
-    expect(cp[3]).toBe(40); // minSpanBars
-    expect(cp[6]).toBe(0.75); // minSwingAtr
-    expect(cp[10]).toBe(0); // maxSpanBars untouched: still the default
-    expect(screen.getByLabelText("Preset").textContent).toContain("Clean");
+    expect(cp[3]).toBe(60); // minSpanBars
+    expect(cp[0]).toBe(8); // pivotLen
+    expect(cp[21]).toBe(1); // mergeAtr
+    expect(cp[17]).toBe(0.5); // pierceMult: the user's edit survives
+    expect(step()).toBe("Minimal");
   });
 
-  // Any edit that leaves a preset's numbers behind reads as Custom — an
-  // out-of-list state the menu only offers while it is true.
-  it("reads Custom after a manual edit", () => {
+  it("walks up to Dense", () => {
+    const { cpWrites } = openRecording();
+    slide(4);
+    expect(cpWrites.at(-1)![5]).toBe(12);
+    expect(step()).toBe("Dense");
+  });
+
+  // Editing a swept param leaves the step behind: the name reads Custom and
+  // the thumb stays put. Editing an unswept one changes nothing.
+  it("reads Custom after a manual edit to a swept param", () => {
     open();
-    fireEvent.change(screen.getByLabelText("Max Trendlines"), {
-      target: { value: "9" },
-    });
-    expect(screen.getByLabelText("Preset").textContent).toContain("Custom");
-    fireEvent.click(screen.getByLabelText("Preset"));
-    expect(screen.getByRole("option", { name: "Custom" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Max Pierce"), { target: { value: "0.5" } });
+    expect(step()).toBe("Default");
+    fireEvent.change(screen.getByLabelText("Max Trendlines"), { target: { value: "9" } });
+    expect(step()).toBe("Custom");
+    expect((screen.getByLabelText("Lines") as HTMLInputElement).value).toBe("2");
   });
 });
 

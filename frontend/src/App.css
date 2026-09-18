@@ -2725,6 +2725,13 @@
    so the unit stays glued to its number; the outer gap separates the two. */
 .ind-range > .ind-control-row { gap: 4px; }
 .ind-range > .ind-control-row + .ind-control-row { margin-left: 4px; }
+/* The Lines slider: thumb plus the step it sits on. Custom dims the name so
+   the thumb reads as "somewhere near", not a chosen step. */
+.ind-row.ind-row-cols.ind-lines-row { grid-template-columns: minmax(0, 1fr) 190px; }
+.ind-lines-slider { gap: 8px; }
+.ind-lines-slider input[type="range"] { flex: 1 1 auto; min-width: 0; margin: 0; }
+.ind-lines-step { font-size: 11px; min-width: 3.6em; text-align: right; font-variant-numeric: tabular-nums; }
+.ind-lines-step.is-custom { color: var(--text-dim); font-style: italic; }
 
 /* A related PAIR of inputs on one row, each label stacked above its own
    control (indicatorMeta's `group`). The column is half a row wide, so a
