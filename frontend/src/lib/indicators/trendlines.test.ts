@@ -46,6 +46,8 @@ import {
   TL_DEDUPE_ATR,
   TL_NEAR_PRICE_ATR,
   TL_LINE_COLOR,
+  trendlineDash,
+  trendlineStyleOf,
   TRENDLINES_TEMPLATE,
   type TrendlinesCalcPoint,
   type TrendLine,
@@ -1343,6 +1345,7 @@ describe("TRENDLINES_TEMPLATE", () => {
 // (colours, dash pattern, label placement) — only that the right segments, in
 // the right count, reach the context.
 interface Segment {
+  width?: number;
   x0: number;
   y0: number;
   x1: number;
@@ -1475,6 +1478,9 @@ function record(
   // instance paints. Absent leaves the key off entirely, exercising the draw
   // path's own TL_LINE_COLOR fallback.
   lineColor?: string,
+  // extendData.lineWidth / lineStyle / lineOpacity: the rest of the
+  // render-only style block, spread in as given.
+  styleExt: Record<string, unknown> = {},
 ): Painted {
   const segments: Segment[] = [];
   const tags: Tag[] = [];
@@ -1516,7 +1522,7 @@ function record(
       start = { x, y };
     },
     lineTo: (x: number, y: number) => {
-      const seg = { x0: cur.x, y0: cur.y, x1: x, y1: y, dashed, alpha: ctx.globalAlpha };
+      const seg = { x0: cur.x, y0: cur.y, x1: x, y1: y, dashed, alpha: ctx.globalAlpha, width: ctx.lineWidth };
       if (ctx.lineWidth === TL_HANDLE_STROKE) handleStrokes.push(seg);
       else segments.push(seg);
       cur = { x, y };
@@ -1564,6 +1570,7 @@ function record(
     ...(showPivots === "default" ? {} : { showPivots }),
     ...(showLinePivots === "default" ? {} : { showLinePivots }),
     ...(lineColor ? { lineColor } : {}),
+    ...styleExt,
   };
   const result = TRENDLINES_TEMPLATE.calc!(bars, {
     calcParams,
@@ -1859,6 +1866,43 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     const { strokeColors } = record(b, params(3), "lastbar");
     expect(strokeColors.length).toBeGreaterThan(0);
     expect(strokeColors.every((c) => c === TL_LINE_COLOR)).toBe(true);
+  });
+
+  // The rest of the Style tab: width and dash are the LINE's alone (the
+  // handle keeps its own weight and stays solid), opacity fades the group.
+  const styled = (styleExt: Record<string, unknown>) =>
+    record(bars(), params(3), "lastbar", undefined, undefined, false, false, undefined, undefined, false, false, false, undefined, styleExt);
+  it("strokes the line at extendData.lineWidth and the handle at its own weight", () => {
+    const { segments, handleStrokes } = styled({ lineWidth: 3 });
+    const lines = segments.filter((s) => s.width === 3);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(handleStrokes.length).toBeGreaterThan(0);
+    expect(handleStrokes.every((s) => s.width === TL_HANDLE_STROKE)).toBe(true);
+  });
+  it("dashes the line under extendData.lineStyle and leaves the handle solid", () => {
+    const { segments, handleStrokes } = styled({ lineStyle: "dashed" });
+    expect(segments.some((s) => s.dashed)).toBe(true);
+    expect(handleStrokes.every((s) => !s.dashed)).toBe(true);
+    const plain = styled({});
+    expect(plain.segments.some((s) => s.dashed)).toBe(false);
+  });
+  it("fades the line and its rings by extendData.lineOpacity", () => {
+    const { segments, touchMarks } = styled({ lineOpacity: 0.5 });
+    expect(segments.some((s) => s.alpha === 0.5)).toBe(true);
+    expect(touchMarks.length).toBeGreaterThan(0);
+    expect(touchMarks.every((m) => m.alpha === 0.5)).toBe(true);
+  });
+  it("resolves the style block with defaults, a width floor and an opacity clamp", () => {
+    expect(trendlineStyleOf(undefined)).toEqual({ color: TL_LINE_COLOR, width: 1, style: "solid", opacity: 1 });
+    expect(trendlineStyleOf({ lineWidth: 0.2, lineOpacity: 4, lineStyle: "apex" as never })).toEqual({
+      color: TL_LINE_COLOR, width: 1, style: "solid", opacity: 1,
+    });
+    expect(trendlineStyleOf({ lineColor: "#123456", lineWidth: 2, lineStyle: "dotted", lineOpacity: 0.3 })).toEqual({
+      color: "#123456", width: 2, style: "dotted", opacity: 0.3,
+    });
+    expect(trendlineDash("solid")).toEqual([]);
+    expect(trendlineDash("dashed")).toEqual([5, 4]);
+    expect(trendlineDash("dotted")).toEqual([1, 3]);
   });
 
   // THE TAG MUST SIT ON ITS LINE. The x is clamped inside the pane, and on a

@@ -1105,6 +1105,43 @@ export interface TrendlinesExtend {
    * Like the rest of this block it never reaches calc, so it has no Python
    * twin and no calcParams entry. */
   lineColor?: string;
+  /** Render-only stroke width of the LINE itself, in pixels (1 = default).
+   * Rings, handles, tags and pivot marks keep their own fixed weights, so a
+   * thick line does not swell its furniture. */
+  lineWidth?: number;
+  /** Render-only dash pattern of the LINE itself; absent or "solid" keeps a
+   * solid stroke. Same vocabulary as every other indicator's Style tab. */
+  lineStyle?: TrendlineStyleOpt;
+  /** Render-only opacity of the whole line group (stroke, rings, tag), 0..1,
+   * absent = 1. Multiplies the dim fade rather than replacing it. */
+  lineOpacity?: number;
+}
+
+export type TrendlineStyleOpt = "solid" | "dashed" | "dotted";
+
+/** The canvas dash for a Style-tab option; `[]` is solid. The pixel
+ * patterns are the ones lib/lineStyle gives klinecharts lines, so a dashed
+ * trendline matches a dashed AVWAP band. */
+export function trendlineDash(style: TrendlineStyleOpt | undefined): number[] {
+  if (style === "dashed") return [5, 4];
+  if (style === "dotted") return [1, 3];
+  return [];
+}
+
+/** The effective style of an instance: every field defaulted, width floored
+ * at 1 and opacity clamped to 0..1, so the draw path and the Style tab agree
+ * on what "unset" paints. */
+export function trendlineStyleOf(ext: TrendlinesExtend | undefined): {
+  color: string; width: number; style: TrendlineStyleOpt; opacity: number;
+} {
+  const w = ext?.lineWidth;
+  const o = ext?.lineOpacity;
+  return {
+    color: ext?.lineColor || TL_LINE_COLOR,
+    width: typeof w === "number" && Number.isFinite(w) && w >= 1 ? w : 1,
+    style: ext?.lineStyle === "dashed" || ext?.lineStyle === "dotted" ? ext.lineStyle : "solid",
+    opacity: typeof o === "number" && Number.isFinite(o) ? Math.min(1, Math.max(0, o)) : 1,
+  };
 }
 
 /** Stable identity for a line across recomputes, for pinning.
@@ -2088,7 +2125,9 @@ function drawTrendlines(
   // Resolved ONCE per draw: every stroke and fill below (lines, rings,
   // handles, tags, pivot marks) reads this instead of the shared default, so
   // one pane's colour choice never bleeds into another's.
-  const lineColor = ext?.lineColor || TL_LINE_COLOR;
+  const lineStyle = trendlineStyleOf(ext);
+  const lineColor = lineStyle.color;
+  const lineDash = trendlineDash(lineStyle.style);
   // NORMALISED, not merely defaulted. A pane saved under a spelling this pane
   // no longer offers ("apex") would otherwise reach lineExtent as an unknown
   // string, fall through every branch and draw the full projection horizon
@@ -2249,7 +2288,8 @@ function drawTrendlines(
     // opacity and hands it back). Recomputing the dim test at those sites is
     // how the touch rings and the ×N tag snapped back to full opacity while
     // the stroke itself faded correctly.
-    const alpha = trendlineDimmed(line, lastIdx, ext) ? trendlineDimAlpha(ext) : 1;
+    const alpha =
+      (trendlineDimmed(line, lastIdx, ext) ? trendlineDimAlpha(ext) : 1) * lineStyle.opacity;
     const isPinned = pins.has(lineKey(line, dataList, starts));
     // The line's end under the MODE alone: what the stroke reverts to when a
     // pin is released. (The handle no longer rides it — see below — it sits at
@@ -2286,7 +2326,10 @@ function drawTrendlines(
       x1 === x0 ? y0 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
     ctx.strokeStyle = lineColor;
     ctx.globalAlpha = alpha;
-    ctx.lineWidth = 1;
+    // Width and dash belong to the LINE alone: both go back to solid, 1px
+    // right after the stroke so the rings, handle and tag keep their shape.
+    ctx.lineWidth = lineStyle.width;
+    ctx.setLineDash(lineDash);
     // Stroke only the near-pane portion (see clipSegmentToRect: an unclipped
     // MTF ray is millions of pixels long and stalls the compositor). The pad
     // is deliberately GENEROUS: a chart-timeframe ray overshoots by a few
@@ -2305,6 +2348,7 @@ function drawTrendlines(
       ctx.lineTo(seg[2], seg[3]);
       ctx.stroke();
     }
+    ctx.setLineDash([]);
     // The touches themselves, one hollow ring each, so the ×N tag can be read
     // back against the bars that earned it: which swings agreed on this line is
     // the question the count only answers in aggregate.
