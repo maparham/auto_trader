@@ -134,7 +134,12 @@
 }
 /* The legend shares that corner; drop it below the button so the way back
    is never buried under the symbol and OHLC rows. */
-.m-body--no-tabbar .chart-legend:not(.sub-pane-legend) { top: 44px; }
+/* The legend steps aside sideways, not downward: the button is 32px wide at
+   left 8px, and every vertical pixel is the point of chart-only mode. */
+.m-body--no-tabbar .chart-legend:not(.sub-pane-legend) {
+  left: 48px;
+  max-width: calc(100% - 48px - 64px);
+}
 
 /* Task 8: touch drawing tool strip. FAB floats bottom-right inside the chart
    body (already above the tab bar, which is a sibling outside .m-chart-view);
