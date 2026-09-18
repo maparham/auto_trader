@@ -666,9 +666,13 @@ describe("computeTrendlines", () => {
     expect(on.tl_1).toBeDefined();
     expect(on.tl_2).toBeUndefined();
     expect(on.tl_nearest).toBe(on.tl_1);
-    const pivot = computeTrendlines(fan(), cfg({ mergeAtr: 0, onePerPivot: 1 })).points[79];
+    const pivot = computeTrendlines(fan(), cfg({ mergeAtr: 0, maxPerPivot: 1 })).points[79];
     expect(pivot.tl_1).toBeDefined();
     expect(pivot.tl_2).toBeUndefined();
+    // At 2 per pivot the fan keeps two: the third shares a pivot with both.
+    const two = computeTrendlines(fan(), cfg({ mergeAtr: 0, maxPerPivot: 2 })).points[79];
+    expect(two.tl_2).toBeDefined();
+    expect(two.tl_3).toBeUndefined();
   });
 
   it("the drawn set IS the emitted set under merging", () => {
@@ -948,7 +952,7 @@ describe("selectDrawnLines", () => {
   });
 
   // THE ONE PLACE THE DRAWN SET AND THE EMITTED SET DIVERGE, and it is the
-  // user's own doing. "One line per pivot" is the merge pass with no tolerance,
+  // user's own doing. Max lines per pivot 1 is the old "One line per pivot",
   // so a twin sharing a pivot goes even though it sits inside maxLines and is
   // therefore one of the ranked operands on this bar. The operand keeps
   // emitting; only the line leaves the chart.
@@ -962,7 +966,7 @@ describe("selectDrawnLines", () => {
     // rank (tl_1..tl_3 at maxLines 3), not a line nobody reads.
     expect(selectDrawnLines(all, 50, 79, 3, null)).toHaveLength(3);
     expect(
-      selectDrawnLines(all, 50, 79, 3, { tol: Infinity, keep: new Set() }),
+      selectDrawnLines(all, 50, 79, 3, { tol: 0, keep: new Set(), perPivot: 1 }),
     ).toEqual([strong, pair]);
   });
 
@@ -1003,22 +1007,45 @@ describe("selectDrawnLines dedup", () => {
     ).toEqual([fanA]);
   });
 
-  it("with no tolerance at all, keeps one line per pivot: the top-ranked survivor", () => {
-    // What "One line per pivot" runs: the three-through-one-swing case no
+  it("with a per-pivot cap of one, keeps one line per pivot: the top-ranked survivor", () => {
+    // What Max lines per pivot 1 runs: the three-through-one-swing case no
     // tolerance a pane can afford would collapse.
     const near: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 95, touches: 5, touchIdxs: [0, 50], lastTouchIdx: 50 };
     const mid: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 86, touches: 3, touchIdxs: [0, 50], lastTouchIdx: 50 };
     const far: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 81, touches: 2, touchIdxs: [0, 50], lastTouchIdx: 50 };
     expect(
-      selectDrawnLines([mid, far, near], 100, 100, 3, { tol: Infinity, keep: NONE }),
+      selectDrawnLines([mid, far, near], 100, 100, 3, { tol: 0, keep: NONE, perPivot: 1 }),
     ).toEqual([near]);
+    // A cap of two keeps the best two through the swing.
+    expect(
+      selectDrawnLines([mid, far, near], 100, 100, 3, { tol: 0, keep: NONE, perPivot: 2 }),
+    ).toEqual([near, mid]);
+  });
+
+  it("the cap counts a pinned line, and composes with the tolerance", () => {
+    const near: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 95, touches: 5, touchIdxs: [0, 50], lastTouchIdx: 50 };
+    const mid: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 86, touches: 3, touchIdxs: [0, 50], lastTouchIdx: 50 };
+    const far: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 81, touches: 2, touchIdxs: [0, 50], lastTouchIdx: 50 };
+    // near is pinned: exempt from the drop, but it still fills one of the
+    // two seats at bar 0, so far (third through it) goes.
+    expect(
+      selectDrawnLines([near, mid, far], 100, 100, 3, { tol: 0, keep: new Set([near]), perPivot: 2 }),
+    ).toEqual([near, mid]);
+    // Cap 2 alone keeps fanA and fanB; with a 1-point tolerance they are the
+    // same trend and fanB goes: both cuts apply.
+    expect(
+      selectDrawnLines([fanA, fanB], 100, 100, 3, { tol: 0, keep: NONE, perPivot: 2 }),
+    ).toEqual([fanA, fanB]);
+    expect(
+      selectDrawnLines([fanA, fanB], 100, 100, 3, { tol: 1, keep: NONE, perPivot: 2 }),
+    ).toEqual([fanA]);
   });
 
   it("with no tolerance, still spares a pinned line", () => {
     const near: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 95, touches: 3, touchIdxs: [0, 50], lastTouchIdx: 50 };
     const far: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 81, touches: 2, touchIdxs: [0, 50], lastTouchIdx: 50 };
     expect(
-      selectDrawnLines([near, far], 100, 100, 3, { tol: Infinity, keep: new Set([far]) }),
+      selectDrawnLines([near, far], 100, 100, 3, { tol: 0, keep: new Set([far]), perPivot: 1 }),
     ).toEqual([near, far]);
   });
 
@@ -1027,7 +1054,7 @@ describe("selectDrawnLines dedup", () => {
     const a: TrendLine = { ...sup, i1: 0, p1: 90, i2: 50, p2: 95, touches: 3, touchIdxs: [0, 50], lastTouchIdx: 50 };
     const b: TrendLine = { ...sup, i1: 10, p1: 60, i2: 60, p2: 62, touches: 2, touchIdxs: [10, 60], lastTouchIdx: 60 };
     expect(
-      selectDrawnLines([a, b], 100, 100, 3, { tol: Infinity, keep: NONE }),
+      selectDrawnLines([a, b], 100, 100, 3, { tol: 0, keep: NONE, perPivot: 1 }),
     ).toEqual([a, b]);
   });
 
@@ -1181,16 +1208,16 @@ describe("selectDrawnLines dedup", () => {
   });
 
   // THE SLOTS. mergeAtr scales the bar's ATR, mergePct the close, and the
-  // tighter one is the band; One line per pivot needs no scale at all
-  // (sharing a pivot alone decides), so it is Infinity even unwarmed.
+  // tighter one is the band; Max lines per pivot is not a tolerance and
+  // leaves the band alone.
   it("takes the band from the config, the tighter of ATR and percent", () => {
     expect(mergeTolerance(cfg({ mergeAtr: 2 }), 4, 100)).toBe(8);
     expect(mergeTolerance(cfg({ mergeAtr: 0, mergePct: 2 }), 4, 100)).toBe(2);
     expect(mergeTolerance(cfg({ mergeAtr: 2, mergePct: 2 }), 4, 100)).toBe(2);
     expect(mergeTolerance(cfg({ mergeAtr: 2, mergePct: 10 }), 4, 100)).toBe(8);
     expect(mergeTolerance(cfg({ mergeAtr: 0, mergePct: 2 }), undefined, 100)).toBe(2);
-    expect(mergeTolerance(cfg({ onePerPivot: 1 }), 4, 100)).toBe(Infinity);
-    expect(mergeTolerance(cfg({ onePerPivot: 1, mergeAtr: 0 }), undefined, 100)).toBe(Infinity);
+    expect(mergeTolerance(cfg({ maxPerPivot: 1 }), 4, 100)).toBe(4);
+    expect(mergeTolerance(cfg({ maxPerPivot: 1, mergeAtr: 0 }), undefined, 100)).toBe(0);
   });
 
   // THE DEFAULT, pinned with the ceiling that bounds it. It was raised to 2.5

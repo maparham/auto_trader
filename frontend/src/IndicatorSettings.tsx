@@ -262,6 +262,29 @@ export default function IndicatorSettings({
   });
 
   const [tab, setTab] = useState<Tab>("inputs");
+  // WHAT A NUMBER BOX SHOWS WHILE IT HAS FOCUS. The boxes are controlled by
+  // the parsed number, and the text on the way to a number is often not one:
+  // "0" in an unbounded box is the off sentinel (rendered empty), "0." and
+  // "-" are nothing at all, "-0" is 0. Rendering the parse back on each
+  // keystroke ate those, so "0.3" landed as "3" and a negative could not be
+  // typed. The raw text stays here, keyed by input, until the box blurs; the
+  // slot still gets the parse on every keystroke, so the preview tracks it.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draftProps = (key: string, shown: number | string, commit: (raw: string) => void) => ({
+    value: drafts[key] ?? shown,
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.value;
+      setDrafts((d) => ({ ...d, [key]: raw }));
+      commit(raw);
+    },
+    onBlur: () =>
+      setDrafts((d) => {
+        if (!(key in d)) return d;
+        const rest = { ...d };
+        delete rest[key];
+        return rest;
+      }),
+  });
   const [calcParams, setCalcParams] = useState<number[]>(() => {
     const cp = original.current.calcParams;
     // A Trendlines pane saved before slots 19 to 22 existed migrates its
@@ -761,13 +784,9 @@ export default function IndicatorSettings({
           // state as empty behind an ∞ placeholder, and clearing it writes the
           // same 0 back — the sentinel never changes, only how it reads.
           placeholder={inp.unbounded ? (inp.placeholder ?? "∞") : undefined}
-          value={inp.unbounded && stored === 0 ? "" : stored}
-          onChange={(e) =>
-            setParam(
-              inp.index!,
-              e.target.value === "" && inp.unbounded ? 0 : Number(e.target.value),
-            )
-          }
+          {...draftProps(inp.key, inp.unbounded && stored === 0 ? "" : stored, (raw) =>
+            setParam(inp.index!, raw === "" && inp.unbounded ? 0 : Number(raw)),
+          )}
         />,
       );
     }
@@ -798,12 +817,13 @@ export default function IndicatorSettings({
           min={inp.min}
           max={inp.max}
           step={inp.step ?? 1}
-          value={
+          {...draftProps(
+            inp.key,
             Number.isFinite(genExtend[inp.field] as number)
               ? (genExtend[inp.field] as number)
-              : ((inp.default as number | undefined) ?? "")
-          }
-          onChange={(e) => setExtendInput(inp.field!, Number(e.target.value))}
+              : ((inp.default as number | undefined) ?? ""),
+            (raw) => setExtendInput(inp.field!, Number(raw)),
+          )}
         />,
       );
     }

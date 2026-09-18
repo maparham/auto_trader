@@ -74,7 +74,7 @@ describe("TRENDLINES registration", () => {
       ["Dim opacity"],
       ["Dim after touching"],
       ["Dim if untouched for"],
-      ["One line per pivot"],
+      ["Max lines per pivot"],
       ["Merge Lines within", "Merge Lines within (%)"],
     ]);
   });
@@ -94,12 +94,15 @@ describe("TRENDLINES registration", () => {
     }
   });
 
-  it("declutters through the calc: One line per pivot is a calcParam boolean", () => {
+  it("declutters through the calc: Max lines per pivot is a calcParam integer", () => {
     const d = resolveInputs("TRENDLINES", undefined).find((i) => i.key === "p22");
-    expect(d?.type).toBe("boolean");
+    expect(d?.type).toBe("number");
     expect(d?.source).toBe("calcParam");
-    expect(d?.label).toBe("One line per pivot");
-    expect(d?.default).toBe(false);
+    expect(d?.label).toBe("Max lines per pivot");
+    expect(d?.default).toBe(0);
+    expect(d?.min).toBe(0);
+    expect(d?.step).toBe(1);
+    expect(d?.unbounded).toBe(true);
     const m = resolveInputs("TRENDLINES", undefined).find((i) => i.label === "Merge Lines within");
     expect(m?.source).toBe("calcParam");
     expect(m?.index).toBe(21);

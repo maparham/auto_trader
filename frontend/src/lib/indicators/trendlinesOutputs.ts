@@ -118,9 +118,10 @@ export interface TrendlinesConfig {
   // reports to a rule: the drawn set IS the emitted set.
   mergeAtr: number;
   mergePct: number;
-  // 1: the merge pass with no tolerance at all, sharing a pivot alone
-  // decides. Same place, same consequence for rules. 0 = off.
-  onePerPivot: number;
+  // Max lines per pivot: once this many kept lines run through one bar (an
+  // anchor or a touch), later lines through it are dropped in the same
+  // pass. 1 was "One line per pivot". 0 = off.
+  maxPerPivot: number;
 }
 
 /** KEY ORDER IS THE calcParams ORDER (mtfCoordinator builds HTF params from
@@ -149,7 +150,7 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   maxDistAtr: 0,
   maxDistPct: 0,
   mergeAtr: 1,
-  onePerPivot: 0,
+  maxPerPivot: 0,
   mergePct: 0,
 };
 
@@ -180,7 +181,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  * maxProjBars, maxLines, minSwingAtr, minSwingReach, pairPivots, maxTouches,
  * maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing, minTouchSpacing,
  * minCrossings, maxCrossings, pierceMult, minBackBars, maxDistAtr,
- * maxDistPct, mergeAtr, onePerPivot, mergePct]. Mirrored by backend
+ * maxDistPct, mergeAtr, maxPerPivot, mergePct]. Mirrored by backend
  * parse_trendlines_config.
  *
  * `extendData` is read ONLY to migrate panes saved before slots 19 to 22
@@ -191,7 +192,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  *    TL_NEAR_PRICE_ATR (slot 19).
  *  - the render-only merge tolerance (`dedupeAtr`, or the older `dedupe:
  *    false` meaning 0) becomes mergeAtr (slot 21).
- *  - `declutter: "pivot"` becomes onePerPivot (slot 22).
+ *  - `declutter: "pivot"` becomes maxPerPivot 1 (slot 22).
  * The settings modal writes every slot on its next save, so the old keys
  * retire on their own.
  *
@@ -214,8 +215,8 @@ export function parseTrendlinesConfig(
   const maxDistAtrDefault =
     p[19] === undefined && legacyNearPrice(extendData) ? TL_NEAR_PRICE_ATR : d.maxDistAtr;
   const mergeAtrDefault = p[21] === undefined ? (legacyMergeAtr(extendData) ?? d.mergeAtr) : d.mergeAtr;
-  const onePerPivotDefault =
-    p[22] === undefined && legacyOnePerPivot(extendData) ? 1 : d.onePerPivot;
+  const maxPerPivotDefault =
+    p[22] === undefined && legacyOnePerPivot(extendData) ? 1 : d.maxPerPivot;
   const numAt = (i: number, def: number, allowZero: boolean): number => {
     const v = Number(p[i]);
     return Number.isFinite(v) && (allowZero ? v >= 0 : v > 0) ? v : def;
@@ -252,7 +253,7 @@ export function parseTrendlinesConfig(
     maxDistAtr: numAt(19, maxDistAtrDefault, true),
     maxDistPct: numAt(20, d.maxDistPct, true),
     mergeAtr: numAt(21, mergeAtrDefault, true),
-    onePerPivot: numAt(22, onePerPivotDefault, true) >= 1 ? 1 : 0,
+    maxPerPivot: zeroInt(22, maxPerPivotDefault),
     mergePct: numAt(23, d.mergePct, true),
   };
 }

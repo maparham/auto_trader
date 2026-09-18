@@ -17,7 +17,7 @@ describe("TRENDLINES_DEFAULTS", () => {
       "pivotLen", "touchMult", "minTouches", "minSpanBars", "maxProjBars", "maxLines",
       "minSwingAtr", "minSwingReach", "pairPivots", "maxTouches", "maxSpanBars",
       "maxSlopeAtr", "minSlopeAtr", "maxTouchSpacing", "minTouchSpacing",
-      "minCrossings", "maxCrossings", "pierceMult", "minBackBars", "maxDistAtr", "maxDistPct", "mergeAtr", "onePerPivot", "mergePct",
+      "minCrossings", "maxCrossings", "pierceMult", "minBackBars", "maxDistAtr", "maxDistPct", "mergeAtr", "maxPerPivot", "mergePct",
     ]);
   });
   it("shares one pool, so pairing reaches 40 pivots back", () => {
@@ -39,7 +39,7 @@ describe("parseTrendlinesConfig", () => {
       maxLines: 9, minSwingAtr: 3, minSwingReach: 6, pairPivots: 25, maxTouches: 7,
       maxSpanBars: 300, maxSlopeAtr: 0.2, minSlopeAtr: 0.01, maxTouchSpacing: 60,
       minTouchSpacing: 3, minCrossings: 1, maxCrossings: 4, pierceMult: 0.4,
-      minBackBars: 12, maxDistAtr: 2.5, maxDistPct: 1.5, mergeAtr: 0.75, onePerPivot: 1, mergePct: 0.3,
+      minBackBars: 12, maxDistAtr: 2.5, maxDistPct: 1.5, mergeAtr: 0.75, maxPerPivot: 1, mergePct: 0.3,
     });
   });
   // Slope is SIGNED (rising +, falling -), so its two slots are the only ones
@@ -81,12 +81,13 @@ describe("parseTrendlinesConfig", () => {
     expect(c.maxDistAtr).toBe(0);
     expect(c.maxDistPct).toBe(0);
     expect(c.mergeAtr).toBe(0);
-    expect(c.onePerPivot).toBe(0);
+    expect(c.maxPerPivot).toBe(0);
     expect(c.mergePct).toBe(0);
   });
   // The merge tolerance and One line per pivot were render-only extendData
-  // settings. A pane saved with them, and no slot 21/22, keeps them; a
-  // present slot wins; and anything else is the default.
+  // settings. A pane saved with them, and no slot 21/22, keeps them (the
+  // old tick is a cap of 1); a present slot wins; and anything else is the
+  // default. Slot 22 is an integer cap now, floored, 0 = off.
   it("migrates the render-only merge settings onto slots 21 and 22", () => {
     expect(parseTrendlinesConfig([], { dedupeAtr: 2.5 }).mergeAtr).toBe(2.5);
     expect(parseTrendlinesConfig([], { dedupe: false }).mergeAtr).toBe(0);
@@ -94,10 +95,12 @@ describe("parseTrendlinesConfig", () => {
     expect(parseTrendlinesConfig([], { dedupeAtr: -1 }).mergeAtr).toBe(1);
     expect(parseTrendlinesConfig([], {}).mergeAtr).toBe(1);
     expect(parseTrendlinesConfig([...Array(21).fill(5), 0.5], { dedupeAtr: 2.5 }).mergeAtr).toBe(0.5);
-    expect(parseTrendlinesConfig([], { declutter: "pivot" }).onePerPivot).toBe(1);
-    expect(parseTrendlinesConfig([], { declutter: "off" }).onePerPivot).toBe(0);
-    expect(parseTrendlinesConfig([...Array(22).fill(5), 0], { declutter: "pivot" }).onePerPivot).toBe(0);
-    expect(parseTrendlinesConfig([...Array(22).fill(5), 3]).onePerPivot).toBe(1);
+    expect(parseTrendlinesConfig([], { declutter: "pivot" }).maxPerPivot).toBe(1);
+    expect(parseTrendlinesConfig([], { declutter: "off" }).maxPerPivot).toBe(0);
+    expect(parseTrendlinesConfig([...Array(22).fill(5), 0], { declutter: "pivot" }).maxPerPivot).toBe(0);
+    expect(parseTrendlinesConfig([...Array(22).fill(5), 3]).maxPerPivot).toBe(3);
+    expect(parseTrendlinesConfig([...Array(22).fill(5), 2.7]).maxPerPivot).toBe(2);
+    expect(parseTrendlinesConfig([...Array(22).fill(5), -1]).maxPerPivot).toBe(0);
   });
 
   // A pierce is a full touch and a gap only a half, so the two tolerances ship

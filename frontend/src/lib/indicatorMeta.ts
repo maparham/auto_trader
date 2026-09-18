@@ -961,24 +961,18 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        key: "p22",
-        label: "One line per pivot",
-        type: "boolean",
-        source: "calcParam",
-        index: 22,
-        default: false,
+        ...num(22, "Max lines per pivot", { min: 0, step: 1 }),
+        default: TL.maxPerPivot,
+        unbounded: true,
         tip: [
-          "Where several lines pass through the same swing, keeps just the strongest.",
-          "A line removed here leaves the chart and stops reporting to rules.",
+          "Where more lines than this pass through one swing, keeps the strongest ones.",
+          "A line removed here leaves the chart and stops reporting to rules. Empty: off.",
         ],
       },
       {
         ...num(21, "Merge Lines within", { min: 0, step: 0.25 }),
         group: "merge",
-        // The tolerance IS the switch: 0 merges nothing. "One line per pivot"
-        // replaces this pass with the shared-pivot test, so under it both
-        // boxes are inert: hidden rather than left there doing nothing.
-        showWhen: { field: "p22", equals: [0] },
+        // The tolerance IS the switch: 0 merges nothing.
         default: TL.mergeAtr,
         unbounded: true,
         suffix: "ATR",
@@ -991,7 +985,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       {
         ...num(23, "Merge Lines within (%)", { min: 0, step: 0.25 }),
         group: "merge",
-        showWhen: { field: "p22", equals: [0] },
         default: TL.mergePct,
         unbounded: true,
         tip: [

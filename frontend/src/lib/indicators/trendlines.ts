@@ -750,7 +750,14 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
       isMajor(l, i, cfg),
   );
   majors.sort(rankLines);
-  const drawn = mergeLines(majors, i, mergeTolerance(cfg, a, close), undefined, cfg.maxLines);
+  const drawn = mergeLines(
+    majors,
+    i,
+    mergeTolerance(cfg, a, close),
+    undefined,
+    cfg.maxLines,
+    cfg.maxPerPivot,
+  );
   let nearestV = 0;
   let nearestD = Infinity;
   const shown = Math.min(drawn.length, cfg.maxLines);
@@ -948,7 +955,7 @@ export function createTrendlinesSession(): TrendlinesSession {
  *
  * THE LINES ARE IN HTF BAR INDICES. Mapping them onto chart bars here would
  * quietly break three things that read those indices as identities rather than
- * as positions: sharesPivot's touch-index membership test (float equality on
+ * as positions: the per-pivot cap's touch-index tally (float equality on
  * interpolated indices), lineKey (a pin would rebind on every reload), and the
  * span ceilings (chart bars compared against an HTF-denominated setting). The
  * conversion happens once, at the last step, where an index becomes a pixel. */
@@ -996,7 +1003,7 @@ export interface TrendlinesExtend {
   dedupeAtr?: number;
   /** LEGACY, read only by the migrations in trendlinesOutputs: the
    * render-only Declutter select. "near" became Max Distance TL_NEAR_PRICE_ATR
-   * (slot 19); "pivot" became onePerPivot (slot 22). Never written. */
+   * (slot 19); "pivot" became maxPerPivot 1 (slot 22). Never written. */
   declutter?: "off" | "near" | "pivot";
   /** LEGACY spelling of `declutter`, from when near-price was a checkbox and
    * the only rule. Read only by the Max Distance migration (legacyNearPrice
@@ -1192,6 +1199,8 @@ export { TL_DEDUPE_ATR };
 export interface TrendlineDedupe {
   tol: number;
   keep: ReadonlySet<TrendLine>;
+  /** Max lines per pivot (cfg.maxPerPivot); 0 or absent = no cap. */
+  perPivot?: number;
 }
 
 /** The dedup tolerance for a bar's ATR, or 0 when merging is off or the ATR
@@ -1256,18 +1265,17 @@ export function trendlineDimmed(
   );
 }
 
-/** The merge pass's price band on a bar: Infinity under One line per pivot
- * (sharing a pivot alone decides, no scale needed); otherwise the tighter of
- * mergeAtr times the bar's ATR(14) and mergePct percent of the close, each
- * skipped at 0 (and the ATR half while unwarmed); 0 (off) when neither is
- * on. ONE reader for the emit step and the draw path, which is what keeps
- * the drawn set the emitted set. Ported to Python as merge_tolerance. */
+/** The merge pass's price band on a bar: the tighter of mergeAtr times the
+ * bar's ATR(14) and mergePct percent of the close, each skipped at 0 (and
+ * the ATR half while unwarmed); 0 (off) when neither is on. The per-pivot
+ * cap (cfg.maxPerPivot) is a separate argument to mergeLines, not a
+ * tolerance. ONE reader for the emit step and the draw path, which is what
+ * keeps the drawn set the emitted set. Ported to Python as merge_tolerance. */
 export function mergeTolerance(
   cfg: TrendlinesConfig,
   atr: number | null | undefined,
   close: number,
 ): number {
-  if (cfg.onePerPivot >= 1) return Infinity;
   let tol = Infinity;
   if (cfg.mergeAtr > 0 && typeof atr === "number" && Number.isFinite(atr)) tol = cfg.mergeAtr * atr;
   if (cfg.mergePct > 0) {
@@ -1301,11 +1309,15 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
  * close the whole time they both exist (sameTrend), whether or not they
  * share a pivot. Two near-parallel lines a few points apart out of
  * different swings are one line to the eye and are merged; two lines that
- * only cross today were far apart before and are not. Under One line per
- * pivot (tol Infinity) the test is the older one instead: sharing a pivot
- * alone decides (sharesPivot), whatever the distance.
+ * only cross today were far apart before and are not.
  *
- * The shared-pivot reasoning below is kept for that mode:
+ * MAX LINES PER PIVOT (`maxPerPivot`, 0 = off) is a second, independent cut
+ * in the same rank walk: once that many kept lines run through a bar (an
+ * anchor or a touch, which is what touchIdxs holds), every later line
+ * through that bar goes, whatever its distance. 1 is the old "One line per
+ * pivot". A pinned line is never dropped but does count toward the tally.
+ *
+ * The shared-pivot reasoning below is what that cap is for:
  *
  * The shared pivot is what makes this a FAN test rather than a "these two
  * levels look similar" test. A pivot is not consumed by the line that first
@@ -1330,40 +1342,21 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
  * A MERGED-AWAY LINE EMITS NOTHING. This pass runs before tl_1..tl_N are
  * filled, so a rule only ever reads a line that is on the chart. Never drops
  * a PINNED line: its handle is the only control that can release the pin. */
-function sharesPivot(a: TrendLine, b: TrendLine): boolean {
-  // Bar AND price, though in practice the bar decides it: an anchor's price is
-  // that bar's high or low, so the same bar at the same kind is the same
-  // price. The price check keeps a hand-built line from merging on a bar
-  // number alone.
-  if (
-    (a.i1 === b.i1 && a.p1 === b.p1) ||
-    (a.i2 === b.i2 && a.p2 === b.p2) ||
-    (a.i1 === b.i2 && a.p1 === b.p2) ||
-    (a.i2 === b.i1 && a.p2 === b.p1)
-  )
-    return true;
-  // A TOUCH COUNTS AS SHARING, not only an anchor, and this is most of what
-  // the pass catches on a real chart. A strong swing is the second anchor of
-  // one line and a mid-line touch of four others; anchors alone see none of
-  // that, so the five ran through the same pivot and none of them merged.
-  // Measured on a live US100 4H pane, five drawn dashed resistances passed
-  // through one 10/08 swing high and only one of them was anchored there.
-  //
-  // The bar is enough, with no price test. Both lines were within the touch
-  // band of that bar's own high or low to be recorded at all, so they are
-  // within two touch tolerances of each other there by construction — which is
-  // the same "they agree at the shared bar" the anchor case gets exactly, only
-  // to a tolerance rather than to the bit.
-  //
-  // The linearity argument survives that weakening. The difference between two
-  // straight lines is itself straight, so on the span between the shared bar
-  // and the bar this is measured at, its size is largest at one end or the
-  // other: bounded there, bounded throughout. LEFT of the shared bar they may
-  // still separate, which is what a fan does and is the same trade the
-  // right-hand side already makes.
-  return a.touchIdxs.some((i) => b.touchIdxs.includes(i));
-}
-
+// A TOUCH COUNTS AS A PIVOT, not only an anchor, and this is most of what
+// the cap catches on a real chart. A strong swing is the second anchor of
+// one line and a mid-line touch of four others; anchors alone see none of
+// that, so the five ran through the same pivot and none of them merged.
+// Measured on a live US100 4H pane, five drawn dashed resistances passed
+// through one 10/08 swing high and only one of them was anchored there.
+// touchIdxs holds the anchors too, so the bar list is the whole pivot set.
+//
+// The bar is enough, with no price test. Both lines were within the touch
+// band of that bar's own high or low to be recorded at all, so they are
+// within two touch tolerances of each other there by construction, which is
+// the same "they agree at the shared bar" an anchor gets exactly, only to a
+// tolerance rather than to the bit. LEFT and RIGHT of the shared bar they
+// separate, which is what a fan does; the cap is about the fan, not about
+// distance.
 export function mergeLines(
   ranked: TrendLine[],
   atIdx: number,
@@ -1372,10 +1365,15 @@ export function mergeLines(
   /** Stop once this many survivors are in: the emit step needs only the
    * first maxLines, and the walk is quadratic in what it keeps. */
   limit = Infinity,
+  /** Max lines per pivot; 0 = no cap. */
+  maxPerPivot = 0,
 ): TrendLine[] {
-  if (!(tol > 0)) return ranked;
+  const capped = maxPerPivot >= 1;
+  if (!(tol > 0) && !capped) return ranked;
   const out: TrendLine[] = [];
   const proj: number[] = [];
+  // Kept lines through each bar, anchors and touches alike.
+  const perBar = new Map<number, number>();
   for (const line of ranked) {
     if (out.length >= limit) break;
     const p = projectAt(line, atIdx);
@@ -1384,12 +1382,13 @@ export function mergeLines(
     // line away would leave a pin with nothing to click.
     const twin =
       !keep?.has(line) &&
-      (tol === Infinity
-        ? out.some((k) => sharesPivot(k, line))
-        : out.some((k, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(k, line, atIdx, tol)));
+      ((tol > 0 &&
+        out.some((k, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(k, line, atIdx, tol))) ||
+        (capped && line.touchIdxs.some((b) => (perBar.get(b) ?? 0) >= maxPerPivot)));
     if (!twin) {
       out.push(line);
       proj.push(p);
+      if (capped) for (const b of line.touchIdxs) perBar.set(b, (perBar.get(b) ?? 0) + 1);
     }
   }
   return out;
@@ -1431,7 +1430,9 @@ export function selectDrawnLines(
 ): TrendLine[] {
   void close;
   const ranked = lines.slice().sort(rankLines);
-  const kept = dedupe ? mergeLines(ranked, atIdx, dedupe.tol, dedupe.keep) : ranked;
+  const kept = dedupe
+    ? mergeLines(ranked, atIdx, dedupe.tol, dedupe.keep, Infinity, dedupe.perPivot ?? 0)
+    : ranked;
   const out: TrendLine[] = [];
   kept.forEach((line, idx) => {
     if (idx < maxLines || dedupe?.keep.has(line)) out.push(line);
@@ -2216,6 +2217,7 @@ function drawTrendlines(
   const drawn = selectDrawnLines(eligible, lastIdx, lastClose, cfg.maxLines, {
     tol: mergeTolerance(cfg, last.atr, lastClose),
     keep: pinnedLines,
+    perPivot: cfg.maxPerPivot,
   });
   const handles: TrendlineHandle[] = [];
   // The bar index sitting at the pane's right edge, so a pinned line reaches it

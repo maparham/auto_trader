@@ -68,7 +68,7 @@ def test_defaults_from_empty_params():
     assert c.pierce_mult == 0.25
     assert c.min_back_bars == 0
     assert (c.max_dist_atr, c.max_dist_pct) == (0.0, 0.0)
-    assert (c.merge_atr, c.one_per_pivot, c.merge_pct) == (1.0, 0, 0.0)
+    assert (c.merge_atr, c.max_per_pivot, c.merge_pct) == (1.0, 0, 0.0)
     assert c.pair_pivots == MAX_PAIR_PIVOTS == 40
     assert (c.min_crossings, c.max_crossings) == (0, 0)
     assert c.timeframe is None
@@ -81,7 +81,7 @@ def test_reads_every_slot_in_order():
             c.min_swing_atr, c.min_swing_reach, c.pair_pivots, c.max_touches, c.max_span_bars,
             c.max_slope_atr, c.min_slope_atr, c.max_touch_spacing, c.min_touch_spacing,
             c.min_crossings, c.max_crossings, c.pierce_mult, c.min_back_bars,
-            c.max_dist_atr, c.max_dist_pct, c.merge_atr, c.one_per_pivot, c.merge_pct) == (
+            c.max_dist_atr, c.max_dist_pct, c.merge_atr, c.max_per_pivot, c.merge_pct) == (
         4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3)
 
 
@@ -97,10 +97,12 @@ def test_render_only_merge_settings_migrate_onto_slots_21_and_22():
     assert parse_trendlines_config([], {"dedupeAtr": -1}).merge_atr == 1.0
     assert parse_trendlines_config([], {"dedupeAtr": True}).merge_atr == 1.0
     assert parse_trendlines_config([5] * 21 + [0.5], {"dedupeAtr": 2.5}).merge_atr == 0.5
-    assert parse_trendlines_config([], {"declutter": "pivot"}).one_per_pivot == 1
-    assert parse_trendlines_config([], {"declutter": "off"}).one_per_pivot == 0
-    assert parse_trendlines_config([5] * 22 + [0], {"declutter": "pivot"}).one_per_pivot == 0
-    assert parse_trendlines_config([5] * 22 + [3], {}).one_per_pivot == 1
+    assert parse_trendlines_config([], {"declutter": "pivot"}).max_per_pivot == 1
+    assert parse_trendlines_config([], {"declutter": "off"}).max_per_pivot == 0
+    assert parse_trendlines_config([5] * 22 + [0], {"declutter": "pivot"}).max_per_pivot == 0
+    assert parse_trendlines_config([5] * 22 + [3], {}).max_per_pivot == 3
+    assert parse_trendlines_config([5] * 22 + [2.7], {}).max_per_pivot == 2
+    assert parse_trendlines_config([5] * 22 + [-1], {}).max_per_pivot == 0
 
 
 def test_a_saved_near_price_declutter_migrates_to_five_atr():
@@ -439,8 +441,11 @@ def test_merge_runs_in_the_emit_step():
     on = compute_trendlines(_fan(), cfg())[0][79]
     assert "tl_1" in on and "tl_2" not in on
     assert on[TL_NEAREST] == on["tl_1"]
-    pivot = compute_trendlines(_fan(), cfg(merge_atr=0, one_per_pivot=1))[0][79]
+    pivot = compute_trendlines(_fan(), cfg(merge_atr=0, max_per_pivot=1))[0][79]
     assert "tl_1" in pivot and "tl_2" not in pivot
+    # At 2 per pivot the fan keeps two: the third shares a pivot with both.
+    two = compute_trendlines(_fan(), cfg(merge_atr=0, max_per_pivot=2))[0][79]
+    assert "tl_2" in two and "tl_3" not in two
     # The percent band reads the same way: 1% of 100 is the 1 ATR the fan
     # merges at; 0.1% is too tight for the 0.74 gap the wide pair has at 79.
     pct = compute_trendlines(_fan(), cfg(merge_atr=0, merge_pct=1))[0][79]

@@ -143,18 +143,19 @@ describe("Inputs tab renders a control for every declared input", () => {
     ).not.toContain("ind-row-cols");
   });
 
-  // A `wide` number lays out the same way (tip beside the label, control in
-  // the shared second column), so it lines up with the checkbox above it
-  // rather than running to the modal edge.
-  it("gives the merge tolerance its tip beside the label, control in column two", () => {
+  // The two merge tolerances (ATR and percent) share one paired row, each
+  // label stacked over its own box, and the per-pivot cap above them is a
+  // solo number row with its control in the shared second column.
+  it("pairs the two merge tolerances, with the per-pivot cap on its own row above", () => {
     open();
-    const box = screen.getByLabelText("Merge Lines within");
-    const row = box.closest(".ind-row");
-    expect(row?.className).toContain("ind-row-cols");
-    const head = row!.querySelector(".ind-row-head");
-    expect(head).toBeTruthy();
-    expect(head!.querySelector(".ind-info")).toBeTruthy();
-    expect(row!.querySelector(".ind-cols-control")).toBeNull();
+    const atr = screen.getByLabelText("Merge Lines within");
+    const pct = screen.getByLabelText("Merge Lines within (%)");
+    const pair = atr.closest(".ind-pair2");
+    expect(pair).toBeTruthy();
+    expect(pct.closest(".ind-pair2")).toBe(pair);
+    const cap = screen.getByLabelText("Max lines per pivot").closest(".ind-row");
+    expect(cap?.className).toContain("ind-row-cols");
+    expect(cap!.querySelector(".ind-info")).toBeTruthy();
   });
 
   it("leaves no declared input without a control", () => {
@@ -165,7 +166,7 @@ describe("Inputs tab renders a control for every declared input", () => {
       "Max Touch Gap",
       "Max Touch Spacing",
       "Merge Lines within",
-      "One line per pivot",
+      "Max lines per pivot",
       "Extend",
     ])
       expect(screen.getByLabelText(label), `${label} has no control`).toBeTruthy();
@@ -195,24 +196,28 @@ describe("Calculation group", () => {
   });
 });
 
-describe("One line per pivot", () => {
-  it("opens unticked by default", () => {
+describe("Max lines per pivot", () => {
+  it("opens empty (off) by default, as an integer box", () => {
     open();
-    expect((screen.getByLabelText("One line per pivot") as HTMLInputElement).checked).toBe(false);
+    const box = screen.getByLabelText("Max lines per pivot") as HTMLInputElement;
+    expect(box.type).toBe("number");
+    expect(box.value).toBe("");
+    expect(box.step).toBe("1");
+    expect(box.min).toBe("0");
   });
 
-  // The Declutter select was render-only; "One line per pivot" is calcParam
-  // slot 22 now, so a merged-away line stops reporting to rules. A pane saved
-  // with the select's "pivot" (and no slot 22) opens ticked.
-  it("migrates a saved pivot declutter onto the slot", () => {
+  // The Declutter select was render-only; the cap is calcParam slot 22 now,
+  // so a merged-away line stops reporting to rules. A pane saved with the
+  // select's "pivot" (and no slot 22) opens on a cap of 1, the old tick.
+  it("migrates a saved pivot declutter onto the slot as a cap of one", () => {
     open({ declutter: "pivot" }, Object.values(TRENDLINES_DEFAULTS).slice(0, 21));
-    expect((screen.getByLabelText("One line per pivot") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Max lines per pivot") as HTMLInputElement).value).toBe("1");
   });
 
   it("migrates a saved near-price rule onto Max Distance", () => {
     open({ declutter: "near" }, Object.values(TRENDLINES_DEFAULTS).slice(0, 19));
     expect((screen.getByLabelText("Max Distance (×ATR)") as HTMLInputElement).value).toBe("5");
-    expect((screen.getByLabelText("One line per pivot") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText("Max lines per pivot") as HTMLInputElement).value).toBe("");
   });
 
   it("leaves Max Distance off (an empty box) for a pane that never chose near-price", () => {
@@ -222,9 +227,10 @@ describe("One line per pivot", () => {
 });
 
 describe("the merge tolerance", () => {
-  it("hides under One line per pivot, because that choice runs the merge with no tolerance", () => {
+  it("stays shown under a per-pivot cap, since the two cuts compose", () => {
     open({}, [...Object.values(TRENDLINES_DEFAULTS).slice(0, 22), 1]);
-    expect(screen.queryByLabelText("Merge Lines within")).toBeNull();
+    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("1");
+    expect((screen.getByLabelText("Max lines per pivot") as HTMLInputElement).value).toBe("1");
   });
 
   it("shows otherwise, carrying its default", () => {
@@ -286,6 +292,35 @@ describe("min/max range rows", () => {
     expect(lo.min).toBe("");
     fireEvent.change(lo, { target: { value: "-0.5" } });
     expect(cpWrites.at(-1)![12]).toBe(-0.5);
+  });
+
+  // The boxes are controlled by the parsed number, and "0" in an unbounded
+  // box IS the off sentinel (rendered empty), "0." and "-" parse to nothing.
+  // Rendering the parse back on each keystroke ate them: "0.3" landed as
+  // "3" and "-0.3" could not be typed at all. The raw text stays in the box
+  // until it blurs; the slot still gets each keystroke's parse.
+  it("keeps the typed text while an unbounded box has focus, so 0.3 and -0.3 can be typed", () => {
+    const { cpWrites } = openRecording();
+    // ("0." and "-" are not asserted: a number input reports them as "" and
+    // keeps the glyphs on screen itself, so the draft has nothing to hold.)
+    const lo = screen.getByLabelText("Min Slope") as HTMLInputElement;
+    for (const raw of ["0", "0.3"]) {
+      fireEvent.change(lo, { target: { value: raw } });
+      expect(lo.value).toBe(raw);
+    }
+    expect(cpWrites.at(-1)![12]).toBe(0.3);
+    for (const raw of ["-0", "-0.3"]) {
+      fireEvent.change(lo, { target: { value: raw } });
+      expect(lo.value).toBe(raw);
+    }
+    expect(cpWrites.at(-1)![12]).toBe(-0.3);
+    fireEvent.blur(lo);
+    expect(lo.value).toBe("-0.3");
+    // A cleared box, once blurred, shows the sentinel as empty again.
+    fireEvent.change(lo, { target: { value: "" } });
+    fireEvent.blur(lo);
+    expect(lo.value).toBe("");
+    expect(cpWrites.at(-1)![12]).toBe(0);
   });
 
   it("stores the same 0 sentinel when the box is cleared", () => {
