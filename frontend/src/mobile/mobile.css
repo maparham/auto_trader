@@ -126,11 +126,12 @@
   z-index: 60;
   width: 40px;
   height: 26px;
-  border: none;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--panel-bg, rgba(128,128,128,.12));
+  background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: 18px;
+  font-weight: 700;
   line-height: 1;
 }
 /* The go-live pill shares the axis top; step it under the button. */

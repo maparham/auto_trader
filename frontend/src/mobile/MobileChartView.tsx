@@ -112,19 +112,19 @@ export default function MobileChartView({ active = true }: { active?: boolean })
           {booted && (
             <button
               className="m-chart-viewmode"
-              aria-label="Chart only"
-              onClick={() => void setChromeHidden(true)}
+              aria-label="Landscape"
+              onClick={() => void setLandscape(true)}
             >
-              ⤢
+              ⟳
             </button>
           )}
           {booted && (
             <button
               className="m-chart-viewmode"
-              aria-label="Landscape"
-              onClick={() => void setLandscape(true)}
+              aria-label="Chart only"
+              onClick={() => void setChromeHidden(true)}
             >
-              ⟳
+              ⤢
             </button>
           )}
         </div>
