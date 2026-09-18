@@ -39,3 +39,13 @@ export function RotateIcon() {
     </svg>
   );
 }
+
+// Gear for the tab bar's Settings button: same 16px box and stroke as the
+// view-mode icons so the bar reads as one set.
+export const GearIcon = () => (
+  <svg {...common} width={18} height={18} strokeWidth={1.4}>
+    <circle cx="8" cy="8" r="2.2" />
+    <path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3" />
+    <circle cx="8" cy="8" r="4.6" />
+  </svg>
+);

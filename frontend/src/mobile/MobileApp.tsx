@@ -12,6 +12,7 @@ import MobilePositionsView from "./MobilePositionsView";
 import MobileTradeView from "./MobileTradeView";
 import MobileModals from "./MobileModals";
 import MobileSettingsSheet from "./MobileSettingsSheet";
+import { GearIcon } from "./viewModeIcons";
 import { initMobileAccount, mobileTabSignal, type MobileTab } from "./mobileChartState";
 import { isWorkspaceKey, bumpMobileWorkspace } from "./mobileWorkspace";
 import { initViewMode, mobileViewMode, setChromeHidden } from "./mobileViewMode";
@@ -156,7 +157,7 @@ export default function MobileApp() {
             aria-label="Settings"
             onClick={() => setSettingsOpen(true)}
           >
-            ⚙
+            <GearIcon />
           </button>
         </nav>
       )}

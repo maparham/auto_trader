@@ -45,12 +45,15 @@
    (fixed width, not flex:1) so it doesn't steal space from them. */
 .m-tabbar-settings {
   flex: 0 0 auto;
-  width: 44px;
-  padding: 10px 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  padding: 0;
   background: none;
   border: none;
-  color: var(--text-dim, var(--text));
-  font-size: 16px;
+  border-left: 1px solid var(--border);
+  color: var(--text);
 }
 
 .m-sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 200; display: flex; align-items: flex-end; }
