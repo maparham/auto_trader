@@ -114,32 +114,27 @@
   position: relative;
 }
 
-/* Chart-only mode: the one way back. Top-left, because bottom-right is the
-   drawing FAB's corner and the right edge now carries the trade pills. */
+/* Chart-only mode: the one way back. It keeps the topbar icon's place on the
+   right edge, so leaving and returning is the same spot, and sits inside the
+   price axis column (51px wide) where no candle, legend or drawing lives.
+   Same chip styling as the topbar buttons: the icon the user tapped simply
+   moved down into the axis. */
 .m-chart-restore {
   position: absolute;
-  top: calc(8px + env(safe-area-inset-top));
-  left: calc(8px + env(safe-area-inset-left));
+  top: calc(4px + env(safe-area-inset-top));
+  right: calc(5px + env(safe-area-inset-right));
   z-index: 60;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 26px;
   border: none;
-  border-radius: 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  background: var(--panel-bg, rgba(128,128,128,.12));
   color: var(--text);
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1;
 }
-/* The legend shares that corner; drop it below the button so the way back
-   is never buried under the symbol and OHLC rows. */
-/* The legend steps aside sideways, not downward: the button is 32px wide at
-   left 8px, and every vertical pixel is the point of chart-only mode. */
-.m-body--no-tabbar .chart-legend:not(.sub-pane-legend) {
-  left: 48px;
-  max-width: calc(100% - 48px - 64px);
-}
+/* The go-live pill shares the axis top; step it under the button. */
+body.m-mobile .m-body--no-tabbar .chart-golive[data-pos="axis"] { top: 38px !important; }
 
 /* Task 8: touch drawing tool strip. FAB floats bottom-right inside the chart
    body (already above the tab bar, which is a sibling outside .m-chart-view);
