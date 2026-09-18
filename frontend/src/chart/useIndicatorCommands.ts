@@ -33,6 +33,7 @@ import { indTypeOf } from "../lib/customIndicators";
 import { saveIndicators, saveIndicatorVisible, type SavedIndicatorConfig } from "../lib/persist";
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "../lib/visibility";
 import { refreshMtfOnVisibilityChange } from "../lib/mtfCoordinator";
+import { stripMtfRuntime } from "../lib/mtfRuntime";
 import { indicatorSettingsRequest } from "../lib/signals";
 import { toast } from "../lib/notify";
 import { MenuIcons } from "../lib/menuIcons";
@@ -52,6 +53,18 @@ export interface IndicatorCommandsDeps {
   setIndMenu: React.Dispatch<
     React.SetStateAction<{ x: number; y: number; paneId: string; name: string } | null>
   >;
+}
+
+/** An indicator's extendData with every computed field dropped: the MTF
+ * runtime stash (only the pin survives) and the session-only Trendlines
+ * compute floor. What a copy, duplicate or paste is entitled to carry. */
+function authoredExtend(
+  ext: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!ext) return ext;
+  const out = { ...stripMtfRuntime(ext) };
+  delete out.tlFloorTs;
+  return out;
 }
 
 export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommandsDeps) {
@@ -149,6 +162,12 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   // per-line styles / extendData inputs). Shared by Copy (→ clipboard JSON) and
   // Duplicate (→ straight back into addFromConfig). The config shape matches
   // SavedIndicatorConfig so it round-trips through persisted storage.
+  //
+  // SETTINGS only, never computed state. A live extendData also carries the MTF
+  // coordinator's stash (the source chart's HTF bars, detected lines and
+  // pivots) and a chart-timeframe Trendlines' compute floor. Shipping those
+  // made a pasted Trendlines draw the SOURCE symbol's lines and pivot markers
+  // on the target chart until something forced a recompute.
   const liveIndicatorConfig = useCallback(
     (paneId: string, name: string): { type: string; config: SavedIndicatorConfig; label: string } | null => {
       const c = chartRef.current;
@@ -164,7 +183,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
           styles: ind.styles?.lines
             ? { lines: ind.styles.lines.map((l) => ({ color: l.color, size: l.size })) }
             : undefined,
-          extendData: ind.extendData as Record<string, unknown> | undefined,
+          extendData: authoredExtend(ind.extendData as Record<string, unknown> | undefined),
         } satisfies SavedIndicatorConfig,
       };
     },

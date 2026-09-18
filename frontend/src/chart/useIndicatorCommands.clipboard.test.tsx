@@ -188,6 +188,55 @@ describe("group copy", () => {
   });
 });
 
+describe("indicator copy carries settings, not computed state", () => {
+  // A Trendlines pinned to a higher timeframe holds the coordinator's stash on
+  // extendData.mtf: the SOURCE chart's HTF bars, lines and pivots. Copying
+  // that verbatim made a paste onto another symbol draw the source's lines.
+  const tl = {
+    name: "TRENDLINES",
+    paneId: "candle_pane",
+    shortName: "Trendlines",
+    calcParams: [5, 0, 2],
+    visible: true,
+    styles: undefined,
+    extendData: {
+      indType: "TRENDLINES",
+      extend: "segment",
+      tlFloorTs: DRAWING_TS,
+      mtf: {
+        timeframe: "1D",
+        waitClose: true,
+        htfStarts: [DRAWING_TS],
+        htfMs: 86_400_000,
+        htfLines: [{ i1: 0, i2: 1 }],
+        htfPivots: { highs: [1], lows: [0] },
+        htfPoints: [{}],
+        coveredFromMs: DRAWING_TS,
+      },
+    },
+  };
+  const tlCommands = () => {
+    const handle = makeHandle();
+    (handle.chartRef as { current: unknown }).current = {
+      getIndicators: () => [tl],
+    };
+    return renderHook(() => useIndicatorCommands(handle, DEPS)).result.current;
+  };
+
+  it("keeps the timeframe pin and drawing options, drops the stash and floor", () => {
+    tlCommands().copyIndicator("candle_pane", "TRENDLINES");
+    const payload = JSON.parse(writeText.mock.calls[0][0]);
+    expect(payload.config.extendData).toEqual({
+      indType: "TRENDLINES",
+      extend: "segment",
+      mtf: { timeframe: "1D", waitClose: true },
+    });
+    // The live instance is untouched.
+    expect(tl.extendData.mtf.htfLines).toHaveLength(1);
+    expect(tl.extendData.tlFloorTs).toBe(DRAWING_TS);
+  });
+});
+
 describe("indicator copy on a blind replay cell", () => {
   // An indicator config can carry a bar timestamp of its own (PREV_HL's anchor),
   // so it goes through the same gate.
