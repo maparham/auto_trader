@@ -53,7 +53,7 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 #  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
 #  max_dist_pct, merge_atr, max_per_pivot, merge_pct]: TRENDLINES_DEFAULTS
 #  in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 1.0, 0, 0.0)
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0)
 # The distance "Only lines near price" drew at, in ATR(14): what a pane saved
 # with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
 # trendlinesOutputs.ts.
@@ -103,7 +103,7 @@ class TrendlinesConfig:
     # how many kept lines may run through one bar (anchor or touch) in the
     # same pass, 0 = off, 1 was "One line per pivot". A merged-away line
     # emits nothing.
-    merge_atr: float = 1.0
+    merge_atr: float = 0.25
     max_per_pivot: int = 0
     merge_pct: float = 0.0
     timeframe: str | None = None

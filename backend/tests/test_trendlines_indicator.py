@@ -68,7 +68,7 @@ def test_defaults_from_empty_params():
     assert c.pierce_mult == 0.25
     assert c.min_back_bars == 0
     assert (c.max_dist_atr, c.max_dist_pct) == (0.0, 0.0)
-    assert (c.merge_atr, c.max_per_pivot, c.merge_pct) == (1.0, 0, 0.0)
+    assert (c.merge_atr, c.max_per_pivot, c.merge_pct) == (0.25, 0, 0.0)
     assert c.pair_pivots == MAX_PAIR_PIVOTS == 40
     assert (c.min_crossings, c.max_crossings) == (0, 0)
     assert c.timeframe is None
@@ -94,8 +94,8 @@ def test_slope_slots_are_signed():
 def test_render_only_merge_settings_migrate_onto_slots_21_and_22():
     assert parse_trendlines_config([], {"dedupeAtr": 2.5}).merge_atr == 2.5
     assert parse_trendlines_config([], {"dedupe": False, "dedupeAtr": 2}).merge_atr == 0.0
-    assert parse_trendlines_config([], {"dedupeAtr": -1}).merge_atr == 1.0
-    assert parse_trendlines_config([], {"dedupeAtr": True}).merge_atr == 1.0
+    assert parse_trendlines_config([], {"dedupeAtr": -1}).merge_atr == 0.25
+    assert parse_trendlines_config([], {"dedupeAtr": True}).merge_atr == 0.25
     assert parse_trendlines_config([5] * 21 + [0.5], {"dedupeAtr": 2.5}).merge_atr == 0.5
     assert parse_trendlines_config([], {"declutter": "pivot"}).max_per_pivot == 1
     assert parse_trendlines_config([], {"declutter": "off"}).max_per_pivot == 0

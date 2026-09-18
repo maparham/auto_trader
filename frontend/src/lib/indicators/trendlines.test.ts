@@ -1232,8 +1232,8 @@ describe("selectDrawnLines dedup", () => {
   // Above half of TL_NEAR_PRICE_ATR a line at the close could merge with one at
   // the far edge of the band that is drawn at all, so that is a ceiling on the
   // default rather than a preference.
-  it("defaults to 1 ATR, never more than half the near-price band", () => {
-    expect(TL_DEDUPE_ATR).toBe(1);
+  it("defaults to a quarter ATR, never more than half the near-price band", () => {
+    expect(TL_DEDUPE_ATR).toBe(0.25);
     expect(TL_DEDUPE_ATR).toBeLessThanOrEqual(TL_NEAR_PRICE_ATR / 2);
   });
 });

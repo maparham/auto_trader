@@ -92,8 +92,8 @@ describe("parseTrendlinesConfig", () => {
     expect(parseTrendlinesConfig([], { dedupeAtr: 2.5 }).mergeAtr).toBe(2.5);
     expect(parseTrendlinesConfig([], { dedupe: false }).mergeAtr).toBe(0);
     expect(parseTrendlinesConfig([], { dedupe: false, dedupeAtr: 2 }).mergeAtr).toBe(0);
-    expect(parseTrendlinesConfig([], { dedupeAtr: -1 }).mergeAtr).toBe(1);
-    expect(parseTrendlinesConfig([], {}).mergeAtr).toBe(1);
+    expect(parseTrendlinesConfig([], { dedupeAtr: -1 }).mergeAtr).toBe(0.25);
+    expect(parseTrendlinesConfig([], {}).mergeAtr).toBe(0.25);
     expect(parseTrendlinesConfig([...Array(21).fill(5), 0.5], { dedupeAtr: 2.5 }).mergeAtr).toBe(0.5);
     expect(parseTrendlinesConfig([], { declutter: "pivot" }).maxPerPivot).toBe(1);
     expect(parseTrendlinesConfig([], { declutter: "off" }).maxPerPivot).toBe(0);

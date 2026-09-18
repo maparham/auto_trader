@@ -149,19 +149,17 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   minBackBars: 0,
   maxDistAtr: 0,
   maxDistPct: 0,
-  mergeAtr: 1,
+  mergeAtr: 0.25,
   maxPerPivot: 0,
   mergePct: 0,
 };
 
 /** DEFAULT merge tolerance, in ATR(14): the value the mergeAtr slot starts
- * on. Measured on a US100 daily pane (see the note above TL_DEDUPE_ATR's
- * former home in trendlines.ts): every merge from 0.25 to 3 joined lines
- * beginning months apart that converge on a later pivot, and 1 is where
- * that stops swallowing distinct levels. Kept under half of
+ * on. A quarter ATR only joins near-duplicates; 1 ATR (the earlier default)
+ * swallowed distinct levels on a daily pane. Kept under half of
  * TL_NEAR_PRICE_ATR, or a line at the close could merge with one at the far
  * edge of that band. */
-export const TL_DEDUPE_ATR = 1;
+export const TL_DEDUPE_ATR = 0.25;
 
 /** The distance "Only lines near price" used to draw at, in ATR(14): the
  * Max Distance a pane that chose that rule migrates onto (see
