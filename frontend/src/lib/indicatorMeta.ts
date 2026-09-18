@@ -133,7 +133,9 @@ function num(
     type: "number",
     source: "calcParam",
     index,
-    min: opts.min ?? 1,
+    // A caller that names `min`, even as undefined, means it (a signed field
+    // has no floor); one that omits it gets the positive default.
+    min: "min" in opts ? opts.min : 1,
     step: opts.step ?? 1,
     max: opts.max,
   };
@@ -770,7 +772,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(12, "Min Slope", { step: 0.01 }),
+        ...num(12, "Min Slope", { min: undefined, step: 0.01 }),
         group: "slope",
         default: 0,
         unbounded: true,
@@ -791,7 +793,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(11, "Max Slope", { step: 0.01 }),
+        ...num(11, "Max Slope", { min: undefined, step: 0.01 }),
         group: "slope",
         default: 0,
         unbounded: true,
