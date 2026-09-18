@@ -2260,13 +2260,15 @@ export default function ChartCore({
     const onContextMenu = (e: MouseEvent) => {
       const c = chartRef.current;
       if (!c) return;
-      // A long press on a phone is the crosshair gesture: klinecharts places the
-      // crosshair after a 500ms hold and the finger then drags it around, the
-      // touch stand-in for moving the mouse. Android Chrome fires contextmenu on
-      // that same hold, so opening the Paste/Settings menu here would cover the
-      // crosshair the user just asked for. Swallow it (and the native menu). The
-      // menu's actions stay reachable from the mobile settings sheet.
-      if ((e as PointerEvent).pointerType === "touch") {
+      // A long press on a phone is the crosshair gesture over the candles:
+      // klinecharts places the crosshair after a 500ms hold and the finger then
+      // drags it around, the touch stand-in for moving the mouse. Android Chrome
+      // fires contextmenu on that same hold, so opening the Paste/Settings menu
+      // here would cover the crosshair the user just asked for. Swallow it (and
+      // the native menu) everywhere but the price-axis column, where no
+      // crosshair lives and the hold keeps opening the axis menu below. The
+      // chart menu's actions stay reachable from the mobile settings sheet.
+      if ((e as PointerEvent).pointerType === "touch" && !overPriceAxis(e)) {
         e.preventDefault();
         return;
       }
