@@ -24,7 +24,7 @@ import {
   mobileSymbol,
 } from "./mobileChartState";
 import { mobileViewMode, setChromeHidden, setLandscape } from "./mobileViewMode";
-import { MaximizeIcon, RestoreIcon } from "./viewModeIcons";
+import { MaximizeIcon, RestoreIcon, RotateIcon } from "./viewModeIcons";
 
 export default function MobileChartView({ active = true }: { active?: boolean }) {
   const symbol = useSyncExternalStore(
@@ -116,22 +116,26 @@ export default function MobileChartView({ active = true }: { active?: boolean })
               aria-label="Landscape"
               onClick={() => void setLandscape(true)}
             >
-              ⟳
+              <RotateIcon />
             </button>
           )}
         </div>
       )}
       {!viewMode.chromeHidden && <MobileChartStrip />}
       <div className="m-chart-body">
-        {/* One control, two states, one spot: top of the price axis, where no
-            candle, legend or drawing lives. Restore ends landscape too. */}
+        {/* One control, one spot: top of the price axis, where no candle,
+            legend or drawing lives. Its icon names what the tap does next:
+            maximize, restore, or (rotated) turn back to portrait, since
+            leaving landscape is what setChromeHidden(false) does first. */}
         {booted && (
           <button
             className="m-chart-restore"
-            aria-label={viewMode.chromeHidden ? "Show controls" : "Chart only"}
+            aria-label={
+              viewMode.landscape ? "Back to portrait" : viewMode.chromeHidden ? "Show controls" : "Chart only"
+            }
             onClick={() => void setChromeHidden(!viewMode.chromeHidden)}
           >
-            {viewMode.chromeHidden ? <RestoreIcon /> : <MaximizeIcon />}
+            {viewMode.landscape ? <RotateIcon /> : viewMode.chromeHidden ? <RestoreIcon /> : <MaximizeIcon />}
           </button>
         )}
         {booted && (

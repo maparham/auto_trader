@@ -120,6 +120,16 @@ describe("MobileChartView view-mode controls", () => {
     expect(screen.queryByLabelText("Show controls")).toBeNull();
   });
 
+  it("offers the way back to portrait while rotated", async () => {
+    render(<MobileChartView />);
+    await waitFor(() => expect(screen.getByTestId("chartcore")).toBeTruthy());
+    await act(async () => {
+      mobileViewMode.set({ chromeHidden: true, landscape: true });
+    });
+    expect(screen.queryByLabelText("Show controls")).toBeNull();
+    expect(screen.getByLabelText("Back to portrait")).toBeTruthy();
+  });
+
   it("enters landscape from the landscape control", async () => {
     const calls: string[] = [];
     setScreenAdapter({
