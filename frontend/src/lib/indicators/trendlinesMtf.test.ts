@@ -534,6 +534,14 @@ describe("crossingChartIdx", () => {
     expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, mtf), data)).toBe(11);
   });
 
+  it("takes the caller's side test when given, the drawn line's", () => {
+    // The projection says bars 9..11 closed above; the drawn segment (a
+    // little higher) says only 11 did, so the mark goes to 11.
+    const run = bars({ 9: 101, 10: 101, 11: 101 });
+    const drawn = (c: number) => (c === 11 ? 1 : -1);
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(run, mtf), run, drawn)).toBe(11);
+  });
+
   it("is the bar itself with no pin", () => {
     const data = bars({});
     expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, undefined), data)).toBe(2);

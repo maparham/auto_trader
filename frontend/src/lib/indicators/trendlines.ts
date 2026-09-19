@@ -1975,14 +1975,23 @@ export function crossingChartIdx(
   j: number,
   map: ReturnType<typeof trendlineIdxMap>,
   dataList: KLineData[],
+  /** Which side of the line chart bar c CLOSED on (+1 above, -1 below, 0
+   * on it). The draw passes the side of the line AS DRAWN: on a finer chart
+   * the straight pixel segment sits a little off the HTF projection (the
+   * chart's bars are not evenly spaced in HTF time), and a mark chosen by
+   * the projection could land on a candle that visibly never reached the
+   * drawn line. Defaults to the projection, which is what the count used. */
+  sideAt?: (c: number) => number,
 ): number {
   const last = map.toChartClose(j);
   const first = Math.max(0, Math.ceil(map.toChart(j)));
   if (!(last > first) || last >= dataList.length) return last;
-  const side = (c: number): number => {
-    const d = dataList[c].close - projectAt(line, map.toLine(c));
-    return d > 0 ? 1 : d < 0 ? -1 : 0;
-  };
+  const side =
+    sideAt ??
+    ((c: number): number => {
+      const d = dataList[c].close - projectAt(line, map.toLine(c));
+      return d > 0 ? 1 : d < 0 ? -1 : 0;
+    });
   const want = side(last);
   if (want === 0) return last;
   const lo = Math.max(0, Math.floor(map.toChart(j - 1)));
@@ -2511,8 +2520,16 @@ function drawTrendlines(
     // Walking back from the HTF close keeps the mark ON the drawn line only
     // while the segment reaches that far, so onSegment is asked as for a ring.
     if (showCrossings) {
+      // Side of the DRAWN segment, in pixels (y grows downward), so the
+      // chosen candle is one whose close visibly sits across the line.
+      const sideDrawn = (c: number): number => {
+        const d = yPx(dataList[c].close) - onSegment(xAxis.convertToPixel(c));
+        return d < 0 ? 1 : d > 0 ? -1 : 0;
+      };
       for (const idx of line.crossIdxs ?? []) {
-        const xC = xAxis.convertToPixel(crossingChartIdx(line, idx, idxMap, dataList));
+        const xC = xAxis.convertToPixel(
+          crossingChartIdx(line, idx, idxMap, dataList, mtf ? sideDrawn : undefined),
+        );
         const yC = onSegment(xC);
         if (xC < 0 || xC > Math.min(tagRight, x1) || yC < 0 || yC > bounding.height)
           continue;
