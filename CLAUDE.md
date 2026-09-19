@@ -51,12 +51,12 @@ UI tools (need a connected browser tab): `ui_sessions`, `ui_actions`
 `ui_screenshot` (returns the focused chart as an image plus a text line
 naming epic/resolution/cell; pairs with `chart.state` for the numbers behind
 the pixels). No tab connected gives a clear error ("no UI session connected:
-open the app in a browser"). The 27 registered actions today, by group:
+open the app in a browser"). The 28 registered actions today, by group:
 `backtest.*` (config.get, config.set, run, cancel, result, progress),
 `sweep.*` (start, cancel, rows), dealing (`order.place`, `position.close`,
 `order.cancel`), `drawing.*` (list, add, remove, clear), `chart.*` (state,
 screenshot, timeframe.set, range.set), `indicator.*` (list, add, set,
-remove), and app shell (`market.select`, `tab.list`,
+remove), and app shell (`market.select`, `tab.list`, `tab.focus`,
 `panel.backtest.open`). The dealing actions require an in-browser Approve
 click. The frontend bridge is on in dev builds and off in production unless
 `VITE_AGENT_BRIDGE=1`.
@@ -69,6 +69,18 @@ when several are open). Recovery chain for a hidden tab: TAB_HIDDEN from
 automation permission for whatever app hosts the backend process; a pending
 permission dialog surfaces as a 15 s osascript timeout with a hint. Hosted
 mode refuses these tools.
+
+Tab Bridge extension (`extension/` at the repo root, generic, unpacked
+install per `extension/README.md`): a page can screenshot or focus its own
+tab through `chrome.debugger` / `chrome.tabs`, which works while the tab is
+backgrounded. `chart.screenshot` uses it when its `hello` probe answers
+(result carries `via: "extension"`), clipped to the chart container, and
+falls back to the canvas composite otherwise (`via: "canvas"`, TAB_HIDDEN
+when hidden). `ui_focus_tab` tries the in-page `tab.focus` action first, so
+it works on any OS with the extension, and only then AppleScript. The
+extension is not Chartkar-specific: it answers a namespaced `postMessage`
+protocol on any http(s) origin and never targets a tab other than the
+requester's.
 
 Direct tools (no tab needed; call the app in-process): `ta_candles`,
 `ta_indicator_series`, `ta_pattern_search`, `ta_pattern_scan`,
@@ -119,8 +131,9 @@ image block, and writes it to PATH.
 3. `ui_read_state("chart.state")` for the numbers (candles, indicator
    values, visible range) and `ui_screenshot` for the picture; read both
    together rather than guessing the layout from one alone. `ui_screenshot`
-   fails with TAB_HIDDEN when the app's browser tab is backgrounded; ask the
-   user to focus the tab and retry.
+   works with the tab backgrounded when the Tab Bridge extension is
+   installed; without it, it fails with TAB_HIDDEN, so call `ui_focus_tab`
+   and retry.
 4. Iterate: adjust the timeframe, swap or remove indicators
    (`indicator.set`, `indicator.remove`), re-screenshot, until the view
    answers the question.
