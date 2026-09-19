@@ -844,7 +844,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ...num(15, "Min Crossings", { min: 0 }),
         group: "cross",
         default: 0,
-        suffix: "times",
+        suffix: "bars",
         range: {
           label: "Crossings",
           tip: [
@@ -860,7 +860,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         group: "cross",
         default: 0,
         unbounded: true,
-        suffix: "times",
+        suffix: "bars",
         tip: ["Max times the close may have crossed the line. Empty: no limit."],
       },
       {
@@ -993,7 +993,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         // touching 5 pivots"), the same shape the row below it and Merge
         // Lines within use.
         label: "Dim after touching",
-        wide: true,
         type: "number",
         source: "extend",
         field: "dimTouches",
@@ -1010,14 +1009,13 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       {
         key: "dimCrossings",
         label: "Dim if crossed",
-        wide: true,
         type: "number",
         source: "extend",
         field: "dimCrossings",
         tab: "style",
         default: 0,
         min: 0,
-        suffix: "times",
+        suffix: "bars",
         tip: [
           "Fades a line once price has cut through it this many times. Zero never dims.",
           "It only fades; Max Crossings is what removes a line.",
@@ -1030,7 +1028,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         // untouched" is wider than the suffix column and clipped to "bars
         // untouc" in the panel.
         label: "Dim if untouched for",
-        wide: true,
         type: "number",
         source: "extend",
         field: "dimStaleBars",
