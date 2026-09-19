@@ -1,13 +1,15 @@
 // Entry point: registers all action modules and starts the WS bridge when the
 // build enables it (VITE_AGENT_BRIDGE=1; dev builds default on). Idempotent.
-import { startAgentBridge } from "./bridge";
+import { registerTabActions, startAgentBridge } from "agent-ui-bridge";
+import { API_BASE } from "../lib/http";
+import { getAuthToken, hasTokenGetter } from "../lib/authToken";
+import { withImpersonation } from "../lib/impersonation";
 import { registerBacktestActions } from "./actions/backtest";
 import { registerSweepActions } from "./actions/sweep";
 import { registerDealingActions } from "./actions/dealing";
 import { registerDrawingActions } from "./actions/drawings";
 import { registerChartActions } from "./actions/chart";
 import { registerIndicatorActions } from "./actions/indicators";
-import { registerTabActions } from "./actions/tab";
 
 let initialized = false;
 
@@ -39,5 +41,14 @@ export function initAgentBridge(): void {
   } catch (e) {
     console.debug("agent: actions already registered (HMR?)", e);
   }
-  if (agentBridgeEnabled()) startAgentBridge();
+  if (!agentBridgeEnabled()) return;
+  startAgentBridge({
+    url: `${API_BASE.replace(/^http/, "ws")}/ws/agent-ui`,
+    // Resolved per (re)connect, not once: ClerkTokenBridge may register its
+    // getter after this runs, and Clerk tokens live about 60s. With no getter
+    // registered (local dev, tests) this answers null synchronously and the
+    // bridge dials in the same tick, exactly as it did before auth existed.
+    token: () => (hasTokenGetter() ? getAuthToken() : null),
+    decorateUrl: withImpersonation,
+  });
 }

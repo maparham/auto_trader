@@ -3,12 +3,11 @@ import { installMemStorage } from "../../lib/testMemStorage";
 
 installMemStorage();
 
-import { handleFrame } from "../bridge";
+import { handleFrame, agentConfirmSignal, resolveAgentConfirm } from "agent-ui-bridge";
 import { clearRegistryForTest, listActions } from "../registry";
 import { registerDealingActions } from "./dealing";
 import { setCellReplaying } from "../../lib/replayingCells";
 
-vi.mock("../confirm");
 vi.mock("../../lib/trading", () => ({
   getTradesAccount: () => "capital:paper",
   placeOrder: vi.fn(async () => ({ dealId: "d1" })),
@@ -17,15 +16,19 @@ vi.mock("../../lib/trading", () => ({
 }));
 
 // Driven through the bridge rather than by reaching into the registry: the
-// warning only matters if it survives the whole path to requestAgentConfirm,
+// warning only matters if it survives the whole path to the confirm gate,
 // and that path is also where confirmContext is merged and the handler's args
-// are kept clean.
+// are kept clean. The confirm gate now lives inside agent-ui-bridge, so this
+// reads the parked dialog state off its own signal (there is nothing left in
+// this file to module-mock; requestAgentConfirm's caller is inside the
+// package, not this test's module graph) and approves it to unpark the call.
 const approve = async (action: string, args: Record<string, unknown>) => {
-  const { requestAgentConfirm } = await import("../confirm");
-  vi.mocked(requestAgentConfirm).mockResolvedValue(true);
-  await handleFrame({ id: "1", op: "invoke", action, args }, () => {});
+  void handleFrame({ id: "1", op: "invoke", action, args }, () => {});
   await new Promise((r) => setTimeout(r, 0));
-  return vi.mocked(requestAgentConfirm).mock.calls.at(-1)?.[0];
+  const state = agentConfirmSignal.value;
+  resolveAgentConfirm(true);
+  await new Promise((r) => setTimeout(r, 0));
+  return state;
 };
 
 const CASES: Array<[string, Record<string, unknown>]> = [

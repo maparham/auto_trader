@@ -94,7 +94,7 @@ export function registerChartActions(): void {
     name: "chart.screenshot",
     description:
       "PNG of the focused chart exactly as rendered (candles, indicators, panes, drawings). Returns base64; use the ui_screenshot MCP tool to receive it as an image. Read-only. " +
-        "With the Tab Bridge extension installed (extension/README.md) this works while the tab is backgrounded; without it, fails with TAB_HIDDEN when the tab is hidden.",
+        "With the Tab Bridge extension (github.com/maparham/agent-ui-bridge) installed this works while the tab is backgrounded; without it, fails with TAB_HIDDEN when the tab is hidden.",
     kind: "read",
     params: { type: "object", properties: {} },
     handler: async () => {
@@ -125,7 +125,10 @@ export function registerChartActions(): void {
             // extension side, one per format tried).
             shot = await tabBridgeScreenshot({ clip, format: "jpeg", quality: 80 });
           }
-          return { epic, cellId, resolution, mime: shot.mime, image_base64: shot.image_base64, via: "extension" };
+          return {
+            epic, cellId, resolution, caption: `${epic} ${resolution} (cell ${cellId})`,
+            mime: shot.mime, image_base64: shot.image_base64, via: "extension",
+          };
         } catch (e) {
           const code = bridgeCode(e);
           if (code !== "EXTENSION_TIMEOUT") {
@@ -157,7 +160,7 @@ export function registerChartActions(): void {
           "TAB_HIDDEN",
           extensionTimedOut
             ? "the app's browser tab is backgrounded and the Tab Bridge extension did not answer (reload the app tab after reloading the extension), or focus the tab and retry"
-            : "the app's browser tab is backgrounded and the Tab Bridge extension is not installed; install it (extension/README.md) or focus the tab and retry",
+            : "the app's browser tab is backgrounded and the Tab Bridge extension is not installed; install the Tab Bridge extension (github.com/maparham/agent-ui-bridge) or focus the tab and retry",
         );
       }
       const bg = chartBackgroundColor();
@@ -178,7 +181,10 @@ export function registerChartActions(): void {
       try {
         let shot = grab("png");
         if (shot.b64.length > MAX_B64) shot = grab("jpeg");
-        return { epic, cellId, resolution, mime: shot.mime, image_base64: shot.b64, via: "canvas" };
+        return {
+          epic, cellId, resolution, caption: `${epic} ${resolution} (cell ${cellId})`,
+          mime: shot.mime, image_base64: shot.b64, via: "canvas",
+        };
       } catch (e) {
         throw new ActionError("SCREENSHOT_FAILED", `screenshot failed: ${String(e)}`);
       }
@@ -193,7 +199,7 @@ export function registerChartActions(): void {
     params: { type: "object", properties: {} },
     handler: async () => {
       if (!(await probeTabBridge())) {
-        throw new ActionError("NO_EXTENSION", "Tab Bridge extension not installed (see extension/README.md)");
+        throw new ActionError("NO_EXTENSION", "the Tab Bridge extension (github.com/maparham/agent-ui-bridge) is not installed");
       }
       try {
         return await tabBridgeFocus();

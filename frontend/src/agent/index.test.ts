@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 // lib/persist (pulled in via the action modules) touches localStorage at
 // module-eval time and vitest runs .ts tests in the 'node' env.
