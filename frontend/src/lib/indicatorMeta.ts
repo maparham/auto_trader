@@ -52,6 +52,11 @@ export interface IndicatorInputDef {
   // belongs to the input that starts the section, so reordering the list moves
   // it with them.
   section?: string;
+  // Render this input on the Style tab instead of Inputs. For a render-only
+  // extend field that changes what a line LOOKS like (a label, a marker), not
+  // what is computed. The Inputs renderer skips it; the type's Style block
+  // picks it up.
+  tab?: "style";
   // Optional conditional visibility: only render this input when another input's
   // value is one of `equals` (an extend field by `field`, or a calcParam
   // input by its key, read as 0/1 for a boolean). Used e.g. to hide Pivot Bands'
@@ -927,6 +932,8 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "boolean",
         source: "extend",
         field: "showPivots",
+        section: "Marks",
+        tab: "style",
         group: "pivotMarks",
         default: TRENDLINES_EXTEND_DEFAULTS.showPivots,
         tip: [
@@ -940,6 +947,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "boolean",
         source: "extend",
         field: "showLinePivots",
+        tab: "style",
         group: "pivotMarks",
         default: TRENDLINES_EXTEND_DEFAULTS.showLinePivots,
         tip: [
@@ -954,6 +962,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "boolean",
         source: "extend",
         field: "showStats",
+        tab: "style",
         default: TRENDLINES_EXTEND_DEFAULTS.showStats,
         tip: [
           "Writes each line's pivot count and crossings at its right end.",
@@ -966,6 +975,8 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "number",
         source: "extend",
         field: "dimOpacity",
+        section: "Dimming",
+        tab: "style",
         default: 60,
         min: 10,
         max: 100,
@@ -986,6 +997,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "number",
         source: "extend",
         field: "dimTouches",
+        tab: "style",
         default: 0,
         min: 0,
         suffix: "pivots",
@@ -993,6 +1005,22 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
           "Fades a line once price has touched it this many times. Zero never dims.",
           "A level with history then reads at a glance instead of by its ×N tag.",
           "It only fades; Max Touches is what removes a line, and if that is set lower this never fires.",
+        ],
+      },
+      {
+        key: "dimCrossings",
+        label: "Dim if crossed",
+        wide: true,
+        type: "number",
+        source: "extend",
+        field: "dimCrossings",
+        tab: "style",
+        default: 0,
+        min: 0,
+        suffix: "times",
+        tip: [
+          "Fades a line once price has cut through it this many times. Zero never dims.",
+          "It only fades; Max Crossings is what removes a line.",
         ],
       },
       {
@@ -1006,6 +1034,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         type: "number",
         source: "extend",
         field: "dimStaleBars",
+        tab: "style",
         default: 0,
         min: 0,
         suffix: "bars",

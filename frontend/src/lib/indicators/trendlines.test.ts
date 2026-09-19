@@ -2374,8 +2374,8 @@ describe("hitAnyTrendlineHandle", () => {
 });
 
 describe("trendlineDimmed", () => {
-  const line = (touches: number, lastTouchIdx: number) =>
-    ({ touches, lastTouchIdx }) as const;
+  const line = (touches: number, lastTouchIdx: number, crossings = 0) =>
+    ({ touches, crossings, lastTouchIdx }) as const;
 
   it("is off with no thresholds, whatever the line looks like", () => {
     expect(trendlineDimmed(line(9, 0), 500, undefined)).toBe(false);
@@ -2399,6 +2399,12 @@ describe("trendlineDimmed", () => {
     expect(trendlineDimmed(line(4, 100), 100, { dimTouches: 5 })).toBe(false);
     expect(trendlineDimmed(line(5, 100), 100, { dimTouches: 5 })).toBe(true);
     expect(trendlineDimmed(line(6, 100), 100, { dimTouches: 5 })).toBe(true);
+  });
+
+  it("dims AT the crossing threshold, and 0 is off", () => {
+    expect(trendlineDimmed(line(2, 100, 2), 100, { dimCrossings: 3 })).toBe(false);
+    expect(trendlineDimmed(line(2, 100, 3), 100, { dimCrossings: 3 })).toBe(true);
+    expect(trendlineDimmed(line(2, 100, 9), 100, { dimCrossings: 0 })).toBe(false);
   });
 
   it("counts staleness from the LAST TOUCH, not from the line's age", () => {

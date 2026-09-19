@@ -39,10 +39,10 @@ describe("TRENDLINES registration", () => {
     // Twenty-four calcParams, all numbers now that One line per pivot became
     // the integer Max lines per pivot. The merge tolerance is a calcParam because a merged-away line
     // must stop reporting to rules, which only the calc can arrange. The
-    // extra numbers are the two dim thresholds and the dim opacity, which
+    // extra numbers are the three dim thresholds and the dim opacity, which
     // choose an alpha and so are render-only.
     expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(24);
-    expect(inputs.filter((i) => i.type === "number")).toHaveLength(27);
+    expect(inputs.filter((i) => i.type === "number")).toHaveLength(28);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
     // metadata, so assert the named title too or this test passes on a miss.
@@ -52,7 +52,9 @@ describe("TRENDLINES registration", () => {
   it("pairs the related inputs two to a row", () => {
     // groupInputs only pairs CONSECUTIVE inputs sharing a group, so this also
     // pins the panel's order: reordering the meta list silently unpairs them.
-    const chunks = groupInputs(resolveInputs("TRENDLINES", undefined));
+    const chunks = groupInputs(
+      resolveInputs("TRENDLINES", undefined).filter((i) => i.tab !== "style"),
+    );
     expect(chunks.map((c) => c.map((i) => i.label))).toEqual([
       ["Max Trendlines"],
       ["Min Pivot Length", "Max Pivot Pairs"],
@@ -67,13 +69,6 @@ describe("TRENDLINES registration", () => {
       ["Max Distance (×ATR)", "Max Distance (%)"],
       ["Max Projection"],
       ["Extend"],
-      // Booleans pair without a `group` tag (see groupInputs): two switchable
-      // labels take a fraction of a row, so a column of them would waste half
-      // the modal.
-      ["Show pivots", "Mark line pivots"],
-      ["Dim opacity"],
-      ["Dim after touching"],
-      ["Dim if untouched for"],
       ["Max lines per pivot"],
       ["Merge Lines within", "Merge Lines within (%)"],
     ]);
@@ -92,6 +87,23 @@ describe("TRENDLINES registration", () => {
       expect(row?.source).toBe("extend");
       expect(row?.default).toBe(want);
     }
+  });
+
+  it("puts the render-only rows on the Style tab, paired like Inputs", () => {
+    // Marks, the end tag and dimming change how a line LOOKS, so they sit
+    // with colour and width rather than among the pivot inputs. Extend stays
+    // on Inputs: it changes where a line ends, which rules can see.
+    const style = resolveInputs("TRENDLINES", undefined).filter((i) => i.tab === "style");
+    expect(style.every((i) => i.source === "extend")).toBe(true);
+    expect(groupInputs(style).map((c) => c.map((i) => i.label))).toEqual([
+      ["Show pivots", "Mark line pivots"],
+      ["Show line stats"],
+      ["Dim opacity"],
+      ["Dim after touching"],
+      ["Dim if crossed"],
+      ["Dim if untouched for"],
+    ]);
+    expect(style.find((i) => i.key === "extend")).toBeUndefined();
   });
 
   it("declutters through the calc: Max lines per pivot is a calcParam integer", () => {

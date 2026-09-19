@@ -1090,6 +1090,14 @@ export interface TrendlinesExtend {
    * Render-only and softer than `maxSpanBars` in exactly the way `dimTouches`
    * is softer than `maxTouches`. */
   dimStaleBars?: number;
+  /** Dim a line price has crossed this many times. 0 (or absent) is off.
+   *
+   * The same statement as `dimTouches` about the other count the end tag
+   * shows: a line that has been cut through repeatedly is no longer a clean
+   * edge, and this fades it rather than dropping it. Render-only and softer
+   * than `maxCrossings` in exactly the way `dimTouches` is softer than
+   * `maxTouches`. */
+  dimCrossings?: number;
   /** Lines the user pinned open by clicking their end handle, as lineKey()
    * strings. A pinned line ignores `extend` and runs to the right edge of the
    * pane, re-measured every render so it stays "indefinite" through scroll and
@@ -1286,15 +1294,18 @@ export function trendlineDimAlpha(
  * path is canvas paint, so a rule buried in it cannot be tested, and any
  * second surface that wants to explain the fade must be able to ask. */
 export function trendlineDimmed(
-  line: Pick<TrendLine, "touches" | "lastTouchIdx">,
+  line: Pick<TrendLine, "touches" | "crossings" | "lastTouchIdx">,
   /** The bar the whole draw path measures at, in the LINES' own space (an HTF
    * bar under a timeframe pin), so the stale count is in the bars the line was
    * detected on rather than the chart's. */
   atIdx: number,
-  ext: Pick<TrendlinesExtend, "dimTouches" | "dimStaleBars"> | undefined,
+  ext: Pick<TrendlinesExtend, "dimTouches" | "dimStaleBars" | "dimCrossings"> | undefined,
 ): boolean {
   const t = ext?.dimTouches;
   if (typeof t === "number" && Number.isFinite(t) && t > 0 && line.touches >= t)
+    return true;
+  const c = ext?.dimCrossings;
+  if (typeof c === "number" && Number.isFinite(c) && c > 0 && line.crossings >= c)
     return true;
   const b = ext?.dimStaleBars;
   return (

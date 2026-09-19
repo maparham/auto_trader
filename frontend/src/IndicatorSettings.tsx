@@ -677,6 +677,7 @@ export default function IndicatorSettings({
   // Filtered BEFORE grouping, so a hidden half of a pair leaves the other half
   // as a normal full-width row rather than an empty grid cell.
   function visibleInput(inp: IndicatorInputDef): boolean {
+    if (inp.tab === "style") return false;
     if (!inp.showWhen) return true;
     const want = inp.showWhen.field;
     const ctrl = inputs.find((d) =>
@@ -2994,6 +2995,29 @@ export default function IndicatorSettings({
                       />
                     </div>
                   </div>
+                  {/* Render-only inputs the meta puts on this tab (pivot
+                      marks, line stats, dimming): same genExtend state and
+                      row shapes as the Inputs tab. */}
+                  {groupInputs(inputs.filter((inp) => inp.tab === "style")).map((chunk) => (
+                    <Fragment key={chunk[0].key}>
+                      {chunk[0].section && <div className="ind-group">{chunk[0].section}</div>}
+                      {chunk.length === 2 && chunk[0].type === "boolean" ? (
+                        <div className="ind-pair2-bool">
+                          {chunk.map((inp) => (
+                            <div className="ind-field" key={inp.key}>
+                              {controlFor(inp, true)}
+                              {tipFor(inp)}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className={chunk[0].wide ? "ind-row" : "ind-row ind-row-cols"}>
+                          {labelFor(chunk[0])}
+                          {controlFor(chunk[0])}
+                        </div>
+                      )}
+                    </Fragment>
+                  ))}
                 </>
               )}
               {/* RSI Style — mirrors TradingView's RSI Style tab. Every row has a
