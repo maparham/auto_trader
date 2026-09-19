@@ -54,12 +54,56 @@ async def ui_actions(session: str | None = None) -> list[dict]:
         raise _friendly(e) from e
 
 
+TITLE_ACTION = "tab.title.set"
+
+
+def _require_titled(session: str | None) -> None:
+    """Every driven tab must be named first. The owner juggles many tabs and
+    wants agent-driven ones to be recognisable at a glance, so the gate is
+    here, on the tools, not in the recipe text."""
+    try:
+        titled = HUB.title_of(session) is not None
+    except NoTabError as e:
+        raise _friendly(e) from e
+    if not titled:
+        raise RuntimeError(
+            "UNTITLED_TAB: this tab has no title yet; call ui_set_title with a "
+            "short description of what you are doing (e.g. 'US100 4H backtest') "
+            "before invoking, reading or screenshotting it"
+        )
+
+
+@mcp.tool()
+async def ui_set_title(title: str, session: str | None = None) -> dict:
+    """Name the browser tab you are about to drive. REQUIRED before ui_invoke,
+    ui_read_state or ui_screenshot work on a session. Keep it short and
+    specific ('US100 4H backtest', 'OIL_CRUDE trendline review'); the tab
+    prefixes a robot mark so the owner can tell agent tabs from their own."""
+    title = (title or "").strip()
+    if not title:
+        raise RuntimeError("title must be a non-empty string")
+    try:
+        sid = HUB.target_id(session)
+        res = await HUB.request(
+            "invoke", {"action": TITLE_ACTION, "args": {"title": title}}, session_id=sid
+        )
+    except (NoTabError, TabTimeoutError, ActionFailedError) as e:
+        raise _friendly(e) from e
+    shown = (res or {}).get("title") if isinstance(res, dict) else None
+    HUB.set_title(sid, shown or title)
+    return {"session": sid, "title": shown or title}
+
+
 @mcp.tool()
 async def ui_invoke(action: str, args: dict | None = None, session: str | None = None) -> object:
     """Invoke a UI action. Fast actions return the result; long-running ones
     (backtest.run, sweep.start) and confirm-kind ones (which wait on a human
     approving a dialog) return {"handle": ...} - poll with ui_wait. A rejected
-    confirm surfaces as ui_wait status "error" with "REJECTED: ..."."""
+    confirm surfaces as ui_wait status "error" with "REJECTED: ...".
+    Refused with UNTITLED_TAB until ui_set_title has named the tab."""
+    if action == TITLE_ACTION:
+        return await ui_set_title(str((args or {}).get("title", "")), session)
+    _require_titled(session)
     try:
         return await HUB.request(
             "invoke", {"action": action, "args": args or {}}, session_id=session
@@ -83,7 +127,9 @@ async def ui_read_state(key: str, session: str | None = None) -> object:
     """Shorthand for invoking a read-kind action by name (e.g. backtest.result).
 
     `readOnly` is enforced by the tab: a key naming a write- or confirm-kind
-    action is refused with NOT_READ_ACTION instead of being executed."""
+    action is refused with NOT_READ_ACTION instead of being executed.
+    Refused with UNTITLED_TAB until ui_set_title has named the tab."""
+    _require_titled(session)
     try:
         return await HUB.request(
             "invoke", {"action": key, "args": {}, "readOnly": True}, session_id=session
@@ -96,7 +142,9 @@ async def ui_read_state(key: str, session: str | None = None) -> object:
 async def ui_screenshot(session: str | None = None) -> list:
     """Screenshot of the focused chart in the connected tab, as an image the
     client renders natively. Pairs with ui_read_state("chart.state") for the
-    numbers behind the pixels."""
+    numbers behind the pixels. Refused with UNTITLED_TAB until ui_set_title
+    has named the tab."""
+    _require_titled(session)
     try:
         res = await HUB.request(
             "invoke",

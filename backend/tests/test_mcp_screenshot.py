@@ -17,6 +17,13 @@ class FakeHub:
             raise self.exc
         return self.result
 
+    def title_of(self, session_id=None):
+        # The title gate runs before the request; a missing tab surfaces here.
+        from auto_trader.api.agent_bridge import NoTabError
+        if isinstance(self.exc, NoTabError):
+            raise self.exc
+        return "🤖 test"
+
 
 @pytest.mark.anyio
 async def test_ui_screenshot_returns_image_block(monkeypatch):

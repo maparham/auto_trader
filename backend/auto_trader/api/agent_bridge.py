@@ -40,6 +40,10 @@ class _Tab:
     send: Callable[[dict], Awaitable[None]]
     connected_at: float
     last_active: float
+    # Set by ui_set_title. A tab stays locked to ui_invoke / ui_read_state /
+    # ui_screenshot until it carries a title, so every agent-driven tab is
+    # named (and visibly marked) before anything happens in it.
+    title: str | None = None
 
 
 @dataclass
@@ -88,9 +92,20 @@ class BridgeHub:
 
     def sessions(self) -> list[dict]:
         return [
-            {"id": t.id, "connectedAt": t.connected_at, "lastActive": t.last_active}
+            {"id": t.id, "connectedAt": t.connected_at, "lastActive": t.last_active,
+             "title": t.title}
             for t in sorted(self._tabs.values(), key=lambda t: -t.last_active)
         ]
+
+    def set_title(self, session_id: str, title: str) -> None:
+        self._target(session_id).title = title
+
+    def target_id(self, session_id: str | None) -> str:
+        """The session a request with this (optional) id would go to."""
+        return self._target(session_id).id
+
+    def title_of(self, session_id: str | None) -> str | None:
+        return self._target(session_id).title
 
     def _target(self, session_id: str | None) -> _Tab:
         if session_id is not None:

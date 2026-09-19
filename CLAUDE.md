@@ -47,17 +47,22 @@ MCP agents can drive the running UI: connect to `http://localhost:8000/mcp`
 protection), so it is local-only by design: any other Host gets a 421.
 
 UI tools (need a connected browser tab): `ui_sessions`, `ui_actions`
-(self-describing manifest), `ui_invoke`, `ui_wait`, `ui_read_state`,
+(self-describing manifest), `ui_set_title`, `ui_invoke`, `ui_wait`, `ui_read_state`,
 `ui_screenshot` (returns the focused chart as an image plus a text line
 naming epic/resolution/cell; pairs with `chart.state` for the numbers behind
 the pixels). No tab connected gives a clear error ("no UI session connected:
-open the app in a browser"). The 28 registered actions today, by group:
+open the app in a browser"). Every driven tab must be named first:
+`ui_invoke`, `ui_read_state` and `ui_screenshot` refuse with UNTITLED_TAB
+until `ui_set_title("US100 4H backtest")` has run on that session (a reload
+is a new session, so title again). The tab's `tab.title.set` action stamps a
+🤖 in front of the title so the owner can tell agent tabs from their own.
+The 29 registered actions today, by group:
 `backtest.*` (config.get, config.set, run, cancel, result, progress),
 `sweep.*` (start, cancel, rows), dealing (`order.place`, `position.close`,
 `order.cancel`), `drawing.*` (list, add, remove, clear), `chart.*` (state,
 screenshot, timeframe.set, range.set), `indicator.*` (list, add, set,
 remove), and app shell (`market.select`, `tab.list`, `tab.focus`,
-`panel.backtest.open`). The dealing actions require an in-browser Approve
+`tab.title.set`, `panel.backtest.open`). The dealing actions require an in-browser Approve
 click. The frontend bridge is on in dev builds and off in production unless
 `VITE_AGENT_BRIDGE=1`.
 
@@ -99,31 +104,34 @@ image block, and writes it to PATH.
 1. `ui_sessions` to confirm a tab is connected (empty list: `ui_open_tab`
    opens one on macOS local dev, then poll `ui_sessions` until the bridge
    connects; elsewhere ask the user to open http://localhost:5173).
-2. `ui_actions` for the live manifest; every action carries its JSON schema.
+2. `ui_set_title("US100 4H backtest")`: name the tab for what you are about
+   to do. Nothing else works on the session until this has run.
+3. `ui_actions` for the live manifest; every action carries its JSON schema.
    Invalid args come back with the expected schema, so self-correct from the
    error rather than guessing.
-3. `ui_invoke("market.select", {"epic": "US100"})` to focus (or open) the
+4. `ui_invoke("market.select", {"epic": "US100"})` to focus (or open) the
    chart, then `ui_read_state("backtest.config.get")` and
    `ui_invoke("backtest.config.set", {"patch": {...}})` to shape the run
    (strategy, range, costs; the patch is a shallow merge).
-4. `ui_invoke("backtest.run", {})` returns `{"handle": ...}` immediately.
+5. `ui_invoke("backtest.run", {})` returns `{"handle": ...}` immediately.
    Poll `ui_wait(handle, timeout_s=30)`: status `running` carries progress
    (phase, pct, eta); `done` carries the full result (metrics, trades,
    analysis); `error` carries the reason (for example "no candles in the
    selected range"). The run renders live on the user's chart.
-5. Sweeps: `ui_invoke("sweep.start", {"axes": [...]})` (same handle flow),
+6. Sweeps: `ui_invoke("sweep.start", {"axes": [...]})` (same handle flow),
    `ui_read_state("sweep.rows")` afterwards.
-6. Dealing (`order.place`, `position.close`, `order.cancel`) also returns a
+7. Dealing (`order.place`, `position.close`, `order.cancel`) also returns a
    handle; it resolves only after the user clicks Approve in the browser
    (Reject or 120 s timeout gives error code REJECTED). Never assume an
    order went through without a `done` status.
-7. One backtest or sweep at a time: a second `run`/`sweep.start` while one
+8. One backtest or sweep at a time: a second `run`/`sweep.start` while one
    is in flight is rejected. `ui_read_state` only works for read-kind
    actions (NOT_READ_ACTION otherwise); use `ui_invoke` for writes.
 
 ### How to analyse a chart visually (agent recipe)
 
-1. `ui_invoke("market.select", {"epic": "US100"})` to focus the chart, then
+1. `ui_set_title("US100 4H review")`, then
+   `ui_invoke("market.select", {"epic": "US100"})` to focus the chart, then
    `ui_invoke("chart.timeframe.set", {"resolution": "HOUR_4"})` for the
    timeframe under review.
 2. `ui_invoke("indicator.add", {"type": "RSI", "calcParams": [14]})` to add
