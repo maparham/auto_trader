@@ -355,14 +355,14 @@ describe("min/max range rows", () => {
 describe("lines slider", () => {
   const step = () => screen.getByTestId("lines-step").textContent;
   const slide = (to: number) =>
-    fireEvent.change(screen.getByLabelText("Lines"), { target: { value: String(to) } });
+    fireEvent.change(screen.getByLabelText("Density"), { target: { value: String(to) } });
 
   // The step in force is resolved by VALUE on the swept slots, so it survives
   // reopen; a pane at the defaults sits on the middle step.
   it("opens on Default for a pane at the defaults", () => {
     open();
     expect(step()).toBe("Default");
-    expect((screen.getByLabelText("Lines") as HTMLInputElement).value).toBe("2");
+    expect((screen.getByLabelText("Density") as HTMLInputElement).value).toBe("2");
   });
 
   // A step writes ONLY its six slots; a slot outside the sweep keeps what the
@@ -397,7 +397,7 @@ describe("lines slider", () => {
     expect(step()).toBe("Default");
     fireEvent.change(screen.getByLabelText("Max Trendlines"), { target: { value: "9" } });
     expect(step()).toBe("Custom");
-    expect((screen.getByLabelText("Lines") as HTMLInputElement).value).toBe("2");
+    expect((screen.getByLabelText("Density") as HTMLInputElement).value).toBe("2");
   });
 });
 

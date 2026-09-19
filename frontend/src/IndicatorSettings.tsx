@@ -2007,20 +2007,19 @@ export default function IndicatorSettings({
                 // Custom until the thumb moves again.
                 <div className="ind-row ind-row-cols ind-lines-row">
                   <span className="ind-row-head">
-                    <label>Lines</label>
+                    <label>Density</label>
                     <InfoTip
-                      title="Lines"
+                      title="Density"
                       text={[
-                        "Fewer, stricter lines on the left; more, looser ones on the right.",
-                        "Each step sets Max Trendlines, Max per pivot, Min Touches, Min Span, Pivot Length and Merge together.",
-                        "Everything else keeps your values. Editing one of those six reads as Custom.",
+                        "Fewer, stricter lines on the left. More on the right.",
+                        "Each step sets six fields at once. Other fields keep your values.",
                       ]}
                     />
                   </span>
                   <span className="ind-control-row ind-lines-slider">
                     <input
                       type="range"
-                      aria-label="Lines"
+                      aria-label="Density"
                       min={0}
                       max={inputPresets.steps.length - 1}
                       step={1}
