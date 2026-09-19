@@ -10,6 +10,7 @@ import {
   trendlineDrawEdge,
   trendlineIdxMap,
   crossingChartIdx,
+  pinnedEndY,
   lineKey,
   TL_PIVOT_ARM,
   TRENDLINES_TEMPLATE,
@@ -536,5 +537,47 @@ describe("crossingChartIdx", () => {
   it("is the bar itself with no pin", () => {
     const data = bars({});
     expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, undefined), data)).toBe(2);
+  });
+});
+
+describe("pinnedEndY", () => {
+  // Rising line: 100 at HTF bar 0, +10 per HTF bar. Pixels: xAt maps a line
+  // index to 10px per bar INSIDE the loaded range [2, 6] but the calendar
+  // extrapolation outside it stretches to 20px per bar (nights and weekends
+  // counted as bars); y is the price itself.
+  const rising: TrendLine = {
+    i1: 0, p1: 100, k1: "low", i2: 1, p2: 110, k2: "low",
+    touches: 2, touchIdxs: [0, 1], touchKinds: ["low", "low"], lastTouchIdx: 1,
+    crossings: 0, crossIdxs: [], lastSign: 1,
+    maxTouchGap: 1, minTouchGap: 1, maxTouchIdx: 1,
+  };
+  const xAt = (j: number): number =>
+    j < 2 ? 20 + (j - 2) * 20 : j > 6 ? 60 + (j - 6) * 20 : 20 + (j - 2) * 10;
+  const yAt = (p: number) => p;
+
+  it("keeps a line whose ends both sit in the loaded range", () => {
+    expect(pinnedEndY(rising, 2, 6, xAt(2), xAt(6), 2, 6, xAt, yAt)).toEqual({ y0: 120, y1: 160 });
+  });
+
+  it("extends an anchor from before the loaded history along the in-range slope", () => {
+    // Anchor at bar 0 is 40px left of the first loaded bar on the stretched
+    // map. Its own projection (100) would flatten the line: at bar 6 the
+    // slope from (-20, 100) to (60, 160) reads 0.75/px, so bar 4 (x=40) would
+    // draw at 145 instead of 140. Along the in-range slope (1/px) the left
+    // end instead sits at 80.
+    const { y0, y1 } = pinnedEndY(rising, 0, 6, xAt(0), xAt(6), 2, 6, xAt, yAt);
+    expect(y1).toBe(160);
+    expect(y0).toBe(80);
+    expect(y0 + ((y1 - y0) * (40 - xAt(0))) / (xAt(6) - xAt(0))).toBe(140);
+  });
+
+  it("does the same past the newest bar", () => {
+    const { y0, y1 } = pinnedEndY(rising, 2, 8, xAt(2), xAt(8), 2, 6, xAt, yAt);
+    expect(y0).toBe(120);
+    expect(y1).toBe(200);
+  });
+
+  it("leaves a line entirely outside the loaded range alone", () => {
+    expect(pinnedEndY(rising, 7, 9, xAt(7), xAt(9), 2, 6, xAt, yAt)).toEqual({ y0: 170, y1: 190 });
   });
 });

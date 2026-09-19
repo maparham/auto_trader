@@ -1991,6 +1991,44 @@ export function crossingChartIdx(
   return c;
 }
 
+/** Pixel y of a pinned line's two drawn ends. The line is straight in HTF
+ * bars, and inside the loaded chart history the index map follows the real
+ * candles, so a pixel line through two in-range points is faithful there.
+ * PAST either end of the loaded history the map extrapolates by calendar
+ * time at the chart's bar length, which counts nights and weekends as bars:
+ * a daily anchor from before the first loaded hourly candle landed twice as
+ * far left as its trading-bar distance, halved the drawn slope, and put the
+ * line several points above every candle it had actually cut (the crossing
+ * mark sat on the right candle, the line did not). So when an end lies
+ * outside [loLine, hiLine] (the line-space indices of the first and last
+ * loaded chart bars), the slope comes from the nearer in-range point and
+ * the outside end is extended along it. Both ends in range, or the line
+ * entirely outside, keep their own projections. */
+export function pinnedEndY(
+  line: TrendLine,
+  jLeft: number,
+  jRight: number,
+  x0: number,
+  x1: number,
+  loLine: number,
+  hiLine: number,
+  xAt: (j: number) => number,
+  yAt: (price: number) => number,
+): { y0: number; y1: number } {
+  const y0 = yAt(projectAt(line, jLeft));
+  const y1 = yAt(projectAt(line, jRight));
+  const jA = Math.max(jLeft, loLine);
+  const jB = Math.min(jRight, hiLine);
+  if ((jA === jLeft && jB === jRight) || !(jB > jA)) return { y0, y1 };
+  const xA = jA === jLeft ? x0 : xAt(jA);
+  const xB = jB === jRight ? x1 : xAt(jB);
+  if (xB === xA) return { y0, y1 };
+  const yA = yAt(projectAt(line, jA));
+  const yB = yAt(projectAt(line, jB));
+  const slope = (yB - yA) / (xB - xA);
+  return { y0: yA + slope * (x0 - xA), y1: yA + slope * (x1 - xA) };
+}
+
 /** Chart index of the candle that traded an HTF bar's extreme — where a pivot
  * caret (and a line anchor) belongs when the pin is COARSER than the chart. An
  * HTF bar's high or low usually trades hours after the bar OPENS, and mapping
@@ -2402,8 +2440,10 @@ function drawTrendlines(
     const x0 = xAtLine(jLeft);
     const x1 = xAtLine(jRight);
     if (x1 <= 0 || x0 >= bounding.width) continue;
-    const y0 = yAxis.convertToPixel(projectAt(line, jLeft));
-    const y1 = yAxis.convertToPixel(projectAt(line, jRight));
+    const yPx = (price: number) => yAxis.convertToPixel(price);
+    const { y0, y1 } = mtf
+      ? pinnedEndY(line, jLeft, jRight, x0, x1, toLine(0), toLine(lastChartIdx), xAt, yPx)
+      : { y0: yPx(projectAt(line, jLeft)), y1: yPx(projectAt(line, jRight)) };
     // Marks (the touch rings) ride the SEGMENT AS DRAWN rather
     // than projecting themselves: under a timeframe pin the index map is only
     // piecewise linear (a weekend compresses on the chart but not in time), so
