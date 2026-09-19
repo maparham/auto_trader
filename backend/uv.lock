@@ -11,6 +11,14 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "agent-ui-bridge"
+version = "0.1.0"
+source = { git = "https://github.com/maparham/agent-ui-bridge?subdirectory=python#4ba4ba5a25b6b0836af2d5bd4028a88663577323" }
+dependencies = [
+    { name = "mcp" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.2"
 source = { registry = "https://pypi.org/simple" }
@@ -177,6 +185,7 @@ name = "auto-trader"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "agent-ui-bridge" },
     { name = "boto3" },
     { name = "dukascopy-python" },
     { name = "fastapi" },
@@ -210,6 +219,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-ui-bridge", git = "https://github.com/maparham/agent-ui-bridge?subdirectory=python" },
     { name = "boto3", specifier = ">=1.43.51" },
     { name = "dukascopy-python", specifier = ">=4.0.1" },
     { name = "fastapi", specifier = ">=0.115" },

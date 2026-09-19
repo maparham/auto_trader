@@ -5,6 +5,8 @@ import os
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from agent_ui_bridge import serve_tab
+
 from ..agent_bridge import HUB
 from ..auth import verify_ws
 from ..guard import REQUIRE_TOKEN_ENV, cors_origins, token_ok
@@ -47,12 +49,7 @@ async def ws_agent_ui(websocket: WebSocket) -> None:
     if await verify_ws(websocket) is None:
         return
     await websocket.accept()
-    sid = HUB.register(websocket.send_json)
     try:
-        while True:
-            frame = await websocket.receive_json()
-            HUB.on_frame(sid, frame)
+        await serve_tab(HUB, websocket)
     except WebSocketDisconnect:
         pass
-    finally:
-        HUB.unregister(sid)

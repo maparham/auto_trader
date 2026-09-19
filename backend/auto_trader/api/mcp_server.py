@@ -1,17 +1,16 @@
-"""MCP server for the Agent UI Bridge, mounted on the FastAPI app at /mcp.
+"""MCP server for Chartkar, mounted on the FastAPI app at /mcp.
 
 Agents (Claude Code etc.) connect over streamable HTTP and get two families of
-tools. The `ui_*` tools relay to the connected browser tab via agent_bridge.HUB
-(six tools today: sessions, actions, invoke, wait, read_state, screenshot).
-The direct (no-tab) tools call the app's own REST routes in-process over
-httpx.ASGITransport, configured via `configure_direct_tools`: `ta_*` (candles,
-indicator series, pattern search/scan/families), `wf_*` (run/status/cancel/
-fold a walk-forward job), and `runs_list`/`run_get` (the backtest/sweep/
-walkforward archives). Errors surface as tool errors with actionable messages
-(the MCP SDK converts raised exceptions).
-
-Note: the tools read the module-global `HUB` at call time, so tests can
-monkeypatch `mcp_server.HUB` with a fresh BridgeHub.
+tools. The `ui_*` tools relay to the connected browser tab via agent_bridge.HUB;
+they are registered by the agent_ui_bridge package, which owns their behaviour
+(ten tools: sessions, actions, set_title, invoke, wait, read_state, screenshot,
+and the three macOS browser tab helpers). The direct (no-tab) tools live here
+and call the app's own REST routes in-process over httpx.ASGITransport,
+configured via `configure_direct_tools`: `ta_*` (candles, indicator series,
+pattern search/scan/families), `wf_*` (run/status/cancel/fold a walk-forward
+job), and `runs_list`/`run_get` (the backtest/sweep/walkforward archives).
+Errors surface as tool errors with actionable messages (the MCP SDK converts
+raised exceptions).
 """
 from __future__ import annotations
 
@@ -21,145 +20,34 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import httpx
+from agent_ui_bridge import register_ui_tools
 from mcp.server import MCPServer  # mcp>=2.0 API (1.x called this mcp.server.fastmcp.FastMCP)
-from mcp.types import ImageContent, TextContent
 
-from .agent_bridge import HUB, ActionFailedError, NoTabError, TabTimeoutError
+from .agent_bridge import HUB
 from .guard import API_TOKEN_ENV
 
 mcp = MCPServer("auto-trader-ui")
 
-
-def _friendly(e: Exception) -> Exception:
-    if isinstance(e, ActionFailedError):
-        detail = f"{e.code}: {e}"
-        if e.expected_schema:
-            detail += f" (expected schema: {e.expected_schema})"
-        return RuntimeError(detail)
-    return RuntimeError(str(e))
-
-
-@mcp.tool()
-async def ui_sessions() -> list[dict]:
-    """List connected UI tabs (most recently active first)."""
-    return HUB.sessions()
-
-
-@mcp.tool()
-async def ui_actions(session: str | None = None) -> list[dict]:
-    """The manifest: every UI action with its name, kind, and JSON schema."""
-    try:
-        return await HUB.request("manifest", {}, session_id=session)
-    except (NoTabError, TabTimeoutError, ActionFailedError) as e:
-        raise _friendly(e) from e
-
-
-TITLE_ACTION = "tab.title.set"
-
-
-def _require_titled(session: str | None) -> None:
-    """Every driven tab must be named first. The owner juggles many tabs and
-    wants agent-driven ones to be recognisable at a glance, so the gate is
-    here, on the tools, not in the recipe text."""
-    try:
-        titled = HUB.title_of(session) is not None
-    except NoTabError as e:
-        raise _friendly(e) from e
-    if not titled:
-        raise RuntimeError(
-            "UNTITLED_TAB: this tab has no title yet; call ui_set_title with a "
-            "short description of what you are doing (e.g. 'US100 4H backtest') "
-            "before invoking, reading or screenshotting it"
-        )
-
-
-@mcp.tool()
-async def ui_set_title(title: str, session: str | None = None) -> dict:
-    """Name the browser tab you are about to drive. REQUIRED before ui_invoke,
-    ui_read_state or ui_screenshot work on a session. Keep it short and
-    specific ('US100 4H backtest', 'OIL_CRUDE trendline review'); the tab
-    prefixes a robot mark so the owner can tell agent tabs from their own."""
-    title = (title or "").strip()
-    if not title:
-        raise RuntimeError("title must be a non-empty string")
-    try:
-        sid = HUB.target_id(session)
-        res = await HUB.request(
-            "invoke", {"action": TITLE_ACTION, "args": {"title": title}}, session_id=sid
-        )
-    except (NoTabError, TabTimeoutError, ActionFailedError) as e:
-        raise _friendly(e) from e
-    shown = (res or {}).get("title") if isinstance(res, dict) else None
-    HUB.set_title(sid, shown or title)
-    return {"session": sid, "title": shown or title}
-
-
-@mcp.tool()
-async def ui_invoke(action: str, args: dict | None = None, session: str | None = None) -> object:
-    """Invoke a UI action. Fast actions return the result; long-running ones
-    (backtest.run, sweep.start) and confirm-kind ones (which wait on a human
-    approving a dialog) return {"handle": ...} - poll with ui_wait. A rejected
-    confirm surfaces as ui_wait status "error" with "REJECTED: ...".
-    Refused with UNTITLED_TAB until ui_set_title has named the tab."""
-    if action == TITLE_ACTION:
-        return await ui_set_title(str((args or {}).get("title", "")), session)
-    _require_titled(session)
-    try:
-        return await HUB.request(
-            "invoke", {"action": action, "args": args or {}}, session_id=session
-        )
-    except (NoTabError, TabTimeoutError, ActionFailedError) as e:
-        raise _friendly(e) from e
-
-
-@mcp.tool()
-async def ui_wait(handle: str, timeout_s: float = 60.0) -> dict:
-    """Wait for a long-running invocation. Returns {status, progress, result?, error?};
-    status "running" after timeout means keep polling."""
-    try:
-        return await HUB.wait_handle(handle, timeout=timeout_s)
-    except KeyError:
-        raise RuntimeError(f"unknown handle: {handle} (expired or never issued)") from None
-
-
-@mcp.tool()
-async def ui_read_state(key: str, session: str | None = None) -> object:
-    """Shorthand for invoking a read-kind action by name (e.g. backtest.result).
-
-    `readOnly` is enforced by the tab: a key naming a write- or confirm-kind
-    action is refused with NOT_READ_ACTION instead of being executed.
-    Refused with UNTITLED_TAB until ui_set_title has named the tab."""
-    _require_titled(session)
-    try:
-        return await HUB.request(
-            "invoke", {"action": key, "args": {}, "readOnly": True}, session_id=session
-        )
-    except (NoTabError, TabTimeoutError, ActionFailedError) as e:
-        raise _friendly(e) from e
-
-
-@mcp.tool()
-async def ui_screenshot(session: str | None = None) -> list:
-    """Screenshot of the focused chart in the connected tab, as an image the
+# The ui_* tools, registered at import time so the manifest is complete before
+# the first request. Every Chartkar-specific word the agent reads is passed in
+# here, which is why the package itself has none: app_name and screenshot_doc
+# keep the tool descriptions byte-identical to what agents saw before the
+# extraction.
+register_ui_tools(
+    mcp,
+    HUB,
+    screenshot_action="chart.screenshot",
+    # Byte-identical to the old ui_screenshot docstring, four-space continuation
+    # indents included: the SDK registers the string verbatim, with no cleandoc.
+    screenshot_doc="""Screenshot of the focused chart in the connected tab, as an image the
     client renders natively. Pairs with ui_read_state("chart.state") for the
     numbers behind the pixels. Refused with UNTITLED_TAB until ui_set_title
-    has named the tab."""
-    _require_titled(session)
-    try:
-        res = await HUB.request(
-            "invoke",
-            {"action": "chart.screenshot", "args": {}, "readOnly": True},
-            session_id=session,
-        )
-    except (NoTabError, TabTimeoutError, ActionFailedError) as e:
-        raise _friendly(e) from e
-    return [
-        ImageContent(type="image", data=res["image_base64"], mimeType=res["mime"]),
-        TextContent(
-            type="text",
-            text=f"{res['epic']} {res['resolution']} (cell {res['cellId']}) via {res.get('via', '?')}",
-        ),
-    ]
+    has named the tab.""",
+    app_name="Chartkar",
+    app_url_label="FRONTEND_URL",
+    frontend_url=lambda: os.environ.get("FRONTEND_URL", "http://localhost:5173"),
+    hosted=lambda: bool(os.environ.get("CLERK_JWKS_URL")),
+)
 
 
 _ASGI_APP = None
@@ -343,196 +231,6 @@ async def run_get(kind: str, run_id: str) -> object:
     if base is None:
         raise ValueError(f"unknown kind: {kind} (one of {', '.join(sorted(_ARCHIVES))})")
     return await _api_get(f"{base}/{_path_id(run_id)}", {})
-
-
-# --- browser tab control (macOS, local dev only) ----------------------------
-#
-# The bridge's page JS cannot raise its own tab (browsers block programmatic
-# focus-stealing), but the backend runs on the same machine as Chrome, so it
-# can via AppleScript. This is what lets an agent recover from TAB_HIDDEN
-# without a human: ui_focus_tab, then retry ui_screenshot.
-
-import asyncio
-import sys
-
-_IS_MACOS = sys.platform == "darwin"
-
-# Interpolated into AppleScript string literals, so it must not be able to
-# close the quote. Plain URL characters only; no quotes, backslashes, spaces.
-_SAFE_URL_RE = re.compile(r"^https?://[A-Za-z0-9.:\-_/]+$")
-
-
-def _frontend_url() -> str:
-    url = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
-    if not _SAFE_URL_RE.match(url):
-        raise RuntimeError(f"FRONTEND_URL is not a plain URL, refusing to script Chrome with it: {url!r}")
-    return url
-
-
-def _require_not_hosted() -> None:
-    if os.environ.get("CLERK_JWKS_URL"):
-        raise RuntimeError("browser tab control is local-dev only (hosted mode refuses it)")
-
-
-def _require_local_macos() -> None:
-    _require_not_hosted()
-    if not _IS_MACOS:
-        raise RuntimeError("browser tab control needs macOS (AppleScript drives Chrome)")
-
-
-# A blocked macOS automation prompt makes osascript wait forever; the cap
-# turns that into an actionable error instead of a hung MCP call.
-_OSASCRIPT_TIMEOUT_S = 15.0
-
-_AUTOMATION_HINT = (
-    "grant the backend's host app (the terminal or editor that runs uvicorn) "
-    "permission to control Google Chrome: approve the macOS prompt, or System "
-    "Settings > Privacy & Security > Automation"
-)
-
-
-async def _osascript(script: str) -> str:
-    proc = await asyncio.create_subprocess_exec(
-        "osascript", "-e", script,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), _OSASCRIPT_TIMEOUT_S)
-    except asyncio.TimeoutError:
-        proc.kill()
-        raise RuntimeError(
-            f"osascript timed out after {_OSASCRIPT_TIMEOUT_S:.0f}s, likely a "
-            f"pending automation permission dialog: {_AUTOMATION_HINT}"
-        ) from None
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"osascript failed: {err.decode().strip() or out.decode().strip()} ({_AUTOMATION_HINT})"
-        )
-    return out.decode().strip()
-
-
-def _focus_script(url: str) -> str:
-    return f'''
-tell application "Google Chrome"
-  activate
-  repeat with w in windows
-    set i to 1
-    repeat with t in tabs of w
-      if URL of t starts with "{url}" then
-        set active tab index of w to i
-        try
-          set minimized of w to false
-        end try
-        set index of w to 1
-        return "FOCUSED:" & (URL of t)
-      end if
-      set i to i + 1
-    end repeat
-  end repeat
-  return "NONE"
-end tell'''
-
-
-def _open_script(url: str) -> str:
-    return f'''
-tell application "Google Chrome"
-  activate
-  if (count of windows) = 0 then
-    make new window
-  end if
-  tell window 1 to make new tab with properties {{URL:"{url}"}}
-  return "OPENED"
-end tell'''
-
-
-def _close_script(url: str) -> str:
-    return f'''
-tell application "Google Chrome"
-  set n to 0
-  repeat with w in windows
-    repeat with t in tabs of w
-      if URL of t starts with "{url}" then set n to n + 1
-    end repeat
-  end repeat
-  if n = 0 then return "NONE"
-  if n > 1 then return "MANY:" & n
-  repeat with w in windows
-    repeat with t in tabs of w
-      if URL of t starts with "{url}" then
-        close t
-        return "CLOSED"
-      end if
-    end repeat
-  end repeat
-end tell'''
-
-
-@mcp.tool()
-async def ui_focus_tab() -> dict:
-    """Bring the Chartkar browser tab to the front. Tries the connected tab's
-    tab.focus action first (needs the Tab Bridge extension, extension/README.md,
-    works on any OS), then falls back to AppleScript on macOS local dev.
-    Errors if no tab is open; ui_open_tab creates one."""
-    # Checked before the HUB attempt (not just before the AppleScript
-    # fallback): otherwise a hosted deployment with a connected tab and the
-    # extension installed would let this tool succeed, which hosted mode
-    # must never allow.
-    _require_not_hosted()
-    no_session_message: str | None = None
-    try:
-        await HUB.request("invoke", {"action": "tab.focus", "args": {}})
-        return {"focused": "extension"}
-    except ActionFailedError as e:
-        if e.code != "NO_EXTENSION":
-            raise _friendly(e) from e
-    except NoTabError:
-        # No tab connected at all is not an extension problem; say so rather
-        # than pointing at the Tab Bridge extension.
-        no_session_message = "no UI session connected: open the app in a browser"
-    except TabTimeoutError:
-        pass
-    if not _IS_MACOS:
-        if no_session_message:
-            raise RuntimeError(no_session_message)
-        raise RuntimeError(
-            "focusing the tab needs the Tab Bridge extension off macOS "
-            "(extension/README.md); AppleScript fallback is macOS-only"
-        )
-    _require_local_macos()
-    result = await _osascript(_focus_script(_frontend_url()))
-    if result.startswith("FOCUSED:"):
-        return {"focused": result[len("FOCUSED:"):]}
-    raise RuntimeError("no Chartkar tab open in Chrome (ui_open_tab creates one)")
-
-
-@mcp.tool()
-async def ui_open_tab() -> dict:
-    """Open the app in Chrome (macOS local dev): focuses an existing Chartkar
-    tab, else opens a new one at FRONTEND_URL. After opening, poll ui_sessions
-    until the bridge connects (a second or two)."""
-    _require_local_macos()
-    url = _frontend_url()
-    existing = await _osascript(_focus_script(url))
-    if existing.startswith("FOCUSED:"):
-        return {"focused": existing[len("FOCUSED:"):]}
-    await _osascript(_open_script(url))
-    return {"opened": url}
-
-
-@mcp.tool()
-async def ui_close_tab() -> dict:
-    """Close the Chartkar browser tab (macOS local dev). Refuses when several
-    matching tabs are open, so it never guesses which one to close."""
-    _require_local_macos()
-    url = _frontend_url()
-    result = await _osascript(_close_script(url))
-    if result == "CLOSED":
-        return {"closed": url}
-    if result.startswith("MANY:"):
-        raise RuntimeError(
-            f"{result[len('MANY:'):]} Chartkar tabs are open; close manually or leave them"
-        )
-    raise RuntimeError("no Chartkar tab open in Chrome")
 
 
 def mcp_http_app():
