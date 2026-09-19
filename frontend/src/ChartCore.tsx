@@ -217,6 +217,7 @@ import { isSynthetic } from "./lib/syntheticRegistry";
 import type { ChartHandle, RangeReq, CenterReq, ReplayHandle } from "./chart/chartHandle";
 import { createChartDataFacade, type ChartDataFacade } from "./chart/chartDataFacade";
 import { applyFreeCrosshairX } from "./chart/freeCrosshair";
+import { fmtPrice } from "./lib/priceFormat";
 import { applyScalePriceOnly } from "./chart/priceOnlyRange";
 import { applyCandleFit, isAutoFitted, nextFitMode } from "./chart/candleFit";
 import {
@@ -5016,7 +5017,7 @@ export default function ChartCore({
   // the cursor at the moment the menu opened.
   const priceActionItems = useCallback(
     (price: number): MenuItem[] => {
-      const label = price.toFixed(precision);
+      const label = fmtPrice(price, precision);
       // Quantize to instrument precision (matches the label) so a valid limit level —
       // not a raw many-decimal float — is staged and later sent to the broker.
       const level = Number(price.toFixed(precision));
@@ -5691,7 +5692,7 @@ export default function ChartCore({
           style={{ top: priceTag.y, width: priceTag.w }}
         >
           <span className="pt-price">
-            {(lastPrice ?? priceTag.price).toFixed(precision)}
+            {fmtPrice(lastPrice ?? priceTag.price, precision)}
           </span>
           {priceTag.countdown && <span className="pt-cd">{priceTag.countdown}</span>}
         </div>
@@ -5708,7 +5709,7 @@ export default function ChartCore({
             className="ba-price"
             style={{ width: askTag.w, background: hexToRgba(bidAskStyle.askColor, 0.16), color: bidAskStyle.askColor }}
           >
-            {askTag.price.toFixed(precision)}
+            {fmtPrice(askTag.price, precision)}
           </span>
         </div>
       )}
@@ -5719,7 +5720,7 @@ export default function ChartCore({
             className="ba-price"
             style={{ width: bidTag.w, background: hexToRgba(bidAskStyle.bidColor, 0.16), color: bidAskStyle.bidColor }}
           >
-            {bidTag.price.toFixed(precision)}
+            {fmtPrice(bidTag.price, precision)}
           </span>
         </div>
       )}
@@ -5763,7 +5764,7 @@ export default function ChartCore({
             onDoubleClick={() => alertEditRequest.set({ id: t.id })}
           >
             <span className="ap-text">
-              {symbol.epic} {CONDITION_LABELS[t.condition]} {t.level.toFixed(precision)}
+              {symbol.epic} {CONDITION_LABELS[t.condition]} {fmtPrice(t.level, precision)}
             </span>
             {/* Clickable one-time (1×) ↔ permanent (∞) toggle. Always present. */}
             <Tooltip content={isOnce ? "One-time alert. Click to make permanent." : "Permanent alert. Click to make one-time."}>
@@ -5788,7 +5789,7 @@ export default function ChartCore({
                 className="ap-del"
                 onClick={() => {
                   requestConfirm({
-                    message: `Delete alert ${CONDITION_LABELS[t.condition]} ${t.level.toFixed(precision)} on ${symbol.epic}?`,
+                    message: `Delete alert ${CONDITION_LABELS[t.condition]} ${fmtPrice(t.level, precision)} on ${symbol.epic}?`,
                     onConfirm: () => {
                       overlays.remove(t.id);
                       setPillHoverId((cur) => (cur === t.id ? null : cur));

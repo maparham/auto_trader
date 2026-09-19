@@ -1,4 +1,5 @@
 import { BellIcon } from "../lib/menuIcons";
+import { fmtPrice } from "../lib/priceFormat";
 import type { AlertCondition, AlertTrigger } from "../lib/persist";
 
 export interface AlertTagItem {
@@ -51,7 +52,7 @@ export default function AlertTags({ tags, priceTag, precision }: AlertTagsProps)
           <span className="at-bell" aria-hidden="true">
             <BellIcon size={11} />
           </span>
-          <span className="at-price">{t.level.toFixed(precision)}</span>
+          <span className="at-price">{fmtPrice(t.level, precision)}</span>
         </div>
         );
       })}

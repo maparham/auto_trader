@@ -9,6 +9,7 @@ import WorkspacePatternPanel from "./WorkspacePatternPanel";
 import TradeListPanel from "./TradeListPanel";
 import { setPatternSeriesProvider } from "./lib/patternPanelStore";
 import { claimSidePanel, endSidePanelRestore, registerSidePanel } from "./lib/sidePanels";
+import { fmtPrice } from "./lib/priceFormat";
 import { anyCellInReadout, subscribeReplayingCells } from "./lib/replayingCells";
 import LayoutPicker from "./LayoutPicker";
 import BrokerSelector from "./BrokerSelector";
@@ -1733,10 +1734,10 @@ export default function App() {
       // but a stale/mismatched deploy or hand-rolled ws message shouldn't be
       // able to RangeError out of toFixed and kill this handler).
       const prec = Math.min(10, Math.max(0, p.precision ?? 2));
-      const now = p.price.toFixed(prec);
+      const now = fmtPrice(p.price, prec);
       // Attribution: always lead with the epic, even for a custom message — the
       // sound alone says nothing about WHERE. One `detail` feeds both surfaces.
-      const detail = p.message || `@ ${p.level.toFixed(prec)}`;
+      const detail = p.message || `@ ${fmtPrice(p.level, prec)}`;
       const body = `${p.epic} ${p.message ? "\u00b7 " : ""}${detail}`;
       // Click either surface to jump to a chart on this epic and select the line.
       const goTo = () => alertNavHandler.current?.(p.epic, p.id, prec);

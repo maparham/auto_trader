@@ -9,6 +9,14 @@
 //  2. onLeave — clears the "+", snap, curve-hover, trade-hover, and bracket as
 //     the cursor leaves the chart.
 //
+// Touch: klinecharts consumes the touch sequence on its canvas, so a phone
+// never delivers mousemove/mouseleave here — the "+" would freeze wherever the
+// last synthetic mouse event left it while the crosshair (a tap, then a drag
+// of the finger) moved on. On touch input the affordance is driven by the
+// chart's own crosshair writes instead (subscribeCrosshairWrites): every set
+// replays moveAt at the crosshair pixel, every clear replays onLeave, so the
+// "+" and its price box sit exactly on the crosshair the user sees.
+//
 // Both attach their own listeners in this hook's own effect, on the SAME targets
 // as the original init effect: onMove on BOTH `wrapRef` and `containerRef` (the
 // price-axis strip is a klinecharts DOM element over the wrap, so wrap's
@@ -38,6 +46,8 @@ import {
   type LineCache,
 } from "./chartGeometry";
 import { first } from "./chartPainters";
+import { subscribeCrosshairWrites } from "./crosshairWrites";
+import { fmtPrice } from "../lib/priceFormat";
 import { hitAnyTrendlineHandle } from "../lib/indicators/trendlines";
 import type { SelectedIndicator } from "../lib/chartController";
 import type { ChartHandle } from "./chartHandle";
@@ -167,7 +177,9 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     };
 
     // "+" affordance follows the cursor's price on the right axis (TV-style).
-    const onMove = (e: MouseEvent) => {
+    // Shared by the mouse path (onMove) and the touch path (crosshair writes),
+    // so it takes the viewport point + event target rather than the MouseEvent.
+    const moveAt = (clientX: number, clientY: number, target: EventTarget | null) => {
       const c = chartRef.current;
       const btn = plusBtnRef.current;
       if (!c) return;
@@ -176,8 +188,8 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
         return;
       }
       const r = el.getBoundingClientRect();
-      const lx = e.clientX - r.left;
-      const ly = e.clientY - r.top;
+      const lx = clientX - r.left;
+      const ly = clientY - r.top;
       // Feed the Pivots-High/Low Δ-label hover-enlarge before any of onMove's later
       // early-returns, so parking on a marker/label always registers.
       setPointerPx({ x: lx, y: ly });
@@ -217,7 +229,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // drag cursor within the pill's rect (see the !overTradePillNow gate below).
       // The hit itself also feeds the hover state below, so the pill lift and dock-row
       // highlight agree with the cursor across the whole pill.
-      const pillHit = avwapAnchorMode.value ? null : tradePillHitTest(e.clientX, e.clientY);
+      const pillHit = avwapAnchorMode.value ? null : tradePillHitTest(clientX, clientY);
       const overTradePillNow = pillHit != null;
       // Over a trendline's pin handle: a hand, same as the other click targets.
       // The cursor MUST be decided here rather than by the pin hook writing an
@@ -243,8 +255,8 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
         return;
       }
       const rect = el.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
       // Pills follow the cursor while their line is merely hovered (a click-
       // selected line's pill stays frozen so its delete button is reachable). Run
       // this BEFORE the "+"-hover early-return below, so the pill keeps tracking the
@@ -430,7 +442,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // swallow the mousedown and block y-axis scaling. The "+" icon protrudes left
       // of mainW into the candle pane, so it stays reachable while the cursor is in
       // the pane — only the on-axis portion is sacrificed.
-      const overPlus = btn.contains(e.target as Node);
+      const overPlus = target instanceof Node && btn.contains(target);
       // The "+" is a quick-create PRICE-alert affordance and its price box reads the
       // candle_pane scale — meaningless over a sub-pane (RSI/MACD/Volume), whose y-axis
       // is an indicator value, not a price. Below the candle pane's bottom edge, hide the
@@ -461,7 +473,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       const guideVal = snapTarget ? snapTarget.level : pt.value;
       plusPriceRef.current = guideVal;
       if (plusPriceLabelRef.current) {
-        plusPriceLabelRef.current.textContent = guideVal.toFixed(precisionRef.current);
+        plusPriceLabelRef.current.textContent = fmtPrice(guideVal, precisionRef.current);
         // Size the price box to the y-axis column so the number sits inside the
         // axis and the "+" circle's right edge lands on the column's left border.
         plusPriceLabelRef.current.style.width = `${Math.max(0, rect.width - mainW)}px`;
@@ -476,6 +488,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // guide there, so leave the crosshair line hidden when snapped.
       setPlusCrosshair(overPlus && snapTarget == null ? guideY : null);
     };
+    const onMove = (e: MouseEvent) => moveAt(e.clientX, e.clientY, e.target);
     const onLeave = () => {
       setPlusCrosshair(null);
       setPointerPx(null); // drop the Δ-label hover-enlarge as the cursor leaves
@@ -517,10 +530,39 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     // it. We need onMove to keep running there so onAxis can be set to true.
     containerRef.current?.addEventListener("mousemove", onMove);
 
+    // Touch path. `touchInput` remembers the input kind of the LAST pointer to
+    // touch the chart (capture phase, so klinecharts' own handlers can't hide
+    // it): the crosshair-write replay below is gated on it so a mouse never
+    // pays for it (mousemove already runs moveAt) and a hybrid device swaps
+    // cleanly between the two. Any stray synthetic mouse event a tap does emit
+    // is harmless — moveAt is idempotent for a given point.
+    let touchInput = false;
+    const onPointer = (e: PointerEvent) => {
+      touchInput = e.pointerType === "touch";
+    };
+    el.addEventListener("pointerdown", onPointer, true);
+    el.addEventListener("pointermove", onPointer, true);
+    // The write's x/y are relative to the chart root (`el`), the same frame
+    // moveAt derives from clientX/Y — so map back through the same rect. A
+    // clear (pan started, drawing tapped, outside tap) is the phone's only
+    // "cursor left" signal, so replay onLeave to drop the "+".
+    const offWrites = subscribeCrosshairWrites(chartRef.current, (cr) => {
+      if (!touchInput) return;
+      if (cr == null) {
+        onLeave();
+        return;
+      }
+      const r = el.getBoundingClientRect();
+      moveAt(r.left + cr.x, r.top + cr.y, null);
+    });
+
     return () => {
       wrapRef.current?.removeEventListener("mousemove", onMove);
       wrapRef.current?.removeEventListener("mouseleave", onLeave);
       containerRef.current?.removeEventListener("mousemove", onMove);
+      el.removeEventListener("pointerdown", onPointer, true);
+      el.removeEventListener("pointermove", onPointer, true);
+      offWrites();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

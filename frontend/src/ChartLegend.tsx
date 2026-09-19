@@ -40,6 +40,7 @@ import {
   legendPrecisionOf,
 } from "./lib/indicators/inset";
 import { periodByResolution } from "./lib/feed";
+import { fmtPrice } from "./lib/priceFormat";
 
 const UP = "#26a69a";
 const DOWN = "#ef5350";
@@ -166,12 +167,9 @@ export interface Props {
   handleRef?: Ref<ChartLegendHandle>;
 }
 
-function fmtNum(v: number, precision: number): string {
-  return v.toLocaleString("en-US", {
-    minimumFractionDigits: precision,
-    maximumFractionDigits: precision,
-  });
-}
+// Same grouping as the axis labels (lib/priceFormat) — the legend's OHLC and
+// the tags on the y-axis must read the same number the same way.
+const fmtNum = fmtPrice;
 
 const ICON_EYE = "\uE8F4"; // visibility
 const ICON_EYE_OFF = "\uE8F5"; // visibility_off (crossed eye)

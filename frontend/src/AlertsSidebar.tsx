@@ -14,6 +14,7 @@ import Tooltip from "./components/Tooltip";
 import type { ChartController } from "./lib/chartController";
 import type { ChartTab, AlertCondition } from "./lib/persist";
 import type { OverlayManager } from "./lib/overlays";
+import { fmtPrice } from "./lib/priceFormat";
 import {
   alertsChanged,
   alertsPanelOpen,
@@ -600,7 +601,7 @@ export default function AlertsSidebar({
                   <div className="ap-row-main">
                     <span className="ap-sym">{epic}</span>
                     <span className="ap-cond">
-                      {CONDITION_LABELS[a.condition]} {a.level.toFixed(precision)}
+                      {CONDITION_LABELS[a.condition]} {fmtPrice(a.level, precision)}
                     </span>
                   </div>
                   {a.message && <div className="ap-msg">{a.message}</div>}
@@ -643,7 +644,7 @@ export default function AlertsSidebar({
                         onClick={(e) => {
                           e.stopPropagation();
                           requestConfirm({
-                            message: `Delete alert ${CONDITION_LABELS[a.condition]} ${a.level.toFixed(precision)} on ${epic}?`,
+                            message: `Delete alert ${CONDITION_LABELS[a.condition]} ${fmtPrice(a.level, precision)} on ${epic}?`,
                             onConfirm: () => overlays?.remove(a.id),
                           });
                         }}
