@@ -132,9 +132,11 @@ export default function DefaultsMenu({
             )}
             <li className="sep" />
             {Object.keys(loadIndicatorPresets(type)).map((nm) => (
-              <li key={nm} className="ind-def-preset">
+              // The whole row applies: the hover highlight spans it, so a click
+              // landing beside the (often two-character) name must not be lost.
+              <li key={nm} className="ind-def-preset" onClick={() => applyPreset(nm)}>
                 <Tooltip content={`Apply "${nm}"`}>
-                  <span onClick={() => applyPreset(nm)}>{nm}</span>
+                  <span>{nm}</span>
                 </Tooltip>
                 <button
                   className="ind-def-del"
