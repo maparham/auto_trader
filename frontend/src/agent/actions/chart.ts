@@ -8,6 +8,7 @@ import type { ChartController } from "../../lib/chartController";
 import type { Period } from "../../lib/feed";
 import { ALL_PERIODS, periodByResolution } from "../../lib/feed";
 import { getIndicatorsByPane } from "../../lib/indicators";
+import { probeTabBridge, tabBridgeScreenshot, tabBridgeFocus, TabBridgeError } from "../../lib/tabBridge";
 
 export interface FocusedChart {
   chart: Chart;
@@ -89,25 +90,51 @@ export function registerChartActions(): void {
     name: "chart.screenshot",
     description:
       "PNG of the focused chart exactly as rendered (candles, indicators, panes, drawings). Returns base64; use the ui_screenshot MCP tool to receive it as an image. Read-only. " +
-        "Fails with TAB_HIDDEN when the app's browser tab is backgrounded; ask the user to focus the tab and retry.",
+        "With the Tab Bridge extension installed (extension/README.md) this works while the tab is backgrounded; without it, fails with TAB_HIDDEN when the tab is hidden.",
     kind: "read",
     params: { type: "object", properties: {} },
     handler: async () => {
       const { chart, epic, cellId, resolution } = focusedChart();
-      // A backgrounded browser tab (document.hidden) cannot be screenshotted
-      // reliably: live reproduction via the agent bridge probe showed the
-      // per-pane canvas itself (chart._candlePane.getImage(true)) reading as
-      // uniformly (0,0,0,0) - transparent, no drawn pixels - via BOTH
-      // getImageData and that canvas's own toDataURL, even though the same
-      // chart renders correctly once the tab is foregrounded again. That is
-      // upstream of any compositing choice in this file (drawImage vs
-      // getImageData/putImageData, background color, pane vs. chart-level
-      // export all reproduced the same blank result), so there is nothing to
-      // paper over here - failing loud beats silently returning a blank PNG.
+
+      // Preferred path: the Tab Bridge extension (extension/ at the repo
+      // root) captures the tab through Chrome's debugger, which forces a
+      // fresh frame even while the tab is backgrounded. Clipped to the chart
+      // container so the agent sees the chart, not the whole app.
+      if (await probeTabBridge()) {
+        const r = chart.getDom()?.getBoundingClientRect() ?? { x: 0, y: 0, width: 0, height: 0 };
+        const clip = {
+          x: r.x + (window.scrollX || 0), y: r.y + (window.scrollY || 0),
+          width: r.width, height: r.height,
+        };
+        const scale = window.devicePixelRatio || 1;
+        try {
+          let shot = await tabBridgeScreenshot({ clip, scale, format: "png" });
+          if (shot.image_base64.length > MAX_B64) {
+            shot = await tabBridgeScreenshot({ clip, scale, format: "jpeg", quality: 80 });
+          }
+          return { epic, cellId, resolution, mime: shot.mime, image_base64: shot.image_base64, via: "extension" };
+        } catch (e) {
+          const code = e instanceof TabBridgeError ? e.code : "EXTENSION_ERROR";
+          throw new ActionError("SCREENSHOT_FAILED", `screenshot via extension failed: ${code}: ${(e as Error).message}`);
+        }
+      }
+
+      // Fallback: copy the pane canvases the chart already painted. A
+      // backgrounded browser tab (document.hidden) cannot be screenshotted
+      // reliably this way: live reproduction via the agent bridge probe
+      // showed the per-pane canvas itself (chart._candlePane.getImage(true))
+      // reading as uniformly (0,0,0,0) - transparent, no drawn pixels - via
+      // BOTH getImageData and that canvas's own toDataURL, even though the
+      // same chart renders correctly once the tab is foregrounded again.
+      // That is upstream of any compositing choice in this file (drawImage
+      // vs getImageData/putImageData, background color, pane vs.
+      // chart-level export all reproduced the same blank result), so there
+      // is nothing to paper over here - failing loud beats silently
+      // returning a blank PNG.
       if (typeof document !== "undefined" && document.hidden) {
         throw new ActionError(
           "TAB_HIDDEN",
-          "the app's browser tab is backgrounded; focus it and retry (chart rendering is unreliable while the tab is hidden)",
+          "the app's browser tab is backgrounded and the Tab Bridge extension is not installed; install it (extension/README.md) or focus the tab and retry",
         );
       }
       const bg = chartBackgroundColor();
@@ -128,9 +155,28 @@ export function registerChartActions(): void {
       try {
         let shot = grab("png");
         if (shot.b64.length > MAX_B64) shot = grab("jpeg");
-        return { epic, cellId, resolution, mime: shot.mime, image_base64: shot.b64 };
+        return { epic, cellId, resolution, mime: shot.mime, image_base64: shot.b64, via: "canvas" };
       } catch (e) {
         throw new ActionError("SCREENSHOT_FAILED", `screenshot failed: ${String(e)}`);
+      }
+    },
+  });
+
+  registerAction({
+    name: "tab.focus",
+    description:
+      "Bring this app's browser tab to the front via the Tab Bridge extension. Errors NO_EXTENSION when the extension is not installed (ui_focus_tab then falls back to AppleScript on macOS).",
+    kind: "write",
+    params: { type: "object", properties: {} },
+    handler: async () => {
+      if (!(await probeTabBridge())) {
+        throw new ActionError("NO_EXTENSION", "Tab Bridge extension not installed (see extension/README.md)");
+      }
+      try {
+        return await tabBridgeFocus();
+      } catch (e) {
+        const code = e instanceof TabBridgeError ? e.code : "EXTENSION_ERROR";
+        throw new ActionError("FOCUS_FAILED", `${code}: ${(e as Error).message}`);
       }
     },
   });

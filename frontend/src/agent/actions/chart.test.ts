@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { installMemStorage } from "../../lib/testMemStorage";
 
 installMemStorage();
 
 import { clearRegistryForTest, listActions, invokeAction } from "../registry";
 import { registerChartActions, setFocusedChartProvider } from "./chart";
+import * as tabBridge from "../../lib/tabBridge";
+
+vi.mock("../../lib/tabBridge", async (importActual) => {
+  const actual = await importActual<typeof import("../../lib/tabBridge")>();
+  return {
+    ...actual,
+    probeTabBridge: vi.fn(async () => null),
+    tabBridgeScreenshot: vi.fn(),
+    tabBridgeFocus: vi.fn(),
+  };
+});
 
 const ctx = { progress: () => {}, signal: new AbortController().signal };
 
@@ -203,6 +214,83 @@ describe("chart.screenshot", () => {
     } finally {
       delete (document as unknown as { hidden?: boolean }).hidden;
     }
+  });
+
+  it("uses the Tab Bridge extension when present, clipped to the chart container", async () => {
+    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.tabBridgeScreenshot).mockResolvedValueOnce({
+      mime: "image/png", image_base64: "QUJD", width: 640, height: 400,
+    });
+    const chart = Object.assign(fakeChart(), {
+      getDom: () => ({ getBoundingClientRect: () => ({ x: 12, y: 34, width: 640, height: 400 }) }),
+      getConvertPictureUrl: () => { throw new Error("canvas path must not run when the extension answers"); },
+    });
+    provide(chart as never);
+    const res = await invokeAction("chart.screenshot", {}, ctx) as { image_base64: string; via: string };
+    expect(res.image_base64).toBe("QUJD");
+    expect(res.via).toBe("extension");
+    expect(vi.mocked(tabBridge.tabBridgeScreenshot).mock.calls[0][0]).toMatchObject({
+      clip: { x: 12, y: 34, width: 640, height: 400 }, format: "png",
+    });
+  });
+
+  it("works with the extension even when the tab is backgrounded", async () => {
+    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.tabBridgeScreenshot).mockResolvedValueOnce({
+      mime: "image/png", image_base64: "QUJD", width: 1, height: 1,
+    });
+    const chart = Object.assign(fakeChart(), {
+      getDom: () => ({ getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }) }),
+    });
+    provide(chart as never);
+    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    try {
+      const res = await invokeAction("chart.screenshot", {}, ctx) as { via: string };
+      expect(res.via).toBe("extension");
+    } finally {
+      delete (document as unknown as { hidden?: boolean }).hidden;
+    }
+  });
+
+  it("surfaces an extension capture failure as SCREENSHOT_FAILED, without a canvas fallback", async () => {
+    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.tabBridgeScreenshot).mockRejectedValueOnce(new tabBridge.TabBridgeError("DEBUGGER_BUSY", "devtools open"));
+    const chart = Object.assign(fakeChart(), {
+      getDom: () => ({ getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }) }),
+      getConvertPictureUrl: () => { throw new Error("must not fall back to canvas"); },
+    });
+    provide(chart as never);
+    await expect(invokeAction("chart.screenshot", {}, ctx)).rejects.toMatchObject({
+      code: "SCREENSHOT_FAILED", message: expect.stringMatching(/DEBUGGER_BUSY.*devtools open/),
+    });
+  });
+
+  it("hidden-tab error names the extension when it is absent", async () => {
+    const chart = Object.assign(fakeChart(), {
+      getConvertPictureUrl: () => { throw new Error("unreachable"); },
+    });
+    provide(chart as never);
+    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    try {
+      await expect(invokeAction("chart.screenshot", {}, ctx)).rejects.toThrow(/Tab Bridge extension/);
+    } finally {
+      delete (document as unknown as { hidden?: boolean }).hidden;
+    }
+  });
+});
+
+describe("tab.focus", () => {
+  beforeEach(() => { clearRegistryForTest(); registerChartActions(); });
+
+  it("is a write action that asks the extension to focus the tab", async () => {
+    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.tabBridgeFocus).mockResolvedValueOnce({ focused: true });
+    expect(listActions().find((a) => a.name === "tab.focus")?.kind).toBe("write");
+    expect(await invokeAction("tab.focus", {}, ctx)).toEqual({ focused: true });
+  });
+
+  it("errors NO_EXTENSION when the extension is absent", async () => {
+    await expect(invokeAction("tab.focus", {}, ctx)).rejects.toMatchObject({ code: "NO_EXTENSION" });
   });
 });
 
