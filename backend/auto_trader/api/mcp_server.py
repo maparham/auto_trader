@@ -30,19 +30,39 @@ mcp = MCPServer("auto-trader-ui")
 
 # The ui_* tools, registered at import time so the manifest is complete before
 # the first request. Every Chartkar-specific word the agent reads is passed in
-# here, which is why the package itself has none: app_name and screenshot_doc
-# keep the tool descriptions byte-identical to what agents saw before the
-# extraction.
+# here, which is why the package itself has none: app_name, screenshot_doc and
+# the docs overrides below keep the tool descriptions byte-identical to what
+# agents saw before the extraction.
 register_ui_tools(
     mcp,
     HUB,
     screenshot_action="chart.screenshot",
-    # Byte-identical to the old ui_screenshot docstring, four-space continuation
-    # indents included: the SDK registers the string verbatim, with no cleandoc.
+    # Byte-identical to the old ui_screenshot docstring; the package runs
+    # inspect.cleandoc on this, so the leading indentation on continuation
+    # lines doesn't matter.
     screenshot_doc="""Screenshot of the focused chart in the connected tab, as an image the
     client renders natively. Pairs with ui_read_state("chart.state") for the
     numbers behind the pixels. Refused with UNTITLED_TAB until ui_set_title
     has named the tab.""",
+    title_example="US100 4H backtest",
+    docs={
+        # Byte-identical to the old ui_set_title/ui_invoke/ui_read_state
+        # docstrings; cleandoc makes the indentation harmless.
+        "ui_set_title": """Name the browser tab you are about to drive. REQUIRED before ui_invoke,
+    ui_read_state or ui_screenshot work on a session. Keep it short and
+    specific ('US100 4H backtest', 'OIL_CRUDE trendline review'); the tab
+    prefixes a robot mark so the owner can tell agent tabs from their own.""",
+        "ui_invoke": """Invoke a UI action. Fast actions return the result; long-running ones
+    (backtest.run, sweep.start) and confirm-kind ones (which wait on a human
+    approving a dialog) return {"handle": ...} - poll with ui_wait. A rejected
+    confirm surfaces as ui_wait status "error" with "REJECTED: ...".
+    Refused with UNTITLED_TAB until ui_set_title has named the tab.""",
+        "ui_read_state": """Shorthand for invoking a read-kind action by name (e.g. backtest.result).
+
+    `readOnly` is enforced by the tab: a key naming a write- or confirm-kind
+    action is refused with NOT_READ_ACTION instead of being executed.
+    Refused with UNTITLED_TAB until ui_set_title has named the tab.""",
+    },
     app_name="Chartkar",
     app_url_label="FRONTEND_URL",
     frontend_url=lambda: os.environ.get("FRONTEND_URL", "http://localhost:5173"),

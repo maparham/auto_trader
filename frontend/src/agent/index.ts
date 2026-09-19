@@ -1,6 +1,6 @@
 // Entry point: registers all action modules and starts the WS bridge when the
 // build enables it (VITE_AGENT_BRIDGE=1; dev builds default on). Idempotent.
-import { registerTabActions, startAgentBridge } from "agent-ui-bridge";
+import { startAgentBridge } from "agent-ui-bridge";
 import { API_BASE } from "../lib/http";
 import { getAuthToken, hasTokenGetter } from "../lib/authToken";
 import { withImpersonation } from "../lib/impersonation";
@@ -10,6 +10,7 @@ import { registerDealingActions } from "./actions/dealing";
 import { registerDrawingActions } from "./actions/drawings";
 import { registerChartActions } from "./actions/chart";
 import { registerIndicatorActions } from "./actions/indicators";
+import { registerTabActions } from "./actions/tab";
 
 let initialized = false;
 

@@ -88,6 +88,25 @@ def test_tools_call_over_http_returns_a_result():
     assert '"isError":true' not in r.text.replace(" ", "")
 
 
+def test_ui_sessions_tool_is_bound_to_chartkars_hub():
+    # The ui_* tools bind to a hub at registration time (agent_bridge.HUB),
+    # not per-call, so a session registered directly on that HUB must show up
+    # through the tool.
+    from auto_trader.api.agent_bridge import HUB
+
+    async def _send(_msg):
+        pass
+
+    sid = HUB.register(_send)
+    try:
+        with _client() as c:
+            r = _call(c, _session(c), "ui_sessions", {})
+        assert r.status_code == 200, r.text
+        assert sid in r.text
+    finally:
+        HUB.unregister(sid)
+
+
 def test_tools_call_surfaces_the_no_tab_message_as_a_tool_error():
     # The SDK converts the raised RuntimeError into an MCP tool error, so the
     # agent reads the actionable message rather than a transport failure.

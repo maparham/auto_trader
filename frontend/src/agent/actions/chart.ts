@@ -100,10 +100,11 @@ export function registerChartActions(): void {
     handler: async () => {
       const { chart, epic, cellId, resolution } = focusedChart();
 
-      // Preferred path: the Tab Bridge extension (extension/ at the repo
-      // root) captures the tab through Chrome's debugger, which forces a
-      // fresh frame even while the tab is backgrounded. Clipped to the chart
-      // container so the agent sees the chart, not the whole app.
+      // Preferred path: the Tab Bridge extension (extension/ in the
+      // agent-ui-bridge repo) captures the tab through Chrome's debugger,
+      // which forces a fresh frame even while the tab is backgrounded.
+      // Clipped to the chart container so the agent sees the chart, not the
+      // whole app.
       let useExtension = Boolean(await probeTabBridge());
       let extensionTimedOut = false;
       if (useExtension) {

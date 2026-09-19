@@ -46,6 +46,21 @@ MCP agents can drive the running UI: connect to `http://localhost:8000/mcp`
 `localhost`, `127.0.0.1` or `[::1]` on any port (the MCP SDK's DNS-rebinding
 protection), so it is local-only by design: any other Host gets a 421.
 
+The generic half of this lives in github.com/maparham/agent-ui-bridge: the
+npm package `agent-ui-bridge` (action registry, relay client, confirm gate,
+confirm dialog, tab.title.set, the Tab Bridge client) and the python package
+of the same name (`agent_ui_bridge`: BridgeHub, serve_tab, the ten ui_*
+tools, the probe). Chartkar depends on both as git dependencies, in
+`frontend/package.json` and `backend/pyproject.toml`, and keeps thin shims at
+`frontend/src/agent/{registry,index}.ts`, `frontend/src/agent/AgentConfirmHost.tsx`,
+`frontend/src/agent/actions/tab.ts`, `frontend/src/lib/tabBridge.ts` and
+`backend/auto_trader/api/agent_bridge.py`, so the app's import paths did not
+move. Chartkar's OWN actions (`chart.*`, `backtest.*`, `sweep.*`, dealing,
+drawings, indicators, `market.select`, the tab helpers) and the direct
+`ta_*`/`wf_*`/`runs_*` tools stay here. Editing the bridge itself means
+editing that repo; `npm link` and
+`uv pip install -e ../agent-ui-bridge/python` for local iteration.
+
 UI tools (need a connected browser tab): `ui_sessions`, `ui_actions`
 (self-describing manifest), `ui_set_title`, `ui_invoke`, `ui_wait`, `ui_read_state`,
 `ui_screenshot` (returns the focused chart as an image plus a text line
@@ -75,10 +90,13 @@ automation permission for whatever app hosts the backend process; a pending
 permission dialog surfaces as a 15 s osascript timeout with a hint. Hosted
 mode refuses these tools.
 
-Tab Bridge extension (`extension/` at the repo root, generic, unpacked
-install per `extension/README.md`): a page can screenshot or focus its own
-tab through `chrome.debugger` / `chrome.tabs`, which works while the tab is
-backgrounded. `chart.screenshot` uses it when its `hello` probe answers
+Tab Bridge extension (`extension/` in the agent-ui-bridge repo, generic,
+unpacked install per that repo's `extension/README.md`): a page can
+screenshot or focus its own tab through `chrome.debugger` / `chrome.tabs`,
+which works while the tab is backgrounded. Action descriptions and the
+TAB_HIDDEN message still say "extension/README.md"; that path now means the
+one in github.com/maparham/agent-ui-bridge, and the wording is left alone on
+purpose because it is part of the agent-visible contract. `chart.screenshot` uses it when its `hello` probe answers
 (result carries `via: "extension"`), clipped to the chart container, and
 falls back to the canvas composite otherwise (`via: "canvas"`, TAB_HIDDEN
 when hidden). `ui_focus_tab` tries the in-page `tab.focus` action first, so
@@ -94,10 +112,11 @@ Direct tools (no tab needed; call the app in-process): `ta_candles`,
 transport, attaching the API token when one is configured, so they work
 without a browser at all.
 
-End-to-end probe: `cd backend && python3 -m scripts.agent_bridge_probe
-[--url URL] [--run] [--invoke ACTION --args JSON] [--screenshot [PATH]]`.
-`--screenshot` (default path `chart.png`) calls `ui_screenshot`, decodes the
-image block, and writes it to PATH.
+End-to-end probe: `cd backend && python3 -m agent_ui_bridge.probe
+[--url URL] [--read-state KEY] [--invoke ACTION --args JSON]
+[--screenshot [PATH]]`. `--screenshot` (default path `screenshot.png`) calls
+`ui_screenshot`, decodes the image block, and writes it to PATH. The old
+`--run` shorthand is gone; use `--invoke backtest.run`.
 
 ### How to run a backtest through the bridge (agent recipe)
 

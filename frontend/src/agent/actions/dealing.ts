@@ -1,6 +1,6 @@
 // Confirm-gated dealing actions. The registry kind "confirm" means bridge.ts
-// parks execution on an in-browser Approve click (agent/confirm.ts); these
-// handlers only run after approval.
+// parks execution on an in-browser Approve click (the confirm gate in the
+// agent-ui-bridge package); these handlers only run after approval.
 //
 // Account: every handler acts against getTradesAccount() (the account the
 // trades feed / dock currently targets), the same choice the chart trade pills

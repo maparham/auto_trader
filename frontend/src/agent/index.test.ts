@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 // lib/persist (pulled in via the action modules) touches localStorage at
-// module-eval time and vitest runs .ts tests in the 'node' env.
+// module-eval time, so this file needs the jsdom env (the directive above)
+// and a fake localStorage installed before importing anything that uses it.
 import { installMemStorage } from "../lib/testMemStorage";
 
 installMemStorage();
