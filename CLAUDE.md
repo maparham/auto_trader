@@ -93,10 +93,10 @@ mode refuses these tools.
 Tab Bridge extension (`extension/` in the agent-ui-bridge repo, generic,
 unpacked install per that repo's `extension/README.md`): a page can
 screenshot or focus its own tab through `chrome.debugger` / `chrome.tabs`,
-which works while the tab is backgrounded. Action descriptions and the
-TAB_HIDDEN message still say "extension/README.md"; that path now means the
-one in github.com/maparham/agent-ui-bridge, and the wording is left alone on
-purpose because it is part of the agent-visible contract. `chart.screenshot` uses it when its `hello` probe answers
+which works while the tab is backgrounded. The `chart.screenshot` action
+descriptions and its TAB_HIDDEN message name that repo; `ui_focus_tab`'s
+own text still says "extension/README.md", meaning the one in that repo.
+`chart.screenshot` uses it when its `hello` probe answers
 (result carries `via: "extension"`), clipped to the chart container, and
 falls back to the canvas composite otherwise (`via: "canvas"`, TAB_HIDDEN
 when hidden). `ui_focus_tab` tries the in-page `tab.focus` action first, so

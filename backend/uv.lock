@@ -13,7 +13,7 @@ resolution-markers = [
 [[package]]
 name = "agent-ui-bridge"
 version = "0.1.0"
-source = { git = "https://github.com/maparham/agent-ui-bridge?subdirectory=python#fa9eac8b1eba9c6fbc2e3670c4e98371553a7527" }
+source = { git = "https://github.com/maparham/agent-ui-bridge?subdirectory=python#000872da04a8b5c649977b8c279035266e882fef" }
 dependencies = [
     { name = "mcp" },
 ]
