@@ -957,12 +957,27 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        key: "showCrossings",
+        label: "Mark crossings",
+        type: "boolean",
+        source: "extend",
+        field: "showCrossings",
+        tab: "style",
+        group: "lineMarks",
+        default: TRENDLINES_EXTEND_DEFAULTS.showCrossings,
+        tip: [
+          "Puts a small cross on a line at every bar the close cut through it.",
+          "These are the crossings Min and Max Crossings count.",
+        ],
+      },
+      {
         key: "showStats",
         label: "Show line stats",
         type: "boolean",
         source: "extend",
         field: "showStats",
         tab: "style",
+        group: "lineMarks",
         default: TRENDLINES_EXTEND_DEFAULTS.showStats,
         tip: [
           "Writes each line's pivot count and crossings at its right end.",

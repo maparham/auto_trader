@@ -101,6 +101,10 @@ export interface TrendLine {
   /** Times the close has changed side of the line since i1. Detector state
    * (a gate and a rank key read it), so it is ported and part of parity. */
   crossings: number;
+  /** The bar of each counted crossing, in order. DRAW-ONLY (the crossing
+   * marks); like touchKinds it is younger than the stashes it rides in, so
+   * every reader takes it as possibly absent. */
+  crossIdxs: number[];
   /** Last NON-ZERO side the close sat on: 1 above, -1 below, 0 none yet. A
    * close exactly on the line keeps the previous sign. */
   lastSign: number;
@@ -177,7 +181,10 @@ export function sideSign(line: TrendLine, j: number, close: number): -1 | 0 | 1 
 export function stepCrossing(line: TrendLine, j: number, close: number): void {
   const s = sideSign(line, j, close);
   if (s === 0) return;
-  if (line.lastSign !== 0 && s !== line.lastSign) line.crossings += 1;
+  if (line.lastSign !== 0 && s !== line.lastSign) {
+    line.crossings += 1;
+    (line.crossIdxs ??= []).push(j);
+  }
   line.lastSign = s;
 }
 
@@ -667,6 +674,7 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
           touchKinds: [k1, kind],
           lastTouchIdx: k,
           crossings: 0,
+          crossIdxs: [],
           lastSign: 0,
           maxTouchGap: k - i1,
           minTouchGap: k - i1,
@@ -779,6 +787,7 @@ const cloneTrendLine = (l: TrendLine): TrendLine => ({
   ...l,
   touchIdxs: l.touchIdxs.slice(),
   touchKinds: l.touchKinds.slice(),
+  crossIdxs: (l.crossIdxs ?? []).slice(),
 });
 
 /** ATR(14) for bar j, incrementally: the exact value atrSeries would put at j
@@ -1048,6 +1057,10 @@ export interface TrendlinesExtend {
    *
    * Render-only, like everything else in this block. */
   showLinePivots?: boolean;
+  /** A small cross on a drawn line at every bar whose close cut through it:
+   * the same events Min/Max Crossings count and the end tag reports. ON by
+   * default. Render-only. */
+  showCrossings?: boolean;
   /** Write each drawn line's touch and crossing counts at its right end
    * ("2 Pivots 5 Crossings"). ON by default. Render-only. */
   showStats?: boolean;
@@ -1497,6 +1510,9 @@ export const TL_HANDLE_RADIUS = 3;
 /** The hollow ring at a touch: a touch is price respecting the line, and this
  * marks each bar that earned the ×N tag. */
 export const TL_TOUCH_RADIUS = 2;
+/** Half-arm of the crossing mark: a small × ON the line at the crossing bar.
+ * A ring there would read as a touch, so it is the one shape a touch is not. */
+export const TL_CROSS_ARM = 3;
 export const TL_HANDLE_HIT = 8;
 /** The pivot mark: an arrow pointing AT price (UP under a low, DOWN over a
  * high), sitting this many pixels clear of the wick with arms this long. An
@@ -2185,6 +2201,7 @@ function drawTrendlines(
   const showAll = ext?.showPivots ?? TRENDLINES_EXTEND_DEFAULTS.showPivots;
   const showLineUsed = ext?.showLinePivots ?? TRENDLINES_EXTEND_DEFAULTS.showLinePivots;
   const showStats = ext?.showStats ?? TRENDLINES_EXTEND_DEFAULTS.showStats;
+  const showCrossings = ext?.showCrossings ?? TRENDLINES_EXTEND_DEFAULTS.showCrossings;
   const paintMarks = (used: ReadonlySet<number>): void => {
     if ((showAll || showLineUsed) && last?.pivots)
       paintPivotMarks(
@@ -2391,6 +2408,22 @@ function drawTrendlines(
       ctx.beginPath();
       ctx.arc(xT, yT, TL_TOUCH_RADIUS, 0, Math.PI * 2);
       ctx.stroke();
+    }
+    // Crossing marks: a × on the line at each bar the close changed side.
+    // Same cull as the rings; the bar is a plain close, so plain time mapping.
+    if (showCrossings) {
+      for (const idx of line.crossIdxs ?? []) {
+        const xC = xAt(idx);
+        const yC = onSegment(xC);
+        if (xC < 0 || xC > Math.min(tagRight, x1) || yC < 0 || yC > bounding.height)
+          continue;
+        ctx.beginPath();
+        ctx.moveTo(xC - TL_CROSS_ARM, yC - TL_CROSS_ARM);
+        ctx.lineTo(xC + TL_CROSS_ARM, yC + TL_CROSS_ARM);
+        ctx.moveTo(xC - TL_CROSS_ARM, yC + TL_CROSS_ARM);
+        ctx.lineTo(xC + TL_CROSS_ARM, yC - TL_CROSS_ARM);
+        ctx.stroke();
+      }
     }
     // Touch count at the right end, the same ×N tag SR_LEVELS puts on a zone:
     // the drawn set is chosen by proximity, so this is how a user tells a

@@ -76,6 +76,7 @@ const res: TrendLine = {
   touchKinds: ["high", "high"],
   lastTouchIdx: 10,
   crossings: 0,
+  crossIdxs: [],
   lastSign: 0,
   // The anchor gap, which is what those two touches alone span. Fixtures that
   // move their anchors and care about spacing override it.
@@ -101,7 +102,7 @@ const mixed: TrendLine = {
   i1: 0, p1: 100, k1: "high",
   i2: 10, p2: 90, k2: "low",
   touches: 2, touchIdxs: [0, 10], touchKinds: ["high", "low"],
-  lastTouchIdx: 10, crossings: 0, lastSign: 0,
+  lastTouchIdx: 10, crossings: 0, crossIdxs: [], lastSign: 0,
   maxTouchGap: 10, minTouchGap: 10, maxTouchIdx: 10,
 };
 
@@ -166,6 +167,15 @@ describe("sideSign / stepCrossing", () => {
     expect([l.crossings, l.lastSign]).toEqual([1, 1]);
     stepCrossing(l, 5, 90); // back below: two
     expect(l.crossings).toBe(2);
+    // The crossing bars, for the marks: only the counted ones.
+    expect(l.crossIdxs).toEqual([4, 5]);
+  });
+  it("records crossing bars on a line restored without the field", () => {
+    const l = { ...mixed, touchIdxs: [...mixed.touchIdxs], touchKinds: [...mixed.touchKinds] };
+    delete (l as { crossIdxs?: number[] }).crossIdxs;
+    stepCrossing(l, 1, 98);
+    stepCrossing(l, 4, 99);
+    expect([l.crossings, l.crossIdxs]).toEqual([1, [4]]);
   });
 });
 
@@ -926,7 +936,7 @@ describe("selectDrawnLines", () => {
   const mk = (i1: number, i2: number, p1: number, p2: number, touches = 2): TrendLine => ({
     i1, p1, k1: "low", i2, p2, k2: "low", touches,
     touchIdxs: [i1, i2], touchKinds: ["low", "low"], lastTouchIdx: i2,
-    crossings: 0, lastSign: 0, maxTouchGap: i2 - i1, minTouchGap: i2 - i1, maxTouchIdx: i2,
+    crossings: 0, crossIdxs: [], lastSign: 0, maxTouchGap: i2 - i1, minTouchGap: i2 - i1, maxTouchIdx: i2,
   });
   const strong = mk(0, 40, 100, 100, 5);
   const mid = mk(0, 40, 90, 90, 3);

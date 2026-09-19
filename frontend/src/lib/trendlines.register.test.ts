@@ -97,7 +97,7 @@ describe("TRENDLINES registration", () => {
     expect(style.every((i) => i.source === "extend")).toBe(true);
     expect(groupInputs(style).map((c) => c.map((i) => i.label))).toEqual([
       ["Show pivots", "Mark line pivots"],
-      ["Show line stats"],
+      ["Mark crossings", "Show line stats"],
       ["Dim opacity"],
       ["Dim after touching"],
       ["Dim if crossed"],

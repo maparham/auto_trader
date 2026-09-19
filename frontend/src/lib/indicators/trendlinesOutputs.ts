@@ -173,6 +173,7 @@ export const TL_NEAR_PRICE_ATR = 5;
 export const TRENDLINES_EXTEND_DEFAULTS = {
   showPivots: false,
   showLinePivots: true,
+  showCrossings: true,
   showStats: true,
 } as const;
 
