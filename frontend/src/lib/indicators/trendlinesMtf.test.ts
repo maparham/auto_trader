@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   alignMtfTrendlines,
   trendlineDrawEdge,
+  trendlineIdxMap,
   lineKey,
   TL_PIVOT_ARM,
   TRENDLINES_TEMPLATE,
@@ -455,5 +456,38 @@ describe("TRENDLINES_TEMPLATE.draw with a pre-touchKinds stash", () => {
   it("still rings every touch, on the unsnapped bar", () => {
     const { rings } = draw(chartBars(), kindless(), { showPivots: false });
     expect(rings).toHaveLength(htfLine.touchIdxs.length);
+  });
+});
+
+describe("trendlineIdxMap.toChartClose", () => {
+  // 15m chart, 1h pin: HTF bar j opens at chart bar 4j and closes at 4j+3.
+  const mtf = (nHtf: number): TrendlinesMtf => ({
+    timeframe: "HOUR_1",
+    htfMs: HTF_MS,
+    htfStarts: Array.from({ length: nHtf }, (_, i) => T0 + i * HTF_MS),
+  });
+
+  it("lands on the HTF bar's last chart bar, where toChart lands on its first", () => {
+    const { toChart, toChartClose } = trendlineIdxMap(chartBars(40), mtf(10));
+    expect(toChart(2)).toBe(8);
+    expect(toChartClose(2)).toBe(11);
+    expect(toChartClose(0)).toBe(3);
+  });
+
+  it("closes the forming HTF bar at the newest loaded bar", () => {
+    // 38 chart bars: HTF bar 9 has only two candles so far.
+    const { toChartClose } = trendlineIdxMap(chartBars(38), mtf(10));
+    expect(toChartClose(9)).toBe(37);
+  });
+
+  it("is the identity with no pin, and follows toChart under a finer one", () => {
+    const plain = trendlineIdxMap(chartBars(8), undefined);
+    expect(plain.toChartClose(5)).toBe(5);
+    const finer = trendlineIdxMap(chartBars(8), {
+      timeframe: "MIN_5",
+      htfMs: 300_000,
+      htfStarts: Array.from({ length: 24 }, (_, i) => T0 + i * 300_000),
+    });
+    expect(finer.toChartClose(7)).toBe(finer.toChart(7));
   });
 });

@@ -1901,25 +1901,36 @@ function timeAtIdx(
   return at(k) + (j - k) * (at(k + 1) - at(k));
 }
 
-/** The two index conversions the draw path needs when the lines were detected
- * on another timeframe: HTF index -> chart index (for pixels) and back (for the
- * pane's right edge, which is a pixel the pin logic needs as a bar). Identity
- * on the chart timeframe, which is what keeps the draw path single-pathed. */
-function trendlineIdxMap(
+/** The index conversions the draw path needs when the lines were detected on
+ * another timeframe: HTF index -> chart index (for pixels), the same for the
+ * HTF bar's CLOSE, and back (for the pane's right edge, which is a pixel the
+ * pin logic needs as a bar). Identity on the chart timeframe, which is what
+ * keeps the draw path single-pathed.
+ *
+ * toChart lands on the chart bar at the HTF bar's OPEN. That is right for a
+ * line's geometry but wrong for anything decided by the HTF CLOSE: a crossing
+ * is counted when the daily close changes side, and on a 4h chart that is the
+ * day's last candle, not its first. toChartClose is the last loaded chart bar
+ * inside the HTF bar (the forming HTF bar closes at the newest bar so far);
+ * identity again under a finer or absent pin. */
+export function trendlineIdxMap(
   dataList: KLineData[],
   mtf: TrendlinesMtf | undefined,
-): { toChart: (j: number) => number; toLine: (j: number) => number } {
+): {
+  toChart: (j: number) => number;
+  toChartClose: (j: number) => number;
+  toLine: (j: number) => number;
+} {
   const starts = mtf?.htfStarts;
   const htfMs = mtf?.htfMs ?? 0;
   if (!starts?.length || !(htfMs > 0) || !dataList.length)
-    return { toChart: (j) => j, toLine: (j) => j };
+    return { toChart: (j) => j, toChartClose: (j) => j, toLine: (j) => j };
   const barMs = chartBarMs(dataList) || htfMs;
   const htfAt = (i: number) => starts[i];
   const chartAt = (i: number) => dataList[i].timestamp;
   const nHtf = starts.length;
   const nChart = dataList.length;
-  return {
-    toChart: (j) => {
+  const toChart = (j: number): number => {
       const idx = idxAtTime(nChart, chartAt, timeAtIdx(nHtf, htfAt, j, htfMs), barMs);
       // A pin FINER than the chart puts a line-space bar INSIDE a chart bar,
       // so the fractional index lands between two candles and an anchor's
@@ -1930,6 +1941,16 @@ function trendlineIdxMap(
       // it onto the last candle.
       if (htfMs < barMs && idx >= 0 && idx < nChart) return Math.floor(idx);
       return idx;
+  };
+  return {
+    toChart,
+    toChartClose: (j) => {
+      if (htfMs <= barMs) return toChart(j);
+      const open = Math.max(0, Math.ceil(toChart(j)));
+      // The bar before the next HTF bar's open; past the loaded data (the
+      // forming HTF bar) it is the newest bar.
+      const close = Math.ceil(toChart(j + 1)) - 1;
+      return Math.min(nChart - 1, Math.max(open, close));
     },
     toLine: (j) =>
       idxAtTime(nHtf, htfAt, timeAtIdx(nChart, chartAt, j, barMs), htfMs),
@@ -2174,12 +2195,15 @@ function drawTrendlines(
       ? ext.mtf
       : undefined;
   const starts = mtf?.htfStarts;
-  const { toChart, toLine } = trendlineIdxMap(dataList, mtf);
+  const { toChart, toChartClose, toLine } = trendlineIdxMap(dataList, mtf);
   // bounding.width spans the whole pane INCLUDING the y-axis strip on the
   // right; nothing drawn may run under it (the ×N tags below share this).
   const axisWidth = chart.getSize(indicator.paneId, "yAxis")?.width ?? 0;
   const tagRight = bounding.width - axisWidth - 4;
   const xAt = (j: number) => xAxis.convertToPixel(toChart(j));
+  // For events decided by a bar's CLOSE (the crossing marks): under a coarser
+  // pin that is the HTF bar's last chart candle, not its first.
+  const xAtClose = (j: number) => xAxis.convertToPixel(toChartClose(j));
   // Coarser-pin snap: a bar index that IS a pivot/touch maps to the chart
   // candle that traded the extreme, not the HTF bar's opening candle.
   const snap = mtf ? htfExtremeSnap(dataList, mtf, toChart) : null;
@@ -2409,11 +2433,12 @@ function drawTrendlines(
       ctx.arc(xT, yT, TL_TOUCH_RADIUS, 0, Math.PI * 2);
       ctx.stroke();
     }
-    // Crossing marks: a × on the line at each bar the close changed side.
-    // Same cull as the rings; the bar is a plain close, so plain time mapping.
+    // Crossing marks: a × on the line at each bar whose close changed side.
+    // Same cull as the rings; the mark sits at the CLOSE's candle, which under
+    // a coarser pin is the HTF bar's last chart bar (see trendlineIdxMap).
     if (showCrossings) {
       for (const idx of line.crossIdxs ?? []) {
-        const xC = xAt(idx);
+        const xC = xAtClose(idx);
         const yC = onSegment(xC);
         if (xC < 0 || xC > Math.min(tagRight, x1) || yC < 0 || yC > bounding.height)
           continue;
