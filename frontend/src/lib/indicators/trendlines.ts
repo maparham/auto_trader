@@ -1957,6 +1957,32 @@ export function trendlineIdxMap(
   };
 }
 
+/** Chart bar that carries a crossing mark for HTF bar j: the FIRST chart
+ * bar inside it whose close sits on the side the HTF close ended on. The
+ * crossing is decided by the HTF close, but on a finer chart the eye sees
+ * price cut the line hours earlier, and a mark on the day's last candle
+ * reads as "off by a few bars" every time. Falls back to the HTF close bar
+ * (no chart bar got there first, or a close exactly on the line); identity
+ * with no pin or a finer one, where the bar IS the crossing bar. */
+export function crossingChartIdx(
+  line: TrendLine,
+  j: number,
+  map: ReturnType<typeof trendlineIdxMap>,
+  dataList: KLineData[],
+): number {
+  const last = map.toChartClose(j);
+  const first = Math.max(0, Math.ceil(map.toChart(j)));
+  if (!(last > first) || last >= dataList.length) return last;
+  const side = (c: number): number => {
+    const d = dataList[c].close - projectAt(line, map.toLine(c));
+    return d > 0 ? 1 : d < 0 ? -1 : 0;
+  };
+  const want = side(last);
+  if (want === 0) return last;
+  for (let c = first; c < last; c++) if (side(c) === want) return c;
+  return last;
+}
+
 /** Chart index of the candle that traded an HTF bar's extreme — where a pivot
  * caret (and a line anchor) belongs when the pin is COARSER than the chart. An
  * HTF bar's high or low usually trades hours after the bar OPENS, and mapping
@@ -2195,15 +2221,13 @@ function drawTrendlines(
       ? ext.mtf
       : undefined;
   const starts = mtf?.htfStarts;
-  const { toChart, toChartClose, toLine } = trendlineIdxMap(dataList, mtf);
+  const idxMap = trendlineIdxMap(dataList, mtf);
+  const { toChart, toLine } = idxMap;
   // bounding.width spans the whole pane INCLUDING the y-axis strip on the
   // right; nothing drawn may run under it (the ×N tags below share this).
   const axisWidth = chart.getSize(indicator.paneId, "yAxis")?.width ?? 0;
   const tagRight = bounding.width - axisWidth - 4;
   const xAt = (j: number) => xAxis.convertToPixel(toChart(j));
-  // For events decided by a bar's CLOSE (the crossing marks): under a coarser
-  // pin that is the HTF bar's last chart candle, not its first.
-  const xAtClose = (j: number) => xAxis.convertToPixel(toChartClose(j));
   // Coarser-pin snap: a bar index that IS a pivot/touch maps to the chart
   // candle that traded the extreme, not the HTF bar's opening candle.
   const snap = mtf ? htfExtremeSnap(dataList, mtf, toChart) : null;
@@ -2434,11 +2458,11 @@ function drawTrendlines(
       ctx.stroke();
     }
     // Crossing marks: a × on the line at each bar whose close changed side.
-    // Same cull as the rings; the mark sits at the CLOSE's candle, which under
-    // a coarser pin is the HTF bar's last chart bar (see trendlineIdxMap).
+    // Same cull as the rings; under a coarser pin the mark sits on the chart
+    // candle that first closed across, not the HTF close (crossingChartIdx).
     if (showCrossings) {
       for (const idx of line.crossIdxs ?? []) {
-        const xC = xAtClose(idx);
+        const xC = xAxis.convertToPixel(crossingChartIdx(line, idx, idxMap, dataList));
         const yC = onSegment(xC);
         if (xC < 0 || xC > Math.min(tagRight, x1) || yC < 0 || yC > bounding.height)
           continue;

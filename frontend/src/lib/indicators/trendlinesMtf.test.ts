@@ -9,6 +9,7 @@ import {
   alignMtfTrendlines,
   trendlineDrawEdge,
   trendlineIdxMap,
+  crossingChartIdx,
   lineKey,
   TL_PIVOT_ARM,
   TRENDLINES_TEMPLATE,
@@ -489,5 +490,38 @@ describe("trendlineIdxMap.toChartClose", () => {
       htfStarts: Array.from({ length: 24 }, (_, i) => T0 + i * 300_000),
     });
     expect(finer.toChartClose(7)).toBe(finer.toChart(7));
+  });
+});
+
+describe("crossingChartIdx", () => {
+  // Flat line at 100 in HTF space; the 1h pin over 15m bars puts HTF bar 2 on
+  // chart bars 8..11.
+  const flat: TrendLine = {
+    i1: 0, p1: 100, k1: "low", i2: 1, p2: 100, k2: "low",
+    touches: 2, touchIdxs: [0, 1], touchKinds: ["low", "low"], lastTouchIdx: 1,
+    crossings: 1, crossIdxs: [2], lastSign: 1,
+    maxTouchGap: 1, minTouchGap: 1, maxTouchIdx: 1,
+  };
+  const mtf: TrendlinesMtf = {
+    timeframe: "HOUR_1",
+    htfMs: HTF_MS,
+    htfStarts: Array.from({ length: 10 }, (_, i) => T0 + i * HTF_MS),
+  };
+  const bars = (closes: Record<number, number>): KLineData[] =>
+    Array.from({ length: 40 }, (_, i) => bar(T0 + i * CHART_MS, closes[i] ?? 99));
+
+  it("lands on the first chart bar that closed on the HTF close's side", () => {
+    const data = bars({ 9: 101, 10: 99, 11: 101 });
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, mtf), data)).toBe(9);
+  });
+
+  it("falls back to the HTF close bar when no earlier bar got there", () => {
+    const data = bars({ 11: 101 });
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, mtf), data)).toBe(11);
+  });
+
+  it("is the bar itself with no pin", () => {
+    const data = bars({});
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, undefined), data)).toBe(2);
   });
 });
