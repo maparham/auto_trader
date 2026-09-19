@@ -23,7 +23,7 @@ async def test_ui_screenshot_returns_image_block(monkeypatch):
     png = base64.b64encode(b"\x89PNG fake").decode()
     hub = FakeHub(result={
         "epic": "US100", "cellId": "c1", "resolution": "HOUR",
-        "mime": "image/png", "image_base64": png,
+        "mime": "image/png", "image_base64": png, "via": "extension",
     })
     monkeypatch.setattr(mcp_server, "HUB", hub)
     blocks = await mcp_server.ui_screenshot()
@@ -32,6 +32,7 @@ async def test_ui_screenshot_returns_image_block(monkeypatch):
     assert image.data == png
     assert image.mime_type == "image/png"
     assert "US100" in text.text and "HOUR" in text.text
+    assert "via extension" in text.text
     # It must go through the readOnly invoke path:
     kind, payload, _ = hub.calls[0]
     assert kind == "invoke"

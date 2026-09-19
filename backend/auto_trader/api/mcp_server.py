@@ -109,7 +109,7 @@ async def ui_screenshot(session: str | None = None) -> list:
         ImageContent(type="image", data=res["image_base64"], mimeType=res["mime"]),
         TextContent(
             type="text",
-            text=f"{res['epic']} {res['resolution']} (cell {res['cellId']})",
+            text=f"{res['epic']} {res['resolution']} (cell {res['cellId']}) via {res.get('via', '?')}",
         ),
     ]
 
@@ -321,11 +321,15 @@ def _frontend_url() -> str:
     return url
 
 
-def _require_local_macos() -> None:
-    if not _IS_MACOS:
-        raise RuntimeError("browser tab control needs macOS (AppleScript drives Chrome)")
+def _require_not_hosted() -> None:
     if os.environ.get("CLERK_JWKS_URL"):
         raise RuntimeError("browser tab control is local-dev only (hosted mode refuses it)")
+
+
+def _require_local_macos() -> None:
+    _require_not_hosted()
+    if not _IS_MACOS:
+        raise RuntimeError("browser tab control needs macOS (AppleScript drives Chrome)")
 
 
 # A blocked macOS automation prompt makes osascript wait forever; the cap
@@ -421,15 +425,27 @@ async def ui_focus_tab() -> dict:
     tab.focus action first (needs the Tab Bridge extension, extension/README.md,
     works on any OS), then falls back to AppleScript on macOS local dev.
     Errors if no tab is open; ui_open_tab creates one."""
+    # Checked before the HUB attempt (not just before the AppleScript
+    # fallback): otherwise a hosted deployment with a connected tab and the
+    # extension installed would let this tool succeed, which hosted mode
+    # must never allow.
+    _require_not_hosted()
+    no_session_message: str | None = None
     try:
         await HUB.request("invoke", {"action": "tab.focus", "args": {}})
         return {"focused": "extension"}
     except ActionFailedError as e:
         if e.code != "NO_EXTENSION":
             raise _friendly(e) from e
-    except (NoTabError, TabTimeoutError):
+    except NoTabError:
+        # No tab connected at all is not an extension problem; say so rather
+        # than pointing at the Tab Bridge extension.
+        no_session_message = "no UI session connected: open the app in a browser"
+    except TabTimeoutError:
         pass
     if not _IS_MACOS:
+        if no_session_message:
+            raise RuntimeError(no_session_message)
         raise RuntimeError(
             "focusing the tab needs the Tab Bridge extension off macOS "
             "(extension/README.md); AppleScript fallback is macOS-only"

@@ -80,13 +80,21 @@ async def test_close_tab_refuses_zero_and_many(monkeypatch):
 
 @pytest.mark.anyio
 async def test_requires_macos(monkeypatch):
+    # ui_open_tab/ui_close_tab hit _require_local_macos directly, so this
+    # exercises ITS "needs macOS" message, distinct from ui_focus_tab's own
+    # off-macOS messages (see test_focus_tab_off_macos_without_extension_names_it
+    # and test_focus_tab_off_macos_no_tab_names_ui_session below).
     monkeypatch.setattr(mcp_server, "_IS_MACOS", False)
-    with pytest.raises(RuntimeError, match="macOS"):
-        await mcp_server.ui_focus_tab()
+    with pytest.raises(RuntimeError, match="needs macOS"):
+        await mcp_server.ui_close_tab()
 
 
 @pytest.mark.anyio
 async def test_refused_in_hosted_mode(monkeypatch):
+    # A connected tab that would happily answer tab.focus must still be
+    # refused: the hosted guard has to run BEFORE the extension path, not
+    # only before the AppleScript fallback.
+    monkeypatch.setattr(mcp_server, "HUB", _Hub(result={"focused": True}))
     monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example/jwks")
     with pytest.raises(RuntimeError, match="local"):
         await mcp_server.ui_focus_tab()
@@ -145,3 +153,15 @@ async def test_focus_tab_off_macos_without_extension_names_it(monkeypatch):
     monkeypatch.setattr(mcp_server, "HUB", _Hub(exc=ActionFailedError("NO_EXTENSION", "not installed")))
     with pytest.raises(RuntimeError, match="Tab Bridge extension"):
         await mcp_server.ui_focus_tab()
+
+
+@pytest.mark.anyio
+async def test_focus_tab_off_macos_no_tab_names_ui_session(monkeypatch):
+    # No connected tab at all is not an extension problem, so off macOS this
+    # must not blame the Tab Bridge extension either (distinct wording from
+    # the NO_EXTENSION case above).
+    monkeypatch.setattr(mcp_server, "_IS_MACOS", False)
+    monkeypatch.setattr(mcp_server, "HUB", _Hub(exc=NoTabError()))
+    with pytest.raises(RuntimeError, match="no UI session connected") as excinfo:
+        await mcp_server.ui_focus_tab()
+    assert "Tab Bridge extension" not in str(excinfo.value)
