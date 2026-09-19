@@ -47,6 +47,7 @@ import {
 } from "./chartGeometry";
 import { first } from "./chartPainters";
 import { subscribeCrosshairWrites } from "./crosshairWrites";
+import { fmtPrice } from "../lib/priceFormat";
 import { hitAnyTrendlineHandle } from "../lib/indicators/trendlines";
 import type { SelectedIndicator } from "../lib/chartController";
 import type { ChartHandle } from "./chartHandle";
@@ -472,7 +473,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       const guideVal = snapTarget ? snapTarget.level : pt.value;
       plusPriceRef.current = guideVal;
       if (plusPriceLabelRef.current) {
-        plusPriceLabelRef.current.textContent = guideVal.toFixed(precisionRef.current);
+        plusPriceLabelRef.current.textContent = fmtPrice(guideVal, precisionRef.current);
         // Size the price box to the y-axis column so the number sits inside the
         // axis and the "+" circle's right edge lands on the column's left border.
         plusPriceLabelRef.current.style.width = `${Math.max(0, rect.width - mainW)}px`;
