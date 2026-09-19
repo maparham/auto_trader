@@ -37,8 +37,11 @@ Post to your own window, listen for the reply with the same `id`:
 Error codes: `UNKNOWN_OP`, `INVALID_ARGS`, `DEBUGGER_BUSY`, `CAPTURE_FAILED`,
 `EXTENSION_ERROR`.
 
-Only the requesting tab is ever targeted. No cross-tab operations exist.
+Only the requesting tab is ever targeted. No cross-tab operations exist. The
+capture is the tab's composited surface, so it includes any cross-origin
+iframes the page embeds; that is intended, since the extension is meant to
+work with any app, but the reader should know.
 
 ## Tests
 
-    node --test extension/
+    node --test extension/*.test.js

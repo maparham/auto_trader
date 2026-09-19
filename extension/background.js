@@ -10,7 +10,7 @@ function serialised(tabId, fn) {
   const prev = queues.get(tabId) ?? Promise.resolve();
   const next = prev.catch(() => {}).then(fn);
   queues.set(tabId, next);
-  next.finally(() => { if (queues.get(tabId) === next) queues.delete(tabId); });
+  next.catch(() => {}).finally(() => { if (queues.get(tabId) === next) queues.delete(tabId); });
   return next;
 }
 
