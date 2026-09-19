@@ -11,7 +11,7 @@
 //
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import type { Chart, Indicator } from "klinecharts";
 import VisibilityTab from "./VisibilityTab";
@@ -208,7 +208,65 @@ function trendlineExtendOf(d: TrendlineStyleDraft): Partial<TrendlinesExtend> {
   return out;
 }
 
-export default function IndicatorSettings({
+/** What Cancel/Escape restores: the instance exactly as it was when the modal
+ * opened. Held by the shell so it survives a form remount (see below). */
+type OriginalSnapshot = {
+  calcParams: number[];
+  visible: boolean;
+  styles: ReturnType<typeof cloneStyles>;
+  extendData: MaExtend | null;
+};
+
+/** The shell around the form. Nothing is persisted until Ok: every edit is a
+ * live preview on the chart, Cancel restores the opening snapshot, and Ok is
+ * the one place the config is written. Applying a preset (or Reset) recreates
+ * the instance from the chosen config, so the ~60 form fields, all seeded from
+ * the live instance at mount, are refreshed by remounting the form (`gen`)
+ * while the snapshot, the stored config and the open tab stay put here. */
+export default function IndicatorSettings(props: Props) {
+  const { chart, paneId: paneId0, name } = props;
+  const ind0 = useMemo(
+    () => getIndicator(chart, paneId0, name) as Indicator | null,
+    [chart, paneId0, name],
+  );
+  // Snapshot the original state once, for an exact revert on Cancel/Escape.
+  const original = useRef<OriginalSnapshot>({
+    calcParams: ((ind0?.calcParams ?? []) as unknown[]).map((v) => Number(v)),
+    visible: ind0?.visible ?? true,
+    // klinecharts mutates an indicator's `.styles` object IN PLACE on
+    // overrideIndicator (verified empirically — see overlays.ts's cloneStyles), and
+    // getIndicator returns that SAME live object. A later Style-tab edit
+    // (apply()/setLine()) would otherwise mutate this "original" snapshot too,
+    // making Cancel just re-apply the already-edited value instead of reverting it.
+    styles: cloneStyles(ind0?.styles ?? null),
+    extendData: (ind0?.extendData ?? null) as MaExtend | null,
+  });
+  const [tab, setTab] = useState<Tab>("inputs");
+  const [gen, setGen] = useState(0);
+  // A recreate can move a sub-pane indicator onto a fresh pane id.
+  const [paneId, setPaneId] = useState(paneId0);
+  return (
+    <IndicatorSettingsForm
+      key={gen}
+      {...props}
+      paneId={paneId}
+      original={original}
+      tab={tab}
+      setTab={setTab}
+      onRecreated={() => {
+        // Look the pane up by name rather than trusting createIndicator's
+        // return: for a candle-pane overlay it hands back a fresh generated id
+        // while the instance actually lands on candle_pane, and a sub-pane
+        // indicator whose pane was torn down comes back on a new one.
+        const live = chart.getIndicators({ name })[0];
+        if (live?.paneId) setPaneId(live.paneId);
+        setGen((g) => g + 1);
+      }}
+    />
+  );
+}
+
+function IndicatorSettingsForm({
   chart,
   scope,
   cellId,
@@ -219,7 +277,16 @@ export default function IndicatorSettings({
   name,
   controller,
   onClose,
-}: Props) {
+  original,
+  tab,
+  setTab,
+  onRecreated,
+}: Props & {
+  original: React.MutableRefObject<OriginalSnapshot>;
+  tab: Tab;
+  setTab: (t: Tab) => void;
+  onRecreated: () => void;
+}) {
   const ind = useMemo(
     () => getIndicator(chart, paneId, name) as Indicator | null,
     [chart, paneId, name],
@@ -265,20 +332,6 @@ export default function IndicatorSettings({
   // (accepted but requires a controller to actually commit) for anything else.
   const isRenameable = EXPR_INSTANCE_TYPES.has(type);
 
-  // Snapshot the original state once, for an exact revert on Cancel/Escape.
-  const original = useRef({
-    calcParams: ((ind?.calcParams ?? []) as unknown[]).map((v) => Number(v)),
-    visible: ind?.visible ?? true,
-    // klinecharts mutates an indicator's `.styles` object IN PLACE on
-    // overrideIndicator (verified empirically — see overlays.ts's cloneStyles), and
-    // getIndicator returns that SAME live object. A later Style-tab edit
-    // (apply()/setLine()) would otherwise mutate this "original" snapshot too,
-    // making Cancel just re-apply the already-edited value instead of reverting it.
-    styles: cloneStyles(ind?.styles ?? null),
-    extendData: (ind?.extendData ?? null) as MaExtend | null,
-  });
-
-  const [tab, setTab] = useState<Tab>("inputs");
   // WHAT A NUMBER BOX SHOWS WHILE IT HAS FOCUS. The boxes are controlled by
   // the parsed number, and the text on the way to a number is often not one:
   // "0" in an unbounded box is the off sentinel (rendered empty), "0." and
@@ -1144,17 +1197,8 @@ export default function IndicatorSettings({
     };
   }
 
-  // Persist the snapshot on every change so all settings survive a reload
-  // (Toolbar.createIndicatorOn re-applies it). The first run captures the opening
-  // config so Cancel can restore it (edits save eagerly, like the live preview).
-  const originalCfg = useRef<SavedIndicatorConfig | null>(null);
-  useEffect(() => {
-    if (!ind) return;
-    const cfg = currentConfig();
-    if (originalCfg.current === null) originalCfg.current = cfg;
-    saveIndicatorConfig(scope, name, cfg);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, visible, showValue, calcParams, maLength, source, offset, smoothType, smoothLen, timeframe, waitClose, maType, envelope, avwapSource, bandMode, bands, lines, genExtend, slopePeriod, smoothing, colorByDirection, threshold, showMa, showAccel, accelPeriod, accelSmoothing, accelThreshold, accelAbsolute, connector, prevHlTz, prevHlLengths, prevHlAggs, prevHlRollingUnit, prevHlGapMode, prevHlAnchorTs, rsiDiv, rsiSource, rsiSmooth, rsiStyle, srZone, fvgZone, trendlineStyle, curveLabelEnabled, curveLabelHighSide, curveLabelHighAlign, curveLabelLowSide, curveLabelLowAlign, curveLabelAlways, vis, sessions, windows, candleExt, slopeColor]);
+  // Nothing is persisted while the modal is open: edits preview live on the
+  // chart and the config is written once, by Ok (see `ok` below).
 
   // Flip the pin's "Wait for timeframe closes" choice: write the flag onto
   // the live indicator FIRST (every apply* reads it from there), then rebuild
@@ -1619,8 +1663,12 @@ export default function IndicatorSettings({
         figures: maFigures(label, oext.envelope === true && !oext.mtf?.timeframe),
       });
     }
-    // Revert the persisted snapshot too (the effect saved edits eagerly).
-    if (originalCfg.current) saveIndicatorConfig(scope, name, originalCfg.current);
+    onClose();
+  }
+  // The ONE write: the form's current values become the stored config, which
+  // the next reload (Toolbar.createIndicatorOn) re-applies.
+  function ok() {
+    saveIndicatorConfig(scope, name, currentConfig());
     onClose();
   }
 
@@ -1768,12 +1816,12 @@ export default function IndicatorSettings({
         name={name}
         type={type}
         currentConfig={currentConfig}
-        onClose={onClose}
+        onRecreated={onRecreated}
       />
       <button className="ghost" onClick={cancel}>
         Cancel
       </button>
-      <button onClick={onClose}>Ok</button>
+      <button onClick={ok}>Ok</button>
     </>
   );
 

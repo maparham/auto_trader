@@ -2,15 +2,18 @@
 // a single global default per indicator TYPE that seeds freshly-added instances,
 // plus named presets applied on demand. Both store the SAME SavedIndicatorConfig
 // currentConfig() produces (see persist.ts). Applying recreates the instance from
-// the chosen config (the established copy/paste mechanism) and closes the modal —
-// reopening reads the fresh live state. We DON'T try to push a config back into the
-// caller's ~12 useState fields.
+// the chosen config (the established copy/paste mechanism) and tells the modal
+// shell, which remounts the form over the fresh live state; the stored config is
+// left exactly as it was, because only Ok persists. We DON'T try to push a
+// config back into the form's ~60 useState fields.
 import { useEffect, useRef, useState } from "react";
 import type { Chart } from "klinecharts";
 import InfoTip from "../components/InfoTip";
 import Tooltip from "../components/Tooltip";
 import {
   saveIndicatorConfig,
+  deleteIndicatorConfig,
+  loadIndicatorConfigs,
   loadIndicatorDefault,
   saveIndicatorDefault,
   clearIndicatorDefault,
@@ -29,7 +32,7 @@ export default function DefaultsMenu({
   name,
   type,
   currentConfig,
-  onClose,
+  onRecreated,
 }: {
   chart: Chart;
   scope: string;
@@ -37,7 +40,9 @@ export default function DefaultsMenu({
   name: string;
   type: string;
   currentConfig: () => SavedIndicatorConfig;
-  onClose: () => void;
+  // The instance was recreated (same id, possibly a new pane): the modal
+  // re-reads it. It stays open, like any other edit.
+  onRecreated: () => void;
 }) {
   const [defOpen, setDefOpen] = useState(false);
   const [naming, setNaming] = useState(false); // inline "Save as preset…" name field
@@ -64,11 +69,15 @@ export default function DefaultsMenu({
   // `rehydrate: true` so an AVWAP keeps its placed anchor across the recreate (the
   // anchor lives in per-epic storage, NOT in the preset config which is anchorless).
   function applyConfigToOpenInstance(cfg: SavedIndicatorConfig | null) {
-    removeIndicatorById(chart, scope, name); // also clears this id's per-cell config
-    saveIndicatorConfig(scope, name, cfg ?? {}); // persist the new config for next reload
-    applyIndicator(chart, scope, epic, { id: name, type }, { config: cfg ?? {}, rehydrate: true });
+    // The remove clears this id's stored config; put it back afterwards so the
+    // apply is a preview like any other edit, persisted by Ok or dropped by Cancel.
+    const stored = loadIndicatorConfigs(scope)[name];
+    removeIndicatorById(chart, scope, name);
+    const created = applyIndicator(chart, scope, epic, { id: name, type }, { config: cfg ?? {}, rehydrate: true });
+    if (stored) saveIndicatorConfig(scope, name, stored);
+    else deleteIndicatorConfig(scope, name);
     setDefOpen(false);
-    onClose();
+    if (created) onRecreated();
   }
 
   function saveAsDefault() {
