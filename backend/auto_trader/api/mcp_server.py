@@ -417,9 +417,23 @@ end tell'''
 
 @mcp.tool()
 async def ui_focus_tab() -> dict:
-    """Bring the Chartkar browser tab to the front (macOS local dev). Use when
-    ui_screenshot fails with TAB_HIDDEN, then retry the screenshot. Errors if
-    no tab is open; ui_open_tab creates one."""
+    """Bring the Chartkar browser tab to the front. Tries the connected tab's
+    tab.focus action first (needs the Tab Bridge extension, extension/README.md,
+    works on any OS), then falls back to AppleScript on macOS local dev.
+    Errors if no tab is open; ui_open_tab creates one."""
+    try:
+        await HUB.request("invoke", {"action": "tab.focus", "args": {}})
+        return {"focused": "extension"}
+    except ActionFailedError as e:
+        if e.code != "NO_EXTENSION":
+            raise _friendly(e) from e
+    except (NoTabError, TabTimeoutError):
+        pass
+    if not _IS_MACOS:
+        raise RuntimeError(
+            "focusing the tab needs the Tab Bridge extension off macOS "
+            "(extension/README.md); AppleScript fallback is macOS-only"
+        )
     _require_local_macos()
     result = await _osascript(_focus_script(_frontend_url()))
     if result.startswith("FOCUSED:"):

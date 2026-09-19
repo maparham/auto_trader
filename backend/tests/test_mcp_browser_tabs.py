@@ -6,6 +6,7 @@ assert on the parsed results and the guards, not on real Chrome.
 import pytest
 
 from auto_trader.api import mcp_server
+from auto_trader.api.agent_bridge import ActionFailedError, NoTabError
 
 URL = "http://localhost:5173"
 
@@ -96,4 +97,51 @@ async def test_rejects_unsafe_frontend_url(monkeypatch):
     monkeypatch.setenv("FRONTEND_URL", 'http://x" & do shell script "echo pwn')
     monkeypatch.setattr(mcp_server, "_osascript", fake_osascript("NONE"))
     with pytest.raises(RuntimeError, match="FRONTEND_URL"):
+        await mcp_server.ui_focus_tab()
+
+
+class _Hub:
+    def __init__(self, result=None, exc=None):
+        self.result, self.exc, self.calls = result, exc, []
+
+    async def request(self, kind, payload, session_id=None):
+        self.calls.append((kind, payload))
+        if self.exc:
+            raise self.exc
+        return self.result
+
+
+@pytest.mark.anyio
+async def test_focus_tab_prefers_the_extension(monkeypatch):
+    hub = _Hub(result={"focused": True})
+    monkeypatch.setattr(mcp_server, "HUB", hub)
+    run = fake_osascript("FOCUSED:should-not-run")
+    monkeypatch.setattr(mcp_server, "_osascript", run)
+    res = await mcp_server.ui_focus_tab()
+    assert res == {"focused": "extension"}
+    assert hub.calls == [("invoke", {"action": "tab.focus", "args": {}})]
+    assert run.calls == []
+
+
+@pytest.mark.anyio
+async def test_focus_tab_falls_back_to_applescript_without_extension(monkeypatch):
+    monkeypatch.setattr(mcp_server, "HUB", _Hub(exc=ActionFailedError("NO_EXTENSION", "not installed")))
+    monkeypatch.setattr(mcp_server, "_osascript", fake_osascript(f"FOCUSED:{URL}/"))
+    res = await mcp_server.ui_focus_tab()
+    assert res == {"focused": f"{URL}/"}
+
+
+@pytest.mark.anyio
+async def test_focus_tab_falls_back_to_applescript_with_no_tab(monkeypatch):
+    monkeypatch.setattr(mcp_server, "HUB", _Hub(exc=NoTabError()))
+    monkeypatch.setattr(mcp_server, "_osascript", fake_osascript("NONE"))
+    with pytest.raises(RuntimeError, match="ui_open_tab"):
+        await mcp_server.ui_focus_tab()
+
+
+@pytest.mark.anyio
+async def test_focus_tab_off_macos_without_extension_names_it(monkeypatch):
+    monkeypatch.setattr(mcp_server, "_IS_MACOS", False)
+    monkeypatch.setattr(mcp_server, "HUB", _Hub(exc=ActionFailedError("NO_EXTENSION", "not installed")))
+    with pytest.raises(RuntimeError, match="Tab Bridge extension"):
         await mcp_server.ui_focus_tab()
