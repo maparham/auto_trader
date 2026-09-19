@@ -31,12 +31,12 @@ Post to your own window, listen for the reply with the same `id`:
 | op | args | result |
 |----|------|--------|
 | `hello` | none | `{ version, ops }` (use with a short timeout to detect the extension) |
-| `screenshot` | `clip?: {x, y, width, height}` (CSS px, page coords), `scale?` (device pixel ratio), `format?: "png" \| "jpeg"`, `quality?: 0..100` | `{ mime, image_base64, width, height }` |
+| `screenshot` | `clip?: {x, y, width, height}` (CSS px, page coords), `scale?` extra multiplier on top of the device pixel ratio, default 1; the capture is already at device resolution, `format?: "png" \| "jpeg"`, `quality?: 0..100` | `{ mime, image_base64, width, height }` |
 | `focus` | none | `{ focused: true }` |
 
 `screenshot`'s `width`/`height` are the CSS clip dimensions passed in (or
 `null` when no clip is given), not the pixel dimensions of the returned
-image: the image is `scale` times that size.
+image: the image is `scale` times the device pixel ratio times that size.
 
 | code | source | meaning |
 |------|--------|---------|

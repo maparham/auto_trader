@@ -90,8 +90,10 @@ function request<T>(op: string, args: object, timeoutMs: number): Promise<T> {
   });
 }
 
-/** Detects the extension. A found answer is cached for the page's life; a
- * null answer is re-probed next call (the user may install it later). */
+/** Detects the extension. A found answer is cached until invalidateTabBridge()
+ * clears it (the timeout path above does this when the extension stops
+ * answering); a null answer is re-probed next call (the user may install it
+ * later). */
 export async function probeTabBridge(): Promise<TabBridgeHello | null> {
   if (hello) return hello;
   try {

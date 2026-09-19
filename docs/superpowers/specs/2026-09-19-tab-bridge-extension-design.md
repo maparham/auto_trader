@@ -114,8 +114,10 @@ Error codes: `UNKNOWN_OP`, `DEBUGGER_BUSY` (DevTools already attached to the
 tab), `CAPTURE_FAILED`, `INVALID_ARGS`.
 
 `screenshot` implementation: `chrome.debugger.attach({tabId}, "1.3")`,
-`Page.captureScreenshot({format, quality, clip: {...clip, scale:
-devicePixelRatio}, fromSurface: true})`, `chrome.debugger.detach`. Attach
+`Page.captureScreenshot({format, quality, clip: {...clip, scale: 1},
+fromSurface: true})`, `chrome.debugger.detach`. CDP's capture surface is
+already at device resolution, so passing `devicePixelRatio` again as scale
+would double it; `scale: 1` is correct. Attach
 and detach per call, so the yellow "is being debugged" banner appears only
 for the duration of a capture. Detach is in a `finally`. Concurrent requests
 for the same tab are serialised in the worker; a second attach would fail.

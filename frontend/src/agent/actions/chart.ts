@@ -105,6 +105,7 @@ export function registerChartActions(): void {
       // fresh frame even while the tab is backgrounded. Clipped to the chart
       // container so the agent sees the chart, not the whole app.
       let useExtension = Boolean(await probeTabBridge());
+      let extensionTimedOut = false;
       if (useExtension) {
         const rect = chart.getDom()?.getBoundingClientRect();
         // A null dom or a 0x0 rect (not yet laid out) can't clip to anything
@@ -113,13 +114,16 @@ export function registerChartActions(): void {
         const clip = rect && rect.width > 0 && rect.height > 0
           ? { x: rect.x + (window.scrollX || 0), y: rect.y + (window.scrollY || 0), width: rect.width, height: rect.height }
           : undefined;
-        const scale = window.devicePixelRatio || 1;
+        // No scale here: CDP's capture surface is already at device
+        // resolution, so passing devicePixelRatio again doubled it (a 1158
+        // CSS px chart on a DPR 2 display came out 4632px wide instead of
+        // 2316). The extension's own default of 1 is correct.
         try {
-          let shot = await tabBridgeScreenshot({ clip, scale, format: "png" });
+          let shot = await tabBridgeScreenshot({ clip, format: "png" });
           if (shot.image_base64.length > MAX_B64) {
             // Over budget: recapture as jpeg (two attach/detach cycles on the
             // extension side, one per format tried).
-            shot = await tabBridgeScreenshot({ clip, scale, format: "jpeg", quality: 80 });
+            shot = await tabBridgeScreenshot({ clip, format: "jpeg", quality: 80 });
           }
           return { epic, cellId, resolution, mime: shot.mime, image_base64: shot.image_base64, via: "extension" };
         } catch (e) {
@@ -132,6 +136,7 @@ export function registerChartActions(): void {
           // already invalidated the cached hello. Fall through to the canvas
           // path below instead of failing outright.
           useExtension = false;
+          extensionTimedOut = true;
         }
       }
 
@@ -150,7 +155,9 @@ export function registerChartActions(): void {
       if (typeof document !== "undefined" && document.hidden) {
         throw new ActionError(
           "TAB_HIDDEN",
-          "the app's browser tab is backgrounded and the Tab Bridge extension is not installed; install it (extension/README.md) or focus the tab and retry",
+          extensionTimedOut
+            ? "the app's browser tab is backgrounded and the Tab Bridge extension did not answer (reload the app tab after reloading the extension), or focus the tab and retry"
+            : "the app's browser tab is backgrounded and the Tab Bridge extension is not installed; install it (extension/README.md) or focus the tab and retry",
         );
       }
       const bg = chartBackgroundColor();

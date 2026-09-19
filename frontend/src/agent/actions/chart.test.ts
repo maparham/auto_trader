@@ -229,9 +229,11 @@ describe("chart.screenshot", () => {
     const res = await invokeAction("chart.screenshot", {}, ctx) as { image_base64: string; via: string };
     expect(res.image_base64).toBe("QUJD");
     expect(res.via).toBe("extension");
-    expect(vi.mocked(tabBridge.tabBridgeScreenshot).mock.calls[0][0]).toMatchObject({
+    const call = vi.mocked(tabBridge.tabBridgeScreenshot).mock.calls[0][0];
+    expect(call).toMatchObject({
       clip: { x: 12, y: 34, width: 640, height: 400 }, format: "png",
     });
+    expect(call).not.toHaveProperty("scale");
   });
 
   it("works with the extension even when the tab is backgrounded", async () => {
@@ -292,7 +294,9 @@ describe("chart.screenshot", () => {
     provide(chart as never);
     Object.defineProperty(document, "hidden", { value: true, configurable: true });
     try {
-      await expect(invokeAction("chart.screenshot", {}, ctx)).rejects.toMatchObject({ code: "TAB_HIDDEN" });
+      await expect(invokeAction("chart.screenshot", {}, ctx)).rejects.toMatchObject({
+        code: "TAB_HIDDEN", message: expect.stringMatching(/did not answer/),
+      });
     } finally {
       delete (document as unknown as { hidden?: boolean }).hidden;
     }
