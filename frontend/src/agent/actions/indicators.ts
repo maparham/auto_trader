@@ -7,6 +7,7 @@ import {
   addIndicatorInstance,
   removeIndicatorById,
   getIndicatorsByPane,
+  getIndicator,
 } from "../../lib/indicators";
 import {
   saveIndicators,
@@ -14,6 +15,9 @@ import {
   loadIndicatorConfigs,
 } from "../../lib/persist/artifacts";
 import { BASE_TEMPLATES } from "../../lib/customIndicators";
+import { ALL_PERIODS, periodByResolution } from "../../lib/feed";
+import { applyTrendlinesTimeframe } from "../../lib/mtfCoordinator";
+import { parseTrendlinesConfig } from "../../lib/indicators/trendlinesOutputs";
 
 // Everything this action can add: the custom templates plus a curated
 // allowlist of klinecharts native indicator types known to work through this
@@ -84,32 +88,103 @@ export function registerIndicatorActions(): void {
 
   registerAction({
     name: "indicator.set",
-    description: "Patch an indicator instance's calcParams (see indicator.list for ids).",
+    description:
+      "Patch an indicator instance (see indicator.list for ids). Any of: calcParams (numeric params), extendData (shallow-merged onto the live extendData, e.g. Trendlines render flags such as showCrossings or dimOpacity), timeframe (pin a Trendlines instance to a higher timeframe: DAY or 1D; \"chart\" unpins). Persists like the settings modal.",
     kind: "write",
     params: {
       type: "object",
       properties: {
         id: { type: "string" },
         calcParams: { type: "array", description: "new numeric params" },
+        extendData: { type: "object", description: "fields merged onto the instance's extendData" },
+        timeframe: {
+          type: "string",
+          description: "TRENDLINES only: a resolution (DAY) or label (1D) at or above the chart's, or \"chart\" to unpin",
+        },
       },
-      required: ["id", "calcParams"],
+      required: ["id"],
     },
     handler: async (args) => {
-      const { chart, scope, cellId } = focusedChart();
+      const { chart, controller, scope, epic, cellId, broker } = focusedChart();
       const id = String(args.id);
-      const calcParams = (args.calcParams as unknown[]).map(Number);
-      if (calcParams.some((n) => !Number.isFinite(n))) {
+      const calcParams = Array.isArray(args.calcParams)
+        ? (args.calcParams as unknown[]).map(Number)
+        : undefined;
+      if (calcParams?.some((n) => !Number.isFinite(n))) {
         throw new ActionError("INVALID_ARGS", "calcParams: numbers required");
+      }
+      const patch =
+        args.extendData !== undefined
+          ? (args.extendData as Record<string, unknown> | null)
+          : undefined;
+      if (patch !== undefined && (patch === null || typeof patch !== "object" || Array.isArray(patch))) {
+        throw new ActionError("INVALID_ARGS", "extendData: an object of fields is required");
+      }
+      // undefined = not asked; null = unpin; string = a resolution to pin to.
+      let timeframe: string | null | undefined;
+      if (args.timeframe !== undefined) {
+        const wanted = String(args.timeframe);
+        if (wanted === "chart") timeframe = null;
+        else {
+          const period =
+            periodByResolution(wanted) ??
+            ALL_PERIODS.find((p) => p.label.toLowerCase() === wanted.toLowerCase());
+          if (!period) {
+            throw new ActionError(
+              "INVALID_ARGS",
+              `unknown timeframe: ${wanted} (chart, or one of ${ALL_PERIODS.map((p) => p.label).join(", ")})`,
+            );
+          }
+          timeframe = period.resolution;
+        }
+      }
+      if (!calcParams && !patch && timeframe === undefined) {
+        throw new ActionError("INVALID_ARGS", "nothing to set: give calcParams, extendData or timeframe");
       }
       let paneId: string | null = null;
       for (const [pid, inds] of getIndicatorsByPane(chart)) {
         if (inds.has(id)) { paneId = pid; break; }
       }
       if (!paneId) throw new ActionError("NOT_FOUND", `no indicator with id ${id}`);
-      chart.overrideIndicator({ paneId, name: id, calcParams });
+      const type = controller.indicators.value.find((i) => i.id === id)?.type;
+      if (timeframe !== undefined && type !== "TRENDLINES") {
+        throw new ActionError("INVALID_ARGS", `timeframe: only TRENDLINES pins through this action (${id} is ${type ?? "unknown"})`);
+      }
+      const live = getIndicator(chart, paneId, id);
       const saved = loadIndicatorConfigs(scope)[id] ?? {};
-      saveIndicatorConfig(scope, id, { ...saved, calcParams });
-      return { id, calcParams, cellId };
+      // The extend patch lands first: a pin re-detects the lines and reads
+      // its render flags off the live instance.
+      if (patch) {
+        chart.overrideIndicator({
+          paneId, name: id,
+          extendData: { ...((live?.extendData as object) ?? {}), ...patch },
+        });
+      }
+      if (timeframe !== undefined) {
+        const cp = calcParams ?? saved.calcParams ?? (live?.calcParams as unknown[] | undefined);
+        const liveExt = getIndicator(chart, paneId, id)?.extendData;
+        await applyTrendlinesTimeframe(
+          chart, epic, id, paneId,
+          parseTrendlinesConfig(cp, liveExt), timeframe, broker,
+        );
+      } else if (calcParams) {
+        chart.overrideIndicator({ paneId, name: id, calcParams });
+      }
+      const ext: Record<string, unknown> = {
+        ...((saved.extendData as Record<string, unknown> | undefined) ?? {}),
+        ...(patch ?? {}),
+      };
+      if (timeframe !== undefined) {
+        const prev = ext.mtf as { waitClose?: boolean } | undefined;
+        if (timeframe) ext.mtf = { timeframe, ...(prev?.waitClose === false ? { waitClose: false } : {}) };
+        else delete ext.mtf;
+      }
+      saveIndicatorConfig(scope, id, {
+        ...saved,
+        ...(calcParams ? { calcParams } : {}),
+        extendData: Object.keys(ext).length ? ext : undefined,
+      });
+      return { id, cellId, calcParams: calcParams ?? saved.calcParams, extendData: ext };
     },
   });
 
