@@ -265,6 +265,39 @@ describe("chart.screenshot", () => {
     });
   });
 
+  it("falls back to the canvas path when the extension times out (tab visible)", async () => {
+    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.tabBridgeScreenshot).mockRejectedValueOnce(
+      new tabBridge.TabBridgeError("EXTENSION_TIMEOUT", "screenshot: no reply from the Tab Bridge extension within 10000ms"),
+    );
+    const chart = Object.assign(fakeChart(), {
+      getDom: () => ({ getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }) }),
+      getConvertPictureUrl: (_ov: boolean, type: string) => "data:image/png;base64,QUJD",
+    });
+    provide(chart as never);
+    const res = await invokeAction("chart.screenshot", {}, ctx) as { image_base64: string; via: string };
+    expect(res.via).toBe("canvas");
+    expect(res.image_base64).toBe("QUJD");
+  });
+
+  it("still throws TAB_HIDDEN when the extension times out and the tab is hidden", async () => {
+    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.tabBridgeScreenshot).mockRejectedValueOnce(
+      new tabBridge.TabBridgeError("EXTENSION_TIMEOUT", "screenshot: no reply from the Tab Bridge extension within 10000ms"),
+    );
+    const chart = Object.assign(fakeChart(), {
+      getDom: () => ({ getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }) }),
+      getConvertPictureUrl: () => { throw new Error("must not be reached: hidden-tab guard fires first"); },
+    });
+    provide(chart as never);
+    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    try {
+      await expect(invokeAction("chart.screenshot", {}, ctx)).rejects.toMatchObject({ code: "TAB_HIDDEN" });
+    } finally {
+      delete (document as unknown as { hidden?: boolean }).hidden;
+    }
+  });
+
   it("hidden-tab error names the extension when it is absent", async () => {
     const chart = Object.assign(fakeChart(), {
       getConvertPictureUrl: () => { throw new Error("unreachable"); },

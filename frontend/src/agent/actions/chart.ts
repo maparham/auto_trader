@@ -42,6 +42,10 @@ export function focusedChart(): FocusedChart {
 const MAX_BARS = 500;
 const DEFAULT_BARS = 100;
 
+function bridgeCode(e: unknown): string {
+  return e instanceof TabBridgeError ? e.code : "EXTENSION_ERROR";
+}
+
 interface Bar {
   timestamp: number; open: number; high: number; low: number; close: number; volume?: number;
 }
@@ -100,22 +104,34 @@ export function registerChartActions(): void {
       // root) captures the tab through Chrome's debugger, which forces a
       // fresh frame even while the tab is backgrounded. Clipped to the chart
       // container so the agent sees the chart, not the whole app.
-      if (await probeTabBridge()) {
-        const r = chart.getDom()?.getBoundingClientRect() ?? { x: 0, y: 0, width: 0, height: 0 };
-        const clip = {
-          x: r.x + (window.scrollX || 0), y: r.y + (window.scrollY || 0),
-          width: r.width, height: r.height,
-        };
+      let useExtension = Boolean(await probeTabBridge());
+      if (useExtension) {
+        const rect = chart.getDom()?.getBoundingClientRect();
+        // A null dom or a 0x0 rect (not yet laid out) can't clip to anything
+        // useful; omit clip rather than send a 0x0 one, which would ask the
+        // extension to capture nothing.
+        const clip = rect && rect.width > 0 && rect.height > 0
+          ? { x: rect.x + (window.scrollX || 0), y: rect.y + (window.scrollY || 0), width: rect.width, height: rect.height }
+          : undefined;
         const scale = window.devicePixelRatio || 1;
         try {
           let shot = await tabBridgeScreenshot({ clip, scale, format: "png" });
           if (shot.image_base64.length > MAX_B64) {
+            // Over budget: recapture as jpeg (two attach/detach cycles on the
+            // extension side, one per format tried).
             shot = await tabBridgeScreenshot({ clip, scale, format: "jpeg", quality: 80 });
           }
           return { epic, cellId, resolution, mime: shot.mime, image_base64: shot.image_base64, via: "extension" };
         } catch (e) {
-          const code = e instanceof TabBridgeError ? e.code : "EXTENSION_ERROR";
-          throw new ActionError("SCREENSHOT_FAILED", `screenshot via extension failed: ${code}: ${(e as Error).message}`);
+          const code = bridgeCode(e);
+          if (code !== "EXTENSION_TIMEOUT") {
+            throw new ActionError("SCREENSHOT_FAILED", `screenshot via extension failed: ${code}: ${(e as Error).message}`);
+          }
+          // The extension was detected but stopped answering (its content
+          // script was orphaned by a reload, most likely): tabBridge.ts has
+          // already invalidated the cached hello. Fall through to the canvas
+          // path below instead of failing outright.
+          useExtension = false;
         }
       }
 
@@ -175,8 +191,7 @@ export function registerChartActions(): void {
       try {
         return await tabBridgeFocus();
       } catch (e) {
-        const code = e instanceof TabBridgeError ? e.code : "EXTENSION_ERROR";
-        throw new ActionError("FOCUS_FAILED", `${code}: ${(e as Error).message}`);
+        throw new ActionError("FOCUS_FAILED", `${bridgeCode(e)}: ${(e as Error).message}`);
       }
     },
   });

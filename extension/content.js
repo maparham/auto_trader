@@ -8,11 +8,23 @@ window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   const f = event.data;
   if (!f || f.ns !== NS || f.dir !== "req" || typeof f.id !== "string") return;
-  chrome.runtime.sendMessage({ op: f.op, args: f.args ?? {} }, (reply) => {
-    const err = chrome.runtime.lastError;
-    const res = err
-      ? { ok: false, error: { code: "EXTENSION_ERROR", message: err.message } }
-      : reply;
-    window.postMessage({ ns: NS, dir: "res", id: f.id, ...res }, "*");
-  });
+  try {
+    chrome.runtime.sendMessage({ op: f.op, args: f.args ?? {} }, (reply) => {
+      const err = chrome.runtime.lastError;
+      const res = err
+        ? { ok: false, error: { code: "EXTENSION_ERROR", message: err.message } }
+        : reply;
+      window.postMessage({ ns: NS, dir: "res", id: f.id, ...res }, "*");
+    });
+  } catch (e) {
+    // Reaching here means this content script is orphaned: the extension
+    // was reloaded/updated after this page loaded, so its runtime context is
+    // gone and sendMessage throws synchronously instead of ever replying.
+    // Answer with an error frame so the page fails fast rather than waiting
+    // out the full request timeout.
+    window.postMessage(
+      { ns: NS, dir: "res", id: f.id, ok: false, error: { code: "EXTENSION_ERROR", message: String(e?.message ?? e) } },
+      "*",
+    );
+  }
 });

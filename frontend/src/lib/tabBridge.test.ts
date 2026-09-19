@@ -82,6 +82,28 @@ describe("tabBridge", () => {
     await assertion;
   });
 
+  it("a screenshot timeout invalidates the cached hello, so the next probe re-sends it", async () => {
+    let hellos = 0;
+    uninstall = installFakeExtension((f) => {
+      if (f.op === "hello") { hellos++; return { ok: true, result: { version: "1.0.0", ops: ["screenshot", "focus"] } }; }
+      return null; // screenshot never answers -> times out
+    });
+    const p = probeTabBridge();
+    await vi.runAllTimersAsync();
+    expect(await p).toEqual({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    expect(hellos).toBe(1);
+
+    const shot = tabBridgeScreenshot({});
+    const assertion = expect(shot).rejects.toMatchObject({ code: "EXTENSION_TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await assertion;
+
+    const p2 = probeTabBridge();
+    await vi.runAllTimersAsync();
+    expect(await p2).toEqual({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    expect(hellos).toBe(2);
+  });
+
   it("ignores frames with the wrong namespace or direction", async () => {
     uninstall = installFakeExtension((f) => {
       window.postMessage({ ns: "other", dir: "res", id: f.id, ok: true, result: { focused: true } }, "*");

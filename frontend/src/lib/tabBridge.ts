@@ -43,6 +43,15 @@ export function resetTabBridgeForTest(): void {
   seq = 0;
 }
 
+/** Clears the cached hello so the next probeTabBridge() re-sends one.
+ * Call this when a request to an already-detected extension fails in a way
+ * that suggests it went away (its content script got orphaned by an
+ * unpacked-extension reload, for example): a stale cache would otherwise
+ * make every later call wait out the full op timeout forever. */
+export function invalidateTabBridge(): void {
+  hello = null;
+}
+
 function request<T>(op: string, args: object, timeoutMs: number): Promise<T> {
   if (typeof window === "undefined") {
     return Promise.reject(new TabBridgeError("NO_WINDOW", "no window"));
@@ -65,7 +74,15 @@ function request<T>(op: string, args: object, timeoutMs: number): Promise<T> {
       else done(() => reject(new TabBridgeError(f.error?.code ?? "EXTENSION_ERROR", f.error?.message ?? "extension error")));
     };
     const timer = setTimeout(
-      () => done(() => reject(new TabBridgeError("EXTENSION_TIMEOUT", `${op}: no reply from the Tab Bridge extension within ${timeoutMs}ms`))),
+      () => done(() => {
+        // A non-hello op that times out likely means the extension went away
+        // mid-page-life (an unpacked reload orphans the content script, whose
+        // sendMessage then throws synchronously and never replies): drop the
+        // cached hello so the caller's next probe re-detects it instead of
+        // assuming it is still there.
+        if (op !== "hello") invalidateTabBridge();
+        reject(new TabBridgeError("EXTENSION_TIMEOUT", `${op}: no reply from the Tab Bridge extension within ${timeoutMs}ms`));
+      }),
       timeoutMs,
     );
     window.addEventListener("message", onMessage);
