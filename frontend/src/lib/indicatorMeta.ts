@@ -949,6 +949,18 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        key: "showStats",
+        label: "Show line stats",
+        type: "boolean",
+        source: "extend",
+        field: "showStats",
+        default: TRENDLINES_EXTEND_DEFAULTS.showStats,
+        tip: [
+          "Writes each line's pivot count and crossings at its right end.",
+          "Crossings are left out when there are none.",
+        ],
+      },
+      {
         key: "dimOpacity",
         label: "Dim opacity",
         type: "number",

@@ -1048,6 +1048,9 @@ export interface TrendlinesExtend {
    *
    * Render-only, like everything else in this block. */
   showLinePivots?: boolean;
+  /** Write each drawn line's touch and crossing counts at its right end
+   * ("2 Pivots 5 Crossings"). ON by default. Render-only. */
+  showStats?: boolean;
   /** How faded a dimmed line paints, as a PERCENT of full opacity. Absent
    * takes TL_DIM_ALPHA. Governs every dim on the pane, whatever put a line
    * into it: "dimmed" is one visual state, and a second knob would only let a
@@ -2170,6 +2173,7 @@ function drawTrendlines(
   //    for a glyph whose whole job is to be seen at the swing.
   const showAll = ext?.showPivots ?? TRENDLINES_EXTEND_DEFAULTS.showPivots;
   const showLineUsed = ext?.showLinePivots ?? TRENDLINES_EXTEND_DEFAULTS.showLinePivots;
+  const showStats = ext?.showStats ?? TRENDLINES_EXTEND_DEFAULTS.showStats;
   const paintMarks = (used: ReadonlySet<number>): void => {
     if ((showAll || showLineUsed) && last?.pivots)
       paintPivotMarks(
@@ -2458,8 +2462,8 @@ function drawTrendlines(
       ctx.lineWidth = 1;
       ctx.globalAlpha = alpha;
     }
-    const label =
-      line.crossings > 0 ? `×${line.touches} ⇅${line.crossings}` : `×${line.touches}`;
+    if (!showStats) continue;
+    const label = trendlineStatsLabel(line.touches, line.crossings);
     const xTag = Math.min(
       xRing + TL_HANDLE_RADIUS + 5,
       tagRight - ctx.measureText(label).width,
@@ -2478,6 +2482,16 @@ function drawTrendlines(
   paintMarks(drawnPivotIdxs(drawn));
   setTrendlineHandles(chart, indicator.paneId, indicator.name, handles);
   return true;
+}
+
+/** The stats tag at a line's right end, spelled out in words: "2 Pivots",
+ * "2 Pivots 5 Crossings". A count of one drops the plural. Crossings are
+ * omitted at zero, since most lines have none and the tag would just repeat
+ * itself down the pane. */
+export function trendlineStatsLabel(touches: number, crossings: number): string {
+  const p = `${touches} ${touches === 1 ? "Pivot" : "Pivots"}`;
+  if (crossings <= 0) return p;
+  return `${p} ${crossings} ${crossings === 1 ? "Crossing" : "Crossings"}`;
 }
 
 const TL_CALC_SESSIONS = new WeakMap<Indicator, TrendlinesSession>();

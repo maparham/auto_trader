@@ -1955,7 +1955,7 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
       3,
       null,
     );
-    expect(tags.map((t) => t.text)).toEqual(drawn.map((l) => `×${l.touches}`));
+    expect(tags.map((t) => t.text)).toEqual(drawn.map((l) => `${l.touches} Pivots`));
   });
 
   it("adds the crossings count to the label once a line has been crossed", () => {
@@ -1979,12 +1979,26 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     const idx = drawn.indexOf(line!);
     expect(idx).toBeGreaterThanOrEqual(0);
     const { tags } = record(b, params(1));
-    expect(tags[idx].text).toBe("×2 ⇅2");
+    expect(tags[idx].text).toBe("2 Pivots 2 Crossings");
+  });
+
+  it("draws no stats tag when showStats is off", () => {
+    const b = flat(120);
+    b[20] = bar(20, 90, 100.5);
+    b[40] = bar(40, 90, 100.5);
+    const on = record(b, params(1));
+    expect(on.tags.length).toBeGreaterThan(0);
+    const off = record(
+      b, params(1), undefined, IDENTITY_VIEW, undefined, false, false, undefined,
+      undefined, false, false, false, undefined, { showStats: false },
+    );
+    expect(off.tags).toEqual([]);
+    expect(off.segments.length).toBe(on.segments.length);
   });
 
   it("shows a half touch as a fraction on the label", () => {
     // A swing high stopping 0.3 short of the flat line at 90 scores a half,
-    // so the tag reads ×2.5 rather than rounding either way.
+    // so the tag reads 2.5 Pivots rather than rounding either way.
     const b = flat(100);
     b[20] = bar(20, 90, 100.5);
     b[40] = bar(40, 90, 100.5);
@@ -2001,7 +2015,7 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     const { tags } = record(b, gapParams);
     // The corridor dips below the line and comes back, so the tag carries the
     // crossings too; the point here is the FRACTION.
-    expect(tags[idx].text).toBe("×2.5 ⇅2");
+    expect(tags[idx].text).toBe("2.5 Pivots 2 Crossings");
   });
 });
 
