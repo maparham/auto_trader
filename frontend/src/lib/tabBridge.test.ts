@@ -67,9 +67,12 @@ describe("tabBridge", () => {
   it("screenshot rejects with the extension's error code", async () => {
     uninstall = installFakeExtension(() => ({ ok: false, error: { code: "DEBUGGER_BUSY", message: "devtools open" } }));
     const p = tabBridgeScreenshot({});
+    const assertion = Promise.all([
+      expect(p).rejects.toMatchObject({ code: "DEBUGGER_BUSY" }),
+      expect(p).rejects.toBeInstanceOf(TabBridgeError),
+    ]);
     await vi.runAllTimersAsync();
-    await expect(p).rejects.toMatchObject({ code: "DEBUGGER_BUSY" });
-    await expect(p).rejects.toBeInstanceOf(TabBridgeError);
+    await assertion;
   });
 
   it("screenshot times out after 10s as EXTENSION_TIMEOUT", async () => {
