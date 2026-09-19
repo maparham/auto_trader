@@ -510,9 +510,22 @@ describe("crossingChartIdx", () => {
   const bars = (closes: Record<number, number>): KLineData[] =>
     Array.from({ length: 40 }, (_, i) => bar(T0 + i * CHART_MS, closes[i] ?? 99));
 
-  it("lands on the first chart bar that closed on the HTF close's side", () => {
-    const data = bars({ 9: 101, 10: 99, 11: 101 });
-    expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, mtf), data)).toBe(9);
+  it("walks back from the HTF close through the run of closes on its side", () => {
+    // 9 and 10 sit under the line again: the run ending at 11 starts at 11.
+    const flip = bars({ 9: 101, 10: 99, 11: 101 });
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(flip, mtf), flip)).toBe(11);
+    const run = bars({ 9: 101, 10: 101, 11: 101 });
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(run, mtf), run)).toBe(9);
+  });
+
+  it("crosses into the previous HTF bar when the run started there", () => {
+    // Bars 6 and 7 belong to HTF bar 1; a daily candle that closes after the
+    // chart's last hour for the day puts the first cut there.
+    const data = bars({ 6: 101, 7: 101, 8: 101, 9: 101, 10: 101, 11: 101 });
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, mtf), data)).toBe(6);
+    // ...but never further back than that bar's open.
+    const long = bars(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i, 101])));
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(long, mtf), long)).toBe(4);
   });
 
   it("falls back to the HTF close bar when no earlier bar got there", () => {

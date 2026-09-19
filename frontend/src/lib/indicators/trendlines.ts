@@ -1957,13 +1957,19 @@ export function trendlineIdxMap(
   };
 }
 
-/** Chart bar that carries a crossing mark for HTF bar j: the FIRST chart
- * bar inside it whose close sits on the side the HTF close ended on. The
- * crossing is decided by the HTF close, but on a finer chart the eye sees
- * price cut the line hours earlier, and a mark on the day's last candle
- * reads as "off by a few bars" every time. Falls back to the HTF close bar
- * (no chart bar got there first, or a close exactly on the line); identity
- * with no pin or a finer one, where the bar IS the crossing bar. */
+/** Chart bar that carries a crossing mark for HTF bar j: the start of the
+ * run of chart closes, ending at the HTF close, that sit on the side the HTF
+ * close ended on. The crossing is decided by the HTF close, but on a finer
+ * chart the eye sees price cut the line hours earlier, and a mark on the
+ * day's last candle reads as "off by a few bars" every time.
+ *
+ * The run may cross INTO the previous HTF bar: a share CFD's daily candle
+ * closes after the last hourly bar the chart holds for that day, so the
+ * hour that first closed under the line can sit in yesterday's bar while
+ * yesterday's daily close was still above it. Bounded one HTF bar back, the
+ * previous HTF close sat on the old side by construction. Falls back to the
+ * HTF close bar (nothing earlier got there); identity with no pin or a
+ * finer one, where the bar IS the crossing bar. */
 export function crossingChartIdx(
   line: TrendLine,
   j: number,
@@ -1979,8 +1985,10 @@ export function crossingChartIdx(
   };
   const want = side(last);
   if (want === 0) return last;
-  for (let c = first; c < last; c++) if (side(c) === want) return c;
-  return last;
+  const lo = Math.max(0, Math.floor(map.toChart(j - 1)));
+  let c = last;
+  while (c - 1 >= lo && side(c - 1) === want) c--;
+  return c;
 }
 
 /** Chart index of the candle that traded an HTF bar's extreme — where a pivot
@@ -2460,6 +2468,8 @@ function drawTrendlines(
     // Crossing marks: a × on the line at each bar whose close changed side.
     // Same cull as the rings; under a coarser pin the mark sits on the chart
     // candle that first closed across, not the HTF close (crossingChartIdx).
+    // Walking back from the HTF close keeps the mark ON the drawn line only
+    // while the segment reaches that far, so onSegment is asked as for a ring.
     if (showCrossings) {
       for (const idx of line.crossIdxs ?? []) {
         const xC = xAxis.convertToPixel(crossingChartIdx(line, idx, idxMap, dataList));
