@@ -135,11 +135,10 @@ interface IndicatorMetaDef {
  * the panel. A group left with one member after showWhen filtering renders as
  * an ordinary full-width row.
  *
- * BOOLEAN PAIRS render as selectable labels rather than tick boxes (see the
+ * BOOLEAN PAIRS render as two labeled tick boxes side by side (see the
  * .ind-pair2-bool branch in IndicatorSettings). A `group` on two booleans is
- * therefore a LOOK as well as a layout, which is why it stays opt-in per
- * indicator instead of pairing every adjacent boolean automatically: pairing
- * them all restyled on/off rows in panels that never asked for it.
+ * therefore a layout choice, which is why it stays opt-in per indicator
+ * instead of pairing every adjacent boolean automatically.
  *
  * A boolean opening a SECTION never pairs backwards: the heading belongs to
  * the row it introduces, and a chunk renders its heading from chunk[0], so

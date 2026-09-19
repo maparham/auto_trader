@@ -768,17 +768,15 @@ function IndicatorSettingsForm({
     );
   }
 
-  // A boolean rendered as a SELECTABLE LABEL: the name is the control, pressed
-  // when on. The checkbox is still the element under it (hidden), so the role,
-  // the accessible name and the keyboard behaviour are the native ones and the
-  // <label> wrapper is what makes the whole chip a hit area.
+  // A boolean in a PAIRED row: a plain tick box with its name beside it. The
+  // <label> wraps both, so the name is part of the hit area.
   function boolChip(
     inp: IndicatorInputDef,
     checked: boolean,
     onChange: (next: boolean) => void,
   ) {
     return (
-      <label className={`ind-bool-chip${checked ? " on" : ""}`}>
+      <label className="ind-bool-check">
         <input
           type="checkbox"
           aria-label={inp.label}
@@ -790,8 +788,8 @@ function IndicatorSettingsForm({
     );
   }
 
-  // The ⓘ alone, for the rows whose label is inside the control (the boolean
-  // chips): the tip has to sit OUTSIDE the hit area, or reading it would
+  // The ⓘ alone, for the rows whose label is inside the control (the paired
+  // checkboxes): the tip has to sit OUTSIDE the hit area, or reading it would
   // toggle the setting.
   function tipFor(inp: IndicatorInputDef) {
     return inp.tip ? <InfoTip title={inp.label} text={inp.tip} /> : null;
@@ -810,7 +808,7 @@ function IndicatorSettingsForm({
   }
 
   // `chip` is set only by the boolean-PAIR row: a pair of on/off settings
-  // renders as two selectable labels, everything else keeps the tick box it
+  // renders as two labeled checkboxes, everything else keeps the tick box it
   // always had. Scoped that narrowly on purpose — restyling every boolean in
   // the modal changed panels that never asked for it.
   function controlFor(inp: IndicatorInputDef, chip = false) {
@@ -2128,11 +2126,8 @@ function IndicatorSettingsForm({
                       </span>
                     </div>
                   ) : chunk.length === 2 && chunk[0].type === "boolean" ? (
-                    // A pair of SWITCHES: two to a row, each label beside its
-                    // own switch rather than above it. A switch is small enough
-                    // that a half-width cell still holds "label ......... [on]"
-                    // whole, so the two stay visibly attached — which is the
-                    // objection that kept a solo checkbox out of .ind-pair2.
+                    // A pair of CHECKBOXES: two to a row, each label beside its
+                    // own box rather than above it.
                     <div className="ind-pair2-bool">
                       {chunk.map((inp) => (
                         <div className="ind-field" key={inp.key}>
