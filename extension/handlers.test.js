@@ -1,32 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeHandlers, OpError, OPS, VERSION } from "./handlers.js";
-
-function fakeChrome({ captureResult = { data: "QUJD" }, attachError = null } = {}) {
-  const calls = [];
-  const chrome = {
-    debugger: {
-      attach: async (target, version) => {
-        calls.push(["attach", target, version]);
-        if (attachError) throw new Error(attachError);
-      },
-      sendCommand: async (target, method, params) => {
-        calls.push(["send", target, method, params]);
-        if (method !== "Page.captureScreenshot") throw new Error("unexpected " + method);
-        return captureResult;
-      },
-      detach: async (target) => { calls.push(["detach", target]); },
-    },
-    tabs: {
-      get: async (tabId) => ({ id: tabId, windowId: 77 }),
-      update: async (tabId, props) => { calls.push(["tabs.update", tabId, props]); },
-    },
-    windows: {
-      update: async (windowId, props) => { calls.push(["windows.update", windowId, props]); },
-    },
-  };
-  return { chrome, calls };
-}
+import { fakeChrome } from "./test-helpers.js";
 
 test("hello reports version and ops", async () => {
   const { chrome } = fakeChrome();

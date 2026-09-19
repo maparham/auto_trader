@@ -107,7 +107,7 @@ Ops (v1):
 | op | args | result |
 |----|------|--------|
 | `hello` | none | `{version, ops: ["screenshot", "focus"]}` |
-| `screenshot` | `clip?: {x, y, width, height}` (CSS px, viewport coords), `format?: "png" \| "jpeg"`, `quality?: 0..100` | `{mime, image_base64, width, height}` |
+| `screenshot` | `clip?: {x, y, width, height}` (CSS px, page coordinates: the viewport rect plus scroll offsets), `format?: "png" \| "jpeg"`, `quality?: 0..100` | `{mime, image_base64, width, height}` |
 | `focus` | none | `{focused: true}` |
 
 Error codes: `UNKNOWN_OP`, `DEBUGGER_BUSY` (DevTools already attached to the

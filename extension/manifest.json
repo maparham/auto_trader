@@ -3,6 +3,7 @@
   "name": "Tab Bridge",
   "version": "1.0.0",
   "description": "Lets a web page screenshot or focus its own tab, even while backgrounded. Generic; any page that speaks the tab-bridge postMessage protocol can use it.",
+  "minimum_chrome_version": "116",
   "permissions": ["debugger", "tabs"],
   "background": { "service_worker": "background.js", "type": "module" },
   "content_scripts": [

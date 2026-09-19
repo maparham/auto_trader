@@ -34,8 +34,20 @@ Post to your own window, listen for the reply with the same `id`:
 | `screenshot` | `clip?: {x, y, width, height}` (CSS px, page coords), `scale?` (device pixel ratio), `format?: "png" \| "jpeg"`, `quality?: 0..100` | `{ mime, image_base64, width, height }` |
 | `focus` | none | `{ focused: true }` |
 
-Error codes: `UNKNOWN_OP`, `INVALID_ARGS`, `DEBUGGER_BUSY`, `CAPTURE_FAILED`,
-`EXTENSION_ERROR`.
+`screenshot`'s `width`/`height` are the CSS clip dimensions passed in (or
+`null` when no clip is given), not the pixel dimensions of the returned
+image: the image is `scale` times that size.
+
+| code | source | meaning |
+|------|--------|---------|
+| `UNKNOWN_OP` | worker | the requested op isn't one of the ops above |
+| `INVALID_ARGS` | worker | malformed args (bad clip, format, quality, scale) |
+| `DEBUGGER_BUSY` | worker | `chrome.debugger.attach` failed, usually DevTools already open on the tab |
+| `CAPTURE_FAILED` | worker | `Page.captureScreenshot` itself failed |
+| `NO_TAB` | worker | the message didn't come from a tab (`sender.tab` missing) |
+| `EXTENSION_ERROR` | worker or content script | any other failure, including a `chrome.runtime.sendMessage` throw from an orphaned content script (the extension was reloaded after the page loaded) |
+| `NO_WINDOW` | client (`tabBridge.ts`) | called outside a browser (no `window`) |
+| `EXTENSION_TIMEOUT` | client (`tabBridge.ts`) | no reply within the op's timeout; the client treats this as the extension having gone away and re-probes on the next call |
 
 Only the requesting tab is ever targeted. No cross-tab operations exist. The
 capture is the tab's composited surface, so it includes any cross-origin
