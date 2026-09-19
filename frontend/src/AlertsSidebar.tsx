@@ -386,9 +386,9 @@ export default function AlertsSidebar({
                   className={`ap-icon-btn${showAll ? " on" : ""}${menuOpen ? " open" : ""}`}
                   onClick={() => { setMenuOpen((v) => !v); setSortOpen(false); }}
                 >
-                  {/* funnel / filter icon */}
-                  <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M2 3h12M4.5 7h7M7 11h2"/>
+                  {/* funnel icon (three narrowing lines read as "sort") */}
+                  <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M2 3h12L9.5 8.5V13l-3 1.5V8.5L2 3z"/>
                   </svg>
                   {showAll && <span className="ap-icon-dot" />}
                 </button>
