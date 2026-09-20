@@ -36,3 +36,14 @@ remove it from here (git history and the memory index track shipped features).
   move heavy work off the browser. Explicitly not a current pain point; revisit
   on real slowness or headless/scheduled-run demand.
   [spec](superpowers/specs/2026-07-07-node-backtest-compute-offload-design.md)
+
+- **Pinned trendlines drawn as exact polylines** — a line pinned to a higher
+  timeframe is straight in HTF bars but bends slightly on the chart at every
+  gap (a weekend is one candle but many HTF hours), so the straight pixel
+  segment sits a few tenths off the per-candle value crossings are judged
+  against, and a × can float in a gap beside the candle that actually cut the
+  line. Draw the pinned line through the exact projection at every loaded bar
+  (`pinnedLineY`), straight past the loaded edges. A stash from 2026-09-19
+  (on 63faa121) holds a working draft plus three tests, but it no longer
+  applies to the draw path or the MTF test harness; port by hand (~1h).
+  [draft patch](superpowers/plans/2026-09-19-pinned-trendline-polyline.stash.patch)

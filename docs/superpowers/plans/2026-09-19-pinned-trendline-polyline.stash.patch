@@ -1,0 +1,236 @@
+diff --git a/frontend/src/lib/indicators/trendlines.ts b/frontend/src/lib/indicators/trendlines.ts
+index 6b9d272b..ef2261b3 100644
+--- a/frontend/src/lib/indicators/trendlines.ts
++++ b/frontend/src/lib/indicators/trendlines.ts
+@@ -2029,6 +2029,44 @@ export function pinnedEndY(
+   return { y0: yA + slope * (x0 - xA), y1: yA + slope * (x1 - xA) };
+ }
+ 
++/** y at pixel x of a PINNED line, exact over the loaded chart bars. A line
++ * is straight in HTF bars, but the chart's bars are not evenly spaced in HTF
++ * time (a night or a weekend is one candle gap on the chart and many hours of
++ * HTF progress), so on the chart the same line is a polyline with a small
++ * kink at every gap. Crossings and touches are decided per candle against
++ * that exact value, and a straight pixel segment can sit a few tenths off it,
++ * which was enough to float a × in the gap under a candle whose close had cut
++ * the line by a cent. Inside [0, lastChartIdx] the value is the projection at
++ * the bar's own line-space index; past either end it follows the straight
++ * (x0,y0)-(x1,y1) segment (see pinnedEndY), shifted so it meets the exact
++ * curve at the edge. */
++export function pinnedLineY(
++  line: TrendLine,
++  toLine: (idx: number) => number,
++  idxAtX: (x: number) => number,
++  xAtIdx: (idx: number) => number,
++  yAt: (price: number) => number,
++  lastChartIdx: number,
++  x0: number,
++  y0: number,
++  x1: number,
++  y1: number,
++): (x: number) => number {
++  const straight = (x: number): number =>
++    x1 === x0 ? y0 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
++  const exact = (idx: number): number => yAt(projectAt(line, toLine(idx)));
++  if (lastChartIdx < 0) return straight;
++  const xFirst = xAtIdx(0);
++  const xLast = xAtIdx(lastChartIdx);
++  const offFirst = exact(0) - straight(xFirst);
++  const offLast = exact(lastChartIdx) - straight(xLast);
++  return (x: number): number => {
++    if (x < xFirst) return straight(x) + offFirst;
++    if (x > xLast) return straight(x) + offLast;
++    return exact(idxAtX(x));
++  };
++}
++
+ /** Chart index of the candle that traded an HTF bar's extreme — where a pivot
+  * caret (and a line anchor) belongs when the pin is COARSER than the chart. An
+  * HTF bar's high or low usually trades hours after the bar OPENS, and mapping
+@@ -2390,6 +2428,10 @@ function drawTrendlines(
+   // constant bar space), so one bar's width inverts it exactly.
+   const barPx = xAxis.convertToPixel(1) - xAxis.convertToPixel(0);
+   const lastChartIdx = dataList.length - 1;
++  const xLastPx = xAxis.convertToPixel(lastChartIdx);
++  // Fractional chart index under a pixel: the inverse of convertToPixel.
++  const idxAtX = (x: number): number =>
++    barPx > 0 ? lastChartIdx + (x - xLastPx) / barPx : lastChartIdx;
+   const edgeChartIdx =
+     barPx > 0
+       ? lastChartIdx + (tagRight - xAxis.convertToPixel(lastChartIdx)) / barPx
+@@ -2450,8 +2492,13 @@ function drawTrendlines(
+     // a mark placed by its own projection can sit a bar off the line it
+     // belongs to. Interpolating at its own x is the idiom the ×N tag already
+     // uses below, and on the chart timeframe it lands on the same pixel.
+-    const onSegment = (x: number): number =>
++    const straightY = (x: number): number =>
+       x1 === x0 ? y0 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
++    // Under a pin the segment is a polyline through the exact per-candle
++    // value (pinnedLineY); on the chart timeframe it is the straight segment.
++    const onSegment = mtf
++      ? pinnedLineY(line, toLine, idxAtX, (i) => xAxis.convertToPixel(i), yPx, lastChartIdx, x0, y0, x1, y1)
++      : straightY;
+     ctx.strokeStyle = lineColor;
+     ctx.globalAlpha = alpha;
+     // Width and dash belong to the LINE alone: both go back to solid, 1px
+@@ -2465,16 +2512,36 @@ function drawTrendlines(
+     // pane would drop lines the identity-view draw tests legitimately place
+     // outside their tiny fake pane. Only the
+     // absurd overshoots — a 1D pin's 250-day horizon on a 1m chart — are cut.
+-    const seg = clipSegmentToRect(
+-      x0, y0, x1, y1,
+-      -DRAW_CLIP_PAD, -DRAW_CLIP_PAD,
+-      bounding.width + DRAW_CLIP_PAD, bounding.height + DRAW_CLIP_PAD,
+-    );
+-    if (seg) {
+-      ctx.beginPath();
+-      ctx.moveTo(seg[0], seg[1]);
+-      ctx.lineTo(seg[2], seg[3]);
+-      ctx.stroke();
++    if (mtf) {
++      // The polyline, x-clipped to the pane pad; a vertex at every loaded
++      // chart bar inside the drawn extent, since that is where the exact
++      // curve bends. y is bounded because x is, so no y-clip is needed.
++      const xs = Math.max(x0, -DRAW_CLIP_PAD);
++      const xe = Math.min(x1, bounding.width + DRAW_CLIP_PAD);
++      if (xe >= xs) {
++        ctx.beginPath();
++        ctx.moveTo(xs, onSegment(xs));
++        const cFrom = Math.max(0, Math.ceil(idxAtX(xs)));
++        const cTo = Math.min(lastChartIdx, Math.floor(idxAtX(xe)));
++        for (let c = cFrom; c <= cTo; c++) {
++          const xc = xAxis.convertToPixel(c);
++          if (xc > xs && xc < xe) ctx.lineTo(xc, onSegment(xc));
++        }
++        ctx.lineTo(xe, onSegment(xe));
++        ctx.stroke();
++      }
++    } else {
++      const seg = clipSegmentToRect(
++        x0, y0, x1, y1,
++        -DRAW_CLIP_PAD, -DRAW_CLIP_PAD,
++        bounding.width + DRAW_CLIP_PAD, bounding.height + DRAW_CLIP_PAD,
++      );
++      if (seg) {
++        ctx.beginPath();
++        ctx.moveTo(seg[0], seg[1]);
++        ctx.lineTo(seg[2], seg[3]);
++        ctx.stroke();
++      }
+     }
+     ctx.setLineDash([]);
+     // The touches themselves, one hollow ring each, so the ×N tag can be read
+@@ -2611,8 +2678,9 @@ function drawTrendlines(
+       xRing + TL_HANDLE_RADIUS + 5,
+       tagRight - ctx.measureText(label).width,
+     );
+-    const yTag =
+-      xHandle === x0
++    const yTag = mtf
++      ? onSegment(xTag)
++      : xHandle === x0
+         ? yHandle
+         : y0 + ((yHandle - y0) * (xTag - x0)) / (xHandle - x0);
+     ctx.fillStyle = ctx.strokeStyle;
+diff --git a/frontend/src/lib/indicators/trendlinesMtf.test.ts b/frontend/src/lib/indicators/trendlinesMtf.test.ts
+index f3d0d7cc..74d80d7b 100644
+--- a/frontend/src/lib/indicators/trendlinesMtf.test.ts
++++ b/frontend/src/lib/indicators/trendlinesMtf.test.ts
+@@ -11,6 +11,7 @@ import {
+   trendlineIdxMap,
+   crossingChartIdx,
+   pinnedEndY,
++  pinnedLineY,
+   lineKey,
+   TL_PIVOT_ARM,
+   TRENDLINES_TEMPLATE,
+@@ -202,6 +203,7 @@ function draw(
+   let cur = { x: 0, y: 0 };
+   let start = { x: 0, y: 0 };
+   let width = 1;
++  let open = false;
+   const ctx = {
+     font: "", textBaseline: "", textAlign: "", strokeStyle: "", fillStyle: "",
+     globalAlpha: 1,
+@@ -210,11 +212,18 @@ function draw(
+     save: () => {}, restore: () => {}, beginPath: () => {}, stroke: () => {},
+     setLineDash: () => {}, fill: () => {},
+     rect: () => {}, clip: () => {},
+-    moveTo: (x: number, y: number) => { cur = { x, y }; start = { x, y }; },
++    moveTo: (x: number, y: number) => { cur = { x, y }; start = { x, y }; open = false; },
+     lineTo: (x: number, y: number) => {
+       // The handle glyph strokes heavier than the line; only the lines matter here.
+-      if (width === 1) segments.push({ x0: cur.x, y0: cur.y, x1: x, y1: y });
++      // A pinned line is a polyline (one vertex per chart bar): its lineTo
++      // run is recorded as ONE segment from the moveTo to the last vertex,
++      // so a test reads a line's two ends the way it did when it was straight.
++      if (width === 1) {
++        if (open) segments[segments.length - 1] = { ...segments[segments.length - 1], x1: x, y1: y };
++        else segments.push({ x0: cur.x, y0: cur.y, x1: x, y1: y });
++      }
+       cur = { x, y };
++      open = true;
+     },
+     // The pivot marks are FILLED triangles, so their closing edge exists only
+     // as a closePath. Recorded like any other edge, or a caret would read as
+@@ -222,6 +231,7 @@ function draw(
+     closePath: () => {
+       if (width === 1) segments.push({ x0: cur.x, y0: cur.y, x1: start.x, y1: start.y });
+       cur = { ...start };
++      open = false;
+     },
+     measureText: (t: string) => ({ width: t.length * 6 }),
+     fillText: () => {},
+@@ -336,7 +346,10 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
+     bars[13] = bar(T0 + 13 * CHART_MS, 106); // HTF bar 3's high (anchor 2)
+     const { segments, rings } = draw(bars, stash());
+     expect(segments[0].x0).toBeCloseTo(6, 6);
+-    expect(segments[0].y0).toBeCloseTo(400 - 110, 6);
++    // The line is exact per chart bar (pinnedLineY): bar 6 is half an HTF
++    // bar past anchor 1 on a line falling 2 per HTF bar, so it reads 109
++    // there, one under the pivot's 110. The ring snaps in x only.
++    expect(segments[0].y0).toBeCloseTo(400 - 109, 6);
+     expect(rings.map((r) => Math.round(r.x))).toEqual([6, 13]);
+   });
+ 
+@@ -581,3 +594,40 @@ describe("pinnedEndY", () => {
+     expect(pinnedEndY(rising, 7, 9, xAt(7), xAt(9), 2, 6, xAt, yAt)).toEqual({ y0: 170, y1: 190 });
+   });
+ });
++
++describe("pinnedLineY", () => {
++  // Rising line, +10 per HTF bar from 100. Two chart bars per HTF bar over
++  // the loaded range 0..8 (10px per chart bar), except a gap: chart bar 5
++  // sits a whole HTF bar after chart bar 4, the way a weekend does.
++  const rising: TrendLine = {
++    i1: 0, p1: 100, k1: "low", i2: 1, p2: 110, k2: "low",
++    touches: 2, touchIdxs: [0, 1], touchKinds: ["low", "low"], lastTouchIdx: 1,
++    crossings: 0, crossIdxs: [], lastSign: 1,
++    maxTouchGap: 1, minTouchGap: 1, maxTouchIdx: 1,
++  };
++  const toLine = (c: number) => (c <= 4 ? c / 2 : c < 5 ? 2 + (c - 4) : c / 2 + 0.5);
++  const xAtIdx = (c: number) => c * 10;
++  const idxAtX = (x: number) => x / 10;
++  const yAt = (p: number) => p;
++  // The straight segment reads 140 at x=80 where the exact curve is 145.
++  const y = pinnedLineY(rising, toLine, idxAtX, xAtIdx, yAt, 8, 0, 100, 80, 140);
++
++  it("is the exact projection at every loaded bar, gap included", () => {
++    expect(y(40)).toBe(120); // bar 4 -> line 2
++    expect(y(50)).toBe(130); // bar 5 -> line 3: the weekend kink
++    expect(y(45)).toBe(125); // between them
++    expect(y(80)).toBe(145);
++  });
++
++  it("continues past the loaded edges along the straight segment, without a step", () => {
++    // Lifted by the 5 the straight segment is short at the right edge; the
++    // left edge agrees with the curve, so nothing shifts there.
++    expect(y(100)).toBeCloseTo(140 + (40 / 80) * 20 + 5);
++    expect(y(-20)).toBeCloseTo(100 - (40 / 80) * 20);
++  });
++
++  it("is the straight segment with nothing loaded", () => {
++    const empty = pinnedLineY(rising, toLine, idxAtX, xAtIdx, yAt, -1, 0, 100, 80, 140);
++    expect(empty(40)).toBe(120);
++  });
++});
