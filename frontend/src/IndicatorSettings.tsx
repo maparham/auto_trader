@@ -871,7 +871,18 @@ function IndicatorSettingsForm({
           {...draftProps(
             inp.key,
             inp.unbounded && stored === 0 ? "" : stored,
-            (raw) => setParam(inp.index!, raw === "" && inp.unbounded ? 0 : Number(raw)),
+            (raw) =>
+              setParam(
+                inp.index!,
+                raw === "" && inp.unbounded
+                  ? 0
+                  : // A meta `max` is a hard ceiling the calc clamps to anyway
+                    // (Max Trendlines caps at 50): store the clamped value so the
+                    // box shows what the chart does, not a number it ignores.
+                    inp.max != null
+                    ? Math.min(inp.max, Number(raw))
+                    : Number(raw),
+              ),
             inp.step ?? 1,
           )}
         />,
@@ -1874,7 +1885,16 @@ function IndicatorSettingsForm({
           ))}
         </div>
 
-        <div className="ind-body">
+        <div
+          className="ind-body"
+          // A wheel over a focused number box would spin its value while the
+          // user only meant to scroll the modal: blur it first, so the scroll
+          // happens and the value stays.
+          onWheelCapture={(e) => {
+            const t = e.target;
+            if (t instanceof HTMLInputElement && t.type === "number" && document.activeElement === t) t.blur();
+          }}
+        >
           {tab === "inputs" && isRenameable && (
             <>
               <div className="ind-row ind-row-cols">

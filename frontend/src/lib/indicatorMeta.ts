@@ -8,7 +8,7 @@
 // reshape. Anything not listed here falls back to generic numeric inputs read
 // from the live indicator's calcParams (see `resolveInputs`).
 
-import { TRENDLINES_DEFAULTS, TRENDLINES_EXTEND_DEFAULTS } from "./indicators/trendlinesOutputs";
+import { MAX_MAX_LINES, TRENDLINES_DEFAULTS, TRENDLINES_EXTEND_DEFAULTS } from "./indicators/trendlinesOutputs";
 
 type IndicatorInputType = "number" | "select" | "boolean";
 
@@ -627,7 +627,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
   TRENDLINES: {
     inputs: [
       {
-        ...num(5, "Max Trendlines"),
+        ...num(5, "Max Trendlines", { max: MAX_MAX_LINES }),
         tip: [
           "Lines drawn and reported, strongest first: most touches, then longest, then fewest crossings.",
           "Each drawn line is also a rule operand (tl_1 .. tl_N).",

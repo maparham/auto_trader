@@ -410,3 +410,30 @@ describe("input sections", () => {
       expect(screen.getByText(h).className, `${h} heading`).toContain("ind-group");
   });
 });
+
+describe("number boxes", () => {
+  // Typed 1000, the box kept saying 1000 while the chart drew 50 (the calc's
+  // ceiling) until the modal was reopened. The ceiling is the meta max now,
+  // and the slot stores the clamped value.
+  it("clamps Max Trendlines to the calc's ceiling as it is typed", () => {
+    const { cpWrites } = openRecording();
+    const box = screen.getByLabelText("Max Trendlines") as HTMLInputElement;
+    expect(box.max).toBe("50");
+    fireEvent.change(box, { target: { value: "1000" } });
+    expect(cpWrites.at(-1)![5]).toBe(50);
+    fireEvent.blur(box);
+    expect(box.value).toBe("50");
+  });
+
+  // Scrolling the modal with the pointer over a focused number box spun its
+  // value (stray Touch Gap and Crossings edits). The box blurs on wheel, so
+  // the browser has no focused spinner to turn.
+  it("blurs a focused number box on wheel so scrolling cannot change it", () => {
+    openRecording();
+    const box = screen.getByLabelText("Max Span") as HTMLInputElement;
+    box.focus();
+    expect(document.activeElement).toBe(box);
+    fireEvent.wheel(box, { deltaY: 100 });
+    expect(document.activeElement).not.toBe(box);
+  });
+});
