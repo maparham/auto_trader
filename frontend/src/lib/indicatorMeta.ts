@@ -667,6 +667,29 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        ...num(6, "Min Size", { min: 0, step: 0.1 }),
+        group: "size",
+        suffix: "ATR",
+        // Charts created before this param existed store fewer calcParams, so
+        // the slot reads undefined and the box would render empty. Same 0
+        // parseTrendlinesConfig already substitutes.
+        default: 0,
+        tip: [
+          "Min height of the swing from a pivot back to the last pivot on the other side, in ATR(14).",
+          "Zero accepts every turn. Raising it drops the small wobbles.",
+        ],
+      },
+      {
+        ...num(7, "Min Reach", { min: 0 }),
+        group: "size",
+        suffix: "bars",
+        default: 0,
+        tip: [
+          "Min bars a pivot must beat to its left to count as a turning point.",
+          "Only matters above Min Length, since a pivot already beats that many.",
+        ],
+      },
+      {
         ...num(24, "Limit", { min: 0 }),
         section: "Major Swings",
         group: "major",
@@ -696,29 +719,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: [
           "Min height of a major pivot's swing back to the last pivot on the other side, in ATR(14).",
           "Zero: length alone decides.",
-        ],
-      },
-      {
-        ...num(6, "Min Pivot Size", { min: 0, step: 0.1 }),
-        group: "size",
-        suffix: "ATR",
-        // Charts created before this param existed store fewer calcParams, so
-        // the slot reads undefined and the box would render empty. Same 0
-        // parseTrendlinesConfig already substitutes.
-        default: 0,
-        tip: [
-          "Min height of the swing from a pivot back to the last pivot on the other side, in ATR(14).",
-          "Zero accepts every turn. Raising it drops the small wobbles.",
-        ],
-      },
-      {
-        ...num(7, "Min Pivot Reach", { min: 0 }),
-        group: "size",
-        suffix: "bars",
-        default: 0,
-        tip: [
-          "Min bars a pivot must beat to its left to count as a turning point.",
-          "Only matters above Min Pivot Length, since a pivot already beats that many.",
         ],
       },
       {

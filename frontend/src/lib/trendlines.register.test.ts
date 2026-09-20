@@ -58,8 +58,8 @@ describe("TRENDLINES registration", () => {
     expect(chunks.map((c) => c.map((i) => i.label))).toEqual([
       ["Max Trendlines"],
       ["Min Length", "Max Pairs"],
+      ["Min Size", "Min Reach"],
       ["Limit", "Length", "Size"],
-      ["Min Pivot Size", "Min Pivot Reach"],
       ["Max Touch Gap", "Max Pierce"],
       ["Back Clearance"],
       ["Min Touches", "Max Touches"],
@@ -129,7 +129,7 @@ describe("TRENDLINES registration", () => {
     const swing = resolveInputs("TRENDLINES", undefined).find(
       (i) => i.index === 6,
     );
-    expect(swing?.label).toBe("Min Pivot Size");
+    expect(swing?.label).toBe("Min Size");
     expect(swing?.suffix).toBe("ATR");
     expect(swing?.default).toBe(0);
   });
