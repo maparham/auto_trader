@@ -168,19 +168,25 @@ if [ "$DO_BACKEND" = 1 ]; then
     '
   fi
 
-  echo "==> backend: pip install + restart auto-trader-demo"
-  "${SSH[@]}" "$HOST" '
+  # agent-ui-bridge is a git dependency declared under [tool.uv.sources], which
+  # plain pip on the box cannot see. Install the commit uv.lock pins first, so
+  # the package install below finds it already satisfied.
+  bridge_rev=$(grep -A2 'name = "agent-ui-bridge"' backend/uv.lock | sed -n 's/.*python#\([0-9a-f]*\)".*/\1/p' | head -1)
+  [ -n "$bridge_rev" ] || { echo "could not read the agent-ui-bridge commit from backend/uv.lock" >&2; exit 1; }
+  echo "==> backend: pip install (agent-ui-bridge@${bridge_rev:0:7}) + restart auto-trader-demo"
+  "${SSH[@]}" "$HOST" "
     set -e
+    /opt/auto-trader/venv/bin/pip install -q --no-cache-dir 'agent-ui-bridge @ git+https://github.com/maparham/agent-ui-bridge@$bridge_rev#subdirectory=python'
     /opt/auto-trader/venv/bin/pip install -q --no-cache-dir /opt/auto-trader/backend
     sudo systemctl restart auto-trader-demo
     for i in $(seq 1 20); do
       sleep 1
       if curl -sf -m 5 http://127.0.0.1:8010/health >/dev/null; then exit 0; fi
     done
-    echo "backend failed to come up; last log lines:" >&2
+    echo 'backend failed to come up; last log lines:' >&2
     sudo journalctl -u auto-trader-demo -n 20 --no-pager >&2
     exit 1
-  '
+  "
 fi
 
 if [ "$DO_FRONTEND" = 1 ]; then
