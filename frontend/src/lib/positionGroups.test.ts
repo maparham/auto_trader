@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { aggregateLegs, groupPositions, type GroupLeg } from "./positionGroups";
+import { aggregatePositions, groupPositions, type GroupPosition } from "./positionGroups";
 
-const leg = (o: Partial<GroupLeg>): GroupLeg => ({
+const pos = (o: Partial<GroupPosition>): GroupPosition => ({
   epic: "TSLA",
   side: "buy",
   quantity: 1,
@@ -17,11 +17,11 @@ const leg = (o: Partial<GroupLeg>): GroupLeg => ({
   ...o,
 });
 
-describe("aggregateLegs", () => {
+describe("aggregatePositions", () => {
   it("size-weights the entry and sums P&L, notionals and margin", () => {
-    const g = aggregateLegs([
-      leg({ quantity: 6, priceLevel: 350, upnl: 60, tradeValue: 2100, marketValue: 2160, margin: 420, last: 360, pnlPct: 2.857, openedAt: 200 }),
-      leg({ quantity: 6, priceLevel: 300, upnl: 360, tradeValue: 1800, marketValue: 2160, margin: 360, last: 360, pnlPct: 20, openedAt: 100 }),
+    const g = aggregatePositions([
+      pos({ quantity: 6, priceLevel: 350, upnl: 60, tradeValue: 2100, marketValue: 2160, margin: 420, last: 360, pnlPct: 2.857, openedAt: 200 }),
+      pos({ quantity: 6, priceLevel: 300, upnl: 360, tradeValue: 1800, marketValue: 2160, margin: 360, last: 360, pnlPct: 20, openedAt: 100 }),
     ]);
     expect(g.side).toBe("buy");
     expect(g.quantity).toBe(12);
@@ -37,10 +37,10 @@ describe("aggregateLegs", () => {
     expect(g.pnlPct).toBeCloseTo(10.77, 2);
   });
 
-  it("nets hedged legs into a mixed group and nulls mismatched leverage", () => {
-    const g = aggregateLegs([
-      leg({ side: "buy", quantity: 3, leverage: 5 }),
-      leg({ side: "sell", quantity: 1, leverage: 10 }),
+  it("nets hedged positions into a mixed group and nulls mismatched leverage", () => {
+    const g = aggregatePositions([
+      pos({ side: "buy", quantity: 3, leverage: 5 }),
+      pos({ side: "sell", quantity: 1, leverage: 10 }),
     ]);
     expect(g.side).toBe("mixed");
     expect(g.quantity).toBe(2);
@@ -54,10 +54,10 @@ describe("aggregateLegs", () => {
 describe("groupPositions", () => {
   it("groups by epic in first-appearance order", () => {
     const gs = groupPositions([
-      leg({ epic: "NATURALGAS" }),
-      leg({ epic: "TSLA" }),
-      leg({ epic: "TSLA" }),
+      pos({ epic: "NATURALGAS" }),
+      pos({ epic: "TSLA" }),
+      pos({ epic: "TSLA" }),
     ]);
-    expect(gs.map((g) => [g.epic, g.legs.length])).toEqual([["NATURALGAS", 1], ["TSLA", 2]]);
+    expect(gs.map((g) => [g.epic, g.positions.length])).toEqual([["NATURALGAS", 1], ["TSLA", 2]]);
   });
 });

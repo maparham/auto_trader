@@ -3889,7 +3889,7 @@
   font-variant-numeric: tabular-nums;
 }
 .cl-name { font-weight: 400; }
-/* Amber ⚠ badge: shown on a legend row when some of the indicator's lines draw
+/* Amber ⚠ badge: shown on a positionend row when some of the indicator's lines draw
    nothing at the current timeframe (PREV_HL degenerate boundaries). It's an InfoTip
    trigger (a <button>), so reset the native button chrome to read as a bare icon. */
 .cl-warn {
@@ -5306,7 +5306,7 @@
 .pp-row.pp-hovered { background: var(--hover); }
 /* Symbol group — several positions on one instrument fold under a header row
    carrying their roll-up. The header is bolder and sits on a faint plate; its
-   legs are indented and read quieter so the roll-up is the headline. */
+   positions are indented and read quieter so the roll-up is the headline. */
 .pp-row.pp-group { font-weight: 600; background: color-mix(in srgb, var(--text) 3%, transparent); }
 .pp-row.pp-group:hover { background: var(--hover); }
 .pp-dir-mixed { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-dim) 50%, transparent); }
@@ -5323,8 +5323,8 @@
   margin-left: 6px; padding: 0 5px; border-radius: 8px; font-size: 10px; font-weight: 600;
   color: var(--text-dim); background: color-mix(in srgb, var(--text) 8%, transparent);
 }
-.pp-row.pp-leg .pp-c-sym { padding-left: 34px; font-weight: 500; color: var(--text-dim); }
-.pp-row.pp-leg { color: var(--text-dim); }
+.pp-row.pp-member .pp-c-sym { padding-left: 34px; font-weight: 500; color: var(--text-dim); }
+.pp-row.pp-member { color: var(--text-dim); }
 /* Selected (click-selected, sticky) — the strongest row state: a full-hue left
    border + a clear plate, mirroring the chart lines going solid. Sits above hover;
    distinct from the fainter focused/editing tints. */
@@ -5680,7 +5680,7 @@ span.bt-leg-long { color: var(--pos); }
 .bt-leg-short .bt-analysis-subrow-label,
 .bt-leg-short.bt-analysis-dist-split,
 span.bt-leg-short { color: var(--neg); }
-.bt-dur-hist-legs { display: flex; gap: 6px; align-items: flex-end; }
+.bt-dur-hist-positions { display: flex; gap: 6px; align-items: flex-end; }
 .bt-dur-hist-leggroup { display: flex; flex-direction: column; align-items: center; }
 .bt-dur-hist-leglabel { font-size: 0.7em; font-weight: 600; }
 .bt-leg-long.bt-dur-hist-leglabel { color: var(--pos); }
@@ -5726,7 +5726,7 @@ span.bt-leg-short { color: var(--neg); }
 
 /* BASELINES group: the null-signal and buy & hold reference runs, one row each,
    with the strategy's net-P&L delta in the last column. Same table idiom as the
-   leg breakdown above (hairline rows, right-aligned mono numerics). */
+   position breakdown above (hairline rows, right-aligned mono numerics). */
 .bt-baselines {
   width: auto; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums;
 }

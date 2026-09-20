@@ -340,7 +340,7 @@ export default function PositionsPanel({
 
   // Sorted view of the active tab. Nulls (no TP/SL/P&L/last/value/time) always sink
   // to the bottom regardless of direction, so missing values never crowd the top.
-  // Sortable fields shared by a leg and a group roll-up (a group has no TP/SL, so
+  // Sortable fields shared by a position and a group roll-up (a group has no TP/SL, so
   // sorting on those lists groups in their original order).
   type Sortable = Partial<Record<SortKey, string | number | null>>;
   const compare = (a: Sortable, b: Sortable) => {
@@ -355,7 +355,7 @@ export default function PositionsPanel({
   const sorted = rows.map(enrich).sort(compare);
   // Positions of one symbol sit together under a group header carrying their
   // roll-up (net size, average entry, total P&L, ...). Groups sort by their
-  // aggregate, legs by their own value; a lone position renders as a plain row.
+  // aggregate, positions by their own value; a lone position renders as a plain row.
   const groups: PositionGroup<RowExt>[] | null =
     tab === "positions" ? groupPositions(sorted).sort(compare) : null;
   const toggleGroup = (epic: string) =>
@@ -366,8 +366,8 @@ export default function PositionsPanel({
       return next;
     });
 
-  // One position / order row. `inGroup` legs sit under their symbol's header row.
-  const renderLeg = (t: RowExt, inGroup: boolean) => {
+  // One position / order row. `inGroup` positions sit under their symbol's header row.
+  const renderPosition = (t: RowExt, inGroup: boolean) => {
     const long = t.side === "buy";
     const isOrder = t.kind === "order";
     const linesHidden = hidden.includes(t.id);
@@ -375,7 +375,7 @@ export default function PositionsPanel({
     const isFocused = focusedEpic != null && t.epic === focusedEpic;
     return (
       <tr
-        className={`pp-row pp-dir-${long ? "long" : "short"}${inGroup ? " pp-leg" : ""}${
+        className={`pp-row pp-dir-${long ? "long" : "short"}${inGroup ? " pp-member" : ""}${
           editId === t.id ? " pp-editing" : ""
         }${isFocused ? " pp-focused" : ""}${
           selectedId === t.id ? " pp-selected" : ""
@@ -683,10 +683,10 @@ export default function PositionsPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {groups == null ? sorted.map((t) => renderLeg(t, false)) : groups.flatMap((g) => {
+                  {groups == null ? sorted.map((t) => renderPosition(t, false)) : groups.flatMap((g) => {
                     // A lone position is a plain row; several under one symbol get a
-                    // header row with the roll-up and (optionally folded) legs beneath.
-                    if (g.legs.length < 2) return g.legs.map((t) => renderLeg(t, false));
+                    // header row with the roll-up and (optionally folded) positions beneath.
+                    if (g.positions.length < 2) return g.positions.map((t) => renderPosition(t, false));
                     const folded = collapsedGroups.has(g.epic);
                     const isFocused = focusedEpic != null && g.epic === focusedEpic;
                     const dir = g.side === "buy" ? "long" : g.side === "sell" ? "short" : "mixed";
@@ -711,7 +711,7 @@ export default function PositionsPanel({
                             <span className="pp-group-chevron" aria-hidden="true">›</span>
                           </button>
                           {g.epic}
-                          <span className="pp-group-count">{g.legs.length}</span>
+                          <span className="pp-group-count">{g.positions.length}</span>
                         </td>
                         <td className={`pp-c-side ${g.side === "buy" ? "pp-side-long" : g.side === "sell" ? "pp-side-short" : "pp-side-mixed"}`}>
                           {g.side === "buy" ? "Long" : g.side === "sell" ? "Short" : "Mixed"}
@@ -743,7 +743,7 @@ export default function PositionsPanel({
                         <td className="pp-c-act" />
                       </tr>
                     );
-                    return folded ? [header] : [header, ...g.legs.map((t) => renderLeg(t, true))];
+                    return folded ? [header] : [header, ...g.positions.map((t) => renderPosition(t, true))];
                   })}
                 </tbody>
               </table>

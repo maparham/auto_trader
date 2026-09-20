@@ -3,7 +3,7 @@
 // average entry, summed P&L / notionals / margin, notional-weighted P&L %). Pure so
 // the roll-up is unit-testable apart from the table.
 
-export interface GroupLeg {
+export interface GroupPosition {
   epic: string;
   side: "buy" | "sell";
   quantity: number;
@@ -18,31 +18,31 @@ export interface GroupLeg {
   openedAt: number | null;
 }
 
-export interface PositionGroup<T extends GroupLeg> {
+export interface PositionGroup<T extends GroupPosition> {
   epic: string;
-  legs: T[];
-  /** Net direction: "mixed" when the legs hedge each other. */
+  positions: T[];
+  /** Net direction: "mixed" when the positions hedge each other. */
   side: "buy" | "sell" | "mixed";
-  /** Absolute net size across the legs. */
+  /** Absolute net size across the positions. */
   quantity: number;
-  /** Size-weighted average entry across every leg. */
+  /** Size-weighted average entry across every pos. */
   priceLevel: number;
   last: number | null;
   upnl: number | null;
-  /** Trade-value-weighted mean of the legs' P&L % (null when no leg has one). */
+  /** Trade-value-weighted mean of the positions' P&L % (null when no position has one). */
   pnlPct: number | null;
   tradeValue: number;
   marketValue: number | null;
-  /** The shared leverage, or null when the legs differ. */
+  /** The shared leverage, or null when the positions differ. */
   leverage: number | null;
   margin: number;
-  /** Earliest open time across the legs. */
+  /** Earliest open time across the positions. */
   openedAt: number | null;
 }
 
-/** Roll `legs` (all the same epic) up into one group. */
-export function aggregateLegs<T extends GroupLeg>(legs: T[]): PositionGroup<T> {
-  const epic = legs[0]?.epic ?? "";
+/** Roll `positions` (all the same epic) up into one group. */
+export function aggregatePositions<T extends GroupPosition>(positions: T[]): PositionGroup<T> {
+  const epic = positions[0]?.epic ?? "";
   let signed = 0;
   let size = 0;
   let entryWeighted = 0;
@@ -55,7 +55,7 @@ export function aggregateLegs<T extends GroupLeg>(legs: T[]): PositionGroup<T> {
   let openedAt: number | null = null;
   let hasBuy = false;
   let hasSell = false;
-  for (const l of legs) {
+  for (const l of positions) {
     const s = l.side === "buy" ? 1 : -1;
     if (l.side === "buy") hasBuy = true;
     else hasSell = true;
@@ -72,14 +72,14 @@ export function aggregateLegs<T extends GroupLeg>(legs: T[]): PositionGroup<T> {
     }
     if (l.openedAt != null && (openedAt == null || l.openedAt < openedAt)) openedAt = l.openedAt;
   }
-  const leverage = legs.every((l) => l.leverage === legs[0].leverage) ? legs[0].leverage : null;
+  const leverage = positions.every((l) => l.leverage === positions[0].leverage) ? positions[0].leverage : null;
   return {
     epic,
-    legs,
+    positions,
     side: hasBuy && hasSell ? "mixed" : hasBuy ? "buy" : "sell",
     quantity: Math.abs(signed),
     priceLevel: size > 0 ? entryWeighted / size : 0,
-    last: legs.find((l) => l.last != null)?.last ?? null,
+    last: positions.find((l) => l.last != null)?.last ?? null,
     upnl,
     pnlPct: pctWeight > 0 ? pctWeighted / pctWeight : null,
     tradeValue,
@@ -90,13 +90,13 @@ export function aggregateLegs<T extends GroupLeg>(legs: T[]): PositionGroup<T> {
   };
 }
 
-/** Group `legs` by epic, preserving first-appearance order of both groups and legs. */
-export function groupPositions<T extends GroupLeg>(legs: T[]): PositionGroup<T>[] {
+/** Group `positions` by epic, preserving first-appearance order of both groups and positions. */
+export function groupPositions<T extends GroupPosition>(positions: T[]): PositionGroup<T>[] {
   const byEpic = new Map<string, T[]>();
-  for (const l of legs) {
+  for (const l of positions) {
     const list = byEpic.get(l.epic);
     if (list) list.push(l);
     else byEpic.set(l.epic, [l]);
   }
-  return [...byEpic.values()].map(aggregateLegs);
+  return [...byEpic.values()].map(aggregatePositions);
 }
