@@ -225,6 +225,8 @@ function draw(
     },
     measureText: (t: string) => ({ width: t.length * 6 }),
     fillText: () => {},
+    strokeText: () => {},
+    // Touch rings only (radius TL_TOUCH_RADIUS); the crossing dot is wider.
     arc: (x: number, y: number, r: number) => {
       if (r === 2) rings.push({ x, y });
     },

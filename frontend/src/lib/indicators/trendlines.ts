@@ -1694,13 +1694,12 @@ export const TL_HANDLE_RADIUS = 3;
 /** The hollow ring at a touch: a touch is price respecting the line, and this
  * marks each bar that earned the ×N tag. */
 export const TL_TOUCH_RADIUS = 2;
-/** Half-arm of the crossing mark: a × ON the line at the crossing bar. A ring
- * there would read as a touch, so it is the one shape a touch is not. It sits
- * on a candle body by definition (the close crossed here), so it is larger
- * and heavier than the 1px ring or a 3px × vanished against the body. */
-export const TL_CROSS_ARM = 4;
-/** Stroke of the crossing ×, heavier than the line for the same reason. */
-export const TL_CROSS_STROKE = 2;
+/** Radius of the crossing mark: a FILLED dot ON the line at the crossing bar,
+ * in the line's own color. A hollow ring there would read as a touch, so the
+ * fill is what tells the two apart. It sits on a candle body by definition
+ * (the close crossed here), so it is larger than the 1px touch ring: a thin
+ * × vanished against the body. */
+export const TL_CROSS_RADIUS = 3;
 export const TL_HANDLE_HIT = 8;
 /** The pivot mark: an arrow pointing AT price (UP under a low, DOWN over a
  * high), sitting this many pixels clear of the wick with arms this long. An
@@ -2712,15 +2711,14 @@ function drawTrendlines(
       ctx.arc(xT, yT, TL_TOUCH_RADIUS, 0, Math.PI * 2);
       ctx.stroke();
     }
-    // Crossing marks: a × on the line at each bar whose close changed side.
+    // Crossing marks: a filled dot on the line at each bar whose close changed side.
     // Same cull as the rings; under a coarser pin the mark sits on the chart
     // candle that first closed across, not the HTF close (crossingChartIdx).
     // Walking back from the HTF close keeps the mark ON the drawn line only
     // while the segment reaches that far, so onSegment is asked as for a ring.
     if (showCrossings) {
       ctx.save();
-      ctx.lineWidth = TL_CROSS_STROKE;
-      ctx.lineCap = "round";
+      ctx.fillStyle = lineColor;
       // Full strength even on a dimmed line: the mark is an event, and
       // dimming is about the line's standing, not whether the event happened.
       ctx.globalAlpha = 1;
@@ -2738,11 +2736,8 @@ function drawTrendlines(
         if (xC < 0 || xC > Math.min(tagRight, x1) || yC < 0 || yC > bounding.height)
           continue;
         ctx.beginPath();
-        ctx.moveTo(xC - TL_CROSS_ARM, yC - TL_CROSS_ARM);
-        ctx.lineTo(xC + TL_CROSS_ARM, yC + TL_CROSS_ARM);
-        ctx.moveTo(xC - TL_CROSS_ARM, yC + TL_CROSS_ARM);
-        ctx.lineTo(xC + TL_CROSS_ARM, yC - TL_CROSS_ARM);
-        ctx.stroke();
+        ctx.arc(xC, yC, TL_CROSS_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
       }
       ctx.restore();
     }
