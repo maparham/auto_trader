@@ -39,6 +39,7 @@ import {
   selectDrawnLines,
   eligibleLines,
   mergeLines,
+  selectLevels,
   mergeTolerance,
   maxDistanceTol,
   sameTrend,
@@ -1063,24 +1064,58 @@ describe("selectDrawnLines", () => {
   it("keeps a pinned line whatever its rank", () => {
     expect(selectDrawnLines(lines, 50, 79, 1, { tol: 0, keep: new Set([weak]) })).toEqual([strong, weak]);
   });
-  // MONOTONE IN THE MERGE TOLERANCE. Under a per-pivot cap the two cuts
-  // used to share one walk: widening the tolerance merged B away, which
-  // freed bar 10, which let C in, which filled bar 60, which cut D, a line
-  // within tolerance of nothing. Cap first, then merge, and D stays.
+  // MONOTONE IN THE MERGE TOLERANCE. The cap reads a FIXED per-bar ordering,
+  // so removing a line can only move the rest UP their bars' orderings.
+  // Widening the tolerance therefore removes the twin it targets and nothing
+  // else: D, which shares no bar with the twin, does not move.
   it("widening the merge tolerance never removes a line that is not near a kept one", () => {
     const a = mk(0, 40, 100, 100, 5);
     const bTwin = mk(10, 50, 100.2, 100.2, 4);
     const c = mk(10, 60, 80, 80, 3);
-    const d = mk(60, 90, 70, 70, 2);
+    const d = mk(70, 90, 70, 70, 2);
     const ranked = [a, bTwin, c, d];
-    expect(mergeLines(ranked, 100, 0, undefined, Infinity, 1)).toEqual([a, bTwin, d]);
-    expect(mergeLines(ranked, 100, 1, undefined, Infinity, 1)).toEqual([a, d]);
+    // C is second at bar 10, so a cap of 1 drops it; A, its twin and D pass.
+    expect(selectLevels(ranked, 100, 0, 1)).toEqual([a, bTwin, d]);
+    expect(selectLevels(ranked, 100, 1, 1)).toEqual([a, d]);
   });
-  // THE CAP SETTLES ON RANK, NOT ON THE GATED SET. Cap 1 per pivot; A (bars
-  // 0,40) outranks C (40,60) which outranks D (60,90). Gated first, tightening
-  // Max Distance so A is out let C take bar 40, then bar 60, and D vanished
-  // from a setting that never concerned it. Cap first: A blocks C for good,
-  // D stays, and the gate removes only A.
+  // RELAXING THE CAP ONLY EVER ADDS. The greedy tally it replaced was not
+  // monotone: L5 below survives a cap of 1 and is lost at a cap of 2, because
+  // L2 and L4, both capped out at 1, jointly fill bar 60 at 2.
+  it("raising the per-pivot cap never removes a level", () => {
+    const l1 = mk(0, 40, 100, 100, 5);
+    const l2 = mk(0, 60, 90, 90, 4);
+    const l3 = mk(10, 50, 80, 80, 3);
+    const l4 = mk(10, 60, 70, 70, 2);
+    const l5 = mk(60, 90, 60, 60, 2);
+    const ranked = [l1, l2, l3, l4, l5];
+    const one = selectLevels(ranked, 100, 0, 1);
+    const two = selectLevels(ranked, 100, 0, 2);
+    const three = selectLevels(ranked, 100, 0, 3);
+    // The greedy tally kept L1, L3, L5 at 1 and lost L5 at 2, because L2 and
+    // L4 (both capped out at 1) jointly filled bar 60. Under the top-N test
+    // L5 is third at bar 60 at every cap below 3, so it is never taken away.
+    expect(one).toEqual([l1, l3]);
+    expect(two).toEqual([l1, l2, l3, l4]);
+    expect(three).toEqual([l1, l2, l3, l4, l5]);
+    for (const line of one) expect(two).toContain(line);
+    for (const line of two) expect(three).toContain(line);
+  });
+  // A LEVEL IS A MERGE GROUP AND IT STANDS IN FOR ITS BEST MEMBER. `best`
+  // outranks `standIn` and they are the same level, but `best` is third at
+  // bar 20 and capped out at 2. Capping the merge winners alone would delete
+  // the level outright; the group draws through `standIn` instead.
+  it("a level whose best member is capped out draws through a weaker member", () => {
+    const x1 = mk(20, 40, 50, 50, 5);
+    const x2 = mk(20, 50, 40, 40, 4);
+    const best = mk(20, 60, 100, 100, 3);
+    const standIn = mk(30, 70, 100.2, 100.2, 2);
+    const ranked = [x1, x2, best, standIn];
+    expect(selectLevels(ranked, 100, 1, 2)).toEqual([x1, x2, standIn]);
+    // Room for `best` at bar 20: the level upgrades in place, nothing is lost.
+    expect(selectLevels(ranked, 100, 1, 3)).toEqual([x1, x2, best]);
+  });
+  // NOTHING INVISIBLE HOLDS A SLOT. The gates run BEFORE the cap, so a line
+  // the pane will not draw is not a candidate and takes no position.
   it("a stale line does not hold its pivots' slots against a drawable one", () => {
     // Cap 1 per pivot. A (bars 0,40) outranks D (40,90) and shares bar 40,
     // but A's last touch is past Max Projection at bar 150: never drawn.
@@ -1089,22 +1124,29 @@ describe("selectDrawnLines", () => {
     const a = mk(0, 40, 100, 100, 5);
     const d = mk(40, 90, 101, 101, 2);
     const c = cfg({ maxPerPivot: 1, maxProjBars: 100 });
-    expect(eligibleLines([d, a], 150, 100, 1, c)).toEqual([d]);
-    expect(eligibleLines([d, a], 100, 100, 1, c)).toEqual([a]);
+    const stale = eligibleLines([d, a], 150, 100, 1, c);
+    expect(stale).toEqual([d]);
+    expect(selectLevels(stale, 150, 0, 1)).toEqual([d]);
+    const live = eligibleLines([d, a], 100, 100, 1, c);
+    expect(live).toEqual([a, d]);
+    expect(selectLevels(live, 100, 0, 1)).toEqual([a]);
   });
   it("tightening Max Distance never cuts an in-range line through the per-pivot cap", () => {
     // Cap 1 per pivot; A (bars 0,40) outranks C (40,60) which outranks D
-    // (60,90). Distance gated first, the cap cascaded: with A cut as far
-    // from price, C got bar 40, took bar 60, and D vanished though it sits a
-    // point from price. Capped first, A blocks C whether or not A is shown,
-    // and the cut removes only A.
+    // (60,90). A is 50 points from price. Tightening the cut onto A frees bar
+    // 40 and lets C through: an addition, never an eviction of a line the cut
+    // never concerned.
     const a = mk(0, 40, 150, 150, 5);
     const c = mk(40, 60, 100, 100, 3);
     const d = mk(60, 90, 101, 101, 2);
     const pool = [d, c, a];
     const wide = cfg({ maxPerPivot: 1, maxDistAtr: 0 });
-    expect(eligibleLines(pool, 100, 100, 1, wide)).toEqual([a, d]);
-    expect(eligibleLines(pool, 100, 100, 1, { ...wide, maxDistAtr: 2 })).toEqual([d]);
+    const widePool = eligibleLines(pool, 100, 100, 1, wide);
+    expect(widePool).toEqual([a, c, d]);
+    expect(selectLevels(widePool, 100, 0, 1)).toEqual([a]);
+    const tightPool = eligibleLines(pool, 100, 100, 1, { ...wide, maxDistAtr: 2 });
+    expect(tightPool).toEqual([c, d]);
+    expect(selectLevels(tightPool, 100, 0, 1)).toEqual([c]);
   });
   it("merges near-twins through a shared pivot before the budget", () => {
     const twin = { ...mid, i1: 0, p1: 90, i2: 40, p2: 90.5, touches: 3 };

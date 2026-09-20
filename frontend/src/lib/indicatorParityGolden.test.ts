@@ -152,6 +152,12 @@ describe("indicator parity golden fixture", () => {
       GAP0: { touchMult: 0 },
       PIERCE: { pierceMult: 1.0 },
       BACK: { minBackBars: 10 },
+      // The per-pivot cap and the merge, which decide LEVELS rather than
+      // lines: both ports must group and position identically.
+      PERPIVOT: { maxPerPivot: 1 },
+      PERPIVOT2: { maxPerPivot: 2 },
+      MERGE: { mergeAtr: 1 },
+      MERGE_CAP: { mergeAtr: 1, maxPerPivot: 2 },
     };
     const tlVariantSeries: Record<string, Array<number | null>> = {};
     for (const [name, patch] of Object.entries(TL_VARIANTS)) {

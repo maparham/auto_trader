@@ -1100,7 +1100,8 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         default: TL.maxPerPivot,
         unbounded: true,
         tip: [
-          "Where more lines than this pass through one swing, keeps the strongest ones.",
+          "At each swing, keeps only its strongest lines: a line must rank this high at every swing it runs through.",
+          "Raising it only ever adds lines. Near-identical lines count as one.",
           "A line removed here leaves the chart and stops reporting to rules. Empty: off.",
         ],
       },

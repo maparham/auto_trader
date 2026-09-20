@@ -254,7 +254,7 @@ def merge_tolerance(cfg: TrendlinesConfig, atr_i: float | None, close: float) ->
     """Mirrors TS mergeTolerance: the tighter of merge_atr x ATR and
     merge_pct % of the close, each skipped at 0 (the ATR half while
     unwarmed); 0 (off) when neither is on. The per-pivot cap is a separate
-    merge_lines argument."""
+    select_levels argument."""
     tol = math.inf
     if cfg.merge_atr > 0 and atr_i is not None and math.isfinite(atr_i):
         tol = cfg.merge_atr * atr_i
@@ -275,39 +275,99 @@ def same_trend(a: TrendLine, b: TrendLine, at_idx: int, tol: float) -> bool:
     )
 
 
+def bar_positions(candidates: list[TrendLine]) -> dict[int, dict[int, int]]:
+    """Mirrors TS barPositions: for every bar, the 1-based position of each
+    candidate line through it, in the rank order `candidates` already carries.
+    Keyed by id(line) because TrendLine is not hashable by identity here.
+    First write wins, so a bar named twice in touch_idxs cannot push a line
+    down its own ordering."""
+    pos: dict[int, dict[int, int]] = {}
+    for line in candidates:
+        for b in line.touch_idxs:
+            m = pos.setdefault(b, {})
+            if id(line) not in m:
+                m[id(line)] = len(m) + 1
+    return pos
+
+
+def within_pivot_cap(
+    line: TrendLine, pos: dict[int, dict[int, int]], max_per_pivot: int
+) -> bool:
+    """Mirrors TS withinPivotCap: inside the top max_per_pivot at EVERY bar
+    the line runs through (anchor or touch), 0 = off. Its worst bar decides
+    it, and a position in a fixed per-bar ordering cannot move when the cap
+    changes, so raising the cap only ever admits more lines."""
+    if max_per_pivot < 1:
+        return True
+    return all(
+        pos.get(b, {}).get(id(line), 1) <= max_per_pivot for b in line.touch_idxs
+    )
+
+
 def cap_per_pivot(ranked: list[TrendLine], max_per_pivot: int) -> list[TrendLine]:
-    """Mirrors TS capPerPivot (no pin exemption: pins are draw-time UI).
-    Walks rank order and drops a line once max_per_pivot kept lines already
-    run through one of its bars (anchor or touch: touch_idxs); 0 = off."""
+    """Mirrors TS capPerPivot (no pin exemption: pins are draw-time UI)."""
     if max_per_pivot < 1:
         return ranked
-    out: list[TrendLine] = []
-    per_bar: dict[int, int] = {}
-    for line in ranked:
-        if any(per_bar.get(b, 0) >= max_per_pivot for b in line.touch_idxs):
-            continue
-        out.append(line)
-        for b in line.touch_idxs:
-            per_bar[b] = per_bar.get(b, 0) + 1
-    return out
+    pos = bar_positions(ranked)
+    return [line for line in ranked if within_pivot_cap(line, pos, max_per_pivot)]
 
 
 def eligible_lines(
     pool: list[TrendLine], i: int, close: float, atr_i: float | None, cfg: TrendlinesConfig
 ) -> list[TrendLine]:
-    """Mirrors TS eligibleLines: the live majors in rank order, cut by the
-    per-pivot cap, THEN gated by Max Distance. is_major is about the line
-    itself, so a line it refuses must not hold its pivots' slots; Max
-    Distance is a per-bar visibility cut and runs after the cap so that
-    tightening it, like the merge, can only remove the lines it targets."""
+    """Mirrors TS eligibleLines: the live majors in rank order, gated by Max
+    Distance. NOTHING INVISIBLE TAKES PART: both cuts run before the cap, so
+    a line the pane will not draw cannot hold a pivot's slot against one it
+    will."""
     majors = sorted(
         (line for line in pool if is_live(line, i, cfg) and is_major(line, i, cfg)), key=rank_key
     )
-    capped = cap_per_pivot(majors, cfg.max_per_pivot)
     dist_tol = max_distance_tol(cfg, atr_i, close)
     if dist_tol == math.inf:
-        return capped
-    return [line for line in capped if within_distance(line, i, close, dist_tol)]
+        return majors
+    return [line for line in majors if within_distance(line, i, close, dist_tol)]
+
+
+def select_levels(
+    candidates: list[TrendLine],
+    at_idx: int,
+    tol: float,
+    max_per_pivot: int,
+    limit: float = math.inf,
+) -> list[TrendLine]:
+    """Mirrors TS selectLevels, without the pin half (pins are draw-time UI).
+
+    A LEVEL IS A MERGE GROUP, not a line: lines showing the same trend
+    (same_trend at tol) are one level drawn from different anchors, and a
+    level holds ONE slot per bar. The group is drawn when ANY member clears
+    the cap, and the member drawn is the best one that does, so a level whose
+    strongest version is crowded out still shows through a weaker one instead
+    of vanishing. Every group picks its rep BEFORE `limit` truncates, since a
+    late group's rep can outrank an earlier group's."""
+    pos = bar_positions(candidates)
+    groups: list[list[TrendLine]] = []
+    proj: list[float] = []
+    for line in candidates:
+        p = project_at(line, at_idx)
+        at = -1
+        if tol > 0:
+            for idx, g in enumerate(groups):
+                if abs(proj[idx] - p) <= tol and same_trend(g[0], line, at_idx, tol):
+                    at = idx
+                    break
+        if at >= 0:
+            groups[at].append(line)
+        else:
+            groups.append([line])
+            proj.append(p)
+    out: list[TrendLine] = []
+    for g in groups:
+        for line in g:
+            if within_pivot_cap(line, pos, max_per_pivot):
+                out.append(line)
+                break
+    out.sort(key=rank_key)
+    return out[: int(limit)] if len(out) > limit else out
 
 
 def merge_lines(
@@ -315,37 +375,13 @@ def merge_lines(
     at_idx: int,
     tol: float,
     limit: float = math.inf,
-    max_per_pivot: int = 0,
 ) -> list[TrendLine]:
-    """Mirrors TS mergeLines (no pin exemption here: pins are draw-time UI).
-    Two passes, cap first: under max_per_pivot (0 = off) a line that runs
-    through a bar (anchor or touch: touch_idxs) already holding that many
-    higher-ranked lines goes, whatever the tolerance; then the survivors are
-    walked in rank order, dropping any that shows the same trend as a kept one
-    (same_trend at tol), stopping at `limit`. Cap first so a wider tolerance
-    can only remove a line that is within it of a kept one and never, by
-    freeing a twin's pivot tallies, let lower-ranked lines in to crowd out an
-    unrelated one."""
-    capped = max_per_pivot >= 1
-    if not tol > 0 and not capped:
-        return ranked
-    cap_set = cap_per_pivot(ranked, max_per_pivot) if capped else ranked
+    """Mirrors TS mergeLines: select_levels with the cap off. Two lines are
+    one when they show the same trend (same_trend at tol), whether or not
+    they share a pivot; a merged-away line emits nothing."""
     if not tol > 0:
-        return cap_set[: int(limit)] if len(cap_set) > limit else cap_set
-    out: list[TrendLine] = []
-    proj: list[float] = []
-    for line in cap_set:
-        if len(out) >= limit:
-            break
-        p = project_at(line, at_idx)
-        twin = any(
-            abs(proj[idx] - p) <= tol and same_trend(k, line, at_idx, tol)
-            for idx, k in enumerate(out)
-        )
-        if not twin:
-            out.append(line)
-            proj.append(p)
-    return out
+        return ranked[: int(limit)] if len(ranked) > limit else ranked
+    return select_levels(ranked, at_idx, tol, 0, limit)
 
 
 def max_distance_tol(cfg: TrendlinesConfig, atr_i: float | None, close: float) -> float:
@@ -778,14 +814,16 @@ def compute_trendlines(
                 lines.sort(key=lambda line: (over_ceilings(line, cfg), survival_key(line)))
                 lines = lines[:cap]
 
-        # 4. Emit eligible_lines (rank, per-pivot cap, THEN Max Distance and
-        #    the major gates), MERGED at this bar's tolerance (the pass the
+        # 4. Emit eligible_lines (rank, the major gates and Max Distance),
+        #    then select_levels at this bar's tolerance and cap (the pass the
         #    draw path runs), cut to max_lines; tl_nearest is the nearest
         #    AMONG THOSE. A line not on the chart reports nothing.
         close = closes[i]
         point: dict[str, float] = {}
         majors = eligible_lines(lines, i, close, a, cfg)
-        drawn = merge_lines(majors, i, merge_tolerance(cfg, a, close), cfg.max_lines, 0)
+        drawn = select_levels(
+            majors, i, merge_tolerance(cfg, a, close), cfg.max_per_pivot, cfg.max_lines
+        )
         nearest_v = 0.0
         nearest_d = math.inf
         shown = min(len(drawn), cfg.max_lines)

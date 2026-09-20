@@ -144,6 +144,10 @@ _TL_VARIANTS = {
     "GAP0": dict(touch_mult=0.0),
     "PIERCE": dict(pierce_mult=1.0),
     "BACK": dict(min_back_bars=10),
+    "PERPIVOT": dict(max_per_pivot=1),
+    "PERPIVOT2": dict(max_per_pivot=2),
+    "MERGE": dict(merge_atr=1),
+    "MERGE_CAP": dict(merge_atr=1, max_per_pivot=2),
 }
 
 

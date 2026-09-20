@@ -29,6 +29,7 @@ from auto_trader.indicators.trendlines import (
     touch_weight,
     is_major,
     eligible_lines,
+    select_levels,
     merge_lines,
     over_ceilings,
     parse_trendlines_config,
@@ -576,21 +577,23 @@ def test_merge_is_about_the_same_trend_not_a_shared_pivot():
     assert merge_lines([a, parallel, crossing], 100, 1.0) == [a, crossing]
     # One per pivot ignores distance and asks only about a shared pivot.
     twin = replace_line(a, i1=0, p1=90.0, i2=50, p2=99.0, touch_idxs=[0, 50])
-    assert merge_lines([a, twin, parallel], 100, 0.0, math.inf, 1) == [a, parallel]
+    assert select_levels([a, twin, parallel], 100, 0.0, 1) == [a, parallel]
 
 
 def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
-    """Mirrors the TS test: under a per-pivot cap the merge and the cap used
-    to share one walk, so merging B away freed bar 10, let C in, which filled
-    bar 60 and cut D. Cap first, then merge, and D stays."""
+    """Mirrors the TS test: the cap reads a FIXED per-bar ordering, so
+    widening the merge can only remove the twin it targets. D, which shares no
+    bar with the twin, is untouched."""
     def mk(i1, i2, p, touches):
         return TrendLine(i1=i1, p1=p, k1="low", i2=i2, p2=p, k2="low", touches=touches,
                          last_touch_idx=i2, crossings=0, last_sign=0, max_touch_gap=i2 - i1,
                          min_touch_gap=i2 - i1, max_touch_idx=i2, touch_idxs=[i1, i2])
-    a, b_twin, c, d = mk(0, 40, 100.0, 5), mk(10, 50, 100.2, 4), mk(10, 60, 80.0, 3), mk(60, 90, 70.0, 2)
+    a, b_twin, c, d = mk(0, 40, 100.0, 5), mk(10, 50, 100.2, 4), mk(10, 60, 80.0, 3), mk(70, 90, 70.0, 2)
     ranked = [a, b_twin, c, d]
-    assert merge_lines(ranked, 100, 0.0, math.inf, 1) == [a, b_twin, d]
-    assert merge_lines(ranked, 100, 1.0, math.inf, 1) == [a, d]
+    # C is second at bar 10 and out at a cap of 1; A, its twin and D pass.
+    assert select_levels(ranked, 100, 0.0, 1) == [a, b_twin, d]
+    # Widening folds the twin into A. D never moves.
+    assert select_levels(ranked, 100, 1.0, 1) == [a, d]
 
 
 def _cap_line(i1, i2, p, touches):
@@ -605,20 +608,30 @@ def test_a_stale_line_does_not_hold_its_pivot_slots_against_a_drawable_one():
     is_major, A held bar 40 and D vanished."""
     a, d = _cap_line(0, 40, 100.0, 5), _cap_line(40, 90, 101.0, 2)
     c = cfg(max_per_pivot=1, max_proj_bars=100, min_span_bars=5)
-    assert eligible_lines([d, a], 150, 100.0, 1.0, c) == [d]
-    assert eligible_lines([d, a], 100, 100.0, 1.0, c) == [a]
+    # Past Max Projection A is not a candidate at all, so it holds no slot.
+    stale = eligible_lines([d, a], 150, 100.0, 1.0, c)
+    assert stale == [d]
+    assert select_levels(stale, 150, 0.0, 1) == [d]
+    live = eligible_lines([d, a], 100, 100.0, 1.0, c)
+    assert live == [a, d]
+    assert select_levels(live, 100, 0.0, 1) == [a]
 
 
 def test_tightening_max_distance_never_cuts_an_in_range_line_through_the_cap():
     """Mirrors the TS test. Cap 1 per pivot; A (0,40) outranks C (40,60)
-    which outranks D (60,90). Distance gated first, the cap cascaded: A cut
-    as far, C took bars 40 and 60, D vanished a point from price. Capped
-    first, A blocks C shown or not, and the cut removes only A."""
+    which outranks D (60,90). Max Distance now runs BEFORE the cap, so a far
+    line holds no slot: tightening the cut onto A can only free bar 40 and let
+    C through, never evict a line the cut never concerned."""
     a, c, d = _cap_line(0, 40, 150.0, 5), _cap_line(40, 60, 100.0, 3), _cap_line(60, 90, 101.0, 2)
     pool = [d, c, a]
     wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5)
-    assert eligible_lines(pool, 100, 100.0, 1.0, wide) == [a, d]
-    assert eligible_lines(pool, 100, 100.0, 1.0, replace(wide, max_dist_atr=2)) == [d]
+    wide_pool = eligible_lines(pool, 100, 100.0, 1.0, wide)
+    assert wide_pool == [a, c, d]
+    assert select_levels(wide_pool, 100, 0.0, 1) == [a]
+    tight_pool = eligible_lines(pool, 100, 100.0, 1.0, replace(wide, max_dist_atr=2))
+    assert tight_pool == [c, d]
+    # A gone frees bar 40, so C comes through. Nothing that was drawn is lost.
+    assert select_levels(tight_pool, 100, 0.0, 1) == [c]
 
 
 def replace_line(line: TrendLine, **over) -> TrendLine:
