@@ -275,12 +275,14 @@ describe("TRENDLINES on DXY monthly", () => {
     const three = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 3 }).points;
     const differing = two.filter((p, i) => JSON.stringify(p) !== JSON.stringify(three[i]));
     expect(differing).toHaveLength(422);
-    // A named bar, so a drift is diagnosable rather than just red: at 1995-03
+    // A named bar, so a drift is diagnosable rather than just red: at 1991-07
     // the third drawn line is the nearest, and tl_nearest reads only the
-    // drawn set, so the two-line pane reports a farther line there.
-    expect(month(bars[112].timestamp)).toBe("1995-03");
-    expect(two[112].tl_nearest).toBeCloseTo(96.327, 3);
-    expect(three[112].tl_nearest).toBeCloseTo(70.29, 3);
+    // drawn set, so the two-line pane reports a farther line there. (127
+    // bars differ in tl_nearest; this is the first of them.)
+    expect(month(bars[68].timestamp)).toBe("1991-07");
+    expect(two[68].tl_nearest).toBeCloseTo(77.792, 3);
+    expect(three[68].tl_3).toBeCloseTo(78.475, 3);
+    expect(three[68].tl_nearest).toBeCloseTo(78.475, 3);
   });
 
   // The invariant that lets the seed loop carry no duplicate check: a line is

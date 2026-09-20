@@ -17,7 +17,9 @@ const month = (t: number): string => new Date(t).toISOString().slice(0, 7);
 // minSwingAtr 2.6 (down from 3), because the 2025-11-03 low's leg against the
 // prior 2025-09 high is 0.04499, only 2.62x atr[k] (0.01716); at 3 it never
 // enters the pivot pool at all.
-const CFG = { ...TRENDLINES_DEFAULTS, pivotLen: 4, minSwingAtr: 2.6, maxLines: 9 };
+// Merge off: the pins below name a rank slot, and the shipped quarter-ATR
+// merge (added later) folds neighbours and renumbers the slots.
+const CFG = { ...TRENDLINES_DEFAULTS, pivotLen: 4, minSwingAtr: 2.6, maxLines: 9, mergeAtr: 0 };
 
 describe("TRENDLINES on EURUSD weekly", () => {
   it("has the fixture it expects", () => {
