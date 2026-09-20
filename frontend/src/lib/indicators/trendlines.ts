@@ -1427,32 +1427,48 @@ export function mergeLines(
   tol: number,
   keep?: ReadonlySet<TrendLine>,
   /** Stop once this many survivors are in: the emit step needs only the
-   * first maxLines, and the walk is quadratic in what it keeps. */
+   * first maxLines, and the merge walk is quadratic in what it keeps. */
   limit = Infinity,
   /** Max lines per pivot; 0 = no cap. */
   maxPerPivot = 0,
 ): TrendLine[] {
   const capped = maxPerPivot >= 1;
   if (!(tol > 0) && !capped) return ranked;
+  // TWO PASSES, CAP FIRST, so the two cuts cannot feed each other. In one
+  // walk a wider merge tolerance removed a twin, which freed that twin's
+  // pivot tallies, which let two lower-ranked lines in, which filled a bar
+  // that a line NOBODY merged then ran through: raising "Merge Lines
+  // within" made an unrelated line vanish (BTCUSD 1D, the 2026-06-05 line at
+  // 0.25 ATR under a cap of 3). With the cap settled on the ranked list
+  // alone, the merge tolerance can only ever remove a line that is within
+  // tolerance of a kept one, and the cap's outcome never depends on it.
+  // The price is that a twin still counts toward its bars' tallies.
+  let capSet = ranked;
+  if (capped) {
+    capSet = [];
+    // Kept lines through each bar, anchors and touches alike.
+    const perBar = new Map<number, number>();
+    for (const line of ranked) {
+      // PINNED LINES ONLY are exempt. A pin is stored by lineKey and its only
+      // control is the handle painted at the line's end, so cutting a pinned
+      // line would leave a pin with nothing to click.
+      if (!keep?.has(line) && line.touchIdxs.some((b) => (perBar.get(b) ?? 0) >= maxPerPivot)) continue;
+      capSet.push(line);
+      for (const b of line.touchIdxs) perBar.set(b, (perBar.get(b) ?? 0) + 1);
+    }
+  }
+  if (!(tol > 0)) return capSet.length > limit ? capSet.slice(0, limit) : capSet;
   const out: TrendLine[] = [];
   const proj: number[] = [];
-  // Kept lines through each bar, anchors and touches alike.
-  const perBar = new Map<number, number>();
-  for (const line of ranked) {
+  for (const line of capSet) {
     if (out.length >= limit) break;
     const p = projectAt(line, atIdx);
-    // PINNED LINES ONLY are exempt. A pin is stored by lineKey and its only
-    // control is the handle painted at the line's end, so merging a pinned
-    // line away would leave a pin with nothing to click.
     const twin =
       !keep?.has(line) &&
-      ((tol > 0 &&
-        out.some((k, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(k, line, atIdx, tol))) ||
-        (capped && line.touchIdxs.some((b) => (perBar.get(b) ?? 0) >= maxPerPivot)));
+      out.some((k, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(k, line, atIdx, tol));
     if (!twin) {
       out.push(line);
       proj.push(p);
-      if (capped) for (const b of line.touchIdxs) perBar.set(b, (perBar.get(b) ?? 0) + 1);
     }
   }
   return out;

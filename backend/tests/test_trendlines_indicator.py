@@ -473,6 +473,20 @@ def test_merge_is_about_the_same_trend_not_a_shared_pivot():
     assert merge_lines([a, twin, parallel], 100, math.inf) == [a, parallel]
 
 
+def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
+    """Mirrors the TS test: under a per-pivot cap the merge and the cap used
+    to share one walk, so merging B away freed bar 10, let C in, which filled
+    bar 60 and cut D. Cap first, then merge, and D stays."""
+    def mk(i1, i2, p, touches):
+        return TrendLine(i1=i1, p1=p, k1="low", i2=i2, p2=p, k2="low", touches=touches,
+                         last_touch_idx=i2, crossings=0, last_sign=0, max_touch_gap=i2 - i1,
+                         min_touch_gap=i2 - i1, max_touch_idx=i2, touch_idxs=[i1, i2])
+    a, b_twin, c, d = mk(0, 40, 100.0, 5), mk(10, 50, 100.2, 4), mk(10, 60, 80.0, 3), mk(60, 90, 70.0, 2)
+    ranked = [a, b_twin, c, d]
+    assert merge_lines(ranked, 100, 0.0, math.inf, 1) == [a, b_twin, d]
+    assert merge_lines(ranked, 100, 1.0, math.inf, 1) == [a, d]
+
+
 def replace_line(line: TrendLine, **over) -> TrendLine:
     from dataclasses import replace as _replace
     return _replace(line, **over)

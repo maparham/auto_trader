@@ -33,6 +33,7 @@ import {
   rankLines,
   compareSurvival,
   selectDrawnLines,
+  mergeLines,
   mergeTolerance,
   maxDistanceTol,
   sameTrend,
@@ -956,6 +957,19 @@ describe("selectDrawnLines", () => {
   });
   it("keeps a pinned line whatever its rank", () => {
     expect(selectDrawnLines(lines, 50, 79, 1, { tol: 0, keep: new Set([weak]) })).toEqual([strong, weak]);
+  });
+  // MONOTONE IN THE MERGE TOLERANCE. Under a per-pivot cap the two cuts
+  // used to share one walk: widening the tolerance merged B away, which
+  // freed bar 10, which let C in, which filled bar 60, which cut D, a line
+  // within tolerance of nothing. Cap first, then merge, and D stays.
+  it("widening the merge tolerance never removes a line that is not near a kept one", () => {
+    const a = mk(0, 40, 100, 100, 5);
+    const bTwin = mk(10, 50, 100.2, 100.2, 4);
+    const c = mk(10, 60, 80, 80, 3);
+    const d = mk(60, 90, 70, 70, 2);
+    const ranked = [a, bTwin, c, d];
+    expect(mergeLines(ranked, 100, 0, undefined, Infinity, 1)).toEqual([a, bTwin, d]);
+    expect(mergeLines(ranked, 100, 1, undefined, Infinity, 1)).toEqual([a, d]);
   });
   it("merges near-twins through a shared pivot before the budget", () => {
     const twin = { ...mid, i1: 0, p1: 90, i2: 40, p2: 90.5, touches: 3 };

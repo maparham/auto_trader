@@ -258,32 +258,42 @@ def merge_lines(
     max_per_pivot: int = 0,
 ) -> list[TrendLine]:
     """Mirrors TS mergeLines (no pin exemption here: pins are draw-time UI).
-    Walks rank order, keeping a line unless it shows the same trend as a kept
-    one (same_trend at tol), or, under max_per_pivot (0 = off), runs through
-    a bar (anchor or touch: touch_idxs) that already has that many kept
-    lines; stops at `limit` survivors."""
+    Two passes, cap first: under max_per_pivot (0 = off) a line that runs
+    through a bar (anchor or touch: touch_idxs) already holding that many
+    higher-ranked lines goes, whatever the tolerance; then the survivors are
+    walked in rank order, dropping any that shows the same trend as a kept one
+    (same_trend at tol), stopping at `limit`. Cap first so a wider tolerance
+    can only remove a line that is within it of a kept one and never, by
+    freeing a twin's pivot tallies, let lower-ranked lines in to crowd out an
+    unrelated one."""
     capped = max_per_pivot >= 1
     if not tol > 0 and not capped:
         return ranked
+    cap_set = ranked
+    if capped:
+        cap_set = []
+        per_bar: dict[int, int] = {}
+        for line in ranked:
+            if any(per_bar.get(b, 0) >= max_per_pivot for b in line.touch_idxs):
+                continue
+            cap_set.append(line)
+            for b in line.touch_idxs:
+                per_bar[b] = per_bar.get(b, 0) + 1
+    if not tol > 0:
+        return cap_set[: int(limit)] if len(cap_set) > limit else cap_set
     out: list[TrendLine] = []
     proj: list[float] = []
-    per_bar: dict[int, int] = {}
-    for line in ranked:
+    for line in cap_set:
         if len(out) >= limit:
             break
         p = project_at(line, at_idx)
-        twin = tol > 0 and any(
+        twin = any(
             abs(proj[idx] - p) <= tol and same_trend(k, line, at_idx, tol)
             for idx, k in enumerate(out)
         )
-        if not twin and capped:
-            twin = any(per_bar.get(b, 0) >= max_per_pivot for b in line.touch_idxs)
         if not twin:
             out.append(line)
             proj.append(p)
-            if capped:
-                for b in line.touch_idxs:
-                    per_bar[b] = per_bar.get(b, 0) + 1
     return out
 
 
