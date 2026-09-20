@@ -95,19 +95,38 @@ describe("MobilePositionsView", () => {
     cancelWorkingOrder.mockResolvedValue({});
   });
 
-  it("renders the account summary and trade rows", async () => {
+  it("renders the dock's stat strip, tabs with counts, and the table columns", async () => {
     render(<MobilePositionsView />);
-    await waitFor(() => expect(screen.getByText(/10000|10,000/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/10,000 USD/)).toBeTruthy());
+    expect(screen.getByText("Balance")).toBeTruthy();
+    expect(screen.getByText("Equity")).toBeTruthy();
+    expect(screen.getByText("Margin level")).toBeTruthy();
+    // Positions tab first, with its count; the orders tab carries its own.
+    expect(screen.getByRole("button", { name: /^Positions\s*1$/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Orders\s*1$/ })).toBeTruthy();
     expect(screen.getByText("US100")).toBeTruthy();
-    expect(screen.getByText("EURUSD")).toBeTruthy();
     expect(screen.getByText("Long")).toBeTruthy();
-    expect(screen.getByText("Limit sell")).toBeTruthy();
+    expect(screen.queryByText("EURUSD")).toBeNull();
+    for (const col of ["Symbol", "Side", "Qty", "Avg fill", "TP", "SL", "Last", "P&L", "P&L %", "Margin", "Time"])
+      expect(screen.getByRole("columnheader", { name: col })).toBeTruthy();
+    expect(screen.getByText("+42.50")).toBeTruthy();
   });
 
-  it("shows 'Paper account' when the account summary is null", async () => {
+  it("switches to the orders tab, whose entry column is the limit price", async () => {
+    render(<MobilePositionsView />);
+    await waitFor(() => expect(screen.getByText("US100")).toBeTruthy());
+    await userEvent.click(screen.getByRole("button", { name: /^Orders\s*1$/ }));
+    expect(screen.getByText("EURUSD")).toBeTruthy();
+    expect(screen.getByText("Limit sell")).toBeTruthy();
+    expect(screen.getByText("resting")).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Limit" })).toBeTruthy();
+    expect(screen.queryByText("US100")).toBeNull();
+  });
+
+  it("names the paper account when the account summary is null", async () => {
     fetchAccountSummary.mockResolvedValue(null);
     render(<MobilePositionsView />);
-    await waitFor(() => expect(screen.getByText("Paper account")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Paper account/)).toBeTruthy());
   });
 
   it("opens a detail sheet on tap and routes Close through requestConfirm", async () => {
@@ -127,7 +146,9 @@ describe("MobilePositionsView", () => {
 
   it("routes Cancel order through requestConfirm for working orders", async () => {
     render(<MobilePositionsView />);
-    await waitFor(() => expect(screen.getByText("EURUSD")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("US100")).toBeTruthy());
+    await userEvent.click(screen.getByRole("button", { name: /^Orders\s*1$/ }));
+    expect(screen.getByText("EURUSD")).toBeTruthy();
     await userEvent.click(screen.getByText("EURUSD"));
     await userEvent.click(screen.getByRole("button", { name: "Cancel order" }));
     expect(confirmRequest.value).not.toBeNull();
