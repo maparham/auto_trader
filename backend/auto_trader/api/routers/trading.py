@@ -56,6 +56,7 @@ def _position_dto(p) -> PositionDTO:
         created_at=p.created_at,
         leverage=p.leverage,
         margin=p.margin,
+        mark=p.mark,
     )
 
 

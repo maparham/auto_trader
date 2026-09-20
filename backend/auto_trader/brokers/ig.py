@@ -583,9 +583,9 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
             size = float(pos.get("size") or 0.0)
             # Mark to market off the position's own embedded snapshot: a long marks
             # at bid (what it'd close at), a short at offer.
-            mark = mkt.get("bid") if side is Side.BUY else mkt.get("offer")
+            mark = _f(mkt.get("bid") if side is Side.BUY else mkt.get("offer"))
             signed = size if side is Side.BUY else -size
-            upnl = signed * (float(mark) - open_level) if mark is not None else None
+            upnl = signed * (mark - open_level) if mark is not None else None
             out.append(
                 Position(
                     epic=mkt.get("epic"),
@@ -597,6 +597,7 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
                     take_profit_level=_f(pos.get("limitLevel")),
                     upnl=upnl,
                     created_at=_parse_ig_created(pos),
+                    mark=mark,
                 )
             )
         return out

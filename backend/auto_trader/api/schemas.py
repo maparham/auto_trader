@@ -622,6 +622,7 @@ class PositionDTO(BaseModel):
     created_at: datetime | None = None
     leverage: float | None = None
     margin: float | None = None
+    mark: float | None = None
 
 
 class QuoteDTO(BaseModel):

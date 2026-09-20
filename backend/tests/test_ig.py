@@ -572,6 +572,7 @@ def test_get_positions_computes_signed_upnl(monkeypatch) -> None:
     assert pos.stop_level == 95.0 and pos.take_profit_level == 110.0
     # long marks at bid: uPnL = 2 * (104 - 100) = 8
     assert pos.upnl == pytest.approx(8.0)
+    assert pos.mark == pytest.approx(104.0)
 
 
 def test_get_positions_maps_created_date_utc(monkeypatch) -> None:

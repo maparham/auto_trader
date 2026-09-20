@@ -1472,6 +1472,7 @@ class MT5ExecutionBroker(ExecutionBroker):
                     take_profit_level=_lvl(p.get("takeProfit")),
                     upnl=p.get("profit"),
                     created_at=p.get("time"),
+                    mark=_lvl(p.get("currentPrice")),
                 )
             )
         return out

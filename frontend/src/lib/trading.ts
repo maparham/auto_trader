@@ -304,6 +304,7 @@ interface Position {
   created_at: string | null;
   leverage: number | null; // broker's real per-position leverage (null for paper)
   margin: number | null; // broker deposit requirement, account currency (null for paper)
+  mark: number | null; // broker's current close-side price (bid for long, offer for short)
 }
 
 interface WorkingOrder {
@@ -334,6 +335,7 @@ export interface TradeView {
   expiresAt: number | null; // working orders: good-till-date epoch ms; null = GTC
   leverage: number | null; // broker per-position leverage (null → fall back to configured)
   margin: number | null; // broker deposit requirement, account currency (null → estimate)
+  mark?: number | null; // broker's current price from the positions poll (absent → chart stream only)
   source?: "manual" | "strategy"; // "strategy" = opened by the live engine (dock `strat` tag)
 }
 
@@ -460,6 +462,7 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
         expiresAt: null,
         leverage: p.leverage,
         margin: p.margin,
+        mark: p.mark ?? null,
         source: isStrategyDeal(p.deal_id) ? "strategy" : "manual",
       }),
     ),
@@ -476,6 +479,7 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
         upnl: null,
         openedAt: o.created_at ? Date.parse(o.created_at) : null,
         expiresAt: o.expires_at != null ? Date.parse(o.expires_at) : null,
+        mark: null,
         leverage: null,
         margin: null,
         source: "manual",

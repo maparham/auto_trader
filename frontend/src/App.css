@@ -5304,6 +5304,27 @@
 /* Hovered from the CHART (a trade line under the cursor) — match the native row
    :hover tint so hovering a line and hovering its row read identically. */
 .pp-row.pp-hovered { background: var(--hover); }
+/* Symbol group — several positions on one instrument fold under a header row
+   carrying their roll-up. The header is bolder and sits on a faint plate; its
+   legs are indented and read quieter so the roll-up is the headline. */
+.pp-row.pp-group { font-weight: 600; background: color-mix(in srgb, var(--text) 3%, transparent); }
+.pp-row.pp-group:hover { background: var(--hover); }
+.pp-dir-mixed { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-dim) 50%, transparent); }
+.pp-row.pp-dir-mixed.pp-focused { box-shadow: inset 3px 0 0 var(--text-dim); }
+.pp-side-mixed { color: var(--text-dim); font-weight: 600; }
+.pp-group-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin: 0 4px 0 -4px; padding: 0;
+  border: 0; background: none; color: var(--text-dim); cursor: pointer; font: inherit;
+}
+.pp-group-chevron { display: inline-block; font-size: 14px; line-height: 1; transform: rotate(90deg); transition: transform 0.12s ease; }
+.pp-row.pp-folded .pp-group-chevron { transform: none; }
+.pp-group-count {
+  margin-left: 6px; padding: 0 5px; border-radius: 8px; font-size: 10px; font-weight: 600;
+  color: var(--text-dim); background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.pp-row.pp-leg .pp-c-sym { padding-left: 34px; font-weight: 500; color: var(--text-dim); }
+.pp-row.pp-leg { color: var(--text-dim); }
 /* Selected (click-selected, sticky) — the strongest row state: a full-hue left
    border + a clear plate, mirroring the chart lines going solid. Sits above hover;
    distinct from the fainter focused/editing tints. */
@@ -5333,7 +5354,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pp-margin-fill, .pp-chevron, .pp-row, .pp-iconbtn { transition: none; }
+  .pp-margin-fill, .pp-chevron, .pp-row, .pp-iconbtn, .pp-group-chevron { transition: none; }
 }
 
 /* Edit form shown in place of the new-order ticket. */

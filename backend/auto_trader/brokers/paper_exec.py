@@ -363,6 +363,7 @@ class PaperExecutionBroker(ExecutionBroker):
                     take_profit_level=p.take_profit_level,
                     upnl=upnl,
                     created_at=p.created_at,
+                    mark=mid,
                 )
             )
         return out

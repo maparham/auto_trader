@@ -380,6 +380,11 @@ class Position:
     # leverage, FX-converted), so the dock shows the broker's figure, not a guess.
     leverage: float | None = None
     margin: float | None = None
+    # Broker's current close-side price for this position (a long marks at bid, a
+    # short at offer), from the same positions payload. Lets the UI show last /
+    # P&L% / market value without a chart streaming that epic. None when the
+    # broker doesn't embed a quote.
+    mark: float | None = None
 
     @property
     def signed_size(self) -> float:

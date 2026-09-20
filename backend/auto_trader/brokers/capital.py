@@ -687,10 +687,10 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
             # Capital reports unrealized P&L directly (`upl`); fall back to marking
             # against the position's embedded quote (long marks at bid, short at offer).
             upnl = _f(pos.get("upl"))
+            mark = _f(mkt.get("bid") if side is Side.BUY else mkt.get("offer"))
             if upnl is None:
-                mark = mkt.get("bid") if side is Side.BUY else mkt.get("offer")
                 signed = size if side is Side.BUY else -size
-                upnl = signed * (float(mark) - open_level) if mark is not None else None
+                upnl = signed * (mark - open_level) if mark is not None else None
             leverage = _f(pos.get("leverage"))
             margin = await self._position_margin(
                 mkt, size, open_level, leverage,
@@ -709,6 +709,7 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
                     created_at=_parse_dt(pos.get("createdDateUTC")),
                     leverage=leverage,
                     margin=margin,
+                    mark=mark,
                 )
             )
         return out

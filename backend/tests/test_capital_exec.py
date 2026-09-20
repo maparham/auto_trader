@@ -249,6 +249,7 @@ def test_position_margin_uses_broker_leverage_and_fx() -> None:
     assert len(positions) == 1
     p = positions[0]
     assert p.leverage == 5.0
+    assert p.mark == 1132.0  # short marks at offer
     # current mid 1131 / 5 = 226.2 USD; / EURUSD ~1.1387 = ~198.6 EUR (NOT entry-based
     # 240, and NOT the old 1200/10 = 120 fixed-leverage estimate).
     assert p.margin is not None
