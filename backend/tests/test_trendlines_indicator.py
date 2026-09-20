@@ -495,19 +495,32 @@ def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
     assert merge_lines(ranked, 100, 1.0, math.inf, 1) == [a, d]
 
 
-def test_a_gated_line_does_not_hold_its_pivot_slots_against_a_drawable_one():
+def _cap_line(i1, i2, p, touches):
+    return TrendLine(i1=i1, p1=p, k1="low", i2=i2, p2=p, k2="low", touches=touches,
+                     last_touch_idx=i2, crossings=0, last_sign=0, max_touch_gap=i2 - i1,
+                     min_touch_gap=i2 - i1, max_touch_idx=i2, touch_idxs=[i1, i2])
+
+
+def test_a_stale_line_does_not_hold_its_pivot_slots_against_a_drawable_one():
     """Mirrors the TS test. Cap 1 per pivot; A (bars 0,40) outranks D (40,90)
-    and shares bar 40, but A is far from price. Capped first, A held bar 40
-    and D vanished; gated first, only drawable lines count toward the cap."""
-    def mk(i1, i2, p, touches):
-        return TrendLine(i1=i1, p1=p, k1="low", i2=i2, p2=p, k2="low", touches=touches,
-                         last_touch_idx=i2, crossings=0, last_sign=0, max_touch_gap=i2 - i1,
-                         min_touch_gap=i2 - i1, max_touch_idx=i2, touch_idxs=[i1, i2])
-    a, d = mk(0, 40, 150.0, 5), mk(40, 90, 101.0, 2)
-    pool = [d, a]
-    tight = cfg(max_per_pivot=1, max_dist_atr=2, min_span_bars=5)
-    assert eligible_lines(pool, 100, 100.0, 1.0, tight) == [d]
-    assert eligible_lines(pool, 100, 100.0, 1.0, replace(tight, max_dist_atr=0)) == [a]
+    and shares bar 40, but at bar 150 A is past Max Projection. Capped before
+    is_major, A held bar 40 and D vanished."""
+    a, d = _cap_line(0, 40, 100.0, 5), _cap_line(40, 90, 101.0, 2)
+    c = cfg(max_per_pivot=1, max_proj_bars=100, min_span_bars=5)
+    assert eligible_lines([d, a], 150, 100.0, 1.0, c) == [d]
+    assert eligible_lines([d, a], 100, 100.0, 1.0, c) == [a]
+
+
+def test_tightening_max_distance_never_cuts_an_in_range_line_through_the_cap():
+    """Mirrors the TS test. Cap 1 per pivot; A (0,40) outranks C (40,60)
+    which outranks D (60,90). Distance gated first, the cap cascaded: A cut
+    as far, C took bars 40 and 60, D vanished a point from price. Capped
+    first, A blocks C shown or not, and the cut removes only A."""
+    a, c, d = _cap_line(0, 40, 150.0, 5), _cap_line(40, 60, 100.0, 3), _cap_line(60, 90, 101.0, 2)
+    pool = [d, c, a]
+    wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5)
+    assert eligible_lines(pool, 100, 100.0, 1.0, wide) == [a, d]
+    assert eligible_lines(pool, 100, 100.0, 1.0, replace(wide, max_dist_atr=2)) == [d]
 
 
 def replace_line(line: TrendLine, **over) -> TrendLine:

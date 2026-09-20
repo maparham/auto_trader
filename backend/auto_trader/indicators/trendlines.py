@@ -270,20 +270,19 @@ def cap_per_pivot(ranked: list[TrendLine], max_per_pivot: int) -> list[TrendLine
 def eligible_lines(
     pool: list[TrendLine], i: int, close: float, atr_i: float | None, cfg: TrendlinesConfig
 ) -> list[TrendLine]:
-    """Mirrors TS eligibleLines: the live pool in rank order, gated by Max
-    Distance and is_major, THEN cut by the per-pivot cap. A line only counts
-    toward the cap once it is itself drawable: capped first, stale or far
-    lines held their pivots' tallies and capped out every drawable line from
-    a busy pivot."""
-    ranked = sorted((line for line in pool if is_live(line, i, cfg)), key=rank_key)
+    """Mirrors TS eligibleLines: the live majors in rank order, cut by the
+    per-pivot cap, THEN gated by Max Distance. is_major is about the line
+    itself, so a line it refuses must not hold its pivots' slots; Max
+    Distance is a per-bar visibility cut and runs after the cap so that
+    tightening it, like the merge, can only remove the lines it targets."""
+    majors = sorted(
+        (line for line in pool if is_live(line, i, cfg) and is_major(line, i, cfg)), key=rank_key
+    )
+    capped = cap_per_pivot(majors, cfg.max_per_pivot)
     dist_tol = max_distance_tol(cfg, atr_i, close)
-    gated = [
-        line
-        for line in ranked
-        if (dist_tol == math.inf or within_distance(line, i, close, dist_tol))
-        and is_major(line, i, cfg)
-    ]
-    return cap_per_pivot(gated, cfg.max_per_pivot)
+    if dist_tol == math.inf:
+        return capped
+    return [line for line in capped if within_distance(line, i, close, dist_tol)]
 
 
 def merge_lines(

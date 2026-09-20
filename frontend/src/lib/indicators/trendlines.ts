@@ -1412,20 +1412,23 @@ export function capPerPivot(
 }
 
 /** The lines a bar may show or emit, BEFORE the merge and the budget: the
- * live pool in rank order, gated by Max Distance and the major floors and
- * ceilings (isMajor), THEN cut by the per-pivot cap. Shared by the emit step
- * and the draw path so the drawn set is the emitted set; ported to Python as
- * eligible_lines.
+ * live pool in rank order, gated by the major floors and ceilings (isMajor),
+ * THEN cut by the per-pivot cap, THEN gated by Max Distance. Shared by the
+ * emit step and the draw path so the drawn set is the emitted set; ported to
+ * Python as eligible_lines.
  *
- * THE CAP SETTLES ON THE GATED SET, NOT ON THE WHOLE POOL. Capped first, a
- * line the gates would never show (stale past Max Projection, or far from
- * price) still held its pivots' tallies, and on a real chart three such
- * lines on one busy pivot capped out every drawable line from it: the pane
- * went empty where the user expected a fan. So a line only counts toward
- * the cap once it is itself drawable. The price is that tightening a gate
- * frees tallies, so a lower-ranked line can come in and fill a bar an
- * unrelated line ran through; the merge, which runs AFTER the cap, cannot
- * do that (see mergeLines). */
+ * WHY THE CAP SITS BETWEEN THE TWO GATES. isMajor is about the line itself
+ * (touches, span, crossings, staleness past Max Projection), so a line it
+ * refuses is not a line the pane could ever show, and it must not hold its
+ * pivots' slots: capped before it, three stale lines on one busy pivot
+ * capped out every drawable line from it and the fan went missing. Max
+ * Distance, like the merge, is a per-bar VISIBILITY cut that depends on
+ * where price is today, and it runs after the cap for the same reason the
+ * merge does: settled on the capped set, tightening it can only remove the
+ * lines it targets. Run before the cap, it freed a far line's slots, a
+ * higher-ranked line came in through them, and a line well within the cut
+ * vanished from a setting that never concerned it. The price is that a far
+ * line still holds its slots against a near one from the same pivot. */
 export function eligibleLines(
   pool: TrendLine[],
   i: number,
@@ -1434,12 +1437,11 @@ export function eligibleLines(
   cfg: TrendlinesConfig,
   keep?: ReadonlySet<TrendLine>,
 ): TrendLine[] {
-  const ranked = pool.filter((l) => isLive(l, i, cfg)).sort(rankLines);
+  const majors = pool.filter((l) => isLive(l, i, cfg) && isMajor(l, i, cfg)).sort(rankLines);
+  const capped = capPerPivot(majors, cfg.maxPerPivot, keep);
   const distTol = maxDistanceTol(cfg, atr, close);
-  const gated = ranked.filter(
-    (l) => (distTol === Infinity || withinDistance(l, i, close, distTol)) && isMajor(l, i, cfg),
-  );
-  return capPerPivot(gated, cfg.maxPerPivot, keep);
+  if (distTol === Infinity) return capped;
+  return capped.filter((l) => withinDistance(l, i, close, distTol));
 }
 
 /** Drops the near-duplicates from an already rank-sorted list, keeping the
