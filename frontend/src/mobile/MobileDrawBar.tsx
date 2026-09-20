@@ -14,6 +14,8 @@ import { DRAW_TOOLS } from "../lib/drawTools";
 import { magnetSignal, toggleMagnet } from "../lib/magnet";
 import { drawingSettingsRequest, requestConfirm } from "../lib/signals";
 import { mobileChartCtx } from "./mobileChartState";
+import { isDemoMode } from "../lib/demoMode";
+import { toast } from "../lib/notify";
 
 export default function MobileDrawBar() {
   const ctx = useSyncExternalStore(
@@ -25,6 +27,18 @@ export default function MobileDrawBar() {
     () => magnetSignal.value,
   );
   const [open, setOpen] = useState(false);
+  // Demo drawings round-trip through localStorage only (persist/core gates
+  // the mirror off), so the first open of the tool strip says so once.
+  const [noted, setNoted] = useState(false);
+  function toggleOpen() {
+    setOpen((o) => !o);
+    if (isDemoMode() && !noted) {
+      setNoted(true);
+      toast("Drawings stay on this phone. Sign up free to sync them.", {
+        onClick: () => location.assign("/?sign_in=1"),
+      });
+    }
+  }
 
   // OverlayManager.setDrawingListener is single-slot (verified: no other
   // caller in the tree occupies it — ChartCore does not call it as of this
@@ -104,7 +118,7 @@ export default function MobileDrawBar() {
       <button
         className="m-drawbar-fab"
         aria-label="Draw"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
       >
         ✏️
       </button>

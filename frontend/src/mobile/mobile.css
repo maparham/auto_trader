@@ -437,3 +437,10 @@ body.m-mobile .ss-exch { display: none; }
   padding-top: calc(6px + env(safe-area-inset-top));
 }
 .m-set-hint a { color: var(--text); }
+.m-chart-source {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-dim, var(--text));
+}

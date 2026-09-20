@@ -2685,6 +2685,12 @@ function drawTrendlines(
     yTag = clearTagRow(placedTags, xTag, yTag, wTag, bounding.height);
     placedTags.push({ x: xTag, y: yTag, w: wTag });
     ctx.fillStyle = ctx.strokeStyle;
+    ctx.save();
+    ctx.strokeStyle = tagHalo();
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.strokeText(label, xTag, yTag);
+    ctx.restore();
     ctx.fillText(label, xTag, yTag);
   }
   ctx.restore();
@@ -2697,7 +2703,18 @@ function drawTrendlines(
 }
 
 /** Tag row height: 10px text plus a little air. */
-const TL_TAG_ROW = 12;
+// Row pitch for stacked end tags: the 10px tag font plus enough air that two
+// rows read as two lines rather than one smeared one on a phone.
+const TL_TAG_ROW = 14;
+
+/** The pane background, for the halo painted behind an end tag so the
+ * strokes it sits on do not cut through the letters. Read from the theme's
+ * CSS variable each draw (cheap, and it follows a theme switch). */
+function tagHalo(): string {
+  if (typeof document === "undefined") return "#fff";
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+  return v || "#fff";
+}
 
 /** End tags painted on a context during the current paint, across every
  * trendlines instance on the pane. klinecharts draws the instances one after

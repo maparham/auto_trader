@@ -13,6 +13,9 @@ import { PERIODS } from "../lib/feed";
 import { requestSymbolSearch } from "../lib/signals";
 import { brokerLabel } from "../lib/trading";
 import { isDemoMode } from "../lib/demoMode";
+
+// Short names for the demo's credential-free feeds: the chip has ~96px.
+const DEMO_SOURCE: Record<string, string> = { yfinance: "Yahoo", dukascopy: "Dukascopy" };
 import MobileBrokerSheet from "./MobileBrokerSheet";
 import {
   bootMobileMarket,
@@ -118,16 +121,15 @@ export default function MobileChartView({ active = true }: { active?: boolean })
     <div className="m-chart-view">
       {!viewMode.chromeHidden && (
         <div className="m-chart-topbar">
-          {/* Demo visitors are pinned to the published feed: the chip names
-              it but opens nothing. */}
-          <button
-            className="m-chart-broker"
-            disabled={isDemoMode()}
-            onClick={() => setBrokerSheetOpen(true)}
-          >
-            {brokerLabel(broker)}
-            {!isDemoMode() && " ▾"}
-          </button>
+          {/* Demo visitors are pinned to the published feed: the source is a
+              label, not a control, and short enough not to truncate. */}
+          {isDemoMode() ? (
+            <span className="m-chart-broker m-chart-source">{DEMO_SOURCE[broker] ?? brokerLabel(broker)}</span>
+          ) : (
+            <button className="m-chart-broker" onClick={() => setBrokerSheetOpen(true)}>
+              {brokerLabel(broker)} ▾
+            </button>
+          )}
           <button className="m-chart-symbol" onClick={() => requestSymbolSearch()}>
             {symbol?.name ?? "Select market…"}
           </button>

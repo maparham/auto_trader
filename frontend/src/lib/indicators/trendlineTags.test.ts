@@ -8,7 +8,7 @@ describe("clearTagRow", () => {
 
   it("drops below a tag that shares the row and x range", () => {
     const placed = [{ x: 100, y: 50, w: 40 }];
-    expect(clearTagRow(placed, 105, 52, 40)).toBe(64);
+    expect(clearTagRow(placed, 105, 52, 40)).toBe(66);
   });
 
   it("does not move for a tag on a different x range", () => {
@@ -19,9 +19,9 @@ describe("clearTagRow", () => {
   it("takes the nearest free row, above when that is closer", () => {
     const placed = [
       { x: 100, y: 50, w: 40 },
-      { x: 100, y: 62, w: 40 },
+      { x: 100, y: 64, w: 40 },
     ];
-    expect(clearTagRow(placed, 100, 50, 40)).toBe(38);
+    expect(clearTagRow(placed, 100, 50, 40)).toBe(36);
   });
 
   it("still spells the tag", () => {
@@ -32,10 +32,10 @@ describe("clearTagRow", () => {
 describe("clearTagRow near the pane bottom", () => {
   it("moves up when the rows below run past the pane", () => {
     const placed = [{ x: 100, y: 95, w: 40 }];
-    expect(clearTagRow(placed, 100, 95, 40, 100)).toBe(83);
+    expect(clearTagRow(placed, 100, 95, 40, 100)).toBe(81);
   });
   it("keeps its own y when nothing is free", () => {
-    const placed = Array.from({ length: 20 }, (_, i) => ({ x: 100, y: i * 12, w: 40 }));
+    const placed = Array.from({ length: 20 }, (_, i) => ({ x: 100, y: i * 14, w: 40 }));
     expect(clearTagRow(placed, 100, 48, 40, 200)).toBe(48);
   });
 });
