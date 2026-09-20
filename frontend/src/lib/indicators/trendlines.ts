@@ -1351,23 +1351,19 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
 }
 
 
-/** Drops the near-duplicates from an already rank-sorted list, keeping the
- * first of each group. RUNS IN THE CALC (the emit step) and again in the draw
- * path with the pinned lines exempt; ported to Python as merge_lines.
+/** The per-pivot cap on its own: walks `ranked` in rank order and drops a
+ * line once `maxPerPivot` kept lines already run through one of its bars
+ * (anchor or touch: touchIdxs). Pinned lines (`keep`) are never dropped but
+ * count. Ported to Python as cap_per_pivot.
  *
- * TWO LINES ARE ONE WHEN THEY SHOW THE SAME TREND: close to each other, and
- * close the whole time they both exist (sameTrend), whether or not they
- * share a pivot. Two near-parallel lines a few points apart out of
- * different swings are one line to the eye and are merged; two lines that
- * only cross today were far apart before and are not.
+ * MAX LINES PER PIVOT (`maxPerPivot`, 0 = off): once that many kept lines
+ * run through a bar (an anchor or a touch, which is what touchIdxs holds),
+ * every later line through that bar goes, whatever its distance. 1 is the
+ * old "One line per pivot". A pinned line is never dropped but does count
+ * toward the tally. The cap runs BEFORE the merge and before the gates
+ * (eligibleLines), on rank alone, so that no other setting can feed it.
  *
- * MAX LINES PER PIVOT (`maxPerPivot`, 0 = off) is a second, independent cut
- * in the same rank walk: once that many kept lines run through a bar (an
- * anchor or a touch, which is what touchIdxs holds), every later line
- * through that bar goes, whatever its distance. 1 is the old "One line per
- * pivot". A pinned line is never dropped but does count toward the tally.
- *
- * The shared-pivot reasoning below is what that cap is for:
+ * The shared-pivot reasoning below is what the cap is for:
  *
  * The shared pivot is what makes this a FAN test rather than a "these two
  * levels look similar" test. A pivot is not consumed by the line that first
@@ -1379,38 +1375,22 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
  * rightward from a common start, close leftward onto a common end, or chain
  * (one line's end is the next one's start).
  *
- * ONE SAMPLE IS ENOUGH, and that is exact rather than approximate. Lines
- * through the same pivot agree exactly there, and their difference is linear
- * in the bar index, so |difference| grows monotonically away from that pivot
- * and is maximised at the far end of the span: within tol at atIdx means
- * within tol everywhere between. RIGHT of atIdx it keeps growing, so a merged
- * pair does separate out in the projection — that is the deliberate trade, and
- * it is what makes the last bar the right place to measure. Whether two lines
- * are the same level is a question about where price is now, not about where
- * they will be 250 bars from now.
+ * A TOUCH COUNTS AS A PIVOT, not only an anchor, and this is most of what
+ * the cap catches on a real chart. A strong swing is the second anchor of
+ * one line and a mid-line touch of four others; anchors alone see none of
+ * that, so the five ran through the same pivot and none of them merged.
+ * Measured on a live US100 4H pane, five drawn dashed resistances passed
+ * through one 10/08 swing high and only one of them was anchored there.
+ * touchIdxs holds the anchors too, so the bar list is the whole pivot set.
  *
- * A MERGED-AWAY LINE EMITS NOTHING. This pass runs before tl_1..tl_N are
- * filled, so a rule only ever reads a line that is on the chart. Never drops
- * a PINNED line: its handle is the only control that can release the pin. */
-// A TOUCH COUNTS AS A PIVOT, not only an anchor, and this is most of what
-// the cap catches on a real chart. A strong swing is the second anchor of
-// one line and a mid-line touch of four others; anchors alone see none of
-// that, so the five ran through the same pivot and none of them merged.
-// Measured on a live US100 4H pane, five drawn dashed resistances passed
-// through one 10/08 swing high and only one of them was anchored there.
-// touchIdxs holds the anchors too, so the bar list is the whole pivot set.
-//
-// The bar is enough, with no price test. Both lines were within the touch
-// band of that bar's own high or low to be recorded at all, so they are
-// within two touch tolerances of each other there by construction, which is
-// the same "they agree at the shared bar" an anchor gets exactly, only to a
-// tolerance rather than to the bit. LEFT and RIGHT of the shared bar they
-// separate, which is what a fan does; the cap is about the fan, not about
-// distance.
-/** The per-pivot cap on its own: walks `ranked` in order and drops a line
- * once `maxPerPivot` kept lines already run through one of its bars (anchor
- * or touch: touchIdxs). Pinned lines (`keep`) are never dropped but count.
- * Ported to Python as cap_per_pivot. */
+ * The bar is enough, with no price test. Both lines were within the touch
+ * band of that bar's own high or low to be recorded at all, so they are
+ * within two touch tolerances of each other there by construction, which is
+ * the same "they agree at the shared bar" an anchor gets exactly, only to a
+ * tolerance rather than to the bit. LEFT and RIGHT of the shared bar they
+ * separate, which is what a fan does; the cap is about the fan, not about
+ * distance.
+ */
 export function capPerPivot(
   ranked: TrendLine[],
   maxPerPivot: number,
@@ -1461,6 +1441,31 @@ export function eligibleLines(
   );
 }
 
+/** Drops the near-duplicates from an already rank-sorted list, keeping the
+ * first of each group. RUNS IN THE CALC (the emit step) and again in the draw
+ * path with the pinned lines exempt; ported to Python as merge_lines. Takes
+ * an optional per-pivot cap (capPerPivot) that is applied first; the emit
+ * step and the draw path pass 0 there because eligibleLines already ran it.
+ *
+ * TWO LINES ARE ONE WHEN THEY SHOW THE SAME TREND: close to each other, and
+ * close the whole time they both exist (sameTrend), whether or not they
+ * share a pivot. Two near-parallel lines a few points apart out of
+ * different swings are one line to the eye and are merged; two lines that
+ * only cross today were far apart before and are not.
+ *
+ * ONE SAMPLE IS ENOUGH, and that is exact rather than approximate. Lines
+ * through the same pivot agree exactly there, and their difference is linear
+ * in the bar index, so |difference| grows monotonically away from that pivot
+ * and is maximised at the far end of the span: within tol at atIdx means
+ * within tol everywhere between. RIGHT of atIdx it keeps growing, so a merged
+ * pair does separate out in the projection — that is the deliberate trade, and
+ * it is what makes the last bar the right place to measure. Whether two lines
+ * are the same level is a question about where price is now, not about where
+ * they will be 250 bars from now.
+ *
+ * A MERGED-AWAY LINE EMITS NOTHING. This pass runs before tl_1..tl_N are
+ * filled, so a rule only ever reads a line that is on the chart. Never drops
+ * a PINNED line: its handle is the only control that can release the pin. */
 export function mergeLines(
   ranked: TrendLine[],
   atIdx: number,
