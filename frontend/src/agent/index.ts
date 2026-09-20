@@ -1,6 +1,6 @@
 // Entry point: registers all action modules and starts the WS bridge when the
 // build enables it (VITE_AGENT_BRIDGE=1; dev builds default on). Idempotent.
-import { startAgentBridge } from "agent-ui-bridge";
+import { restoreTabTitle, startAgentBridge } from "agent-ui-bridge";
 import { API_BASE } from "../lib/http";
 import { getAuthToken, hasTokenGetter } from "../lib/authToken";
 import { withImpersonation } from "../lib/impersonation";
@@ -43,6 +43,9 @@ export function initAgentBridge(): void {
     console.debug("agent: actions already registered (HMR?)", e);
   }
   if (!agentBridgeEnabled()) return;
+  // A reloaded tab keeps the name an agent gave it; the bridge announces it
+  // to the hub on connect so the title gate stays satisfied.
+  restoreTabTitle();
   startAgentBridge({
     url: `${API_BASE.replace(/^http/, "ws")}/ws/agent-ui`,
     // Resolved per (re)connect, not once: ClerkTokenBridge may register its
