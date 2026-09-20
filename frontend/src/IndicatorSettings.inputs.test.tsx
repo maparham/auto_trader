@@ -406,7 +406,7 @@ describe("input sections", () => {
   // into the detector's story: pivots -> fit -> filters -> lifetime.
   it("opens a heading over each run of related params", () => {
     open();
-    for (const h of ["Pivots", "Line Fit", "Filters", "Lifetime"])
+    for (const h of ["Pivots", "Major Pivots", "Line Fit", "Filters", "Lifetime"])
       expect(screen.getByText(h).className, `${h} heading`).toContain("ind-group");
   });
 });
