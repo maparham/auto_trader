@@ -71,7 +71,7 @@ open the app in a browser"). Every driven tab must be named first:
 until `ui_set_title("US100 4H backtest")` has run on that session. The
 title survives a reload and a backend restart (the tab keeps it in
 sessionStorage and announces it on reconnect); only a fresh tab needs naming. The tab's `tab.title.set` action stamps a
-🤖 in front of the title so the owner can tell agent tabs from their own.
+✻ in front of the title so the owner can tell agent tabs from their own.
 The 29 registered actions today, by group:
 `backtest.*` (config.get, config.set, run, cancel, result, progress),
 `sweep.*` (start, cancel, rows), dealing (`order.place`, `position.close`,

@@ -51,7 +51,7 @@ register_ui_tools(
         "ui_set_title": """Name the browser tab you are about to drive. REQUIRED before ui_invoke,
     ui_read_state or ui_screenshot work on a session. Keep it short and
     specific ('US100 4H backtest', 'OIL_CRUDE trendline review'); the tab
-    prefixes a robot mark so the owner can tell agent tabs from their own.""",
+    prefixes a ✻ mark so the owner can tell agent tabs from their own.""",
         "ui_invoke": """Invoke a UI action. Fast actions return the result; long-running ones
     (backtest.run, sweep.start) and confirm-kind ones (which wait on a human
     approving a dialog) return {"handle": ...} - poll with ui_wait. A rejected
