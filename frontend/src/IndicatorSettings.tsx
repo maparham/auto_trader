@@ -160,6 +160,7 @@ import { CandlePatternsPanel, candlePatternsConfig } from "./indicatorSettings/C
 import type { CandlePatternsExtend } from "./lib/indicators/candlePatterns";
 import SlopeColorPanel, { slopeColorConfig } from "./indicatorSettings/SlopeColorPanel";
 import { defaultSlopeColor, type SlopeColorConfig } from "./lib/indicators/slopeColor";
+import { adaptiveStep } from "./lib/adaptiveStep";
 import {
   DEFAULT_LINE_PALETTE,
   CURVE_LABEL_TYPES,
@@ -348,8 +349,15 @@ function IndicatorSettingsForm({
   // typed. The raw text stays here, keyed by input, until the box blurs; the
   // slot still gets the parse on every keystroke, so the preview tracks it.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const draftProps = (key: string, shown: number | string, commit: (raw: string) => void) => ({
+  const draftProps = (
+    key: string,
+    shown: number | string,
+    commit: (raw: string) => void,
+    baseStep = 1,
+  ) => ({
     value: drafts[key] ?? shown,
+    // On a fractional field the arrow-key step follows the value shown.
+    step: adaptiveStep(drafts[key] ?? shown, baseStep),
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
       const raw = e.target.value;
       setDrafts((d) => ({ ...d, [key]: raw }));
@@ -856,13 +864,15 @@ function IndicatorSettingsForm({
           aria-label={inp.label}
           min={inp.min}
           max={inp.max}
-          step={inp.step ?? 1}
           // An `unbounded` param stores 0 for "no limit": the box shows that
           // state as empty behind an ∞ placeholder, and clearing it writes the
           // same 0 back — the sentinel never changes, only how it reads.
           placeholder={inp.unbounded ? (inp.placeholder ?? "∞") : undefined}
-          {...draftProps(inp.key, inp.unbounded && stored === 0 ? "" : stored, (raw) =>
-            setParam(inp.index!, raw === "" && inp.unbounded ? 0 : Number(raw)),
+          {...draftProps(
+            inp.key,
+            inp.unbounded && stored === 0 ? "" : stored,
+            (raw) => setParam(inp.index!, raw === "" && inp.unbounded ? 0 : Number(raw)),
+            inp.step ?? 1,
           )}
         />,
       );
@@ -893,13 +903,13 @@ function IndicatorSettingsForm({
           aria-label={inp.label}
           min={inp.min}
           max={inp.max}
-          step={inp.step ?? 1}
           {...draftProps(
             inp.key,
             Number.isFinite(genExtend[inp.field] as number)
               ? (genExtend[inp.field] as number)
               : ((inp.default as number | undefined) ?? ""),
             (raw) => setExtendInput(inp.field!, Number(raw)),
+            inp.step ?? 1,
           )}
         />,
       );
