@@ -77,9 +77,10 @@ export interface IndicatorInputDef {
   // Display-only — the stored sentinel does not change.
   unbounded?: boolean;
   // A live readout under the control, from the indicator's last result:
-  // how many pivots pass the filter, how many sit in the major tier, how
-  // many candidate lines the pairing has seeded. Trendlines only.
-  liveStat?: "tlPivots" | "tlMajors" | "tlPairs";
+  // how many pivots pass the filter and how many candidate lines the pairing
+  // has seeded. Trendlines only. (The major tier is a fixed-size list, so its
+  // size would only repeat the box.)
+  liveStat?: "tlPivots" | "tlPairs";
   // Placeholder for the empty `unbounded` box when "∞" is the wrong picture,
   // e.g. "-∞" on the low side of a signed range.
   placeholder?: string;
@@ -669,7 +670,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       {
         ...num(24, "Majors", { min: 0 }),
         group: "pivot",
-        liveStat: "tlMajors",
         suffix: "pivots",
         default: TL.majorPivots,
         tip: [

@@ -776,7 +776,7 @@ function IndicatorSettingsForm({
   // row's pivot pool, read on a short poll while the form is open because the
   // calc lands asynchronously after every param write. Only set when the
   // numbers change, so the poll does not re-render the form on its own.
-  const [tlStats, setTlStats] = useState<{ pivots: number; majors: number; pairs: number } | null>(null);
+  const [tlStats, setTlStats] = useState<{ pivots: number; pairs: number } | null>(null);
   useEffect(() => {
     if (name !== "TRENDLINES") return;
     const read = () => {
@@ -784,10 +784,10 @@ function IndicatorSettingsForm({
       const rows = (live?.result ?? []) as Array<{ pivots?: TrendPivots }>;
       const pv = rows[rows.length - 1]?.pivots;
       const next = pv
-        ? { pivots: pv.idxs.length, majors: pv.majorQs?.length ?? 0, pairs: pv.pairs ?? 0 }
+        ? { pivots: pv.idxs.length, pairs: pv.pairs ?? 0 }
         : null;
       setTlStats((cur) =>
-        cur === next || (cur && next && cur.pivots === next.pivots && cur.majors === next.majors && cur.pairs === next.pairs)
+        cur === next || (cur && next && cur.pivots === next.pivots && cur.pairs === next.pairs)
           ? cur
           : next,
       );
@@ -799,10 +799,7 @@ function IndicatorSettingsForm({
 
   function statFor(inp: IndicatorInputDef) {
     if (!inp.liveStat || !tlStats) return null;
-    const text =
-      inp.liveStat === "tlPivots" ? `${tlStats.pivots} pivots`
-      : inp.liveStat === "tlMajors" ? `${tlStats.majors} pivots`
-      : `${tlStats.pairs} pairs`;
+    const text = inp.liveStat === "tlPivots" ? `${tlStats.pivots} pivots` : `${tlStats.pairs} pairs`;
     return <span className="ind-stat">{text}</span>;
   }
 
