@@ -444,13 +444,13 @@ body.m-mobile .ss-exch { display: none; }
   font-size: 13px;
   color: var(--text-dim, var(--text));
 }
-/* Chart-only mode in the demo: the tab bar's nudge, shrunk to a pill in the
-   corner the pencil FAB does not use. */
+/* Chart-only mode in the demo: the tab bar's nudge, shrunk to a pill at the
+   top right, under the restore button (28px tall at 4px from the top) and
+   clear of the legend's OHLC row on the left. */
 .m-chart-cta {
   position: absolute;
-  left: calc(12px + env(safe-area-inset-left));
-  /* Above the time axis (about 26px of date labels), not on it. */
-  bottom: calc(38px + env(safe-area-inset-bottom));
+  top: calc(40px + env(safe-area-inset-top));
+  right: calc(5px + env(safe-area-inset-right));
   z-index: 60;
 }
 .m-chart-cta .demo-cta {
