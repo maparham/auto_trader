@@ -449,7 +449,8 @@ body.m-mobile .ss-exch { display: none; }
 .m-chart-cta {
   position: absolute;
   left: calc(12px + env(safe-area-inset-left));
-  bottom: calc(12px + env(safe-area-inset-bottom));
+  /* Above the time axis (about 26px of date labels), not on it. */
+  bottom: calc(38px + env(safe-area-inset-bottom));
   z-index: 60;
 }
 .m-chart-cta .demo-cta {
