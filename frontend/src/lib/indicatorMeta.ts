@@ -863,7 +863,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: ["Max times the close may have crossed the line. Empty: no limit."],
       },
       {
-        ...num(19, "Max Distance (×ATR)", { min: 0, step: 0.25 }),
+        ...num(19, "Max Distance (×ATR)", { min: 0, step: 0.1 }),
         group: "dist",
         default: TL.maxDistAtr,
         unbounded: true,
@@ -884,7 +884,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(20, "Max Distance (%)", { min: 0, step: 0.25 }),
+        ...num(20, "Max Distance (%)", { min: 0, step: 0.1 }),
         group: "dist",
         default: TL.maxDistPct,
         unbounded: true,
@@ -1065,7 +1065,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(21, "Merge Lines within", { min: 0, step: 0.25 }),
+        ...num(21, "Merge Lines within", { min: 0, step: 0.1 }),
         group: "merge",
         // The tolerance IS the switch: 0 merges nothing.
         default: TL.mergeAtr,
@@ -1088,7 +1088,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(23, "Merge Lines within (%)", { min: 0, step: 0.25 }),
+        ...num(23, "Merge Lines within (%)", { min: 0, step: 0.1 }),
         group: "merge",
         default: TL.mergePct,
         unbounded: true,

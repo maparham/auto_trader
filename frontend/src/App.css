@@ -2714,7 +2714,7 @@
 /* A control with its unit beside it (indicatorMeta's `suffix`). The unit sits
    with the number it applies to, not inside the label. */
 .ind-control-row { display: inline-flex; align-items: center; gap: 6px; }
-.ind-control-row > .ind-suffix { color: var(--text-dim); white-space: nowrap; }
+.ind-control-row > .ind-suffix { color: var(--text-dim); white-space: nowrap; font-size: 0.75em; }
 /* A solo row (number, checkbox, select) laid out on two shared columns, so
    every control down the tab starts at one x instead of at the modal's right
    edge. Without it the Inputs tab zig-zags: numbers at the middle, checkboxes
