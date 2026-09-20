@@ -12,6 +12,7 @@ import { applyThemeToDocument, loadSettings, saveSettings, type Theme } from "..
 import { toast } from "../lib/notify";
 import { openSettings } from "../lib/signals";
 import { mobileSettingsVersion } from "./mobileChartState";
+import { isDemoMode } from "../lib/demoMode";
 
 const THEMES: { value: Theme; label: string }[] = [
   { value: "light", label: "Light" },
@@ -87,7 +88,11 @@ export default function MobileSettingsSheet({ onClose }: { onClose: () => void }
   return (
     <Sheet title="Settings" onClose={onClose}>
       <div className="m-set-label">Notifications</div>
-      {supported ? (
+      {isDemoMode() ? (
+        <div className="m-set-hint">
+          <a href="/?sign_in=1">Sign up free</a> to get price alerts on this phone.
+        </div>
+      ) : supported ? (
         <button
           className={`m-set-toggle${subscribed ? " on" : ""}`}
           role="switch"
@@ -100,7 +105,7 @@ export default function MobileSettingsSheet({ onClose }: { onClose: () => void }
       ) : (
         <div className="m-set-hint">Push notifications aren't supported on this device.</div>
       )}
-      {iosNeedsInstall() && (
+      {!isDemoMode() && iosNeedsInstall() && (
         <div className="m-set-hint">
           On iOS, install this app to your home screen (Share → Add to Home Screen) to enable notifications.
         </div>

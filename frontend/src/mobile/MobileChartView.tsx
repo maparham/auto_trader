@@ -12,6 +12,7 @@ import { loadSettings } from "../theme";
 import { PERIODS } from "../lib/feed";
 import { requestSymbolSearch } from "../lib/signals";
 import { brokerLabel } from "../lib/trading";
+import { isDemoMode } from "../lib/demoMode";
 import MobileBrokerSheet from "./MobileBrokerSheet";
 import {
   bootMobileMarket,
@@ -117,8 +118,15 @@ export default function MobileChartView({ active = true }: { active?: boolean })
     <div className="m-chart-view">
       {!viewMode.chromeHidden && (
         <div className="m-chart-topbar">
-          <button className="m-chart-broker" onClick={() => setBrokerSheetOpen(true)}>
-            {brokerLabel(broker)} ▾
+          {/* Demo visitors are pinned to the published feed: the chip names
+              it but opens nothing. */}
+          <button
+            className="m-chart-broker"
+            disabled={isDemoMode()}
+            onClick={() => setBrokerSheetOpen(true)}
+          >
+            {brokerLabel(broker)}
+            {!isDemoMode() && " ▾"}
           </button>
           <button className="m-chart-symbol" onClick={() => requestSymbolSearch()}>
             {symbol?.name ?? "Select market…"}

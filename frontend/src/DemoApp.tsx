@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import App from "./App";
+import MobileApp from "./mobile/MobileApp";
 import { setDemoMode } from "./lib/demoMode";
 import { setPersistBroker } from "./lib/persist/core";
 import { fetchDemoSnapshot, seedDemoLayout } from "./lib/demoSnapshot";
@@ -21,11 +22,19 @@ import { exitDemoPreview } from "./lib/demoPreview";
  *  namespace (lib/demoPreview.ts) and demo mode keeps the backend mirror off,
  *  so the seeded layout cannot touch the admin's real workspace.
  *
+ *  `mobile` is main.tsx's boot decision (lib/mobileBoot.ts): a phone gets
+ *  the mobile shell in demo mode too, instead of the desktop chrome squeezed
+ *  to phone width. MobileApp reads isDemoMode() itself to hide the account
+ *  tabs and put the sign-up nudge in the tab bar.
+ *
  *  A published demo snapshot (backend `/api/demo/snapshot`) seeds a curated
  *  layout before `<App />` mounts. No snapshot yet (never published, or the
  *  fetch failed) still renders the app - it just opens on App's own default
  *  single chart instead of a curated one. */
-export default function DemoApp({ preview = false }: { preview?: boolean } = {}) {
+export default function DemoApp({
+  preview = false,
+  mobile = false,
+}: { preview?: boolean; mobile?: boolean } = {}) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -47,16 +56,21 @@ export default function DemoApp({ preview = false }: { preview?: boolean } = {})
   }, []);
 
   if (!ready) return null; // same treatment AccountGate uses while its gate is pending
+  const bar = preview ? (
+    <div className="demo-preview-bar">
+      <span>Previewing the public demo as a signed-out visitor sees it.</span>
+      <button type="button" onClick={exitDemoPreview}>
+        Exit preview
+      </button>
+    </div>
+  ) : null;
+  // The mobile shell is position:fixed over the whole viewport, so the bar
+  // has to live inside it (MobileApp slots it above the body) rather than
+  // as a sibling it would paint over.
+  if (mobile) return <MobileApp banner={bar} />;
   return (
     <>
-      {preview && (
-        <div className="demo-preview-bar">
-          <span>Previewing the public demo as a signed-out visitor sees it.</span>
-          <button type="button" onClick={exitDemoPreview}>
-            Exit preview
-          </button>
-        </div>
-      )}
+      {bar}
       <App />
     </>
   );

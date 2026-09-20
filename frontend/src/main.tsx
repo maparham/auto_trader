@@ -76,7 +76,7 @@ createRoot(document.getElementById('root')!).render(
           {shellAuthParams ? (
             <ShellAuthHandoff params={shellAuthParams} />
           ) : bootDemoPreview ? (
-            <DemoApp preview />
+            <DemoApp preview mobile={bootMobile} />
           ) : (
             <AccountGate>
               <ImpersonationBanner />
@@ -88,12 +88,12 @@ createRoot(document.getElementById('root')!).render(
           {shellAuthParams || shouldShowSignIn(window.location.search) ? (
             <ShellTicketSignIn />
           ) : (
-            <DemoApp />
+            <DemoApp mobile={bootMobile} />
           )}
         </SignedOut>
       </ClerkProvider>
     ) : bootDemoPreview ? (
-      <DemoApp preview />
+      <DemoApp preview mobile={bootMobile} />
     ) : bootAdmin ? (
       <AdminApp />
     ) : bootMobile ? (

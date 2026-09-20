@@ -2,7 +2,7 @@
 // NOTE: klinecharts custom indicators/overlays are registered by App.tsx's
 // module-level side effects; main.tsx imports App statically, so they are
 // registered before we mount (see lib/moduleInitOrder.test.ts).
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { hydrateFromBackend, subscribeToBackendUpdates } from "../lib/persist";
 import { hydrateAlerts } from "../lib/alertsApi";
 import { applyThemeToDocument, loadSettings } from "../theme";
@@ -13,6 +13,8 @@ import MobileTradeView from "./MobileTradeView";
 import MobileModals from "./MobileModals";
 import MobileSettingsSheet from "./MobileSettingsSheet";
 import { GearIcon } from "./viewModeIcons";
+import DemoCta from "../DemoCta";
+import { isDemoMode } from "../lib/demoMode";
 import { initMobileAccount, mobileTabSignal, type MobileTab } from "./mobileChartState";
 import { isWorkspaceKey, bumpMobileWorkspace } from "./mobileWorkspace";
 import { initViewMode, mobileViewMode, setChromeHidden } from "./mobileViewMode";
@@ -25,8 +27,14 @@ const TABS: { id: MobileTab; label: string }[] = [
   { id: "trade", label: "Trade" },
 ];
 
-export default function MobileApp() {
+// `banner`: DemoApp's preview bar. It renders inside the fixed shell, above
+// the body, because a sibling outside `.m-app` would sit under it.
+export default function MobileApp({ banner }: { banner?: ReactNode } = {}) {
   const [ready, setReady] = useState(false);
+  // The public demo (lib/demoMode.ts): no account, so no alerts, positions or
+  // trade tabs, and the tab bar carries the sign-up nudge instead. Alerts
+  // hydrate is skipped too: /api/alerts is not on the demo allowlist.
+  const demo = isDemoMode();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const tab = useSyncExternalStore(
     (fn) => mobileTabSignal.subscribe(fn),
@@ -39,7 +47,7 @@ export default function MobileApp() {
 
   useEffect(() => {
     hydrateFromBackend()
-      .then(() => hydrateAlerts())
+      .then(() => (demo ? undefined : hydrateAlerts()))
       .catch((e) => console.warn("mobile hydrate failed; using local state", e))
       .finally(() => {
         applyThemeToDocument(loadSettings());
@@ -48,6 +56,7 @@ export default function MobileApp() {
         initMobileAccount();
         setReady(true);
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // App-shell cache SW (Task 13: PWA). Same "/alert-sw.js" path pushClient.ts
@@ -118,6 +127,7 @@ export default function MobileApp() {
 
   return (
     <div className="m-app">
+      {banner}
       {offline && <div className="m-offline">Offline — reconnecting…</div>}
       <div className={viewMode.chromeHidden ? "m-body m-body--no-tabbar" : "m-body"}>
         {/* Kept mounted (display:none when inactive) so the chart's websocket
@@ -143,7 +153,8 @@ export default function MobileApp() {
       </div>
       {!viewMode.chromeHidden && (
         <nav className="m-tabbar">
-          {TABS.map((t) => (
+          {demo && <DemoCta />}
+          {!demo && TABS.map((t) => (
             <button
               key={t.id}
               className={tab === t.id ? "active" : ""}

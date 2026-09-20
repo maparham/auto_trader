@@ -25,6 +25,7 @@ import { loadStoredAlert, updateStoredAlert, deleteStoredAlert } from "../lib/pe
 import { applyThemeToDocument, loadSettings, saveSettings, type Settings } from "../theme";
 import type { Instrument } from "../lib/feed";
 import { brokerOf } from "../lib/trading";
+import { isDemoMode } from "../lib/demoMode";
 import AlertModal from "../AlertModal";
 import SettingsModal from "../Settings";
 import DrawingSettings from "../DrawingSettings";
@@ -99,13 +100,16 @@ export default function MobileModals() {
   // off the chart mid-drag.
   const prevDraftRef = useRef(draftOrder);
   useEffect(() => {
-    if (draftOrder && !prevDraftRef.current) mobileTabSignal.set("trade");
+    // No trade tab in the demo: routing there would leave an empty body.
+    if (draftOrder && !prevDraftRef.current && !isDemoMode()) mobileTabSignal.set("trade");
     prevDraftRef.current = draftOrder;
   }, [draftOrder]);
 
   return (
     <div className="m-modal-host">
-      {alertReq && symbol && (
+      {/* Alerts are backend-owned and the demo principal cannot create them,
+          same gate as desktop App. */}
+      {!isDemoMode() && alertReq && symbol && (
         <AlertModal
           epic={symbol.epic}
           price={alertReq.price}
@@ -119,7 +123,8 @@ export default function MobileModals() {
         />
       )}
 
-      {alertEdit &&
+      {!isDemoMode() &&
+        alertEdit &&
         symbol &&
         (() => {
           const a = controller?.overlays.getAlert(alertEdit.id);
@@ -154,7 +159,8 @@ export default function MobileModals() {
           );
         })()}
 
-      {alertGlobalEdit &&
+      {!isDemoMode() &&
+        alertGlobalEdit &&
         (() => {
           const a = loadStoredAlert(alertGlobalEdit.epic, alertGlobalEdit.savedId, brokerId);
           if (!a) {

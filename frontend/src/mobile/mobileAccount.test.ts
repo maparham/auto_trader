@@ -2,12 +2,19 @@
 // choice restores at init (with a fallback when the account vanished from the
 // backend), and a switch repoints persistBroker + the trades account and
 // reboots the chart symbol.
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installMemStorage } from "../lib/testMemStorage";
 
 // Before the state/trading/persist imports below touch localStorage at
 // module-eval time (vitest runs in the node env).
 installMemStorage();
+
+const demo = vi.hoisted(() => ({ on: false, broker: null as string | null }));
+vi.mock("../lib/demoMode", () => ({ isDemoMode: () => demo.on, setDemoMode: () => {} }));
+vi.mock("../lib/demoSnapshot", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getDemoSnapshot: () => (demo.broker ? { broker: demo.broker } : null),
+}));
 import {
   MOBILE_ACCOUNT_KEY,
   initMobileAccount,
@@ -61,6 +68,33 @@ describe("initMobileAccount", () => {
     localStorage.setItem(MOBILE_ACCOUNT_KEY, JSON.stringify("mt5:demo"));
     initMobileAccount();
     expect(mobileAccount.value).toBe("mt5:demo");
+  });
+});
+
+describe("initMobileAccount in the public demo", () => {
+  beforeEach(() => {
+    demo.on = true;
+  });
+  afterEach(() => {
+    demo.on = false;
+    demo.broker = null;
+  });
+
+  it("pins the published snapshot's data feed and ignores the stored account", () => {
+    localStorage.setItem(MOBILE_ACCOUNT_KEY, JSON.stringify("capital:paper"));
+    demo.broker = "yfinance";
+    initMobileAccount();
+    expect(mobileAccount.value).toBe("yfinance:data");
+    expect(mobileBroker()).toBe("yfinance");
+    expect(getPersistBroker()).toBe("yfinance");
+    expect(getTradesAccount()).toBe("yfinance:data");
+    // Never persisted: the key is not workspace-prefixed.
+    expect(JSON.parse(localStorage.getItem(MOBILE_ACCOUNT_KEY)!)).toBe("capital:paper");
+  });
+
+  it("falls back to dukascopy with no snapshot", () => {
+    initMobileAccount();
+    expect(mobileAccount.value).toBe("dukascopy:data");
   });
 });
 

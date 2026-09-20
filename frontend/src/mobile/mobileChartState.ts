@@ -17,6 +17,8 @@ import {
 } from "../lib/trading";
 import { load, saveLocal, setPersistBroker } from "../lib/persist/core";
 import { bumpMobileWorkspace } from "./mobileWorkspace";
+import { isDemoMode } from "../lib/demoMode";
+import { getDemoSnapshot } from "../lib/demoSnapshot";
 
 export interface MobileChartCtx {
   chart: Chart;
@@ -93,6 +95,17 @@ function applyMobileAccount(account: TradeAccount): void {
  * A stored account that's no longer registered (backend config changed) falls
  * back to the default rather than pointing the shell at a dead account. */
 export function initMobileAccount(): void {
+  // The public demo is pinned to the published snapshot's credential-free
+  // feed, the same derivation desktop App uses: a stored account belongs to a
+  // signed-in session and must not leak in, and the pin is never persisted
+  // (MOBILE_ACCOUNT_KEY is not workspace-prefixed, so a ?demo=preview tab
+  // would otherwise seed the admin's real phone with `yfinance:data`).
+  if (isDemoMode()) {
+    const account: TradeAccount = `${getDemoSnapshot()?.broker ?? "dukascopy"}:data`;
+    mobileAccount.set(account);
+    applyMobileAccount(account);
+    return;
+  }
   let account = load<TradeAccount>(MOBILE_ACCOUNT_KEY, DEFAULT_ACCOUNT);
   const known = cachedBrokers()?.exec;
   if (known?.length && !known.some((a) => a.key === account)) account = DEFAULT_ACCOUNT;

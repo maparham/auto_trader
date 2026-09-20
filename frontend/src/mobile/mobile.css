@@ -417,3 +417,23 @@ body.m-mobile .ss-exch { display: none; }
 
 /* Indicator row: the legend's param/timeframe tail in a dimmer, smaller run. */
 .m-ind-row-params { color: var(--text-dim); font-size: 12px; margin-left: 6px; }
+
+/* Public demo (DemoApp with the mobile boot): the sign-up nudge stands in for
+   the account tabs, and the admin's preview bar rides inside the fixed shell. */
+.m-tabbar .demo-cta {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim, var(--text));
+  text-decoration: none;
+}
+.m-app .demo-preview-bar {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding-top: calc(6px + env(safe-area-inset-top));
+}
+.m-set-hint a { color: var(--text); }

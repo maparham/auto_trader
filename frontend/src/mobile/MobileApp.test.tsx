@@ -7,6 +7,16 @@ import { mobileViewMode, setScreenAdapter } from "./mobileViewMode";
 
 installMemStorage();
 
+// Flipped per test: the real isDemoMode() is a one-way latch, so a mock is
+// the only way one file can cover both the signed-in and the demo shell.
+const demoFlag = vi.hoisted(() => ({ on: false }));
+vi.mock("../lib/demoMode", () => ({
+  isDemoMode: () => demoFlag.on,
+  setDemoMode: () => {
+    demoFlag.on = true;
+  },
+}));
+
 vi.mock("../lib/persist", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   hydrateFromBackend: vi.fn().mockResolvedValue(undefined),
@@ -27,6 +37,7 @@ vi.mock("../ChartCore", () => ({
 
 import MobileApp from "./MobileApp";
 import { mobileTabSignal } from "./mobileChartState";
+import { hydrateAlerts } from "../lib/alertsApi";
 
 describe("MobileApp shell", () => {
   beforeEach(() => mobileTabSignal.set("chart"));
@@ -67,6 +78,34 @@ describe("MobileApp shell", () => {
 
     window.dispatchEvent(new Event("online"));
     await waitFor(() => expect(screen.queryByText("Offline — reconnecting…")).toBeNull());
+  });
+});
+
+describe("MobileApp in the public demo", () => {
+  beforeEach(() => {
+    demoFlag.on = true;
+    mobileTabSignal.set("chart");
+    vi.mocked(hydrateAlerts).mockClear();
+  });
+  afterEach(() => {
+    demoFlag.on = false;
+    cleanup();
+  });
+
+  it("replaces the account tabs with the sign-up nudge and skips the alerts hydrate", async () => {
+    render(<MobileApp />);
+    const cta = await screen.findByRole("link", { name: "Sign up free" });
+    expect(cta.getAttribute("href")).toBe("/?sign_in=1");
+    expect(screen.queryByRole("button", { name: "Alerts" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Trade" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeTruthy();
+    expect(hydrateAlerts).not.toHaveBeenCalled();
+  });
+
+  it("slots the banner inside the shell", async () => {
+    render(<MobileApp banner={<div data-testid="banner" />} />);
+    await screen.findByRole("link", { name: "Sign up free" });
+    expect(screen.getByTestId("banner").closest(".m-app")).not.toBeNull();
   });
 });
 
