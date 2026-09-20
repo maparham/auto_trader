@@ -160,12 +160,17 @@ export function registerIndicatorActions(): void {
           extendData: { ...((live?.extendData as object) ?? {}), ...patch },
         });
       }
-      if (timeframe !== undefined) {
+      // A pinned Trendlines instance detects on the higher timeframe's own
+      // bars, so new params have to go back through the coordinator: a bare
+      // calcParams override would leave the stashed HTF detection as it was.
+      const pinned = (live?.extendData as { mtf?: { timeframe?: string | null } } | undefined)?.mtf?.timeframe ?? null;
+      const rewalk = timeframe !== undefined ? timeframe : calcParams && type === "TRENDLINES" && pinned ? pinned : undefined;
+      if (rewalk !== undefined) {
         const cp = calcParams ?? saved.calcParams ?? (live?.calcParams as unknown[] | undefined);
         const liveExt = getIndicator(chart, paneId, id)?.extendData;
         await applyTrendlinesTimeframe(
           chart, epic, id, paneId,
-          parseTrendlinesConfig(cp, liveExt), timeframe, broker,
+          parseTrendlinesConfig(cp, liveExt), rewalk, broker,
         );
       } else if (calcParams) {
         chart.overrideIndicator({ paneId, name: id, calcParams });

@@ -125,6 +125,20 @@ describe("indicator actions", () => {
       expect(loadIndicatorConfigs("t1.c1").TRENDLINES?.extendData).toBeUndefined();
     });
 
+    it("re-detects a pinned Trendlines instance when only calcParams change", async () => {
+      const controller = provide();
+      liveInstance(controller, "TRENDLINES", "TRENDLINES", { mtf: { timeframe: "DAY" } });
+      const apply = vi.spyOn(mtf, "applyTrendlinesTimeframe").mockResolvedValue(undefined);
+      const calcParams = [5, 0, 2, 8, 100, 12, 2, 0, 40];
+      await invokeAction("indicator.set", { id: "TRENDLINES", calcParams }, ctx);
+      expect(apply).toHaveBeenCalledWith(
+        controller.chart, "US100", "TRENDLINES", "candle_pane",
+        expect.objectContaining({ pivotLen: 5 }), "DAY", "capital",
+      );
+      expect(controller.chart.overrideIndicator).not.toHaveBeenCalledWith({ paneId: "candle_pane", name: "TRENDLINES", calcParams });
+      expect(loadIndicatorConfigs("t1.c1").TRENDLINES?.calcParams).toEqual(calcParams);
+    });
+
     it("refuses a pin on a non-Trendlines instance, an unknown timeframe, and an empty patch", async () => {
       const controller = provide();
       liveInstance(controller, "RSI#x1", "RSI");
