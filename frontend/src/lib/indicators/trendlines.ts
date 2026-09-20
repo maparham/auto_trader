@@ -72,6 +72,9 @@ export interface TrendPivots {
    * Read only by the draw path, which boxes those carets so the tier can be
    * checked on the chart. Absent means no tier information. */
   majorQs?: number[];
+  /** Pivots that met the MAJOR definition so far, whether or not the tier
+   * still holds them. A settings readout. */
+  majorsSeen?: number;
   /** Candidate lines seeded so far (pairings that passed the slope and
    * back-clearance gates), cumulative over the series. A settings readout. */
   pairs?: number;
@@ -475,7 +478,7 @@ export function swingStrength(
 }
 
 /** Admit pool position q into the major tier. majors.q stays ascending because
- * q is always the newest position; a newcomer must STRICTLY beat the weakest
+ * majors are admitted in bar order; a newcomer must STRICTLY beat the weakest
  * (first minimum) to evict it, so ties keep the older pivot. Mirrors Python
  * admit_major. */
 export function admitMajor(
@@ -499,6 +502,23 @@ export function admitMajor(
     majors.q.push(q);
     majors.strength.push(strength);
   }
+}
+
+/** Pool position of the (idx, kind) pivot, or -1 when the filter dropped it.
+ * Walks back from the end: the pool is in bar order and the lookup is for a
+ * bar majorLen back, so this is a few dozen steps at most. Mirrors Python
+ * pool_position. */
+export function poolPosition(
+  pool: { idxs: number[]; kinds: PivotKind[] },
+  idx: number,
+  kind: PivotKind,
+): number {
+  for (let q = pool.idxs.length - 1; q >= 0; q--) {
+    const p = pool.idxs[q];
+    if (p < idx) return -1;
+    if (p === idx && pool.kinds[q] === kind) return q;
+  }
+  return -1;
 }
 
 export function hasSwingReach(
@@ -581,9 +601,11 @@ interface TlState {
    * within a bar). What may seed or touch a line. */
   pool: { idxs: number[]; kinds: PivotKind[] };
   /** The MAJOR tier as POOL POSITIONS (ascending) with their strengths: the
-   * cfg.majorPivots strongest swings so far, paired with beyond the recent
-   * window. See admitMajor. */
+   * biggest of the pivots that met the MAJOR definition (see
+   * TrendlinesConfig.majorPivots), paired with beyond the recent window. */
   majors: { q: number[]; strength: number[] };
+  /** Pivots that met the MAJOR definition so far; see TrendPivots.majorsSeen. */
+  majorsSeen: number;
   /** EVERY confirmed fractal pivot per kind, including the ones the size and
    * reach gates reject, because the Min Pivot Size leg runs to the previous
    * turn of the other kind whether or not that turn was big enough to trade. */
@@ -615,6 +637,7 @@ export function buildTlState(
     closes: prefix.map((d) => d.close),
     pool: { idxs: [], kinds: [] },
     majors: { q: [], strength: [] },
+    majorsSeen: 0,
     turns: { high: [], low: [] },
     lines: [],
     points: Array.from({ length: m }, () => ({})),
@@ -636,7 +659,10 @@ export function computeTrendlines(
 }
 
 function pivotsOf(st: TlState): TrendPivots {
-  return { idxs: st.pool.idxs, kinds: st.pool.kinds, highs: st.highs, lows: st.lows, majorQs: st.majors.q, pairs: st.pairs };
+  return {
+    idxs: st.pool.idxs, kinds: st.pool.kinds, highs: st.highs, lows: st.lows,
+    majorQs: st.majors.q, majorsSeen: st.majorsSeen, pairs: st.pairs,
+  };
 }
 
 /** The price distance past which a line is too far from bar i's close to
@@ -805,14 +831,28 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
       }
       pool.idxs.push(k);
       pool.kinds.push(kind);
-      if (cfg.majorPivots > 0) {
-        const opposite = turns[kind === "high" ? "low" : "high"];
-        admitMajor(
-          majorTier,
-          pool.idxs.length - 1,
-          swingStrength(highs, lows, opposite, k, kind, atr[k]),
-          cfg.majorPivots,
-        );
+    }
+
+    // 2c. MAJOR check for the pivot at km = i - majorLen: the extreme over
+    //     majorLen bars each side, already in the pool (a wider fractal is a
+    //     narrower one too, unless the size or reach gate dropped it), and
+    //     big enough under Major Size. Admitted in bar order, so the tier
+    //     stays ascending.
+    if (cfg.majorPivots > 0) {
+      const ml = Math.max(cfg.majorLen, cfg.pivotLen);
+      const km = i - ml;
+      if (km >= 0) {
+        for (const kind of KINDS) {
+          const vals = kind === "high" ? highs : lows;
+          if (!isPivotAt(vals, km, ml, ml, kind, true)) continue;
+          const q = poolPosition(pool, km, kind);
+          if (q < 0) continue;
+          const opposite = turns[kind === "high" ? "low" : "high"];
+          const strength = swingStrength(highs, lows, opposite, km, kind, atr[km]);
+          if (cfg.majorSizeAtr > 0 && strength < cfg.majorSizeAtr) continue;
+          st.majorsSeen++;
+          admitMajor(majorTier, q, strength, cfg.majorPivots);
+        }
       }
     }
 
@@ -1012,6 +1052,7 @@ export function createTrendlinesSession(): TrendlinesSession {
         points: b.points,
         pool: { idxs: b.pool.idxs.slice(), kinds: b.pool.kinds.slice() },
         majors: { q: b.majors.q.slice(), strength: b.majors.strength.slice() },
+        majorsSeen: b.majorsSeen,
         turns: { high: b.turns.high.slice(), low: b.turns.low.slice() },
         lines: b.lines.map(cloneTrendLine),
         pairs: b.pairs,

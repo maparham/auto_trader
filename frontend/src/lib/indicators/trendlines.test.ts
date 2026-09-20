@@ -16,6 +16,7 @@ import {
   hasSwingReach,
   swingStrength,
   admitMajor,
+  poolPosition,
   isMajor,
   isSignificantSwing,
   lineExtent,
@@ -434,7 +435,9 @@ describe("major tier", () => {
   // confirmed before ATR warms up is never recorded), then a run of small
   // zigzag pivots that pushes bar 20 out of any short recent window, then a
   // low at bar 170 level with it. Closes stay near 100, so the line across
-  // the two lows is never crossed. Mirrors Python _old_major_low.
+  // the two lows is never crossed. Under Major Length 10 the majors are the
+  // bar 15 high, the bar 20 low and the bar 170 low: every zigzag turn has an
+  // equal neighbour within 10 bars. Mirrors Python _old_major_low.
   const oldMajorLow = (): KLineData[] => {
     const bars = flat(200);
     bars[15] = bar(15, 99.5, 103);
@@ -450,24 +453,24 @@ describe("major tier", () => {
 
   it("reaches past the recent window", () => {
     const bars = oldMajorLow();
-    const base = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0 });
+    const base = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorLen: 10 });
     expect(spansTheLows(computeTrendlines(bars, { ...base, majorPivots: 0 }).lines)).toHaveLength(0);
     expect(spansTheLows(computeTrendlines(bars, { ...base, majorPivots: 1 }).lines)).toHaveLength(1);
   });
 
   it("is a union with the recent window: a major still inside it seeds once", () => {
-    const c = cfg({ pairPivots: 200, maxLines: 50, mergeAtr: 0, majorPivots: 12 });
+    const c = cfg({ pairPivots: 200, maxLines: 50, mergeAtr: 0, majorPivots: 12, majorLen: 10 });
     expect(spansTheLows(computeTrendlines(oldMajorLow(), c).lines)).toHaveLength(1);
   });
 
   it("drops a major no line could span under Max Span", () => {
-    const c = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 1, maxSpanBars: 100 });
+    const c = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 1, maxSpanBars: 100, majorLen: 10 });
     expect(spansTheLows(computeTrendlines(oldMajorLow(), c).lines)).toHaveLength(0);
   });
 
   it("matches the incremental session with the tier on", () => {
     const bars = oldMajorLow();
-    const c = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 1 });
+    const c = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 1, majorLen: 10 });
     const ref = computeTrendlines(bars, c);
     const session = createTrendlinesSession();
     const inc = session.compute(bars, c);
@@ -475,12 +478,32 @@ describe("major tier", () => {
     expect(inc.points).toEqual(ref.points);
   });
 
-  it("exposes the tier's pool positions on the pivots, for the chart marks", () => {
+  it("exposes the tier's pool positions and the majors seen, for the marks and the readout", () => {
     const bars = oldMajorLow();
-    const { pivots } = computeTrendlines(bars, cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 1 }));
-    expect(pivots.majorQs).toHaveLength(1);
-    expect(pivots.idxs[pivots.majorQs![0]]).toBe(20);
+    const { pivots } = computeTrendlines(bars, cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 12, majorLen: 10 }));
+    expect(pivots.majorQs!.map((q) => [pivots.idxs[q], pivots.kinds[q]])).toEqual([[15, "high"], [20, "low"], [170, "low"]]);
+    expect(pivots.majorsSeen).toBe(3);
+    // Major Size drops the bar 15 high, whose leg has no opposite turn before it.
+    const sized = computeTrendlines(bars, cfg({ majorPivots: 12, majorLen: 10, majorSizeAtr: 5 })).pivots;
+    expect(sized.majorsSeen).toBe(2);
     expect(computeTrendlines(bars, cfg({ majorPivots: 0 })).pivots.majorQs).toEqual([]);
+  });
+
+  it("a major is the extreme over Major Length bars each side", () => {
+    // 30 runs off the start for bar 20, so nothing is major and the long
+    // line is not seeded; at 10 it is.
+    const bars = oldMajorLow();
+    const base = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 12 });
+    expect(spansTheLows(computeTrendlines(bars, { ...base, majorLen: 30 }).lines)).toHaveLength(0);
+    expect(spansTheLows(computeTrendlines(bars, { ...base, majorLen: 10 }).lines)).toHaveLength(1);
+  });
+
+  it("poolPosition finds a pivot by bar and kind", () => {
+    const pool = { idxs: [3, 9, 9, 15], kinds: ["high", "high", "low", "low"] as PivotKind[] };
+    expect(poolPosition(pool, 9, "low")).toBe(2);
+    expect(poolPosition(pool, 9, "high")).toBe(1);
+    expect(poolPosition(pool, 15, "high")).toBe(-1);
+    expect(poolPosition(pool, 4, "low")).toBe(-1);
   });
 
   it("admitMajor evicts the weakest only when strictly beaten", () => {

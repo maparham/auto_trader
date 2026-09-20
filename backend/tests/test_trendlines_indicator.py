@@ -14,6 +14,7 @@ from auto_trader.indicators.registry import SERIES_INDICATORS, resolve_instances
 from auto_trader.indicators.trendlines import (
     MAX_LIVE_MULT,
     MAX_MAX_LINES,
+    MAJOR_LEN,
     MAJOR_PIVOTS,
     MAX_PAIR_PIVOTS,
     TL_ATR_LEN,
@@ -21,6 +22,7 @@ from auto_trader.indicators.trendlines import (
     TrendLine,
     admit_major,
     compute_trendlines,
+    pool_position,
     swing_strength,
     has_back_clearance,
     touch_weight,
@@ -75,20 +77,21 @@ def test_defaults_from_empty_params():
     assert (c.merge_atr, c.max_per_pivot, c.merge_pct) == (0.25, 0, 0.0)
     assert c.pair_pivots == MAX_PAIR_PIVOTS == 40
     assert c.major_pivots == MAJOR_PIVOTS == 12
+    assert (c.major_len, c.major_size_atr) == (MAJOR_LEN, 0.0) == (30, 0.0)
     assert (c.min_crossings, c.max_crossings) == (0, 0)
     assert c.timeframe is None
 
 
 def test_reads_every_slot_in_order():
     c = parse_trendlines_config(
-        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3, 5], {})
+        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3, 5, 40, 1.5], {})
     assert (c.pivot_len, c.touch_mult, c.min_touches, c.min_span_bars, c.max_proj_bars, c.max_lines,
             c.min_swing_atr, c.min_swing_reach, c.pair_pivots, c.max_touches, c.max_span_bars,
             c.max_slope_atr, c.min_slope_atr, c.max_touch_spacing, c.min_touch_spacing,
             c.min_crossings, c.max_crossings, c.pierce_mult, c.min_back_bars,
             c.max_dist_atr, c.max_dist_pct, c.merge_atr, c.max_per_pivot, c.merge_pct,
-            c.major_pivots) == (
-        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3, 5)
+            c.major_pivots, c.major_len, c.major_size_atr) == (
+        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3, 5, 40, 1.5)
 
 
 def test_slope_slots_are_signed():
@@ -328,7 +331,9 @@ def _old_major_low() -> list[Candle]:
     """A big low at bar 20 (its opposite turn is the high at bar 15), then a
     run of small zigzag pivots that pushes bar 20 out of any short recent
     window, then a low at bar 170 level with it. Closes stay near 100, so the
-    line across the two lows is never crossed."""
+    line across the two lows is never crossed. Under Major Length 10 the
+    majors are the bar 15 high, the bar 20 low and the bar 170 low: every
+    zigzag turn has an equal neighbour within 10 bars."""
     bars = flat(200)
     bars[15] = bar(15, 99.5, 103)
     bars[20] = bar(20, 80, 100.5)
@@ -345,7 +350,7 @@ def _spans_the_lows(lines: list[TrendLine]) -> bool:
 
 def test_major_tier_reaches_past_the_recent_window():
     bars = _old_major_low()
-    base = cfg(pair_pivots=4, max_lines=50, merge_atr=0)
+    base = cfg(pair_pivots=4, max_lines=50, merge_atr=0, major_len=10)
     assert not _spans_the_lows(compute_trendlines(bars, replace(base, major_pivots=0))[1])
     assert _spans_the_lows(compute_trendlines(bars, replace(base, major_pivots=1))[1])
 
@@ -353,15 +358,39 @@ def test_major_tier_reaches_past_the_recent_window():
 def test_major_tier_is_a_union_with_the_recent_window():
     # A major that is still inside the recent window seeds ONCE.
     bars = _old_major_low()
-    c = cfg(pair_pivots=200, max_lines=50, merge_atr=0, major_pivots=12)
+    c = cfg(pair_pivots=200, max_lines=50, merge_atr=0, major_pivots=12, major_len=10)
     _, lines = compute_trendlines(bars, c)
     assert sum(1 for l in lines if l.i1 == 20 and l.i2 == 170) == 1
 
 
 def test_max_span_drops_a_major_no_line_could_use():
     bars = _old_major_low()
-    c = cfg(pair_pivots=4, max_lines=50, merge_atr=0, major_pivots=1, max_span_bars=100)
+    c = cfg(pair_pivots=4, max_lines=50, merge_atr=0, major_pivots=1, max_span_bars=100, major_len=10)
     assert not _spans_the_lows(compute_trendlines(bars, c)[1])
+
+
+def test_major_is_the_extreme_over_major_len_each_side():
+    # Major Length 30 runs off the start for bar 20, so nothing is major and
+    # the long line is not seeded; at 10 it is. The zigzag turns never are.
+    bars = _old_major_low()
+    base = cfg(pair_pivots=4, max_lines=50, merge_atr=0, major_pivots=12)
+    assert not _spans_the_lows(compute_trendlines(bars, replace(base, major_len=30))[1])
+    assert _spans_the_lows(compute_trendlines(bars, replace(base, major_len=10))[1])
+
+
+def test_major_size_gates_the_tier():
+    bars = _old_major_low()
+    base = cfg(pair_pivots=4, max_lines=50, merge_atr=0, major_pivots=12, major_len=10)
+    assert _spans_the_lows(compute_trendlines(bars, replace(base, major_size_atr=5))[1])
+    assert not _spans_the_lows(compute_trendlines(bars, replace(base, major_size_atr=50))[1])
+
+
+def test_pool_position_finds_a_pivot_by_bar_and_kind():
+    idxs, kinds = [3, 9, 9, 15], ["high", "high", "low", "low"]
+    assert pool_position(idxs, kinds, 9, "low") == 2
+    assert pool_position(idxs, kinds, 9, "high") == 1
+    assert pool_position(idxs, kinds, 15, "high") == -1
+    assert pool_position(idxs, kinds, 4, "low") == -1
 
 
 def test_admit_major_evicts_the_weakest_only_when_beaten():

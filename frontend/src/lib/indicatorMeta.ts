@@ -78,9 +78,8 @@ export interface IndicatorInputDef {
   unbounded?: boolean;
   // A live readout under the control, from the indicator's last result:
   // how many pivots pass the filter and how many candidate lines the pairing
-  // has seeded. Trendlines only. (The major tier is a fixed-size list, so its
-  // size would only repeat the box.)
-  liveStat?: "tlPivots" | "tlPairs";
+  // has seeded, how many pivots met the major definition. Trendlines only.
+  liveStat?: "tlPivots" | "tlPairs" | "tlMajors";
   // Placeholder for the empty `unbounded` box when "∞" is the wrong picture,
   // e.g. "-∞" on the low side of a signed range.
   placeholder?: string;
@@ -673,8 +672,29 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         suffix: "pivots",
         default: TL.majorPivots,
         tip: [
-          "The biggest swings seen so far, kept beyond the Max Pivot Pairs window so a new pivot can still start a line from an old major high or low.",
-          "Swing size is the leg to the previous pivot on the other side, in ATR(14). Zero: only the recent window pairs.",
+          "How many major pivots are kept beyond the Max Pairs window, so a new pivot can still start a line from an old major high or low.",
+          "The biggest swings stay when there are more. Zero: only the recent window pairs.",
+        ],
+      },
+      {
+        ...num(25, "Major Length"),
+        group: "major",
+        suffix: "bars",
+        default: TL.majorLen,
+        liveStat: "tlMajors",
+        tip: [
+          "A pivot is major when it is the highest high or lowest low over this many bars on each side.",
+          "It becomes known that many bars after it happened.",
+        ],
+      },
+      {
+        ...num(26, "Major Size", { min: 0, step: 0.1 }),
+        group: "major",
+        suffix: "ATR",
+        default: TL.majorSizeAtr,
+        tip: [
+          "Min height of a major pivot's swing back to the last pivot on the other side, in ATR(14).",
+          "Zero: length alone decides.",
         ],
       },
       {

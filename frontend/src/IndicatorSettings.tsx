@@ -775,7 +775,7 @@ function IndicatorSettingsForm({
   // each change of the params reads a few times over the next second and
   // then stops; nothing runs while the form sits idle. Only set when the
   // numbers change, so a read never re-renders the form on its own.
-  const [tlStats, setTlStats] = useState<{ pivots: number; pairs: number } | null>(null);
+  const [tlStats, setTlStats] = useState<{ pivots: number; pairs: number; majors: number } | null>(null);
   useEffect(() => {
     if (name !== "TRENDLINES") return;
     const read = () => {
@@ -783,10 +783,11 @@ function IndicatorSettingsForm({
       const rows = (live?.result ?? []) as Array<{ pivots?: TrendPivots }>;
       const pv = rows[rows.length - 1]?.pivots;
       const next = pv
-        ? { pivots: pv.idxs.length, pairs: pv.pairs ?? 0 }
+        ? { pivots: pv.idxs.length, pairs: pv.pairs ?? 0, majors: pv.majorsSeen ?? 0 }
         : null;
       setTlStats((cur) =>
-        cur === next || (cur && next && cur.pivots === next.pivots && cur.pairs === next.pairs)
+        cur === next ||
+        (cur && next && cur.pivots === next.pivots && cur.pairs === next.pairs && cur.majors === next.majors)
           ? cur
           : next,
       );
@@ -801,7 +802,10 @@ function IndicatorSettingsForm({
 
   function statFor(inp: IndicatorInputDef) {
     if (!inp.liveStat || !tlStats) return null;
-    const text = inp.liveStat === "tlPivots" ? `${tlStats.pivots} pivots` : `${tlStats.pairs} pairs`;
+    const text =
+      inp.liveStat === "tlPivots" ? `${tlStats.pivots} pivots`
+      : inp.liveStat === "tlMajors" ? `${tlStats.majors} pivots`
+      : `${tlStats.pairs} pairs`;
     return <span className="ind-stat">{text}</span>;
   }
 
@@ -911,12 +915,10 @@ function IndicatorSettingsForm({
                 inp.index!,
                 raw === "" && inp.unbounded
                   ? 0
-                  : // A meta `max` is a hard ceiling the calc clamps to anyway
+                  : // Meta `min` / `max` are hard bounds the calc clamps to anyway
                     // (Max Trendlines caps at 50): store the clamped value so the
                     // box shows what the chart does, not a number it ignores.
-                    inp.max != null
-                    ? Math.min(inp.max, Number(raw))
-                    : Number(raw),
+                    Math.min(inp.max ?? Infinity, Math.max(inp.min ?? -Infinity, Number(raw))),
               ),
             inp.step ?? 1,
           )}

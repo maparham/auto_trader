@@ -412,11 +412,11 @@ describe("input sections", () => {
 });
 
 describe("live pivot readouts", () => {
-  // Min Length and Max Pairs carry a count read from the last result row, so
-  // the user sees what the filter admits and how many candidate lines the
-  // pairing seeded. Majors gets none: the tier is a fixed-size list, so its
-  // size would only repeat the box.
-  it("shows pivots and pairs under their boxes, nothing under Majors", () => {
+  // Min Length, Max Pairs and Major Length each carry a count read from the
+  // last result row: what the filter admits, how many candidate lines the
+  // pairing seeded, how many pivots met the major definition. The Majors
+  // cap gets none: the tier's size would only repeat the box.
+  it("shows pivots, pairs and majors under their boxes", () => {
     const ind = {
       paneId: "candle_pane",
       name: "TRENDLINES",
@@ -424,7 +424,7 @@ describe("live pivot readouts", () => {
       extendData: { indType: "TRENDLINES" },
       figures: [],
       styles: {},
-      result: [{}, { pivots: { idxs: [3, 9, 15], kinds: ["high", "low", "high"], highs: [], lows: [], majorQs: [0, 2], pairs: 7 } }],
+      result: [{}, { pivots: { idxs: [3, 9, 15], kinds: ["high", "low", "high"], highs: [], lows: [], majorQs: [0, 2], majorsSeen: 5, pairs: 7 } }],
     };
     const chart = {
       getIndicators: () => [ind],
@@ -436,7 +436,7 @@ describe("live pivot readouts", () => {
       <IndicatorSettings chart={chart} paneId="candle_pane" name="TRENDLINES" onClose={() => {}} scope="s" cellId="c" epic="E" brokerId="b" chartResolution="DAY" />,
     );
     expect(screen.getByText("3 pivots")).toBeTruthy();
-    expect(screen.queryByText("2 pivots")).toBeNull();
+    expect(screen.getByText("5 pivots")).toBeTruthy();
     expect(screen.getByText("7 pairs")).toBeTruthy();
   });
 });

@@ -34,6 +34,9 @@ MAX_PAIR_PIVOTS = 40
 # beyond the recent window so a fresh pivot can still start a line from a big
 # old one. Mirrors MAJOR_PIVOTS in trendlinesOutputs.ts.
 MAJOR_PIVOTS = 12
+# DEFAULT window that makes a pivot MAJOR: the extreme over this many bars on
+# each side. Mirrors MAJOR_LEN in trendlinesOutputs.ts.
+MAJOR_LEN = 30
 # Live state keeps this multiple of max_lines lines IN TOTAL. 16, not 4: a line
 # is built once, at its second anchor, so the cap is a one-shot test it can
 # never retake (see survival_key). Mirrors MAX_LIVE_MULT in
@@ -55,9 +58,9 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 #  min_swing_atr, min_swing_reach, pair_pivots, max_touches, max_span_bars,
 #  max_slope_atr, min_slope_atr, max_touch_spacing, min_touch_spacing,
 #  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
-#  max_dist_pct, merge_atr, max_per_pivot, merge_pct, major_pivots]:
-#  TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS)
+#  max_dist_pct, merge_atr, max_per_pivot, merge_pct, major_pivots,
+#  major_len, major_size_atr]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, 0.0)
 # The distance "Only lines near price" drew at, in ATR(14): what a pane saved
 # with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
 # trendlinesOutputs.ts.
@@ -110,12 +113,18 @@ class TrendlinesConfig:
     merge_atr: float = 0.25
     max_per_pivot: int = 0
     # The MAJOR tier: on top of the last pair_pivots pool entries, a new pivot
-    # also pairs with the major_pivots strongest swings seen so far (swing leg
-    # to the previous turn of the other kind, in ATR(14) at the pivot's bar).
-    # A pivot enters the tier when it beats the weakest member, which drops
-    # out. Losing the tier never touches lines already seeded. 0 = off.
+    # also pairs with the MAJOR pivots kept so far. A filter-passing pivot is
+    # major when it is the extreme over major_len bars on EACH side (so it is
+    # known major_len bars after it happened) and, with major_size_atr > 0,
+    # its swing leg to the previous turn of the other kind is at least that
+    # many ATR(14) at its bar. The tier keeps at most major_pivots of them,
+    # the biggest swings winning; a newcomer must beat the weakest, which
+    # drops out. Losing the tier never touches lines already seeded.
+    # major_pivots 0 = off.
     major_pivots: int = MAJOR_PIVOTS
     merge_pct: float = 0.0
+    major_len: int = MAJOR_LEN
+    major_size_atr: float = 0.0
     timeframe: str | None = None
 
 
@@ -215,6 +224,8 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         max_per_pivot=zero_int(22, max_per_pivot_default),
         merge_pct=num_at(23, d[23], True),
         major_pivots=zero_int(24, d[24]),
+        major_len=int_at(25, d[25]),
+        major_size_atr=num_at(26, d[26], True),
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
@@ -523,8 +534,8 @@ def swing_strength(
 
 
 def admit_major(major_q: list[int], major_str: list[float], q: int, strength: float, cap: int) -> None:
-    """Mirrors TS admitMajor. major_q stays ascending because q is always the
-    newest pool position; a newcomer must STRICTLY beat the weakest (first
+    """Mirrors TS admitMajor. major_q stays ascending because majors are
+    admitted in bar order; a newcomer must STRICTLY beat the weakest (first
     minimum) to evict it, so ties keep the older pivot."""
     if cap <= 0:
         return
@@ -541,6 +552,19 @@ def admit_major(major_q: list[int], major_str: list[float], q: int, strength: fl
         del major_str[weakest]
         major_q.append(q)
         major_str.append(strength)
+
+
+def pool_position(pool_idxs: Sequence[int], pool_kinds: Sequence[str], idx: int, kind: str) -> int:
+    """Pool position of the (idx, kind) pivot, or -1 when the filter dropped
+    it. Walks back from the end: the pool is in bar order and the lookup is
+    for a bar major_len back, so this is a few dozen steps at most."""
+    for q in range(len(pool_idxs) - 1, -1, -1):
+        p = pool_idxs[q]
+        if p < idx:
+            return -1
+        if p == idx and pool_kinds[q] == kind:
+            return q
+    return -1
 
 
 def _has_swing_reach(vals: Sequence[float], k: int, kind: str, bars: int) -> bool:
@@ -719,12 +743,28 @@ def compute_trendlines(
                     lines.append(cand)
                 pool_idxs.append(k)
                 pool_kinds.append(kind)
-                if cfg.major_pivots > 0:
-                    opposite = turns["low" if kind == "high" else "high"]
-                    admit_major(
-                        major_q, major_str, len(pool_idxs) - 1,
-                        swing_strength(highs, lows, opposite, k, kind, atr[k]), cfg.major_pivots,
-                    )
+
+            # 2c. MAJOR check for the pivot at km = i - major_len: the extreme
+            #     over major_len bars each side, already in the pool (a wider
+            #     fractal is a narrower one too, unless the size or reach gate
+            #     dropped it), and big enough under Major Size. Admitted in bar
+            #     order, so the tier stays ascending.
+            if cfg.major_pivots > 0:
+                ml = max(cfg.major_len, cfg.pivot_len)
+                km = i - ml
+                if km >= 0:
+                    for kind in KINDS:
+                        vals = highs if kind == "high" else lows
+                        if not _is_pivot_at(vals, km, ml, ml, kind):
+                            continue
+                        q = pool_position(pool_idxs, pool_kinds, km, kind)
+                        if q < 0:
+                            continue
+                        opposite = turns["low" if kind == "high" else "high"]
+                        strength = swing_strength(highs, lows, opposite, km, kind, atr[km])
+                        if cfg.major_size_atr > 0 and strength < cfg.major_size_atr:
+                            continue
+                        admit_major(major_q, major_str, q, strength, cfg.major_pivots)
 
             # 3. Prune the dead, then cap live state by the SURVIVAL order IN
             #    TOTAL (survival_key, not rank_key: see its docstring).
