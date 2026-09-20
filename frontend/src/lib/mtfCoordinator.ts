@@ -278,6 +278,16 @@ const FLOOR_REBASE_SCREENS = 4;
  * the coverage refresh. The floor is the view's left end minus the type's
  * warmup in chart bars; a changed stamp triggers the instance's recalc, which
  * rebuilds the detector from the new floor (see createTrendlinesSession).
+ *
+ * This is lazy loading of history, BY DESIGN, and it shows on the chart: a
+ * swing older than the floor is in no pool, so a line that would rest on it
+ * (a major swing pairing especially, since pairing with old swings is the
+ * tier's whole point) appears only once the user has scrolled far enough
+ * left to pull the floor past that swing. Scrolling back right keeps it (the
+ * floor never moves right for an ordinary scroll), and only a far jump toward
+ * the present drops it again along with the deep-history compute cost. The
+ * warmup deliberately leaves Major Length out: the margin is the price of
+ * every recalc, and a major just off screen is a scroll away, not a bug.
  */
 export function stampTrendlinesFloors(chart: Chart): void {
   const read = viewportReaders.get(chart);

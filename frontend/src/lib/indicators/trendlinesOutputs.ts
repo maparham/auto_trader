@@ -26,6 +26,12 @@ export const MAJOR_PIVOTS = 12;
  * indicators/trendlines.py. */
 export const MAJOR_LEN = 30;
 
+/** DEFAULT min swing, in ATR(14), for a pivot to be MAJOR (cfg.majorSizeAtr,
+ * calcParams[26]). 3: on OIL_CRUDE daily 5 rejected the swings a reader
+ * would call major and 4.5 kept them; 0 (length alone) let in too many.
+ * Mirrors MAJOR_SIZE_ATR in indicators/trendlines.py. */
+export const MAJOR_SIZE_ATR = 3;
+
 /** Live state keeps this multiple of maxLines lines IN TOTAL, so a line that is
  * temporarily outranked is not destroyed and can return when it gains a touch.
  * Raising maxLines therefore also widens the candidate set a rule can see.
@@ -177,7 +183,7 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   mergePct: 0,
   majorPivots: MAJOR_PIVOTS,
   majorLen: MAJOR_LEN,
-  majorSizeAtr: 0,
+  majorSizeAtr: MAJOR_SIZE_ATR,
 };
 
 /** DEFAULT merge tolerance, in ATR(14): the value the mergeAtr slot starts
@@ -322,7 +328,9 @@ export function legacyNearPrice(extendData: unknown): boolean {
  * two pivots that must confirm (pivotLen each), plus the span they must
  * cover. Every output shares it. minSwingReach is a left-window gate and is
  * deliberately left out (the floor is about the shape of the spec, not the
- * strictest reachable config). */
+ * strictest reachable config), and so is majorLen: a major swing further back
+ * than this is found once the view scrolls there (see stampTrendlinesFloors),
+ * and the margin is paid on every recalc. */
 export function trendlinesWarmup(cfg: TrendlinesConfig): number {
   return TL_ATR_LEN + 2 * cfg.pivotLen + cfg.minSpanBars;
 }
