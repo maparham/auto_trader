@@ -275,53 +275,36 @@ def same_trend(a: TrendLine, b: TrendLine, at_idx: int, tol: float) -> bool:
     )
 
 
-def bar_positions(candidates: list[TrendLine]) -> dict[int, dict[int, int]]:
-    """Mirrors TS barPositions: for every bar, the 1-based position of each
-    candidate line through it, in the rank order `candidates` already carries.
-    Keyed by id(line) because TrendLine is not hashable by identity here.
-    First write wins, so a bar named twice in touch_idxs cannot push a line
-    down its own ordering."""
+def level_positions(
+    candidates: list[TrendLine], level_of: dict[int, int]
+) -> dict[int, dict[int, int]]:
+    """Mirrors TS levelPositions: for every bar, the 1-based position of each
+    LEVEL through it, in the rank order `candidates` already carries. Keyed by
+    id(line) -> level index. First write wins, so a level counts once per bar
+    however many of its members run through it, and LEVELS are what the cap
+    counts because a level is one line on the chart."""
     pos: dict[int, dict[int, int]] = {}
     for line in candidates:
+        lvl = level_of.get(id(line), -1)
         for b in line.touch_idxs:
             m = pos.setdefault(b, {})
-            if id(line) not in m:
-                m[id(line)] = len(m) + 1
+            if lvl not in m:
+                m[lvl] = len(m) + 1
     return pos
 
 
-def pivot_cap_needed(line: TrendLine, pos: dict[int, dict[int, int]]) -> int:
-    """Mirrors TS pivotCapNeeded: the worst position the line holds at any of
-    its bars, i.e. the lowest cap that could ever draw it. Depends only on the
-    candidate list, never on the cap."""
+def pivot_cap_needed(
+    line: TrendLine, pos: dict[int, dict[int, int]], level: int
+) -> int:
+    """Mirrors TS pivotCapNeeded: the worst position the line's LEVEL holds at
+    any of the line's bars, i.e. the lowest cap that could ever draw it.
+    Depends only on the candidate list and the grouping, never on the cap."""
     worst = 1
     for b in line.touch_idxs:
-        at = pos.get(b, {}).get(id(line), 1)
+        at = pos.get(b, {}).get(level, 1)
         if at > worst:
             worst = at
     return worst
-
-
-def within_pivot_cap(
-    line: TrendLine, pos: dict[int, dict[int, int]], max_per_pivot: int
-) -> bool:
-    """Mirrors TS withinPivotCap: inside the top max_per_pivot at EVERY bar
-    the line runs through (anchor or touch), 0 = off. Its worst bar decides
-    it, and a position in a fixed per-bar ordering cannot move when the cap
-    changes, so raising the cap only ever admits more lines."""
-    if max_per_pivot < 1:
-        return True
-    return all(
-        pos.get(b, {}).get(id(line), 1) <= max_per_pivot for b in line.touch_idxs
-    )
-
-
-def cap_per_pivot(ranked: list[TrendLine], max_per_pivot: int) -> list[TrendLine]:
-    """Mirrors TS capPerPivot (no pin exemption: pins are draw-time UI)."""
-    if max_per_pivot < 1:
-        return ranked
-    pos = bar_positions(ranked)
-    return [line for line in ranked if within_pivot_cap(line, pos, max_per_pivot)]
 
 
 def eligible_lines(
@@ -357,9 +340,9 @@ def select_levels(
     of vanishing AND does not swap anchors when the stronger one later fits.
     Every group picks its rep BEFORE `limit` truncates, since a late group's
     rep can outrank an earlier group's."""
-    pos = bar_positions(candidates)
     groups: list[list[TrendLine]] = []
     proj: list[float] = []
+    level_of: dict[int, int] = {}
     for line in candidates:
         p = project_at(line, at_idx)
         at = -1
@@ -370,11 +353,15 @@ def select_levels(
                     break
         if at >= 0:
             groups[at].append(line)
+            level_of[id(line)] = at
         else:
+            level_of[id(line)] = len(groups)
             groups.append([line])
             proj.append(p)
+    # The cap counts LEVELS at a bar, so the grouping has to exist first.
+    pos = level_positions(candidates, level_of)
     out: list[TrendLine] = []
-    for g in groups:
+    for idx, g in enumerate(groups):
         # THE REP IS THE MEMBER THE CAP REACHES FIRST, ties to the better rank,
         # so raising the cap cannot redraw a level already on the chart. With
         # the cap off there are no positions to compare and the best-ranked
@@ -383,9 +370,9 @@ def select_levels(
             out.append(g[0])
             continue
         rep = g[0]
-        need = pivot_cap_needed(g[0], pos)
+        need = pivot_cap_needed(g[0], pos, idx)
         for line in g[1:]:
-            n = pivot_cap_needed(line, pos)
+            n = pivot_cap_needed(line, pos, idx)
             if n < need:
                 need = n
                 rep = line

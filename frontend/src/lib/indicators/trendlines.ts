@@ -1487,14 +1487,24 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
 }
 
 
-/** THE PER-PIVOT CAP, as a per-bar TOP-N TEST rather than a running tally.
+/** THE PER-PIVOT CAP, as a per-bar TOP-N TEST over LEVELS.
  *
- * MAX LINES PER PIVOT (`maxPerPivot`, 0 = off): at every bar, the candidate
- * lines through it are already in rank order (rankLines: most touches, then
- * longest span, then fewest crossings). A line is kept when it is inside the
- * top `maxPerPivot` at EVERY bar it runs through, anchor or touch, which is
- * what touchIdxs holds. Its worst bar decides it. Ported to Python as
- * bar_positions / within_pivot_cap.
+ * MAX LINES PER PIVOT (`maxPerPivot`, 0 = off): at every bar, rank the LEVELS
+ * running through it (a level is a merge group; see selectLevels) in the order
+ * their best line ranks, and keep only the top `maxPerPivot`. A line is drawn
+ * when its level is inside that top N at EVERY bar the line runs through,
+ * anchor or touch, which is what touchIdxs holds. Its worst bar decides it.
+ * Ported to Python as level_positions / pivot_cap_needed.
+ *
+ * LEVELS, NOT LINES, because a level IS one line on the chart. The detector
+ * pairs a pivot with every other pivot that yields a passing line, so one
+ * strong swing emits a whole sheaf through the same point, and most of that
+ * sheaf is the SAME level drawn from slightly different anchors. Counting raw
+ * lines charged a pivot several times for one visible line: on GOLD 1D the
+ * 2025-08-20 low carried 8 candidate lines but only 3 levels, with three of
+ * the four lines above the 2026-08-25 resistance all belonging to the one big
+ * support. That resistance needed a cap of 4 to appear at a pivot the user
+ * could see one other line through.
  *
  * WHY NOT A RUNNING TALLY. The old cap walked the ranked list and dropped a
  * line once `maxPerPivot` ALREADY-KEPT lines shared one of its bars. That
@@ -1506,24 +1516,14 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
  * in a fixed per-bar ordering cannot move when the cap changes, so raising
  * the cap can only turn "outside the top N" into "inside" and never back.
  *
- * It also makes the cap independent of every other setting, which the old
- * ordering could only get by running the cap FIRST, before Max Distance and
- * the merge, on lines the pane would never show. That is what this replaces:
- * a line dropped by Max Distance, or merged away as a twin, used to hold its
- * pivots' slots against a line you could actually see, and the two incidents
- * the old comments recorded (a fan going missing behind three stale lines,
- * and the BTCUSD 2026-06-05 line vanishing when Merge Lines within was
- * widened) were both that coupling. With positions fixed, removing ANY
- * candidate can only move the rest UP their bars' orderings, so a tighter Max
- * Distance or a wider merge can add a line but never evict an unrelated one.
- *
- * THE SHARED PIVOT IS WHAT MAKES THIS A FAN TEST rather than a "these two
- * levels look similar" test. A pivot is not consumed by the line that first
- * used it: the detector pairs it with every other pivot that yields a line
- * passing the gates, so one strong swing emits a whole sheaf of lines through
- * the same point. That sheaf is the clutter. Two levels that merely happen to
- * sit close today came from different swings and are left alone, however
- * close they are.
+ * NOTHING INVISIBLE HOLDS A SLOT. The major gates and Max Distance run before
+ * the pool is built, and the merge is folded into the positions themselves, so
+ * every slot at a bar belongs to a line the pane actually draws. The two
+ * incidents the old comments recorded (a fan going missing behind three stale
+ * lines, and the BTCUSD 2026-06-05 line vanishing when Merge Lines within was
+ * widened) were both the opposite arrangement. The cap does now move with the
+ * merge tolerance, but only ever upward: fusing two levels leaves one fewer
+ * competitor at their shared bars, which can admit a line and cannot evict one.
  *
  * A TOUCH COUNTS AS A PIVOT, not only an anchor, and this is most of what the
  * cap catches on a real chart. A strong swing is the second anchor of one line
@@ -1532,62 +1532,41 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
  * The bar is enough, with no price test. Both lines were within the touch band
  * of that bar's own high or low to be recorded at all, so they agree there by
  * construction; LEFT and RIGHT of it they separate, which is what a fan does. */
-export function barPositions(
+export function levelPositions(
   candidates: readonly TrendLine[],
-): Map<number, Map<TrendLine, number>> {
-  const pos = new Map<number, Map<TrendLine, number>>();
+  levelOf: ReadonlyMap<TrendLine, number>,
+): Map<number, Map<number, number>> {
+  const pos = new Map<number, Map<number, number>>();
   for (const line of candidates) {
+    const lvl = levelOf.get(line) ?? -1;
     for (const b of line.touchIdxs) {
       let m = pos.get(b);
       if (!m) pos.set(b, (m = new Map()));
-      // FIRST write wins: touchIdxs may name a bar twice (an anchor that also
-      // recorded a touch), and a second write would push the line down its own
-      // bar's ordering.
-      if (!m.has(line)) m.set(line, m.size + 1);
+      // FIRST write wins, so a level counts once per bar however many of its
+      // members run through it, and a bar named twice in touchIdxs (an anchor
+      // that also recorded a touch) cannot push a level down its own ordering.
+      if (!m.has(lvl)) m.set(lvl, m.size + 1);
     }
   }
   return pos;
 }
 
-/** THE LOWEST CAP THAT COULD EVER DRAW THIS LINE: the worst position it holds
- * at any of its bars. A line absent from the map (not a candidate) needs 1.
- * It depends only on the candidate list, never on the cap, which is what lets
- * a level pick a representative the cap cannot move. Ported to Python as
- * pivot_cap_needed. */
+/** THE LOWEST CAP THAT COULD EVER DRAW THIS LINE: the worst position its level
+ * holds at any of the line's bars. A bar or level absent from the map counts
+ * as first. It depends only on the candidate list and the grouping, never on
+ * the cap, which is what lets a level pick a representative the cap cannot
+ * move. Ported to Python as pivot_cap_needed. */
 export function pivotCapNeeded(
   line: TrendLine,
-  pos: ReadonlyMap<number, ReadonlyMap<TrendLine, number>>,
+  pos: ReadonlyMap<number, ReadonlyMap<number, number>>,
+  level: number,
 ): number {
   let worst = 1;
   for (const b of line.touchIdxs) {
-    const at = pos.get(b)?.get(line) ?? 1;
+    const at = pos.get(b)?.get(level) ?? 1;
     if (at > worst) worst = at;
   }
   return worst;
-}
-
-/** True when `line` is inside the top `maxPerPivot` at every bar it runs
- * through. A line absent from the map (not a candidate) counts as first. */
-export function withinPivotCap(
-  line: TrendLine,
-  pos: ReadonlyMap<number, ReadonlyMap<TrendLine, number>>,
-  maxPerPivot: number,
-): boolean {
-  if (!(maxPerPivot >= 1)) return true;
-  return line.touchIdxs.every((b) => (pos.get(b)?.get(line) ?? 1) <= maxPerPivot);
-}
-
-/** The cap on its own, over a rank-sorted candidate list. Pinned lines
- * (`keep`) are exempt but still hold their positions, since they are
- * candidates like any other. */
-export function capPerPivot(
-  ranked: TrendLine[],
-  maxPerPivot: number,
-  keep?: ReadonlySet<TrendLine>,
-): TrendLine[] {
-  if (!(maxPerPivot >= 1)) return ranked;
-  const pos = barPositions(ranked);
-  return ranked.filter((l) => keep?.has(l) || withinPivotCap(l, pos, maxPerPivot));
 }
 
 /** THE CANDIDATE POOL a bar may show, in rank order: the live lines the major
@@ -1650,12 +1629,12 @@ export function selectLevels(
   keep?: ReadonlySet<TrendLine>,
   limit = Infinity,
 ): TrendLine[] {
-  const pos = barPositions(candidates);
   // Groups in rank order, each compared against its LEADER: lines through one
   // pivot agree exactly there and separate linearly, so a member within tol of
   // the leader at atIdx is within tol of it throughout (see sameTrend).
   const groups: TrendLine[][] = [];
   const proj: number[] = [];
+  const levelOf = new Map<TrendLine, number>();
   for (const line of candidates) {
     const p = projectAt(line, atIdx);
     const at =
@@ -1664,12 +1643,17 @@ export function selectLevels(
             (g, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(g[0], line, atIdx, tol),
           )
         : -1;
-    if (at >= 0) groups[at].push(line);
-    else {
+    if (at >= 0) {
+      groups[at].push(line);
+      levelOf.set(line, at);
+    } else {
+      levelOf.set(line, groups.length);
       groups.push([line]);
       proj.push(p);
     }
   }
+  // The cap counts LEVELS at a bar, so the grouping has to exist first.
+  const pos = levelPositions(candidates, levelOf);
   // EVERY group picks its rep before anything is truncated. A late group's rep
   // can outrank an early group's, so cutting the walk short at `limit` would
   // drop a level that belonged in the budget.
@@ -1687,15 +1671,15 @@ export function selectLevels(
   // WITH THE CAP OFF there are no positions to compare, so the group falls
   // back to its best-ranked member: off means the best line wins.
   const out = new Set<TrendLine>();
-  for (const g of groups) {
+  groups.forEach((g, idx) => {
     if (!(maxPerPivot >= 1)) {
       out.add(g[0]);
-      continue;
+      return;
     }
     let rep = g[0];
-    let need = pivotCapNeeded(g[0], pos);
+    let need = pivotCapNeeded(g[0], pos, idx);
     for (let k = 1; k < g.length; k++) {
-      const n = pivotCapNeeded(g[k], pos);
+      const n = pivotCapNeeded(g[k], pos, idx);
       // STRICTLY lower only, so a tie keeps the better-ranked member.
       if (n < need) {
         need = n;
@@ -1703,7 +1687,7 @@ export function selectLevels(
       }
     }
     if (need <= maxPerPivot) out.add(rep);
-  }
+  });
   // A pin survives the cap and the merge alike: its handle is the only control
   // that can release it.
   if (keep) for (const l of candidates) if (keep.has(l)) out.add(l);
