@@ -2454,10 +2454,12 @@ function drawTrendlines(
   ctx.font = "10px sans-serif";
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
-  // End tags already painted this pass, so two lines converging on the right
-  // edge do not print "3 Pivots" on top of "3 Pivots": a tag that would land on
-  // an earlier one is pushed down a line at a time until it is clear.
-  const placedTags: { x: number; y: number; w: number }[] = [];
+  // End tags already painted on this canvas, so two lines converging on the
+  // right edge do not print "3 Pivots" on top of "3 Pivots": a tag that would
+  // land on an earlier one is pushed down a line at a time until it is clear.
+  // Shared across instances (Trendlines(1D) and Trendlines(4H) draw in
+  // separate passes on the same context), see paneTags.
+  const placedTags = paneTags(ctx);
   // The shared canvas context arrives with whatever dash pattern the previous
   // drawer left behind (price lines and alert lines are dashed), so every
   // trendline stroke, ring, handle and tag below needs a solid line reset
@@ -2696,6 +2698,27 @@ function drawTrendlines(
 
 /** Tag row height: 10px text plus a little air. */
 const TL_TAG_ROW = 12;
+
+/** End tags painted on a context recently, across every trendlines instance
+ * on the pane. klinecharts draws the instances one after another in the same
+ * paint, so tags older than a frame belong to a previous paint and are
+ * dropped; keyed by context so panes and charts never see each other's. */
+const PANE_TAGS = new WeakMap<
+  CanvasRenderingContext2D,
+  { at: number; tags: { x: number; y: number; w: number }[] }
+>();
+const TL_TAG_FRAME_MS = 40;
+function paneTags(ctx: CanvasRenderingContext2D): { x: number; y: number; w: number }[] {
+  const now = performance.now();
+  const cur = PANE_TAGS.get(ctx);
+  if (cur && now - cur.at < TL_TAG_FRAME_MS) {
+    cur.at = now;
+    return cur.tags;
+  }
+  const fresh = { at: now, tags: [] };
+  PANE_TAGS.set(ctx, fresh);
+  return fresh.tags;
+}
 
 /** The y a tag can be painted at without sitting on an earlier tag: the
  * requested y when nothing overlaps it, otherwise the first free row below.
