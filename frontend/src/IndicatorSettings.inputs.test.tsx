@@ -94,7 +94,7 @@ describe("Inputs tab renders a control for every declared input", () => {
   // tolerance drew its label and nothing beside it.
   it("gives the merge tolerance a number box carrying its default", () => {
     open();
-    const box = screen.getByLabelText("Merge Lines within");
+    const box = screen.getByLabelText("Merge within");
     expect(box).toBeTruthy();
     expect((box as HTMLInputElement).type).toBe("number");
     expect((box as HTMLInputElement).value).toBe("0.25");
@@ -103,7 +103,7 @@ describe("Inputs tab renders a control for every declared input", () => {
   it("shows the saved value rather than the default when there is one", () => {
     open({}, [...Object.values(TRENDLINES_DEFAULTS).slice(0, 21), 0.5]);
     expect(
-      (screen.getByLabelText("Merge Lines within") as HTMLInputElement).value,
+      (screen.getByLabelText("Merge within") as HTMLInputElement).value,
     ).toBe("0.5");
   });
 
@@ -148,8 +148,8 @@ describe("Inputs tab renders a control for every declared input", () => {
   // row with its control in the shared second column.
   it("pairs the two merge tolerances, with the per-pivot cap on its own row above", () => {
     open();
-    const atr = screen.getByLabelText("Merge Lines within");
-    const pct = screen.getByLabelText("Merge Lines within (%)");
+    const atr = screen.getByLabelText("Merge within");
+    const pct = screen.getByLabelText("Merge within (%)");
     const pair = atr.closest(".ind-range");
     expect(pair).toBeTruthy();
     expect(pct.closest(".ind-range")).toBe(pair);
@@ -165,7 +165,7 @@ describe("Inputs tab renders a control for every declared input", () => {
       "Max Trendlines",
       "Max Touch Gap",
       "Max Touch Spacing",
-      "Merge Lines within",
+      "Merge within",
       "Max lines per pivot",
       "Extend",
     ])
@@ -229,13 +229,13 @@ describe("Max lines per pivot", () => {
 describe("the merge tolerance", () => {
   it("stays shown under a per-pivot cap, since the two cuts compose", () => {
     open({}, [...Object.values(TRENDLINES_DEFAULTS).slice(0, 22), 1]);
-    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("0.25");
+    expect((screen.getByLabelText("Merge within") as HTMLInputElement).value).toBe("0.25");
     expect((screen.getByLabelText("Max lines per pivot") as HTMLInputElement).value).toBe("1");
   });
 
   it("shows otherwise, carrying its default", () => {
     open();
-    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("0.25");
+    expect((screen.getByLabelText("Merge within") as HTMLInputElement).value).toBe("0.25");
   });
 
   // The tolerance lived on extendData while merging was render-only. A pane
@@ -243,12 +243,12 @@ describe("the merge tolerance", () => {
   // that value in the slot.
   it("migrates the render-only tolerance onto slot 21", () => {
     open({ dedupeAtr: 2.5 }, Object.values(TRENDLINES_DEFAULTS).slice(0, 21));
-    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("2.5");
+    expect((screen.getByLabelText("Merge within") as HTMLInputElement).value).toBe("2.5");
   });
 
   it("migrates the unticked checkbox to off, an empty box", () => {
     open({ dedupe: false }, Object.values(TRENDLINES_DEFAULTS).slice(0, 21));
-    expect((screen.getByLabelText("Merge Lines within") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Merge within") as HTMLInputElement).value).toBe("");
   });
 });
 
@@ -276,7 +276,7 @@ describe("min/max range rows", () => {
     open();
     for (const [label, atrLabel, pctLabel] of [
       ["Max Distance", "Max Distance (×ATR)", "Max Distance (%)"],
-      ["Merge Lines within", "Merge Lines within", "Merge Lines within (%)"],
+      ["Merge within", "Merge within", "Merge within (%)"],
     ]) {
       const row = screen.getByText(label).closest(".ind-range-row");
       expect(row, `${label} has no range row`).toBeTruthy();

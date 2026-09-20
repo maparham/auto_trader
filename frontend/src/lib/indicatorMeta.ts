@@ -1065,14 +1065,14 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(21, "Merge Lines within", { min: 0, step: 0.1 }),
+        ...num(21, "Merge within", { min: 0, step: 0.1 }),
         group: "merge",
         // The tolerance IS the switch: 0 merges nothing.
         default: TL.mergeAtr,
         unbounded: true,
         suffix: "ATR",
         range: {
-          label: "Merge Lines within",
+          label: "Merge within",
           dual: true,
           tip: [
             "Two lines that stay this close the whole time they both exist show one trend, so only the stronger is kept.",
@@ -1088,7 +1088,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(23, "Merge Lines within (%)", { min: 0, step: 0.1 }),
+        ...num(23, "Merge within (%)", { min: 0, step: 0.1 }),
         group: "merge",
         default: TL.mergePct,
         unbounded: true,
