@@ -154,7 +154,7 @@ export function groupInputs(
   for (const inp of inputs) {
     const last = out[out.length - 1];
     // A group runs two to a row, three when the labels are short enough
-    // (the Major Pivots trio). Longer runs wrap to a fresh row.
+    // (the Major Swings trio). Longer runs wrap to a fresh row.
     if (inp.group && last && last.length < 3 && last[0].group === inp.group)
       last.push(inp);
     else out.push([inp]);
@@ -668,7 +668,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
       {
         ...num(24, "Kept", { min: 0 }),
-        section: "Major Pivots",
+        section: "Major Swings",
         group: "major",
         suffix: "pivots",
         default: TL.majorPivots,
