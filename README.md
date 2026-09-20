@@ -50,9 +50,15 @@ cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
-uvicorn auto_trader.api.app:app --reload --reload-dir auto_trader --port 8000
+uvicorn auto_trader.api.app:app --reload --reload-dir auto_trader --port 8000 --timeout-graceful-shutdown 2
 pytest
 ```
+
+`--timeout-graceful-shutdown 2` matters with `--reload`: without it a code
+change makes the old worker wait forever for its open connections to close,
+and an MCP client's streamable-HTTP session (the `chartkar` server in Claude
+Code) never closes on its own. The reloader keeps the port, so every request
+then connects and hangs while both processes look alive and idle.
 
 ### Frontend
 
