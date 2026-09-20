@@ -1549,6 +1549,23 @@ export function barPositions(
   return pos;
 }
 
+/** THE LOWEST CAP THAT COULD EVER DRAW THIS LINE: the worst position it holds
+ * at any of its bars. A line absent from the map (not a candidate) needs 1.
+ * It depends only on the candidate list, never on the cap, which is what lets
+ * a level pick a representative the cap cannot move. Ported to Python as
+ * pivot_cap_needed. */
+export function pivotCapNeeded(
+  line: TrendLine,
+  pos: ReadonlyMap<number, ReadonlyMap<TrendLine, number>>,
+): number {
+  let worst = 1;
+  for (const b of line.touchIdxs) {
+    const at = pos.get(b)?.get(line) ?? 1;
+    if (at > worst) worst = at;
+  }
+  return worst;
+}
+
 /** True when `line` is inside the top `maxPerPivot` at every bar it runs
  * through. A line absent from the map (not a candidate) counts as first. */
 export function withinPivotCap(
@@ -1613,13 +1630,13 @@ export function eligibleLines(
  * at one busy bar, even though a weaker version of the same level was free to
  * draw. Capping first and merging after is what made raising the cap LOOK
  * destructive: the stronger version arrived and swallowed the weaker one, so
- * a line the user knew disappeared. As a group, the level simply upgrades its
- * anchors and stays on the chart.
+ * a line the user knew disappeared.
  *
- * SO RAISING THE CAP DOES THREE THINGS AND ONLY THREE: it adds levels, it
- * upgrades a level's anchors, and it never removes a level. The one exception
- * is `limit` (Max Lines), a hard count: when the pane is already full, a
- * better level entering must push the weakest one off.
+ * SO RAISING THE CAP DOES ONE THING: it adds levels. It never removes one and
+ * never redraws one, because a level's representative is fixed by the
+ * candidate list rather than by the cap (see the rep choice below). The one
+ * exception is `limit` (Max Lines), a hard count: when the pane is already
+ * full, a better level entering must push the weakest one off.
  *
  * PINS ARE NOT REPS. A pinned line draws IN ADDITION, never in place of the
  * member the cap chose, so that the emit step (which knows nothing of pins)
@@ -1634,7 +1651,6 @@ export function selectLevels(
   limit = Infinity,
 ): TrendLine[] {
   const pos = barPositions(candidates);
-  const passes = (l: TrendLine) => withinPivotCap(l, pos, maxPerPivot);
   // Groups in rank order, each compared against its LEADER: lines through one
   // pivot agree exactly there and separate linearly, so a member within tol of
   // the leader at atIdx is within tol of it throughout (see sameTrend).
@@ -1657,10 +1673,36 @@ export function selectLevels(
   // EVERY group picks its rep before anything is truncated. A late group's rep
   // can outrank an early group's, so cutting the walk short at `limit` would
   // drop a level that belonged in the budget.
+  //
+  // THE REP IS THE MEMBER THE CAP REACHES FIRST (pivotCapNeeded), ties to the
+  // better rank, and the level draws as soon as the cap reaches that number.
+  // The choice never mentions the cap, so RAISING THE CAP CANNOT MOVE A LINE
+  // ALREADY ON THE CHART. Picking the best member that fits instead would swap
+  // the drawn anchors the moment a stronger version of the same level got in,
+  // and a line the user was watching changed shape under them: on GOLD 1D the
+  // resistance into 2026-08-25 jumped its left anchor from the 2025-07-23 high
+  // to the 2025-08-20 low between a cap of 3 and 4. Same level to the merge,
+  // a different line to the eye.
+  //
+  // WITH THE CAP OFF there are no positions to compare, so the group falls
+  // back to its best-ranked member: off means the best line wins.
   const out = new Set<TrendLine>();
   for (const g of groups) {
-    const rep = g.find(passes);
-    if (rep) out.add(rep);
+    if (!(maxPerPivot >= 1)) {
+      out.add(g[0]);
+      continue;
+    }
+    let rep = g[0];
+    let need = pivotCapNeeded(g[0], pos);
+    for (let k = 1; k < g.length; k++) {
+      const n = pivotCapNeeded(g[k], pos);
+      // STRICTLY lower only, so a tie keeps the better-ranked member.
+      if (n < need) {
+        need = n;
+        rep = g[k];
+      }
+    }
+    if (need <= maxPerPivot) out.add(rep);
   }
   // A pin survives the cap and the merge alike: its handle is the only control
   // that can release it.

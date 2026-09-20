@@ -1100,19 +1100,23 @@ describe("selectDrawnLines", () => {
     for (const line of one) expect(two).toContain(line);
     for (const line of two) expect(three).toContain(line);
   });
-  // A LEVEL IS A MERGE GROUP AND IT STANDS IN FOR ITS BEST MEMBER. `best`
-  // outranks `standIn` and they are the same level, but `best` is third at
-  // bar 20 and capped out at 2. Capping the merge winners alone would delete
-  // the level outright; the group draws through `standIn` instead.
-  it("a level whose best member is capped out draws through a weaker member", () => {
+  // A LEVEL IS A MERGE GROUP AND IT DRAWS THE MEMBER THE CAP REACHES FIRST.
+  // `best` outranks `standIn` and they are the same level, but `best` is third
+  // at bar 20 and needs a cap of 3; `standIn` needs 1. Capping the merge
+  // winners alone would delete the level outright below 3; picking the best
+  // member that fits would redraw it at 3, moving a line already on screen.
+  it("a level draws the member the cap reaches first and keeps it", () => {
     const x1 = mk(20, 40, 50, 50, 5);
     const x2 = mk(20, 50, 40, 40, 4);
     const best = mk(20, 60, 100, 100, 3);
     const standIn = mk(30, 70, 100.2, 100.2, 2);
     const ranked = [x1, x2, best, standIn];
     expect(selectLevels(ranked, 100, 1, 2)).toEqual([x1, x2, standIn]);
-    // Room for `best` at bar 20: the level upgrades in place, nothing is lost.
-    expect(selectLevels(ranked, 100, 1, 3)).toEqual([x1, x2, best]);
+    // Room for `best` now, but the level does not swap its anchors.
+    expect(selectLevels(ranked, 100, 1, 3)).toEqual([x1, x2, standIn]);
+    expect(selectLevels(ranked, 100, 1, 9)).toEqual([x1, x2, standIn]);
+    // Cap off: no positions to compare, so the best-ranked member wins.
+    expect(selectLevels(ranked, 100, 1, 0)).toEqual([x1, x2, best]);
   });
   // NOTHING INVISIBLE HOLDS A SLOT. The gates run BEFORE the cap, so a line
   // the pane will not draw is not a candidate and takes no position.
