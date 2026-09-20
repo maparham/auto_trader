@@ -3893,7 +3893,7 @@
   font-variant-numeric: tabular-nums;
 }
 .cl-name { font-weight: 400; }
-/* Amber ⚠ badge: shown on a positionend row when some of the indicator's lines draw
+/* Amber ⚠ badge: shown on a legend row when some of the indicator's lines draw
    nothing at the current timeframe (PREV_HL degenerate boundaries). It's an InfoTip
    trigger (a <button>), so reset the native button chrome to read as a bare icon. */
 .cl-warn {
@@ -5684,7 +5684,7 @@ span.bt-leg-long { color: var(--pos); }
 .bt-leg-short .bt-analysis-subrow-label,
 .bt-leg-short.bt-analysis-dist-split,
 span.bt-leg-short { color: var(--neg); }
-.bt-dur-hist-positions { display: flex; gap: 6px; align-items: flex-end; }
+.bt-dur-hist-legs { display: flex; gap: 6px; align-items: flex-end; }
 .bt-dur-hist-leggroup { display: flex; flex-direction: column; align-items: center; }
 .bt-dur-hist-leglabel { font-size: 0.7em; font-weight: 600; }
 .bt-leg-long.bt-dur-hist-leglabel { color: var(--pos); }

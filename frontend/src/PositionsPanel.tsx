@@ -18,7 +18,6 @@ import {
   applyLevels,
   cancelWorkingOrder,
   closePosition,
-  getLivePrice,
   refreshTrades,
   subscribeLivePrices,
   subscribeTrades,
@@ -45,7 +44,7 @@ import {
   draggingLineSignal,
   type PendingEdit,
 } from "./lib/signals";
-import { usedMargin } from "./lib/orderInfo";
+import { accountStats, enrichTrade, type EnrichedTrade } from "./lib/accountStats";
 import type { TradingSettings } from "./theme";
 import Tooltip from "./components/Tooltip";
 import Mt5DeployButton from "./Mt5DeployButton";
@@ -82,14 +81,7 @@ type Tab = "positions" | "orders";
 // A trade row enriched with the derived figures TV shows (last price, P&L %, trade
 // /market value, per-row leverage + margin). All approximate, internally coherent
 // with our paper P&L — see lib/orderInfo. Sortable columns read straight off this.
-interface RowExt extends TradeView {
-  last: number | null;
-  pnlPct: number | null;
-  tradeValue: number;
-  marketValue: number | null;
-  leverage: number;
-  margin: number;
-}
+type RowExt = EnrichedTrade;
 // Sortable columns map 1:1 to RowExt fields, so the comparator reads row[key].
 type SortKey =
   | "epic"
@@ -211,74 +203,13 @@ export default function PositionsPanel({
   const cur = accountSummary?.currency ?? trading.accountCurrency;
   const cash = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-  // Account stats — modelled on TV's account strip. For a LIVE account the balance/
-  // available/currency are the broker's real figures (accountSummary); for paper they
-  // come from usedMargin + the configured balance + summed upnl. Realized P&L is the
-  // one TV stat we can't show yet (the book doesn't track closed trades).
-  const lev = trading.defaultLeverage > 0 ? trading.defaultLeverage : 1;
-  // P&L per position. For a LIVE account, trust the broker's server uPnL (`t.upnl`),
-  // which is already in the ACCOUNT currency — client-side marking from the chart's
-  // price stream would compute it in the INSTRUMENT currency and mis-mix currencies
-  // (e.g. a USD stock in a EUR account). Paper marks to market from the live price
-  // (same currency throughout) so P&L stays live without a poll.
-  const liveUpnl = (t: TradeView): number | null => {
-    if (t.kind !== "position" || t.quantity <= 0) return t.upnl;
-    if (isLive) return t.upnl; // server-marked, account currency (refreshed by the live poll)
-    const live = getLivePrice(t.epic);
-    if (live == null) return t.upnl;
-    return (t.side === "buy" ? 1 : -1) * t.quantity * (live - t.priceLevel);
-  };
-  const pnl = positions.reduce((s, p) => s + (liveUpnl(p) ?? 0), 0);
-  const ordersMargin = usedMargin(orders, lev); // margin reserved by resting orders
-  const balance = accountSummary?.balance ?? trading.accountBalance;
-  const brokerMarginAllKnown =
-    positions.length > 0 && positions.every((p) => p.margin != null);
-  // Available: the broker's real free margin for a live account; for paper derive it
-  // from the configured balance + open P&L less the leverage-based margin.
-  const available =
-    accountSummary?.available ??
-    Math.max(0, balance + pnl - usedMargin(positions, lev) - ordersMargin);
-  // Does the LIVE broker's `balance` already include open P&L? Capital's does (balance
-  // = account value incl uPnL); IG / cash-balance brokers report a cash balance that
-  // EXCLUDES it. This decides whether adding `pnl` would double-count it. (Capital's
-  // `deposit` field is unrelated to used margin — see position-margin notes — so we
-  // derive used margin from balance/available, not deposit.)
-  const liveBalanceInclPnl = accountSummary != null && isCapital(activeBroker);
-  // Some brokers (MT5) report account value + margin-in-use authoritatively. When both
-  // are present, use them verbatim for equity/margin/margin-level instead of the
-  // balance−available derivation below (which drifts by swap/commission). MetaApi's
-  // identity freeMargin = equity − margin keeps `available + margin = equity` exact.
-  const brokerEquity = accountSummary?.equity ?? null;
-  const brokerMargin = accountSummary?.margin ?? null;
-  const brokerFiguresKnown = brokerEquity != null && brokerMargin != null;
-  // Account margin (deposit tied up by open positions). When the broker reports
-  // per-position margin (Capital) sum those rows so the strip footer adds up to the
-  // MARGIN column exactly. Otherwise derive used margin from the broker's balance −
-  // available, adding `pnl` ONLY for cash-balance brokers (for Capital the balance
-  // already includes it). For paper, compute from leverage.
-  const accountMargin = brokerFiguresKnown
-    ? brokerMargin
-    : accountSummary
-      ? brokerMarginAllKnown
-        ? positions.reduce((s, p) => s + (p.margin ?? 0), 0) + ordersMargin
-        : Math.max(0, balance + (liveBalanceInclPnl ? 0 : pnl) - available - ordersMargin)
-      : usedMargin(positions, lev);
-  // Equity (account value). When the broker's per-position margin is known, equity =
-  // available + margin-in-use (broker-agnostic). Otherwise: Capital's `balance` IS the
-  // equity (already includes uPnL) — adding `pnl` would double-count it (the bug);
-  // a cash balance (IG / paper) needs balance + open P&L.
-  const equity = brokerFiguresKnown
-    ? brokerEquity
-    : accountSummary && brokerMarginAllKnown
-      ? available + accountMargin
-      : liveBalanceInclPnl
-        ? balance
-        : balance + pnl;
-  // Margin buffer: free margin as a share of equity (available ÷ equity).
-  const marginBuffer = equity > 0 ? (available / equity) * 100 : 0;
-  // Margin level: equity as a share of margin in use (equity ÷ account margin) — this
-  // is Capital's "CFD Margin %"; null when nothing is at margin (no open positions).
-  const marginLevel = accountMargin > 0 ? (equity / accountMargin) * 100 : null;
+  // Account stats: the shared derivation in lib/accountStats.ts (the mobile
+  // positions tab shows the same strip). Recomputed each render, which the
+  // live-price subscription drives.
+  const stats = accountStats({
+    positions, orders, summary: accountSummary, trading, broker: activeBroker, isLive,
+  });
+  const { pnl, balance, available, accountMargin, ordersMargin, equity, marginBuffer, marginLevel, noBrokerData } = stats;
   // The broker's margin-call / close-out thresholds on the margin level above (a tooltip
   // note so a trader knows how far the % can fall). Capital.com publishes these; other
   // brokers omit the note until their levels are known.
@@ -287,11 +218,6 @@ export default function PositionsPanel({
     isCapital(activeBroker)
       ? " Capital.com issues a margin call at 100% (no new trades) and again at 75%; at 50% or below it starts closing positions (margin close-out)."
       : "";
-  // A real-money account must NEVER show fabricated paper figures. Until the broker's
-  // summary lands (or if the fetch fails), blank the broker-derived stats rather than
-  // falling back to the configured paper balance. uPnL stays — it's real (server-marked
-  // per position), not derived from the paper balance.
-  const noBrokerData = isLive && accountSummary?.balance == null;
   const money = (n: number) => (noBrokerData ? "—" : `${cash(n)} ${cur}`);
   const pct = (n: number | null) => (noBrokerData || n == null ? "—" : `${n.toFixed(2)}%`);
 
@@ -300,43 +226,7 @@ export default function PositionsPanel({
   const caret = pnl > 0 ? "▲" : pnl < 0 ? "▼" : "";
   const posCount = positions.length;
 
-  // Enrich each row with the derived figures TV shows. P&L is marked to market from
-  // the live price when available (see liveUpnl); last price is backed out of it so
-  // it stays consistent with the P&L column; market/trade value + per-row margin
-  // follow. Orders have no P&L, so their last/market/% are blank.
-  const enrich = (t: TradeView): RowExt => {
-    const tradeValue = t.priceLevel * t.quantity;
-    // Prefer the broker's real per-position leverage + margin (Capital varies the
-    // ratio per instrument, and its margin is in the account currency); fall back to
-    // the configured leverage estimate for paper / brokers that don't report them.
-    const leverage = t.leverage ?? lev;
-    const margin = t.margin ?? tradeValue / leverage;
-    let last: number | null = null;
-    let marketValue: number | null = null;
-    let pnlPct: number | null = null;
-    const upnl = liveUpnl(t);
-    if (t.kind === "position" && t.quantity > 0) {
-      const sign = t.side === "buy" ? 1 : -1;
-      if (isLive) {
-        // `upnl` is account-currency, so we can't back out a price from it. Use the
-        // real streamed price as `last`, or the broker's own mark from the positions
-        // poll when no chart is streaming this epic; P&L% is a price move
-        // (currency-invariant).
-        last = getLivePrice(t.epic) ?? t.mark ?? null;
-        marketValue = last != null ? last * t.quantity : null;
-        pnlPct =
-          last != null && t.priceLevel !== 0
-            ? (sign * (last - t.priceLevel)) / t.priceLevel * 100
-            : null;
-      } else if (upnl != null) {
-        // Paper: P&L is instrument-currency, so back out `last` to stay consistent.
-        last = t.priceLevel + (sign * upnl) / t.quantity;
-        marketValue = last * t.quantity;
-        pnlPct = tradeValue !== 0 ? (upnl / tradeValue) * 100 : null;
-      }
-    }
-    return { ...t, upnl, last, marketValue, pnlPct, tradeValue, margin, leverage };
-  };
+  const enrich = (t: TradeView): RowExt => enrichTrade(t, stats, isLive);
 
   // Sorted view of the active tab. Nulls (no TP/SL/P&L/last/value/time) always sink
   // to the bottom regardless of direction, so missing values never crowd the top.

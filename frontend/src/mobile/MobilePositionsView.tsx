@@ -11,14 +11,12 @@
 // call, same refreshTrades after). No optimistic removal: the row only
 // disappears once the server confirms via the next trades poll.
 //
-// The stat math (P&L marking, equity, margins) is the dock's, copied rather
-// than shared: the dock derives it inline from its props, and lifting it out
-// of a 1000-line component is its own change.
-import { useEffect, useState } from "react";
+// The stat math (P&L marking, equity, margins) is lib/accountStats.ts, shared
+// with the dock.
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   subscribeTrades,
   subscribeLivePrices,
-  getLivePrice,
   refreshTrades,
   getTradesAccount,
   fetchAccountSummary,
@@ -27,28 +25,21 @@ import {
   tradeLabel,
   brokerLabel,
   brokerOf,
-  isCapital,
   isRealMoneyAccount,
   type TradeView,
   type AccountSummary,
 } from "../lib/trading";
-import { usedMargin } from "../lib/orderInfo";
+import { accountStats, enrichTrade, type EnrichedTrade } from "../lib/accountStats";
 import { groupPositions, type PositionGroup } from "../lib/positionGroups";
 import { loadSettings } from "../theme";
+import { mobileSettingsVersion } from "./mobileChartState";
 import { requestConfirm } from "../lib/signals";
 import { toast } from "../lib/notify";
 import Sheet from "./Sheet";
 
 type Tab = "positions" | "orders";
 
-interface RowExt extends TradeView {
-  last: number | null;
-  marketValue: number | null;
-  pnlPct: number | null;
-  tradeValue: number;
-  margin: number;
-  leverage: number;
-}
+type RowExt = EnrichedTrade;
 
 function fmtPnl(n: number | null): string {
   if (n == null) return "—";
@@ -139,85 +130,23 @@ export default function MobilePositionsView() {
   const account = getTradesAccount();
   const broker = brokerOf(account);
   const live = isRealMoneyAccount(account);
-  const trading = loadSettings().trading;
+  // Read once, and again when the settings sheet saves (not on every price tick).
+  const settingsVersion = useSyncExternalStore(
+    (fn) => mobileSettingsVersion.subscribe(fn),
+    () => mobileSettingsVersion.value,
+  );
+  const trading = useMemo(() => loadSettings().trading, [settingsVersion]);
   const cur = summary?.currency ?? trading.accountCurrency;
-  const lev = trading.defaultLeverage > 0 ? trading.defaultLeverage : 1;
 
   const positions = trades.filter((t) => t.kind === "position");
   const orders = trades.filter((t) => t.kind === "order");
 
-  // --- the dock's account math (PositionsPanel.tsx), verbatim --------------
-  const liveUpnl = (t: TradeView): number | null => {
-    if (t.kind !== "position" || t.quantity <= 0) return t.upnl;
-    if (live) return t.upnl;
-    const px = getLivePrice(t.epic);
-    if (px == null) return t.upnl;
-    return (t.side === "buy" ? 1 : -1) * t.quantity * (px - t.priceLevel);
-  };
-  const pnl = positions.reduce((s, p) => s + (liveUpnl(p) ?? 0), 0);
-  const ordersMargin = usedMargin(orders, lev);
-  const balance = summary?.balance ?? trading.accountBalance;
-  const brokerMarginAllKnown = positions.length > 0 && positions.every((p) => p.margin != null);
-  const available =
-    summary?.available ?? Math.max(0, balance + pnl - usedMargin(positions, lev) - ordersMargin);
-  const liveBalanceInclPnl = summary != null && isCapital(broker);
-  const brokerEquity = summary?.equity ?? null;
-  const brokerMargin = summary?.margin ?? null;
-  const brokerFiguresKnown = brokerEquity != null && brokerMargin != null;
-  const accountMargin = brokerFiguresKnown
-    ? brokerMargin
-    : summary
-      ? brokerMarginAllKnown
-        ? positions.reduce((s, p) => s + (p.margin ?? 0), 0) + ordersMargin
-        : Math.max(0, balance + (liveBalanceInclPnl ? 0 : pnl) - available - ordersMargin)
-      : usedMargin(positions, lev);
-  const equity = brokerFiguresKnown
-    ? brokerEquity
-    : summary && brokerMarginAllKnown
-      ? available + accountMargin
-      : liveBalanceInclPnl
-        ? balance
-        : balance + pnl;
-  const marginBuffer = equity > 0 ? (available / equity) * 100 : 0;
-  const marginLevel = accountMargin > 0 ? (equity / accountMargin) * 100 : null;
-  const noBrokerData = live && summary?.balance == null;
+  const stats = accountStats({ positions, orders, summary, trading, broker, isLive: live });
+  const { pnl, balance, available, accountMargin, ordersMargin, equity, marginBuffer, marginLevel, noBrokerData } = stats;
   const money = (n: number) => (noBrokerData ? "—" : `${cash(n)} ${cur}`);
   const pct = (n: number | null) => (noBrokerData || n == null ? "—" : `${n.toFixed(2)}%`);
   const pnlTone = pnl > 0 ? "pp-pos" : pnl < 0 ? "pp-neg" : "";
-
-  const enrich = (t: TradeView): RowExt => {
-    const tradeValue = t.priceLevel * t.quantity;
-    const leverage = t.leverage ?? lev;
-    const margin = t.margin ?? tradeValue / leverage;
-    let last: number | null = null;
-    let marketValue: number | null = null;
-    let pnlPct: number | null = null;
-    const upnl = liveUpnl(t);
-    if (t.kind === "position" && t.quantity > 0) {
-      const sign = t.side === "buy" ? 1 : -1;
-      if (live) {
-        last = getLivePrice(t.epic) ?? t.mark ?? null;
-        marketValue = last != null ? last * t.quantity : null;
-        pnlPct =
-          last != null && t.priceLevel !== 0 ? ((sign * (last - t.priceLevel)) / t.priceLevel) * 100 : null;
-      } else if (upnl != null) {
-        last = t.priceLevel + (sign * upnl) / t.quantity;
-        marketValue = last * t.quantity;
-        pnlPct = tradeValue !== 0 ? (upnl / tradeValue) * 100 : null;
-      }
-    }
-    return {
-      ...t,
-      upnl,
-      last,
-      marketValue,
-      pnlPct,
-      tradeValue,
-      margin,
-      leverage,
-    };
-  };
-  // ------------------------------------------------------------------------
+  const enrich = (t: TradeView): RowExt => enrichTrade(t, stats, live);
 
   const rows = (tab === "positions" ? positions : orders).map(enrich);
   const groups: PositionGroup<RowExt>[] | null = tab === "positions" ? groupPositions(rows) : null;
