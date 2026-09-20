@@ -57,8 +57,8 @@ describe("TRENDLINES registration", () => {
     );
     expect(chunks.map((c) => c.map((i) => i.label))).toEqual([
       ["Max Trendlines"],
-      ["Min Length", "Max Pairs", "Majors"],
-      ["Major Length", "Major Size"],
+      ["Min Length", "Max Pairs"],
+      ["Majors", "Major Length", "Major Size"],
       ["Min Pivot Size", "Min Pivot Reach"],
       ["Max Touch Gap", "Max Pierce"],
       ["Back Clearance"],
