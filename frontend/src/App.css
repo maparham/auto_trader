@@ -2812,7 +2812,7 @@
    the hit area, the ⓘ beside it is not. */
 .ind-bool-check {
   display: inline-flex; align-items: center; gap: 8px; min-width: 0;
-  color: var(--text); font-size: 12px; line-height: 1.2;
+  color: var(--text); line-height: 1.2;
   cursor: pointer; user-select: none;
 }
 .ind-bool-check > input[type="checkbox"] { flex: 0 0 auto; margin: 0; cursor: pointer; }
