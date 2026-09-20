@@ -1732,10 +1732,6 @@ export const TL_PIVOT_STEM_HALF = 1;
  * line rests on, so they carry no ring, and only one bar in view ever carries
  * the price label. */
 export const TL_PIVOT_USED_GAP = 16;
-/** Half-size of the hollow square that marks a pivot in the MAJOR tier,
- * drawn just past the caret's base. A debugging aid: it answers which old
- * swings a new pivot may still pair with. */
-export const TL_MAJOR_BOX = 3;
 /** Handles stroke heavier than the 1px line they cap, so a 3px mark reads at
  * all. It is also what tells a handle stroke from a line stroke. */
 export const TL_HANDLE_STROKE = 1.5;
@@ -2364,9 +2360,16 @@ function paintPivotMarks(
   ctx.rect(0, 0, right, height);
   ctx.clip();
   ctx.fillStyle = lineColor;
-  // Stemmed first, so the plain batch below can be the complement of it with
-  // one test rather than two flags per pivot.
-  for (const stemmed of [true, false]) {
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 1;
+  const majorQs = new Set(pivots.majorQs ?? []);
+  // Three batches, each ONE canvas call: the stemmed arrows on the pivots a
+  // line uses (filled), the plain heads on the major swings (filled) and the
+  // plain heads on the rest (outline only). Filled against hollow is how a
+  // major swing reads apart from an ordinary pivot: same glyph, same spot,
+  // nothing stacked under it.
+  for (const batch of ["stemmed", "major", "plain"] as const) {
+    const stemmed = batch === "stemmed";
     if (stemmed ? !showLineUsed : !showAll) continue;
     ctx.beginPath();
     for (let q = 0; q < pivots.idxs.length; q++) {
@@ -2379,6 +2382,7 @@ function paintPivotMarks(
       // head under a stemmed one is invisible and only thickens it. When
       // Show pivots is off, the unused ones simply go unmarked.
       if ((showLineUsed && used.has(idx)) !== stemmed) continue;
+      if (!stemmed && majorQs.has(q) !== (batch === "major")) continue;
       const x = xAt(idx, kind);
       // The arms reach TL_PIVOT_ARM either way, so the window is widened by
       // one arm rather than testing the tip alone: otherwise a caret at the
@@ -2420,30 +2424,8 @@ function paintPivotMarks(
       ctx.lineTo(x + TL_PIVOT_ARM, yBase);
       ctx.closePath();
     }
-    // One path per kind: the marks in a batch share a colour, so each is a
-    // single fill call however many pivots are on screen.
-    ctx.fill();
-  }
-  // The MAJOR tier: a hollow square past the base of the caret, used or not.
-  // Only with the plain marks on, since it qualifies them, and one stroke
-  // for the whole batch.
-  if (showAll && pivots.majorQs && pivots.majorQs.length > 0) {
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (const q of pivots.majorQs) {
-      const idx = pivots.idxs[q];
-      const kind = pivots.kinds[q];
-      const dir = kind === "low" ? 1 : -1;
-      const x = xAt(idx, kind);
-      if (x < -TL_MAJOR_BOX || x > right + TL_MAJOR_BOX) continue;
-      const y = yOf(pivotPriceAt(pivots, q));
-      if (y < 0 || y > height) continue;
-      const gap = showLineUsed && used.has(idx) ? TL_PIVOT_USED_GAP + TL_PIVOT_STEM : TL_PIVOT_GAP;
-      const yc = y + dir * (gap + TL_PIVOT_ARM + 2 + TL_MAJOR_BOX);
-      ctx.rect(x - TL_MAJOR_BOX, yc - TL_MAJOR_BOX, 2 * TL_MAJOR_BOX, 2 * TL_MAJOR_BOX);
-    }
-    ctx.stroke();
+    if (batch === "plain") ctx.stroke();
+    else ctx.fill();
   }
   ctx.restore();
 }
