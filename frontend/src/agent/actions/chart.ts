@@ -8,7 +8,7 @@ import type { ChartController } from "../../lib/chartController";
 import type { Period } from "../../lib/feed";
 import { ALL_PERIODS, periodByResolution } from "../../lib/feed";
 import { getIndicatorsByPane } from "../../lib/indicators";
-import { probeTabBridge, tabBridgeScreenshot, tabBridgeFocus, TabBridgeError } from "../../lib/tabBridge";
+import { probeTabBridge, probeTabBridgeDetailed, tabBridgeScreenshot, tabBridgeFocus, TabBridgeError } from "../../lib/tabBridge";
 
 export interface FocusedChart {
   chart: Chart;
@@ -105,8 +105,12 @@ export function registerChartActions(): void {
       // which forces a fresh frame even while the tab is backgrounded.
       // Clipped to the chart container so the agent sees the chart, not the
       // whole app.
-      let useExtension = Boolean(await probeTabBridge());
-      let extensionTimedOut = false;
+      const probe = await probeTabBridgeDetailed();
+      let useExtension = Boolean(probe.hello);
+      // Set when a DETECTED extension stopped answering mid-call; a probe
+      // that answered with an error frame (orphaned content script) is the
+      // same situation, just caught earlier.
+      let extensionTimedOut = probe.reason === "error";
       if (useExtension) {
         const rect = chart.getDom()?.getBoundingClientRect();
         // A null dom or a 0x0 rect (not yet laid out) can't clip to anything
@@ -161,7 +165,7 @@ export function registerChartActions(): void {
           "TAB_HIDDEN",
           extensionTimedOut
             ? "the app's browser tab is backgrounded and the Tab Bridge extension did not answer (reload the app tab after reloading the extension), or focus the tab and retry"
-            : "the app's browser tab is backgrounded and the Tab Bridge extension is not installed; install the Tab Bridge extension (github.com/maparham/agent-ui-bridge) or focus the tab and retry",
+            : "the app's browser tab is backgrounded and the Tab Bridge extension did not answer within 1.8s (not installed, or the page is still loading; retry once); install the Tab Bridge extension (github.com/maparham/agent-ui-bridge) or focus the tab and retry",
         );
       }
       const bg = chartBackgroundColor();

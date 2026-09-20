@@ -22,7 +22,7 @@
     "@lezer/common": "^1.5.2",
     "@lezer/highlight": "^1.2.3",
     "@lezer/lr": "^1.4.10",
-    "agent-ui-bridge": "github:maparham/agent-ui-bridge",
+    "agent-ui-bridge": "github:maparham/agent-ui-bridge#d587a813d916d3e5029c9897b48b2d75f68da713",
     "klinecharts": "10.0.0",
     "qrcode-generator": "^2.0.4",
     "react": "^19.2.6",

@@ -13,6 +13,7 @@ vi.mock("../../lib/tabBridge", async (importActual) => {
   return {
     ...actual,
     probeTabBridge: vi.fn(async () => null),
+    probeTabBridgeDetailed: vi.fn(async () => ({ hello: null, reason: "timeout" })),
     tabBridgeScreenshot: vi.fn(),
     tabBridgeFocus: vi.fn(),
   };
@@ -217,7 +218,7 @@ describe("chart.screenshot", () => {
   });
 
   it("uses the Tab Bridge extension when present, clipped to the chart container", async () => {
-    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.probeTabBridgeDetailed).mockResolvedValueOnce({ hello: { version: "1.0.0", ops: ["screenshot", "focus"] } });
     vi.mocked(tabBridge.tabBridgeScreenshot).mockResolvedValueOnce({
       mime: "image/png", image_base64: "QUJD", width: 640, height: 400,
     });
@@ -237,7 +238,7 @@ describe("chart.screenshot", () => {
   });
 
   it("works with the extension even when the tab is backgrounded", async () => {
-    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.probeTabBridgeDetailed).mockResolvedValueOnce({ hello: { version: "1.0.0", ops: ["screenshot", "focus"] } });
     vi.mocked(tabBridge.tabBridgeScreenshot).mockResolvedValueOnce({
       mime: "image/png", image_base64: "QUJD", width: 1, height: 1,
     });
@@ -255,7 +256,7 @@ describe("chart.screenshot", () => {
   });
 
   it("surfaces an extension capture failure as SCREENSHOT_FAILED, without a canvas fallback", async () => {
-    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.probeTabBridgeDetailed).mockResolvedValueOnce({ hello: { version: "1.0.0", ops: ["screenshot", "focus"] } });
     vi.mocked(tabBridge.tabBridgeScreenshot).mockRejectedValueOnce(new tabBridge.TabBridgeError("DEBUGGER_BUSY", "devtools open"));
     const chart = Object.assign(fakeChart(), {
       getDom: () => ({ getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }) }),
@@ -268,7 +269,7 @@ describe("chart.screenshot", () => {
   });
 
   it("falls back to the canvas path when the extension times out (tab visible)", async () => {
-    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.probeTabBridgeDetailed).mockResolvedValueOnce({ hello: { version: "1.0.0", ops: ["screenshot", "focus"] } });
     vi.mocked(tabBridge.tabBridgeScreenshot).mockRejectedValueOnce(
       new tabBridge.TabBridgeError("EXTENSION_TIMEOUT", "screenshot: no reply from the Tab Bridge extension within 10000ms"),
     );
@@ -283,7 +284,7 @@ describe("chart.screenshot", () => {
   });
 
   it("still throws TAB_HIDDEN when the extension times out and the tab is hidden", async () => {
-    vi.mocked(tabBridge.probeTabBridge).mockResolvedValueOnce({ version: "1.0.0", ops: ["screenshot", "focus"] });
+    vi.mocked(tabBridge.probeTabBridgeDetailed).mockResolvedValueOnce({ hello: { version: "1.0.0", ops: ["screenshot", "focus"] } });
     vi.mocked(tabBridge.tabBridgeScreenshot).mockRejectedValueOnce(
       new tabBridge.TabBridgeError("EXTENSION_TIMEOUT", "screenshot: no reply from the Tab Bridge extension within 10000ms"),
     );
