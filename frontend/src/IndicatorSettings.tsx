@@ -11,7 +11,7 @@
 //
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import type { Chart, Indicator } from "klinecharts";
 import VisibilityTab from "./VisibilityTab";
@@ -34,7 +34,7 @@ import {
   parseTrendlinesConfig,
   TL_NEAR_PRICE_ATR,
 } from "./lib/indicators/trendlinesOutputs";
-import { TL_LINE_COLOR, trendlineStyleOf, type TrendlinesExtend } from "./lib/indicators/trendlines";
+import { TL_LINE_COLOR, trendlineStyleOf, type TrendlinesExtend, type TrendPivots } from "./lib/indicators/trendlines";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -772,6 +772,40 @@ function IndicatorSettingsForm({
 
   // The label, with an optional ⓘ info tip beside it (matches the hand-built
   // panels like PREV_HL). Plain <label> when there is no tip.
+  // TRENDLINES live readouts (IndicatorInputDef.liveStat): the last result
+  // row's pivot pool, read on a short poll while the form is open because the
+  // calc lands asynchronously after every param write. Only set when the
+  // numbers change, so the poll does not re-render the form on its own.
+  const [tlStats, setTlStats] = useState<{ pivots: number; majors: number; pairs: number } | null>(null);
+  useEffect(() => {
+    if (name !== "TRENDLINES") return;
+    const read = () => {
+      const live = getIndicator(chart, paneId, name) as Indicator | null;
+      const rows = (live?.result ?? []) as Array<{ pivots?: TrendPivots }>;
+      const pv = rows[rows.length - 1]?.pivots;
+      const next = pv
+        ? { pivots: pv.idxs.length, majors: pv.majorQs?.length ?? 0, pairs: pv.pairs ?? 0 }
+        : null;
+      setTlStats((cur) =>
+        cur === next || (cur && next && cur.pivots === next.pivots && cur.majors === next.majors && cur.pairs === next.pairs)
+          ? cur
+          : next,
+      );
+    };
+    read();
+    const timer = setInterval(read, 500);
+    return () => clearInterval(timer);
+  }, [chart, paneId, name]);
+
+  function statFor(inp: IndicatorInputDef) {
+    if (!inp.liveStat || !tlStats) return null;
+    const text =
+      inp.liveStat === "tlPivots" ? `${tlStats.pivots} pivots`
+      : inp.liveStat === "tlMajors" ? `${tlStats.majors} pivots`
+      : `${tlStats.pairs} pairs`;
+    return <span className="ind-stat">{text}</span>;
+  }
+
   function labelFor(inp: IndicatorInputDef) {
     return inp.tip ? (
       <span className="ind-row-head">
@@ -2182,6 +2216,7 @@ function IndicatorSettingsForm({
                         <div className="ind-field" key={inp.key}>
                           {labelFor(inp)}
                           {controlFor(inp)}
+                          {statFor(inp)}
                         </div>
                       ))}
                     </div>

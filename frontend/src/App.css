@@ -2793,6 +2793,8 @@
 .ind-pair2 > .ind-field input[type="number"] { width: 64px; }
 /* Three short fields on one row (the Pivots trio). */
 .ind-pair2.ind-pair3 { grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+/* Live readout under a control (Trendlines pivot counts). */
+.ind-stat { color: var(--text-faint); font-size: 11px; line-height: 1; white-space: nowrap; }
 /* A pair of BOOLEANS on one row. Not .ind-pair2: that stacks the label above
    its control, which is right for a number or a select and wrong for a switch,
    where the label has to stay beside the thing it labels. Each cell is

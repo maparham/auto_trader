@@ -68,6 +68,13 @@ export interface TrendPivots {
   kinds: PivotKind[];
   highs: number[];
   lows: number[];
+  /** Pool positions (into idxs/kinds) currently in the MAJOR tier, ascending.
+   * Read only by the draw path, which boxes those carets so the tier can be
+   * checked on the chart. Absent means no tier information. */
+  majorQs?: number[];
+  /** Candidate lines seeded so far (pairings that passed the slope and
+   * back-clearance gates), cumulative over the series. A settings readout. */
+  pairs?: number;
 }
 
 /** The price pool entry q turned at. */
@@ -583,6 +590,8 @@ interface TlState {
   turns: Record<PivotKind, number[]>;
   lines: TrendLine[];
   points: TrendlinesPoint[];
+  /** Candidate lines seeded so far; see TrendPivots.pairs. */
+  pairs: number;
 }
 
 export function buildTlState(
@@ -609,6 +618,7 @@ export function buildTlState(
     turns: { high: [], low: [] },
     lines: [],
     points: Array.from({ length: m }, () => ({})),
+    pairs: 0,
   };
   for (let i = startIdx; i < m; i++) stepTrendlinesBar(st, i, cfg);
   return st;
@@ -626,7 +636,7 @@ export function computeTrendlines(
 }
 
 function pivotsOf(st: TlState): TrendPivots {
-  return { idxs: st.pool.idxs, kinds: st.pool.kinds, highs: st.highs, lows: st.lows };
+  return { idxs: st.pool.idxs, kinds: st.pool.kinds, highs: st.highs, lows: st.lows, majorQs: st.majors.q, pairs: st.pairs };
 }
 
 /** The price distance past which a line is too far from bar i's close to
@@ -791,6 +801,7 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
         cand.minTouchGap = seedGaps.narrowest;
         cand.maxTouchIdx = cand.i2;
         lines.push(cand);
+        st.pairs++;
       }
       pool.idxs.push(k);
       pool.kinds.push(kind);
@@ -1003,6 +1014,7 @@ export function createTrendlinesSession(): TrendlinesSession {
         majors: { q: b.majors.q.slice(), strength: b.majors.strength.slice() },
         turns: { high: b.turns.high.slice(), low: b.turns.low.slice() },
         lines: b.lines.map(cloneTrendLine),
+        pairs: b.pairs,
       };
       advanceTlBar(fork, dataList, n - 1, cfg);
       // A fresh top-level array per call (callers replace the last row), with
@@ -1679,6 +1691,10 @@ export const TL_PIVOT_STEM_HALF = 1;
  * line rests on, so they carry no ring, and only one bar in view ever carries
  * the price label. */
 export const TL_PIVOT_USED_GAP = 16;
+/** Half-size of the hollow square that marks a pivot in the MAJOR tier,
+ * drawn just past the caret's base. A debugging aid: it answers which old
+ * swings a new pivot may still pair with. */
+export const TL_MAJOR_BOX = 3;
 /** Handles stroke heavier than the 1px line they cap, so a 3px mark reads at
  * all. It is also what tells a handle stroke from a line stroke. */
 export const TL_HANDLE_STROKE = 1.5;
@@ -2366,6 +2382,27 @@ function paintPivotMarks(
     // One path per kind: the marks in a batch share a colour, so each is a
     // single fill call however many pivots are on screen.
     ctx.fill();
+  }
+  // The MAJOR tier: a hollow square past the base of the caret, used or not.
+  // Only with the plain marks on, since it qualifies them, and one stroke
+  // for the whole batch.
+  if (showAll && pivots.majorQs && pivots.majorQs.length > 0) {
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const q of pivots.majorQs) {
+      const idx = pivots.idxs[q];
+      const kind = pivots.kinds[q];
+      const dir = kind === "low" ? 1 : -1;
+      const x = xAt(idx, kind);
+      if (x < -TL_MAJOR_BOX || x > right + TL_MAJOR_BOX) continue;
+      const y = yOf(pivotPriceAt(pivots, q));
+      if (y < 0 || y > height) continue;
+      const gap = showLineUsed && used.has(idx) ? TL_PIVOT_USED_GAP + TL_PIVOT_STEM : TL_PIVOT_GAP;
+      const yc = y + dir * (gap + TL_PIVOT_ARM + 2 + TL_MAJOR_BOX);
+      ctx.rect(x - TL_MAJOR_BOX, yc - TL_MAJOR_BOX, 2 * TL_MAJOR_BOX, 2 * TL_MAJOR_BOX);
+    }
+    ctx.stroke();
   }
   ctx.restore();
 }

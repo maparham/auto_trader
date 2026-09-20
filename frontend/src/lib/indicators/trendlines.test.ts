@@ -475,6 +475,14 @@ describe("major tier", () => {
     expect(inc.points).toEqual(ref.points);
   });
 
+  it("exposes the tier's pool positions on the pivots, for the chart marks", () => {
+    const bars = oldMajorLow();
+    const { pivots } = computeTrendlines(bars, cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 1 }));
+    expect(pivots.majorQs).toHaveLength(1);
+    expect(pivots.idxs[pivots.majorQs![0]]).toBe(20);
+    expect(computeTrendlines(bars, cfg({ majorPivots: 0 })).pivots.majorQs).toEqual([]);
+  });
+
   it("admitMajor evicts the weakest only when strictly beaten", () => {
     const m = { q: [] as number[], strength: [] as number[] };
     admitMajor(m, 0, 1, 2);

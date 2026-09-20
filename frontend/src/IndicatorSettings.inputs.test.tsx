@@ -411,6 +411,35 @@ describe("input sections", () => {
   });
 });
 
+describe("live pivot readouts", () => {
+  // The three Pivots boxes each carry a count read from the last result row,
+  // so the user sees what the filter admits, how big the major tier is and
+  // how many candidate lines the pairing seeded.
+  it("shows pivots, majors and pairs under their boxes", () => {
+    const ind = {
+      paneId: "candle_pane",
+      name: "TRENDLINES",
+      calcParams: [...Object.values(TRENDLINES_DEFAULTS)],
+      extendData: { indType: "TRENDLINES" },
+      figures: [],
+      styles: {},
+      result: [{}, { pivots: { idxs: [3, 9, 15], kinds: ["high", "low", "high"], highs: [], lows: [], majorQs: [0, 2], pairs: 7 } }],
+    };
+    const chart = {
+      getIndicators: () => [ind],
+      overrideIndicator: () => true,
+      getStyles: () => ({ indicator: { lines: [] } }),
+      getDataList: () => [],
+    } as never;
+    render(
+      <IndicatorSettings chart={chart} paneId="candle_pane" name="TRENDLINES" onClose={() => {}} scope="s" cellId="c" epic="E" brokerId="b" chartResolution="DAY" />,
+    );
+    expect(screen.getByText("3 pivots")).toBeTruthy();
+    expect(screen.getByText("2 pivots")).toBeTruthy();
+    expect(screen.getByText("7 pairs")).toBeTruthy();
+  });
+});
+
 describe("number boxes", () => {
   // Typed 1000, the box kept saying 1000 while the chart drew 50 (the calc's
   // ceiling) until the modal was reopened. The ceiling is the meta max now,
