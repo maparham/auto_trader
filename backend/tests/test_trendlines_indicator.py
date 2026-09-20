@@ -495,21 +495,19 @@ def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
     assert merge_lines(ranked, 100, 1.0, math.inf, 1) == [a, d]
 
 
-def test_tightening_a_gate_never_cuts_an_unrelated_line_through_the_cap():
-    """Mirrors the TS test. Cap 1 per pivot; A (bars 0,40) outranks C (40,60)
-    which outranks D (60,90). Gates first, the cap cascaded: with A gated out
-    by Max Distance, C got bar 40, took bar 60, and D vanished. Cap first on
-    rank: A blocks C for good, D stays, and the gate removes only A."""
+def test_a_gated_line_does_not_hold_its_pivot_slots_against_a_drawable_one():
+    """Mirrors the TS test. Cap 1 per pivot; A (bars 0,40) outranks D (40,90)
+    and shares bar 40, but A is far from price. Capped first, A held bar 40
+    and D vanished; gated first, only drawable lines count toward the cap."""
     def mk(i1, i2, p, touches):
         return TrendLine(i1=i1, p1=p, k1="low", i2=i2, p2=p, k2="low", touches=touches,
                          last_touch_idx=i2, crossings=0, last_sign=0, max_touch_gap=i2 - i1,
                          min_touch_gap=i2 - i1, max_touch_idx=i2, touch_idxs=[i1, i2])
-    a, c, d = mk(0, 40, 150.0, 5), mk(40, 60, 100.0, 3), mk(60, 90, 101.0, 2)
-    pool = [d, c, a]
-    wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5)
-    assert eligible_lines(pool, 100, 100.0, 1.0, wide) == [a, d]
-    tight = replace(wide, max_dist_atr=2)
+    a, d = mk(0, 40, 150.0, 5), mk(40, 90, 101.0, 2)
+    pool = [d, a]
+    tight = cfg(max_per_pivot=1, max_dist_atr=2, min_span_bars=5)
     assert eligible_lines(pool, 100, 100.0, 1.0, tight) == [d]
+    assert eligible_lines(pool, 100, 100.0, 1.0, replace(tight, max_dist_atr=0)) == [a]
 
 
 def replace_line(line: TrendLine, **over) -> TrendLine:

@@ -977,14 +977,18 @@ describe("selectDrawnLines", () => {
   // Max Distance so A is out let C take bar 40, then bar 60, and D vanished
   // from a setting that never concerned it. Cap first: A blocks C for good,
   // D stays, and the gate removes only A.
-  it("tightening a gate never cuts an unrelated line through the per-pivot cap", () => {
+  it("a line the gates hide does not hold its pivots' slots against a drawable one", () => {
+    // Cap 1 per pivot. A (bars 0,40) outranks D (40,90) and shares bar 40
+    // with it, but A sits far from price: gated off the chart. Capped first
+    // on rank, A still took bar 40 and D vanished with it, so a busy pivot
+    // whose best lines had gone stale showed nothing at all. Gated first,
+    // the cap only counts what can be drawn.
     const a = mk(0, 40, 150, 150, 5);
-    const c = mk(40, 60, 100, 100, 3);
-    const d = mk(60, 90, 101, 101, 2);
-    const pool = [d, c, a];
-    const wide = cfg({ maxPerPivot: 1, maxDistAtr: 0 });
-    expect(eligibleLines(pool, 100, 100, 1, wide)).toEqual([a, d]);
-    expect(eligibleLines(pool, 100, 100, 1, { ...wide, maxDistAtr: 2 })).toEqual([d]);
+    const d = mk(40, 90, 101, 101, 2);
+    const pool = [d, a];
+    const c = cfg({ maxPerPivot: 1, maxDistAtr: 2 });
+    expect(eligibleLines(pool, 100, 100, 1, c)).toEqual([d]);
+    expect(eligibleLines(pool, 100, 100, 1, { ...c, maxDistAtr: 0 })).toEqual([a]);
   });
   it("merges near-twins through a shared pivot before the budget", () => {
     const twin = { ...mid, i1: 0, p1: 90, i2: 40, p2: 90.5, touches: 3 };
