@@ -162,6 +162,7 @@ import {
   tapSecondFinger,
   isTap,
   clickSuppressed,
+  isDoubleTap,
   type TapState,
 } from "./chart/touchTap";
 import GoLivePill from "./chart/GoLivePill";
@@ -1971,6 +1972,8 @@ export default function ChartCore({
     // through this same handler; `tap`/`lastTapT` are its gesture state.
     let tap: TapState | null = null;
     let lastTapT: number | null = null;
+    // The previous handled tap's press, so the next one can read as a double tap.
+    let lastTap: TapState | null = null;
     const onClick = (e: MouseEvent) => {
       const c = chartRef.current;
       if (!c) return;
@@ -2189,6 +2192,9 @@ export default function ChartCore({
     const onDblClick = (e: MouseEvent) => {
       const c = chartRef.current;
       if (!c) return;
+      // Same guard as onClick: a double tap already replayed through here must
+      // not run twice if the browser does deliver a dblclick behind it.
+      if (e.type === "dblclick" && clickSuppressed(lastTapT, e.timeStamp)) return;
       // Same guard as onClick: a dblclick on a pill button is two button actions,
       // not a line-edit or empty-space gesture.
       if (e.target instanceof Element && e.target.closest(".tp-btn")) return;
@@ -3221,11 +3227,23 @@ export default function ChartCore({
     };
     const onTouchUp = (e: PointerEvent) => {
       if (e.pointerType !== "touch") return;
+      const pressed = tap;
       const hit = isTap(tap, e.timeStamp);
       tap = null;
-      if (!hit) return;
+      if (!hit || !pressed) return;
       lastTapT = e.timeStamp;
+      const double = isDoubleTap(lastTap, pressed.x, pressed.y, pressed.t);
+      // A double tap ends the pair; a third prompt tap starts a fresh one.
+      lastTap = double ? null : pressed;
       onClick(e); // PointerEvent IS a MouseEvent — same clientX/clientY/target
+      if (!double) return;
+      // Double tap -> the dblclick chain, in the order the DOM listeners run for
+      // a mouse: the capture-phase axis resets first (each bails unless over its
+      // axis), then the chart-body handler (which bails over either axis). The
+      // click above ran for both taps, exactly as two clicks precede a dblclick.
+      onAxisDblClick(e);
+      onTimeAxisDblClick(e);
+      onDblClick(e);
     };
     const onTouchCancel = () => {
       tap = null;

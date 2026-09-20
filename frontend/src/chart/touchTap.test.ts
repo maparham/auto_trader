@@ -13,6 +13,9 @@ import {
   tapSecondFinger,
   isTap,
   clickSuppressed,
+  isDoubleTap,
+  DOUBLE_TAP_MS,
+  DOUBLE_TAP_PX,
 } from "./touchTap";
 
 describe("touchTap gesture predicate", () => {
@@ -73,5 +76,30 @@ describe("touchTap click suppression", () => {
 
   it("lets every click through when no tap has been handled", () => {
     expect(clickSuppressed(null, 1_000)).toBe(false);
+  });
+});
+
+// A double tap on a phone must reach the same dblclick chain a mouse does
+// (edit a trade/alert line, open drawing/indicator settings, reset an axis,
+// collapse the sub-panes): the canvas swallows the synthetic dblclick too.
+describe("touchTap double tap", () => {
+  it("pairs two prompt taps on the same spot", () => {
+    const first = tapStart(100, 200, 1_000);
+    expect(isDoubleTap(first, 102, 198, 1_000 + DOUBLE_TAP_MS - 1)).toBe(true);
+  });
+
+  it("rejects a second tap that comes too late", () => {
+    const first = tapStart(100, 200, 1_000);
+    expect(isDoubleTap(first, 100, 200, 1_000 + DOUBLE_TAP_MS + 1)).toBe(false);
+  });
+
+  it("rejects a second tap that lands too far away on either axis", () => {
+    const first = tapStart(100, 200, 1_000);
+    expect(isDoubleTap(first, 100 + DOUBLE_TAP_PX + 1, 200, 1_100)).toBe(false);
+    expect(isDoubleTap(first, 100, 200 + DOUBLE_TAP_PX + 1, 1_100)).toBe(false);
+  });
+
+  it("needs a first tap to pair with", () => {
+    expect(isDoubleTap(null, 100, 200, 1_100)).toBe(false);
   });
 });

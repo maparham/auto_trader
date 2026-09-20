@@ -52,3 +52,19 @@ export function clickSuppressed(lastTapT: number | null, t: number): boolean {
   if (lastTapT == null) return false;
   return t - lastTapT <= TAP_MS;
 }
+
+/** Second tap within this long of the first reads as a double tap. */
+export const DOUBLE_TAP_MS = 300;
+/** ...and within this far of it, per axis (looser than TAP_MOVE_PX: two
+ *  separate presses land less precisely than one finger holding still). */
+export const DOUBLE_TAP_PX = 25;
+
+/** Is a tap at (x, y, t) the second half of a double tap begun by `first`
+ *  (the previous handled tap's press)? The canvas swallows the synthetic
+ *  dblclick just as it does click, so ChartCore replays its dblclick chain
+ *  off this. */
+export function isDoubleTap(first: TapState | null, x: number, y: number, t: number): boolean {
+  if (!first) return false;
+  if (t - first.t > DOUBLE_TAP_MS) return false;
+  return Math.abs(x - first.x) <= DOUBLE_TAP_PX && Math.abs(y - first.y) <= DOUBLE_TAP_PX;
+}
