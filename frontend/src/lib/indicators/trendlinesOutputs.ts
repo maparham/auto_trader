@@ -15,6 +15,12 @@ export const TL_ATR_LEN = 14;
  * pivots out lets the same slots reach further back. */
 export const MAX_PAIR_PIVOTS = 40;
 
+/** DEFAULT size of the MAJOR tier (cfg.majorPivots, calcParams[24]): the
+ * strongest swings seen so far, kept beyond the recent window so a fresh
+ * pivot can still start a line from a big old one. Mirrors MAJOR_PIVOTS in
+ * indicators/trendlines.py. */
+export const MAJOR_PIVOTS = 12;
+
 /** Live state keeps this multiple of maxLines lines IN TOTAL, so a line that is
  * temporarily outranked is not destroyed and can return when it gains a touch.
  * Raising maxLines therefore also widens the candidate set a rule can see.
@@ -122,6 +128,12 @@ export interface TrendlinesConfig {
   // anchor or a touch), later lines through it are dropped in the same
   // pass. 1 was "One line per pivot". 0 = off.
   maxPerPivot: number;
+  // The MAJOR tier: on top of the last pairPivots pool entries, a new pivot
+  // also pairs with the majorPivots strongest swings seen so far (the swing
+  // leg to the previous turn of the other kind, in ATR(14) at the pivot's
+  // bar). A pivot enters the tier when it beats the weakest member, which
+  // drops out; losing the tier never touches lines already seeded. 0 = off.
+  majorPivots: number;
 }
 
 /** KEY ORDER IS THE calcParams ORDER (mtfCoordinator builds HTF params from
@@ -152,6 +164,7 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   mergeAtr: 0.25,
   maxPerPivot: 0,
   mergePct: 0,
+  majorPivots: MAJOR_PIVOTS,
 };
 
 /** DEFAULT merge tolerance, in ATR(14): the value the mergeAtr slot starts
@@ -181,8 +194,8 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  * maxProjBars, maxLines, minSwingAtr, minSwingReach, pairPivots, maxTouches,
  * maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing, minTouchSpacing,
  * minCrossings, maxCrossings, pierceMult, minBackBars, maxDistAtr,
- * maxDistPct, mergeAtr, maxPerPivot, mergePct]. Mirrored by backend
- * parse_trendlines_config.
+ * maxDistPct, mergeAtr, maxPerPivot, mergePct, majorPivots]. Mirrored by
+ * backend parse_trendlines_config.
  *
  * `extendData` is read ONLY to migrate panes saved before slots 19 to 22
  * existed, and only while the slot in question is ABSENT (a present slot, 0
@@ -255,6 +268,7 @@ export function parseTrendlinesConfig(
     mergeAtr: numAt(21, mergeAtrDefault, true),
     maxPerPivot: zeroInt(22, maxPerPivotDefault),
     mergePct: numAt(23, d.mergePct, true),
+    majorPivots: zeroInt(24, d.majorPivots),
   };
 }
 

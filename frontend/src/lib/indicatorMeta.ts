@@ -659,6 +659,16 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        ...num(24, "Major Pivots", { min: 0 }),
+        group: "pivot",
+        suffix: "pivots",
+        default: TL.majorPivots,
+        tip: [
+          "The biggest swings seen so far, kept beyond the Max Pivot Pairs window so a new pivot can still start a line from an old major high or low.",
+          "Swing size is the leg to the previous pivot on the other side, in ATR(14). Zero: only the recent window pairs.",
+        ],
+      },
+      {
         ...num(6, "Min Pivot Size", { min: 0, step: 0.1 }),
         group: "size",
         suffix: "ATR",

@@ -443,6 +443,57 @@ export function isSignificantSwing(
  * off the start of the series the same way isPivotAt does, by rejecting.
  *
  * Anything <= pivotLen is a no-op: isPivotAt already proved those bars. */
+/** The major tier's rank: the same leg isSignificantSwing measures, in ATR(14)
+ * at k. No opposite turn yet, or no ATR, is 0 (weakest). Mirrors Python
+ * swing_strength. */
+export function swingStrength(
+  highs: ReadonlyArray<number>,
+  lows: ReadonlyArray<number>,
+  oppositePool: ReadonlyArray<number>,
+  k: number,
+  kind: PivotKind,
+  atrK: number | null,
+): number {
+  if (atrK === null || atrK <= 0) return 0;
+  let h = -1;
+  for (let q = oppositePool.length - 1; q >= 0; q--) {
+    if (oppositePool[q] < k) {
+      h = oppositePool[q];
+      break;
+    }
+  }
+  if (h < 0) return 0;
+  const leg = kind === "high" ? highs[k] - lows[h] : highs[h] - lows[k];
+  return leg / atrK;
+}
+
+/** Admit pool position q into the major tier. majors.q stays ascending because
+ * q is always the newest position; a newcomer must STRICTLY beat the weakest
+ * (first minimum) to evict it, so ties keep the older pivot. Mirrors Python
+ * admit_major. */
+export function admitMajor(
+  majors: { q: number[]; strength: number[] },
+  q: number,
+  strength: number,
+  cap: number,
+): void {
+  if (cap <= 0) return;
+  if (majors.q.length < cap) {
+    majors.q.push(q);
+    majors.strength.push(strength);
+    return;
+  }
+  let weakest = 0;
+  for (let j = 1; j < majors.strength.length; j++)
+    if (majors.strength[j] < majors.strength[weakest]) weakest = j;
+  if (strength > majors.strength[weakest]) {
+    majors.q.splice(weakest, 1);
+    majors.strength.splice(weakest, 1);
+    majors.q.push(q);
+    majors.strength.push(strength);
+  }
+}
+
 export function hasSwingReach(
   vals: ReadonlyArray<number>,
   k: number,
@@ -522,6 +573,10 @@ interface TlState {
   /** Filter-passing pivots of BOTH kinds, in confirm order (high before low
    * within a bar). What may seed or touch a line. */
   pool: { idxs: number[]; kinds: PivotKind[] };
+  /** The MAJOR tier as POOL POSITIONS (ascending) with their strengths: the
+   * cfg.majorPivots strongest swings so far, paired with beyond the recent
+   * window. See admitMajor. */
+  majors: { q: number[]; strength: number[] };
   /** EVERY confirmed fractal pivot per kind, including the ones the size and
    * reach gates reject, because the Min Pivot Size leg runs to the previous
    * turn of the other kind whether or not that turn was big enough to trade. */
@@ -550,6 +605,7 @@ export function buildTlState(
     lows: prefix.map((d) => d.low),
     closes: prefix.map((d) => d.close),
     pool: { idxs: [], kinds: [] },
+    majors: { q: [], strength: [] },
     turns: { high: [], low: [] },
     lines: [],
     points: Array.from({ length: m }, () => ({})),
@@ -609,6 +665,7 @@ export function withinDistance(line: TrendLine, j: number, close: number, tol: n
  * which the incremental session relies on. Ported line for line to Python. */
 function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void {
   const { atr, highs, lows, closes, pool, turns, points } = st;
+  const majorTier = st.majors;
   let lines = st.lines;
   const a = atr[i];
 
@@ -658,9 +715,22 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
       }
 
       // 2b. Seed candidates against the previous pairPivots pool entries, of
-      //     either kind. The pool push happens AFTER this loop.
+      //     either kind, plus the major tier where it reaches further back;
+      //     ascending pool position throughout. Under Max Span a major too
+      //     old to span is dropped from the tier: no line could use it. The
+      //     pool push happens AFTER this loop.
       const from = Math.max(0, pool.idxs.length - cfg.pairPivots);
-      for (let q = from; q < pool.idxs.length; q++) {
+      if (cfg.maxSpanBars > 0 && majorTier.q.length > 0) {
+        for (let j = majorTier.q.length - 1; j >= 0; j--) {
+          if (k - pool.idxs[majorTier.q[j]] > cfg.maxSpanBars) {
+            majorTier.q.splice(j, 1);
+            majorTier.strength.splice(j, 1);
+          }
+        }
+      }
+      const seeds: number[] = majorTier.q.filter((q) => q < from);
+      for (let q = from; q < pool.idxs.length; q++) seeds.push(q);
+      for (const q of seeds) {
         const i1 = pool.idxs[q];
         // A bar's own high and low confirm together and would give span 0.
         if (i1 >= k) continue;
@@ -724,6 +794,15 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
       }
       pool.idxs.push(k);
       pool.kinds.push(kind);
+      if (cfg.majorPivots > 0) {
+        const opposite = turns[kind === "high" ? "low" : "high"];
+        admitMajor(
+          majorTier,
+          pool.idxs.length - 1,
+          swingStrength(highs, lows, opposite, k, kind, atr[k]),
+          cfg.majorPivots,
+        );
+      }
     }
 
     // 3. Prune the dead, then cap live state by the SURVIVAL order, IN TOTAL
@@ -921,6 +1000,7 @@ export function createTrendlinesSession(): TrendlinesSession {
         closes: b.closes,
         points: b.points,
         pool: { idxs: b.pool.idxs.slice(), kinds: b.pool.kinds.slice() },
+        majors: { q: b.majors.q.slice(), strength: b.majors.strength.slice() },
         turns: { high: b.turns.high.slice(), low: b.turns.low.slice() },
         lines: b.lines.map(cloneTrendLine),
       };

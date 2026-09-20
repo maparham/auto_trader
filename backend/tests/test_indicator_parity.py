@@ -123,7 +123,8 @@ _TL_BASE = dict(
     max_lines=3, min_swing_atr=0.0, min_swing_reach=0, pair_pivots=40, max_touches=0,
     max_span_bars=0, max_slope_atr=0.0, min_slope_atr=0.0, max_touch_spacing=0,
     min_touch_spacing=0, min_crossings=0, max_crossings=0, pierce_mult=0.25,
-    min_back_bars=0,
+    min_back_bars=0, max_dist_atr=0.0, max_dist_pct=0.0, merge_atr=0.0, max_per_pivot=0,
+    merge_pct=0.0, major_pivots=0,
 )
 
 # Mirrors TL_VARIANTS in indicatorParityGolden.test.ts VALUE FOR VALUE.
@@ -131,6 +132,7 @@ _TL_VARIANTS = {
     "SWING": dict(min_swing_atr=2.0),
     "REACH": dict(min_swing_reach=12),
     "PAIR": dict(pair_pivots=5),
+    "MAJOR": dict(pair_pivots=5, major_pivots=3),
     "CAP": dict(max_touches=3),
     "SPAN": dict(max_span_bars=40),
     "SLOPE": dict(max_slope_atr=0.1),

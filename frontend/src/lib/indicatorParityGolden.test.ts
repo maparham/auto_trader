@@ -127,7 +127,8 @@ describe("indicator parity golden fixture", () => {
       maxLines: 3, minSwingAtr: 0, minSwingReach: 0, pairPivots: 40, maxTouches: 0,
       maxSpanBars: 0, maxSlopeAtr: 0, minSlopeAtr: 0, maxTouchSpacing: 0,
       minTouchSpacing: 0, minCrossings: 0, maxCrossings: 0, pierceMult: 0.25,
-      minBackBars: 0,
+      minBackBars: 0, maxDistAtr: 0, maxDistPct: 0, mergeAtr: 0, maxPerPivot: 0, mergePct: 0,
+      majorPivots: 0,
     };
     const tlPoints = computeTrendlines(candles, TL_CFG).points;
     // One variant per gate, each against its own off state in TL_CFG, so a port
@@ -136,6 +137,8 @@ describe("indicator parity golden fixture", () => {
       SWING: { minSwingAtr: 2 },
       REACH: { minSwingReach: 12 },
       PAIR: { pairPivots: 5 },
+      // The major tier only bites once the recent window is short.
+      MAJOR: { pairPivots: 5, majorPivots: 3 },
       CAP: { maxTouches: 3 },
       SPAN: { maxSpanBars: 40 },
       SLOPE: { maxSlopeAtr: 0.1 },

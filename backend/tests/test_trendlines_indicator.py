@@ -14,11 +14,14 @@ from auto_trader.indicators.registry import SERIES_INDICATORS, resolve_instances
 from auto_trader.indicators.trendlines import (
     MAX_LIVE_MULT,
     MAX_MAX_LINES,
+    MAJOR_PIVOTS,
     MAX_PAIR_PIVOTS,
     TL_ATR_LEN,
     TL_NEAREST,
     TrendLine,
+    admit_major,
     compute_trendlines,
+    swing_strength,
     has_back_clearance,
     touch_weight,
     is_major,
@@ -71,19 +74,21 @@ def test_defaults_from_empty_params():
     assert (c.max_dist_atr, c.max_dist_pct) == (0.0, 0.0)
     assert (c.merge_atr, c.max_per_pivot, c.merge_pct) == (0.25, 0, 0.0)
     assert c.pair_pivots == MAX_PAIR_PIVOTS == 40
+    assert c.major_pivots == MAJOR_PIVOTS == 12
     assert (c.min_crossings, c.max_crossings) == (0, 0)
     assert c.timeframe is None
 
 
 def test_reads_every_slot_in_order():
     c = parse_trendlines_config(
-        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3], {})
+        [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3, 5], {})
     assert (c.pivot_len, c.touch_mult, c.min_touches, c.min_span_bars, c.max_proj_bars, c.max_lines,
             c.min_swing_atr, c.min_swing_reach, c.pair_pivots, c.max_touches, c.max_span_bars,
             c.max_slope_atr, c.min_slope_atr, c.max_touch_spacing, c.min_touch_spacing,
             c.min_crossings, c.max_crossings, c.pierce_mult, c.min_back_bars,
-            c.max_dist_atr, c.max_dist_pct, c.merge_atr, c.max_per_pivot, c.merge_pct) == (
-        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3)
+            c.max_dist_atr, c.max_dist_pct, c.merge_atr, c.max_per_pivot, c.merge_pct,
+            c.major_pivots) == (
+        4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3, 5)
 
 
 def test_slope_slots_are_signed():
@@ -315,6 +320,69 @@ def test_a_fresh_long_uncrossed_line_survives_the_cap():
     _, lines = compute_trendlines(bars, c)
     assert len(lines) <= MAX_LIVE_MULT * c.max_lines
     assert any(deep(line) for line in lines), "the long uncrossed line was evicted at birth"
+
+
+# ------------------------------------------------------------ major tier
+
+def _old_major_low() -> list[Candle]:
+    """A big low at bar 20 (its opposite turn is the high at bar 15), then a
+    run of small zigzag pivots that pushes bar 20 out of any short recent
+    window, then a low at bar 170 level with it. Closes stay near 100, so the
+    line across the two lows is never crossed."""
+    bars = flat(200)
+    bars[15] = bar(15, 99.5, 103)
+    bars[20] = bar(20, 80, 100.5)
+    for j in range(30, 150, 6):
+        bars[j] = bar(j, 98, 100.5)
+        bars[j + 3] = bar(j + 3, 99.5, 102)
+    bars[170] = bar(170, 80, 100.5)
+    return bars
+
+
+def _spans_the_lows(lines: list[TrendLine]) -> bool:
+    return any(l.i1 == 20 and l.i2 == 170 for l in lines)
+
+
+def test_major_tier_reaches_past_the_recent_window():
+    bars = _old_major_low()
+    base = cfg(pair_pivots=4, max_lines=50, merge_atr=0)
+    assert not _spans_the_lows(compute_trendlines(bars, replace(base, major_pivots=0))[1])
+    assert _spans_the_lows(compute_trendlines(bars, replace(base, major_pivots=1))[1])
+
+
+def test_major_tier_is_a_union_with_the_recent_window():
+    # A major that is still inside the recent window seeds ONCE.
+    bars = _old_major_low()
+    c = cfg(pair_pivots=200, max_lines=50, merge_atr=0, major_pivots=12)
+    _, lines = compute_trendlines(bars, c)
+    assert sum(1 for l in lines if l.i1 == 20 and l.i2 == 170) == 1
+
+
+def test_max_span_drops_a_major_no_line_could_use():
+    bars = _old_major_low()
+    c = cfg(pair_pivots=4, max_lines=50, merge_atr=0, major_pivots=1, max_span_bars=100)
+    assert not _spans_the_lows(compute_trendlines(bars, c)[1])
+
+
+def test_admit_major_evicts_the_weakest_only_when_beaten():
+    q, s = [], []
+    admit_major(q, s, 0, 1.0, 2)
+    admit_major(q, s, 1, 3.0, 2)
+    admit_major(q, s, 2, 1.0, 2)  # tie with the weakest: older stays
+    assert (q, s) == ([0, 1], [1.0, 3.0])
+    admit_major(q, s, 3, 2.0, 2)
+    assert (q, s) == ([1, 3], [3.0, 2.0])
+    admit_major(q, s, 4, 9.0, 0)  # off
+    assert q == [1, 3]
+
+
+def test_swing_strength_is_the_leg_in_atr():
+    highs = [100.0, 110.0, 100.0]
+    lows = [90.0, 100.0, 90.0]
+    assert swing_strength(highs, lows, [1], 2, "low", 4.0) == 5.0
+    assert swing_strength(highs, lows, [], 2, "low", 4.0) == 0.0
+    assert swing_strength(highs, lows, [1], 2, "low", None) == 0.0
+    assert swing_strength(highs, lows, [2], 2, "low", 4.0) == 0.0  # strictly before k
 
 
 def test_crossings_floor_and_ceiling():

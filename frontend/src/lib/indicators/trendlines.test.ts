@@ -13,6 +13,8 @@ import {
   withinSlope,
   aboveSlope,
   hasSwingReach,
+  swingStrength,
+  admitMajor,
   isMajor,
   isSignificantSwing,
   lineExtent,
@@ -423,6 +425,74 @@ describe("isSignificantSwing", () => {
     // The old window-average measure grew with pivotLen, so a stricter pivot
     // setting could ADD lines. There is no pivotLen argument left to pass.
     expect(isSignificantSwing.length).toBe(7);
+  });
+});
+
+describe("major tier", () => {
+  // A big low at bar 20 (its opposite turn is the high at bar 15; a turn
+  // confirmed before ATR warms up is never recorded), then a run of small
+  // zigzag pivots that pushes bar 20 out of any short recent window, then a
+  // low at bar 170 level with it. Closes stay near 100, so the line across
+  // the two lows is never crossed. Mirrors Python _old_major_low.
+  const oldMajorLow = (): KLineData[] => {
+    const bars = flat(200);
+    bars[15] = bar(15, 99.5, 103);
+    bars[20] = bar(20, 80, 100.5);
+    for (let j = 30; j < 150; j += 6) {
+      bars[j] = bar(j, 98, 100.5);
+      bars[j + 3] = bar(j + 3, 99.5, 102);
+    }
+    bars[170] = bar(170, 80, 100.5);
+    return bars;
+  };
+  const spansTheLows = (lines: TrendLine[]) => lines.filter((l) => l.i1 === 20 && l.i2 === 170);
+
+  it("reaches past the recent window", () => {
+    const bars = oldMajorLow();
+    const base = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0 });
+    expect(spansTheLows(computeTrendlines(bars, { ...base, majorPivots: 0 }).lines)).toHaveLength(0);
+    expect(spansTheLows(computeTrendlines(bars, { ...base, majorPivots: 1 }).lines)).toHaveLength(1);
+  });
+
+  it("is a union with the recent window: a major still inside it seeds once", () => {
+    const c = cfg({ pairPivots: 200, maxLines: 50, mergeAtr: 0, majorPivots: 12 });
+    expect(spansTheLows(computeTrendlines(oldMajorLow(), c).lines)).toHaveLength(1);
+  });
+
+  it("drops a major no line could span under Max Span", () => {
+    const c = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 1, maxSpanBars: 100 });
+    expect(spansTheLows(computeTrendlines(oldMajorLow(), c).lines)).toHaveLength(0);
+  });
+
+  it("matches the incremental session with the tier on", () => {
+    const bars = oldMajorLow();
+    const c = cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 1 });
+    const ref = computeTrendlines(bars, c);
+    const session = createTrendlinesSession();
+    const inc = session.compute(bars, c);
+    expect(inc.lines).toEqual(ref.lines);
+    expect(inc.points).toEqual(ref.points);
+  });
+
+  it("admitMajor evicts the weakest only when strictly beaten", () => {
+    const m = { q: [] as number[], strength: [] as number[] };
+    admitMajor(m, 0, 1, 2);
+    admitMajor(m, 1, 3, 2);
+    admitMajor(m, 2, 1, 2); // tie with the weakest: the older stays
+    expect(m).toEqual({ q: [0, 1], strength: [1, 3] });
+    admitMajor(m, 3, 2, 2);
+    expect(m).toEqual({ q: [1, 3], strength: [3, 2] });
+    admitMajor(m, 4, 9, 0); // off
+    expect(m.q).toEqual([1, 3]);
+  });
+
+  it("swingStrength is the leg in ATR, 0 without an opposite turn or ATR", () => {
+    const highs = [100, 110, 100];
+    const lows = [90, 100, 90];
+    expect(swingStrength(highs, lows, [1], 2, "low", 4)).toBe(5);
+    expect(swingStrength(highs, lows, [], 2, "low", 4)).toBe(0);
+    expect(swingStrength(highs, lows, [1], 2, "low", null)).toBe(0);
+    expect(swingStrength(highs, lows, [2], 2, "low", 4)).toBe(0); // strictly before k
   });
 });
 
