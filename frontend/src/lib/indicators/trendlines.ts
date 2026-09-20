@@ -1694,9 +1694,13 @@ export const TL_HANDLE_RADIUS = 3;
 /** The hollow ring at a touch: a touch is price respecting the line, and this
  * marks each bar that earned the ×N tag. */
 export const TL_TOUCH_RADIUS = 2;
-/** Half-arm of the crossing mark: a small × ON the line at the crossing bar.
- * A ring there would read as a touch, so it is the one shape a touch is not. */
-export const TL_CROSS_ARM = 3;
+/** Half-arm of the crossing mark: a × ON the line at the crossing bar. A ring
+ * there would read as a touch, so it is the one shape a touch is not. It sits
+ * on a candle body by definition (the close crossed here), so it is larger
+ * and heavier than the 1px ring or a 3px × vanished against the body. */
+export const TL_CROSS_ARM = 4;
+/** Stroke of the crossing ×, heavier than the line for the same reason. */
+export const TL_CROSS_STROKE = 2;
 export const TL_HANDLE_HIT = 8;
 /** The pivot mark: an arrow pointing AT price (UP under a low, DOWN over a
  * high), sitting this many pixels clear of the wick with arms this long. An
@@ -2714,6 +2718,12 @@ function drawTrendlines(
     // Walking back from the HTF close keeps the mark ON the drawn line only
     // while the segment reaches that far, so onSegment is asked as for a ring.
     if (showCrossings) {
+      ctx.save();
+      ctx.lineWidth = TL_CROSS_STROKE;
+      ctx.lineCap = "round";
+      // Full strength even on a dimmed line: the mark is an event, and
+      // dimming is about the line's standing, not whether the event happened.
+      ctx.globalAlpha = 1;
       // Side of the DRAWN segment, in pixels (y grows downward), so the
       // chosen candle is one whose close visibly sits across the line.
       const sideDrawn = (c: number): number => {
@@ -2734,6 +2744,7 @@ function drawTrendlines(
         ctx.lineTo(xC + TL_CROSS_ARM, yC - TL_CROSS_ARM);
         ctx.stroke();
       }
+      ctx.restore();
     }
     // Touch count at the right end, the same ×N tag SR_LEVELS puts on a zone:
     // the drawn set is chosen by proximity, so this is how a user tells a
