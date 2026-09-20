@@ -70,7 +70,7 @@ describe("TRENDLINES registration", () => {
       ["Max Projection"],
       ["Extend"],
       ["Max lines per pivot"],
-      ["Merge within", "Merge within (%)"],
+      ["Merge lines within", "Merge lines within (%)"],
     ]);
   });
 
@@ -115,7 +115,7 @@ describe("TRENDLINES registration", () => {
     expect(d?.min).toBe(0);
     expect(d?.step).toBe(1);
     expect(d?.unbounded).toBe(true);
-    const m = resolveInputs("TRENDLINES", undefined).find((i) => i.label === "Merge within");
+    const m = resolveInputs("TRENDLINES", undefined).find((i) => i.label === "Merge lines within");
     expect(m?.source).toBe("calcParam");
     expect(m?.index).toBe(21);
   });

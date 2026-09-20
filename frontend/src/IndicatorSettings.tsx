@@ -1842,7 +1842,7 @@ function IndicatorSettingsForm({
 
   return (
     <FloatingModal
-      className={`ind-settings${type === "PREV_HL" ? " ind-settings-wide" : ""}`}
+      className={`ind-settings${type === "PREV_HL" ? " ind-settings-wide" : type === "TRENDLINES" ? " ind-settings-tl" : ""}`}
       title={<strong>{shortName}</strong>}
       onClose={cancel}
       closeLabel="Cancel"
