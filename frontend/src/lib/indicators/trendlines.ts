@@ -2543,6 +2543,8 @@ function drawTrendlines(
   // Shared across instances (Trendlines(1D) and Trendlines(4H) draw in
   // separate passes on the same context), see paneTags.
   const placedTags = paneTags(ctx);
+  // One style lookup per draw, not one per tag.
+  const halo = tagHalo();
   // The shared canvas context arrives with whatever dash pattern the previous
   // drawer left behind (price lines and alert lines are dashed), so every
   // trendline stroke, ring, handle and tag below needs a solid line reset
@@ -2766,7 +2768,7 @@ function drawTrendlines(
     placedTags.push({ x: xTag, y: yTag, w: wTag });
     ctx.fillStyle = ctx.strokeStyle;
     ctx.save();
-    ctx.strokeStyle = tagHalo();
+    ctx.strokeStyle = halo;
     ctx.lineWidth = 3;
     ctx.lineJoin = "round";
     ctx.strokeText(label, xTag, yTag);

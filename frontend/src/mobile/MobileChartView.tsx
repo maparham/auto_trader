@@ -207,7 +207,8 @@ export default function MobileChartView({ active = true }: { active?: boolean })
         )}
         {booted && <MobileDrawBar />}
         {/* Chart-only mode unmounts the tab bar, and with it the demo's
-            sign-up nudge; a small pill in the bottom-left corner keeps it. */}
+            sign-up nudge; a pill on the legend row, left of the price axis,
+            keeps it (mobile.css .m-chart-cta). */}
         {isDemoMode() && viewMode.chromeHidden && (
           <span className="m-chart-cta">
             <DemoCta />
