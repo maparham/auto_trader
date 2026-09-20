@@ -480,7 +480,9 @@ describe("major tier", () => {
 
   it("exposes the tier's pool positions and the majors seen, for the marks and the readout", () => {
     const bars = oldMajorLow();
-    const { pivots } = computeTrendlines(bars, cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 12, majorLen: 10 }));
+    // Size off: the bar 15 high's leg has no opposite turn before it, so any
+    // Size at all would drop it (the default 3 included).
+    const { pivots } = computeTrendlines(bars, cfg({ pairPivots: 4, maxLines: 50, mergeAtr: 0, majorPivots: 12, majorLen: 10, majorSizeAtr: 0 }));
     expect(pivots.majorQs!.map((q) => [pivots.idxs[q], pivots.kinds[q]])).toEqual([[15, "high"], [20, "low"], [170, "low"]]);
     expect(pivots.majorsSeen).toBe(3);
     // Major Size drops the bar 15 high, whose leg has no opposite turn before it.

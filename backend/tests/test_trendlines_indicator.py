@@ -15,6 +15,7 @@ from auto_trader.indicators.trendlines import (
     MAX_LIVE_MULT,
     MAX_MAX_LINES,
     MAJOR_LEN,
+    MAJOR_SIZE_ATR,
     MAJOR_PIVOTS,
     MAX_PAIR_PIVOTS,
     TL_ATR_LEN,
@@ -77,7 +78,7 @@ def test_defaults_from_empty_params():
     assert (c.merge_atr, c.max_per_pivot, c.merge_pct) == (0.25, 0, 0.0)
     assert c.pair_pivots == MAX_PAIR_PIVOTS == 40
     assert c.major_pivots == MAJOR_PIVOTS == 12
-    assert (c.major_len, c.major_size_atr) == (MAJOR_LEN, 0.0) == (30, 0.0)
+    assert (c.major_len, c.major_size_atr) == (MAJOR_LEN, MAJOR_SIZE_ATR) == (30, 3.0)
     assert (c.min_crossings, c.max_crossings) == (0, 0)
     assert c.timeframe is None
 

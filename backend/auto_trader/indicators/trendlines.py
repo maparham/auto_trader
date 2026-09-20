@@ -37,6 +37,9 @@ MAJOR_PIVOTS = 12
 # DEFAULT window that makes a pivot MAJOR: the extreme over this many bars on
 # each side. Mirrors MAJOR_LEN in trendlinesOutputs.ts.
 MAJOR_LEN = 30
+# DEFAULT min swing, in ATR(14), for a pivot to be MAJOR. Mirrors
+# MAJOR_SIZE_ATR in trendlinesOutputs.ts.
+MAJOR_SIZE_ATR = 3.0
 # Live state keeps this multiple of max_lines lines IN TOTAL. 16, not 4: a line
 # is built once, at its second anchor, so the cap is a one-shot test it can
 # never retake (see survival_key). Mirrors MAX_LIVE_MULT in
@@ -60,7 +63,7 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 #  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
 #  max_dist_pct, merge_atr, max_per_pivot, merge_pct, major_pivots,
 #  major_len, major_size_atr]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, 0.0)
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR)
 # The distance "Only lines near price" drew at, in ATR(14): what a pane saved
 # with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
 # trendlinesOutputs.ts.
@@ -124,7 +127,7 @@ class TrendlinesConfig:
     major_pivots: int = MAJOR_PIVOTS
     merge_pct: float = 0.0
     major_len: int = MAJOR_LEN
-    major_size_atr: float = 0.0
+    major_size_atr: float = MAJOR_SIZE_ATR
     timeframe: str | None = None
 
 

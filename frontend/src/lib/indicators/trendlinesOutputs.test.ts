@@ -32,7 +32,7 @@ describe("TRENDLINES_DEFAULTS", () => {
     expect(TRENDLINES_DEFAULTS.majorPivots).toBe(12);
     expect(MAJOR_LEN).toBe(30);
     expect(TRENDLINES_DEFAULTS.majorLen).toBe(30);
-    expect(TRENDLINES_DEFAULTS.majorSizeAtr).toBe(0);
+    expect(TRENDLINES_DEFAULTS.majorSizeAtr).toBe(3);
   });
 });
 
@@ -96,7 +96,7 @@ describe("parseTrendlinesConfig", () => {
     expect(c.mergePct).toBe(0);
     expect(c.majorPivots).toBe(0);
     expect(c.majorLen).toBe(TRENDLINES_DEFAULTS.majorLen); // 0 fails > 0
-    expect(c.majorSizeAtr).toBe(0);
+    expect(c.majorSizeAtr).toBe(0); // an explicit 0 is off, not the default
   });
   // The merge tolerance and One line per pivot were render-only extendData
   // settings. A pane saved with them, and no slot 21/22, keeps them (the
