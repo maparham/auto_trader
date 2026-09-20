@@ -770,12 +770,11 @@ function IndicatorSettingsForm({
     return inp.showWhen.equals.includes(cur as string | number);
   }
 
-  // The label, with an optional ⓘ info tip beside it (matches the hand-built
-  // panels like PREV_HL). Plain <label> when there is no tip.
   // TRENDLINES live readouts (IndicatorInputDef.liveStat): the last result
-  // row's pivot pool, read on a short poll while the form is open because the
-  // calc lands asynchronously after every param write. Only set when the
-  // numbers change, so the poll does not re-render the form on its own.
+  // row's pivot pool. The calc lands asynchronously after a param write, so
+  // each change of the params reads a few times over the next second and
+  // then stops; nothing runs while the form sits idle. Only set when the
+  // numbers change, so a read never re-renders the form on its own.
   const [tlStats, setTlStats] = useState<{ pivots: number; pairs: number } | null>(null);
   useEffect(() => {
     if (name !== "TRENDLINES") return;
@@ -793,9 +792,12 @@ function IndicatorSettingsForm({
       );
     };
     read();
-    const timer = setInterval(read, 500);
-    return () => clearInterval(timer);
-  }, [chart, paneId, name]);
+    const timers = [150, 400, 1000, 2500].map((ms) => setTimeout(read, ms));
+    return () => timers.forEach(clearTimeout);
+    // calcParams is the trigger, not an input: a new params array means a
+    // recompute is on its way.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chart, paneId, name, calcParams]);
 
   function statFor(inp: IndicatorInputDef) {
     if (!inp.liveStat || !tlStats) return null;
@@ -803,6 +805,8 @@ function IndicatorSettingsForm({
     return <span className="ind-stat">{text}</span>;
   }
 
+  // The label, with an optional ⓘ info tip beside it (matches the hand-built
+  // panels like PREV_HL). Plain <label> when there is no tip.
   function labelFor(inp: IndicatorInputDef) {
     return inp.tip ? (
       <span className="ind-row-head">

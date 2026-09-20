@@ -165,7 +165,7 @@ export function registerChartActions(): void {
           "TAB_HIDDEN",
           extensionTimedOut
             ? "the app's browser tab is backgrounded and the Tab Bridge extension did not answer (reload the app tab after reloading the extension), or focus the tab and retry"
-            : "the app's browser tab is backgrounded and the Tab Bridge extension did not answer within 1.8s (not installed, or the page is still loading; retry once); install the Tab Bridge extension (github.com/maparham/agent-ui-bridge) or focus the tab and retry",
+            : "the app's browser tab is backgrounded and the Tab Bridge extension did not answer (not installed, or the page is still loading; retry once); install the Tab Bridge extension (github.com/maparham/agent-ui-bridge) or focus the tab and retry",
         );
       }
       const bg = chartBackgroundColor();
