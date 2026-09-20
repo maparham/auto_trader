@@ -73,11 +73,13 @@ export default function DefaultsMenu({
     // apply is a preview like any other edit, persisted by Ok or dropped by Cancel.
     const stored = loadIndicatorConfigs(scope)[name];
     removeIndicatorById(chart, scope, name);
-    const created = applyIndicator(chart, scope, epic, { id: name, type }, { config: cfg ?? {}, rehydrate: true });
+    applyIndicator(chart, scope, epic, { id: name, type }, { config: cfg ?? {}, rehydrate: true });
     if (stored) saveIndicatorConfig(scope, name, stored);
     else deleteIndicatorConfig(scope, name);
     setDefOpen(false);
-    if (created) onRecreated();
+    // Unconditional: the old instance is gone either way, and the shell must
+    // re-read rather than keep a form bound to a removed indicator.
+    onRecreated();
   }
 
   function saveAsDefault() {

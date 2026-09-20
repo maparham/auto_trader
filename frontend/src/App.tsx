@@ -3002,6 +3002,7 @@ export default function App() {
 
       {indSettings && focused && focusedCell && symbol && period && (
         <IndicatorSettings
+          key={`${indSettings.paneId}:${indSettings.name}`}
           chart={focused.chart}
           scope={focusedCell.scope}
           cellId={focusedCell.id}

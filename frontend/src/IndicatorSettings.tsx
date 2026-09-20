@@ -291,6 +291,14 @@ function IndicatorSettingsForm({
     () => getIndicator(chart, paneId, name) as Indicator | null,
     [chart, paneId, name],
   );
+  // What the form opens on: the LIVE instance. After a preset recreate this is
+  // the preset's state, while `original` (the shell's) is still what Cancel
+  // restores, so the two must not be confused.
+  const seed = {
+    calcParams: ((ind?.calcParams ?? []) as unknown[]).map((v) => Number(v)),
+    visible: ind?.visible ?? true,
+    extendData: (ind?.extendData ?? null) as MaExtend | null,
+  };
   // `name` is the instance id (klinecharts name, e.g. "EMA#a1b2"); the real TYPE
   // (EMA/MA/AVWAP/…) drives which input panels show. Resolve it from extendData.
   const type = ind ? indTypeOf(ind) : name;
@@ -356,13 +364,13 @@ function IndicatorSettingsForm({
       }),
   });
   const [calcParams, setCalcParams] = useState<number[]>(() => {
-    const cp = original.current.calcParams;
+    const cp = seed.calcParams;
     // A Trendlines pane saved before slots 19 to 22 existed migrates its
     // render-only settings onto them, by the same rules parseTrendlinesConfig
     // applies for the chart, so each box shows what the pane draws. Only an
     // ABSENT slot migrates; a present one is what the user set since.
     if (!isTrendlines) return cp;
-    const ext = original.current.extendData;
+    const ext = seed.extendData;
     const next = cp.slice();
     if (cp[19] === undefined && legacyNearPrice(ext)) next[19] = TL_NEAR_PRICE_ATR;
     if (cp[21] === undefined) {
@@ -378,15 +386,14 @@ function IndicatorSettingsForm({
   // back to the legacy `visible` flag only when userVisible is genuinely absent
   // (fresh/legacy indicator) — mirrors overlays.ts's rehydrate seed.
   const [visible, setVisible] = useState<boolean>(
-    (original.current.extendData as { userVisible?: boolean } | null)?.userVisible ??
-      original.current.visible,
+    (seed.extendData as { userVisible?: boolean } | null)?.userVisible ?? seed.visible,
   );
   const [showValue, setShowValue] = useState<boolean>(
-    !(original.current.extendData as { hideLegendValue?: boolean } | null)?.hideLegendValue,
+    !(seed.extendData as { hideLegendValue?: boolean } | null)?.hideLegendValue,
   );
 
   // --- Per-timeframe visibility (TV Visibility tab), shared with drawings ---
-  const visExt0 = (original.current.extendData ?? {}) as { visibility?: VisibilityModel };
+  const visExt0 = (seed.extendData ?? {}) as { visibility?: VisibilityModel };
   const [vis, setVis] = useState<VisibilityModel>(visExt0.visibility ?? defaultVisibility());
   // Auto-hide (bar-count) is only wired up for drawings so far — indicators.ts's
   // applyIndicatorIntervalVisibility never evaluates barsSpanned/autoHide, so
@@ -488,7 +495,7 @@ function IndicatorSettingsForm({
 
   // --- Moving-average (EMA/MA) inputs, sourced from calcParams + extendData ---
   const ext0 = (ind?.extendData ?? {}) as MaExtend;
-  const [maLength, setMaLength] = useState<number>(original.current.calcParams[0] ?? (type === "EMA" ? 9 : 20));
+  const [maLength, setMaLength] = useState<number>(seed.calcParams[0] ?? (type === "EMA" ? 9 : 20));
   const [source, setSource] = useState<string>(ext0.source ?? "close");
   const [offset, setOffset] = useState<number>(ext0.offset ?? 0);
   const [smoothType, setSmoothType] = useState<string>(ext0.smoothing?.type ?? "none");

@@ -200,6 +200,7 @@ export default function MobileModals() {
 
       {indSettings && ctx && controller && symbol && period && (
         <IndicatorSettings
+          key={`${indSettings.paneId}:${indSettings.name}`}
           chart={ctx.chart}
           scope={controller.scope}
           cellId="mobile"
