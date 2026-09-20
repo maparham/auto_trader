@@ -65,6 +65,22 @@ def _alert_sig(params: dict) -> str:
     return f"{params.get('level')}|{params.get('condition')}|{params.get('trigger')}"
 
 
+
+def _is_broker_paused(exc: BaseException) -> bool:
+    """True when `exc` or anything in its cause/context chain is the MT5
+    paused-account error: the stream helpers wrap it in a RuntimeError, so the
+    original sits one link down the chain."""
+    from auto_trader.brokers.mt5 import MT5PausedError
+
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        if isinstance(cur, MT5PausedError):
+            return True
+        seen.add(id(cur))
+        cur = cur.__cause__ or cur.__context__
+    return False
+
 class AlertEngine:
     """Singleton (`ALERT_ENGINE` below) driving every user's price alerts off
     live ticks. Construct + `configure()` are split so tests can build a fresh
@@ -286,7 +302,17 @@ class AlertEngine:
                 await asyncio.sleep(POLL_INTERVAL)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as e:
+                if _is_broker_paused(e):
+                    # Deliberate operator state, not a fault: one line, no
+                    # traceback, straight to the slowest retry cadence.
+                    backoff[0] = BACKOFF_MAX
+                    log.info(
+                        "alert feed for %s/%s: broker paused, retrying in %.0fs",
+                        broker_id, epic, backoff[0],
+                    )
+                    await asyncio.sleep(backoff[0])
+                    continue
                 log.warning("alert feed for %s/%s failed, backing off %.1fs", broker_id, epic, backoff[0], exc_info=True)
                 await asyncio.sleep(backoff[0])
                 backoff[0] = min(backoff[0] * 2, BACKOFF_MAX)

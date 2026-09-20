@@ -137,6 +137,43 @@ def test_poll_loop_survives_get_quote_error_and_backs_off(tmp_path):
     asyncio.run(main())
 
 
+def test_feed_loop_paused_broker_logs_one_line_and_uses_max_backoff(tmp_path, monkeypatch, caplog):
+    """A paused MT5 account is operator state, not a fault: the feed loop logs
+    one INFO line without a traceback and waits BACKOFF_MAX before retrying,
+    even when the paused error arrives wrapped (as the stream helper raises it)."""
+    from auto_trader.brokers.mt5 import MT5PausedError
+
+    async def main():
+        class Paused:
+            supports_streaming = False
+
+            async def get_quote(self, epic):
+                try:
+                    raise MT5PausedError("paused")
+                except MT5PausedError as e:
+                    raise RuntimeError("mt5 stream connect failed") from e
+
+        eng, store, sent = make_engine(tmp_path, get_broker=lambda b: Paused())
+        sleeps = []
+
+        async def fake_sleep(secs):
+            sleeps.append(secs)
+            if len(sleeps) >= 2:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(alert_engine_module.asyncio, "sleep", fake_sleep)
+        with caplog.at_level("INFO", logger="auto_trader.core.alert_engine"):
+            with pytest.raises(asyncio.CancelledError):
+                await eng._feed_loop("mt5", "CrudeOIL")
+
+        assert sleeps[0] == alert_engine_module.BACKOFF_MAX
+        recs = [r for r in caplog.records if "paused" in r.getMessage()]
+        assert recs and all(r.levelname == "INFO" and r.exc_info is None for r in recs)
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    asyncio.run(main())
+
+
 def test_poll_loop_missing_broker_retries(tmp_path):
     async def main():
         calls = {"n": 0}
