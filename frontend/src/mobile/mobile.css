@@ -288,7 +288,8 @@
 .m-pos-live { margin-left: 6px; padding: 1px 6px; border-radius: 4px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; }
 .m-pos-detail { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
 .m-pos-detail-row { display: flex; justify-content: space-between; font-size: 14px; color: var(--text); }
-.m-pos-act-btn { margin-top: 8px; padding: 12px; border-radius: 8px; border: none; background: var(--danger); color: #fff; font-size: 15px; font-weight: 600; }
+.m-pos-chart-btn { margin-top: 8px; padding: 12px; border-radius: 8px; border: 1px solid var(--border); background: none; color: var(--text); font-size: 15px; font-weight: 600; }
+.m-pos-act-btn { padding: 12px; border-radius: 8px; border: none; background: var(--danger); color: #fff; font-size: 15px; font-weight: 600; }
 
 body.m-mobile .floating-modal {
   left: 0 !important;

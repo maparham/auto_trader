@@ -28,7 +28,7 @@ import {
 import { DEFAULT_ACCOUNT, getTradesAccount, setTradesAccount } from "../lib/trading";
 import { getPersistBroker } from "../lib/persist/core";
 import { saveLayout, type Workspace } from "../lib/persist";
-import { mobilePeriod } from "./mobileChartState";
+import { mobilePeriod, mobileTabSignal, showMobileEpic } from "./mobileChartState";
 import { BROKERS_CACHE_KEY } from "../lib/brokerDefaults";
 import type { Instrument } from "../lib/feed";
 
@@ -142,5 +142,42 @@ describe("setMobileAccount", () => {
     mobileSymbol.set(IBM);
     setMobileAccount(mobileAccount.value);
     expect(mobileSymbol.value).toBe(IBM); // no reboot
+  });
+});
+
+describe("showMobileEpic", () => {
+  beforeEach(() => {
+    mobileTabSignal.set("positions");
+    mobilePeriod.set(null);
+  });
+
+  it("adopts the mirrored layout cell showing the epic, scope and timeframe included", () => {
+    const cell = {
+      id: "c1",
+      symbol: { epic: "NVDA", name: "NVIDIA" },
+      period: { resolution: "HOUR_1", label: "1h" },
+      scope: "s1",
+    };
+    saveLayout("l1", "Main", { tabs: [{ id: "t1", layout: "1", cells: [cell], activeCellId: "c1" }], activeTabId: "t1" } as unknown as Workspace);
+    showMobileEpic("NVDA", 2);
+    expect(mobileSymbol.value?.name).toBe("NVIDIA");
+    expect(mobileChartScope.value).toEqual({ epic: "NVDA", scope: "s1" });
+    expect(mobilePeriod.value?.resolution).toBe("HOUR_1");
+    expect(mobileTabSignal.value).toBe("chart");
+  });
+
+  it("opens an unknown epic as a bare instrument at the given precision", () => {
+    showMobileEpic("EURUSD", 5);
+    expect(mobileSymbol.value).toEqual({ epic: "EURUSD", name: "EURUSD", status: null, pricePrecision: 5 });
+    expect(mobileTabSignal.value).toBe("chart");
+  });
+
+  it("only switches tabs when the chart already shows the epic", () => {
+    mobileSymbol.set(IBM);
+    mobileChartScope.set({ epic: "IBM", scope: "keep" });
+    showMobileEpic("IBM");
+    expect(mobileSymbol.value).toBe(IBM);
+    expect(mobileChartScope.value?.scope).toBe("keep");
+    expect(mobileTabSignal.value).toBe("chart");
   });
 });

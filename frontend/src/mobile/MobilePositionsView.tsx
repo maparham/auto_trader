@@ -32,7 +32,7 @@ import {
 import { accountStats, enrichTrade, type EnrichedTrade } from "../lib/accountStats";
 import { groupPositions, type PositionGroup } from "../lib/positionGroups";
 import { loadSettings } from "../theme";
-import { mobileSettingsVersion } from "./mobileChartState";
+import { mobileSettingsVersion, showMobileEpic } from "./mobileChartState";
 import { requestConfirm } from "../lib/signals";
 import { toast } from "../lib/notify";
 import Sheet from "./Sheet";
@@ -395,6 +395,15 @@ export default function MobilePositionsView() {
                 <span className={pnlClass(selected.upnl)}>{fmtPnl(selected.upnl)}</span>
               </div>
             )}
+            <button
+              className="m-pos-chart-btn"
+              onClick={() => {
+                showMobileEpic(selected.epic, decimalsOf(selected.priceLevel));
+                setSelected(null);
+              }}
+            >
+              Show on chart
+            </button>
             <button className="m-pos-act-btn" onClick={() => act(selected)}>
               {selected.kind === "order" ? "Cancel order" : "Close position"}
             </button>

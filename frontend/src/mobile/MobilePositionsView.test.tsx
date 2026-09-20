@@ -28,6 +28,7 @@ vi.mock("../lib/notify", async (orig) => ({
 
 import MobilePositionsView from "./MobilePositionsView";
 import { confirmRequest } from "../lib/signals";
+import { mobileSymbol, mobileTabSignal } from "./mobileChartState";
 import type { TradeView, AccountSummary } from "../lib/trading";
 
 afterEach(() => {
@@ -161,6 +162,18 @@ describe("MobilePositionsView", () => {
     confirmRequest.value!.onConfirm();
     await waitFor(() => expect(closePosition).toHaveBeenCalledWith("pos-1", "capital:paper"));
     await waitFor(() => expect(refreshTrades).toHaveBeenCalled());
+  });
+
+  it("Show on chart opens the row's epic on the chart tab and closes the sheet", async () => {
+    mobileTabSignal.set("positions");
+    mobileSymbol.set(null);
+    render(<MobilePositionsView />);
+    await waitFor(() => expect(screen.getByText("US100")).toBeTruthy());
+    await userEvent.click(screen.getByText("US100"));
+    await userEvent.click(screen.getByRole("button", { name: "Show on chart" }));
+    expect(mobileTabSignal.value).toBe("chart");
+    expect(mobileSymbol.value?.epic).toBe("US100");
+    expect(screen.queryByRole("button", { name: "Close position" })).toBeNull();
   });
 
   it("routes Cancel order through requestConfirm for working orders", async () => {

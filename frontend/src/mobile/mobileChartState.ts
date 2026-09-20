@@ -147,6 +147,26 @@ function bootFromLayout(): boolean {
   return true;
 }
 
+/** Show `epic` on the chart tab (a positions row's "Show on chart"). The
+ * chart already on it just gets the tab; a mirrored layout cell showing it
+ * is adopted as its strip chip would be (exact scope, so its drawings and
+ * indicators, and its timeframe); otherwise the epic opens as a bare
+ * instrument the way desktop's jumpToEpic does, on the last-viewed
+ * timeframe. `precision` is the decimals guess for that bare instrument. */
+export function showMobileEpic(epic: string, precision = 2): void {
+  if (mobileSymbol.value?.epic !== epic) {
+    const mirror = mirroredWorkspace();
+    const hit = mirror ? flattenCells(mirror.ws).find((f) => f.cell.symbol.epic === epic) : undefined;
+    if (hit) {
+      setMobileSymbol(hit.cell.symbol, undefined, hit.cell.scope);
+      mobilePeriod.set(hit.cell.period);
+    } else {
+      setMobileSymbol({ epic, name: epic, status: null, pricePrecision: precision });
+    }
+  }
+  mobileTabSignal.set("chart");
+}
+
 /** Switch the mobile shell to a different broker account (broker sheet). */
 export function setMobileAccount(account: TradeAccount): void {
   if (account === mobileAccount.value) return;
