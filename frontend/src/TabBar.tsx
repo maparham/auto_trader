@@ -244,6 +244,8 @@ export default function TabBar({
     // wrong slot.
     scrollLeft: number;
     containerWidth: number;
+    // Rows mode: the first row is shorter by the floated .tab-bar-actions.
+    firstRowWidth: number;
     grabDx: number;
     grabDy: number;
     // Clamp range for the clone's translate: the chip rides the tab bar only
@@ -523,6 +525,7 @@ export default function TabBar({
           TAB_GAP,
           fromIdx,
           previewTo,
+          dragGeom.current.firstRowWidth,
         )
       : null;
 
@@ -634,7 +637,10 @@ export default function TabBar({
 
   return (
     <div className={`tab-bar strip-${strip}`}>
-      {/* Tabs scroll horizontally on overflow; the trailing actions stay pinned. */}
+      {/* Rows: the actions come FIRST in the DOM so they can float right on
+          the first row and the chips flow around them (a float only shapes
+          content that follows it). Scroll: one row, actions pinned after. */}
+      {!scrolls && trailing && <div className="tab-bar-actions">{trailing}</div>}
       <div
         className={"tab-bar-tabs" + (anim ? " drag-anim" : "")}
         role="tablist"
@@ -820,6 +826,17 @@ export default function TabBar({
               // from the content box. Scroll: one row, so the simulation must
               // never wrap a chip.
               containerWidth: scrolls ? Number.POSITIVE_INFINITY : bar.clientWidth - 6,
+              // Rows: the workspace actions float at the right of row 1, so
+              // that row's budget ends where they start (the float sits in
+              // the strip's flow, measured live so a resize can't stale it).
+              firstRowWidth: (() => {
+                if (scrolls) return Number.POSITIVE_INFINITY;
+                const actions = bar.parentElement?.querySelector<HTMLElement>(
+                  ":scope > .tab-bar-actions",
+                );
+                if (actions == null) return bar.clientWidth - 6;
+                return Math.max(0, actions.getBoundingClientRect().left - (barRect.left + 6));
+              })(),
               grabDx: e.clientX - rects[i].left,
               grabDy: e.clientY - rects[i].top,
               bounds: {
@@ -873,7 +890,7 @@ export default function TabBar({
       {!scrolls && tail}
       </div>
       {scrolls && tail}
-      {trailing && <div className="tab-bar-actions">{trailing}</div>}
+      {scrolls && trailing && <div className="tab-bar-actions">{trailing}</div>}
       {ctxMenu && tabs.length > 1 && (
         <ContextMenu
           x={ctxMenu.x}

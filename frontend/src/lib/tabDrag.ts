@@ -21,19 +21,23 @@ export type DragTarget =
   // Chip index to merge the dragged tab into.
   | { kind: "merge"; index: number };
 
-// Where flex-wrap puts items of the given widths: x offset within the row and
-// the row number. Mirrors .tab-bar-tabs (row wrap, fixed gap); an item wider
-// than the container still gets a row to itself.
+// Where inline wrapping puts items of the given widths: x offset within the
+// row and the row number. Mirrors .tab-bar-tabs (row wrap, fixed gap); an item
+// wider than the container still gets a row to itself. `firstRowWidth` is the
+// first row's narrower budget when the workspace actions float at its right
+// edge (rows mode); every later row gets the full container.
 export function flowPositions(
   widths: number[],
   containerWidth: number,
   gap: number,
+  firstRowWidth: number = containerWidth,
 ): { x: number; row: number }[] {
   const out: { x: number; row: number }[] = [];
   let x = 0;
   let row = 0;
   for (const w of widths) {
-    if (x > 0 && x + w > containerWidth) {
+    const limit = row === 0 ? firstRowWidth : containerWidth;
+    if (x > 0 && x + w > limit) {
       x = 0;
       row++;
     }
@@ -60,9 +64,10 @@ export function previewDeltas(
   gap: number,
   from: number,
   to: number,
+  firstRowWidth: number = containerWidth,
 ): { dx: number; dy: number }[] {
   const widths = rects.map((r) => r.width);
-  const orig = flowPositions(widths, containerWidth, gap);
+  const orig = flowPositions(widths, containerWidth, gap, firstRowWidth);
   const order = moveItem(
     rects.map((_, i) => i),
     from,
@@ -72,6 +77,7 @@ export function previewDeltas(
     order.map((i) => widths[i]),
     containerWidth,
     gap,
+    firstRowWidth,
   );
   const rowPitch = (rects[0]?.height ?? 26) + gap;
   const deltas = rects.map(() => ({ dx: 0, dy: 0 }));

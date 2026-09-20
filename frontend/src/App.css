@@ -6,6 +6,12 @@
    child to actually shrink to the remainder instead of overflowing by its
    content's natural (unconstrained) height. */
 .app { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; width: 100vw; }
+/* No horizontal page scroll, ever: a fixed-width control poking past a narrow
+   viewport (chart range bar, legend OHLC row, ...) is cut at the edge rather
+   than widening the document. `clip` specifically: unlike hidden it creates
+   neither a scroll container nor a formatting context, so fixed/absolute
+   children and the stacking notes near .bt-overlay are unaffected. */
+.app { overflow-x: clip; }
 .toolbar {
   display: flex; align-items: center; gap: 4px; flex-wrap: nowrap;
   padding: 4px 10px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px;
@@ -13,6 +19,12 @@
      tight (see the @container rule near .periods). nowrap: the toolbar is a
      single row, always — controls collapse rather than wrap to a second row. */
   container: toolbar / inline-size;
+  /* Clip on X only: below the collapse point the fixed-width controls would
+     otherwise poke past the viewport and hand the whole document a horizontal
+     scrollbar. `clip` (not hidden/auto) is the one value that keeps Y visible,
+     which the dropdowns hanging below the bar need; an auto/hidden X would
+     turn Y into auto and cut every menu off at the bar's bottom edge. */
+  overflow-x: clip; overflow-y: visible;
 }
 /* No child squishing: a squeezed button wraps its label onto two lines and
    grows the bar. Below the collapse point the row clips at the right edge
@@ -375,8 +387,14 @@
    ROWS (default): the tabs WRAP onto as many rows as needed so every tab is
    always visible at full size. The bar grows taller as rows are added (it's
    flex-shrink:0 in the column layout, so it pushes the chart down); + and Find
-   symbol ride at the end of the LAST row; the trailing workspace actions stay
-   pinned top-right. */
+   symbol ride at the end of the LAST row; the trailing workspace actions
+   FLOAT top-right and the chips flow around them, so only the first row is
+   shortened by the actions and every later row spans the whole bar. That
+   needs a block formatting context rather than flexbox (flex items never
+   flow around a float): the bar and the strip are blocks, the chips and the
+   tail are inline-flex, and the 6px gap is a right/bottom margin per chip
+   (TAB_GAP in TabBar.tsx and lib/tabDrag.ts mirror it). The actions come
+   before the strip in the DOM for the same reason. */
 .tab-bar-tabs {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   flex: 1; min-width: 0; min-height: 34px;
@@ -384,6 +402,23 @@
      rows off the bar's top/bottom edges. */
   padding: 4px 0 4px 6px;
 }
+.strip-rows.tab-bar { display: block; }
+/* The float must end exactly with row 1's line box (1px strip padding +
+   3 + 26 chip + 3 = 33) or it shortens row 2 as well: 32px tall, 1px down. */
+.strip-rows .tab-bar-actions { float: right; min-height: 32px; margin-top: 1px; }
+.strip-rows .tab-bar-tabs {
+  display: block; padding: 1px 0 1px 6px;
+  /* Inline-level children ride on line boxes; zero line-height stops the
+     strut adding slack under each row (the chips restore their own). */
+  line-height: 0; font-size: 0;
+}
+.strip-rows .tab-bar-tabs > .tab,
+.strip-rows .tab-bar-tail {
+  display: inline-flex; vertical-align: top;
+  margin: 3px 6px 3px 0; line-height: normal;
+}
+.strip-rows .tab-bar-tabs > .tab { font-size: 12px; }
+.strip-rows .tab-bar-tail { font-size: 13px; min-height: 28px; }
 /* SCROLL: one row that scrolls sideways once the tabs outgrow it, so the bar
    never grows taller. The scrollbar is hidden (wheel, trackpad and drag still
    scroll; TabBar scrolls the active tab and the first search hit into view)
