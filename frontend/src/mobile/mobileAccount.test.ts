@@ -17,6 +17,7 @@ vi.mock("../lib/demoSnapshot", async (importOriginal) => ({
 }));
 import {
   MOBILE_ACCOUNT_KEY,
+  bootMobileMarket,
   initMobileAccount,
   mobileAccount,
   mobileBroker,
@@ -26,6 +27,8 @@ import {
 } from "./mobileChartState";
 import { DEFAULT_ACCOUNT, getTradesAccount, setTradesAccount } from "../lib/trading";
 import { getPersistBroker } from "../lib/persist/core";
+import { saveLayout, type Workspace } from "../lib/persist";
+import { mobilePeriod } from "./mobileChartState";
 import { BROKERS_CACHE_KEY } from "../lib/brokerDefaults";
 import type { Instrument } from "../lib/feed";
 
@@ -95,6 +98,22 @@ describe("initMobileAccount in the public demo", () => {
   it("falls back to dukascopy with no snapshot", () => {
     initMobileAccount();
     expect(mobileAccount.value).toBe("dukascopy:data");
+  });
+
+  it("boots the chart on the published layout's first cell", async () => {
+    demo.broker = "yfinance";
+    initMobileAccount();
+    const cell = {
+      id: "c1",
+      symbol: { epic: "NVDA", name: "NVIDIA" },
+      period: { resolution: "HOUR_1", label: "1h" },
+      scope: "demo-s1",
+    };
+    saveLayout("l1", "demo", { tabs: [{ id: "t1", layout: "1", cells: [cell], activeCellId: "c1" }], activeTabId: "t1" } as unknown as Workspace);
+    await bootMobileMarket("yfinance");
+    expect(mobileSymbol.value?.epic).toBe("NVDA");
+    expect(mobileChartScope.value).toEqual({ epic: "NVDA", scope: "demo-s1" });
+    expect(mobilePeriod.value?.resolution).toBe("HOUR_1");
   });
 });
 

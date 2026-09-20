@@ -16,7 +16,7 @@ import {
   type TradeAccount,
 } from "../lib/trading";
 import { load, saveLocal, setPersistBroker } from "../lib/persist/core";
-import { bumpMobileWorkspace } from "./mobileWorkspace";
+import { bumpMobileWorkspace, flattenCells, mirroredWorkspace } from "./mobileWorkspace";
 import { isDemoMode } from "../lib/demoMode";
 import { getDemoSnapshot } from "../lib/demoSnapshot";
 
@@ -117,17 +117,34 @@ export function initMobileAccount(): void {
  * favorite → symbol search. Shared by MobileChartView's mount effect and the
  * account switch below. */
 export async function bootMobileMarket(broker: string): Promise<void> {
+  // The public demo opens on the published layout's first cell, the curated
+  // view, the way desktop does: it has no heartbeat and no favorites, so the
+  // usual chain would land a first-time visitor on symbol search.
+  if (isDemoMode() && bootFromLayout()) return;
   const m = await initialMarket(broker);
   // A symbol picked while this fetch was in flight wins over the boot default.
   if (mobileSymbol.value) return;
   if (!m) {
-    requestSymbolSearch();
+    // No heartbeat, no favorites: a mirrored layout cell still beats search.
+    if (!bootFromLayout()) requestSymbolSearch();
     return;
   }
   setMobileSymbol(m.symbol, broker);
   mobilePeriod.set(
     periodByResolution(m.resolution) ?? { resolution: m.resolution, label: m.resolution },
   );
+}
+
+/** Open the first cell of the mirrored layout (its exact scope, so its
+ * drawings and indicators), as tapping that strip chip would. False when no
+ * saved layout exists. */
+function bootFromLayout(): boolean {
+  const mirror = mirroredWorkspace();
+  const first = mirror ? flattenCells(mirror.ws)[0] : undefined;
+  if (!first) return false;
+  setMobileSymbol(first.cell.symbol, undefined, first.cell.scope);
+  mobilePeriod.set(first.cell.period);
+  return true;
 }
 
 /** Switch the mobile shell to a different broker account (broker sheet). */
