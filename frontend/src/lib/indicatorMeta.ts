@@ -149,7 +149,9 @@ export function groupInputs(
   const out: IndicatorInputDef[][] = [];
   for (const inp of inputs) {
     const last = out[out.length - 1];
-    if (inp.group && last && last.length === 1 && last[0].group === inp.group)
+    // A group runs two to a row, three when the labels are short enough
+    // (the Pivots trio). Longer runs wrap to a fresh row.
+    if (inp.group && last && last.length < 3 && last[0].group === inp.group)
       last.push(inp);
     else out.push([inp]);
   }
@@ -639,7 +641,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       // price, which lines qualify, how long they live — while every slot
       // index stays put (indexes are storage, order is presentation).
       {
-        ...num(0, "Min Pivot Length"),
+        ...num(0, "Min Length"),
         section: "Pivots",
         group: "pivot",
         suffix: "bars",
@@ -649,7 +651,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(8, "Max Pivot Pairs"),
+        ...num(8, "Max Pairs"),
         group: "pivot",
         suffix: "pairs",
         default: 40,
@@ -659,7 +661,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(24, "Major Pivots", { min: 0 }),
+        ...num(24, "Majors", { min: 0 }),
         group: "pivot",
         suffix: "pivots",
         default: TL.majorPivots,

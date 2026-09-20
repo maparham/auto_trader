@@ -2177,7 +2177,7 @@ function IndicatorSettingsForm({
                     // Related pair: two to a row, each label stacked above its
                     // own control. Halves the width a label gets, which is why
                     // only inputs with short labels carry a `group`.
-                    <div className="ind-pair2">
+                    <div className={chunk.length === 3 ? "ind-pair2 ind-pair3" : "ind-pair2"}>
                       {chunk.map((inp) => (
                         <div className="ind-field" key={inp.key}>
                           {labelFor(inp)}

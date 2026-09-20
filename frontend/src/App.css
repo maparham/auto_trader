@@ -2791,6 +2791,8 @@
    under the left edge of their label, rather than stretching to half the row. */
 .ind-pair2 > .ind-field select { width: 100%; }
 .ind-pair2 > .ind-field input[type="number"] { width: 64px; }
+/* Three short fields on one row (the Pivots trio). */
+.ind-pair2.ind-pair3 { grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 /* A pair of BOOLEANS on one row. Not .ind-pair2: that stacks the label above
    its control, which is right for a number or a select and wrong for a switch,
    where the label has to stay beside the thing it labels. Each cell is

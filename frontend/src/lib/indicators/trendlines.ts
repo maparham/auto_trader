@@ -2785,7 +2785,8 @@ function drawTrendlines(
 /** Tag row height: 10px text plus a little air. */
 // Row pitch for stacked end tags: the 10px tag font plus enough air that two
 // rows read as two lines rather than one smeared one on a phone.
-const TL_TAG_ROW = 14;
+/** Row pitch the tags step by when they would overlap (clearTagRow). */
+export const TL_TAG_ROW = 14;
 
 /** The pane background, for the halo painted behind an end tag so the
  * strokes it sits on do not cut through the letters. Read from the theme's

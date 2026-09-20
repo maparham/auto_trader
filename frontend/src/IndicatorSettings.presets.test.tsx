@@ -63,10 +63,10 @@ function open() {
 describe("applying a preset", () => {
   it("fills the form from the recreated instance, keeps the modal open, and stores only on Ok", () => {
     const preset = [...Object.values(TRENDLINES_DEFAULTS)];
-    preset[0] = 7; // Min Pivot Length
+    preset[0] = 7; // Min Length
     saveIndicatorPreset("TRENDLINES", "7 bars", { calcParams: preset });
     open();
-    const box = () => screen.getByLabelText("Min Pivot Length") as HTMLInputElement;
+    const box = () => screen.getByLabelText("Min Length") as HTMLInputElement;
     expect(box().value).toBe(String(Object.values(TRENDLINES_DEFAULTS)[0]));
 
     fireEvent.click(screen.getByText("Defaults ▾"));

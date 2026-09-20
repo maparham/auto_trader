@@ -10,6 +10,7 @@ import {
   hitAnyTrendlineHandle,
   hitHandle,
   touchWeight,
+  TL_TAG_ROW,
   withinSlope,
   aboveSlope,
   hasSwingReach,
@@ -1667,6 +1668,9 @@ function record(
     fillText: (text: string, x: number, y: number) => {
       tags.push({ text, x, y });
     },
+    // The tag's halo. Recorded nowhere: fillText is the tag's position of
+    // record, and the halo lands at the same point.
+    strokeText: () => {},
     arc: (x: number, y: number, r: number) => {
       const m = { x, y, r, alpha: ctx.globalAlpha };
       if (r === TL_TOUCH_RADIUS) touchMarks.push(m);
@@ -2061,9 +2065,11 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
       expect(s.x1).toBeGreaterThan(view.width);
       expect(tag.x).toBeLessThanOrEqual(tagRight);
       expect(tag.x).toBeGreaterThan(0);
-      // ON the segment, to within a pixel.
+      // ON the segment, to within a pixel, or stepped off it by whole tag
+      // rows where clearTagRow moved it clear of an earlier tag.
       const onLine = s.y0 + ((s.y1 - s.y0) * (tag.x - s.x0)) / (s.x1 - s.x0);
-      expect(Math.abs(tag.y - onLine)).toBeLessThan(1);
+      const off = Math.abs(tag.y - onLine);
+      expect(Math.abs(off - Math.round(off / TL_TAG_ROW) * TL_TAG_ROW)).toBeLessThan(1);
       // And on the pane, which is the visible symptom the interpolation fixes.
       expect(tag.y).toBeGreaterThan(0);
       expect(tag.y).toBeLessThan(view.height);
