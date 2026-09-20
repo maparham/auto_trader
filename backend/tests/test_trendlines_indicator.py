@@ -28,7 +28,10 @@ from auto_trader.indicators.trendlines import (
     has_back_clearance,
     touch_weight,
     is_major,
-    eligible_lines,
+    max_distance_tol,
+    poolable,
+    pool_lines,
+    trendline_gate,
     select_levels,
     merge_lines,
     over_ceilings,
@@ -582,8 +585,8 @@ def test_merge_is_about_the_same_trend_not_a_shared_pivot():
 
 def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
     """Mirrors the TS test: the cap reads a FIXED per-bar ordering, so
-    widening the merge can only remove the twin it targets. D, which shares no
-    bar with the twin, is untouched."""
+    widening the merge can only move the survivors UP their bars' orderings.
+    D, which shares no bar with the twin, is untouched."""
     def mk(i1, i2, p, touches):
         return TrendLine(i1=i1, p1=p, k1="low", i2=i2, p2=p, k2="low", touches=touches,
                          last_touch_idx=i2, crossings=0, last_sign=0, max_touch_gap=i2 - i1,
@@ -592,8 +595,8 @@ def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
     ranked = [a, b_twin, c, d]
     # C is second at bar 10 and out at a cap of 1; A, its twin and D pass.
     assert select_levels(ranked, 100, 0.0, 1) == [a, b_twin, d]
-    # Widening folds the twin into A. D never moves.
-    assert select_levels(ranked, 100, 1.0, 1) == [a, d]
+    # Widening folds the twin into A, leaving bar 10 to C alone. D never moves.
+    assert select_levels(ranked, 100, 1.0, 1) == [a, c, d]
 
 
 def _cap_line(i1, i2, p, touches):
@@ -602,36 +605,47 @@ def _cap_line(i1, i2, p, touches):
                      min_touch_gap=i2 - i1, max_touch_idx=i2, touch_idxs=[i1, i2])
 
 
+def test_a_level_draws_its_best_ranked_member_at_every_cap():
+    """Mirrors the TS test: the leader is fixed by the pool, so no cap can
+    swap the anchors of a line already on the chart."""
+    x1, x2 = _cap_line(20, 40, 50.0, 5), _cap_line(20, 50, 40.0, 4)
+    best, stand_in = _cap_line(20, 60, 100.0, 3), _cap_line(30, 70, 100.2, 2)
+    ranked = [x1, x2, best, stand_in]
+    assert select_levels(ranked, 100, 1.0, 2) == [x1, x2]
+    assert select_levels(ranked, 100, 1.0, 3) == [x1, x2, best]
+    assert select_levels(ranked, 100, 1.0, 0) == [x1, x2, best]
+
+
 def test_a_stale_line_does_not_hold_its_pivot_slots_against_a_drawable_one():
     """Mirrors the TS test. Cap 1 per pivot; A (bars 0,40) outranks D (40,90)
-    and shares bar 40, but at bar 150 A is past Max Projection. Capped before
-    is_major, A held bar 40 and D vanished."""
+    and shares bar 40, but at bar 150 A is past Max Projection: a dead line is
+    gone rather than hidden, so it never reaches the pool."""
     a, d = _cap_line(0, 40, 100.0, 5), _cap_line(40, 90, 101.0, 2)
-    c = cfg(max_per_pivot=1, max_proj_bars=100, min_span_bars=5)
-    # Past Max Projection A is not a candidate at all, so it holds no slot.
-    stale = eligible_lines([d, a], 150, 100.0, 1.0, c)
+    c = cfg(max_per_pivot=1, max_proj_bars=100, min_span_bars=5, max_lines=5)
+    stale = pool_lines(poolable([d, a], 150, c), c.max_lines)
     assert stale == [d]
     assert select_levels(stale, 150, 0.0, 1) == [d]
-    live = eligible_lines([d, a], 100, 100.0, 1.0, c)
+    live = pool_lines(poolable([d, a], 100, c), c.max_lines)
     assert live == [a, d]
     assert select_levels(live, 100, 0.0, 1) == [a]
 
 
-def test_tightening_max_distance_never_cuts_an_in_range_line_through_the_cap():
-    """Mirrors the TS test. Cap 1 per pivot; A (0,40) outranks C (40,60)
-    which outranks D (60,90). Max Distance now runs BEFORE the cap, so a far
-    line holds no slot: tightening the cut onto A can only free bar 40 and let
-    C through, never evict a line the cut never concerned."""
-    a, c, d = _cap_line(0, 40, 150.0, 5), _cap_line(40, 60, 100.0, 3), _cap_line(60, 90, 101.0, 2)
-    pool = [d, c, a]
-    wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5)
-    wide_pool = eligible_lines(pool, 100, 100.0, 1.0, wide)
-    assert wide_pool == [a, c, d]
-    assert select_levels(wide_pool, 100, 0.0, 1) == [a]
-    tight_pool = eligible_lines(pool, 100, 100.0, 1.0, replace(wide, max_dist_atr=2))
-    assert tight_pool == [c, d]
-    # A gone frees bar 40, so C comes through. Nothing that was drawn is lost.
-    assert select_levels(tight_pool, 100, 0.0, 1) == [c]
+def test_tightening_max_distance_never_promotes_a_line_the_cap_had_dropped():
+    """Mirrors the TS test. Cap 1 per pivot; A (0,40) outranks C (40,60) which
+    outranks D (60,90). The cap reads the POOL, which Max Distance never
+    touches, so tightening the cut onto A removes A and promotes nobody: the
+    price of relaxing the cut never taking C away."""
+    a, c_line, d = _cap_line(0, 40, 150.0, 5), _cap_line(40, 60, 100.0, 3), _cap_line(60, 90, 101.0, 2)
+    wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5, max_lines=5)
+    pool = pool_lines(poolable([d, c_line, a], 100, wide), wide.max_lines)
+    assert pool == [a, c_line, d]
+    wide_tol = max_distance_tol(wide, 1.0, 100.0)
+    assert select_levels(pool, 100, 0.0, 1,
+                         lambda l: trendline_gate(l, 100, 100.0, wide_tol, wide)) == [a]
+    tight = replace(wide, max_dist_atr=2)
+    tight_tol = max_distance_tol(tight, 1.0, 100.0)
+    assert select_levels(pool, 100, 0.0, 1,
+                         lambda l: trendline_gate(l, 100, 100.0, tight_tol, tight)) == []
 
 
 def replace_line(line: TrendLine, **over) -> TrendLine:

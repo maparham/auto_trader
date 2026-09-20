@@ -265,16 +265,17 @@ describe("TRENDLINES on DXY monthly", () => {
     for (const l of drawn) expect(month(bars[l.i1].timestamp) >= "2000-01").toBe(true);
   });
 
-  // maxLines is not just a drawing budget: it sizes live state, so it changes
-  // WHAT A RULE READS. Pinned so that "maxLines does not affect operands" can
-  // never be written in user-facing copy. Re-measured for the sideless
-  // detector at MAX_LIVE_MULT 16: 422 differing points, of which 130 differ in
-  // tl_nearest (the rest gain a tl_3 the two-line config has no slot for).
+  // maxLines is not just a drawing budget: it is the POOL every filter runs
+  // on, and it sizes live state, so it changes WHAT A RULE READS. Pinned so
+  // that "maxLines does not affect operands" can never be written in
+  // user-facing copy. Re-measured with Max Lines as the pool: 311 differing
+  // points, where the two-line pane gains a tl_3 or reports a farther
+  // tl_nearest.
   it("changes an emitted value between maxLines 2 and 3", () => {
     const two = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 2 }).points;
     const three = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 3 }).points;
     const differing = two.filter((p, i) => JSON.stringify(p) !== JSON.stringify(three[i]));
-    expect(differing).toHaveLength(422);
+    expect(differing).toHaveLength(311);
     // A named bar, so a drift is diagnosable rather than just red: at 1991-07
     // the third drawn line is the nearest, and tl_nearest reads only the
     // drawn set, so the two-line pane reports a farther line there. (127

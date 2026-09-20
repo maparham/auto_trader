@@ -607,15 +607,18 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Fair Value Gaps",
     desc: "Marks 3-candle imbalances (a gap between the first bar's wick and the third bar's) as zones. A gap shrinks to its unfilled remainder as price trades back into it and disappears once price crosses its far edge, so only live imbalances stay on the chart. Bullish gaps tint green, bearish red. The nearest gap's edges on each side are available as rule operands. Gaps confirm on the third candle (no repaint).",
   },
-  // TRENDLINES. Two gates decide whether a line is MAJOR (readable by a rule):
-  // Min Touches and Min Span. Max Lines is not a third gate, but it is NOT
-  // operand-neutral either: the emit path reads the live pool, and that pool is
-  // capped at MAX_LIVE_MULT * maxLines IN TOTAL (no per-side split) by the
-  // survival order, so raising maxLines widens the candidate set. Re-measured
-  // on the DXY fixture for the sideless detector, maxLines 2 vs 3 changes the
-  // emitted row on 422 of 490 bars, and tl_nearest specifically on 130. The
-  // Max Lines tip must say that and must never claim the operands are
-  // unaffected.
+  // TRENDLINES. Max Lines is THE POOL: the top N of the rank order, taken
+  // before any filter runs, so every other setting only ever removes from a
+  // fixed set and relaxing one can only hand lines back. It is therefore not
+  // operand-neutral and not monotone itself: changing N changes the pool, and
+  // it also sizes live state (MAX_LIVE_MULT * maxLines by the survival
+  // order). Measured on the DXY fixture, maxLines 2 vs 3 changes the emitted
+  // row on 311 of 490 bars; over 1000 GOLD daily bars, stepping it 1..20
+  // dropped a drawn line 6 times. The Max Lines tip must say that and must
+  // never claim the operands are unaffected.
+  //
+  // Two gates decide whether a line is MAJOR (readable by a rule): Min Touches
+  // and Min Span.
   //
   // Min Pivot Size gates HARDER than any of them: it decides what counts as a
   // swing at all, so a rejected bar seeds no line and joins no pool. Default 0
@@ -635,9 +638,10 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       {
         ...num(5, "Max Trendlines", { max: MAX_MAX_LINES }),
         tip: [
-          "Lines drawn and reported, strongest first: most touches, then longest, then fewest crossings.",
+          "How many lines to consider, strongest first: most touches, then longest, then fewest crossings.",
+          "Every other setting filters this pool, so the chart often shows fewer.",
           "Each drawn line is also a rule operand (tl_1 .. tl_N).",
-          "Raising it also keeps more lines in play, which can change the prices this indicator reports.",
+          "The one setting that can swap lines instead of only adding or removing them.",
         ],
       },
       // The list below is RENDER order, resectioned to tell the detector's
