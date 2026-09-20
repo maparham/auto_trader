@@ -302,8 +302,18 @@ export function savePriceStretched(scope: string, value: boolean): void {
 // indicator rows and shows only the symbol/OHLC row. Default false (expanded).
 const legendCollapsedKey = (scope: string) => ns(scope, "legendCollapsed");
 
+/** Small touch screens start with the indicator rows folded: expanded, the
+ * legend covered the top third of a phone-width candle pane. The chevron
+ * stays, and a choice made on the device is saved and wins from then on. */
+export function defaultLegendCollapsed(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse) and (max-width: 768px)").matches
+  );
+}
 export function loadLegendCollapsed(scope: string): boolean {
-  return load<boolean>(legendCollapsedKey(scope), false);
+  return load<boolean>(legendCollapsedKey(scope), defaultLegendCollapsed());
 }
 export function saveLegendCollapsed(scope: string, value: boolean): void {
   save(legendCollapsedKey(scope), value);

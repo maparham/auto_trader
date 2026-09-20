@@ -35,6 +35,8 @@ interface TooltipProps {
 // you wait once, not on every icon.
 const GRACE_MS = 400;
 let lastHideAt = -Infinity;
+// How long after a touch/pen pointerdown the hover and focus opens stay muted.
+const TOUCH_SUPPRESS_MS = 1000;
 
 function isEmpty(content: TooltipProps["content"]): boolean {
   return (
@@ -60,6 +62,11 @@ export default function Tooltip({
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false); // toggles .show for the enter transition
   const [placed, setPlaced] = useState<Placed | null>(null);
+  // Set by a touch/pen pointerdown on the trigger. A tap fires a synthetic
+  // mouseenter (and focus) with no mouseleave ever coming, which left the
+  // bubble stranded over whatever the tap opened. Hover/focus opens are
+  // ignored for a short window after such a pointerdown.
+  const touchAtRef = useRef(-Infinity);
   const id = useId();
 
   const off = disabled || isEmpty(content);
@@ -86,8 +93,12 @@ export default function Tooltip({
     }
   }
 
+  function recentTouch() {
+    return Date.now() - touchAtRef.current < TOUCH_SUPPRESS_MS;
+  }
+
   function hoverShow() {
-    if (off) return;
+    if (off || recentTouch()) return;
     clearTimer();
     const instant = delay <= 0 || Date.now() - lastHideAt < GRACE_MS;
     if (instant) setOpen(true);
@@ -95,7 +106,7 @@ export default function Tooltip({
   }
 
   function focusShow() {
-    if (off) return;
+    if (off || recentTouch()) return;
     clearTimer();
     setOpen(true); // keyboard focus is always instant
   }
@@ -136,13 +147,19 @@ export default function Tooltip({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") hide();
     };
+    // A touch anywhere takes the bubble down: no mouseleave will.
+    const onPointer = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse") hide();
+    };
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onScroll);
     window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer, true);
     return () => {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onScroll);
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer, true);
     };
   }, [open]);
 
@@ -169,6 +186,11 @@ export default function Tooltip({
         onMouseLeave={hide}
         onFocus={focusShow}
         onBlur={hide}
+        onPointerDown={(e) => {
+          if (e.pointerType === "mouse") return;
+          touchAtRef.current = Date.now();
+          hide();
+        }}
       >
         {describedChildren}
       </span>

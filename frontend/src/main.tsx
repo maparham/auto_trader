@@ -35,6 +35,17 @@ const snapshotParams = parseSnapshotParams(window.location.search)
 // Chrome tab opened by the native shell to mint and forward a sign-in ticket.
 const shellAuthParams = parseShellAuthParams(window.location.search)
 
+// The Clerk cards otherwise title themselves after the dashboard's application
+// name, which still reads "Auto Trader"; the product is Chartkar.
+const CLERK_TEXT = {
+  signIn: {
+    start: { title: 'Sign in to Chartkar', subtitle: 'Welcome back' },
+  },
+  signUp: {
+    start: { title: 'Create your Chartkar account', subtitle: 'Free to start' },
+  },
+}
+
 // Decided once so both the Clerk-enabled and no-Clerk fallback branches agree.
 const bootMobile = shouldBootMobile()
 
@@ -59,7 +70,7 @@ createRoot(document.getElementById('root')!).render(
     {snapshotParams ? (
       <SnapshotApp />
     ) : CLERK_ENABLED && clerkKey ? (
-      <ClerkProvider publishableKey={clerkKey} afterSignOutUrl="/">
+      <ClerkProvider publishableKey={clerkKey} afterSignOutUrl="/" localization={CLERK_TEXT}>
         <ClerkTokenBridge />
         <SignedIn>
           {shellAuthParams ? (

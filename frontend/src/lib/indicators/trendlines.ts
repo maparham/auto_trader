@@ -2454,6 +2454,10 @@ function drawTrendlines(
   ctx.font = "10px sans-serif";
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
+  // End tags already painted this pass, so two lines converging on the right
+  // edge do not print "3 Pivots" on top of "3 Pivots": a tag that would land on
+  // an earlier one is pushed down a line at a time until it is clear.
+  const placedTags: { x: number; y: number; w: number }[] = [];
   // The shared canvas context arrives with whatever dash pattern the previous
   // drawer left behind (price lines and alert lines are dashed), so every
   // trendline stroke, ring, handle and tag below needs a solid line reset
@@ -2671,10 +2675,13 @@ function drawTrendlines(
       xRing + TL_HANDLE_RADIUS + 5,
       tagRight - ctx.measureText(label).width,
     );
-    const yTag =
+    let yTag =
       xHandle === x0
         ? yHandle
         : y0 + ((yHandle - y0) * (xTag - x0)) / (xHandle - x0);
+    const wTag = ctx.measureText(label).width;
+    yTag = clearTagRow(placedTags, xTag, yTag, wTag);
+    placedTags.push({ x: xTag, y: yTag, w: wTag });
     ctx.fillStyle = ctx.strokeStyle;
     ctx.fillText(label, xTag, yTag);
   }
@@ -2685,6 +2692,29 @@ function drawTrendlines(
   paintMarks(drawnPivotIdxs(drawn));
   setTrendlineHandles(chart, indicator.paneId, indicator.name, handles);
   return true;
+}
+
+/** Tag row height: 10px text plus a little air. */
+const TL_TAG_ROW = 12;
+
+/** The y a tag can be painted at without sitting on an earlier tag: the
+ * requested y when nothing overlaps it, otherwise the first free row below.
+ * Exported for the unit test. */
+export function clearTagRow(
+  placed: readonly { x: number; y: number; w: number }[],
+  x: number,
+  y: number,
+  w: number,
+): number {
+  let yy = y;
+  for (let guard = 0; guard < 8; guard++) {
+    const hit = placed.some(
+      (t) => x < t.x + t.w && t.x < x + w && Math.abs(t.y - yy) < TL_TAG_ROW,
+    );
+    if (!hit) break;
+    yy += TL_TAG_ROW;
+  }
+  return yy;
 }
 
 /** The stats tag at a line's right end, spelled out in words: "2 Pivots",
