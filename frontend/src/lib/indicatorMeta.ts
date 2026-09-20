@@ -667,7 +667,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(24, "Kept", { min: 0 }),
+        ...num(24, "Limit", { min: 0 }),
         section: "Major Swings",
         group: "major",
         suffix: "pivots",
