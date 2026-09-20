@@ -112,6 +112,25 @@ describe("MobilePositionsView", () => {
     expect(screen.getByText("+42.50")).toBeTruthy();
   });
 
+  it("groups same-symbol positions under a roll-up header that folds on tap", async () => {
+    const second: TradeView = { ...position, id: "pos-2", quantity: 1, priceLevel: 15300, upnl: -10 };
+    subscribeTrades.mockImplementation((fn: (t: TradeView[]) => void) => {
+      fn([position, second, order]);
+      return () => {};
+    });
+    render(<MobilePositionsView />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Hide positions" })).toBeTruthy());
+    // Header: net size 3, size-weighted entry 15100, summed P&L, count badge.
+    const header = screen.getByRole("button", { name: "Hide positions" }).closest("tr")!;
+    expect(header.className).toContain("pp-group");
+    expect(header.textContent).toContain("15100");
+    expect(header.textContent).toContain("+32.50");
+    expect(document.querySelectorAll(".pp-row.pp-member").length).toBe(2);
+    await userEvent.click(screen.getByRole("button", { name: "Hide positions" }));
+    expect(document.querySelectorAll(".pp-row.pp-member").length).toBe(0);
+    expect(screen.getByRole("button", { name: "Show positions" })).toBeTruthy();
+  });
+
   it("switches to the orders tab, whose entry column is the limit price", async () => {
     render(<MobilePositionsView />);
     await waitFor(() => expect(screen.getByText("US100")).toBeTruthy());

@@ -33,6 +33,7 @@ import {
   type AccountSummary,
 } from "../lib/trading";
 import { usedMargin } from "../lib/orderInfo";
+import { groupPositions, type PositionGroup } from "../lib/positionGroups";
 import { loadSettings } from "../theme";
 import { requestConfirm } from "../lib/signals";
 import { toast } from "../lib/notify";
@@ -61,7 +62,26 @@ function pnlClass(n: number | null): string {
 // The dock formats levels to the symbol's precision; the phone has no
 // per-symbol precision source, so a level prints as stored, trimmed.
 function fmtLevel(n: number | null): string {
-  return n == null ? "—" : n.toLocaleString(undefined, { maximumFractionDigits: 6, useGrouping: false });
+  return n == null
+    ? "—"
+    : n.toLocaleString(undefined, {
+        maximumFractionDigits: 6,
+        useGrouping: false,
+      });
+}
+
+// Decimals a stored level carries, so a roll-up's weighted average prints at
+// its members' precision rather than at float noise.
+function decimalsOf(n: number): number {
+  const str = String(n);
+  const i = str.indexOf(".");
+  return i < 0 ? 0 : str.length - i - 1;
+}
+
+function fmtAvg(n: number | null, members: { priceLevel: number }[]): string {
+  if (n == null) return "—";
+  const d = Math.max(0, ...members.map((m) => decimalsOf(m.priceLevel)));
+  return n.toFixed(Math.min(d, 6));
 }
 
 function cash(n: number): string {
@@ -71,7 +91,11 @@ function cash(n: number): string {
 function fmtTime(ms: number | null): string {
   if (ms == null) return "—";
   const d = new Date(ms);
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const time = d.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
   const sameDay = d.toDateString() === new Date().toDateString();
   return sameDay ? time : `${d.toLocaleDateString([], { day: "2-digit", month: "short" })} ${time}`;
 }
@@ -90,6 +114,8 @@ export default function MobilePositionsView() {
   const [summary, setSummary] = useState<AccountSummary | null>(null);
   const [selected, setSelected] = useState<TradeView | null>(null);
   const [tab, setTab] = useState<Tab>("positions");
+  // Same-symbol positions fold under a roll-up header row, as in the dock.
+  const [folded, setFolded] = useState<Set<string>>(() => new Set());
   const [, setTick] = useState(0);
 
   useEffect(() => subscribeTrades(setTrades), []);
@@ -180,12 +206,84 @@ export default function MobilePositionsView() {
         pnlPct = tradeValue !== 0 ? (upnl / tradeValue) * 100 : null;
       }
     }
-    return { ...t, upnl, last, marketValue, pnlPct, tradeValue, margin, leverage };
+    return {
+      ...t,
+      upnl,
+      last,
+      marketValue,
+      pnlPct,
+      tradeValue,
+      margin,
+      leverage,
+    };
   };
   // ------------------------------------------------------------------------
 
   const rows = (tab === "positions" ? positions : orders).map(enrich);
+  const groups: PositionGroup<RowExt>[] | null = tab === "positions" ? groupPositions(rows) : null;
   const entryLabel = tab === "positions" ? "Avg fill" : "Limit";
+  const toggleGroup = (epic: string) =>
+    setFolded((f) => {
+      const next = new Set(f);
+      if (next.has(epic)) next.delete(epic);
+      else next.add(epic);
+      return next;
+    });
+
+  // One position / order row; `inGroup` rows sit under their symbol's header.
+  const renderRow = (t: RowExt, inGroup: boolean) => {
+    const long = t.side === "buy";
+    return (
+      <tr
+        key={t.id}
+        className={`pp-row pp-dir-${long ? "long" : "short"}${inGroup ? " pp-member" : ""}`}
+        onClick={() => setSelected(t)}
+      >
+        <td className="pp-c-sym">
+          {t.epic}
+          {t.source === "strategy" && <span className="pp-strat-tag">strat</span>}
+        </td>
+        <td className={`pp-c-side ${long ? "pp-side-long" : "pp-side-short"}`}>
+          {tradeLabel(t.kind, t.side)}
+        </td>
+        <td className="pp-c-num">{t.quantity}</td>
+        <td className="pp-c-num">{fmtLevel(t.priceLevel)}</td>
+        <td className={`pp-c-num${t.takeProfit != null ? " pp-lvl-tp" : " pp-dash"}`}>
+          {fmtLevel(t.takeProfit)}
+        </td>
+        <td className={`pp-c-num${t.stop != null ? " pp-lvl-sl" : " pp-dash"}`}>{fmtLevel(t.stop)}</td>
+        <td className={`pp-c-num${t.last == null ? " pp-dash" : ""}`}>{fmtLevel(t.last)}</td>
+        <td className="pp-c-num">
+          {t.kind === "order" ? (
+            <span className="pp-resting">resting</span>
+          ) : (
+            <span className={`pp-pnl ${pnlClass(t.upnl)}`}>{fmtPnl(t.upnl)}</span>
+          )}
+        </td>
+        <td className={`pp-c-num${t.pnlPct == null ? " pp-dash" : ` ${pnlClass(t.pnlPct)}`}`}>
+          {t.pnlPct != null ? `${t.pnlPct >= 0 ? "+" : "−"}${Math.abs(t.pnlPct).toFixed(2)}%` : "—"}
+        </td>
+        <td className="pp-c-num">{cash(t.tradeValue)}</td>
+        <td className={`pp-c-num${t.marketValue == null ? " pp-dash" : ""}`}>
+          {t.marketValue != null ? cash(t.marketValue) : "—"}
+        </td>
+        <td className="pp-c-num pp-c-lev">{t.leverage}:1</td>
+        <td className="pp-c-num">{cash(t.margin)}</td>
+        <td className="pp-c-time">
+          {fmtTime(t.openedAt)}
+          {t.kind === "order" && t.expiresAt != null && (
+            <span className="pp-expiry">
+              exp{" "}
+              {new Date(t.expiresAt).toLocaleString([], {
+                dateStyle: "short",
+                timeStyle: "short",
+              })}
+            </span>
+          )}
+        </td>
+      </tr>
+    );
+  };
 
   function act(t: TradeView) {
     const isOrder = t.kind === "order";
@@ -249,57 +347,70 @@ export default function MobilePositionsView() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((t) => {
-                const long = t.side === "buy";
-                return (
-                  <tr
-                    key={t.id}
-                    className={`pp-row pp-dir-${long ? "long" : "short"}`}
-                    onClick={() => setSelected(t)}
-                  >
-                    <td className="pp-c-sym">
-                      {t.epic}
-                      {t.source === "strategy" && <span className="pp-strat-tag">strat</span>}
-                    </td>
-                    <td className={`pp-c-side ${long ? "pp-side-long" : "pp-side-short"}`}>
-                      {tradeLabel(t.kind, t.side)}
-                    </td>
-                    <td className="pp-c-num">{t.quantity}</td>
-                    <td className="pp-c-num">{fmtLevel(t.priceLevel)}</td>
-                    <td className={`pp-c-num${t.takeProfit != null ? " pp-lvl-tp" : " pp-dash"}`}>
-                      {fmtLevel(t.takeProfit)}
-                    </td>
-                    <td className={`pp-c-num${t.stop != null ? " pp-lvl-sl" : " pp-dash"}`}>
-                      {fmtLevel(t.stop)}
-                    </td>
-                    <td className={`pp-c-num${t.last == null ? " pp-dash" : ""}`}>{fmtLevel(t.last)}</td>
-                    <td className="pp-c-num">
-                      {t.kind === "order" ? (
-                        <span className="pp-resting">resting</span>
-                      ) : (
-                        <span className={`pp-pnl ${pnlClass(t.upnl)}`}>{fmtPnl(t.upnl)}</span>
-                      )}
-                    </td>
-                    <td className={`pp-c-num${t.pnlPct == null ? " pp-dash" : ` ${pnlClass(t.pnlPct)}`}`}>
-                      {t.pnlPct != null ? `${t.pnlPct >= 0 ? "+" : "−"}${Math.abs(t.pnlPct).toFixed(2)}%` : "—"}
-                    </td>
-                    <td className="pp-c-num">{cash(t.tradeValue)}</td>
-                    <td className={`pp-c-num${t.marketValue == null ? " pp-dash" : ""}`}>
-                      {t.marketValue != null ? cash(t.marketValue) : "—"}
-                    </td>
-                    <td className="pp-c-num pp-c-lev">{t.leverage}:1</td>
-                    <td className="pp-c-num">{cash(t.margin)}</td>
-                    <td className="pp-c-time">
-                      {fmtTime(t.openedAt)}
-                      {t.kind === "order" && t.expiresAt != null && (
-                        <span className="pp-expiry">
-                          exp {new Date(t.expiresAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+              {groups == null
+                ? rows.map((t) => renderRow(t, false))
+                : groups.flatMap((g) => {
+                    // A lone position is a plain row; several under one symbol get
+                    // a header with the roll-up and the positions folded beneath.
+                    if (g.positions.length < 2) return g.positions.map((t) => renderRow(t, false));
+                    const isFolded = folded.has(g.epic);
+                    const dir = g.side === "buy" ? "long" : g.side === "sell" ? "short" : "mixed";
+                    const header = (
+                      <tr
+                        key={`group:${g.epic}`}
+                        className={`pp-row pp-group pp-dir-${dir}${isFolded ? " pp-folded" : ""}`}
+                        onClick={() => toggleGroup(g.epic)}
+                      >
+                        <td className="pp-c-sym">
+                          <button
+                            className="pp-group-toggle"
+                            aria-expanded={!isFolded}
+                            aria-label={isFolded ? "Show positions" : "Hide positions"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleGroup(g.epic);
+                            }}
+                          >
+                            <span className="pp-group-chevron" aria-hidden="true">
+                              ›
+                            </span>
+                          </button>
+                          {g.epic}
+                          <span className="pp-group-count">{g.positions.length}</span>
+                        </td>
+                        <td
+                          className={`pp-c-side ${g.side === "buy" ? "pp-side-long" : g.side === "sell" ? "pp-side-short" : "pp-side-mixed"}`}
+                        >
+                          {g.side === "buy" ? "Long" : g.side === "sell" ? "Short" : "Mixed"}
+                        </td>
+                        <td className="pp-c-num">{+g.quantity.toFixed(8)}</td>
+                        <td className="pp-c-num">{fmtAvg(g.priceLevel, g.positions)}</td>
+                        <td className="pp-c-num pp-dash">—</td>
+                        <td className="pp-c-num pp-dash">—</td>
+                        <td className={`pp-c-num${g.last == null ? " pp-dash" : ""}`}>
+                          {fmtAvg(g.last, g.positions)}
+                        </td>
+                        <td className="pp-c-num">
+                          <span className={`pp-pnl ${pnlClass(g.upnl)}`}>{fmtPnl(g.upnl)}</span>
+                        </td>
+                        <td className={`pp-c-num${g.pnlPct == null ? " pp-dash" : ` ${pnlClass(g.pnlPct)}`}`}>
+                          {g.pnlPct != null
+                            ? `${g.pnlPct >= 0 ? "+" : "−"}${Math.abs(g.pnlPct).toFixed(2)}%`
+                            : "—"}
+                        </td>
+                        <td className="pp-c-num">{cash(g.tradeValue)}</td>
+                        <td className={`pp-c-num${g.marketValue == null ? " pp-dash" : ""}`}>
+                          {g.marketValue != null ? cash(g.marketValue) : "—"}
+                        </td>
+                        <td className={`pp-c-num pp-c-lev${g.leverage == null ? " pp-dash" : ""}`}>
+                          {g.leverage != null ? `${g.leverage}:1` : "—"}
+                        </td>
+                        <td className="pp-c-num">{cash(g.margin)}</td>
+                        <td className="pp-c-time">{fmtTime(g.openedAt)}</td>
+                      </tr>
+                    );
+                    return isFolded ? [header] : [header, ...g.positions.map((t) => renderRow(t, true))];
+                  })}
             </tbody>
           </table>
         </div>
@@ -312,7 +423,11 @@ export default function MobilePositionsView() {
           {live && <span className="m-pos-live">LIVE</span>}
         </span>
         <div className="pp-acct">
-          <Stat label="Unrealized P&L" value={`${pnl < 0 ? "−" : ""}${cash(Math.abs(pnl))} ${cur}`} tone={pnlTone} />
+          <Stat
+            label="Unrealized P&L"
+            value={`${pnl < 0 ? "−" : ""}${cash(Math.abs(pnl))} ${cur}`}
+            tone={pnlTone}
+          />
           <Stat label="Balance" value={money(balance)} />
           <Stat label="Equity" value={money(equity)} />
           <Stat label="Account margin" value={money(accountMargin)} />
