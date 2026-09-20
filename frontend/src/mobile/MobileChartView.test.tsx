@@ -7,6 +7,9 @@ import { brokerRoot } from "../lib/persist";
 import { mobileViewMode, setScreenAdapter } from "./mobileViewMode";
 
 installMemStorage();
+
+const demoFlag = vi.hoisted(() => ({ on: false }));
+vi.mock("../lib/demoMode", () => ({ isDemoMode: () => demoFlag.on, setDemoMode: () => {} }));
 afterEach(cleanup);
 
 vi.mock("../ChartCore", () => ({
@@ -118,6 +121,20 @@ describe("MobileChartView chrome-only mode", () => {
       mobileViewMode.set({ chromeHidden: true, landscape: false });
     });
     expect(container.querySelector(".m-chart-topbar")).toBeNull();
+  });
+
+  it("keeps the demo sign-up nudge on the chart once the chrome is hidden", async () => {
+    demoFlag.on = true;
+    try {
+      const { container } = render(<MobileChartView />);
+      expect(container.querySelector(".m-chart-cta")).toBeNull();
+      await act(async () => {
+        mobileViewMode.set({ chromeHidden: true, landscape: false });
+      });
+      expect(container.querySelector(".m-chart-cta .demo-cta")).not.toBeNull();
+    } finally {
+      demoFlag.on = false;
+    }
   });
 });
 

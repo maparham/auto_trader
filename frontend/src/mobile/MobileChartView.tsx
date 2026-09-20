@@ -13,6 +13,7 @@ import { PERIODS } from "../lib/feed";
 import { requestSymbolSearch } from "../lib/signals";
 import { brokerLabel } from "../lib/trading";
 import { isDemoMode } from "../lib/demoMode";
+import DemoCta from "../DemoCta";
 
 // Short names for the demo's credential-free feeds: the chip has ~96px.
 const DEMO_SOURCE: Record<string, string> = { yfinance: "Yahoo", dukascopy: "Dukascopy" };
@@ -205,6 +206,13 @@ export default function MobileChartView({ active = true }: { active?: boolean })
           />
         )}
         {booted && <MobileDrawBar />}
+        {/* Chart-only mode unmounts the tab bar, and with it the demo's
+            sign-up nudge; a small pill in the bottom-left corner keeps it. */}
+        {isDemoMode() && viewMode.chromeHidden && (
+          <span className="m-chart-cta">
+            <DemoCta />
+          </span>
+        )}
       </div>
       {periodSheetOpen && (
         <Sheet title="Period" onClose={() => setPeriodSheetOpen(false)}>
