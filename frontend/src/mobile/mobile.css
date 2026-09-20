@@ -444,14 +444,18 @@ body.m-mobile .ss-exch { display: none; }
   font-size: 13px;
   color: var(--text-dim, var(--text));
 }
-/* Chart-only mode in the demo: the tab bar's nudge, shrunk to a pill at the
-   top right, under the restore button (28px tall at 4px from the top) and
-   clear of the legend's OHLC row on the left. */
+/* Chart-only mode in the demo: the tab bar's nudge, shrunk to a pill on the
+   legend's top row, just left of the price axis (the restore button covers
+   the axis: 40px wide at 5px from the edge). The legend gives up the width
+   so its OHLC row wraps under the pill instead of running into it. */
 .m-chart-cta {
   position: absolute;
-  top: calc(40px + env(safe-area-inset-top));
-  right: calc(5px + env(safe-area-inset-right));
+  top: calc(4px + env(safe-area-inset-top));
+  right: calc(53px + env(safe-area-inset-right));
   z-index: 60;
+}
+.m-chart-body:has(> .m-chart-cta) .chart-legend {
+  max-width: calc(100% - 190px);
 }
 .m-chart-cta .demo-cta {
   display: inline-flex;
