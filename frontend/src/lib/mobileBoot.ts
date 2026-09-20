@@ -20,6 +20,19 @@ export function decideMobileBoot(
   return { mobile: coarseSmall, persist: null };
 }
 
+/** A small touch screen: coarse pointer and a phone-sized viewport in
+ * either axis. The boot branch below and the desktop chrome's own
+ * small-screen defaults (legend collapse) share this one probe. */
+export function isCoarseSmallScreen(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(
+      "(pointer: coarse) and ((max-width: 768px) or (max-height: 768px))",
+    ).matches
+  );
+}
+
 export function shouldBootMobile(): boolean {
   let stored: string | null = null;
   try {
@@ -30,11 +43,7 @@ export function shouldBootMobile(): boolean {
   // Width OR height: a phone held sideways is ~900px wide but ~400px tall,
   // and a load in that posture (Chrome restoring a discarded tab, a link
   // opened while rotated) must still boot the mobile shell.
-  const coarseSmall =
-    typeof window.matchMedia === "function" &&
-    window.matchMedia(
-      "(pointer: coarse) and ((max-width: 768px) or (max-height: 768px))",
-    ).matches;
+  const coarseSmall = isCoarseSmallScreen();
   const d = decideMobileBoot(window.location.search, stored, coarseSmall);
   if (d.persist) {
     try {

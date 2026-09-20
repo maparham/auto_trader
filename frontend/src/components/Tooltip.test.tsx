@@ -124,3 +124,32 @@ describe("Tooltip", () => {
     expect(screen.getByRole("tooltip").textContent).toContain("Second");
   });
 });
+
+describe("touch input", () => {
+  it("opens on tap, ignores the synthetic hover, and closes on a tap elsewhere", () => {
+    vi.useFakeTimers();
+    render(
+      <Tooltip content="tip">
+        <button>t</button>
+      </Tooltip>,
+    );
+    const btn = screen.getByText("t");
+    // The compat mouseenter a tap emits must not open anything on its own.
+    fireEvent.pointerDown(document.body, { pointerType: "touch" });
+    fireEvent.mouseEnter(btn.parentElement!);
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    // A tap on the trigger opens it.
+    fireEvent.pointerDown(btn, { pointerType: "touch" });
+    expect(screen.getByRole("tooltip")).toBeTruthy();
+    // A tap elsewhere closes it.
+    fireEvent.pointerDown(document.body, { pointerType: "touch" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    // A real mouse restores hover opens.
+    fireEvent.pointerDown(document.body, { pointerType: "mouse" });
+    fireEvent.focus(btn.parentElement!);
+    expect(screen.getByRole("tooltip")).toBeTruthy();
+  });
+});

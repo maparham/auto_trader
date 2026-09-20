@@ -2,6 +2,7 @@
 // indicators + their configs, price-axis/legend flags, favourites, recent
 // symbols, and AVWAP anchors.
 
+import { isCoarseSmallScreen } from "../mobileBoot";
 import type { DeepPartial, OverlayStyle, LineType } from "klinecharts";
 import type { VisibilityModel } from "../visibility";
 import type { FibConfig } from "../fibConfig";
@@ -305,15 +306,8 @@ const legendCollapsedKey = (scope: string) => ns(scope, "legendCollapsed");
 /** Small touch screens start with the indicator rows folded: expanded, the
  * legend covered the top third of a phone-width candle pane. The chevron
  * stays, and a choice made on the device is saved and wins from then on. */
-export function defaultLegendCollapsed(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(pointer: coarse) and (max-width: 768px)").matches
-  );
-}
 export function loadLegendCollapsed(scope: string): boolean {
-  return load<boolean>(legendCollapsedKey(scope), defaultLegendCollapsed());
+  return load<boolean>(legendCollapsedKey(scope), isCoarseSmallScreen());
 }
 export function saveLegendCollapsed(scope: string, value: boolean): void {
   save(legendCollapsedKey(scope), value);

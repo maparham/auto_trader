@@ -2673,16 +2673,13 @@ function drawTrendlines(
     }
     if (!showStats) continue;
     const label = trendlineStatsLabel(line.touches, line.crossings);
-    const xTag = Math.min(
-      xRing + TL_HANDLE_RADIUS + 5,
-      tagRight - ctx.measureText(label).width,
-    );
+    const wTag = ctx.measureText(label).width;
+    const xTag = Math.min(xRing + TL_HANDLE_RADIUS + 5, tagRight - wTag);
     let yTag =
       xHandle === x0
         ? yHandle
         : y0 + ((yHandle - y0) * (xTag - x0)) / (xHandle - x0);
-    const wTag = ctx.measureText(label).width;
-    yTag = clearTagRow(placedTags, xTag, yTag, wTag);
+    yTag = clearTagRow(placedTags, xTag, yTag, wTag, bounding.height);
     placedTags.push({ x: xTag, y: yTag, w: wTag });
     ctx.fillStyle = ctx.strokeStyle;
     ctx.fillText(label, xTag, yTag);
@@ -2699,45 +2696,43 @@ function drawTrendlines(
 /** Tag row height: 10px text plus a little air. */
 const TL_TAG_ROW = 12;
 
-/** End tags painted on a context recently, across every trendlines instance
- * on the pane. klinecharts draws the instances one after another in the same
- * paint, so tags older than a frame belong to a previous paint and are
- * dropped; keyed by context so panes and charts never see each other's. */
-const PANE_TAGS = new WeakMap<
-  CanvasRenderingContext2D,
-  { at: number; tags: { x: number; y: number; w: number }[] }
->();
-const TL_TAG_FRAME_MS = 40;
+/** End tags painted on a context during the current paint, across every
+ * trendlines instance on the pane. klinecharts draws the instances one after
+ * another synchronously, so the list lives until the microtask after the
+ * paint and the next paint starts empty; keyed by context so panes and
+ * charts never see each other's. */
+const PANE_TAGS = new WeakMap<CanvasRenderingContext2D, { x: number; y: number; w: number }[]>();
 function paneTags(ctx: CanvasRenderingContext2D): { x: number; y: number; w: number }[] {
-  const now = performance.now();
   const cur = PANE_TAGS.get(ctx);
-  if (cur && now - cur.at < TL_TAG_FRAME_MS) {
-    cur.at = now;
-    return cur.tags;
-  }
-  const fresh = { at: now, tags: [] };
+  if (cur) return cur;
+  const fresh: { x: number; y: number; w: number }[] = [];
   PANE_TAGS.set(ctx, fresh);
-  return fresh.tags;
+  queueMicrotask(() => PANE_TAGS.delete(ctx));
+  return fresh;
 }
 
 /** The y a tag can be painted at without sitting on an earlier tag: the
- * requested y when nothing overlaps it, otherwise the first free row below.
+ * requested y when nothing overlaps it, otherwise the nearest free row below,
+ * or above once the rows below run past `maxY` (the pane's bottom). A tag
+ * with nowhere to go keeps its own y and overlaps rather than vanishing.
  * Exported for the unit test. */
 export function clearTagRow(
   placed: readonly { x: number; y: number; w: number }[],
   x: number,
   y: number,
   w: number,
+  maxY = Number.POSITIVE_INFINITY,
 ): number {
-  let yy = y;
-  for (let guard = 0; guard < 8; guard++) {
-    const hit = placed.some(
-      (t) => x < t.x + t.w && t.x < x + w && Math.abs(t.y - yy) < TL_TAG_ROW,
-    );
-    if (!hit) break;
-    yy += TL_TAG_ROW;
+  const hit = (yy: number) =>
+    placed.some((t) => x < t.x + t.w && t.x < x + w && Math.abs(t.y - yy) < TL_TAG_ROW);
+  if (!hit(y)) return y;
+  for (let i = 1; i <= 8; i++) {
+    const below = y + i * TL_TAG_ROW;
+    if (below + TL_TAG_ROW / 2 <= maxY && !hit(below)) return below;
+    const above = y - i * TL_TAG_ROW;
+    if (above - TL_TAG_ROW / 2 >= 0 && !hit(above)) return above;
   }
-  return yy;
+  return y;
 }
 
 /** The stats tag at a line's right end, spelled out in words: "2 Pivots",

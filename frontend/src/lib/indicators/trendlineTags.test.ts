@@ -16,15 +16,26 @@ describe("clearTagRow", () => {
     expect(clearTagRow(placed, 200, 52, 40)).toBe(52);
   });
 
-  it("skips past a stack of tags", () => {
+  it("takes the nearest free row, above when that is closer", () => {
     const placed = [
       { x: 100, y: 50, w: 40 },
       { x: 100, y: 62, w: 40 },
     ];
-    expect(clearTagRow(placed, 100, 50, 40)).toBe(74);
+    expect(clearTagRow(placed, 100, 50, 40)).toBe(38);
   });
 
   it("still spells the tag", () => {
     expect(trendlineStatsLabel(3, 1)).toBe("3 Pivots 1 Crossing");
+  });
+});
+
+describe("clearTagRow near the pane bottom", () => {
+  it("moves up when the rows below run past the pane", () => {
+    const placed = [{ x: 100, y: 95, w: 40 }];
+    expect(clearTagRow(placed, 100, 95, 40, 100)).toBe(83);
+  });
+  it("keeps its own y when nothing is free", () => {
+    const placed = Array.from({ length: 20 }, (_, i) => ({ x: 100, y: i * 12, w: 40 }));
+    expect(clearTagRow(placed, 100, 48, 40, 200)).toBe(48);
   });
 });

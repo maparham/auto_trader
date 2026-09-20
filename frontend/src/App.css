@@ -7157,8 +7157,10 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
    into the price axis. Width-only, so a narrow desktop window gets the same
    treatment as a phone. */
 @media (max-width: 640px) {
-  /* Chart toolbar: a second row beats a clipped one. */
+  /* Chart toolbar: a second row beats a clipped one. The toast and snackbar
+     anchors assume the single 41px row, so they move below a wrapped bar. */
   .toolbar { flex-wrap: wrap; }
+  #toast-container, .snackbar { top: 128px; }
   /* Tab bar: the workspace actions take a row of their own, the sign-up /
      broker control pushed to the far right, and the tabs start on the next
      row at full width instead of flowing around a float. */

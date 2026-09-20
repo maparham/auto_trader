@@ -835,7 +835,12 @@ export default function TabBar({
                   ":scope > .tab-bar-actions",
                 );
                 if (actions == null) return bar.clientWidth - 6;
-                return Math.max(0, actions.getBoundingClientRect().left - (barRect.left + 6));
+                // Narrow viewports stack the actions on a row of their own
+                // above the strip (App.css, max-width 640px): nothing shares
+                // row 1 with the chips, so the budget is the full width.
+                const aRect = actions.getBoundingClientRect();
+                if (aRect.bottom <= barRect.top + 1) return bar.clientWidth - 6;
+                return Math.max(0, aRect.left - (barRect.left + 6));
               })(),
               grabDx: e.clientX - rects[i].left,
               grabDy: e.clientY - rects[i].top,

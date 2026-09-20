@@ -35,8 +35,20 @@ interface TooltipProps {
 // you wait once, not on every icon.
 const GRACE_MS = 400;
 let lastHideAt = -Infinity;
-// How long after a touch/pen pointerdown the hover and focus opens stay muted.
-const TOUCH_SUPPRESS_MS = 1000;
+// Whether the most recent pointer on the page was a touch or pen. A tap fires
+// a synthetic mouseenter and focus with no mouseleave ever coming, so while
+// this is set the hover and focus paths are muted and a trigger opens by tap
+// instead (see the trigger's onPointerDown). A real mouse clears it.
+let lastPointerTouch = false;
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "pointerdown",
+    (e) => {
+      lastPointerTouch = e.pointerType !== "mouse";
+    },
+    true,
+  );
+}
 
 function isEmpty(content: TooltipProps["content"]): boolean {
   return (
@@ -62,11 +74,6 @@ export default function Tooltip({
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false); // toggles .show for the enter transition
   const [placed, setPlaced] = useState<Placed | null>(null);
-  // Set by a touch/pen pointerdown on the trigger. A tap fires a synthetic
-  // mouseenter (and focus) with no mouseleave ever coming, which left the
-  // bubble stranded over whatever the tap opened. Hover/focus opens are
-  // ignored for a short window after such a pointerdown.
-  const touchAtRef = useRef(-Infinity);
   const id = useId();
 
   const off = disabled || isEmpty(content);
@@ -93,12 +100,8 @@ export default function Tooltip({
     }
   }
 
-  function recentTouch() {
-    return Date.now() - touchAtRef.current < TOUCH_SUPPRESS_MS;
-  }
-
   function hoverShow() {
-    if (off || recentTouch()) return;
+    if (off || lastPointerTouch) return;
     clearTimer();
     const instant = delay <= 0 || Date.now() - lastHideAt < GRACE_MS;
     if (instant) setOpen(true);
@@ -106,7 +109,7 @@ export default function Tooltip({
   }
 
   function focusShow() {
-    if (off || recentTouch()) return;
+    if (off || lastPointerTouch) return;
     clearTimer();
     setOpen(true); // keyboard focus is always instant
   }
@@ -147,9 +150,13 @@ export default function Tooltip({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") hide();
     };
-    // A touch anywhere takes the bubble down: no mouseleave will.
+    // A touch anywhere outside the trigger takes the bubble down: no
+    // mouseleave will. A touch on the trigger itself is the toggle above.
     const onPointer = (e: PointerEvent) => {
-      if (e.pointerType !== "mouse") hide();
+      if (e.pointerType === "mouse") return;
+      const t = e.target;
+      if (t instanceof Node && triggerRef.current?.contains(t)) return;
+      hide();
     };
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onScroll);
@@ -187,9 +194,14 @@ export default function Tooltip({
         onFocus={focusShow}
         onBlur={hide}
         onPointerDown={(e) => {
-          if (e.pointerType === "mouse") return;
-          touchAtRef.current = Date.now();
-          hide();
+          // Touch: a tap toggles the bubble (the ⓘ icons have no hover to
+          // give). The window listener below closes it on a tap elsewhere.
+          if (e.pointerType === "mouse" || off) return;
+          if (open) hide();
+          else {
+            clearTimer();
+            setOpen(true);
+          }
         }}
       >
         {describedChildren}
