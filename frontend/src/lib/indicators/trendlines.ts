@@ -740,32 +740,18 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
     }
   }
 
-  // 4. Emit: the live majors WITHIN MAX DISTANCE of this bar's close (the
-  //    distance gate goes first, one comparison per line, before anything
-  //    dearer), in rank order, MERGED (mergeLines at this bar's tolerance,
-  //    the same pass the draw path runs), fill tl_1..tl_maxLines; the one
-  //    nearest the close AMONG THOSE fills tl_nearest (ties to the better
-  //    rank, since the walk is in rank order and only a STRICTLY nearer line
-  //    displaces). Only lines on the chart take part in a rule: a line too
-  //    far, merged away, or ranked past the drawn budget reports nothing.
+  // 4. Emit: eligibleLines (the live pool in rank order, per-pivot cap,
+  //    THEN Max Distance and the major gates), MERGED (mergeLines at this
+  //    bar's tolerance, the same pass the draw path runs), fill
+  //    tl_1..tl_maxLines; the one nearest the close AMONG THOSE fills
+  //    tl_nearest (ties to the better rank, since the walk is in rank order
+  //    and only a STRICTLY nearer line displaces). Only lines on the chart
+  //    take part in a rule: a line too far, capped, merged away, or ranked
+  //    past the drawn budget reports nothing.
   const close = closes[i];
   const point: TrendlinesPoint = {};
-  const distTol = maxDistanceTol(cfg, a, close);
-  const majors = lines.filter(
-    (l) =>
-      (distTol === Infinity || withinDistance(l, i, close, distTol)) &&
-      isLive(l, i, cfg) &&
-      isMajor(l, i, cfg),
-  );
-  majors.sort(rankLines);
-  const drawn = mergeLines(
-    majors,
-    i,
-    mergeTolerance(cfg, a, close),
-    undefined,
-    cfg.maxLines,
-    cfg.maxPerPivot,
-  );
+  const majors = eligibleLines(lines, i, close, a, cfg);
+  const drawn = mergeLines(majors, i, mergeTolerance(cfg, a, close), undefined, cfg.maxLines, 0);
   let nearestV = 0;
   let nearestD = Infinity;
   const shown = Math.min(drawn.length, cfg.maxLines);
@@ -1421,6 +1407,60 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
 // tolerance rather than to the bit. LEFT and RIGHT of the shared bar they
 // separate, which is what a fan does; the cap is about the fan, not about
 // distance.
+/** The per-pivot cap on its own: walks `ranked` in order and drops a line
+ * once `maxPerPivot` kept lines already run through one of its bars (anchor
+ * or touch: touchIdxs). Pinned lines (`keep`) are never dropped but count.
+ * Ported to Python as cap_per_pivot. */
+export function capPerPivot(
+  ranked: TrendLine[],
+  maxPerPivot: number,
+  keep?: ReadonlySet<TrendLine>,
+): TrendLine[] {
+  if (!(maxPerPivot >= 1)) return ranked;
+  const out: TrendLine[] = [];
+  // Kept lines through each bar, anchors and touches alike.
+  const perBar = new Map<number, number>();
+  for (const line of ranked) {
+    // PINNED LINES ONLY are exempt. A pin is stored by lineKey and its only
+    // control is the handle painted at the line's end, so cutting a pinned
+    // line would leave a pin with nothing to click.
+    if (!keep?.has(line) && line.touchIdxs.some((b) => (perBar.get(b) ?? 0) >= maxPerPivot)) continue;
+    out.push(line);
+    for (const b of line.touchIdxs) perBar.set(b, (perBar.get(b) ?? 0) + 1);
+  }
+  return out;
+}
+
+/** The lines a bar may show or emit, BEFORE the merge and the budget: the
+ * live pool in rank order, cut by the per-pivot cap, THEN gated by Max
+ * Distance and the major floors and ceilings (isMajor). Shared by the emit
+ * step and the draw path so the drawn set is the emitted set; ported to
+ * Python as eligible_lines.
+ *
+ * THE CAP SETTLES ON THE RANKED POOL, NOT ON THE GATED ONE. Gated first, the
+ * cap cascaded: tightening Max Distance (or Crossings, Touches, Span, ...)
+ * removed a high-ranked line, which freed that line's pivot tallies, which
+ * let a lower-ranked line in, which filled a bar an unrelated line ran
+ * through, and THAT line vanished from a setting that never concerned it.
+ * With the cap read off rank alone, a gate can only remove the lines it
+ * targets, the same monotonicity mergeLines has against the cap. The price
+ * is that a gated-away line still holds its bars' tallies. */
+export function eligibleLines(
+  pool: TrendLine[],
+  i: number,
+  close: number,
+  atr: number | null | undefined,
+  cfg: TrendlinesConfig,
+  keep?: ReadonlySet<TrendLine>,
+): TrendLine[] {
+  const ranked = pool.filter((l) => isLive(l, i, cfg)).sort(rankLines);
+  const capped = capPerPivot(ranked, cfg.maxPerPivot, keep);
+  const distTol = maxDistanceTol(cfg, atr, close);
+  return capped.filter(
+    (l) => (distTol === Infinity || withinDistance(l, i, close, distTol)) && isMajor(l, i, cfg),
+  );
+}
+
 export function mergeLines(
   ranked: TrendLine[],
   atIdx: number,
@@ -1443,20 +1483,7 @@ export function mergeLines(
   // alone, the merge tolerance can only ever remove a line that is within
   // tolerance of a kept one, and the cap's outcome never depends on it.
   // The price is that a twin still counts toward its bars' tallies.
-  let capSet = ranked;
-  if (capped) {
-    capSet = [];
-    // Kept lines through each bar, anchors and touches alike.
-    const perBar = new Map<number, number>();
-    for (const line of ranked) {
-      // PINNED LINES ONLY are exempt. A pin is stored by lineKey and its only
-      // control is the handle painted at the line's end, so cutting a pinned
-      // line would leave a pin with nothing to click.
-      if (!keep?.has(line) && line.touchIdxs.some((b) => (perBar.get(b) ?? 0) >= maxPerPivot)) continue;
-      capSet.push(line);
-      for (const b of line.touchIdxs) perBar.set(b, (perBar.get(b) ?? 0) + 1);
-    }
-  }
+  const capSet = capped ? capPerPivot(ranked, maxPerPivot, keep) : ranked;
   if (!(tol > 0)) return capSet.length > limit ? capSet.slice(0, limit) : capSet;
   const out: TrendLine[] = [];
   const proj: number[] = [];
@@ -2386,28 +2413,23 @@ function drawTrendlines(
   // same one selectDrawnLines projects to), not a per-line bar.
   // Max Distance first, exactly as the emit step gates it, so a far line is
   // off the chart on the same bars it reports nothing.
-  const distTol = maxDistanceTol(cfg, last.atr, lastClose);
-  const eligible = last.lines.filter(
-    (l) =>
-      (distTol === Infinity || withinDistance(l, lastIdx, lastClose, distTol)) &&
-      isMajor(l, lastIdx, cfg),
+  // Resolved to line objects BEFORE selection, because the cap and the dedup
+  // pass have to know which lines are pinned in order to spare them.
+  const pinnedLines = new Set(
+    pins.size ? last.lines.filter((l) => pins.has(lineKey(l, dataList, starts))) : [],
   );
+  const eligible = eligibleLines(last.lines, lastIdx, lastClose, last.atr, cfg, pinnedLines);
   if (!eligible.length) {
     paintMarks(NO_PIVOTS_USED);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
     return true;
   }
-  // Resolved to line objects BEFORE selection, because the dedup pass has to
-  // know which lines are pinned in order to spare them.
-  const pinnedLines = new Set(
-    pins.size ? eligible.filter((l) => pins.has(lineKey(l, dataList, starts))) : [],
-  );
   // The same tolerance the emit step merged at on this bar, so the drawn set
-  // is the emitted set (plus pins).
+  // is the emitted set (plus pins). The per-pivot cap already ran inside
+  // eligibleLines, before the gates.
   const drawn = selectDrawnLines(eligible, lastIdx, lastClose, cfg.maxLines, {
     tol: mergeTolerance(cfg, last.atr, lastClose),
     keep: pinnedLines,
-    perPivot: cfg.maxPerPivot,
   });
   const handles: TrendlineHandle[] = [];
   // The bar index sitting at the pane's right edge, so a pinned line reaches it

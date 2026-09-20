@@ -22,6 +22,7 @@ from auto_trader.indicators.trendlines import (
     has_back_clearance,
     touch_weight,
     is_major,
+    eligible_lines,
     merge_lines,
     over_ceilings,
     parse_trendlines_config,
@@ -137,7 +138,13 @@ def test_zero_survives_on_the_ge_zero_params_and_integers_floor():
 
 @pytest.mark.parametrize("junk", [None, "", [], "x", -1, float("nan"), float("inf")])
 def test_junk_falls_back_to_the_default(junk):
-    assert parse_trendlines_config([junk] * 18, {}) == parse_trendlines_config([], {})
+    got = parse_trendlines_config([junk] * 18, {})
+    want = parse_trendlines_config([], {})
+    if junk == -1:
+        # The two slope slots are SIGNED (mirrors TS signedAt): -1 is a real
+        # Min/Max Slope, not junk, and lands as given.
+        want = replace(want, max_slope_atr=-1.0, min_slope_atr=-1.0)
+    assert got == want
 
 
 def test_huge_int_literal_falls_back_instead_of_raising():
@@ -438,7 +445,8 @@ def _fan() -> list[Candle]:
 def test_merge_runs_in_the_emit_step():
     off = compute_trendlines(_fan(), cfg(merge_atr=0))[0][79]
     assert {"tl_1", "tl_2", "tl_3"} <= set(off)
-    on = compute_trendlines(_fan(), cfg())[0][79]
+    # The fan's lines sit ~0.74 apart at 79, past the quarter-ATR default.
+    on = compute_trendlines(_fan(), cfg(merge_atr=1))[0][79]
     assert "tl_1" in on and "tl_2" not in on
     assert on[TL_NEAREST] == on["tl_1"]
     pivot = compute_trendlines(_fan(), cfg(merge_atr=0, max_per_pivot=1))[0][79]
@@ -470,7 +478,7 @@ def test_merge_is_about_the_same_trend_not_a_shared_pivot():
     assert merge_lines([a, parallel, crossing], 100, 1.0) == [a, crossing]
     # One per pivot ignores distance and asks only about a shared pivot.
     twin = replace_line(a, i1=0, p1=90.0, i2=50, p2=99.0, touch_idxs=[0, 50])
-    assert merge_lines([a, twin, parallel], 100, math.inf) == [a, parallel]
+    assert merge_lines([a, twin, parallel], 100, 0.0, math.inf, 1) == [a, parallel]
 
 
 def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
@@ -485,6 +493,23 @@ def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
     ranked = [a, b_twin, c, d]
     assert merge_lines(ranked, 100, 0.0, math.inf, 1) == [a, b_twin, d]
     assert merge_lines(ranked, 100, 1.0, math.inf, 1) == [a, d]
+
+
+def test_tightening_a_gate_never_cuts_an_unrelated_line_through_the_cap():
+    """Mirrors the TS test. Cap 1 per pivot; A (bars 0,40) outranks C (40,60)
+    which outranks D (60,90). Gates first, the cap cascaded: with A gated out
+    by Max Distance, C got bar 40, took bar 60, and D vanished. Cap first on
+    rank: A blocks C for good, D stays, and the gate removes only A."""
+    def mk(i1, i2, p, touches):
+        return TrendLine(i1=i1, p1=p, k1="low", i2=i2, p2=p, k2="low", touches=touches,
+                         last_touch_idx=i2, crossings=0, last_sign=0, max_touch_gap=i2 - i1,
+                         min_touch_gap=i2 - i1, max_touch_idx=i2, touch_idxs=[i1, i2])
+    a, c, d = mk(0, 40, 150.0, 5), mk(40, 60, 100.0, 3), mk(60, 90, 101.0, 2)
+    pool = [d, c, a]
+    wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5)
+    assert eligible_lines(pool, 100, 100.0, 1.0, wide) == [a, d]
+    tight = replace(wide, max_dist_atr=2)
+    assert eligible_lines(pool, 100, 100.0, 1.0, tight) == [d]
 
 
 def replace_line(line: TrendLine, **over) -> TrendLine:

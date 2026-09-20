@@ -250,6 +250,42 @@ def same_trend(a: TrendLine, b: TrendLine, at_idx: int, tol: float) -> bool:
     )
 
 
+def cap_per_pivot(ranked: list[TrendLine], max_per_pivot: int) -> list[TrendLine]:
+    """Mirrors TS capPerPivot (no pin exemption: pins are draw-time UI).
+    Walks rank order and drops a line once max_per_pivot kept lines already
+    run through one of its bars (anchor or touch: touch_idxs); 0 = off."""
+    if max_per_pivot < 1:
+        return ranked
+    out: list[TrendLine] = []
+    per_bar: dict[int, int] = {}
+    for line in ranked:
+        if any(per_bar.get(b, 0) >= max_per_pivot for b in line.touch_idxs):
+            continue
+        out.append(line)
+        for b in line.touch_idxs:
+            per_bar[b] = per_bar.get(b, 0) + 1
+    return out
+
+
+def eligible_lines(
+    pool: list[TrendLine], i: int, close: float, atr_i: float | None, cfg: TrendlinesConfig
+) -> list[TrendLine]:
+    """Mirrors TS eligibleLines: the live pool in rank order, cut by the
+    per-pivot cap, THEN gated by Max Distance and is_major. The cap settles
+    on rank alone so that tightening a gate can only remove the lines it
+    targets, never (by freeing a gated line's pivot tallies) let a lower
+    line in that crowds out an unrelated one."""
+    ranked = sorted((line for line in pool if is_live(line, i, cfg)), key=rank_key)
+    capped = cap_per_pivot(ranked, cfg.max_per_pivot)
+    dist_tol = max_distance_tol(cfg, atr_i, close)
+    return [
+        line
+        for line in capped
+        if (dist_tol == math.inf or within_distance(line, i, close, dist_tol))
+        and is_major(line, i, cfg)
+    ]
+
+
 def merge_lines(
     ranked: list[TrendLine],
     at_idx: int,
@@ -269,16 +305,7 @@ def merge_lines(
     capped = max_per_pivot >= 1
     if not tol > 0 and not capped:
         return ranked
-    cap_set = ranked
-    if capped:
-        cap_set = []
-        per_bar: dict[int, int] = {}
-        for line in ranked:
-            if any(per_bar.get(b, 0) >= max_per_pivot for b in line.touch_idxs):
-                continue
-            cap_set.append(line)
-            for b in line.touch_idxs:
-                per_bar[b] = per_bar.get(b, 0) + 1
+    cap_set = cap_per_pivot(ranked, max_per_pivot) if capped else ranked
     if not tol > 0:
         return cap_set[: int(limit)] if len(cap_set) > limit else cap_set
     out: list[TrendLine] = []
@@ -639,24 +666,14 @@ def compute_trendlines(
                 lines.sort(key=lambda line: (over_ceilings(line, cfg), survival_key(line)))
                 lines = lines[:cap]
 
-        # 4. Emit the ranked majors within Max Distance of this close, MERGED
-        #    at this bar's tolerance (the pass the draw path runs), cut to
-        #    max_lines; tl_nearest is the nearest AMONG THOSE. A line not on
-        #    the chart reports nothing.
+        # 4. Emit eligible_lines (rank, per-pivot cap, THEN Max Distance and
+        #    the major gates), MERGED at this bar's tolerance (the pass the
+        #    draw path runs), cut to max_lines; tl_nearest is the nearest
+        #    AMONG THOSE. A line not on the chart reports nothing.
         close = closes[i]
         point: dict[str, float] = {}
-        dist_tol = max_distance_tol(cfg, a, close)
-        majors = [
-            line
-            for line in lines
-            if (dist_tol == math.inf or within_distance(line, i, close, dist_tol))
-            and is_live(line, i, cfg)
-            and is_major(line, i, cfg)
-        ]
-        majors.sort(key=rank_key)
-        drawn = merge_lines(
-            majors, i, merge_tolerance(cfg, a, close), cfg.max_lines, cfg.max_per_pivot
-        )
+        majors = eligible_lines(lines, i, close, a, cfg)
+        drawn = merge_lines(majors, i, merge_tolerance(cfg, a, close), cfg.max_lines, 0)
         nearest_v = 0.0
         nearest_d = math.inf
         shown = min(len(drawn), cfg.max_lines)

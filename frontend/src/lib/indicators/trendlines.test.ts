@@ -33,6 +33,7 @@ import {
   rankLines,
   compareSurvival,
   selectDrawnLines,
+  eligibleLines,
   mergeLines,
   mergeTolerance,
   maxDistanceTol,
@@ -970,6 +971,20 @@ describe("selectDrawnLines", () => {
     const ranked = [a, bTwin, c, d];
     expect(mergeLines(ranked, 100, 0, undefined, Infinity, 1)).toEqual([a, bTwin, d]);
     expect(mergeLines(ranked, 100, 1, undefined, Infinity, 1)).toEqual([a, d]);
+  });
+  // THE CAP SETTLES ON RANK, NOT ON THE GATED SET. Cap 1 per pivot; A (bars
+  // 0,40) outranks C (40,60) which outranks D (60,90). Gated first, tightening
+  // Max Distance so A is out let C take bar 40, then bar 60, and D vanished
+  // from a setting that never concerned it. Cap first: A blocks C for good,
+  // D stays, and the gate removes only A.
+  it("tightening a gate never cuts an unrelated line through the per-pivot cap", () => {
+    const a = mk(0, 40, 150, 150, 5);
+    const c = mk(40, 60, 100, 100, 3);
+    const d = mk(60, 90, 101, 101, 2);
+    const pool = [d, c, a];
+    const wide = cfg({ maxPerPivot: 1, maxDistAtr: 0 });
+    expect(eligibleLines(pool, 100, 100, 1, wide)).toEqual([a, d]);
+    expect(eligibleLines(pool, 100, 100, 1, { ...wide, maxDistAtr: 2 })).toEqual([d]);
   });
   it("merges near-twins through a shared pivot before the budget", () => {
     const twin = { ...mid, i1: 0, p1: 90, i2: 40, p2: 90.5, touches: 3 };
