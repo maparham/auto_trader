@@ -4,7 +4,7 @@
     {
       "label": "Backend: uvicorn",
       "type": "shell",
-      "command": ".venv/bin/python -m uvicorn auto_trader.api.app:app --reload --reload-dir auto_trader --port 8000",
+      "command": ".venv/bin/python -m uvicorn auto_trader.api.app:app --reload --reload-dir auto_trader --port 8000 --timeout-graceful-shutdown 2",
       "options": {
         "cwd": "${workspaceFolder}/backend"
       },
