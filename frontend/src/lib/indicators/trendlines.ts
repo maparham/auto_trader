@@ -1921,6 +1921,12 @@ export function lineExtent(
    * Passed in rather than derived: only the caller holds the axis, and pinning
    * means "to the edge", which is a viewport fact that changes with zoom. */
   pinnedEdge: number | null,
+  /** When true (pinned HTF with "Wait for timeframe closes" off), even
+   * "segment" must run to the live edge — otherwise a line whose last touch
+   * was a day ago leaves a full HTF period gap before the newest candle,
+   * which is exactly the bug "always cover until the last bar when Wait off"
+   * reports. */
+  extendSegmentToLastBar?: boolean,
 ): { jLeft: number; jRight: number } {
   // The drawn segment starts at the line's own first anchor. "extended" runs
   // maxProjBars further back still.
@@ -1930,7 +1936,10 @@ export function lineExtent(
   // Pinned beats the mode: the user clicked THIS line open, so it runs to the
   // edge whatever the dropdown says.
   if (pinnedEdge !== null) return { jLeft, jRight: Math.max(jEnd, pinnedEdge) };
-  if (mode === "segment") return { jLeft, jRight: jEnd };
+  if (mode === "segment") {
+    if (extendSegmentToLastBar) return { jLeft, jRight: Math.max(jEnd, lastIdx) };
+    return { jLeft, jRight: jEnd };
+  }
   if (mode === "lastbar") {
     // Straight to "now" and no further. Max() so a line whose own end already
     // sits past the newest bar is never pulled backwards.
@@ -1957,15 +1966,25 @@ export function lineExtent(
  * at the bucket's open, up to a whole HTF period short of the newest candle.
  * Never pulls backwards (max), and only the drawn edge moves: isMajor and the
  * emitted-value match still measure at the integer lastIdx the values came
- * from. */
+ * from.
+ *
+ * When "Wait for timeframe closes" is OFF the line must visually cover to the
+ * live edge even if the forming stash has not landed yet (no formingIdx):
+ * otherwise a 1D pin on a 1H chart leaves a 24-bar gap before the newest
+ * candle, which is the reported bug. */
 export function trendlineDrawEdge(
   formingIdx: number | undefined,
   lastIdx: number,
   toLine: (j: number) => number,
   nChart: number,
+  /** True when the pin has Wait off (mtf.waitClose === false) — forces the
+   * fractional live edge even without a formingIdx. */
+  forceToLastBar?: boolean,
 ): number {
-  if (formingIdx === undefined || !nChart) return lastIdx;
-  return Math.max(lastIdx, toLine(nChart - 1));
+  if (!nChart) return lastIdx;
+  if (formingIdx !== undefined) return Math.max(lastIdx, toLine(nChart - 1));
+  if (forceToLastBar) return Math.max(lastIdx, toLine(nChart - 1));
+  return lastIdx;
 }
 
 export interface TrendlineHandle {
@@ -2629,11 +2648,16 @@ function drawTrendlines(
   // is the price whatever timeframe the lines were found on.
   const lastClose = dataList[dataList.length - 1].close;
   // Forming pin: stopping modes draw through "now" (see trendlineDrawEdge).
+  // When Wait is off the line must always cover to the live edge, even before
+  // the forming stash has landed — otherwise a 1D pin on a 1H chart leaves a
+  // 24-bar gap. The flag forces the fractional edge even without formingIdx.
+  const forceToLastBar = mtf?.waitClose === false;
   const drawEdge = trendlineDrawEdge(
     mtf?.formingIdx,
     lastIdx,
     toLine,
     dataList.length,
+    forceToLastBar,
   );
   // A pin means "run past where you stopped", so it is only meaningful in the
   // modes that STOP a line. "ray" and "extended" already run to the horizon:
@@ -2724,9 +2748,9 @@ function drawTrendlines(
     // pin is released. (The handle no longer rides it — see below — it sits at
     // the newest bar, which likewise never travels to the pane edge with a
     // pinned line, so there is always something to click to undo the pin.)
-    const natural = lineExtent(line, mode, cfg, drawn, drawEdge, null);
+    const natural = lineExtent(line, mode, cfg, drawn, drawEdge, null, forceToLastBar);
     const { jLeft, jRight } = isPinned
-      ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx)
+      ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx, forceToLastBar)
       : natural;
     // A line endpoint that is one of the line's own touch bars (the anchors
     // always are) snaps to the extreme's candle; a projected end (a ray's
