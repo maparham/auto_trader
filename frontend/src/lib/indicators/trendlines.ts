@@ -1796,7 +1796,7 @@ export const TL_TOUCH_RADIUS = 2;
  * fill is what tells the two apart. It sits on a candle body by definition
  * (the close crossed here), so it is larger than the 1px touch ring: a thin
  * × vanished against the body. */
-export const TL_CROSS_RADIUS = 2.5;
+export const TL_CROSS_RADIUS = 3;
 export const TL_HANDLE_HIT = 8;
 /** The pivot mark: an arrow pointing AT price (UP under a low, DOWN over a
  * high), sitting this many pixels clear of the wick with arms this long. An
