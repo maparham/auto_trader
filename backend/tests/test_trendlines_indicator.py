@@ -33,7 +33,6 @@ from auto_trader.indicators.trendlines import (
     pool_lines,
     trendline_gate,
     select_levels,
-    merge_lines,
     over_ceilings,
     parse_trendlines_config,
     project_at,
@@ -577,7 +576,7 @@ def test_merge_is_about_the_same_trend_not_a_shared_pivot():
                          last_touch_idx=60, crossings=0, last_sign=0, max_touch_gap=40,
                          min_touch_gap=40, max_touch_idx=60, touch_idxs=[20, 60])
     assert abs(project_at(crossing, 100) - project_at(a, 100)) < 0.01
-    assert merge_lines([a, parallel, crossing], 100, 1.0) == [a, crossing]
+    assert select_levels([a, parallel, crossing], 100, 1.0, 0) == [a, crossing]
     # One per pivot ignores distance and asks only about a shared pivot.
     twin = replace_line(a, i1=0, p1=90.0, i2=50, p2=99.0, touch_idxs=[0, 50])
     assert select_levels([a, twin, parallel], 100, 0.0, 1) == [a, parallel]

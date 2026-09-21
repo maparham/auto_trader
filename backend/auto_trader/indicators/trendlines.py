@@ -375,19 +375,6 @@ def select_levels(
     return out
 
 
-def merge_lines(
-    ranked: list[TrendLine],
-    at_idx: int,
-    tol: float,
-) -> list[TrendLine]:
-    """Mirrors TS mergeLines: select_levels with the cap and the filters off.
-    Two lines are one when they show the same trend (same_trend at tol),
-    whether or not they share a pivot; a merged-away line emits nothing."""
-    if not tol > 0:
-        return list(ranked)
-    return select_levels(ranked, at_idx, tol, 0)
-
-
 def max_distance_tol(cfg: TrendlinesConfig, atr_i: float | None, close: float) -> float:
     """Mirrors TS maxDistanceTol: the price distance past which a line is too
     far from this bar's close to take part, math.inf when both cuts are off.

@@ -1346,7 +1346,7 @@ export type TrendlinesCalcPoint = TrendlinesPoint & {
  * nothing (5.72 lines per bar to 5.46) because the freed slots refill.
  *
  * As generous as it is only because the shared-pivot requirement carries the
- * real weight (see mergeLines). A tolerance this wide applied to any two
+ * real weight (see selectLevels). A tolerance this wide applied to any two
  * lines would swallow unrelated levels.
  *
  * THAT REQUIREMENT HAS ITSELF LOOSENED, so the two changes compound and the
@@ -1679,7 +1679,26 @@ export function trendlineGate(
  *
  * PINS ARE NOT LEADERS. A pinned line draws IN ADDITION, never in place of its
  * level's leader, so the emit step (which knows nothing of pins) and the draw
- * path agree on every level's line. */
+ * path agree on every level's line.
+ *
+ * TWO LINES ARE ONE WHEN THEY SHOW THE SAME TREND: close to each other, and
+ * close the whole time they both exist (sameTrend), whether or not they share
+ * a pivot. Two near-parallel lines a few points apart out of different swings
+ * are one line to the eye and are merged; two lines that only cross today were
+ * far apart before and are not.
+ *
+ * ONE SAMPLE IS ENOUGH, and that is exact rather than approximate. Lines
+ * through the same pivot agree exactly there, and their difference is linear
+ * in the bar index, so |difference| grows monotonically away from that pivot
+ * and is maximised at the far end of the span: within tol at atIdx means
+ * within tol everywhere between. RIGHT of atIdx it keeps growing, so a merged
+ * pair does separate out in the projection, which is the deliberate trade and
+ * is what makes the last bar the right place to measure. Whether two lines are
+ * the same level is a question about where price is now, not about where they
+ * will be 250 bars from now.
+ *
+ * A MERGED-AWAY LINE EMITS NOTHING. This runs before tl_1..tl_N are filled, so
+ * a rule only ever reads a line that is on the chart. */
 export function selectLevels(
   pool: readonly TrendLine[],
   atIdx: number,
@@ -1717,39 +1736,6 @@ export function selectLevels(
   // only control that can release it.
   if (keep) for (const l of pool) if (keep.has(l)) out.add(l);
   return [...out].sort(rankLines);
-}
-
-/** Drops the near-duplicates from an already rank-sorted list, keeping the
- * first of each group: selectLevels with the cap and the filters off. Ported
- * to Python as merge_lines.
- *
- * TWO LINES ARE ONE WHEN THEY SHOW THE SAME TREND: close to each other, and
- * close the whole time they both exist (sameTrend), whether or not they
- * share a pivot. Two near-parallel lines a few points apart out of
- * different swings are one line to the eye and are merged; two lines that
- * only cross today were far apart before and are not.
- *
- * ONE SAMPLE IS ENOUGH, and that is exact rather than approximate. Lines
- * through the same pivot agree exactly there, and their difference is linear
- * in the bar index, so |difference| grows monotonically away from that pivot
- * and is maximised at the far end of the span: within tol at atIdx means
- * within tol everywhere between. RIGHT of atIdx it keeps growing, so a merged
- * pair does separate out in the projection — that is the deliberate trade, and
- * it is what makes the last bar the right place to measure. Whether two lines
- * are the same level is a question about where price is now, not about where
- * they will be 250 bars from now.
- *
- * A MERGED-AWAY LINE EMITS NOTHING. This pass runs before tl_1..tl_N are
- * filled, so a rule only ever reads a line that is on the chart. Never drops
- * a PINNED line: its handle is the only control that can release the pin. */
-export function mergeLines(
-  ranked: readonly TrendLine[],
-  atIdx: number,
-  tol: number,
-  keep?: ReadonlySet<TrendLine>,
-): TrendLine[] {
-  if (!(tol > 0)) return ranked.slice();
-  return selectLevels(ranked, atIdx, tol, 0, undefined, keep);
 }
 
 /** The DRAWN set, and the whole pipeline in one call: the POOL (rank order,
@@ -2946,8 +2932,8 @@ function drawTrendlines(
   }
   ctx.restore();
   // Last, so the marks sit over the strokes, and keyed on the set the pane
-  // actually drew — not `eligible`, which still holds lines the dedupe and
-  // proximity passes threw away.
+  // actually drew, not on the pool, which still holds the lines the merge,
+  // the cap and the filters threw away.
   paintMarks(drawnPivotIdxs(drawn));
   setTrendlineHandles(chart, indicator.paneId, indicator.name, handles);
   return true;
