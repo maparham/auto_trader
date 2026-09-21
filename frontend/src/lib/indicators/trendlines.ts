@@ -1810,13 +1810,13 @@ export const TL_HANDLE_HIT = 8;
  * an open teal caret entirely. Solid saturated fill separates from those
  * washes; an outline cannot. */
 export const TL_PIVOT_GAP = 5;
-export const TL_PIVOT_ARM = 5;
+export const TL_PIVOT_ARM = 4;
 /** The line-pivot arrow (showLinePivots) is the same head with a tail: this
  * much shaft, this half-wide, added beyond the head's base. Same tip, same
  * gap, so the two marks sit at the same distance from the wick and only the
  * stem tells them apart — which is what makes the difference readable when
  * both kinds are on one pane. */
-export const TL_PIVOT_STEM = 5;
+export const TL_PIVOT_STEM = 4;
 export const TL_PIVOT_STEM_HALF = 1;
 /** The stemmed arrow's OWN gap, replacing TL_PIVOT_GAP for the line-pivot
  * marks only. Much wider, because that mark lands where the pane is busiest
