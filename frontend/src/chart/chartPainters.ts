@@ -72,13 +72,17 @@ export function paintSelectionDots(
     // same bars — they thin/reappear on zoom, never slide.
     let step = DOT_STEP;
     while (step * barSpace < MIN_DOT_GAP_PX) step *= 2;
-    ctx.lineWidth = 1.5;
+    // Filled selection dots shrink when zoomed out so they stay proportional
+    // to the candles rather than dominating a compressed bar.
+    const dotScale = Math.max(0.5, Math.min(1, barSpace / 8));
+    const dotR = DOT_RADIUS * dotScale;
+    ctx.lineWidth = 1.5 * dotScale;
     ctx.strokeStyle = line.color;
     ctx.fillStyle = fill;
     for (const p of coords) {
       if (Math.round(p.t / barMs) % step !== 0) continue;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, DOT_RADIUS, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, dotR, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }

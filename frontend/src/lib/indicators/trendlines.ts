@@ -2843,6 +2843,10 @@ function drawTrendlines(
       // Full strength even on a dimmed line: the mark is an event, and
       // dimming is about the line's standing, not whether the event happened.
       ctx.globalAlpha = 1;
+      // Filled crossing dots shrink when zoomed out so they stay proportional
+      // to the candles rather than dominating a compressed bar.
+      const crossScale = Math.max(0.5, Math.min(1, barPx > 0 ? barPx / 8 : 1));
+      const crossR = TL_CROSS_RADIUS * crossScale;
       // Side of the DRAWN segment, in pixels (y grows downward), so the
       // chosen candle is one whose close visibly sits across the line.
       const sideDrawn = (c: number): number => {
@@ -2857,7 +2861,7 @@ function drawTrendlines(
         if (xC < 0 || xC > Math.min(tagRight, x1) || yC < 0 || yC > bounding.height)
           continue;
         ctx.beginPath();
-        ctx.arc(xC, yC, TL_CROSS_RADIUS, 0, Math.PI * 2);
+        ctx.arc(xC, yC, crossR, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
