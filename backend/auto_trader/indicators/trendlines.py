@@ -344,6 +344,9 @@ def select_levels(
 ) -> list[TrendLine]:
     """Mirrors TS selectLevels, without the pin half (pins are draw-time UI).
 
+    The O(n^2) first-fit loop is deliberate: see the TS docstring before
+    replacing it, since both ports must stay value-identical.
+
     A LEVEL IS A MERGE GROUP, not a line: lines showing the same trend
     (same_trend at tol) are one level drawn from different anchors, and the
     level draws its LEADER, the best-ranked member, fixed by the pool alone.

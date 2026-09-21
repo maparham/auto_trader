@@ -1698,7 +1698,15 @@ export function trendlineGate(
  * will be 250 bars from now.
  *
  * A MERGED-AWAY LINE EMITS NOTHING. This runs before tl_1..tl_N are filled, so
- * a rule only ever reads a line that is on the chart. */
+ * a rule only ever reads a line that is on the chart.
+ *
+ * THE O(n^2) FIRST-FIT LOOP IS DELIBERATE. The pool is at most MAX_MAX_LINES
+ * (50) plus pins, and benchmarks put the merge below noise above Max Lines 3.
+ * Sub-quadratic options were weighed (2026-09-21) and rejected: a grid over a
+ * common right-hand sample bar changes the predicate; the exact version needs
+ * range-min structures in BOTH ports for golden parity; a KD-tree gives no
+ * worst-case bound. Revisit only if the pool cap reaches the hundreds and a
+ * benchmark shows the merge as the bottleneck. */
 export function selectLevels(
   pool: readonly TrendLine[],
   atIdx: number,
