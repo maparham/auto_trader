@@ -97,3 +97,21 @@ describe("a pinned MTF timeframe always shows", () => {
     expect(rowFor(trendlines(true)).calcParamsText).toBe("");
   });
 });
+
+// Several Trendlines instances share one look apart from their color, so the
+// legend name carries that color to tell them apart.
+describe("trendlines legend color", () => {
+  it("paints the name in the instance's line color", () => {
+    const t = trendlines(false);
+    const colored = { ...t, extendData: { ...t.extendData, lineColor: "#ff00aa" } };
+    expect(rowFor(colored).nameColor).toBe("#ff00aa");
+  });
+
+  it("falls back to the shared default color", () => {
+    expect(rowFor(trendlines(false)).nameColor).toBe("#3b82f6");
+  });
+
+  it("leaves other indicators on the theme text color", () => {
+    expect(rowFor(ema(false)).nameColor).toBeUndefined();
+  });
+});

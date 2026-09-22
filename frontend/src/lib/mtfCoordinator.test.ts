@@ -430,10 +430,15 @@ describe("applyTrendlinesTimeframe", () => {
     // The object's own key order IS the calcParams order here, so a param
     // inserted anywhere but the end would shift every slot after it and the
     // HTF pane would silently detect on the wrong settings.
-    expect(Object.values(TRENDLINES_DEFAULTS)).toHaveLength(19);
+    expect(Object.keys(TRENDLINES_DEFAULTS)).toHaveLength(27);
     expect(Object.values(TRENDLINES_DEFAULTS)[15]).toBe(0); // minCrossings
     expect(Object.values(TRENDLINES_DEFAULTS)[16]).toBe(0); // maxCrossings
     expect(Object.values(TRENDLINES_DEFAULTS)[17]).toBe(0.25); // pierceMult
+    // The slots parseTrendlinesConfig reads by literal index.
+    expect(Object.keys(TRENDLINES_DEFAULTS)[19]).toBe("maxDistAtr");
+    expect(Object.keys(TRENDLINES_DEFAULTS)[21]).toBe("mergeAtr");
+    expect(Object.keys(TRENDLINES_DEFAULTS)[22]).toBe("maxPerPivot");
+    expect(Object.keys(TRENDLINES_DEFAULTS)[26]).toBe("majorSizeAtr");
   });
 
   it("fetches the HTF candles on the PANE'S price side, not a hardcoded mid", async () => {

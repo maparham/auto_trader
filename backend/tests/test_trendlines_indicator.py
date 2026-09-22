@@ -629,11 +629,10 @@ def test_a_stale_line_does_not_hold_its_pivot_slots_against_a_drawable_one():
     assert select_levels(live, 100, 0.0, 1) == [a]
 
 
-def test_tightening_max_distance_never_promotes_a_line_the_cap_had_dropped():
+def test_tightening_max_distance_promotes_a_line_the_cap_had_dropped():
     """Mirrors the TS test. Cap 1 per pivot; A (0,40) outranks C (40,60) which
-    outranks D (60,90). The cap reads the POOL, which Max Distance never
-    touches, so tightening the cut onto A removes A and promotes nobody: the
-    price of relaxing the cut never taking C away."""
+    outranks D (60,90). The cap counts visible levels only, so tightening the
+    cut onto A removes A and promotes C; relaxing it takes C away again."""
     a, c_line, d = _cap_line(0, 40, 150.0, 5), _cap_line(40, 60, 100.0, 3), _cap_line(60, 90, 101.0, 2)
     wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5, max_lines=5)
     pool = pool_lines(poolable([d, c_line, a], 100, wide), wide.max_lines)
@@ -644,7 +643,20 @@ def test_tightening_max_distance_never_promotes_a_line_the_cap_had_dropped():
     tight = replace(wide, max_dist_atr=2)
     tight_tol = max_distance_tol(tight, 1.0, 100.0)
     assert select_levels(pool, 100, 0.0, 1,
-                         lambda l: trendline_gate(l, 100, 100.0, tight_tol, tight)) == []
+                         lambda l: trendline_gate(l, 100, 100.0, tight_tol, tight)) == [c_line]
+
+
+def test_filtered_out_level_holds_no_per_pivot_slot():
+    """A outranks B and shares its only bar, but A fails the gate, so B draws
+    at a cap of 1."""
+    a, b = _cap_line(0, 40, 150.0, 5), _cap_line(0, 40, 100.0, 2)
+    wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5, max_lines=5)
+    pool = pool_lines(poolable([b, a], 100, wide), wide.max_lines)
+    assert pool == [a, b]
+    tight = replace(wide, max_dist_atr=2)
+    tight_tol = max_distance_tol(tight, 1.0, 100.0)
+    assert select_levels(pool, 100, 0.0, 1,
+                         lambda l: trendline_gate(l, 100, 100.0, tight_tol, tight)) == [b]
 
 
 def replace_line(line: TrendLine, **over) -> TrendLine:

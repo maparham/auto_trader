@@ -1180,12 +1180,21 @@ export interface TrendlinesExtend {
    *
    * Render-only, like everything else in this block. */
   showLinePivots?: boolean;
+  /** DEBUG: write the number of competing levels at each pivot — how many
+   * gate-passing levels run through that bar, which is exactly what Max lines
+   * per pivot counts. OFF by default.
+   *
+   * A pivot showing fewer lines than its number is blocked by a level that is
+   * itself hidden at another pivot (or by a gate): the number is the counted
+   * depth, the marks are the visible survivors. Render-only, like the rest of
+   * this block. */
+  showPivotDepth?: boolean;
   /** A small cross on a drawn line at every bar whose close cut through it:
    * the same events Min/Max Crossings count and the end tag reports. ON by
    * default. Render-only. */
   showCrossings?: boolean;
   /** Write each drawn line's touch and crossing counts at its right end
-   * ("2 Pivots 5 Crossings"). ON by default. Render-only. */
+   * ("3 ○ 2 ●"). ON by default. Render-only. */
   showStats?: boolean;
   /** How faded a dimmed line paints, as a PERCENT of full opacity. Absent
    * takes TL_DIM_ALPHA. Governs every dim on the pane, whatever put a line
@@ -1387,6 +1396,9 @@ export interface TrendlineDedupe {
   perPivot?: number;
   /** The per-line filters for this bar (trendlineGate); absent = none. */
   pass?: (line: TrendLine) => boolean;
+  /** DEBUG: when given, filled with the pivot depths (pivotDepths) of this
+   * same selection, so the label counts exactly what the cap read. */
+  depthsOut?: Map<number, number>;
 }
 
 /** No pins: the emit step draws nothing and pins nothing. */
@@ -1528,13 +1540,15 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
  * in a fixed per-bar ordering cannot move when the cap changes, so raising
  * the cap can only turn "outside the top N" into "inside" and never back.
  *
- * THE POSITIONS IGNORE THE OTHER FILTERS, and that is the deliberate trade of
- * the pool-first pipeline: a level hidden by the major floors or by Max
- * Distance still holds its slot here. The alternative, counting only the
- * levels those gates let through, is exactly what makes RELAXING a gate
- * remove a line: a newly admitted level takes a position and pushes another
- * past the cap. One of the two has to give, and monotonicity is the one the
- * user can see.
+ * VISIBLE LINES ONLY. The positions are computed over the leaders that pass
+ * the per-line filters, so a filtered-out level never holds a slot. A pinned
+ * leader counts exactly when it passes them too, never merely for being
+ * pinned: the emit step knows nothing of pins, so a gate-failing pin holding
+ * a slot would cap a line off the chart that still emits its tl_k. A pin that
+ * fails the gate draws IN ADDITION, like every other pin. What you see is what is counted: at
+ * most `maxPerPivot` visible lines through any bar. The price is that relaxing
+ * a gate can now remove a line — a newly admitted level takes a position and
+ * can push another past the cap. That is the trade the label demands.
  *
  * A TOUCH COUNTS AS A PIVOT, not only an anchor, and this is most of what the
  * cap catches on a real chart. A strong swing is the second anchor of one line
@@ -1561,8 +1575,9 @@ export function levelPositions(
 
 /** THE LOWEST CAP THAT COULD EVER DRAW THIS LINE: the worst position its level
  * holds at any of the line's bars. A bar or level absent from the map counts
- * as first. It depends only on the pool and the grouping, never on the cap and
- * never on the other filters. Ported to Python as pivot_cap_needed. */
+ * as first. It depends on the pool, the grouping and the gate (positions are
+ * built over gate-passing leaders only), never on the cap itself. Ported to
+ * Python as pivot_cap_needed. */
 export function pivotCapNeeded(
   line: TrendLine,
   pos: ReadonlyMap<number, ReadonlyMap<number, number>>,
@@ -1580,13 +1595,15 @@ export function pivotCapNeeded(
  * the top of the rank order (rankLines) BEFORE any filter runs. Ported to
  * Python as pool_lines.
  *
- * THIS IS WHAT MAKES EVERY OTHER SETTING MONOTONE. A filter used to be a cut
+ * THIS IS WHAT KEEPS THE POOL STABLE. A filter used to be a cut
  * on a pool that the filters themselves had shaped, so relaxing one enlarged
  * the pool, re-ranked everything downstream and could REMOVE a line the user
  * was watching: measured over 1000 GOLD daily bars, relaxing Back Clearance
  * lost 9 levels, Min Swing 6, Max Crossings 6, Max Pierce 5. With the pool
- * fixed first, nothing new can enter when a filter is relaxed, so a filter can
- * only ever hand lines back.
+ * fixed first, nothing new can enter when a filter is relaxed. Each gate on
+ * its own then only hands lines back, but the visible-only per-pivot cap
+ * reintroduces one interaction: a newly admitted level can push another past
+ * the cap.
  *
  * THE PRICE IS MAX LINES ITSELF. It no longer means "show N lines" but
  * "consider N", so the pane usually shows fewer than N and raising it by one
@@ -1618,8 +1635,9 @@ export function pivotCapNeeded(
  *
  * THE PRICE is that these two settings shape the pool, so they keep the power
  * every setting used to have: relaxing one lets new lines in, which can push
- * another out of the top N. Every filter DOWNSTREAM of the pool is monotone;
- * these are not, and neither is Max Lines itself. */
+ * another out of the top N. The per-pivot cap counts visible lines only, so a
+ * gate it interacts with can do the same: relaxing one admits a level that can
+ * push another past the cap. Max Lines itself is not monotone either. */
 export function poolable(
   lines: readonly TrendLine[],
   i: number,
@@ -1643,8 +1661,10 @@ export function poolLines(
 /** THE PER-LINE FILTERS for one bar, as a predicate: the major floors and
  * ceilings (isMajor: touches, span, crossings, Max Touches, Max Span, Touch
  * Spacing) and Max Distance, which is a per-bar visibility cut that depends on
- * where price is today. Each one asks about ONE line and nothing else, so
- * tightening one can only remove lines and relaxing one can only add them. */
+ * where price is today. Each one asks about ONE line and nothing else, so on
+ * its own tightening one only removes and relaxing one only adds; combined
+ * with the visible-only per-pivot cap, a newly admitted level can still push
+ * another past the cap. */
 export function trendlineGate(
   i: number,
   close: number,
@@ -1656,6 +1676,55 @@ export function trendlineGate(
     isMajor(line, i, cfg) && (distTol === Infinity || withinDistance(line, i, close, distTol));
 }
 
+/** Group the pool into merge levels in rank order: each line joins the first
+ * level whose LEADER shows the same trend (sameTrend at `tol`), else starts
+ * one. Callers must hand in rank order (poolLines), since the first member of
+ * a group fixes its leader. Shared by selectLevels and pivotDepths so the
+ * debug number counts exactly what the cap reads. */
+function groupLevels(
+  pool: readonly TrendLine[],
+  atIdx: number,
+  tol: number,
+): { leaders: TrendLine[]; proj: number[] } {
+  // Groups in rank order, each compared against its LEADER: lines through one
+  // pivot agree exactly there and separate linearly, so a member within tol of
+  // the leader at atIdx is within tol of it throughout (see sameTrend).
+  const leaders: TrendLine[] = [];
+  const proj: number[] = [];
+  for (const line of pool) {
+    const p = projectAt(line, atIdx);
+    const at =
+      tol > 0
+        ? leaders.findIndex(
+            (g, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(g, line, atIdx, tol),
+          )
+        : -1;
+    if (at < 0) {
+      leaders.push(line);
+      proj.push(p);
+    }
+  }
+  return { leaders, proj };
+}
+
+/** DEBUG: how many counted levels run through each bar — the per-bar depth
+ * the per-pivot cap reads. Same grouping and same gate filter as
+ * selectLevels (pins count only when they pass the gate), so a pivot's number and its surviving marks can only
+ * differ by levels hidden at OTHER bars (capped out elsewhere): that gap is
+ * the whole point of the label. Bars no counted level touches are absent.
+ *
+ * `pool` must be rank order, as poolLines returns. Render-only debugging;
+ * no Python twin. */
+export function pivotDepths(
+  pool: readonly TrendLine[],
+  atIdx: number,
+  tol: number,
+  pass?: (line: TrendLine) => boolean,
+): Map<number, number> {
+  const depths = new Map<number, number>();
+  selectLevels(pool, atIdx, tol, 0, pass, undefined, depths);
+  return depths;
+}
 /** THE LEVELS a bar draws: the POOL grouped into levels by the merge, each
  * level represented by its best-ranked member, then cut by the per-pivot cap
  * and by the per-line filters. Ported to Python as select_levels.
@@ -1673,9 +1742,11 @@ export function trendlineGate(
  * whose leader fails a filter is gone for the bar even when a weaker member of
  * it would have passed.
  *
- * ORDER DOES NOT MATTER inside this function: the grouping, the positions and
- * the gate each read the pool and nothing else, so they could run in any
- * order. That is the property the whole pipeline is built for.
+ * ORDER MATTERS for gate vs cap: the grouping reads the pool alone, but the
+ * cap positions are built over gate-passing leaders only, so the gate runs
+ * first. A filtered-out level holds no slot; relaxing a gate can therefore
+ * promote nobody or remove somebody, and tightening one can promote a line
+ * the cap had dropped.
  *
  * PINS ARE NOT LEADERS. A pinned line draws IN ADDITION, never in place of its
  * level's leader, so the emit step (which knows nothing of pins) and the draw
@@ -1714,32 +1785,28 @@ export function selectLevels(
   maxPerPivot: number,
   pass?: (line: TrendLine) => boolean,
   keep?: ReadonlySet<TrendLine>,
+  depthsOut?: Map<number, number>,
 ): TrendLine[] {
-  // Groups in rank order, each compared against its LEADER: lines through one
-  // pivot agree exactly there and separate linearly, so a member within tol of
-  // the leader at atIdx is within tol of it throughout (see sameTrend).
-  const leaders: TrendLine[] = [];
-  const proj: number[] = [];
-  for (const line of pool) {
-    const p = projectAt(line, atIdx);
-    const at =
-      tol > 0
-        ? leaders.findIndex(
-            (g, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(g, line, atIdx, tol),
-          )
-        : -1;
-    if (at < 0) {
-      leaders.push(line);
-      proj.push(p);
-    }
-  }
-  const pos = maxPerPivot >= 1 ? levelPositions(leaders) : null;
+  const { leaders } = groupLevels(pool, atIdx, tol);
+  // Gate-passing leaders only, pins included only when they pass: the emit
+  // step runs this with no pins, and the drawn set minus pins must equal it.
+  const counted = pass ? leaders.filter(pass) : leaders;
+  const countedIdx = new Map<TrendLine, number>();
+  counted.forEach((l, i) => countedIdx.set(l, i));
+  const pos = maxPerPivot >= 1 || depthsOut ? levelPositions(counted) : null;
+  if (depthsOut && pos) for (const [b, m] of pos) depthsOut.set(b, m.size);
+  const capPos = maxPerPivot >= 1 ? pos : null;
   const out = new Set<TrendLine>();
-  leaders.forEach((leader, idx) => {
-    if (pos && pivotCapNeeded(leader, pos, idx) > maxPerPivot) return;
-    if (pass && !pass(leader)) return;
+  for (const leader of leaders) {
+    if (keep?.has(leader)) {
+      out.add(leader);
+      continue;
+    }
+    if (pass && !pass(leader)) continue;
+    const idx = countedIdx.get(leader);
+    if (capPos && idx !== undefined && pivotCapNeeded(leader, capPos, idx) > maxPerPivot) continue;
     out.add(leader);
-  });
+  }
   // A pin survives the cap, the merge and the filters alike: its handle is the
   // only control that can release it.
   if (keep) for (const l of pool) if (keep.has(l)) out.add(l);
@@ -1781,7 +1848,15 @@ export function selectDrawnLines(
   void close;
   const pool = poolLines(lines, maxLines, dedupe?.keep);
   if (!dedupe) return pool;
-  return selectLevels(pool, atIdx, dedupe.tol, dedupe.perPivot ?? 0, dedupe.pass, dedupe.keep);
+  return selectLevels(
+    pool,
+    atIdx,
+    dedupe.tol,
+    dedupe.perPivot ?? 0,
+    dedupe.pass,
+    dedupe.keep,
+    dedupe.depthsOut,
+  );
 }
 
 
@@ -2549,6 +2624,56 @@ function paintPivotMarks(
   ctx.restore();
 }
 
+/** DEBUG painter for pivotDepths: a tiny count beside every pivot at least
+ * one counted level runs through. The number is the depth the per-pivot cap
+ * reads; the marks beside it are the visible survivors. Where the two
+ * disagree, the gap is levels hidden at OTHER bars (capped out elsewhere) —
+ * that gap is the whole point of the label. Clipped to the pane like the
+ * marks; skipped where the pivot itself is off-pane. */
+function paintPivotDepths(
+  ctx: CanvasRenderingContext2D,
+  pivots: TrendPivots,
+  xAt: (j: number, kind: PivotKind) => number,
+  yOf: (price: number) => number,
+  right: number,
+  height: number,
+  depths: ReadonlyMap<number, number>,
+  lineColor: string,
+): void {
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.rect(0, 0, right, height);
+  ctx.clip();
+  ctx.font = "9px sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = lineColor;
+  for (let q = 0; q < pivots.idxs.length; q++) {
+    const idx = pivots.idxs[q];
+    const d = depths.get(idx) ?? 0;
+    if (d < 1) continue;
+    const kind = pivots.kinds[q];
+    const dir = kind === "low" ? 1 : -1;
+    const x = xAt(idx, kind);
+    if (x < -20) continue;
+    if (x > right + 20) break;
+    const y = yOf(pivotPriceAt(pivots, q));
+    if (y < 0 || y > height) continue;
+    // Past the longest mark (the stemmed arrow), so the number never sits on
+    // a glyph whatever the mark settings are.
+    // Clamped, not dropped: the pane's extreme pivot sits at the edge on an
+    // autoscaled chart, and that is exactly the one the user is inspecting.
+    const yText = Math.min(
+      height - 5,
+      Math.max(5, y + dir * (TL_PIVOT_USED_GAP + TL_PIVOT_ARM + TL_PIVOT_STEM + 2)),
+    );
+    ctx.fillText(String(d), x + 4, yText);
+  }
+  ctx.restore();
+}
+
 function drawTrendlines(
   params: IndicatorDrawParams<TrendlinesCalcPoint, unknown, unknown>,
 ): boolean {
@@ -2615,7 +2740,8 @@ function drawTrendlines(
   const showLineUsed = ext?.showLinePivots ?? TRENDLINES_EXTEND_DEFAULTS.showLinePivots;
   const showStats = ext?.showStats ?? TRENDLINES_EXTEND_DEFAULTS.showStats;
   const showCrossings = ext?.showCrossings ?? TRENDLINES_EXTEND_DEFAULTS.showCrossings;
-  const paintMarks = (used: ReadonlySet<number>): void => {
+  const showDepth = ext?.showPivotDepth ?? TRENDLINES_EXTEND_DEFAULTS.showPivotDepth;
+  const paintMarks = (used: ReadonlySet<number>, depths: ReadonlyMap<number, number> | null): void => {
     if ((showAll || showLineUsed) && last?.pivots)
       paintPivotMarks(
         ctx,
@@ -2629,10 +2755,21 @@ function drawTrendlines(
         showLineUsed,
         lineColor,
       );
+    if (showDepth && depths && depths.size && last?.pivots)
+      paintPivotDepths(
+        ctx,
+        last.pivots,
+        xAtPivot,
+        (price) => yAxis.convertToPixel(price),
+        tagRight,
+        bounding.height,
+        depths,
+        lineColor,
+      );
   };
   const NO_PIVOTS_USED: ReadonlySet<number> = new Set<number>();
   if (!last?.lines?.length) {
-    paintMarks(NO_PIVOTS_USED);
+    paintMarks(NO_PIVOTS_USED, null);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
     return true;
   }
@@ -2640,7 +2777,7 @@ function drawTrendlines(
   // Under a pin, no HTF bar has closed inside the loaded window yet: there is
   // nothing to measure the lines at, so draw none rather than measure at -1.
   if (lastIdx < 0) {
-    paintMarks(NO_PIVOTS_USED);
+    paintMarks(NO_PIVOTS_USED, null);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
     return true;
   }
@@ -2690,16 +2827,20 @@ function drawTrendlines(
   const pinnedLines = new Set(
     pins.size ? last.lines.filter((l) => pins.has(lineKey(l, dataList, starts))) : [],
   );
-  // The same pool, tolerance, cap and gate the emit step used on this bar, so
-  // the drawn set is the emitted set (plus pins).
+  // The same call, pool, tolerance, cap and gate the emit step used on this
+  // bar, so the drawn set is the emitted set (plus pins). The debug depths
+  // come out of the same selection, so the number counts exactly what the
+  // cap read.
+  const depths = showDepth ? new Map<number, number>() : null;
   const drawn = selectDrawnLines(poolable(last.lines, lastIdx, cfg), lastIdx, lastClose, cfg.maxLines, {
     tol: mergeTolerance(cfg, last.atr, lastClose),
     keep: pinnedLines,
     perPivot: cfg.maxPerPivot,
     pass: trendlineGate(lastIdx, lastClose, last.atr, cfg),
+    depthsOut: depths ?? undefined,
   });
   if (!drawn.length) {
-    paintMarks(NO_PIVOTS_USED);
+    paintMarks(NO_PIVOTS_USED, depths);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
     return true;
   }
@@ -2722,7 +2863,7 @@ function drawTrendlines(
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
   // End tags already painted on this canvas, so two lines converging on the
-  // right edge do not print "3 Pivots" on top of "3 Pivots": a tag that would
+  // right edge do not print "3 ○" on top of "3 ○": a tag that would
   // land on an earlier one is pushed down a line at a time until it is clear.
   // Shared across instances (Trendlines(1D) and Trendlines(4H) draw in
   // separate passes on the same context), see paneTags.
@@ -2970,7 +3111,7 @@ function drawTrendlines(
   // Last, so the marks sit over the strokes, and keyed on the set the pane
   // actually drew, not on the pool, which still holds the lines the merge,
   // the cap and the filters threw away.
-  paintMarks(drawnPivotIdxs(drawn));
+  paintMarks(drawnPivotIdxs(drawn), depths);
   setTrendlineHandles(chart, indicator.paneId, indicator.name, handles);
   return true;
 }
@@ -3029,14 +3170,14 @@ export function clearTagRow(
   return y;
 }
 
-/** The stats tag at a line's right end, spelled out in words: "2 Pivots",
- * "2 Pivots 5 Crossings". A count of one drops the plural. Crossings are
- * omitted at zero, since most lines have none and the tag would just repeat
- * itself down the pane. */
+/** The stats tag at a line's right end, as compact counts with the same
+ * markers the chart paints: "3 ○" (pivots, hollow rings), "3 ○ 2 ●"
+ * (plus crossings, filled dots). Crossings are omitted at zero, since
+ * most lines have none and the tag would just repeat itself down the pane. */
 export function trendlineStatsLabel(touches: number, crossings: number): string {
-  const p = `${touches} ${touches === 1 ? "Pivot" : "Pivots"}`;
+  const p = `${touches} ○`;
   if (crossings <= 0) return p;
-  return `${p} ${crossings} ${crossings === 1 ? "Crossing" : "Crossings"}`;
+  return `${p} ${crossings} ●`;
 }
 
 const TL_CALC_SESSIONS = new WeakMap<Indicator, TrendlinesSession>();
@@ -3066,6 +3207,11 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     const mtf = ext?.mtf;
     if (mtf?.timeframe && mtf.htfStarts?.length && mtf.htfMs)
       return alignMtfTrendlines(dataList, mtf);
+    // A pin whose HTF stash has not landed (a fresh mount, a tab switch, a
+    // failed fetch awaiting retry) emits nothing. Falling through to the
+    // detector here painted chart-timeframe lines under the pin's label for
+    // the moment until the stash arrived, and fed them to operands.
+    if (mtf?.timeframe) return dataList.map(() => ({}));
     // One session per indicator instance (klinecharts passes the same object
     // to every calc), so per-tick recalcs re-run only the forming bar. The
     // WeakMap lets a removed indicator's cache be collected with it.

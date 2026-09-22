@@ -25,7 +25,7 @@ describe("clearTagRow", () => {
   });
 
   it("still spells the tag", () => {
-    expect(trendlineStatsLabel(3, 1)).toBe("3 Pivots 1 Crossing");
+    expect(trendlineStatsLabel(3, 1)).toBe("3 ○ 1 ●");
   });
 });
 

@@ -41,6 +41,7 @@ import {
   poolable,
   trendlineGate,
   selectLevels,
+  pivotDepths,
   mergeTolerance,
   maxDistanceTol,
   sameTrend,
@@ -59,6 +60,7 @@ import {
   TRENDLINES_TEMPLATE,
   type TrendlinesCalcPoint,
   type TrendLine,
+  type PivotKind,
 } from "./trendlines";
 import {
   MAX_LIVE_MULT,
@@ -1137,12 +1139,12 @@ describe("selectDrawnLines", () => {
     expect(live).toEqual([a, d]);
     expect(selectLevels(live, 100, 0, 1)).toEqual([a]);
   });
-  // THE FILTERS DO NOT MOVE THE POSITIONS. A (bars 0,40) outranks C (40,60)
-  // which outranks D (60,90); a cap of 1 leaves A alone. Tightening Max
-  // Distance onto A removes A and does NOT promote C into the slot it left:
-  // the cap reads the POOL, which the cut never touched. That is the price of
-  // the other direction, where relaxing the cut would otherwise take C away.
-  it("tightening Max Distance never promotes a line the cap had dropped", () => {
+  // VISIBLE LINES ONLY. A (bars 0,40) outranks C (40,60) which outranks D
+  // (60,90); a cap of 1 leaves A alone. Tightening Max Distance onto A removes
+  // A and promotes C into the slot it left: the cap counts only gate-passing
+  // levels. The price is the other direction, where relaxing the cut takes C
+  // away again.
+  it("tightening Max Distance promotes a line the cap had dropped", () => {
     const a = mk(0, 40, 150, 150, 5);
     const c = mk(40, 60, 100, 100, 3);
     const d = mk(60, 90, 101, 101, 2);
@@ -1151,7 +1153,78 @@ describe("selectDrawnLines", () => {
     expect(pool).toEqual([a, c, d]);
     expect(selectLevels(pool, 100, 0, 1, trendlineGate(100, 100, 1, wide))).toEqual([a]);
     const tight = { ...wide, maxDistAtr: 2 };
-    expect(selectLevels(pool, 100, 0, 1, trendlineGate(100, 100, 1, tight))).toEqual([]);
+    expect(selectLevels(pool, 100, 0, 1, trendlineGate(100, 100, 1, tight))).toEqual([c]);
+  });
+  it("a filtered-out level holds no per-pivot slot", () => {
+    // A outranks B and shares its only bar, but A fails the gate, so B draws
+    // at a cap of 1. Under pool-counting B would need a cap of 2.
+    const a = mk(0, 40, 150, 150, 5);
+    const b = mk(0, 40, 100, 100, 2);
+    const wide = cfg({ maxPerPivot: 1, maxDistAtr: 0, maxLines: 5 });
+    const pool = poolLines([b, a], wide.maxLines);
+    expect(pool).toEqual([a, b]);
+    const tight = { ...wide, maxDistAtr: 2 };
+    expect(selectLevels(pool, 100, 0, 1, trendlineGate(100, 100, 1, tight))).toEqual([b]);
+  });
+  it("a pinned level that fails the gate holds no slot either", () => {
+    // Pinning A keeps it on the chart, but the emit step knows nothing of
+    // pins and emits B. If the pin held A's slot, B would be capped off the
+    // chart while still emitting: the drawn set minus pins must equal the
+    // emitted set.
+    const a = mk(0, 40, 150, 150, 5);
+    const b = mk(0, 40, 100, 100, 2);
+    const tight = cfg({ maxPerPivot: 1, maxDistAtr: 2, maxLines: 5 });
+    const pool = poolLines([b, a], tight.maxLines);
+    const gate = trendlineGate(100, 100, 1, tight);
+    const emitted = selectLevels(pool, 100, 0, 1, gate);
+    expect(emitted).toEqual([b]);
+    const drawn = selectLevels(pool, 100, 0, 1, gate, new Set([a]));
+    expect(drawn).toEqual([a, b]);
+    expect(drawn.filter((l) => l !== a)).toEqual(emitted);
+    expect(pivotDepths(pool, 100, 0, gate).get(40)).toBe(1);
+  });
+  describe("pivotDepths", () => {
+    // The debug number counts what the cap reads: gate-passing levels only,
+    // one slot per level no matter how many members it merged.
+    it("counts counted levels per bar, and nothing else", () => {
+      const a = mk(0, 40, 150, 150, 5);
+      const c = mk(40, 60, 100, 100, 3);
+      const d = mk(60, 90, 101, 101, 2);
+      const wide = cfg({ maxPerPivot: 1, maxDistAtr: 0, maxLines: 5 });
+      const pool = poolLines([d, c, a], wide.maxLines);
+      const pass = trendlineGate(100, 100, 1, wide);
+      const depths = pivotDepths(pool, 100, 0, pass);
+      // Bar 40 carries A and C; bar 60 carries C and D; the anchors stand alone.
+      expect(depths.get(0)).toBe(1);
+      expect(depths.get(40)).toBe(2);
+      expect(depths.get(60)).toBe(2);
+      expect(depths.get(90)).toBe(1);
+      expect(depths.has(100)).toBe(false);
+    });
+    it("a filtered-out level leaves no depth behind", () => {
+      const a = mk(0, 40, 150, 150, 5);
+      const b = mk(0, 40, 100, 100, 2);
+      const wide = cfg({ maxPerPivot: 1, maxDistAtr: 0, maxLines: 5 });
+      const pool = poolLines([b, a], wide.maxLines);
+      const tight = { ...wide, maxDistAtr: 2 };
+      const depths = pivotDepths(pool, 100, 0, trendlineGate(100, 100, 1, tight));
+      expect(depths.get(0)).toBe(1);
+      expect(depths.get(40)).toBe(1);
+    });
+    it("a merged-away member adds no depth of its own", () => {
+      // Twin of mid within tolerance: one level, so depth 1 at the shared bars
+      // even though two lines run through them.
+      const twin = { ...mid, i1: 0, p1: 90, i2: 40, p2: 90.5, touches: 3 };
+      const pool = poolLines([twin, mid, strong], 3);
+      const depths = pivotDepths(pool, 50, 1);
+      expect(depths.get(0)).toBe(2);
+      expect(depths.get(40)).toBe(2);
+    });
+    it("a bar named twice by one line counts once", () => {
+      const twice: TrendLine = { ...strong, touchIdxs: [0, 40, 40], touchKinds: ["low", "low", "low"] };
+      const pool = poolLines([twice], 3);
+      expect(pivotDepths(pool, 50, 0).get(40)).toBe(1);
+    });
   });
   it("merges near-twins through a shared pivot before the budget", () => {
     const twin = { ...mid, i1: 0, p1: 90, i2: 40, p2: 90.5, touches: 3 };
@@ -2168,7 +2241,7 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
       3,
       null,
     );
-    expect(tags.map((t) => t.text)).toEqual(drawn.map((l) => `${l.touches} Pivots`));
+    expect(tags.map((t) => t.text)).toEqual(drawn.map((l) => `${l.touches} ○`));
   });
 
   it("adds the crossings count to the label once a line has been crossed", () => {
@@ -2192,7 +2265,7 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     const idx = drawn.indexOf(line!);
     expect(idx).toBeGreaterThanOrEqual(0);
     const { tags } = record(b, params(1));
-    expect(tags[idx].text).toBe("2 Pivots 2 Crossings");
+    expect(tags[idx].text).toBe("2 ○ 2 ●");
   });
 
   it("draws no stats tag when showStats is off", () => {
@@ -2228,7 +2301,7 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     const { tags } = record(b, gapParams);
     // The corridor dips below the line and comes back, so the tag carries the
     // crossings too; the point here is the FRACTION.
-    expect(tags[idx].text).toBe("2.5 Pivots 2 Crossings");
+    expect(tags[idx].text).toBe("2.5 ○ 2 ●");
   });
 });
 
@@ -2877,6 +2950,62 @@ describe("TRENDLINES line-pivot marks", () => {
     // Show pivots still paints its own, unchanged: the two settings are
     // independent, and an empty used set cannot subtract from it.
     expect(paint(NO_LINES, true, true)).toEqual(paint(NO_LINES, true, false));
+  });
+});
+
+// "Show pivot depth": the debugging number beside each contested pivot —
+// what Max lines per pivot counts, next to what survived it.
+describe("TRENDLINES pivot depth labels", () => {
+  const bars = (): KLineData[] => {
+    const out = flat(80);
+    out[20] = bar(20, 90, 100.5);
+    out[40] = bar(40, 94, 100.5);
+    out[60] = bar(60, 96, 100.5);
+    return out;
+  };
+  const view: View = {
+    width: 900,
+    height: 400,
+    axis: 60,
+    toX: (i) => i * 10,
+    toY: (p) => (110 - p) * 15 + 40,
+  };
+  const LINES = [2, 0.75, 2, 5, 250, 3];
+  const tags = (depth: boolean | "default"): Tag[] =>
+    record(
+      bars(),
+      LINES,
+      undefined,
+      view,
+      undefined,
+      false,
+      false,
+      undefined,
+      undefined,
+      false,
+      false,
+      false,
+      undefined,
+      depth === "default" ? {} : { showPivotDepth: depth },
+    ).tags;
+  // Depth labels are bare numbers; the ×N stats tags always carry glyphs.
+  const bare = (ts: Tag[]): Tag[] => ts.filter((t) => /^\d+$/.test(t.text));
+
+  it("is off unless switched on: absent key paints no numbers", () => {
+    expect(bare(tags(false))).toHaveLength(0);
+    expect(bare(tags("default"))).toHaveLength(0);
+  });
+
+  it("writes the counted depth beside each contested pivot", () => {
+    const numbered = bare(tags(true));
+    expect(numbered.length).toBeGreaterThan(0);
+    // Every number stands just right of a real pivot bar's mark.
+    const pv = computeTrendlines(bars(), parseTrendlinesConfig(LINES)).pivots;
+    const xs = new Set(pv.idxs.map((i) => view.toX(i)));
+    for (const t of numbered) {
+      expect([...xs].some((x) => Math.abs(x + 4 - t.x) < 1e-6)).toBe(true);
+      expect(Number(t.text)).toBeGreaterThanOrEqual(1);
+    }
   });
 });
 

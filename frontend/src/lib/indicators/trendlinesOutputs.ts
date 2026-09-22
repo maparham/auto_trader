@@ -207,6 +207,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
   showLinePivots: true,
   showCrossings: true,
   showStats: true,
+  showPivotDepth: false,
 } as const;
 
 /** calcParams order: [pivotLen, touchMult, minTouches, minSpanBars,

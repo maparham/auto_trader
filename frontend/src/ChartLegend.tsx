@@ -40,6 +40,7 @@ import {
   legendPrecisionOf,
 } from "./lib/indicators/inset";
 import { periodByResolution } from "./lib/feed";
+import { trendlineStyleOf, type TrendlinesExtend } from "./lib/indicators/trendlines";
 import { fmtPrice } from "./lib/priceFormat";
 
 const UP = "#26a69a";
@@ -70,6 +71,10 @@ export interface LegendRow {
   // A dimmed summary shown after the name (PREV_HL lookbacks, e.g. "1 day, since …").
   // Absent when off or empty.
   summary?: string;
+  // Paints the name(params) in the indicator's own draw color. Set only for types
+  // with no figure readouts to carry a color (TRENDLINES), so several instances on
+  // one chart can be told apart. Absent = the theme's legend text color.
+  nameColor?: string;
 }
 
 // One sub-pane's legend: its paneId, its indicator rows, and the y-pixel (relative
@@ -701,7 +706,7 @@ function IndicatorRow({
       onClick={() => onSelectRow(row.name)}
       onDoubleClick={() => onOpenSettings(row.name)}
     >
-      <span className="cl-name">
+      <span className="cl-name" style={row.nameColor ? { color: row.nameColor } : undefined}>
         {row.shortName}
         {row.calcParamsText}
       </span>
@@ -1119,6 +1124,10 @@ function rowsForPane(
       warn,
       summary,
       indType,
+      nameColor:
+        indType === "TRENDLINES"
+          ? trendlineStyleOf(ind.extendData as TrendlinesExtend | undefined).color
+          : undefined,
     });
   }
   return rows;
@@ -1132,7 +1141,7 @@ function rowsSig(rows: LegendRow[]): string {
       (r) =>
         `${r.name}:${r.shortName}${r.calcParamsText}:${r.visible ? 1 : 0}:${r.hideValue ? 1 : 0}:${
           r.warn ?? ""
-        }:${r.summary ?? ""}:${r.figures.map((f) => f.key + f.title + f.color).join(",")}`,
+        }:${r.summary ?? ""}:${r.nameColor ?? ""}:${r.figures.map((f) => f.key + f.title + f.color).join(",")}`,
     )
     .join("|");
 }

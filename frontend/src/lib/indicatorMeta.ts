@@ -1000,6 +1000,20 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        key: "showPivotDepth",
+        label: "Show pivot depth",
+        type: "boolean",
+        source: "extend",
+        field: "showPivotDepth",
+        tab: "style",
+        group: "pivotMarks",
+        default: TRENDLINES_EXTEND_DEFAULTS.showPivotDepth,
+        tip: [
+          "Writes the number of competing levels at each pivot: what Max lines per pivot counts.",
+          "Debug helper: a pivot showing fewer lines than its number is blocked by a level hidden at another pivot.",
+        ],
+      },
+      {
         key: "showCrossings",
         label: "Mark crossings",
         type: "boolean",

@@ -3119,7 +3119,10 @@ function IndicatorSettingsForm({
                   {groupInputs(inputs.filter((inp) => inp.tab === "style")).map((chunk) => (
                     <Fragment key={chunk[0].key}>
                       {chunk[0].section && <div className="ind-group">{chunk[0].section}</div>}
-                      {chunk.length === 2 && chunk[0].type === "boolean" ? (
+                      {/* Any run of CHECKBOXES shares the beside-the-box row;
+                          any other chunk renders one row per input so a mixed
+                          group never drops its tail. */}
+                      {chunk.length > 1 && chunk.every((inp) => inp.type === "boolean") ? (
                         <div className="ind-pair2-bool">
                           {chunk.map((inp) => (
                             <div className="ind-field" key={inp.key}>
@@ -3129,10 +3132,12 @@ function IndicatorSettingsForm({
                           ))}
                         </div>
                       ) : (
-                        <div className={chunk[0].wide ? "ind-row" : "ind-row ind-row-cols"}>
-                          {labelFor(chunk[0])}
-                          {controlFor(chunk[0])}
-                        </div>
+                        chunk.map((inp) => (
+                          <div key={inp.key} className={inp.wide ? "ind-row" : "ind-row ind-row-cols"}>
+                            {labelFor(inp)}
+                            {controlFor(inp)}
+                          </div>
+                        ))
                       )}
                     </Fragment>
                   ))}

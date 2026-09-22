@@ -176,14 +176,16 @@ describe("TRENDLINES_TEMPLATE.calc under a pin", () => {
     expect(out[out.length - 1].tl_1).toBe(96); // HTF bar 8
   });
 
-  it("ignores a stash with no series behind it", () => {
-    // A pin whose fetch has not landed yet stores the timeframe alone. Falling
-    // through to the chart-TF detector is what keeps the pane painted meanwhile.
+  it("emits nothing while the pin's stash has not landed", () => {
+    // A pin whose fetch has not landed yet stores the timeframe alone. Running
+    // the chart-TF detector meanwhile flashed a pane of chart-timeframe lines
+    // under the pin's label on every tab switch, gone once the stash arrived.
     const out = TRENDLINES_TEMPLATE.calc!(chartBars(), {
       calcParams: PARAMS,
       extendData: { mtf: { timeframe: "HOUR" } },
     } as never) as TrendlinesCalcPoint[];
-    expect(out[out.length - 1].lineIdx).toBe(39);
+    expect(out).toHaveLength(40);
+    expect(out.every((r) => Object.keys(r).length === 0)).toBe(true);
   });
 });
 

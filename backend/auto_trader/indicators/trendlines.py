@@ -294,8 +294,8 @@ def pivot_cap_needed(
 ) -> int:
     """Mirrors TS pivotCapNeeded: the worst position the line's LEVEL holds at
     any of the line's bars, i.e. the lowest cap that could ever draw it.
-    Depends only on the pool and the grouping, never on the cap and never on
-    the other filters."""
+    Positions are built over gate-passing leaders only, so this depends on
+    the pool, the grouping and the gate, never on the cap itself."""
     worst = 1
     for b in line.touch_idxs:
         at = pos.get(b, {}).get(level, 1)
@@ -316,8 +316,9 @@ def poolable(pool: list[TrendLine], i: int, cfg: TrendlinesConfig) -> list[Trend
 def pool_lines(lines: list[TrendLine], max_lines: int) -> list[TrendLine]:
     """Mirrors TS poolLines (without the pin half, which is draw-time UI): Max
     Lines read as HOW MANY TRENDLINES TO CONSIDER, taken off the top of the
-    rank order BEFORE any filter runs. A filter can then only ever remove from
-    a fixed pool, so relaxing one cannot take a line away."""
+    rank order BEFORE any filter runs. Each gate on its own only ever removes,
+    but the per-pivot cap counts visible lines only, so relaxing a gate can
+    admit a level that pushes another past the cap."""
     ranked = sorted(lines, key=rank_key)
     if not max_lines > 0 or len(ranked) <= max_lines:
         return ranked
@@ -328,8 +329,10 @@ def trendline_gate(
     line: TrendLine, i: int, close: float, dist_tol: float, cfg: TrendlinesConfig
 ) -> bool:
     """Mirrors TS trendlineGate: the per-line filters for one bar, the major
-    floors and ceilings plus Max Distance. Each asks about ONE line, so
-    tightening one only removes and relaxing one only adds."""
+    floors and ceilings plus Max Distance. Each asks about ONE line, so on its
+    own tightening one only removes and relaxing one only adds; combined with
+    the visible-only per-pivot cap, a newly admitted level can still push
+    another past the cap."""
     if not is_major(line, i, cfg):
         return False
     return dist_tol == math.inf or within_distance(line, i, close, dist_tol)
@@ -351,8 +354,9 @@ def select_levels(
     (same_trend at tol) are one level drawn from different anchors, and the
     level draws its LEADER, the best-ranked member, fixed by the pool alone.
     Nothing substitutes for anything, so no setting can swap the anchors of a
-    line already on the chart. The grouping, the positions and the gate each
-    read the pool and nothing else."""
+    line already on the chart. VISIBLE LINES ONLY: the cap positions are built
+    over gate-passing leaders, so a filtered-out level holds no slot and the
+    gate runs before the cap."""
     leaders: list[TrendLine] = []
     proj: list[float] = []
     for line in pool:
@@ -366,12 +370,15 @@ def select_levels(
         if at < 0:
             leaders.append(line)
             proj.append(p)
-    pos = level_positions(leaders) if max_per_pivot >= 1 else None
+    counted: list[TrendLine] = [line for line in leaders if passes is None or passes(line)]
+    counted_idx: dict[int, int] = {id(line): i for i, line in enumerate(counted)}
+    pos = level_positions(counted) if max_per_pivot >= 1 else None
     out: list[TrendLine] = []
-    for idx, leader in enumerate(leaders):
-        if pos is not None and pivot_cap_needed(leader, pos, idx) > max_per_pivot:
-            continue
+    for leader in leaders:
         if passes is not None and not passes(leader):
+            continue
+        idx = counted_idx.get(id(leader))
+        if pos is not None and idx is not None and pivot_cap_needed(leader, pos, idx) > max_per_pivot:
             continue
         out.append(leader)
     out.sort(key=rank_key)

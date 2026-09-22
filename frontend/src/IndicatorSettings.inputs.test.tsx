@@ -467,3 +467,28 @@ describe("number boxes", () => {
     expect(document.activeElement).not.toBe(box);
   });
 });
+
+describe("Style tab pivot-mark toggles", () => {
+  // THE BUG THIS PINS: the Style tab's checkbox row only matched a PAIR of
+  // booleans and rendered chunk[0] otherwise, so growing the pivotMarks group
+  // to three (Show pivot depth) dropped both Mark line pivots and the new
+  // toggle: the Style tab showed Show pivots solo and the depth numbers had
+  // no switch to turn them on.
+  function openStyle(extendData: object = {}) {
+    const rec = openRecording(extendData);
+    fireEvent.click(screen.getByRole("button", { name: "Style" }));
+    return rec;
+  }
+
+  it("shows all three pivot-mark checkboxes", () => {
+    openStyle();
+    for (const label of ["Show pivots", "Mark line pivots", "Show pivot depth"])
+      expect(screen.getByLabelText(label)).toBeTruthy();
+  });
+
+  it("ticking Show pivot depth writes the flag to extendData", () => {
+    const { writes } = openStyle();
+    fireEvent.click(screen.getByLabelText("Show pivot depth") as HTMLInputElement);
+    expect(writes.some((w) => w.showPivotDepth === true)).toBe(true);
+  });
+});
