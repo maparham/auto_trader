@@ -8,10 +8,11 @@ import { seedSingleChartDefault, stubStateApi } from "./helpers";
 //
 // Limits of what headless can assert: the time axis, the crosshair label and the
 // OHLC tooltip are painted on CANVAS, so the "no absolute date anywhere" claim is
-// only checkable here for the DOM chrome (the pill readout, and the withdrawal of
-// the quick-range bar). The canvas side is covered by the masked-formatter unit
-// tests (src/lib/timeFormat.test.ts, and src/lib/replayFormat.test.ts for the
-// masked/real pairing) plus manual verification.
+// only checkable here for the DOM chrome (the withdrawal of the quick-range
+// bar). The pill itself is controls-only with no date label. The canvas side is
+// covered by the masked-formatter unit tests (src/lib/timeFormat.test.ts, and
+// src/lib/replayFormat.test.ts for the masked/real pairing) plus manual
+// verification.
 
 // Real backend + a real candle fetch, plus a full reload mid-test, does not fit
 // the config's 30s default. Spec-local so the shared config stays untouched.
@@ -61,18 +62,13 @@ test("chart replay: jump, step, mask, persist, exit", async ({ page }) => {
   const pill = page.locator(".replay-pill");
   await pill.waitFor({ timeout: 30000 });
 
-  // The readout is masked: a relative day, never a real date.
-  //
-  // BOTH halves, the way the reveal-range assertion below already does it. The
-  // positive alone is worthless here: Playwright's toHaveText matches a regex
-  // PARTIALLY, so a start-anchored /^Day -?\d+/ passes just as happily on
-  // "Day 4 2026-08-10 09:30" — a readout carrying the real date is the single
-  // DOM surface this spec exists to guard, and it would sail through. The
-  // negative is what actually holds the line: no four-digit year, anywhere.
-  const readout = page.locator(".rp-readout");
-  await expect(readout).toHaveClass(/masked/);
-  await expect(readout).toHaveText(/^Day -?\d+ \d{2}:\d{2}$/);
-  await expect(readout).not.toHaveText(/\d{4}/);
+  // The pill is controls-only by design: the cursor readout and the
+  // rewound / caught-up labels used to live here, and every appearance or
+  // extra character resized the bar mid-session. Masking is covered by the
+  // masked-formatter unit tests (src/lib/timeFormat.test.ts, and
+  // src/lib/replayFormat.test.ts for the masked/real pairing) plus manual
+  // verification.
+  await expect(page.locator(".replay-pill .rp-readout")).toHaveCount(0);
 
   // The quick-range bar (which navigates to "now" and carries a date picker) is
   // gone for the duration of the session.
@@ -116,11 +112,11 @@ test("chart replay: jump, step, mask, persist, exit", async ({ page }) => {
   // Stepping forward advances the cursor — by EXACTLY one bar, which the pair of
   // reads below proves: the bar count goes up by one and the invariant still
   // holds at the new cursor.
-  const before = await readout.textContent();
+  const cursorBefore = await cursorMs();
   const barsBefore = await barCount();
   await page.locator('[aria-label="Step forward"]').click();
-  await expect(readout).not.toHaveText(before ?? "");
-  const stepped = await readout.textContent();
+  await expect.poll(() => cursorMs(), { timeout: 30000 }).toBeGreaterThan(cursorBefore);
+  const steppedCursor = await cursorMs();
   expect(await barCount()).toBe(barsBefore + 1);
   await expect.poll(async () => (await lastBarTs()) < (await cursorMs())).toBe(true);
 
@@ -141,15 +137,14 @@ test("chart replay: jump, step, mask, persist, exit", async ({ page }) => {
     });
   await expect.poll(saved).toBe(1);
 
-  // A reload resumes the session: mode (the pill is back, not the range bar),
-  // mask, and the cursor. The cursor check is the one with teeth — a resume that
+  // A reload resumes the session: mode (the pill is back, not the range bar)
+  // and the cursor. The cursor check is the one with teeth — a resume that
   // restored the session but reset the cursor to its start would still satisfy
-  // the other two, and the readout is masked, so re-rendering the SAME "Day N
-  // HH:mm" is what says the stepped-to cursorMs (not just startMs) came back.
+  // the mode check, so the stepped-to cursorMs (not just startMs) coming back
+  // is what is asserted.
   await page.reload();
   await page.locator(".replay-pill").waitFor({ timeout: 30000 });
-  await expect(page.locator(".rp-readout")).toHaveClass(/masked/);
-  await expect(page.locator(".rp-readout")).toHaveText(stepped ?? "");
+  await expect.poll(() => cursorMs(), { timeout: 30000 }).toBe(steppedCursor);
   await expect(page.locator(".chart-range-bar")).toHaveCount(0);
 
   // Exit: this session never traded, so there is no book to report and no card
@@ -372,7 +367,7 @@ test("chart replay: the strategy reveal shows only what the cursor has passed", 
   // one of the two the reveal was measured dead on.)
   await page.reload();
   await page.locator(".replay-pill").waitFor({ timeout: 30000 });
-  await expect(page.locator(".rp-readout")).toHaveClass(/masked/);
+  // Controls-only pill: no variable readout label to assert on here.
 
   const markerCount = () =>
     page.evaluate(() => {
@@ -408,11 +403,6 @@ test("chart replay: the strategy reveal shows only what the cursor has passed", 
   // browser (it stayed at 0 forever).
   await expect.poll(markerCount, { timeout: 30000 }).toBe(2);
   await expect(strategy).toHaveClass(/rp-on/);
-
-  // ...and the readout is still masked while the reveal is on: revealing the
-  // STRATEGY must not reveal the DATES.
-  await expect(page.locator(".rp-readout")).toHaveText(/^Day -?\d+ \d{2}:\d{2}$/);
-  await expect(page.locator(".rp-readout")).not.toHaveText(/\d{4}/);
 
   // PROGRESSIVE: one step forward reveals the fill stamped at the old cursor, so
   // the drawn set grows. This is the half that says the reveal tracks the cursor

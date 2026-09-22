@@ -11,6 +11,7 @@ import {
   loadPillPos,
   savePillPos,
   clearPillPos,
+  PILL_MARGIN,
   type PillPos,
 } from "./lib/replayPillPos";
 
@@ -18,8 +19,10 @@ interface Props {
   state: ReplayUiState;
   /** The cell's persistence scope: where this pill's dragged position is kept. */
   scope: string;
-  /** Already-formatted cursor label: a real date, or "Day N HH:mm" when masked. */
-  readout: string;
+  /** Width of the price-axis column. The pill's default parking clears it, so
+   * the axis furniture (last-price tag, trade pills) never lands on the pill's
+   * trailing buttons. ChartCore measures this live; 0 until the first paint. */
+  axisWidth: number;
   onStepBack(): void;
   onPlayPause(): void;
   onStepForward(): void;
@@ -38,15 +41,15 @@ interface Props {
   /** True while the session report card is up. The session is technically still
    * active behind it (that is what lets the card report on it), so the pill is
    * still mounted — but the card is a one-way door and every control here is
-   * dead. DISABLED rather than hidden, for the same reason the atEnd note below
-   * gives: a disabled button is what explains why nothing moved. */
+   * dead. DISABLED rather than hidden so the pill reads as one dead unit
+   * instead of going quietly unresponsive. */
   reportPending: boolean;
 }
 
 export default function ReplayPill({
   state,
   scope,
-  readout,
+  axisWidth,
   onStepBack,
   onPlayPause,
   onStepForward,
@@ -60,10 +63,6 @@ export default function ReplayPill({
   hasStrategy,
   reportPending,
 }: Props) {
-  // Rewound = the cursor sits behind the furthest bar this session ever revealed.
-  // The hook never lowers highWaterMs, so this is a view-only state the user has
-  // to leave before trading again (Task 12).
-  const rewound = state.cursorMs < state.highWaterMs;
   // One explanation for every dead control, so a pill frozen behind the report
   // card says why instead of going quietly unresponsive. The hook refuses these
   // actions regardless (useReplay gates on its own pendingReport); this is the
@@ -160,11 +159,23 @@ export default function ReplayPill({
     [scope],
   );
 
+  const parkRight = (axisWidth > 0 ? axisWidth : 56) + PILL_MARGIN;
+
   return (
     <div
       ref={ref}
       className={`replay-pill${pos ? " rp-moved" : ""}${dragging ? " rp-dragging" : ""}`}
-      style={pos ? { left: pos.x, top: pos.y } : undefined}
+      // Unmoved: parked, clearing the price-axis column (same idiom as the
+      // grid toolbar buttons and the go-live pill). Moved: the dragged offset.
+      // ChartGrid's 56px stand-in while the redraw loop hasn't measured yet.
+      // The parked pill is never clamped (clampPillPos only runs on a stored
+      // position), so its max width has to give up the axis column too, or in
+      // a narrow split it would run off the cell's LEFT edge.
+      style={
+        pos
+          ? { left: pos.x, top: pos.y }
+          : { right: parkRight, maxWidth: `calc(100% - ${parkRight + PILL_MARGIN}px)` }
+      }
       role="group"
       aria-label="Replay controls"
       onPointerDown={onPointerDown}
@@ -184,25 +195,29 @@ export default function ReplayPill({
           ⏮
         </button>
       </Tooltip>
-      {/* Forward controls stay ENABLED at atEnd. "Caught up" means the store has
-          no loaded bar after the cursor, but in a live market more print while the
-          user sits there, and pressing forward is what re-attempts the refill that
-          finds them (useReplay clears atEnd when one lands). Disabling them made
-          the badge a dead end for the rest of the session. The badge, not a
-          disabled button, is what explains why nothing moved.
+      {/* Forward controls stay ENABLED at the live edge. atEnd means the store
+          has no loaded bar after the cursor, but in a live market more print
+          while the user sits there, and pressing forward is what re-attempts
+          the refill that finds them (useReplay clears atEnd when one lands).
+          Disabling them made the end of the session a dead end for the rest
+          of the session. The tooltip, not a disabled button, is what explains
+          why nothing moved.
 
           A pending REPORT is the opposite case and does disable them: there is
           no "later" to wait for, because the session is over and the reveal has
           already shown the user the real dates. */}
       <Tooltip
         content={tip(
-          state.playing ? "Pause" : state.atEnd ? "Check for new bars, then play" : "Play",
+          state.error ??
+            (state.playing ? "Pause" : state.atEnd ? "Check for new bars, then play" : "Play"),
         )}
       >
         <button
           type="button"
-          className="rp-btn rp-play"
+          className={`rp-btn rp-play${state.error ? " rp-error" : ""}`}
           aria-label={state.playing ? "Pause" : "Play"}
+          // The tint is visual only; this is what a screen reader announces.
+          aria-description={state.error ?? undefined}
           onClick={onPlayPause}
           disabled={reportPending}
         >
@@ -211,7 +226,8 @@ export default function ReplayPill({
       </Tooltip>
       <Tooltip
         content={tip(
-          state.atEnd ? "At the live edge: check for newly printed bars" : "Step forward one bar",
+          state.error ??
+            (state.atEnd ? "At the live edge: check for newly printed bars" : "Step forward one bar"),
         )}
       >
         <button
@@ -238,12 +254,6 @@ export default function ReplayPill({
           </option>
         ))}
       </select>
-
-      <span className={`rp-readout${state.masked ? " masked" : ""}`}>{readout}</span>
-
-      {rewound && <span className="rp-rewound">rewound</span>}
-      {state.atEnd && <span className="rp-atend">caught up</span>}
-      {state.error && <span className="rp-error">{state.error}</span>}
 
       {/* Trading during a session goes through the ledger-backed ticket, never
           the account's order ticket. Rewound is not a reason to hide it: the

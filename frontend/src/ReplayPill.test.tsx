@@ -41,7 +41,7 @@ const CONTROLS = [
   "Exit replay",
 ] as const;
 
-function renderPill(reportPending: boolean, opts: { hasStrategy?: boolean; showStrategy?: boolean } = {}) {
+function renderPill(reportPending: boolean, opts: { hasStrategy?: boolean; showStrategy?: boolean; error?: string | null } = {}) {
   const on = {
     onStepBack: vi.fn(),
     onPlayPause: vi.fn(),
@@ -55,8 +55,8 @@ function renderPill(reportPending: boolean, opts: { hasStrategy?: boolean; showS
   render(
     <ReplayPill
       scope="tab.test"
-      state={STATE}
-      readout="Day 4 09:30"
+      state={{ ...STATE, error: opts.error ?? null }}
+      axisWidth={64}
       ticketOpen={false}
       hasStrategy={opts.hasStrategy ?? true}
       showStrategy={opts.showStrategy ?? false}
@@ -125,6 +125,23 @@ describe("ReplayPill's Strategy toggle", () => {
   });
 });
 
+// A mid-session error (a refill failure pausing playback) has no text row of
+// its own anymore — the pill is fixed-width controls only — so the play
+// button itself carries the signal while the tooltip carries the words.
+describe("ReplayPill's error signal", () => {
+  it("tints the play button while the session holds an error, and not otherwise", () => {
+    const bad = renderPill(false, { error: "Couldn't load more bars. Paused." });
+    expect(bad.btn("Play").className).toContain("rp-error");
+    expect(bad.btn("Play").getAttribute("aria-description")).toBe(
+      "Couldn't load more bars. Paused.",
+    );
+    cleanup();
+    const good = renderPill(false);
+    expect(good.btn("Play").className).not.toContain("rp-error");
+    expect(good.btn("Play").hasAttribute("aria-description")).toBe(false);
+  });
+});
+
 // --- dragging ----------------------------------------------------------------
 //
 // The pill floats over a chart, so wherever it defaults to it is in someone's
@@ -135,12 +152,12 @@ describe("dragging the pill", () => {
   const CELL = { width: 1000, height: 600, left: 0, top: 0, right: 1000, bottom: 600 };
   const PILL = { width: 400, height: 34, left: 592, top: 8, right: 992, bottom: 42 };
 
-  function renderDraggable() {
+  function renderDraggable(axisWidth = 64) {
     const { container } = render(
       <ReplayPill
         scope="tab.drag"
         state={STATE}
-        readout="Day 4 09:30"
+        axisWidth={axisWidth}
         ticketOpen={false}
         hasStrategy
         showStrategy={false}
@@ -175,10 +192,18 @@ describe("dragging the pill", () => {
 
   beforeEach(() => localStorage.clear());
 
-  it("starts at the CSS corner, with no inline position", () => {
+  it("starts parked clear of the price axis, with no drag offset", () => {
     const pill = renderDraggable();
     expect(pill.style.left).toBe("");
+    // 64px axis + 8px margin: the last-price tag and axis-docked trade pills
+    // land to its right, never on the trailing buttons.
+    expect(pill.style.right).toBe("72px");
     expect(pill.className).not.toContain("rp-moved");
+  });
+
+  it("falls back to the 56px stand-in before the axis is measured", () => {
+    const pill = renderDraggable(0);
+    expect(pill.style.right).toBe("64px");
   });
 
   it("moves to where it was dragged and remembers it", async () => {

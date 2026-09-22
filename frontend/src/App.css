@@ -6470,11 +6470,19 @@ span.bt-leg-short { color: var(--neg); }
      they moved to the toolbar, and the one piece of the top edge the legend
      (top-left, and as wide as its indicator rows need) never reaches. Draggable
      from there to anywhere in the cell — see .rp-moved, which swaps this anchor
-     for the dragged offset. */
+     for the dragged offset.
+     The CSS right edge is the pre-measure fallback only: the component sets an
+     inline right that clears the price-axis column (axis width + margin), so the
+     last-price tag and the trade pills docked against the axis never land on the
+     pill's trailing buttons — same idiom as the grid toolbar buttons. */
   position: absolute; right: 8px; top: 8px; z-index: 51;
   cursor: grab;
-  /* Wraps rather than overflowing: with an error string at its 220px cap the row
-     is wider than a cell in a 3- or 4-way split. */
+  /* Fixed-width row of controls only: the cursor readout and the
+     rewound / caught-up / error labels used to live here, and every
+     appearance or extra character resized the bar mid-session. Still wraps
+     when a narrow split is thinner than the controls: with no variable
+     labels left, that width only changes when the cell does, and nowrap
+     would spill the buttons out of the cell instead. */
   display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px;
   max-width: calc(100% - 16px);
   padding: 4px 8px; border-radius: 8px;
@@ -6502,14 +6510,15 @@ span.bt-leg-short { color: var(--neg); }
 .rp-btn:disabled, .rp-speed:disabled { opacity: 0.4; cursor: default; }
 .rp-btn:disabled:hover { background: transparent; }
 .rp-play { font-size: 14px; }
+/* A mid-session error (a refill failure pausing playback) has no text row of
+   its own — the pill is fixed-width controls only — so the play button tints
+   danger while the tooltip carries the words. Colour only, never content, so
+   the bar keeps its width. */
+.rp-btn.rp-error { color: var(--danger); }
 .rp-speed {
   background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font-size: 11px;
 }
-.rp-readout { font-variant-numeric: tabular-nums; opacity: 0.9; padding: 0 4px; }
-.rp-readout.masked { color: var(--accent); }
-.rp-rewound, .rp-atend { font-size: 11px; opacity: 0.8; }
-.rp-error { font-size: 11px; color: var(--danger); max-width: 220px; }
 .rp-exit:hover { background: color-mix(in srgb, var(--danger) 24%, transparent); }
 
 /* A replaying cell carries a subtle accent edge so the mode is obvious in a

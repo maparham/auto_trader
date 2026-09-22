@@ -4165,24 +4165,24 @@ export default function ChartCore({
     coverBacktestTradeTo,
   });
 
-  // Cursor readout for the pill: masked sessions get the same relative label the
-  // axis shows, so the pill can never be the thing that leaks the date. (Task 8
-  // owns swapping the CHART's own formatter; this is the pill's label only.)
-  // Depends on the four fields it READS, not on the whole state object: playing /
-  // loading / error / atEnd churn every step, which at 10x would rebuild an
-  // Intl.DateTimeFormat ten times a second for a label that had not changed.
+  // Replay date formatters: masked sessions get the same relative label the
+  // axis shows, so the ticket and report card can never be the thing that
+  // leaks the date. (Task 8 owns swapping the CHART's own formatter.)
+  // Depends on the three fields it READS, not on the whole state object:
+  // playing / loading / error / atEnd churn every step, which at 10x would
+  // rebuild an Intl.DateTimeFormat ten times a second for a label that had
+  // not changed.
   // (`replayMode` below is the curtain's; these carry a distinct prefix to avoid
   // shadowing it.)
   const {
     mode: readoutMode,
-    cursorMs: readoutCursorMs,
     startMs: readoutStartMs,
     masked: readoutMasked,
   } = replay.state;
-  // The FORMATTERS are what is memoised, not the rendered strings: three replay
-  // labels ride them (the pill's cursor, the ticket's high-water "return to",
-  // and the report card's date reveal), and applying one to a timestamp is a
-  // couple of string ops, so the cursor drops out of the deps entirely.
+  // The FORMATTERS are what is memoised, not the rendered strings: two replay
+  // labels ride them (the ticket's high-water "return to", and the report
+  // card's date reveal), and applying one to a timestamp is a couple of string
+  // ops, so the cursor drops out of the deps entirely.
   //
   // Both come from ONE factory (lib/replayFormat.ts) rather than being built
   // side by side here. `cursor` masks whenever the session does — the ticket's
@@ -4213,8 +4213,6 @@ export default function ChartCore({
     replayRealFmtRef.current = replayFmt.real;
   }, [replayFmt]);
 
-  const replayReadout =
-    readoutMode === "active" && readoutCursorMs ? replayFmt.cursor(readoutCursorMs) : "";
   // Where a rewound cursor has to get back to before trading reopens.
   const replayReturnTo =
     readoutMode === "active" && replay.state.highWaterMs
@@ -5237,7 +5235,7 @@ export default function ChartCore({
         <ReplayPill
           scope={scope}
           state={replay.state}
-          readout={replayReadout}
+          axisWidth={axisW}
           onStepBack={replay.stepBack}
           onPlayPause={replay.togglePlay}
           onStepForward={replay.stepForward}
