@@ -4139,7 +4139,7 @@ export default function ChartCore({
   // Symbol / period changes -> reload history, (re)subscribe live, set scroll-back.
   // Extracted to chart/useLiveMarketData.ts; every value it read from this
   // closure is passed via `handle` or the deps object below.
-  const { goLive } = useLiveMarketData(handle, {
+  const { goLive, retryNow } = useLiveMarketData(handle, {
     symbol,
     brokerId,
     priceSide,
@@ -5418,6 +5418,9 @@ export default function ChartCore({
         <div className="chart-stale-pill" role="status">
           <span className="chart-nodata-spinner" aria-hidden="true" />
           Refresh failed: showing previously loaded data. Retrying automatically…
+          <button type="button" className="chart-stale-retry" onClick={retryNow}>
+            Retry now
+          </button>
         </div>
       )}
       {/* Degraded load: the backend served CACHED bars because the broker is
@@ -5428,6 +5431,9 @@ export default function ChartCore({
         <div className="chart-stale-pill" role="status">
           <span className="chart-nodata-spinner" aria-hidden="true" />
           Broker unreachable: showing cached data. Retrying automatically…
+          <button type="button" className="chart-stale-retry" onClick={retryNow}>
+            Retry now
+          </button>
         </div>
       )}
 

@@ -1514,5 +1514,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     });
   };
 
-  return { goLive };
+  // Manual "Retry now" from the stale/degraded pills: bump the nonce so the load
+  // effect re-runs at once. Its cleanup clears the pending backoff timer, and the
+  // re-run counts as a retry run, so the view holds steady.
+  const retryNow = () => setRetryNonce((n) => n + 1);
+
+  return { goLive, retryNow };
 }

@@ -3595,6 +3595,14 @@
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
   pointer-events: none;
 }
+/* The pill ignores the pointer so it never blocks the chart; only its retry
+   button takes clicks. */
+.chart-stale-retry {
+  pointer-events: auto; cursor: pointer;
+  background: transparent; border: none; padding: 0; margin-left: 2px;
+  font-size: 11.5px; color: var(--accent); text-decoration: underline;
+}
+.chart-stale-retry:hover { opacity: 0.8; }
 /* Indicator-selection cursor affordances (same !important-over-canvas trick as
    above, since klinecharts sets an inline crosshair cursor on its container):
    a hand over a selectable indicator curve, a normal arrow over the legend strip
