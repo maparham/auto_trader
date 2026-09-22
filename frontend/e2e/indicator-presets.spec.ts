@@ -7,19 +7,18 @@ import { seedSingleChartDefault } from "./helpers";
 // Backend is stubbed empty (hydrateFromBackend overwrites localStorage with the
 // shared workspace otherwise — see symbol-template.spec.ts).
 
-type IndMap = Map<string, Map<string, { name: string; calcParams: unknown[] }>>;
+type Ind = { name: string; calcParams: unknown[] } & { paneId: string };
 
 // calcParams of every EMA-type instance on the focused chart (id starts with "EMA").
 async function emaCalcParams(page: Page): Promise<number[][]> {
   return page.evaluate(() => {
     const c = (window as unknown as {
-      __chart?: { getIndicatorByPaneId: () => IndMap };
+      __chart?: { getIndicators: () => Ind[] };
     }).__chart;
     if (!c) return [];
     const out: number[][] = [];
-    for (const pane of c.getIndicatorByPaneId().values())
-      for (const ind of pane.values())
-        if (ind.name.startsWith("EMA")) out.push((ind.calcParams as number[]).map(Number));
+    for (const ind of c.getIndicators())
+      if (ind.name.startsWith("EMA")) out.push((ind.calcParams as number[]).map(Number));
     return out;
   });
 }
@@ -79,10 +78,10 @@ test("saving an indicator default seeds freshly-added instances of that type", a
   const emaRow = page.locator(".cl-row.cl-ind", { hasText: "EMA" }).first();
   await emaRow.hover({ force: true });
   await emaRow.locator('.cl-icon[aria-label="Settings"]').click({ force: true });
-  await expect(page.locator(".modal.ind-settings")).toBeVisible();
+  await expect(page.locator(".floating-modal.ind-settings")).toBeVisible();
 
   // Change Length 9 -> 21 (Inputs tab, MA panel's first Length input).
-  const lengthInput = page.locator(".modal.ind-settings .ind-row", { hasText: "Length" })
+  const lengthInput = page.locator(".floating-modal.ind-settings .ind-row", { hasText: "Length" })
     .first()
     .locator('input[type="number"]');
   await lengthInput.fill("21");
@@ -91,8 +90,8 @@ test("saving an indicator default seeds freshly-added instances of that type", a
   // Defaults -> Save as default, then close.
   await page.locator(".ind-def-menu button", { hasText: "Defaults" }).click();
   await page.locator(".ind-def-dropdown li", { hasText: "Save as default" }).click();
-  await page.locator(".modal.ind-settings button", { hasText: "Ok" }).click();
-  await expect(page.locator(".modal.ind-settings")).toBeHidden();
+  await page.locator(".floating-modal.ind-settings button", { hasText: "Ok" }).click();
+  await expect(page.locator(".floating-modal.ind-settings")).toBeHidden();
 
   // The existing EMA is now length 21; persisted to its own config.
   await expect.poll(() => emaCalcParams(page)).toEqual([[21]]);

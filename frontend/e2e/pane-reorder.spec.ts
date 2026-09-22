@@ -4,16 +4,16 @@ import { seedSingleChartDefault } from "./helpers";
 // The user-defined sub-pane order must be changeable via the legend "more" menu and
 // must survive a reload. Backend stubbed empty so hydrate doesn't overwrite storage.
 
-type IndMap = Map<string, Map<string, { name: string }>>;
+type Ind = { name: string } & { paneId: string };
 
 // The top-to-bottom order of sub-pane indicator names (skip the candle pane).
 async function subPaneNames(page: Page): Promise<string[]> {
   return page.evaluate(() => {
-    const c = (window as unknown as { __chart?: { getIndicatorByPaneId: () => IndMap } }).__chart;
+    const c = (window as unknown as { __chart?: { getIndicators: () => Ind[] } }).__chart;
     if (!c) return [];
     const out: string[] = [];
-    for (const [paneId, inds] of c.getIndicatorByPaneId())
-      if (paneId !== "candle_pane") for (const ind of inds.values()) out.push(ind.name);
+    for (const ind of c.getIndicators())
+      if (ind.paneId !== "candle_pane") out.push(ind.name);
     return out;
   });
 }

@@ -33,7 +33,7 @@ type Chart = {
     points: Array<{ y: number }>,
     opts: { paneId: string },
   ) => Array<{ value: number }>;
-  getIndicatorByPaneId: () => Map<string, Map<string, { name: string }>>;
+  getIndicators: () => { name: string }[];
   overrideIndicator: (o: { name: string; calcParams: number[] }) => void;
 };
 
@@ -55,9 +55,8 @@ async function stretchMA(page: Page): Promise<void> {
   await page.evaluate(() => {
     const c = (window as unknown as { __chart?: Chart }).__chart;
     if (!c) return;
-    for (const pane of c.getIndicatorByPaneId().values())
-      for (const ind of pane.values())
-        if (ind.name === "MA") c.overrideIndicator({ name: "MA", calcParams: [300] });
+    for (const ind of c.getIndicators())
+      if (ind.name === "MA") c.overrideIndicator({ name: "MA", calcParams: [300] });
   });
 }
 
@@ -110,8 +109,7 @@ test("overlay outside the view does not shrink candles while the toggle is on", 
   await stretchMA(page);
   await expect.poll(() => page.evaluate(() => {
     const c = (window as unknown as { __chart?: Chart }).__chart;
-    for (const pane of c!.getIndicatorByPaneId().values())
-      for (const ind of pane.values()) if (ind.name === "MA") return true;
+    for (const ind of c!.getIndicators()) if (ind.name === "MA") return true;
     return false;
   })).toBe(true);
 
@@ -164,8 +162,7 @@ test("right-clicking a sub-pane axis does not open the candle-only menu", async 
     .poll(() =>
       page.evaluate(() => {
         const c = (window as unknown as { __chart?: Chart }).__chart;
-        for (const pane of c!.getIndicatorByPaneId().values())
-          for (const ind of pane.values()) if (ind.name === "RSI") return true;
+        for (const ind of c!.getIndicators()) if (ind.name === "RSI") return true;
         return false;
       }),
     )

@@ -9,19 +9,18 @@ import { seedSingleChartDefault } from "./helpers";
 // tab starts on — so we can verify auto-apply without driving the symbol-search
 // modal: save on tab 1, open tab 2 (same default symbol), assert the layout appears.
 
-type IndMap = Map<string, Map<string, { name: string }>>;
+type Ind = { name: string } & { paneId: string };
 
 // Active indicator TYPE names on the focused chart, read from klinecharts directly
 // (the menu shows no active-state). Mirrors tab-indicators.spec.ts.
 async function activeTypes(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const c = (window as unknown as {
-      __chart?: { getIndicatorByPaneId: () => IndMap };
+      __chart?: { getIndicators: () => Ind[] };
     }).__chart;
     if (!c) return [];
     const out: string[] = [];
-    for (const pane of c.getIndicatorByPaneId().values())
-      for (const ind of pane.values()) out.push(ind.name);
+    for (const ind of c.getIndicators()) out.push(ind.name);
     return out;
   });
 }

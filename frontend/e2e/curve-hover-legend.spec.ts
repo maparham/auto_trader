@@ -7,7 +7,7 @@ import { seedSingleChartDefault, stubStateApi } from "./helpers";
 // the EMA legend row gains `cl-curve-hover`; moving off the chart clears it.
 
 type Pt = { key: string; result: Array<Record<string, number | undefined>> };
-type IndMap = Map<string, Map<string, Pt & { name: string; figures: { key: string }[]; visible?: boolean }>>;
+type Ind = Pt & { name: string; figures: { key: string }[]; visible?: boolean } & { paneId: string };
 
 function indicatorMenu(page: Page) {
   const indBtn = page.locator(".menu button", { hasText: "Indicators" });
@@ -33,7 +33,7 @@ async function emaLinePixel(page: Page): Promise<{ x: number; y: number }> {
   const pt = await page.evaluate(() => {
     const c = (window as unknown as {
       __chart?: {
-        getIndicatorByPaneId: () => IndMap;
+        getIndicators: () => Ind[];
         getDataList: () => Array<{ timestamp: number }>;
         getVisibleRange: () => { from: number; to: number };
         convertToPixel: (
@@ -45,25 +45,25 @@ async function emaLinePixel(page: Page): Promise<{ x: number; y: number }> {
     if (!c) return null;
     const dl = c.getDataList();
     const vr = c.getVisibleRange();
-    for (const [paneId, inds] of c.getIndicatorByPaneId())
-      for (const ind of inds.values()) {
-        if (ind.name !== "EMA") continue;
-        const key = ind.figures[0].key;
-        // Collect finite points across the visible range, then take a consecutive
-        // pair near the MIDDLE — away from the left edge where the legend card and
-        // y-axis warmup gaps sit, so the hovered pixel is unobstructed chart area.
-        const pts: Array<{ timestamp: number; value: number }> = [];
-        for (let i = vr.from; i < Math.min(vr.to, dl.length); i++) {
-          const v = ind.result[i]?.[key];
-          const k = dl[i];
-          if (k && typeof v === "number" && Number.isFinite(v))
-            pts.push({ timestamp: k.timestamp, value: v });
-        }
-        if (pts.length < 2) return null;
-        const m = Math.floor(pts.length / 2);
-        const px = c.convertToPixel([pts[m - 1], pts[m]], { paneId, absolute: true });
-        return { x: (px[0].x + px[1].x) / 2, y: (px[0].y + px[1].y) / 2 };
+    for (const ind of c.getIndicators()) {
+      const paneId = ind.paneId;
+      if (ind.name !== "EMA") continue;
+      const key = ind.figures[0].key;
+      // Collect finite points across the visible range, then take a consecutive
+      // pair near the MIDDLE — away from the left edge where the legend card and
+      // y-axis warmup gaps sit, so the hovered pixel is unobstructed chart area.
+      const pts: Array<{ timestamp: number; value: number }> = [];
+      for (let i = vr.from; i < Math.min(vr.to, dl.length); i++) {
+        const v = ind.result[i]?.[key];
+        const k = dl[i];
+        if (k && typeof v === "number" && Number.isFinite(v))
+          pts.push({ timestamp: k.timestamp, value: v });
       }
+      if (pts.length < 2) return null;
+      const m = Math.floor(pts.length / 2);
+      const px = c.convertToPixel([pts[m - 1], pts[m]], { paneId, absolute: true });
+      return { x: (px[0].x + px[1].x) / 2, y: (px[0].y + px[1].y) / 2 };
+    }
     return null;
   });
   if (!pt) throw new Error("could not locate an EMA line pixel");
@@ -92,15 +92,14 @@ test("hovering an indicator curve highlights its legend card and shows it select
   await expect
     .poll(async () =>
       page.evaluate(() => {
-        const c = (window as unknown as { __chart?: { getIndicatorByPaneId: () => IndMap } }).__chart;
+        const c = (window as unknown as { __chart?: { getIndicators: () => Ind[] } }).__chart;
         if (!c) return 0;
-        for (const inds of c.getIndicatorByPaneId().values())
-          for (const ind of inds.values())
-            if (ind.name === "EMA")
-              return ind.result.filter((r) => {
-                const v = r?.[ind.figures[0].key];
-                return typeof v === "number" && Number.isFinite(v);
-              }).length;
+        for (const ind of c.getIndicators())
+          if (ind.name === "EMA")
+            return ind.result.filter((r) => {
+              const v = r?.[ind.figures[0].key];
+              return typeof v === "number" && Number.isFinite(v);
+            }).length;
         return 0;
       }),
     )

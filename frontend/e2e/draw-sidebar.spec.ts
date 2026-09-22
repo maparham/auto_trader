@@ -28,7 +28,7 @@ test("draw sidebar: flyout, favorites, last-used, bulk buttons", async ({ page }
   const flyout = sidebar.locator(".ds-flyout");
   await expect(flyout).toBeVisible();
   await expect(flyout.locator(".ds-fly-section")).toHaveText("Drawing tools");
-  await expect(flyout.locator(".ds-row")).toHaveCount(12);
+  await expect(flyout.locator(".ds-row")).toHaveCount(13);
   await expect(flyout.locator(".ds-row").first()).toContainText("Trend line");
   await expect(flyout.locator(".ds-row svg").first()).toBeVisible(); // glyph
 
@@ -73,7 +73,7 @@ test("draw sidebar: flyout, favorites, last-used, bulk buttons", async ({ page }
   await expect(page.locator(".draw-sidebar button[aria-label='Ray (favorite)']")).toBeVisible();
 
   // Measure + magnet live on the sidebar now.
-  await expect(page.locator(".draw-sidebar .measure-toggle")).toBeVisible();
+  await expect(page.locator(".draw-sidebar .measure-family-toggle")).toBeVisible();
   await expect(page.locator(".draw-sidebar .magnet-toggle")).toBeVisible();
 
   // Bulk cluster renders enabled with a ready chart.
@@ -140,16 +140,17 @@ test("draw sidebar: eye menu — hide drawings/indicators/positions/all", async 
   const sidebar = page.locator(".draw-sidebar");
   const eyeBtn = sidebar.locator(".ds-eye");
   await expect(eyeBtn).toBeVisible();
-  // Click opens the flyout with exactly the 4 rows, in order.
+  // Click opens the flyout with exactly the 5 rows, in order.
   await eyeBtn.click();
   const flyout = sidebar.locator(".ds-flyout", { hasText: "Hide all" });
   await expect(flyout).toBeVisible();
   const rows = flyout.locator(".ds-row");
-  await expect(rows).toHaveCount(4);
+  await expect(rows).toHaveCount(5);
   await expect(rows.nth(0)).toContainText("Hide drawings");
   await expect(rows.nth(1)).toContainText("Hide indicators");
-  await expect(rows.nth(2)).toContainText("Hide positions and orders");
-  await expect(rows.nth(3)).toContainText("Hide all");
+  await expect(rows.nth(2)).toContainText("Hide positions");
+  await expect(rows.nth(3)).toContainText("Hide alert lines");
+  await expect(rows.nth(4)).toContainText("Hide all");
 
   // "Hide drawings" toggles: its row shows a check, the eye button turns `on`.
   await rows.nth(0).click();
@@ -157,15 +158,15 @@ test("draw sidebar: eye menu — hide drawings/indicators/positions/all", async 
   await expect(eyeBtn).toHaveClass(/\bon\b/);
   await expect(flyout).toBeVisible(); // row click does not close the menu
 
-  // "Hide all" sets all three (all four rows check).
-  await rows.nth(3).click();
-  for (let i = 0; i < 4; i++) {
+  // "Hide all" sets all four (all five rows check).
+  await rows.nth(4).click();
+  for (let i = 0; i < 5; i++) {
     await expect(rows.nth(i).locator(".check")).toHaveText("✓");
   }
 
   // "Hide all" again clears everything; eye button un-`on`s.
-  await rows.nth(3).click();
-  for (let i = 0; i < 4; i++) {
+  await rows.nth(4).click();
+  for (let i = 0; i < 5; i++) {
     await expect(rows.nth(i).locator(".check")).toHaveText("");
   }
   await expect(eyeBtn).not.toHaveClass(/\bon\b/);

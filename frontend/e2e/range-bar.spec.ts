@@ -152,8 +152,8 @@ test("calendar popover opens, accepts a date, submits, and closes without crashi
   // Popover appears.
   await expect(bar.locator(".crb-cal-pop")).toBeVisible();
 
-  // Fill the date input (aria-label="Go to date") — distinct from the button now.
-  await bar.getByRole("textbox", { name: "Go to date" }).fill("2026-03-15");
+  // Fill the datetime-local input (aria-label="Go to date").
+  await bar.getByRole("textbox", { name: "Go to date" }).fill("2026-03-15T00:00");
   await bar.getByRole("button", { name: "Go", exact: true }).click();
 
   // Popover closes after submit and the chart canvas is still present.
@@ -176,15 +176,11 @@ test("trailing offset -1W switches to 5m and buttons carry tooltips", async ({ p
   const bar = cell.getByTestId("chart-range-bar");
   await expect(bar).toBeVisible();
 
-  // Tooltips: calendar 1D and trailing -1D carry the expected title text.
-  await expect(bar.getByRole("button", { name: "1D", exact: true })).toHaveAttribute(
-    "title",
-    "From the start of today",
-  );
-  await expect(bar.getByRole("button", { name: "-1D", exact: true })).toHaveAttribute(
-    "title",
-    "This time 1 day ago",
-  );
+  // Tooltips: calendar 1D and trailing -1D show the expected text on hover.
+  await bar.getByRole("button", { name: "1D", exact: true }).hover();
+  await expect(page.getByRole("tooltip")).toHaveText("From the start of today");
+  await bar.getByRole("button", { name: "-1D", exact: true }).hover();
+  await expect(page.getByRole("tooltip")).toHaveText("This time 1 day ago");
 
   // -1W is a trailing offset paired with 5m (MINUTE_5).
   const btn1W = bar.getByRole("button", { name: "-1W", exact: true });

@@ -25,8 +25,11 @@ test("measure ruler: toolbar toggle, arm/disarm, Esc, no persistence", async ({ 
   await page.locator(".tab-bar").waitFor();
   await page.locator(".chart canvas").first().waitFor();
 
-  const ruler = page.locator(".measure-toggle");
-  await expect(ruler).toHaveAttribute("title", /Measure/);
+  // Measure shares a rail family with Slope; the icon arms the last-used one,
+  // which is Measure on a fresh profile.
+  const ruler = page.locator(".measure-family-toggle");
+  await ruler.hover();
+  await expect(page.getByRole("tooltip")).toContainText("Measure");
 
   // Nothing is ever persisted by the ruler (transient by design).
   const drawingCount = () =>

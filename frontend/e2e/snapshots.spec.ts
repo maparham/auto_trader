@@ -7,7 +7,7 @@ import { seedSingleChartDefault, stubStateApi } from "./helpers";
 // new tab has the saved indicator back + a one-shot pendingRange that gets
 // consumed once ChartCore positions the window on it.
 
-type IndMap = Map<string, Map<string, { name: string }>>;
+type Ind = { name: string } & { paneId: string };
 
 // Wait until the currently-focused chart (window.__chart) has candles loaded.
 async function waitForChartData(page: Page) {
@@ -27,12 +27,11 @@ async function waitForChartData(page: Page) {
 // Active indicator TYPE names on the focused chart (mirrors symbol-template.spec.ts).
 async function activeTypes(page: Page): Promise<string[]> {
   return page.evaluate(() => {
-    const c = (window as unknown as { __chart?: { getIndicatorByPaneId: () => IndMap } })
+    const c = (window as unknown as { __chart?: { getIndicators: () => Ind[] } })
       .__chart;
     if (!c) return [];
     const out: string[] = [];
-    for (const pane of c.getIndicatorByPaneId().values())
-      for (const ind of pane.values()) out.push(ind.name);
+    for (const ind of c.getIndicators()) out.push(ind.name);
     return out;
   });
 }

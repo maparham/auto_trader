@@ -8,18 +8,17 @@ import { seedSingleChartDefault, stubStateApi } from "./helpers";
 //     collapses to a single line on reload (the truncation migration).
 
 type Ind = { name: string; calcParams: number[]; figures: { key: string }[] };
-type IndMap = Map<string, Map<string, Ind>>;
+
 
 async function rsiState(page: Page): Promise<Ind | null> {
   return page.evaluate(() => {
     const c = (window as unknown as {
-      __chart?: { getIndicatorByPaneId: () => IndMap };
+      __chart?: { getIndicators: () => Ind[] };
     }).__chart;
     if (!c) return null;
-    for (const pane of c.getIndicatorByPaneId().values())
-      for (const ind of pane.values())
-        if (ind.name === "RSI")
-          return { name: ind.name, calcParams: ind.calcParams, figures: ind.figures };
+    for (const ind of c.getIndicators())
+      if (ind.name === "RSI")
+        return { name: ind.name, calcParams: ind.calcParams, figures: ind.figures };
     return null;
   });
 }
@@ -60,9 +59,9 @@ test("fresh RSI draws a single length-14 line with one Length input", async ({ p
 });
 
 test("a saved three-length RSI collapses to one line on reload", async ({ page }) => {
-  // Seed the OLD bare-`tabs` shape: migrateToNamedLayouts wraps it into a named
-  // default layout on load (keeping tabId `seed` → scope `tab.seed`), so the RSI
-  // config still resolves. Stub the API so the real backend can't clobber the seed.
+  // Seed a one-chart workspace whose cell (scope `tab.seed`) carries an RSI
+  // saved with the OLD three-length params. Stub the API so the real backend
+  // can't clobber the seed.
   await stubStateApi(page);
   await page.addInitScript(() => {
     localStorage.clear();
@@ -70,13 +69,13 @@ test("a saved three-length RSI collapses to one line on reload", async ({ page }
     const scope = `tab.${tabId}`;
     const sym = { epic: "US100", name: "US Tech 100", status: null, pricePrecision: 2 };
     const period = { resolution: "HOUR", label: "1H" };
-    localStorage.setItem(
-      "auto-trader.tabs",
-      JSON.stringify([
-        { id: tabId, layout: "1", activeCellId: tabId, cells: [{ id: tabId, symbol: sym, period, scope }] },
-      ]),
-    );
-    localStorage.setItem("auto-trader.activeTab", JSON.stringify(tabId));
+    const ws = {
+      tabs: [{ id: tabId, layout: "1", activeCellId: `${tabId}-c0`, cells: [{ id: `${tabId}-c0`, symbol: sym, period, scope }] }],
+      activeTabId: tabId,
+    };
+    // The workspace is per broker now: the unsaved one lives in the broker's
+    // `scratch` key (Capital is the default data broker).
+    localStorage.setItem("auto-trader.b.capital.scratch", JSON.stringify(ws));
     localStorage.setItem(`auto-trader.${scope}.indicators`, JSON.stringify([{ id: "RSI", type: "RSI" }]));
     localStorage.setItem(
       `auto-trader.${scope}.indicatorConfig`,

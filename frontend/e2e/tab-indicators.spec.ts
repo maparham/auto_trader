@@ -5,16 +5,15 @@ import { seedSingleChartDefault, stubStateApi } from "./helpers";
 // The menu no longer shows a checkmark/active-state (an indicator can be added any
 // number of times; removal is via the legend), so "is X active" is read from the
 // chart's live indicator set, not the menu.
-type IndMap = Map<string, Map<string, { name: string }>>;
+type Ind = { name: string } & { paneId: string };
 async function activeTypes(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const c = (window as unknown as {
-      __chart?: { getIndicatorByPaneId: () => IndMap };
+      __chart?: { getIndicators: () => Ind[] };
     }).__chart;
     if (!c) return [];
     const out: string[] = [];
-    for (const pane of c.getIndicatorByPaneId().values())
-      for (const ind of pane.values()) out.push(ind.name);
+    for (const ind of c.getIndicators()) out.push(ind.name);
     return out;
   });
 }
@@ -114,10 +113,10 @@ test("indicator favourites and info tooltip", async ({ page }) => {
 
   // ⓘ reveals a portaled tooltip with the friendly title + description.
   await rsi.locator(".ind-info").hover();
-  const tip = page.locator(".ind-tooltip");
+  const tip = page.getByRole("tooltip");
   await expect(tip).toBeVisible();
-  await expect(tip.locator(".ind-tooltip-title")).toHaveText("Relative Strength Index");
-  await expect(tip.locator(".ind-tooltip-desc")).not.toBeEmpty();
+  await expect(tip.locator(".tooltip-title")).toHaveText("Relative Strength Index");
+  await expect(tip.locator(".tooltip-desc").first()).not.toBeEmpty();
   await m.close();
 
   // Favourite persists across reload.
