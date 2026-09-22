@@ -2687,7 +2687,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                           // every other clock filter (the tz is NOT set).
                           // resolveMask keeps existing weekday chips if the user set
                           // any (non-destructive), else fills the preset's weekdays.
-                          const r = resolveMask({ ...cfg.range.mask, session: key });
+                          const r = resolveMask({ enabled: false, ...cfg.range.mask, session: key });
                           const p = SESSION_PRESETS[key];
                           const timeOfDay = sessionWindowInTz(r.timeOfDay ?? null, p.tz, chartTimezone, Date.now()) ?? undefined;
                           setMask({ session: undefined, timeOfDay, daysOfWeek: r.daysOfWeek });
