@@ -5,6 +5,7 @@
 // would defer the writes by a render tick, corrupting the Cancel snapshot. These
 // components are pure render + JSX for the family, taking state + writers as
 // explicit props.
+import Tooltip from "../components/Tooltip";
 import type { ChangeEvent } from "react";
 import InfoTip from "../components/InfoTip";
 import ColorLineStylePicker from "../ColorLineStylePicker";
@@ -416,22 +417,24 @@ export function RsiStylePanel({
               (c) => setRsiStylePatch({ [key]: { ...rsiStyle[key], color: c } }),
               (v) => setRsiStylePatch({ [key]: { ...rsiStyle[key], lineStyle: v } }),
             )}
-            <input
-              type="number"
-              min={0}
-              max={100}
-              step={1}
-              value={rsiStyle[key].level}
-              onChange={(e) =>
-                setRsiStylePatch({
-                  [key]: {
-                    ...rsiStyle[key],
-                    level: Math.max(0, Math.min(100, Math.floor(Number(e.target.value)) || 0)),
-                  },
-                })
-              }
-              title="Level"
-            />
+            <Tooltip asChild content="Level">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={rsiStyle[key].level}
+                onChange={(e) =>
+                  setRsiStylePatch({
+                    [key]: {
+                      ...rsiStyle[key],
+                      level: Math.max(0, Math.min(100, Math.floor(Number(e.target.value)) || 0)),
+                    },
+                  })
+                }
+                aria-label="Level"
+              />
+            </Tooltip>
           </div>
         </div>
       ))}

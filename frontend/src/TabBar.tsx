@@ -86,7 +86,7 @@ function ChipContent({
           market is closed (CSS positions it absolutely). The tooltip names the
           next opening time when known. */}
       {closedTip != null && (
-        <span className="tab-closed-badge" title={closedTip} aria-label={closedTip}>
+        <span className="tab-closed-badge" aria-label={closedTip}>
           {/* Solid crescent (currentColor) — keeps the chrome monochrome rather
               than the lone colored 🌙 emoji it replaced. */}
           <svg viewBox="0 0 24 24" width="8" height="8" aria-hidden="true">
@@ -99,18 +99,14 @@ function ChipContent({
           corner-pinned) so it can never be clipped by the bar edge or collide
           with the close ×. */}
       {alertBadge && (
-        <Tooltip content="Alert fired">
-          {/* Empty title suppresses the chip's ancestor native title while the
-              bell is hovered — otherwise both tooltips render at once. */}
-          <span className="tab-alert-badge" aria-label="Alert fired" title="">
-            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M12 22a2.3 2.3 0 0 0 2.3-2.3H9.7A2.3 2.3 0 0 0 12 22zm7-5.3v-1l-1.7-1.7v-4.2A5.3 5.3 0 0 0 13.5 4.6V4a1.5 1.5 0 0 0-3 0v.6A5.3 5.3 0 0 0 6.7 9.8V14L5 15.7v1z"
-              />
-            </svg>
-          </span>
-        </Tooltip>
+        <span className="tab-alert-badge" aria-label="Alert fired">
+          <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 22a2.3 2.3 0 0 0 2.3-2.3H9.7A2.3 2.3 0 0 0 12 22zm7-5.3v-1l-1.7-1.7v-4.2A5.3 5.3 0 0 0 13.5 4.6V4a1.5 1.5 0 0 0-3 0v.6A5.3 5.3 0 0 0 6.7 9.8V14L5 15.7v1z"
+            />
+          </svg>
+        </span>
       )}
     </>
   );
@@ -747,7 +743,7 @@ export default function TabBar({
       >
       {tabs.map((t, i) => {
         // The tab chip represents the layout by its focused (or first) cell; a
-        // multi-cell layout adds a small count badge. The title lists every cell.
+        // multi-cell layout adds a small count badge. The tooltip lists every cell.
         const lead =
           t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0];
         const leadMeta = closedEpics[lead.symbol.epic];
@@ -757,12 +753,15 @@ export default function TabBar({
             ? `Market closed · opens ${fmtNextOpen(leadMeta.nextOpen)}`
             : "Market closed"
           : null;
-        const titleText = t.cells
-          .map((c) => `${c.symbol.name} · ${c.period.label}`)
-          .join("   |   ");
+        // One tooltip for the whole chip: a line per cell, then the badges'
+        // meaning (the badges carry no tooltip of their own, so hovering one
+        // never stacks a second bubble on the chip's).
+        const tipLines = t.cells.map((c) => `${c.symbol.name} · ${c.period.label}`);
+        if (closedTip) tipLines.push(closedTip);
+        if (alertTabIds.has(t.id)) tipLines.push("Alert fired");
         return (
+        <Tooltip key={t.id} asChild content={tipLines} disabled={dragId != null}>
         <div
-          key={t.id}
           role="tab"
           // DOM hook for anchoring floating UI to a specific chip (the merge
           // undo snackbar positions itself under the merged tab).
@@ -801,7 +800,6 @@ export default function TabBar({
               : undefined
           }
           onClick={() => onSelect(t.id)}
-          title={closedTip ? `${titleText} · ${closedTip}` : titleText}
           draggable
           onDragStart={(e) => {
             // Cache every chip's rect NOW — the preview transforms change
@@ -885,11 +883,12 @@ export default function TabBar({
               e.stopPropagation();
               onClose(t.id);
             }}
-            title="Close tab"
+            aria-label="Close tab"
           >
             ×
           </button>
         </div>
+        </Tooltip>
         );
       })}
       {!scrolls && tail}

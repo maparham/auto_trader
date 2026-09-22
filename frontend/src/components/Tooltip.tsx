@@ -6,8 +6,13 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
+  type Ref,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import { computePlacement, type Placed, type Placement } from "./tooltipPosition";
@@ -27,7 +32,31 @@ interface TooltipProps {
   placement?: Placement;
   delay?: number;
   disabled?: boolean;
+  /**
+   * Attach the hover/focus handlers and the anchor ref to the single child
+   * element itself instead of wrapping it in a span. For triggers a wrapper
+   * would break: table rows, list items, absolutely positioned buttons, flex
+   * children that scripts query with `:scope > .x`. The child's own handlers
+   * and ref still run. Avoid it for `disabled` buttons, which may not fire
+   * mouse events; keep the wrapper there.
+   */
+  asChild?: boolean;
   children: ReactNode;
+}
+
+type TriggerProps = {
+  ref?: Ref<HTMLElement>;
+  onMouseEnter?: (e: ReactMouseEvent<HTMLElement>) => void;
+  onMouseLeave?: (e: ReactMouseEvent<HTMLElement>) => void;
+  onFocus?: (e: ReactFocusEvent<HTMLElement>) => void;
+  onBlur?: (e: ReactFocusEvent<HTMLElement>) => void;
+  onPointerDown?: (e: ReactPointerEvent<HTMLElement>) => void;
+  "aria-describedby"?: string;
+};
+
+function setRef<T>(ref: Ref<T> | undefined, value: T | null) {
+  if (typeof ref === "function") ref(value);
+  else if (ref) (ref as RefObject<T | null>).current = value;
 }
 
 // Module-level grace window: after any tooltip hides, the next one shown within
@@ -50,6 +79,11 @@ if (typeof window !== "undefined") {
   );
 }
 
+// Every open tooltip's trigger and hide(). Triggers can nest (a table row with
+// a hint, a button inside it with its own), and two bubbles must never stack:
+// the innermost open trigger wins, whichever of the two opened first.
+const openTips = new Set<{ el: HTMLElement; hide: () => void }>();
+
 function isEmpty(content: TooltipProps["content"]): boolean {
   return (
     content == null ||
@@ -66,9 +100,10 @@ export default function Tooltip({
   placement = "top",
   delay = 100,
   disabled,
+  asChild,
   children,
 }: TooltipProps) {
-  const triggerRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
@@ -143,6 +178,23 @@ export default function Tooltip({
     return () => cancelAnimationFrame(raf);
   }, [open, placement, content, title]);
 
+  useLayoutEffect(() => {
+    const el = triggerRef.current;
+    if (!open || off || !el) return;
+    for (const other of openTips) {
+      if (el.contains(other.el)) {
+        hide(); // a nested trigger is already showing its bubble
+        return;
+      }
+    }
+    for (const other of openTips) if (other.el.contains(el)) other.hide();
+    const entry = { el, hide };
+    openTips.add(entry);
+    return () => {
+      openTips.delete(entry);
+    };
+  }, [open, off]);
+
   // Hide on scroll (capture, so nested scrollers count), resize, and Escape.
   useLayoutEffect(() => {
     if (!open) return;
@@ -172,40 +224,81 @@ export default function Tooltip({
 
   const lines = Array.isArray(content) ? content : [content];
 
-  // aria-describedby must live on the element that actually receives focus.
-  // The wrapper span is never focused itself (only its child is), so when
-  // children is a single element we inject the attribute onto it directly;
-  // otherwise fall back to the wrapper as a best effort.
   const describedBy = open ? id : undefined;
-  const describedChildren = isValidElement(children)
-    ? cloneElement(children as ReactElement<{ "aria-describedby"?: string }>, {
-        "aria-describedby": describedBy,
-      })
-    : children;
 
-  return (
-    <>
+  function togglePointer(e: ReactPointerEvent<HTMLElement>) {
+    // Touch: a tap toggles the bubble (the ⓘ icons have no hover to
+    // give). The window listener below closes it on a tap elsewhere.
+    if (e.pointerType === "mouse" || off) return;
+    if (open) hide();
+    else {
+      clearTimer();
+      setOpen(true);
+    }
+  }
+
+  let trigger: ReactNode;
+  if (asChild && isValidElement(children)) {
+    // The child becomes the trigger: its own handlers run first, then ours,
+    // and its own ref (React 19 carries it in props) still gets the node.
+    const child = children as ReactElement<TriggerProps>;
+    const p = child.props;
+    trigger = cloneElement(child, {
+      ref: (node: HTMLElement | null) => {
+        triggerRef.current = node;
+        setRef(p.ref, node);
+      },
+      onMouseEnter: (e) => {
+        p.onMouseEnter?.(e);
+        hoverShow();
+      },
+      onMouseLeave: (e) => {
+        p.onMouseLeave?.(e);
+        hide();
+      },
+      onFocus: (e) => {
+        p.onFocus?.(e);
+        focusShow();
+      },
+      onBlur: (e) => {
+        p.onBlur?.(e);
+        hide();
+      },
+      onPointerDown: (e) => {
+        p.onPointerDown?.(e);
+        togglePointer(e);
+      },
+      "aria-describedby": describedBy ?? p["aria-describedby"],
+    });
+  } else {
+    // aria-describedby must live on the element that actually receives focus.
+    // The wrapper span is never focused itself (only its child is), so when
+    // children is a single element we inject the attribute onto it directly;
+    // otherwise fall back to the wrapper as a best effort.
+    const describedChildren = isValidElement(children)
+      ? cloneElement(children as ReactElement<{ "aria-describedby"?: string }>, {
+          "aria-describedby": describedBy,
+        })
+      : children;
+    trigger = (
       <span
-        ref={triggerRef}
+        ref={triggerRef as RefObject<HTMLSpanElement | null>}
         className="tooltip-trigger"
         aria-describedby={isValidElement(children) ? undefined : describedBy}
         onMouseEnter={hoverShow}
         onMouseLeave={hide}
         onFocus={focusShow}
         onBlur={hide}
-        onPointerDown={(e) => {
-          // Touch: a tap toggles the bubble (the ⓘ icons have no hover to
-          // give). The window listener below closes it on a tap elsewhere.
-          if (e.pointerType === "mouse" || off) return;
-          if (open) hide();
-          else {
-            clearTimer();
-            setOpen(true);
-          }
-        }}
+        onPointerDown={togglePointer}
       >
         {describedChildren}
       </span>
+    );
+  }
+
+  return (
+    <>
+      {trigger}
       {open &&
         !off &&
         createPortal(

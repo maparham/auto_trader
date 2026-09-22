@@ -1,3 +1,4 @@
+import Tooltip from "../components/Tooltip";
 import { BellIcon } from "../lib/menuIcons";
 import { fmtPrice } from "../lib/priceFormat";
 import type { AlertCondition, AlertTrigger } from "../lib/persist";
@@ -46,14 +47,16 @@ export default function AlertTags({ tags, priceTag, precision }: AlertTagsProps)
           return null;
         }
         return (
-        <div key={t.id} className={`alert-tag${t.selected ? " selected" : ""}`} style={{ top: t.y }} title="Price alert">
-          {/* Inline SVG bell (currentColor → amber via .at-bell) so the tag stays in
-              the monochrome SVG-icon language, not a colored 🔔 emoji. */}
-          <span className="at-bell" aria-hidden="true">
-            <BellIcon size={11} />
-          </span>
-          <span className="at-price">{fmtPrice(t.level, precision)}</span>
-        </div>
+          <Tooltip key={t.id} asChild content="Price alert">
+            <div className={`alert-tag${t.selected ? " selected" : ""}`} style={{ top: t.y }}>
+              {/* Inline SVG bell (currentColor → amber via .at-bell) so the tag stays in
+                  the monochrome SVG-icon language, not a colored 🔔 emoji. */}
+              <span className="at-bell" aria-hidden="true">
+                <BellIcon size={11} />
+              </span>
+              <span className="at-price">{fmtPrice(t.level, precision)}</span>
+            </div>
+          </Tooltip>
         );
       })}
     </>

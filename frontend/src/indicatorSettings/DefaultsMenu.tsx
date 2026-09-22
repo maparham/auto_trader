@@ -149,16 +149,18 @@ export default function DefaultsMenu({
                 <Tooltip content={`Apply "${nm}"`}>
                   <span>{nm}</span>
                 </Tooltip>
-                <button
-                  className="ind-def-del"
-                  title={`Delete "${nm}"`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removePreset(nm);
-                  }}
-                >
-                  ✕
-                </button>
+                <Tooltip content={`Delete "${nm}"`}>
+                  <button
+                    className="ind-def-del"
+                    aria-label={`Delete "${nm}"`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removePreset(nm);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </Tooltip>
               </li>
             ))}
             {naming ? (

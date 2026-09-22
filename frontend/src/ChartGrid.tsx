@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import ChartCore from "./ChartCore";
 import ContextMenu from "./ContextMenu";
+import Tooltip from "./components/Tooltip";
 import type { Chart } from "klinecharts";
 import type { ChartController } from "./lib/chartController";
 import type { ChartCell, LayoutKind } from "./lib/persist";
@@ -217,87 +218,90 @@ export default function ChartGrid({
           }}
         >
           {cells.length > 1 && (
-            <button
-              type="button"
-              className="chart-cell-maximize chart-cell-detach"
-              style={{ right: buttonRight(cell.id, 1) }}
-              title="Detach in new tab (⌘-click: open copy in browser tab, right-click: options)"
-              aria-label="Detach in new tab"
-              onClick={(e) => {
-                e.stopPropagation();
-                // Ctrl/Cmd-click matches the browser's own "open link in new
-                // tab" gesture → open a copy in a new BROWSER tab instead.
-                onDetachCell(cell.id, e.metaKey || e.ctrlKey ? "window" : "move");
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setDetachMenu({ x: e.clientX, y: e.clientY, cellId: cell.id });
-              }}
-            >
-              {/* open-in-new: box with an arrow pointing out the top-right */}
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M7 3H3v10h10V9" />
-                <path d="M9 3h4v4" />
-                <path d="M13 3L7.5 8.5" />
-              </svg>
-            </button>
+            <Tooltip asChild title="Detach in new tab" content={["⌘-click: open a copy in a browser tab.", "Right-click: more options."]}>
+              <button
+                type="button"
+                className="chart-cell-maximize chart-cell-detach"
+                style={{ right: buttonRight(cell.id, 1) }}
+                aria-label="Detach in new tab"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Ctrl/Cmd-click matches the browser's own "open link in new
+                  // tab" gesture → open a copy in a new BROWSER tab instead.
+                  onDetachCell(cell.id, e.metaKey || e.ctrlKey ? "window" : "move");
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDetachMenu({ x: e.clientX, y: e.clientY, cellId: cell.id });
+                }}
+              >
+                {/* open-in-new: box with an arrow pointing out the top-right */}
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M7 3H3v10h10V9" />
+                  <path d="M9 3h4v4" />
+                  <path d="M13 3L7.5 8.5" />
+                </svg>
+              </button>
+            </Tooltip>
           )}
           {cells.length > 1 && (
-            <button
-              type="button"
-              className="chart-cell-maximize"
-              style={{ right: buttonRight(cell.id, 0) }}
-              title={isMax ? "Restore" : "Maximize"}
-              aria-label={isMax ? "Restore" : "Maximize"}
-              onClick={(e) => {
-                e.stopPropagation();
-                // The button lives outside ChartCore's own focus-on-pointerdown
-                // subtree, so focus this cell explicitly — otherwise maximizing
-                // a non-focused cell leaves the Toolbar/alerts bound to whatever
-                // was focused before, even though it's now hidden.
-                onFocus(cell.id);
-                onToggleMaximizeCell(cell.id);
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                {isMax ? (
-                  // restore: inward arrows
-                  <>
-                    <path d="M9 3v4h4" />
-                    <path d="M7 13V9H3" />
-                    <path d="M13 3l-4 4" />
-                    <path d="M3 13l4-4" />
-                  </>
-                ) : (
-                  // maximize: outward expand arrows
-                  <>
-                    <path d="M6 2H2v4" />
-                    <path d="M10 14h4v-4" />
-                    <path d="M2 2l5 5" />
-                    <path d="M14 14l-5-5" />
-                  </>
-                )}
-              </svg>
-            </button>
+            <Tooltip asChild content={isMax ? "Restore" : "Maximize"}>
+              <button
+                type="button"
+                className="chart-cell-maximize"
+                style={{ right: buttonRight(cell.id, 0) }}
+                aria-label={isMax ? "Restore" : "Maximize"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // The button lives outside ChartCore's own focus-on-pointerdown
+                  // subtree, so focus this cell explicitly — otherwise maximizing
+                  // a non-focused cell leaves the Toolbar/alerts bound to whatever
+                  // was focused before, even though it's now hidden.
+                  onFocus(cell.id);
+                  onToggleMaximizeCell(cell.id);
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  {isMax ? (
+                    // restore: inward arrows
+                    <>
+                      <path d="M9 3v4h4" />
+                      <path d="M7 13V9H3" />
+                      <path d="M13 3l-4 4" />
+                      <path d="M3 13l4-4" />
+                    </>
+                  ) : (
+                    // maximize: outward expand arrows
+                    <>
+                      <path d="M6 2H2v4" />
+                      <path d="M10 14h4v-4" />
+                      <path d="M2 2l5 5" />
+                      <path d="M14 14l-5-5" />
+                    </>
+                  )}
+                </svg>
+              </button>
+            </Tooltip>
           )}
           {cells.length > 1 && (
-            <button
-              type="button"
-              className="chart-cell-maximize chart-cell-close"
-              style={{ right: buttonRight(cell.id, 2) }}
-              title="Close chart"
-              aria-label="Close chart"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCloseCell(cell.id);
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                <path d="M4 4l8 8" />
-                <path d="M12 4l-8 8" />
-              </svg>
-            </button>
+            <Tooltip asChild content="Close chart">
+              <button
+                type="button"
+                className="chart-cell-maximize chart-cell-close"
+                style={{ right: buttonRight(cell.id, 2) }}
+                aria-label="Close chart"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCloseCell(cell.id);
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M4 4l8 8" />
+                  <path d="M12 4l-8 8" />
+                </svg>
+              </button>
+            </Tooltip>
           )}
           <ChartCore
             cellId={cell.id}
@@ -393,26 +397,26 @@ export default function ChartGrid({
             const top =
               (rowFracs.slice(0, r).reduce((s, v) => s + v, 0) + rowFracs[r] / 2) * 100;
             return (
-              <button
-                key={`swap-c${c}-r${r}`}
-                type="button"
-                className="cell-swap cols"
-                data-line={`cols-${c}`}
-                style={{ left: `calc(${left}% - 12px)`, top: `calc(${top}% - 12px)` }}
-                title="Swap charts"
-                aria-label="Swap charts"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSwapCells(a.id, b.id);
-                }}
-              >
-                {/* ↔ two-way arrow */}
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 8h10" />
-                  <path d="M6 5L3 8l3 3" />
-                  <path d="M10 5l3 3-3 3" />
-                </svg>
-              </button>
+              <Tooltip key={`swap-c${c}-r${r}`} asChild content="Swap charts">
+                <button
+                  type="button"
+                  className="cell-swap cols"
+                  data-line={`cols-${c}`}
+                  style={{ left: `calc(${left}% - 12px)`, top: `calc(${top}% - 12px)` }}
+                  aria-label="Swap charts"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSwapCells(a.id, b.id);
+                  }}
+                >
+                  {/* ↔ two-way arrow */}
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 8h10" />
+                    <path d="M6 5L3 8l3 3" />
+                    <path d="M10 5l3 3-3 3" />
+                  </svg>
+                </button>
+              </Tooltip>
             );
           }),
         )}
@@ -427,26 +431,26 @@ export default function ChartGrid({
             const left =
               (colFracs.slice(0, c).reduce((s, v) => s + v, 0) + colFracs[c] / 2) * 100;
             return (
-              <button
-                key={`swap-r${r}-c${c}`}
-                type="button"
-                className="cell-swap rows"
-                data-line={`rows-${r}`}
-                style={{ left: `calc(${left}% - 12px)`, top: `calc(${top}% - 12px)` }}
-                title="Swap charts"
-                aria-label="Swap charts"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSwapCells(a.id, b.id);
-                }}
-              >
-                {/* ↕ two-way arrow */}
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M8 3v10" />
-                  <path d="M5 6l3-3 3 3" />
-                  <path d="M5 10l3 3 3-3" />
-                </svg>
-              </button>
+              <Tooltip key={`swap-r${r}-c${c}`} asChild content="Swap charts">
+                <button
+                  type="button"
+                  className="cell-swap rows"
+                  data-line={`rows-${r}`}
+                  style={{ left: `calc(${left}% - 12px)`, top: `calc(${top}% - 12px)` }}
+                  aria-label="Swap charts"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSwapCells(a.id, b.id);
+                  }}
+                >
+                  {/* ↕ two-way arrow */}
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M8 3v10" />
+                    <path d="M5 6l3-3 3 3" />
+                    <path d="M5 10l3 3 3-3" />
+                  </svg>
+                </button>
+              </Tooltip>
             );
           }),
         )}

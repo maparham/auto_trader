@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChartTab } from "./lib/persist";
 import SymbolIcon from "./SymbolIcon";
+import Tooltip from "./components/Tooltip";
 
 interface Props {
   x: number;
@@ -59,20 +60,21 @@ export default function MergeTabsMenu({ x, y, tabs, targetId, onMerge, onClose }
         const on = picked.has(t.id);
         const fits = on || total + t.cells.length <= 4;
         return (
-          <button
-            key={t.id}
-            className={`ctx-item merge-row${on ? " on" : ""}`}
-            disabled={!fits}
-            title={fits ? undefined : "Would exceed 4 charts"}
-            onClick={() => toggle(t.id)}
-          >
-            <span className="ctx-item-label">
-              <input type="checkbox" checked={on} readOnly tabIndex={-1} />
-              <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="tab-icon" />
-              {lead.symbol.name} · {lead.period.label}
-              {t.cells.length > 1 && <span className="tab-count">{t.cells.length}</span>}
-            </span>
-          </button>
+          // Wrapper, not asChild: a disabled button may not fire mouse events.
+          <Tooltip key={t.id} content={fits ? null : "Would exceed 4 charts"}>
+            <button
+              className={`ctx-item merge-row${on ? " on" : ""}`}
+              disabled={!fits}
+              onClick={() => toggle(t.id)}
+            >
+              <span className="ctx-item-label">
+                <input type="checkbox" checked={on} readOnly tabIndex={-1} />
+                <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="tab-icon" />
+                {lead.symbol.name} · {lead.period.label}
+                {t.cells.length > 1 && <span className="tab-count">{t.cells.length}</span>}
+              </span>
+            </button>
+          </Tooltip>
         );
       })}
       <button

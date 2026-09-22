@@ -173,27 +173,29 @@ export default function LayoutManager({
   return (
     <div className="layout-mgr" ref={menuRef}>
       {/* Name button: click to open the layout switcher dropdown */}
-      <button
-        className={`layout-mgr-name-btn${open ? " on" : ""}${isDirty ? " dirty" : ""}`}
-        onClick={() => setOpen((o) => !o)}
-        title={isDirty ? `${label}: unsaved changes` : "Workspace layouts"}
-      >
-        <span className="layout-mgr-label">{label}</span>
-        {active && active.id === defaultId && (
-          <span className="layout-mgr-star">★</span>
-        )}
-        {isDirty && !autosave && <span className="layout-mgr-dot" />}
-      </button>
+      <Tooltip asChild disabled={open} content={isDirty ? `${label}: unsaved changes` : "Workspace layouts"}>
+        <button
+          className={`layout-mgr-name-btn${open ? " on" : ""}${isDirty ? " dirty" : ""}`}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <span className="layout-mgr-label">{label}</span>
+          {active && active.id === defaultId && (
+            <span className="layout-mgr-star">★</span>
+          )}
+          {isDirty && !autosave && <span className="layout-mgr-dot" />}
+        </button>
+      </Tooltip>
 
       {/* Caret button: same toggle, visually separated */}
-      <button
-        className={`layout-mgr-caret-btn${open ? " on" : ""}`}
-        onClick={() => setOpen((o) => !o)}
-        title="Layout options"
-        aria-label="Layout options"
-      >
-        ▾
-      </button>
+      <Tooltip asChild disabled={open} content="Layout options">
+        <button
+          className={`layout-mgr-caret-btn${open ? " on" : ""}`}
+          onClick={() => setOpen((o) => !o)}
+          aria-label="Layout options"
+        >
+          ▾
+        </button>
+      </Tooltip>
 
       {open && (
         <div className="dropdown layout-mgr-menu">
@@ -232,27 +234,31 @@ export default function LayoutManager({
               </button>
             </li>
             {active && (
-              <li
-                className={`layout-mgr-action${active.id === defaultId ? " highlight" : ""}`}
-                onClick={() => {
-                  setDefault(active.id === defaultId ? null : active.id);
-                }}
-                title={
+              <Tooltip
+                asChild
+                content={
                   active.id === defaultId
-                    ? "This layout opens on launch. Click to clear."
-                    : "Open this layout on launch instead of blank"
+                    ? ["Opens on launch.", "Click to clear."]
+                    : ["Open this layout on launch instead of blank."]
                 }
               >
-                <span className="layout-mgr-action-icon">★</span>
-                <span className="layout-mgr-action-text">
-                  {active.id === defaultId
-                    ? "Default layout"
-                    : "Set as default layout"}
-                </span>
-                {active.id === defaultId && (
-                  <span className="layout-mgr-action-kbd">✓</span>
-                )}
-              </li>
+                <li
+                  className={`layout-mgr-action${active.id === defaultId ? " highlight" : ""}`}
+                  onClick={() => {
+                    setDefault(active.id === defaultId ? null : active.id);
+                  }}
+                >
+                  <span className="layout-mgr-action-icon">★</span>
+                  <span className="layout-mgr-action-text">
+                    {active.id === defaultId
+                      ? "Default layout"
+                      : "Set as default layout"}
+                  </span>
+                  {active.id === defaultId && (
+                    <span className="layout-mgr-action-kbd">✓</span>
+                  )}
+                </li>
+              </Tooltip>
             )}
             {active && (
               <li

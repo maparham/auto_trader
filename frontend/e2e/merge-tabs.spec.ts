@@ -97,15 +97,17 @@ test("merge checklist disables a row live once the running total would exceed 4 
   await expect(t3Row).toBeEnabled();
 
   // 2. Ticking t2 pushes the running total to 3; adding t3's 2 cells would
-  // make 5, so t3 disables live with the exceeds-cap title.
+  // make 5, so t3 disables live with the exceeds-cap tooltip.
   await t2Row.click();
   await expect(t3Row).toBeDisabled();
-  await expect(t3Row).toHaveAttribute("title", "Would exceed 4 charts");
+  await t3Row.hover();
+  await expect(page.getByRole("tooltip")).toHaveText("Would exceed 4 charts");
 
   // 3. Unticking t2 brings the total back to 1 and t3 re-enables.
   await t2Row.click();
   await expect(t3Row).toBeEnabled();
-  await expect(t3Row).not.toHaveAttribute("title", "Would exceed 4 charts");
+  await t3Row.hover();
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
 
   // 4. Tick t3 only and confirm — t3 (2 cells) merges into t1 (1 cell) for 3
   // total; t2 is untouched and remains its own tab.

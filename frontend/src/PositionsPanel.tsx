@@ -264,115 +264,115 @@ export default function PositionsPanel({
     const prec = precOf(t.epic);
     const isFocused = focusedEpic != null && t.epic === focusedEpic;
     return (
-      <tr
-        className={`pp-row pp-dir-${long ? "long" : "short"}${inGroup ? " pp-member" : ""}${
-          editId === t.id ? " pp-editing" : ""
-        }${isFocused ? " pp-focused" : ""}${
-          selectedId === t.id ? " pp-selected" : ""
-        }${hoveredId === t.id ? " pp-hovered" : ""}`}
-        key={t.id}
-        // Single click → open/focus the chart for this trade's symbol
-        // AND (de)select the trade, so its chart lines + this row light
-        // up together. Double click → also reveal the ticket in edit mode.
-        onClick={() => {
-          onJumpToEpic?.(t.epic);
-          toggleTradeSelected(t.id);
-        }}
-        onDoubleClick={() => edit(t)}
-        onMouseEnter={() => setTradeHovered(t.id)}
-        onMouseLeave={() => {
-          if (tradeLineUiSignal.value.hovered === t.id) setTradeHovered(null);
-        }}
-        title="Click to open chart · double-click to edit"
-      >
-        <td className="pp-c-sym">
-          {t.epic}
-          {t.source === "strategy" && (
-            <Tooltip content="Opened by the live trading engine">
-              <span className="pp-strat-tag">strat</span>
-            </Tooltip>
-          )}
-        </td>
-        <td className={`pp-c-side ${long ? "pp-side-long" : "pp-side-short"}`}>
-          {tradeLabel(t.kind, t.side)}
-        </td>
-        <td className="pp-c-num">{t.quantity}</td>
-        <td className="pp-c-num">{fmt(t.priceLevel, prec)}</td>
-        <td className={`pp-c-num${t.takeProfit != null ? " pp-lvl-tp" : " pp-dash"}`}>
-          {t.takeProfit != null ? fmt(t.takeProfit, prec) : "—"}
-        </td>
-        <td className={`pp-c-num${t.stop != null ? " pp-lvl-sl" : " pp-dash"}`}>
-          {t.stop != null ? fmt(t.stop, prec) : "—"}
-        </td>
-        <td className={`pp-c-num${t.last == null ? " pp-dash" : ""}`}>
-          {t.last != null ? fmt(t.last, prec) : "—"}
-        </td>
-        <td className="pp-c-num">
-          {isOrder ? (
-            <span className="pp-resting">resting</span>
-          ) : (
-            <span className={`pp-pnl ${pnlClass(t.upnl)}`}>{fmtPnl(t.upnl)}</span>
-          )}
-        </td>
-        <td className={`pp-c-num${t.pnlPct == null ? " pp-dash" : ` ${pnlClass(t.pnlPct)}`}`}>
-          {t.pnlPct != null
-            ? `${t.pnlPct >= 0 ? "+" : "−"}${Math.abs(t.pnlPct).toFixed(2)}%`
-            : "—"}
-        </td>
-        <td className="pp-c-num">{cash(t.tradeValue)}</td>
-        <td className={`pp-c-num${t.marketValue == null ? " pp-dash" : ""}`}>
-          {t.marketValue != null ? cash(t.marketValue) : "—"}
-        </td>
-        <td className="pp-c-num pp-c-lev">{t.leverage}:1</td>
-        <td className="pp-c-num">{cash(t.margin)}</td>
-        <td className="pp-c-time">
-          {fmtTime(t.openedAt)}
-          {t.kind === "order" && t.expiresAt != null && (
-            <span className="pp-expiry">
-              exp {new Date(t.expiresAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
-            </span>
-          )}
-        </td>
-        <td className="pp-c-act">
-          <div className="pp-actions">
-            <Tooltip content={linesHidden ? "Show lines on chart" : "Hide lines on chart"}>
-              <button
-                className={`pp-iconbtn${linesHidden ? " off" : ""}`}
-                aria-pressed={linesHidden}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleTradeHidden(t.id);
-                }}
-              >
-                <EyeIcon hidden={linesHidden} />
-              </button>
-            </Tooltip>
-            <Tooltip content="Edit levels">
-              <button
-                className="pp-iconbtn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  edit(t);
-                }}
-              >
-                <PencilIcon />
-              </button>
-            </Tooltip>
-            <Tooltip content={isOrder ? "Cancel order" : "Close position"}>
-              <button
-                className="pp-iconbtn pp-iconbtn-x"
-                disabled={busy === t.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  act(t);
-                }}
-              >
-                <CloseIcon />
-              </button>
-            </Tooltip>
-          </div>
-        </td>
-      </tr>
+      <Tooltip key={t.id} asChild content={["Click: open chart.", "Double-click: edit."]}>
+        <tr
+          className={`pp-row pp-dir-${long ? "long" : "short"}${inGroup ? " pp-member" : ""}${
+            editId === t.id ? " pp-editing" : ""
+          }${isFocused ? " pp-focused" : ""}${
+            selectedId === t.id ? " pp-selected" : ""
+          }${hoveredId === t.id ? " pp-hovered" : ""}`}
+          // Single click → open/focus the chart for this trade's symbol
+          // AND (de)select the trade, so its chart lines + this row light
+          // up together. Double click → also reveal the ticket in edit mode.
+          onClick={() => {
+            onJumpToEpic?.(t.epic);
+            toggleTradeSelected(t.id);
+          }}
+          onDoubleClick={() => edit(t)}
+          onMouseEnter={() => setTradeHovered(t.id)}
+          onMouseLeave={() => {
+            if (tradeLineUiSignal.value.hovered === t.id) setTradeHovered(null);
+          }}
+        >
+          <td className="pp-c-sym">
+            {t.epic}
+            {t.source === "strategy" && (
+              <Tooltip content="Opened by the live trading engine">
+                <span className="pp-strat-tag">strat</span>
+              </Tooltip>
+            )}
+          </td>
+          <td className={`pp-c-side ${long ? "pp-side-long" : "pp-side-short"}`}>
+            {tradeLabel(t.kind, t.side)}
+          </td>
+          <td className="pp-c-num">{t.quantity}</td>
+          <td className="pp-c-num">{fmt(t.priceLevel, prec)}</td>
+          <td className={`pp-c-num${t.takeProfit != null ? " pp-lvl-tp" : " pp-dash"}`}>
+            {t.takeProfit != null ? fmt(t.takeProfit, prec) : "—"}
+          </td>
+          <td className={`pp-c-num${t.stop != null ? " pp-lvl-sl" : " pp-dash"}`}>
+            {t.stop != null ? fmt(t.stop, prec) : "—"}
+          </td>
+          <td className={`pp-c-num${t.last == null ? " pp-dash" : ""}`}>
+            {t.last != null ? fmt(t.last, prec) : "—"}
+          </td>
+          <td className="pp-c-num">
+            {isOrder ? (
+              <span className="pp-resting">resting</span>
+            ) : (
+              <span className={`pp-pnl ${pnlClass(t.upnl)}`}>{fmtPnl(t.upnl)}</span>
+            )}
+          </td>
+          <td className={`pp-c-num${t.pnlPct == null ? " pp-dash" : ` ${pnlClass(t.pnlPct)}`}`}>
+            {t.pnlPct != null
+              ? `${t.pnlPct >= 0 ? "+" : "−"}${Math.abs(t.pnlPct).toFixed(2)}%`
+              : "—"}
+          </td>
+          <td className="pp-c-num">{cash(t.tradeValue)}</td>
+          <td className={`pp-c-num${t.marketValue == null ? " pp-dash" : ""}`}>
+            {t.marketValue != null ? cash(t.marketValue) : "—"}
+          </td>
+          <td className="pp-c-num pp-c-lev">{t.leverage}:1</td>
+          <td className="pp-c-num">{cash(t.margin)}</td>
+          <td className="pp-c-time">
+            {fmtTime(t.openedAt)}
+            {t.kind === "order" && t.expiresAt != null && (
+              <span className="pp-expiry">
+                exp {new Date(t.expiresAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+              </span>
+            )}
+          </td>
+          <td className="pp-c-act">
+            <div className="pp-actions">
+              <Tooltip content={linesHidden ? "Show lines on chart" : "Hide lines on chart"}>
+                <button
+                  className={`pp-iconbtn${linesHidden ? " off" : ""}`}
+                  aria-pressed={linesHidden}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleTradeHidden(t.id);
+                  }}
+                >
+                  <EyeIcon hidden={linesHidden} />
+                </button>
+              </Tooltip>
+              <Tooltip content="Edit levels">
+                <button
+                  className="pp-iconbtn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    edit(t);
+                  }}
+                >
+                  <PencilIcon />
+                </button>
+              </Tooltip>
+              <Tooltip content={isOrder ? "Cancel order" : "Close position"}>
+                <button
+                  className="pp-iconbtn pp-iconbtn-x"
+                  disabled={busy === t.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    act(t);
+                  }}
+                >
+                  <CloseIcon />
+                </button>
+              </Tooltip>
+            </div>
+          </td>
+        </tr>
+      </Tooltip>
                     );
   };
 
@@ -582,56 +582,56 @@ export default function PositionsPanel({
                     const dir = g.side === "buy" ? "long" : g.side === "sell" ? "short" : "mixed";
                     const prec = precOf(g.epic);
                     const header = (
-                      <tr
-                        className={`pp-row pp-group pp-dir-${dir}${isFocused ? " pp-focused" : ""}${folded ? " pp-folded" : ""}`}
-                        key={`group:${g.epic}`}
-                        onClick={() => onJumpToEpic?.(g.epic)}
-                        title="Click to open chart"
-                      >
-                        <td className="pp-c-sym">
-                          <button
-                            className="pp-group-toggle"
-                            aria-expanded={!folded}
-                            aria-label={folded ? "Show positions" : "Hide positions"}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleGroup(g.epic);
-                            }}
-                          >
-                            <span className="pp-group-chevron" aria-hidden="true">›</span>
-                          </button>
-                          {g.epic}
-                          <span className="pp-group-count">{g.positions.length}</span>
-                        </td>
-                        <td className={`pp-c-side ${g.side === "buy" ? "pp-side-long" : g.side === "sell" ? "pp-side-short" : "pp-side-mixed"}`}>
-                          {g.side === "buy" ? "Long" : g.side === "sell" ? "Short" : "Mixed"}
-                        </td>
-                        <td className="pp-c-num">{+g.quantity.toFixed(8)}</td>
-                        <td className="pp-c-num">{fmt(g.priceLevel, prec)}</td>
-                        <td className="pp-c-num pp-dash">—</td>
-                        <td className="pp-c-num pp-dash">—</td>
-                        <td className={`pp-c-num${g.last == null ? " pp-dash" : ""}`}>
-                          {g.last != null ? fmt(g.last, prec) : "—"}
-                        </td>
-                        <td className="pp-c-num">
-                          <span className={`pp-pnl ${pnlClass(g.upnl)}`}>{fmtPnl(g.upnl)}</span>
-                        </td>
-                        <td className={`pp-c-num${g.pnlPct == null ? " pp-dash" : ` ${pnlClass(g.pnlPct)}`}`}>
-                          {g.pnlPct != null
-                            ? `${g.pnlPct >= 0 ? "+" : "−"}${Math.abs(g.pnlPct).toFixed(2)}%`
-                            : "—"}
-                        </td>
-                        <td className="pp-c-num">{cash(g.tradeValue)}</td>
-                        <td className={`pp-c-num${g.marketValue == null ? " pp-dash" : ""}`}>
-                          {g.marketValue != null ? cash(g.marketValue) : "—"}
-                        </td>
-                        <td className={`pp-c-num pp-c-lev${g.leverage == null ? " pp-dash" : ""}`}>
-                          {g.leverage != null ? `${g.leverage}:1` : "—"}
-                        </td>
-                        <td className="pp-c-num">{cash(g.margin)}</td>
-                        <td className="pp-c-time">{fmtTime(g.openedAt)}</td>
-                        <td className="pp-c-act" />
-                      </tr>
+                      <Tooltip key={`group:${g.epic}`} asChild content="Click to open chart">
+                        <tr
+                          className={`pp-row pp-group pp-dir-${dir}${isFocused ? " pp-focused" : ""}${folded ? " pp-folded" : ""}`}
+                          onClick={() => onJumpToEpic?.(g.epic)}
+                        >
+                          <td className="pp-c-sym">
+                            <button
+                              className="pp-group-toggle"
+                              aria-expanded={!folded}
+                              aria-label={folded ? "Show positions" : "Hide positions"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleGroup(g.epic);
+                              }}
+                            >
+                              <span className="pp-group-chevron" aria-hidden="true">›</span>
+                            </button>
+                            {g.epic}
+                            <span className="pp-group-count">{g.positions.length}</span>
+                          </td>
+                          <td className={`pp-c-side ${g.side === "buy" ? "pp-side-long" : g.side === "sell" ? "pp-side-short" : "pp-side-mixed"}`}>
+                            {g.side === "buy" ? "Long" : g.side === "sell" ? "Short" : "Mixed"}
+                          </td>
+                          <td className="pp-c-num">{+g.quantity.toFixed(8)}</td>
+                          <td className="pp-c-num">{fmt(g.priceLevel, prec)}</td>
+                          <td className="pp-c-num pp-dash">—</td>
+                          <td className="pp-c-num pp-dash">—</td>
+                          <td className={`pp-c-num${g.last == null ? " pp-dash" : ""}`}>
+                            {g.last != null ? fmt(g.last, prec) : "—"}
+                          </td>
+                          <td className="pp-c-num">
+                            <span className={`pp-pnl ${pnlClass(g.upnl)}`}>{fmtPnl(g.upnl)}</span>
+                          </td>
+                          <td className={`pp-c-num${g.pnlPct == null ? " pp-dash" : ` ${pnlClass(g.pnlPct)}`}`}>
+                            {g.pnlPct != null
+                              ? `${g.pnlPct >= 0 ? "+" : "−"}${Math.abs(g.pnlPct).toFixed(2)}%`
+                              : "—"}
+                          </td>
+                          <td className="pp-c-num">{cash(g.tradeValue)}</td>
+                          <td className={`pp-c-num${g.marketValue == null ? " pp-dash" : ""}`}>
+                            {g.marketValue != null ? cash(g.marketValue) : "—"}
+                          </td>
+                          <td className={`pp-c-num pp-c-lev${g.leverage == null ? " pp-dash" : ""}`}>
+                            {g.leverage != null ? `${g.leverage}:1` : "—"}
+                          </td>
+                          <td className="pp-c-num">{cash(g.margin)}</td>
+                          <td className="pp-c-time">{fmtTime(g.openedAt)}</td>
+                          <td className="pp-c-act" />
+                        </tr>
+                      </Tooltip>
                     );
                     return folded ? [header] : [header, ...g.positions.map((t) => renderPosition(t, true))];
                   })}

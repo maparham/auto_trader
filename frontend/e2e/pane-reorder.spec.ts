@@ -49,7 +49,7 @@ function indicatorMenu(page: Page) {
 async function openMoreMenu(page: Page, name: string) {
   const row = page.locator(".sub-pane-legend .cl-row", { hasText: name }).first();
   await row.hover();
-  await row.locator('button[title="More"]').click();
+  await row.locator('button[aria-label="More"]').click();
 }
 
 // Click the ↑ or ↓ arrow on the sub-pane legend row whose text starts with `name`.

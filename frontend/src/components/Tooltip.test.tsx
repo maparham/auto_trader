@@ -152,4 +152,66 @@ describe("touch input", () => {
     fireEvent.focus(btn.parentElement!);
     expect(screen.getByRole("tooltip")).toBeTruthy();
   });
+  describe("asChild", () => {
+    it("renders no wrapper span and anchors on the child itself", () => {
+      vi.useFakeTimers();
+      render(
+        <table><tbody>
+          <Tooltip asChild content="Open chart"><tr data-testid="row"><td>r</td></tr></Tooltip>
+        </tbody></table>,
+      );
+      act(() => { vi.advanceTimersByTime(600); });
+      const row = screen.getByTestId("row");
+      expect(row.parentElement!.tagName).toBe("TBODY");
+      expect(document.querySelector(".tooltip-trigger")).toBeNull();
+      fireEvent.mouseEnter(row);
+      act(() => { vi.advanceTimersByTime(100); });
+      const tip = screen.getByRole("tooltip");
+      expect(tip.textContent).toContain("Open chart");
+      expect(row.getAttribute("aria-describedby")).toBe(tip.id);
+      fireEvent.mouseLeave(row);
+      expect(screen.queryByRole("tooltip")).toBeNull();
+    });
+
+    it("still runs the child's own handlers and ref", () => {
+      const enter = vi.fn();
+      const leave = vi.fn();
+      const focus = vi.fn();
+      const ref = { current: null as HTMLButtonElement | null };
+      render(
+        <Tooltip asChild content="Hi">
+          <button ref={ref} onMouseEnter={enter} onMouseLeave={leave} onFocus={focus}>b</button>
+        </Tooltip>,
+      );
+      const btn = screen.getByText("b");
+      expect(ref.current).toBe(btn);
+      fireEvent.mouseEnter(btn);
+      fireEvent.mouseLeave(btn);
+      fireEvent.focus(btn);
+      expect(enter).toHaveBeenCalledTimes(1);
+      expect(leave).toHaveBeenCalledTimes(1);
+      expect(focus).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("tooltip").textContent).toContain("Hi");
+    });
+  });
+  it("never stacks bubbles for nested triggers: the inner one wins", () => {
+    render(
+      <Tooltip asChild content="Row hint">
+        <div data-testid="row">
+          <Tooltip content="Button hint"><button>b</button></Tooltip>
+        </div>
+      </Tooltip>,
+    );
+    const row = screen.getByTestId("row");
+    fireEvent.focus(row);
+    expect(screen.getByRole("tooltip").textContent).toContain("Row hint");
+    fireEvent.focus(screen.getByText("b").parentElement!);
+    const tips = screen.getAllByRole("tooltip");
+    expect(tips).toHaveLength(1);
+    expect(tips[0].textContent).toContain("Button hint");
+    // The outer opening late (its hover delay) stands down for the inner.
+    fireEvent.focus(row);
+    expect(screen.getAllByRole("tooltip")).toHaveLength(1);
+    expect(screen.getByRole("tooltip").textContent).toContain("Button hint");
+  });
 });

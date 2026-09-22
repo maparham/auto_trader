@@ -334,7 +334,9 @@ function WindowTimeline(
           className={`bt-timeline-history${historyBars === null ? " open-ended" : ""}`}
           style={{ flexGrow: historyShare }}
         />
-        <div className="bt-timeline-marker" title="Trades can only open from here on" />
+        <Tooltip asChild content="Trades can only open from here on">
+          <div className="bt-timeline-marker" />
+        </Tooltip>
         <div className="bt-timeline-window" style={{ flexGrow: windowShare }} />
       </div>
       <div className="bt-timeline-labels">
@@ -4565,15 +4567,15 @@ export function RuleGroupSection({
                       />
                     </span>
                   ) : (
-                    <button
-                      key={lit.ordinal}
-                      type="button"
-                      className="bt-chip"
-                      onClick={() => sweep.onToggle(target, lit.value)}
-                      title={`Sweep ${lit.label}`}
-                    >
-                      {lit.label} {lit.value}
-                    </button>
+                    <Tooltip key={lit.ordinal} asChild content={`Sweep ${lit.label}`}>
+                      <button
+                        type="button"
+                        className="bt-chip"
+                        onClick={() => sweep.onToggle(target, lit.value)}
+                      >
+                        {lit.label} {lit.value}
+                      </button>
+                    </Tooltip>
                   ),
                 )}
               </span>

@@ -78,7 +78,7 @@ test("saving an indicator default seeds freshly-added instances of that type", a
   // (the chart canvas would otherwise intercept a normal pointer event).
   const emaRow = page.locator(".cl-row.cl-ind", { hasText: "EMA" }).first();
   await emaRow.hover({ force: true });
-  await emaRow.locator('.cl-icon[title="Settings"]').click({ force: true });
+  await emaRow.locator('.cl-icon[aria-label="Settings"]').click({ force: true });
   await expect(page.locator(".modal.ind-settings")).toBeVisible();
 
   // Change Length 9 -> 21 (Inputs tab, MA panel's first Length input).

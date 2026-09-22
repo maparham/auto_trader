@@ -421,39 +421,39 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
 
         <ul className="symsearch-results">
           {shown.map((m, i) => (
-            <li
-              key={`${m.epic}-${i}`}
-              className={
-                (m.epic === current?.epic ? "selected" : "") +
-                (m.status !== "TRADEABLE" ? " closed" : "")
-              }
-              onClick={() => (showOps ? addSymbol(m.epic) : pick(m))}
-              title={m.status !== "TRADEABLE" ? "Market closed" : undefined}
-            >
-              <SymbolIcon epic={m.epic} type={m.type} className="ss-icon" />
-              <span className="ss-epic">{m.epic}</span>
-              <span className="ss-name">{m.name}</span>
-              <span className="ss-type">{typeLabel(m.type, categories)}</span>
-              <span className="ss-exch">{brokerLabel(brokerId).toUpperCase()}</span>
-              <span className="ss-badge" aria-hidden="true">
-                {brokerId.charAt(0).toUpperCase()}
-              </span>
-              <Tooltip content={favEpics.has(m.epic) ? "Remove from favorites" : "Add to favorites"}>
-                <button
-                  className={"ss-star" + (favEpics.has(m.epic) ? " on" : "")}
-                  aria-label={favEpics.has(m.epic) ? "Remove from favorites" : "Add to favorites"}
-                  aria-pressed={favEpics.has(m.epic)}
-                  onClick={(e) => {
-                    e.stopPropagation(); // don't select + close the modal
-                    void toggleFavorite(m);
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
-                    <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
-                  </svg>
-                </button>
-              </Tooltip>
-            </li>
+            <Tooltip key={`${m.epic}-${i}`} asChild content={m.status !== "TRADEABLE" ? "Market closed" : null}>
+              <li
+                className={
+                  (m.epic === current?.epic ? "selected" : "") +
+                  (m.status !== "TRADEABLE" ? " closed" : "")
+                }
+                onClick={() => (showOps ? addSymbol(m.epic) : pick(m))}
+              >
+                <SymbolIcon epic={m.epic} type={m.type} className="ss-icon" />
+                <span className="ss-epic">{m.epic}</span>
+                <span className="ss-name">{m.name}</span>
+                <span className="ss-type">{typeLabel(m.type, categories)}</span>
+                <span className="ss-exch">{brokerLabel(brokerId).toUpperCase()}</span>
+                <span className="ss-badge" aria-hidden="true">
+                  {brokerId.charAt(0).toUpperCase()}
+                </span>
+                <Tooltip content={favEpics.has(m.epic) ? "Remove from favorites" : "Add to favorites"}>
+                  <button
+                    className={"ss-star" + (favEpics.has(m.epic) ? " on" : "")}
+                    aria-label={favEpics.has(m.epic) ? "Remove from favorites" : "Add to favorites"}
+                    aria-pressed={favEpics.has(m.epic)}
+                    onClick={(e) => {
+                      e.stopPropagation(); // don't select + close the modal
+                      void toggleFavorite(m);
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+                      <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
+                    </svg>
+                  </button>
+                </Tooltip>
+              </li>
+            </Tooltip>
           ))}
           {isSyntheticExpr(query) && activeSymbolFragment(query) === "" ? (
             <li className="symsearch-empty">Type to search the next symbol…</li>

@@ -409,9 +409,9 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
               <li className="sep" />
               {Object.keys(loadDrawingPresets(name)).map((nm) => (
                 <li key={nm} className="ind-def-preset">
-                  <span onClick={() => applyPreset(nm)} title={`Apply "${nm}"`}>
-                    {nm}
-                  </span>
+                  <Tooltip content={`Apply "${nm}"`}>
+                    <span onClick={() => applyPreset(nm)}>{nm}</span>
+                  </Tooltip>
                   <Tooltip content={`Delete "${nm}"`}>
                     <button
                       className="ind-def-del"

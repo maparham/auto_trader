@@ -66,7 +66,7 @@ function indicatorMenu(page: Page) {
 async function removeIndicatorViaLegend(page: Page, shortName: string) {
   const legendRow = page.locator(".chart-legend .cl-row.cl-ind", { hasText: shortName }).first();
   await legendRow.hover();
-  await legendRow.locator('button.cl-icon[title="Remove"]').click();
+  await legendRow.locator('button.cl-icon[aria-label="Remove"]').click();
 }
 
 test("snapshot: save, restore into new tab with state + marker + range", async ({

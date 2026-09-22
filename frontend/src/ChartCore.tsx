@@ -5877,36 +5877,38 @@ export default function ChartCore({
       </div>
 
       {!isSynthetic(symbol.epic) && !snapView && (
-      <div
-        ref={plusBtnRef}
-        className="axis-plus"
-        style={{ display: "none" }}
-        title="Add alert / draw at this price"
-        // Moving the cursor onto the "+" makes klinecharts drop the line's hover
-        // (it's a DOM sibling over the canvas). Keep the active alert's pill shown
-        // (and following) while parked here, mirroring the pill's own hover guard.
-        onMouseEnter={() => {
-          if (lastActivePillIdRef.current) setPillHoverId(lastActivePillIdRef.current);
-        }}
-        onMouseLeave={() =>
-          setPillHoverId((cur) => (cur === lastActivePillIdRef.current ? null : cur))
-        }
-        onClick={() => {
-          const el = containerRef.current;
-          if (!el) return;
-          const rect = el.getBoundingClientRect();
-          const top = parseFloat(plusBtnRef.current?.style.top || "0");
-          setPlusMenu({ x: rect.right - 12, y: rect.top + top, price: plusPriceRef.current });
-        }}
-      >
-        <span className="axis-plus-icon">
-          {/* SVG plus (not the "+" glyph) so it's perfectly centered in the circle. */}
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-          </svg>
-        </span>
-        <span className="axis-plus-price" ref={plusPriceLabelRef} />
-      </div>
+      <Tooltip asChild disabled={plusMenu != null} content="Add alert or draw at this price">
+        <div
+          ref={plusBtnRef}
+          className="axis-plus"
+          style={{ display: "none" }}
+          aria-label="Add alert or draw at this price"
+          // Moving the cursor onto the "+" makes klinecharts drop the line's hover
+          // (it's a DOM sibling over the canvas). Keep the active alert's pill shown
+          // (and following) while parked here, mirroring the pill's own hover guard.
+          onMouseEnter={() => {
+            if (lastActivePillIdRef.current) setPillHoverId(lastActivePillIdRef.current);
+          }}
+          onMouseLeave={() =>
+            setPillHoverId((cur) => (cur === lastActivePillIdRef.current ? null : cur))
+          }
+          onClick={() => {
+            const el = containerRef.current;
+            if (!el) return;
+            const rect = el.getBoundingClientRect();
+            const top = parseFloat(plusBtnRef.current?.style.top || "0");
+            setPlusMenu({ x: rect.right - 12, y: rect.top + top, price: plusPriceRef.current });
+          }}
+        >
+          <span className="axis-plus-icon">
+            {/* SVG plus (not the "+" glyph) so it's perfectly centered in the circle. */}
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            </svg>
+          </span>
+          <span className="axis-plus-price" ref={plusPriceLabelRef} />
+        </div>
+      </Tooltip>
       )}
 
 

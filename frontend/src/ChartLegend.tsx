@@ -751,77 +751,89 @@ function IndicatorRow({
         className={`cl-icons${row.visible ? "" : " cl-icons-hidden-eye"}`}
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        <button
-          className="cl-icon"
-          title={row.visible ? "Hide" : "Show"}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleVisible(row.name);
-          }}
-        >
-          {row.visible ? ICON_EYE : ICON_EYE_OFF}
-        </button>
-        <button
-          className="cl-icon"
-          title="Settings"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenSettings(row.name);
-          }}
-        >
-          {ICON_GEAR}
-        </button>
-        <button
-          className="cl-icon"
-          title="Remove"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove(row.name);
-          }}
-        >
-          {ICON_TRASH}
-        </button>
+        <Tooltip asChild content={row.visible ? "Hide" : "Show"}>
+          <button
+            className="cl-icon"
+            aria-label={row.visible ? "Hide" : "Show"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleVisible(row.name);
+            }}
+          >
+            {row.visible ? ICON_EYE : ICON_EYE_OFF}
+          </button>
+        </Tooltip>
+        <Tooltip asChild content="Settings">
+          <button
+            className="cl-icon"
+            aria-label="Settings"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenSettings(row.name);
+            }}
+          >
+            {ICON_GEAR}
+          </button>
+        </Tooltip>
+        <Tooltip asChild content="Remove">
+          <button
+            className="cl-icon"
+            aria-label="Remove"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(row.name);
+            }}
+          >
+            {ICON_TRASH}
+          </button>
+        </Tooltip>
         {/* TradingView-style "more" (⋯): opens the context menu, anchored
             just below the button. SVG (not the Material Symbols subset, which
             doesn't include more_horiz) so it's crisp without re-subsetting. */}
-        <button
-          className="cl-icon cl-icon-svg"
-          title="More"
-          onClick={(e) => {
-            e.stopPropagation();
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            onOpenMenu(row.name, r.left, r.bottom + 4);
-          }}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="5" cy="12" r="1.6" />
-            <circle cx="12" cy="12" r="1.6" />
-            <circle cx="19" cy="12" r="1.6" />
-          </svg>
-        </button>
-        {onMoveUp && (
+        <Tooltip asChild content="More">
           <button
-            className="cl-icon cl-icon-svg cl-icon-stroke sp-move-up"
-            title="Move up"
+            className="cl-icon cl-icon-svg"
+            aria-label="More"
             onClick={(e) => {
               e.stopPropagation();
-              onMoveUp();
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              onOpenMenu(row.name, r.left, r.bottom + 4);
             }}
           >
-            {ICON_ARROW_UP}
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.6" />
+              <circle cx="12" cy="12" r="1.6" />
+              <circle cx="19" cy="12" r="1.6" />
+            </svg>
           </button>
+        </Tooltip>
+        {onMoveUp && (
+          <Tooltip asChild content="Move up">
+            <button
+              className="cl-icon cl-icon-svg cl-icon-stroke sp-move-up"
+              aria-label="Move up"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveUp();
+              }}
+            >
+              {ICON_ARROW_UP}
+            </button>
+          </Tooltip>
         )}
         {onMoveDown && (
-          <button
-            className="cl-icon cl-icon-svg cl-icon-stroke sp-move-down"
-            title="Move down"
-            onClick={(e) => {
-              e.stopPropagation();
-              onMoveDown();
-            }}
-          >
-            {ICON_ARROW_DOWN}
-          </button>
+          <Tooltip asChild content="Move down">
+            <button
+              className="cl-icon cl-icon-svg cl-icon-stroke sp-move-down"
+              aria-label="Move down"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveDown();
+              }}
+            >
+              {ICON_ARROW_DOWN}
+            </button>
+          </Tooltip>
         )}
       </span>
     </div>

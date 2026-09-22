@@ -349,21 +349,25 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
           tools.find((t) => t.name === lastUsed.tool)?.name ?? tools[0].name;
         return (
           <div className="ds-family">
-            <button className="ds-btn" title={`Drawing tools · ${toolLabel(current)}`}
-              onClick={() => arm(current)}>
-              <DrawGlyph name={current} />
-            </button>
-            <button
-              className={"ds-caret" + (openFly ? " on" : "")}
-              title="Drawing tools…"
-              aria-label="Open drawing tools menu"
-              onClick={() => setOpenFly((v) => !v)}
-            >
-              <svg viewBox="0 0 24 24" width="8" height="8" fill="none"
-                stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
-                <path d="m9 6 6 6-6 6" />
-              </svg>
-            </button>
+            <Tooltip placement="right" disabled={openFly}
+              content={`Drawing tools · ${toolLabel(current)}`}>
+              <button className="ds-btn" aria-label={`Drawing tools · ${toolLabel(current)}`}
+                onClick={() => arm(current)}>
+                <DrawGlyph name={current} />
+              </button>
+            </Tooltip>
+            <Tooltip placement="right" disabled={openFly} content="Drawing tools…">
+              <button
+                className={"ds-caret" + (openFly ? " on" : "")}
+                aria-label="Open drawing tools menu"
+                onClick={() => setOpenFly((v) => !v)}
+              >
+                <svg viewBox="0 0 24 24" width="8" height="8" fill="none"
+                  stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
+                  <path d="m9 6 6 6-6 6" />
+                </svg>
+              </button>
+            </Tooltip>
             {openFly && (
               <DsFlyout>
                 <div className="ds-fly-section">Drawing tools</div>
@@ -411,6 +415,7 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
         <Tooltip key={name} content={toolLabel(name)} placement="right">
           <button
             className="ds-btn ds-fav"
+            aria-label={`${toolLabel(name)} (favorite)`}
             onClick={() => arm(name)}
           >
             <DrawGlyph name={name} />
@@ -451,18 +456,19 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
             {measureTool === "slope" ? <SlopeIcon /> : <RulerIcon />}
           </button>
         </Tooltip>
-        <button
-          className={"ds-caret" + (measureMenuOpen ? " on" : "")}
-          title="Measure tools…"
-          aria-label="Open measure tools menu"
-          aria-expanded={measureMenuOpen}
-          onClick={() => setMeasureMenuOpen((v) => !v)}
-        >
-          <svg viewBox="0 0 24 24" width="8" height="8" fill="none"
-            stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
-            <path d="m9 6 6 6-6 6" />
-          </svg>
-        </button>
+        <Tooltip placement="right" disabled={measureMenuOpen} content="Measure tools…">
+          <button
+            className={"ds-caret" + (measureMenuOpen ? " on" : "")}
+            aria-label="Open measure tools menu"
+            aria-expanded={measureMenuOpen}
+            onClick={() => setMeasureMenuOpen((v) => !v)}
+          >
+            <svg viewBox="0 0 24 24" width="8" height="8" fill="none"
+              stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
+              <path d="m9 6 6 6-6 6" />
+            </svg>
+          </button>
+        </Tooltip>
         {measureMenuOpen && (
           <DsFlyout>
             <div className="ds-fly-section">Measure tools</div>
@@ -601,23 +607,28 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
 
       {/* Magnet (moved from the toolbar): icon toggles, caret picks strength. */}
       <div className="ds-family" ref={magnetRef}>
-        <button
-          className={"ds-btn magnet-toggle" + (magnet.on ? " on" : "")}
-          title="Magnet mode. Snaps drawings to bar prices. Hold Ctrl/Cmd to invert."
-          onClick={() => toggleMagnet()}
-        >
-          <MagnetIcon size={22} />
-        </button>
-        <button
-          className={"ds-caret" + (magnetOpen ? " on" : "")}
-          title="Magnet strength"
-          onClick={() => setMagnetOpen((v) => !v)}
-        >
-          <svg viewBox="0 0 24 24" width="8" height="8" fill="none"
-            stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
-            <path d="m9 6 6 6-6 6" />
-          </svg>
-        </button>
+        <Tooltip placement="right" disabled={magnetOpen} title="Magnet mode"
+          content={["Snaps drawings to bar prices.", "Hold Ctrl/Cmd to invert."]}>
+          <button
+            className={"ds-btn magnet-toggle" + (magnet.on ? " on" : "")}
+            aria-label="Magnet mode"
+            onClick={() => toggleMagnet()}
+          >
+            <MagnetIcon size={22} />
+          </button>
+        </Tooltip>
+        <Tooltip placement="right" disabled={magnetOpen} content="Magnet strength">
+          <button
+            className={"ds-caret" + (magnetOpen ? " on" : "")}
+            aria-label="Magnet strength"
+            onClick={() => setMagnetOpen((v) => !v)}
+          >
+            <svg viewBox="0 0 24 24" width="8" height="8" fill="none"
+              stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
+              <path d="m9 6 6 6-6 6" />
+            </svg>
+          </button>
+        </Tooltip>
         {magnetOpen && (
           <DsFlyout>
             <ul>
@@ -677,23 +688,24 @@ export default function DrawSidebar({ controller, preserveCenterOnTf, onTogglePr
 
       {/* Bulk cluster (focused cell): eye menu, lock-all, delete-all. */}
       <div className="ds-family" ref={eyeRef}>
-        <button className={"ds-btn ds-eye" + (anyHidden ? " on" : "")}
-          title="Hide…"
-          aria-label="Open hide menu"
-          disabled={!overlays} onClick={() => setEyeOpen((v) => !v)}>
-          {anyHidden ? (
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-              strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-              <path d="M3 3l18 18M10.6 10.7a2.5 2.5 0 0 0 3.5 3.5M7.4 7.5C4.9 8.9 3 12 3 12s3.5 6 9 6c1.6 0 3-.4 4.3-1.1M12 6c5.5 0 9 6 9 6s-.7 1.2-2 2.5" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-              strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-              <path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
-              <circle cx="12" cy="12" r="2.5" />
-            </svg>
-          )}
-        </button>
+        <Tooltip placement="right" disabled={eyeOpen} content="Hide…">
+          <button className={"ds-btn ds-eye" + (anyHidden ? " on" : "")}
+            aria-label="Open hide menu"
+            disabled={!overlays} onClick={() => setEyeOpen((v) => !v)}>
+            {anyHidden ? (
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                <path d="M3 3l18 18M10.6 10.7a2.5 2.5 0 0 0 3.5 3.5M7.4 7.5C4.9 8.9 3 12 3 12s3.5 6 9 6c1.6 0 3-.4 4.3-1.1M12 6c5.5 0 9 6 9 6s-.7 1.2-2 2.5" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                <path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
+                <circle cx="12" cy="12" r="2.5" />
+              </svg>
+            )}
+          </button>
+        </Tooltip>
         {eyeOpen && (
           <DsFlyout className="compact">
             <ul>

@@ -438,15 +438,19 @@ export default function TradePills({
             {isEntry && <span className="tp-qty">{p.qty}</span>}
             {isOrderEntry ? (
               p.expiresAt != null ? (
-                <span className="tp-expiry" title={`Order expires ${fmtExpiry(p.expiresAt, true)}`}>
-                  <svg className="tp-exp-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <polyline points="12 7 12 12 15 14" />
-                  </svg>
-                  {expiryText}
-                </span>
+                <Tooltip asChild content={`Order expires ${fmtExpiry(p.expiresAt, true)}`}>
+                  <span className="tp-expiry">
+                    <svg className="tp-exp-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" />
+                      <polyline points="12 7 12 12 15 14" />
+                    </svg>
+                    {expiryText}
+                  </span>
+                </Tooltip>
               ) : (
-                <span className="tp-gtc" title="Good till cancelled">GTC</span>
+                <Tooltip asChild content="Good till cancelled">
+                  <span className="tp-gtc">GTC</span>
+                </Tooltip>
               )
             ) : (
               <span className="tp-price">
@@ -454,18 +458,19 @@ export default function TradePills({
               </span>
             )}
             {p.breakevenField && (
-              <span
-                className="tp-be"
-                title={p.breakevenField === "stop" ? "Stop at breakeven" : "Target at breakeven"}
-              >
-                BE
-              </span>
+              <Tooltip asChild content={p.breakevenField === "stop" ? "Stop at breakeven" : "Target at breakeven"}>
+                <span className="tp-be">BE</span>
+              </Tooltip>
             )}
             {bodyPnl != null && (
-              <span className="tp-pnl" title="Unrealised P&L">{bodyPnl}</span>
+              <Tooltip asChild content="Unrealised P&L">
+                <span className="tp-pnl">{bodyPnl}</span>
+              </Tooltip>
             )}
             {!isEntry && p.pl != null && (
-              <span className="tp-plhint" title="P&L if this level is hit">{sign(p.pl)}</span>
+              <Tooltip asChild content="P&L if this level is hit">
+                <span className="tp-plhint">{sign(p.pl)}</span>
+              </Tooltip>
             )}
             {p.changed && (
               <>

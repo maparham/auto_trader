@@ -11,7 +11,7 @@ shows on hover (~100ms delay + instant grace group between nearby triggers) and
 keyboard focus, with a fade + slide animation.
 
 ```tsx
-<Tooltip content={string | string[] | ReactNode} title?={string} placement?={"top"|"bottom"|"left"|"right"} delay?={number}>
+<Tooltip content={string | string[] | ReactNode} title?={string} placement?={"top"|"bottom"|"left"|"right"} delay?={number} asChild?>
   {trigger}
 </Tooltip>
 ```
@@ -23,9 +23,13 @@ For the common ⓘ info-icon pattern, use `InfoTip`
 <InfoTip title={string} text={string | string[]} />
 ```
 
-Note: `~126` standalone native `title=` sites elsewhere in the app have not yet
-been migrated onto `Tooltip` — that's tracked follow-up work, not a pattern to
-copy in new code.
+Where a wrapper span would break layout (a `tr`, an `li`, an absolutely
+positioned button, a flex child that code finds with `:scope > .x`), pass
+`asChild`. The handlers and the anchor ref then go on the child itself, and
+the child's own handlers and ref still run. Keep the wrapper for a disabled
+button, since it may not fire mouse events. When triggers are nested (a row
+hint around buttons that have their own tooltips), only the innermost open
+tooltip shows. The app has no native `title=` tooltips left; don't add new ones.
 
 ### Side panels
 

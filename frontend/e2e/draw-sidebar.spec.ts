@@ -43,13 +43,13 @@ test("draw sidebar: flyout, favorites, last-used, bulk buttons", async ({ page }
   const rayRow = flyout.locator(".ds-row", { hasText: "Ray" });
   await rayRow.hover();
   await rayRow.locator(".ind-star").click();
-  await expect(sidebar.locator("button[title='Ray (favorite)']")).toBeVisible();
+  await expect(sidebar.locator("button[aria-label='Ray (favorite)']")).toBeVisible();
   // The favorites strip collapses/expands via the slim toggle under the tool button.
   const favToggle = sidebar.locator(".ds-fav-toggle");
   await favToggle.click();
-  await expect(sidebar.locator("button[title='Ray (favorite)']")).toHaveCount(0);
+  await expect(sidebar.locator("button[aria-label='Ray (favorite)']")).toHaveCount(0);
   await favToggle.click();
-  await expect(sidebar.locator("button[title='Ray (favorite)']")).toBeVisible();
+  await expect(sidebar.locator("button[aria-label='Ray (favorite)']")).toBeVisible();
   const favs = await page.evaluate(() => {
     const k = Object.keys(localStorage).find((x) => x.includes("drawingFavorites"));
     return k ? JSON.parse(localStorage.getItem(k)!) : [];
@@ -65,12 +65,12 @@ test("draw sidebar: flyout, favorites, last-used, bulk buttons", async ({ page }
     return k ? JSON.parse(localStorage.getItem(k)!) : {};
   });
   expect(lastUsed.tool).toBe("rayLine");
-  await expect(toolFamily.locator(".ds-btn")).toHaveAttribute("title", /Ray/);
+  await expect(toolFamily.locator(".ds-btn")).toHaveAttribute("aria-label", /Ray/);
 
   // Favorites survive reload.
   await page.reload();
   await page.locator(".chart canvas").first().waitFor();
-  await expect(page.locator(".draw-sidebar button[title='Ray (favorite)']")).toBeVisible();
+  await expect(page.locator(".draw-sidebar button[aria-label='Ray (favorite)']")).toBeVisible();
 
   // Measure + magnet live on the sidebar now.
   await expect(page.locator(".draw-sidebar .measure-toggle")).toBeVisible();
