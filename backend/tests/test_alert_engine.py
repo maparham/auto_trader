@@ -297,9 +297,10 @@ def test_fired_payload_has_all_expected_keys(tmp_path):
         assert set(fired[0]["value"].keys()) == {
             "id", "broker", "epic", "kind", "price", "level", "condition",
             "message", "precision", "notify",
-            "trigger", "timeframe", "triggered_id",
+            "trigger", "timeframe", "triggered_id", "time",
         }
         assert fired[0]["value"]["triggered_id"] > 0
+        assert isinstance(fired[0]["value"]["time"], int)
     asyncio.run(main())
 
 

@@ -126,6 +126,8 @@ export interface FiredPayload {
   message: string;
   precision: number;
   notify: Partial<AlertNotifyChannels>;
+  /** Server firing moment (ms epoch); absent on payloads from older backends. */
+  time?: number;
 }
 
 // --- wire shape (server) ------------------------------------------------------
@@ -505,7 +507,9 @@ export function applyAlertEvent(key: string, value: unknown): boolean {
     const payload = value as FiredPayload;
     triggeredCache = [
       {
-        time: Date.now(),
+        // The server's stamp, so History matches the stored row and the
+        // Telegram caption rather than this client's clock.
+        time: typeof payload.time === "number" ? payload.time : Date.now(),
         epic: payload.epic,
         condition: payload.condition,
         level: payload.level,

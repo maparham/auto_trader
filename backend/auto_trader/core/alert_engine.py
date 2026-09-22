@@ -635,10 +635,11 @@ class AlertEngine:
         level = params.get("level")
         condition = params.get("condition")
 
+        now_ms = int(time.time() * 1000)
         triggered_id = await self._store.add_triggered(
             user_id,
             {
-                "time": int(time.time() * 1000),
+                "time": now_ms,
                 "alert_id": row["id"],
                 "broker": row["broker"],
                 "epic": row["epic"],
@@ -668,10 +669,12 @@ class AlertEngine:
             # Notifier-facing extras: which trigger mode fired (drives which
             # inline buttons Telegram shows), the chart timeframe the alert was
             # created from (drives the snapshot), and the triggered rowid (the
-            # re-arm callback reference).
+            # re-arm callback reference). `time` is the firing moment (ms
+            # epoch) so notifiers (Telegram caption) can stamp it.
             "trigger": params.get("trigger"),
             "timeframe": params.get("timeframe"),
             "triggered_id": triggered_id,
+            "time": now_ms,
         }
         await self._broadcast(user_id, {"key": "__alerts__:fired", "value": payload})
 

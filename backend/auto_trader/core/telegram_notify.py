@@ -28,6 +28,7 @@ import logging
 import secrets
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -74,6 +75,28 @@ _TIMEFRAME_LABELS = {
     "MINUTE": "1m", "MINUTE_5": "5m", "MINUTE_15": "15m", "MINUTE_30": "30m",
     "HOUR": "1h", "HOUR_4": "4h", "DAY": "1D", "WEEK": "1W",
 }
+
+
+def _format_fired_time(payload: dict) -> str:
+    """UTC firing timestamp for the caption (`YYYY-MM-DD HH:MM:SS UTC`).
+
+    The engine stamps `payload["time"]` (ms epoch); older/test payloads may
+    lack it, in which case the send moment is used so the caption always
+    carries a timestamp. Never raises — a missing, unparsable or
+    out-of-range stamp falls back to now."""
+    try:
+        raw = payload.get("time")
+        if isinstance(raw, bool):  # int(True) == 1 would caption 1970
+            raise TypeError("bool time")
+        ms = int(raw)  # type: ignore[arg-type]
+        stamp = datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+    except (TypeError, ValueError, OverflowError, OSError):
+        stamp = datetime.fromtimestamp(time.time(), tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+    return stamp
 
 
 @dataclass
@@ -245,6 +268,7 @@ class TelegramNotify:
         cond = _CONDITION_LABELS.get(payload.get("condition"), payload.get("condition") or "")
         head = " ".join(p for p in (f"🔔 {epic}", cond, f"{level:.{precision}f}") if p)
         lines = [f"{head} · now {price:.{precision}f}"]
+        lines.append(f"🕒 {_format_fired_time(payload)}")
         if payload.get("message"):
             lines.append(str(payload["message"]))
         lines.extend(await self._position_lines(payload, precision))
@@ -318,7 +342,8 @@ class TelegramNotify:
             )
             title = (
                 f"{payload['epic']} · {tf_label} · {cond} "
-                f"{payload['level']:.{precision}f} @ {payload['price']:.{precision}f}"
+                f"{payload['level']:.{precision}f} @ {payload['price']:.{precision}f} "
+                f"· {_format_fired_time(payload)}"
             )
             return await asyncio.to_thread(
                 render_alert_chart,

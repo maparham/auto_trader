@@ -132,13 +132,30 @@ async def test_notifier_sends_when_linked(store):
         {
             "epic": "US100", "message": "broke out", "level": 100.0, "price": 100.456,
             "precision": 2, "notify": {"telegram": True}, "condition": "crossing_up",
+            "time": 1727188800000,
         },
     )
 
     assert route.called
     body = json.loads(route.calls.last.request.content)
     assert body["chat_id"] == "chat-1"
-    assert body["text"] == "🔔 US100 crossed up 100.00 · now 100.46\nbroke out"
+    assert body["text"] == (
+        "🔔 US100 crossed up 100.00 · now 100.46\n"
+        "🕒 2024-09-24 14:40:00 UTC\n"
+        "broke out"
+    )
+
+
+def test_format_fired_time_never_raises():
+    """Missing, unparsable and out-of-range stamps fall back to now; a good
+    stamp formats as UTC. (This file cannot run where agent_ui_bridge is not
+    installed — conftest pulls it via mcp_server — so this rides CI.)"""
+    fmt = telegram_notify_mod._format_fired_time
+    assert fmt({"time": 1727188800000}) == "2024-09-24 14:40:00 UTC"
+    for bad in ({}, {"time": None}, {"time": "not-a-time"}, {"time": 10**30}, {"time": True}):
+        stamped = fmt(bad)
+        assert stamped.endswith(" UTC") and len(stamped) == len("2024-09-24 14:40:00 UTC")
+        assert not stamped.startswith("1970")
 
 
 @respx.mock
