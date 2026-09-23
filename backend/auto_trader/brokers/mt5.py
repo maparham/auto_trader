@@ -632,13 +632,14 @@ class MT5Broker(MarketDataBroker):
         """Cache the account's real broker name off a MetaApi account-information
         payload — `broker` verbatim (the registered name, e.g. "Ava Trade Ltd")
         plus a demo/live suffix from the trade mode, matching the selector's
-        "Capital.com (demo)" style. Called opportunistically by every account-info
+        "Capital.com (demo)" style, tagged MetaApi so it never reads like the
+        self-hosted mt5-self row for the same account. Called opportunistically by every account-info
         read so the label heals itself even if the startup fetch missed."""
         name = (info or {}).get("broker")
         if not name:
             return
         env = _TRADE_MODE_ENV.get(info.get("type"))
-        self.display_name = f"{name} ({env})" if env else name
+        self.display_name = f"{name} ({env}, MetaApi)" if env else f"{name} (MetaApi)"
 
     def start_display_name_fetch(self) -> None:
         """Kick the one-shot background fetch of the broker name, so the selector

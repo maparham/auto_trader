@@ -66,25 +66,25 @@ def test_account_summary_maps_metaapi_fields():
 
 def test_note_account_info_composes_display_name():
     # Broker field verbatim + demo/live suffix from the trade mode — the selector
-    # label ("Ava Trade Ltd (demo)") in the "Capital.com (demo)" style.
+    # label ("Ava Trade Ltd (demo, MetaApi)") in the "Capital.com (demo)" style.
     broker = MT5Broker(token="t", account_id="a")
     assert broker.display_name is None
     broker.note_account_info({"broker": "Ava Trade Ltd", "type": "ACCOUNT_TRADE_MODE_DEMO"})
-    assert broker.display_name == "Ava Trade Ltd (demo)"
+    assert broker.display_name == "Ava Trade Ltd (demo, MetaApi)"
     broker.note_account_info({"broker": "Ava Trade Ltd", "type": "ACCOUNT_TRADE_MODE_REAL"})
-    assert broker.display_name == "Ava Trade Ltd (live)"
+    assert broker.display_name == "Ava Trade Ltd (live, MetaApi)"
 
 
 def test_note_account_info_partial_payloads():
     broker = MT5Broker(token="t", account_id="a")
     # Unknown/missing trade mode → bare name (no invented suffix).
     broker.note_account_info({"broker": "Ava Trade Ltd", "type": "ACCOUNT_TRADE_MODE_CONTEST"})
-    assert broker.display_name == "Ava Trade Ltd"
+    assert broker.display_name == "Ava Trade Ltd (MetaApi)"
     # No name → keep the last-known label rather than blanking it.
     broker.note_account_info({"type": "ACCOUNT_TRADE_MODE_DEMO"})
-    assert broker.display_name == "Ava Trade Ltd"
+    assert broker.display_name == "Ava Trade Ltd (MetaApi)"
     broker.note_account_info(None)
-    assert broker.display_name == "Ava Trade Ltd"
+    assert broker.display_name == "Ava Trade Ltd (MetaApi)"
 
 
 def test_account_summary_refreshes_display_name():
@@ -94,7 +94,7 @@ def test_account_summary_refreshes_display_name():
         {"balance": 1.0, "equity": 1.0, "broker": "Ava Trade Ltd", "type": "ACCOUNT_TRADE_MODE_DEMO"}
     )
     asyncio.run(MT5ExecutionBroker(data).get_account_summary())
-    assert data.display_name == "Ava Trade Ltd (demo)"
+    assert data.display_name == "Ava Trade Ltd (demo, MetaApi)"
 
 
 def test_account_summary_tolerates_missing_fields():

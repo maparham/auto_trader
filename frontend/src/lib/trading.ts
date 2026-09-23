@@ -100,6 +100,9 @@ const BROKER_LABELS: Record<string, string> = {
   "capital-live": "Capital.com (live)",
   "ig-demo": "IG (demo)",
   "ig-live": "IG (live)",
+  // AvaTrade MT5 through MetaApi's cloud. Same account as mt5-self, so the
+  // backend's live label carries "MetaApi" too.
+  mt5: "AvaTrade MT5 (MetaApi)",
   // AvaTrade MT5 through the local terminal's built-in MCP server. The backend
   // sends the real broker name as a label once the terminal answers.
   "mt5-self": "AvaTrade MT5 (self-hosted)",

@@ -109,7 +109,7 @@ describe("capital feed labels + isCapital", () => {
 
 describe("backend-reported broker labels", () => {
   it("falls back to a capitalized id for an unknown broker with no label", () => {
-    expect(brokerLabel("mt5")).toBe("Mt5");
+    expect(brokerLabel("newbroker")).toBe("Newbroker");
   });
   it("prefers the backend label over the static map and the fallback", () => {
     noteBrokerLabels({ mt5: "Ava Trade Ltd (demo)", capital: "Capital (renamed)" });
