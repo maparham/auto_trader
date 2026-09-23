@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from auto_trader.config import IGSettings, MTSettings, OanorSettings, Settings, settings
+from auto_trader.config import IGSettings, MT5MCPSettings, MTSettings, OanorSettings, Settings, settings
 from auto_trader.brokers.registry import BrokerRegistry, build_registry
 
 
@@ -28,6 +28,7 @@ def _no_ig(monkeypatch):
     override) so tests still exercise the real credential gating."""
     monkeypatch.setattr(IGSettings, "has", lambda self, side: False)
     monkeypatch.setattr(MTSettings, "has", lambda self: False)
+    monkeypatch.setattr(MT5MCPSettings, "has", lambda self: False)
     monkeypatch.setattr(OanorSettings, "has", lambda self: False)
     monkeypatch.setattr(settings, "api_key", "k", raising=False)
     monkeypatch.setattr(settings, "identifier", "i", raising=False)
@@ -201,15 +202,18 @@ def test_broker_query_resolves_empty_to_default(monkeypatch) -> None:
     """Routes take ?broker= via deps.broker_query: absent/empty lands on the
     default registered broker, an explicit id passes through untouched.
 
-    broker_query now also takes the request (for the admin gate); passing
-    None is safe here since dev mode (no CLERK_JWKS_URL) short-circuits
-    request_is_admin to True before it ever touches the request object."""
+    broker_query now also takes the request (for the demo pin and the admin
+    gate). A bare stub with an empty state reads as a non-demo request, and
+    dev mode (no CLERK_JWKS_URL) short-circuits request_is_admin to True."""
+    from types import SimpleNamespace
+
     from auto_trader.api import deps
 
+    req = SimpleNamespace(state=SimpleNamespace())
     monkeypatch.setattr(settings, "api_key", "", raising=False)
     monkeypatch.setattr(deps, "_registry", build_registry())
-    assert deps.broker_query(None, "") == "dukascopy"
-    assert deps.broker_query(None, "yfinance") == "yfinance"
+    assert deps.broker_query(req, "") == "dukascopy"
+    assert deps.broker_query(req, "yfinance") == "yfinance"
 
 
 def test_get_data_unknown_broker_is_404() -> None:

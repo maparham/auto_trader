@@ -22,7 +22,7 @@ def _registry() -> BrokerRegistry:
 
 def test_restricted_set_contents():
     assert RESTRICTED_BROKER_IDS == frozenset(
-        {"capital", "capital-live", "ig-demo", "ig-live", "mt5", "oanor"}
+        {"capital", "capital-live", "ig-demo", "ig-live", "mt5", "mt5-self", "oanor"}
     )
 
 
