@@ -62,8 +62,8 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 #  max_slope_atr, min_slope_atr, max_touch_spacing, min_touch_spacing,
 #  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
 #  max_dist_pct, merge_atr, max_per_pivot, merge_pct, major_pivots,
-#  major_len, major_size_atr]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR)
+#  major_len, major_size_atr, lookback_bars]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR, 0)
 # The distance "Only lines near price" drew at, in ATR(14): what a pane saved
 # with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
 # trendlinesOutputs.ts.
@@ -128,6 +128,9 @@ class TrendlinesConfig:
     merge_pct: float = 0.0
     major_len: int = MAJOR_LEN
     major_size_atr: float = MAJOR_SIZE_ATR
+    # Oldest bar a line may start on, counted back from the bar being
+    # computed; older lines drop and older pivots seed nothing. 0 = off.
+    lookback_bars: int = 0
     timeframe: str | None = None
 
 
@@ -229,6 +232,7 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         major_pivots=zero_int(24, d[24]),
         major_len=int_at(25, d[25]),
         major_size_atr=num_at(26, d[26], True),
+        lookback_bars=zero_int(27, d[27]),
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
@@ -619,7 +623,12 @@ def _has_swing_reach(vals: Sequence[float], k: int, kind: str, bars: int) -> boo
 
 
 def is_live(line: TrendLine, i: int, cfg: TrendlinesConfig) -> bool:
-    return i - line.last_touch_idx <= cfg.max_proj_bars
+    return i - line.last_touch_idx <= cfg.max_proj_bars and within_lookback(line.i1, i, cfg)
+
+
+def within_lookback(i1: int, i: int, cfg: TrendlinesConfig) -> bool:
+    """Mirrors TS withinLookback. 0 = off."""
+    return cfg.lookback_bars <= 0 or i - i1 <= cfg.lookback_bars
 
 
 def touch_gaps(touch_idxs: Sequence[int]) -> tuple[int, float]:
@@ -654,7 +663,11 @@ def is_major(line: TrendLine, i: int, cfg: TrendlinesConfig) -> bool:
         return False
     if line.crossings < cfg.min_crossings:
         return False
-    return i >= line.i1 and i <= line.last_touch_idx + cfg.max_proj_bars
+    return (
+        i >= line.i1
+        and i <= line.last_touch_idx + cfg.max_proj_bars
+        and within_lookback(line.i1, i, cfg)
+    )
 
 
 def compute_trendlines(
@@ -727,12 +740,15 @@ def compute_trendlines(
 
                 # 2b. Seed against the previous pair_pivots pool entries, plus
                 #     the major tier where it reaches further back. Ascending
-                #     pool position throughout. Under Max Span a major too old
-                #     to span is dropped from the tier: no line could use it.
+                #     pool position throughout. Under Max Span or Lookback a
+                #     major too old to use is dropped from the tier.
                 frm = max(0, len(pool_idxs) - cfg.pair_pivots)
-                if cfg.max_span_bars > 0 and major_q:
+                if (cfg.max_span_bars > 0 or cfg.lookback_bars > 0) and major_q:
                     for j in range(len(major_q) - 1, -1, -1):
-                        if k - pool_idxs[major_q[j]] > cfg.max_span_bars:
+                        mi = pool_idxs[major_q[j]]
+                        if (
+                            cfg.max_span_bars > 0 and k - mi > cfg.max_span_bars
+                        ) or not within_lookback(mi, i, cfg):
                             del major_q[j]
                             del major_str[j]
                 seeds = [q for q in major_q if q < frm]
@@ -740,6 +756,8 @@ def compute_trendlines(
                 for q in seeds:
                     i1 = pool_idxs[q]
                     if i1 >= k:
+                        continue
+                    if not within_lookback(i1, i, cfg):
                         continue
                     k1 = pool_kinds[q]
                     p1 = highs[i1] if k1 == "high" else lows[i1]

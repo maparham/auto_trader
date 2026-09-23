@@ -151,6 +151,11 @@ export interface TrendlinesConfig {
   majorPivots: number;
   majorLen: number;
   majorSizeAtr: number;
+  // Lookback: the oldest bar a line may start on, counted back from the bar
+  // being computed. A line whose first anchor is more than this many bars
+  // before bar i is dropped at i, and no older pivot seeds one. Causal (bar i
+  // reads only bars <= i), so a backtest sees what the chart shows. 0 = off.
+  lookbackBars: number;
 }
 
 /** KEY ORDER IS THE calcParams ORDER (mtfCoordinator builds HTF params from
@@ -184,6 +189,7 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   majorPivots: MAJOR_PIVOTS,
   majorLen: MAJOR_LEN,
   majorSizeAtr: MAJOR_SIZE_ATR,
+  lookbackBars: 0,
 };
 
 /** DEFAULT merge tolerance, in ATR(14): the value the mergeAtr slot starts
@@ -215,7 +221,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  * maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing, minTouchSpacing,
  * minCrossings, maxCrossings, pierceMult, minBackBars, maxDistAtr,
  * maxDistPct, mergeAtr, maxPerPivot, mergePct, majorPivots, majorLen,
- * majorSizeAtr]. Mirrored by backend parse_trendlines_config.
+ * majorSizeAtr, lookbackBars]. Mirrored by backend parse_trendlines_config.
  *
  * `extendData` is read ONLY to migrate panes saved before slots 19 to 22
  * existed, and only while the slot in question is ABSENT (a present slot, 0
@@ -291,6 +297,7 @@ export function parseTrendlinesConfig(
     majorPivots: zeroInt(24, d.majorPivots),
     majorLen: intAt(25, d.majorLen),
     majorSizeAtr: numAt(26, d.majorSizeAtr, true),
+    lookbackBars: zeroInt(27, d.lookbackBars),
   };
 }
 

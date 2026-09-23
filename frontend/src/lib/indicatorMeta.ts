@@ -948,6 +948,17 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        ...num(27, "Lookback", { min: 0 }),
+        default: TL.lookbackBars,
+        unbounded: true,
+        suffix: "bars",
+        tip: [
+          "Oldest bar a line may start on, counted back from each bar.",
+          "A line whose first anchor is older is dropped. Empty: no limit.",
+          "On a daily chart, about 252 bars is a year.",
+        ],
+      },
+      {
         key: "extend",
         label: "Extend",
         // Everything from here down is render-only: nothing a rule reads can

@@ -125,6 +125,7 @@ _TL_BASE = dict(
     min_touch_spacing=0, min_crossings=0, max_crossings=0, pierce_mult=0.25,
     min_back_bars=0, max_dist_atr=0.0, max_dist_pct=0.0, merge_atr=0.0, max_per_pivot=0,
     merge_pct=0.0, major_pivots=0, major_len=30, major_size_atr=0.0,
+    lookback_bars=0,
 )
 
 # Mirrors TL_VARIANTS in indicatorParityGolden.test.ts VALUE FOR VALUE.
@@ -148,6 +149,7 @@ _TL_VARIANTS = {
     "PERPIVOT2": dict(max_per_pivot=2),
     "MERGE": dict(merge_atr=1),
     "MERGE_CAP": dict(merge_atr=1, max_per_pivot=2),
+    "LOOKBACK": dict(lookback_bars=50),
 }
 
 

@@ -129,6 +129,7 @@ describe("indicator parity golden fixture", () => {
       minTouchSpacing: 0, minCrossings: 0, maxCrossings: 0, pierceMult: 0.25,
       minBackBars: 0, maxDistAtr: 0, maxDistPct: 0, mergeAtr: 0, maxPerPivot: 0, mergePct: 0,
       majorPivots: 0, majorLen: 30, majorSizeAtr: 0,
+      lookbackBars: 0,
     };
     const tlPoints = computeTrendlines(candles, TL_CFG).points;
     // One variant per gate, each against its own off state in TL_CFG, so a port
@@ -158,6 +159,7 @@ describe("indicator parity golden fixture", () => {
       PERPIVOT2: { maxPerPivot: 2 },
       MERGE: { mergeAtr: 1 },
       MERGE_CAP: { mergeAtr: 1, maxPerPivot: 2 },
+      LOOKBACK: { lookbackBars: 50 },
     };
     const tlVariantSeries: Record<string, Array<number | null>> = {};
     for (const [name, patch] of Object.entries(TL_VARIANTS)) {

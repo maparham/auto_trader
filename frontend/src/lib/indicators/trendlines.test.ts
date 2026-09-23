@@ -1008,6 +1008,33 @@ describe("the ceilings silence without destroying", () => {
     expect(isMajor(over as TrendLine, bars.length - 1, cfg({ maxSpanBars: 39 }))).toBe(false);
   });
 
+  // Lookback DROPS rather than silences: age only grows, so a line past it
+  // can never qualify again, and no older pivot may seed a new one.
+  it("drops a line once its first anchor is older than Lookback", () => {
+    const bars = flat(80);
+    bars[20] = bar(20, 90, 100.5);
+    bars[60] = bar(60, 94, 100.5);
+    const L = 50;
+    const { points, lines } = computeTrendlines(bars, cfg({ lookbackBars: L }));
+    expect(lines.some((l) => l.i1 === 20)).toBe(false);
+    // The bar-60 low confirms at 62, when bar 20 is already 42 bars back, so
+    // the line emits until bar 20 + L and never after.
+    expect(points[20 + L].tl_1).toBeDefined();
+    expect(points.slice(20 + L + 1).every((p) => p.tl_1 === undefined)).toBe(true);
+    expect(computeTrendlines(bars, cfg({ lookbackBars: 30 })).points.some((p) => p.tl_1 !== undefined)).toBe(false);
+    expect(computeTrendlines(bars, cfg({ lookbackBars: 0 })).lines.some((l) => l.i1 === 20)).toBe(true);
+  });
+
+  it("matches the incremental session under Lookback", () => {
+    const bars = walk(400);
+    const c = cfg({ lookbackBars: 60, maxLines: 6 });
+    const ref = computeTrendlines(bars, c);
+    const inc = createTrendlinesSession().compute(bars, c);
+    expect(inc.lines).toEqual(ref.lines);
+    expect(inc.points).toEqual(ref.points);
+    expect(ref.lines.every((l) => bars.length - 1 - l.i1 <= 60)).toBe(true);
+  });
+
   it("silences a line past Max Touches without destroying it", () => {
     // Three dips on one rising line: the pair plus a third pivot touching it.
     const bars = flat(80);

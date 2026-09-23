@@ -1023,13 +1023,20 @@ function buildSrMtf(
 // bars), which the coverage guard then chased with a refetch + full recompute
 // on every trigger, forever. Best-effort is the contract here, and the cap is
 // what keeps the ASK inside what a walk can actually settle.
-const tlWarmup = (cfg: TrendlinesConfig): number =>
-  TL_ATR_LEN +
-  2 * cfg.pivotLen +
-  cfg.maxProjBars +
-  (cfg.maxSpanBars > 0
-    ? cfg.maxSpanBars
-    : Math.min(cfg.pairPivots, MAX_PAIR_PIVOTS) * (2 * cfg.pivotLen + 1));
+// Lookback bounds it outright: no line at bar i starts before i - Lookback,
+// so the ATR warm-up and one pivot window on top of it are all a view needs.
+const tlWarmup = (cfg: TrendlinesConfig): number => {
+  const reach =
+    TL_ATR_LEN +
+    2 * cfg.pivotLen +
+    cfg.maxProjBars +
+    (cfg.maxSpanBars > 0
+      ? cfg.maxSpanBars
+      : Math.min(cfg.pairPivots, MAX_PAIR_PIVOTS) * (2 * cfg.pivotLen + 1));
+  return cfg.lookbackBars > 0
+    ? Math.min(reach, TL_ATR_LEN + 2 * cfg.pivotLen + cfg.lookbackBars)
+    : reach;
+};
 
 /**
  * Point Trendlines at a higher timeframe (or back to the chart timeframe when

@@ -305,7 +305,13 @@ const KINDS: readonly PivotKind[] = ["high", "low"];
 
 /** Live means not aged out past its projection horizon. */
 function isLive(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
-  return i - line.lastTouchIdx <= cfg.maxProjBars;
+  return i - line.lastTouchIdx <= cfg.maxProjBars && withinLookback(line.i1, i, cfg);
+}
+
+/** False once bar `i1` is more than Lookback bars before bar `i`. Age only
+ * grows, so a line or pivot that fails it never comes back. 0 = off. */
+function withinLookback(i1: number, i: number, cfg: TrendlinesConfig): boolean {
+  return cfg.lookbackBars <= 0 || i - i1 <= cfg.lookbackBars;
 }
 
 /** True when a line has grown past one of the user's ceilings (Max Touches,
@@ -379,7 +385,7 @@ export function isMajor(line: TrendLine, i: number, cfg: TrendlinesConfig): bool
   const span = line.lastTouchIdx - line.i1;
   if (span < cfg.minSpanBars) return false;
   if (line.crossings < cfg.minCrossings) return false;
-  return i >= line.i1 && i <= line.lastTouchIdx + cfg.maxProjBars;
+  return i >= line.i1 && i <= line.lastTouchIdx + cfg.maxProjBars && withinLookback(line.i1, i, cfg);
 }
 
 /** True when the pivot at bar `k` sits far enough from the swing before it.
@@ -752,13 +758,17 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
 
       // 2b. Seed candidates against the previous pairPivots pool entries, of
       //     either kind, plus the major tier where it reaches further back;
-      //     ascending pool position throughout. Under Max Span a major too
-      //     old to span is dropped from the tier: no line could use it. The
-      //     pool push happens AFTER this loop.
+      //     ascending pool position throughout. Under Max Span or Lookback
+      //     a major too old to use is dropped from the tier: no line could
+      //     start on it. The pool push happens AFTER this loop.
       const from = Math.max(0, pool.idxs.length - cfg.pairPivots);
-      if (cfg.maxSpanBars > 0 && majorTier.q.length > 0) {
+      if ((cfg.maxSpanBars > 0 || cfg.lookbackBars > 0) && majorTier.q.length > 0) {
         for (let j = majorTier.q.length - 1; j >= 0; j--) {
-          if (k - pool.idxs[majorTier.q[j]] > cfg.maxSpanBars) {
+          const mi = pool.idxs[majorTier.q[j]];
+          if (
+            (cfg.maxSpanBars > 0 && k - mi > cfg.maxSpanBars) ||
+            !withinLookback(mi, i, cfg)
+          ) {
             majorTier.q.splice(j, 1);
             majorTier.strength.splice(j, 1);
           }
@@ -770,6 +780,8 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
         const i1 = pool.idxs[q];
         // A bar's own high and low confirm together and would give span 0.
         if (i1 >= k) continue;
+        // Past Lookback: step 3 would drop the line on this same bar.
+        if (!withinLookback(i1, i, cfg)) continue;
         const k1 = pool.kinds[q];
         const p1 = k1 === "high" ? highs[i1] : lows[i1];
         const cand: TrendLine = {
