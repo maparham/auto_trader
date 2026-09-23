@@ -352,6 +352,15 @@ body.m-mobile .floating-modal {
 .m-chart-strip-divider { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
 .m-chart-strip-chip { flex: 0 0 auto; border: 1px solid var(--border); background: none; color: var(--text-dim); border-radius: 12px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
 .m-chart-strip-chip.active { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+/* Find-open-chart search: magnifier pinned at the strip's left edge so it
+   stays reachable while the chips scroll under it. */
+.m-chart-strip-icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text-dim); }
+.m-chart-strip-search { position: sticky; left: 0; z-index: 1; flex: 0 0 auto; display: flex; align-items: center; gap: 4px; background: var(--bg); }
+.m-chart-strip > .m-chart-strip-icon { position: sticky; left: 0; z-index: 1; }
+.m-chart-strip-input { width: 110px; font: inherit; font-size: 14px; color: var(--text); background: none; border: 1px solid var(--border); border-radius: 12px; padding: 3px 10px; outline: none; }
+/* The strip has its own close button; drop the native clear x beside it. */
+.m-chart-strip-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+.m-chart-strip-empty { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-faint); white-space: nowrap; }
 
 /* Broker chip in the chart top bar (broker switching). Fixed-shrink so a long
    broker label can't squeeze the symbol name out entirely. */
