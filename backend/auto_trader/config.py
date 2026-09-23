@@ -189,6 +189,33 @@ class MTSettings(BaseSettings):
 mt5_settings = MTSettings()
 
 
+# The local MT5 terminal's built-in MCP server (Tools > Options > MCP), an
+# alternative transport to MetaApi for the same AvaTrade account. Registers as
+# "mt5-self" (+ paper + live) only when the key is set, so a machine without a
+# running terminal never shows a dead entry.
+class MT5MCPSettings(BaseSettings):
+    """Env-prefixed MT5MCP_. `key` is the API key shown in the terminal's MCP
+    options tab. `server_utc_offset_minutes` is the trade server's clock
+    offset from UTC (0 for Ava-Real 1-MT5); MCP timestamps are server time."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MT5MCP_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    url: str = "http://127.0.0.1:22346/mcp"
+    key: str = ""
+    server_utc_offset_minutes: int = 0
+
+    def has(self) -> bool:
+        return bool(self.url and self.key)
+
+
+mt5mcp_settings = MT5MCPSettings()
+
+
 # oanor (oanor.com) serves Iran's free-market (bazaar) rial/gold prices — daily
 # OHLC history (max 365 rows/symbol) and a latest-price endpoint. Registers as
 # the data-only "oanor" broker; only when the API key is set (see `has`), so an

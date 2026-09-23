@@ -1,7 +1,7 @@
 # Self-hosted MT5 broker: native Windows VPS + our own REST bridge
 
 **Date:** 2026-07-11
-**Status:** Design approved, pending implementation plan
+**Status:** Transport superseded by [2026-09-23-mt5-local-mcp-broker-design.md](2026-09-23-mt5-local-mcp-broker-design.md): the terminal's built-in MCP server replaces the custom bridge. Goal and phases still apply.
 
 ## Problem
 

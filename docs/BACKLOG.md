@@ -3,16 +3,14 @@
 Desired-but-not-yet-built work. Each entry links to its spec. Once a spec ships,
 remove it from here (git history and the memory index track shipped features).
 
-## Specced, ready to implement
-
-- **MT5 self-hosted HTTP broker** — replace the MetaApi cloud dependency with a
-  self-run MT5 terminal on a native Windows VPS fronted by our own HTTP bridge
-  (psyb0t-style). REST contract for quotes/orders/positions + a broker adapter
-  (`mt5-self`); Phase 1 read + dealing, later phases add live ticks and remove
-  MetaApi. Design-only so far — no plan file, no implementation yet.
-  [spec](superpowers/specs/2026-07-11-mt5-selfhosted-http-broker-design.md)
-
 ## In progress
+
+- **MT5 local terminal broker (`mt5-self`)**: MT5's built-in MCP server replaces
+  MetaApi and the planned REST bridge. Phase 1 (data, paper, live dealing) is
+  built in `brokers/mt5_mcp.py`; reads verified live, dealing only unit-tested.
+  Next: one demo-account order test, then Phase 2 (live ticks by polling
+  Market Watch), which gates removing MetaApi.
+  [spec](superpowers/specs/2026-09-23-mt5-local-mcp-broker-design.md)
 
 - **Slim large modules** — split the 10 biggest modules into focused files.
   Partially done (6 of 9 committed: persist, customIndicators, app.py, brokers dedup, IndicatorSettings, ChartCore); remaining: BacktestSettingsModal, overlays.ts, App.tsx, plus new candidates lib/backtest.ts and lib/feed.ts.
