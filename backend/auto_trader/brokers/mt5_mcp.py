@@ -574,13 +574,13 @@ class MT5MCPBroker(MarketDataBroker):
     # --- account label --------------------------------------------------------
 
     def note_account_info(self, info: dict | None) -> None:
-        """Selector label from the account block: "<broker> (live, MCP)"."""
+        """Selector label from the account block: "<broker> (live, self-hosted)"."""
         acct = (info or {}).get("account") or {}
         name = acct.get("broker")
         if not name:
             return
         env = _ACCOUNT_ENV.get(str(acct.get("type") or "").lower())
-        self.display_name = f"{name} ({env}, MCP)" if env else f"{name} (MCP)"
+        self.display_name = f"{name} ({env}, self-hosted)" if env else f"{name} (self-hosted)"
 
     def start_display_name_fetch(self) -> None:
         """One background read of the account's broker name. A no-op outside a

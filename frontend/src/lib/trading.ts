@@ -102,7 +102,7 @@ const BROKER_LABELS: Record<string, string> = {
   "ig-live": "IG (live)",
   // AvaTrade MT5 through the local terminal's built-in MCP server. The backend
   // sends the real broker name as a label once the terminal answers.
-  "mt5-self": "AvaTrade MT5 (MCP)",
+  "mt5-self": "AvaTrade MT5 (self-hosted)",
   // Read-only deep-history source (Dukascopy). Charts/backtests only, no dealing.
   dukascopy: "Dukascopy (history)",
   // Read-only Yahoo Finance history (stocks/ETFs/FX/crypto/indices). Serves the
