@@ -2310,11 +2310,13 @@ export function trendlineIdxMap(
   toChart: (j: number) => number;
   toChartClose: (j: number) => number;
   toLine: (j: number) => number;
+  /** No pin: chart bars ARE line bars. */
+  identity?: boolean;
 } {
   const starts = mtf?.htfStarts;
   const htfMs = mtf?.htfMs ?? 0;
   if (!starts?.length || !(htfMs > 0) || !dataList.length)
-    return { toChart: (j) => j, toChartClose: (j) => j, toLine: (j) => j };
+    return { toChart: (j) => j, toChartClose: (j) => j, toLine: (j) => j, identity: true };
   const barMs = chartBarMs(dataList) || htfMs;
   const htfAt = (i: number) => starts[i];
   const chartAt = (i: number) => dataList[i].timestamp;
@@ -2347,47 +2349,64 @@ export function trendlineIdxMap(
   };
 }
 
-/** Chart bar that carries a crossing mark for HTF bar j: the start of the
- * run of chart closes, ending at the HTF close, that sit on the side the HTF
- * close ended on. The crossing is decided by the HTF close, but on a finer
- * chart the eye sees price cut the line hours earlier, and a mark on the
- * day's last candle reads as "off by a few bars" every time.
+/** Chart bar that carries a crossing mark for HTF bar j: the chart bar where
+ * price VISIBLY crossed the line, whatever the pin. The crossing is decided by
+ * the HTF close, but on a finer chart the eye sees price cut the line hours
+ * earlier, and a mark on the day's last candle reads as "off by a few bars"
+ * every time.
  *
- * The run may cross INTO the previous HTF bar: a share CFD's daily candle
- * closes after the last hourly bar the chart holds for that day, so the
- * hour that first closed under the line can sit in yesterday's bar while
- * yesterday's daily close was still above it. Bounded one HTF bar back, the
- * previous HTF close sat on the old side by construction. Falls back to the
- * HTF close bar (nothing earlier got there); identity with no pin or a
- * finer one, where the bar IS the crossing bar. */
+ * The search looks for a chart close that changed onto `want` (the side the
+ * HTF close crossed to), latest first, over [previous HTF bar's open, HTF
+ * close]: a share CFD's daily candle closes after the last hourly bar the
+ * chart holds for that day, so the hour that first closed under the line can
+ * sit in yesterday's bar while yesterday's daily close was still above it.
+ * The drawn segment sits a little off the HTF projection, so the chart's
+ * closes may cut it just past the HTF close instead: the next HTF bar is
+ * searched too, nearest first. With no close transition anywhere near, the
+ * nearest candle whose range spans the line takes the mark (a cross inside
+ * one chart candle, as under a pin finer than the chart). Nothing at all:
+ * NaN, and the caller draws no mark rather than one on a candle that never
+ * reached the line. Identity with no pin. */
 export function crossingChartIdx(
   line: TrendLine,
   j: number,
   map: ReturnType<typeof trendlineIdxMap>,
   dataList: KLineData[],
-  /** Which side of the line chart bar c CLOSED on (+1 above, -1 below, 0
-   * on it). The draw passes the side of the line AS DRAWN: on a finer chart
-   * the straight pixel segment sits a little off the HTF projection (the
-   * chart's bars are not evenly spaced in HTF time), and a mark chosen by
-   * the projection could land on a candle that visibly never reached the
-   * drawn line. Defaults to the projection, which is what the count used. */
-  sideAt?: (c: number) => number,
+  /** Which side of the line `price` sits on at chart bar c (+1 above, -1
+   * below, 0 on it). The draw passes the side of the line AS DRAWN: on a
+   * finer chart the straight pixel segment sits a little off the HTF
+   * projection (the chart's bars are not evenly spaced in HTF time), and a
+   * mark chosen by the projection could land on a candle that visibly never
+   * reached the drawn line. Defaults to the projection, which is what the
+   * count used. */
+  sideAt?: (c: number, price: number) => number,
+  /** The side the HTF close crossed ONTO. Defaults to the side chart bar
+   * `last` closed on. */
+  want?: number,
 ): number {
+  if (map.identity) return j;
   const last = map.toChartClose(j);
-  const first = Math.max(0, Math.ceil(map.toChart(j)));
-  if (!(last > first) || last >= dataList.length) return last;
+  const n = dataList.length;
+  if (!(last >= 0) || last >= n) return last;
   const side =
-    sideAt ??
-    ((c: number): number => {
-      const d = dataList[c].close - projectAt(line, map.toLine(c));
+    sideAt ?? ((c: number, price: number): number => {
+      const d = price - projectAt(line, map.toLine(c));
       return d > 0 ? 1 : d < 0 ? -1 : 0;
     });
-  const want = side(last);
-  if (want === 0) return last;
+  const closeSide = (c: number) => side(c, dataList[c].close);
+  const to = want ?? closeSide(last);
+  if (to === 0) return last;
+  const turned = (c: number) => c > 0 && closeSide(c) === to && closeSide(c - 1) !== to;
   const lo = Math.max(0, Math.floor(map.toChart(j - 1)));
-  let c = last;
-  while (c - 1 >= lo && side(c - 1) === want) c--;
-  return c;
+  for (let c = last; c >= lo; c--) if (turned(c)) return c;
+  const hi = Math.min(n - 1, map.toChartClose(j + 1));
+  for (let c = last + 1; c <= hi; c++) if (turned(c)) return c;
+  const spans = (c: number) => side(c, dataList[c].high) >= 0 && side(c, dataList[c].low) <= 0;
+  for (let d = 0; last - d >= lo || last + d <= hi; d++) {
+    if (last - d >= lo && spans(last - d)) return last - d;
+    if (d > 0 && last + d <= hi && spans(last + d)) return last + d;
+  }
+  return NaN;
 }
 
 /** Pixel y of a pinned line's two drawn ends. The line is straight in HTF
@@ -2986,10 +3005,9 @@ function drawTrendlines(
       ctx.stroke();
     }
     // Crossing marks: a filled dot on the line at each bar whose close changed side.
-    // Same cull as the rings; under a coarser pin the mark sits on the chart
-    // candle that first closed across, not the HTF close (crossingChartIdx).
-    // Walking back from the HTF close keeps the mark ON the drawn line only
-    // while the segment reaches that far, so onSegment is asked as for a ring.
+    // Same cull as the rings; under a pin the mark sits on the chart candle
+    // whose close visibly cut the DRAWN line (crossingChartIdx), not the HTF
+    // close, and a crossing no nearby candle shows gets no mark at all.
     if (showCrossings) {
       ctx.save();
       ctx.fillStyle = lineColor;
@@ -3002,14 +3020,20 @@ function drawTrendlines(
       const crossR = TL_CROSS_RADIUS * crossScale;
       // Side of the DRAWN segment, in pixels (y grows downward), so the
       // chosen candle is one whose close visibly sits across the line.
-      const sideDrawn = (c: number): number => {
-        const d = yPx(dataList[c].close) - onSegment(xAxis.convertToPixel(c));
+      const sideDrawn = (c: number, price: number): number => {
+        const d = yPx(price) - onSegment(xAxis.convertToPixel(c));
         return d < 0 ? 1 : d > 0 ? -1 : 0;
       };
-      for (const idx of line.crossIdxs ?? []) {
-        const xC = xAxis.convertToPixel(
-          crossingChartIdx(line, idx, idxMap, dataList, mtf ? sideDrawn : undefined),
-        );
+      // Sides alternate with every counted crossing and the last one ended on
+      // lastSign, so crossing k crossed ONTO lastSign * (-1)^(n-1-k).
+      const crossIdxs = line.crossIdxs ?? [];
+      for (let k = 0; k < crossIdxs.length; k++) {
+        const want = (crossIdxs.length - 1 - k) % 2 === 0 ? line.lastSign : -line.lastSign;
+        const cIdx = mtf
+          ? crossingChartIdx(line, crossIdxs[k], idxMap, dataList, sideDrawn, want || undefined)
+          : crossIdxs[k];
+        if (!Number.isFinite(cIdx)) continue;
+        const xC = xAxis.convertToPixel(cIdx);
         const yC = onSegment(xC);
         if (xC < 0 || xC > Math.min(tagRight, x1) || yC < 0 || yC > bounding.height)
           continue;

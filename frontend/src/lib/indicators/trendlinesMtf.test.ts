@@ -528,9 +528,37 @@ describe("crossingChartIdx", () => {
     // chart's last hour for the day puts the first cut there.
     const data = bars({ 6: 101, 7: 101, 8: 101, 9: 101, 10: 101, 11: 101 });
     expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, mtf), data)).toBe(6);
-    // ...but never further back than that bar's open.
+    // ...but never further back than that bar's open: price above the line
+    // since bar 0 shows no cut anywhere near, so there is no mark to draw.
     const long = bars(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i, 101])));
-    expect(crossingChartIdx(flat, 2, trendlineIdxMap(long, mtf), long)).toBe(4);
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(long, mtf), long)).toBeNaN();
+  });
+
+  it("never marks a candle that stayed on the old side of the drawn line", () => {
+    // The HTF close crossed ABOVE, but the drawn segment sits higher and every
+    // chart close in HTF bars 1..2 stayed under it. The old walk-back from the
+    // HTF close marked the start of that under-run (bar 4). The cut the eye
+    // sees is bar 13, where a close first sits above the drawn line.
+    const data = bars({ 13: 101, 14: 101 });
+    const drawn = (_c: number, price: number) => (price > 100 ? 1 : -1);
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, mtf), data, drawn, 1)).toBe(13);
+  });
+
+  it("marks a candle whose range spans the line when no close changed side", () => {
+    const data = bars({});
+    data[10] = { ...data[10], high: 102 };
+    expect(crossingChartIdx(flat, 2, trendlineIdxMap(data, mtf), data, undefined, 1)).toBe(10);
+  });
+
+  it("marks the chart candle holding the cut under a pin finer than the chart", () => {
+    // 15m pin over 1h bars: HTF bar 9 sits inside chart bar 2.
+    const fine: TrendlinesMtf = {
+      timeframe: "MINUTE_15",
+      htfMs: CHART_MS,
+      htfStarts: Array.from({ length: 40 }, (_, i) => T0 + i * CHART_MS),
+    };
+    const hourly = Array.from({ length: 10 }, (_, i) => bar(T0 + i * HTF_MS, i >= 2 ? 101 : 99));
+    expect(crossingChartIdx(flat, 9, trendlineIdxMap(hourly, fine), hourly, undefined, 1)).toBe(2);
   });
 
   it("falls back to the HTF close bar when no earlier bar got there", () => {
