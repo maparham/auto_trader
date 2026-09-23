@@ -55,17 +55,19 @@ describe("TRENDLINES on EURUSD weekly", () => {
     expect(found[0].touches).toBe(4);
 
     // AND A RULE CAN READ IT. The emitted number IS projectAt's result on the
-    // same bar, so the match is exact rather than toleranced. It lands on tl_8
+    // same bar, so the match is exact rather than toleranced. It lands on tl_9
     // rather than tl_nearest: at 1.1312 against a close of 1.1539 it is the
-    // eighth-ranked line of the nine this pane draws (rank leads with touches,
+    // ninth-ranked line of the nine this pane draws (rank leads with touches,
     // and the tighter touch rule costs this long line more of them than it
     // costs the shorter lines around it), and a shallower one sits closer to
-    // price. Slot 8 rather than 7 since Max Lines became the POOL: the nine
-    // are now the top nine of the rank order taken before anything filters.
+    // price. Slot 9 rather than 8 since the live cap became a fixed MAX_LIVE
+    // (256, measured 2026-09-23): the 2018-02 high -> 2026-08 high line (4
+    // touches), evicted under the old cap of 144, now survives and ranks
+    // seventh, moving everything from the old seventh slot down by one.
     const lastIdx = bars.length - 1;
     const at = projectAt(found[0], lastIdx);
     const row = points[lastIdx] as Record<string, number | undefined>;
-    expect(row.tl_8).toBe(at);
+    expect(row.tl_9).toBe(at);
     expect(Object.values(row)).toContain(at);
   });
 });

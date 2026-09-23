@@ -125,8 +125,8 @@ describe("parseTrendlinesConfig", () => {
     expect(parseTrendlinesConfig([5]).pierceMult).toBe(0.25);
   });
   // A pane saved under the OLD calcParams layout reads its Max Projection into
-  // slot 5. Each unit is a rule operand plus MAX_LIVE_MULT live lines, so the
-  // parser caps it rather than minting 251 operands on a pane nobody touched.
+  // slot 5. Each unit is a rule operand, so the parser caps it rather than
+  // minting 251 operands on a pane nobody touched.
   it("clamps Max Trendlines to the ceiling", () => {
     expect(parseTrendlinesConfig([5, 0.75, 2, 20, 250, 250]).maxLines).toBe(50);
     expect(MAX_MAX_LINES).toBe(50);

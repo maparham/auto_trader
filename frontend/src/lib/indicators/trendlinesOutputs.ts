@@ -32,28 +32,25 @@ export const MAJOR_LEN = 30;
  * Mirrors MAJOR_SIZE_ATR in indicators/trendlines.py. */
 export const MAJOR_SIZE_ATR = 3;
 
-/** Live state keeps this multiple of maxLines lines IN TOTAL, so a line that is
- * temporarily outranked is not destroyed and can return when it gains a touch.
- * Raising maxLines therefore also widens the candidate set a rule can see.
- *
- * 16, not 4: a line is built once, at its second anchor, so the cap is a
- * one-shot test it can never retake. compareSurvival fixed WHICH lines the cap
- * keeps; this is the headroom that ordering still needs on real charts. The
- * DXY monthly 2011 low line needs a cap of 224 to reach the last bar, so even
- * at 16 one acceptance fixture runs above the pane default. Cost is close to
- * linear in the cap, over a fixed base: measured on the 1209-bar TSLA daily
- * fixture, a full recompute takes 6.0ms at cap 16, 8.7ms at cap 48 (the pane
- * default) and 35.4ms at cap 288. */
-export const MAX_LIVE_MULT = 16;
+/** Live state keeps at most this many lines IN TOTAL, whatever Max Trendlines
+ * is. A line is built once, at its second anchor, so eviction is a one-shot
+ * test it can never retake; compareSurvival decides who stays. Fixed rather
+ * than scaled by Max Trendlines, because Max Trendlines caps VISIBLE lines and
+ * a small one must not starve discovery. 256 keeps the DXY 2011 low line
+ * (needs 224). Cost is close to linear in the cap: full recompute measured
+ * 2026-09-23 at 39 ms on the 1209-bar TSLA fixture and 194 ms on 5463 KBH
+ * daily bars, against 15 / 93 ms at the old default-pane cap of 48. Mirrored
+ * by MAX_LIVE in trendlines.py. */
+export const MAX_LIVE = 256;
 
 /** Hard ceiling on Max Trendlines, applied at parse time.
  *
  * The slot was re-cut by the sideless rewrite, so a pane saved under the OLD
  * layout reads its Max Projection (250 by default) into this one. Each unit
- * costs a rule operand AND MAX_LIVE_MULT live lines, so 250 would mint 251
- * operands over 4000 live lines on a pane nobody asked to change. 50 is far
- * above any usable pane (the acceptance fixtures run at 8, 9 and 14) and far
- * below the runaway. Mirrored by MAX_MAX_LINES in trendlines.py. */
+ * is one rule operand (tl_k), so 250 would mint 251 operands on a pane nobody
+ * asked to change. Live state no longer scales with it (that is MAX_LIVE). 50
+ * is well above a readable pane and far below the runaway. Mirrored by
+ * MAX_MAX_LINES in trendlines.py. */
 export const MAX_MAX_LINES = 50;
 
 /** The nearest-to-price operand, the one output whose name does not carry a
@@ -84,8 +81,7 @@ export interface TrendlinesConfig {
   minTouches: number; // touches before a line is major (2 = anchors only)
   minSpanBars: number; // minimum span before a line is major
   maxProjBars: number; // how far past its last touch a line stays live
-  // Sizes live state (x MAX_LIVE_MULT) and is the number of ranked outputs
-  // (tl_1 .. tl_maxLines) and the drawn budget.
+  // The most lines drawn, and the number of ranked outputs (tl_1 .. tl_maxLines).
   maxLines: number;
   // How far a pivot must stand out from the last pivot of the other kind, in
   // ATR(14), before it counts as a swing at all. 0 = off.

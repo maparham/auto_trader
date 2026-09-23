@@ -12,7 +12,7 @@ from auto_trader.core.models import Candle
 from auto_trader.indicators.core import atr_series
 from auto_trader.indicators.registry import SERIES_INDICATORS, resolve_instances
 from auto_trader.indicators.trendlines import (
-    MAX_LIVE_MULT,
+    MAX_LIVE,
     MAX_MAX_LINES,
     MAJOR_LEN,
     MAJOR_SIZE_ATR,
@@ -30,7 +30,6 @@ from auto_trader.indicators.trendlines import (
     is_major,
     max_distance_tol,
     poolable,
-    pool_lines,
     trendline_gate,
     select_levels,
     over_ceilings,
@@ -133,8 +132,8 @@ def test_a_saved_near_price_declutter_migrates_to_five_atr():
 
 def test_max_lines_is_clamped_to_the_ceiling():
     # A pane saved under the OLD calcParams layout reads its Max Projection into
-    # slot 5. Each unit is a rule operand plus MAX_LIVE_MULT live lines, so the
-    # parser caps it rather than minting 251 operands on a pane nobody touched.
+    # slot 5. Each unit is a rule operand, so the parser caps it rather than
+    # minting 251 operands on a pane nobody touched.
     assert parse_trendlines_config([5, 0.75, 2, 20, 250, 250], {}).max_lines == MAX_MAX_LINES == 50
     # Anything under the ceiling is untouched, the goldens' 3 included.
     assert parse_trendlines_config([5, 0.75, 2, 20, 250, 3], {}).max_lines == 3
@@ -316,16 +315,16 @@ def test_a_fresh_long_uncrossed_line_survives_the_cap():
     def deep(line: TrendLine) -> bool:
         return line.i1 == 20 and line.i2 == 160
 
-    # Merge off: the emit-step merge walk is quadratic in what it keeps, and
-    # this budget keeps everything.
-    _, allx = compute_trendlines(bars, replace(c, max_lines=100_000, merge_atr=0))
-    born = next(line for line in allx if deep(line))
-    assert born.touches == 2 and born.crossings == 0
-    crowd = [line for line in allx if line.touches > 2 and line.crossings > 0]
-    assert len(crowd) > MAX_LIVE_MULT * c.max_lines
-
     _, lines = compute_trendlines(bars, c)
-    assert len(lines) <= MAX_LIVE_MULT * c.max_lines
+    born = next(line for line in lines if deep(line))
+    assert born.touches == 2 and born.crossings == 0
+    # Non-vacuous: "the cap binds," not "nothing needed to be evicted." MAX_LIVE
+    # is fixed regardless of max_lines, so there is no longer an "uncapped"
+    # max_lines value to compare a crowd against (100_000 saturates the live
+    # set at MAX_LIVE same as any other value); this walk saturates the live
+    # set at exactly 256 == MAX_LIVE instead (measured 2026-09-23), proving
+    # eviction pressure here was real, not vacuous. Mirrors the TS test.
+    assert len(lines) == MAX_LIVE
     assert any(deep(line) for line in lines), "the long uncrossed line was evicted at birth"
 
 
@@ -576,10 +575,10 @@ def test_merge_is_about_the_same_trend_not_a_shared_pivot():
                          last_touch_idx=60, crossings=0, last_sign=0, max_touch_gap=40,
                          min_touch_gap=40, max_touch_idx=60, touch_idxs=[20, 60])
     assert abs(project_at(crossing, 100) - project_at(a, 100)) < 0.01
-    assert select_levels([a, parallel, crossing], 100, 1.0, 0) == [a, crossing]
+    assert select_levels([a, parallel, crossing], 100, 1.0, 0, 0) == [a, crossing]
     # One per pivot ignores distance and asks only about a shared pivot.
     twin = replace_line(a, i1=0, p1=90.0, i2=50, p2=99.0, touch_idxs=[0, 50])
-    assert select_levels([a, twin, parallel], 100, 0.0, 1) == [a, parallel]
+    assert select_levels([a, twin, parallel], 100, 0.0, 1, 0) == [a, parallel]
 
 
 def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
@@ -593,9 +592,9 @@ def test_widening_the_merge_tolerance_never_cuts_an_unrelated_line():
     a, b_twin, c, d = mk(0, 40, 100.0, 5), mk(10, 50, 100.2, 4), mk(10, 60, 80.0, 3), mk(70, 90, 70.0, 2)
     ranked = [a, b_twin, c, d]
     # C is second at bar 10 and out at a cap of 1; A, its twin and D pass.
-    assert select_levels(ranked, 100, 0.0, 1) == [a, b_twin, d]
+    assert select_levels(ranked, 100, 0.0, 1, 0) == [a, b_twin, d]
     # Widening folds the twin into A, leaving bar 10 to C alone. D never moves.
-    assert select_levels(ranked, 100, 1.0, 1) == [a, c, d]
+    assert select_levels(ranked, 100, 1.0, 1, 0) == [a, c, d]
 
 
 def _cap_line(i1, i2, p, touches):
@@ -604,15 +603,25 @@ def _cap_line(i1, i2, p, touches):
                      min_touch_gap=i2 - i1, max_touch_idx=i2, touch_idxs=[i1, i2])
 
 
+def _cap_line_sloped(i1, i2, p1, p2, touches):
+    return TrendLine(i1=i1, p1=p1, k1="low", i2=i2, p2=p2, k2="low", touches=touches,
+                     last_touch_idx=i2, crossings=0, last_sign=0, max_touch_gap=i2 - i1,
+                     min_touch_gap=i2 - i1, max_touch_idx=i2, touch_idxs=[i1, i2])
+
+
+def _ranked(lines: list[TrendLine]) -> list[TrendLine]:
+    return sorted(lines, key=rank_key)
+
+
 def test_a_level_draws_its_best_ranked_member_at_every_cap():
     """Mirrors the TS test: the leader is fixed by the pool, so no cap can
     swap the anchors of a line already on the chart."""
     x1, x2 = _cap_line(20, 40, 50.0, 5), _cap_line(20, 50, 40.0, 4)
     best, stand_in = _cap_line(20, 60, 100.0, 3), _cap_line(30, 70, 100.2, 2)
     ranked = [x1, x2, best, stand_in]
-    assert select_levels(ranked, 100, 1.0, 2) == [x1, x2]
-    assert select_levels(ranked, 100, 1.0, 3) == [x1, x2, best]
-    assert select_levels(ranked, 100, 1.0, 0) == [x1, x2, best]
+    assert select_levels(ranked, 100, 1.0, 2, 0) == [x1, x2]
+    assert select_levels(ranked, 100, 1.0, 3, 0) == [x1, x2, best]
+    assert select_levels(ranked, 100, 1.0, 0, 0) == [x1, x2, best]
 
 
 def test_a_stale_line_does_not_hold_its_pivot_slots_against_a_drawable_one():
@@ -621,12 +630,12 @@ def test_a_stale_line_does_not_hold_its_pivot_slots_against_a_drawable_one():
     gone rather than hidden, so it never reaches the pool."""
     a, d = _cap_line(0, 40, 100.0, 5), _cap_line(40, 90, 101.0, 2)
     c = cfg(max_per_pivot=1, max_proj_bars=100, min_span_bars=5, max_lines=5)
-    stale = pool_lines(poolable([d, a], 150, c), c.max_lines)
+    stale = _ranked(poolable([d, a], 150, c))
     assert stale == [d]
-    assert select_levels(stale, 150, 0.0, 1) == [d]
-    live = pool_lines(poolable([d, a], 100, c), c.max_lines)
+    assert select_levels(stale, 150, 0.0, 1, 0) == [d]
+    live = _ranked(poolable([d, a], 100, c))
     assert live == [a, d]
-    assert select_levels(live, 100, 0.0, 1) == [a]
+    assert select_levels(live, 100, 0.0, 1, 0) == [a]
 
 
 def test_tightening_max_distance_promotes_a_line_the_cap_had_dropped():
@@ -635,15 +644,15 @@ def test_tightening_max_distance_promotes_a_line_the_cap_had_dropped():
     cut onto A removes A and promotes C; relaxing it takes C away again."""
     a, c_line, d = _cap_line(0, 40, 150.0, 5), _cap_line(40, 60, 100.0, 3), _cap_line(60, 90, 101.0, 2)
     wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5, max_lines=5)
-    pool = pool_lines(poolable([d, c_line, a], 100, wide), wide.max_lines)
+    pool = _ranked(poolable([d, c_line, a], 100, wide))
     assert pool == [a, c_line, d]
     wide_tol = max_distance_tol(wide, 1.0, 100.0)
-    assert select_levels(pool, 100, 0.0, 1,
-                         lambda l: trendline_gate(l, 100, 100.0, wide_tol, wide)) == [a]
+    assert select_levels([l for l in pool if trendline_gate(l, 100, 100.0, wide_tol, wide)],
+                         100, 0.0, 1, 0) == [a]
     tight = replace(wide, max_dist_atr=2)
     tight_tol = max_distance_tol(tight, 1.0, 100.0)
-    assert select_levels(pool, 100, 0.0, 1,
-                         lambda l: trendline_gate(l, 100, 100.0, tight_tol, tight)) == [c_line]
+    assert select_levels([l for l in pool if trendline_gate(l, 100, 100.0, tight_tol, tight)],
+                         100, 0.0, 1, 0) == [c_line]
 
 
 def test_filtered_out_level_holds_no_per_pivot_slot():
@@ -651,12 +660,44 @@ def test_filtered_out_level_holds_no_per_pivot_slot():
     at a cap of 1."""
     a, b = _cap_line(0, 40, 150.0, 5), _cap_line(0, 40, 100.0, 2)
     wide = cfg(max_per_pivot=1, max_dist_atr=0, min_span_bars=5, max_lines=5)
-    pool = pool_lines(poolable([b, a], 100, wide), wide.max_lines)
+    pool = _ranked(poolable([b, a], 100, wide))
     assert pool == [a, b]
     tight = replace(wide, max_dist_atr=2)
     tight_tol = max_distance_tol(tight, 1.0, 100.0)
-    assert select_levels(pool, 100, 0.0, 1,
-                         lambda l: trendline_gate(l, 100, 100.0, tight_tol, tight)) == [b]
+    assert select_levels([l for l in pool if trendline_gate(l, 100, 100.0, tight_tol, tight)],
+                         100, 0.0, 1, 0) == [b]
+
+
+def test_a_line_failing_the_gate_never_takes_a_slot():
+    """Mirrors the TS test."""
+    far, near1, near2 = _cap_line(0, 40, 150.0, 9), _cap_line(0, 40, 101.0, 3), _cap_line(10, 50, 99.0, 2)
+    c = cfg(max_dist_atr=2, max_lines=2, min_span_bars=5)
+    tol = max_distance_tol(c, 1.0, 100.0)
+    ranked = _ranked([l for l in [far, near1, near2] if trendline_gate(l, 100, 100.0, tol, c)])
+    assert select_levels(ranked, 100, 0.0, 0, 2) == [near1, near2]
+
+
+def test_the_early_stop_equals_the_full_walk():
+    """Mirrors the TS test, same LCG."""
+    s = 7
+
+    def rnd(n: int) -> int:
+        nonlocal s
+        s = (s * 1664525 + 1013904223) % (2**32)
+        return s % n
+
+    for _ in range(200):
+        ls = []
+        for _k in range(30):
+            i1 = rnd(8) * 5
+            i2 = i1 + 5 + rnd(8) * 5
+            ls.append(_cap_line_sloped(i1, i2, 90.0 + rnd(20), 90.0 + rnd(20), 2 + rnd(4)))
+        ranked = _ranked(ls)
+        tol = float(rnd(3))
+        per_pivot = rnd(4)
+        full = select_levels(ranked, 100, tol, per_pivot, 0)
+        for n in (1, 2, 3, 5, 8):
+            assert select_levels(ranked, 100, tol, per_pivot, n) == full[:n]
 
 
 def replace_line(line: TrendLine, **over) -> TrendLine:
@@ -682,11 +723,17 @@ def test_is_causal():
     assert pre == full[:80]
 
 
-def test_caps_live_state_in_total():
+def test_caps_live_state_in_total_whatever_max_lines_is():
+    """Mirrors the TS test."""
     bars = [bar(i, 99.5 + math.sin(i / 3) * 4, 100.5 + math.sin(i / 3) * 4) for i in range(400)]
-    c = cfg(max_lines=1, min_span_bars=3)
-    _, lines = compute_trendlines(bars, c)
-    assert len(lines) <= MAX_LIVE_MULT * c.max_lines
+    _, one = compute_trendlines(bars, cfg(max_lines=1, min_span_bars=3))
+    _, fifty = compute_trendlines(bars, cfg(max_lines=50, min_span_bars=3))
+    assert 16 < len(one) <= MAX_LIVE
+
+    def key(l: TrendLine) -> tuple:
+        return (l.i1, l.k1, l.i2, l.k2)
+
+    assert [key(l) for l in one] == [key(l) for l in fifty]
 
 
 # ---------------------------------------------------------------- series

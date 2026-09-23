@@ -607,15 +607,12 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Fair Value Gaps",
     desc: "Marks 3-candle imbalances (a gap between the first bar's wick and the third bar's) as zones. A gap shrinks to its unfilled remainder as price trades back into it and disappears once price crosses its far edge, so only live imbalances stay on the chart. Bullish gaps tint green, bearish red. The nearest gap's edges on each side are available as rule operands. Gaps confirm on the third candle (no repaint).",
   },
-  // TRENDLINES. Max Lines is THE POOL: the top N of the rank order, taken
-  // before any filter runs, so every other setting only ever removes from a
-  // fixed set and relaxing one can only hand lines back. It is therefore not
-  // operand-neutral and not monotone itself: changing N changes the pool, and
-  // it also sizes live state (MAX_LIVE_MULT * maxLines by the survival
-  // order). Measured on the DXY fixture, maxLines 2 vs 3 changes the emitted
-  // row on 311 of 490 bars; over 1000 GOLD daily bars, stepping it 1..20
-  // dropped a drawn line 6 times. The Max Lines tip must say that and must
-  // never claim the operands are unaffected.
+  // TRENDLINES. Max Trendlines caps VISIBLE lines: every filter runs first,
+  // then rank, merge and Max Per Pivot, and the cut to N comes last. Each
+  // drawn line is a rule operand, so it is not operand-neutral: measured on
+  // the DXY fixture (2026-09-23), maxLines 2 vs 3 changes the emitted row on
+  // 422 of 490 bars. It no longer sizes live state (that is MAX_LIVE). The tip
+  // must never claim the operands are unaffected.
   //
   // Two gates decide whether a line is MAJOR (readable by a rule): Min Touches
   // and Min Span.
@@ -638,10 +635,10 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       {
         ...num(5, "Max Trendlines", { max: MAX_MAX_LINES }),
         tip: [
-          "How many lines to consider, strongest first: most touches, then longest, then fewest crossings.",
-          "Every other setting filters this pool, so the chart often shows fewer.",
-          "Each drawn line is also a rule operand (tl_1 .. tl_N).",
-          "The one setting that can swap lines instead of only adding or removing them.",
+          "Most lines drawn at once, strongest first.",
+          "Strongest: most touches, then longest, then fewest crossings.",
+          "Filters run first, so a hidden line never takes a slot.",
+          "Each drawn line is a rule operand (tl_1 .. tl_N).",
         ],
       },
       // The list below is RENDER order, resectioned to tell the detector's

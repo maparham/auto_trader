@@ -42,7 +42,7 @@ import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { minPositiveGap } from "../barInterval";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "./shared";
 import {
-  MAX_LIVE_MULT,
+  MAX_LIVE,
   parseTrendlinesConfig,
   TL_ATR_LEN,
   TL_DEDUPE_ATR,
@@ -327,11 +327,11 @@ function withinLookback(i1: number, i: number, cfg: TrendlinesConfig): boolean {
  * It is also the tie-break the live cap sorts on first (step 3). Without that,
  * the ceilings starve their own side: rankLines' first two keys are touches and
  * span descending, which is EXACTLY what these ceilings disqualify, so the
- * rejects sorted to the front of the MAX_LIVE_MULT * maxLines slots and evicted
- * the lines still eligible to emit. Measured on the DXY monthly fixture at
- * maxTouches 2, the top-rank operand fired on 246 bars at maxLines 3 against
- * 442 at maxLines 12, the setting silently blanked an operand a strategy
- * reads. */
+ * rejects sorted to the front of the live cap (then scaled by maxLines, now a
+ * fixed MAX_LIVE) and evicted the lines still eligible to emit. Measured on the
+ * DXY monthly fixture at maxTouches 2, before this key existed, the top-rank
+ * operand fired on 246 bars at maxLines 3 against 442 at maxLines 12: the
+ * setting silently blanked an operand a strategy reads. */
 export function overCeilings(line: TrendLine, cfg: TrendlinesConfig): boolean {
   if (cfg.maxTouches > 0 && line.touches > cfg.maxTouches) return true;
   if (cfg.maxSpanBars > 0 && line.lastTouchIdx - line.i1 > cfg.maxSpanBars) return true;
@@ -868,12 +868,12 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
       }
     }
 
-    // 3. Prune the dead, then cap live state by the SURVIVAL order, IN TOTAL
-    //    (compareSurvival, not rankLines: see its comment). Ceiling-failed
-    //    lines still sort last: they can never re-qualify, and the survival
-    //    order would otherwise hand them the front of the queue.
+    // 3. Prune the dead, then cap live state at MAX_LIVE by the SURVIVAL order,
+    //    IN TOTAL (compareSurvival, not rankLines: see its comment).
+    //    Ceiling-failed lines still sort last: they can never re-qualify, and
+    //    the survival order would otherwise hand them the front of the queue.
     if (lines.some((l) => !isLive(l, i, cfg))) lines = lines.filter((l) => isLive(l, i, cfg));
-    const cap = MAX_LIVE_MULT * cfg.maxLines;
+    const cap = MAX_LIVE;
     if (lines.length > cap) {
       lines.sort(
         (x, y) => Number(overCeilings(x, cfg)) - Number(overCeilings(y, cfg)) || compareSurvival(x, y),
@@ -882,14 +882,15 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
     }
   }
 
-  // 4. Emit: selectDrawnLines, the same call the draw path makes — the pool
-  //    (rank order, cut to Max Lines), grouped into levels at this bar's
-  //    tolerance, cut by the per-pivot cap and by the per-line filters — fills
-  //    tl_1..tl_maxLines; the one nearest the close AMONG THOSE fills
-  //    tl_nearest (ties to the better rank, since the walk is in rank order
-  //    and only a STRICTLY nearer line displaces). Only lines on the chart
-  //    take part in a rule: a line too far, capped, standing behind a better
-  //    member of its level, or ranked past the drawn budget reports nothing.
+  // 4. Emit: selectDrawnLines, the same call the draw path makes. Stage 2
+  //    (poolable plus the per-line gate) first, then rank, then stage 3
+  //    (merge into levels at this bar's tolerance, the per-pivot cap, Max
+  //    Trendlines). Its result fills tl_1..tl_maxLines; the one nearest the
+  //    close AMONG THOSE fills tl_nearest (ties to the better rank, since the
+  //    walk is in rank order and only a STRICTLY nearer line displaces). Only
+  //    lines on the chart take part in a rule: a line too far, capped,
+  //    standing behind a better member of its level, or ranked past Max
+  //    Trendlines reports nothing.
   const close = closes[i];
   const point: TrendlinesPoint = {};
   const drawn = selectDrawnLines(poolable(lines, i, cfg), i, close, cfg.maxLines, {
@@ -900,6 +901,8 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
   });
   let nearestV = 0;
   let nearestD = Infinity;
+  // selectLevels reads maxLines 0 as uncapped; the parser never yields 0,
+  // but a raw cfg can, and it must still emit no tl_k. Mirrors Python.
   const shown = Math.min(drawn.length, cfg.maxLines);
   for (let r = 0; r < shown; r++) {
     const v = projectAt(drawn[r], i);
@@ -1193,13 +1196,15 @@ export interface TrendlinesExtend {
    * Render-only, like everything else in this block. */
   showLinePivots?: boolean;
   /** DEBUG: write the number of competing levels at each pivot — how many
-   * gate-passing levels run through that bar, which is exactly what Max lines
-   * per pivot counts. OFF by default.
+   * gate-passing levels have a leader running through that bar, the same
+   * positions Max lines per pivot counts. OFF by default.
    *
-   * A pivot showing fewer lines than its number is blocked by a level that is
-   * itself hidden at another pivot (or by a gate): the number is the counted
-   * depth, the marks are the visible survivors. Render-only, like the rest of
-   * this block. */
+   * A pivot's number can exceed its visible lines for two reasons, neither of
+   * them a gate (gate-failing levels never reach this walk): the level was
+   * itself dropped by the per-pivot cap after its position was recorded, or
+   * it ranks past where Max Trendlines would normally stop early, and the
+   * debug walk (unlike the drawn-set walk) keeps going to count every level.
+   * Render-only, like the rest of this block. */
   showPivotDepth?: boolean;
   /** A small cross on a drawn line at every bar whose close cut through it:
    * the same events Min/Max Crossings count and the end tag reports. ON by
@@ -1396,11 +1401,11 @@ export { TL_DEDUPE_ATR };
 
 /** The dedup pass's inputs. `tol` is a price distance (0 or NaN turns merging
  * off, which is what an unwarmed ATR gives on the first TL_ATR_LEN bars).
- * `keep` names lines that must survive merging whatever their twins look
- * like — the PINNED ones. A pin is stored by lineKey and its only control is
- * the handle painted at the line's end, so merging a pinned line away would
- * leave a pin with nothing to click, exactly the dead-state the `stops` gate
- * exists to prevent. */
+ * `keep` names the PINNED lines. They take no part in selection: they are
+ * never grouped, capped or cut, and are appended to the drawn set afterwards.
+ * A pin is stored by lineKey and its only control is the handle painted at the
+ * line's end, so a pin that selection could drop would leave nothing to click,
+ * exactly the dead state the `stops` gate exists to prevent. */
 export interface TrendlineDedupe {
   tol: number;
   keep: ReadonlySet<TrendLine>;
@@ -1517,10 +1522,24 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
 }
 
 
+function addLevelPositions(
+  pos: Map<number, Map<number, number>>,
+  line: TrendLine,
+  lvl: number,
+): void {
+  for (const b of line.touchIdxs) {
+    let m = pos.get(b);
+    if (!m) pos.set(b, (m = new Map()));
+    // FIRST write wins, so a bar named twice in touchIdxs (an anchor that
+    // also recorded a touch) cannot push a level down its own ordering.
+    if (!m.has(lvl)) m.set(lvl, m.size + 1);
+  }
+}
+
 /** THE PER-PIVOT CAP, as a per-bar TOP-N TEST over LEVELS.
  *
  * MAX LINES PER PIVOT (`maxPerPivot`, 0 = off): at every bar, rank the LEVELS
- * of the pool running through it (a level is a merge group; see selectLevels)
+ * of gate-passing lines running through it (a merge group; see selectLevels)
  * in the order their best line ranks, and keep only the top `maxPerPivot`. A
  * line is drawn when its level is inside that top N at EVERY bar the line runs
  * through, anchor or touch, which is what touchIdxs holds. Its worst bar
@@ -1535,12 +1554,13 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
  *
  * ONLY THE LEADER'S BARS COUNT, not every member's. The level draws its
  * leader and nothing else, so the leader's pivots are the bars it actually
- * occupies. It is also what keeps MAX LINES monotone: a line entering the
- * pool when Max Lines rises always ranks last, so it either forms a new level
- * numbered last at its own bars or joins an existing one as a non-leader and
- * changes nothing. Counting every member would let that new member add
- * occupancy at bars its leader never touches, pushing another level down and
- * evicting it.
+ * occupies.
+ *
+ * POSITIONS ARE FIXED AT INSERTION. Leaders arrive in rank order, and a
+ * leader's position at a bar is one plus the number of better-ranked leaders
+ * already there. A later line can only join a level or start a later one, so
+ * it never moves an earlier position; that is what lets selectLevels stop
+ * early and stay exact.
  *
  * WHY NOT A RUNNING TALLY. The old cap walked the ranked list and dropped a
  * line once `maxPerPivot` ALREADY-KEPT lines shared one of its bars. That
@@ -1548,19 +1568,18 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
  * not monotone in the setting: ranked L1{x}, L2{x,b}, L3{y}, L4{y,b}, L5{b}
  * keeps L1, L3, L5 at a cap of 1 and keeps L1, L2, L3, L4 at a cap of 2,
  * losing L5, because two lines that were themselves capped out at 1 now
- * jointly fill bar b. RELAXING A LIMIT MUST ONLY EVER ADD LINES. A position
- * in a fixed per-bar ordering cannot move when the cap changes, so raising
- * the cap can only turn "outside the top N" into "inside" and never back.
+ * jointly fill bar b. A position in a fixed per-bar ordering cannot move
+ * when the cap changes, so raising the cap can only move a level's position
+ * test from "outside the top N" to "inside" and never back. The DRAWN set is
+ * not monotone in it: a newly accepted leader can take a Max Trendlines slot
+ * from a line ranked below it (see selectDrawnLines).
  *
- * VISIBLE LINES ONLY. The positions are computed over the leaders that pass
- * the per-line filters, so a filtered-out level never holds a slot. A pinned
- * leader counts exactly when it passes them too, never merely for being
- * pinned: the emit step knows nothing of pins, so a gate-failing pin holding
- * a slot would cap a line off the chart that still emits its tl_k. A pin that
- * fails the gate draws IN ADDITION, like every other pin. What you see is what is counted: at
- * most `maxPerPivot` visible lines through any bar. The price is that relaxing
- * a gate can now remove a line — a newly admitted level takes a position and
- * can push another past the cap. That is the trade the label demands.
+ * VISIBLE LINES ONLY. The positions are computed over gate-passing leaders,
+ * so a filtered-out level never holds a slot. What you see is what is
+ * counted: at most `maxPerPivot` visible lines through any bar. The price is
+ * that relaxing a gate can remove a line: a newly admitted level takes a
+ * position and can push another past the cap. That is the trade the label
+ * demands.
  *
  * A TOUCH COUNTS AS A PIVOT, not only an anchor, and this is most of what the
  * cap catches on a real chart. A strong swing is the second anchor of one line
@@ -1573,23 +1592,15 @@ export function levelPositions(
   leaders: readonly TrendLine[],
 ): Map<number, Map<number, number>> {
   const pos = new Map<number, Map<number, number>>();
-  leaders.forEach((line, lvl) => {
-    for (const b of line.touchIdxs) {
-      let m = pos.get(b);
-      if (!m) pos.set(b, (m = new Map()));
-      // FIRST write wins, so a bar named twice in touchIdxs (an anchor that
-      // also recorded a touch) cannot push a level down its own ordering.
-      if (!m.has(lvl)) m.set(lvl, m.size + 1);
-    }
-  });
+  leaders.forEach((line, lvl) => addLevelPositions(pos, line, lvl));
   return pos;
 }
 
 /** THE LOWEST CAP THAT COULD EVER DRAW THIS LINE: the worst position its level
  * holds at any of the line's bars. A bar or level absent from the map counts
- * as first. It depends on the pool, the grouping and the gate (positions are
- * built over gate-passing leaders only), never on the cap itself. Ported to
- * Python as pivot_cap_needed. */
+ * as first. Positions are over gate-passing leaders and fixed at insertion, so
+ * this depends only on better-ranked leaders, never on the cap itself or on
+ * anything ranked below. Ported to Python as pivot_cap_needed. */
 export function pivotCapNeeded(
   line: TrendLine,
   pos: ReadonlyMap<number, ReadonlyMap<number, number>>,
@@ -1603,53 +1614,21 @@ export function pivotCapNeeded(
   return worst;
 }
 
-/** THE POOL: MAX LINES read as "how many trendlines to consider", taken off
- * the top of the rank order (rankLines) BEFORE any filter runs. Ported to
- * Python as pool_lines.
- *
- * THIS IS WHAT KEEPS THE POOL STABLE. A filter used to be a cut
- * on a pool that the filters themselves had shaped, so relaxing one enlarged
- * the pool, re-ranked everything downstream and could REMOVE a line the user
- * was watching: measured over 1000 GOLD daily bars, relaxing Back Clearance
- * lost 9 levels, Min Swing 6, Max Crossings 6, Max Pierce 5. With the pool
- * fixed first, nothing new can enter when a filter is relaxed. Each gate on
- * its own then only hands lines back, but the visible-only per-pivot cap
- * reintroduces one interaction: a newly admitted level can push another past
- * the cap.
- *
- * THE PRICE IS MAX LINES ITSELF. It no longer means "show N lines" but
- * "consider N", so the pane usually shows fewer than N and raising it by one
- * can add nothing. It is also the ONE setting still able to remove a line,
- * since changing N changes the pool. That is the whole of the non-monotonicity
- * budget, spent on the one knob whose name admits it.
- *
- * PINS ARE IN THE POOL WHATEVER THEIR RANK. A pin's only control is the handle
- * painted at its end, so a pinned line that fell outside the top N would leave
- * a pin with nothing to click. They are appended rather than counted, exactly
- * as they are exempt from the cap and the merge.
- *
- * Callers hand in POOLABLE lines (poolable): a line past Max Projection is gone
- * rather than hidden, so it must not take a slot. The detector prunes them
- * from live state anyway; the filter is what makes that a property of this
- * function rather than of its caller. */
-/** THE LINES THE POOL MAY DRAW FROM: the ones still alive (inside Max
+/** THE LINES SELECTION MAY DRAW FROM: the ones still alive (inside Max
  * Projection) and not permanently disqualified by a ceiling (overCeilings:
  * Max Touches, Max Span, Touch Spacing, Max Crossings).
  *
  * BOTH ARE PERMANENT, which is why they sit here rather than among the
  * filters. A dead line is gone, not hidden, and touches and span only grow, so
- * a line over a ceiling can never come back. Leaving either in the pool would
- * STARVE IT: rankLines sorts by touches and span descending, which is exactly
- * what the ceilings disqualify, so the rejects would take the front of the
- * pool and the pane would carry nothing. Measured on the DXY monthly fixture
- * at Max Span 3, the top-rank operand fired on 334 bars against 70 with the
- * rejects in the pool.
+ * a line over a ceiling can never come back. When candidates were cut before
+ * any filter ran, leaving either in STARVED that cut: rankLines sorts by
+ * touches and span descending, which is exactly what the ceilings disqualify,
+ * so the rejects took the front and the pane carried nothing (DXY monthly at
+ * Max Span 3: the top-rank operand fired on 334 bars against 70). trendlineGate
+ * rejects them too, so they can no longer starve anything; filtering here just
+ * keeps them out of the per-bar work.
  *
- * THE PRICE is that these two settings shape the pool, so they keep the power
- * every setting used to have: relaxing one lets new lines in, which can push
- * another out of the top N. The per-pivot cap counts visible lines only, so a
- * gate it interacts with can do the same: relaxing one admits a level that can
- * push another past the cap. Max Lines itself is not monotone either. */
+ * These are the permanent half of stage 2; trendlineGate is the per-bar half. */
 export function poolable(
   lines: readonly TrendLine[],
   i: number,
@@ -1658,25 +1637,14 @@ export function poolable(
   return lines.filter((l) => isLive(l, i, cfg) && !overCeilings(l, cfg));
 }
 
-export function poolLines(
-  lines: readonly TrendLine[],
-  maxLines: number,
-  keep?: ReadonlySet<TrendLine>,
-): TrendLine[] {
-  const ranked = lines.slice().sort(rankLines);
-  if (!(maxLines > 0) || ranked.length <= maxLines) return ranked;
-  const pool = ranked.slice(0, maxLines);
-  if (keep?.size) for (const l of ranked.slice(maxLines)) if (keep.has(l)) pool.push(l);
-  return pool;
-}
-
 /** THE PER-LINE FILTERS for one bar, as a predicate: the major floors and
  * ceilings (isMajor: touches, span, crossings, Max Touches, Max Span, Touch
  * Spacing) and Max Distance, which is a per-bar visibility cut that depends on
- * where price is today. Each one asks about ONE line and nothing else, so on
- * its own tightening one only removes and relaxing one only adds; combined
- * with the visible-only per-pivot cap, a newly admitted level can still push
- * another past the cap. */
+ * where price is today. The per-bar half of stage 2 (poolable is the
+ * permanent half). Each one asks about ONE line and nothing else, so it runs
+ * before ranking and no other line can displace it. Relaxing one can still
+ * remove a drawn line in stage 3: a newly admitted, better-ranked line can take
+ * its per-pivot position or its Max Trendlines slot. */
 export function trendlineGate(
   i: number,
   close: number,
@@ -1688,81 +1656,53 @@ export function trendlineGate(
     isMajor(line, i, cfg) && (distTol === Infinity || withinDistance(line, i, close, distTol));
 }
 
-/** Group the pool into merge levels in rank order: each line joins the first
- * level whose LEADER shows the same trend (sameTrend at `tol`), else starts
- * one. Callers must hand in rank order (poolLines), since the first member of
- * a group fixes its leader. Shared by selectLevels and pivotDepths so the
- * debug number counts exactly what the cap reads. */
-function groupLevels(
-  pool: readonly TrendLine[],
-  atIdx: number,
-  tol: number,
-): { leaders: TrendLine[]; proj: number[] } {
-  // Groups in rank order, each compared against its LEADER: lines through one
-  // pivot agree exactly there and separate linearly, so a member within tol of
-  // the leader at atIdx is within tol of it throughout (see sameTrend).
-  const leaders: TrendLine[] = [];
-  const proj: number[] = [];
-  for (const line of pool) {
-    const p = projectAt(line, atIdx);
-    const at =
-      tol > 0
-        ? leaders.findIndex(
-            (g, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(g, line, atIdx, tol),
-          )
-        : -1;
-    if (at < 0) {
-      leaders.push(line);
-      proj.push(p);
-    }
-  }
-  return { leaders, proj };
-}
-
-/** DEBUG: how many counted levels run through each bar — the per-bar depth
- * the per-pivot cap reads. Same grouping and same gate filter as
- * selectLevels (pins count only when they pass the gate), so a pivot's number and its surviving marks can only
- * differ by levels hidden at OTHER bars (capped out elsewhere): that gap is
- * the whole point of the label. Bars no counted level touches are absent.
- *
- * `pool` must be rank order, as poolLines returns. Render-only debugging;
- * no Python twin. */
+/** DEBUG: how many levels run through each bar, the per-bar depth the
+ * per-pivot cap reads. `ranked` is the gate-passing lines in rank order, as
+ * selectDrawnLines hands to selectLevels. Render-only; no Python twin. */
 export function pivotDepths(
-  pool: readonly TrendLine[],
+  ranked: readonly TrendLine[],
   atIdx: number,
   tol: number,
-  pass?: (line: TrendLine) => boolean,
 ): Map<number, number> {
   const depths = new Map<number, number>();
-  selectLevels(pool, atIdx, tol, 0, pass, undefined, depths);
+  selectLevels(ranked, atIdx, tol, 0, 0, depths);
   return depths;
 }
-/** THE LEVELS a bar draws: the POOL grouped into levels by the merge, each
- * level represented by its best-ranked member, then cut by the per-pivot cap
- * and by the per-line filters. Ported to Python as select_levels.
+/** STAGE 3 of selection: lines against each other. `ranked` is the lines
+ * that passed stage 2 (poolable plus trendlineGate), in rank order; pins are
+ * never in it. Ported to Python as select_levels. Three steps, in one walk:
+ *
+ *   1. MERGE. Each line joins the first level whose leader shows the same
+ *      trend, or starts a new level and leads it.
+ *   2. PER PIVOT. A new leader takes its position at every bar it runs
+ *      through (levelPositions); past `maxPerPivot` at any of them, it is
+ *      dropped. It keeps its positions, so it still counts against the
+ *      levels ranked below it.
+ *   3. MAX TRENDLINES. The first `maxLines` leaders the cap accepts are the
+ *      drawn set (0 = uncapped).
+ *
+ * THE EARLY STOP IS EXACT. A leader's positions are fixed when it is inserted
+ * and depend only on better-ranked leaders, and a later line can only join a
+ * level or start a later one. So once `maxLines` leaders have been ACCEPTED
+ * (leaders dropped by the per-pivot cap do not count), nothing further down
+ * can change the result, and the walk stops. Only the debug depths
+ * (`depthsOut`) walk the whole list, since they count every level.
  *
  * A LEVEL IS A MERGE GROUP, not a line. Lines that show the same trend
  * (sameTrend at `tol`) are the same level drawn from different anchors, and a
- * level is ONE line on the chart: its LEADER, the best-ranked member, fixed by
- * the pool alone.
+ * level is ONE line on the chart: its LEADER, the best-ranked GATE-PASSING
+ * member. A member that fails a filter never reaches this walk, so when a
+ * level's best line fails one, the next member leads instead, and the level's
+ * anchors can move when Max Distance or a floor moves. What still never swaps
+ * a leader is the per-pivot cap: it drops a whole level and never promotes a
+ * weaker member of it. On GOLD 1D the resistance into 2026-08-25 used to jump
+ * its left anchor from the 2025-07-23 high to the 2025-08-20 low between a cap
+ * of 3 and 4 (same level to the merge, a different line to the eye); leaders
+ * fixed before the cap runs are what stop that.
  *
- * NOTHING SUBSTITUTES FOR ANYTHING. The leader never changes when a filter
- * moves, so no setting can swap the anchors of a line already on the chart:
- * on GOLD 1D the resistance into 2026-08-25 used to jump its left anchor from
- * the 2025-07-23 high to the 2025-08-20 low between a cap of 3 and 4, same
- * level to the merge, a different line to the eye. The cost is that a level
- * whose leader fails a filter is gone for the bar even when a weaker member of
- * it would have passed.
- *
- * ORDER MATTERS for gate vs cap: the grouping reads the pool alone, but the
- * cap positions are built over gate-passing leaders only, so the gate runs
- * first. A filtered-out level holds no slot; relaxing a gate can therefore
- * promote nobody or remove somebody, and tightening one can promote a line
- * the cap had dropped.
- *
- * PINS ARE NOT LEADERS. A pinned line draws IN ADDITION, never in place of its
- * level's leader, so the emit step (which knows nothing of pins) and the draw
- * path agree on every level's line.
+ * PINS ARE NOT GROUPED. selectDrawnLines appends them after this walk, so a
+ * pin that fails the gate can never lead a level and swallow a member the emit
+ * step (which knows nothing of pins) would emit.
  *
  * TWO LINES ARE ONE WHEN THEY SHOW THE SAME TREND: close to each other, and
  * close the whole time they both exist (sameTrend), whether or not they share
@@ -1783,73 +1723,86 @@ export function pivotDepths(
  * A MERGED-AWAY LINE EMITS NOTHING. This runs before tl_1..tl_N are filled, so
  * a rule only ever reads a line that is on the chart.
  *
- * THE O(n^2) FIRST-FIT LOOP IS DELIBERATE. The pool is at most MAX_MAX_LINES
- * (50) plus pins, and benchmarks put the merge below noise above Max Lines 3.
- * Sub-quadratic options were weighed (2026-09-21) and rejected: a grid over a
- * common right-hand sample bar changes the predicate; the exact version needs
- * range-min structures in BOTH ports for golden parity; a KD-tree gives no
- * worst-case bound. Revisit only if the pool cap reaches the hundreds and a
- * benchmark shows the merge as the bottleneck. */
+ * THE O(n^2) FIRST-FIT LOOP IS DELIBERATE. The input is bounded by MAX_LIVE
+ * (256), but the walk stops once Max Trendlines leaders are accepted, so the
+ * leader list it scans stays near Max Trendlines (at most MAX_MAX_LINES, 50)
+ * plus the leaders the per-pivot cap dropped. Only the debug depths walk
+ * everything. Sub-quadratic options were weighed (2026-09-21) and rejected: a
+ * grid over a common right-hand sample bar changes the predicate; the exact
+ * version needs range-min structures in BOTH ports for golden parity; a
+ * KD-tree gives no worst-case bound. Revisit only if a benchmark shows the
+ * merge as the bottleneck. */
 export function selectLevels(
-  pool: readonly TrendLine[],
+  ranked: readonly TrendLine[],
   atIdx: number,
   tol: number,
   maxPerPivot: number,
-  pass?: (line: TrendLine) => boolean,
-  keep?: ReadonlySet<TrendLine>,
+  maxLines: number,
   depthsOut?: Map<number, number>,
 ): TrendLine[] {
-  const { leaders } = groupLevels(pool, atIdx, tol);
-  // Gate-passing leaders only, pins included only when they pass: the emit
-  // step runs this with no pins, and the drawn set minus pins must equal it.
-  const counted = pass ? leaders.filter(pass) : leaders;
-  const countedIdx = new Map<TrendLine, number>();
-  counted.forEach((l, i) => countedIdx.set(l, i));
-  const pos = maxPerPivot >= 1 || depthsOut ? levelPositions(counted) : null;
-  if (depthsOut && pos) for (const [b, m] of pos) depthsOut.set(b, m.size);
-  const capPos = maxPerPivot >= 1 ? pos : null;
-  const out = new Set<TrendLine>();
-  for (const leader of leaders) {
-    if (keep?.has(leader)) {
-      out.add(leader);
-      continue;
-    }
-    if (pass && !pass(leader)) continue;
-    const idx = countedIdx.get(leader);
-    if (capPos && idx !== undefined && pivotCapNeeded(leader, capPos, idx) > maxPerPivot) continue;
-    out.add(leader);
+  const leaders: TrendLine[] = [];
+  const proj: number[] = [];
+  const pos = new Map<number, Map<number, number>>();
+  const out: TrendLine[] = [];
+  const cut = maxLines > 0;
+  for (const line of ranked) {
+    // Exact early stop: see the spec's "Stage 3 can stop early". The debug
+    // depths need every level, so they walk the whole list.
+    if (cut && out.length >= maxLines && !depthsOut) break;
+    const p = projectAt(line, atIdx);
+    const joined =
+      tol > 0 &&
+      leaders.some((g, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(g, line, atIdx, tol));
+    if (joined) continue;
+    const lvl = leaders.length;
+    leaders.push(line);
+    proj.push(p);
+    addLevelPositions(pos, line, lvl);
+    if (maxPerPivot >= 1 && pivotCapNeeded(line, pos, lvl) > maxPerPivot) continue;
+    if (cut && out.length >= maxLines) continue;
+    out.push(line);
   }
-  // A pin survives the cap, the merge and the filters alike: its handle is the
-  // only control that can release it.
-  if (keep) for (const l of pool) if (keep.has(l)) out.add(l);
-  return [...out].sort(rankLines);
+  if (depthsOut) for (const [b, m] of pos) depthsOut.set(b, m.size);
+  return out;
 }
 
-/** The DRAWN set, and the whole pipeline in one call: the POOL (rank order,
- * cut to `maxLines`, plus pins), then the levels that survive the merge, the
- * per-pivot cap and the per-line filters.
+/** The DRAWN set, and the whole pipeline in one call. `lines` is poolable's
+ * output (the permanent half of stage 2). Stage 2 finishes here: the per-bar
+ * filters (`dedupe.pass`, trendlineGate) drop every line that fails them,
+ * BEFORE ranking, so a line no filter would show never holds a slot. Stage 3
+ * (selectLevels) then merges the rank-ordered survivors into levels, applies
+ * the per-pivot cap, and cuts to `maxLines`. MAX TRENDLINES CAPS DRAWN LINES:
+ * with at least `maxLines` levels that pass, exactly `maxLines` draw. Pins are
+ * appended last.
  *
- * RANK, not proximity. A pool ordered by distance to price would put a fresh
+ * RELAXING A FILTER CAN REMOVE A LINE. A newly admitted line that outranks a
+ * drawn one takes its Max Trendlines slot (or its per-pivot position) and
+ * pushes it off. That is the intended meaning of a cap on visible lines: the
+ * old guarantee that relaxing a filter only ever adds lines came from cutting
+ * candidates before filtering, which let lines no filter would show take the
+ * slots, and was given up on purpose.
+ *
+ * RANK, not proximity. An order by distance to price would put a fresh
  * two-touch line ahead of a decade-old five-touch one merely because it
  * happens to sit half a point closer today; rank is what a trader means by
  * "the real lines" and is also what the detector itself already sorts by
  * (rankLines), so the pane and the emit path agree on which lines matter.
  *
- * SO THE DRAWN SET IS THE EMITTED SET. Same pool, same levels, same gate:
+ * SO THE DRAWN SET IS THE EMITTED SET. Same lines, same levels, same gate:
  * every `tl_k` on the last bar has its line on the chart, and a line that is
  * not on the chart reports nothing to a rule. The ONE exception is a PINNED
- * line, which is in the pool past the budget and survives merging, the cap and
- * the filters because its handle is the only control that can release the pin;
- * a pin is session UI the calc cannot see, so such a line is visible without
- * emitting. Never the other way round.
+ * line, which is appended whatever selection decided, because its handle is
+ * the only control that can release the pin; a pin is session UI the calc
+ * cannot see, so such a line is visible without emitting. Never the other way
+ * round.
  *
  * The drawn set is INDEPENDENT OF THE EXTEND MODE on purpose: rank and the
  * merge pass never look at how far a line is drawn, only at its projection
  * at `atIdx`. Switching extend must change how far lines run and
  * nothing else, so which lines appear, like which values emit, must not move.
  *
- * Mirrored in Python by pool_lines + select_levels in the emit step; the pin
- * exemption is draw-time only. */
+ * Mirrored in Python by the emit step (trendline_gate, rank_key sort,
+ * select_levels); the pin append is draw-time only. */
 export function selectDrawnLines(
   lines: readonly TrendLine[],
   atIdx: number,
@@ -1858,17 +1811,23 @@ export function selectDrawnLines(
   dedupe: TrendlineDedupe | null,
 ): TrendLine[] {
   void close;
-  const pool = poolLines(lines, maxLines, dedupe?.keep);
-  if (!dedupe) return pool;
-  return selectLevels(
-    pool,
-    atIdx,
-    dedupe.tol,
-    dedupe.perPivot ?? 0,
-    dedupe.pass,
-    dedupe.keep,
-    dedupe.depthsOut,
-  );
+  // Stage 2 (each line on its own) BEFORE ranking, so a line no filter would
+  // show can never hold a slot.
+  const pass = dedupe?.pass;
+  const ranked = (pass ? lines.filter(pass) : lines.slice()).sort(rankLines);
+  // Stage 3 (lines against each other): merge, per pivot, Max Trendlines.
+  const shown = dedupe
+    ? selectLevels(ranked, atIdx, dedupe.tol, dedupe.perPivot ?? 0, maxLines, dedupe.depthsOut)
+    : maxLines > 0
+      ? ranked.slice(0, maxLines)
+      : ranked;
+  // Pins take no part in the selection: they draw IN ADDITION, so the drawn
+  // set minus pins is exactly the emitted set.
+  const keep = dedupe?.keep;
+  if (!keep?.size) return shown;
+  const out = new Set(shown);
+  for (const l of lines) if (keep.has(l)) out.add(l);
+  return [...out].sort(rankLines);
 }
 
 
@@ -2853,15 +2812,17 @@ function drawTrendlines(
   // same one selectDrawnLines projects to), not a per-line bar.
   // Max Distance first, exactly as the emit step gates it, so a far line is
   // off the chart on the same bars it reports nothing.
-  // Resolved to line objects BEFORE selection, because the cap and the dedup
-  // pass have to know which lines are pinned in order to spare them.
+  // Resolved to line objects so selectDrawnLines can append them after
+  // selection. Pins take no part in the merge, the cap or the filters.
   const pinnedLines = new Set(
     pins.size ? last.lines.filter((l) => pins.has(lineKey(l, dataList, starts))) : [],
   );
-  // The same call, pool, tolerance, cap and gate the emit step used on this
+  // The same call, lines, tolerance, cap and gate the emit step used on this
   // bar, so the drawn set is the emitted set (plus pins). The debug depths
-  // come out of the same selection, so the number counts exactly what the
-  // cap read.
+  // come out of the same selection but not the same walk: depthsOut disables
+  // the early stop, so the number counts every gate-passing level that
+  // reaches this bar, beyond what the cap and Max Trendlines let through to
+  // the drawn set.
   const depths = showDepth ? new Map<number, number>() : null;
   const drawn = selectDrawnLines(poolable(last.lines, lastIdx, cfg), lastIdx, lastClose, cfg.maxLines, {
     tol: mergeTolerance(cfg, last.atr, lastClose),

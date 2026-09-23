@@ -159,6 +159,10 @@ describe("indicator parity golden fixture", () => {
       PERPIVOT2: { maxPerPivot: 2 },
       MERGE: { mergeAtr: 1 },
       MERGE_CAP: { mergeAtr: 1, maxPerPivot: 2 },
+      // Gate first (max_dist_atr drops far levels before ranking), rank, then
+      // the streaming merge and per-pivot cap walk the survivors: the
+      // three-stage path end to end in one variant.
+      MAXDIST_MERGE_CAP: { maxDistAtr: 3, mergeAtr: 1, maxPerPivot: 2 },
       LOOKBACK: { lookbackBars: 50 },
     };
     const tlVariantSeries: Record<string, Array<number | null>> = {};

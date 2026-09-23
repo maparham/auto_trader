@@ -19,7 +19,7 @@ inputs [0..i].
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -40,16 +40,16 @@ MAJOR_LEN = 30
 # DEFAULT min swing, in ATR(14), for a pivot to be MAJOR. Mirrors
 # MAJOR_SIZE_ATR in trendlinesOutputs.ts.
 MAJOR_SIZE_ATR = 3.0
-# Live state keeps this multiple of max_lines lines IN TOTAL. 16, not 4: a line
-# is built once, at its second anchor, so the cap is a one-shot test it can
-# never retake (see survival_key). Mirrors MAX_LIVE_MULT in
+# Live state keeps at most this many lines IN TOTAL, whatever max_lines is.
+# Fixed, not scaled by max_lines, because max_lines caps VISIBLE lines and a
+# small one must not starve discovery. Mirrors MAX_LIVE in
 # frontend/src/lib/indicators/trendlinesOutputs.ts.
-MAX_LIVE_MULT = 16
+MAX_LIVE = 256
 # Hard ceiling on max_lines, applied at parse time. The sideless rewrite re-cut
 # the calcParams layout, so a pane saved under the OLD one reads its Max
-# Projection (250 by default) into this slot. Each unit costs a rule operand AND
-# MAX_LIVE_MULT live lines, so 250 would mint 251 operands over 4000 live lines
-# on a pane nobody asked to change. Mirrors MAX_MAX_LINES in
+# Projection (250 by default) into this slot. Each unit is one rule operand, so
+# 250 would mint 251 operands on a pane nobody asked to change; live state is
+# MAX_LIVE, not this. Mirrors MAX_MAX_LINES in
 # frontend/src/lib/indicators/trendlinesOutputs.ts.
 MAX_MAX_LINES = 50
 TL_NEAREST = "tl_nearest"
@@ -81,7 +81,7 @@ class TrendlinesConfig:
     min_touches: int
     min_span_bars: int
     max_proj_bars: int
-    max_lines: int  # live-state size (x MAX_LIVE_MULT) and the ranked output count
+    max_lines: int  # the most lines drawn, and the ranked output count
     min_swing_atr: float  # 0 = off
     min_swing_reach: int  # 0 = off
     pair_pivots: int  # earlier pivots of either kind a new pivot pairs with
@@ -279,17 +279,20 @@ def same_trend(a: TrendLine, b: TrendLine, at_idx: int, tol: float) -> bool:
     )
 
 
+def _add_level_positions(pos: dict[int, dict[int, int]], line: TrendLine, lvl: int) -> None:
+    for b in line.touch_idxs:
+        m = pos.setdefault(b, {})
+        if lvl not in m:
+            m[lvl] = len(m) + 1
+
+
 def level_positions(leaders: list[TrendLine]) -> dict[int, dict[int, int]]:
-    """Mirrors TS levelPositions: for every bar, the 1-based position of each
-    LEVEL through it, in the rank order `leaders` already carries. Only the
-    leaders count, because a level draws its leader and nothing else, and that
-    is also what keeps Max Lines monotone."""
+    """Mirrors TS levelPositions: each gate-passing leader's position at every
+    bar it runs through, in rank order. Positions are fixed at insertion: a
+    later leader never moves an earlier one."""
     pos: dict[int, dict[int, int]] = {}
     for lvl, line in enumerate(leaders):
-        for b in line.touch_idxs:
-            m = pos.setdefault(b, {})
-            if lvl not in m:
-                m[lvl] = len(m) + 1
+        _add_level_positions(pos, line, lvl)
     return pos
 
 
@@ -298,8 +301,8 @@ def pivot_cap_needed(
 ) -> int:
     """Mirrors TS pivotCapNeeded: the worst position the line's LEVEL holds at
     any of the line's bars, i.e. the lowest cap that could ever draw it.
-    Positions are built over gate-passing leaders only, so this depends on
-    the pool, the grouping and the gate, never on the cap itself."""
+    Positions are over gate-passing leaders and fixed at insertion, so this
+    depends only on better-ranked leaders, never on the cap itself."""
     worst = 1
     for b in line.touch_idxs:
         at = pos.get(b, {}).get(level, 1)
@@ -309,83 +312,59 @@ def pivot_cap_needed(
 
 
 def poolable(pool: list[TrendLine], i: int, cfg: TrendlinesConfig) -> list[TrendLine]:
-    """Mirrors TS poolable: the lines the pool may draw from, i.e. alive
+    """Mirrors TS poolable: the lines selection may draw from, i.e. alive
     (inside Max Projection) and not permanently disqualified by a ceiling.
-    Both are permanent, and leaving either in would STARVE the pool: rank_key
-    sorts by touches and span descending, exactly what the ceilings
-    disqualify."""
+    These are the permanent half of stage 2; trendline_gate is the per-bar
+    half."""
     return [line for line in pool if is_live(line, i, cfg) and not over_ceilings(line, cfg)]
-
-
-def pool_lines(lines: list[TrendLine], max_lines: int) -> list[TrendLine]:
-    """Mirrors TS poolLines (without the pin half, which is draw-time UI): Max
-    Lines read as HOW MANY TRENDLINES TO CONSIDER, taken off the top of the
-    rank order BEFORE any filter runs. Each gate on its own only ever removes,
-    but the per-pivot cap counts visible lines only, so relaxing a gate can
-    admit a level that pushes another past the cap."""
-    ranked = sorted(lines, key=rank_key)
-    if not max_lines > 0 or len(ranked) <= max_lines:
-        return ranked
-    return ranked[:max_lines]
 
 
 def trendline_gate(
     line: TrendLine, i: int, close: float, dist_tol: float, cfg: TrendlinesConfig
 ) -> bool:
     """Mirrors TS trendlineGate: the per-line filters for one bar, the major
-    floors and ceilings plus Max Distance. Each asks about ONE line, so on its
-    own tightening one only removes and relaxing one only adds; combined with
-    the visible-only per-pivot cap, a newly admitted level can still push
-    another past the cap."""
+    floors and ceilings plus Max Distance, the per-bar half of stage 2. Each
+    asks about ONE line and runs before ranking, so no other line can displace
+    it; relaxing one can still remove a drawn line in stage 3, where a newly
+    admitted better-ranked line takes its slot."""
     if not is_major(line, i, cfg):
         return False
     return dist_tol == math.inf or within_distance(line, i, close, dist_tol)
 
 
 def select_levels(
-    pool: list[TrendLine],
+    ranked: list[TrendLine],
     at_idx: int,
     tol: float,
     max_per_pivot: int,
-    passes: Callable[[TrendLine], bool] | None = None,
+    max_lines: int,
 ) -> list[TrendLine]:
-    """Mirrors TS selectLevels, without the pin half (pins are draw-time UI).
-
-    The O(n^2) first-fit loop is deliberate: see the TS docstring before
-    replacing it, since both ports must stay value-identical.
-
-    A LEVEL IS A MERGE GROUP, not a line: lines showing the same trend
-    (same_trend at tol) are one level drawn from different anchors, and the
-    level draws its LEADER, the best-ranked member, fixed by the pool alone.
-    Nothing substitutes for anything, so no setting can swap the anchors of a
-    line already on the chart. VISIBLE LINES ONLY: the cap positions are built
-    over gate-passing leaders, so a filtered-out level holds no slot and the
-    gate runs before the cap."""
+    """Mirrors TS selectLevels (without the debug depths), stage 3: `ranked`
+    is the gate-passing lines in rank order, pins never among them. Merge
+    (a level's leader is its best gate-passing member), per-pivot cap, then
+    stop once max_lines leaders are accepted (0 = uncapped). The stop is exact
+    because a leader's positions are fixed at insertion (see the TS
+    docstring)."""
     leaders: list[TrendLine] = []
     proj: list[float] = []
-    for line in pool:
-        p = project_at(line, at_idx)
-        at = -1
-        if tol > 0:
-            for idx, g in enumerate(leaders):
-                if abs(proj[idx] - p) <= tol and same_trend(g, line, at_idx, tol):
-                    at = idx
-                    break
-        if at < 0:
-            leaders.append(line)
-            proj.append(p)
-    counted: list[TrendLine] = [line for line in leaders if passes is None or passes(line)]
-    counted_idx: dict[int, int] = {id(line): i for i, line in enumerate(counted)}
-    pos = level_positions(counted) if max_per_pivot >= 1 else None
+    pos: dict[int, dict[int, int]] = {}
     out: list[TrendLine] = []
-    for leader in leaders:
-        if passes is not None and not passes(leader):
+    for line in ranked:
+        if max_lines > 0 and len(out) >= max_lines:
+            break
+        p = project_at(line, at_idx)
+        if tol > 0 and any(
+            abs(proj[idx] - p) <= tol and same_trend(g, line, at_idx, tol)
+            for idx, g in enumerate(leaders)
+        ):
             continue
-        idx = counted_idx.get(id(leader))
-        if pos is not None and idx is not None and pivot_cap_needed(leader, pos, idx) > max_per_pivot:
+        lvl = len(leaders)
+        leaders.append(line)
+        proj.append(p)
+        _add_level_positions(pos, line, lvl)
+        if max_per_pivot >= 1 and pivot_cap_needed(line, pos, lvl) > max_per_pivot:
             continue
-        out.append(leader)
-    out.sort(key=rank_key)
+        out.append(line)
     return out
 
 
@@ -824,33 +803,34 @@ def compute_trendlines(
                             continue
                         admit_major(major_q, major_str, q, strength, cfg.major_pivots)
 
-            # 3. Prune the dead, then cap live state by the SURVIVAL order IN
-            #    TOTAL (survival_key, not rank_key: see its docstring).
+            # 3. Prune the dead, then cap live state at MAX_LIVE by the
+            #    SURVIVAL order IN TOTAL (survival_key, not rank_key: see its
+            #    docstring).
             if any(not is_live(line, i, cfg) for line in lines):
                 lines = [line for line in lines if is_live(line, i, cfg)]
-            cap = MAX_LIVE_MULT * cfg.max_lines
+            cap = MAX_LIVE
             if len(lines) > cap:
                 lines.sort(key=lambda line: (over_ceilings(line, cfg), survival_key(line)))
                 lines = lines[:cap]
 
-        # 4. Emit: the POOL (rank order, cut to max_lines), then
-        #    select_levels at this bar's tolerance, cut by the per-pivot cap
-        #    and by the per-line filters — the same pipeline the draw path
-        #    runs; tl_nearest is the nearest AMONG THOSE. A line not on the
-        #    chart reports nothing.
+        # 4. Emit: stage 2 (the per-line gate) first, then rank, then stage 3
+        #    (merge, per-pivot cap, max_lines), the same pipeline the draw
+        #    path runs; tl_nearest is the nearest AMONG THOSE.
         close = closes[i]
         point: dict[str, float] = {}
-        pool = pool_lines(poolable(lines, i, cfg), cfg.max_lines)
         dist_tol = max_distance_tol(cfg, a, close)
+        ranked = sorted(
+            (line for line in poolable(lines, i, cfg)
+             if trendline_gate(line, i, close, dist_tol, cfg)),
+            key=rank_key,
+        )
         drawn = select_levels(
-            pool,
-            i,
-            merge_tolerance(cfg, a, close),
-            cfg.max_per_pivot,
-            lambda line: trendline_gate(line, i, close, dist_tol, cfg),
+            ranked, i, merge_tolerance(cfg, a, close), cfg.max_per_pivot, cfg.max_lines
         )
         nearest_v = 0.0
         nearest_d = math.inf
+        # select_levels reads max_lines 0 as uncapped; the parser never yields
+        # 0, but a raw cfg can, and it must still emit no tl_k. Mirrors TS.
         shown = min(len(drawn), cfg.max_lines)
         for r in range(shown):
             v = project_at(drawn[r], i)

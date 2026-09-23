@@ -38,19 +38,17 @@ const EXPECTED = [
   // DEFAULT: the second anchor is the 2026-01 low, not the 2021-01 one a human
   // would pick. Same first anchor, same secular line, a shallower slope
   // (0.128/month against 0.142). The exact human pairing is asserted in its own
-  // test below, at the cap it needs.
+  // test below.
   { k1: "low", k2: "low", from: "2011-05", fromPrice: 72.696, to: "2026-01", toPrice: 95.226 },
   { k1: "high", k2: "high", from: "2022-09", fromPrice: 114.687, to: "2025-01", toPrice: 109.879 },
 ] as const;
 
-// THE PANE DEFAULT. Both EXPECTED rows survive the live cap at maxLines 3
-// (measured by bisection: the 2011-05 row needs maxLines 1 and the 2022-09 row
-// 2, i.e. live caps of 16 and 32 against the 48 that MAX_LIVE_MULT 16 gives at
-// 3), so this file no longer raises maxLines to make its acceptance pass. The one line that still needs a raised
-// cap is the exact 2011-05 -> 2021-01 pairing, and it says so where it is
-// asserted. See the "Survival vs rank" section of
-// docs/superpowers/specs/2026-09-16-sideless-trendlines-design.md for the
-// measured cap numbers behind this.
+// THE PANE DEFAULT. Live state is a fixed MAX_LIVE (256) whatever Max
+// Trendlines is, so every line this file names, the exact 2011-05 -> 2021-01
+// pairing included (it needs a live cap of 224), is built at the default and
+// nothing here raises maxLines to make its acceptance pass. BUILT is not
+// DRAWN: at maxLines 3 the pane draws the three best-ranked lines, which on
+// this fixture are older five- and four-touch lines (see the tl_nearest test).
 const CFG = TRENDLINES_DEFAULTS;
 
 const bars = fixture as unknown as KLineData[];
@@ -124,19 +122,15 @@ describe("TRENDLINES on DXY monthly", () => {
     }
   });
 
-  // THE PAIRING A HUMAN DRAWS, 2011-05 -> 2021-01, which is NOT what survives
-  // at the pane default. It is a weak specimen by every measure the cap can
-  // see (2 touches, 6 crossings over 116 months) and sits deep in the ~1000
-  // lines the detector builds on this fixture, so it needs a live cap of 224,
-  // i.e. maxLines 14 at MAX_LIVE_MULT 16 (bisected; 13 fails). Re-measured
-  // when the touch rule split into Max Touch Gap and Max Pierce: the third
-  // touch it used to be credited with was a near miss on the old symmetric
-  // band, and the cap it needs fell from 256.
-  // Asserted at that setting
-  // rather than dropped, because it is the line the fixture was captured for.
-  it("still builds the exact 2011-05 -> 2021-01 human pairing, at the cap it needs", () => {
-    const wide = { ...TRENDLINES_DEFAULTS, maxLines: 14 };
-    const { lines } = computeTrendlines(bars, wide);
+  // THE PAIRING A HUMAN DRAWS, 2011-05 -> 2021-01. It is a weak specimen by
+  // every measure the live cap can see (2 touches, 6 crossings over 116
+  // months) and sits deep in the ~1000 lines the detector builds on this
+  // fixture, so it needs a live cap of 224 (bisected when the cap was still
+  // scaled by maxLines: 14 x 16 passed, 13 x 16 failed). MAX_LIVE is 256, so
+  // since 2026-09-23 it is built at the pane default, where it used to need
+  // maxLines 14.
+  it("builds the exact 2011-05 -> 2021-01 human pairing at the pane default", () => {
+    const { lines } = computeTrendlines(bars, CFG);
     const human = lines.find(
       (l: TrendLine) =>
         l.k1 === "low" &&
@@ -147,21 +141,12 @@ describe("TRENDLINES on DXY monthly", () => {
     expect(human, "no low->low line 2011-05 -> 2021-01").toBeDefined();
     expect(human!.p1).toBe(72.696);
     expect(human!.p2).toBe(89.203);
-    expect(isMajor(human!, bars.length - 1, wide)).toBe(true);
-    // And it is genuinely absent at the default, which is what makes the
-    // raised cap above a measurement rather than a precaution.
-    const atDefault = computeTrendlines(bars, CFG).lines.some(
-      (l: TrendLine) =>
-        l.k1 === "low" && l.k2 === "low" &&
-        month(bars[l.i1].timestamp) === "2011-05" &&
-        month(bars[l.i2].timestamp) === "2021-01",
-    );
-    expect(atDefault).toBe(false);
+    expect(isMajor(human!, bars.length - 1, CFG)).toBe(true);
   });
 
   // The secular support the detector DOES carry at the pane default is the
-  // 2011-05 -> 2026-01 pairing, which projects just under spot. Re-measured
-  // for the sideless detector at MAX_LIVE_MULT 16: 96.122 against a 99.267
+  // 2011-05 -> 2026-01 pairing, which projects just under spot. Measured for
+  // the sideless detector (and unchanged at MAX_LIVE 256): 96.122 against a 99.267
   // close, 3.145 under it (the human 2021-01 pairing projected 98.737, 0.53
   // under, which is where the old "within a point" bound came from).
   it("projects the secular low-to-low line just under spot", () => {
@@ -181,14 +166,25 @@ describe("TRENDLINES on DXY monthly", () => {
     expect(close - proj).toBeLessThan(3.5);
   });
 
-  // The nearest-to-close operand reads real, current geometry rather than
-  // stale far-off-screen lines: within a few points under the close. It is
-  // the nearest AMONG THE DRAWN lines (the merged top maxLines), which is why
-  // the band is wider than the hand-drawn lines' own neighbourhood.
-  it("emits a tl_nearest value a few points under the close on the last bar", () => {
-    const { points } = computeTrendlines(bars, CFG);
-    const last = points[points.length - 1];
+  // tl_nearest is the nearest AMONG THE DRAWN lines, so it is only as current
+  // as the drawn set. Measured 2026-09-23 on the last bar (close 99.267):
+  //   - PANE DEFAULT (Max Distance off): the drawn three are the best-ranked
+  //     lines, 2004-12 low -> 2022-09 high (122.255, 5 touches), 2001-07 high
+  //     -> 2016-05 low (71.810, 5) and 2009-03 high -> 2015-03 high (120.875,
+  //     4). tl_nearest is 120.875, 21.6 ABOVE the close. Under the old live
+  //     cap (48 at this maxLines) those lines were evicted and tl_nearest sat
+  //     a few points under the close; MAX_LIVE 256 keeps them, and rank puts
+  //     touches first.
+  //   - MAX DISTANCE ON (TL_NEAR_PRICE_ATR): the drawn three are the best of
+  //     the lines within the band, and tl_nearest is 94.675 (2000-10 high ->
+  //     2026-01 low), 4.59 under the close. That is the setting that asks for
+  //     current geometry, so it is where "a few points under" is asserted.
+  it("emits tl_nearest from the drawn set: far at the default, a few points under with Max Distance", () => {
     const close = bars[bars.length - 1].close;
+    const atDefault = computeTrendlines(bars, CFG).points;
+    expect(atDefault[atDefault.length - 1].tl_nearest).toBeCloseTo(120.875, 3);
+    const near = computeTrendlines(bars, { ...CFG, maxDistAtr: TL_NEAR_PRICE_ATR }).points;
+    const last = near[near.length - 1];
     expect(last.tl_nearest).toBeLessThan(close);
     expect(close - (last.tl_nearest as number)).toBeLessThan(5);
   });
@@ -196,14 +192,18 @@ describe("TRENDLINES on DXY monthly", () => {
   // THE CEILINGS USED TO STARVE THE LIVE SET. The cap's first key is
   // overCeilings, and it exists because the rest of the survival order rewards
   // exactly what Max Touches and Max Span disqualify: without it the rejects
-  // took the front of the MAX_LIVE_MULT x maxLines slots and evicted the lines
+  // took the front of the live cap (then maxLines x 16) and evicted the lines
   // still able to emit. Measured on this fixture before that fix, the top
   // operand fired on 246 bars at maxLines 3 against 442 at maxLines 12.
   //
   // The invariant, stated so it cannot regress quietly: a ceiling's effect must
   // not depend on maxLines, which is a DRAWING budget. Read through tl_nearest,
   // which is present whenever any line qualifies, so the count is the number of
-  // bars the detector had something to say at all.
+  // bars the detector had something to say at all. Since the live cap became a
+  // fixed MAX_LIVE the live set cannot depend on maxLines at all, so fires(3)
+  // and fires(12) differ only by lines ranked 4..12 and can only grow with
+  // maxLines; measured 2026-09-23 they are equal, 442 and 442 for both
+  // ceilings, and the test keeps that stronger equality.
   it.each([
     { name: "Max Touches", patch: { maxTouches: 2 } },
     { name: "Max Span", patch: { maxSpanBars: 40 } },
@@ -219,14 +219,14 @@ describe("TRENDLINES on DXY monthly", () => {
     expect(tight).toBe(fires(12));
   });
 
-  // WHAT THE PANE ACTUALLY SHOWS. computeTrendlines keeps MAX_LIVE_MULT x
-  // maxLines lines alive IN TOTAL, which on this fixture at the pane default is
-  // 48, and their projections on the last bar run from -58.9 to 207.5 against a
-  // close of 99.27: valid geometry, and nowhere near the chart. Max Distance
-  // is the cut for that, and it runs INSIDE the calc: a candidate too far from
-  // the close on its confirm bar is never built, and a live line is dropped
-  // the bar it strays. The drawn set is then rank order, merged, budgeted.
-  it("draws only the lines in play, not the 1990s geometry", () => {
+  // WHAT THE PANE ACTUALLY SHOWS. computeTrendlines keeps MAX_LIVE (256)
+  // lines alive IN TOTAL, and on this fixture their projections on the last
+  // bar run from -380.6 to 491.6 against a close of 99.27 (measured
+  // 2026-09-23): valid geometry, and nowhere near the chart. Max Distance is
+  // the cut for that, a per-bar filter that hides a far line without
+  // deleting it. The drawn set is then the lines within it, ranked, merged,
+  // budgeted.
+  it("draws only the lines in play, not the stale geometry", () => {
     const { lines } = computeTrendlines(bars, TRENDLINES_DEFAULTS);
     const last = bars.length - 1;
     const close = bars[last].close;
@@ -254,31 +254,34 @@ describe("TRENDLINES on DXY monthly", () => {
     expect(near.length).toBeLessThan(lines.length);
     const projections = near.map((l) => projectAt(l, last));
     for (const v of stale) expect(projections.some((p) => Math.abs(p - v) < 0.01)).toBe(false);
-    // Every line in play is within the cut at the last bar, and every drawn
-    // anchor is 2000 or later: no 1990s line resurfaces.
+    // Every line in play is within the cut at the last bar.
     for (const p of projections) expect(Math.abs(p - close)).toBeLessThanOrEqual(a * TL_NEAR_PRICE_ATR);
     const drawn = selectDrawnLines(near, last, close, TRENDLINES_DEFAULTS.maxLines, {
       tol: a * TL_DEDUPE_ATR,
       keep: new Set(),
     });
-    expect(drawn.length).toBeGreaterThan(0);
-    for (const l of drawn) expect(month(bars[l.i1].timestamp) >= "2000-01").toBe(true);
+    // Pinned by first anchor, measured 2026-09-23. A 1990s anchor no longer
+    // means stale: MAX_LIVE 256 keeps the 1998-10 low -> 2017-01 high line
+    // (110.778, inside the band), and it ranks first among the lines in play.
+    // What the cut guarantees is the band above, not the anchor's age.
+    expect(drawn.map((l) => month(bars[l.i1].timestamp))).toEqual(["1998-10", "2000-10", "2001-07"]);
   });
 
-  // maxLines is not just a drawing budget: it is the POOL every filter runs
-  // on, and it sizes live state, so it changes WHAT A RULE READS. Pinned so
+  // maxLines is a drawing budget, and every drawn line is a rule operand, so
+  // it changes WHAT A RULE READS: a third slot adds a tl_3 and can move
+  // tl_nearest. It no longer sizes live state (that is MAX_LIVE). Pinned so
   // that "maxLines does not affect operands" can never be written in
-  // user-facing copy. Re-measured with Max Lines as the pool: 311 differing
-  // points, where the two-line pane gains a tl_3 or reports a farther
-  // tl_nearest.
+  // user-facing copy. Measured 2026-09-23 with filters before the cut and the
+  // fixed live cap: 422 differing points (311 when maxLines cut the
+  // candidates first and sized live state).
   it("changes an emitted value between maxLines 2 and 3", () => {
     const two = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 2 }).points;
     const three = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 3 }).points;
     const differing = two.filter((p, i) => JSON.stringify(p) !== JSON.stringify(three[i]));
-    expect(differing).toHaveLength(311);
+    expect(differing).toHaveLength(422);
     // A named bar, so a drift is diagnosable rather than just red: at 1991-07
     // the third drawn line is the nearest, and tl_nearest reads only the
-    // drawn set, so the two-line pane reports a farther line there. (127
+    // drawn set, so the two-line pane reports a farther line there. (135
     // bars differ in tl_nearest; this is the first of them.)
     expect(month(bars[68].timestamp)).toBe("1991-07");
     expect(two[68].tl_nearest).toBeCloseTo(77.792, 3);
@@ -300,13 +303,11 @@ describe("TRENDLINES on DXY monthly", () => {
       ...TRENDLINES_DEFAULTS,
       pivotLen: 2,
       pairPivots: 100,
-      // Nothing is ever pruned, so the final list is every line the detector
-      // built across the whole series, not just the survivors.
-      maxLines: 100_000,
+      // maxLines and mergeAtr are selection-stage knobs (points, not lines)
+      // and MAX_LIVE, not maxLines, sizes live state, so this checks the
+      // MAX_LIVE survivors rather than every line ever built; a duplicate
+      // among them would still fail. Defaults are fine here.
       maxProjBars: 100_000,
-      // Merge off: the emit-step merge walk is quadratic in what it keeps,
-      // and this budget keeps everything.
-      mergeAtr: 0,
     });
     expect(lines.length).toBeGreaterThan(20);
     for (const l of lines) {

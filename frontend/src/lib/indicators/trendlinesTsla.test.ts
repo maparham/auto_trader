@@ -19,23 +19,18 @@ import fixture from "./trendlinesTsla.fixture.json";
 
 const bars = fixture as unknown as KLineData[];
 
-// maxLines 6, NOT the pane default of 3, and that is a product finding rather
-// than a fixture detail: AT THE PANE DEFAULT THIS FLAGSHIP HAND-DRAWN TSLA
-// SUPPORT IS NOT SURFACED AT ALL. A line is built once, at its second anchor,
-// so the live cap is a one-shot test it can never retake, and this one is born
-// with 2 touches into a crowd that already has more. compareSurvival
-// (crossings first) is what lets it survive at any setting; measured by
-// bisection it still needs a live cap of 128 lines, which is maxLines 8 at
-// MAX_LIVE_MULT 16 (7 and below all fail). It was 96 (maxLines 6) while one
-// symmetric 0.75 ATR band counted every near miss as a full touch; splitting
-// the tolerance into Max Touch Gap (0 by default) and Max Pierce reshuffles
-// which lines the survival order carries, and this one needs a little more
-// room. Widening Max Touch Gap back to 0.75 does NOT bring it back at 6 (it
-// was measured), so the cap is the lever. A user on the default 3 does not see
-// this line. See the "Survival vs rank" section of
-// docs/superpowers/specs/2026-09-16-sideless-trendlines-design.md for the
-// measured cap numbers behind this.
-const CFG = { ...TRENDLINES_DEFAULTS, maxLines: 8 };
+// THE PANE DEFAULT. A line is built once, at its second anchor, so the live
+// cap is a one-shot test it can never retake, and this one is born with 2
+// touches into a crowd that already has more. compareSurvival (crossings
+// first) is what lets it survive; measured by bisection it needs a live cap
+// of 128 lines, which used to mean maxLines 8 (the cap was maxLines x 16).
+// The live cap is now a fixed MAX_LIVE (256), so it is built at the default.
+//
+// BUILT IS NOT DRAWN, and that is still a product finding: measured
+// 2026-09-23 at the default it ranks 151st of the 226 lines that pass the
+// per-line filters on the last bar, so a pane at Max Trendlines 3 does not
+// draw it. The lever is now rank (it has 2 touches), not the live cap.
+const CFG = TRENDLINES_DEFAULTS;
 
 describe("TRENDLINES on TSLA daily", () => {
   it("holds the fixture it expects", () => {
