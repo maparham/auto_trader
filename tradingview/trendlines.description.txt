@@ -1,0 +1,25 @@
+[b]Trendlines[/b]
+
+Draws sloping trendlines automatically through confirmed swing highs and lows. A line can join two highs, two lows, or a high and a low. Once drawn, a line never moves or re-angles.
+
+[b]How it works[/b]
+[list]
+[*]Pivots are strict fractals: a bar must beat Pivot Length bars on each side. Optional filters drop small or short-lived swings (Min Pivot Size in ATR, Min Swing Reach in bars).
+[*]Each new pivot is paired with recent earlier pivots, plus a small set of major swings from further back.
+[*]Later pivots count as touches. A pivot that pokes through a line by up to Max Pierce counts as 1. One that stops short by up to Max Touch Gap counts as 0.5. Both are measured in ATR(14).
+[*]Each time the close changes side of a line, the script counts a crossing. Crossings don't delete a line, but you can filter on them.
+[*]Lines are ranked by touches, then span, then fewest crossings. Near-duplicate lines merge into one level, and Max Lines per Pivot stops one swing from sprouting a fan of lines.
+[/list]
+
+[b]Non-repainting[/b]
+Pivots confirm Pivot Length bars late, and every value at a bar uses only data up to that bar. Nothing changes after the fact.
+
+[b]Outputs[/b]
+[i]tl_nearest[/i] (the drawn line closest to price) and [i]tl_1..tl_3[/i] (the top-ranked lines' values at each bar) are in the Data Window and can be used in alerts.
+
+[b]Tips[/b]
+[list]
+[*]Raise Min Span or Min Touches for fewer, stronger lines.
+[*]Set Max Crossings low for clean trend edges, or raise Min Crossings for levels price keeps returning to.
+[*]On long histories, set Max Span or Compute from if the script runs slowly.
+[/list]

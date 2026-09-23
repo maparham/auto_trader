@@ -1,0 +1,742 @@
+// Port of Chartkar's TRENDLINES indicator
+// (frontend/src/lib/indicators/trendlines.ts, Python twin
+// backend/auto_trader/indicators/trendlines.py). Same detector, same step
+// order, same cross-multiplied gates. Not ported: the MTF pin, line pins and
+// handles, dimming, legacy param migrations, the pivot-depth debug label.
+//
+// Sideless lines through confirmed fractal pivots of either kind. A line is
+// two anchor swings (high or low, any mix) and never rotates. Later swings
+// score touches: 1 for a pierce within Max Pierce, 0.5 for stopping short
+// within Max Touch Gap (both in ATR(14) at the pivot's bar). Closes that
+// change side of a line are counted as crossings, never a fault. Causal:
+// values at bar i depend only on bars 0..i, so nothing repaints.
+//@version=6
+indicator("Trendlines", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ---------------------------------------------------------------- inputs ----
+const int TL_ATR_LEN = 14
+const int MAX_LIVE_MULT = 16
+
+G_PIV = "Pivots"
+pivotLen = input.int(5, "Pivot Length", minval = 1, group = G_PIV, tooltip = "Bars a swing must beat on each side to count as a pivot.\nHigher keeps fewer pivots and confirms them later.")
+minSwingAtr = input.float(0.0, "Min Pivot Size (ATR)", minval = 0, step = 0.25, group = G_PIV, tooltip = "Min height of the swing from a pivot back to the last pivot on the other side, in ATR(14).\nRaising it drops the small wobbles.\n0 accepts every turn.")
+minSwingReach = input.int(0, "Min Swing Reach (bars)", minval = 0, group = G_PIV, tooltip = "Min bars a pivot must beat to its left to count as a turning point.\nOnly matters above Pivot Length, since a pivot already beats that many.\n0 = off.")
+pairPivots = input.int(40, "Pair Pivots", minval = 1, group = G_PIV, tooltip = "How many earlier pivots a new pivot tries to pair a line with, highs and lows together.\nCounted in pivots, not bars, so filtering pivots out lets the same slots reach further back.")
+majorPivots = input.int(12, "Major Pivots", minval = 0, group = G_PIV, tooltip = "How many major pivots are kept beyond the Pair Pivots window, so a new pivot can still start a line from an old major high or low.\nThe biggest swings stay when there are more.\n0: only the recent window pairs.")
+majorLen = input.int(10, "Major Length", minval = 1, group = G_PIV, tooltip = "A pivot is major when it is the highest high or lowest low over this many bars on each side.\nIt becomes known that many bars after it happened.")
+majorSizeAtr = input.float(3.0, "Major Size (ATR)", minval = 0, step = 0.25, group = G_PIV, tooltip = "Min height of a major pivot's swing back to the last pivot on the other side, in ATR(14).\n0: Major Length alone decides.")
+
+G_TCH = "Touches"
+touchMult = input.float(0.0, "Max Touch Gap (ATR)", minval = 0, step = 0.05, group = G_TCH, tooltip = "How far a pivot may stop short of a line and still count as a half touch, in ATR(14).\n0: a pivot must reach the line.")
+pierceMult = input.float(0.25, "Max Pierce (ATR)", minval = 0, step = 0.05, group = G_TCH, tooltip = "How far a pivot may poke through a line and still count as a full touch, in ATR(14).\nA touch that pierces counts 1, one that stops short counts a half.")
+minTouches = input.int(2, "Min Touches", minval = 2, group = G_TCH, tooltip = "Min pivots that must touch a line before it counts as a real trendline.\n2 is just the pair that drew it, so Min Span does most of the filtering.")
+maxTouches = input.int(0, "Max Touches", minval = 0, group = G_TCH, tooltip = "Max pivots that may touch a line before it stops counting.\nA line that keeps collecting touches is usually a flat shelf grazed by half the swings in a range.\n0 = no limit.")
+maxTouchSpacing = input.int(0, "Max Touch Spacing (bars)", minval = 0, group = G_TCH, tooltip = "Max bars between two touches in a row.\nDrops lines whose touches sit far apart, like a pair anchored months before its next touch.\n0 = no limit.")
+minTouchSpacing = input.int(0, "Min Touch Spacing (bars)", minval = 0, group = G_TCH, tooltip = "Min bars between two touches in a row.\nDrops lines whose touches bunch together rather than testing the line at separate times.\n0 = off.")
+
+G_GEO = "Span and slope"
+minSpanBars = input.int(20, "Min Span (bars)", minval = 1, group = G_GEO, tooltip = "Min bars a line must span to count as a real trendline.\nKeeps short, meaningless lines off the chart.")
+maxSpanBars = input.int(0, "Max Span (bars)", minval = 0, group = G_GEO, tooltip = "Max bars a line may span before it stops counting.\nHelps when only recent structure matters and a line reaching back years is noise.\nAlso speeds the script up on long histories.\n0 = no limit.")
+maxProjBars = input.int(50, "Max Projection (bars)", minval = 1, group = G_GEO, tooltip = "Bars a line keeps running past its last touch before it retires.")
+maxSlopeAtr = input.float(0.0, "Max Slope (ATR/bar)", step = 0.01, group = G_GEO, tooltip = "Highest signed slope a line may have, in ATR(14) of price per bar. Rising is positive, falling negative.\nA negative ceiling keeps only falling lines; a positive one caps how steeply a line may rise.\n0 = no ceiling.")
+minSlopeAtr = input.float(0.0, "Min Slope (ATR/bar)", step = 0.01, group = G_GEO, tooltip = "Lowest signed slope a line may have, in ATR(14) of price per bar.\nA positive floor (e.g. 0.01) keeps only rising lines; a negative floor also admits falling lines no steeper than that.\n0 = no floor.")
+minBackBars = input.int(0, "Min Back Clearance (bars)", minval = 0, group = G_GEO, tooltip = "Bars before a line's first anchor over which the close must stay on one side of the line.\nRejects a line that price was already crossing before it started.\n0 = off.")
+
+G_CRS = "Crossings"
+minCrossings = input.int(0, "Min Crossings", minval = 0, group = G_CRS, tooltip = "Min times the close must have crossed the line.\nA line price never crosses is a clean trend edge; one it crosses often is a level price keeps returning to.\n0 = no floor.")
+maxCrossings = input.int(5, "Max Crossings", minval = 0, group = G_CRS, tooltip = "Max times the close may have crossed the line.\n0 = no limit.")
+
+G_OUT = "Output"
+maxLines = input.int(10, "Max Lines", minval = 1, maxval = 50, group = G_OUT, tooltip = "How many lines to consider, strongest first: most touches, then longest, then fewest crossings.\nEvery other setting filters this pool, so the chart often shows fewer.\nThe top three drawn lines are also the tl_1..tl_3 outputs.")
+maxDistAtr = input.float(0.0, "Max Distance (ATR)", minval = 0, step = 0.5, group = G_OUT, tooltip = "How far a line may sit from the current close, in ATR(14).\nA line past it is hidden and stops reporting until price comes back.\nApplies with the % cut below: a line has to pass both.\n0 = no limit.")
+maxDistPct = input.float(0.0, "Max Distance (%)", minval = 0, step = 0.5, group = G_OUT, tooltip = "How far a line may sit from the current close, as a percent of it.\nSame rule as the ATR cut, in price terms, so it holds across timeframes.\n0 = no limit.")
+mergeAtr = input.float(0.1, "Merge (ATR)", minval = 0, step = 0.05, group = G_OUT, tooltip = "Two lines that stay this close the whole time they both exist show one trend, so only the stronger is kept.\nClose and almost parallel merges; lines that only cross today do not.\nThe tighter of this and Merge (%) is the band.\n0 = off.")
+mergePct = input.float(0.0, "Merge (%)", minval = 0, step = 0.05, group = G_OUT, tooltip = "Same merge rule, as a percent of price.\nThe tighter of this and Merge (ATR) is the band.\n0 = off.")
+maxPerPivot = input.int(5, "Max Lines per Pivot", minval = 0, group = G_OUT, tooltip = "At each swing, keeps only its strongest lines: a line must rank this high at every swing it runs through.\nRaising it only ever adds lines. Near-identical lines count as one.\n0 = off.")
+startTime = input.time(0, "Compute from", group = G_OUT, tooltip = "Bars before this date are ignored: no pivots, no lines, no ATR.\nMove it later if the script times out on a long history.")
+
+G_STY = "Style"
+extendMode = input.string("Ray", "Extend", options = ["Ray", "Segment", "Extended", "To last bar", "Until cross"], group = G_STY, tooltip = "Where a line stops on the right.\nRay: Max Projection bars past its last touch.\nSegment: at its last touch.\nExtended: like Ray, and also runs back before its first anchor.\nTo last bar: at the newest bar.\nUntil cross: where it meets another drawn line.")
+lineColor = input.color(#3b82f6, "Line color", group = G_STY)
+lineWidth = input.int(1, "Line width", minval = 1, maxval = 4, group = G_STY)
+lineStyleOpt = input.string("Solid", "Line style", options = ["Solid", "Dashed", "Dotted"], group = G_STY)
+showTouches = input.bool(true, "Show touch rings", group = G_STY, tooltip = "Rings each pivot a drawn line rests on, anchors included.")
+showCrossings = input.bool(false, "Show crossings", group = G_STY, tooltip = "A dot on a line at every bar the close cut through it.\nThese are the crossings Min and Max Crossings count.")
+showStats = input.bool(false, "Show stats tag", group = G_STY, tooltip = "Writes each line's touch count (○) and crossings (●) at its right end.\nCrossings are left out when there are none.")
+showLinePivots = input.bool(true, "Show line pivots", group = G_STY, tooltip = "Arrows on the swings the drawn lines rest on: down over a high, up under a low.")
+showPivots = input.bool(false, "Show all pivots", group = G_STY, tooltip = "Marks every swing that passed the pivot settings, including ones no drawn line uses.\nShows exactly what the pivot settings admit.")
+showTable = input.bool(false, "Show debug table", group = G_STY, tooltip = "Lists each drawn line's anchors, prices, touches and crossings.")
+
+// ----------------------------------------------------------------- types ----
+// kind: 1 = high, -1 = low.
+type TL
+    int i1
+    float p1
+    int k1
+    int i2
+    float p2
+    int k2
+    float touches          // half-step sum: pierce 1, gap 0.5
+    array<int> touchIdxs   // anchors included, insertion order
+    array<int> touchKinds
+    int lastTouchIdx
+    int crossings
+    array<int> crossIdxs
+    int lastSign           // last non-zero side: 1 above, -1 below, 0 none
+    int maxTouchGap
+    float minTouchGap
+    int maxTouchIdx
+
+// --------------------------------------------------------- per-bar store ----
+// Arrays indexed by bar_index, so old anchors stay reachable past the
+// history-reference limit.
+var array<float> H = array.new<float>()
+var array<float> L = array.new<float>()
+var array<float> C = array.new<float>()
+var array<float> A = array.new<float>()
+var array<int>   T = array.new<int>()
+
+// ------------------------------------------------------------- geometry ----
+projectAt(TL l, int j) =>
+    l.p1 + ((l.p2 - l.p1) * (j - l.i1)) / (l.i2 - l.i1)
+
+// Every gate below cross-multiplies by the integer span instead of dividing.
+touchWeight(TL l, int j, float price, int kind, float gapTol, float pierceTol) =>
+    span = l.i2 - l.i1
+    lhs = (price - l.p1) * span
+    rhs = (l.p2 - l.p1) * (j - l.i1)
+    bool through = kind == 1 ? lhs >= rhs : lhs <= rhs
+    float w = 0.0
+    if through
+        t = pierceTol * span
+        w := (kind == 1 ? lhs <= rhs + t : lhs >= rhs - t) ? 1.0 : 0.0
+    else
+        t = gapTol * span
+        w := (kind == 1 ? lhs >= rhs - t : lhs <= rhs + t) ? 0.5 : 0.0
+    w
+
+sideSign(TL l, int j, float c) =>
+    span = l.i2 - l.i1
+    lhs = (c - l.p1) * span
+    rhs = (l.p2 - l.p1) * (j - l.i1)
+    lhs > rhs ? 1 : lhs < rhs ? -1 : 0
+
+stepCrossing(TL l, int j, float c) =>
+    s = sideSign(l, j, c)
+    if s != 0
+        if l.lastSign != 0 and s != l.lastSign
+            l.crossings := l.crossings + 1
+            l.crossIdxs.push(j)
+        l.lastSign := s
+    s
+
+hasBackClearance(TL l, int bars, int startIdx) =>
+    bool ok = true
+    if bars > 0
+        if l.i1 - bars < startIdx
+            ok := false
+        else
+            int last = 0
+            for j = l.i1 - 1 to l.i1 - bars
+                s = sideSign(l, j, C.get(j))
+                if s != 0
+                    if last != 0 and s != last
+                        ok := false
+                        break
+                    last := s
+    ok
+
+withinSlope(TL l, float atrAt, float mult) =>
+    mult == 0 or (l.p2 - l.p1) <= mult * atrAt * (l.i2 - l.i1)
+
+aboveSlope(TL l, float atrAt, float mult) =>
+    mult == 0 or (l.p2 - l.p1) >= mult * atrAt * (l.i2 - l.i1)
+
+touchGaps(array<int> idxs) =>
+    int widest = 0
+    float narrowest = 1e300
+    if idxs.size() >= 2
+        s = idxs.copy()
+        s.sort()
+        for x = 1 to s.size() - 1
+            gap = s.get(x) - s.get(x - 1)
+            if gap > widest
+                widest := gap
+            if gap < narrowest
+                narrowest := gap
+    [widest, narrowest]
+
+// ---------------------------------------------------------------- pivots ----
+// Strict fractal: an equal neighbour rejects.
+isPivot(array<float> vals, int i, int lb, bool wantHigh) =>
+    bool ok = i - lb >= 0 and i + lb < vals.size()
+    if ok
+        v = vals.get(i)
+        for j = i - lb to i + lb
+            if j != i
+                w = vals.get(j)
+                if wantHigh ? w >= v : w <= v
+                    ok := false
+                    break
+    ok
+
+// Most recent turn in `turns` strictly before k, or -1.
+lastTurnBefore(array<int> turns, int k) =>
+    int h = -1
+    n = turns.size()
+    if n > 0
+        for q = n - 1 to 0
+            if turns.get(q) < k
+                h := turns.get(q)
+                break
+    h
+
+swingLeg(int k, int kind, int h) =>
+    kind == 1 ? H.get(k) - L.get(h) : H.get(h) - L.get(k)
+
+hasSwingReach(array<float> vals, int k, int kind, int bars) =>
+    bool ok = true
+    if bars > 0
+        if k - bars < 0
+            ok := false
+        else
+            vk = vals.get(k)
+            for j = k - bars to k - 1
+                if kind == 1 ? vals.get(j) >= vk : vals.get(j) <= vk
+                    ok := false
+                    break
+    ok
+
+// -------------------------------------------------------------- ranking ----
+overCeilings(TL l) =>
+    (maxTouches > 0 and l.touches > maxTouches) or
+     (maxSpanBars > 0 and l.lastTouchIdx - l.i1 > maxSpanBars) or
+     (maxTouchSpacing > 0 and l.maxTouchGap > maxTouchSpacing) or
+     (minTouchSpacing > 0 and l.minTouchGap < minTouchSpacing) or
+     (maxCrossings > 0 and l.crossings > maxCrossings)
+
+isLive(TL l, int i) =>
+    i - l.lastTouchIdx <= maxProjBars
+
+isMajor(TL l, int i) =>
+    l.touches >= minTouches and not overCeilings(l) and
+     l.lastTouchIdx - l.i1 >= minSpanBars and l.crossings >= minCrossings and
+     i >= l.i1 and i <= l.lastTouchIdx + maxProjBars
+
+sgn(float x) =>
+    x > 0 ? 1 : x < 0 ? -1 : 0
+
+// > 0 means a sorts after b. Rank: most touches, longest span, fewest
+// crossings, most recent, oldest origin, lowest anchor price.
+rankCmp(TL a, TL b) =>
+    int r = sgn(b.touches - a.touches)
+    if r == 0
+        r := sgn((b.lastTouchIdx - b.i1) - (a.lastTouchIdx - a.i1))
+    if r == 0
+        r := sgn(a.crossings - b.crossings)
+    if r == 0
+        r := sgn(b.lastTouchIdx - a.lastTouchIdx)
+    if r == 0
+        r := sgn(a.i1 - b.i1)
+    if r == 0
+        r := sgn(a.p1 - b.p1)
+    r
+
+// Live-cap survival: ceiling rejects last, then fewest crossings, longest
+// span, most touches, most recent, oldest origin, lowest anchor price.
+survivalCmp(TL a, TL b) =>
+    int r = (overCeilings(a) ? 1 : 0) - (overCeilings(b) ? 1 : 0)
+    if r == 0
+        r := sgn(a.crossings - b.crossings)
+    if r == 0
+        r := sgn((b.lastTouchIdx - b.i1) - (a.lastTouchIdx - a.i1))
+    if r == 0
+        r := sgn(b.touches - a.touches)
+    if r == 0
+        r := sgn(b.lastTouchIdx - a.lastTouchIdx)
+    if r == 0
+        r := sgn(a.i1 - b.i1)
+    if r == 0
+        r := sgn(a.p1 - b.p1)
+    r
+
+// Stable insertion sort in survival order.
+sortSurvival(array<TL> arr) =>
+    n = arr.size()
+    if n > 1
+        for x = 1 to n - 1
+            TL cur = arr.get(x)
+            int y = x - 1
+            while y >= 0
+                if survivalCmp(arr.get(y), cur) <= 0
+                    break
+                arr.set(y + 1, arr.get(y))
+                y -= 1
+            arr.set(y + 1, cur)
+    n
+
+// Top `n` by rank, in rank order (stable selection).
+topRanked(array<TL> src, int n) =>
+    rest = src.copy()
+    out = array.new<TL>()
+    while out.size() < n and rest.size() > 0
+        int best = 0
+        if rest.size() > 1
+            for x = 1 to rest.size() - 1
+                if rankCmp(rest.get(best), rest.get(x)) > 0
+                    best := x
+        out.push(rest.remove(best))
+    out
+
+// ------------------------------------------------------------ selection ----
+mergeTol(float a, float cl) =>
+    float tol = na
+    if mergeAtr > 0 and not na(a)
+        tol := mergeAtr * a
+    if mergePct > 0
+        pct = math.abs(cl) * (mergePct / 100)
+        if na(tol) or pct < tol
+            tol := pct
+    na(tol) ? 0.0 : tol
+
+maxDistTol(float a, float cl) =>
+    float tol = na
+    if maxDistAtr > 0 and not na(a)
+        tol := maxDistAtr * a
+    if maxDistPct > 0
+        pct = math.abs(cl) * (maxDistPct / 100)
+        if na(tol) or pct < tol
+            tol := pct
+    tol
+
+sameTrend(TL a, TL b, int at, float tol) =>
+    start = math.max(a.i1, b.i1)
+    math.abs(projectAt(a, at) - projectAt(b, at)) <= tol and
+     math.abs(projectAt(a, start) - projectAt(b, start)) <= tol
+
+gatePass(TL l, int i, float cl, float distTol) =>
+    isMajor(l, i) and (na(distTol) or math.abs(projectAt(l, i) - cl) <= distTol)
+
+// Worst position the level holds at any of its bars: 1 + earlier counted
+// leaders that run through the same bar.
+capNeeded(array<TL> counted, int idx) =>
+    TL me = counted.get(idx)
+    int worst = 1
+    for b in me.touchIdxs
+        int pos = 1
+        if idx > 0
+            for z = 0 to idx - 1
+                if counted.get(z).touchIdxs.includes(b)
+                    pos += 1
+        worst := math.max(worst, pos)
+    worst
+
+// The drawn set, which is also the emitted set: pool (top Max Lines by rank
+// among live, non-ceiling lines), merge levels, per-line gate, per-pivot cap.
+selectDrawn(array<TL> lines, int i, float cl, float a) =>
+    cands = array.new<TL>()
+    for l in lines
+        if isLive(l, i) and not overCeilings(l)
+            cands.push(l)
+    pool = topRanked(cands, maxLines)
+    tol = mergeTol(a, cl)
+    distTol = maxDistTol(a, cl)
+    leaders = array.new<TL>()
+    for l in pool
+        bool merged = false
+        if tol > 0
+            p = projectAt(l, i)
+            for g in leaders
+                if math.abs(projectAt(g, i) - p) <= tol and sameTrend(g, l, i, tol)
+                    merged := true
+                    break
+        if not merged
+            leaders.push(l)
+    counted = array.new<TL>()
+    for l in leaders
+        if gatePass(l, i, cl, distTol)
+            counted.push(l)
+    out = array.new<TL>()
+    if maxPerPivot >= 1 and counted.size() > 0
+        for x = 0 to counted.size() - 1
+            if capNeeded(counted, x) <= maxPerPivot
+                out.push(counted.get(x))
+    else
+        out := counted
+    out
+
+// ------------------------------------------------------------- detector ----
+var array<TL>    lines    = array.new<TL>()
+var array<int>   poolIdx  = array.new<int>()
+var array<int>   poolKind = array.new<int>()
+var array<int>   turnsH   = array.new<int>()
+var array<int>   turnsL   = array.new<int>()
+var array<int>   majorQ   = array.new<int>()
+var array<float> majorStr = array.new<float>()
+var int   startIdx = na
+var int   trCount  = 0
+var float trSum    = 0.0
+var float atrV     = na
+
+prevClose = close[1]
+bool active = time >= startTime
+if active and na(startIdx)
+    startIdx := bar_index
+
+// ATR(14), Wilder RMA seeded with the SMA of the first 14 true ranges,
+// windowed from startIdx (TR there is high - low).
+if active
+    tr = bar_index == startIdx ? high - low : math.max(high - low, math.abs(high - prevClose), math.abs(low - prevClose))
+    trCount += 1
+    if trCount <= TL_ATR_LEN
+        trSum += tr
+        if trCount == TL_ATR_LEN
+            atrV := trSum / TL_ATR_LEN
+    else
+        atrV := (atrV * (TL_ATR_LEN - 1) + tr) / TL_ATR_LEN
+
+H.push(high)
+L.push(low)
+C.push(close)
+A.push(active ? atrV : na)
+T.push(time)
+
+int i = bar_index
+bool pooledHigh = false
+bool pooledLow = false
+array<TL> drawn = array.new<TL>()
+
+if active
+    float a = A.get(i)
+
+    // 1. Per-bar crossing step for every existing line.
+    for l in lines
+        stepCrossing(l, i, close)
+
+    // 2. Confirm-bar work for the pivot at k = i - pivotLen.
+    k = i - pivotLen
+    if k >= 0 and not na(a)
+        for kind in array.from(1, -1)
+            vals = kind == 1 ? H : L
+            if not isPivot(vals, k, pivotLen, kind == 1)
+                continue
+            array.push(kind == 1 ? turnsH : turnsL, k)
+            if minSwingAtr > 0
+                atrK = A.get(k)
+                if na(atrK)
+                    continue
+                h = lastTurnBefore(kind == 1 ? turnsL : turnsH, k)
+                if h < 0
+                    continue
+                if swingLeg(k, kind, h) < minSwingAtr * atrK
+                    continue
+            if not hasSwingReach(vals, k, kind, minSwingReach)
+                continue
+            price = vals.get(k)
+
+            // 2a. Touch test against every existing line.
+            tolA = A.get(k)
+            if not na(tolA)
+                for l in lines
+                    if k <= l.i2
+                        continue
+                    w = touchWeight(l, k, price, kind, touchMult * tolA, pierceMult * tolA)
+                    if w > 0
+                        l.touches := l.touches + w
+                        l.touchIdxs.push(k)
+                        l.touchKinds.push(kind)
+                        gap = k - l.maxTouchIdx
+                        if gap > l.maxTouchGap
+                            l.maxTouchGap := gap
+                        if gap < l.minTouchGap
+                            l.minTouchGap := gap
+                        l.maxTouchIdx := k
+                        l.lastTouchIdx := k
+
+            // 2b. Seed against the last pairPivots pool entries plus the
+            //     major tier below them, ascending pool position.
+            frm = math.max(0, poolIdx.size() - pairPivots)
+            if maxSpanBars > 0 and majorQ.size() > 0
+                for j = majorQ.size() - 1 to 0
+                    if k - poolIdx.get(majorQ.get(j)) > maxSpanBars
+                        majorQ.remove(j)
+                        majorStr.remove(j)
+            seeds = array.new<int>()
+            for q in majorQ
+                if q < frm
+                    seeds.push(q)
+            if poolIdx.size() > frm
+                for q = frm to poolIdx.size() - 1
+                    seeds.push(q)
+            // Exact early reject for the crossing walk. When at least `cap`
+            // lines already rank strictly ahead of a seed in survival order
+            // (fewer crossings, no ceiling hit, live at i), step 3 evicts the
+            // seed this bar, so its walk can stop the moment its crossings
+            // pass doomAt. Those lines' crossings are fixed for the bar and
+            // their liveness only improves. Their ceilings can still move in
+            // the low-kind touch pass, so the high pass needs the touch
+            // ceilings off.
+            cap0 = MAX_LIVE_MULT * maxLines
+            int doomAt = 1000000000
+            if lines.size() >= cap0 and (kind == -1 or (maxTouches == 0 and maxSpanBars == 0 and maxTouchSpacing == 0 and minTouchSpacing == 0))
+                xs = array.new<int>()
+                for l in lines
+                    if isLive(l, i) and not overCeilings(l)
+                        xs.push(l.crossings)
+                if xs.size() >= cap0
+                    xs.sort()
+                    doomAt := xs.get(cap0 - 1)
+            for q in seeds
+                i1 = poolIdx.get(q)
+                if i1 >= k
+                    continue
+                k1 = poolKind.get(q)
+                p1 = k1 == 1 ? H.get(i1) : L.get(i1)
+                cand = TL.new(i1, p1, k1, k, price, kind, 2.0, array.from(i1, k), array.from(k1, kind), k, 0, array.new<int>(), 0, k - i1, k - i1, k)
+                if maxSlopeAtr != 0 or minSlopeAtr != 0
+                    atrK = A.get(k)
+                    if na(atrK)
+                        continue
+                    if not withinSlope(cand, atrK, maxSlopeAtr) or not aboveSlope(cand, atrK, minSlopeAtr)
+                        continue
+                if not hasBackClearance(cand, minBackBars, startIdx)
+                    continue
+                // Crossings over (i1, i]: stepCrossing inlined, same operations.
+                cSpan = k - i1
+                cRise = price - p1
+                int lastS = 0
+                int nCross = 0
+                bool doomed = false
+                for j = i1 + 1 to i
+                    lhs = (C.get(j) - p1) * cSpan
+                    rhs = cRise * (j - i1)
+                    s = lhs > rhs ? 1 : lhs < rhs ? -1 : 0
+                    if s != 0
+                        if lastS != 0 and s != lastS
+                            nCross += 1
+                            if nCross > doomAt
+                                doomed := true
+                                break
+                            cand.crossIdxs.push(j)
+                        lastS := s
+                if doomed
+                    continue
+                cand.crossings := nCross
+                cand.lastSign := lastS
+                // Retro touches strictly between the anchors.
+                if q + 1 < poolIdx.size()
+                    for q2 = q + 1 to poolIdx.size() - 1
+                        pj = poolIdx.get(q2)
+                        if pj >= k
+                            break
+                        if pj == i1
+                            continue
+                        tolP = A.get(pj)
+                        if na(tolP)
+                            continue
+                        kj = poolKind.get(q2)
+                        pv = kj == 1 ? H.get(pj) : L.get(pj)
+                        w = touchWeight(cand, pj, pv, kj, touchMult * tolP, pierceMult * tolP)
+                        if w > 0
+                            cand.touches := cand.touches + w
+                            cand.touchIdxs.push(pj)
+                            cand.touchKinds.push(kj)
+                [wid, nar] = touchGaps(cand.touchIdxs)
+                cand.maxTouchGap := wid
+                cand.minTouchGap := nar
+                cand.maxTouchIdx := cand.i2
+                lines.push(cand)
+            poolIdx.push(k)
+            poolKind.push(kind)
+            if kind == 1
+                pooledHigh := true
+            else
+                pooledLow := true
+
+        // 2c. Major check for the pivot at km = i - majorLen.
+        if majorPivots > 0
+            ml = math.max(majorLen, pivotLen)
+            km = i - ml
+            if km >= 0
+                for kind in array.from(1, -1)
+                    vals = kind == 1 ? H : L
+                    if not isPivot(vals, km, ml, kind == 1)
+                        continue
+                    int q = -1
+                    if poolIdx.size() > 0
+                        for x = poolIdx.size() - 1 to 0
+                            p = poolIdx.get(x)
+                            if p < km
+                                break
+                            if p == km and poolKind.get(x) == kind
+                                q := x
+                                break
+                    if q < 0
+                        continue
+                    atrKm = A.get(km)
+                    float strength = 0.0
+                    h = lastTurnBefore(kind == 1 ? turnsL : turnsH, km)
+                    if not na(atrKm) and atrKm > 0 and h >= 0
+                        strength := swingLeg(km, kind, h) / atrKm
+                    if majorSizeAtr > 0 and strength < majorSizeAtr
+                        continue
+                    // Admit: a newcomer must strictly beat the weakest.
+                    if majorQ.size() < majorPivots
+                        majorQ.push(q)
+                        majorStr.push(strength)
+                    else
+                        int weakest = 0
+                        if majorStr.size() > 1
+                            for x = 1 to majorStr.size() - 1
+                                if majorStr.get(x) < majorStr.get(weakest)
+                                    weakest := x
+                        if strength > majorStr.get(weakest)
+                            majorQ.remove(weakest)
+                            majorStr.remove(weakest)
+                            majorQ.push(q)
+                            majorStr.push(strength)
+
+        // 3. Prune the dead, then cap live state in survival order.
+        bool anyDead = false
+        for l in lines
+            if not isLive(l, i)
+                anyDead := true
+                break
+        if anyDead
+            alive = array.new<TL>()
+            for l in lines
+                if isLive(l, i)
+                    alive.push(l)
+            lines := alive
+        cap = MAX_LIVE_MULT * maxLines
+        if lines.size() > cap
+            sortSurvival(lines)
+            while lines.size() > cap
+                lines.pop()
+
+    // 4. Emit.
+    drawn := selectDrawn(lines, i, close, a)
+
+// --------------------------------------------------------------- outputs ----
+float tl1 = na
+float tl2 = na
+float tl3 = na
+if drawn.size() > 0
+    tl1 := projectAt(drawn.get(0), i)
+if drawn.size() > 1
+    tl2 := projectAt(drawn.get(1), i)
+if drawn.size() > 2
+    tl3 := projectAt(drawn.get(2), i)
+float tlNearest = na
+float nearestD = na
+for l in drawn
+    v = projectAt(l, i)
+    d = math.abs(v - close)
+    if na(nearestD) or d < nearestD
+        nearestD := d
+        tlNearest := v
+
+plot(tlNearest, "tl_nearest", color = lineColor, display = display.data_window, editable = false)
+plot(tl1, "tl_1", display = display.data_window, editable = false)
+plot(tl2, "tl_2", display = display.data_window, editable = false)
+plot(tl3, "tl_3", display = display.data_window, editable = false)
+plotshape(showPivots and pooledHigh, "Pivot high", shape.triangledown, location.abovebar, color.new(lineColor, 40), offset = -pivotLen, size = size.tiny, display = display.pane, editable = false)
+plotshape(showPivots and pooledLow, "Pivot low", shape.triangleup, location.belowbar, color.new(lineColor, 40), offset = -pivotLen, size = size.tiny, display = display.pane, editable = false)
+
+// ------------------------------------------------------------------ draw ----
+var array<line>  gLines  = array.new<line>()
+var array<label> gLabels = array.new<label>()
+var table dbg = na
+
+// Where `l` first meets one of `others` at least a bar after `from`, or na.
+meetsAt(array<TL> others, int selfIdx, int fromIdx, int limit) =>
+    TL l = others.get(selfIdx)
+    sA = (l.p2 - l.p1) / (l.i2 - l.i1)
+    cA = l.p1 - sA * l.i1
+    float best = na
+    for x = 0 to others.size() - 1
+        if x == selfIdx
+            continue
+        TL o = others.get(x)
+        sB = (o.p2 - o.p1) / (o.i2 - o.i1)
+        if sA == sB
+            continue
+        j = (o.p1 - sB * o.i1 - cA) / (sA - sB)
+        if j < fromIdx + 1 or j > limit
+            continue
+        if na(best) or j < best
+            best := j
+    best
+
+if barstate.islast
+    for g in gLines
+        g.delete()
+    gLines.clear()
+    for g in gLabels
+        g.delete()
+    gLabels.clear()
+
+    lstyle = lineStyleOpt == "Dashed" ? line.style_dashed : lineStyleOpt == "Dotted" ? line.style_dotted : line.style_solid
+    clear = color.new(color.black, 100)
+    int jMin = math.max(0, i - 9999)
+    int jMax = i + 499
+    seenPivots = map.new<int, bool>()
+    for r = 0 to math.max(drawn.size() - 1, 0)
+        if drawn.size() == 0
+            break
+        TL l = drawn.get(r)
+        jLeft = extendMode == "Extended" ? l.i1 - maxProjBars : l.i1
+        horizon = l.lastTouchIdx + maxProjBars
+        int jRight = horizon
+        if extendMode == "Segment"
+            jRight := l.lastTouchIdx
+        else if extendMode == "To last bar"
+            jRight := math.max(l.lastTouchIdx, i)
+        else if extendMode == "Until cross"
+            m = meetsAt(drawn, r, l.lastTouchIdx, horizon)
+            jRight := na(m) ? math.max(l.lastTouchIdx, i) : int(math.round(m))
+        jLeft := math.max(jLeft, jMin)
+        jRight := math.min(jRight, jMax)
+        gLines.push(line.new(jLeft, projectAt(l, jLeft), jRight, projectAt(l, jRight), xloc.bar_index, extend.none, lineColor, lstyle, lineWidth))
+
+        for t = 0 to l.touchIdxs.size() - 1
+            idx = l.touchIdxs.get(t)
+            if idx < jMin or idx > jRight
+                continue
+            if showTouches
+                gLabels.push(label.new(idx, projectAt(l, idx), "○", color = clear, textcolor = lineColor, style = label.style_label_center, size = size.tiny))
+            kd = l.touchKinds.get(t)
+            key = idx * 2 + (kd == 1 ? 1 : 0)
+            if showLinePivots and not seenPivots.contains(key)
+                seenPivots.put(key, true)
+                // Stemmed arrow pointing at price, like the app's line-pivot mark;
+                // the plain triangle stays for Show all pivots. Anchored at the
+                // wick's price (a clear label_down/up box sits just past it),
+                // not abovebar, which floats it far off the candle.
+                gLabels.push(label.new(idx, kd == 1 ? H.get(idx) : L.get(idx), kd == 1 ? "↓" : "↑", color = clear, textcolor = lineColor, style = kd == 1 ? label.style_label_down : label.style_label_up, size = size.small))
+        if showCrossings
+            for idx in l.crossIdxs
+                if idx < jMin or idx > jRight
+                    continue
+                gLabels.push(label.new(idx, projectAt(l, idx), "●", color = clear, textcolor = lineColor, style = label.style_label_center, size = size.tiny))
+        if showStats
+            txt = str.tostring(l.touches) + " ○" + (l.crossings > 0 ? " " + str.tostring(l.crossings) + " ●" : "")
+            gLabels.push(label.new(i + 2, projectAt(l, i + 2), txt, color = clear, textcolor = lineColor, style = label.style_label_left, size = size.tiny))
+
+    if showTable
+        if not na(dbg)
+            dbg.delete()
+        dbg := table.new(position.bottom_right, 6, drawn.size() + 1, bgcolor = color.new(color.gray, 85))
+        hdr = array.from("#", "anchor 1", "anchor 2", "p1 / p2", "touches", "crossings")
+        for c = 0 to 5
+            dbg.cell(c, 0, hdr.get(c), text_size = size.small)
+        for r = 0 to math.max(drawn.size() - 1, 0)
+            if drawn.size() == 0
+                break
+            l = drawn.get(r)
+            dbg.cell(0, r + 1, str.tostring(r + 1), text_size = size.small)
+            dbg.cell(1, r + 1, str.format_time(T.get(l.i1), "yyyy-MM-dd HH:mm", syminfo.timezone), text_size = size.small)
+            dbg.cell(2, r + 1, str.format_time(T.get(l.i2), "yyyy-MM-dd HH:mm", syminfo.timezone), text_size = size.small)
+            dbg.cell(3, r + 1, str.tostring(l.p1, format.mintick) + " / " + str.tostring(l.p2, format.mintick), text_size = size.small)
+            dbg.cell(4, r + 1, str.tostring(l.touches), text_size = size.small)
+            dbg.cell(5, r + 1, str.tostring(l.crossings), text_size = size.small)
