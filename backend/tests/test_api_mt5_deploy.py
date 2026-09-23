@@ -14,6 +14,7 @@ _GET_DATA = "auto_trader.api.routers.mt5.deps.get_data"
 
 def _broker(**async_returns) -> AsyncMock:
     b = AsyncMock()
+    b.owns_deploy = True
     for name, value in async_returns.items():
         getattr(b, name).return_value = value
     return b
@@ -64,6 +65,15 @@ def test_undeploy_calls_pause():
         body = client.post("/api/mt5/undeploy").json()
     broker.pause.assert_awaited_once()
     assert body["state"] == "turning-off"
+
+
+def test_deploy_state_hides_countdown_on_a_deployment_we_do_not_own():
+    broker = _broker(deploy_state="on")
+    broker.owns_deploy = False
+    broker.seconds_until_idle_undeploy = lambda: 1234
+    with patch(_GET_DATA, return_value=broker):
+        body = client.get("/api/mt5/deploy-state").json()
+    assert body == {"state": "on", "detail": None, "idle_seconds_remaining": None}
 
 
 def test_metaapi_error_is_502():

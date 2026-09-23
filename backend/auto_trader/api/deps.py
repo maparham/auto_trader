@@ -275,11 +275,21 @@ async def _run_paper_triggers(broker: PaperExecutionBroker, account: str) -> Non
 
 
 async def _mt5_idle_tick(broker) -> bool:
-    """One watchdog check: undeploy the MT5 account if it is deployed and has
-    been idle past its window. Returns True iff it undeployed. Never raises —
-    a bad MetaApi call must not kill the watchdog."""
+    """One watchdog check: undeploy the MT5 account if THIS process owns the
+    deployment and it has been idle past its window. Returns True iff it
+    undeployed. Never raises: a bad MetaApi call must not kill the watchdog."""
     try:
-        if await broker.deploy_state() == "on" and broker.seconds_until_idle_undeploy() == 0:
+        seq = broker._deploy_seq
+        state = await broker.deploy_state()
+        if state == "off" and broker._deploy_seq == seq:
+            # Stopped elsewhere (the other backend, the dashboard): whoever
+            # deploys it next owns its idle clock, not us.
+            broker.owns_deploy = False
+        elif (
+            state == "on"
+            and broker.owns_deploy
+            and broker.seconds_until_idle_undeploy() == 0
+        ):
             await broker.pause()
             log.info("mt5: auto-undeployed after idle timeout")
             return True
@@ -290,7 +300,14 @@ async def _mt5_idle_tick(broker) -> bool:
 
 async def _run_mt5_idle_watchdog(broker) -> None:
     """Periodically auto-undeploy an idle MT5 account so a forgotten deployment
-    stops billing. The account is redeployed only by an explicit user action."""
+    stops billing. The account is redeployed only by an explicit user action.
+
+    The local and hosted backends share the MetaApi account and each sees only
+    its own MT5 use, so each times only the deployments it started
+    (owns_deploy). At boot the local backend adopts whatever is running, so a
+    deploy that outlived a restart still gets undeployed; the hosted one adopts
+    nothing, or it would undeploy a local Start within one interval."""
+    broker.owns_deploy = not auth_enabled()
     while True:
         await asyncio.sleep(_MT5_WATCHDOG_INTERVAL)
         await _mt5_idle_tick(broker)

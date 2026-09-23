@@ -97,6 +97,7 @@ def test_pause_undeploys_and_drops_connection():
     assert state == "turning-off"
     assert broker._synced is False and broker._conn is None
     assert conn.closed is True
+    assert broker.owns_deploy is False
 
 
 def test_pause_is_idempotent_when_already_off():
@@ -111,6 +112,7 @@ def test_resume_deploys_only_when_needed():
     broker = _broker(acct)
     assert asyncio.run(broker.resume()) == "turning-on"
     assert acct.deploy_calls == 1
+    assert broker.owns_deploy is True  # whoever starts it times its idle clock
 
     already = _FakeAcct(state="DEPLOYED")
     broker2 = _broker(already)

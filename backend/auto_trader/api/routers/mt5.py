@@ -12,11 +12,11 @@ from typing import Awaitable, Callable
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import deps
-from ..auth import auth_enabled
 from ..deps import require_admin
 
 # The account-deploy lifecycle is dealing-adjacent (it toggles the operator's
-# real MetaApi account): admin-only in hosted mode, same as trading.py.
+# real MetaApi account): admin-only in hosted mode, same as trading.py. An
+# impersonating admin is not admin, so a tenant view never sees or flips it.
 router = APIRouter(dependencies=[Depends(require_admin)])
 
 
@@ -36,10 +36,6 @@ async def _lifecycle(action: Callable[[object], Awaitable[str]]) -> dict:
 
 @router.get("/api/mt5/deploy-state")
 async def mt5_deploy_state() -> dict:
-    if auth_enabled():
-        # Hosted mode: report unconfigured (frontend hides the pill) rather
-        # than exposing the operator's MetaApi account state to tenants.
-        return {"state": "unconfigured", "detail": None, "idle_seconds_remaining": None}
     try:
         broker = deps.get_data("mt5")
     except HTTPException:
@@ -48,17 +44,15 @@ async def mt5_deploy_state() -> dict:
         state = await broker.deploy_state()
     except Exception as exc:  # SDK error taxonomy is broad; surface verbatim
         raise HTTPException(502, f"MetaApi error: {exc}") from None
-    # Countdown only means anything while deployed; hide it otherwise.
-    remaining = broker.seconds_until_idle_undeploy() if state == "on" else None
+    # Countdown only means anything while deployed, and only on the backend
+    # that owns the deployment's idle clock (see deps._run_mt5_idle_watchdog).
+    owned = state == "on" and broker.owns_deploy
+    remaining = broker.seconds_until_idle_undeploy() if owned else None
     return {"state": state, "detail": None, "idle_seconds_remaining": remaining}
 
 
 @router.post("/api/mt5/deploy")
 async def mt5_deploy() -> dict:
-    # Hosted mode: the MetaApi account is the operator's real dealing account —
-    # never let a signed-in tenant (re)deploy it (same stance as compute.py).
-    if auth_enabled():
-        raise HTTPException(403, "MT5 deploy is not available on the hosted service")
     return await _lifecycle(lambda b: b.resume())
 
 
@@ -66,6 +60,4 @@ async def mt5_deploy() -> dict:
 async def mt5_undeploy() -> dict:
     """No open-position guard here: the frontend confirm warns that positions
     stay open at the broker; a deliberate stop wins (same stance as compute)."""
-    if auth_enabled():
-        raise HTTPException(403, "MT5 deploy is not available on the hosted service")
     return await _lifecycle(lambda b: b.pause())

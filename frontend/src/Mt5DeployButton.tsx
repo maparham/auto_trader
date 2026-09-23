@@ -11,8 +11,7 @@ import { deployMt5, mt5DeployState, undeployMt5 } from "./api";
 // a filled amber "MT5 ON" pill with a Stop button while deployed, a subtle grey
 // "MT5 off" + Start while undeployed, a spinner through the ~1-2 min
 // deploy/undeploy transitions. Renders nothing when MetaApi isn't configured.
-// Turning off confirms first: data + trading stop, and open positions stay
-// open at the broker, unmanaged.
+// Stop acts immediately, no confirm: open positions stay open at the broker.
 // mm:ss for the idle countdown.
 function fmtCountdown(secs: number): string {
   const m = Math.floor(secs / 60);
@@ -112,15 +111,6 @@ export default function Mt5DeployButton() {
     }
   };
 
-  const onStop = () => {
-    const ok = window.confirm(
-      "Turn MT5 off?\n\nThis undeploys the MetaApi account: price data and order " +
-        "execution stop until you turn it back on (~1-2 min to redeploy). Open " +
-        "positions at the broker stay open — and unmanaged — while it's off.",
-    );
-    if (ok) void doStop();
-  };
-
   if (state === "unknown" || state === "unconfigured") return null;
 
   if (state === "turning-on" || state === "turning-off") {
@@ -153,7 +143,7 @@ export default function Mt5DeployButton() {
           </Tooltip>
         )}
         <Tooltip content="Undeploy the MetaApi account to pause its hosting cost. Open positions stay open at the broker.">
-          <button type="button" className="compute-host-stop" onClick={onStop}>
+          <button type="button" className="compute-host-stop" onClick={() => void doStop()}>
             Stop
           </button>
         </Tooltip>

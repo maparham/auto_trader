@@ -382,6 +382,14 @@ class MT5Broker(MarketDataBroker):
         # "now" so a just-constructed broker gets a full grace window.
         self._idle_timeout = _IDLE_UNDEPLOY_SECS
         self._last_use = time.monotonic()
+        # Whether THIS process owns the current deployment's idle clock. Local and
+        # hosted backends share one MetaApi account but each sees only its own RPC
+        # use, so only the instance that deployed it may idle-undeploy it. Set by
+        # resume(), cleared by pause() or by the watchdog seeing the account off;
+        # _deploy_seq lets the watchdog tell a stale "off" read from a fresh
+        # resume(). The watchdog seeds it at startup (see _run_mt5_idle_watchdog).
+        self.owns_deploy = False
+        self._deploy_seq = 0
         # Streaming lives on a SECOND, stateful MetaApi connection alongside the RPC
         # one (they coexist — verified live). One shared connection multiplexes every
         # symbol; its listener fans ticks out to per-symbol consumer queues, and
@@ -465,6 +473,7 @@ class MT5Broker(MarketDataBroker):
         await acct.reload()
         if acct.state in ("DEPLOYED", "DEPLOYING"):
             await acct.undeploy()
+        self.owns_deploy = False
         return _ui_deploy_state(acct.state)
 
     async def resume(self) -> str:
@@ -488,6 +497,8 @@ class MT5Broker(MarketDataBroker):
         # next call. Nulling it here would be off-lock and could race a concurrent
         # _ensure into spawning a second _connect that leaks an RPC connection.
         self._last_use = time.monotonic()  # fresh deploy → full idle window
+        self.owns_deploy = True
+        self._deploy_seq += 1
         return _ui_deploy_state(acct.state)
 
     def seconds_until_idle_undeploy(self) -> int:

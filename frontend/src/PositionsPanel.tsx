@@ -42,6 +42,7 @@ import {
   toggleTradeSelected,
   setTradeSelected,
   draggingLineSignal,
+  mt5DeployStateSignal,
   type PendingEdit,
 } from "./lib/signals";
 import { accountStats, enrichTrade, type EnrichedTrade } from "./lib/accountStats";
@@ -188,6 +189,25 @@ export default function PositionsPanel({
     brokerAccounts.length > 0
       ? brokerAccounts
       : [{ key: account, broker: activeBroker, env: account.split(":")[1] ?? "paper", isRealMoney: false }];
+
+  // MT5 just came on (Start here, or another tab/backend): jump to the live
+  // account so its balance and positions show without a manual switch. Only on
+  // the off → on transition, never on a boot read that finds it already on, so
+  // a deliberate Paper pick survives a reload.
+  const liveSwitchRef = useRef({ account, acctTabs, onAccountChange });
+  liveSwitchRef.current = { account, acctTabs, onAccountChange };
+  useEffect(() => {
+    let prev = mt5DeployStateSignal.value;
+    return mt5DeployStateSignal.subscribe((next) => {
+      const cameOn = next === "on" && (prev === "off" || prev === "turning-on");
+      prev = next;
+      if (!cameOn) return;
+      const { account: cur, acctTabs: tabs, onAccountChange: change } = liveSwitchRef.current;
+      if (brokerOf(cur) !== "mt5") return;
+      const live = tabs.find((a) => a.broker === "mt5" && a.env === "live");
+      if (live && live.key !== cur) change?.(live.key);
+    });
+  }, []);
 
   const trades = all; // whole book — every symbol, not just the focused chart
   const positions = trades.filter((t) => t.kind === "position");
