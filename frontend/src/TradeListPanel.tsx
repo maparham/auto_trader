@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import CloseButton from "./CloseButton";
 import Tooltip from "./components/Tooltip";
-import { SortHeader } from "./PositionsPanel";
+import { SortHeader } from "./PositionsTable";
 import { fetchAllMarkets, searchInstruments, type Instrument } from "./lib/feed";
 import { requestConfirm } from "./lib/signals";
 import {

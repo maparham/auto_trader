@@ -6,7 +6,7 @@ import { CopyPatternIcon } from "./lib/menuIcons";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import TipIcon from "./components/TipIcon";
-import { SortHeader } from "./PositionsPanel";
+import { SortHeader } from "./PositionsTable";
 import {
   avgDistance,
   DEFAULT_MATCH_SORT,

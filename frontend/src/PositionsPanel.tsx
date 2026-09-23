@@ -21,7 +21,6 @@ import {
   refreshTrades,
   subscribeLivePrices,
   subscribeTrades,
-  tradeLabel,
   brokerLabel,
   brokerOf,
   isDataOnlyBroker,
@@ -48,6 +47,18 @@ import {
 import { accountStats, enrichTrade, type EnrichedTrade } from "./lib/accountStats";
 import type { TradingSettings } from "./theme";
 import Tooltip from "./components/Tooltip";
+import { PositionsHead } from "./PositionsTable";
+import {
+  DEFAULT_SORT,
+  cash,
+  groupCells,
+  nextSort,
+  positionCells,
+  sortCompare,
+  type SortKey,
+  type SortState,
+  type TableTab,
+} from "./lib/positionsTable";
 import Mt5DeployButton from "./Mt5DeployButton";
 
 interface Props {
@@ -78,32 +89,11 @@ interface Props {
   onToggleMaximize?: () => void;
 }
 
-type Tab = "positions" | "orders";
 // A trade row enriched with the derived figures TV shows (last price, P&L %, trade
 // /market value, per-row leverage + margin). All approximate, internally coherent
 // with our paper P&L — see lib/orderInfo. Sortable columns read straight off this.
 type RowExt = EnrichedTrade;
-// Sortable columns map 1:1 to RowExt fields, so the comparator reads row[key].
-type SortKey =
-  | "epic"
-  | "side"
-  | "quantity"
-  | "priceLevel"
-  | "last"
-  | "takeProfit"
-  | "stop"
-  | "upnl"
-  | "pnlPct"
-  | "tradeValue"
-  | "marketValue"
-  | "leverage"
-  | "margin"
-  | "openedAt";
-type SortDir = "asc" | "desc";
 const COLLAPSE_KEY = "tradeDockCollapsed";
-
-// Text columns read more naturally A→Z; numbers and time most-recent/largest-first.
-const defaultDir = (key: SortKey): SortDir => (key === "epic" || key === "side" ? "asc" : "desc");
 
 // Env tab label (paper/demo/live → Paper/Demo/Live) and its risk tier, mirroring the
 // broker selector's old tiering so a real-money tab still reads red.
@@ -113,14 +103,6 @@ function envLabel(env: string): string {
 function acctTier(a: BrokerAccount): "paper" | "demo" | "live" {
   if (a.isRealMoney) return "live";
   return a.env === "paper" ? "paper" : "demo";
-}
-
-function fmtTime(ms: number | null): string {
-  if (ms == null) return "—";
-  const d = new Date(ms);
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const sameDay = d.toDateString() === new Date().toDateString();
-  return sameDay ? time : `${d.toLocaleDateString([], { day: "2-digit", month: "short" })} ${time}`;
 }
 
 export default function PositionsPanel({
@@ -151,8 +133,8 @@ export default function PositionsPanel({
   const [selectedId, setSelectedId] = useState<string | null>(tradeLineUiSignal.value.selected);
   // Paused auto-apply while a chart line is being dragged (no-confirm mode).
   const [lineDragging, setLineDragging] = useState<boolean>(draggingLineSignal.value);
-  const [tab, setTab] = useState<Tab>("positions");
-  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "openedAt", dir: "desc" });
+  const [tab, setTab] = useState<TableTab>("positions");
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(COLLAPSE_KEY) === "1";
@@ -214,14 +196,14 @@ export default function PositionsPanel({
   const orders = trades.filter((t) => t.kind === "order");
   const rows = tab === "positions" ? positions : orders;
 
-  const toggleSort = (key: SortKey) =>
-    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: defaultDir(key) }));
+  const toggleSort = (key: SortKey) => setSort((s) => nextSort(s, key));
   const precOf = (e: string) => precisionFor?.(e) ?? precision;
   const fmt = (n: number, p = precision) => n.toFixed(p);
+  // A table level at precision `p`, "—" when absent.
+  const levelFmt = (p: number) => (n: number | null) => (n != null ? fmt(n, p) : "—");
   // A live account reports its real currency; otherwise the configured paper one.
   const isLive = isRealMoneyAccount(account);
   const cur = accountSummary?.currency ?? trading.accountCurrency;
-  const cash = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
   // Account stats: the shared derivation in lib/accountStats.ts (the mobile
   // positions tab shows the same strip). Recomputed each render, which the
@@ -248,20 +230,8 @@ export default function PositionsPanel({
 
   const enrich = (t: TradeView): RowExt => enrichTrade(t, stats, isLive);
 
-  // Sorted view of the active tab. Nulls (no TP/SL/P&L/last/value/time) always sink
-  // to the bottom regardless of direction, so missing values never crowd the top.
-  // Sortable fields shared by a position and a group roll-up (a group has no TP/SL, so
-  // sorting on those lists groups in their original order).
-  type Sortable = Partial<Record<SortKey, string | number | null>>;
-  const compare = (a: Sortable, b: Sortable) => {
-    const av = a[sort.key];
-    const bv = b[sort.key];
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    const d = sort.dir === "asc" ? 1 : -1;
-    return (typeof av === "string" ? av.localeCompare(bv as string) : av - (bv as number)) * d;
-  };
+  // Sorted view of the active tab (nulls sink; see PositionsTable.sortCompare).
+  const compare = sortCompare(sort);
   const sorted = rows.map(enrich).sort(compare);
   // Positions of one symbol sit together under a group header carrying their
   // roll-up (net size, average entry, total P&L, ...). Groups sort by their
@@ -304,54 +274,7 @@ export default function PositionsPanel({
             if (tradeLineUiSignal.value.hovered === t.id) setTradeHovered(null);
           }}
         >
-          <td className="pp-c-sym">
-            {t.epic}
-            {t.source === "strategy" && (
-              <Tooltip content="Opened by the live trading engine">
-                <span className="pp-strat-tag">strat</span>
-              </Tooltip>
-            )}
-          </td>
-          <td className={`pp-c-side ${long ? "pp-side-long" : "pp-side-short"}`}>
-            {tradeLabel(t.kind, t.side)}
-          </td>
-          <td className="pp-c-num">{t.quantity}</td>
-          <td className="pp-c-num">
-            {isOrder ? (
-              <span className="pp-resting">resting</span>
-            ) : (
-              <span className={`pp-pnl ${pnlClass(t.upnl)}`}>{fmtPnl(t.upnl)}</span>
-            )}
-          </td>
-          <td className={`pp-c-num${t.pnlPct == null ? " pp-dash" : ` ${pnlClass(t.pnlPct)}`}`}>
-            {t.pnlPct != null
-              ? `${t.pnlPct >= 0 ? "+" : "−"}${Math.abs(t.pnlPct).toFixed(2)}%`
-              : "—"}
-          </td>
-          <td className="pp-c-num">{fmt(t.priceLevel, prec)}</td>
-          <td className={`pp-c-num${t.takeProfit != null ? " pp-lvl-tp" : " pp-dash"}`}>
-            {t.takeProfit != null ? fmt(t.takeProfit, prec) : "—"}
-          </td>
-          <td className={`pp-c-num${t.stop != null ? " pp-lvl-sl" : " pp-dash"}`}>
-            {t.stop != null ? fmt(t.stop, prec) : "—"}
-          </td>
-          <td className={`pp-c-num${t.last == null ? " pp-dash" : ""}`}>
-            {t.last != null ? fmt(t.last, prec) : "—"}
-          </td>
-          <td className="pp-c-num">{cash(t.tradeValue)}</td>
-          <td className={`pp-c-num${t.marketValue == null ? " pp-dash" : ""}`}>
-            {t.marketValue != null ? cash(t.marketValue) : "—"}
-          </td>
-          <td className="pp-c-num pp-c-lev">{t.leverage}:1</td>
-          <td className="pp-c-num">{cash(t.margin)}</td>
-          <td className="pp-c-time">
-            {fmtTime(t.openedAt)}
-            {t.kind === "order" && t.expiresAt != null && (
-              <span className="pp-expiry">
-                exp {new Date(t.expiresAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
-              </span>
-            )}
-          </td>
+          {positionCells(t, levelFmt(prec))}
           <td className="pp-c-act">
             <div className="pp-actions">
               <Tooltip content={linesHidden ? "Show lines on chart" : "Hide lines on chart"}>
@@ -509,11 +432,6 @@ export default function PositionsPanel({
     }
   }
 
-  const fmtPnl = (v: number | null) =>
-    v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
-  const pnlClass = (v: number | null) => (v == null ? "" : v >= 0 ? "pp-pos" : "pp-neg");
-  const entryLabel = tab === "positions" ? "Avg fill" : "Limit";
-
   // A data-only source (Dukascopy history) has no account, positions or orders. Show
   // a plain "history only" note instead of a misleading paper account strip + book.
   // Deliberately NOT collapsible: the toolbar trade-toggle that would re-open the dock
@@ -574,23 +492,7 @@ export default function PositionsPanel({
             <div className="pp-table-wrap">
               <table className="pp-table">
                 <thead>
-                  <tr>
-                    <th className="pp-c-sym"><SortHeader label="Symbol" col="epic" sort={sort} onSort={toggleSort} title="Instrument" /></th>
-                    <th className="pp-c-side"><SortHeader label="Side" col="side" sort={sort} onSort={toggleSort} title="Direction: long (buy) profits when price rises, short (sell) when it falls" /></th>
-                    <th className="pp-c-num"><SortHeader label="Qty" col="quantity" sort={sort} onSort={toggleSort} title="Position size (number of contracts / shares)" /></th>
-                    <th className="pp-c-num"><SortHeader label="P&L" col="upnl" sort={sort} onSort={toggleSort} title="Unrealized profit / loss in the account currency (broker-reported for live accounts)" /></th>
-                    <th className="pp-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={toggleSort} title="Unrealized P&L as a percentage of the price move from entry" /></th>
-                    <th className="pp-c-num"><SortHeader label={entryLabel} col="priceLevel" sort={sort} onSort={toggleSort} title={tab === "positions" ? "Average price you opened the position at" : "Limit price the resting order will fill at"} /></th>
-                    <th className="pp-c-num"><SortHeader label="TP" col="takeProfit" sort={sort} onSort={toggleSort} title="Take-profit: auto-closes the position in profit at this price" /></th>
-                    <th className="pp-c-num"><SortHeader label="SL" col="stop" sort={sort} onSort={toggleSort} title="Stop-loss: auto-closes the position to cap the loss at this price" /></th>
-                    <th className="pp-c-num"><SortHeader label="Last" col="last" sort={sort} onSort={toggleSort} title="Latest market price" /></th>
-                    <th className="pp-c-num"><SortHeader label="Trade val" col="tradeValue" sort={sort} onSort={toggleSort} title="Notional at entry = entry price × quantity (instrument currency)" /></th>
-                    <th className="pp-c-num"><SortHeader label="Mkt val" col="marketValue" sort={sort} onSort={toggleSort} title="Current notional = last price × quantity (instrument currency)" /></th>
-                    <th className="pp-c-num"><SortHeader label="Lev" col="leverage" sort={sort} onSort={toggleSort} title="Leverage on this position, from the broker for live accounts (Capital varies it by instrument, e.g. 5:1 on US shares)" /></th>
-                    <th className="pp-c-num"><SortHeader label="Margin" col="margin" sort={sort} onSort={toggleSort} title="Deposit required to hold this position, in the account currency = current notional ÷ leverage (broker figure for live accounts)" /></th>
-                    <th className="pp-c-time"><SortHeader label="Time" col="openedAt" sort={sort} onSort={toggleSort} title={tab === "positions" ? "When the position was opened" : "When the order was placed"} /></th>
-                    <th className="pp-c-act" />
-                  </tr>
+                  <PositionsHead tab={tab} sort={sort} onSort={toggleSort} trailing={<th className="pp-c-act" />} />
                 </thead>
                 <tbody>
                   {groups == null ? sorted.map((t) => renderPosition(t, false)) : groups.flatMap((g) => {
@@ -607,48 +509,25 @@ export default function PositionsPanel({
                           className={`pp-row pp-group pp-dir-${dir}${isFocused ? " pp-focused" : ""}${folded ? " pp-folded" : ""}`}
                           onClick={() => toggleGroup(g.epic)}
                         >
-                          <td className="pp-c-sym">
-                            <button
-                              className="pp-group-toggle"
-                              aria-expanded={!folded}
-                              aria-label={folded ? "Show positions" : "Hide positions"}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleGroup(g.epic);
-                              }}
-                            >
-                              <span className="pp-group-chevron" aria-hidden="true">›</span>
-                            </button>
-                            {g.epic}
-                            <span className="pp-group-count">{g.positions.length}</span>
-                          </td>
-                          <td className={`pp-c-side ${g.side === "buy" ? "pp-side-long" : g.side === "sell" ? "pp-side-short" : "pp-side-mixed"}`}>
-                            {g.side === "buy" ? "Long" : g.side === "sell" ? "Short" : "Mixed"}
-                          </td>
-                          <td className="pp-c-num">{+g.quantity.toFixed(8)}</td>
-                          <td className="pp-c-num">
-                            <span className={`pp-pnl ${pnlClass(g.upnl)}`}>{fmtPnl(g.upnl)}</span>
-                          </td>
-                          <td className={`pp-c-num${g.pnlPct == null ? " pp-dash" : ` ${pnlClass(g.pnlPct)}`}`}>
-                            {g.pnlPct != null
-                              ? `${g.pnlPct >= 0 ? "+" : "−"}${Math.abs(g.pnlPct).toFixed(2)}%`
-                              : "—"}
-                          </td>
-                          <td className="pp-c-num">{fmt(g.priceLevel, prec)}</td>
-                          <td className="pp-c-num pp-dash">—</td>
-                          <td className="pp-c-num pp-dash">—</td>
-                          <td className={`pp-c-num${g.last == null ? " pp-dash" : ""}`}>
-                            {g.last != null ? fmt(g.last, prec) : "—"}
-                          </td>
-                          <td className="pp-c-num">{cash(g.tradeValue)}</td>
-                          <td className={`pp-c-num${g.marketValue == null ? " pp-dash" : ""}`}>
-                            {g.marketValue != null ? cash(g.marketValue) : "—"}
-                          </td>
-                          <td className={`pp-c-num pp-c-lev${g.leverage == null ? " pp-dash" : ""}`}>
-                            {g.leverage != null ? `${g.leverage}:1` : "—"}
-                          </td>
-                          <td className="pp-c-num">{cash(g.margin)}</td>
-                          <td className="pp-c-time">{fmtTime(g.openedAt)}</td>
+                          {groupCells(
+                            g,
+                            <td className="pp-c-sym">
+                              <button
+                                className="pp-group-toggle"
+                                aria-expanded={!folded}
+                                aria-label={folded ? "Show positions" : "Hide positions"}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleGroup(g.epic);
+                                }}
+                              >
+                                <span className="pp-group-chevron" aria-hidden="true">›</span>
+                              </button>
+                              {g.epic}
+                              <span className="pp-group-count">{g.positions.length}</span>
+                            </td>,
+                            levelFmt(prec),
+                          )}
                           <td className="pp-c-act" />
                         </tr>
                       </Tooltip>
@@ -806,42 +685,6 @@ export function Stat({
         <span className="pp-stat-label">{label}</span>
         <span className={`pp-stat-val num${tone ? ` pp-${tone}` : ""}`}>{value}</span>
       </div>
-    </Tooltip>
-  );
-}
-
-// Clickable column header: click to sort by this column, click again to flip
-// direction. A caret marks the active column; inactive heads stay quiet.
-// Generic over the key type so other tables (the pattern-search results) can
-// reuse it with their own column union. `sort.key` is deliberately the wider
-// `string`: inferring K from both `col` and `sort.key` at once gives two
-// competing literal candidates at every call site, and neither wins.
-export function SortHeader<K extends string>({
-  label,
-  col,
-  sort,
-  onSort,
-  title,
-}: {
-  label: string;
-  col: K;
-  sort: { key: string; dir: SortDir };
-  onSort: (key: K) => void;
-  title?: string;
-}) {
-  const active = sort.key === col;
-  return (
-    <Tooltip content={title}>
-      <button
-        className={`pp-sort${active ? " on" : ""}`}
-        onClick={() => onSort(col)}
-        aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
-      >
-        <span>{label}</span>
-        <span className="pp-sort-caret" aria-hidden="true">
-          {active ? (sort.dir === "asc" ? "▲" : "▼") : ""}
-        </span>
-      </button>
     </Tooltip>
   );
 }

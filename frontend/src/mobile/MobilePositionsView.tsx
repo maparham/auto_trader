@@ -1,10 +1,10 @@
 // Positions tab (spec: 2026-09-07-mobile-companion-design.md, Task 11). The
 // desktop dock (PositionsPanel.tsx) at phone width: the same Positions /
-// Orders tabs with live counts, the same table with the same columns and
-// cell styling (it scrolls sideways), and the same account stat strip under
-// it, all on the dock's `pp-*` classes so the two read as one control.
-// mobile.css carries the few phone overrides (no table floor, scrolling
-// stat strip). What stays mobile-specific: tapping a row opens a detail
+// Orders tabs with live counts, the same table (PositionsTable.tsx: one
+// column list, sortable heads with tooltips; it scrolls sideways), and the
+// same account stat strip under it, all on the dock's `pp-*` classes so the
+// two read as one control. mobile.css carries the few phone overrides (no
+// table floor, scrolling stat strip). What stays mobile-specific: tapping a row opens a detail
 // Sheet whose Close / Cancel button routes through the shared
 // `requestConfirm` dialog before touching the broker, mirroring the chart
 // pill's flow in chart/TradePills.tsx (same closePosition/cancelWorkingOrder
@@ -36,19 +36,20 @@ import { mobileSettingsVersion, showMobileEpic } from "./mobileChartState";
 import { requestConfirm } from "../lib/signals";
 import { toast } from "../lib/notify";
 import Sheet from "./Sheet";
-
-type Tab = "positions" | "orders";
-
-type RowExt = EnrichedTrade;
-
-function fmtPnl(n: number | null): string {
-  if (n == null) return "—";
-  return `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}`;
-}
-
-function pnlClass(n: number | null): string {
-  return n == null ? "" : n >= 0 ? "pp-pos" : "pp-neg";
-}
+import { PositionsHead } from "../PositionsTable";
+import {
+  DEFAULT_SORT,
+  cash,
+  fmtPnl,
+  groupCells,
+  nextSort,
+  pnlClass,
+  positionCells,
+  sortCompare,
+  type SortKey,
+  type SortState,
+  type TableTab,
+} from "../lib/positionsTable";
 
 // The dock formats levels to the symbol's precision; the phone has no
 // per-symbol precision source, so a level prints as stored, trimmed.
@@ -75,20 +76,17 @@ function fmtAvg(n: number | null, members: { priceLevel: number }[]): string {
   return n.toFixed(Math.min(d, 6));
 }
 
-function cash(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
-function fmtTime(ms: number | null): string {
-  if (ms == null) return "—";
-  const d = new Date(ms);
-  const time = d.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const sameDay = d.toDateString() === new Date().toDateString();
-  return sameDay ? time : `${d.toLocaleDateString([], { day: "2-digit", month: "short" })} ${time}`;
+// Each row's and group's place in the table, from one sort of the current
+// values. Groups rank under a `group:` prefix so they cannot collide with ids.
+function rankRows(rows: EnrichedTrade[], sort: SortState, tab: TableTab, key: string) {
+  const compare = sortCompare(sort);
+  const sorted = [...rows].sort(compare);
+  const rank = new Map(sorted.map((r, i) => [r.id, i]));
+  if (tab === "positions")
+    groupPositions(sorted)
+      .sort(compare)
+      .forEach((g, i) => rank.set(`group:${g.epic}`, i));
+  return { key, rank };
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -104,9 +102,10 @@ export default function MobilePositionsView() {
   const [trades, setTrades] = useState<TradeView[]>([]);
   const [summary, setSummary] = useState<AccountSummary | null>(null);
   const [selected, setSelected] = useState<TradeView | null>(null);
-  const [tab, setTab] = useState<Tab>("positions");
+  const [tab, setTab] = useState<TableTab>("positions");
   // Same-symbol positions fold under a roll-up header row, as in the dock.
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [, setTick] = useState(0);
 
   useEffect(() => subscribeTrades(setTrades), []);
@@ -146,11 +145,23 @@ export default function MobilePositionsView() {
   const money = (n: number) => (noBrokerData ? "—" : `${cash(n)} ${cur}`);
   const pct = (n: number | null) => (noBrokerData || n == null ? "—" : `${n.toFixed(2)}%`);
   const pnlTone = pnl > 0 ? "pp-pos" : pnl < 0 ? "pp-neg" : "";
-  const enrich = (t: TradeView): RowExt => enrichTrade(t, stats, live);
+  const enrich = (t: TradeView): EnrichedTrade => enrichTrade(t, stats, live);
 
-  const rows = (tab === "positions" ? positions : orders).map(enrich);
-  const groups: PositionGroup<RowExt>[] | null = tab === "positions" ? groupPositions(rows) : null;
-  const entryLabel = tab === "positions" ? "Avg fill" : "Limit";
+  // Sorted as in the dock (positions by their own value, groups by their
+  // roll-up), but the order is only worked out again when the sort or the set
+  // of rows changes, never on a price tick: with P&L as the key a re-sort
+  // under the finger would open the wrong row's detail sheet.
+  const toggleSort = (key: SortKey) => setSort((s) => nextSort(s, key));
+  const unsorted = (tab === "positions" ? positions : orders).map(enrich);
+  const orderKey = [tab, sort.key, sort.dir, ...unsorted.map((r) => r.id).sort()].join("|");
+  const [order, setOrder] = useState(() => rankRows(unsorted, sort, tab, orderKey));
+  if (order.key !== orderKey) setOrder(rankRows(unsorted, sort, tab, orderKey));
+  const byRank = (k: string) => order.rank.get(k) ?? Number.MAX_SAFE_INTEGER;
+  const rows = unsorted.sort((a, b) => byRank(a.id) - byRank(b.id));
+  const groups: PositionGroup<EnrichedTrade>[] | null =
+    tab === "positions"
+      ? groupPositions(rows).sort((a, b) => byRank(`group:${a.epic}`) - byRank(`group:${b.epic}`))
+      : null;
   const toggleGroup = (epic: string) =>
     setFolded((f) => {
       const next = new Set(f);
@@ -160,7 +171,7 @@ export default function MobilePositionsView() {
     });
 
   // One position / order row; `inGroup` rows sit under their symbol's header.
-  const renderRow = (t: RowExt, inGroup: boolean) => {
+  const renderRow = (t: EnrichedTrade, inGroup: boolean) => {
     const long = t.side === "buy";
     return (
       <tr
@@ -168,48 +179,7 @@ export default function MobilePositionsView() {
         className={`pp-row pp-dir-${long ? "long" : "short"}${inGroup ? " pp-member" : ""}`}
         onClick={() => setSelected(t)}
       >
-        <td className="pp-c-sym">
-          {t.epic}
-          {t.source === "strategy" && <span className="pp-strat-tag">strat</span>}
-        </td>
-        <td className={`pp-c-side ${long ? "pp-side-long" : "pp-side-short"}`}>
-          {tradeLabel(t.kind, t.side)}
-        </td>
-        <td className="pp-c-num">{t.quantity}</td>
-        <td className="pp-c-num">{fmtLevel(t.priceLevel)}</td>
-        <td className={`pp-c-num${t.takeProfit != null ? " pp-lvl-tp" : " pp-dash"}`}>
-          {fmtLevel(t.takeProfit)}
-        </td>
-        <td className={`pp-c-num${t.stop != null ? " pp-lvl-sl" : " pp-dash"}`}>{fmtLevel(t.stop)}</td>
-        <td className={`pp-c-num${t.last == null ? " pp-dash" : ""}`}>{fmtLevel(t.last)}</td>
-        <td className="pp-c-num">
-          {t.kind === "order" ? (
-            <span className="pp-resting">resting</span>
-          ) : (
-            <span className={`pp-pnl ${pnlClass(t.upnl)}`}>{fmtPnl(t.upnl)}</span>
-          )}
-        </td>
-        <td className={`pp-c-num${t.pnlPct == null ? " pp-dash" : ` ${pnlClass(t.pnlPct)}`}`}>
-          {t.pnlPct != null ? `${t.pnlPct >= 0 ? "+" : "−"}${Math.abs(t.pnlPct).toFixed(2)}%` : "—"}
-        </td>
-        <td className="pp-c-num">{cash(t.tradeValue)}</td>
-        <td className={`pp-c-num${t.marketValue == null ? " pp-dash" : ""}`}>
-          {t.marketValue != null ? cash(t.marketValue) : "—"}
-        </td>
-        <td className="pp-c-num pp-c-lev">{t.leverage}:1</td>
-        <td className="pp-c-num">{cash(t.margin)}</td>
-        <td className="pp-c-time">
-          {fmtTime(t.openedAt)}
-          {t.kind === "order" && t.expiresAt != null && (
-            <span className="pp-expiry">
-              exp{" "}
-              {new Date(t.expiresAt).toLocaleString([], {
-                dateStyle: "short",
-                timeStyle: "short",
-              })}
-            </span>
-          )}
-        </td>
+        {positionCells(t, fmtLevel, { tips: false })}
       </tr>
     );
   };
@@ -258,22 +228,7 @@ export default function MobilePositionsView() {
         <div className="pp-table-wrap">
           <table className="pp-table">
             <thead>
-              <tr>
-                <th className="pp-c-sym">Symbol</th>
-                <th className="pp-c-side">Side</th>
-                <th className="pp-c-num">Qty</th>
-                <th className="pp-c-num">{entryLabel}</th>
-                <th className="pp-c-num">TP</th>
-                <th className="pp-c-num">SL</th>
-                <th className="pp-c-num">Last</th>
-                <th className="pp-c-num">P&L</th>
-                <th className="pp-c-num">P&L %</th>
-                <th className="pp-c-num">Trade val</th>
-                <th className="pp-c-num">Mkt val</th>
-                <th className="pp-c-num">Lev</th>
-                <th className="pp-c-num">Margin</th>
-                <th className="pp-c-time">Time</th>
-              </tr>
+              <PositionsHead tab={tab} sort={sort} onSort={toggleSort} tips={false} />
             </thead>
             <tbody>
               {groups == null
@@ -290,52 +245,27 @@ export default function MobilePositionsView() {
                         className={`pp-row pp-group pp-dir-${dir}${isFolded ? " pp-folded" : ""}`}
                         onClick={() => toggleGroup(g.epic)}
                       >
-                        <td className="pp-c-sym">
-                          <button
-                            className="pp-group-toggle"
-                            aria-expanded={!isFolded}
-                            aria-label={isFolded ? "Show positions" : "Hide positions"}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleGroup(g.epic);
-                            }}
-                          >
-                            <span className="pp-group-chevron" aria-hidden="true">
-                              ›
-                            </span>
-                          </button>
-                          {g.epic}
-                          <span className="pp-group-count">{g.positions.length}</span>
-                        </td>
-                        <td
-                          className={`pp-c-side ${g.side === "buy" ? "pp-side-long" : g.side === "sell" ? "pp-side-short" : "pp-side-mixed"}`}
-                        >
-                          {g.side === "buy" ? "Long" : g.side === "sell" ? "Short" : "Mixed"}
-                        </td>
-                        <td className="pp-c-num">{+g.quantity.toFixed(8)}</td>
-                        <td className="pp-c-num">{fmtAvg(g.priceLevel, g.positions)}</td>
-                        <td className="pp-c-num pp-dash">—</td>
-                        <td className="pp-c-num pp-dash">—</td>
-                        <td className={`pp-c-num${g.last == null ? " pp-dash" : ""}`}>
-                          {fmtAvg(g.last, g.positions)}
-                        </td>
-                        <td className="pp-c-num">
-                          <span className={`pp-pnl ${pnlClass(g.upnl)}`}>{fmtPnl(g.upnl)}</span>
-                        </td>
-                        <td className={`pp-c-num${g.pnlPct == null ? " pp-dash" : ` ${pnlClass(g.pnlPct)}`}`}>
-                          {g.pnlPct != null
-                            ? `${g.pnlPct >= 0 ? "+" : "−"}${Math.abs(g.pnlPct).toFixed(2)}%`
-                            : "—"}
-                        </td>
-                        <td className="pp-c-num">{cash(g.tradeValue)}</td>
-                        <td className={`pp-c-num${g.marketValue == null ? " pp-dash" : ""}`}>
-                          {g.marketValue != null ? cash(g.marketValue) : "—"}
-                        </td>
-                        <td className={`pp-c-num pp-c-lev${g.leverage == null ? " pp-dash" : ""}`}>
-                          {g.leverage != null ? `${g.leverage}:1` : "—"}
-                        </td>
-                        <td className="pp-c-num">{cash(g.margin)}</td>
-                        <td className="pp-c-time">{fmtTime(g.openedAt)}</td>
+                        {groupCells(
+                          g,
+                          <td className="pp-c-sym">
+                            <button
+                              className="pp-group-toggle"
+                              aria-expanded={!isFolded}
+                              aria-label={isFolded ? "Show positions" : "Hide positions"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleGroup(g.epic);
+                              }}
+                            >
+                              <span className="pp-group-chevron" aria-hidden="true">
+                                ›
+                              </span>
+                            </button>
+                            {g.epic}
+                            <span className="pp-group-count">{g.positions.length}</span>
+                          </td>,
+                          (n) => fmtAvg(n, g.positions),
+                        )}
                       </tr>
                     );
                     return isFolded ? [header] : [header, ...g.positions.map((t) => renderRow(t, true))];

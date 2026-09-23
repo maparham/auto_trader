@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const subscribeTrades = vi.fn();
@@ -130,6 +130,72 @@ describe("MobilePositionsView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Hide positions" }));
     expect(document.querySelectorAll(".pp-row.pp-member").length).toBe(0);
     expect(screen.getByRole("button", { name: "Show positions" })).toBeTruthy();
+  });
+
+  it("lays the columns out in the dock's order", async () => {
+    render(<MobilePositionsView />);
+    await waitFor(() => expect(screen.getByText("US100")).toBeTruthy());
+    const heads = screen.getAllByRole("columnheader").map((th) => th.textContent);
+    expect(heads).toEqual([
+      "Symbol", "Side", "Qty", "P&L", "P&L %", "Avg fill", "TP", "SL",
+      "Last", "Trade val", "Mkt val", "Lev", "Margin", "Time▼",
+    ]);
+  });
+
+  it("shows the full date and time on every row, today's included", async () => {
+    // Only Date is faked, so the clock (and the row's "today") is pinned.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2025, 5, 10, 15, 30, 45));
+    try {
+      subscribeTrades.mockImplementation((fn: (t: TradeView[]) => void) => {
+        fn([{ ...position, openedAt: new Date(2025, 5, 10, 9, 5, 7).getTime() }]);
+        return () => {};
+      });
+      render(<MobilePositionsView />);
+      await waitFor(() => expect(screen.getByText("US100")).toBeTruthy());
+      const time = document.querySelector(".pp-row .pp-c-time")!.textContent!;
+      expect(time).toContain("2025");
+      expect(time).toContain("10");
+      expect(time).toMatch(/09:05:07/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the row order while values change, until the sort or the rows do", async () => {
+    let push: (t: TradeView[]) => void = () => {};
+    const other: TradeView = { ...position, id: "pos-2", epic: "AAPL", upnl: -5 };
+    subscribeTrades.mockImplementation((fn: (t: TradeView[]) => void) => {
+      push = fn;
+      fn([position, other]);
+      return () => {};
+    });
+    render(<MobilePositionsView />);
+    await waitFor(() => expect(screen.getByText("US100")).toBeTruthy());
+    const symbols = () => [...document.querySelectorAll(".pp-row .pp-c-sym")].map((td) => td.textContent);
+    await userEvent.click(screen.getByRole("button", { name: /^P&L$/ }));
+    expect(symbols()).toEqual(["US100", "AAPL"]);
+    // A P&L swap alone (same rows) must not move anything under the finger.
+    act(() => push([{ ...position, upnl: -50 }, { ...other, upnl: 80 }]));
+    expect(symbols()).toEqual(["US100", "AAPL"]);
+    // A new row re-sorts on the current values.
+    act(() => push([{ ...position, upnl: -50 }, { ...other, upnl: 80 }, { ...position, id: "pos-3", epic: "NVDA", upnl: 10 }]));
+    expect(symbols()).toEqual(["AAPL", "NVDA", "US100"]);
+  });
+
+  it("sorts on a header tap, flipping direction on a second tap", async () => {
+    const other: TradeView = { ...position, id: "pos-2", epic: "AAPL", upnl: -5 };
+    subscribeTrades.mockImplementation((fn: (t: TradeView[]) => void) => {
+      fn([position, other, order]);
+      return () => {};
+    });
+    render(<MobilePositionsView />);
+    await waitFor(() => expect(screen.getByText("US100")).toBeTruthy());
+    const symbols = () => [...document.querySelectorAll(".pp-row .pp-c-sym")].map((td) => td.textContent);
+    await userEvent.click(screen.getByRole("button", { name: /^Symbol/ }));
+    expect(symbols()).toEqual(["AAPL", "US100"]);
+    await userEvent.click(screen.getByRole("button", { name: /^Symbol/ }));
+    expect(symbols()).toEqual(["US100", "AAPL"]);
   });
 
   it("switches to the orders tab, whose entry column is the limit price", async () => {

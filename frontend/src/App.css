@@ -5238,7 +5238,7 @@
 .pp-table td:first-child { padding-left: 14px; }
 .pp-table th:last-child, .pp-table td:last-child { padding-right: 14px; }
 .pp-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
-.pp-table .pp-c-sym { font-weight: 600; color: var(--text); letter-spacing: 0.01em; }
+.pp-table .pp-c-sym { font-weight: 500; color: var(--text); letter-spacing: 0.01em; }
 .pp-side-long { color: var(--accent); font-weight: 600; }
 .pp-side-short { color: var(--neg); font-weight: 600; }
 .pp-pnl { font-weight: 600; color: var(--text-dim); }
@@ -5319,10 +5319,13 @@
    :hover tint so hovering a line and hovering its row read identically. */
 .pp-row.pp-hovered { background: var(--hover); }
 /* Symbol group — several positions on one instrument fold under a header row
-   carrying their roll-up. The header is bolder and sits on a faint plate; its
+   carrying their roll-up. The header is bolder and sits on a grey plate under a
+   darker top rule, so it never reads as a position; its
    positions are indented and read quieter so the roll-up is the headline. */
-.pp-row.pp-group { font-weight: 600; background: color-mix(in srgb, var(--text) 3%, transparent); }
-.pp-row.pp-group:hover { background: var(--hover); }
+.pp-row.pp-group { font-weight: 600; background: color-mix(in srgb, var(--text) 9%, transparent); }
+.pp-row.pp-group:hover { background: color-mix(in srgb, var(--text) 13%, transparent); }
+.pp-table .pp-row.pp-group > td { border-top: 1px solid color-mix(in srgb, var(--text) 18%, transparent); }
+.pp-table .pp-row.pp-group .pp-c-sym { font-weight: 700; }
 .pp-dir-mixed { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-dim) 50%, transparent); }
 .pp-row.pp-dir-mixed.pp-focused { box-shadow: inset 3px 0 0 var(--text-dim); }
 .pp-side-mixed { color: var(--text-dim); font-weight: 600; }
