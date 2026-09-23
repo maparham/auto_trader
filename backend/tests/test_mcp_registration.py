@@ -115,3 +115,23 @@ def test_tools_call_surfaces_the_no_tab_message_as_a_tool_error():
     assert r.status_code == 200, r.text
     assert '"isError":true' in r.text.replace(" ", "")
     assert "no UI session connected" in r.text
+
+
+def test_hosted_mode_never_loads_the_bridge():
+    # Hosted mode is decided at import, so check it in a fresh interpreter: no
+    # /mcp mount, no tab relay, and the mcp SDK never imported at all.
+    import os
+    import subprocess
+    import sys
+    code = (
+        "import sys\n"
+        "from auto_trader.api.app import app\n"
+        "paths = {getattr(r, 'path', '') for r in app.routes}\n"
+        "assert '/mcp' not in paths and '/ws/agent-ui' not in paths, paths\n"
+        "assert 'mcp' not in sys.modules\n"
+    )
+    env = {**os.environ,
+           "CLERK_JWKS_URL": "https://example.clerk.accounts.dev/.well-known/jwks.json",
+           "CLERK_AUTHORIZED_PARTIES": "https://chartkar.app"}
+    r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2000:]

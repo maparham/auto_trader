@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, nullcontext, suppress
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,13 +29,19 @@ from auto_trader.brokers.registry import build_registry
 from auto_trader.core.tick_store import TICK_STORE
 
 from . import deps
-from .auth import install_auth
+from .auth import auth_enabled, install_auth
 from .guard import cors_origins, install_guards
-from . import mcp_server
-from .mcp_server import mcp_http_app, mcp_session
-from .routers import admin, agent, alerts, backtest, charts, compute, costs, demo, expr, markets, mt5, patterns, pattern_presets, shell_auth, state, strategy, stream, trading, strategies
+from .routers import admin, alerts, backtest, charts, compute, costs, demo, expr, markets, mt5, patterns, pattern_presets, shell_auth, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
+
+# The Agent UI Bridge (MCP endpoint + tab relay) is local-dev only: auth already
+# 404s /mcp in hosted mode, and the production frontend never dials the relay.
+# Skipping the imports keeps the mcp SDK (~28 MB) out of the hosted process.
+AGENT_BRIDGE = not auth_enabled()
+if AGENT_BRIDGE:
+    from . import mcp_server
+    from .routers import agent
 
 
 _TOKEN_RE = re.compile(r"(token=)[^&\s\"']+")
@@ -164,7 +170,7 @@ async def lifespan(app: FastAPI):
         await ALERT_ENGINE.start()
         # The MCP endpoint is mounted, so its own lifespan never runs — drive its
         # streamable-HTTP session manager from here for the app's lifetime.
-        async with mcp_session():
+        async with mcp_server.mcp_session() if AGENT_BRIDGE else nullcontext():
             yield
     finally:
         # A raise/hang in ALERT_ENGINE.stop() must not prevent the teardown
@@ -223,14 +229,16 @@ async def _track_activity(request, call_next):
 # unless the corresponding env flags are set, which happens only on the remote host.
 install_guards(app)
 
-for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, agent, patterns, pattern_presets, alerts, admin, shell_auth, demo):
+for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, patterns, pattern_presets, alerts, admin, shell_auth, demo):
     app.include_router(_module.router)
 app.include_router(demo.admin_router)
 
 # MCP endpoint for the Agent UI Bridge. Mounted LAST so it never shadows API
 # routes; the guard middleware wraps mounts too, so REQUIRE_API_TOKEN covers it.
-app.mount("/mcp", mcp_http_app())
-mcp_server.configure_direct_tools(app)
+if AGENT_BRIDGE:
+    app.include_router(agent.router)
+    app.mount("/mcp", mcp_server.mcp_http_app())
+    mcp_server.configure_direct_tools(app)
 
 
 @app.middleware("http")
