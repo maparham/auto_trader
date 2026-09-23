@@ -316,16 +316,6 @@ export default function PositionsPanel({
             {tradeLabel(t.kind, t.side)}
           </td>
           <td className="pp-c-num">{t.quantity}</td>
-          <td className="pp-c-num">{fmt(t.priceLevel, prec)}</td>
-          <td className={`pp-c-num${t.takeProfit != null ? " pp-lvl-tp" : " pp-dash"}`}>
-            {t.takeProfit != null ? fmt(t.takeProfit, prec) : "—"}
-          </td>
-          <td className={`pp-c-num${t.stop != null ? " pp-lvl-sl" : " pp-dash"}`}>
-            {t.stop != null ? fmt(t.stop, prec) : "—"}
-          </td>
-          <td className={`pp-c-num${t.last == null ? " pp-dash" : ""}`}>
-            {t.last != null ? fmt(t.last, prec) : "—"}
-          </td>
           <td className="pp-c-num">
             {isOrder ? (
               <span className="pp-resting">resting</span>
@@ -337,6 +327,16 @@ export default function PositionsPanel({
             {t.pnlPct != null
               ? `${t.pnlPct >= 0 ? "+" : "−"}${Math.abs(t.pnlPct).toFixed(2)}%`
               : "—"}
+          </td>
+          <td className="pp-c-num">{fmt(t.priceLevel, prec)}</td>
+          <td className={`pp-c-num${t.takeProfit != null ? " pp-lvl-tp" : " pp-dash"}`}>
+            {t.takeProfit != null ? fmt(t.takeProfit, prec) : "—"}
+          </td>
+          <td className={`pp-c-num${t.stop != null ? " pp-lvl-sl" : " pp-dash"}`}>
+            {t.stop != null ? fmt(t.stop, prec) : "—"}
+          </td>
+          <td className={`pp-c-num${t.last == null ? " pp-dash" : ""}`}>
+            {t.last != null ? fmt(t.last, prec) : "—"}
           </td>
           <td className="pp-c-num">{cash(t.tradeValue)}</td>
           <td className={`pp-c-num${t.marketValue == null ? " pp-dash" : ""}`}>
@@ -578,12 +578,12 @@ export default function PositionsPanel({
                     <th className="pp-c-sym"><SortHeader label="Symbol" col="epic" sort={sort} onSort={toggleSort} title="Instrument" /></th>
                     <th className="pp-c-side"><SortHeader label="Side" col="side" sort={sort} onSort={toggleSort} title="Direction: long (buy) profits when price rises, short (sell) when it falls" /></th>
                     <th className="pp-c-num"><SortHeader label="Qty" col="quantity" sort={sort} onSort={toggleSort} title="Position size (number of contracts / shares)" /></th>
+                    <th className="pp-c-num"><SortHeader label="P&L" col="upnl" sort={sort} onSort={toggleSort} title="Unrealized profit / loss in the account currency (broker-reported for live accounts)" /></th>
+                    <th className="pp-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={toggleSort} title="Unrealized P&L as a percentage of the price move from entry" /></th>
                     <th className="pp-c-num"><SortHeader label={entryLabel} col="priceLevel" sort={sort} onSort={toggleSort} title={tab === "positions" ? "Average price you opened the position at" : "Limit price the resting order will fill at"} /></th>
                     <th className="pp-c-num"><SortHeader label="TP" col="takeProfit" sort={sort} onSort={toggleSort} title="Take-profit: auto-closes the position in profit at this price" /></th>
                     <th className="pp-c-num"><SortHeader label="SL" col="stop" sort={sort} onSort={toggleSort} title="Stop-loss: auto-closes the position to cap the loss at this price" /></th>
                     <th className="pp-c-num"><SortHeader label="Last" col="last" sort={sort} onSort={toggleSort} title="Latest market price" /></th>
-                    <th className="pp-c-num"><SortHeader label="P&L" col="upnl" sort={sort} onSort={toggleSort} title="Unrealized profit / loss in the account currency (broker-reported for live accounts)" /></th>
-                    <th className="pp-c-num"><SortHeader label="P&L %" col="pnlPct" sort={sort} onSort={toggleSort} title="Unrealized P&L as a percentage of the price move from entry" /></th>
                     <th className="pp-c-num"><SortHeader label="Trade val" col="tradeValue" sort={sort} onSort={toggleSort} title="Notional at entry = entry price × quantity (instrument currency)" /></th>
                     <th className="pp-c-num"><SortHeader label="Mkt val" col="marketValue" sort={sort} onSort={toggleSort} title="Current notional = last price × quantity (instrument currency)" /></th>
                     <th className="pp-c-num"><SortHeader label="Lev" col="leverage" sort={sort} onSort={toggleSort} title="Leverage on this position, from the broker for live accounts (Capital varies it by instrument, e.g. 5:1 on US shares)" /></th>
@@ -602,10 +602,10 @@ export default function PositionsPanel({
                     const dir = g.side === "buy" ? "long" : g.side === "sell" ? "short" : "mixed";
                     const prec = precOf(g.epic);
                     const header = (
-                      <Tooltip key={`group:${g.epic}`} asChild content="Click to open chart">
+                      <Tooltip key={`group:${g.epic}`} asChild content={folded ? "Click to show positions" : "Click to hide positions"}>
                         <tr
                           className={`pp-row pp-group pp-dir-${dir}${isFocused ? " pp-focused" : ""}${folded ? " pp-folded" : ""}`}
-                          onClick={() => onJumpToEpic?.(g.epic)}
+                          onClick={() => toggleGroup(g.epic)}
                         >
                           <td className="pp-c-sym">
                             <button
@@ -626,12 +626,6 @@ export default function PositionsPanel({
                             {g.side === "buy" ? "Long" : g.side === "sell" ? "Short" : "Mixed"}
                           </td>
                           <td className="pp-c-num">{+g.quantity.toFixed(8)}</td>
-                          <td className="pp-c-num">{fmt(g.priceLevel, prec)}</td>
-                          <td className="pp-c-num pp-dash">—</td>
-                          <td className="pp-c-num pp-dash">—</td>
-                          <td className={`pp-c-num${g.last == null ? " pp-dash" : ""}`}>
-                            {g.last != null ? fmt(g.last, prec) : "—"}
-                          </td>
                           <td className="pp-c-num">
                             <span className={`pp-pnl ${pnlClass(g.upnl)}`}>{fmtPnl(g.upnl)}</span>
                           </td>
@@ -639,6 +633,12 @@ export default function PositionsPanel({
                             {g.pnlPct != null
                               ? `${g.pnlPct >= 0 ? "+" : "−"}${Math.abs(g.pnlPct).toFixed(2)}%`
                               : "—"}
+                          </td>
+                          <td className="pp-c-num">{fmt(g.priceLevel, prec)}</td>
+                          <td className="pp-c-num pp-dash">—</td>
+                          <td className="pp-c-num pp-dash">—</td>
+                          <td className={`pp-c-num${g.last == null ? " pp-dash" : ""}`}>
+                            {g.last != null ? fmt(g.last, prec) : "—"}
                           </td>
                           <td className="pp-c-num">{cash(g.tradeValue)}</td>
                           <td className={`pp-c-num${g.marketValue == null ? " pp-dash" : ""}`}>
