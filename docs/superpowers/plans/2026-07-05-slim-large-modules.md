@@ -1,5 +1,20 @@
 # Slim the Ten Largest Modules — Implementation Plan
 
+> **Status 2026-09-24 (later):** Task 7 (overlays.ts) DONE in seven commits
+> (`5c90226c` .. `736bed85`), 3,267 -> 506 lines. Free functions over `(mgr, ...)`
+> would have meant de-privatizing ~50 fields for 16 importers, so the class
+> became a stack of named abstract layers in `frontend/src/lib/overlays/`:
+> shared (module-level helpers, config types, alertPriceLine), base (all
+> fields, lifecycle, listeners, right-click, selection, snap), persistence,
+> display, alerts, tools (measure/slope/range/zoom/match/time range), drawings
+> (placement, trade box, ghosts, config snapshot). OverlayManager keeps
+> create(), remove() and rehydrate(). Only two upward hooks are declared
+> abstract in the base (create, shiftIndexAnchoredPoints); members that cross a
+> layer went private -> protected. Five e2e tests in four specs
+> (alert-crosshair x1, alert-pill-axis x2, drawing-defaults, tab-drawings) fail
+> identically on the pre-split code served the same way; cause not investigated.
+> Remaining: T8, T10, T11.
+
 > **Status 2026-09-24:** Task 4 (BacktestSettingsModal) DONE in three commits
 > (`045de8ef`, `d55f1b2a`, `699b18ec`), 4,635 -> 1,714 lines. It landed in
 > `frontend/src/backtestSettings/` rather than `backtest/`, mirroring
