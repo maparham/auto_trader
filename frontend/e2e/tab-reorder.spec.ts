@@ -1,5 +1,16 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { seedSingleChartDefault, stubStateApi } from "./helpers";
+
+// Pick an interval through the toolbar's caret dropdown. The quick-bar buttons
+// can't be clicked directly here: below a 1530px toolbar (the default 1280px
+// test viewport) the quick bar collapses to just the active interval, so every
+// other interval is only reachable from the dropdown.
+async function pickInterval(page: Page, label: string): Promise<void> {
+  await page.locator(".interval-toggle").first().click();
+  const dropdown = page.locator(".interval-dropdown");
+  await dropdown.locator("li", { hasText: new RegExp(`^${label}$`) }).click();
+  await expect(dropdown).toHaveCount(0);
+}
 
 // Verifies the tab bar sits at the top (above the toolbar) and tabs can be
 // reordered by drag-and-drop, with the new order persisting across reload.
@@ -19,7 +30,7 @@ test("tab bar is at the top and tabs reorder by drag", async ({ page }) => {
   // Make a second tab distinguishable: change its interval to 1D.
   await page.locator(".tab-add").click();
   await page.locator(".modal.symsearch .modal-close").click();
-  await page.locator(".periods button", { hasText: /^1D$/ }).click();
+  await pickInterval(page, "1D");
 
   const periods = () =>
     page.locator(".tab-bar .tab .tab-period").allTextContents();
@@ -45,7 +56,7 @@ test("tab bar is at the top and tabs reorder by drag", async ({ page }) => {
   // Add a third tab so rightward moves are meaningful. Order now: [1D, 1H, 1W].
   await page.locator(".tab-add").click();
   await page.locator(".modal.symsearch .modal-close").click();
-  await page.locator(".periods button", { hasText: /^1W$/ }).click();
+  await pickInterval(page, "1W");
   expect(await periods()).toEqual(["1D", "1H", "1W"]);
 
   // Rightward drag onto the LEFT half of 1W → land before it (index-shift case).
@@ -78,7 +89,7 @@ test("dragging lifts a floating chip and slides a gap open", async ({ page }) =>
   // Second, distinguishable tab (1D). Order: [1H, 1D].
   await page.locator(".tab-add").click();
   await page.locator(".modal.symsearch .modal-close").click();
-  await page.locator(".periods button", { hasText: /^1D$/ }).click();
+  await pickInterval(page, "1D");
 
   const tabs = page.locator(".tab-bar .tab");
   const src = (await tabs.nth(1).boundingBox())!;

@@ -14,11 +14,34 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Deferred / forward-looking
 
-- **Pre-existing e2e failures**: 13 Playwright tests failed identically before
-  and after the slim-modules splits (cause not investigated): alert-crosshair,
-  alert-pill-axis x2, drawing-defaults, tab-drawings, market-closed (background
-  tab badge), named-layouts x3, split-layout, tab-reorder x2, tabs.
-  merge-tabs' "reordering keeps the undo offer" is flaky.
+- **Drawings placed during a cache pre-paint are lost** (bug, unfixed): a new
+  tab or split cell on a series already in the session bar cache paints those
+  bars at once (`chart/useLiveMarketData.ts` pre-paint), so the drawing tools
+  work before the cell's own candle fetch lands. Until then `persist()`
+  (`lib/overlays/persistence.ts`) is gated on `hydratedEpic`, and the
+  `overlays.rehydrate()` that follows the fetch rebuilds from storage, so a line
+  drawn in that 1-2 s window shows, is never saved, and vanishes. Repro: open a
+  second tab on the same symbol and place a horizontal line immediately (3/3 in
+  an e2e probe). Fix directions, not chosen: hydrate overlays at pre-paint (a
+  second rebuild per remount, and it cancels a placement in progress), or block
+  placement until the cell is hydrated. tab-drawings and split-layout wait on
+  the candle fetch to step around it.
+
+- **e2e seed helpers write stale keys**: `seedSingleChartDefault` and
+  `seedTwoChartTabs` in `frontend/e2e/helpers.ts` still write the unprefixed
+  `auto-trader.layouts` / `layout.*` keys; the app reads per-broker
+  `auto-trader.b.<broker>.*` roots now, so the seeds do nothing and specs using
+  them pass only because the default chart is US100 1H. Prefix them, then rerun
+  the whole suite, since every seeding spec starts testing its real layout.
+
+- **Replay "Reveal strategy" enabled over a pruned backtest** (minor):
+  `useReplay` decides the button's enabled state before the startup
+  `pruneStaleBacktests` runs, so resuming a replay whose saved backtest is over
+  7 days old shows an enabled button that reveals nothing.
+
+- **Merge undo lost during boot** (minor): the startup hydrate ends with
+  `reseedFromLocal()` (`app/useBackendSync.ts`), which clears `pendingUndo`, so a
+  tab merge made before hydrate finishes loses its Undo snackbar.
 
 - **BacktestSettingsModal sweep/WFO state**: ~600 lines of interleaved state and
   effects stayed in the modal shell after its split; lift them only if they keep

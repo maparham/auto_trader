@@ -1,5 +1,16 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { seedSingleChartDefault, stubStateApi } from "./helpers";
+
+// Pick an interval through the toolbar's caret dropdown. The quick-bar buttons
+// can't be clicked directly here: below a 1530px toolbar (the default 1280px
+// test viewport) the quick bar collapses to just the active interval, so every
+// other interval is only reachable from the dropdown.
+async function pickInterval(page: Page, label: string): Promise<void> {
+  await page.locator(".interval-toggle").first().click();
+  const dropdown = page.locator(".interval-dropdown");
+  await dropdown.locator("li", { hasText: new RegExp(`^${label}$`) }).click();
+  await expect(dropdown).toHaveCount(0);
+}
 
 // Verifies the multi-tab feature: a tab bar exists, new tabs can be opened,
 // switching a tab's symbol is scoped to that tab, and tabs persist across reload.
@@ -35,7 +46,7 @@ test("chart tabs: add, switch, scope and persist", async ({ page }) => {
     page.locator(".periods button", { hasText: new RegExp(`^${label}$`) });
 
   // Change ONLY the active (second) tab's interval to 1D.
-  await periodBtn("1D").click();
+  await pickInterval(page, "1D");
   await expect(tabs.nth(1).locator(".tab-period")).toHaveText("1D");
   // The first tab must be unaffected — settings are per-tab.
   await expect(tabs.nth(0).locator(".tab-period")).toHaveText("1H");

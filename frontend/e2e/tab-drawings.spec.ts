@@ -15,9 +15,9 @@ test("tabs on the same symbol+period have independent drawings", async ({ page }
   // persist via onDrawEnd, so this updates right after a line is placed.
   const overlayCount = () =>
     page.evaluate(() => {
-      const __lid = JSON.parse(localStorage.getItem("auto-trader.activeLayoutId") || "null");
-      const __body = __lid ? JSON.parse(localStorage.getItem(`auto-trader.layout.${__lid}`) || "null") : null;
-      const active = __body?.activeTabId ?? "";
+      // The active chart tab is per browser tab now: App keeps it in
+      // sessionStorage (raw id), not in the persisted layout body.
+      const active = sessionStorage.getItem("auto-trader.activeTabId") ?? "";
       const key = Object.keys(localStorage).find(
         (k) => k.startsWith(`auto-trader.tab.${active}.drawings.`),
       );
@@ -27,6 +27,18 @@ test("tabs on the same symbol+period have independent drawings", async ({ page }
   // Place a single-click drawing (horizontal line) at the canvas center.
   // Tools now live in the left draw sidebar (Lines family flyout).
   const drawHLine = async () => {
+    // A placement only anchors once the active chart has candles (convertFromPixel
+    // needs a real price); a freshly opened tab is still loading, so wait for data.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const c = (window as unknown as { __chart?: { getDataList(): unknown[] } }).__chart;
+            return c ? c.getDataList().length : 0;
+          }),
+        { timeout: 20000 },
+      )
+      .toBeGreaterThan(0);
     const lines = page.locator(".draw-sidebar .ds-family").first();
     await lines.hover();
     await lines.locator(".ds-caret").click();
@@ -41,15 +53,24 @@ test("tabs on the same symbol+period have independent drawings", async ({ page }
   await drawHLine();
   await expect.poll(overlayCount).toBe(1);
 
-  // Tab 2 on the SAME symbol + period.
+  // Tab 2 on the SAME symbol + period. Its chart pre-paints instantly from the
+  // session bar cache (tab 1's bars), but its drawings only rehydrate, and
+  // persistence only opens, once its own candle fetch lands. Waiting for that
+  // fetch works around a known app bug (BACKLOG: "Drawings placed during a
+  // cache pre-paint are lost"): a line drawn before it is wiped by rehydrate.
+  const tab2Candles = page.waitForResponse(
+    (r) => r.url().includes("/api/candles?") && r.url().includes("US100"),
+  );
   await page.locator(".tab-add").click();
   await page.locator(".modal.symsearch .modal-close").click();
   await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
+  await (await tab2Candles).finished();
   // Tab 2 starts with no drawings (independent layout).
   await expect.poll(overlayCount).toBe(0);
 
   // Draw two lines on tab 2.
   await drawHLine();
+  await expect.poll(overlayCount).toBe(1);
   await drawHLine();
   await expect.poll(overlayCount).toBe(2);
 

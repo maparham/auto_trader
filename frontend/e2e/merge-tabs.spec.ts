@@ -32,6 +32,22 @@ async function seedTwoTabs(page: Page): Promise<void> {
   });
 }
 
+// Boot the app and wait until its startup hydrate has finished. The hydrate
+// (useBackendSync) ends with a reseedFromLocal() that clears any pending merge
+// undo, and it only runs once /api/state AND /api/alerts have answered, so a
+// merge made before then loses its snackbar a beat later. The /ws/state dial
+// happens right after that reseed, which makes it the ready signal. The socket
+// is mocked (never reaches the real backend), which also keeps other sessions'
+// state pushes out of this test.
+async function gotoHydrated(page: Page): Promise<void> {
+  let ready!: () => void;
+  const dialled = new Promise<void>((res) => (ready = res));
+  await page.routeWebSocket(/\/ws\/state/, () => ready());
+  await page.goto("/");
+  await page.locator(".tab-bar").waitFor();
+  await dialled;
+}
+
 // t1 = 1 cell, t2 = 2 cells, t3 = 2 cells — exercises the checklist's live
 // 4-cell cap: t2 and t3 each fit alone (1+2<=4) but not together (1+2+2>4).
 async function seedThreeTabs(page: Page): Promise<void> {
@@ -289,8 +305,7 @@ test("releasing a chip on the dead zone between drop targets cancels instead of 
 test("Undo restores the pre-merge tabs with content back under the old scope", async ({ page }) => {
   await seedTwoTabs(page);
   await stubStateApi(page);
-  await page.goto("/");
-  await page.locator(".tab-bar").waitFor();
+  await gotoHydrated(page);
 
   await page.locator(".tab-bar .tab").first().click({ button: "right" });
   await page.locator(".ctxmenu .ctx-item", { hasText: "Merge into this tab" }).click();
@@ -335,8 +350,7 @@ test("Undo restores the pre-merge tabs with content back under the old scope", a
 test("snackbar disappears on a structural tab change instead of offering a stale undo", async ({ page }) => {
   await seedThreeTabs(page);
   await stubStateApi(page);
-  await page.goto("/");
-  await page.locator(".tab-bar").waitFor();
+  await gotoHydrated(page);
 
   // Merge t3 (GOLD) into t1 via the checklist, then close t2 — a structural
   // change unrelated to the merge. The undo snapshot is stale → snackbar gone.
@@ -354,8 +368,7 @@ test("snackbar disappears on a structural tab change instead of offering a stale
 test("snackbar auto-dismisses after 8s and the merge stays", async ({ page }) => {
   await seedTwoTabs(page);
   await stubStateApi(page);
-  await page.goto("/");
-  await page.locator(".tab-bar").waitFor();
+  await gotoHydrated(page);
 
   await page.locator(".tab-bar .tab").first().click({ button: "right" });
   await page.locator(".ctxmenu .ctx-item", { hasText: "Merge into this tab" }).click();
@@ -371,8 +384,7 @@ test("snackbar auto-dismisses after 8s and the merge stays", async ({ page }) =>
 test("reordering tabs keeps the undo offer (order is not structural)", async ({ page }) => {
   await seedThreeTabs(page);
   await stubStateApi(page);
-  await page.goto("/");
-  await page.locator(".tab-bar").waitFor();
+  await gotoHydrated(page);
 
   // Merge t3 (GOLD, 2 cells) into t1 — snackbar appears.
   await page.locator(".tab-bar .tab").first().click({ button: "right" });

@@ -70,11 +70,11 @@ test("saving a drawing default persists it and seeds freshly-drawn overlays", as
   await page.mouse.move(box.x + box.width * 0.35, cy);
   await page.mouse.move(cx, cy);
   await page.mouse.dblclick(cx, cy);
-  await expect(page.locator(".modal.ind-settings")).toBeVisible();
+  await expect(page.locator(".floating-modal.ind-settings")).toBeVisible();
 
   // Drag the modal to the top by its header so the footer's downward-opening
   // "Defaults" dropdown has room for all its items in the viewport.
-  const head = page.locator(".modal.ind-settings .modal-head");
+  const head = page.locator(".floating-modal.ind-settings .modal-head");
   const hb = (await head.boundingBox())!;
   await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
   await page.mouse.down();
@@ -83,9 +83,9 @@ test("saving a drawing default persists it and seeds freshly-drawn overlays", as
 
   // Visibility tab -> turn OFF "Show price label on axis" (a distinctive, observable
   // flag to prove the seed transfers).
-  await page.locator(".modal.ind-settings .ind-tab", { hasText: "Visibility" }).click();
+  await page.locator(".floating-modal.ind-settings .ind-tab", { hasText: "Visibility" }).click();
   const priceLabel = page
-    .locator(".modal.ind-settings .ind-check", { hasText: "Show price label on axis" })
+    .locator(".floating-modal.ind-settings .ind-check", { hasText: "Show price label on axis" })
     .locator('input[type="checkbox"]');
   await priceLabel.uncheck();
 
@@ -116,8 +116,8 @@ test("saving a drawing default persists it and seeds freshly-drawn overlays", as
   await page.locator(".ind-def-menu button", { hasText: "Defaults" }).click();
   await expect(page.locator(".ind-def-preset", { hasText: "Red" })).toBeVisible();
 
-  await page.locator(".modal.ind-settings button", { hasText: "Ok" }).click();
-  await expect(page.locator(".modal.ind-settings")).toBeHidden();
+  await page.locator(".floating-modal.ind-settings button", { hasText: "Ok" }).click();
+  await expect(page.locator(".floating-modal.ind-settings")).toBeHidden();
 
   // (b) A second Horizontal line seeds from the default: its persisted extendData
   // carries priceLabels:false (the seeded flag), unlike a plain draw (true/absent).

@@ -123,11 +123,21 @@ test("chart replay: jump, step, mask, persist, exit", async ({ page }) => {
   // "Find similar" is withdrawn for the duration of a session. Two reasons, and
   // the second one bites even with the dates on screen: its results panel stamps
   // every match with a real calendar date, and clicking a row scrolls the chart
-  // to that match — bars the cursor has not reached. Asserted through the sidebar
-  // button because that is the only entry point; ChartCore has no unit harness
-  // (5k lines, a live klinecharts instance), so this is where the gate is pinned.
+  // to that match, onto bars the cursor has not reached.
+  //
+  // The toolbar's Patterns button is NEVER disabled (its Presets view works
+  // without a searchable chart), so the gate is not on the button. It is two
+  // gates downstream of it: App hides the workspace pattern panel while any
+  // on-screen cell is in a replay readout, and ChartCore's
+  // patternSearchAvailable makes "Select range on chart" a no-op. So the click
+  // lands (aria-pressed flips, which proves it was not lost) and the panel
+  // still does not render. ChartCore has no unit harness (5k lines, a live
+  // klinecharts instance), so this is where the gate is pinned.
   const findSimilar = page.locator(".pattern-range-toggle");
-  await expect(findSimilar).toBeDisabled();
+  const patternPanel = page.locator(".pattern-panel");
+  await findSimilar.click();
+  await expect(findSimilar).toHaveAttribute("aria-pressed", "true");
+  await expect(patternPanel).toHaveCount(0);
 
   // The session is persisted device-locally, keyed by cell scope.
   const saved = () =>
@@ -146,6 +156,11 @@ test("chart replay: jump, step, mask, persist, exit", async ({ page }) => {
   await page.locator(".replay-pill").waitFor({ timeout: 30000 });
   await expect.poll(() => cursorMs(), { timeout: 30000 }).toBe(steppedCursor);
   await expect(page.locator(".chart-range-bar")).toHaveCount(0);
+  // The panel's open state is in-memory only, so the reload closed it. Open it
+  // again on the RESUMED session: the gate has to hold there too.
+  await findSimilar.click();
+  await expect(findSimilar).toHaveAttribute("aria-pressed", "true");
+  await expect(patternPanel).toHaveCount(0);
 
   // Exit: this session never traded, so there is no book to report and no card
   // (a modal saying nothing happened is a click for its own sake). The reveal is
@@ -167,8 +182,17 @@ test("chart replay: jump, step, mask, persist, exit", async ({ page }) => {
   await expect(page.locator(".chart-range-bar")).toHaveCount(1);
   await expect.poll(saved).toBe(0);
   // ...and comes back with the cell. A gate that never lifts would pass the
-  // check above and quietly cost the user the tool.
-  await expect(findSimilar).toBeEnabled();
+  // checks above and quietly cost the user the tool. Both halves: the panel the
+  // user already opened appears with no further click, and arming a range
+  // search works again. The arm is retried because the panel can mount a frame
+  // before ChartCore republishes patternSearchAvailable, and a click in that
+  // frame is a legitimate no-op.
+  await expect(patternPanel).toBeVisible();
+  const selectRange = page.locator(".pattern-select-range");
+  await expect(async () => {
+    await selectRange.click();
+    await expect(selectRange).toHaveText(/drag on the chart/, { timeout: 1000 });
+  }).toPass({ timeout: 10000 });
 
   expect(errors).toEqual([]);
 });
@@ -318,6 +342,12 @@ test("chart replay: the strategy reveal shows only what the cursor has passed", 
         mfe_r: null,
       });
       const result = {
+        // Stamped like saveBacktestResult stamps a real run. Boot runs
+        // pruneStaleBacktests, which deletes every `.backtest.` key with no
+        // `savedAt` (or one older than BACKTEST_TTL_MS). Without it, the reload
+        // below wipes this fixture, and the Strategy toggle then reveals
+        // nothing, so the marker count stays at 0.
+        savedAt: Date.now(),
         epic,
         // The CHART's resolution, so backtestRenderFlags picks "native" markers
         // (one overlay per fill) and the counts below are what gets drawn.

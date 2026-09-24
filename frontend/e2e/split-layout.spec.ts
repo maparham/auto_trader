@@ -12,9 +12,18 @@ test("split layout cells have independent drawings", async ({ page }) => {
   await page.locator(".tab-bar").waitFor();
 
   // Switch the active tab to a two-column layout (2 independent cells).
-  await page.locator(".layout-menu button", { hasText: "Layout" }).click();
+  // The split picker is the glyph-only button in the tab bar (no "Layout" text).
+  // The added cell pre-paints from the session bar cache, but its drawings only
+  // rehydrate (and persistence only opens) once its own candle fetch lands.
+  // Waiting for that fetch works around a known app bug (BACKLOG: "Drawings
+  // placed during a cache pre-paint are lost").
+  const cell2Candles = page.waitForResponse(
+    (r) => r.url().includes("/api/candles?") && r.url().includes("US100"),
+  );
+  await page.locator(".layout-menu button.tabbar-action").click();
   await page.locator(".layout-dropdown li", { hasText: "Two columns" }).click();
   await expect(page.locator(".chart-cell")).toHaveCount(2);
+  await (await cell2Candles).finished();
 
   // Wait until BOTH cells' charts are live AND have loaded candles — a horizontal
   // line can only anchor to a price once the cell has data.
@@ -34,29 +43,15 @@ test("split layout cells have independent drawings", async ({ page }) => {
   const cellCanvas = (i: number) =>
     page.locator(".chart-cell").nth(i).locator("canvas").first();
 
-  // The active tab's cell ids (cells[0] = primary, cells[1] = the added cell).
-  const cellIds: string[] = await page.evaluate(() => {
-    const __lid = JSON.parse(localStorage.getItem("auto-trader.activeLayoutId") || "null");
-    const __body = __lid ? JSON.parse(localStorage.getItem(`auto-trader.layout.${__lid}`) || "null") : null;
-    const tabs = __body?.tabs ?? [];
-    const active = __body?.activeTabId ?? "";
-    return tabs.find((t: { id: string }) => t.id === active).cells.map((c: { id: string }) => c.id);
-  });
-  const activeCellId = () =>
-    page.evaluate(() => {
-      const __lid = JSON.parse(localStorage.getItem("auto-trader.activeLayoutId") || "null");
-      const __body = __lid ? JSON.parse(localStorage.getItem(`auto-trader.layout.${__lid}`) || "null") : null;
-      const tabs = __body?.tabs ?? [];
-      const active = __body?.activeTabId ?? "";
-      return tabs.find((t: { id: string }) => t.id === active).activeCellId as string;
-    });
-
   // Focus cell `i` by clicking its center, and WAIT until the focus actually moved
-  // (avoids racing the focus re-render before driving the toolbar).
+  // (avoids racing the focus re-render before driving the toolbar). Read focus
+  // from the DOM (`.chart-cell.focused`): the workspace no longer lives under the
+  // legacy `auto-trader.layout.<id>` key the seed writes (layouts moved under
+  // `auto-trader.b.<broker>.`), so the stored body is not a stable place to look.
   const focusCell = async (i: number) => {
     const box = await cellCanvas(i).boundingBox();
     await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
-    await expect.poll(activeCellId).toBe(cellIds[i]);
+    await expect(page.locator(".chart-cell").nth(i)).toHaveClass(/\bfocused\b/);
   };
 
   // Place a horizontal line at the focused cell's center.
