@@ -3397,6 +3397,13 @@
    live price label (47). A merely-hovered pill stays at 46 — below the price
    label — so a passing cursor never hides the live price. */
 .alert-pill.selected { z-index: 51; }
+/* On a touch screen the pill opens right where the finger tapped the line, so
+   its body would swallow the next drag. Let the body pass touches through to
+   the line underneath; the toggle and delete buttons stay tappable. */
+@media (pointer: coarse) {
+  .alert-pill { pointer-events: none; }
+  .alert-pill button { pointer-events: auto; }
+}
 /* Drag affordance: hovering an alert line shows the up/down-arrow resize cursor
    over the canvas, signalling the line drags vertically (klinecharts sets an
    inline crosshair cursor, so override with !important). */

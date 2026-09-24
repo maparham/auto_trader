@@ -815,6 +815,11 @@ export const indicatorSettingsRequest = new Signal<{
 // OverlayManager) reads/writes the live overlay. null = closed.
 export const drawingSettingsRequest = new Signal<{ id: string } | null>(null);
 
+// Open the drawing context menu for a drawing at a page point. The mobile
+// selection handle sets it; each DrawingContextMenu answers only for a drawing
+// its own chart holds. Fire-and-forget, so it never needs resetting.
+export const drawingMenuRequest = new Signal<{ id: string; x: number; y: number } | null>(null);
+
 // Bumped when an indicator's own-canvas overlay (e.g. the Slope's on-chart MA
 // curves, drawn outside klinecharts) needs an immediate repaint after a settings
 // change. ChartCore subscribes and re-runs its redraw loop. Without this the

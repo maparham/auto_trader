@@ -47,6 +47,7 @@ import { timeRangeSpan } from "./timeRangeMetrics";
 import type { ChartDataFacade } from "../chart/chartDataFacade";
 import { type FibConfig, asFibConfig } from "./fibConfig";
 import { isFibOverlay } from "./drawTools";
+import { SELECT_GLOW_KEY } from "./touchHitSlop";
 import { type TradeConfig, type TradePoint, asTradeConfig, defaultStopPrice, flipTradeLeg, normalizeTradePoints, syncTradePoints } from "./tradePlan";
 import { TRADE_BOX } from "./tradeOverlay";
 import {
@@ -93,7 +94,12 @@ function mergeStyles(
 // Cancel-button snapshot of an indicator's live `styles`) can reuse the exact same
 // deep-clone instead of re-deriving the technique.
 export function cloneStyles<T>(styles: T): T {
-  return styles == null ? styles : (JSON.parse(JSON.stringify(styles)) as T);
+  if (styles == null) return styles;
+  const out = JSON.parse(JSON.stringify(styles)) as T & { line?: Record<string, unknown> };
+  // The selection glow is a live-only marker (see syncSelectGlow); no
+  // snapshot, and so nothing persisted, copied or cloned, may carry it.
+  if (out.line && SELECT_GLOW_KEY in out.line) delete out.line[SELECT_GLOW_KEY];
+  return out;
 }
 
 export interface AlertConfig {
@@ -384,6 +390,8 @@ export class OverlayManager {
   // delete / copy and the "Settings…" target without a right-click.
   private hoveredDrawingId: string | null = null;
   private selectedDrawingId: string | null = null;
+  // Drawings and alerts lockUnselectedForPress is holding, with their own lock flag.
+  private pressHeld = new Map<string, boolean>();
   // The drawing currently emphasized from OUTSIDE the chart (a chart-operand picker
   // row hover), so the user can see which on-chart line a row refers to when names/
   // colors are identical. Transient: the line is thickened (+ its concrete color) via
@@ -435,6 +443,10 @@ export class OverlayManager {
   // A timestamp (not a boolean) so a claim whose contextmenu never arrived (e.g. the
   // press was dragged off the chart) can't swallow a later empty-space right-click.
   private rightClickClaimedAt = 0;
+  // Set only for the duration of a synthetic right-click replayed from a touch
+  // long press (ChartCore's onTouchDown): the one overlay id whose onRightClick may
+  // open the menu. undefined = no gate (a real mouse right-click).
+  private rightClickOnly: string | null | undefined = undefined;
   // Unsubscribe from the global magnet signals (toggle + hold-invert modifier), set
   // up in attach() and torn down in detach() so this cell's drawings track both (see
   // applyMagnet).
@@ -451,6 +463,8 @@ export class OverlayManager {
   // ChartCore subscribes to react to drawing selection changes (clear keyboard
   // focus targets, repaint), independent of the alert listener.
   private drawingListener: (() => void) | null = null;
+  // The drawing currently carrying the selection glow (see syncSelectGlow).
+  private glowDrawingId: string | null = null;
 
   // dataFacade is optional only so unit tests can construct a manager without the
   // v10 data pipeline; production (ChartCore) always passes it, and applyOlderBars
@@ -489,6 +503,7 @@ export class OverlayManager {
     this.selectedAlertId = null;
     this.hoveredDrawingId = null;
     this.selectedDrawingId = null;
+    this.glowDrawingId = null;
     this.emphasizedDrawingId = null;
     this.emphasisBase = undefined;
     this.draggingAlert = false;
@@ -559,6 +574,16 @@ export class OverlayManager {
   // mousedown precedes the caller's contextmenu event; the window below only needs to
   // outlive that same-gesture gap, and keeps a stale claim from swallowing a later
   // empty-space right-click). Consuming clears the claim.
+  // Run `fn` (which dispatches a synthetic right-click) with the menu gated to the
+  // overlay `id`: onRightClick ignores any other overlay the press lands on.
+  withRightClickOnly(id: string, fn: () => void): void {
+    this.rightClickOnly = id;
+    try {
+      fn();
+    } finally {
+      this.rightClickOnly = undefined;
+    }
+  }
   consumeOverlayRightClick(): boolean {
     const claimed = this.peekOverlayRightClick();
     this.rightClickClaimedAt = 0;
@@ -579,6 +604,32 @@ export class OverlayManager {
   // clear/refresh the keyboard target and repaint affordances).
   setDrawingListener(fn: (() => void) | null): void {
     this.drawingListener = fn;
+  }
+  // Every drawing-selection change goes through here: move the selection
+  // glow, then tell the listener.
+  private notifyDrawing(): void {
+    this.syncSelectGlow();
+    this.drawingListener?.();
+  }
+  // The selected drawing gets the Trendlines indicator's selection glow, a wide
+  // translucent under-stroke (drawn by the `line` figure in touchHitSlop.ts),
+  // so it reads as selected even with both end dots off screen. The marker
+  // rides on the live line style only; cloneStyles strips it from every
+  // snapshot.
+  private syncSelectGlow(): void {
+    const next = this.selectedDrawingId && this.entries.get(this.selectedDrawingId) === "drawing" ? this.selectedDrawingId : null;
+    if (next === this.glowDrawingId) return;
+    if (this.glowDrawingId) this.setSelectGlow(this.glowDrawingId, false);
+    this.glowDrawingId = next;
+    if (next) this.setSelectGlow(next, true);
+  }
+  // Write the whole live `line` back with the flag set, not a one-key patch:
+  // overrideOverlay's partial merge is not trusted here (see fade/unfade).
+  private setSelectGlow(id: string, on: boolean): void {
+    const ov = this.byId(id);
+    if (!ov) return;
+    const line = { ...((ov.styles?.line as object | undefined) ?? {}), [SELECT_GLOW_KEY]: on };
+    this.chart?.overrideOverlay({ id, styles: { line } as never });
   }
   // ChartCore sets this to disarm the one-shot ruler when a measurement completes.
   setMeasureDone(fn: (() => void) | null): void {
@@ -823,7 +874,40 @@ export class OverlayManager {
   selectDrawing(id: string | null): void {
     if (id === this.selectedDrawingId) return;
     this.selectedDrawingId = id;
-    this.drawingListener?.();
+    this.notifyDrawing();
+  }
+  // Touch: a finger must tap a drawing or alert line to select it before it can
+  // drag it, so a pan that happens to start on a line can't move it by accident. klinecharts
+  // checks `lock` before it lets a press grab an overlay, and an overlay that
+  // refuses the press leaves the gesture to the chart's own pan. So ChartCore
+  // calls this on a finger's pointerdown (which precedes the touchstart
+  // klinecharts hit-tests on) and runs the returned release right after that
+  // touchstart. The lock is set on the instance directly, not via
+  // overrideOverlay, so nothing repaints; pressHeld remembers each drawing's
+  // own flag, which every lock reader here (userLock) reports instead, so the
+  // hold is never saved or shown even if the release comes late.
+  lockUnselectedForPress(): () => void {
+    if (this.chart && this.pressHeld.size === 0) {
+      for (const ov of this.chart.getOverlays()) {
+        const id = ov.id;
+        const kind = this.entries.get(id);
+        const selected = kind === "alert" ? this.selectedAlertId : this.selectedDrawingId;
+        if (ov.lock || id === selected || (kind !== "drawing" && kind !== "alert")) continue;
+        this.pressHeld.set(id, ov.lock);
+        (ov as { lock: boolean }).lock = true;
+      }
+    }
+    return () => {
+      for (const [id, lock] of this.pressHeld) {
+        const ov = this.byId(id) as { lock: boolean } | null;
+        if (ov) ov.lock = lock;
+      }
+      this.pressHeld.clear();
+    };
+  }
+  // The drawing's own lock flag, not a press hold.
+  private userLock(id: string, ov: Overlay): boolean {
+    return this.pressHeld.has(id) ? this.pressHeld.get(id)! : ov.lock;
   }
   // ChartCore calls this from its native container click handler, which runs AFTER
   // klinecharts has processed the same click (its listeners fire on mouseup, before
@@ -913,7 +997,7 @@ export class OverlayManager {
       // any recreate (setExtend / clone / paste / modal Cancel).
       points: (ov.points ?? []).map((p) => ({ timestamp: p.timestamp, value: p.value, dataIndex: p.dataIndex })),
       styles: this.canonicalStyles(id, ov) ?? null,
-      lock: !!ov.lock,
+      lock: !!this.userLock(id, ov),
       // INTENT, not the live (effective) flag — the overlay's `visible` is the
       // interval-filtered render state, but the checkbox + clone/paste/setExtend
       // all want what the user chose. See effectiveVisible / userVisible.
@@ -1138,11 +1222,15 @@ export class OverlayManager {
       // the DOM contextmenu event, which is what stacked the chart menu on top of the
       // overlay menu). Keep returning true for the separate consumed/repaint path.
       onRightClick: (e) => {
+        // Always prevent: klinecharts deletes the overlay otherwise (see above).
+        e.preventDefault?.();
+        // A touch long press only opens the menu of the drawing already selected
+        // (see rightClickOnly); a hold that lands on any other overlay is ignored.
+        if (this.rightClickOnly !== undefined && e.overlay.id !== this.rightClickOnly) return true;
         // Claim this right-click gesture BEFORE the DOM contextmenu event fires (this
         // callback runs on the mousedown), so ChartCore's contextmenu handler yields
         // to the overlay menu the handler below opens (see consumeOverlayRightClick).
         this.rightClickClaimedAt = Date.now();
-        e.preventDefault?.();
         this.rightClick?.(e);
         return true;
       },
@@ -1317,7 +1405,7 @@ export class OverlayManager {
         if (this.hoveredDrawingId === e.overlay.id) this.hoveredDrawingId = null;
         if (this.selectedDrawingId === e.overlay.id) {
           this.selectedDrawingId = null;
-          this.drawingListener?.();
+          this.notifyDrawing();
         }
         if (!this.hydrating) this.persist(); // drawings-only; a drawing was removed
         // A GENUINE user delete (not programmatic teardown/reconcile churn) removes
@@ -1364,7 +1452,7 @@ export class OverlayManager {
           // NOT fire onDeselected on empty-space clicks — ChartCore clears via
           // selectDrawing(null) there.
           this.selectedDrawingId = e.overlay.id;
-          this.drawingListener?.();
+          this.notifyDrawing();
         }
         return false;
       },
@@ -1375,7 +1463,7 @@ export class OverlayManager {
           if (this.selectedAlertId === e.overlay.id) this.setSelectedAlert(null);
         } else if (this.selectedDrawingId === e.overlay.id) {
           this.selectedDrawingId = null;
-          this.drawingListener?.();
+          this.notifyDrawing();
         }
         return false;
       },
@@ -1776,7 +1864,7 @@ export class OverlayManager {
     // Leave the just-placed band click-selected so the user can hit Delete/⌘C
     // immediately (mirrors the clone path). deleteSelectedDrawing reads this id.
     this.selectedDrawingId = id;
-    this.drawingListener?.();
+    this.notifyDrawing();
     return id;
   }
 
@@ -1820,7 +1908,7 @@ export class OverlayManager {
     if (ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
     // Leave it selected so Delete works straight away, like a placed time range.
     this.selectedDrawingId = id;
-    this.drawingListener?.();
+    this.notifyDrawing();
     return id;
   }
 
@@ -2080,7 +2168,7 @@ export class OverlayManager {
       if (isTradeDrawing(spec.name)) this.completeTradeDrawing(id);
       this.persist();
       this.selectedDrawingId = id;
-      this.drawingListener?.();
+      this.notifyDrawing();
     }
     return id;
   }
@@ -2358,6 +2446,7 @@ export class OverlayManager {
   }
 
   setLock(id: string, lock: boolean): void {
+    this.pressHeld.delete(id); // a real lock outlives a press hold
     this.chart?.overrideOverlay({ id, lock });
     this.persist();
   }
@@ -2497,7 +2586,7 @@ export class OverlayManager {
       // look identical to the (possibly currently-ghosted) original, not bake the fade
       // in as if it were the real one (see canonicalStyles/fadedStyles).
       styles: this.canonicalStyles(id, ov) ?? null,
-      lock: !!ov.lock,
+      lock: !!this.userLock(id, ov),
       zLevel: ov.zLevel ?? 0,
       extendData: ov.extendData,
     };
@@ -2519,7 +2608,7 @@ export class OverlayManager {
       if (newOv) this.applyDisplay(newId, newOv, asDrawingExtra(newOv.extendData));
       this.selectedDrawingId = newId;
       this.persist();
-      this.drawingListener?.();
+      this.notifyDrawing();
     }
     return newId;
   }
@@ -2720,6 +2809,7 @@ export class OverlayManager {
   // Sidebar padlock: lock every drawing (alerts and the measure ruler are not
   // drawings and stay interactive). Persisted via SavedOverlay.lock.
   lockAllDrawings(): void {
+    this.pressHeld.clear();
     for (const [id, kind] of this.entries) {
       if (kind === "drawing") this.chart?.overrideOverlay({ id, lock: true });
     }
@@ -2731,12 +2821,14 @@ export class OverlayManager {
   // must never silently lock (and persist) everything the user left unlocked.
   anyDrawingsLocked(): boolean {
     for (const [id, kind] of this.entries) {
-      if (kind === "drawing" && this.byId(id)?.lock) return true;
+      const ov = kind === "drawing" ? this.byId(id) : null;
+      if (ov && this.userLock(id, ov)) return true;
     }
     return false;
   }
 
   unlockAll(): void {
+    this.pressHeld.clear();
     for (const id of this.entries.keys()) {
       this.chart?.overrideOverlay({ id, lock: false });
     }
@@ -2904,6 +2996,7 @@ export class OverlayManager {
       this.selectedAlertId = null;
       this.hoveredDrawingId = null;
       this.selectedDrawingId = null;
+      this.glowDrawingId = null;
 
       // Corrupt-storage guard: two records claiming one id would make
       // createOverlay return the FIRST overlay instead of creating the second,
@@ -3160,7 +3253,7 @@ export class OverlayManager {
         // auto-hide stub) — ov.styles is the FADED color in that state, and
         // persist() must never write that; see canonicalStyles/fadedStyles.
         styles: this.canonicalStyles(id, ov) ?? undefined,
-        lock: ov.lock,
+        lock: this.userLock(id, ov),
         // Persist INTENT, not the live (effective) flag — the overlay's `visible`
         // is interval-filtered, so reading it here would corrupt the user's choice
         // when they save while on a filtered interval. extendData carries intent.

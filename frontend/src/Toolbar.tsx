@@ -4,7 +4,7 @@
 //  - A/L price-scale toggles
 //
 // Drawing tools, magnet, and measure now live in DrawSidebar; this toolbar
-// still owns the right-click drawing context menu (Lock/Settings/Delete).
+// mounts the right-click drawing context menu (DrawingContextMenu).
 // Everything drives the Chart instance directly via its public API.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -12,7 +12,6 @@ import { getSupportedIndicators } from "klinecharts";
 import { type Instrument, type Period } from "./lib/feed";
 import type { PriceSide } from "./theme";
 import { ensureNotifyPermission, primeSound, toast } from "./lib/notify";
-import { refuseClipboardCopy } from "./lib/replayClipboard";
 import HeatmapPanel from "./HeatmapPanel";
 import { EQUITY_INDICATOR, isChartReplaying } from "./lib/backtest";
 import {
@@ -20,7 +19,6 @@ import {
   backtestPanelOpenSignal,
   openBacktestSettings,
   symbolSearchRequest,
-  drawingSettingsRequest,
   saveDefaultTemplateRequest,
   snapshotsGalleryOpen,
 } from "./lib/signals";
@@ -46,7 +44,7 @@ import {
 import { indicatorInfo } from "./lib/indicatorMeta";
 import IndicatorRow from "./IndicatorRow";
 import type { ChartController } from "./lib/chartController";
-import ContextMenu from "./ContextMenu";
+import DrawingContextMenu from "./DrawingContextMenu";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import {
@@ -113,13 +111,6 @@ import {
   togglePatternPanel,
 } from "./lib/patternPanelStore";
 
-interface DrawMenu {
-  x: number;
-  y: number;
-  id: string;
-  locked: boolean;
-}
-
 interface Props {
   // The FOCUSED cell's controller (its chart + overlays + per-cell signals). The
   // toolbar is a remote control over whichever cell currently has focus.
@@ -178,7 +169,6 @@ export default function Toolbar({
   // instead while controller.readOnly is set — so nothing here needs a
   // read-only gate.)
   const chart = controller?.chart ?? null;
-  const overlays = controller?.overlays ?? null;
 
   // instrument search (TV-style modal, opened by clicking the symbol name)
   // Adds the Admin entry to the Clerk account menu. Probes only in hosted
@@ -270,10 +260,6 @@ export default function Toolbar({
   const [backtestOpen, setBacktestOpen] = useState(backtestPanelOpenSignal.value);
   useEffect(() => backtestPanelOpenSignal.subscribe(setBacktestOpen), []);
 
-  // drawing right-click context menu (Lock/Settings/Delete etc — the tools that
-  // CREATE drawings now live in DrawSidebar; this menu still fires from the chart).
-  const [drawMenu, setDrawMenu] = useState<DrawMenu | null>(null);
-
   // App opens a fresh tab → prompt for its symbol (the new tab starts empty).
   useEffect(() => symbolSearchRequest.subscribe(() => setSymModalOpen(true)), []);
 
@@ -320,22 +306,6 @@ export default function Toolbar({
       : backtestOpen ? "backtest"
       : heatmap?.on ? "heatmap"
       : null;
-
-  // Right-clicking any overlay (drawn live or rehydrated) opens our context menu.
-  // Bound to the FOCUSED cell's overlay manager; re-bind when focus changes.
-  useEffect(() => {
-    const ov = controller?.overlays;
-    if (!ov) return;
-    ov.setRightClickHandler((e) =>
-      setDrawMenu({
-        x: e.pageX ?? 0,
-        y: e.pageY ?? 0,
-        id: e.overlay.id,
-        locked: e.overlay.lock,
-      }),
-    );
-    return () => ov.setRightClickHandler(null);
-  }, [controller]);
 
   // NOTE: indicator HYDRATION moved to ChartCore (each cell hydrates its own saved
   // set on mount, even when not focused). The toolbar only TOGGLES on the focused
@@ -492,82 +462,6 @@ export default function Toolbar({
     }
     setSnapSavedName(snap.name);
   };
-
-  // Copy the right-clicked drawing to the system clipboard, in the same tagged
-  // envelope ChartCore's Ctrl/Cmd+C uses, so menu-copy and keyboard-copy are
-  // interchangeable (and a menu-copied drawing pastes with Ctrl/Cmd+V).
-  //
-  // Interchangeable includes REFUSING together: the payload's points are bar
-  // timestamps, so on a blind cell this writes the session's real dates onto the
-  // system clipboard. Same gate as the keyboard path, from one module, because
-  // "the other one is gated" is what made this a hole the first time.
-  function copyDrawing(id: string) {
-    // No controller means no focused cell, so nothing can be masked either.
-    if (controller && refuseClipboardCopy(controller.cellId)) return;
-    const d = overlays?.getDrawing(id);
-    if (!d) return;
-    const payload = {
-      __autoTraderDrawing: 1 as const,
-      name: d.name,
-      points: d.points,
-      styles: d.styles,
-      visible: d.visible,
-      zLevel: d.zLevel,
-      extendData: d.extendData,
-    };
-    navigator.clipboard?.writeText(JSON.stringify(payload, null, 2));
-  }
-
-  // Clone in place: duplicate the drawing offset a little (the chart-side ⌘-drag
-  // clone reuses this via placeDrawing too). Offset by a small price delta only —
-  // a menu clone has no drag, so just nudge it so it's visibly distinct.
-  function cloneDrawing(id: string) {
-    const d = overlays?.getDrawing(id);
-    if (!d) return;
-    overlays?.placeDrawing({
-      name: d.name,
-      points: d.points.map((p) => ({
-        timestamp: p.timestamp,
-        value: p.value != null ? p.value * 0.9975 : p.value,
-      })),
-      styles: d.styles,
-      visible: d.visible,
-      zLevel: d.zLevel,
-      extendData: d.extendData,
-    });
-  }
-
-  const drawMenuItems = drawMenu
-    ? [
-        // Only a ghost the user has placed by hand: re-aligning one that is
-        // already tracking the candles under it would do nothing visible.
-        ...(overlays?.isPinnedGhost(drawMenu.id)
-          ? [
-              {
-                label: "Re-align",
-                icon: MenuIcons.realign,
-                onClick: () => overlays?.realignGhost(drawMenu.id),
-              },
-            ]
-          : []),
-        { label: "Settings", icon: MenuIcons.settings, onClick: () => drawingSettingsRequest.set({ id: drawMenu.id }) },
-        { label: "Clone", icon: MenuIcons.clone, onClick: () => cloneDrawing(drawMenu.id) },
-        { label: "Copy", icon: MenuIcons.copy, onClick: () => copyDrawing(drawMenu.id) },
-        { label: "Bring to front", icon: MenuIcons.bringFront, onClick: () => overlays?.bringToFront(drawMenu.id) },
-        { label: "Send to back", icon: MenuIcons.sendBack, onClick: () => overlays?.sendToBack(drawMenu.id) },
-        {
-          label: drawMenu.locked ? "Unlock" : "Lock",
-          icon: drawMenu.locked ? MenuIcons.unlock : MenuIcons.lock,
-          onClick: () => overlays?.setLock(drawMenu.id, !drawMenu.locked),
-        },
-        {
-          label: "Delete",
-          icon: MenuIcons.remove,
-          danger: true,
-          onClick: () => overlays?.remove(drawMenu.id),
-        },
-      ]
-    : [];
 
   // Blank workspace (no open tab/cell): the chart controls have nothing to act on,
   // so render just the layout manager — the user opens or creates a layout from it.
@@ -1016,14 +910,7 @@ export default function Toolbar({
         />
       )}
 
-      {drawMenu && (
-        <ContextMenu
-          x={drawMenu.x}
-          y={drawMenu.y}
-          items={drawMenuItems}
-          onClose={() => setDrawMenu(null)}
-        />
-      )}
+      <DrawingContextMenu controller={controller} />
 
       {CLERK_ENABLED && !isDemoMode() && (
         <div className="clerk-user" style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>

@@ -6,7 +6,8 @@
 // so it's always kept in); timeRange/recurringRange arm a controller signal
 // instead of going through OverlayManager; everything else calls
 // controller.overlays.addDrawing(name). A magnet toggle and, when a drawing
-// is selected, Edit/Delete actions round out the strip.
+// is selected, Edit/Delete actions round out the strip, and a ⋯ handle beside
+// the drawing opens its menu (MobileDrawingHandle).
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { getSupportedOverlays } from "klinecharts";
 import DrawGlyph from "../DrawIcons";
@@ -16,6 +17,7 @@ import { drawingSettingsRequest, requestConfirm } from "../lib/signals";
 import { mobileChartCtx } from "./mobileChartState";
 import { isDemoMode } from "../lib/demoMode";
 import { toast } from "../lib/notify";
+import MobileDrawingHandle from "./MobileDrawingHandle";
 
 export default function MobileDrawBar() {
   const ctx = useSyncExternalStore(
@@ -78,6 +80,9 @@ export default function MobileDrawBar() {
 
   return (
     <>
+      {selectedId != null && (
+        <MobileDrawingHandle chart={ctx.chart} overlays={controller.overlays} selectedId={selectedId} />
+      )}
       {open && (
         <div className="m-drawbar-strip">
           {tools.map((t) => (

@@ -14,6 +14,7 @@
 
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "./indicators/shared";
 import { registerOverlay } from "klinecharts";
+import { installTouchHitSlop } from "./touchHitSlop";
 import type {
   OverlayTemplate,
   OverlayCreateFiguresCallbackParams,
@@ -1128,4 +1129,6 @@ export function registerCustomOverlays(): void {
   registerOverlay(timeRange);
   registerOverlay(patternGhost);
   registerOverlay(tradeBox);
+  // Fingertip-sized hit area for every line figure (see touchHitSlop.ts).
+  installTouchHitSlop();
 }

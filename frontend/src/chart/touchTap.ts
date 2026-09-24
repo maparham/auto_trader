@@ -68,3 +68,8 @@ export function isDoubleTap(first: TapState | null, x: number, y: number, t: num
   if (t - first.t > DOUBLE_TAP_MS) return false;
   return Math.abs(x - first.x) <= DOUBLE_TAP_PX && Math.abs(y - first.y) <= DOUBLE_TAP_PX;
 }
+
+/** A still press held this long is a long press: over a drawing it opens the
+ *  right-click menu (ChartCore replays it as a right-button press). Matches
+ *  klinecharts' own long-tap delay, which places the crosshair elsewhere. */
+export const LONG_PRESS_MS = 500;

@@ -2554,3 +2554,60 @@ describe("OverlayManager alert lines start at their creation time", () => {
       .toBeGreaterThan(0);
   });
 });
+
+describe("OverlayManager.lockUnselectedForPress (touch: select before drag)", () => {
+  it("locks every unselected, unlocked drawing and release restores them", () => {
+    const { chart, m } = setup();
+    const a = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const b = m.addDrawing("segment", [{ value: 3 }, { value: 4 }])!;
+    const c = m.addDrawing("segment", [{ value: 5 }, { value: 6 }])!;
+    m.setLock(c, true);
+    m.selectDrawing(a);
+    const release = m.lockUnselectedForPress();
+    expect(ovById(chart, a)!.lock).toBeFalsy(); // selected: still draggable
+    expect(ovById(chart, b)!.lock).toBe(true);
+    release();
+    expect(ovById(chart, a)!.lock).toBeFalsy();
+    expect(ovById(chart, b)!.lock).toBeFalsy();
+    expect(ovById(chart, c)!.lock).toBe(true); // user's own lock untouched
+    release(); // idempotent
+    expect(ovById(chart, b)!.lock).toBeFalsy();
+  });
+
+  it("never saves or reports the hold, even while it lasts", () => {
+    const { m } = setup();
+    const a = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const release = m.lockUnselectedForPress();
+    (m as unknown as { persist(): void }).persist();
+    const saved = P.loadDrawings("tab.A", "US100").find((d) => d.id === a);
+    expect(saved).toBeDefined();
+    expect(saved!.lock).toBeFalsy();
+    expect(m.getDrawing(a)!.lock).toBe(false);
+    expect(m.anyDrawingsLocked()).toBe(false);
+    release();
+  });
+
+  it("keeps a real lock set during the hold after release", () => {
+    const { chart, m } = setup();
+    const a = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const b = m.addDrawing("segment", [{ value: 3 }, { value: 4 }])!;
+    const release = m.lockUnselectedForPress();
+    m.setLock(a, true);
+    m.lockAllDrawings();
+    release();
+    expect(ovById(chart, a)!.lock).toBe(true);
+    expect(ovById(chart, b)!.lock).toBe(true);
+  });
+
+  it("holds unselected alert lines too, but not the selected one", () => {
+    const { chart, m } = setup();
+    const a = m.addAlert(50, { condition: "crossing", trigger: "once", message: "" })!;
+    const b = m.addAlert(60, { condition: "crossing", trigger: "once", message: "" })!;
+    m.selectAlert(a);
+    const release = m.lockUnselectedForPress();
+    expect(ovById(chart, a)!.lock).toBeFalsy();
+    expect(ovById(chart, b)!.lock).toBe(true);
+    release();
+    expect(ovById(chart, b)!.lock).toBeFalsy();
+  });
+});

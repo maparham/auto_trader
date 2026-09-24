@@ -166,8 +166,10 @@ import {
   isTap,
   clickSuppressed,
   isDoubleTap,
+  LONG_PRESS_MS,
   type TapState,
 } from "./chart/touchTap";
+import { installPressLock } from "./chart/touchPressLock";
 import GoLivePill from "./chart/GoLivePill";
 import HistoryJumpPill from "./chart/HistoryJumpPill";
 import { beginHistoryJump } from "./lib/historyJump";
@@ -2311,6 +2313,8 @@ export default function ChartCore({
       // the native menu) everywhere but the price-axis column, where no
       // crosshair lives and the hold keeps opening the axis menu below. The
       // chart menu's actions stay reachable from the mobile settings sheet.
+      // A hold on a drawing opens the drawing menu instead, via onTouchDown's
+      // long-press timer, not this event (iOS never fires contextmenu).
       if ((e as PointerEvent).pointerType === "touch" && !overPriceAxis(e)) {
         e.preventDefault();
         return;
@@ -3258,16 +3262,61 @@ export default function ChartCore({
     // pan, a pinch or a long press must not select (see chart/touchTap.ts). These
     // are passive observers — they never preventDefault, so klinecharts keeps its
     // own pan/zoom gestures intact.
+    // Long press -> the right-click path. A still single finger held for
+    // LONG_PRESS_MS replays as a right-button mousedown at the same point, so
+    // klinecharts hit-tests its overlays exactly as for a mouse and the
+    // SELECTED drawing, when under the finger, opens its desktop context menu
+    // (DrawingContextMenu). Tap to select first, then hold.
+    // Over empty chart nothing claims it and klinecharts' own long tap places
+    // the crosshair as before. Skipped over the price axis (the native
+    // contextmenu opens the axis menu there) and while a drawing is being
+    // placed (a hold there must not open the in-progress drawing's menu).
+    let pressTimer: ReturnType<typeof setTimeout> | null = null;
+    let uninstallPressLock: (() => void) | null = null;
+    const clearPress = () => {
+      if (pressTimer != null) clearTimeout(pressTimer);
+      pressTimer = null;
+    };
     const onTouchDown = (e: PointerEvent) => {
       if (e.pointerType !== "touch") return;
       tap = tap ? tapSecondFinger(tap) : tapStart(e.clientX, e.clientY, e.timeStamp);
+      clearPress();
+      if (!tap || tap.cancelled || overPriceAxis(e)) return;
+      const target = e.target;
+      const { clientX, clientY } = e;
+      pressTimer = setTimeout(() => {
+        pressTimer = null;
+        if (!tap || tap.cancelled || overlays.isDrawing()) return;
+        if (!(target instanceof Element) || !target.isConnected) return;
+        // Only a drawing selected beforehand (by a tap) opens its menu: a hold on
+        // an unselected one is not a menu request.
+        const selected = overlays.getSelectedDrawingId();
+        if (selected == null) return;
+        // The hold is not a tap, whatever opens (or not) from here.
+        tap = { ...tap, cancelled: true };
+        overlays.withRightClickOnly(selected, () =>
+          target.dispatchEvent(
+            new MouseEvent("mousedown", {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              button: 2,
+              buttons: 2,
+              clientX,
+              clientY,
+            }),
+          ),
+        );
+      }, LONG_PRESS_MS);
     };
     const onTouchMove = (e: PointerEvent) => {
       if (e.pointerType !== "touch") return;
       tap = tapMove(tap, e.clientX, e.clientY);
+      if (tap?.cancelled) clearPress();
     };
     const onTouchUp = (e: PointerEvent) => {
       if (e.pointerType !== "touch") return;
+      clearPress();
       const pressed = tap;
       const hit = isTap(tap, e.timeStamp);
       tap = null;
@@ -3287,12 +3336,15 @@ export default function ChartCore({
       onDblClick(e);
     };
     const onTouchCancel = () => {
+      clearPress();
       tap = null;
     };
 
     if (chart) {
       chart.setStyles(klineStyles(theme, legendHovered.value, crosshairRef.current, candleHiddenRef.current));
       el.addEventListener("click", onClick);
+      // Select before drag: see chart/touchPressLock.ts.
+      uninstallPressLock = installPressLock(el, overlays);
       el.addEventListener("pointerdown", onTouchDown, true);
       el.addEventListener("pointermove", onTouchMove, true);
       el.addEventListener("pointerup", onTouchUp, true);
@@ -3720,6 +3772,8 @@ export default function ChartCore({
       el.removeEventListener("pointermove", onTouchMove, true);
       el.removeEventListener("pointerup", onTouchUp, true);
       el.removeEventListener("pointercancel", onTouchCancel, true);
+      uninstallPressLock?.();
+      clearPress();
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
       el.removeEventListener("mousedown", onZoomDown, true);

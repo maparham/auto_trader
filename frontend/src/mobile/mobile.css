@@ -189,6 +189,24 @@
    above it instead of sitting in a gap of exposed time axis below it. */
 .m-chart-body:has(> .m-drawbar-strip) .m-drawbar-fab { bottom: 76px; }
 
+/* The selected drawing's menu handle; MobileDrawingHandle sets transform. */
+.m-drawing-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .m-drawbar-tool {
   flex: 0 0 auto;
   display: flex;

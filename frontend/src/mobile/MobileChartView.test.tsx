@@ -66,7 +66,7 @@ describe("MobileChartView", () => {
     act(() => {
       mobileChartCtx.set({
         chart: { getBarSpace: () => ({ bar: 8 }), getDom: () => null } as never,
-        controller: { overlays: { getSelectedDrawingId: () => null, addDrawing: () => {} } } as never,
+        controller: { overlays: { getSelectedDrawingId: () => null, addDrawing: () => {}, setRightClickHandler: () => {} } } as never,
       });
     });
     const hour = PERIODS.find((p) => p.resolution === "HOUR")!;
@@ -89,7 +89,7 @@ describe("MobileChartView", () => {
     const resize = vi.fn();
     mobileChartCtx.set({
       chart: { resize },
-      controller: { overlays: { getSelectedDrawingId: () => null, addDrawing: () => {} } },
+      controller: { overlays: { getSelectedDrawingId: () => null, addDrawing: () => {}, setRightClickHandler: () => {} } },
     } as never);
     const { rerender } = render(<MobileChartView active={false} />);
     await waitFor(() => screen.getByTestId("chartcore"));
