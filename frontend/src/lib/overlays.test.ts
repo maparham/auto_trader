@@ -2480,6 +2480,21 @@ describe("OverlayManager alert drag restores the alert's own anchor", () => {
     expect(after[0].dataIndex).toBeUndefined();
     expect(after[0].timestamp).toBeUndefined();
   });
+
+  it("keeps the creation anchor through a ChartCore-driven drag", () => {
+    const { chart, m } = setup();
+    m.setPricePrecision(2);
+    const id = m.addAlert(100, { condition: "crossing", trigger: "every", message: "" })!;
+    const ts = () => (ovById(chart, id)!.points as Array<Record<string, unknown>>)[0].timestamp;
+    const anchor = ts();
+    expect(anchor).toBeGreaterThan(0);
+    m.beginAlertDrag(id);
+    m.dragAlertTo(id, 105.123);
+    expect(ts()).toBe(anchor); // mid-drag too, or the line flashes full-width
+    m.endAlertDrag(id);
+    expect(ts()).toBe(anchor);
+    expect((ovById(chart, id)!.points as Array<Record<string, unknown>>)[0].value).toBe(105.12);
+  });
 });
 
 describe("OverlayManager alert lines start at their creation time", () => {

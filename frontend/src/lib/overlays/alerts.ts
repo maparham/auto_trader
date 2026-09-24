@@ -80,7 +80,9 @@ export abstract class OverlayAlerts extends OverlayDisplay {
     this.notifyAlerts(); // glue the on-line label while dragging
   }
   dragAlertTo(id: string, rawLevel: number): void {
-    this.chart?.overrideOverlay({ id, points: [{ value: rawLevel }] });
+    // alertPoints, not a value-only point: that would drop the creation-time
+    // anchor and the line would span the whole pane until a reload.
+    this.chart?.overrideOverlay({ id, points: this.alertPoints(id, rawLevel) });
     this.notifyAlerts();
   }
   endAlertDrag(id: string): void {
@@ -94,7 +96,7 @@ export abstract class OverlayAlerts extends OverlayDisplay {
     const raw = this.byId(id)?.points?.[0]?.value;
     if (raw != null) {
       const rounded = this.roundLevel(raw);
-      if (rounded !== raw) this.chart?.overrideOverlay({ id, points: [{ value: rounded }] });
+      if (rounded !== raw) this.chart?.overrideOverlay({ id, points: this.alertPoints(id, rounded) });
       const cfg = this.alertCfg.get(id);
       if (cfg) this.writeAlertUpdate(id, rounded, cfg);
     }
