@@ -18,6 +18,9 @@ import { hexToRgba } from "../lineStyle";
 import { fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
 import { smoothSeries, type SmoothType } from "./smoothing";
+import { RSI_DIVERGENCE_DEFAULTS, type RsiDivergenceConfig } from "./rsiOutputs";
+
+export { RSI_DIVERGENCE_DEFAULTS, type RsiDivergenceConfig };
 
 export type DivergenceKind = "bullish" | "bearish" | "hiddenBullish" | "hiddenBearish";
 
@@ -64,25 +67,6 @@ export const RSI_SMOOTHING_DEFAULTS: RsiSmoothing = {
   bbStdDev: 2,
 };
 
-// Divergence tuning, carried on extendData.divergence (set by the settings modal).
-// Defaults mirror TradingView's "Divergence Indicator": pivot strength 5 each side,
-// pivots 5–60 bars apart. Regular bull/bear on; hidden variants off; whole feature
-// OFF until `on` is set.
-export interface RsiDivergenceConfig {
-  on: boolean;
-  lookbackLeft: number; // pivot strength to the LEFT (bars before the pivot)
-  lookbackRight: number; // pivot strength to the RIGHT (bars after; also the lag)
-  rangeMin: number; // min bars between the two pivots
-  rangeMax: number; // max bars between the two pivots
-  bullish: boolean; // regular: price lower low + RSI higher low
-  bearish: boolean; // regular: price higher high + RSI lower high
-  hiddenBullish: boolean; // price higher low + RSI lower low
-  hiddenBearish: boolean; // price lower high + RSI higher high
-  showForming: boolean; // also mark the latest still-forming divergence
-  formingLookbackRight: number; // right-side bars for a tentative (forming) pivot
-  formingScanBack: boolean; // if the latest tail swing isn't diverging, scan older ones
-}
-
 export interface RsiExtend {
   source?: PriceSource; // price the RSI is computed on (default close, TV default)
   smoothing?: RsiSmoothing; // optional MA of the RSI (+ Bollinger Bands)
@@ -90,32 +74,6 @@ export interface RsiExtend {
   style?: Partial<RsiStyle>; // Style-tab colours/levels for the canvas-drawn elements
   hideLegendValue?: boolean;
 }
-
-// The four divergence kinds in the order the RSI series operand exposes them as
-// output lines: line 1 = bullish, 2 = bearish, 3 = hiddenBullish, 4 = hiddenBearish
-// (line 0 is the RSI value). Single source of truth for the line ↔ kind mapping,
-// shared by the compute (backtestSeries) and the picker enumeration (chartOperand).
-export const DIVERGENCE_KINDS: readonly DivergenceKind[] = [
-  "bullish",
-  "bearish",
-  "hiddenBullish",
-  "hiddenBearish",
-];
-
-export const RSI_DIVERGENCE_DEFAULTS: RsiDivergenceConfig = {
-  on: false,
-  lookbackLeft: 5,
-  lookbackRight: 5,
-  rangeMin: 5,
-  rangeMax: 60,
-  bullish: true,
-  bearish: true,
-  hiddenBullish: false,
-  hiddenBearish: false,
-  showForming: false,
-  formingLookbackRight: 2,
-  formingScanBack: false,
-};
 
 // One RSI pivot: its bar index, the RSI value, and the price extreme used for the
 // divergence comparison (the bar's low for low pivots, high for high pivots).
@@ -125,9 +83,11 @@ interface RsiPivot {
   price: number;
 }
 
-// Detect regular/hidden divergences by comparing each confirmed RSI pivot to the
-// previous pivot of the same side, within [rangeMin, rangeMax] bars. Segments are
-// appended to the right-pivot bar's result point so `draw` can render them.
+// Detect regular/hidden divergences by comparing each confirmed RSI pivot to an
+// earlier pivot of the same side, within [rangeMin, rangeMax] bars. The latest
+// earlier pivot is tried first, then older ones up to `pivotDepth` back, so a small
+// in-between swing can't hide a divergence against a more important low/high.
+// Segments are appended to the right-pivot bar's result point so `draw` can render them.
 export function detectDivergences(
   dataList: KLineData[],
   rsi: Array<number | undefined>,
@@ -139,6 +99,7 @@ export function detectDivergences(
   const lbR = Math.max(1, Math.floor(cfg.lookbackRight) || 1);
   const lo = Math.max(1, Math.floor(cfg.rangeMin) || 1);
   const hi = Math.max(lo, Math.floor(cfg.rangeMax) || lo);
+  const depth = Math.max(1, Math.floor(cfg.pivotDepth) || 1);
   // A pivot is confirmed only with lbL valid bars to the LEFT and lbR to the RIGHT
   // (so the most recent lbR bars never form one — the same confirmation lag as
   // TradingView's ta.pivothigh/low). Ties allowed (strict=false): `"low"` finds a
@@ -148,40 +109,64 @@ export function detectDivergences(
   const add = (i: number, seg: DivSegment) => {
     (out[i].divs ??= []).push(seg);
   };
-  let lastLow: RsiPivot | null = null;
-  let lastHigh: RsiPivot | null = null;
+  // True when a pivot strictly between prev[k] and `cur` crosses the RSI line joining
+  // them (below it for lows, above it for highs): that line would cut through the
+  // swing in between, so it isn't a clean divergence.
+  const pierced = (prev: RsiPivot[], k: number, cur: RsiPivot, side: "low" | "high"): boolean => {
+    const a = prev[k];
+    const slope = (cur.rsi - a.rsi) / (cur.index - a.index);
+    for (let j = k + 1; j < prev.length && prev[j].index < cur.index; j++) {
+      const q = prev[j];
+      const line = a.rsi + slope * (q.index - a.index);
+      if (side === "low" ? q.rsi < line : q.rsi > line) return true;
+    }
+    return false;
+  };
+  // Emit, per enabled kind, a segment from the NEAREST earlier pivot (at most `depth`
+  // back, within range, unpierced) that diverges from `cur`. Returns whether any did.
+  const emit = (prev: RsiPivot[], cur: RsiPivot, side: "low" | "high", forming: boolean): boolean => {
+    const kinds: Array<[DivergenceKind, (p: RsiPivot) => boolean]> =
+      side === "low"
+        ? [
+            // Regular bullish: price makes a LOWER low while RSI makes a HIGHER low.
+            ["bullish", (p) => cfg.bullish && cur.rsi > p.rsi && cur.price < p.price],
+            // Hidden bullish: price makes a HIGHER low while RSI makes a LOWER low.
+            ["hiddenBullish", (p) => cfg.hiddenBullish && cur.rsi < p.rsi && cur.price > p.price],
+          ]
+        : [
+            // Regular bearish: price makes a HIGHER high while RSI makes a LOWER high.
+            ["bearish", (p) => cfg.bearish && cur.rsi < p.rsi && cur.price > p.price],
+            // Hidden bearish: price makes a LOWER high while RSI makes a HIGHER high.
+            ["hiddenBearish", (p) => cfg.hiddenBearish && cur.rsi > p.rsi && cur.price < p.price],
+          ];
+    let emitted = false;
+    for (const [kind, test] of kinds) {
+      for (let k = prev.length - 1, tried = 0; k >= 0 && tried < depth; k--, tried++) {
+        const p = prev[k];
+        const dist = cur.index - p.index;
+        if (dist > hi) break;
+        if (dist < lo || !test(p) || pierced(prev, k, cur, side)) continue;
+        const seg: DivSegment = { kind, fromIndex: p.index, fromValue: p.rsi, toIndex: cur.index, toValue: cur.rsi };
+        if (forming) seg.forming = true;
+        add(cur.index, seg);
+        emitted = true;
+        break;
+      }
+    }
+    return emitted;
+  };
+  const lows: RsiPivot[] = [];
+  const highs: RsiPivot[] = [];
   for (let i = 0; i < n; i++) {
     if (isPivot(i, "low")) {
-      const price = dataList[i].low;
-      const v = rsi[i] as number;
-      if (lastLow) {
-        const dist = i - lastLow.index;
-        if (dist >= lo && dist <= hi) {
-          // Regular bullish: price makes a LOWER low while RSI makes a HIGHER low.
-          if (cfg.bullish && v > lastLow.rsi && price < lastLow.price)
-            add(i, { kind: "bullish", fromIndex: lastLow.index, fromValue: lastLow.rsi, toIndex: i, toValue: v });
-          // Hidden bullish: price makes a HIGHER low while RSI makes a LOWER low.
-          if (cfg.hiddenBullish && v < lastLow.rsi && price > lastLow.price)
-            add(i, { kind: "hiddenBullish", fromIndex: lastLow.index, fromValue: lastLow.rsi, toIndex: i, toValue: v });
-        }
-      }
-      lastLow = { index: i, rsi: v, price };
+      const cur = { index: i, rsi: rsi[i] as number, price: dataList[i].low };
+      emit(lows, cur, "low", false);
+      lows.push(cur);
     }
     if (isPivot(i, "high")) {
-      const price = dataList[i].high;
-      const v = rsi[i] as number;
-      if (lastHigh) {
-        const dist = i - lastHigh.index;
-        if (dist >= lo && dist <= hi) {
-          // Regular bearish: price makes a HIGHER high while RSI makes a LOWER high.
-          if (cfg.bearish && v < lastHigh.rsi && price > lastHigh.price)
-            add(i, { kind: "bearish", fromIndex: lastHigh.index, fromValue: lastHigh.rsi, toIndex: i, toValue: v });
-          // Hidden bearish: price makes a LOWER high while RSI makes a HIGHER high.
-          if (cfg.hiddenBearish && v > lastHigh.rsi && price < lastHigh.price)
-            add(i, { kind: "hiddenBearish", fromIndex: lastHigh.index, fromValue: lastHigh.rsi, toIndex: i, toValue: v });
-        }
-      }
-      lastHigh = { index: i, rsi: v, price };
+      const cur = { index: i, rsi: rsi[i] as number, price: dataList[i].high };
+      emit(highs, cur, "high", false);
+      highs.push(cur);
     }
   }
 
@@ -189,107 +174,28 @@ export function detectDivergences(
   // pivot uses the same rule as a confirmed one but only `formingLookbackRight`
   // bars to the right (< lbR), and must sit in the not-yet-confirmable tail
   // (i + lbR >= n) so it's a genuinely forming swing — not an old one that failed
-  // full confirmation. It is compared to the last CONFIRMED pivot of its side.
+  // full confirmation. It is compared to the CONFIRMED pivots of its side.
   if (cfg.showForming) {
-    // Forming right-lookback: at least 1 (never the noisy zero-right case) and strictly
-    // less than the confirmed lbR. When lbR === 1 this yields fbR === 1 === lbR, and the
-    // tail (`i + lbR >= n`) and `i + fbR < n` conditions below can't both hold — so no
-    // forming pivot forms, the right outcome (no room for a "less confirmed" pivot).
-    const fbR = Math.max(1, Math.min(lbR - 1, Math.max(1, Math.floor(cfg.formingLookbackRight) || 1)));
-    const isFormingPivot = (i: number, want: "low" | "high"): boolean => {
-      const v = rsi[i];
-      if (v === undefined) return false;
-      if (i - lbL < 0 || i + fbR >= n) return false;
-      for (let j = i - lbL; j <= i + fbR; j++) {
-        const w = rsi[j];
-        if (w === undefined) return false;
-        if (j !== i && (want === "low" ? w < v : w > v)) return false;
+    // Forming right-lookback: 0 or more and strictly less than the confirmed lbR. Zero
+    // lets the newest bar itself be a tentative pivot (earliest, jumpiest read).
+    const rawFbR = Math.floor(cfg.formingLookbackRight);
+    const fbR = Math.max(0, Math.min(lbR - 1, Number.isFinite(rawFbR) ? rawFbR : 1));
+    const isFormingPivot = (i: number, want: "low" | "high"): boolean =>
+      isPivotAt(rsi, i, lbL, fbR, want, false);
+    const scan = (prev: RsiPivot[], side: "low" | "high") => {
+      const last = prev[prev.length - 1];
+      if (!last) return;
+      for (let i = n - 1; i > last.index && i + lbR >= n; i--) {
+        if (!isFormingPivot(i, side)) continue;
+        const cur = { index: i, rsi: rsi[i] as number, price: side === "low" ? dataList[i].low : dataList[i].high };
+        // Default: stop at the most recent tentative swing (even if it didn't diverge).
+        // scanBack: keep looking at older in-range tail swings until one diverges.
+        if (emit(prev, cur, side, true) || !cfg.formingScanBack) break;
       }
-      return true;
     };
-    if (lastLow) {
-      for (let i = n - 1; i > lastLow.index && i + lbR >= n; i--) {
-        if (!isFormingPivot(i, "low")) continue;
-        const dist = i - lastLow.index;
-        if (dist > hi) continue;
-        if (dist < lo) break;
-        const v = rsi[i] as number;
-        const price = dataList[i].low;
-        let emitted = false;
-        if (cfg.bullish && v > lastLow.rsi && price < lastLow.price) {
-          add(i, { kind: "bullish", fromIndex: lastLow.index, fromValue: lastLow.rsi, toIndex: i, toValue: v, forming: true });
-          emitted = true;
-        }
-        if (cfg.hiddenBullish && v < lastLow.rsi && price > lastLow.price) {
-          add(i, { kind: "hiddenBullish", fromIndex: lastLow.index, fromValue: lastLow.rsi, toIndex: i, toValue: v, forming: true });
-          emitted = true;
-        }
-        // Default: stop at the most recent tentative low (even if it didn't diverge).
-        // scanBack: keep looking at older in-range tail lows until one diverges.
-        if (emitted || !cfg.formingScanBack) break;
-      }
-    }
-    if (lastHigh) {
-      for (let i = n - 1; i > lastHigh.index && i + lbR >= n; i--) {
-        if (!isFormingPivot(i, "high")) continue;
-        const dist = i - lastHigh.index;
-        if (dist > hi) continue;
-        if (dist < lo) break;
-        const v = rsi[i] as number;
-        const price = dataList[i].high;
-        let emitted = false;
-        if (cfg.bearish && v < lastHigh.rsi && price > lastHigh.price) {
-          add(i, { kind: "bearish", fromIndex: lastHigh.index, fromValue: lastHigh.rsi, toIndex: i, toValue: v, forming: true });
-          emitted = true;
-        }
-        if (cfg.hiddenBearish && v > lastHigh.rsi && price < lastHigh.price) {
-          add(i, { kind: "hiddenBearish", fromIndex: lastHigh.index, fromValue: lastHigh.rsi, toIndex: i, toValue: v, forming: true });
-          emitted = true;
-        }
-        // Default: stop at the most recent tentative high (even if it didn't diverge).
-        // scanBack: keep looking at older in-range tail highs until one diverges.
-        if (emitted || !cfg.formingScanBack) break;
-      }
-    }
+    scan(lows, "low");
+    scan(highs, "high");
   }
-}
-
-// A divergence config that force-detects EXACTLY one kind: the pivot/range params
-// come from the instance's config (or the defaults), but every per-kind flag except
-// `kind` is turned off and the whole feature is turned on — so `detectDivergences`
-// with this config yields only that kind's confirmed segments regardless of which
-// kinds the source RSI instance had toggled. `showForming` is off (the operand is
-// confirmed-only: no repaint, no lookahead).
-export function cfgForKind(
-  div: Partial<RsiDivergenceConfig> | undefined,
-  kind: DivergenceKind,
-): RsiDivergenceConfig {
-  return {
-    ...RSI_DIVERGENCE_DEFAULTS,
-    ...(div ?? {}),
-    on: true,
-    bullish: kind === "bullish",
-    bearish: kind === "bearish",
-    hiddenBullish: kind === "hiddenBullish",
-    hiddenBearish: kind === "hiddenBearish",
-    showForming: false,
-  };
-}
-
-// Confirmed divergences of one `kind` as a per-bar 0/1 event series: `1` on the bar
-// a divergence of that kind confirms (its right pivot, `toIndex`), `0` everywhere
-// else — including the warm-up (never undefined, so a rule comparison stays
-// well-defined). Reuses the exact detector the chart draws with, so backtest ↔ live
-// ↔ chart all agree. `cfg` should force-enable just `kind` (see `cfgForKind`).
-export function divergenceEventSeries(
-  dataList: KLineData[],
-  rsi: Array<number | undefined>,
-  cfg: RsiDivergenceConfig,
-  kind: DivergenceKind,
-): Array<0 | 1> {
-  const out: RsiPoint[] = dataList.map(() => ({}));
-  detectDivergences(dataList, rsi, out, cfg);
-  return dataList.map((_, i) => (out[i].divs?.some((d) => d.kind === kind) ? 1 : 0));
 }
 
 // Wilder's RSI (RMA of gains/losses), seeded with the SMA of the first `length`
@@ -626,6 +532,9 @@ function drawRsiDivergences(params: IndicatorDrawParams<RsiPoint, unknown, unkno
   for (let i = 0; i < result.length; i++) {
     const segs = result[i]?.divs;
     if (!segs?.length) continue;
+    // One pivot can carry a regular AND a hidden divergence (against different
+    // earlier pivots), so stack their labels instead of drawing them on top of each other.
+    let stack = 0;
     for (const s of segs) {
       const x1 = xAxis.convertToPixel(s.fromIndex);
       const x2 = xAxis.convertToPixel(s.toIndex);
@@ -646,7 +555,8 @@ function drawRsiDivergences(params: IndicatorDrawParams<RsiPoint, unknown, unkno
       ctx.stroke();
       // Label outside the pivot: above for bearish (RSI tops), below for bullish.
       ctx.setLineDash([]);
-      ctx.fillText(vis.label, x2 + 3, bullish ? y2 + 7 : y2 - 7);
+      const dy = 7 + 11 * stack++;
+      ctx.fillText(vis.label, x2 + 3, bullish ? y2 + dy : y2 - dy);
       ctx.globalAlpha = 1;
     }
   }

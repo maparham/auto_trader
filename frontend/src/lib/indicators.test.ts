@@ -466,6 +466,10 @@ describe("mintInstanceId (bare name for the first instance, except ref/function 
     expect(mintInstanceId(fakeChart([]), "EMA")).toBe("EMA");
   });
 
+  it("keeps the bare name for RSI (referenceable, and `RSI.bullDiv` parses as a ref)", () => {
+    expect(mintInstanceId(fakeChart([]), "RSI")).toBe("RSI");
+  });
+
   it("numbers a second instance of a bare-name type from 2 (the bare name IS number 1)", () => {
     expect(mintInstanceId(fakeChart([{ name: "SLOPE", paneId: "pane_1" }]), "SLOPE")).toBe(
       "SLOPE2",

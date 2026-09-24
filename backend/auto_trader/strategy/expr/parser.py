@@ -231,11 +231,17 @@ class _Parser:
                 # A bare unknown zero-arg name with a field is an
                 # indicator-instance reference. Registered names keep the
                 # Field(Call) shape so validate still reports field_on_call for
-                # EMA(9).signal.
+                # EMA(9).signal. A BARE registered indicator name that takes
+                # args (no parens, like `RSI.bullDiv`) can only be a pane: the
+                # chart names its first RSI pane "RSI".
                 is_ref = (
                     isinstance(node, N.Call)
                     and not node.args
-                    and node.name not in INDICATORS
+                    and (
+                        node.name not in INDICATORS
+                        or (INDICATORS[node.name].arity > 0
+                            and node.end - node.start == len(node.name))
+                    )
                     and node.name not in WRAPPERS
                     and node.name not in N.CROSS_FNS
                     and node.name not in N.PREDICATE_FNS

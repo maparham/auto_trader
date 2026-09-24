@@ -65,7 +65,8 @@ const LOGIC_TYPES = new Set(["AND", "OR", "NOT"]);
 function isInstanceRef(value: string, next: Token | undefined): boolean {
   return (
     next?.type === "DOT"
-    && !Object.hasOwn(INDICATOR_SPECS, value)
+    // A bare arg-taking indicator name before "." is a pane (`RSI.bullDiv`).
+    && (!Object.hasOwn(INDICATOR_SPECS, value) || INDICATOR_SPECS[value].arity > 0)
     && !Object.hasOwn(WRAPPER_ARITY, value)
     && !CROSS_SET.has(value)
     && !PREDICATE_SET.has(value)
@@ -94,6 +95,7 @@ function classify(
   if (prev?.type === "DOT") return "field";
   // Object.hasOwn (not `in`) so inherited Object.prototype members — a token
   // literally named `toString` or `constructor` — never count as registered.
+  if (isInstanceRef(value, next)) return "instanceRef";
   if (Object.hasOwn(INDICATOR_SPECS, value)) return "indicator";
   if (Object.hasOwn(WRAPPER_ARITY, value)) return "wrapper";
   if (CROSS_SET.has(value)) return "cross";

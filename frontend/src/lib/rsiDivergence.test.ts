@@ -22,7 +22,7 @@ function bars(highs: Record<number, number>, n: number): KLineData[] {
 }
 // detectDivergences writes onto out[i].divs; a bare [] of empty objects suffices.
 function outFor(n: number) {
-  return Array.from({ length: n }, () => ({}) as { divs?: Array<{ kind: string; forming?: boolean; toIndex: number }> });
+  return Array.from({ length: n }, () => ({}) as { divs?: Array<{ kind: string; forming?: boolean; fromIndex: number; toIndex: number }> });
 }
 // Small pivot params keep the crafted series short.
 const CFG = {
@@ -71,6 +71,18 @@ describe("detectDivergences forming pass", () => {
     detectDivergences(data, RSI18, out as never, { ...CFG, showForming: true });
     expect(bearsAt(out, 16).length).toBe(1);
     expect(bearsAt(out, 16)[0].forming).toBe(true);
+  });
+
+  it("formingLookbackRight 0 lets the newest bar be a forming pivot", () => {
+    const rsi = RSI18.slice(0, 17); // index 16 (the 52 peak) is the last bar
+    const data = bars(HIGHS, 17);
+    const withOne = outFor(17);
+    detectDivergences(data, rsi, withOne as never, { ...CFG, showForming: true });
+    expect(bearsAt(withOne, 16).length).toBe(0);
+    const withZero = outFor(17);
+    detectDivergences(data, rsi, withZero as never, { ...CFG, showForming: true, formingLookbackRight: 0 });
+    expect(bearsAt(withZero, 16).length).toBe(1);
+    expect(bearsAt(withZero, 16)[0].forming).toBe(true);
   });
 
   it("promotes a forming divergence to confirmed once enough bars follow it", () => {
@@ -145,6 +157,58 @@ describe("detectDivergences forming — scan-back option", () => {
     detectDivergences(barsHL(20, HIGHS_W, {}), RSI_W, out as never, { ...CFG2, formingScanBack: true });
     expect(kindAt(out, 16, "bearish").length).toBe(1);
     expect(kindAt(out, 16, "bearish")[0].forming).toBe(true);
+  });
+});
+
+describe("detectDivergences pivot depth", () => {
+  // Low pivots (lb 1/1): A at 2 (rsi 30, price 100), a small swing B at 5 (rsi 50,
+  // price 110), then C at 8 (rsi 28, price 105). C vs B diverges in neither way;
+  // C vs A is a hidden bullish (higher price low, lower RSI low).
+  const RSI_D = [40, 35, 30, 45, 55, 50, 55, 40, 28, 40, 45];
+  const LOWS_D = { 2: 100, 5: 110, 8: 105 };
+  const CFG_D = { ...RSI_DIVERGENCE_DEFAULTS, on: true, lookbackLeft: 1, lookbackRight: 1, rangeMin: 2, rangeMax: 60, bullish: false, hiddenBullish: true };
+
+  it("only checks the latest pivot at depth 1", () => {
+    const out = outFor(11);
+    detectDivergences(barsHL(11, {}, LOWS_D), RSI_D, out as never, { ...CFG_D, pivotDepth: 1 });
+    expect(kindAt(out, 8, "hiddenBullish").length).toBe(0);
+  });
+
+  it("looks past a small in-between swing at depth 2+", () => {
+    const out = outFor(11);
+    detectDivergences(barsHL(11, {}, LOWS_D), RSI_D, out as never, { ...CFG_D, pivotDepth: 3 });
+    const segs = kindAt(out, 8, "hiddenBullish");
+    expect(segs.length).toBe(1);
+    expect(segs[0].fromIndex).toBe(2);
+  });
+
+  it("rejects an older pivot when a swing in between crosses the RSI line", () => {
+    const rsi = [...RSI_D];
+    rsi[5] = 25; // B now dips below the A→C line
+    const out = outFor(11);
+    detectDivergences(barsHL(11, {}, LOWS_D), rsi, out as never, { ...CFG_D, pivotDepth: 3 });
+    expect(kindAt(out, 8, "hiddenBullish").length).toBe(0);
+  });
+
+  it("forming pass skips a latest pivot that is closer than Range min", () => {
+    const rsi = RSI_D.slice(0, 9);
+    const out = outFor(9);
+    detectDivergences(barsHL(9, {}, LOWS_D), rsi, out as never, {
+      ...CFG_D, rangeMin: 4, lookbackRight: 2, pivotDepth: 3, showForming: true, formingLookbackRight: 0,
+    });
+    expect(kindAt(out, 8, "hiddenBullish")[0]?.fromIndex).toBe(2);
+  });
+
+  it("forming pass also looks back past the latest pivot", () => {
+    const rsi = RSI_D.slice(0, 9); // C is the last bar
+    const out = outFor(9);
+    detectDivergences(barsHL(9, {}, LOWS_D), rsi, out as never, {
+      ...CFG_D, lookbackRight: 2, pivotDepth: 3, showForming: true, formingLookbackRight: 0,
+    });
+    const segs = kindAt(out, 8, "hiddenBullish");
+    expect(segs.length).toBe(1);
+    expect(segs[0].fromIndex).toBe(2);
+    expect(segs[0].forming).toBe(true);
   });
 });
 

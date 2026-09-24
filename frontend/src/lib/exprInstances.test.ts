@@ -124,6 +124,27 @@ describe("ATR instances", () => {
   });
 });
 
+describe("RSI instances", () => {
+  const live = [
+    { id: "RSI", type: "RSI", calcParams: [14], extendData: { divergence: { on: true, lookbackRight: 3 } } },
+  ];
+  it("exprInstancesFor lists the value and four divergence outputs", () => {
+    const [inst] = exprInstancesFor(live);
+    expect(inst.id).toBe("RSI");
+    expect(inst.outputs).toEqual(["value", "bullDiv", "bearDiv", "hBullDiv", "hBearDiv"]);
+    expect(inst.timeframe).toBeNull();
+  });
+  it("exprWarmupByRef matches backend rsi_warmup", () => {
+    const warm = exprWarmupByRef(live);
+    expect(warm("RSI", "value")).toBe(14);
+    expect(warm("RSI", "bullDiv")).toBe(14 + 60 + 5 + 3);
+    expect(warm("RSI", "nope")).toBe(0);
+  });
+  it("ships the bare RSI pane a rule references", () => {
+    expect(Object.keys(collectExprInstances(live, ["RSI.hBullDiv == 1"]))).toEqual(["RSI"]);
+  });
+});
+
 describe("rewriteInstanceRefs", () => {
   it("rewrites mapped instance refs, leaving output and the rest of the expression intact", () => {
     expect(rewriteInstanceRefs("SLOPE.9 > 0 and SLOPE.accel9 < 1", { SLOPE: "SLOPE2" }))

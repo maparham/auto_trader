@@ -189,7 +189,7 @@ export function RsiDivergencePanel({
               const lookbackRight = Math.max(1, n);
               // Keep forming right-lookback ≤ lookbackRight-1 so the shown value never
               // exceeds what detection can use after lowering the confirmed lookback.
-              const formingLookbackRight = Math.min(rsiDiv.formingLookbackRight, Math.max(1, lookbackRight - 1));
+              const formingLookbackRight = Math.min(rsiDiv.formingLookbackRight, Math.max(0, lookbackRight - 1));
               setRsiDivergence({ lookbackRight, formingLookbackRight });
             }}
           />
@@ -221,6 +221,21 @@ export function RsiDivergencePanel({
             commit={(n) => setRsiDivergence({ rangeMax: Math.max(rsiDiv.rangeMin, n) })}
           />
         </span>
+      </div>
+      <div className={`ind-row${rsiDiv.on ? "" : " is-off"}`}>
+        <span className="ind-row-head">
+          <label>Pivot depth</label>
+          <InfoTip
+            title="Pivot depth"
+            text={["How many earlier pivots to compare against.", "1 = only the latest one.", "Higher catches divergences hidden behind a small swing."]}
+          />
+        </span>
+        <IntInput
+          min={1}
+          disabled={!rsiDiv.on}
+          value={rsiDiv.pivotDepth}
+          commit={(n) => setRsiDivergence({ pivotDepth: Math.max(1, n) })}
+        />
       </div>
       <label className={`ind-check${rsiDiv.on ? "" : " is-off"}`}>
         <input
@@ -278,15 +293,15 @@ export function RsiDivergencePanel({
           <InfoTip title="Forming lookback right" text="Right-side bars for a tentative pivot; lower = earlier but jumpier. Always < Pivot lookback right." />
         </span>
         <IntInput
-          min={1}
-          max={Math.max(1, rsiDiv.lookbackRight - 1)}
+          min={0}
+          max={Math.max(0, rsiDiv.lookbackRight - 1)}
           disabled={!rsiDiv.on || !rsiDiv.showForming}
           value={rsiDiv.formingLookbackRight}
           commit={(n) =>
             setRsiDivergence({
               formingLookbackRight: Math.min(
-                Math.max(1, rsiDiv.lookbackRight - 1),
-                Math.max(1, n),
+                Math.max(0, rsiDiv.lookbackRight - 1),
+                Math.max(0, n),
               ),
             })
           }

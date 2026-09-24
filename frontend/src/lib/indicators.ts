@@ -376,7 +376,9 @@ export function mintInstanceId(chart: Chart, type: string): string {
   // registered function. EMA/RSI etc. keep the bare-name fast path — they are
   // not instance-referenceable, and their bare names are load-bearing for
   // stored-chart compatibility.
-  const refCollision = EXPR_INSTANCE_TYPES.has(type) && Object.hasOwn(INDICATOR_SPECS, type);
+  // RSI is exempt: the parser reads a bare `RSI.bullDiv` as a ref, and existing
+  // charts already carry a pane named "RSI".
+  const refCollision = type !== "RSI" && EXPR_INSTANCE_TYPES.has(type) && Object.hasOwn(INDICATOR_SPECS, type);
   if (!refCollision && !taken.has(type)) return type; // first instance keeps the clean name
   for (let n = refCollision ? 1 : 2; ; n++) {
     const id = `${type}${n}`;

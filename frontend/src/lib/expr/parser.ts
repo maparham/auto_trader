@@ -547,10 +547,14 @@ class Parser {
         // reference. Registered names keep the Field(Call) shape so validate
         // still reports field_on_call for EMA(9).signal. Object.hasOwn (not
         // `in`) so inherited Object.prototype members never count as registered.
+        // A BARE registered indicator name that takes args (no parens, like
+        // `RSI.bullDiv`) can only be a pane: the chart names its first RSI pane
+        // "RSI". Mirrors parser.py.
         const isRef =
           node.kind === "Call"
           && node.args.length === 0
-          && !Object.hasOwn(INDICATOR_SPECS, node.name)
+          && (!Object.hasOwn(INDICATOR_SPECS, node.name)
+            || (INDICATOR_SPECS[node.name].arity > 0 && node.end - node.start === node.name.length))
           && !Object.hasOwn(WRAPPER_ARITY, node.name)
           && !CROSS_SET.has(node.name)
           && !PREDICATE_SET.has(node.name);

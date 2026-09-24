@@ -39,6 +39,7 @@ import {
   srLevelsWarmup,
 } from "./indicators/srLevelsOutputs";
 import { SPIKE_OUTPUTS, parseSpikeConfig, spikeWarmup } from "./indicators/spikeOutputs";
+import { RSI_OUTPUTS, parseRsiRefConfig, rsiWarmup } from "./indicators/rsiOutputs";
 import type { SrLevelsExtend } from "./indicators/srLevels"; // erased at build; no runtime edge
 import type { ExprInstance } from "./expr/catalog";
 // Display vocabularies, both from klinecharts-free modules so this stays a pure,
@@ -60,6 +61,7 @@ export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set([
   "PIVOT_ANALYSIS",
   "SR_LEVELS",
   "SPIKE",
+  "RSI",
 ]);
 
 /** A live chart pane, flattened to just what the expression layer reads. */
@@ -169,7 +171,7 @@ export function synthesizeExprInstances(
     }
     // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
     // kept, as there), atrLength's 14 (single-length pane).
-    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS and SPIKE
+    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE and RSI
     // outputs are fixed names, not lengths, so nothing about the pane's params
     // is recoverable from a ref — an empty list takes every default.
     const calcParams =
@@ -178,7 +180,8 @@ export function synthesizeExprInstances(
       type === "PIVOT_BANDS" ||
       type === "PIVOT_ANALYSIS" ||
       type === "SR_LEVELS" ||
-      type === "SPIKE"
+      type === "SPIKE" ||
+      type === "RSI"
         ? []
         : type === "ATR"
           ? [lengths[0] ?? 14]
@@ -305,6 +308,7 @@ export function exprWarmupByRef(
       return (SPIKE_OUTPUTS as readonly string[]).includes(output)
         ? spikeWarmup(parseSpikeConfig(inst.calcParams))
         : 0;
+    if (inst.type === "RSI") return rsiWarmup(parseRsiRefConfig(inst.calcParams, inst.extendData), output);
     if (inst.type !== "SLOPE") return 0;
     return slopeWarmup(inst.calcParams, (inst.extendData ?? {}) as SlopeExtend, output);
   };
@@ -416,6 +420,18 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         // arms a spike and latches consolidation — the SLOPE/ATR detail
         // convention.
         detail: `${cfg.minSpikePct}%/${cfg.spikeBars} bars · flat ${cfg.flatBars} in ${cfg.maxFlatRangePct}% · ${cfg.maxPatternBars} bar life`,
+      });
+      continue;
+    }
+    if (inst.type === "RSI") {
+      const cfg = parseRsiRefConfig(inst.calcParams, inst.extendData);
+      out.push({
+        id: inst.id,
+        outputs: [...RSI_OUTPUTS],
+        timeframe: null, // chart-timeframe only (no MTF pin)
+        // Divergences fire once the right pivot is confirmed, so the lag is
+        // what a reader most needs to know.
+        detail: `RSI ${cfg.length} · pivots ${cfg.lookbackLeft}/${cfg.lookbackRight} · divergence fires ${cfg.lookbackRight} bars after pivot`,
       });
       continue;
     }

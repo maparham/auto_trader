@@ -97,8 +97,8 @@ export function chartIndicatorToExprToken(
     // ref and the pane stays the source of truth — same contract as SLOPE.
     // The fallback CALL shape survives for two callers: one with no instance
     // context at all, and the unreachable-but-possible bare "ATR" id (pre-mint
-    // fix), which cannot parse as a ref because ATR is a registered function
-    // name. Both are RMA-identical only for an unsmoothed pane, which is the
+    // fix). A bare `ATR.14` does parse as a ref now (parser.ts isRef), but the
+    // call keeps this click's output unchanged for those legacy panes. Both are RMA-identical only for an unsmoothed pane, which is the
     // default — a smoothed pane always arrives with a distinct id ("ATR1" or a
     // legacy "ATR#<rand>"), and any id other than the bare type name parses.
     case "ATR": {

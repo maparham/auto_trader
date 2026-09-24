@@ -154,6 +154,14 @@ describe("chart indicator instance references", () => {
     expect(opts).toEqual(["SLOPE.accel9"]);
   });
 
+  it("offers a bare RSI pane's divergence outputs after the dot", () => {
+    const rsi: ExprInstance[] = [
+      { id: "RSI", outputs: ["value", "bullDiv", "bearDiv", "hBullDiv", "hBearDiv"], timeframe: null, detail: "" },
+    ];
+    const labels = completionsFor("RSI.", 4, { instances: rsi }).map((c) => c.label);
+    expect(labels).toEqual(expect.arrayContaining(["RSI.bullDiv", "RSI.hBullDiv", "RSI.value"]));
+  });
+
   it("completes a dotted pct output prefix", () => {
     const atr: ExprInstance[] = [
       { id: "ATR1", outputs: ["14", "14.to%"], timeframe: null, detail: "RMA" },

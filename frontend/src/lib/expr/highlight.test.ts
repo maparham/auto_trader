@@ -52,8 +52,13 @@ describe("classifyTokens", () => {
     ]);
   });
 
-  it("does not treat a registered name followed by a dot as a ref", () => {
-    expect(classes("EMA.foo > 1")[0]).toEqual(["EMA", "indicator"]);
+  it("treats a bare arg-taking indicator name before a dot as a pane ref", () => {
+    // The parser reads `RSI.bullDiv` as the chart's RSI pane (parser.ts isRef).
+    expect(classes("RSI.bullDiv == 1")[0]).toEqual(["RSI", "instanceRef"]);
+    expect(classes("VOL.foo > 1")[0]).toEqual(["VOL", "indicator"]);
+  });
+
+  it("does not treat other registered names followed by a dot as a ref", () => {
     expect(classes("slope.foo > 1")[0]).toEqual(["slope", "wrapper"]);
     expect(classes("candle.close > 1")[0]).toEqual(["candle", "variable"]);
   });

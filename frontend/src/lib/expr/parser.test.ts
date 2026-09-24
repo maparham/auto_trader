@@ -307,6 +307,13 @@ describe("indicator references", () => {
     expect(err.code).toBe("field_on_call");
   });
 
+  it("reads a bare arg-taking indicator name with a field as a pane ref", () => {
+    const rsi = [...INSTANCES, { id: "RSI", outputs: ["value", "bullDiv"], timeframe: null }];
+    expect(analyze("RSI.bullDiv == 1", { instances: rsi }).errors).toEqual([]);
+    expect(analyze("RSI.bullDiv == 1", { instances: INSTANCES }).errors[0].code).toBe("unknown_indicator_ref");
+    expect(analyze("RSI(14).bullDiv > 0", { instances: rsi }).errors[0].code).toBe("field_on_call");
+  });
+
   it("lexes # inside a name but not as a leading character", () => {
     expect(analyze("SLOPE#p1n.50 > 0", { instances: INSTANCES }).errors).toEqual([]);
     expect(analyze("#SLOPE > 0", { instances: INSTANCES }).errors[0].code).toBe("bad_char");
