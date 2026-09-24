@@ -13,7 +13,8 @@ remove it from here (git history and the memory index track shipped features).
   [spec](superpowers/specs/2026-09-23-mt5-local-mcp-broker-design.md)
 
 - **Slim large modules** — split the 10 biggest modules into focused files.
-  Partially done (6 of 9 committed: persist, customIndicators, app.py, brokers dedup, IndicatorSettings, ChartCore); remaining: BacktestSettingsModal, overlays.ts, App.tsx, plus new candidates lib/backtest.ts and lib/feed.ts.
+  Partially done (7 of 9 committed: persist, customIndicators, app.py, brokers dedup, IndicatorSettings, ChartCore, BacktestSettingsModal); remaining: overlays.ts, App.tsx, plus new candidates lib/backtest.ts and lib/feed.ts.
+  The modal's sweep/WFO state (~600 lines of interleaved state and effects) stayed in the shell; lift it only if it keeps growing.
   [plan](superpowers/plans/2026-07-05-slim-large-modules.md)
 
 ## Deferred / forward-looking

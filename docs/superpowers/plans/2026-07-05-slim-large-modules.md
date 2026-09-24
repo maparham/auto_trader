@@ -1,5 +1,18 @@
 # Slim the Ten Largest Modules — Implementation Plan
 
+> **Status 2026-09-24:** Task 4 (BacktestSettingsModal) DONE in three commits
+> (`045de8ef`, `d55f1b2a`, `699b18ec`), 4,635 -> 1,714 lines. It landed in
+> `frontend/src/backtestSettings/` rather than `backtest/`, mirroring
+> `indicatorSettings/`: leaf pieces (shared tables and helpers, icons, section
+> collapse, menus, WindowTimeline, risk/scaling sections, SidePanel,
+> RuleBuilder), four contiguous hooks called at their original spot
+> (usePanelLayout, useSectionScrollspy, useExprPick/useExprInstances,
+> useInstrumentCosts), and the tab bodies as section components with state
+> left in the shell. The modal re-exports RuleGroupSection, RiskSection,
+> EMPTY_RISK and resetCostProfileCache, so LiveTradingPanel and the tests did
+> not change. The sweep/WFO state block stayed in the shell. Remaining: T7, T8,
+> T10, T11.
+
 > **Status 2026-07-10 (end of day):** Tasks 1–3, 5, 6, and **9** are DONE and committed
 > to main (each final-reviewed clean). Task 6 landed as `_market_hours.py` + `_prices.py`
 > + `_session.py` (SessionAuthBroker) + `_ig_dealing.py`; `_parse_prices` kept per-broker.
