@@ -1,5 +1,18 @@
 # Slim the Ten Largest Modules — Implementation Plan
 
+> **Status 2026-09-25:** ALL TASKS DONE. Task 11 (lib/feed.ts) in four commits
+> (`a7606cb7` .. `82d117e0`): feed.ts is now a 60-line barrel over
+> `lib/feed/` (periods, common, candles, instruments, live). Task 8 (App.tsx)
+> in thirteen commits (`53f77392` .. `8fdf0d45`), 3,120 -> 1,288 lines, into
+> `frontend/src/app/` rather than `hooks/`: workspace (startup helpers),
+> usePanelSignals, useAccounts, useSearchGlow, useTabBadges, useTradeBoxJump,
+> useBackendSync, useCellActions, useTabActions, useNamedLayouts,
+> useIndicatorSync, useAppAgentActions, useAlertFiredNotices, plus types.ts.
+> Each hook is called where its block sat and takes App's state, setters and
+> refs as params; readyRef moved up ahead of useBackendSync. App keeps the
+> tab/cell state, the epic jump and alert navigation glue, and the JSX.
+> App-level e2e: the same 8 tests fail before and after (see BACKLOG).
+
 > **Status 2026-09-24 (evening):** Task 10 (lib/backtest.ts) DONE in five
 > commits (`50474296` .. `8f2a5be6`), 2,744 -> 1,534 lines, into
 > `frontend/src/lib/backtest/`: markerMath (pure label/stack/cluster/dash

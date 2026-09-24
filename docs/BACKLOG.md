@@ -12,13 +12,17 @@ remove it from here (git history and the memory index track shipped features).
   account.
   [spec](superpowers/specs/2026-09-23-mt5-local-mcp-broker-design.md)
 
-- **Slim large modules** — split the 10 biggest modules into focused files.
-  Partially done (8 of 9 committed: persist, customIndicators, app.py, brokers dedup, IndicatorSettings, ChartCore, BacktestSettingsModal, overlays.ts); remaining: App.tsx and lib/feed.ts. New candidate lib/backtest.ts is also done.
-  Five alert/drawing e2e tests (alert-crosshair, alert-pill-axis x2, drawing-defaults, tab-drawings) already failed before the overlays split; cause not investigated.
-  The modal's sweep/WFO state (~600 lines of interleaved state and effects) stayed in the shell; lift it only if it keeps growing.
-  [plan](superpowers/plans/2026-07-05-slim-large-modules.md)
-
 ## Deferred / forward-looking
+
+- **Pre-existing e2e failures**: 13 Playwright tests failed identically before
+  and after the slim-modules splits (cause not investigated): alert-crosshair,
+  alert-pill-axis x2, drawing-defaults, tab-drawings, market-closed (background
+  tab badge), named-layouts x3, split-layout, tab-reorder x2, tabs.
+  merge-tabs' "reordering keeps the undo offer" is flaky.
+
+- **BacktestSettingsModal sweep/WFO state**: ~600 lines of interleaved state and
+  effects stayed in the modal shell after its split; lift them only if they keep
+  growing.
 
 - **Cloud candle DB (source of truth)** — centralize candle history in a cloud
   Postgres (same schema/PK as the sqlite cache) so the remote sweep host shares
