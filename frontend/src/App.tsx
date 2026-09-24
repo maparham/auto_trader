@@ -96,10 +96,12 @@ import {
 } from "./lib/signals";
 import { minPositiveGap } from "./lib/barInterval";
 import { reportView } from "./lib/viewHeartbeat";
+import { jumpToEpic as runEpicJump, type EpicJumpDeps, type ReuseSlot } from "./lib/epicJump";
 import {
   PERIODS,
   fetchMarketMeta,
   fetchRangeWithStatus,
+  resolveInstrument,
   RESOLUTION_SECONDS,
   type Instrument,
   type Period,
@@ -1180,65 +1182,42 @@ export default function App() {
     };
   }, []);
 
-  // Focus (or open) a chart showing `epic` and return its focused cell. Search
-  // order for an existing cell: the active tab first (its focused cell, then its
-  // other cells), then every other tab — so a chart already on screen is reused
-  // before we touch tabs the user can't see. Nothing open for the epic → spin up a
-  // fresh tab. We only know the epic and a precision guess; the chart fetches its
-  // own market meta on mount, so a minimal instrument is enough to render. Shared
-  // by alert navigation and the trading dock's whole-book rows (clicking a position
-  // re-scopes the order ticket + chart lines to its symbol).
-  // `reuseTabId` (trade-list same-tab mode): when the epic is open nowhere and
-  // this tab still exists, its active cell SWITCHES SYMBOL to the epic instead
-  // of a new tab opening — unless that cell is mid-replay (silently killing a
-  // session is worse than an extra tab).
-  const jumpToEpic = (
-    epic: string,
-    precisionGuess = 2,
-    reuseTabId?: string | null,
-  ): { cellId: string; tabId: string; opened: boolean } => {
-    const ordered = active ? [active, ...tabs.filter((t) => t.id !== active.id)] : tabs;
-    for (const t of ordered) {
-      const lead = t.cells.find((c) => c.id === t.activeCellId);
-      const cells = lead ? [lead, ...t.cells.filter((c) => c.id !== lead.id)] : t.cells;
-      const hit = cells.find((c) => c.symbol.epic === epic);
-      if (hit) {
-        // Focus that cell so the chrome (and the panel's "current chart" scope)
-        // follow it, and bring its tab to the front.
-        setTabs((ts) => ts.map((tt) => (tt.id === t.id ? { ...tt, activeCellId: hit.id } : tt)));
-        setActiveId(t.id);
-        return { cellId: hit.id, tabId: t.id, opened: false };
-      }
-    }
-    if (reuseTabId) {
-      const rt = tabs.find((t) => t.id === reuseTabId);
-      const cell = rt ? rt.cells.find((c) => c.id === rt.activeCellId) ?? rt.cells[0] : undefined;
-      if (rt && cell && !isCellReplaying(cell.id)) {
-        const symbol: Instrument = { epic, name: epic, status: null, pricePrecision: precisionGuess };
-        setTabs((ts) =>
-          ts.map((tt) =>
-            tt.id !== rt.id
-              ? tt
-              : { ...tt, cells: tt.cells.map((c) => (c.id === cell.id ? { ...c, symbol } : c)) },
-          ),
-        );
-        setActiveId(rt.id);
-        return { cellId: cell.id, tabId: rt.id, opened: true };
-      }
-    }
-    const t = makeTab(
-      { epic, name: epic, status: null, pricePrecision: precisionGuess },
-      DEFAULT_PERIOD,
-    );
-    setTabs((ts) => [...ts, t]);
-    setActiveId(t.id);
-    return { cellId: t.cells[0].id, tabId: t.id, opened: true };
+  // Tab writes from jumpToEpic land in the refs at once as well as in state.
+  // Its awaits resume outside any React event, so the render that would refresh
+  // tabsRef can come after the next queued jump has already read it: without
+  // this, two overlapping jumps open the same epic twice, or miss the tab the
+  // first one opened. The update fn must be pure (React may call it twice).
+  const applyTabs = (fn: (ts: ChartTab[]) => ChartTab[]) => {
+    tabsRef.current = fn(tabsRef.current);
+    setTabs(fn);
+  };
+  const applyActiveId = (id: string) => {
+    activeIdRef.current = id;
+    setActiveId(id);
   };
 
-  // Agent bridge: actions that need App's handlers (tabs, symbol jump). The
-  // registration effect runs once, so it must not close over the first render's
-  // tabs — it reads through refs re-assigned every render (same idiom as
-  // alertNavHandler / showBacktestCfgRef).
+  // Every path that opens a new tab: build it, append it, make it active.
+  const openTab = (symbol: Instrument): ChartTab => {
+    const t = makeTab(symbol, DEFAULT_PERIOD);
+    applyTabs((ts) => [...ts, t]);
+    applyActiveId(t.id);
+    return t;
+  };
+
+  // Focus (or open) a chart showing `epic`: lib/epicJump.ts, over this App's
+  // tab refs/state and the broker catalogue.
+  const epicJumpDeps: EpicJumpDeps = {
+    tabs: () => tabsRef.current,
+    activeId: () => activeIdRef.current,
+    applyTabs,
+    setActive: applyActiveId,
+    openTab,
+    resolve: (epic, precisionGuess) => resolveInstrument(epic, brokerIdRef.current, precisionGuess),
+    isReplaying: isCellReplaying,
+  };
+  const jumpToEpic = (epic: string, precisionGuess = 2, reuse?: ReuseSlot) =>
+    runEpicJump(epicJumpDeps, epic, precisionGuess, reuse);
+
   const jumpToEpicRef = useRef(jumpToEpic);
   jumpToEpicRef.current = jumpToEpic;
   const tabsRef = useRef(tabs);
@@ -1478,15 +1457,17 @@ export default function App() {
   // Same-tab mode reuses ONE tab for symbols not open anywhere; the ref tracks
   // which (session-only — a fresh session starts with the first click's tab).
   const tradeListTabRef = useRef<string | null>(null);
-  const jumpToTrade = (t: TradeRow) => {
-    tradeBoxEpochRef.current++;
-    const { cellId, tabId, opened } = jumpToEpic(
-      t.symbol, 2, loadSameTab() ? tradeListTabRef.current : null,
-    );
+  const jumpToTrade = async (t: TradeRow) => {
+    const epoch = ++tradeBoxEpochRef.current;
     // Remember only a tab WE opened (created or symbol-replaced) as the reuse
     // target — adopting a tab that merely already showed the symbol would let
-    // the next click hijack a user tab.
-    if (opened) tradeListTabRef.current = tabId;
+    // the next click hijack a user tab. Recorded even when this click is
+    // superseded below: the tab exists, and the newer click must reuse it.
+    const { cellId } = await jumpToEpic(t.symbol, 2, {
+      get: () => (loadSameTab() ? tradeListTabRef.current : null),
+      opened: (tabId) => { tradeListTabRef.current = tabId; },
+    });
+    if (epoch !== tradeBoxEpochRef.current) return; // a newer click superseded this one
     pendingTradeBoxRef.current = { cellId, epic: t.symbol, trade: t };
     resolvePendingTradeBox();
   };
@@ -1496,8 +1477,8 @@ export default function App() {
   // is idempotent and guarded, so calling it now resolves an already-mounted cell
   // and harmlessly no-ops for a freshly-opened tab (the alertsChanged/ready path
   // resolves that later).
-  const openAlert = (epic: string, target: AlertNavTarget, precisionGuess: number) => {
-    const { cellId } = jumpToEpic(epic, precisionGuess);
+  const openAlert = async (epic: string, target: AlertNavTarget, precisionGuess: number) => {
+    const { cellId } = await jumpToEpic(epic, precisionGuess);
     pendingSelectRef.current = { epic, cellId, ...target };
     resolvePendingSelect();
   };
@@ -1507,7 +1488,7 @@ export default function App() {
   // directly). Re-assigned every render so it always closes over current tabs.
   useEffect(() => {
     alertNavHandler.current = (epic, savedId, precision) =>
-      openAlert(epic, { savedId }, precision);
+      void openAlert(epic, { savedId }, precision);
   });
   useEffect(() => () => { alertNavHandler.current = null; }, []);
 
@@ -2089,9 +2070,7 @@ export default function App() {
   // New tab starts on the default chart, becomes active, then immediately opens
   // symbol search (TradingView-style "new tab" UX).
   const addTab = () => {
-    const t = makeTab(DEFAULT_SYMBOL, DEFAULT_PERIOD);
-    setTabs((ts) => [...ts, t]);
-    setActiveId(t.id);
+    openTab(DEFAULT_SYMBOL);
     requestSymbolSearch();
   };
 
@@ -2114,9 +2093,7 @@ export default function App() {
   // interval, and record it as recently opened like any other pick.
   const openSymbolTab = (s: Instrument) => {
     pushRecentSymbol(s.epic);
-    const t = makeTab(s, DEFAULT_PERIOD);
-    setTabs((ts) => [...ts, t]);
-    setActiveId(t.id);
+    openTab(s);
   };
 
   // Detach a cell into its own NEW one-cell tab: same symbol/interval, and a full

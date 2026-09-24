@@ -166,9 +166,21 @@ describe("showMobileEpic", () => {
     expect(mobileTabSignal.value).toBe("chart");
   });
 
-  it("opens an unknown epic as a bare instrument at the given precision", () => {
-    showMobileEpic("EURUSD", 5);
+  it("opens an epic as a bare instrument at the given precision when the catalogue is down", async () => {
+    // A failed fetch is not cached, so the next test's catalogue still loads.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, json: () => Promise.resolve({}) }));
+    await showMobileEpic("EURUSD", 5);
+    vi.unstubAllGlobals();
     expect(mobileSymbol.value).toEqual({ epic: "EURUSD", name: "EURUSD", status: null, pricePrecision: 5 });
+    expect(mobileTabSignal.value).toBe("chart");
+  });
+
+  it("opens a catalogue epic with its catalogue row", async () => {
+    const row = { epic: "MU", name: "Micron Technology", status: "TRADEABLE", type: "SHARES", pricePrecision: 2 };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([row]) }));
+    await showMobileEpic("MU", 4);
+    vi.unstubAllGlobals();
+    expect(mobileSymbol.value).toEqual(row);
     expect(mobileTabSignal.value).toBe("chart");
   });
 

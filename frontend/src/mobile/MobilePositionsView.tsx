@@ -328,7 +328,7 @@ export default function MobilePositionsView() {
             <button
               className="m-pos-chart-btn"
               onClick={() => {
-                showMobileEpic(selected.epic, decimalsOf(selected.priceLevel));
+                void showMobileEpic(selected.epic, decimalsOf(selected.priceLevel));
                 setSelected(null);
               }}
             >

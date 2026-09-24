@@ -237,7 +237,8 @@ describe("MobilePositionsView", () => {
     await waitFor(() => expect(screen.getByText("US100")).toBeTruthy());
     await userEvent.click(screen.getByText("US100"));
     await userEvent.click(screen.getByRole("button", { name: "Show on chart" }));
-    expect(mobileTabSignal.value).toBe("chart");
+    // showMobileEpic resolves the epic through the catalogue first.
+    await waitFor(() => expect(mobileTabSignal.value).toBe("chart"));
     expect(mobileSymbol.value?.epic).toBe("US100");
     expect(screen.queryByRole("button", { name: "Close position" })).toBeNull();
   });

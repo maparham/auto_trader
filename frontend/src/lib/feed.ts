@@ -314,6 +314,43 @@ export function fetchAllMarkets(brokerId: string = DEFAULT_BROKER): Promise<Inst
   );
 }
 
+/** A bare instrument known only by its epic: no name, type or status. The
+ * fallback when the catalogue has no row for the epic. */
+export function bareInstrument(epic: string, pricePrecision = 2): Instrument {
+  return { epic, name: epic, status: null, pricePrecision };
+}
+
+// How long a chart open waits on the catalogue before settling for a bare
+// instrument. The backend caches it (core/catalog_cache.py), so this normally
+// answers well inside the wait; only the backend's first upstream call (Capital:
+// ~8000 rows, ~2 s) runs past it, and a click must not hang on that. The fetch
+// keeps going and fills the session cache for the next open.
+const RESOLVE_WAIT_MS = 500;
+
+/** The canonical epic -> Instrument lookup for every path that opens a chart
+ * from a bare epic (trade list, alerts, positions, agent, mobile): the broker
+ * catalogue row, so the chart carries the same name/type/status as a symbol
+ * picked in search, else a bare instrument. `precisionGuess` fills in when the
+ * row has no precision of its own. Never rejects (a failed catalogue fetch
+ * resolves []), and never waits longer than `waitMs`. */
+export async function resolveInstrument(
+  epic: string,
+  brokerId: string = DEFAULT_BROKER,
+  precisionGuess = 2,
+  waitMs = RESOLVE_WAIT_MS,
+): Promise<Instrument> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<Instrument[]>((resolve) => {
+    timer = setTimeout(() => resolve([]), waitMs);
+  });
+  const list = await Promise.race([fetchAllMarkets(brokerId), timeout]);
+  clearTimeout(timer);
+  const hit = list.find((i) => i.epic === epic);
+  return hit
+    ? { ...hit, pricePrecision: hit.pricePrecision ?? precisionGuess }
+    : bareInstrument(epic, precisionGuess);
+}
+
 // The account's FAVORITES watchlist — the modal's opening view. Cached per broker.
 const favoritesCache = new Map<string, Promise<Instrument[]>>();
 export function fetchFavorites(brokerId: string = DEFAULT_BROKER): Promise<Instrument[]> {

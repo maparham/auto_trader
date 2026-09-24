@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from auto_trader.brokers.yahoo_splits import SPLITS
+from auto_trader.core.catalog_cache import cached_catalog
 
 from .. import deps
 from ..deps import broker_query, get_data, guarded, request_is_admin
@@ -44,9 +45,14 @@ async def all_markets(
     broker_id: str = Depends(broker_query),
 ) -> list[MarketDTO]:
     # The full instrument catalogue (~4000), one upstream call. The modal caches
-    # this and filters by instrumentType for its category chips.
+    # this and filters by instrumentType for its category chips. Served through
+    # core/catalog_cache.py so page loads don't each cost an upstream call.
     broker = get_data(broker_id)
-    found = await guarded(broker_id, lambda: broker.all_markets(), "market list")
+    found = await cached_catalog(
+        broker_id,
+        broker,
+        lambda: guarded(broker_id, lambda: broker.all_markets(), "market list"),
+    )
     return [MarketDTO(**m) for m in found]
 
 

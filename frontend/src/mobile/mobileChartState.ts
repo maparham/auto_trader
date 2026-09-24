@@ -5,7 +5,7 @@
 import { Signal, requestSymbolSearch } from "../lib/signals";
 import type { Chart } from "klinecharts";
 import type { ChartController } from "../lib/chartController";
-import { DEFAULT_BROKER, periodByResolution, type Instrument, type Period } from "../lib/feed";
+import { DEFAULT_BROKER, periodByResolution, resolveInstrument, type Instrument, type Period } from "../lib/feed";
 import { initialMarket, mobileDrawScope } from "../lib/mobileScope";
 import { resolveDescriptor } from "../lib/snapshotBoot";
 import {
@@ -150,10 +150,15 @@ function bootFromLayout(): boolean {
 /** Show `epic` on the chart tab (a positions row's "Show on chart"). The
  * chart already on it just gets the tab; a mirrored layout cell showing it
  * is adopted as its strip chip would be (exact scope, so its drawings and
- * indicators, and its timeframe); otherwise the epic opens as a bare
- * instrument the way desktop's jumpToEpic does, on the last-viewed
- * timeframe. `precision` is the decimals guess for that bare instrument. */
-export function showMobileEpic(epic: string, precision = 2): void {
+ * indicators, and its timeframe); otherwise the epic resolves through the
+ * broker catalogue the way desktop's jumpToEpic does (resolveInstrument) and
+ * opens on the last-viewed timeframe. `precision` is the decimals guess for
+ * an epic the catalogue has no precision for. */
+let showEpicSeq = 0;
+export async function showMobileEpic(epic: string, precision = 2): Promise<void> {
+  // While this waits on the catalogue, a later call (another row) or a broker
+  // switch supersedes it; the checks after the await drop the stale answer.
+  const seq = ++showEpicSeq;
   if (mobileSymbol.value?.epic !== epic) {
     const mirror = mirroredWorkspace();
     const hit = mirror ? flattenCells(mirror.ws).find((f) => f.cell.symbol.epic === epic) : undefined;
@@ -161,7 +166,10 @@ export function showMobileEpic(epic: string, precision = 2): void {
       setMobileSymbol(hit.cell.symbol, undefined, hit.cell.scope);
       mobilePeriod.set(hit.cell.period);
     } else {
-      setMobileSymbol({ epic, name: epic, status: null, pricePrecision: precision });
+      const broker = mobileBroker();
+      const symbol = await resolveInstrument(epic, broker, precision);
+      if (seq !== showEpicSeq || broker !== mobileBroker()) return;
+      setMobileSymbol(symbol);
     }
   }
   mobileTabSignal.set("chart");
