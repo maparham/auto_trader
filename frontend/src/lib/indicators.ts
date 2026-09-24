@@ -602,6 +602,10 @@ export function applyIndicator(
   // from one) can still carry it, so drop it here rather than resurrect pins the
   // user cannot remember making.
   delete (extendData as { pinned?: unknown }).pinned;
+  // Same for the picked trendline: a selection is a live gesture, not config.
+  delete (extendData as { selectedLine?: unknown }).selectedLine;
+  delete (extendData as { hoveredLine?: unknown }).hoveredLine;
+  delete (extendData as { emphasized?: unknown }).emphasized;
   if (opts?.forceHidden && extendData.userVisible === undefined) {
     extendData.userVisible = cfg?.visible !== false;
   }

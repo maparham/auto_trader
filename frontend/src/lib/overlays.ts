@@ -560,9 +560,15 @@ export class OverlayManager {
   // outlive that same-gesture gap, and keeps a stale claim from swallowing a later
   // empty-space right-click). Consuming clears the claim.
   consumeOverlayRightClick(): boolean {
-    const claimed = this.rightClickClaimedAt !== 0 && Date.now() - this.rightClickClaimedAt < 500;
+    const claimed = this.peekOverlayRightClick();
     this.rightClickClaimedAt = 0;
     return claimed;
+  }
+  // The same test WITHOUT clearing the claim: the touch long-press asks "did a
+  // drawing take this hold?" before offering it to a trendline, and must leave
+  // the claim for whatever reads it next.
+  peekOverlayRightClick(): boolean {
+    return this.rightClickClaimedAt !== 0 && Date.now() - this.rightClickClaimedAt < 500;
   }
   // ChartCore subscribes to redraw its TV-style alert labels when alerts are
   // added, dragged, or removed.
@@ -2076,6 +2082,20 @@ export class OverlayManager {
       this.selectedDrawingId = id;
       this.drawingListener?.();
     }
+    return id;
+  }
+
+  // Place a drawing as if the user had just drawn it: styled from their saved
+  // default for `name` (klinecharts' own look when there is none), not from a
+  // snapshot. Persists and selects it like placeDrawing.
+  placeFreshDrawing(name: string, points: SavedOverlay["points"]): string | null {
+    if (this.readOnly) return null;
+    const seed = this.seedFromDefault(name);
+    const id = this.placeDrawing({ name, points, styles: seed?.styles, extendData: seed?.extendData });
+    // An in-place create never fires onDrawEnd, so any seeded per-interval
+    // visibility has to be enforced here (same as pastePatternGhost).
+    const ov = id ? this.byId(id) : null;
+    if (id && ov) this.applyDisplay(id, ov, asDrawingExtra(ov.extendData));
     return id;
   }
 

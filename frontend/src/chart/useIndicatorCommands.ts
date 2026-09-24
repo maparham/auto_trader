@@ -35,6 +35,7 @@ import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "
 import { refreshMtfOnVisibilityChange } from "../lib/mtfCoordinator";
 import { stripMtfRuntime } from "../lib/mtfRuntime";
 import { indicatorSettingsRequest } from "../lib/signals";
+import { pickTrendline } from "./useTrendlineMenu";
 import { toast } from "../lib/notify";
 import { MenuIcons } from "../lib/menuIcons";
 import { type MenuItem } from "../ContextMenu";
@@ -152,6 +153,10 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       });
       return;
     }
+    // A row click selects the whole instance: drop any picked trendline so
+    // every line of a Trendlines row glows, not just the one clicked earlier.
+    const c = chartRef.current;
+    if (c) pickTrendline(c, null);
     const cur = selectedIndicator.value;
     if (cur?.paneId === paneId && cur?.name === name) return;
     selectedIndicator.set({ paneId, name });

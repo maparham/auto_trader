@@ -43,6 +43,20 @@ import { minPositiveGap } from "../barInterval";
 import { htfBarEndMs } from "../mtfForming";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "./shared";
 import {
+  cloneToolFor,
+  dropTrendlineSegments,
+  marksFor,
+  markedLineStyle,
+  setTrendlineSegments,
+  tsAtIndex,
+  TL_SELECT_GLOW,
+  TL_SELECT_GLOW_ALPHA,
+  TL_HOVER_GLOW_ALPHA,
+  type LineMarksByEpic,
+  type TrendlineClone,
+  type TrendlineSegment,
+} from "./trendlineMarks";
+import {
   MAX_LIVE,
   parseTrendlinesConfig,
   TL_ATR_LEN,
@@ -1291,6 +1305,18 @@ export interface TrendlinesExtend {
   /** Render-only opacity of the whole line group (stroke, rings, tag), 0..1,
    * absent = 1. Multiplies the dim fade rather than replacing it. */
   lineOpacity?: number;
+  /** Per-line Hide / Highlight marks, per epic (see trendlineMarks.ts).
+   * Render-only and PERSISTED: it rides the saved config like the style keys
+   * above, so it survives reloads and reaches the user's other devices. */
+  lineMarks?: LineMarksByEpic;
+  /** lineKey of the line the user last picked (click or menu). SESSION-ONLY
+   * like `pinned`: never saved, and applyIndicator strips it. */
+  selectedLine?: string;
+  /** lineKey of the line under the mouse. SESSION-ONLY, like selectedLine. */
+  hoveredLine?: string;
+  /** The whole instance is selected or its legend row hovered: every line
+   * gets the hover glow, the way an EMA shows its handles. SESSION-ONLY. */
+  emphasized?: boolean;
 }
 
 export type TrendlineStyleOpt = "solid" | "dashed" | "dotted";
@@ -2188,6 +2214,8 @@ export function hitAnyTrendlineHandle(
  * pointer over dots that are no longer on screen. (Clicks were already inert,
  * since the pin hook walks live instances.) */
 export function dropTrendlineHandles(chart: object, name: string): void {
+  // The line-body targets die with the handles, for the same reason.
+  dropTrendlineSegments(chart, name);
   const byPane = HANDLES.get(chart);
   if (!byPane) return;
   for (const key of [...byPane.keys()])
@@ -2779,6 +2807,9 @@ function drawTrendlines(
   const result = (indicator.result ?? []) as TrendlinesCalcPoint[];
   const last = result[result.length - 1];
   const dataList = chart.getDataList();
+  // Line-body targets: cleared up front and re-set at the one full-draw exit,
+  // so every early return leaves nothing clickable.
+  setTrendlineSegments(chart, indicator.paneId, indicator.name, null);
   // Clear on the empty paths too, or the last frame's handles stay clickable
   // over a chart that no longer draws them.
   if (dataList.length === 0) {
@@ -2947,6 +2978,14 @@ function drawTrendlines(
     return true;
   }
   const handles: TrendlineHandle[] = [];
+  const segments: TrendlineSegment[] = [];
+  // Per-line user marks (Hide / Highlight) for THIS symbol, and the picked
+  // line. Render-only: they restyle lines already chosen above, never choose.
+  const marks = marksFor(ext?.lineMarks, chart.getSymbol?.()?.ticker);
+  const selectedKey = ext?.selectedLine;
+  const hoveredKey = ext?.hoveredLine;
+  const emphasized = ext?.emphasized === true;
+  let timestamps: number[] | null = null;
   // The bar index sitting at the pane's right edge, so a pinned line reaches it
   // at any zoom. The index-to-pixel map is linear (klinecharts multiplies by a
   // constant bar space), so one bar's width inverts it exactly.
@@ -2986,7 +3025,12 @@ function drawTrendlines(
     // the stroke itself faded correctly.
     const alpha =
       (trendlineDimmed(line, lastIdx, ext) ? trendlineDimAlpha(ext) : 1) * lineStyle.opacity;
-    const isPinned = pins.has(lineKey(line, dataList, starts));
+    const key = lineKey(line, dataList, starts);
+    const isPinned = pins.has(key);
+    const look = markedLineStyle(
+      { width: lineStyle.width, alpha, opacity: lineStyle.opacity },
+      { hidden: marks.hidden.has(key), bold: marks.bold.has(key) },
+    );
     // The line's end under the MODE alone: what the stroke reverts to when a
     // pin is released. (The handle no longer rides it — see below — it sits at
     // the newest bar, which likewise never travels to the pane edge with a
@@ -3023,10 +3067,26 @@ function drawTrendlines(
     const onSegment = (x: number): number =>
       x1 === x0 ? y0 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
     ctx.strokeStyle = lineColor;
-    ctx.globalAlpha = alpha;
+    const seg = clipSegmentToRect(
+      x0, y0, x1, y1,
+      -DRAW_CLIP_PAD, -DRAW_CLIP_PAD,
+      bounding.width + DRAW_CLIP_PAD, bounding.height + DRAW_CLIP_PAD,
+    );
+    // The picked line: a wide translucent under-stroke, solid, beneath it.
+    // The hovered one gets the same glow, fainter, and so does every line of
+    // an emphasized instance.
+    if (seg && (key === selectedKey || key === hoveredKey || emphasized)) {
+      ctx.globalAlpha = key === selectedKey ? TL_SELECT_GLOW_ALPHA : TL_HOVER_GLOW_ALPHA;
+      ctx.lineWidth = look.width + TL_SELECT_GLOW;
+      ctx.beginPath();
+      ctx.moveTo(seg[0], seg[1]);
+      ctx.lineTo(seg[2], seg[3]);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = look.alpha;
     // Width and dash belong to the LINE alone: both go back to solid, 1px
     // right after the stroke so the rings, handle and tag keep their shape.
-    ctx.lineWidth = lineStyle.width;
+    ctx.lineWidth = look.width;
     ctx.setLineDash(lineDash);
     // Stroke only the near-pane portion (see clipSegmentToRect: an unclipped
     // MTF ray is millions of pixels long and stalls the compositor). The pad
@@ -3035,11 +3095,7 @@ function drawTrendlines(
     // pane would drop lines the identity-view draw tests legitimately place
     // outside their tiny fake pane. Only the
     // absurd overshoots — a 1D pin's 250-day horizon on a 1m chart — are cut.
-    const seg = clipSegmentToRect(
-      x0, y0, x1, y1,
-      -DRAW_CLIP_PAD, -DRAW_CLIP_PAD,
-      bounding.width + DRAW_CLIP_PAD, bounding.height + DRAW_CLIP_PAD,
-    );
+    // (`seg` is computed above, before the selection glow.)
     if (seg) {
       ctx.beginPath();
       ctx.moveTo(seg[0], seg[1]);
@@ -3047,6 +3103,35 @@ function drawTrendlines(
       ctx.stroke();
     }
     ctx.setLineDash([]);
+    // Line-body hit target: the stroke's on-pane part only, so a click can
+    // never land on a stretch of line nobody can see.
+    const hitSeg = clipSegmentToRect(x0, y0, x1, y1, 0, 0, tagRight, bounding.height);
+    if (hitSeg) {
+      const toPoint = (x: number): { timestamp: number; value: number } | null => {
+        timestamps ??= dataList.map((d) => d.timestamp);
+        const idx = Math.round(xAxis.convertFromPixel(x));
+        const timestamp = tsAtIndex(timestamps, idx);
+        const value = yAxis.convertFromPixel(onSegment(xAxis.convertToPixel(idx)));
+        return timestamp === null || !Number.isFinite(value) ? null : { timestamp, value };
+      };
+      const tool = isPinned ? "segment" : cloneToolFor(mode);
+      segments.push({
+        key,
+        x0: hitSeg[0], y0: hitSeg[1], x1: hitSeg[2], y1: hitSeg[3],
+        // Anchored on the line's first anchor, then its drawn end (segment) or
+        // the newest bar (ray / extended run on by themselves), so the
+        // drawing lies on the stroke the user saw.
+        clone: (): TrendlineClone | null => {
+          const a = toPoint(xAtLine(line.i1));
+          const b = toPoint(tool === "segment" ? x1 : xAt(drawEdge));
+          if (!a || !b || a.timestamp === b.timestamp) return null;
+          return { tool, points: [a, b] };
+        },
+      });
+    }
+    // A hidden line is the stroke and nothing else: no rings, crossing dots,
+    // pin handle or ×N tag, so it claims no tag slot either.
+    if (!look.furniture) continue;
     // The touches themselves, one hollow ring each, so the ×N tag can be read
     // back against the bars that earned it: which swings agreed on this line is
     // the question the count only answers in aggregate.
@@ -3193,7 +3278,7 @@ function drawTrendlines(
       }
       ctx.stroke();
       ctx.lineWidth = 1;
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = look.alpha;
     }
     if (!showStats) continue;
     const label = trendlineStatsLabel(line.touches, line.crossings);
@@ -3218,8 +3303,13 @@ function drawTrendlines(
   // Last, so the marks sit over the strokes, and keyed on the set the pane
   // actually drew, not on the pool, which still holds the lines the merge,
   // the cap and the filters threw away.
-  paintMarks(drawnPivotIdxs(drawn), depths);
+  // Hidden lines stem no pivots: their furniture is off, and so is this.
+  paintMarks(
+    drawnPivotIdxs(marks.hidden.size ? drawn.filter((l) => !marks.hidden.has(lineKey(l, dataList, starts))) : drawn),
+    depths,
+  );
   setTrendlineHandles(chart, indicator.paneId, indicator.name, handles);
+  setTrendlineSegments(chart, indicator.paneId, indicator.name, segments);
   return true;
 }
 

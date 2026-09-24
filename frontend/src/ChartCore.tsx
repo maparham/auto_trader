@@ -52,6 +52,8 @@ import { anyCellInReadout, setCellReadout, subscribeReplayingCells } from "./lib
 import { toast } from "./lib/notify";
 import { capturePattern, MIN_GHOST_BARS } from "./lib/patternGhost";
 import { useTrendlinePins } from "./chart/useTrendlinePins";
+import { emphasizeTrendlines, useTrendlineMenu } from "./chart/useTrendlineMenu";
+import { hitTrendline, TL_LINE_HIT, TL_LINE_HIT_TOUCH } from "./lib/indicators/trendlineMarks";
 import { compactHides } from "./chart/compactChrome";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
@@ -1020,6 +1022,21 @@ export default function ChartCore({
   // Hovering an indicator's legend row also shows its curve in "selected mode"
   // (the hollow handles), TradingView-style — repaint the overlay on hover change.
   useEffect(() => legendHoverName.subscribe(() => redrawRef.current()), [legendHoverName]);
+  // Trendlines paints its own lines, so it has no handles: selecting it from
+  // its legend row, or hovering that row, makes every line glow instead. A
+  // click on one line selects the instance but glows only that line.
+  useEffect(() => {
+    const sync = () => {
+      const c = chartRef.current;
+      if (c) emphasizeTrendlines(c, selectedIndicator.value?.name, legendHoverName.value);
+    };
+    const offSel = selectedIndicator.subscribe(sync);
+    const offHov = legendHoverName.subscribe(sync);
+    return () => {
+      offSel();
+      offHov();
+    };
+  }, [selectedIndicator, legendHoverName]);
   useEffect(
     () => indicatorOverlayRepaint.subscribe(() => redrawRef.current()),
     [],
@@ -1721,6 +1738,12 @@ export default function ChartCore({
   // Click a trendline's end handle to run it on to the pane edge (and again to
   // release). Capture-phase, so it claims the press before the chart pans.
   useTrendlinePins({ chartRef, containerRef });
+  // Pick a trendline, then Highlight / Hide / To drawing from its menu. The
+  // right-click entry is read through a ref by the once-mounted contextmenu
+  // handler below.
+  const trendlineMenu = useTrendlineMenu({ chartRef, containerRef, overlays, scope, epicRef });
+  const trendlineMenuOpenRef = useRef(trendlineMenu.openAt);
+  trendlineMenuOpenRef.current = trendlineMenu.openAt;
   // onZoomToRange runs from the once-mounted init effect, so it must read these
   // through live refs (updated every render), not its mount-time closure props.
   const onPeriodRef = useRef(onPeriod);
@@ -2013,7 +2036,13 @@ export default function ChartCore({
       // on the rows; the container is pass-through). So here we only handle curve
       // hits on the canvas: a click near ANY indicator's curve (sub-panes included)
       // selects it; a click on empty chart space deselects.
-      const hit = hitTestCache(lineCacheRef.current, x, y);
+      // Trendlines paints its own lines, outside the line cache: its hit
+      // targets come from the draw's segment registry. A touch tap gets the
+      // wider finger slop.
+      const touch = (e as Partial<PointerEvent>).pointerType === "touch";
+      const curveHit = hitTestCache(lineCacheRef.current, x, y);
+      const tlHit = curveHit ? null : hitTrendline(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
+      const hit = curveHit ?? (tlHit ? { paneId: tlHit.paneId, name: tlHit.name, figKey: "" } : null);
       if (hit && controller.indicatorPickArmed.value) {
         // "Pick from chart" is armed: publish the clicked instance for the panel
         // to turn into an expression token, rather than selecting it on the chart.
@@ -2249,7 +2278,10 @@ export default function ChartCore({
         return;
       }
       // Double-click an indicator's curve -> open its settings (TradingView-style).
-      const hit = hitTestCache(lineCacheRef.current, x, y);
+      // A trendline counts as its instance's curve.
+      const touch = (e as Partial<PointerEvent>).pointerType === "touch";
+      const hit = hitTestCache(lineCacheRef.current, x, y)
+        ?? hitTrendline(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
       if (hit) {
         if (!snapViewRef.current) indicatorSettingsRequest.set({ paneId: hit.paneId, name: hit.name });
         return;
@@ -2288,6 +2320,11 @@ export default function ChartCore({
       // opens the overlay menu, so the two can't disagree. preventDefault so the
       // native browser menu doesn't stack on the overlay menu either.
       if (overlays.consumeOverlayRightClick()) {
+        e.preventDefault();
+        return;
+      }
+      // A trendline under the pointer gets its own menu (drawings won above).
+      if (!overPriceAxis(e) && trendlineMenuOpenRef.current(e.clientX, e.clientY)) {
         e.preventDefault();
         return;
       }
@@ -5596,6 +5633,8 @@ export default function ChartCore({
           onClose={() => setCacheStatsOpen(false)}
         />
       )}
+
+      {trendlineMenu.menu}
 
       {indMenu && (
         <ContextMenu

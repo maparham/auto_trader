@@ -1744,7 +1744,20 @@ function IndicatorSettingsForm({
   // The ONE write: the form's current values become the stored config, which
   // the next reload (Toolbar.createIndicatorOn) re-applies.
   function ok() {
-    saveIndicatorConfig(scope, name, currentConfig());
+    const cfg = currentConfig();
+    // Per-line Hide / Highlight marks are not form state: carry them over from
+    // the SAVED config (the source of truth, which another device may have
+    // updated) so Ok never wipes them, and put them back on the live instance
+    // in case a preset apply recreated it without them. Not in currentConfig,
+    // so a saved default or preset never carries one symbol's line keys.
+    if (isTrendlines) {
+      const marks = loadIndicatorConfigs(scope)[name]?.extendData?.lineMarks;
+      if (marks) {
+        cfg.extendData = { ...(cfg.extendData ?? {}), lineMarks: marks };
+        overrideExtend(chart, paneId, name, { lineMarks: marks });
+      }
+    }
+    saveIndicatorConfig(scope, name, cfg);
     onClose();
   }
 

@@ -49,6 +49,8 @@ import { first } from "./chartPainters";
 import { subscribeCrosshairWrites } from "./crosshairWrites";
 import { fmtPrice } from "../lib/priceFormat";
 import { hitAnyTrendlineHandle } from "../lib/indicators/trendlines";
+import { hitTrendline, TL_LINE_HIT } from "../lib/indicators/trendlineMarks";
+import { hoverTrendline } from "./useTrendlineMenu";
 import type { SelectedIndicator } from "../lib/chartController";
 import type { ChartHandle } from "./chartHandle";
 import type { TradeLinePx } from "./useLineDrag";
@@ -205,9 +207,18 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // the legend-card highlight, AND the curve's selected-mode handles (curveHover).
       // Excludes hovered drawings — a drawing isn't an indicator, so it must not light
       // up a legend. hitTestCache returns a fresh object each call, so compare fields.
-      const curveHit = avwapAnchorMode.value
+      const lineHit = avwapAnchorMode.value
         ? null
         : hitTestCache(lineCacheRef.current, lx, ly);
+      // TRENDLINES paints its own lines (no curve in the cache), so its line
+      // bodies are hit-tested from the draw's own registry: the line glows and
+      // its legend card lights like any other curve. A drawing on top wins.
+      const tlHit =
+        lineHit || avwapAnchorMode.value || overlays.getHoveredDrawingId()
+          ? null
+          : hitTrendline(c, lx, ly, TL_LINE_HIT);
+      hoverTrendline(c, tlHit ? { paneId: tlHit.paneId, name: tlHit.name, key: tlHit.seg.key } : null);
+      const curveHit = lineHit ?? (tlHit ? { paneId: tlHit.paneId, name: tlHit.name } : null);
       const ch = curveHover.value;
       if (ch?.paneId !== curveHit?.paneId || ch?.name !== curveHit?.name) {
         curveHover.set(curveHit);
@@ -501,6 +512,8 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       }
       // onMove stops firing past the canvas edge, so clear the curve-hover highlight.
       if (curveHover.value !== null) curveHover.set(null);
+      const lc = chartRef.current;
+      if (lc) hoverTrendline(lc, null);
       // Drop any chart-driven trade-line hover as the cursor leaves the chart. If
       // it's heading for a dock row, that row's onMouseEnter re-sets it (mouseleave
       // here fires before the row's mouseenter), so the highlight lands correctly.

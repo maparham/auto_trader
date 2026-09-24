@@ -365,6 +365,8 @@ export const MenuIcons = {
       <path d="M6.4 12h11.2" />
     </>,
   ),
+  // Thick diagonal line — "highlight this trendline".
+  highlight: svg(<path d="M4 19L20 5" strokeWidth="4" />),
   // Pencil — "drawings" (the eye menu's Hide drawings row).
   pencil: svg(<path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />),
   // Pulse line — "indicators" (the eye menu's Hide indicators row).

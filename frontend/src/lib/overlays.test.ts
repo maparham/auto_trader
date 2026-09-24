@@ -1717,6 +1717,18 @@ describe("drawing defaults seeding + config round-trip", () => {
     expect(asDrawingExtra(ov.extendData).visibility).toEqual(hidden); // stored
   });
 
+  it("placeFreshDrawing styles a placed drawing from the saved default, and persists it", () => {
+    const { chart, m } = setup();
+    P.saveDrawingDefault("rayLine", { line: { color: "#00ff00", size: 2 } });
+    const id = m.placeFreshDrawing("rayLine", [{ value: 5 }, { value: 6 }])!;
+    expect((ovById(chart, id)!.styles as { line?: { color?: string } }).line?.color).toBe("#00ff00");
+    const saved = P.loadDrawings("tab.A", "US100").find((d) => d.points?.[0]?.value === 5);
+    expect((saved!.styles as { line?: { color?: string } } | undefined)?.line?.color).toBe("#00ff00");
+    // No default: the built-in drawing look, not the other tool's default.
+    const plain = m.placeFreshDrawing("segment", [{ value: 7 }, { value: 8 }])!;
+    expect((ovById(chart, plain)!.styles as { line?: { color?: string } } | undefined)?.line?.color).not.toBe("#00ff00");
+  });
+
   it("enforces a seeded hidden-visibility default when an interactive draw completes (Step 3b)", () => {
     // The interactive (no-points) path enforces visibility in create()'s onDrawEnd,
     // which klinecharts fires on completion. FakeChart never fires it, so simulate
