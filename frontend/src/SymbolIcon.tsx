@@ -5,7 +5,7 @@
 // are the norm, not an exception. Three things keep that from becoming a request
 // flood / broken-image mess on a 4000-row catalogue:
 //   - loading="lazy": only near-viewport rows ever fetch.
-//   - candidate paths (feed.logoCandidates): stocks live on two CDN paths; we try
+//   - candidate paths (feed.logoCandidates): stocks live on three CDN paths; we try
 //     them in order and only fall back to the glyph after the LAST one fails.
 //   - a module-level failed-epic Set: a known miss renders the glyph with zero
 //     requests on re-scroll / re-open (S3's 403s carry no cache-control, so the

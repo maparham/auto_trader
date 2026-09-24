@@ -203,6 +203,8 @@ const QUOTE_CCYS = [
 //                         crypto, commodities, and megacap stocks (AAPL, TSLA).
 //   - logos/{EPIC}.svg    original (upper) case. Holds most other stocks
 //                         (COST, ARM, MRK) that are absent from the slug path.
+//   - logos/{epic}.svg    lowercase. A third set (INTC, MU, SPCX) that neither
+//                         of the above carries.
 // Coverage is partial and skews to popular instruments, so callers must fall
 // back to a glyph on load error. CORS is open; <img> works with no API key.
 const LOGO_BASE = "https://static.capital.com/instrument-icons/instrument-logos";
@@ -217,13 +219,21 @@ function epicSlug(epic: string, type?: string | null): string {
   return slug;
 }
 
+// Row types that name a stock or fund: Capital's (also MT5/IG) SHARES, and
+// yfinance's own stock/etf/fund words.
+const SHARE_TYPES = new Set(["SHARES", "stock", "etf", "fund"]);
+
 // Ordered logo-URL candidates to try before giving up to a glyph. Non-stocks
 // only ever live on the slug path, so we return a single URL for them (a second
-// attempt would be guaranteed-waste requests). Stocks are split across both
-// paths, so we try the slug first (megacaps/favorites) then the cased epic.
+// attempt would be guaranteed-waste requests). Stocks are split across all
+// three paths, so we try the slug first (megacaps/favorites) then both cases
+// under logos/. A symbol with no type (jumpToEpic's placeholder, opened from
+// the trade list or the agent bridge) could be either, so it gets the full list.
 export function logoCandidates(epic: string, type?: string | null): string[] {
   const slug = `${LOGO_BASE}/${epicSlug(epic, type)}.svg`;
-  if (type === "SHARES") return [slug, `${LOGO_BASE}/logos/${epic}.svg`];
+  if (!type || SHARE_TYPES.has(type)) {
+    return [slug, `${LOGO_BASE}/logos/${epic}.svg`, `${LOGO_BASE}/logos/${epic.toLowerCase()}.svg`];
+  }
   return [slug];
 }
 
