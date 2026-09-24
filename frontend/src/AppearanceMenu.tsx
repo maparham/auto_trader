@@ -25,6 +25,8 @@ import {
 interface Props {
   settings: Settings;
   onChange: (s: Settings) => void;
+  // Bar change % on every tab: sets the default and clears per-tab choices.
+  onBarChangeAll?: (on: boolean) => void;
 }
 
 const THEMES: { value: Theme; label: string }[] = [
@@ -46,7 +48,7 @@ const STRIPS: { value: TabStrip; label: string; tip: string[] }[] = [
   },
 ];
 
-export default function AppearanceMenu({ settings, onChange }: Props) {
+export default function AppearanceMenu({ settings, onChange, onBarChangeAll }: Props) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -117,6 +119,22 @@ export default function AppearanceMenu({ settings, onChange }: Props) {
               </Tooltip>
             ))}
           </div>
+
+          {onBarChangeAll && (
+            <div className="appr-label appr-switch-row">
+              <span id="appr-bar-change">Bar change % on all tabs</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.tabBarChange}
+                aria-labelledby="appr-bar-change"
+                className={`bt-switch${settings.tabBarChange ? " on" : ""}`}
+                onClick={() => onBarChangeAll(!settings.tabBarChange)}
+              >
+                <span className="bt-switch-knob" />
+              </button>
+            </div>
+          )}
 
           <div className="appr-label appr-bg-label">
             <span>Background</span>

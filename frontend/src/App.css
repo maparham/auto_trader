@@ -599,6 +599,11 @@
 }
 .tab-symbol { font-weight: 600; }
 .tab-period { color: var(--text-faint); }
+/* Live-bar % change (tab context menu > Show bar change %). Tabular digits so
+   a ticking value does not jiggle the chip width. */
+.tab-bar-change { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-faint); }
+.tab-bar-change.up { color: var(--pos); }
+.tab-bar-change.down { color: var(--neg); }
 /* Cell-count badge on a multi-chart (split) tab. */
 .tab-count {
   font-size: 10px; font-weight: 700; line-height: 1;
@@ -609,8 +614,8 @@
    width on the ~20 chips that aren't hovered. In flow it reserved a button plus
    a gap on every single chip for a control only the hovered/active one ever
    showed - the blank tail that made every chip too wide. On hover it fades in
-   while the trailing period/count/bell fade out on the same 0.1s, so the two
-   read as a swap rather than a collision. (Hence no .tab.on rule: a permanent x
+   while the LAST trailing item (.tab-trail-last, the one under it) fades out
+   on the same 0.1s, so the two read as a swap rather than a collision. (Hence no .tab.on rule: a permanent x
    on the active chip would permanently hide that chip's interval label.) */
 .tab-close {
   position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
@@ -618,11 +623,9 @@
   padding: 0; width: 14px; height: 14px; line-height: 1; border-radius: 3px;
   font-size: 13px; opacity: 0; transition: opacity 0.1s;
 }
-.tab-period, .tab-count, .tab-alert-badge, .tab-closed-badge { transition: opacity 0.1s; }
+.tab-period, .tab-bar-change, .tab-count, .tab-alert-badge, .tab-closed-badge { transition: opacity 0.1s; }
 .tab:hover .tab-close { opacity: 1; }
-.tab:hover .tab-period,
-.tab:hover .tab-count,
-.tab:hover .tab-alert-badge,
+.tab:hover .tab-trail-last,
 .tab:hover .tab-closed-badge { opacity: 0; }
 .tab-close:hover { background: var(--border); color: var(--text); }
 .tab-add {
@@ -723,6 +726,7 @@
   text-transform: none; letter-spacing: 0;
 }
 .appr-reset:hover { color: var(--text); }
+.appr-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .appr-theme { display: flex; width: 100%; margin: 2px 0; }
 .appr-theme button { flex: 1; padding: 5px 8px; font-size: 12px; }
 .appr-mood-label {
@@ -1020,13 +1024,14 @@
 .ctxmenu .ctx-item.danger:hover:not(.disabled) { background: var(--danger); color: #fff; }
 .ctxmenu .ctx-item-label { display: flex; align-items: center; gap: 10px; }
 .ctxmenu .ctx-item-icon { display: inline-flex; color: var(--text-dim); flex: 0 0 auto; }
+.ctxmenu .ctx-item-check { width: 14px; height: 14px; margin-right: -4px; }
 .ctxmenu .ctx-item:hover:not(:disabled):not(.disabled) .ctx-item-icon { color: var(--accent-text); }
 .ctxmenu .ctx-item.danger:hover:not(.disabled) .ctx-item-icon { color: #fff; }
 .ctxmenu .ctx-item kbd { font-family: inherit; font-size: 11px; color: var(--text-dim); background: transparent; }
 .ctxmenu .ctx-item:hover:not(:disabled):not(.disabled) kbd { color: var(--accent-text); }
 .ctx-sep { height: 1px; margin: 6px 4px; background: var(--border); }
 
-/* Merge-tabs checklist (tab-chip context menu → "Merge into this tab…"). */
+/* Merge-tabs checklist (tab-chip context menu → "Merge into this tab"). */
 .merge-menu { min-width: 220px; }
 .merge-menu-title { padding: 5px 10px 7px; font-size: 12px; color: var(--text-faint); }
 .merge-menu .merge-row .ctx-item-label { display: flex; align-items: center; gap: 8px; }

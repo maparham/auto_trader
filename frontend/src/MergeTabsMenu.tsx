@@ -1,4 +1,4 @@
-// Checklist popover behind the tab context-menu's "Merge into this tab…": lists
+// Checklist popover behind the tab context-menu's "Merge into this tab": lists
 // every OTHER tab; ticked tabs merge into the target in tab-bar order. Rows
 // whose cells would push the merged tab past 4 are disabled, live — ticking a
 // row updates which of the rest still fit. Closes on outside-click / Escape

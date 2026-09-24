@@ -13,7 +13,8 @@ import ContextMenu from "./ContextMenu";
 import MergeTabsMenu from "./MergeTabsMenu";
 import { isSynthetic } from "./lib/syntheticRegistry";
 import { catalogueMatches, matchingTabIds } from "./lib/tabSearch";
-import type { TabStrip } from "./theme";
+import type { PriceSide, TabStrip } from "./theme";
+import { barLeadKey, fmtBarChange, useTabBarChange } from "./lib/tabBarChange";
 import { fetchAllMarkets, type Instrument } from "./lib/feed";
 
 // Where the floating clone of the dragged chip sits for a given cursor point:
@@ -67,24 +68,46 @@ function fmtNextOpen(iso: string): string {
 // closed-market badge). The close button stays chip-only, outside this.
 function ChipContent({
   lead,
-  cellCount,
+  cells,
   closedTip,
   alertBadge = false,
   snapshotBadge = false,
+  barChange = null,
+  tips = true,
 }: {
   lead: ChartCell;
-  cellCount: number;
+  cells: ChartCell[];
   closedTip: string | null;
   alertBadge?: boolean;
   snapshotBadge?: boolean;
+  // Live-bar % change of the lead cell; null hides it (option off, no data).
+  barChange?: number | null;
+  // Badge tooltips (the chip itself has none). Off on the drag clone.
+  tips?: boolean;
 }) {
+  const cellCount = cells.length;
+  const tip = (content: string | string[], node: ReactNode) => (
+    <Tooltip asChild content={content} disabled={!tips}>
+      {node}
+    </Tooltip>
+  );
+  // The hover × sits over the chip's right end, so only the LAST trailing item
+  // fades under it (App.css .tab-trail-last); the rest stay readable.
+  const last = alertBadge
+    ? "alert"
+    : cellCount > 1
+      ? "count"
+      : barChange != null
+        ? "change"
+        : "period";
+  const trail = (k: string) => (k === last ? " tab-trail-last" : "");
   return (
     <>
       <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="tab-icon" />
       {/* Camera on a tab restored from a snapshot (read-only until Unlock), so
           it can't be mistaken for the live chart of the same symbol. Leading,
           not trailing: the trailing items fade out under the hover ×. */}
-      {snapshotBadge && (
+      {snapshotBadge && tip("Snapshot view (read-only)",
         <span className="tab-snapshot-badge" aria-label="Snapshot view">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
@@ -95,12 +118,22 @@ function ChipContent({
       <span className="tab-symbol">
         {isSynthetic(lead.symbol.epic) ? (lead.symbol.name ?? lead.symbol.epic) : lead.symbol.epic}
       </span>
-      <span className="tab-period">{lead.period.label}</span>
-      {cellCount > 1 && <span className="tab-count">{cellCount}</span>}
+      <span className={`tab-period${trail("period")}`}>{lead.period.label}</span>
+      {barChange != null && (
+        <span
+          className={`tab-bar-change${barChange > 0 ? " up" : barChange < 0 ? " down" : ""}${trail("change")}`}
+        >
+          {fmtBarChange(barChange)}
+        </span>
+      )}
+      {cellCount > 1 && tip(
+        cells.map((c) => `${c.symbol.name} · ${c.period.label}`),
+        <span className={`tab-count${trail("count")}`}>{cellCount}</span>,
+      )}
       {/* Crescent-moon badge pinned to the tab's top-right when the lead cell's
-          market is closed (CSS positions it absolutely). The tooltip names the
-          next opening time when known. */}
-      {closedTip != null && (
+          market is closed (CSS positions it absolutely). Its tooltip names
+          the next opening time when known. */}
+      {closedTip != null && tip(closedTip,
         <span className="tab-closed-badge" aria-label={closedTip}>
           {/* Solid crescent (currentColor) — keeps the chrome monochrome rather
               than the lone colored 🌙 emoji it replaced. */}
@@ -113,8 +146,8 @@ function ChipContent({
           in the background; cleared on visit (App owns the set). Inline (not
           corner-pinned) so it can never be clipped by the bar edge or collide
           with the close ×. */}
-      {alertBadge && (
-        <span className="tab-alert-badge" aria-label="Alert fired">
+      {alertBadge && tip("Alert fired",
+        <span className={`tab-alert-badge${trail("alert")}`} aria-label="Alert fired">
           <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
             <path
               fill="currentColor"
@@ -165,6 +198,12 @@ interface Props {
   onOpenSymbol: (s: Instrument) => void;
   // Strip layout (Settings / Appearance): wrapping rows or one scrolling row.
   strip?: TabStrip;
+  // Live-bar % change on the chips: each tab's own ChartTab.barChange, else
+  // this default (Settings.tabBarChange). The context menu toggles one tab.
+  // The feeds run here, not in App, so ticks re-render only the bar.
+  showBarChange?: boolean;
+  onToggleBarChange?: (tabId: string) => void;
+  priceSide?: PriceSide;
 }
 
 export default function TabBar({
@@ -186,7 +225,26 @@ export default function TabBar({
   brokerId,
   onOpenSymbol,
   strip = "rows",
+  showBarChange = false,
+  onToggleBarChange,
+  priceSide = "mid",
 }: Props) {
+  const leadOf = (t: ChartTab) => t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0];
+  const showsBarChange = (t: ChartTab) => t.barChange ?? showBarChange;
+  const barChanges = useTabBarChange(
+    tabs.filter(showsBarChange).map((t) => {
+      const lead = leadOf(t);
+      return { epic: lead.symbol.epic, resolution: lead.period.resolution };
+    }),
+    brokerId,
+    priceSide,
+  );
+  const hasCtxItems = tabs.length > 1 || onToggleBarChange != null;
+  const barChangeOf = (t: ChartTab): number | null => {
+    if (!showsBarChange(t)) return null;
+    const lead = leadOf(t);
+    return barChanges[barLeadKey(lead.symbol.epic, lead.period.resolution)] ?? null;
+  };
   const searchHits = matchingTabIds(tabs, searchQuery);
   const scrolls = strip === "scroll";
   // Drag-to-reorder state. The dragged tab is tracked by ID, not index (see
@@ -333,6 +391,7 @@ export default function TabBar({
   // Right-click menu on a chip and the follow-up merge checklist, anchored
   // where the user clicked.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+  const ctxTab = ctxMenu != null ? tabs.find((t) => t.id === ctxMenu.tabId) : undefined;
   const [mergePick, setMergePick] = useState<{ x: number; y: number; tabId: string } | null>(null);
 
   // Find-open-symbol search: collapsed magnifier ⇄ inline input.
@@ -761,7 +820,8 @@ export default function TabBar({
       >
       {tabs.map((t, i) => {
         // The tab chip represents the layout by its focused (or first) cell; a
-        // multi-cell layout adds a small count badge. The tooltip lists every cell.
+        // multi-cell layout adds a small count badge. No hover tooltip: the
+        // chip already says what it holds.
         const lead =
           t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0];
         const leadMeta = closedEpics[lead.symbol.epic];
@@ -771,16 +831,9 @@ export default function TabBar({
             ? `Market closed · opens ${fmtNextOpen(leadMeta.nextOpen)}`
             : "Market closed"
           : null;
-        // One tooltip for the whole chip: a line per cell, then the badges'
-        // meaning (the badges carry no tooltip of their own, so hovering one
-        // never stacks a second bubble on the chip's).
-        const tipLines = t.cells.map((c) => `${c.symbol.name} · ${c.period.label}`);
-        if (closedTip) tipLines.push(closedTip);
-        if (snapshotTabIds.has(t.id)) tipLines.push("Snapshot view (read-only)");
-        if (alertTabIds.has(t.id)) tipLines.push("Alert fired");
         return (
-        <Tooltip key={t.id} asChild content={tipLines} disabled={dragId != null}>
         <div
+          key={t.id}
           role="tab"
           // DOM hook for anchoring floating UI to a specific chip (the merge
           // undo snackbar positions itself under the merged tab).
@@ -883,18 +936,18 @@ export default function TabBar({
           onDragEnd={() => endDrag(false)}
           onContextMenu={(e) => {
             e.preventDefault();
-            // With one tab, the only context-menu action ("Merge into this
-            // tab…") has nothing to target, and the menu is render-gated on
-            // tabs.length > 1 — setting state here would never clear.
-            if (tabs.length > 1) setCtxMenu({ x: e.clientX, y: e.clientY, tabId: t.id });
+            // Gated like the menu's render below, so an itemless menu never
+            // leaves state set that nothing would clear.
+            if (hasCtxItems) setCtxMenu({ x: e.clientX, y: e.clientY, tabId: t.id });
           }}
         >
           <ChipContent
             lead={lead}
-            cellCount={t.cells.length}
+            cells={t.cells}
             closedTip={closedTip}
             alertBadge={alertTabIds.has(t.id)}
             snapshotBadge={snapshotTabIds.has(t.id)}
+            barChange={barChangeOf(t)}
           />
           <button
             className="tab-close"
@@ -908,22 +961,30 @@ export default function TabBar({
             ×
           </button>
         </div>
-        </Tooltip>
         );
       })}
       {!scrolls && tail}
       </div>
       {scrolls && tail}
       {scrolls && trailing && <div className="tab-bar-actions">{trailing}</div>}
-      {ctxMenu && tabs.length > 1 && (
+      {ctxMenu && hasCtxItems && (
         <ContextMenu
           x={ctxMenu.x}
           y={ctxMenu.y}
           items={[
-            {
-              label: "Merge into this tab…",
-              onClick: () => setMergePick(ctxMenu),
-            },
+            // With one tab, merging has nothing to target.
+            ...(onToggleBarChange && ctxTab
+              ? [
+                  {
+                    label: "Show bar change %",
+                    checked: showsBarChange(ctxTab),
+                    onClick: () => onToggleBarChange(ctxTab.id),
+                  },
+                ]
+              : []),
+            ...(tabs.length > 1
+              ? [{ label: "Merge into this tab", onClick: () => setMergePick(ctxMenu) }]
+              : []),
           ]}
           onClose={() => setCtxMenu(null)}
         />
@@ -957,10 +1018,12 @@ export default function TabBar({
           >
             <ChipContent
               lead={floatLead}
-              cellCount={draggedTab.cells.length}
+              cells={draggedTab.cells}
+              tips={false}
               closedTip={floatClosedTip}
               alertBadge={alertTabIds.has(draggedTab.id)}
               snapshotBadge={snapshotTabIds.has(draggedTab.id)}
+              barChange={barChangeOf(draggedTab)}
             />
           </div>,
           document.body,

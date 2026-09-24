@@ -10,6 +10,8 @@ export interface MenuItem {
   danger?: boolean;
   // Optional leading icon (an inline SVG node — see ./lib/menuIcons).
   icon?: ReactNode;
+  // A toggle item: a check mark in the icon slot when true, blank when false.
+  checked?: boolean;
   // A greyed-out, non-clickable item. `disabledReason` (when set) shows as a
   // tooltip explaining why — e.g. "MACD isn't supported in rules yet".
   disabled?: boolean;
@@ -52,6 +54,10 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
     };
   }, [onClose]);
 
+  // While a toggle item is ticked, every icon-less item gets the same blank
+  // slot so the labels start in one column. With none ticked there is no
+  // slot at all: a blank gutter would only widen the menu.
+  const hasChecks = items.some((it) => it.checked === true);
   const style: React.CSSProperties = {
     left: Math.min(x, window.innerWidth - 200),
     top: Math.min(y, window.innerHeight - items.length * 34 - 12),
@@ -67,6 +73,8 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
             // emits the pointer events the tooltip wrapper listens for.
             className={`ctx-item${it.danger ? " danger" : ""}${it.disabled ? " disabled" : ""}`}
             aria-disabled={it.disabled}
+            role={it.checked !== undefined ? "menuitemcheckbox" : undefined}
+            aria-checked={it.checked}
             onClick={() => {
               if (it.disabled) return;
               it.onClick();
@@ -74,7 +82,17 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
             }}
           >
             <span className="ctx-item-label">
-              {it.icon && <span className="ctx-item-icon">{it.icon}</span>}
+              {hasChecks && !it.icon ? (
+                <span className="ctx-item-icon ctx-item-check" aria-hidden="true">
+                  {it.checked && (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  )}
+                </span>
+              ) : (
+                it.icon && <span className="ctx-item-icon">{it.icon}</span>
+              )}
               {it.label}
             </span>
           </button>

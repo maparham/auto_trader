@@ -76,6 +76,9 @@ export interface ChartTab {
   // set by dragging the borders between cells. Absent = equal split. Reset when
   // the layout kind changes.
   sizes?: { cols: number[]; rows: number[] };
+  // Live-bar % change on this tab's chip (tab context menu). Absent follows
+  // the global default, Settings.tabBarChange (Appearance > Tabs).
+  barChange?: boolean;
 }
 
 // Pre-cells persisted tab shape (one chart per tab). Kept only to migrate.
@@ -441,6 +444,7 @@ export function remapTabs(
       syncIndicators: t.syncIndicators,
       locked: t.locked,
       sizes: t.sizes,
+      barChange: t.barChange,
     };
   });
 }

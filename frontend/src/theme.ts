@@ -87,6 +87,8 @@ export interface Settings {
   theme: Theme;
   // Tab strip layout, see TabStrip. Default rows.
   tabStrip: TabStrip;
+  // Live-bar % change on each tab chip (tab context menu). Default off.
+  tabBarChange: boolean;
   // IANA timezone name (e.g. "America/New_York") the chart's time axis renders
   // in, or "" to follow the browser's local timezone (klinecharts' default).
   timezone: string;
@@ -209,6 +211,7 @@ const DEFAULT_BID_ASK_STYLE: BidAskStyle = {
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   tabStrip: "rows",
+  tabBarChange: false,
   timezone: "",
   clock: "24h",
   dateFormat: "ymd",

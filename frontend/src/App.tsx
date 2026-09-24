@@ -2633,6 +2633,15 @@ export default function App() {
         brokerId={brokerId}
         onOpenSymbol={openSymbolTab}
         strip={settings.tabStrip}
+        showBarChange={settings.tabBarChange}
+        onToggleBarChange={(id) =>
+          setTabs((ts) =>
+            ts.map((t) =>
+              t.id === id ? { ...t, barChange: !(t.barChange ?? settings.tabBarChange) } : t,
+            ),
+          )
+        }
+        priceSide={settings.priceSide}
         trailing={
           <>
             <LayoutManager
@@ -2662,7 +2671,19 @@ export default function App() {
                 onToggleLock={toggleLock}
               />
             )}
-            <AppearanceMenu settings={settings} onChange={setSettings} />
+            <AppearanceMenu
+              settings={settings}
+              onChange={setSettings}
+              onBarChangeAll={(on) => {
+                setSettings((s) => ({ ...s, tabBarChange: on }));
+                // All tabs means all: drop the per-tab overrides.
+                setTabs((ts) =>
+                  ts.some((t) => t.barChange !== undefined)
+                    ? ts.map((t) => ({ ...t, barChange: undefined }))
+                    : ts,
+                );
+              }}
+            />
             <Tooltip content="Settings">
               <button
                 className="tabbar-action icon-only gear"
