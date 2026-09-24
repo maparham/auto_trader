@@ -16,6 +16,7 @@ import type { LegendRow } from "./ChartLegend";
 
 const { default: ChartLegend } = await import("./ChartLegend");
 const { ChartController } = await import("./lib/chartController");
+const { confirmRequest } = await import("./lib/signals");
 
 const row = (name: string, indType: string, params: string, visible = true): LegendRow => ({
   name,
@@ -202,10 +203,32 @@ describe("the group copy hands every member's name to one clipboard call", () =>
 describe("the group trash removes every member", () => {
   // The chevron is button 0, the eye 1, the copy 2, the trash 3.
   const trash = () => groupHeader().querySelectorAll("button")[3];
+  // The trash asks first; accept the pending confirm like the dialog's button would.
+  const accept = () => {
+    const req = confirmRequest.value;
+    confirmRequest.set(null);
+    req?.onConfirm();
+  };
+  afterEach(() => confirmRequest.set(null));
 
-  it("removes all members on one click", () => {
+  it("asks for confirmation and removes nothing until confirmed", () => {
     const { onRemove } = renderLegend(fvgs);
     fireEvent.click(trash());
+    expect(confirmRequest.value?.message).toContain("3");
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("removes nothing when the confirm is dismissed", () => {
+    const { onRemove } = renderLegend(fvgs);
+    fireEvent.click(trash());
+    confirmRequest.set(null);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("removes all members once confirmed", () => {
+    const { onRemove } = renderLegend(fvgs);
+    fireEvent.click(trash());
+    accept();
     expect(onRemove.mock.calls.map((c) => c[0])).toEqual(["FVG", "FVG2", "FVG3"]);
   });
 
@@ -213,12 +236,14 @@ describe("the group trash removes every member", () => {
     const mixed = [fvgs[0], { ...fvgs[1], visible: false }, fvgs[2]];
     const { onRemove } = renderLegend(mixed);
     fireEvent.click(trash());
+    accept();
     expect(onRemove.mock.calls.map((c) => c[0])).toEqual(["FVG", "FVG2", "FVG3"]);
   });
 
   it("does not collapse the group as a side effect of the click", () => {
     const { onRemove } = renderLegend(fvgs);
     fireEvent.click(trash());
+    accept();
     // The header row's own onClick toggles collapse; the trash must stopPropagation,
     // or removing a group would also persist a collapsed flag for a type that is
     // about to have no rows at all.

@@ -17,6 +17,7 @@ import type { ChartController } from "./lib/chartController";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import { isDemoMode } from "./lib/demoMode";
+import { requestConfirm } from "./lib/signals";
 import {
   indTypeOf,
   prevHlDegenerateInfo,
@@ -331,10 +332,17 @@ export default function ChartLegend({
       if (row.visible === anyVisible) onToggleVisible(row.name);
     }
   };
-  // Remove every member of a group. No confirmation — the per-row trash doesn't
-  // ask either, and the group's members are re-addable from the indicator menu.
+  // Remove every member of a group, behind a confirm: one click wipes several
+  // configured instances at once, unlike the per-row trash.
   const removeGroup = (rows: LegendRow[]) => {
-    for (const row of rows) onRemove(row.name);
+    requestConfirm({
+      title: "Remove indicators",
+      message: `Remove all ${rows.length} ${rows[0].shortName} indicators from this chart?`,
+      confirmLabel: "Remove",
+      onConfirm: () => {
+        for (const row of rows) onRemove(row.name);
+      },
+    });
   };
   // One clipboard write for the whole group — per-row onCopy calls would each
   // overwrite the previous member, leaving only the last one copied.
