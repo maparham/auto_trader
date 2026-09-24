@@ -5,11 +5,11 @@ remove it from here (git history and the memory index track shipped features).
 
 ## In progress
 
-- **MT5 local terminal broker (`mt5-self`)**: MT5's built-in MCP server replaces
-  MetaApi and the planned REST bridge. Phase 1 (data, paper, live dealing) is
-  built in `brokers/mt5_mcp.py`; reads verified live, dealing only unit-tested.
-  Next: one demo-account order test, then Phase 2 (live ticks by polling
-  Market Watch), which gates removing MetaApi.
+- **MT5 local terminal broker (`mt5-self`)**: over MT5's built-in MCP server,
+  beside the MetaApi `mt5`, which stays permanently. Data, paper, live dealing
+  and polled live ticks are built in `brokers/mt5_mcp.py`; reads and ticks
+  verified live, dealing only unit-tested. Left: one order test on a demo
+  account.
   [spec](superpowers/specs/2026-09-23-mt5-local-mcp-broker-design.md)
 
 - **Slim large modules** — split the 10 biggest modules into focused files.

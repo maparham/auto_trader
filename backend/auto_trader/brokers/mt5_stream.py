@@ -40,6 +40,7 @@ from auto_trader.core.tick_store import TICK_STORE
 
 if TYPE_CHECKING:
     from auto_trader.brokers.mt5 import MT5Broker
+    from auto_trader.brokers.mt5_mcp import MT5MCPBroker
 
 log = logging.getLogger(__name__)
 
@@ -149,9 +150,13 @@ class _TickListener(SynchronizationListener):
 
 
 async def stream_candles(
-    broker: "MT5Broker", epic: str, resolution: Resolution, price_side: str = "mid"
+    broker: "MT5Broker | MT5MCPBroker", epic: str, resolution: Resolution, price_side: str = "mid"
 ) -> AsyncIterator[LiveBar]:
-    """Yield the forming `resolution` candle for `epic` as MetaApi ticks arrive.
+    """Yield the forming `resolution` candle for `epic` as ticks arrive.
+
+    `broker` is either MT5 adapter: the MetaApi one pushes ticks from its
+    streaming connection, the local-terminal one (mt5_mcp) polls them; both
+    hand (bid, ask) tuples through the same register_tick_queue queue.
 
     Mirrors capital_stream/ig_stream: an async generator of `LiveBar`. Also feeds
     the mid close into TICK_STORE so the MT5 paper executor has a fresh price for

@@ -1,8 +1,8 @@
 # Local MT5 broker over the terminal's built-in MCP server
 
 **Date:** 2026-09-23
-**Status:** Phase 1 implemented (`backend/auto_trader/brokers/mt5_mcp.py`). Reads verified live; dealing paths are unit-tested only.
-**Supersedes:** the transport in [2026-07-11-mt5-selfhosted-http-broker-design.md](2026-07-11-mt5-selfhosted-http-broker-design.md). The goal (leave MetaApi) and the phase plan stay; the custom REST bridge is dropped.
+**Status:** Phases 1 and 2 implemented (`backend/auto_trader/brokers/mt5_mcp.py`). Reads and live ticks verified live; dealing paths are unit-tested only.
+**Supersedes:** the transport in [2026-07-11-mt5-selfhosted-http-broker-design.md](2026-07-11-mt5-selfhosted-http-broker-design.md); the custom REST bridge is dropped. Its goal of leaving MetaApi is dropped too (2026-09-24): MetaApi `mt5` stays permanently beside `mt5-self`.
 
 ## What changed
 
@@ -58,7 +58,7 @@ account block: "Ava Trade Markets Ltd. (live, local)"; frontend fallback
 | Specs | Market Watch rows carry contract size, volume min/max/step, digits | Lots and units converted as on `mt5` |
 | Position P&L | `profit` leaves swap out; equity counts it (`profit + swaps == equity - balance`) | `upnl` is `profit + swaps` |
 | Sessions, margin | No trading sessions; tick value is 0 and there is no margin tool | `closed` stays None; no leverage figure |
-| Streaming | None | `supports_streaming = False` |
+| Streaming | No push. Market Watch reads take about 1 ms (6 ms for every selected row); `get_chart_ticks_history` returns every tick with millisecond times | Polled ticks (Phase 2 below), `supports_streaming = True` |
 | Partial close | Not offered | REJECTED. Not emulated with an opposite order: the account is hedging, so that would open a second position |
 | Pending price/expiry change | Only SL/TP can be modified | REJECTED with a reason |
 | SL/TP modify | Unchanged values are rejected by the server | Send only changed levels |
@@ -76,10 +76,19 @@ account block: "Ava Trade Markets Ltd. (live, local)"; frontend fallback
 ## Roadmap
 
 - **Phase 1 (done):** data, paper and live dealing over MCP.
-- **Phase 2:** live ticks, likely by polling Market Watch into a pseudo-stream.
-  Still the gate to removing MetaApi.
-- **Phase 3:** delete `mt5.py`, promote `mt5-self` to `mt5`;
-  `_mt5_symbols.py` becomes the only copy of the symbol classifier.
+- **Phase 2 (done):** live ticks. One poller per terminal runs while any
+  chart or alert is subscribed: every 0.5 s it reads Market Watch once, and
+  for each subscribed symbol whose row moved it pulls the tick history since
+  the last delivered tick, so no tick is skipped between rounds. The broker
+  exposes the same hooks as the MetaApi one (`_ensure_stream`,
+  `register_tick_queue`, `unregister_tick_queue`, `get_forming_candle`), so
+  `mt5_stream.stream_candles` folds the ticks unchanged and the candle
+  socket, MONTH folding, alert feeds and the paper executor's tick store all
+  work for both brokers. Limits shared with MetaApi: no seconds intervals,
+  and a terminal that goes away leaves an open chart frozen rather than
+  reporting the feed down (the poller warns once and retries every 5 s).
+- ~~Phase 3~~ (dropped 2026-09-24): MetaApi stays, so `mt5.py` is not
+  deleted and `mt5-self` is not promoted.
 
 Hosting: the terminal must run and stay logged in. On the Mac it stops with
 sleep; for 24/7 dealing, run it on a Windows VPS and reach the MCP through a

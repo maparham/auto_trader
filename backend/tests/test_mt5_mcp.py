@@ -456,3 +456,154 @@ def test_tail_check_skips_past_windows_and_missing_tick_times():
     b = _broker({"get_chart_history": _m1(old), "get_marketwatch_symbols": {"symbols": [unselected]}})
     bars = run(b.get_recent_candles("EURUSD", Resolution.MINUTE, 3))
     assert bars[-1].time == old
+
+
+# --- live ticks: Market Watch poll feeding mt5_stream ----------------------------
+
+
+def _ticks(t, *quotes):
+    """Tick-history reply: one tick per (bid, ask), 100 ms apart from `t`."""
+    return {"history": [
+        {"time_ms": (t + timedelta(milliseconds=100 * i)).strftime("%Y.%m.%d %H:%M:%S.%f")[:-3], "bid": b, "ask": a}
+        for i, (b, a) in enumerate(quotes)
+    ]}
+
+
+def test_tick_poll_delivers_each_tick_once_and_idles_when_unsubscribed(monkeypatch):
+    """Market Watch moves every round while the tick history keeps answering
+    the same three ticks: each reaches the queue once. With the last consumer
+    gone the poller exits on its own."""
+    import auto_trader.brokers.mt5_mcp as mod
+
+    monkeypatch.setattr(mod, "_POLL_INTERVAL", 0.0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    rounds = {"n": 0}
+
+    def market_watch(a):
+        rounds["n"] += 1
+        return {"symbols": [{**EURUSD, "update_time": (now + timedelta(seconds=rounds["n"])).strftime("%Y.%m.%d %H:%M:%S")}]}
+
+    b = _broker({"get_marketwatch_symbols": market_watch, "add_marketwatch_symbol": {"ok": True},
+                 "get_chart_ticks_history": _ticks(now, (1.1, 1.2), (1.3, 1.4), (1.5, 1.6))})
+
+    async def go():
+        await b._ensure_stream()
+        q = await b.register_tick_queue("EURUSD")
+        await asyncio.sleep(0.05)
+        got = []
+        while not q.empty():
+            got.append(q.get_nowait())
+        await b.unregister_tick_queue("EURUSD", q)
+        await asyncio.sleep(0.01)
+        return got, b._poll_task.done(), rounds["n"]
+
+    got, idle, n = run(go())
+    assert got == [(1.1, 1.2), (1.3, 1.4), (1.5, 1.6)]
+    assert idle and n > 3
+    assert ("add_marketwatch_symbol", {"symbol": "EURUSD"}) in b.client.calls
+
+
+def test_tick_poll_reads_from_the_last_delivered_tick(monkeypatch):
+    import auto_trader.brokers.mt5_mcp as mod
+
+    monkeypatch.setattr(mod, "_POLL_INTERVAL", 0.0)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    b = _broker({"get_marketwatch_symbols": {"symbols": [EURUSD]}, "add_marketwatch_symbol": {"ok": True},
+                 "get_chart_ticks_history": _ticks(now, (1.1, 1.2), (1.3, 1.4))})
+
+    async def go():
+        b._tick_subs["EURUSD"] = {asyncio.Queue()}
+        await b._deliver_ticks("EURUSD")
+        await b._deliver_ticks("EURUSD")
+        return b._last_tick["EURUSD"], [a for t, a in b.client.calls if t == "get_chart_ticks_history"]
+
+    last, calls = run(go())
+    assert last == now + timedelta(milliseconds=100)
+    assert calls[1]["datetime_from"] == b._to_server(last, ms=True)
+
+
+def test_unknown_symbol_subscribe_leaves_no_orphan():
+    b = _broker({"add_marketwatch_symbol": MCPToolError("symbol not found"),
+                 "get_marketwatch_symbols": {"symbols": []}})
+    with pytest.raises(MCPToolError):
+        run(b.register_tick_queue("NOPE"))
+    assert b._tick_subs == {} and b._sub_refcount == {}
+
+
+def test_forming_candle_is_the_newest_rebuilt_bar():
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    h = now.replace(minute=0)
+    stale_h1 = {"history": [{"time": _fmt(h - timedelta(hours=1)), "open": 1, "high": 1, "low": 1, "close": 1}]}
+    m1 = _m1(now)
+    b = _broker({"get_chart_history": lambda a: m1 if a["period"] == "M1" else stale_h1,
+                 "get_marketwatch_symbols": _tick(now)})
+    c = run(b.get_forming_candle("EURUSD", Resolution.HOUR))
+    assert c is not None and c.time == h
+
+
+def test_mt5_stream_folds_polled_ticks_unchanged(monkeypatch):
+    """The MetaApi fold (mt5_stream.stream_candles) runs on the local-terminal
+    broker as is: seeded from the forming M1 bar, then the polled ticks move
+    the close and stretch the range."""
+    import auto_trader.brokers.mt5_mcp as mod
+    from auto_trader.brokers import mt5_stream
+
+    monkeypatch.setattr(mod, "_POLL_INTERVAL", 0.0)
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    seed = {"history": [{"time": _fmt(now), "open": 1.10, "high": 1.15, "low": 1.05, "close": 1.12, "tick_volume": 9}]}
+    b = _broker({"get_chart_history": seed, "add_marketwatch_symbol": {"ok": True},
+                 "get_marketwatch_symbols": _tick(now),
+                 "get_chart_ticks_history": _ticks(datetime.now(timezone.utc), (1.20, 1.22), (1.00, 1.02))})
+    b.broker_id = "mt5-self"
+
+    async def go():
+        out = []
+        async for bar in mt5_stream.stream_candles(b, "EURUSD", Resolution.MINUTE):
+            out.append(bar)
+            if len(out) == 2:
+                break
+        return out
+
+    bars = run(go())
+    assert (bars[0].candle.open, bars[0].candle.volume) == (1.10, 9)
+    assert bars[0].bid == 1.20 and bars[0].candle.high == 1.21
+    assert bars[1].candle.close == 1.01 and bars[1].candle.low == 1.01
+    assert b._tick_subs == {}  # the generator's finally unregistered
+
+
+def test_ticks_from_an_outage_gap_are_not_replayed():
+    """After the terminal was away (Mac asleep), the backlog since the last
+    delivered tick must not fold into the current bar: only recent ticks go."""
+    now = datetime.now(timezone.utc)
+    old, fresh = now - timedelta(minutes=30), now - timedelta(seconds=1)
+    b = _broker({"get_chart_ticks_history": {"history": [
+        {"time_ms": old.strftime("%Y.%m.%d %H:%M:%S.%f")[:-3], "bid": 1.0, "ask": 1.1},
+        {"time_ms": fresh.strftime("%Y.%m.%d %H:%M:%S.%f")[:-3], "bid": 2.0, "ask": 2.1},
+    ]}})
+
+    async def go():
+        q = asyncio.Queue()
+        b._tick_subs["EURUSD"] = {q}
+        b._last_tick["EURUSD"] = now - timedelta(hours=1)
+        await b._deliver_ticks("EURUSD")
+        return [q.get_nowait() for _ in range(q.qsize())], b.client.calls[-1][1]["datetime_from"]
+
+    got, since = run(go())
+    assert got == [(2.0, 2.1)]
+    assert since > b._to_server(now - timedelta(minutes=1), ms=True)
+
+
+def test_week_tail_one_week_stale_is_rebuilt_from_m1():
+    """The terminal's W1 stops at LAST week's bar (opened more than 8 days
+    ago): the current week still comes back, rebuilt from M1."""
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    b = _broker({})
+    this_week = b._bucket(now, Resolution.WEEK)
+    last = _fmt(this_week - timedelta(days=7))
+    stale_w1 = {"data_available_from": last,  # a new symbol: this is all the history there is
+                "history": [{"time": last, "open": 1, "high": 1, "low": 1, "close": 1}]}
+    m1 = {**_m1(now), "data_available_from": _fmt(now - timedelta(minutes=2))}
+    b = _broker({"get_chart_history": lambda a: m1 if a["period"] == "M1" else stale_w1,
+                 "get_marketwatch_symbols": _tick(now)})
+    bars = run(b.get_recent_candles("EURUSD", Resolution.WEEK, 2))
+    assert bars[-1].time == this_week

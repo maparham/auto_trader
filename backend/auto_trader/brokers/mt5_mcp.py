@@ -4,9 +4,10 @@ MT5 build 6180+ ships an MCP server inside the desktop terminal
 (Tools > Options > MCP, default http://127.0.0.1:22346/mcp, bearer API key). It
 exposes account info, positions/orders, candle history, Market Watch and the
 trade calls we need, so a locally running, logged-in terminal (native Windows,
-or the macOS app under Wine) replaces both MetaApi and the custom REST bridge
-the 2026-07-11 spec planned. Registered as the "mt5-self" data broker with
-"mt5-self:paper" and the real-money "mt5-self:live" beside the MetaApi "mt5".
+or the macOS app under Wine) replaces the custom REST bridge the 2026-07-11
+spec planned. Registered as the "mt5-self" data broker with "mt5-self:paper"
+and the real-money "mt5-self:live" beside the MetaApi "mt5", which stays: the
+two are permanent alternatives for the same account, not a migration.
 
 Transport is a thin JSON-RPC-over-HTTP client (initialize, then tools/call),
 not the `mcp` SDK: the SDK's task-group lifetime does not fit a long-lived
@@ -18,7 +19,13 @@ Conventions that match the MetaApi adapter:
 - MT5 speaks LOTS; the app speaks instrument units. Convert at this boundary.
 
 What the MCP cannot do, and how it surfaces:
-- No live tick stream: `supports_streaming = False` (charts load REST history).
+- No push stream. Live ticks are POLLED: one Market Watch read per round
+  (6 ms for every selected row) tells which subscribed symbols moved, and
+  `get_chart_ticks_history` then returns every tick since the last one, so
+  no tick is skipped between rounds. The same four hooks the MetaApi broker
+  exposes (`_ensure_stream`, `register_tick_queue`, `unregister_tick_queue`,
+  `get_forming_candle`) sit on top, so `mt5_stream.stream_candles` folds the
+  ticks into bars unchanged for both brokers.
 - Higher-timeframe series lag inside the terminal until something rebuilds
   them, while M1 is current. The candle reads therefore rebuild the newest
   bars of any timeframe above M1 from M1 (`_patch_tail`).
@@ -81,8 +88,10 @@ _PERIOD = {
 # 100000). When a page comes back full, the next page ends at its oldest bar.
 _PAGE = 50_000
 _MAX_PAGES = 20
-# The M1 tail rebuild covers at most this far back; a higher-timeframe series
-# staler than that is returned as the terminal has it.
+# The M1 tail rebuild covers at most this far back past the end of the last
+# bar the terminal has; a higher-timeframe series staler than that is
+# returned as the terminal has it. Measured from the bar's END, or a W1 series
+# one week stale (last bar opened 11 days ago) would never be rebuilt.
 _TAIL_MAX = timedelta(days=8)
 # Lazy history download: a reply whose oldest bar sits more than _LOAD_GAP
 # after what was asked for (and after what the symbol has) is still loading.
@@ -96,6 +105,16 @@ _STABLE_FOR = 12.0
 # current about 2 s later). An M1 reply whose newest bar sits more than
 # _TAIL_LAG behind the symbol's last tick is still syncing.
 _TAIL_LAG = timedelta(minutes=10)
+# Tick polling: one Market Watch read per round while any chart is subscribed
+# (ticks arrive up to _POLL_INTERVAL late; the fold stamps them on receipt).
+# A round that fails waits _POLL_BACKOFF before the next.
+_POLL_INTERVAL = 0.5
+_POLL_BACKOFF = 5.0
+_TICK_PAGE = 5_000
+# Ticks older than this are never delivered: after an outage (a sleeping Mac)
+# the gap's backlog would otherwise all fold into the CURRENT bar, since the
+# fold stamps ticks on receipt.
+_CATCHUP = timedelta(seconds=2 * _POLL_BACKOFF)
 
 # MT5 trade server return codes that mean the request went through
 # (DONE, PLACED, DONE_PARTIAL). Anything else with a retcode is a rejection.
@@ -260,7 +279,7 @@ class MT5MCPBroker(MarketDataBroker):
     """Market data for the account logged into the local MT5 terminal, plus
     the shared MCP client the execution broker trades through."""
 
-    supports_streaming = False
+    supports_streaming = True
     CATEGORIES = MT5_CATEGORIES
 
     READ_BUDGET = 20.0
@@ -276,11 +295,20 @@ class MT5MCPBroker(MarketDataBroker):
         # (epic, period) -> (newest bar seen, monotonic time it last moved)
         self._tail: dict[tuple[str, str], tuple[datetime | None, float]] = {}
         self._label_task: asyncio.Task | None = None
+        # Live ticks: consumer queues per symbol (mt5_stream folds them),
+        # the poller feeding them, and the newest tick time delivered per
+        # symbol (where the next tick-history read starts).
+        self._tick_subs: dict[str, set[asyncio.Queue]] = {}
+        self._sub_refcount: dict[str, int] = {}
+        self._stream_lock = asyncio.Lock()
+        self._poll_task: asyncio.Task | None = None
+        self._last_tick: dict[str, datetime] = {}
 
     async def aclose(self) -> None:
-        if self._label_task is not None:
-            self._label_task.cancel()
-            self._label_task = None
+        for task in (self._label_task, self._poll_task):
+            if task is not None:
+                task.cancel()
+        self._label_task = self._poll_task = None
         await self.client.aclose()
 
     # --- time -----------------------------------------------------------------
@@ -290,10 +318,12 @@ class MT5MCPBroker(MarketDataBroker):
         s = str(s).replace(".", "-", 2).replace("T", " ").rstrip("Z")
         return datetime.fromisoformat(s).replace(tzinfo=timezone.utc) - self._offset
 
-    def _to_server(self, dt: datetime) -> str:
+    def _to_server(self, dt: datetime, *, ms: bool = False) -> str:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return (dt.astimezone(timezone.utc) + self._offset).strftime("%Y-%m-%dT%H:%M:%S")
+        srv = dt.astimezone(timezone.utc) + self._offset
+        text = srv.strftime("%Y-%m-%dT%H:%M:%S")
+        return f"{text}.{srv.microsecond // 1000:03d}" if ms else text
 
     def _bucket(self, t: datetime, res: Resolution) -> datetime:
         """Open time of the `res` bar containing UTC `t`, aligned the way MT5
@@ -451,7 +481,7 @@ class MT5MCPBroker(MarketDataBroker):
         if end < now - timedelta(seconds=2 * res.seconds):
             return bars
         tail_from = bars[-1].time if bars else self._bucket(max(start, now - timedelta(seconds=res.seconds)), res)
-        if tail_from < now - _TAIL_MAX:
+        if tail_from + timedelta(seconds=res.seconds) < now - _TAIL_MAX:
             return bars
         minutes = await self._history(epic, "M1", tail_from, now + timedelta(minutes=1))
         if not minutes:
@@ -493,6 +523,129 @@ class MT5MCPBroker(MarketDataBroker):
         bars = await self._history(epic, _PERIOD[resolution], now - span, now + timedelta(days=1), limit=count)
         bars = await self._patch_tail(epic, resolution, bars, now - span, now + timedelta(days=1))
         return bars[-count:]
+
+    async def get_forming_candle(self, epic: str, resolution: Resolution,
+                                 price_side: str = "mid") -> Candle | None:
+        """The current, still-forming bar, for mt5_stream to seed its fold
+        from. The newest bar of any timeframe is rebuilt from M1, so this is
+        current even where the terminal's own series lags. None on failure
+        (the stream cold-starts)."""
+        try:
+            bars = await self.get_recent_candles(epic, resolution, 1, price_side)
+        except Exception:
+            log.debug("%s: get_forming_candle failed for %s", BROKER_ID, epic, exc_info=True)
+            return None
+        return bars[-1] if bars else None
+
+    # --- live ticks (polled) ---------------------------------------------------
+    # Same surface as MT5Broker's MetaApi stream, so mt5_stream.stream_candles
+    # drives either broker: _ensure_stream, register/unregister_tick_queue.
+
+    async def _ensure_stream(self) -> None:
+        """Reachability check standing in for MetaApi's connect: a terminal
+        that is down raises here (mt5_stream turns it into a recoverable
+        error, and the chart keeps retrying) rather than in the per-symbol
+        subscribe, which it reports as a permanent fault."""
+        if self._poll_task is not None and not self._poll_task.done():
+            return
+        await self.call("get_marketwatch_symbols", {"limit": 1})
+
+    async def register_tick_queue(self, symbol: str) -> asyncio.Queue:
+        """Register a consumer queue for `symbol`'s ticks. The first consumer
+        selects the symbol in Market Watch (only selected rows carry a price
+        and an update time) and starts the poller if it is idle."""
+        q: asyncio.Queue = asyncio.Queue()
+        async with self._stream_lock:
+            first = not self._tick_subs.get(symbol)
+            self._tick_subs.setdefault(symbol, set()).add(q)
+            self._sub_refcount[symbol] = self._sub_refcount.get(symbol, 0) + 1
+            if first:
+                try:
+                    await self._select(symbol)
+                except BaseException:
+                    # An unknown symbol (or a cancel mid-subscribe) must leave no
+                    # orphan registration that would block the symbol for good.
+                    self._tick_subs.pop(symbol, None)
+                    self._sub_refcount.pop(symbol, None)
+                    raise
+            if self._poll_task is None or self._poll_task.done():
+                self._poll_task = asyncio.create_task(self._poll_ticks())
+        return q
+
+    async def unregister_tick_queue(self, symbol: str, q: asyncio.Queue) -> None:
+        """Drop a consumer queue. The last consumer of a symbol forgets it; the
+        poller exits by itself once no symbol is left."""
+        async with self._stream_lock:
+            subs = self._tick_subs.get(symbol)
+            if subs:
+                subs.discard(q)
+            self._sub_refcount[symbol] = max(0, self._sub_refcount.get(symbol, 0) - 1)
+            if self._sub_refcount[symbol] == 0:
+                self._sub_refcount.pop(symbol, None)
+                self._tick_subs.pop(symbol, None)
+                self._last_tick.pop(symbol, None)
+
+    async def _poll_ticks(self) -> None:
+        """One loop per terminal while anything is subscribed. Each round reads
+        Market Watch once and pulls tick history only for the subscribed
+        symbols whose row moved (update_time is whole seconds, so bid/ask are
+        part of the mark). The terminal serves one call at a time, so a trade
+        waiting on a confirmation dialog can hold a round up; it resumes."""
+        seen: dict[str, tuple] = {}
+        failing = False
+        while self._tick_subs:
+            try:
+                data = await self.call("get_marketwatch_symbols",
+                                       {"include_hidden": False, "limit": 100_000})
+                rows = {r.get("symbol"): r for r in ((data or {}).get("symbols") or [])}
+                for symbol in list(self._tick_subs):
+                    row = rows.get(symbol)
+                    if row is None:
+                        continue
+                    mark = (row.get("update_time"), row.get("bid"), row.get("ask"))
+                    if seen.get(symbol) == mark:
+                        continue
+                    seen[symbol] = mark
+                    await self._deliver_ticks(symbol)
+                if failing:
+                    log.info("%s: tick poll recovered", BROKER_ID)
+                    failing = False
+                await asyncio.sleep(_POLL_INTERVAL)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Warn once per outage (a sleeping Mac stops the terminal for
+                # hours), then keep retrying quietly.
+                log.log(logging.DEBUG if failing else logging.WARNING,
+                        "%s: tick poll failed, retrying every %.0fs", BROKER_ID, _POLL_BACKOFF, exc_info=True)
+                failing = True
+                await asyncio.sleep(_POLL_BACKOFF)
+
+    async def _deliver_ticks(self, symbol: str) -> None:
+        """Every tick newer than the last delivered one onto the symbol's
+        queues, as (bid, ask), never reaching back more than _CATCHUP. The
+        first read for a symbol starts one poll interval back so a chart's
+        first frame is not an old tick."""
+        since = self._last_tick.get(symbol)
+        now = datetime.now(timezone.utc)
+        floor = now - _CATCHUP
+        start = max(since, floor) if since is not None else now - timedelta(seconds=_POLL_INTERVAL)
+        data = await self._symbol_call(
+            "get_chart_ticks_history",
+            {"symbol": symbol, "datetime_from": self._to_server(start, ms=True),
+             "datetime_to": self._to_server(now + timedelta(minutes=1)), "limit": _TICK_PAGE},
+        )
+        rows = (data or {}).get("history") or [] if isinstance(data, dict) else []
+        for r in rows:
+            t = self._to_utc(r["time_ms"])
+            if (since is not None and t <= since) or t < floor:
+                continue  # already delivered (datetime_from is inclusive), or stale
+            bid, ask = _f(r.get("bid")), _f(r.get("ask"))
+            if bid is None or ask is None:
+                continue
+            for q in self._tick_subs.get(symbol, ()):
+                q.put_nowait((bid, ask))
+            self._last_tick[symbol] = t
 
     # --- quote + catalogue ----------------------------------------------------
 

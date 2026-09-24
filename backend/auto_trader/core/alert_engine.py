@@ -338,6 +338,7 @@ class AlertEngine:
         from auto_trader.brokers.capital_stream import stream_candles as capital_stream_candles
         from auto_trader.brokers.ig import IGBroker
         from auto_trader.brokers.mt5 import MT5Broker
+        from auto_trader.brokers.mt5_mcp import MT5MCPBroker
         from auto_trader.core.models import Resolution
 
         if isinstance(broker, IGBroker):
@@ -345,7 +346,7 @@ class AlertEngine:
                 await self._poll_feed(broker, broker_id, epic, reset_backoff)
                 return True
             stream = ig_stream.stream_candles(broker, epic, Resolution.MINUTE, "mid")
-        elif isinstance(broker, MT5Broker):
+        elif isinstance(broker, (MT5Broker, MT5MCPBroker)):
             stream = mt5_stream.stream_candles(broker, epic, Resolution.MINUTE, "mid")
         else:
             stream = capital_stream_candles(broker, epic, Resolution.MINUTE, "mid")

@@ -18,6 +18,7 @@ from auto_trader.brokers.capital_stream import (
 )
 from auto_trader.brokers.ig import IGBroker
 from auto_trader.brokers.mt5 import MT5Broker
+from auto_trader.brokers.mt5_mcp import MT5MCPBroker
 from auto_trader.core.candle_aggregate import (
     DERIVED,
     aggregate_candle_stream,
@@ -131,7 +132,8 @@ async def ws_candles(websocket: WebSocket) -> None:
     res_raw = canon
 
     is_ig = isinstance(broker, IGBroker)
-    is_mt5 = isinstance(broker, MT5Broker)
+    # Both MT5 adapters (MetaApi and the local terminal) fold ticks the same way.
+    is_mt5 = isinstance(broker, (MT5Broker, MT5MCPBroker))
     # (CandleKey, res_seconds) once the native branch below opts in; None keeps
     # derived and sub-minute streams persistence-free.
     persist: tuple[tuple[str, str, str, str], int] | None = None
