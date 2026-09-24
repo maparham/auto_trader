@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from auto_trader.core.models import Candle
@@ -62,8 +62,8 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 #  max_slope_atr, min_slope_atr, max_touch_spacing, min_touch_spacing,
 #  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
 #  max_dist_pct, merge_atr, max_per_pivot, merge_pct, major_pivots,
-#  major_len, major_size_atr, lookback_bars]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR, 0)
+#  major_len, major_size_atr, lookback_bars, extend_left]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR, 0, 0)
 # The distance "Only lines near price" drew at, in ATR(14): what a pane saved
 # with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
 # trendlinesOutputs.ts.
@@ -131,6 +131,10 @@ class TrendlinesConfig:
     # Oldest bar a line may start on, counted back from the bar being
     # computed; older lines drop and older pivots seed nothing. 0 = off.
     lookback_bars: int = 0
+    # Start each line at the nearest earlier pool pivot it touches (within
+    # max_proj_bars of i1), counting the crossings on the way; skipped when the
+    # extended line would break a ceiling. 0 = off, 1 = on (mirrors the TS).
+    extend_left: int = 0
     timeframe: str | None = None
 
 
@@ -155,6 +159,8 @@ class TrendLine:
     min_touch_gap: float  # float only because the no-gap guard is math.inf
     max_touch_idx: int
     touch_idxs: list[int] = field(default_factory=list)
+    i0: int | None = None  # start when Extend Left moved it back; read via line_start
+    i0_weight: float = 0.0  # the start pivot's touch weight, for shorten_if_broken
 
 
 def trendlines_outputs(cfg: TrendlinesConfig) -> tuple[str, ...]:
@@ -233,6 +239,7 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         major_len=int_at(25, d[25]),
         major_size_atr=num_at(26, d[26], True),
         lookback_bars=zero_int(27, d[27]),
+        extend_left=min(1, zero_int(28, d[28])),
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
@@ -272,7 +279,7 @@ def merge_tolerance(cfg: TrendlinesConfig, atr_i: float | None, close: float) ->
 def same_trend(a: TrendLine, b: TrendLine, at_idx: int, tol: float) -> bool:
     """Mirrors TS sameTrend: within tol at at_idx AND where the younger line
     starts, which for two straight lines is within tol throughout."""
-    start = max(a.i1, b.i1)
+    start = max(line_start(a), line_start(b))
     return (
         abs(project_at(a, at_idx) - project_at(b, at_idx)) <= tol
         and abs(project_at(a, start) - project_at(b, start)) <= tol
@@ -401,6 +408,11 @@ def project_at(line: TrendLine, j: int) -> float:
     return line.p1 + ((line.p2 - line.p1) * (j - line.i1)) / (line.i2 - line.i1)
 
 
+def line_start(line: TrendLine) -> int:
+    """Mirrors TS lineStart: i0 when Extend Left moved the start back, else i1."""
+    return line.i1 if line.i0 is None else line.i0
+
+
 def touch_weight(
     line: TrendLine, j: int, price: float, kind: str, gap_tol: float, pierce_tol: float
 ) -> float:
@@ -507,7 +519,7 @@ def rank_key(line: TrendLine) -> tuple[float, int, int, int, int, float]:
     order and the tie-break of nearest_first, not the walk order itself."""
     return (
         -line.touches,
-        -(line.last_touch_idx - line.i1),
+        -(line.last_touch_idx - line_start(line)),
         line.crossings,
         -line.last_touch_idx,
         line.i1,
@@ -530,7 +542,7 @@ def survival_key(line: TrendLine) -> tuple[int, int, float, int, int, float]:
     """
     return (
         line.crossings,
-        -(line.last_touch_idx - line.i1),
+        -(line.last_touch_idx - line_start(line)),
         -line.touches,
         -line.last_touch_idx,
         line.i1,
@@ -638,7 +650,7 @@ def _has_swing_reach(vals: Sequence[float], k: int, kind: str, bars: int) -> boo
 
 
 def is_live(line: TrendLine, i: int, cfg: TrendlinesConfig) -> bool:
-    return i - line.last_touch_idx <= cfg.max_proj_bars and within_lookback(line.i1, i, cfg)
+    return i - line.last_touch_idx <= cfg.max_proj_bars and within_lookback(line_start(line), i, cfg)
 
 
 def within_lookback(i1: int, i: int, cfg: TrendlinesConfig) -> bool:
@@ -654,11 +666,90 @@ def touch_gaps(touch_idxs: Sequence[int]) -> tuple[int, float]:
     return max(gaps), min(gaps)
 
 
+def find_left_start(
+    cand: TrendLine,
+    q: int,
+    pool_idxs: Sequence[int],
+    pool_kinds: Sequence[str],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    atr: Sequence[float | None],
+    i: int,
+    cfg: TrendlinesConfig,
+) -> tuple[int, str, float] | None:
+    """Mirrors TS findLeftStart: the NEAREST pool pivot before i1 the touch
+    model counts, skipping an entry at i1, no further back than max_proj_bars
+    before i1 and never past Lookback. (idx, kind, weight) or None."""
+    for q0 in range(q - 1, -1, -1):
+        pj = pool_idxs[q0]
+        if pj == cand.i1:
+            continue
+        if cand.i1 - pj > cfg.max_proj_bars:
+            break
+        if not within_lookback(pj, i, cfg):
+            break
+        tol_p = atr[pj]
+        if tol_p is None:
+            continue
+        kj = pool_kinds[q0]
+        pv = highs[pj] if kj == "high" else lows[pj]
+        w = touch_weight(cand, pj, pv, kj, cfg.touch_mult * tol_p, cfg.pierce_mult * tol_p)
+        if w > 0:
+            return pj, kj, w
+    return None
+
+
+def extended_copy(
+    cand: TrendLine, start: tuple[int, str, float], closes: Sequence[float], i: int
+) -> TrendLine:
+    """Mirrors TS extendedCopy: i0 set, the start pivot added as a touch, gaps
+    recomputed, crossings recounted over (i0, i]. A copy."""
+    idx, _kind, w = start
+    ext = replace(
+        cand,
+        i0=idx,
+        i0_weight=w,
+        touches=cand.touches + w,
+        touch_idxs=[*cand.touch_idxs, idx],
+        crossings=0,
+        last_sign=0,
+    )
+    step_crossings(ext, idx + 1, i, closes)
+    ext.max_touch_gap, ext.min_touch_gap = touch_gaps(ext.touch_idxs)
+    return ext
+
+
+def shorten_if_broken(
+    line: TrendLine, i: int, cfg: TrendlinesConfig, closes: Sequence[float]
+) -> TrendLine:
+    """Mirrors TS shortenIfBroken: an extended line that fails a ceiling or
+    whose earlier start aged past Lookback goes back to the line Extend Left
+    off would have built (start i1, the start touch taken out, crossings
+    walked again over (i1, i], gaps recomputed). Otherwise the line itself."""
+    if line.i0 is None:
+        return line
+    if not over_ceilings(line, cfg) and within_lookback(line.i0, i, cfg):
+        return line
+    at = line.touch_idxs.index(line.i0)
+    short = replace(
+        line,
+        i0=None,
+        i0_weight=0.0,
+        touches=line.touches - line.i0_weight,
+        touch_idxs=[t for n, t in enumerate(line.touch_idxs) if n != at],
+        crossings=0,
+        last_sign=0,
+    )
+    step_crossings(short, line.i1 + 1, i, closes)
+    short.max_touch_gap, short.min_touch_gap = touch_gaps(short.touch_idxs)
+    return short
+
+
 def over_ceilings(line: TrendLine, cfg: TrendlinesConfig) -> bool:
     """Mirrors TS overCeilings: SILENCES, does not delete."""
     if cfg.max_touches > 0 and line.touches > cfg.max_touches:
         return True
-    if cfg.max_span_bars > 0 and line.last_touch_idx - line.i1 > cfg.max_span_bars:
+    if cfg.max_span_bars > 0 and line.last_touch_idx - line_start(line) > cfg.max_span_bars:
         return True
     if cfg.max_touch_spacing > 0 and line.max_touch_gap > cfg.max_touch_spacing:
         return True
@@ -674,14 +765,15 @@ def is_major(line: TrendLine, i: int, cfg: TrendlinesConfig) -> bool:
         return False
     if over_ceilings(line, cfg):
         return False
-    if line.last_touch_idx - line.i1 < cfg.min_span_bars:
+    start = line_start(line)
+    if line.last_touch_idx - start < cfg.min_span_bars:
         return False
     if line.crossings < cfg.min_crossings:
         return False
     return (
-        i >= line.i1
+        i >= start
         and i <= line.last_touch_idx + cfg.max_proj_bars
-        and within_lookback(line.i1, i, cfg)
+        and within_lookback(start, i, cfg)
     )
 
 
@@ -713,6 +805,10 @@ def compute_trendlines(
         # 1. Per-bar crossing step for every existing line.
         for line in lines:
             step_crossings(line, i, i, closes)
+        # Extend Left (mirrors TS): a crossing or the Lookback edge moving can
+        # break an extended line; it drops back to the short line first.
+        if cfg.extend_left > 0:
+            lines = [shorten_if_broken(line, i, cfg, closes) for line in lines]
 
         # 2. Confirm-bar work for the pivot at k = i - pivot_len.
         k = i - cfg.pivot_len
@@ -812,7 +908,18 @@ def compute_trendlines(
                             cand.touch_idxs.append(pj)
                     cand.max_touch_gap, cand.min_touch_gap = touch_gaps(cand.touch_idxs)
                     cand.max_touch_idx = cand.i2
-                    lines.append(cand)
+                    # Extend Left (mirrors TS): nearest earlier touch, crossings
+                    # recounted from it; kept unextended if a ceiling breaks.
+                    seeded = cand
+                    if cfg.extend_left > 0:
+                        s = find_left_start(
+                            cand, q, pool_idxs, pool_kinds, highs, lows, atr, i, cfg
+                        )
+                        if s is not None:
+                            ext = extended_copy(cand, s, closes, i)
+                            if not over_ceilings(ext, cfg):
+                                seeded = ext
+                    lines.append(seeded)
                 pool_idxs.append(k)
                 pool_kinds.append(kind)
 
@@ -837,6 +944,10 @@ def compute_trendlines(
                         if cfg.major_size_atr > 0 and strength < cfg.major_size_atr:
                             continue
                         admit_major(major_q, major_str, q, strength, cfg.major_pivots)
+
+            # Extend Left again, after this bar's touches, before the prune.
+            if cfg.extend_left > 0:
+                lines = [shorten_if_broken(line, i, cfg, closes) for line in lines]
 
             # 3. Prune the dead, then cap live state at MAX_LIVE by the
             #    SURVIVAL order IN TOTAL (survival_key, not rank_key: see its

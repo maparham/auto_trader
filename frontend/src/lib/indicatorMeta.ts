@@ -231,6 +231,22 @@ const SLOPE_UNIT_OPTIONS: Array<{ value: string; label: string }> =
 const TL = TRENDLINES_DEFAULTS;
 const TL_DEFAULT_PARAMS = Object.values(TL) as number[];
 
+/** Fills the calcParams gap a jump to a high slot (e.g. Extend Left, 28)
+ * leaves behind: a saved pane that predates the newer slots has no entries
+ * for them, and a plain array write (`cp[28] = 1`) would otherwise leave
+ * those slots `undefined`, which JSON.stringify turns into `null` holes.
+ * Every slot below `upTo` that is missing or not a finite number is set to
+ * its TRENDLINES_DEFAULTS value; slots already holding a real number are
+ * left as they are. */
+export function padTrendlinesParams(cp: number[], upTo: number): number[] {
+  const next = cp.slice();
+  for (let k = 0; k < upTo; k++) {
+    const v = next[k];
+    if (typeof v !== "number" || !Number.isFinite(v)) next[k] = TL_DEFAULT_PARAMS[k];
+  }
+  return next;
+}
+
 // The Lines slider, least to most: each step sets how many lines are kept
 // (Max Trendlines, Max per pivot), how much a line must earn its place (Min
 // Touches, Min Span), how coarse the swings are (Pivot Length) and how close
@@ -954,6 +970,20 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
           "Oldest bar a line may start on, counted back from each bar.",
           "A line whose first anchor is older is dropped. Empty: no limit.",
           "On a daily chart, about 252 bars is a year.",
+        ],
+      },
+      {
+        key: "p28",
+        label: "Extend Left",
+        type: "boolean",
+        source: "calcParam",
+        index: 28,
+        default: false,
+        tip: [
+          "Starts each line at the nearest earlier swing it touched.",
+          "The line keeps its angle; that swing counts as a touch.",
+          "Breaks on the way count as crossings.",
+          "Drops back to the shorter line if the longer one fails a filter.",
         ],
       },
       {

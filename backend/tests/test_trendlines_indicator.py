@@ -12,6 +12,7 @@ from auto_trader.core.models import Candle
 from auto_trader.indicators.core import atr_series
 from auto_trader.indicators.registry import SERIES_INDICATORS, resolve_instances
 from auto_trader.indicators.trendlines import (
+    shorten_if_broken,
     MAX_LIVE,
     MAX_MAX_LINES,
     MAJOR_LEN,
@@ -23,11 +24,14 @@ from auto_trader.indicators.trendlines import (
     TrendLine,
     admit_major,
     compute_trendlines,
+    extended_copy,
+    find_left_start,
     pool_position,
     swing_strength,
     has_back_clearance,
     touch_weight,
     is_major,
+    line_start,
     max_distance_tol,
     nearest_first,
     poolable,
@@ -895,3 +899,109 @@ def test_a_merged_level_is_led_by_its_nearest_member():
     far_strong, near_weak = _cap_line(0, 40, 100.8, 5), _cap_line(0, 40, 100.2, 2)
     ordered = nearest_first([far_strong, near_weak], 50, 100.0)
     assert select_levels(ordered, 50, 1.0, 0, 5) == [near_weak]
+
+
+def test_extend_left_slot_parses_zero_one():
+    assert parse_trendlines_config([], {}).extend_left == 0
+    base = [None] * 28
+    assert parse_trendlines_config(base + [1], {}).extend_left == 1
+    assert parse_trendlines_config(base + [5], {}).extend_left == 1
+    assert parse_trendlines_config(base + [0], {}).extend_left == 0
+    assert parse_trendlines_config(base + [-1], {}).extend_left == 0
+
+
+def test_line_start_falls_back_to_i1():
+    l = _mixed()
+    assert l.i0 is None
+    assert line_start(l) == l.i1
+    l.i0 = l.i1 - 3
+    assert line_start(l) == l.i1 - 3
+
+
+def _rising_line() -> TrendLine:
+    # Value at bar j is 100 + (j - 10).
+    return TrendLine(i1=10, p1=100.0, k1="low", i2=20, p2=110.0, k2="low", touches=2.0,
+                     last_touch_idx=20, crossings=0, last_sign=0, max_touch_gap=10,
+                     min_touch_gap=10, max_touch_idx=20, touch_idxs=[10, 20])
+
+
+def _el_cfg(**over):
+    base = replace(parse_trendlines_config([], {}), touch_mult=0.0, pierce_mult=0.25,
+                   max_proj_bars=100, extend_left=1)
+    return replace(base, **over)
+
+
+_N = 30
+_ATR = [1.0] * _N
+_HI = [200.0] * _N
+_LO = [0.0] * _N
+
+
+def test_find_left_start_nearest():
+    lows = list(_LO); lows[2] = 92.0; lows[5] = 95.0
+    got = find_left_start(_rising_line(), 2, [2, 5, 10, 20], ["low"] * 4, _HI, lows, _ATR, 25, _el_cfg())
+    assert got == (5, "low", 1.0)
+
+
+def test_find_left_start_none_touch():
+    assert find_left_start(_rising_line(), 2, [2, 5, 10, 20], ["low"] * 4, _HI, _LO, _ATR, 25, _el_cfg()) is None
+
+
+def test_find_left_start_reach_and_lookback():
+    lows = list(_LO); lows[4] = 94.0
+    args = (_rising_line(), 1, [4, 10, 20], ["low"] * 3, _HI, lows, _ATR, 25)
+    assert find_left_start(*args, _el_cfg(max_proj_bars=6))[0] == 4
+    assert find_left_start(*args, _el_cfg(max_proj_bars=5)) is None
+    assert find_left_start(*args, _el_cfg(lookback_bars=20)) is None
+
+
+def test_find_left_start_skips_anchor_bar():
+    highs = list(_HI); highs[10] = 100.0
+    assert find_left_start(_rising_line(), 1, [10, 10, 20], ["high", "low", "low"], highs, _LO, _ATR, 25, _el_cfg()) is None
+
+
+def test_extended_copy():
+    closes = [100.0 + (j - 10) - 1 if 5 <= j <= 7 else 100.0 + (j - 10) + 1 for j in range(_N)]
+    cand = _rising_line()
+    ext = extended_copy(cand, (5, "low", 1.0), closes, 25)
+    assert line_start(ext) == 5
+    assert ext.touches == 3.0
+    assert ext.touch_idxs == [10, 20, 5]
+    assert ext.crossings == 1
+    assert (ext.max_touch_gap, ext.min_touch_gap) == (10, 5)
+    assert cand.i0 is None and cand.touch_idxs == [10, 20]
+
+
+# ---------------------------------------------------------------- Extend Left fallback
+
+_SC = [100.0 + (j - 10) - 1 if 5 <= j <= 7 else 100.0 + (j - 10) + 1 for j in range(30)]
+
+
+def _plain_line() -> TrendLine:
+    p = _rising_line()
+    step_crossings(p, 11, 25, _SC)
+    return p
+
+
+def _extended_line() -> TrendLine:
+    return extended_copy(_plain_line(), (5, "low", 1.0), _SC, 25)
+
+
+def test_shorten_keeps_a_passing_extended_line():
+    ext = _extended_line()
+    assert shorten_if_broken(ext, 25, _el_cfg(), _SC) is ext
+
+
+def test_shorten_drops_back_to_the_unextended_line():
+    short = shorten_if_broken(_extended_line(), 25, _el_cfg(max_span_bars=12), _SC)
+    assert short == _plain_line()
+    assert line_start(short) == 10
+
+
+def test_shorten_on_lookback_age():
+    assert shorten_if_broken(_extended_line(), 25, _el_cfg(lookback_bars=18), _SC) == _plain_line()
+
+
+def test_shorten_ignores_unextended_lines():
+    p = _plain_line()
+    assert shorten_if_broken(p, 25, _el_cfg(max_span_bars=1), _SC) is p

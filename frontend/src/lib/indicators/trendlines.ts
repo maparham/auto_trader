@@ -136,6 +136,14 @@ export interface TrendLine {
   maxTouchGap: number; // widest gap between consecutive touches; only grows
   minTouchGap: number; // narrowest; only shrinks
   maxTouchIdx: number; // running maximum of touchIdxs
+  /** Where the line STARTS when Extend Left moved it back past i1: the bar of
+   * the nearest earlier pool pivot it touches. Absent when not extended, and
+   * absent on MTF stashes persisted before it existed, so read it only
+   * through lineStart. The anchors never move; this is not geometry. */
+  i0?: number;
+  /** The touch weight the start pivot added, so shortenIfBroken can take it
+   * back out. Set with i0, absent without it. */
+  i0Weight?: number;
 }
 
 /** The kind that touched at slot `t`, or null when the line carries no kinds.
@@ -155,6 +163,11 @@ function touchKindAt(line: TrendLine, t: number): PivotKind | null {
 /** The line's price at bar j. The ONLY division in this module. */
 export function projectAt(line: TrendLine, j: number): number {
   return line.p1 + ((line.p2 - line.p1) * (j - line.i1)) / (line.i2 - line.i1);
+}
+
+/** The bar a line starts on: i0 when Extend Left moved it back, else i1. */
+export function lineStart(line: TrendLine): number {
+  return line.i0 ?? line.i1;
 }
 
 /** How much of a touch the pivot `(j, price)` of kind `kind` scores against
@@ -246,8 +259,8 @@ export function hasBackClearance(
  * the stage 3 walk (nearestFirst), not the walk order itself. */
 export function rankLines(a: TrendLine, b: TrendLine): number {
   if (a.touches !== b.touches) return b.touches - a.touches;
-  const spanA = a.lastTouchIdx - a.i1;
-  const spanB = b.lastTouchIdx - b.i1;
+  const spanA = a.lastTouchIdx - lineStart(a);
+  const spanB = b.lastTouchIdx - lineStart(b);
   if (spanA !== spanB) return spanB - spanA;
   if (a.crossings !== b.crossings) return a.crossings - b.crossings;
   if (a.lastTouchIdx !== b.lastTouchIdx) return b.lastTouchIdx - a.lastTouchIdx;
@@ -285,8 +298,8 @@ export function rankLines(a: TrendLine, b: TrendLine): number {
  * add them in the same order, so the compare stays bit-identical. */
 export function compareSurvival(a: TrendLine, b: TrendLine): number {
   if (a.crossings !== b.crossings) return a.crossings - b.crossings;
-  const spanA = a.lastTouchIdx - a.i1;
-  const spanB = b.lastTouchIdx - b.i1;
+  const spanA = a.lastTouchIdx - lineStart(a);
+  const spanB = b.lastTouchIdx - lineStart(b);
   if (spanA !== spanB) return spanB - spanA;
   if (a.touches !== b.touches) return b.touches - a.touches;
   if (a.lastTouchIdx !== b.lastTouchIdx) return b.lastTouchIdx - a.lastTouchIdx;
@@ -322,7 +335,7 @@ const KINDS: readonly PivotKind[] = ["high", "low"];
 
 /** Live means not aged out past its projection horizon. */
 export function isLive(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
-  return i - line.lastTouchIdx <= cfg.maxProjBars && withinLookback(line.i1, i, cfg);
+  return i - line.lastTouchIdx <= cfg.maxProjBars && withinLookback(lineStart(line), i, cfg);
 }
 
 /** False once bar `i1` is more than Lookback bars before bar `i`. Age only
@@ -351,7 +364,7 @@ export function withinLookback(i1: number, i: number, cfg: TrendlinesConfig): bo
  * setting silently blanked an operand a strategy reads. */
 export function overCeilings(line: TrendLine, cfg: TrendlinesConfig): boolean {
   if (cfg.maxTouches > 0 && line.touches > cfg.maxTouches) return true;
-  if (cfg.maxSpanBars > 0 && line.lastTouchIdx - line.i1 > cfg.maxSpanBars) return true;
+  if (cfg.maxSpanBars > 0 && line.lastTouchIdx - lineStart(line) > cfg.maxSpanBars) return true;
   if (cfg.maxTouchSpacing > 0 && line.maxTouchGap > cfg.maxTouchSpacing) return true;
   if (cfg.minTouchSpacing > 0 && line.minTouchGap < cfg.minTouchSpacing) return true;
   if (cfg.maxCrossings > 0 && line.crossings > cfg.maxCrossings) return true;
@@ -394,15 +407,118 @@ export function touchGaps(touchIdxs: readonly number[]): {
   return { widest, narrowest };
 }
 
+/** The start pivot Extend Left found: its bar, its kind and its touch weight. */
+export interface LeftStart {
+  idx: number;
+  kind: PivotKind;
+  w: number;
+}
+
+/** Extend Left's start pivot: the NEAREST pool pivot before the line's first
+ * anchor that the touch model counts. Newest first from pool position q - 1
+ * (q is the anchor's own position), skipping an entry AT i1 (the other extreme
+ * of the anchor bar), stopping once an entry is more than maxProjBars before
+ * i1 (the reach a line has to the right of its last touch) or past Lookback.
+ * Mirrored by Python find_left_start. */
+export function findLeftStart(
+  cand: TrendLine,
+  q: number,
+  poolIdxs: readonly number[],
+  poolKinds: readonly PivotKind[],
+  highs: readonly number[],
+  lows: readonly number[],
+  atr: readonly (number | null)[],
+  i: number,
+  cfg: TrendlinesConfig,
+): LeftStart | null {
+  for (let q0 = q - 1; q0 >= 0; q0--) {
+    const pj = poolIdxs[q0];
+    if (pj === cand.i1) continue;
+    if (cand.i1 - pj > cfg.maxProjBars) break;
+    if (!withinLookback(pj, i, cfg)) break;
+    const tolP = atr[pj];
+    if (tolP === null) continue;
+    const kj = poolKinds[q0];
+    const pv = kj === "high" ? highs[pj] : lows[pj];
+    const w = touchWeight(cand, pj, pv, kj, cfg.touchMult * tolP, cfg.pierceMult * tolP);
+    if (w > 0) return { idx: pj, kind: kj, w };
+  }
+  return null;
+}
+
+/** The candidate started at `s`: the start pivot added as a touch, the gaps
+ * recomputed, and the crossings recounted over (s.idx, i] so breaks between
+ * the start and the old anchor count. A copy; the candidate is untouched.
+ * Mirrored by Python extended_copy. */
+export function extendedCopy(
+  cand: TrendLine,
+  s: LeftStart,
+  closes: readonly number[],
+  i: number,
+): TrendLine {
+  const ext: TrendLine = {
+    ...cand,
+    i0: s.idx,
+    i0Weight: s.w,
+    touches: cand.touches + s.w,
+    touchIdxs: [...cand.touchIdxs, s.idx],
+    touchKinds: [...cand.touchKinds, s.kind],
+    crossings: 0,
+    crossIdxs: [],
+    lastSign: 0,
+  };
+  for (let j = s.idx + 1; j <= i; j++) stepCrossing(ext, j, closes[j]);
+  const gaps = touchGaps(ext.touchIdxs);
+  ext.maxTouchGap = gaps.widest;
+  ext.minTouchGap = gaps.narrowest;
+  return ext;
+}
+
+/** Extend Left's fallback, asked on every bar: an extended line that now
+ * fails a ceiling (overCeilings) or whose earlier start has aged past
+ * Lookback goes back to the line it would have been with Extend Left off:
+ * start at i1, the start pivot's touch taken out, crossings walked again
+ * over (i1, i], the gaps recomputed. That line is then an ordinary one, so
+ * if it fails a filter too it is silenced like any other. Returns the line
+ * itself when nothing is broken or it was never extended. Mirrored by Python
+ * shorten_if_broken. */
+export function shortenIfBroken(
+  line: TrendLine,
+  i: number,
+  cfg: TrendlinesConfig,
+  closes: readonly number[],
+): TrendLine {
+  if (line.i0 === undefined) return line;
+  if (!overCeilings(line, cfg) && withinLookback(line.i0, i, cfg)) return line;
+  const at = line.touchIdxs.indexOf(line.i0);
+  const short: TrendLine = {
+    ...line,
+    touches: line.touches - (line.i0Weight ?? 0),
+    touchIdxs: line.touchIdxs.filter((_, t) => t !== at),
+    touchKinds: (line.touchKinds ?? []).filter((_, t) => t !== at),
+    crossings: 0,
+    crossIdxs: [],
+    lastSign: 0,
+  };
+  delete short.i0;
+  delete short.i0Weight;
+  for (let j = line.i1 + 1; j <= i; j++) stepCrossing(short, j, closes[j]);
+  const gaps = touchGaps(short.touchIdxs);
+  short.maxTouchGap = gaps.widest;
+  short.minTouchGap = gaps.narrowest;
+  return short;
+}
+
 /** Major means: enough touches, enough span, enough crossings, and covering
  * this bar. The floors live here because a line can still grow into them. */
 export function isMajor(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
   if (line.touches < cfg.minTouches) return false;
   if (overCeilings(line, cfg)) return false;
-  const span = line.lastTouchIdx - line.i1;
+  const start = lineStart(line);
+  const span = line.lastTouchIdx - start;
   if (span < cfg.minSpanBars) return false;
   if (line.crossings < cfg.minCrossings) return false;
-  return i >= line.i1 && i <= line.lastTouchIdx + cfg.maxProjBars && withinLookback(line.i1, i, cfg);
+  return i >= start && i <= line.lastTouchIdx + cfg.maxProjBars && withinLookback(start, i, cfg);
 }
 
 /** True when the pivot at bar `k` sits far enough from the swing before it.
@@ -842,6 +958,11 @@ export function stepTrendlinesBar(
   //    seeded at an earlier confirm bar and has consumed closes through it, so
   //    this bar is the next one. Needs no ATR.
   for (const line of lines) stepCrossing(line, i, closes[i]);
+  // Extend Left: a crossing (or the Lookback edge moving) can break an
+  // extended line; it drops back to the short line before anything reads it.
+  if (cfg.extendLeft > 0) {
+    for (let t = 0; t < lines.length; t++) lines[t] = shortenIfBroken(lines[t], i, cfg, closes);
+  }
   sink?.crossings(i, closes[i]);
 
   // 2. CONFIRM-BAR work for the pivot at bar k = i - pivotLen.
@@ -948,7 +1069,18 @@ export function stepTrendlinesBar(
           continue;
         }
         finishSeed(st, cand, q + 1, i, cfg);
-        lines.push(cand);
+        // Extend Left (spec 2026-09-24): start at the nearest earlier pivot
+        // the line touches, crossings recounted from there; kept unextended
+        // when that breaks a ceiling, so the option never removes a line.
+        let seeded = cand;
+        if (cfg.extendLeft > 0) {
+          const s = findLeftStart(cand, q, pool.idxs, pool.kinds, highs, lows, atr, i, cfg);
+          if (s !== null) {
+            const ext = extendedCopy(cand, s, closes, i);
+            if (!overCeilings(ext, cfg)) seeded = ext;
+          }
+        }
+        lines.push(seeded);
         st.pairs++;
       }
       pool.idxs.push(k);
@@ -976,6 +1108,12 @@ export function stepTrendlinesBar(
           admitMajor(majorTier, q, strength, cfg.majorPivots);
         }
       }
+    }
+
+    // Extend Left again, after this bar's touches (Max Touches, the spacing
+    // limits and Max Span move only on a touch), before the prune and the cap.
+    if (cfg.extendLeft > 0) {
+      for (let t = 0; t < lines.length; t++) lines[t] = shortenIfBroken(lines[t], i, cfg, closes);
     }
 
     // 3. Prune the dead, then cap live state at MAX_LIVE by the SURVIVAL order,
@@ -1642,7 +1780,7 @@ export function mergeTolerance(
  * meet only today but were far apart earlier are different trends that
  * happen to cross, and stay. */
 export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number): boolean {
-  const start = Math.max(a.i1, b.i1);
+  const start = Math.max(lineStart(a), lineStart(b));
   return (
     Math.abs(projectAt(a, atIdx) - projectAt(b, atIdx)) <= tol &&
     Math.abs(projectAt(a, start) - projectAt(b, start)) <= tol
@@ -2203,9 +2341,11 @@ export function lineExtent(
    * reports. */
   extendSegmentToLastBar?: boolean,
 ): { jLeft: number; jRight: number } {
-  // The drawn segment starts at the line's own first anchor. "extended" runs
-  // maxProjBars further back still.
-  const jLeft = mode === "extended" ? line.i1 - cfg.maxProjBars : line.i1;
+  // The drawn segment starts at the line's start (its first anchor, or the
+  // earlier touch Extend Left found). "extended" runs maxProjBars further
+  // back still.
+  const s = lineStart(line);
+  const jLeft = mode === "extended" ? s - cfg.maxProjBars : s;
   const jEnd = line.lastTouchIdx;
   const horizon = line.lastTouchIdx + cfg.maxProjBars;
   // Pinned beats the mode: the user clicked THIS line open, so it runs to the
@@ -3221,7 +3361,7 @@ function drawTrendlines(
         // the newest bar (ray / extended run on by themselves), so the
         // drawing lies on the stroke the user saw.
         clone: (): TrendlineClone | null => {
-          const a = toPoint(xAtLine(line.i1));
+          const a = toPoint(xAtLine(lineStart(line)));
           const b = toPoint(tool === "segment" ? x1 : xAt(drawEdge));
           if (!a || !b || a.timestamp === b.timestamp) return null;
           return { tool, points: [a, b] };

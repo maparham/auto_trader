@@ -34,6 +34,7 @@ import {
   TL_PIVOT_ARM,
   TL_PIVOT_GAP,
   projectAt,
+  lineStart,
   rankLines,
   compareSurvival,
   selectDrawnLines,
@@ -58,6 +59,9 @@ import {
   trendlineDash,
   trendlineStyleOf,
   TRENDLINES_TEMPLATE,
+  findLeftStart,
+  extendedCopy,
+  shortenIfBroken,
   type TrendlinesCalcPoint,
   type TrendLine,
   type PivotKind,
@@ -3288,5 +3292,137 @@ describe("session compute floor", () => {
     const r2 = session.compute(bars, cfg(), floorTs);
     for (let i = 0; i < bars.length - 1; i++)
       expect(r2.points[i]).toBe(r1.points[i]); // identity: no rebuild happened
+  });
+});
+
+describe("Extend Left plumbing", () => {
+  it("parses slot 28 as 0/1, off when absent", () => {
+    expect(parseTrendlinesConfig([]).extendLeft).toBe(0);
+    const base = new Array(28).fill(undefined);
+    expect(parseTrendlinesConfig([...base, 1]).extendLeft).toBe(1);
+    expect(parseTrendlinesConfig([...base, 5]).extendLeft).toBe(1);
+    expect(parseTrendlinesConfig([...base, 0]).extendLeft).toBe(0);
+    expect(parseTrendlinesConfig([...base, -1]).extendLeft).toBe(0);
+  });
+
+  it("reads a JSON hole at slot 27 as Lookback off", () => {
+    const saved = JSON.parse(JSON.stringify(Object.assign(new Array(29).fill(0), { 27: undefined, 28: 1 })));
+    const cfg = parseTrendlinesConfig(saved);
+    expect(cfg.lookbackBars).toBe(0);
+    expect(cfg.extendLeft).toBe(1);
+  });
+
+  it("lineStart falls back to i1 for a line without i0", () => {
+    const l = { ...mixed };
+    delete (l as { i0?: number }).i0;
+    expect(lineStart(l)).toBe(l.i1);
+    expect(lineStart({ ...mixed, i0: mixed.i1 - 3 })).toBe(mixed.i1 - 3);
+  });
+});
+
+describe("Extend Left: findLeftStart / extendedCopy", () => {
+  // Rising line: value at bar j is 100 + (j - 10). ATR 1 everywhere, pierce
+  // 0.25, no gap band, so only an extreme ON (or just through) the line counts.
+  const line: TrendLine = {
+    i1: 10, p1: 100, k1: "low", i2: 20, p2: 110, k2: "low",
+    touches: 2, touchIdxs: [10, 20], touchKinds: ["low", "low"], lastTouchIdx: 20,
+    crossings: 0, crossIdxs: [], lastSign: 0, maxTouchGap: 10, minTouchGap: 10, maxTouchIdx: 20,
+  };
+  const n = 30;
+  const atr = new Array<number | null>(n).fill(1);
+  const flatHighs = new Array<number>(n).fill(200);
+  const flatLows = new Array<number>(n).fill(0);
+  const c = (over: Partial<TrendlinesConfig> = {}): TrendlinesConfig =>
+    ({ ...TRENDLINES_DEFAULTS, touchMult: 0, pierceMult: 0.25, maxProjBars: 100, extendLeft: 1, ...over });
+
+  it("returns the nearest touching pool pivot", () => {
+    const lows = [...flatLows]; lows[2] = 92; lows[5] = 95; // both ON the line
+    const idxs = [2, 5, 10, 20]; const kinds: PivotKind[] = ["low", "low", "low", "low"];
+    expect(findLeftStart(line, 2, idxs, kinds, flatHighs, lows, atr, 25, c())).toEqual({ idx: 5, kind: "low", w: 1 });
+  });
+
+  it("skips non-touching pivots and returns null when none touch", () => {
+    const idxs = [2, 5, 10, 20]; const kinds: PivotKind[] = ["low", "low", "low", "low"];
+    expect(findLeftStart(line, 2, idxs, kinds, flatHighs, flatLows, atr, 25, c())).toBeNull();
+  });
+
+  it("reaches exactly maxProjBars back and no further", () => {
+    const lows = [...flatLows]; lows[4] = 94;
+    const idxs = [4, 10, 20]; const kinds: PivotKind[] = ["low", "low", "low"];
+    expect(findLeftStart(line, 1, idxs, kinds, flatHighs, lows, atr, 25, c({ maxProjBars: 6 }))?.idx).toBe(4);
+    expect(findLeftStart(line, 1, idxs, kinds, flatHighs, lows, atr, 25, c({ maxProjBars: 5 }))).toBeNull();
+  });
+
+  it("stops at the Lookback edge", () => {
+    const lows = [...flatLows]; lows[4] = 94;
+    const idxs = [4, 10, 20]; const kinds: PivotKind[] = ["low", "low", "low"];
+    expect(findLeftStart(line, 1, idxs, kinds, flatHighs, lows, atr, 25, c({ lookbackBars: 20 }))).toBeNull();
+  });
+
+  it("never uses the other extreme of the anchor bar", () => {
+    const highs = [...flatHighs]; highs[10] = 100; // the anchor bar's high sits ON the line
+    const idxs = [10, 10, 20]; const kinds: PivotKind[] = ["high", "low", "low"];
+    expect(findLeftStart(line, 1, idxs, kinds, highs, flatLows, atr, 25, c())).toBeNull();
+  });
+
+  it("extendedCopy sets i0, adds the touch and recounts crossings from i0", () => {
+    // Closes: under the line from 5 to 7, above from 8 on: one crossing (at 8).
+    const closes = Array.from({ length: n }, (_, j) => (j >= 5 && j <= 7 ? 100 + (j - 10) - 1 : 100 + (j - 10) + 1));
+    const cand = { ...line, touchIdxs: [...line.touchIdxs], touchKinds: [...line.touchKinds] };
+    const ext = extendedCopy(cand, { idx: 5, kind: "low", w: 1 }, closes, 25);
+    expect(lineStart(ext)).toBe(5);
+    expect(ext.touches).toBe(3);
+    expect(ext.touchIdxs).toEqual([10, 20, 5]);
+    expect(ext.touchKinds).toEqual(["low", "low", "low"]);
+    expect(ext.crossings).toBe(1);
+    expect(ext.crossIdxs).toEqual([8]);
+    expect(ext.minTouchGap).toBe(5);
+    expect(ext.maxTouchGap).toBe(10);
+    expect(cand.i0).toBeUndefined(); // a copy, the candidate is untouched
+    expect(cand.touchIdxs).toEqual([10, 20]);
+  });
+});
+
+describe("Extend Left: shortenIfBroken", () => {
+  // Same rising line as above: value at bar j is 100 + (j - 10). Closes sit
+  // under it from bar 5 to 7 and above it from 8 on, so the extended line
+  // (start 5) has one crossing and the short one (start 10) none.
+  const line: TrendLine = {
+    i1: 10, p1: 100, k1: "low", i2: 20, p2: 110, k2: "low",
+    touches: 2, touchIdxs: [10, 20], touchKinds: ["low", "low"], lastTouchIdx: 20,
+    crossings: 0, crossIdxs: [], lastSign: 0, maxTouchGap: 10, minTouchGap: 10, maxTouchIdx: 20,
+  };
+  const closes = Array.from({ length: 30 }, (_, j) => (j >= 5 && j <= 7 ? 100 + (j - 10) - 1 : 100 + (j - 10) + 1));
+  const c = (over: Partial<TrendlinesConfig> = {}): TrendlinesConfig =>
+    ({ ...TRENDLINES_DEFAULTS, maxProjBars: 100, extendLeft: 1, ...over });
+  // The line as it would be with Extend Left off: crossings walked from i1.
+  const plain = (): TrendLine => {
+    const p = { ...line, touchIdxs: [...line.touchIdxs], touchKinds: [...line.touchKinds], crossIdxs: [] };
+    for (let j = 11; j <= 25; j++) stepCrossing(p, j, closes[j]);
+    return p;
+  };
+  const extended = () => extendedCopy(plain(), { idx: 5, kind: "low", w: 1 }, closes, 25);
+
+  it("keeps an extended line that passes every filter", () => {
+    const ext = extended();
+    expect(shortenIfBroken(ext, 25, c(), closes)).toBe(ext);
+  });
+
+  it("drops back to exactly the unextended line when a ceiling breaks", () => {
+    // Span 15 extended, 10 short: Max Span 12 fails only the extended line.
+    const short = shortenIfBroken(extended(), 25, c({ maxSpanBars: 12 }), closes);
+    expect(short).toEqual(plain());
+    expect(lineStart(short)).toBe(10);
+    expect(short.crossings).toBe(0);
+  });
+
+  it("drops back when the older start ages past Lookback", () => {
+    // At bar 25, Lookback 18 keeps a start at 10 but not at 5.
+    expect(shortenIfBroken(extended(), 25, c({ lookbackBars: 18 }), closes)).toEqual(plain());
+  });
+
+  it("never touches a line Extend Left did not move", () => {
+    const p = plain();
+    expect(shortenIfBroken(p, 25, c({ maxSpanBars: 1 }), closes)).toBe(p);
   });
 });

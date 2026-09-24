@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { presetsFor, presetStepOf, withPresetStep } from "./indicatorMeta";
+import { padTrendlinesParams, presetsFor, presetStepOf, withPresetStep, resolveInputs } from "./indicatorMeta";
 
 const tl = presetsFor("TRENDLINES")!;
 
@@ -29,5 +29,30 @@ describe("trendlines Lines steps", () => {
     const short = tl.base.slice(0, 10);
     expect(presetStepOf(tl, short)).toBe(presetStepOf(tl, tl.base));
     expect(withPresetStep(tl, short, 0)).toHaveLength(tl.base.length);
+  });
+});
+
+describe("Extend Left input", () => {
+  it("TRENDLINES has an Extend Left toggle on slot 28", () => {
+    const inp = resolveInputs("TRENDLINES", undefined).find((x) => x.index === 28);
+    expect(inp).toMatchObject({ label: "Extend Left", type: "boolean", source: "calcParam", default: false });
+    expect(inp?.tip).toEqual([
+      "Starts each line at the nearest earlier swing it touched.",
+      "The line keeps its angle; that swing counts as a touch.",
+      "Breaks on the way count as crossings.",
+      "Drops back to the shorter line if the longer one fails a filter.",
+    ]);
+  });
+});
+
+describe("padTrendlinesParams", () => {
+  it("fills the gap between a short saved array and a higher slot from the defaults", () => {
+    const twentyFour = Array.from({ length: 24 }, (_, i) => i);
+    const padded = padTrendlinesParams(twentyFour, 28);
+    expect(padded[24]).toBe(12); // majorPivots (MAJOR_PIVOTS)
+    expect(padded[26]).toBe(3); // majorSizeAtr
+    expect(padded[27]).toBe(0); // lookbackBars
+    // The given slots are untouched.
+    for (let i = 0; i < 24; i++) expect(padded[i]).toBe(i);
   });
 });

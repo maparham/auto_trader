@@ -130,6 +130,7 @@ describe("indicator parity golden fixture", () => {
       minBackBars: 0, maxDistAtr: 0, maxDistPct: 0, mergeAtr: 0, maxPerPivot: 0, mergePct: 0,
       majorPivots: 0, majorLen: 30, majorSizeAtr: 0,
       lookbackBars: 0,
+      extendLeft: 0,
     };
     const tlPoints = computeTrendlines(candles, TL_CFG).points;
     // One variant per gate, each against its own off state in TL_CFG, so a port
@@ -164,6 +165,11 @@ describe("indicator parity golden fixture", () => {
       // three-stage path end to end in one variant.
       MAXDIST_MERGE_CAP: { maxDistAtr: 3, mergeAtr: 1, maxPerPivot: 2 },
       LOOKBACK: { lookbackBars: 50 },
+      // Extend Left: extended lines gain a touch and a longer span, so a
+      // touches floor of 3 lets more of them emit; the Max Crossings pairing
+      // exercises the ceiling fallback to the unextended line.
+      EXTEND: { extendLeft: 1, minTouches: 3 },
+      EXTEND_CROSS: { extendLeft: 1, maxCrossings: 1 },
     };
     const tlVariantSeries: Record<string, Array<number | null>> = {};
     for (const [name, patch] of Object.entries(TL_VARIANTS)) {
@@ -174,6 +180,8 @@ describe("indicator parity golden fixture", () => {
       // could ignore the param and still pass.
       expect(JSON.stringify(pts), name).not.toBe(JSON.stringify(tlPoints));
     }
+    expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, extendLeft: 1, maxCrossings: 1 }).points))
+      .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, maxCrossings: 1 }).points));
 
     const series: Record<string, Array<number | null>> = {
       EMA_9: toNull(ema9Base),

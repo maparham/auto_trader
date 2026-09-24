@@ -34,15 +34,16 @@ describe("TRENDLINES registration", () => {
     expect(OVERLAY_INDICATORS.has("TRENDLINES")).toBe(true);
   });
 
-  it("has settings metadata for all twenty-seven params and the extend select", () => {
+  it("has settings metadata for all twenty-nine params and the extend select", () => {
     const inputs = resolveInputs("TRENDLINES", undefined);
-    // Twenty-seven calcParams, all numbers now that One line per pivot became
-    // the integer Max lines per pivot. The merge tolerance is a calcParam because a merged-away line
-    // must stop reporting to rules, which only the calc can arrange. The
-    // extra numbers are the three dim thresholds and the dim opacity, which
-    // choose an alpha and so are render-only.
-    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(27);
-    expect(inputs.filter((i) => i.type === "number")).toHaveLength(31);
+    // Twenty-nine calcParams: the twenty-seven numeric ones (One line per
+    // pivot became the integer Max lines per pivot; the merge tolerance is a
+    // calcParam because a merged-away line must stop reporting to rules,
+    // which only the calc can arrange), plus Lookback (number) and Extend
+    // Left (boolean). The extra numbers are the three dim thresholds and the
+    // dim opacity, which choose an alpha and so are render-only.
+    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(29);
+    expect(inputs.filter((i) => i.type === "number")).toHaveLength(32);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
     // metadata, so assert the named title too or this test passes on a miss.
@@ -69,6 +70,8 @@ describe("TRENDLINES registration", () => {
       ["Min Crossings", "Max Crossings"],
       ["Max Distance (×ATR)", "Max Distance (%)"],
       ["Max Projection"],
+      ["Lookback"],
+      ["Extend Left"],
       ["Extend"],
       ["Max lines per pivot"],
       ["Merge lines within", "Merge lines within (%)"],

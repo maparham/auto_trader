@@ -20,6 +20,7 @@ import {
   resolveInputs,
   groupInputs,
   isMovingAverage,
+  padTrendlinesParams,
   presetsFor,
   presetStepOf,
   withPresetStep,
@@ -1564,7 +1565,11 @@ function IndicatorSettingsForm({
   }
 
   function setParam(index: number, value: number) {
-    const nextCp = calcParams.slice();
+    // TRENDLINES only: a saved pane that predates a newer slot (e.g. Extend
+    // Left at 28) has nothing at the slots between its old length and this
+    // one, so a plain `nextCp[index] = value` would leave undefined holes
+    // that JSON.stringify turns into null. Pad those from the defaults first.
+    const nextCp = isTrendlines ? padTrendlinesParams(calcParams, index) : calcParams.slice();
     nextCp[index] = value;
     setCalcParams(nextCp);
     if (isMa && index === 0) {

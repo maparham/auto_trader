@@ -154,6 +154,8 @@ _TL_VARIANTS = {
     # three-stage path end to end in one variant.
     "MAXDIST_MERGE_CAP": dict(max_dist_atr=3, merge_atr=1, max_per_pivot=2),
     "LOOKBACK": dict(lookback_bars=50),
+    "EXTEND": dict(extend_left=1, min_touches=3),
+    "EXTEND_CROSS": dict(extend_left=1, max_crossings=1),
 }
 
 
