@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+from auto_trader.brokers.yahoo_listing import listing_ticker
+
 # Symbol-search chips over the `type` values _classify_symbol stamps.
 MT5_CATEGORIES = [
     {"key": "SHARES", "label": "Stocks", "types": ["SHARES"], "row": "stock"},
@@ -87,3 +89,21 @@ def _classify_symbol(sym: str) -> str | None:
     if len(alnum) == 6 and alnum[:3] in _FIAT_CODES and alnum[3:] in _FIAT_CODES:
         return "CURRENCIES"
     return None
+
+
+# AvaTrade share descriptions end in the ticker: "1 Lot= 10 Shares (BKNG)".
+_DESC_TICKER = re.compile(r"\(([A-Z0-9][A-Z0-9.\-]{0,9})\)\s*$")
+
+
+def avatrade_ticker(sym: str, description: str | None, isin: str | None) -> str | None:
+    """Yahoo ticker for an AvaTrade share, for the chart's split markers, or
+    None. The symbol is a company name (#BOOKING.COM), so the ticker comes from
+    the description. A # symbol is a US listing whatever the issuer's ISIN
+    country (Spotify is LU); a _ symbol is European, placed by its ISIN."""
+    if not sym.startswith(("#", "_")):
+        return None
+    m = _DESC_TICKER.search(description or "")
+    if m is None:
+        return None
+    country = "US" if sym.startswith("#") else (isin or "")[:2]
+    return listing_ticker(m.group(1), country)

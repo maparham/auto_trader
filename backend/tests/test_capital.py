@@ -277,13 +277,24 @@ def test_get_market_meta_closed_outside_hours_with_next_open():
     assert meta["nextOpen"] == "2026-06-28T22:00:00+00:00"
 
 
+def test_get_market_meta_carries_the_instrument_type():
+    # The split-markers endpoint shows markers only for equities.
+    broker = _broker_returning(
+        {"snapshot": {"decimalPlacesFactor": 2}, "instrument": {"type": "SHARES"}}
+    )
+    assert _run_meta(broker, "BKNG")["type"] == "SHARES"
+
+
 def test_get_market_meta_falls_back_to_marketstatus_without_hours():
     # No openingHours -> derive closed from marketStatus (non-TRADEABLE = closed).
     broker = _broker_returning(
         {"snapshot": {"decimalPlacesFactor": 5.0, "marketStatus": "TRADEABLE"}}
     )
     meta = _run_meta(broker, "EURUSD")
-    assert meta == {"pricePrecision": 5, "closed": False, "nextOpen": None, "status": "TRADEABLE"}
+    assert meta == {
+        "pricePrecision": 5, "closed": False, "nextOpen": None, "status": "TRADEABLE",
+        "type": None,
+    }
 
     broker = _broker_returning(
         {"snapshot": {"decimalPlacesFactor": 5.0, "marketStatus": "CLOSED"}}

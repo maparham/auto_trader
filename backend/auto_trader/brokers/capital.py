@@ -233,7 +233,7 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
         - `nextOpen`: ISO-8601 UTC time the market next opens (only when closed),
           surfaced in the chart's closed-badge tooltip.
 
-        Returns {pricePrecision, closed, nextOpen, status}, or None if unknown."""
+        Returns {pricePrecision, closed, nextOpen, status, type}, or None if unknown."""
         d = await self._fetch_market_raw(epic)
         if d is None:
             return None
@@ -278,6 +278,8 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
             "closed": closed,
             "nextOpen": next_open,
             "status": status,
+            # instrumentType ("SHARES", "CURRENCIES", ...): gates split markers.
+            "type": (d.get("instrument") or {}).get("type"),
         }
 
     async def _fetch_market_raw(self, epic: str) -> dict | None:

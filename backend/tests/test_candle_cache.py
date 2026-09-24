@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from auto_trader.core.candle_cache import CandleCache
+from auto_trader.core.candle_cache import CandleCache, CandleKey
 from auto_trader.core.models import Candle
 
 
@@ -1517,3 +1517,45 @@ def test_window_passthrough_expired_budget_reports_partial(tmp_path):
     assert f.range_calls == []  # budget was gone before the first chunk
     assert partial["done_chunks"] == 0 and partial["total_chunks"] == 5
     assert "still loading history" in partial["reason"]
+
+
+# --- repair hook (api/candle_repair.py installs the real one) ---------------
+
+
+def test_repair_hook_rewrites_window_and_recent_results(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    seen: list[tuple[CandleKey, int, list[int]]] = []
+
+    async def hook(key, res_seconds, bars):
+        seen.append((key, res_seconds, [int(b.time.timestamp()) for b in bars]))
+        return [b for b in bars if int(b.time.timestamp()) != 160]
+
+    cache.set_repair(hook)
+    f = FakeFetcher([_c(t, float(t)) for t in (100, 160, 220, 280)])
+    win = asyncio.run(cache.window(KEY, 60, _dt(100), _dt(280), f.range, now=10_000))
+    rec = asyncio.run(cache.recent(KEY, 60, 4, f.recent, now=10_000))
+    assert [int(c.time.timestamp()) for c in win] == [100, 220, 280]
+    assert [int(c.time.timestamp()) for c in rec] == [100, 220, 280]
+    assert seen[0] == (KEY, 60, [100, 160, 220, 280])
+    # The store keeps the broker's bars: repair is a read-time view.
+    assert len(cache._read_window(KEY, 0, 10_000)) == 4
+
+
+def test_repair_hook_failure_serves_raw_bars(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+
+    async def hook(key, res_seconds, bars):
+        raise RuntimeError("boom")
+
+    cache.set_repair(hook)
+    f = FakeFetcher([_c(t, float(t)) for t in (100, 160)])
+    out = asyncio.run(cache.window(KEY, 60, _dt(100), _dt(160), f.range, now=10_000))
+    assert [int(c.time.timestamp()) for c in out] == [100, 160]
+
+
+def test_bar_before_reads_the_previous_stored_bar(tmp_path):
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(t, float(t)) for t in (100, 160, 220)], cutoff_ts=10_000)
+    prev = asyncio.run(cache.bar_before(KEY, 220))
+    assert prev is not None and int(prev.time.timestamp()) == 160
+    assert asyncio.run(cache.bar_before(KEY, 100)) is None

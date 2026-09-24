@@ -186,6 +186,8 @@ import {
 } from "./lib/tradeMarkers";
 import { journalSignal } from "./lib/liveJournal";
 import TradeExitAggMarkers, { type TradeExitAggMarkersHandle } from "./TradeExitAggMarkers";
+import SplitMarkers, { type SplitMarkersHandle } from "./SplitMarkers";
+import { fetchSplits, type Split } from "./lib/splits";
 import {
   brokerLabel,
   subscribeTrades,
@@ -877,6 +879,10 @@ export default function ChartCore({
   // analog of aggMarkersRef. Clusters are recomputed in drawTradeMarkers and
   // projected to pixels each redraw, like the backtest aggregate pills.
   const exitAggMarkersRef = useRef<TradeExitAggMarkersHandle>(null);
+  // Stock splits of this cell's symbol (fetched per symbol, see the effect
+  // below) and the DOM chip layer the redraw loop projects them onto.
+  const splitsRef = useRef<Split[]>([]);
+  const splitMarkersRef = useRef<SplitMarkersHandle>(null);
   const exitClustersRef = useRef<ExitCluster[]>([]);
   // While the cursor is parked over the "+" affordance, klinecharts has lost the
   // canvas hover and dropped its crosshair. We redraw just the HORIZONTAL crosshair
@@ -1805,6 +1811,8 @@ export default function ChartCore({
       crosshairRef,
       aggMarkersRef,
       exitAggMarkersRef,
+      splitMarkersRef,
+      splitsRef,
       tradeDashesRef,
       paintBracketRef,
       paintSeparatorRef,
@@ -3976,6 +3984,23 @@ export default function ChartCore({
     };
   }, [symbol.epic, brokerId]);
 
+  // Split markers: equities only (the backend answers [] for everything else),
+  // one fetch per broker+epic per session. Cleared first so a symbol switch
+  // never shows the previous symbol's splits while the new list loads.
+  useEffect(() => {
+    let cancelled = false;
+    splitsRef.current = [];
+    handle.redrawRef.current();
+    void fetchSplits(symbol.epic, brokerId).then((splits) => {
+      if (cancelled) return;
+      splitsRef.current = splits;
+      handle.redrawRef.current();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol.epic, brokerId]);
+
   // A market open/closed change must repaint the price pill (the redraw reads the
   // ref, so a re-render alone won't). The tab badge is sourced separately by an
   // App-level epic poll, so this cell only needs to refresh its own price label.
@@ -5547,6 +5572,8 @@ export default function ChartCore({
           backtest aggregate markers, for journaled closes that collide on the current
           timeframe. Hover lists that bar's exits; no drill-in. Fed by the redraw loop. */}
       <TradeExitAggMarkers handleRef={exitAggMarkersRef} />
+      {/* Stock split chips on the candle pane's bottom edge. Fed by the redraw loop. */}
+      <SplitMarkers handleRef={splitMarkersRef} />
       {/* Read-only snapshot view banner: top-center pill naming the snapshot, a
           READ-ONLY tag, and Unlock (graduates the tab into a normal chart). The
           one always-visible cue that editing is deliberately off on this cell. */}

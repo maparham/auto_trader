@@ -607,3 +607,13 @@ def test_week_tail_one_week_stale_is_rebuilt_from_m1():
                  "get_marketwatch_symbols": _tick(now)})
     bars = run(b.get_recent_candles("EURUSD", Resolution.WEEK, 2))
     assert bars[-1].time == this_week
+
+
+def test_meta_names_type_and_yahoo_ticker_for_shares():
+    booking = {**EURUSD, "symbol": "#BOOKING.COM", "contract_size": 10.0,
+               "description": "1 Lot= 10 Shares (BKNG)", "isin": "US09857L1089"}
+    b = _broker({"get_marketwatch_symbols": {"symbols": [booking, EURUSD]}})
+    meta = run(b.get_market_meta("#BOOKING.COM"))
+    assert meta["type"] == "SHARES" and meta["yahooTicker"] == "BKNG"
+    fx = run(b.get_market_meta("EURUSD"))
+    assert fx["type"] == "CURRENCIES" and fx["yahooTicker"] is None

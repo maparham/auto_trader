@@ -41,6 +41,7 @@ _POST_EXACT = frozenset(
 _PATTERNS = (
     re.compile(r"^/api/market/[^/]+$"),
     re.compile(r"^/api/market/[^/]+/details$"),
+    re.compile(r"^/api/market/[^/]+/splits$"),
 )
 
 

@@ -53,6 +53,7 @@ import { UP, DOWN } from "../lib/chartTheme";
 import { isSynthetic } from "../lib/syntheticRegistry";
 import { chartColors, type BidAskStyle, type Theme } from "../theme";
 import { RESOLUTION_SECONDS, type LiveStatus } from "../lib/feed";
+import { maxBarMs, projectSplitMarkers } from "../lib/splits";
 import { barEndMs } from "../lib/timeframe";
 import { type AlertCondition, type AlertTrigger } from "../lib/persist";
 import { type ExitCluster } from "../lib/tradeMarkers";
@@ -248,6 +249,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     controller,
     aggMarkersRef,
     exitAggMarkersRef,
+    splitMarkersRef,
+    splitsRef,
     tradeDashesRef,
   } = handle;
 
@@ -1329,6 +1332,29 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       exitAggMarkersRef.current?.setPills(exitPills);
     } else {
       exitAggMarkersRef.current?.setPills([]);
+    }
+    // Stock split chips: one per split on a visible bar, on the candle pane's
+    // bottom edge. splitsRef is [] for non-equities, so this is a no-op there.
+    const splits = splitsRef.current;
+    if (splits.length > 0) {
+      const size = chart.getSize("candle_pane", "main");
+      const toX = (timestamp: number): number | null =>
+        first(
+          chart.convertToPixel([{ timestamp, value: 0 }], { paneId: "candle_pane", absolute: true }),
+        ).x ?? null;
+      splitMarkersRef.current?.setMarkers(
+        projectSplitMarkers(
+          splits,
+          chart.getDataList(),
+          maxBarMs(resRef.current),
+          chart.getVisibleRange(),
+          toX,
+          size?.width ?? Infinity,
+        ),
+        (size?.top ?? 0) + (size?.height ?? 0),
+      );
+    } else {
+      splitMarkersRef.current?.setMarkers([], 0);
     }
     // Keep the position bracket glued to its lines as geometry shifts (scroll/zoom/
     // tick/drag) — the cursor needn't move for the lines to.

@@ -14,12 +14,15 @@ import asyncio
 import contextlib
 import sqlite3
 from collections import OrderedDict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
 from auto_trader.config import settings
 from auto_trader.core.candle_aggregate import _WEEK, DERIVED, BucketRule, bucket_open
+from auto_trader.core.candle_clean import NO_THRESHOLD_BROKERS, Split, repair_stale_arrays
+from auto_trader.core.models import Resolution
 from auto_trader.core.pattern_scan import prefix_sums
 
 # Roughly 250 MB of float64 once the prefix sums are counted.
@@ -101,14 +104,40 @@ class PatternSeriesCache:
     A per-key lock stops two concurrent cold searches on the same series from
     both paying the multi-second load, mirroring CandleCache._key_lock."""
 
-    def __init__(self, db_path: str, max_bars: int = _MAX_BARS) -> None:
+    def __init__(
+        self,
+        db_path: str,
+        max_bars: int = _MAX_BARS,
+        splits_for: Callable[[str], Sequence[Split]] = lambda epic: (),
+    ) -> None:
         self._db_path = db_path
         self._max_bars = max_bars
+        # Split list per epic for the stale-print repair. Must not block: the
+        # app wires Yahoo's cached list (SPLITS.peek), and a split it has not
+        # fetched yet still leaves the threshold rule to catch large ones.
+        self._splits_for = splits_for
         self._entries: OrderedDict[CandleKey, tuple[tuple[int, int], Series]] = OrderedDict()
         self._locks: dict[CandleKey, asyncio.Lock] = {}
 
     def clear(self) -> None:
         self._entries.clear()
+
+    def set_splits_lookup(self, splits_for: Callable[[str], Sequence[Split]]) -> None:
+        self._splits_for = splits_for
+
+    def _repair(self, key: CandleKey, ts: np.ndarray, ohlc: np.ndarray,
+                prev_close: float | None = None) -> None:
+        """Stale pre-split prints, fixed on the RAW prices before folding and
+        centring, as the candle cache's read-time hook fixes what the chart
+        sees (core/candle_clean.py). The store keeps the broker's bars."""
+        try:
+            res_seconds = Resolution(key[2]).seconds
+        except ValueError:
+            res_seconds = 60
+        repair_stale_arrays(
+            ts, ohlc, self._splits_for(key[1]), res_seconds=res_seconds,
+            prev_close=prev_close, allow_threshold=key[0] not in NO_THRESHOLD_BROKERS,
+        )
 
     def is_cached(self, broker: str, epic: str, resolution: str, side: str) -> bool:
         """Whether a get() would be served without a multi-second load. Asked
@@ -163,10 +192,20 @@ class PatternSeriesCache:
                 " ORDER BY ts",
                 (*key, after_ts),
             ).fetchall()
+            # The bar the tail follows, so a stale print that lands first in
+            # the tail is judged against the right previous close.
+            before = con.execute(
+                "SELECT close FROM bars"
+                " WHERE broker=? AND epic=? AND resolution=? AND side=? AND ts<=?"
+                " ORDER BY ts DESC LIMIT 1",
+                (*key, after_ts),
+            ).fetchone()
         if not rows:
             return None
         arr = np.asarray(rows, dtype=np.float64)
-        return arr[:, 0].astype(np.int64), arr[:, 1:5]
+        ts, ohlc = arr[:, 0].astype(np.int64), arr[:, 1:5]
+        self._repair(key, ts, ohlc, prev_close=before[0] if before else None)
+        return ts, ohlc
 
     @staticmethod
     def _extend(series: Series, ts_new: np.ndarray, ohlc_new: np.ndarray) -> Series:
@@ -229,6 +268,7 @@ class PatternSeriesCache:
             return None
         arr = np.asarray(rows, dtype=np.float64)
         ts = arr[:, 0].astype(np.int64)
+        self._repair(key, ts, arr[:, 1:5])  # a view: repairs arr in place
         if rule is not None:
             ts, arr = fold_arrays(ts, arr[:, 1:5], rule)
             arr = np.concatenate([ts[:, None].astype(np.float64), arr], axis=1)

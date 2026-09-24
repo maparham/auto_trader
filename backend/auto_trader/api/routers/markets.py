@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from auto_trader.brokers.yahoo_splits import SPLITS
+
 from .. import deps
 from ..deps import broker_query, get_data, guarded, request_is_admin
 from ..schemas import MarketDTO
@@ -69,6 +71,30 @@ async def market_meta(
         "nextOpen": meta.get("nextOpen"),
         "status": meta.get("status"),
     }
+
+
+# Instrument types that can split, in each broker's own vocabulary: Capital,
+# IG and MT5 use Capital's instrumentType words, yfinance/dukascopy their own.
+_EQUITY_TYPES = frozenset({"SHARES", "stock", "etf"})
+
+
+@router.get("/api/market/{epic}/splits")
+async def market_splits(
+    epic: str, broker_id: str = Depends(broker_query)
+) -> dict[str, object]:
+    # Split history for the chart's split markers, from Yahoo. The epic is the
+    # ticker for Capital and yfinance; IG and MT5 name it in meta.yahooTicker. Equities only, by the broker's
+    # own instrument type: Yahoo's GOLD is Barrick, not the gold CFD. Markers
+    # are decoration, so a failed type lookup answers "no splits", not an error.
+    broker = get_data(broker_id)
+    try:
+        meta = await broker.get_market_meta(epic)
+    except Exception:  # noqa: BLE001
+        meta = None
+    if (meta or {}).get("type") not in _EQUITY_TYPES:
+        return {"epic": epic, "splits": []}
+    splits = await SPLITS.get(epic, ticker=meta.get("yahooTicker"))  # type: ignore[union-attr]
+    return {"epic": epic, "splits": [{"time": s.ts, "ratio": s.ratio} for s in splits]}
 
 
 @router.get("/api/market/{epic}/details")

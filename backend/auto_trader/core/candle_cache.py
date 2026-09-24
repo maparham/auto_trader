@@ -27,6 +27,8 @@ from auto_trader.core.models import Candle
 log = logging.getLogger(__name__)
 
 CandleKey = tuple[str, str, str, str]  # (broker, epic, resolution, side)
+# Read-time bar repair (api/candle_repair.py): (key, res_seconds, bars) -> bars.
+RepairHook = Callable[[CandleKey, int, list[Candle]], Awaitable[list[Candle]]]
 
 
 def _to_candle(ts: int, o: float, h: float, l: float, c: float, v: float) -> Candle:
@@ -103,7 +105,28 @@ class CandleCache:
         self._hits: dict[CandleKey, int] = {}
         self._misses: dict[CandleKey, int] = {}
         self._last_fetch: dict[CandleKey, float] = {}
+        self._repair: RepairHook | None = None
         self._connect().close()  # create db file + schema up front
+
+    def set_repair(self, hook: RepairHook | None) -> None:
+        """Install the read-time repair applied to every window()/recent()
+        result. The store keeps the broker's bars verbatim; only what callers
+        see is repaired, so a better repair later needs no cache migration."""
+        self._repair = hook
+
+    async def _repaired(self, key: CandleKey, res_seconds: int, bars: list[Candle]) -> list[Candle]:
+        if self._repair is None or not bars:
+            return bars
+        try:
+            return await self._repair(key, res_seconds, bars)
+        except Exception:  # a broken repair must never cost the chart its data
+            log.exception("candle repair failed for %s; serving raw bars", _key_label(key))
+            return bars
+
+    async def bar_before(self, key: CandleKey, ts: int) -> Candle | None:
+        """The stored closed bar just before `ts`, or None."""
+        rows = await asyncio.to_thread(self._read_back, key, 1, ts)
+        return rows[0] if rows else None
 
     def _key_lock(self, key: CandleKey) -> asyncio.Lock:
         """Per-series lock. window() and recent() each snapshot coverage BEFORE their
@@ -408,17 +431,21 @@ class CandleCache:
                 gap_chunks = -(-(cov[0] - from_ts) // chunk_secs)  # ceil
                 if gap_chunks > max_fill_chunks:
                     self._record_miss(key)
-                    return await self._passthrough(
+                    bars = await self._passthrough(
                         key, from_ts, to_ts, fetch_range,
                         chunk_secs=chunk_secs, deadline=deadline,
                         degraded=degraded, partial=partial,
                     )
+                    return await self._repaired(key, res_seconds, bars)
         async with self._key_lock(key):
-            return await self._window(
+            bars = await self._window(
                 key, res_seconds, start, end, fetch_range,
                 now=now, chunk_bars=chunk_bars, degraded=degraded,
                 deadline=deadline, partial=partial,
             )
+        # Outside the lock: the repair may read this key's store and fetch finer
+        # bars under other keys.
+        return await self._repaired(key, res_seconds, bars)
 
     async def _window(
         self,
@@ -776,9 +803,10 @@ class CandleCache:
         `degraded` (optional out-param): same contract as window() — set when a
         broker fetch failed and cached bars were served in its place."""
         async with self._key_lock(key):
-            return await self._recent(
+            bars = await self._recent(
                 key, res_seconds, count, fetch_recent, tail=tail, now=now, degraded=degraded
             )
+        return await self._repaired(key, res_seconds, bars)
 
     async def _recent(
         self,

@@ -27,10 +27,12 @@ from fastapi.responses import JSONResponse
 
 from auto_trader.brokers.paper_exec import PaperExecutionBroker
 from auto_trader.brokers.registry import build_registry
+from auto_trader.core.candle_cache import CANDLE_CACHE
 from auto_trader.core.tick_store import TICK_STORE
 from auto_trader.core.timeframe import TimeframeError
 
 from . import deps
+from .candle_repair import install as install_candle_repair
 from .auth import auth_enabled, install_auth
 from .guard import cors_origins, install_guards
 from .routers import admin, alerts, backtest, charts, compute, costs, demo, expr, markets, mt5, patterns, pattern_presets, shell_auth, state, strategy, stream, trading, strategies
@@ -107,6 +109,8 @@ def _configure_logging() -> None:
 async def lifespan(app: FastAPI):
     _configure_logging()
     deps._registry = build_registry()
+    # Read-time repair of stale pre-split prints on every cached candle read.
+    install_candle_repair(CANDLE_CACHE)
     # Periodic batch-flush of recorded ticks to sqlite (sub-minute history).
     flusher = asyncio.create_task(TICK_STORE.run_flusher())
     # Paper limit/SL/TP trigger driver — one per registered paper executor, so

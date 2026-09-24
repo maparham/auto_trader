@@ -1400,3 +1400,11 @@ def test_rebuild_outcome_drives_the_backoff_counter():
     broker._ensure = _ok_ensure
     asyncio.run(broker._rebuild(broker._gen, broker._conn))
     assert broker._rebuild_fails == 0  # success resets the backoff
+
+
+def test_market_meta_names_type_and_yahoo_ticker_for_shares():
+    spec = {**_SPEC_100, "description": "1 Lot= 10 Shares (BKNG)"}
+    meta = asyncio.run(_data_with(_FakeTradeConn(spec=spec)).get_market_meta("#BOOKING.COM"))
+    assert meta["type"] == "SHARES" and meta["yahooTicker"] == "BKNG"
+    fx = asyncio.run(_data_with(_FakeTradeConn(spec=_SPEC_100)).get_market_meta("EURUSD"))
+    assert fx["type"] == "CURRENCIES" and fx["yahooTicker"] is None

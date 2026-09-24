@@ -40,6 +40,7 @@ from auto_trader.brokers._ig_dealing import (
 )
 from auto_trader.brokers._market_hours import _market_hours_state
 from auto_trader.brokers._session import SessionAuthBroker, raise_if_waf_blocked
+from auto_trader.brokers.yahoo_listing import listing_ticker
 from auto_trader.brokers._prices import (
     PriceSide,
     _RateLimiter,
@@ -430,11 +431,18 @@ class IGBroker(SessionAuthBroker, MarketDataBroker):
         status = snap.get("marketStatus")
         if closed is None:
             closed = status is not None and status != "TRADEABLE"
+        instrument = raw.get("instrument") or {}
+        kind = instrument.get("type")
         return {
             "pricePrecision": precision,
             "closed": closed,
             "nextOpen": next_open,
             "status": status,
+            "type": kind,
+            # For the split markers: the epic is no ticker (Booking is still
+            # PCLN in it); chartCode is the local code, country the listing.
+            "yahooTicker": listing_ticker(instrument.get("chartCode"), instrument.get("country"))
+            if kind == "SHARES" else None,
         }
 
     async def get_market_detail(self, epic: str) -> dict | None:

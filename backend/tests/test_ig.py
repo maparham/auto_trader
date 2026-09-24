@@ -722,3 +722,37 @@ def test_ig_broker_supports_streaming() -> None:
     """IG live streaming is wired (Lightstreamer, see ig_stream), so ws_candles
     routes IG to ig_stream rather than capital_stream."""
     assert IGBroker.supports_streaming is True
+
+
+def test_market_meta_names_type_and_yahoo_ticker(monkeypatch) -> None:
+    # The split markers need both: type gates equities, and IG's epic
+    # (UC.D.PCLN.CASH.IP, still Priceline's old code) is no ticker.
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/session":
+            return _session_response()
+        return httpx.Response(200, json={
+            "instrument": {"type": "SHARES", "chartCode": "BKNG", "country": "US"},
+            "snapshot": {"marketStatus": "TRADEABLE", "decimalPlacesFactor": 2},
+        })
+
+    b = _broker(handler, monkeypatch)
+    meta = asyncio.run(b.get_market_meta("UC.D.PCLN.CASH.IP"))
+    asyncio.run(b.aclose())
+    assert meta["type"] == "SHARES"
+    assert meta["yahooTicker"] == "BKNG"
+
+
+def test_market_meta_has_no_yahoo_ticker_for_non_shares(monkeypatch) -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/session":
+            return _session_response()
+        return httpx.Response(200, json={
+            "instrument": {"type": "CURRENCIES", "chartCode": "EURUSD", "country": None},
+            "snapshot": {"marketStatus": "TRADEABLE", "decimalPlacesFactor": 5},
+        })
+
+    b = _broker(handler, monkeypatch)
+    meta = asyncio.run(b.get_market_meta("CS.D.EURUSD.CFD.IP"))
+    asyncio.run(b.aclose())
+    assert meta["type"] == "CURRENCIES"
+    assert meta["yahooTicker"] is None

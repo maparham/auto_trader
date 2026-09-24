@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from auto_trader.brokers._mt5_symbols import MT5_CATEGORIES, _classify_symbol
+from auto_trader.brokers._mt5_symbols import MT5_CATEGORIES, _classify_symbol, avatrade_ticker
 from auto_trader.brokers._prices import pick_side
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.core.broker_health import BrokerReconnecting, BrokerTimeout
@@ -740,6 +740,8 @@ class MT5MCPBroker(MarketDataBroker):
             "closed": True if disabled else None,
             "nextOpen": None,
             "status": "CLOSED" if disabled else "TRADEABLE",
+            "type": _classify_symbol(epic),
+            "yahooTicker": avatrade_ticker(epic, row.get("description"), row.get("isin")),
         }
 
     async def get_market_detail(self, epic: str) -> dict | None:

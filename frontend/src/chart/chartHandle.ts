@@ -18,6 +18,8 @@ import type { PageResult } from "../lib/historyPaging";
 import type { CrosshairStyle, PriceSide } from "../theme";
 import type { BacktestAggMarkersHandle } from "../BacktestAggMarkers";
 import type { TradeExitAggMarkersHandle } from "../TradeExitAggMarkers";
+import type { SplitMarkersHandle } from "../SplitMarkers";
+import type { Split } from "../lib/splits";
 import type { BacktestTradeDashesHandle } from "../BacktestTradeDashes";
 
 // The in-flight quick-range request (resolution + window + the series identity
@@ -100,6 +102,8 @@ export interface ChartHandle {
   crosshairRef: React.MutableRefObject<CrosshairStyle>;
   aggMarkersRef: React.RefObject<BacktestAggMarkersHandle | null>;
   exitAggMarkersRef: React.RefObject<TradeExitAggMarkersHandle | null>;
+  splitMarkersRef: React.RefObject<SplitMarkersHandle | null>;
+  splitsRef: React.MutableRefObject<Split[]>;
   tradeDashesRef: React.RefObject<BacktestTradeDashesHandle | null>;
   paintBracketRef: React.MutableRefObject<() => void>;
   paintSeparatorRef: React.MutableRefObject<() => void>;

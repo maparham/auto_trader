@@ -37,6 +37,7 @@ from metaapi_cloud_sdk.clients.timeout_exception import TimeoutException
 from metaapi_cloud_sdk.logger import LoggerManager
 
 from auto_trader.brokers._mt5_hours import mt5_market_state
+from auto_trader.brokers._mt5_symbols import avatrade_ticker
 from auto_trader.brokers._prices import pick_side
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 from auto_trader.core.broker_health import BrokerReconnecting, BrokerTimeout
@@ -1147,6 +1148,8 @@ class MT5Broker(MarketDataBroker):
             "nextOpen": next_open,
             # closed is True/False/None; only a definite True reads as CLOSED.
             "status": "CLOSED" if closed else "TRADEABLE",
+            "type": _classify_symbol(epic),
+            "yahooTicker": avatrade_ticker(epic, spec.get("description"), spec.get("isin")),
         }
 
     async def _market_open_state(

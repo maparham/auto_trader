@@ -478,3 +478,47 @@ async def test_new_base_bars_refold_the_newest_bucket_in_place(tmp_path):
     np.testing.assert_allclose(grown.ts, fresh.ts)
     np.testing.assert_allclose(grown.ohlc + grown.offset, fresh.ohlc + fresh.offset)
     assert grown.newest_ts == fresh.newest_ts
+
+
+async def test_load_repairs_a_stale_pre_split_print(tmp_path):
+    # Capital's BKNG split day as stored: the open is the pre-split price.
+    path = tmp_path / "c.db"
+    rows = [
+        (1775088000, 165.6, 168.12, 162.405, 167.5),
+        (1775433600, 4187.5, 4187.5, 166.295, 176.12),
+        (1775520000, 177.6, 180.25, 169.835, 177.375),
+    ]
+    _db(path, rows, epic="BKNG", res="DAY", side="mid")
+    s = await PatternSeriesCache(str(path)).get("capital", "BKNG", "DAY", "mid")
+    raw = s.ohlc + s.offset
+    assert raw[1].tolist() == pytest.approx([167.5, 176.12, 166.295, 176.12])
+
+
+async def test_load_uses_the_split_lookup(tmp_path):
+    from auto_trader.core.candle_clean import Split
+
+    # 2:1 split: under the 3x threshold, so only the split list can repair it.
+    path = tmp_path / "c.db"
+    rows = [(0, 99.0, 101.0, 98.0, 100.0), (86400, 200.0, 200.0, 99.0, 104.0)]
+    _db(path, rows, epic="XYZ", res="DAY", side="mid")
+    plain = await PatternSeriesCache(str(path)).get("capital", "XYZ", "DAY", "mid")
+    assert (plain.ohlc + plain.offset)[1][0] == pytest.approx(200.0)
+    cache = PatternSeriesCache(str(path), splits_for=lambda epic: [Split(ts=86400, ratio=2.0)])
+    s = await cache.get("capital", "XYZ", "DAY", "mid")
+    assert (s.ohlc + s.offset)[1].tolist() == pytest.approx([100.0, 104.0, 99.0, 104.0])
+
+
+async def test_appended_tail_is_repaired_against_the_cached_last_close(tmp_path):
+    path = tmp_path / "c.db"
+    _db(path, [(1775088000, 165.6, 168.12, 162.405, 167.5)], epic="BKNG", res="DAY", side="mid")
+    cache = PatternSeriesCache(str(path))
+    await cache.get("capital", "BKNG", "DAY", "mid")
+    con = sqlite3.connect(path)
+    con.execute(
+        "INSERT INTO bars VALUES ('capital','BKNG','DAY','mid',1775433600,4187.5,4187.5,166.295,176.12,0)"
+    )
+    con.execute("UPDATE coverage SET newest_ts=1775433600")
+    con.commit()
+    con.close()
+    s = await cache.get("capital", "BKNG", "DAY", "mid")
+    assert (s.ohlc + s.offset)[1].tolist() == pytest.approx([167.5, 176.12, 166.295, 176.12])
