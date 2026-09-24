@@ -91,11 +91,36 @@ describe("debug sink", () => {
     }
   });
 
+  it("the RECORDING sink leaves the detector bit-identical with Extend Left and a floor", () => {
+    const forced = [{ i1: 500, k1: "low" as const, i2: 800, k2: "low" as const }];
+    for (const patch of [{ extendLeft: 1 }, { extendLeft: 1, maxSlopeAtr: 0.02, maxProjBars: 40 }]) {
+      const cfg = { ...TRENDLINES_DEFAULTS, ...patch };
+      for (const startIdx of [0, 300]) {
+        const run = runDebugSync(input(patch, { startIdx, forced }));
+        const plain = buildTlState(bars, bars.length, cfg, startIdx);
+        expect(run.st.points).toEqual(plain.points);
+        expect(run.st.lines).toEqual(plain.lines);
+        expect(run.st.pairs).toBe(plain.pairs);
+      }
+    }
+  });
+
   it("a full stepping cap keeps the most recent records, not the oldest", () => {
     const run = runDebugSync(input({ maxSlopeAtr: 0.01 }, { maxStepping: 60 }));
     expect(run.overflow).toBeGreaterThan(0);
     const latest = Math.max(...run.records.map((r) => r.bornAt));
     expect(latest).toBeGreaterThan(bars.length - 150);
+  });
+
+  it("died and ended records count toward the cap too", () => {
+    const cap = 80;
+    const run = runDebugSync(input({ maxProjBars: 20, maxSlopeAtr: 0.01 }, { maxStepping: cap }));
+    expect(run.records.some((r) => r.origin === "died")).toBe(true);
+    expect(run.records.length).toBeLessThanOrEqual(cap);
+    expect(run.overflow).toBeGreaterThan(0);
+    // Most recent win across died records as well.
+    const died = run.records.filter((r) => r.origin === "died");
+    expect(Math.max(...died.map((r) => r.endedAt as number))).toBeGreaterThan(bars.length - 150);
   });
 
   it("async run equals sync run and honours abort", async () => {

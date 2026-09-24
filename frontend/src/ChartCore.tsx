@@ -53,6 +53,7 @@ import { toast } from "./lib/notify";
 import { capturePattern, MIN_GHOST_BARS } from "./lib/patternGhost";
 import { useTrendlinePins } from "./chart/useTrendlinePins";
 import { emphasizeTrendlines, useTrendlineMenu } from "./chart/useTrendlineMenu";
+import { useTrendlineDebug } from "./chart/useTrendlineDebug";
 import { hitTrendline, TL_LINE_HIT, TL_LINE_HIT_TOUCH } from "./lib/indicators/trendlineMarks";
 import { compactHides } from "./chart/compactChrome";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
@@ -1741,7 +1742,10 @@ export default function ChartCore({
   // Pick a trendline, then Highlight / Hide / To drawing from its menu. The
   // right-click entry is read through a ref by the once-mounted contextmenu
   // handler below.
-  const trendlineMenu = useTrendlineMenu({ chartRef, containerRef, overlays, scope, epicRef });
+  const trendlineDebug = useTrendlineDebug({ chartRef, containerRef, overlays, scope, epicRef, brokerIdRef });
+  const trendlineMenu = useTrendlineMenu({
+    chartRef, containerRef, overlays, scope, epicRef, onDebugPick: trendlineDebug.openFor,
+  });
   const trendlineMenuOpenRef = useRef(trendlineMenu.openAt);
   trendlineMenuOpenRef.current = trendlineMenu.openAt;
   // onZoomToRange runs from the once-mounted init effect, so it must read these
@@ -5635,6 +5639,8 @@ export default function ChartCore({
       )}
 
       {trendlineMenu.menu}
+      {trendlineDebug.popup}
+      {trendlineDebug.bar}
 
       {indMenu && (
         <ContextMenu

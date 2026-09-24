@@ -34,6 +34,7 @@ import { saveIndicators, saveIndicatorVisible, type SavedIndicatorConfig } from 
 import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "../lib/visibility";
 import { refreshMtfOnVisibilityChange } from "../lib/mtfCoordinator";
 import { stripMtfRuntime } from "../lib/mtfRuntime";
+import { noteDebugOn } from "../lib/indicators/trendlinesDebugStore";
 import { indicatorSettingsRequest } from "../lib/signals";
 import { pickTrendline } from "./useTrendlineMenu";
 import { toast } from "../lib/notify";
@@ -101,7 +102,10 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // next timeframe switch, since the stale userVisible would win again.
     const ext = { ...((ind?.extendData as object) ?? {}), userVisible: next };
     const vis = (ext as { visibility?: VisibilityModel }).visibility ?? defaultVisibility();
-    c.overrideIndicator({ paneId, name, extendData: ext, visible: next && isVisibleOnResolution(vis, period.resolution) });
+    const visible = next && isVisibleOnResolution(vis, period.resolution);
+    c.overrideIndicator({ paneId, name, extendData: ext, visible });
+    // A hidden indicator never draws, so its debug strip is dropped here.
+    if (!visible) noteDebugOn(c, name, false);
     // Visibility persists by scope+name (pane-agnostic) and is re-applied on hydrate,
     // so sub-pane indicators now keep their hidden state across reloads too.
     saveIndicatorVisible(scope, name, next);

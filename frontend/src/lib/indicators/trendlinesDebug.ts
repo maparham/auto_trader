@@ -72,9 +72,21 @@ export interface DebugRunInput {
   forced: ForcedPair[];
   /** Stepping cap override (tests); default DEBUG_MAX_STEPPING. */
   maxStepping?: number;
-  /** Bar-open timestamps of the compute space when it is NOT `bars`' own
-   * (never needed today: MTF runs pass the HTF bars themselves). */
+  /** Bar-open timestamps the candidate keys are read from when they are NOT
+   * `bars`' own: MTF runs pass the pin's htfStarts, the same timestamps the
+   * draw keys its lines off. */
   starts?: number[];
+  /** The close the gates, the ranking and the merge measure at: the draw's
+   * own (the chart's newest close, dataList[last].close). Under a pin that
+   * is not the HTF bar's close, and on a forming bar it moves every tick.
+   * Default: bars[evalIdx].close. Never part of the run key: a new close
+   * re-runs explain only (trendlinesDebugStore). */
+  evalClose?: number;
+  /** The bars that key the run by content (count, first and last
+   * timestamp), when it is not `bars`. A Wait-off pin refolds its forming
+   * bar every second into NEW arrays; keying on the closed bars
+   * (mtf.htfClosed) keeps one run across those folds. */
+  keyBars?: readonly { timestamp: number }[];
 }
 
 export interface DebugRun {
@@ -85,10 +97,12 @@ export interface DebugRun {
   input: DebugRunInput;
 }
 
-/** Most sink lines stepped at once. When full, the quarter with the OLDEST
- * last touch is dropped (counted in `overflow`): the run goes left to right
- * and the view sits at the right edge, so the newest candidates must win
- * (spec: "most recent win"). Batched so eviction is amortised O(log n). */
+/** Most records a run keeps: the ones still stepped PLUS the ones already
+ * ended (died, or stopped being live) inside the window. When full, the
+ * quarter with the OLDEST last touch is dropped (counted in `overflow`): the
+ * run goes left to right and the view sits at the right edge, so the newest
+ * candidates must win (spec: "most recent win"). Batched so eviction is
+ * amortised O(log n). */
 export const DEBUG_MAX_STEPPING = 3000;
 
 const priceOf = (st: TlState, idx: number, kind: PivotKind): number =>
@@ -122,18 +136,24 @@ interface RecordingSink extends TlSink {
 function createSink(lo: number, hi: number, forced: ForcedPair[], maxStepping: number): RecordingSink {
   const records: DebugRecord[] = [];
   let stepping: DebugRecord[] = [];
+  /** Kept records no longer stepped: died lines and ones that ended. They
+   * count toward the cap like the stepped ones. */
+  let ended: DebugRecord[] = [];
   const injected = new Set<ForcedPair>();
+  const makeRoom = (): void => {
+    if (stepping.length + ended.length < maxStepping) return;
+    // Forced lines are the user's own and are never evicted.
+    const byAge = [...stepping, ...ended]
+      .filter((x) => x.origin !== "forced")
+      .sort((a, b) => a.line.lastTouchIdx - b.line.lastTouchIdx);
+    const cut = new Set(byAge.slice(0, Math.max(1, Math.floor(maxStepping / 4))));
+    for (const x of cut) x.dropped = true;
+    sink.overflow += cut.size;
+    stepping = stepping.filter((x) => !cut.has(x));
+    ended = ended.filter((x) => !cut.has(x));
+  };
   const track = (r: DebugRecord): void => {
-    if (stepping.length >= maxStepping) {
-      // Forced lines are the user's own and are never evicted.
-      const byAge = stepping
-        .filter((x) => x.origin !== "forced")
-        .sort((a, b) => a.line.lastTouchIdx - b.line.lastTouchIdx);
-      const cut = new Set(byAge.slice(0, Math.max(1, Math.floor(maxStepping / 4))));
-      for (const x of cut) x.dropped = true;
-      sink.overflow += cut.size;
-      stepping = stepping.filter((x) => !cut.has(x));
-    }
+    makeRoom();
     records.push(r);
     stepping.push(r);
   };
@@ -191,7 +211,10 @@ function createSink(lo: number, hi: number, forced: ForcedPair[], maxStepping: n
     died(line, i, cfg) {
       if (i < lo || line.i1 > hi) return;
       const endedBy = i - line.lastTouchIdx > cfg.maxProjBars ? "stale" : "lookback";
-      records.push({ line, origin: "died", bornAt: line.i2, endedAt: i, endedBy });
+      makeRoom();
+      const r: DebugRecord = { line, origin: "died", bornAt: line.i2, endedAt: i, endedBy };
+      records.push(r);
+      ended.push(r);
     },
     evicted(lines, i) {
       for (const line of lines)
@@ -206,13 +229,17 @@ function createSink(lo: number, hi: number, forced: ForcedPair[], maxStepping: n
         r.endedAt = i;
         r.endedBy = i - r.line.lastTouchIdx > cfg.maxProjBars ? "stale" : "lookback";
         if (i < lo) r.dropped = true;
+        else ended.push(r);
       }
       for (const f of forced)
         if (!injected.has(f) && f.i2 + cfg.pivotLen === i && f.i1 < f.i2) inject(st, f, i, cfg, false);
     },
     finish(st, evalIdx, cfg) {
       for (const f of forced)
-        if (!injected.has(f) && f.i1 < f.i2 && f.i2 <= evalIdx) inject(st, f, evalIdx, cfg, true);
+        // Past the confirm bar without an afterConfirm (ATR warmup or the
+        // compute floor): confirmed all the same, so not "unconfirmed".
+        if (!injected.has(f) && f.i1 < f.i2 && f.i2 <= evalIdx)
+          inject(st, f, evalIdx, cfg, f.i2 + cfg.pivotLen > evalIdx);
     },
   };
   return sink;

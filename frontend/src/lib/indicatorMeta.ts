@@ -8,7 +8,13 @@
 // reshape. Anything not listed here falls back to generic numeric inputs read
 // from the live indicator's calcParams (see `resolveInputs`).
 
-import { MAX_MAX_LINES, TRENDLINES_DEFAULTS, TRENDLINES_EXTEND_DEFAULTS } from "./indicators/trendlinesOutputs";
+import {
+  MAX_MAX_LINES,
+  TRENDLINES_DEFAULTS,
+  TRENDLINES_EXTEND_DEFAULTS,
+  parseTrendlinesConfig,
+  type TrendlinesConfig,
+} from "./indicators/trendlinesOutputs";
 
 type IndicatorInputType = "number" | "select" | "boolean";
 
@@ -55,8 +61,8 @@ export interface IndicatorInputDef {
   // Render this input on the Style tab instead of Inputs. For a render-only
   // extend field that changes what a line LOOKS like (a label, a marker), not
   // what is computed. The Inputs renderer skips it; the type's Style block
-  // picks it up.
-  tab?: "style";
+  // picks it up. "debug" gets its own tab (Trendlines' Debug mode).
+  tab?: "style" | "debug";
   // Optional conditional visibility: only render this input when another input's
   // value is one of `equals` (an extend field by `field`, or a calcParam
   // input by its key, read as 0/1 for a boolean). Used e.g. to hide Pivot Bands'
@@ -230,19 +236,25 @@ const SLOPE_UNIT_OPTIONS: Array<{ value: string; label: string }> =
 // TRENDLINES_DEFAULTS by name so the two cannot drift apart silently.
 const TL = TRENDLINES_DEFAULTS;
 const TL_DEFAULT_PARAMS = Object.values(TL) as number[];
+// Slot k's config field: TRENDLINES_DEFAULTS is declared in slot order.
+const TL_SLOT_KEYS = Object.keys(TL) as (keyof TrendlinesConfig)[];
 
 /** Fills the calcParams gap a jump to a high slot (e.g. Extend Left, 28)
  * leaves behind: a saved pane that predates the newer slots has no entries
  * for them, and a plain array write (`cp[28] = 1`) would otherwise leave
  * those slots `undefined`, which JSON.stringify turns into `null` holes.
  * Every slot below `upTo` that is missing or not a finite number is set to
- * its TRENDLINES_DEFAULTS value; slots already holding a real number are
- * left as they are. */
-export function padTrendlinesParams(cp: number[], upTo: number): number[] {
+ * the value the pane RUNS with there: parseTrendlinesConfig's, so the legacy
+ * migrations a missing slot triggers (Only lines near price, the render-only
+ * merge tolerance, One line per pivot, all read from extendData) are written
+ * down instead of silently reset to the plain default. Slots already holding
+ * a real number are left as they are. */
+export function padTrendlinesParams(cp: number[], upTo: number, extendData?: unknown): number[] {
   const next = cp.slice();
+  const eff = parseTrendlinesConfig(cp, extendData);
   for (let k = 0; k < upTo; k++) {
     const v = next[k];
-    if (typeof v !== "number" || !Number.isFinite(v)) next[k] = TL_DEFAULT_PARAMS[k];
+    if (typeof v !== "number" || !Number.isFinite(v)) next[k] = eff[TL_SLOT_KEYS[k]];
   }
   return next;
 }
@@ -1151,6 +1163,61 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
           "A forgotten level stops competing with a live one.",
           "It only fades; Max Projection is what drops a stale line entirely.",
         ],
+      },
+      {
+        key: "debug",
+        label: "Debug mode",
+        type: "boolean",
+        source: "extend",
+        field: "debug",
+        tab: "debug",
+        default: TRENDLINES_EXTEND_DEFAULTS.debug,
+        tip: [
+          "Draws every candidate line, not just the ones shown.",
+          "Dotted: failed a filter. Dashed: passed but outranked.",
+          "Click any line to see what holds it back and how to fix it.",
+          "Turns off on reload.",
+        ],
+      },
+      {
+        key: "debugShowFailed",
+        label: "Failed a filter",
+        type: "boolean",
+        source: "extend",
+        field: "debugShowFailed",
+        tab: "debug",
+        default: TRENDLINES_EXTEND_DEFAULTS.debugShowFailed,
+        tip: ["Lines a filter removed. The strip counts them per filter."],
+      },
+      {
+        key: "debugShowOutranked",
+        label: "Passed, outranked by a nearer line",
+        type: "boolean",
+        source: "extend",
+        field: "debugShowOutranked",
+        tab: "debug",
+        default: TRENDLINES_EXTEND_DEFAULTS.debugShowOutranked,
+        tip: ["Lines that pass every filter but lose to a nearer one: merged, per pivot or Max Trendlines."],
+      },
+      {
+        key: "debugShowForced",
+        label: "Built from your line's points",
+        type: "boolean",
+        source: "extend",
+        field: "debugShowForced",
+        tab: "debug",
+        default: TRENDLINES_EXTEND_DEFAULTS.debugShowForced,
+        tip: ["Lines Check a line tries between the points you picked."],
+      },
+      {
+        key: "debugShowDrawn",
+        label: "Drawn",
+        type: "boolean",
+        source: "extend",
+        field: "debugShowDrawn",
+        tab: "debug",
+        default: TRENDLINES_EXTEND_DEFAULTS.debugShowDrawn,
+        tip: ["The indicator's own lines. Off shows only the candidates."],
       },
       {
         ...num(22, "Max lines per pivot", { min: 0, step: 1 }),

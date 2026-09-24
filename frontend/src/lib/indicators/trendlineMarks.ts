@@ -128,13 +128,13 @@ export interface TrendlineSegment {
 
 /** Recorded by the draw, per chart then "paneId:name", like the end-handle
  * map beside it: hit targets are what was painted, never a recomputation. */
-const SEGMENTS = new WeakMap<object, Map<string, TrendlineSegment[]>>();
+const SEGMENTS = new WeakMap<object, Map<string, readonly TrendlineSegment[]>>();
 
 export function setTrendlineSegments(
   chart: object,
   paneId: string,
   name: string,
-  segs: TrendlineSegment[] | null,
+  segs: readonly TrendlineSegment[] | null,
 ): void {
   let byPane = SEGMENTS.get(chart);
   if (!byPane) {
@@ -144,6 +144,17 @@ export function setTrendlineSegments(
   }
   if (segs === null) byPane.delete(`${paneId}:${name}`);
   else byPane.set(`${paneId}:${name}`, segs);
+}
+
+/** The painted segment for one line of one instance, or null when it is not
+ * on screen (culled, or the instance is gone). */
+export function findTrendlineSegment(
+  chart: object,
+  paneId: string,
+  name: string,
+  key: string,
+): TrendlineSegment | null {
+  return SEGMENTS.get(chart)?.get(`${paneId}:${name}`)?.find((s) => s.key === key) ?? null;
 }
 
 export function dropTrendlineSegments(chart: object, name: string): void {

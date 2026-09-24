@@ -68,6 +68,10 @@ import {
   TRENDLINES_EXTEND_DEFAULTS,
   type TrendlinesConfig,
 } from "./trendlinesOutputs";
+// Runtime cycle (both import this module back): safe, since every import from
+// them is used only at call time inside drawTrendlines, never at module init.
+import { debugInputFor, debugLookup, debugState, debugTarget, debugWindow, requestDebug, noteDebugOn } from "./trendlinesDebugStore";
+import { DBG_KEY_PREFIX, paintDebug } from "./trendlinesDebugDraw";
 
 export type PivotKind = "high" | "low";
 
@@ -1370,6 +1374,26 @@ export interface TrendlinesMtf extends MtfSeriesBase {
   /** ATR(14) on the HTF bars. The merge tolerance is ATR-denominated, so the
    * chart's own ATR would scale it by the ratio between the timeframes. */
   htfAtr?: number;
+  /** The HTF bars the stash was computed on. Read only by debug mode (which
+   * replays the detector on them). NEVER written to extendData: klinecharts
+   * deep-copies extendData on every override, so the coordinator keeps them
+   * in TL_HTF_BARS and the debug draw path grafts them on (see drawTrendlines). */
+  htfBars?: KLineData[];
+}
+
+/** Per chart, per instance: the HTF bars the stash was last built on. A module
+ * map rather than a stash field so a hover or fold never copies the candles. */
+const TL_HTF_BARS = new WeakMap<object, Map<string, KLineData[]>>();
+export function setTrendlinesHtfBars(chart: object, name: string, bars: KLineData[]): void {
+  let byName = TL_HTF_BARS.get(chart);
+  if (!byName) TL_HTF_BARS.set(chart, (byName = new Map()));
+  byName.set(name, bars);
+}
+/** The instance's HTF bars when they match its stash's htfStarts, else undefined. */
+export function trendlinesHtfBars(chart: object, name: string, starts: readonly number[] | undefined): KLineData[] | undefined {
+  const bars = TL_HTF_BARS.get(chart)?.get(name);
+  if (!bars || !starts || bars.length !== starts.length) return undefined;
+  return bars.length && bars[bars.length - 1].timestamp !== starts[starts.length - 1] ? undefined : bars;
 }
 
 export interface TrendlinesExtend {
@@ -1460,6 +1484,18 @@ export interface TrendlinesExtend {
    * debug walk (unlike the drawn-set walk) keeps going to count every level.
    * Render-only, like the rest of this block. */
   showPivotDepth?: boolean;
+  /** DEBUG MODE: draw every candidate line with why it is not drawn (see
+   * trendlinesDebug*.ts). Render-only; OFF by default. */
+  debug?: boolean;
+  /** Debug layers, each on unless false: lines that failed a filter, lines
+   * that passed but were outranked, lines built from a checked line's
+   * points, and the indicator's own drawn lines. */
+  debugShowFailed?: boolean;
+  debugShowOutranked?: boolean;
+  debugShowForced?: boolean;
+  debugShowDrawn?: boolean;
+  /** Bumped when a debug run lands, purely to repaint. SESSION-ONLY. */
+  debugRev?: number;
   /** A small cross on a drawn line at every bar whose close cut through it:
    * the same events Min/Max Crossings count and the end tag reports. ON by
    * default. Render-only. */
@@ -3039,6 +3075,9 @@ function paintPivotDepths(
   ctx.restore();
 }
 
+/** debugSegs' debug-off value: shared, so the off path allocates nothing. */
+const NO_SEGS: readonly TrendlineSegment[] = [];
+
 function drawTrendlines(
   params: IndicatorDrawParams<TrendlinesCalcPoint, unknown, unknown>,
 ): boolean {
@@ -3136,9 +3175,80 @@ function drawTrendlines(
       );
   };
   const NO_PIVOTS_USED: ReadonlySet<number> = new Set<number>();
+  // DEBUG MODE: every candidate under the normal lines. Painted before any
+  // early return, since the whole point is the chart that draws nothing.
+  // Under a pin the eval index is the HTF line index, the bar the lines were
+  // measured at, in the pinned bars' own space.
+  let debugSegs: readonly TrendlineSegment[] = NO_SEGS;
+  noteDebugOn(chart, indicator.name, ext?.debug === true);
+  if (ext?.debug) {
+    const evalIdx = mtf ? (last?.lineIdx ?? -1) : dataList.length - 1;
+    const vr = chart.getVisibleRange();
+    // The chart's newest close, the one the drawn set is selected at below
+    // (lastClose), so debug measures distance and rank at the same price.
+    // The pinned bars live off extendData (TL_HTF_BARS); graft them on here.
+    const dext = mtf?.timeframe
+      ? { ...ext, mtf: { ...mtf, htfBars: trendlinesHtfBars(chart, indicator.name, mtf.htfStarts) } }
+      : ext;
+    const inp = evalIdx >= 0
+      ? debugInputFor(dataList, cfg, dext, evalIdx, debugWindow(vr.from, vr.to, toLine), dataList[dataList.length - 1].close)
+      : { error: "No bars loaded." };
+    if (!("error" in inp)) {
+      const res = requestDebug(chart, indicator.paneId, indicator.name, inp);
+      const entry = debugState(chart, indicator.name);
+      if (res) {
+        const sel = ext.selectedLine;
+        const selCand = sel?.startsWith(DBG_KEY_PREFIX)
+          ? res.byKey.get(sel.slice(DBG_KEY_PREFIX.length))
+          : sel ? res.byKey.get(sel) : undefined;
+        const t = debugTarget(entry, inp)?.tgt ?? null;
+        const tgt = t && !("error" in t) ? t : null;
+        // With a target: paint its matches only, the closest one lit (the
+        // strip's "Click it for a fix"). Memoised per result, not per frame.
+        const lk = tgt ? debugLookup(entry, res, tgt) : null;
+        const closest = lk && !lk.covered ? lk.matches[0] : undefined;
+        debugSegs = paintDebug({
+          ctx, lineColor, xAt, xAtPivot,
+          yPx: (price) => yAxis.convertToPixel(price),
+          width: bounding.width, height: bounding.height, tagRight,
+          selectedKey: sel, hoveredKey: ext.hoveredLine,
+          winnerKey: selCand?.fate?.kind === "merged" ? res.keyOf(selCand.fate.into) : undefined,
+          target: tgt,
+          expanded: entry.expanded,
+          matchKeys: lk ? lk.keys : null,
+          highlightKey: closest && !sel?.startsWith(DBG_KEY_PREFIX) ? DBG_KEY_PREFIX + closest.cand.key : undefined,
+          // A pin's eval bar is the last CLOSED HTF bar; a live candidate
+          // still runs to the chart's newest bar, as the drawn lines do.
+          liveEdge: Math.max(res.evalIdx, toLine(dataList.length - 1)),
+          // Chart bar indices of both ends, rounded to bars, with the price
+          // taken on the painted stroke (linear in chart index) at the bars
+          // they round to. Times come from this frame's own bars, so a later
+          // backfill or scroll cannot shift them.
+          pointsFor: (ja, pa, jb, pb) => {
+            const ca = toChart(ja);
+            const cb = toChart(jb);
+            const ra = Math.round(ca);
+            const rb = Math.round(cb);
+            if (!(cb > ca) || ra === rb) return null;
+            const at = (r: number) => pa + ((pb - pa) * (r - ca)) / (cb - ca);
+            const ts = dataList.map((d) => d.timestamp);
+            const ta = tsAtIndex(ts, ra);
+            const tb = tsAtIndex(ts, rb);
+            return ta === null || tb === null ? null : [{ timestamp: ta, value: at(ra) }, { timestamp: tb, value: at(rb) }];
+          },
+          show: {
+            failed: ext.debugShowFailed !== false,
+            outranked: ext.debugShowOutranked !== false,
+            forced: ext.debugShowForced !== false,
+          },
+        }, res, entry.hidden);
+      }
+    }
+  }
   if (!last?.lines?.length) {
     paintMarks(NO_PIVOTS_USED, null);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    if (debugSegs.length) setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs);
     return true;
   }
   const lastIdx = mtf ? (last.lineIdx ?? -1) : dataList.length - 1;
@@ -3147,6 +3257,7 @@ function drawTrendlines(
   if (lastIdx < 0) {
     paintMarks(NO_PIVOTS_USED, null);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    if (debugSegs.length) setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs);
     return true;
   }
   // The CHART's newest close either way: it is the current price, and the price
@@ -3214,6 +3325,7 @@ function drawTrendlines(
   if (!drawn.length) {
     paintMarks(NO_PIVOTS_USED, depths);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    if (debugSegs.length) setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs);
     return true;
   }
   const handles: TrendlineHandle[] = [];
@@ -3256,7 +3368,10 @@ function drawTrendlines(
   // explicitly rather than inheriting it.
   ctx.setLineDash([]);
   ctx.lineDashOffset = 0;
+  // Debug tab: the drawn layer can be switched off to see the rest.
+  const hideDrawn = ext?.debug === true && ext.debugShowDrawn === false;
   for (const line of drawn) {
+    if (hideDrawn) continue;
     // ONE alpha for the whole line, computed before the stroke and reused at
     // every site that restores it below (the pin handle paints at full
     // opacity and hands it back). Recomputing the dim test at those sites is
@@ -3548,7 +3663,9 @@ function drawTrendlines(
     depths,
   );
   setTrendlineHandles(chart, indicator.paneId, indicator.name, handles);
-  setTrendlineSegments(chart, indicator.paneId, indicator.name, segments);
+  // Drawn segments first: hitTrendline keeps the first at equal distance, so
+  // a tie resolves to the drawn line, not the debug candidate under it.
+  setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs.length ? [...segments, ...debugSegs] : segments);
   return true;
 }
 

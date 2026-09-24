@@ -55,4 +55,16 @@ describe("padTrendlinesParams", () => {
     // The given slots are untouched.
     for (let i = 0; i < 24; i++) expect(padded[i]).toBe(i);
   });
+
+  it("writes down the legacy migrations a missing slot runs with", () => {
+    // A pane saved before slots 19 to 22 existed, with the old extendData
+    // choices: Only lines near price, a render-only merge of 1 ATR, One line
+    // per pivot. Padding to reach slot 28 must keep all three.
+    const old = Array.from({ length: 19 }, () => 1);
+    const ext = { declutter: "near", dedupeAtr: 1 };
+    const padded = padTrendlinesParams(old, 28, ext);
+    expect(padded[19]).toBe(5); // TL_NEAR_PRICE_ATR
+    expect(padded[21]).toBe(1);
+    expect(padTrendlinesParams(old, 28, { declutter: "pivot" })[22]).toBe(1);
+  });
 });

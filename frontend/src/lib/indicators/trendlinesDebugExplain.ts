@@ -65,7 +65,15 @@ export interface Verdict {
   pass: boolean;
   /** Anchor gates: which anchor (1 = left). */
   anchor?: 1 | 2;
+  /** The setting is at its "no limit" value (0), so the gate is off. */
+  off?: boolean;
 }
+
+/** Gates whose setting at 0 means no limit rather than a literal 0. */
+const OFF_AT_ZERO: ReadonlySet<Gate> = new Set<Gate>([
+  "lookback", "slopeMax", "slopeMin", "backClearance", "maxTouches", "maxSpan",
+  "maxTouchSpacing", "minTouchSpacing", "maxCrossings", "minCrossings", "minSpan",
+]);
 
 export type Fate =
   | { kind: "drawn" }
@@ -85,6 +93,23 @@ export interface DebugCandidate {
   outranked: boolean;
   /** Last bar the debug layer draws it to. */
   end: number;
+  /** |line - close| in ATR(14) at min(end, eval bar): the sampling rank. */
+  dist: number;
+  /** Among its reason group's DEBUG_SAMPLE nearest the price: painted even
+   * when the group is not expanded (the strip's "(10 shown)"). */
+  shown: boolean;
+}
+
+/** Candidates painted per reason group until the group is expanded. A group
+ * of hundreds of lines is a wall no one can click; the nearest to the price
+ * are the ones that matter. */
+export const DEBUG_SAMPLE = 10;
+
+/** The strip group a candidate is tallied under: its primary reason's group,
+ * "drawn", or "passes" (a died/evicted/forced snapshot that fails nothing
+ * now, which selection never actually outranked). */
+export function groupOf(c: Pick<DebugCandidate, "drawn" | "failed">): string {
+  return c.drawn ? "drawn" : c.failed.length ? GATE_GROUP[c.failed[0].gate] : "passes";
 }
 
 export interface TlDebugResult {
@@ -98,7 +123,8 @@ export interface TlDebugResult {
   candidates: DebugCandidate[];
   byKey: Map<string, DebugCandidate>;
   rejectedPivots: RejectedPivot[];
-  counts: Array<{ group: string; n: number }>;
+  /** Per reason group: how many, and how many of them are sampled. */
+  counts: Array<{ group: string; n: number; shown: number }>;
   overflow: number;
   /** The gate-passing live lines at the eval bar (the what-if base). */
   passing: TrendLine[];
@@ -230,15 +256,23 @@ function anchorVerdicts(rec: DebugRecord, run: DebugRun): Verdict[] {
   return out;
 }
 
-/** Every per-line gate for `line` at the run's eval bar, pass and fail. */
-export function lineVerdicts(line: TrendLine, rec: DebugRecord | null, run: DebugRun): Verdict[] {
+/** The close a run is measured at when the caller names none: the draw's
+ * (input.evalClose), else the eval bar's own. */
+export const evalCloseOf = (run: DebugRun): number => run.input.evalClose ?? run.st.closes[run.input.evalIdx];
+
+/** Every per-line gate for `line` at the run's eval bar, pass and fail,
+ * with the distance gates measured against `close`. */
+export function lineVerdicts(
+  line: TrendLine, rec: DebugRecord | null, run: DebugRun, close: number = evalCloseOf(run),
+): Verdict[] {
   const { st, input } = run;
   const cfg = input.cfg;
   const i = input.evalIdx;
-  const close = st.closes[i];
   const v: Verdict[] = rec ? anchorVerdicts(rec, run) : [];
   const add = (gate: Gate, field: keyof TrendlinesConfig | null, measured: number | null, limit: number | null, pass: boolean) =>
-    v.push({ gate, field, measured, limit, pass });
+    v.push(limit === 0 && OFF_AT_ZERO.has(gate)
+      ? { gate, field, measured, limit, pass, off: true }
+      : { gate, field, measured, limit, pass });
   // lineStart, not i1: isLive/isMajor/overCeilings all read a line's start
   // through lineStart (Extend Left can move it back past i1).
   const start = lineStart(line);
@@ -297,13 +331,15 @@ function fateVerdict(f: Fate, cfg: TrendlinesConfig, atrI: number | null, close:
 
 const byOrder = (a: Verdict, b: Verdict) => GATE_ORDER.indexOf(a.gate) - GATE_ORDER.indexOf(b.gate);
 
-export function explain(run: DebugRun): TlDebugResult {
+/** `close` is what the gates, the ranking and the merge measure at; the
+ * store passes the draw's newest one so a new tick re-explains the same run. */
+export function explain(run: DebugRun, close: number = evalCloseOf(run)): TlDebugResult {
   const { st, input } = run;
   const cfg = input.cfg;
   const i = input.evalIdx;
-  const close = st.closes[i];
   const [lo, hi] = input.window;
   const keyOf = (l: TrendLine) => lineKey(l, input.bars, input.starts);
+  const atrI = st.atr[i];
   const passing = poolable(st.lines, i, cfg).filter(trendlineGate(i, close, st.atr[i], cfg));
   const ranked = nearestFirst(passing, i, close);
   const fates = explainSelection(ranked, i, mergeTolerance(cfg, st.atr[i], close), cfg.maxPerPivot, cfg.maxLines);
@@ -314,7 +350,7 @@ export function explain(run: DebugRun): TlDebugResult {
     if (byKey.has(key)) return;
     const end = rec?.endedAt ?? i;
     if (line.i1 > hi || end < lo) return;
-    const verdicts = lineVerdicts(line, rec, run);
+    const verdicts = lineVerdicts(line, rec, run, close);
     const fate = rec ? null : (fates.get(line) ?? null);
     const fv = fate ? fateVerdict(fate, cfg, st.atr[i], close) : null;
     if (fv) verdicts.push(fv);
@@ -328,9 +364,10 @@ export function explain(run: DebugRun): TlDebugResult {
       if (idx > 0) failed.unshift(failed.splice(idx, 1)[0]);
     }
     const drawn = fate?.kind === "drawn";
+    const d = Math.abs(projectAt(line, Math.min(end, i)) - close);
     const c: DebugCandidate = {
       key, line, origin: rec ? rec.origin : "live", record: rec, verdicts, failed, fate, drawn,
-      outranked: !!fv && failed.length === 1, end,
+      outranked: !!fv && failed.length === 1, end, dist: atrI !== null && atrI > 0 ? d / atrI : d, shown: true,
     };
     candidates.push(c);
     byKey.set(key, c);
@@ -341,19 +378,24 @@ export function explain(run: DebugRun): TlDebugResult {
   // the SAME anchors as an already-live line is represented by that live
   // candidate, not a separate "forced" one.
   for (const rec of run.records) if (rec.origin === "forced") push(rec.line, rec);
-  const tally = new Map<string, number>();
+  // Sampling: rank each group nearest the price first and flag the first
+  // DEBUG_SAMPLE. Once per explain, never per paint (chart draw perf rule).
+  const groups = new Map<string, DebugCandidate[]>();
   for (const c of candidates) {
-    // "passes" (tally label only, not a Gate/GATE_GROUP): a non-drawn, no
-    // failed-verdict candidate here is a snapshot of a died/evicted/forced
-    // line that happens to satisfy every current per-line gate, not one
-    // selection actually outranked (c.outranked is the latter).
-    const g = c.drawn ? "drawn" : c.failed.length ? GATE_GROUP[c.failed[0].gate] : "passes";
-    tally.set(g, (tally.get(g) ?? 0) + 1);
+    const g = groupOf(c);
+    const list = groups.get(g);
+    if (list) list.push(c);
+    else groups.set(g, [c]);
+  }
+  for (const list of groups.values()) {
+    if (list.length <= DEBUG_SAMPLE) continue;
+    list.sort((a, b) => a.dist - b.dist);
+    for (let n = DEBUG_SAMPLE; n < list.length; n++) list[n].shown = false;
   }
   return {
     evalIdx: i, close, atr: st.atr, cfg, startIdx: st.startIdx, highs: st.highs, lows: st.lows,
     candidates, byKey, rejectedPivots: run.rejectedPivots,
-    counts: [...tally].map(([group, n]) => ({ group, n })).sort((a, b) => (a.group === "drawn" ? -1 : b.group === "drawn" ? 1 : b.n - a.n)),
+    counts: [...groups].map(([group, list]) => ({ group, n: list.length, shown: Math.min(list.length, DEBUG_SAMPLE) })).sort((a, b) => (a.group === "drawn" ? -1 : b.group === "drawn" ? 1 : b.n - a.n)),
     overflow: run.overflow, passing, keyOf,
   };
 }

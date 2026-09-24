@@ -54,7 +54,7 @@ describe("TRENDLINES registration", () => {
     // groupInputs only pairs CONSECUTIVE inputs sharing a group, so this also
     // pins the panel's order: reordering the meta list silently unpairs them.
     const chunks = groupInputs(
-      resolveInputs("TRENDLINES", undefined).filter((i) => i.tab !== "style"),
+      resolveInputs("TRENDLINES", undefined).filter((i) => !i.tab),
     );
     expect(chunks.map((c) => c.map((i) => i.label))).toEqual([
       ["Max Trendlines"],

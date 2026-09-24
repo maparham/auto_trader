@@ -7270,3 +7270,56 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
   .cl-row.cl-ohlc { flex-wrap: wrap; height: auto; min-height: 22px; row-gap: 2px; white-space: normal; }
   .cl-row.cl-ohlc > .cl-ohlc-item { white-space: nowrap; }
 }
+
+/* Trendlines debug: no hue anywhere (near color-blind owner). Pass/fail is a
+   glyph; a hidden group is struck through; emphasis is weight. The strip
+   sits above .chart-range-bar (left 8, bottom 8, z 11) and below the popup
+   (z 60) and modals. */
+.tl-dbg-pop {
+  position: fixed; z-index: 60; max-width: 340px; padding: 8px 10px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; font-size: 12px;
+}
+.tl-dbg-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+.tl-dbg-pop .tl-dbg-x { border: none; padding: 0 2px; font-size: 14px; }
+.tl-dbg-state { margin: 4px 0 6px; font-weight: 600; }
+.tl-dbg-gates { border-collapse: collapse; width: 100%; }
+.tl-dbg-gates td { padding: 1px 4px; vertical-align: middle; }
+.tl-dbg-gates tr.is-pass { opacity: 0.6; }
+.tl-dbg-gates tr.is-fail { font-weight: 600; }
+.tl-dbg-glyph { width: 14px; text-align: center; }
+.tl-dbg-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tl-dbg-note, .tl-dbg-live { margin-top: 6px; }
+.tl-dbg-tried { margin-top: 4px; color: var(--text-dim); }
+.tl-dbg-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.tl-dbg-pop button, .tl-dbg-bar button {
+  background: none; color: inherit; border: 1px solid var(--border); border-radius: 3px;
+  padding: 1px 6px; cursor: pointer; font: inherit;
+}
+.tl-dbg-pop button:hover, .tl-dbg-bar button:hover { background: var(--hover); }
+.tl-dbg-bar {
+  position: absolute; left: 8px; bottom: calc(var(--candle-foot, 28px) + 16px); z-index: 12; display: flex; flex-direction: column; gap: 3px;
+  max-width: calc(100% - 16px); padding: 3px 6px; font-size: 11px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
+}
+.tl-dbg-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.tl-dbg-row + .tl-dbg-row { border-top: 1px solid var(--border); padding-top: 3px; }
+.tl-dbg-title { font-weight: 600; }
+.tl-dbg-bar button.is-hidden { text-decoration: line-through; opacity: 0.6; }
+.tl-dbg-bar button.is-armed { font-weight: 700; border-width: 2px; }
+.tl-dbg-msg { color: var(--text-dim); }
+.tl-dbg-label { padding: 1px 2px; }
+.tl-dbg-sim { display: inline-flex; align-items: center; gap: 3px; }
+.tl-dbg-sim input {
+  width: 44px; padding: 0 3px; font: inherit; color: inherit; background: none;
+  border: 1px solid var(--border); border-radius: 3px;
+}
+.tl-dbg-hint { color: var(--text-dim); }
+/* Indicator settings, Trendlines' Debug tab. */
+.ind-debug-toggle { margin-bottom: 6px; }
+.ind-debug-legend { margin: 0 0 8px; display: grid; gap: 4px; }
+.ind-debug-legend .ind-bool-check { gap: 8px; }
+.ind-debug-legend > .ind-field, .ind-debug-toggle { display: flex; align-items: center; gap: 6px; }
+.ind-debug-legend .ind-bool-check.is-off { opacity: 0.5; }
+.ind-debug-swatch { flex: none; color: var(--text); }
+.ind-debug-note { color: var(--text-dim); font-size: 12px; line-height: 1.5; }

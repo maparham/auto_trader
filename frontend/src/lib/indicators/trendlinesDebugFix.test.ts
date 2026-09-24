@@ -69,7 +69,7 @@ describe("proposeChanges", () => {
     const verdict: Verdict = { gate: "liveCap", field: null, measured: null, limit: null, pass: false };
     const cand: DebugCandidate = {
       key: "evicted:test", line, origin: "evicted", record: null,
-      verdicts: [verdict], failed: [verdict], fate: null, drawn: false, outranked: false, end: 20,
+      verdicts: [verdict], failed: [verdict], fate: null, drawn: false, outranked: false, end: 20, dist: 0, shown: true,
     };
     const { impossible } = proposeChanges(cand, TRENDLINES_DEFAULTS);
     expect(impossible.some((v) => v.gate === "liveCap")).toBe(true);
@@ -120,6 +120,22 @@ describe("findFix", () => {
     expect(typeof out?.error).toBe("string");
     expect(out?.changes).toEqual([]);
     expect(out?.attempted).toEqual([]);
+  });
+});
+
+describe("drawnKeys at the draw's close", () => {
+  it("selects at evalClose, not the eval bar's own close", () => {
+    const b = base({ maxDistAtr: 1, maxLines: 10 });
+    const own = drawnKeys(b, b.cfg);
+    expect(own.size).toBeGreaterThan(0);
+    // A close far from every line: the distance gate drops them all.
+    const far = drawnKeys({ ...b, evalClose: bars[bars.length - 1].close * 3 }, b.cfg);
+    expect(far.size).toBe(0);
+  });
+  it("sideEffects honours an aborted signal", async () => {
+    const ctl = new AbortController();
+    ctl.abort();
+    expect(await sideEffects(base(), { ...TRENDLINES_DEFAULTS, maxLines: 6 }, ctl.signal)).toBeNull();
   });
 });
 

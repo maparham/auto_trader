@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { runDebugSync } from "./trendlinesDebug";
-import { explain, explainSelection, lineVerdicts, GATE_ORDER } from "./trendlinesDebugExplain";
 import {
+  DEBUG_SAMPLE, explain, explainSelection, groupOf, lineVerdicts, GATE_ORDER,
+} from "./trendlinesDebugExplain";
+import {
+  projectAt,
   mergeTolerance, nearestFirst, poolable, selectDrawnLines, selectLevels, trendlineGate,
 } from "./trendlines";
 import { TRENDLINES_DEFAULTS, type TrendlinesConfig } from "./trendlinesOutputs";
@@ -92,6 +95,24 @@ describe("explain", () => {
     const res = explain(run({ maxSlopeAtr: 0.02 }));
     const total = res.counts.filter((g) => g.group !== "drawn").reduce((s, g) => s + g.n, 0);
     expect(total).toBe(res.candidates.filter((c) => !c.drawn).length);
+  });
+
+  it("samples each group's DEBUG_SAMPLE nearest the price, once per explain", () => {
+    const res = explain(run({ maxSlopeAtr: 0.02 }));
+    const big = res.counts.find((g) => g.n > DEBUG_SAMPLE);
+    expect(big).toBeDefined();
+    for (const g of res.counts) {
+      const list = res.candidates.filter((c) => groupOf(c) === g.group);
+      const shown = list.filter((c) => c.shown);
+      expect(shown.length).toBe(Math.min(list.length, DEBUG_SAMPLE));
+      expect(g.shown).toBe(shown.length);
+      const worstShown = Math.max(...shown.map((c) => c.dist));
+      for (const c of list) if (!c.shown) expect(c.dist).toBeGreaterThanOrEqual(worstShown);
+    }
+    const c = res.candidates[0];
+    const i = res.evalIdx;
+    const want = Math.abs(projectAt(c.line, Math.min(c.end, i)) - res.close) / (res.atr[i] as number);
+    expect(c.dist).toBeCloseTo(want, 9);
   });
 
   it("forced anchors that are not fractals report the largest Min Length that works", () => {

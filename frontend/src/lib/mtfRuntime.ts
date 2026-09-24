@@ -34,6 +34,7 @@ export const MTF_RUNTIME_KEYS = [
   "htfLines",
   "htfPivots",
   "htfAtr",
+  "htfBars",
   // Forming-bar mode's per-session fold state (waitClose itself is CONFIG and
   // ships): the flag and inputs are re-derived by the coordinator on the
   // target, and htfClosed is a whole candle array besides.

@@ -666,6 +666,19 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       const paneH = chart.getSize("candle_pane", 'main')?.height;
       clip.style.height = paneH && paneH > 0 ? `${paneH}px` : "100%";
     }
+    // Gap from the candle pane's foot to the cell's bottom (sub-panes plus the
+    // time axis), as a CSS var on the cell so DOM chrome pinned to the candle
+    // pane's foot (the trendline debug strip) clears any sub-pane.
+    {
+      const cont = containerRef.current;
+      const cb = chart.getSize("candle_pane", "root");
+      if (cont?.parentElement && cb && cb.height > 0) {
+        const foot = Math.max(0, Math.round(cont.clientHeight - cb.top - cb.height));
+        const v = `${foot}px`;
+        if (cont.parentElement.style.getPropertyValue("--candle-foot") !== v)
+          cont.parentElement.style.setProperty("--candle-foot", v);
+      }
+    }
     // Price-axis column width, for the axis-docked trade pills. getSize can
     // transiently report 0 pre-layout; keep the last good value then.
     {

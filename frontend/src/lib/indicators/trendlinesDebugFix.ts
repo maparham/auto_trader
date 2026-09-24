@@ -138,7 +138,9 @@ export async function findFix(
   base: DebugRunInput, target: TargetLine, limits: SimLimits, signal?: AbortSignal,
 ): Promise<FixResult | null> {
   const times = (base.starts ?? base.bars.map((b) => b.timestamp)).slice(0, base.evalIdx + 1);
-  const tgt = targetToIdx(times, target);
+  // Under a pin (starts set) the compute bars are not the chart's: a point
+  // snaps to the bar CONTAINING it, not the nearest bar start.
+  const tgt = targetToIdx(times, target, base.starts ? "containing" : "nearest");
   if ("error" in tgt) return { changes: [], covered: false, viaKey: null, blockers: [], attempted: [], error: tgt.error };
   const highs = base.bars.map((b) => b.high);
   const lows = base.bars.map((b) => b.low);
@@ -179,7 +181,8 @@ export async function findFix(
 export function drawnKeys(input: DebugRunInput, cfg: TrendlinesConfig): Set<string> {
   const st = buildTlState(input.bars, input.evalIdx + 1, cfg, input.startIdx);
   const i = input.evalIdx;
-  const close = st.closes[i];
+  // The draw's close (the chart's newest), as selection measures it there.
+  const close = input.evalClose ?? st.closes[i];
   const drawn = selectDrawnLines(poolable(st.lines, i, cfg), i, close, cfg.maxLines, {
     tol: mergeTolerance(cfg, st.atr[i], close),
     keep: new Set(),

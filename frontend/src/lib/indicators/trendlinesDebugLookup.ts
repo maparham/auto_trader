@@ -29,9 +29,32 @@ function nearestIdx(times: readonly number[], ts: number): number {
   return lo;
 }
 
-export function targetToIdx(times: readonly number[], t: TargetLine): TargetIdx | { error: string } {
-  const a = nearestIdx(times, t.t1);
-  const b = nearestIdx(times, t.t2);
+/** The bar CONTAINING `ts` (the last start at or before it), or -1 when it
+ * lies before the first bar or more than one bar past the last. */
+function containingIdx(times: readonly number[], ts: number): number {
+  const n = times.length;
+  if (!n) return -1;
+  const step = n > 1 ? times[n - 1] - times[n - 2] : 0;
+  if (ts < times[0] || ts > times[n - 1] + step) return -1;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (times[mid] <= ts) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/** `mode` "containing" is for a compute space that is not the chart's own
+ * bars (a pinned timeframe): a click inside an HTF bar belongs to that bar,
+ * never to the next one because its start happens to be nearer. */
+export function targetToIdx(
+  times: readonly number[], t: TargetLine, mode: "nearest" | "containing" = "nearest",
+): TargetIdx | { error: string } {
+  const at = mode === "containing" ? containingIdx : nearestIdx;
+  const a = at(times, t.t1);
+  const b = at(times, t.t2);
   if (a < 0 || b < 0) return { error: "A point is outside the loaded bars." };
   if (a === b) return { error: "Pick two points on different bars." };
   return a < b ? { x1: a, p1: t.p1, x2: b, p2: t.p2 } : { x1: b, p1: t.p2, x2: a, p2: t.p1 };

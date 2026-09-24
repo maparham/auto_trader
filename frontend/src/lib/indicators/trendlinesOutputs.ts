@@ -215,6 +215,12 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
   showCrossings: true,
   showStats: true,
   showPivotDepth: false,
+  debug: false,
+  // Which debug layers paint (Debug tab checkboxes).
+  debugShowFailed: true,
+  debugShowOutranked: true,
+  debugShowForced: true,
+  debugShowDrawn: true,
 } as const;
 
 /** calcParams order: [pivotLen, touchMult, minTouches, minSpanBars,

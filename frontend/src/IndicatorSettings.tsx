@@ -11,6 +11,7 @@
 //
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
+import { DBG_FAILED_DASH, DBG_FORCED_DASH, DBG_OUTRANKED_DASH } from "./lib/indicators/trendlinesDebugDraw";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import type { Chart, Indicator } from "klinecharts";
@@ -194,7 +195,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = "inputs" | "divergence" | "slope" | "style" | "visibility";
+type Tab = "inputs" | "divergence" | "slope" | "style" | "visibility" | "debug";
 
 
 /** The Trendlines Style-tab draft: the resolved style of the instance, every
@@ -704,6 +705,7 @@ function IndicatorSettingsForm({
   });
 
   const inputs = resolveInputs(type, ind?.calcParams as unknown[] | undefined);
+  const debugInputs = inputs.filter((inp) => inp.tab === "debug");
 
   // --- Generic extendData inputs (e.g. LR's Source select) ---
   // For non-MA/non-AVWAP indicators whose meta declares `source:"extend"` inputs,
@@ -747,7 +749,7 @@ function IndicatorSettingsForm({
   // Filtered BEFORE grouping, so a hidden half of a pair leaves the other half
   // as a normal full-width row rather than an empty grid cell.
   function visibleInput(inp: IndicatorInputDef): boolean {
-    if (inp.tab === "style") return false;
+    if (inp.tab) return false; // Style and Debug tabs render their own
     if (!inp.showWhen) return true;
     const want = inp.showWhen.field;
     const ctrl = inputs.find((d) =>
@@ -1568,8 +1570,11 @@ function IndicatorSettingsForm({
     // TRENDLINES only: a saved pane that predates a newer slot (e.g. Extend
     // Left at 28) has nothing at the slots between its old length and this
     // one, so a plain `nextCp[index] = value` would leave undefined holes
-    // that JSON.stringify turns into null. Pad those from the defaults first.
-    const nextCp = isTrendlines ? padTrendlinesParams(calcParams, index) : calcParams.slice();
+    // that JSON.stringify turns into null. Pad those with the values the pane
+    // runs with (legacy extendData migrations included) first.
+    const nextCp = isTrendlines
+      ? padTrendlinesParams(calcParams, index, seed.extendData)
+      : calcParams.slice();
     nextCp[index] = value;
     setCalcParams(nextCp);
     if (isMa && index === 0) {
@@ -1934,6 +1939,7 @@ function IndicatorSettingsForm({
             ...(hasSlopeTab ? ["slope"] : []),
             "style",
             "visibility",
+            ...(debugInputs.length ? ["debug"] : []),
           ] as Tab[]).map((t) => (
             <button
               key={t}
@@ -1948,7 +1954,9 @@ function IndicatorSettingsForm({
                     ? "Slope"
                     : t === "style"
                       ? "Style"
-                      : "Visibility"}
+                      : t === "debug"
+                        ? "Debug"
+                        : "Visibility"}
             </button>
           ))}
         </div>
@@ -3150,10 +3158,11 @@ function IndicatorSettingsForm({
                   {groupInputs(inputs.filter((inp) => inp.tab === "style")).map((chunk) => (
                     <Fragment key={chunk[0].key}>
                       {chunk[0].section && <div className="ind-group">{chunk[0].section}</div>}
-                      {/* Any run of CHECKBOXES shares the beside-the-box row;
-                          any other chunk renders one row per input so a mixed
-                          group never drops its tail. */}
-                      {chunk.length > 1 && chunk.every((inp) => inp.type === "boolean") ? (
+                      {/* Any run of CHECKBOXES shares the beside-the-box row,
+                          a grouped lone one too (Debug mode), so it reads like
+                          its neighbours; any other chunk renders one row per
+                          input so a mixed group never drops its tail. */}
+                      {(chunk.length > 1 || chunk[0].group) && chunk.every((inp) => inp.type === "boolean") ? (
                         <div className="ind-pair2-bool">
                           {chunk.map((inp) => (
                             <div className="ind-field" key={inp.key}>
@@ -3204,6 +3213,45 @@ function IndicatorSettingsForm({
             </>
           )}
 
+          {tab === "debug" && debugInputs.length > 0 && (
+            <>
+              {debugInputs.filter((inp) => !(inp.field && inp.field in DEBUG_LAYER_DASH)).map((inp) => (
+                <div className="ind-field ind-debug-toggle" key={inp.key}>
+                  {controlFor(inp, true)}
+                  {tipFor(inp)}
+                </div>
+              ))}
+              {/* No hue anywhere: the line patterns carry every state. */}
+              <div className="ind-group">On the chart</div>
+              <div className="ind-debug-legend">
+                {debugInputs.filter((inp) => inp.field && inp.field in DEBUG_LAYER_DASH).map((inp) => {
+                  const field = inp.field as string;
+                  const checked = (genExtend[field] ?? inp.default ?? true) as boolean;
+                  return (
+                    <div className="ind-field" key={inp.key}>
+                      <label className={`ind-bool-check${genExtend.debug ? "" : " is-off"}`}>
+                        <input
+                          type="checkbox"
+                          aria-label={inp.label}
+                          checked={checked}
+                          onChange={(e) => setExtendInput(field, e.target.checked)}
+                        />
+                        <DebugSwatch dash={DEBUG_LAYER_DASH[field]} />
+                        <span>{inp.label}</span>
+                      </label>
+                      {tipFor(inp)}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="ind-debug-note">
+                Click any line to see what holds it back and the smallest fix.
+                The strip at the chart's foot counts lines per reason.
+                Debug turns off on reload.
+              </div>
+            </>
+          )}
+
           {tab === "visibility" && (
             <>
               <label className="ind-check">
@@ -3224,5 +3272,26 @@ function IndicatorSettingsForm({
           )}
         </div>
     </FloatingModal>
+  );
+}
+
+/** Each debug layer's checkbox field and the dash it paints with (null:
+ * the drawn lines' own solid stroke). */
+const DEBUG_LAYER_DASH: Record<string, readonly number[] | null> = {
+  debugShowFailed: DBG_FAILED_DASH,
+  debugShowOutranked: DBG_OUTRANKED_DASH,
+  debugShowForced: DBG_FORCED_DASH,
+  debugShowDrawn: null,
+};
+
+/** A short line in the chart's debug pattern, for the Debug tab's legend. */
+function DebugSwatch({ dash }: { dash: readonly number[] | null }) {
+  return (
+    <svg width="28" height="8" aria-hidden="true" className="ind-debug-swatch">
+      <line
+        x1="0" y1="4" x2="28" y2="4" stroke="currentColor"
+        strokeWidth={dash ? 1.5 : 2} strokeDasharray={dash?.join(" ")}
+      />
+    </svg>
   );
 }

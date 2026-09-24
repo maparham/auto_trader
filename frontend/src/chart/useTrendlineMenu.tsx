@@ -34,6 +34,7 @@ import {
   type TrendlineHit,
   type TrendlineSegment,
 } from "../lib/indicators/trendlineMarks";
+import { DBG_KEY_PREFIX } from "../lib/indicators/trendlinesDebugDraw";
 import { LONG_PRESS_MS, TAP_MOVE_PX, TAP_MS } from "./touchTap";
 
 interface Picked {
@@ -157,7 +158,14 @@ interface Args {
   overlays: OverlayManager;
   scope: string;
   epicRef: React.MutableRefObject<string>;
+  /** Debug mode's popup: called with every picked line; true when it took
+   * the pick (the instance has debug on). */
+  onDebugPick?: (hit: TrendlineHit, clientX: number, clientY: number) => boolean;
 }
+
+/** A debug layer line ("dbg:" key): a candidate the detector did not draw,
+ * so it has no real lineKey to mark, hide or clone. */
+const isDebugKey = (key: string) => key.startsWith(DBG_KEY_PREFIX);
 
 interface MenuState {
   x: number;
@@ -165,13 +173,15 @@ interface MenuState {
   hit: TrendlineHit;
 }
 
-export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epicRef }: Args): {
+export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epicRef, onDebugPick }: Args): {
   /** Right-click entry, for ChartCore's contextmenu handler: opens the menu
    * when a line is under the pointer and says so, so the caller yields. */
   openAt: (clientX: number, clientY: number) => boolean;
   menu: ReactNode;
 } {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const onDebugPickRef = useRef(onDebugPick);
+  onDebugPickRef.current = onDebugPick;
 
   const hitAt = useCallback(
     (clientX: number, clientY: number, touch: boolean): TrendlineHit | null => {
@@ -203,7 +213,7 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
       open(clientX, clientY, hit);
       return true;
     },
-    [hitAt, open],
+    [chartRef, hitAt, open],
   );
 
   // Pick on click / tap, and the touch hold on the picked line. Pointer
@@ -270,6 +280,7 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
       if (p.touch && e.timeStamp - p.t > TAP_MS) return;
       const hit = hitAt(e.clientX, e.clientY, p.touch);
       pickTrendline(chart, hit ? { paneId: hit.paneId, name: hit.name, key: hit.seg.key } : null);
+      if (hit) onDebugPickRef.current?.(hit, e.clientX, e.clientY);
     };
     const onCancel = () => {
       press = null;
@@ -289,7 +300,18 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
   }, [chartRef, containerRef, overlays, hitAt, open]);
 
   let node: ReactNode = null;
-  if (menu) {
+  if (menu && isDebugKey(menu.hit.seg.key)) {
+    // A debug line has no lineKey to highlight or hide: Explain (its popup)
+    // and To drawing only.
+    const { hit, x, y } = menu;
+    const items: MenuItem[] = [
+      ...(onDebugPick
+        ? [{ label: "Explain", icon: MenuIcons.indicator, onClick: () => void onDebugPickRef.current?.(hit, x, y) }]
+        : []),
+      { label: "To drawing", icon: MenuIcons.pencil, onClick: () => void trendlineToDrawing(overlays, hit.seg) },
+    ];
+    node = <ContextMenu x={x} y={y} items={items} onClose={() => setMenu(null)} />;
+  } else if (menu) {
     const { hit } = menu;
     const epic = epicRef.current;
     const saved = loadIndicatorConfigs(scope)[hit.name]?.extendData as

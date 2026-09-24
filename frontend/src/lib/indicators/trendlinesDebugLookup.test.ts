@@ -19,6 +19,14 @@ describe("targetToIdx", () => {
     const t = targetToIdx(times, { t1: times[10], p1: 1, t2: last + 10 * 60_000, p2: 2 });
     expect("error" in t).toBe(true);
   });
+  it("containing mode floors to the bar whose span holds the point", () => {
+    const step = times[1] - times[0];
+    const near = targetToIdx(times, { t1: times[100] + 0.9 * step, p1: 1, t2: times[300], p2: 2 });
+    expect(near).toMatchObject({ x1: 101 });
+    const cont = targetToIdx(times, { t1: times[100] + 0.9 * step, p1: 1, t2: times[300], p2: 2 }, "containing");
+    expect(cont).toMatchObject({ x1: 100, x2: 300 });
+    expect("error" in targetToIdx(times, { t1: times[0] - 1, p1: 1, t2: times[3], p2: 2 }, "containing")).toBe(true);
+  });
   it("orders the two points left to right", () => {
     const t = targetToIdx(times, { t1: times[300], p1: 2, t2: times[100], p2: 1 });
     expect(t).toEqual({ x1: 100, p1: 1, x2: 300, p2: 2 });

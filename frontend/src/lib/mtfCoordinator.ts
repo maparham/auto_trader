@@ -43,6 +43,7 @@ import {
 } from "./indicators/srLevels";
 import {
   computeTrendlines,
+  setTrendlinesHtfBars,
   type TrendlinesExtend,
 } from "./indicators/trendlines";
 import {
@@ -1149,6 +1150,7 @@ export async function applyTrendlinesTimeframe(
     : newestMs
       ? htf.filter((b) => htfBarEndMs(b.timestamp, htfMs, timeframe) <= newestMs)
       : htf;
+  setTrendlinesHtfBars(chart, name, bars);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     epic,
@@ -1646,6 +1648,7 @@ export function refreshFormingBar(chart: Chart): void {
       } else if (type === "SR_LEVELS") {
         built = buildSrMtf(bars, parseSrConfig(ind.calcParams), timeframe, htfMs);
       } else if (type === "TRENDLINES") {
+        setTrendlinesHtfBars(chart, id, bars);
         built = buildTrendlinesMtf(
           bars,
           parseTrendlinesConfig(ind.calcParams, ind.extendData),

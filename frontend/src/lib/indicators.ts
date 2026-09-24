@@ -40,6 +40,7 @@ import { INSET_CAPABLE, insetTemplate } from "./indicators/inset";
 import { hiddenAware } from "./indicators/hiddenCalc";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
 import { dropTrendlineHandles } from "./indicators/trendlines";
+import { noteDebugOn } from "./indicators/trendlinesDebugStore";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
 import {
   type VisibilityModel,
@@ -608,6 +609,11 @@ export function applyIndicator(
   delete (extendData as { selectedLine?: unknown }).selectedLine;
   delete (extendData as { hoveredLine?: unknown }).hoveredLine;
   delete (extendData as { emphasized?: unknown }).emphasized;
+  // Debug mode is a live gesture like a selection: never restored from a
+  // saved config, so it cannot leak into alert snapshots, the public demo,
+  // templates or pastes.
+  delete (extendData as { debug?: unknown }).debug;
+  delete (extendData as { debugRev?: unknown }).debugRev;
   if (opts?.forceHidden && extendData.userVisible === undefined) {
     extendData.userVisible = cfg?.visible !== false;
   }
@@ -1020,6 +1026,8 @@ export function applyIndicatorVisibility(chart: Chart, resolution: string, allHi
           ? { extendData: { ...ext, userVisible: ind.visible ?? true } }
           : {};
       chart.overrideIndicator({ paneId, name: ind.name, visible, ...seed });
+      // A hidden indicator never draws, so its debug strip is dropped here.
+      if (!visible) noteDebugOn(chart, ind.name, false);
     }
   }
 }
@@ -1248,6 +1256,7 @@ export function removeIndicatorById(chart: Chart, scope: string, id: string): vo
   // A removed pane never draws again, so its recorded TRENDLINES pin handles
   // would stay clickable-looking (the cursor turns to a pointer) forever.
   dropTrendlineHandles(chart, id);
+  noteDebugOn(chart, id, false);
   deleteIndicatorConfig(scope, id);
 }
 
