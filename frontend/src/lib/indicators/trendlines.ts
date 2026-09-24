@@ -321,13 +321,13 @@ export function writeOutput(row: TrendlinesPoint, name: string, v: number): void
 const KINDS: readonly PivotKind[] = ["high", "low"];
 
 /** Live means not aged out past its projection horizon. */
-function isLive(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
+export function isLive(line: TrendLine, i: number, cfg: TrendlinesConfig): boolean {
   return i - line.lastTouchIdx <= cfg.maxProjBars && withinLookback(line.i1, i, cfg);
 }
 
 /** False once bar `i1` is more than Lookback bars before bar `i`. Age only
  * grows, so a line or pivot that fails it never comes back. 0 = off. */
-function withinLookback(i1: number, i: number, cfg: TrendlinesConfig): boolean {
+export function withinLookback(i1: number, i: number, cfg: TrendlinesConfig): boolean {
   return cfg.lookbackBars <= 0 || i - i1 <= cfg.lookbackBars;
 }
 
@@ -614,7 +614,7 @@ export function aboveSlope(
  * it and re-run only the forming bar per live tick instead of the whole
  * series (a from-scratch run costs ~30ms at BTCUSD 1m bar counts, on EVERY
  * tick, which was the pan/zoom jank). */
-interface TlState {
+export interface TlState {
   startIdx: number;
   atr: Array<number | null>;
   highs: number[];
@@ -639,10 +639,39 @@ interface TlState {
   pairs: number;
 }
 
-export function buildTlState(
+/** A seed-time gate that DELETES a candidate (see withinSlope's comment). */
+export type SeedGate = "lookback" | "slopeMax" | "slopeMin" | "backClearance";
+
+/** DEBUG instrumentation (trendlinesDebug.ts). Every call site is `sink?.`,
+ * and no normal path passes one, so the detector's arithmetic, order and
+ * output are untouched: trendlinesDebug.parity.test.ts pins that. The hooks
+ * only OBSERVE; a sink must never mutate `st` or a line in `st.lines`. */
+export interface TlSink {
+  /** Step 1 ran for bar i: step the sink's own lines' crossings too. */
+  crossings(i: number, close: number): void;
+  /** A confirmed fractal at k failed Min Size or Min Reach. */
+  pivotRejected(st: TlState, k: number, kind: PivotKind, gate: "size" | "reach"): void;
+  /** An ACCEPTED pivot at k: score it against the sink's own lines. */
+  pivotTouch(st: TlState, k: number, price: number, kind: PivotKind, cfg: TrendlinesConfig): void;
+  /** Pool entry q paired with the pivot at k and was deleted by `gate`. */
+  seedRejected(
+    st: TlState, q: number, k: number, kind: PivotKind, price: number,
+    i: number, cfg: TrendlinesConfig, gate: SeedGate,
+  ): void;
+  /** A live line left live state at bar i (Max Projection or Lookback). */
+  died(line: TrendLine, i: number, cfg: TrendlinesConfig): void;
+  /** Lines cut by the MAX_LIVE cap at bar i. */
+  evicted(lines: readonly TrendLine[], i: number): void;
+  /** End of the confirm-bar block for bar i (after the prune and cap). */
+  afterConfirm(st: TlState, i: number, cfg: TrendlinesConfig): void;
+}
+
+/** The empty detector state for the first `m` bars: per-bar arrays filled,
+ * no bar stepped yet. buildTlState steps it; the debug run steps it with a
+ * sink attached. */
+export function initTlState(
   dataList: KLineData[],
   m: number,
-  cfg: TrendlinesConfig,
   startIdx = 0,
 ): TlState {
   const prefix = m === dataList.length ? dataList : dataList.slice(0, m);
@@ -652,7 +681,7 @@ export function buildTlState(
     const windowed = atrSeries(prefix.slice(startIdx), TL_ATR_LEN);
     for (let i = 0; i < windowed.length; i++) atr[startIdx + i] = windowed[i];
   }
-  const st: TlState = {
+  return {
     startIdx,
     atr,
     highs: prefix.map((d) => d.high),
@@ -666,6 +695,15 @@ export function buildTlState(
     points: Array.from({ length: m }, () => ({})),
     pairs: 0,
   };
+}
+
+export function buildTlState(
+  dataList: KLineData[],
+  m: number,
+  cfg: TrendlinesConfig,
+  startIdx = 0,
+): TlState {
+  const st = initTlState(dataList, m, startIdx);
   for (let i = startIdx; i < m; i++) stepTrendlinesBar(st, i, cfg);
   return st;
 }
@@ -720,9 +758,81 @@ export function withinDistance(line: TrendLine, j: number, close: number, tol: n
   return Math.abs(projectAt(line, j) - close) <= tol;
 }
 
+/** A freshly paired candidate: two anchors, nothing counted yet. The field
+ * order is the literal the seed loop used to build inline. */
+export function newSeed(
+  i1: number, p1: number, k1: PivotKind,
+  k: number, price: number, kind: PivotKind,
+): TrendLine {
+  return {
+    i1, p1, k1,
+    i2: k, p2: price, k2: kind,
+    touches: 2,
+    touchIdxs: [i1, k],
+    touchKinds: [k1, kind],
+    lastTouchIdx: k,
+    crossings: 0,
+    crossIdxs: [],
+    lastSign: 0,
+    maxTouchGap: k - i1,
+    minTouchGap: k - i1,
+    maxTouchIdx: k,
+  };
+}
+
+/** The seed-time walks for a candidate that passed the seed gates: crossings
+ * over (i1, i], retro touches from pool position `fromQ` up to the second
+ * anchor, then the touch gaps. Moved out of the seed loop VERBATIM (same
+ * operations, same order) so the debug sink can build a rejected candidate's
+ * true stats with the same code. `fromQ` is q + 1 in the seed loop. */
+export function finishSeed(
+  st: TlState,
+  cand: TrendLine,
+  fromQ: number,
+  i: number,
+  cfg: TrendlinesConfig,
+): void {
+  const { atr, highs, lows, closes, pool } = st;
+  const i1 = cand.i1;
+  const k = cand.i2;
+  // Crossings over (i1, i]: the closes between the anchors and since the
+  // second anchor, all of which have already happened.
+  for (let j = i1 + 1; j <= i; j++) stepCrossing(cand, j, closes[j]);
+  // Retro touches: pool entries strictly between the anchors, of either
+  // kind. The pool is in bar order and i1 IS pool.idxs[q], so the window
+  // starts at q + 1 and ends at the first entry reaching k. An entry AT
+  // i1 (the other extreme of the anchor bar) is not a touch.
+  for (let q2 = fromQ; q2 < pool.idxs.length; q2++) {
+    const pj = pool.idxs[q2];
+    if (pj >= k) break;
+    if (pj === i1) continue;
+    const tolP = atr[pj];
+    if (tolP === null) continue;
+    const kj = pool.kinds[q2];
+    const pv = kj === "high" ? highs[pj] : lows[pj];
+    const w = touchWeight(cand, pj, pv, kj, cfg.touchMult * tolP, cfg.pierceMult * tolP);
+    if (w > 0) {
+      cand.touches += w;
+      cand.touchIdxs.push(pj);
+      cand.touchKinds.push(kj);
+    }
+  }
+  // Recomputed once every seed-time touch is in (touchIdxs is not in
+  // bar order; touchGaps sorts a copy).
+  const seedGaps = touchGaps(cand.touchIdxs);
+  cand.maxTouchGap = seedGaps.widest;
+  cand.minTouchGap = seedGaps.narrowest;
+  cand.maxTouchIdx = cand.i2;
+}
+
 /** One bar of the detector. Reads/writes state only at indices <= i (causal),
  * which the incremental session relies on. Ported line for line to Python. */
-function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void {
+export function stepTrendlinesBar(
+  st: TlState,
+  i: number,
+  cfg: TrendlinesConfig,
+  sink?: TlSink,
+): void {
   const { atr, highs, lows, closes, pool, turns, points } = st;
   const majorTier = st.majors;
   let lines = st.lines;
@@ -732,6 +842,7 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
   //    seeded at an earlier confirm bar and has consumed closes through it, so
   //    this bar is the next one. Needs no ATR.
   for (const line of lines) stepCrossing(line, i, closes[i]);
+  sink?.crossings(i, closes[i]);
 
   // 2. CONFIRM-BAR work for the pivot at bar k = i - pivotLen.
   const k = i - cfg.pivotLen;
@@ -745,11 +856,20 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
       // minSwingAtr > 0 so that off means untouched.
       if (cfg.minSwingAtr > 0) {
         const atrK = atr[k];
-        if (atrK === null) continue;
+        if (atrK === null) {
+          sink?.pivotRejected(st, k, kind, "size");
+          continue;
+        }
         const opposite = turns[kind === "high" ? "low" : "high"];
-        if (!isSignificantSwing(highs, lows, opposite, k, kind, atrK, cfg.minSwingAtr)) continue;
+        if (!isSignificantSwing(highs, lows, opposite, k, kind, atrK, cfg.minSwingAtr)) {
+          sink?.pivotRejected(st, k, kind, "size");
+          continue;
+        }
       }
-      if (!hasSwingReach(vals, k, kind, cfg.minSwingReach)) continue;
+      if (!hasSwingReach(vals, k, kind, cfg.minSwingReach)) {
+        sink?.pivotRejected(st, k, kind, "reach");
+        continue;
+      }
       const price = vals[k];
 
       // 2a. Test the new pivot against every existing line, whatever kind
@@ -772,6 +892,7 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
           }
         }
       }
+      sink?.pivotTouch(st, k, price, kind, cfg);
 
       // 2b. Seed candidates against the previous pairPivots pool entries, of
       //     either kind, plus the major tier where it reaches further back;
@@ -798,63 +919,35 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
         // A bar's own high and low confirm together and would give span 0.
         if (i1 >= k) continue;
         // Past Lookback: step 3 would drop the line on this same bar.
-        if (!withinLookback(i1, i, cfg)) continue;
+        if (!withinLookback(i1, i, cfg)) {
+          sink?.seedRejected(st, q, k, kind, price, i, cfg, "lookback");
+          continue;
+        }
         const k1 = pool.kinds[q];
         const p1 = k1 === "high" ? highs[i1] : lows[i1];
-        const cand: TrendLine = {
-          i1, p1, k1,
-          i2: k, p2: price, k2: kind,
-          touches: 2,
-          touchIdxs: [i1, k],
-          touchKinds: [k1, kind],
-          lastTouchIdx: k,
-          crossings: 0,
-          crossIdxs: [],
-          lastSign: 0,
-          maxTouchGap: k - i1,
-          minTouchGap: k - i1,
-          maxTouchIdx: k,
-        };
+        const cand = newSeed(i1, p1, k1, k, price, kind);
         // Slope first: one comparison, asked once because the line never
         // rotates.
         if (cfg.maxSlopeAtr !== 0 || cfg.minSlopeAtr !== 0) {
           const atrK = atr[k];
           if (atrK === null) continue;
-          if (!withinSlope(cand, atrK, cfg.maxSlopeAtr)) continue;
-          if (!aboveSlope(cand, atrK, cfg.minSlopeAtr)) continue;
+          if (!withinSlope(cand, atrK, cfg.maxSlopeAtr)) {
+            sink?.seedRejected(st, q, k, kind, price, i, cfg, "slopeMax");
+            continue;
+          }
+          if (!aboveSlope(cand, atrK, cfg.minSlopeAtr)) {
+            sink?.seedRejected(st, q, k, kind, price, i, cfg, "slopeMin");
+            continue;
+          }
         }
         // Back clearance next, still before the crossing walk: bounded by
         // minBackBars where the walk is O(span). It reads ONLY bars before
         // i1, so it is fixed the moment the line is defined and cannot repaint.
-        if (!hasBackClearance(cand, closes, st.startIdx, cfg.minBackBars)) continue;
-        // Crossings over (i1, i]: the closes between the anchors and since the
-        // second anchor, all of which have already happened.
-        for (let j = i1 + 1; j <= i; j++) stepCrossing(cand, j, closes[j]);
-        // Retro touches: pool entries strictly between the anchors, of either
-        // kind. The pool is in bar order and i1 IS pool.idxs[q], so the window
-        // starts at q + 1 and ends at the first entry reaching k. An entry AT
-        // i1 (the other extreme of the anchor bar) is not a touch.
-        for (let q2 = q + 1; q2 < pool.idxs.length; q2++) {
-          const pj = pool.idxs[q2];
-          if (pj >= k) break;
-          if (pj === i1) continue;
-          const tolP = atr[pj];
-          if (tolP === null) continue;
-          const kj = pool.kinds[q2];
-          const pv = kj === "high" ? highs[pj] : lows[pj];
-          const w = touchWeight(cand, pj, pv, kj, cfg.touchMult * tolP, cfg.pierceMult * tolP);
-          if (w > 0) {
-            cand.touches += w;
-            cand.touchIdxs.push(pj);
-            cand.touchKinds.push(kj);
-          }
+        if (!hasBackClearance(cand, closes, st.startIdx, cfg.minBackBars)) {
+          sink?.seedRejected(st, q, k, kind, price, i, cfg, "backClearance");
+          continue;
         }
-        // Recomputed once every seed-time touch is in (touchIdxs is not in
-        // bar order; touchGaps sorts a copy).
-        const seedGaps = touchGaps(cand.touchIdxs);
-        cand.maxTouchGap = seedGaps.widest;
-        cand.minTouchGap = seedGaps.narrowest;
-        cand.maxTouchIdx = cand.i2;
+        finishSeed(st, cand, q + 1, i, cfg);
         lines.push(cand);
         st.pairs++;
       }
@@ -889,14 +982,20 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
     //    IN TOTAL (compareSurvival, not rankLines: see its comment).
     //    Ceiling-failed lines still sort last: they can never re-qualify, and
     //    the survival order would otherwise hand them the front of the queue.
-    if (lines.some((l) => !isLive(l, i, cfg))) lines = lines.filter((l) => isLive(l, i, cfg));
+    if (lines.some((l) => !isLive(l, i, cfg))) {
+      if (sink) for (const l of lines) if (!isLive(l, i, cfg)) sink.died(l, i, cfg);
+      lines = lines.filter((l) => isLive(l, i, cfg));
+    }
     const cap = MAX_LIVE;
     if (lines.length > cap) {
       lines.sort(
         (x, y) => Number(overCeilings(x, cfg)) - Number(overCeilings(y, cfg)) || compareSurvival(x, y),
       );
+      sink?.evicted(lines.slice(cap), i);
       lines = lines.slice(0, cap);
     }
+    st.lines = lines;
+    sink?.afterConfirm(st, i, cfg);
   }
 
   // 4. Emit: selectDrawnLines, the same call the draw path makes. Stage 2
@@ -991,7 +1090,7 @@ export interface TrendlinesSession {
 }
 
 /** First index with timestamp >= ts (dataList ascending); 0 for ts<=first. */
-function floorIdxOf(dataList: KLineData[], ts: number | undefined): number {
+export function floorIdxOf(dataList: KLineData[], ts: number | undefined): number {
   if (!ts || !dataList.length || ts <= dataList[0].timestamp) return 0;
   let lo = 0;
   let hi = dataList.length; // may return length: an all-older list gives an
@@ -1551,7 +1650,7 @@ export function sameTrend(a: TrendLine, b: TrendLine, atIdx: number, tol: number
 }
 
 
-function addLevelPositions(
+export function addLevelPositions(
   pos: Map<number, Map<number, number>>,
   line: TrendLine,
   lvl: number,
