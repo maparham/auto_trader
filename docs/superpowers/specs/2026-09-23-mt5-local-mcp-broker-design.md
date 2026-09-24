@@ -52,9 +52,11 @@ account block: "Ava Trade Markets Ltd. (live, local)"; frontend fallback
 | Candle freshness | M1 is live; H1/H4/D1/W1 lag until the terminal rebuilds them (D1 was missing today's bar) | Newest bars above M1 are rebuilt from M1 (`_patch_tail`), capped at 8 days |
 | Bar alignment | H4 on the server clock; W1 opens Sunday 00:00 | Same bucketing in the rebuild |
 | History depth | The terminal downloads history lazily: a cold symbol's first reply is short and grows in steps for 30 to 60 s; `data_available_from` overstates real depth | A reply stopping more than 5 days short of the request is retried (3 s apart, about 10 s per call). It is accepted once its oldest bar has held still for 12 s (tracked per series across calls); still moving means a retryable 503, never a truncated range |
+| M1 tail after a restart | The first M1 reply ends where the terminal last saved it (GBPUSD two days stale) until it catches up, about 2 s later | An M1 reply reaching the present whose newest bar trails the Market Watch `update_time` by more than 10 min is retried; a tail that holds still for 12 s is accepted |
 | Symbols | History and quotes fail with "symbol not found" until the symbol is in Market Watch | Add it and retry once (changes Market Watch visibility) |
 | Quotes | `get_marketwatch_symbols` carries bid/ask for selected rows only | Select on a miss |
 | Specs | Market Watch rows carry contract size, volume min/max/step, digits | Lots and units converted as on `mt5` |
+| Position P&L | `profit` leaves swap out; equity counts it (`profit + swaps == equity - balance`) | `upnl` is `profit + swaps` |
 | Sessions, margin | No trading sessions; tick value is 0 and there is no margin tool | `closed` stays None; no leverage figure |
 | Streaming | None | `supports_streaming = False` |
 | Partial close | Not offered | REJECTED. Not emulated with an opposite order: the account is hedging, so that would open a second position |

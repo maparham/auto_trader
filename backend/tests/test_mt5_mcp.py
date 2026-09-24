@@ -244,6 +244,14 @@ def test_positions_map_lots_to_units_and_zero_levels_to_none():
     assert p.created_at == datetime(2026, 9, 1, 10, tzinfo=timezone.utc)
 
 
+def test_position_pnl_includes_swaps():
+    """MT5 `profit` leaves swap out; equity counts it, so the dock would
+    under-report open P&L without it."""
+    ex, _ = _exec({"get_trading_open_positions": {"positions": [{**POSITION, "swaps": -12.5}], "orders": []}})
+    [p] = run(ex.get_positions())
+    assert p.upnl == pytest.approx(87.5)
+
+
 def test_market_order_converts_units_to_lots_and_is_idempotent():
     ex, client = _exec({"trade_send_market_order": {"retcode": 10009, "order": 9, "position": 555, "price": 1.1449}})
     order = Order(epic="EURUSD", side=Side.BUY, quantity=2000.0, type=OrderType.MARKET, client_order_id="c1")
@@ -372,3 +380,79 @@ def test_duplicate_submit_while_in_flight_sends_nothing():
     assert second.status is OrderStatus.UNKNOWN
     assert first.status is OrderStatus.FILLED
     assert [t for t, _ in data.client.calls].count("trade_send_market_order") == 1
+
+
+# --- M1 tail freshness after a terminal restart ----------------------------------
+
+
+def _fmt(t):
+    return t.strftime("%Y.%m.%d %H:%M:%S")
+
+
+def _m1(newest, n=3):
+    return {"history": [{"time": _fmt(newest - timedelta(minutes=k)), "open": 1, "high": 1, "low": 1, "close": 1}
+                        for k in range(n - 1, -1, -1)]}
+
+
+def _tick(t):
+    return {"symbols": [{**EURUSD, "update_time": _fmt(t)}]}
+
+
+def test_stale_m1_tail_is_retried_until_current(monkeypatch):
+    """Right after the terminal starts, M1 ends where it was last saved (two
+    days back) while ticks are current: retried until the tail catches up."""
+    import auto_trader.brokers.mt5_mcp as mod
+
+    monkeypatch.setattr(mod, "_LOAD_WAIT", 0.0)
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    replies = iter([_m1(now - timedelta(days=2)), _m1(now)])
+    b = _broker({"get_chart_history": lambda a: next(replies), "get_marketwatch_symbols": _tick(now)})
+    bars = run(b.get_recent_candles("GBPUSD", Resolution.MINUTE, 3))
+    assert bars[-1].time == now
+
+
+def test_stale_m1_tail_that_holds_still_is_accepted(monkeypatch):
+    """A tail that stops moving is what the terminal has (ticks without bars,
+    say): accepted rather than retried forever."""
+    import auto_trader.brokers.mt5_mcp as mod
+
+    monkeypatch.setattr(mod, "_LOAD_WAIT", 0.0)
+    monkeypatch.setattr(mod, "_STABLE_FOR", 0.0)
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    b = _broker({"get_chart_history": _m1(now - timedelta(hours=3)), "get_marketwatch_symbols": _tick(now)})
+    bars = run(b.get_recent_candles("GBPUSD", Resolution.MINUTE, 3))
+    assert bars[-1].time == now - timedelta(hours=3)
+
+
+def test_stale_m1_tail_still_moving_is_retryable(monkeypatch):
+    import auto_trader.brokers.mt5_mcp as mod
+
+    monkeypatch.setattr(mod, "_LOAD_WAIT", 0.0)
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    hours = iter(range(10, 0, -1))
+    b = _broker({"get_chart_history": lambda a: _m1(now - timedelta(hours=next(hours))),
+                 "get_marketwatch_symbols": _tick(now)})
+    with pytest.raises(BrokerReconnecting):
+        run(b.get_recent_candles("GBPUSD", Resolution.MINUTE, 3))
+
+
+def test_weekend_tail_matching_the_last_tick_is_current():
+    """Market closed: the newest bar is Friday's and so is the last tick."""
+    friday = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(days=2)
+    b = _broker({"get_chart_history": _m1(friday), "get_marketwatch_symbols": _tick(friday + timedelta(seconds=40))})
+    bars = run(b.get_recent_candles("EURUSD", Resolution.MINUTE, 3))
+    assert bars[-1].time == friday
+    assert [t for t, _ in b.client.calls].count("get_chart_history") == 1
+
+
+def test_tail_check_skips_past_windows_and_missing_tick_times():
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    old = now - timedelta(days=3)
+    b = _broker({"get_chart_history": _m1(old), "get_marketwatch_symbols": _tick(now)})
+    run(b.get_candles("EURUSD", Resolution.MINUTE, old - timedelta(hours=1), old + timedelta(hours=1)))
+    assert "get_marketwatch_symbols" not in [t for t, _ in b.client.calls]
+
+    unselected = {k: v for k, v in EURUSD.items() if k not in ("bid", "ask")}
+    b = _broker({"get_chart_history": _m1(old), "get_marketwatch_symbols": {"symbols": [unselected]}})
+    bars = run(b.get_recent_candles("EURUSD", Resolution.MINUTE, 3))
+    assert bars[-1].time == old

@@ -91,6 +91,11 @@ _LOAD_GAP = timedelta(days=5)
 _LOAD_RETRIES = 3
 _LOAD_WAIT = 3.0
 _STABLE_FOR = 12.0
+# After a terminal restart, M1 history ends where the terminal last saved it
+# until it catches up (observed: GBPUSD M1 two days stale on the first reply,
+# current about 2 s later). An M1 reply whose newest bar sits more than
+# _TAIL_LAG behind the symbol's last tick is still syncing.
+_TAIL_LAG = timedelta(minutes=10)
 
 # MT5 trade server return codes that mean the request went through
 # (DONE, PLACED, DONE_PARTIAL). Anything else with a retcode is a rejection.
@@ -239,6 +244,14 @@ def _first(d: dict, *keys: str) -> Any:
     return None
 
 
+def _upnl(p: dict) -> float | None:
+    """Open P&L with swap, in account currency. MT5's `profit` leaves swap
+    out while equity counts it (profit + swaps == equity - balance, checked
+    on a live account)."""
+    profit = _f(p.get("profit"))
+    return None if profit is None else profit + (_f(p.get("swaps")) or 0.0)
+
+
 def _side(action: Any) -> Side:
     return Side.BUY if "buy" in str(action or "").lower() else Side.SELL
 
@@ -260,6 +273,8 @@ class MT5MCPBroker(MarketDataBroker):
         self._symbols: dict[str, dict] = {}
         # (epic, period) -> (oldest bar seen, monotonic time it last moved)
         self._depth: dict[tuple[str, str], tuple[datetime, float]] = {}
+        # (epic, period) -> (newest bar seen, monotonic time it last moved)
+        self._tail: dict[tuple[str, str], tuple[datetime | None, float]] = {}
         self._label_task: asyncio.Task | None = None
 
     async def aclose(self) -> None:
@@ -338,21 +353,55 @@ class MT5MCPBroker(MarketDataBroker):
         # bar keeps moving. Deep loads advance in steps several seconds apart,
         # so the oldest bar must hold still for _STABLE_FOR before a short reply
         # counts as all the terminal has. The clock is kept per series across
-        # calls, so a known hard limit answers at once next time.
+        # calls, so a known hard limit answers at once next time. The newest
+        # bar gets the same treatment against the last tick (_tail_behind).
         key = (epic, period)
         for attempt in range(_LOAD_RETRIES + 1):
             bars, available_from = await self._history_once(epic, period, start, end, limit)
-            if not self._looks_truncated(bars, start, available_from, limit):
-                return bars
-            now = time.monotonic()
-            seen = self._depth.get(key)
-            if seen is None or seen[0] != bars[0].time:
-                self._depth[key] = (bars[0].time, now)
-            elif now - seen[1] >= _STABLE_FOR:
+            loading = (
+                await self._tail_behind(epic, period, bars, start, end)
+                and not self._settled(self._tail, key, bars[-1].time if bars else None)
+            ) or (
+                self._looks_truncated(bars, start, available_from, limit)
+                and not self._settled(self._depth, key, bars[0].time)
+            )
+            if not loading:
                 return bars
             if attempt < _LOAD_RETRIES:
                 await asyncio.sleep(_LOAD_WAIT)
         raise BrokerReconnecting(f"{BROKER_ID}: {epic} {period} history still loading in the terminal")
+
+    @staticmethod
+    def _settled(clock: dict, key: tuple[str, str], mark: datetime | None) -> bool:
+        """True once `mark` has held still for _STABLE_FOR, timed across calls."""
+        now = time.monotonic()
+        seen = clock.get(key)
+        if seen is None or seen[0] != mark:
+            clock[key] = (mark, now)
+            return False
+        return now - seen[1] >= _STABLE_FOR
+
+    async def _tail_behind(self, epic: str, period: str, bars: list[Candle],
+                           start: datetime, end: datetime) -> bool:
+        """An M1 reply reaching the present whose newest bar trails the
+        symbol's last tick (Market Watch `update_time`) by more than _TAIL_LAG.
+        Higher timeframes lag by design and are rebuilt from M1 instead. No
+        tick time (symbol not selected yet, read failed) means no check."""
+        if period != "M1":
+            return False
+        now = datetime.now(timezone.utc)
+        newest = bars[-1].time if bars else None
+        if end < now - _TAIL_LAG or (newest is not None and newest >= now - _TAIL_LAG):
+            return False  # a past window (scroll-back), or already current
+        try:
+            row = await self._market_row(epic, fresh=True)
+            tick = self._to_utc(row["update_time"]) if row and row.get("update_time") else None
+        except Exception:
+            log.debug("%s: tick time read failed for %s", BROKER_ID, epic, exc_info=True)
+            return False
+        if tick is None or not start <= tick < end:
+            return False
+        return newest is None or tick - newest > _TAIL_LAG
 
     @staticmethod
     def _looks_truncated(bars: list[Candle], start: datetime, available_from: datetime | None,
@@ -769,7 +818,7 @@ class MT5MCPExecutionBroker(ExecutionBroker):
                 deal_id=str(p.get("position_id")),
                 stop_level=_lvl(p.get("stop_loss")),
                 take_profit_level=_lvl(p.get("take_profit")),
-                upnl=_f(p.get("profit")),
+                upnl=_upnl(p),
                 created_at=self._data._to_utc(created) if created else None,
                 mark=_lvl(p.get("price_last")),
             ))
