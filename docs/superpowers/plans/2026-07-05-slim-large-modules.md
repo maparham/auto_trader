@@ -1,5 +1,15 @@
 # Slim the Ten Largest Modules — Implementation Plan
 
+> **Status 2026-09-24 (evening):** Task 10 (lib/backtest.ts) DONE in five
+> commits (`50474296` .. `8f2a5be6`), 2,744 -> 1,534 lines, into
+> `frontend/src/lib/backtest/`: markerMath (pure label/stack/cluster/dash
+> math), overlayTemplates (templates, colours, register-once guards), equity
+> (EQUITY indicator, WFO equity/fold points), replayPolicy, and artifacts (the
+> per-chart registry and its readers). backtest.ts re-exports every public
+> name and keeps the render lifecycle; the module-level `let`s written by the
+> render code (selectFromMarkerClick, zoneOverlayId) stayed with it, and no
+> submodule imports backtest.ts. Remaining: T8, T11.
+
 > **Status 2026-09-24 (later):** Task 7 (overlays.ts) DONE in seven commits
 > (`5c90226c` .. `736bed85`), 3,267 -> 506 lines. Free functions over `(mgr, ...)`
 > would have meant de-privatizing ~50 fields for 16 importers, so the class
