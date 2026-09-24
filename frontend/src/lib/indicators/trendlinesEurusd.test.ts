@@ -17,8 +17,8 @@ const month = (t: number): string => new Date(t).toISOString().slice(0, 7);
 // minSwingAtr 2.6 (down from 3), because the 2025-11-03 low's leg against the
 // prior 2025-09 high is 0.04499, only 2.62x atr[k] (0.01716); at 3 it never
 // enters the pivot pool at all.
-// Merge off: the pins below name a rank slot, and the shipped quarter-ATR
-// merge (added later) folds neighbours and renumbers the slots.
+// Merge off: the pins below name a slot, and the shipped quarter-ATR merge
+// (added later) folds neighbours and renumbers the slots.
 const CFG = { ...TRENDLINES_DEFAULTS, pivotLen: 4, minSwingAtr: 2.6, maxLines: 9, mergeAtr: 0 };
 
 describe("TRENDLINES on EURUSD weekly", () => {
@@ -54,20 +54,19 @@ describe("TRENDLINES on EURUSD weekly", () => {
     // full touch. The line is the same line; the count is now what pierced it.
     expect(found[0].touches).toBe(4);
 
-    // AND A RULE CAN READ IT. The emitted number IS projectAt's result on the
-    // same bar, so the match is exact rather than toleranced. It lands on tl_9
-    // rather than tl_nearest: at 1.1312 against a close of 1.1539 it is the
-    // ninth-ranked line of the nine this pane draws (rank leads with touches,
-    // and the tighter touch rule costs this long line more of them than it
-    // costs the shorter lines around it), and a shallower one sits closer to
-    // price. Slot 9 rather than 8 since the live cap became a fixed MAX_LIVE
-    // (256, measured 2026-09-23): the 2018-02 high -> 2026-08 high line (4
-    // touches), evicted under the old cap of 144, now survives and ranks
-    // seventh, moving everything from the old seventh slot down by one.
+    // AND A RULE CAN READ IT, given the slots. The emitted number IS
+    // projectAt's result on the same bar, so the match is exact rather than
+    // toleranced. Measured 2026-09-24, after stage 3 became nearest first: at
+    // 1.1312 against a close of 1.1539 (1.86 ATR under it) 48 gate-passing
+    // lines sit nearer, so the user's nine-line pane no longer draws it (on
+    // 2026-09-23, in rank order, it was tl_9). At Max Trendlines 49 it is the
+    // 49th nearest and reads as tl_49. With the shipped quarter-ATR merge on
+    // it folds into a nearer member's level and is not a leader at all.
     const lastIdx = bars.length - 1;
     const at = projectAt(found[0], lastIdx);
     const row = points[lastIdx] as Record<string, number | undefined>;
-    expect(row.tl_9).toBe(at);
-    expect(Object.values(row)).toContain(at);
+    expect(Object.values(row)).not.toContain(at);
+    const wide = computeTrendlines(bars, { ...CFG, maxLines: 49 }).points;
+    expect((wide[lastIdx] as Record<string, number | undefined>).tl_49).toBe(at);
   });
 });

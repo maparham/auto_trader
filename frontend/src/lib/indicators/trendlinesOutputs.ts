@@ -57,7 +57,7 @@ export const MAX_MAX_LINES = 50;
  * rank. */
 export const TL_NEAREST = "tl_nearest";
 
-/** The ranked operand names: rank 1 is the strongest live line on that bar. */
+/** The ranked operand names: tl_1 is the nearest drawn line on that bar. */
 export function tlOutputName(rank: number): string {
   return `tl_${rank}`;
 }
@@ -125,7 +125,7 @@ export interface TrendlinesConfig {
   // The merge pass, IN THE CALC: two majors that stay within this band of
   // each other over the whole stretch they both exist (checked where the
   // younger starts and at the current bar; straight lines make that the
-  // whole stretch) are one line, and the better-ranked survives. The band
+  // whole stretch) are one line, and the nearer member leads. The band
   // is the tighter of mergeAtr x ATR(14) and mergePct % of the close, each
   // 0 = off. Runs in the emit step, so a merged-away line neither draws nor
   // reports to a rule: the drawn set IS the emitted set.

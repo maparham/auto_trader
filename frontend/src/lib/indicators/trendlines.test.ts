@@ -37,6 +37,7 @@ import {
   rankLines,
   compareSurvival,
   selectDrawnLines,
+  nearestFirst,
   poolable,
   trendlineGate,
   selectLevels,
@@ -742,29 +743,32 @@ describe("computeTrendlines", () => {
     expect(loose!.lastTouchIdx).toBe(60);
   });
 
-  it("emits tl_1..tl_N by rank and tl_nearest by distance to the close", () => {
+  // The walk is nearest first, so tl_1 IS the nearest drawn line.
+  it("emits tl_1..tl_N nearest first, so tl_nearest is tl_1", () => {
     const bars = flat(80);
     bars[20] = bar(20, 90, 100.5);
     bars[40] = bar(40, 94, 100.5); // rising line, projects ABOVE the close later
     bars[25] = bar(25, 99.5, 108);
     bars[45] = bar(45, 99.5, 104); // falling line
-    // Merge off, so the drawn set is the top maxLines majors by rank.
+    // Merge off, so the drawn set is the maxLines majors nearest the close.
     const c = { ...cfg(), maxLines: 2, mergeAtr: 0 };
     const { points, lines } = computeTrendlines(bars, c);
     const last = points[79];
-    const majors = lines.filter((l) => isMajor(l, 79, c)).sort(rankLines);
+    const close = bars[79].close;
+    const majors = nearestFirst(lines.filter((l) => isMajor(l, 79, c)), 79, close);
     expect(majors.length).toBeGreaterThanOrEqual(3);
     expect(last.tl_1).toBe(projectAt(majors[0], 79));
     expect(last.tl_2).toBe(projectAt(majors[1], 79));
     expect(last.tl_3).toBeUndefined();
-    const close = bars[79].close;
-    const dist = (l: TrendLine) => Math.abs(projectAt(l, 79) - close);
-    // tl_nearest is the nearest AMONG THE DRAWN lines: only what is on the
-    // chart takes part in a rule, and a third major ranked past the budget
-    // is not on the chart, however close it sits.
-    const nearest = majors.slice(0, 2).reduce((b, l) => (dist(l) < dist(b) ? l : b));
-    expect(last.tl_nearest).toBe(projectAt(nearest, 79));
-    expect(Math.min(...majors.slice(2).map(dist))).toBeLessThan(dist(nearest));
+    expect(last.tl_nearest).toBe(last.tl_1);
+    // Independent of nearestFirst: the two emitted values are the two
+    // smallest distances among ALL majors, measured directly.
+    const dists = lines
+      .filter((l) => isMajor(l, 79, c))
+      .map((l) => Math.abs(projectAt(l, 79) - close))
+      .sort((a, b) => a - b);
+    expect(Math.abs((last.tl_1 as number) - close)).toBe(dists[0]);
+    expect(Math.abs((last.tl_2 as number) - close)).toBe(dists[1]);
   });
 
   // Three lows at 20 (90), 40 (94) and 60 (98.5): the pairs 20-40, 20-60 and
@@ -1082,19 +1086,63 @@ describe("selectDrawnLines", () => {
   const weak = mk(0, 40, 80, 80, 2);
   const lines = [weak, strong, mid];
 
-  it("draws the top maxLines by rank, in rank order", () => {
-    expect(selectDrawnLines(lines, 50, 79, 2, null)).toEqual([strong, mid]);
+  // The walk is nearest to the close first: at 79, weak (80) leads and
+  // strong (100) trails, whatever their touches.
+  it("draws the maxLines lines nearest the close, nearest first", () => {
+    expect(selectDrawnLines(lines, 50, 79, 2, null)).toEqual([weak, mid]);
   });
-  // THE DRAWN SET IS THE EMITTED SET. With no declutter and no merge, the two
-  // cuts read the same rank order with the same budget, so `weak` being the
-  // nearest-to-close operand buys it nothing: it is outside maxLines 1 and it
-  // does not draw. The exemption that used to add it back is gone, because it
-  // made the budget a floor rather than a cap.
-  it("does not add back an operand's line that falls outside the budget", () => {
-    expect(selectDrawnLines(lines, 50, 79, 1, null)).toEqual([strong]);
+  // THE DRAWN SET IS THE EMITTED SET. Max Trendlines is a cap: the strongest
+  // line, outside maxLines 1 at this close, does not come back.
+  it("does not add back a stronger line that falls outside the budget", () => {
+    expect(selectDrawnLines(lines, 50, 79, 1, null)).toEqual([weak]);
   });
   it("keeps a pinned line whatever its rank", () => {
-    expect(selectDrawnLines(lines, 50, 79, 1, { tol: 0, keep: new Set([weak]) })).toEqual([strong, weak]);
+    expect(selectDrawnLines(lines, 50, 101, 1, { tol: 0, keep: new Set([weak]) })).toEqual([strong, weak]);
+  });
+  it("draws nearest first; strength only breaks distance ties", () => {
+    const far5 = mk(0, 40, 120, 120, 5);
+    const near2 = mk(0, 40, 101, 101, 2);
+    const mid3 = mk(0, 40, 95, 95, 3);
+    const ls = [far5, near2, mid3];
+    expect(selectDrawnLines(ls, 50, 100, 2, { tol: 0, keep: new Set() })).toEqual([near2, mid3]);
+    expect(selectDrawnLines(ls, 50, 100, 3, null)).toEqual([near2, mid3, far5]);
+  });
+
+  it("breaks an exact distance tie by rank", () => {
+    const above = mk(0, 40, 102, 102, 2);
+    const below = mk(0, 40, 98, 98, 4);
+    expect(nearestFirst([above, below], 50, 100)).toEqual([below, above]);
+    expect(selectDrawnLines([above, below], 50, 100, 2, null)).toEqual([below, above]);
+  });
+
+  it("a merged level is led by its nearest member, not its strongest", () => {
+    // Flat twins 0.6 apart at merge tol 1, same start: one level.
+    const farStrong = mk(0, 40, 100.8, 100.8, 5);
+    const nearWeak = mk(0, 40, 100.2, 100.2, 2);
+    expect(selectDrawnLines([farStrong, nearWeak], 50, 100, 5, { tol: 1, keep: new Set() })).toEqual([nearWeak]);
+  });
+
+  it("the early stop is exact in nearest first order too", () => {
+    let s = 11;
+    const rnd = (n: number) => {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s % n;
+    };
+    for (let trial = 0; trial < 200; trial++) {
+      const ls: TrendLine[] = [];
+      for (let k = 0; k < 30; k++) {
+        const i1 = rnd(8) * 5;
+        const i2 = i1 + 5 + rnd(8) * 5;
+        ls.push(mk(i1, i2, 90 + rnd(20), 90 + rnd(20), 2 + rnd(4)));
+      }
+      const ordered = nearestFirst(ls, 100, 100);
+      const tol = rnd(3);
+      const perPivot = rnd(4);
+      const full = selectLevels(ordered, 100, tol, perPivot, 0);
+      for (const n of [1, 2, 3, 5, 8]) {
+        expect(selectLevels(ordered, 100, tol, perPivot, n)).toEqual(full.slice(0, n));
+      }
+    }
   });
   // MONOTONE IN THE MERGE TOLERANCE. The cap reads a FIXED per-bar ordering,
   // so removing a line can only move the rest UP their bars' orderings.
@@ -1135,13 +1183,14 @@ describe("selectDrawnLines", () => {
     for (const line of one) expect(two).toContain(line);
     for (const line of two) expect(three).toContain(line);
   });
-  // A LEVEL ALWAYS DRAWS ITS BEST-RANKED MEMBER, whatever the cap. `best`
-  // outranks `standIn` and they are the same level, so the level is `best`
+  // A LEVEL ALWAYS DRAWS ITS LEADER, the member first in walk order (nearest
+  // first in production; fed here in a fixed order), whatever the cap. `best`
+  // walks ahead of `standIn` and they are the same level, so the level is `best`
   // and needs the cap `best` needs: third at bar 20, so 3. Picking whichever
   // member fits soonest would redraw the level at 3, moving a line already on
   // screen: on GOLD 1D the resistance into 2026-08-25 jumped its left anchor
   // between a cap of 3 and 4 that way.
-  it("a level draws its best-ranked member at every cap", () => {
+  it("a level draws its leader at every cap", () => {
     const x1 = mk(20, 40, 50, 50, 5);
     const x2 = mk(20, 50, 40, 40, 4);
     const best = mk(20, 60, 100, 100, 3);
@@ -1208,7 +1257,8 @@ describe("selectDrawnLines", () => {
     const emitted = selectDrawnLines(pool, 100, 100, 5, { tol: 0, keep: new Set(), perPivot: 1, pass: gate });
     expect(emitted).toEqual([b]);
     const drawn = selectDrawnLines(pool, 100, 100, 5, { tol: 0, keep: new Set([a]), perPivot: 1, pass: gate });
-    expect(drawn).toEqual([a, b]);
+    // The pin fails the gate, so it is farther than b and appends after it.
+    expect(drawn).toEqual([b, a]);
     expect(drawn.filter((l) => l !== a)).toEqual(emitted);
     expect(pivotDepths(pool.filter(gate), 100, 0).get(40)).toBe(1);
   });
@@ -1257,8 +1307,8 @@ describe("selectDrawnLines", () => {
   });
   it("Max Trendlines caps drawn lines, not candidates", () => {
     const ls = [mk(0, 40, 100, 100, 6), mk(0, 40, 90, 90, 5), mk(0, 40, 80, 80, 4), mk(0, 40, 70, 70, 3), mk(0, 40, 60, 60, 2)];
-    expect(selectDrawnLines(ls, 50, 79, 3, { tol: 0, keep: new Set() })).toEqual(ls.slice(0, 3));
-    expect(selectDrawnLines(ls, 50, 79, 9, { tol: 0, keep: new Set() })).toEqual(ls);
+    expect(selectDrawnLines(ls, 50, 101, 3, { tol: 0, keep: new Set() })).toEqual(ls.slice(0, 3));
+    expect(selectDrawnLines(ls, 50, 101, 9, { tol: 0, keep: new Set() })).toEqual(ls);
   });
 
   it("a line failing the gate never takes a slot, whatever its rank", () => {
@@ -1279,7 +1329,8 @@ describe("selectDrawnLines", () => {
     const emitted = selectDrawnLines([pin, twin], 100, 100, 5, { tol: 1, keep: new Set(), pass });
     expect(emitted).toEqual([twin]);
     const drawn = selectDrawnLines([pin, twin], 100, 100, 5, { tol: 1, keep: new Set([pin]), pass });
-    expect(drawn).toEqual([pin, twin]);
+    // The pin fails the gate, so it is farther than the twin and draws after it.
+    expect(drawn).toEqual([twin, pin]);
     expect(drawn.filter((l) => l !== pin)).toEqual(emitted);
   });
 
@@ -1309,13 +1360,15 @@ describe("selectDrawnLines", () => {
   it("merges near-twins through a shared pivot before the budget", () => {
     const twin = { ...mid, i1: 0, p1: 90, i2: 40, p2: 90.5, touches: 3 };
     const out = selectDrawnLines([strong, mid, twin], 50, 79, 3, { tol: 1, keep: new Set() });
-    expect(out).toEqual([strong, mid]);
+    // No close puts strong first and mid ahead of its twin, so this reads
+    // nearest first: mid leads the merged level, and three lines still draw two.
+    expect(out).toEqual([mid, strong]);
   });
 
   // THE ONE PLACE THE DRAWN SET AND THE EMITTED SET DIVERGE, and it is the
   // user's own doing. Max lines per pivot 1 is the old "One line per pivot",
   // so a twin sharing a pivot goes even though it sits inside maxLines and is
-  // therefore one of the ranked operands on this bar. The operand keeps
+  // therefore one of the emitted operands on this bar. The operand keeps
   // emitting; only the line leaves the chart.
   it("declutter by pivot removes a twin that is itself an emitted operand", () => {
     // Anchored off `strong`'s bars, so the only shared pivot on the pane is
@@ -1324,11 +1377,54 @@ describe("selectDrawnLines", () => {
     const twin = { ...pair, p2: 95 };
     const all = [strong, pair, twin];
     // Premise: with no declutter all three draw, so the twin IS an emitted
-    // rank (tl_1..tl_3 at maxLines 3), not a line nobody reads.
+    // operand (tl_1..tl_3 at maxLines 3), not a line nobody reads.
     expect(selectDrawnLines(all, 50, 79, 3, null)).toHaveLength(3);
+    // No close puts strong first and pair ahead of twin, so this reads nearest
+    // first: pair (nearer) takes the shared pivot and the twin still goes.
     expect(
       selectDrawnLines(all, 50, 79, 3, { tol: 0, keep: new Set(), perPivot: 1 }),
-    ).toEqual([strong, pair]);
+    ).toEqual([pair, strong]);
+  });
+
+  // THE LAZY HEAP MUST MATCH THE FULL SORT. selectDrawnLines takes a
+  // capped-walk shortcut (nearestFirstLazy) whenever maxLines > 0 and no
+  // depthsOut is requested; passing a depthsOut map forces the full
+  // nearestFirst sort instead. An integer price grid around a close of 100
+  // and small tol values make many lines land at the exact same distance,
+  // so ties (broken by rankLines) are common, and identical-strength lines
+  // exercise rankLines' own tie-break too.
+  it("the lazy heap agrees with the full sort under ties, pins and caps", () => {
+    let s = 2026;
+    const rnd = (n: number) => {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s % n;
+    };
+    const close = 100;
+    for (let trial = 0; trial < 2000; trial++) {
+      const count = 2 + rnd(10);
+      const ls: TrendLine[] = [];
+      for (let k = 0; k < count; k++) {
+        const i1 = rnd(6) * 5;
+        const i2 = i1 + 5 + rnd(6) * 5;
+        // Integer price grid close to the close: many exact distance ties.
+        const p1 = close - 5 + rnd(11);
+        // Slope in {0, ...}: flat lines are common (more exact ties), but
+        // some lines still slope so p2 can differ from p1.
+        const slope = rnd(3) === 0 ? rnd(3) - 1 : 0;
+        const p2 = p1 + slope * (i2 - i1 > 0 ? 1 : 0);
+        // Touches drawn from a small set so identical-strength lines recur.
+        ls.push(mk(i1, i2, p1, p2, 2 + rnd(3)));
+      }
+      const tol = rnd(3);
+      const perPivot = rnd(4);
+      const maxLines = 1 + rnd(8);
+      const keep = new Set<TrendLine>();
+      for (const l of ls) if (rnd(4) === 0) keep.add(l);
+      const dedupe = { tol, keep, perPivot };
+      const lazy = selectDrawnLines(ls, 50, close, maxLines, dedupe);
+      const full = selectDrawnLines(ls, 50, close, maxLines, { ...dedupe, depthsOut: new Map() });
+      expect(lazy).toEqual(full);
+    }
   });
 
 });
@@ -1336,9 +1432,9 @@ describe("selectDrawnLines", () => {
 describe("selectDrawnLines dedup", () => {
   const NONE: ReadonlySet<TrendLine> = new Set();
   // A fan out of one pivot: both start at bar 0 / price 90, which is what a
-  // swing pairing with two later swings produces. Read at bar 100. fanA
-  // outranks fanB on touches alone, so which one survives a merge is
-  // unambiguous under the rank-ordered budget.
+  // swing pairing with two later swings produces. Read at bar 100. The fan
+  // tests close at 97, where fanA (98) is both nearer than fanB (98.25) and
+  // stronger, so which one survives a merge is unambiguous.
   const fanA: TrendLine = {
     ...sup,
     i1: 0,
@@ -1364,7 +1460,7 @@ describe("selectDrawnLines dedup", () => {
     expect(projectAt(fanA, 100)).toBeCloseTo(98, 6);
     expect(projectAt(fanB, 100)).toBeCloseTo(98.25, 6);
     expect(
-      selectDrawnLines([fanA, fanB], 100, 100, 3, { tol: 1, keep: NONE }),
+      selectDrawnLines([fanA, fanB], 100, 97, 3, { tol: 1, keep: NONE }),
     ).toEqual([fanA]);
   });
 
@@ -1395,10 +1491,10 @@ describe("selectDrawnLines dedup", () => {
     // Cap 2 alone keeps fanA and fanB; with a 1-point tolerance they are the
     // same trend and fanB goes: both cuts apply.
     expect(
-      selectDrawnLines([fanA, fanB], 100, 100, 3, { tol: 0, keep: NONE, perPivot: 2 }),
+      selectDrawnLines([fanA, fanB], 100, 97, 3, { tol: 0, keep: NONE, perPivot: 2 }),
     ).toEqual([fanA, fanB]);
     expect(
-      selectDrawnLines([fanA, fanB], 100, 100, 3, { tol: 1, keep: NONE, perPivot: 2 }),
+      selectDrawnLines([fanA, fanB], 100, 97, 3, { tol: 1, keep: NONE, perPivot: 2 }),
     ).toEqual([fanA]);
   });
 
@@ -1473,7 +1569,7 @@ describe("selectDrawnLines dedup", () => {
     expect(sameTrend(fanA, parallel, 100, 1)).toBe(true);
     expect(sameTrend(fanA, parallel, 100, 0.4)).toBe(false);
     expect(
-      selectDrawnLines([fanA, parallel], 100, 100, 3, { tol: 1, keep: NONE }),
+      selectDrawnLines([fanA, parallel], 100, 97, 3, { tol: 1, keep: NONE }),
     ).toEqual([fanA]);
   });
 
@@ -1531,13 +1627,13 @@ describe("selectDrawnLines dedup", () => {
     // fan lines fill both slots. Merged, they are one level, so the second
     // slot goes to `other`.
     expect(
-      selectDrawnLines([fanA, fanB, other], 100, 100, 2, null),
+      selectDrawnLines([fanA, fanB, other], 100, 97, 2, null),
     ).toEqual([fanA, fanB]);
     expect(
       selectDrawnLines(
         [fanA, fanB, other],
         100,
-        100,
+        97,
         2,
         { tol: 1, keep: NONE },
       ),
@@ -1545,13 +1641,13 @@ describe("selectDrawnLines dedup", () => {
   });
 
   it("never merges away a pinned line, which owns the only handle to undo it", () => {
-    // fanB is pinned here: it would otherwise merge into the higher-ranked
-    // fanA, and the pin is what spares it.
+    // fanB is pinned here: at close 97 it would otherwise merge into fanA,
+    // nearer and stronger, and the pin is what spares it.
     expect(
       selectDrawnLines(
         [fanA, fanB],
         100,
-        100,
+        97,
         3,
         { tol: 1, keep: new Set([fanB]) },
       ),
@@ -2974,10 +3070,19 @@ describe("TRENDLINES line-pivot marks", () => {
   it("marks the used pivots with a stemmed arrow and leaves the rest alone", () => {
     const linesOnly = paint(LINES, false, false);
     const stemmed = paint(LINES, false, true).slice(linesOnly.length);
-    const used = drawnPivotIdxs(
-      computeTrendlines(bars(), parseTrendlinesConfig(LINES)).lines,
+    // The DRAWN lines are the emitted ones (this fixture's projections are
+    // all distinct), so match tl_k values back to lines.
+    const res = computeTrendlines(bars(), parseTrendlinesConfig(LINES));
+    const emitted = new Set(
+      Object.entries(res.points[79]).filter(([k]) => /^tl_\d+$/.test(k)).map(([, v]) => v),
     );
+    const drawnLines = res.lines.filter((l) => emitted.has(projectAt(l, 79)));
+    // The premise: one drawn line per emitted value, no shared projection.
+    expect(drawnLines.length).toBe(emitted.size);
+    const used = drawnPivotIdxs(drawnLines);
     const pv = passing(LINES);
+    // Some pivot carries no drawn line, so "the rest" is not empty.
+    expect(pv.idxs.some((i) => !used.has(i))).toBe(true);
     // Only the pivots a line rests on, and only those the pivot pool holds —
     // a line's touch can be an opposite-kind pivot, but it is a pivot either
     // way, so every mark still stands on one.
@@ -2995,9 +3100,15 @@ describe("TRENDLINES line-pivot marks", () => {
     const stemmed = paint(LINES, false, true).slice(linesOnly.length);
     const ys = stemmed.flatMap((sg) => [sg.y0, sg.y1]);
     const pv = passing(LINES);
-    const used = drawnPivotIdxs(
-      computeTrendlines(bars(), parseTrendlinesConfig(LINES)).lines,
+    // The drawn lines, matched back from the emitted values as the neighbour
+    // test does: the marks rest on those, not on every live line.
+    const res = computeTrendlines(bars(), parseTrendlinesConfig(LINES));
+    const emitted = new Set(
+      Object.entries(res.points[79]).filter(([k]) => /^tl_\d+$/.test(k)).map(([, v]) => v),
     );
+    const drawnLines = res.lines.filter((l) => emitted.has(projectAt(l, 79)));
+    expect(drawnLines.length).toBe(emitted.size);
+    const used = drawnPivotIdxs(drawnLines);
     // A used-low mark hangs BELOW its low (larger y here) and reaches exactly
     // usedGap + arm + stem past it. Take the deepest used low pivot so the
     // extreme below is unambiguously its.

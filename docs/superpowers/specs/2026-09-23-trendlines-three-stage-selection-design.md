@@ -144,6 +144,10 @@ pre-merge cut.
   five reach that touch only because of the longer projection (at 100 they
   die first, and only two sit ahead, inside Max Per Pivot 3), so dropping the
   line at 300 is correct stage 3 behaviour.
+  Superseded 2026-09-24 by nearest first
+  (`2026-09-24-trendlines-nearest-first-selection-design.md`): stage 3 walks
+  by distance, the line is the nearest level at 2026-05-19, and at 300 it is
+  drawn with the exact params and with Max Per Pivot 1.
 - Max Trendlines is a visible cap: with more than N stage 2 survivors that do
   not merge, exactly N are drawn; with fewer, all are drawn.
 - A line failing Max Distance never displaces one that passes, whatever its

@@ -81,7 +81,7 @@ class TrendlinesConfig:
     min_touches: int
     min_span_bars: int
     max_proj_bars: int
-    max_lines: int  # the most lines drawn, and the ranked output count
+    max_lines: int  # the most lines drawn, and the output count (nearest first)
     min_swing_atr: float  # 0 = off
     min_swing_reach: int  # 0 = off
     pair_pivots: int  # earlier pivots of either kind a new pivot pairs with
@@ -108,7 +108,7 @@ class TrendlinesConfig:
     max_dist_pct: float = 0.0
     # The merge pass, in the emit step: two majors that stay within the band
     # of each other over the whole stretch they both exist are one line and
-    # the better-ranked survives. The band is the tighter of merge_atr x
+    # the nearer one (walk order) survives. The band is the tighter of merge_atr x
     # ATR(14) and merge_pct % of the close, each 0 = off. max_per_pivot caps
     # how many kept lines may run through one bar (anchor or touch) in the
     # same pass, 0 = off, 1 was "One line per pivot". A merged-away line
@@ -288,7 +288,8 @@ def _add_level_positions(pos: dict[int, dict[int, int]], line: TrendLine, lvl: i
 
 def level_positions(leaders: list[TrendLine]) -> dict[int, dict[int, int]]:
     """Mirrors TS levelPositions: each gate-passing leader's position at every
-    bar it runs through, in rank order. Positions are fixed at insertion: a
+    bar it runs through, in walk order (nearest first). Positions are fixed
+    at insertion: a
     later leader never moves an earlier one."""
     pos: dict[int, dict[int, int]] = {}
     for lvl, line in enumerate(leaders):
@@ -302,7 +303,8 @@ def pivot_cap_needed(
     """Mirrors TS pivotCapNeeded: the worst position the line's LEVEL holds at
     any of the line's bars, i.e. the lowest cap that could ever draw it.
     Positions are over gate-passing leaders and fixed at insertion, so this
-    depends only on better-ranked leaders, never on the cap itself."""
+    depends only on leaders earlier in the walk order (nearest first), never
+    on the cap itself."""
     worst = 1
     for b in line.touch_idxs:
         at = pos.get(b, {}).get(level, 1)
@@ -324,12 +326,18 @@ def trendline_gate(
 ) -> bool:
     """Mirrors TS trendlineGate: the per-line filters for one bar, the major
     floors and ceilings plus Max Distance, the per-bar half of stage 2. Each
-    asks about ONE line and runs before ranking, so no other line can displace
-    it; relaxing one can still remove a drawn line in stage 3, where a newly
-    admitted better-ranked line takes its slot."""
+    asks about ONE line and runs before the nearest first order, so no other
+    line can displace it; relaxing one can still remove a drawn line in stage
+    3, where a newly admitted nearer line takes its slot."""
     if not is_major(line, i, cfg):
         return False
     return dist_tol == math.inf or within_distance(line, i, close, dist_tol)
+
+
+def nearest_first(lines: list[TrendLine], at_idx: int, close: float) -> list[TrendLine]:
+    """Mirrors TS nearestFirst: nearest to the close first at at_idx, exact
+    distance ties by rank_key. Stable, like the TS sort."""
+    return sorted(lines, key=lambda line: (abs(project_at(line, at_idx) - close), rank_key(line)))
 
 
 def select_levels(
@@ -340,8 +348,9 @@ def select_levels(
     max_lines: int,
 ) -> list[TrendLine]:
     """Mirrors TS selectLevels (without the debug depths), stage 3: `ranked`
-    is the gate-passing lines in rank order, pins never among them. Merge
-    (a level's leader is its best gate-passing member), per-pivot cap, then
+    is the gate-passing lines in walk order (nearest_first: nearest to the
+    close, rank_key breaking exact ties), pins never among them. Merge (a
+    level's leader is its nearest gate-passing member), per-pivot cap, then
     stop once max_lines leaders are accepted (0 = uncapped). The stop is exact
     because a leader's positions are fixed at insertion (see the TS
     docstring)."""
@@ -433,6 +442,32 @@ def step_crossing(line: TrendLine, j: int, close: float) -> None:
     line.last_sign = s
 
 
+def step_crossings(line: TrendLine, j_from: int, j_to: int, closes: Sequence[float]) -> None:
+    """step_crossing over bars j_from..j_to inclusive, inlined for speed (the
+    hot loop of compute_trendlines). Same arithmetic as side_sign, so the
+    signs land on the same bits."""
+    i1 = line.i1
+    p1 = line.p1
+    span = line.i2 - i1
+    dp = line.p2 - p1
+    last = line.last_sign
+    crossings = line.crossings
+    for j in range(j_from, j_to + 1):
+        lhs = (closes[j] - p1) * span
+        rhs = dp * (j - i1)
+        if lhs > rhs:
+            s = 1
+        elif lhs < rhs:
+            s = -1
+        else:
+            continue
+        if last != 0 and s != last:
+            crossings += 1
+        last = s
+    line.last_sign = last
+    line.crossings = crossings
+
+
 def has_back_clearance(line: TrendLine, closes: Sequence[float], bars: int) -> bool:
     """Mirrors TS hasBackClearance with startIdx 0: the close must not change
     side of the line over the `bars` bars before i1; a bar on the line is
@@ -468,7 +503,8 @@ def above_slope(line: TrendLine, atr_at: float, mult: float) -> bool:
 
 def rank_key(line: TrendLine) -> tuple[float, int, int, int, int, float]:
     """TS rankLines as a total-order key: most touches, longest span, FEWEST
-    crossings, most recent, oldest origin, lowest anchor price."""
+    crossings, most recent, oldest origin, lowest anchor price. The strength
+    order and the tie-break of nearest_first, not the walk order itself."""
     return (
         -line.touches,
         -(line.last_touch_idx - line.i1),
@@ -676,7 +712,7 @@ def compute_trendlines(
 
         # 1. Per-bar crossing step for every existing line.
         for line in lines:
-            step_crossing(line, i, closes[i])
+            step_crossings(line, i, i, closes)
 
         # 2. Confirm-bar work for the pivot at k = i - pivot_len.
         k = i - cfg.pivot_len
@@ -756,8 +792,7 @@ def compute_trendlines(
                             continue
                     if not has_back_clearance(cand, closes, cfg.min_back_bars):
                         continue
-                    for j in range(i1 + 1, i + 1):
-                        step_crossing(cand, j, closes[j])
+                    step_crossings(cand, i1 + 1, i, closes)
                     for q2 in range(q + 1, len(pool_idxs)):
                         pj = pool_idxs[q2]
                         if pj >= k:
@@ -813,16 +848,18 @@ def compute_trendlines(
                 lines.sort(key=lambda line: (over_ceilings(line, cfg), survival_key(line)))
                 lines = lines[:cap]
 
-        # 4. Emit: stage 2 (the per-line gate) first, then rank, then stage 3
-        #    (merge, per-pivot cap, max_lines), the same pipeline the draw
-        #    path runs; tl_nearest is the nearest AMONG THOSE.
+        # 4. Emit: stage 2 (the per-line gate) first, then nearest first,
+        #    then stage 3 (merge, per-pivot cap, max_lines), the same pipeline
+        #    the draw path runs; tl_nearest is the nearest AMONG THOSE, so
+        #    it always equals tl_1 (kept so saved rules keep working).
         close = closes[i]
         point: dict[str, float] = {}
         dist_tol = max_distance_tol(cfg, a, close)
-        ranked = sorted(
-            (line for line in poolable(lines, i, cfg)
-             if trendline_gate(line, i, close, dist_tol, cfg)),
-            key=rank_key,
+        ranked = nearest_first(
+            [line for line in poolable(lines, i, cfg)
+             if trendline_gate(line, i, close, dist_tol, cfg)],
+            i,
+            close,
         )
         drawn = select_levels(
             ranked, i, merge_tolerance(cfg, a, close), cfg.max_per_pivot, cfg.max_lines

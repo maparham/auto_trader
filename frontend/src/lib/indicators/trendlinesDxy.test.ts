@@ -47,8 +47,10 @@ const EXPECTED = [
 // Trendlines is, so every line this file names, the exact 2011-05 -> 2021-01
 // pairing included (it needs a live cap of 224), is built at the default and
 // nothing here raises maxLines to make its acceptance pass. BUILT is not
-// DRAWN: at maxLines 3 the pane draws the three best-ranked lines, which on
-// this fixture are older five- and four-touch lines (see the tl_nearest test).
+// DRAWN: at maxLines 3 the pane draws the three lines nearest the close.
+// Measured 2026-09-24 (nearest first) those are 2001-09 -> 2017-01, the
+// human 2011-05 -> 2021-01 pairing and 2014-05 -> 2021-01 (see the
+// tl_nearest test).
 const CFG = TRENDLINES_DEFAULTS;
 
 const bars = fixture as unknown as KLineData[];
@@ -167,26 +169,35 @@ describe("TRENDLINES on DXY monthly", () => {
   });
 
   // tl_nearest is the nearest AMONG THE DRAWN lines, so it is only as current
-  // as the drawn set. Measured 2026-09-23 on the last bar (close 99.267):
-  //   - PANE DEFAULT (Max Distance off): the drawn three are the best-ranked
-  //     lines, 2004-12 low -> 2022-09 high (122.255, 5 touches), 2001-07 high
-  //     -> 2016-05 low (71.810, 5) and 2009-03 high -> 2015-03 high (120.875,
-  //     4). tl_nearest is 120.875, 21.6 ABOVE the close. Under the old live
-  //     cap (48 at this maxLines) those lines were evicted and tl_nearest sat
-  //     a few points under the close; MAX_LIVE 256 keeps them, and rank puts
-  //     touches first.
-  //   - MAX DISTANCE ON (TL_NEAR_PRICE_ATR): the drawn three are the best of
-  //     the lines within the band, and tl_nearest is 94.675 (2000-10 high ->
-  //     2026-01 low), 4.59 under the close. That is the setting that asks for
-  //     current geometry, so it is where "a few points under" is asserted.
-  it("emits tl_nearest from the drawn set: far at the default, a few points under with Max Distance", () => {
+  // as the drawn set. Measured 2026-09-24 on the last bar (close 99.267, ATR
+  // 2.710), after stage 3 became nearest first:
+  //   - PANE DEFAULT (Max Distance off): tl_nearest is 99.139 (2001-09 low
+  //     -> 2017-01 high), 0.128 under the close, 0.05 ATR. On 2026-09-23 it
+  //     was 120.875, 21.6 above: rank put touches first, so old four- and
+  //     five-touch lines far from price took the three slots.
+  //   - MAX DISTANCE ON (TL_NEAR_PRICE_ATR): the same row. The three nearest
+  //     lines already sit inside the band, so the cut changes nothing here.
+  it("emits tl_nearest from the drawn set: just under the close, with or without Max Distance", () => {
     const close = bars[bars.length - 1].close;
     const atDefault = computeTrendlines(bars, CFG).points;
-    expect(atDefault[atDefault.length - 1].tl_nearest).toBeCloseTo(120.875, 3);
+    const lastDefault = atDefault[atDefault.length - 1];
+    expect(lastDefault.tl_nearest).toBeCloseTo(99.139, 3);
+    expect(close - (lastDefault.tl_nearest as number)).toBeLessThan(0.2);
     const near = computeTrendlines(bars, { ...CFG, maxDistAtr: TL_NEAR_PRICE_ATR }).points;
-    const last = near[near.length - 1];
-    expect(last.tl_nearest).toBeLessThan(close);
-    expect(close - (last.tl_nearest as number)).toBeLessThan(5);
+    expect(near[near.length - 1]).toEqual(lastDefault);
+  });
+
+  // tl_nearest names the nearest drawn line, and stage 3 walks nearest first,
+  // so the first slot IS that line. The operand stays so saved rules work.
+  it("tl_nearest is tl_1 on every emitted bar", () => {
+    const { points } = computeTrendlines(bars, CFG);
+    let checked = 0;
+    for (const p of points) {
+      if (p.tl_1 === undefined) continue;
+      expect(p.tl_nearest).toBe(p.tl_1);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(100);
   });
 
   // THE CEILINGS USED TO STARVE THE LIVE SET. The cap's first key is
@@ -201,8 +212,8 @@ describe("TRENDLINES on DXY monthly", () => {
   // which is present whenever any line qualifies, so the count is the number of
   // bars the detector had something to say at all. Since the live cap became a
   // fixed MAX_LIVE the live set cannot depend on maxLines at all, so fires(3)
-  // and fires(12) differ only by lines ranked 4..12 and can only grow with
-  // maxLines; measured 2026-09-23 they are equal, 442 and 442 for both
+  // and fires(12) differ only by the lines walked 4th..12th and can only grow
+  // with maxLines; measured 2026-09-23 they are equal, 442 and 442 for both
   // ceilings, and the test keeps that stronger equality.
   it.each([
     { name: "Max Touches", patch: { maxTouches: 2 } },
@@ -224,9 +235,9 @@ describe("TRENDLINES on DXY monthly", () => {
   // bar run from -380.6 to 491.6 against a close of 99.27 (measured
   // 2026-09-23): valid geometry, and nowhere near the chart. Max Distance is
   // the cut for that, a per-bar filter that hides a far line without
-  // deleting it. The drawn set is then the lines within it, ranked, merged,
-  // budgeted.
-  it("draws only the lines in play, not the stale geometry", () => {
+  // deleting it. The drawn set is then the lines within it, nearest first,
+  // merged, budgeted.
+  it("draws only the lines in play, not the 1990s geometry", () => {
     const { lines } = computeTrendlines(bars, TRENDLINES_DEFAULTS);
     const last = bars.length - 1;
     const close = bars[last].close;
@@ -260,32 +271,38 @@ describe("TRENDLINES on DXY monthly", () => {
       tol: a * TL_DEDUPE_ATR,
       keep: new Set(),
     });
-    // Pinned by first anchor, measured 2026-09-23. A 1990s anchor no longer
-    // means stale: MAX_LIVE 256 keeps the 1998-10 low -> 2017-01 high line
-    // (110.778, inside the band), and it ranks first among the lines in play.
-    // What the cut guarantees is the band above, not the anchor's age.
-    expect(drawn.map((l) => month(bars[l.i1].timestamp))).toEqual(["1998-10", "2000-10", "2001-07"]);
+    // Pinned by first anchor, measured 2026-09-24. Nearest first draws the
+    // three lines closest to the close (99.139, 98.737, 97.827), the human
+    // 2011-05 -> 2021-01 pairing among them; on 2026-09-23 rank order drew
+    // 1998-10, 2000-10 and 2001-07 anchored lines. What the cut guarantees is
+    // the band above, not the anchor's age.
+    expect(drawn.map((l) => month(bars[l.i1].timestamp))).toEqual(["2001-09", "2011-05", "2014-05"]);
   });
 
   // maxLines is a drawing budget, and every drawn line is a rule operand, so
-  // it changes WHAT A RULE READS: a third slot adds a tl_3 and can move
-  // tl_nearest. It no longer sizes live state (that is MAX_LIVE). Pinned so
-  // that "maxLines does not affect operands" can never be written in
-  // user-facing copy. Measured 2026-09-23 with filters before the cut and the
-  // fixed live cap: 422 differing points (311 when maxLines cut the
-  // candidates first and sized live state).
+  // it changes WHAT A RULE READS: a third slot adds a tl_3. It no longer
+  // sizes live state (that is MAX_LIVE). Pinned so that "maxLines does not
+  // affect operands" can never be written in user-facing copy. Measured
+  // 2026-09-23 with filters before the cut and the fixed live cap: 422
+  // differing points (311 when maxLines cut the candidates first and sized
+  // live state), unchanged by nearest first on 2026-09-24.
   it("changes an emitted value between maxLines 2 and 3", () => {
     const two = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 2 }).points;
     const three = computeTrendlines(bars, { ...TRENDLINES_DEFAULTS, maxLines: 3 }).points;
     const differing = two.filter((p, i) => JSON.stringify(p) !== JSON.stringify(three[i]));
     expect(differing).toHaveLength(422);
+    // Since 2026-09-24 the walk is nearest first, so tl_nearest is tl_1 and
+    // both budgets draw it: the third slot can no longer move it. (Under rank
+    // order 135 bars differed in tl_nearest.)
+    expect(two.filter((p, i) => p.tl_nearest !== three[i].tl_nearest)).toHaveLength(0);
     // A named bar, so a drift is diagnosable rather than just red: at 1991-07
-    // the third drawn line is the nearest, and tl_nearest reads only the
-    // drawn set, so the two-line pane reports a farther line there. (135
-    // bars differ in tl_nearest; this is the first of them.)
+    // the third slot adds the farthest of the three lines and leaves the
+    // first two where they were.
     expect(month(bars[68].timestamp)).toBe("1991-07");
-    expect(two[68].tl_nearest).toBeCloseTo(77.792, 3);
-    expect(three[68].tl_3).toBeCloseTo(78.475, 3);
+    expect(three[68].tl_1).toBe(two[68].tl_1);
+    expect(three[68].tl_2).toBe(two[68].tl_2);
+    expect(two[68].tl_3).toBeUndefined();
+    expect(three[68].tl_3).toBeCloseTo(77.128, 3);
     expect(three[68].tl_nearest).toBeCloseTo(78.475, 3);
   });
 

@@ -608,11 +608,12 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     desc: "Marks 3-candle imbalances (a gap between the first bar's wick and the third bar's) as zones. A gap shrinks to its unfilled remainder as price trades back into it and disappears once price crosses its far edge, so only live imbalances stay on the chart. Bullish gaps tint green, bearish red. The nearest gap's edges on each side are available as rule operands. Gaps confirm on the third candle (no repaint).",
   },
   // TRENDLINES. Max Trendlines caps VISIBLE lines: every filter runs first,
-  // then rank, merge and Max Per Pivot, and the cut to N comes last. Each
-  // drawn line is a rule operand, so it is not operand-neutral: measured on
-  // the DXY fixture (2026-09-23), maxLines 2 vs 3 changes the emitted row on
-  // 422 of 490 bars. It no longer sizes live state (that is MAX_LIVE). The tip
-  // must never claim the operands are unaffected.
+  // then the nearest first order (strength breaks exact ties), merge and Max
+  // Per Pivot, and the cut to N comes last. Each drawn line is a rule
+  // operand, nearest first, so it is not operand-neutral: measured on the DXY
+  // fixture (2026-09-24), maxLines 2 vs 3 changes the emitted row on 422 of
+  // 490 bars. It no longer sizes live state (that is MAX_LIVE). The tip must
+  // never claim the operands are unaffected.
   //
   // Two gates decide whether a line is MAJOR (readable by a rule): Min Touches
   // and Min Span.
@@ -635,10 +636,10 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       {
         ...num(5, "Max Trendlines", { max: MAX_MAX_LINES }),
         tip: [
-          "Most lines drawn at once, strongest first.",
-          "Strongest: most touches, then longest, then fewest crossings.",
+          "Most lines drawn at once, nearest to price first.",
+          "Ties go to the stronger line: more touches, then longer.",
           "Filters run first, so a hidden line never takes a slot.",
-          "Each drawn line is a rule operand (tl_1 .. tl_N).",
+          "Each drawn line is a rule operand (tl_1 .. tl_N), nearest first.",
         ],
       },
       // The list below is RENDER order, resectioned to tell the detector's
@@ -1126,7 +1127,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         default: TL.maxPerPivot,
         unbounded: true,
         tip: [
-          "At each swing, keeps only its strongest lines: a line must rank this high at every swing it runs through.",
+          "At each swing, only the lines nearest to price keep their places: a line must rank this high at every swing it runs through.",
           "Raising it only ever adds lines. Near-identical lines count as one.",
           "A line removed here leaves the chart and stops reporting to rules. Empty: off.",
         ],
@@ -1142,14 +1143,14 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
           label: "Merge lines within",
           dual: true,
           tip: [
-            "Two lines that stay this close the whole time they both exist show one trend, so only the stronger is kept.",
+            "Two lines that stay this close the whole time they both exist show one trend, so the nearer one is kept.",
             "In ATR(14) and as a percent of price; the tighter of the two is the band.",
             "Close and almost parallel merges; lines that only cross today do not.",
             "A merged line leaves the chart and stops reporting to rules. Empty: off.",
           ],
         },
         tip: [
-          "Two lines that stay this close the whole time they both exist show one trend, so only the stronger is kept.",
+          "Two lines that stay this close the whole time they both exist show one trend, so the nearer one is kept.",
           "Close and almost parallel merges; lines that only cross today do not.",
           "A merged line leaves the chart and stops reporting to rules. Empty: off.",
         ],
@@ -1168,7 +1169,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     ],
     presets: TRENDLINES_PRESETS,
     title: "Trendlines",
-    desc: "Sloping lines through confirmed swing highs and lows, in any mix: a line is two significant swings that later swings land on. Price may cross a line; the count of crossings is shown beside the touch count and can be filtered. The strongest lines are drawn and tagged. Pivots confirm a few bars late, so nothing repaints.",
+    desc: "Sloping lines through confirmed swing highs and lows, in any mix: a line is two significant swings that later swings land on. Price may cross a line; the count of crossings is shown beside the touch count and can be filtered. The lines nearest to price are drawn and tagged. Pivots confirm a few bars late, so nothing repaints.",
   },
   SESSIONS: {
     inputs: [],

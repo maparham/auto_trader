@@ -29,6 +29,7 @@ from auto_trader.indicators.trendlines import (
     touch_weight,
     is_major,
     max_distance_tol,
+    nearest_first,
     poolable,
     trendline_gate,
     select_levels,
@@ -39,6 +40,7 @@ from auto_trader.indicators.trendlines import (
     side_sign,
     survival_key,
     step_crossing,
+    step_crossings,
     tl_output_name,
     trendlines_outputs,
     trendlines_series,
@@ -254,6 +256,19 @@ def test_side_sign_and_step_crossing():
     assert (l.crossings, l.last_sign) == (1, 1)
     step_crossing(l, 5, 90)
     assert l.crossings == 2
+
+
+def test_step_crossings_matches_step_crossing():
+    # The inlined range walk must agree with bar-by-bar step_crossing,
+    # including closes exactly on the line (which keep the previous sign).
+    closes = [98, 96, 97, 99, 90, 95, 95, 101, 94, 95.5, 93]
+    for frm in range(len(closes)):
+        for to in range(frm - 1, len(closes)):
+            a, b = _mixed(), _mixed()
+            for j in range(frm, to + 1):
+                step_crossing(a, j, closes[j])
+            step_crossings(b, frm, to, closes)
+            assert (b.crossings, b.last_sign) == (a.crossings, a.last_sign)
 
 
 def test_rank_key_order():
@@ -505,30 +520,30 @@ def test_a_pivot_that_stops_short_is_half_a_touch_only_if_a_gap_is_allowed():
     assert l.touches == 2.5 and l.last_touch_idx == 60
 
 
-def test_emits_ranked_outputs_and_the_nearest():
+def test_emits_nearest_first_so_tl_nearest_is_tl_1():
+    """Mirrors the TS test: the walk is nearest first, so tl_1 IS the nearest
+    drawn line."""
     bars = flat(80)
     bars[20] = bar(20, 90, 100.5)
     bars[40] = bar(40, 94, 100.5)
     bars[25] = bar(25, 99.5, 108)
     bars[45] = bar(45, 99.5, 104)
-    # Merge off, so the drawn set is the top max_lines majors by rank.
+    # Merge off, so the drawn set is the max_lines majors nearest the close.
     c = cfg(max_lines=2, merge_atr=0)
     points, lines = compute_trendlines(bars, c)
-    majors = sorted((l for l in lines if is_major(l, 79, c)), key=rank_key)
+    close = bars[79].close
+    majors = nearest_first([l for l in lines if is_major(l, 79, c)], 79, close)
     assert len(majors) >= 3
     last = points[79]
     assert last["tl_1"] == project_at(majors[0], 79)
     assert last["tl_2"] == project_at(majors[1], 79)
     assert "tl_3" not in last
-    close = bars[79].close
-    # tl_nearest is the nearest AMONG THE DRAWN lines: only what is on the
-    # chart takes part in a rule, and a third major ranked past the budget is
-    # not on the chart.
-    drawn = majors[:2]
-    nearest = min(drawn, key=lambda l: (abs(project_at(l, 79) - close), rank_key(l)))
-    assert last[TL_NEAREST] == project_at(nearest, 79)
-    third = min(majors[2:], key=lambda l: abs(project_at(l, 79) - close))
-    assert abs(project_at(third, 79) - close) < abs(project_at(nearest, 79) - close)
+    assert last[TL_NEAREST] == last["tl_1"]
+    # Independent of nearest_first: the two emitted values are the two
+    # smallest distances among ALL majors, measured directly.
+    dists = sorted(abs(project_at(l, 79) - close) for l in lines if is_major(l, 79, c))
+    assert abs(last["tl_1"] - close) == dists[0]
+    assert abs(last["tl_2"] - close) == dists[1]
 
 
 def _fan() -> list[Candle]:
@@ -866,3 +881,17 @@ def test_signed_slope_range_mirrors_the_ts():
     assert _last(_falling(), min_slope_atr=-0.5, max_slope_atr=0.5).get("tl_1") is not None
     assert _last(_rising(), min_slope_atr=-0.05, max_slope_atr=0.05).get("tl_1") is None
     assert _last(_falling(), min_slope_atr=-0.05, max_slope_atr=0.05).get("tl_1") is None
+
+
+def test_nearest_first_orders_by_distance_ties_by_rank():
+    """Mirrors the TS tests."""
+    far5, near2, mid3 = _cap_line(0, 40, 120.0, 5), _cap_line(0, 40, 101.0, 2), _cap_line(0, 40, 95.0, 3)
+    assert nearest_first([far5, near2, mid3], 50, 100.0) == [near2, mid3, far5]
+    above, below = _cap_line(0, 40, 102.0, 2), _cap_line(0, 40, 98.0, 4)
+    assert nearest_first([above, below], 50, 100.0) == [below, above]
+
+
+def test_a_merged_level_is_led_by_its_nearest_member():
+    far_strong, near_weak = _cap_line(0, 40, 100.8, 5), _cap_line(0, 40, 100.2, 2)
+    ordered = nearest_first([far_strong, near_weak], 50, 100.0)
+    assert select_levels(ordered, 50, 1.0, 0, 5) == [near_weak]

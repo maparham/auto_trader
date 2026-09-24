@@ -226,7 +226,9 @@ export function hasBackClearance(
 
 /** Full deterministic ordering (Python rank_key sorts identically): most
  * touches, longest span, FEWEST crossings, most recent, oldest origin, lowest
- * anchor price. p1 is a STORED price, so ranking cannot depend on the bar. */
+ * anchor price. p1 is a STORED price, so ranking cannot depend on the bar.
+ * Since 2026-09-24 it is the documented strength order and the tie-break of
+ * the stage 3 walk (nearestFirst), not the walk order itself. */
 export function rankLines(a: TrendLine, b: TrendLine): number {
   if (a.touches !== b.touches) return b.touches - a.touches;
   const spanA = a.lastTouchIdx - a.i1;
@@ -277,7 +279,7 @@ export function compareSurvival(a: TrendLine, b: TrendLine): number {
   return a.p1 - b.p1;
 }
 
-/** One calc row: the ranked operands plus the nearest. The template-literal
+/** One calc row: the operands, nearest first, plus the nearest. The template-literal
  * index lets `point[tlOutputName(r)]` type-check while `lines`/`pivots` on the
  * calc row stay outside the pattern. */
 export interface TrendlinesPoint {
@@ -883,14 +885,14 @@ function stepTrendlinesBar(st: TlState, i: number, cfg: TrendlinesConfig): void 
   }
 
   // 4. Emit: selectDrawnLines, the same call the draw path makes. Stage 2
-  //    (poolable plus the per-line gate) first, then rank, then stage 3
-  //    (merge into levels at this bar's tolerance, the per-pivot cap, Max
-  //    Trendlines). Its result fills tl_1..tl_maxLines; the one nearest the
-  //    close AMONG THOSE fills tl_nearest (ties to the better rank, since the
-  //    walk is in rank order and only a STRICTLY nearer line displaces). Only
-  //    lines on the chart take part in a rule: a line too far, capped,
-  //    standing behind a better member of its level, or ranked past Max
-  //    Trendlines reports nothing.
+  //    (poolable plus the per-line gate) first, then the nearest first order,
+  //    then stage 3 (merge into levels at this bar's tolerance, the per-pivot
+  //    cap, Max Trendlines). Its result fills tl_1..tl_maxLines, nearest to
+  //    the close first; tl_nearest is the nearest AMONG THOSE, so it always
+  //    equals tl_1 (kept so saved rules keep working). Only lines on the
+  //    chart take part in a rule: a line too far, capped, standing behind a
+  //    nearer member of its level, or walked past Max Trendlines reports
+  //    nothing.
   const close = closes[i];
   const point: TrendlinesPoint = {};
   const drawn = selectDrawnLines(poolable(lines, i, cfg), i, close, cfg.maxLines, {
@@ -1538,9 +1540,10 @@ function addLevelPositions(
 
 /** THE PER-PIVOT CAP, as a per-bar TOP-N TEST over LEVELS.
  *
- * MAX LINES PER PIVOT (`maxPerPivot`, 0 = off): at every bar, rank the LEVELS
+ * MAX LINES PER PIVOT (`maxPerPivot`, 0 = off): at every bar, order the LEVELS
  * of gate-passing lines running through it (a merge group; see selectLevels)
- * in the order their best line ranks, and keep only the top `maxPerPivot`. A
+ * by the walk order (nearest first) of their leaders, and keep only the first
+ * `maxPerPivot`. A
  * line is drawn when its level is inside that top N at EVERY bar the line runs
  * through, anchor or touch, which is what touchIdxs holds. Its worst bar
  * decides it. Ported to Python as level_positions / pivot_cap_needed.
@@ -1556,23 +1559,23 @@ function addLevelPositions(
  * leader and nothing else, so the leader's pivots are the bars it actually
  * occupies.
  *
- * POSITIONS ARE FIXED AT INSERTION. Leaders arrive in rank order, and a
- * leader's position at a bar is one plus the number of better-ranked leaders
- * already there. A later line can only join a level or start a later one, so
+ * POSITIONS ARE FIXED AT INSERTION. Leaders arrive in walk order (nearest
+ * first), and a leader's position at a bar is one plus the number of earlier
+ * leaders already there. A later line can only join a level or start a later one, so
  * it never moves an earlier position; that is what lets selectLevels stop
  * early and stay exact.
  *
- * WHY NOT A RUNNING TALLY. The old cap walked the ranked list and dropped a
+ * WHY NOT A RUNNING TALLY. The old cap walked the ordered list and dropped a
  * line once `maxPerPivot` ALREADY-KEPT lines shared one of its bars. That
  * made every decision depend on the earlier decisions, and the result was
- * not monotone in the setting: ranked L1{x}, L2{x,b}, L3{y}, L4{y,b}, L5{b}
+ * not monotone in the setting: walked L1{x}, L2{x,b}, L3{y}, L4{y,b}, L5{b}
  * keeps L1, L3, L5 at a cap of 1 and keeps L1, L2, L3, L4 at a cap of 2,
  * losing L5, because two lines that were themselves capped out at 1 now
  * jointly fill bar b. A position in a fixed per-bar ordering cannot move
  * when the cap changes, so raising the cap can only move a level's position
  * test from "outside the top N" to "inside" and never back. The DRAWN set is
  * not monotone in it: a newly accepted leader can take a Max Trendlines slot
- * from a line ranked below it (see selectDrawnLines).
+ * from a line later in the walk (see selectDrawnLines).
  *
  * VISIBLE LINES ONLY. The positions are computed over gate-passing leaders,
  * so a filtered-out level never holds a slot. What you see is what is
@@ -1599,8 +1602,9 @@ export function levelPositions(
 /** THE LOWEST CAP THAT COULD EVER DRAW THIS LINE: the worst position its level
  * holds at any of the line's bars. A bar or level absent from the map counts
  * as first. Positions are over gate-passing leaders and fixed at insertion, so
- * this depends only on better-ranked leaders, never on the cap itself or on
- * anything ranked below. Ported to Python as pivot_cap_needed. */
+ * this depends only on leaders earlier in the walk order (nearest first),
+ * never on the cap itself or on anything later. Ported to Python as
+ * pivot_cap_needed. */
 export function pivotCapNeeded(
   line: TrendLine,
   pos: ReadonlyMap<number, ReadonlyMap<number, number>>,
@@ -1642,9 +1646,9 @@ export function poolable(
  * Spacing) and Max Distance, which is a per-bar visibility cut that depends on
  * where price is today. The per-bar half of stage 2 (poolable is the
  * permanent half). Each one asks about ONE line and nothing else, so it runs
- * before ranking and no other line can displace it. Relaxing one can still
- * remove a drawn line in stage 3: a newly admitted, better-ranked line can take
- * its per-pivot position or its Max Trendlines slot. */
+ * before ordering and no other line can displace it. Relaxing one can still
+ * remove a drawn line in stage 3: a newly admitted, nearer line can take its
+ * per-pivot position or its Max Trendlines slot. */
 export function trendlineGate(
   i: number,
   close: number,
@@ -1657,8 +1661,8 @@ export function trendlineGate(
 }
 
 /** DEBUG: how many levels run through each bar, the per-bar depth the
- * per-pivot cap reads. `ranked` is the gate-passing lines in rank order, as
- * selectDrawnLines hands to selectLevels. Render-only; no Python twin. */
+ * per-pivot cap reads. `ranked` is the gate-passing lines in walk order
+ * (nearest first), as selectDrawnLines hands to selectLevels. Render-only; no Python twin. */
 export function pivotDepths(
   ranked: readonly TrendLine[],
   atIdx: number,
@@ -1669,7 +1673,8 @@ export function pivotDepths(
   return depths;
 }
 /** STAGE 3 of selection: lines against each other. `ranked` is the lines
- * that passed stage 2 (poolable plus trendlineGate), in rank order; pins are
+ * that passed stage 2 (poolable plus trendlineGate), in walk order (nearest
+ * first, nearestFirst); pins are
  * never in it. Ported to Python as select_levels. Three steps, in one walk:
  *
  *   1. MERGE. Each line joins the first level whose leader shows the same
@@ -1677,12 +1682,12 @@ export function pivotDepths(
  *   2. PER PIVOT. A new leader takes its position at every bar it runs
  *      through (levelPositions); past `maxPerPivot` at any of them, it is
  *      dropped. It keeps its positions, so it still counts against the
- *      levels ranked below it.
+ *      levels later in the walk.
  *   3. MAX TRENDLINES. The first `maxLines` leaders the cap accepts are the
  *      drawn set (0 = uncapped).
  *
  * THE EARLY STOP IS EXACT. A leader's positions are fixed when it is inserted
- * and depend only on better-ranked leaders, and a later line can only join a
+ * and depend only on earlier leaders, and a later line can only join a
  * level or start a later one. So once `maxLines` leaders have been ACCEPTED
  * (leaders dropped by the per-pivot cap do not count), nothing further down
  * can change the result, and the walk stops. Only the debug depths
@@ -1690,12 +1695,13 @@ export function pivotDepths(
  *
  * A LEVEL IS A MERGE GROUP, not a line. Lines that show the same trend
  * (sameTrend at `tol`) are the same level drawn from different anchors, and a
- * level is ONE line on the chart: its LEADER, the best-ranked GATE-PASSING
+ * level is ONE line on the chart: its LEADER, the NEAREST GATE-PASSING
  * member. A member that fails a filter never reaches this walk, so when a
- * level's best line fails one, the next member leads instead, and the level's
- * anchors can move when Max Distance or a floor moves. What still never swaps
- * a leader is the per-pivot cap: it drops a whole level and never promotes a
- * weaker member of it. On GOLD 1D the resistance into 2026-08-25 used to jump
+ * level's nearest line fails one, the next member leads instead, and the
+ * level's anchors can move when Max Distance or a floor moves, or bar to bar
+ * as its nearest member changes. What still never swaps a leader is the
+ * per-pivot cap: it drops a whole level and never promotes a later member of
+ * it. On GOLD 1D the resistance into 2026-08-25 used to jump
  * its left anchor from the 2025-07-23 high to the 2025-08-20 low between a cap
  * of 3 and 4 (same level to the merge, a different line to the eye); leaders
  * fixed before the cap runs are what stop that.
@@ -1733,7 +1739,7 @@ export function pivotDepths(
  * KD-tree gives no worst-case bound. Revisit only if a benchmark shows the
  * merge as the bottleneck. */
 export function selectLevels(
-  ranked: readonly TrendLine[],
+  ranked: Iterable<TrendLine>,
   atIdx: number,
   tol: number,
   maxPerPivot: number,
@@ -1766,27 +1772,117 @@ export function selectLevels(
   return out;
 }
 
+/** STAGE 3 WALK ORDER: nearest to the close first, at `atIdx`. Ties (exact
+ * float equality of the distance) go to rankLines, so strength decides only
+ * between lines equally far from price. Quality is the filters' job, not the
+ * order's. Distances are computed once per line, not in the comparator.
+ * Mirrored by nearest_first in trendlines.py (same float operations, same
+ * tie-break, both sorts stable over the same input order). */
+export function nearestFirst(
+  lines: readonly TrendLine[],
+  atIdx: number,
+  close: number,
+): TrendLine[] {
+  // Decorate, sort indices, undecorate: the comparator reads a typed array
+  // instead of a Map (Map lookups made this sort the whole cost of the emit
+  // step). Same comparator expression over the same input order, so the same
+  // stable sort yields the same order, ties and NaN included.
+  const n = lines.length;
+  const dist = new Float64Array(n);
+  const idx: number[] = new Array(n);
+  for (let k = 0; k < n; k++) {
+    dist[k] = Math.abs(projectAt(lines[k], atIdx) - close);
+    idx[k] = k;
+  }
+  idx.sort((a, b) => dist[a] - dist[b] || rankLines(lines[a], lines[b]));
+  const out: TrendLine[] = new Array(n);
+  for (let k = 0; k < n; k++) out[k] = lines[idx[k]];
+  return out;
+}
+
+/** nearestFirst, LAZILY: the same order, one line at a time. The capped walk
+ * (selectLevels with Max Trendlines and no debug depths) stops after a few
+ * lines, so fully sorting the ~200 gate-passing lines every bar was the whole
+ * cost of the emit step. A binary heap yields the prefix the walk reads for
+ * O(n) plus O(log n) per line taken.
+ *
+ * EXACTLY nearestFirst's order. Its sort is stable, so its order is the total
+ * order (distance, rankLines, input position), and the heap compares by that
+ * same triple. A NaN distance would make the sort comparator inconsistent, so
+ * any NaN falls back to the full sort, which keeps whatever order it gives. */
+function* nearestFirstLazy(
+  lines: readonly TrendLine[],
+  atIdx: number,
+  close: number,
+): Generator<TrendLine> {
+  const n = lines.length;
+  const dist = new Float64Array(n);
+  for (let k = 0; k < n; k++) {
+    const d = Math.abs(projectAt(lines[k], atIdx) - close);
+    if (d !== d) {
+      yield* nearestFirst(lines, atIdx, close);
+      return;
+    }
+    dist[k] = d;
+  }
+  // Mirrors the sort comparator `dist[a] - dist[b] || rankLines(...)`,
+  // including Infinity - Infinity (NaN) falling through to rankLines.
+  const before = (a: number, b: number): boolean => {
+    const d = dist[a] - dist[b];
+    if (d < 0) return true;
+    if (d > 0) return false;
+    const r = rankLines(lines[a], lines[b]);
+    if (r < 0) return true;
+    if (r > 0) return false;
+    return a < b;
+  };
+  const heap = new Int32Array(n);
+  for (let k = 0; k < n; k++) heap[k] = k;
+  let size = n;
+  const siftDown = (at: number): void => {
+    const x = heap[at];
+    for (;;) {
+      let c = 2 * at + 1;
+      if (c >= size) break;
+      if (c + 1 < size && before(heap[c + 1], heap[c])) c++;
+      if (!before(heap[c], x)) break;
+      heap[at] = heap[c];
+      at = c;
+    }
+    heap[at] = x;
+  };
+  for (let k = (size >> 1) - 1; k >= 0; k--) siftDown(k);
+  while (size > 0) {
+    const top = heap[0];
+    heap[0] = heap[--size];
+    if (size > 0) siftDown(0);
+    yield lines[top];
+  }
+}
+
 /** The DRAWN set, and the whole pipeline in one call. `lines` is poolable's
  * output (the permanent half of stage 2). Stage 2 finishes here: the per-bar
  * filters (`dedupe.pass`, trendlineGate) drop every line that fails them,
- * BEFORE ranking, so a line no filter would show never holds a slot. Stage 3
- * (selectLevels) then merges the rank-ordered survivors into levels, applies
+ * BEFORE ordering, so a line no filter would show never holds a slot. Stage 3
+ * (selectLevels) then merges the survivors, nearest first, into levels, applies
  * the per-pivot cap, and cuts to `maxLines`. MAX TRENDLINES CAPS DRAWN LINES:
  * with at least `maxLines` levels that pass, exactly `maxLines` draw. Pins are
  * appended last.
  *
- * RELAXING A FILTER CAN REMOVE A LINE. A newly admitted line that outranks a
+ * RELAXING A FILTER CAN REMOVE A LINE. A newly admitted line nearer than a
  * drawn one takes its Max Trendlines slot (or its per-pivot position) and
  * pushes it off. That is the intended meaning of a cap on visible lines: the
  * old guarantee that relaxing a filter only ever adds lines came from cutting
  * candidates before filtering, which let lines no filter would show take the
  * slots, and was given up on purpose.
  *
- * RANK, not proximity. An order by distance to price would put a fresh
- * two-touch line ahead of a decade-old five-touch one merely because it
- * happens to sit half a point closer today; rank is what a trader means by
- * "the real lines" and is also what the detector itself already sorts by
- * (rankLines), so the pane and the emit path agree on which lines matter.
+ * NEAREST FIRST (owner's decision, 2026-09-24). Lines closer to the last
+ * price win the slots; strength (rankLines) only breaks exact distance ties.
+ * Line quality is the filters' job (Min Touches, Min Span, Min Crossings, the
+ * ceilings), not the order's: under strength order an old five-touch line far
+ * from price outranked a fresh two-touch line at price, and once the live cap
+ * kept those old lines alive, default panes drew them. The draw loop paints
+ * in this same order, so the nearest line claims the first end-tag slot.
  *
  * SO THE DRAWN SET IS THE EMITTED SET. Same lines, same levels, same gate:
  * every `tl_k` on the last bar has its line on the chart, and a line that is
@@ -1796,12 +1892,12 @@ export function selectLevels(
  * cannot see, so such a line is visible without emitting. Never the other way
  * round.
  *
- * The drawn set is INDEPENDENT OF THE EXTEND MODE on purpose: rank and the
- * merge pass never look at how far a line is drawn, only at its projection
+ * The drawn set is INDEPENDENT OF THE EXTEND MODE on purpose: the nearest
+ * first order and the merge pass never look at how far a line is drawn, only at its projection
  * at `atIdx`. Switching extend must change how far lines run and
  * nothing else, so which lines appear, like which values emit, must not move.
  *
- * Mirrored in Python by the emit step (trendline_gate, rank_key sort,
+ * Mirrored in Python by the emit step (trendline_gate, nearest_first,
  * select_levels); the pin append is draw-time only. */
 export function selectDrawnLines(
   lines: readonly TrendLine[],
@@ -1810,24 +1906,31 @@ export function selectDrawnLines(
   maxLines: number,
   dedupe: TrendlineDedupe | null,
 ): TrendLine[] {
-  void close;
-  // Stage 2 (each line on its own) BEFORE ranking, so a line no filter would
+  // Stage 2 (each line on its own) BEFORE ordering, so a line no filter would
   // show can never hold a slot.
   const pass = dedupe?.pass;
-  const ranked = (pass ? lines.filter(pass) : lines.slice()).sort(rankLines);
+  const passing = pass ? lines.filter(pass) : lines;
   // Stage 3 (lines against each other): merge, per pivot, Max Trendlines.
-  const shown = dedupe
-    ? selectLevels(ranked, atIdx, dedupe.tol, dedupe.perPivot ?? 0, maxLines, dedupe.depthsOut)
-    : maxLines > 0
-      ? ranked.slice(0, maxLines)
-      : ranked;
+  // A capped walk without debug depths stops early, so it reads the order
+  // lazily (nearestFirstLazy); everything else sorts in full.
+  let shown: TrendLine[];
+  if (dedupe) {
+    const ranked =
+      maxLines > 0 && !dedupe.depthsOut
+        ? nearestFirstLazy(passing, atIdx, close)
+        : nearestFirst(passing, atIdx, close);
+    shown = selectLevels(ranked, atIdx, dedupe.tol, dedupe.perPivot ?? 0, maxLines, dedupe.depthsOut);
+  } else {
+    const ranked = nearestFirst(passing, atIdx, close);
+    shown = maxLines > 0 ? ranked.slice(0, maxLines) : ranked;
+  }
   // Pins take no part in the selection: they draw IN ADDITION, so the drawn
   // set minus pins is exactly the emitted set.
   const keep = dedupe?.keep;
   if (!keep?.size) return shown;
   const out = new Set(shown);
   for (const l of lines) if (keep.has(l)) out.add(l);
-  return [...out].sort(rankLines);
+  return nearestFirst([...out], atIdx, close);
 }
 
 
@@ -2123,7 +2226,7 @@ export function hitHandle(
 }
 
 /**
- * Multi-timeframe calc: the ranked operand series were computed on the HTF bars
+ * Multi-timeframe calc: the operand series were computed on the HTF bars
  * by the coordinator, so all that is left is to hand each chart bar the value
  * of the most recent HTF bar that had CLOSED by then (waitClose, no lookahead:
  * the whole point of the alignment, and the same rule SR_LEVELS and Pivot Bands
@@ -2822,7 +2925,9 @@ function drawTrendlines(
   // come out of the same selection but not the same walk: depthsOut disables
   // the early stop, so the number counts every gate-passing level that
   // reaches this bar, beyond what the cap and Max Trendlines let through to
-  // the drawn set.
+  // the drawn set. The result is in walk order (nearest first), so the loop
+  // below paints the nearest line first and it claims the first tag slot;
+  // tl_nearest equals tl_1.
   const depths = showDepth ? new Map<number, number>() : null;
   const drawn = selectDrawnLines(poolable(last.lines, lastIdx, cfg), lastIdx, lastClose, cfg.maxLines, {
     tol: mergeTolerance(cfg, last.atr, lastClose),

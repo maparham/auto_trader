@@ -27,9 +27,10 @@ const bars = fixture as unknown as KLineData[];
 // The live cap is now a fixed MAX_LIVE (256), so it is built at the default.
 //
 // BUILT IS NOT DRAWN, and that is still a product finding: measured
-// 2026-09-23 at the default it ranks 151st of the 226 lines that pass the
-// per-line filters on the last bar, so a pane at Max Trendlines 3 does not
-// draw it. The lever is now rank (it has 2 touches), not the live cap.
+// 2026-09-24 at the default, with stage 3 nearest first, it sits 4.08 ATR
+// under the close and 58 of the 226 lines that pass the per-line filters on
+// the last bar are nearer (its merged level is 43rd), so a pane at Max
+// Trendlines 3 does not draw it. The lever is distance, not the live cap.
 const CFG = TRENDLINES_DEFAULTS;
 
 describe("TRENDLINES on TSLA daily", () => {

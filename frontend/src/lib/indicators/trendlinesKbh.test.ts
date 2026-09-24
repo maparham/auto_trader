@@ -45,14 +45,14 @@ describe("TRENDLINES on KBH daily", () => {
   it("draws it at Max Projection 300 with Max Per Pivot off", () => {
     expect(drawnAtLast({ 4: 300, 22: 0 }).some(covidLine)).toBe(true);
   });
-  // With the pane's Max Per Pivot 3 it is dropped at 300, and that is correct:
-  // five better-ranked levels touch 2026-05-19 and put it sixth there, so Max
-  // Per Pivot 6 is the smallest cap that draws it. Three of the five are dead
-  // before that touch at Max Projection 100 (their second anchors are in
-  // 2025); at 100 only two sit ahead and it draws at 3. Measured 2026-09-23.
-  it("at Max Projection 300 it is the per-pivot cap that drops it", () => {
-    expect(drawnAtLast({ 4: 300 }).some(covidLine)).toBe(false);
-    expect(drawnAtLast({ 4: 300, 22: 5 }).some(covidLine)).toBe(false);
-    expect(drawnAtLast({ 4: 300, 22: 6 }).some(covidLine)).toBe(true);
+  // With the pane's exact params (Max Per Pivot 3) it is drawn at 300 too,
+  // and Max Per Pivot 1 is the smallest cap that draws it: stage 3 walks
+  // nearest first, and at about 1.3 below the close it is the nearest level
+  // touching 2026-05-19, so it takes that pivot's first place. Measured
+  // 2026-09-24. Under rank order (2026-09-23) five better-ranked levels took
+  // those places first and it needed Max Per Pivot 6.
+  it("at Max Projection 300 it is drawn with the pane's per-pivot cap", () => {
+    expect(drawnAtLast({ 4: 300 }).some(covidLine)).toBe(true);
+    expect(drawnAtLast({ 4: 300, 22: 1 }).some(covidLine)).toBe(true);
   });
 });
