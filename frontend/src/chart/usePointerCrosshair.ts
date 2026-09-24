@@ -59,6 +59,15 @@ import type { TradeLinePx } from "./useLineDrag";
 // cursor is over, as produced by ChartCore's component-scope tradePillHitTest().
 type PillHit = { id: string; field: TradeLineField };
 
+/** True when the pointer is over the DOM legend. The legend sits inside the
+ *  wrap, so its mousemoves bubble into onMove; without this gate a row lying on
+ *  top of a trendline or curve would hover (glow, hand cursor) the line under
+ *  it. The legend container is click-through, so a target inside it is always
+ *  one of its interactive rows. */
+export function isOverLegend(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(".chart-legend") != null;
+}
+
 export interface PointerCrosshairDeps {
   containerRef: React.RefObject<HTMLDivElement | null>;
   wrapRef: React.RefObject<HTMLDivElement | null>;
@@ -499,7 +508,20 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // guide there, so leave the crosshair line hidden when snapped.
       setPlusCrosshair(overPlus && snapTarget == null ? guideY : null);
     };
-    const onMove = (e: MouseEvent) => moveAt(e.clientX, e.clientY, e.target);
+    // Over the legend the pointer belongs to the legend alone: drop every chart
+    // hover once on the way in (same as leaving the chart) and skip hit-testing.
+    let overLegend = false;
+    const onMove = (e: MouseEvent) => {
+      if (isOverLegend(e.target)) {
+        if (!overLegend) {
+          overLegend = true;
+          onLeave();
+        }
+        return;
+      }
+      overLegend = false;
+      moveAt(e.clientX, e.clientY, e.target);
+    };
     const onLeave = () => {
       setPlusCrosshair(null);
       setPointerPx(null); // drop the Δ-label hover-enlarge as the cursor leaves
