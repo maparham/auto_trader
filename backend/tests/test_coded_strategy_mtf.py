@@ -230,3 +230,31 @@ def test_a_truly_unfetchable_timeframe_is_still_a_clean_422(tmp_path, monkeypatc
         res = client.post("/api/backtest", json=req)
     assert res.status_code == 422
     assert "HOUR_4" in res.text
+
+
+def test_a_non_native_intraday_tf_closes_its_short_last_bucket_at_midnight():
+    """tf="HOUR_7" on a 1H base: the day's 21:00 bucket is 3h long and closes
+    at the 00:00 reset, so the 00:00 base bar reads it (parity with the chart's
+    alignHtfToChart). The nominal close (04:00) would still read the 14:00 one."""
+    candles = hourly(30)
+    # 7H buckets tile the day from 00:00: 00, 07, 14, 21 (short), then 24.
+    groups = [(0, 7), (7, 14), (14, 21), (21, 24), (24, 30)]
+    htf = [Candle(time=candles[a].time, open=candles[a].open,
+                  high=max(c.high for c in candles[a:b]), low=min(c.low for c in candles[a:b]),
+                  close=candles[b - 1].close, volume=1.0) for a, b in groups]
+    seen = {}
+
+    def on_bar(ctx):
+        i = len(ctx.closes) - 1
+        if i in (23, 24):
+            seen[i] = ctx.ema(1, tf="HOUR_7")
+        return []
+
+    strat = CodedStrategy(module_from(on_bar), candles, quantity=1.0,
+                          htf_candles={"HOUR_7": htf}, base_timeframe="HOUR")
+    ctx = Context()
+    for i in range(25):
+        ctx.history = candles[: i + 1]
+        strat.on_bar(ctx)
+    assert seen[23] == pytest.approx(htf[2].close)  # 23:00: 21:00 bucket still forming
+    assert seen[24] == pytest.approx(htf[3].close)  # 00:00: the short bucket closed

@@ -119,11 +119,14 @@ describe("computePivotBands", () => {
 });
 
 describe("computePivotBands MTF alignment", () => {
-  // Chart bars every 1ms; a 4ms "higher timeframe" whose pivot values are supplied
-  // directly on extendData.mtf. Only timestamps matter for alignment.
+  // Chart bars every minute; a 4m higher timeframe whose pivot values are
+  // supplied directly on extendData.mtf. Only timestamps matter for alignment,
+  // and the pin's timeframe must name the same span as htfMs (the closed-bar
+  // gate reads the bar's close off the timeframe). "t=4" below means minute 4.
+  const M = 60_000;
   function chartBars(n: number): KLineData[] {
     return Array.from({ length: n }, (_, i) => ({
-      timestamp: i,
+      timestamp: i * M,
       open: 0,
       high: 0,
       low: 0,
@@ -132,13 +135,13 @@ describe("computePivotBands MTF alignment", () => {
     }));
   }
 
-  const HTF_MS = 4;
+  const HTF_MS = 4 * M;
   // Three HTF bars opening at t=0,4,8. htfHigh/htfLow are already carried-forward
   // step values (as computePivotBands would produce on the HTF): dense after the
   // first pivot, undefined before it.
   const mtf = {
     timeframe: "4m",
-    htfStarts: [0, 4, 8],
+    htfStarts: [0, 4 * M, 8 * M],
     htfHigh: [undefined, 100, 110] as Array<number | undefined>,
     htfLow: [70, 70, 65] as Array<number | undefined>,
     htfMs: HTF_MS,

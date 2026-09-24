@@ -621,3 +621,26 @@ describe("pinnedEndY", () => {
     expect(pinnedEndY(rising, 7, 9, xAt(7), xAt(9), 2, 6, xAt, yAt)).toEqual({ y0: 170, y1: 190 });
   });
 });
+
+describe("alignMtfTrendlines short last intraday bucket", () => {
+  // 7H pin on a 1h chart: buckets 00/07/14/21 UTC, the 21:00 one closes at
+  // the 00:00 reset. The 00:00 chart bar must read it, and lineIdx must agree
+  // with the values (selectDrawnLines' === match).
+  const H = 3_600_000;
+  const D0 = Date.UTC(2026, 0, 5);
+  const starts = [0, 7, 14, 21, 24].map((h) => D0 + h * H);
+  const bars = [20, 21, 22, 23, 24].map((h) => bar(D0 + h * H));
+  const pin = stash({
+    timeframe: "HOUR_7",
+    htfMs: 7 * H,
+    chartMs: H,
+    htfStarts: starts,
+    htfPoints: starts.map((_, i) => ({ tl_1: 10 * (i + 1) })),
+  });
+
+  it("the 00:00 chart bar reads the 21:00 bucket and lineIdx points at it", () => {
+    const out = alignMtfTrendlines(bars, pin);
+    expect(out.map((p) => p.tl_1)).toEqual([20, 30, 30, 30, 40]);
+    expect(out[out.length - 1].lineIdx).toBe(3);
+  });
+});

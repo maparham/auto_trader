@@ -53,7 +53,8 @@ export function defaultVisibility(): VisibilityModel {
   return { units, autoHide: { on: false, minBars: 3 } };
 }
 
-// "MINUTE" -> {minutes,1}; "MINUTE_15" -> {minutes,15}; "HOUR_4" -> {hours,4}. The
+// "MINUTE" -> {minutes,1}; "MINUTE_15" -> {minutes,15}; "HOUR_4" -> {hours,4};
+// "MINUTE_90" -> {hours,1.5}. The
 // resolution keys come from lib/feed.ts (PREFIX or PREFIX_<n>). Returns null if the
 // prefix isn't a supported unit (caller fails open).
 export function parseResolution(res: string): { unit: VisUnit; value: number } | null {
@@ -62,8 +63,13 @@ export function parseResolution(res: string): { unit: VisUnit; value: number } |
   const prefix = us === -1 ? res : res.slice(0, us);
   const unit = PREFIX_UNIT[prefix];
   if (!unit) return null;
-  const value = us === -1 ? 1 : Number(res.slice(us + 1));
-  return Number.isFinite(value) ? { unit, value } : { unit, value: 1 };
+  const raw = us === -1 ? 1 : Number(res.slice(us + 1));
+  const value = Number.isFinite(raw) ? raw : 1;
+  // Custom minute timeframes of an hour or more that are not whole hours (90m, 1439m)
+  // live on the hours row as a fractional value (90m -> 1.5 hours): the minutes row
+  // caps at 59 and saved models store that explicit max, so raising it would still hide.
+  if (unit === "minutes" && value >= 60) return { unit: "hours", value: value / 60 };
+  return { unit, value };
 }
 
 export function isVisibleOnResolution(m: VisibilityModel, res: string): boolean {

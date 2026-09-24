@@ -288,6 +288,7 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
         return align_htf_to_base(
             base_ms, tf_candles, tf_vals, tf_ms,
             base_interval_ms=base_interval_ms_of(resolution),
+            htf_resolution=tf_res,
         )
     if isinstance(node, N.Unary):
         inner = series_of(node.operand, candles, resolution, htf, instances)
@@ -350,6 +351,7 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
             return align_htf_to_base(
                 base_ms, tf_candles, tf_vals, resolution_seconds(tf_res) * 1000,
                 base_interval_ms=base_interval_ms_of(resolution),
+                htf_resolution=tf_res,
             )
         return inst.spec.series(inst.config, node.output, candles, _tf_hours(resolution))
     if isinstance(node, N.Call):

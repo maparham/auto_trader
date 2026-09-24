@@ -6,7 +6,7 @@ import { ActionError, registerAction } from "../registry";
 import type { Chart } from "klinecharts";
 import type { ChartController } from "../../lib/chartController";
 import type { Period } from "../../lib/feed";
-import { ALL_PERIODS, periodByResolution } from "../../lib/feed";
+import { agentPeriod } from "./agentPeriod";
 import { getIndicatorsByPane } from "../../lib/indicators";
 import { probeTabBridge, probeTabBridgeDetailed, tabBridgeScreenshot, tabBridgeFocus, TabBridgeError } from "../../lib/tabBridge";
 
@@ -49,6 +49,9 @@ function bridgeCode(e: unknown): string {
 interface Bar {
   timestamp: number; open: number; high: number; low: number; close: number; volume?: number;
 }
+
+// agentPeriod lives in its own leaf module; re-exported for existing importers.
+export { agentPeriod };
 
 export function registerChartActions(): void {
   registerAction({
@@ -217,23 +220,21 @@ export function registerChartActions(): void {
   registerAction({
     name: "chart.timeframe.set",
     description:
-      "Switch the focused chart's timeframe. Accepts a resolution (HOUR_4) or its label (4H); see lib/feed ALL_PERIODS.",
+      "Switch the focused chart's timeframe. Accepts any resolution (HOUR_4, HOUR_6, MINUTE_90) or label (4H, 6H, 90m, 2D, 3W, 2M). m is minutes, M is months; h/d/w/y take either case.",
     kind: "write",
     params: {
       type: "object",
-      properties: { resolution: { type: "string", description: "e.g. HOUR, HOUR_4, DAY, or a label like 1H/4H/1D" } },
+      properties: { resolution: { type: "string", description: "e.g. HOUR, HOUR_4, DAY, or a label like 1H/4H/1D/90m/2M (m is minutes, M is months)" } },
       required: ["resolution"],
     },
     handler: async (args) => {
       const f = focusedChart();
       const wanted = String(args.resolution);
-      const period =
-        periodByResolution(wanted) ??
-        ALL_PERIODS.find((p) => p.label.toLowerCase() === wanted.toLowerCase());
+      const period = agentPeriod(wanted);
       if (!period) {
         throw new ActionError(
           "INVALID_ARGS",
-          `unknown timeframe: ${wanted} (one of ${ALL_PERIODS.map((p) => p.label).join(", ")})`,
+          `unknown timeframe: ${wanted}. Use a resolution (HOUR_4, HOUR_6) or a label (4H, 6H, 90m, 2D, 3W, 2M); m is minutes, M is months. Limits: minutes 1 to 1439, hours 1 to 24, days 1 to 365, weeks 1 to 52, months 1 to 12.`,
         );
       }
       f.setPeriod(period);

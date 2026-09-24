@@ -66,3 +66,92 @@ def test_explicit_base_interval_below_the_pin_keeps_the_gate():
         times_ms(base), htf, [10.0, 20.0], 4 * H_MS, base_interval_ms=H_MS
     )
     assert out == [None, None, None, None, 10.0, 10.0]
+
+
+# --- short last intraday bucket (parity: mtf.test.ts "alignHtfToChart short
+# last intraday bucket") ---------------------------------------------------
+# A 7H pin tiles each UTC day 00/07/14/21; the 21:00 bucket is short and
+# closes at the 00:00 reset, not at 04:00 the next day.
+
+def test_short_last_bucket_closes_at_midnight_for_a_non_native_intraday_pin():
+    htf = bars([0, 7, 14, 21, 24])
+    base = bars([20, 21, 22, 23, 24, 25])
+    out = align_htf_to_base(
+        times_ms(base), htf, [10.0, 20.0, 30.0, 40.0, 50.0], 7 * H_MS,
+        base_interval_ms=H_MS, htf_resolution="HOUR_7",
+    )
+    assert out == [20.0, 30.0, 30.0, 30.0, 40.0, 40.0]
+
+
+def test_short_last_bucket_accepts_an_alias_pin():
+    htf = bars([0, 7, 14, 21, 24])
+    base = bars([20, 21, 22, 23, 24, 25])
+    out = align_htf_to_base(
+        times_ms(base), htf, [10.0, 20.0, 30.0, 40.0, 50.0], 7 * H_MS,
+        base_interval_ms=H_MS, htf_resolution="7H",
+    )
+    assert out == [20.0, 30.0, 30.0, 30.0, 40.0, 40.0]
+
+
+def test_without_a_resolution_the_close_stays_nominal():
+    htf = bars([0, 7, 14, 21, 24])
+    base = bars([20, 21, 22, 23, 24, 25])
+    out = align_htf_to_base(
+        times_ms(base), htf, [10.0, 20.0, 30.0, 40.0, 50.0], 7 * H_MS,
+        base_interval_ms=H_MS,
+    )
+    assert out == [20.0, 30.0, 30.0, 30.0, 30.0, 30.0]
+
+
+def test_native_and_calendar_pins_keep_the_nominal_close():
+    htf = bars([0, 4, 8])
+    base = bars([3, 4, 7, 8])
+    out = align_htf_to_base(
+        times_ms(base), htf, [1.0, 2.0, 3.0], 4 * H_MS,
+        base_interval_ms=H_MS, htf_resolution="HOUR_4",
+    )
+    assert out == [None, 1.0, 1.0, 2.0]
+
+
+# --- calendar pins close at the TRUE bucket end (parity: mtf.test.ts
+# "alignHtfToChart calendar bucket ends") -----------------------------------
+# A month group closes at the next group's first day, not open + 30d * N: a
+# 31-day October must not be gated closed on Oct 31 (lookahead), and the short
+# Nov-Dec tail of a 5M year closes on Jan 1 (not ~Mar 31, months stale).
+
+D_MS = 86_400_000
+
+
+def _at(y: int, m: int, d: int) -> Candle:
+    t = datetime(y, m, d, tzinfo=timezone.utc)
+    return Candle(time=t, open=1, high=2, low=0, close=1, volume=1)
+
+
+def test_one_month_pin_closes_on_the_first_of_the_next_month():
+    htf = [_at(2025, 10, 1), _at(2025, 11, 1)]
+    base = [_at(2025, 10, 31), _at(2025, 11, 1)]
+    out = align_htf_to_base(
+        times_ms(base), htf, [1.0, 2.0], 30 * D_MS,
+        base_interval_ms=D_MS, htf_resolution="MONTH",
+    )
+    assert out == [None, 1.0]
+
+
+def test_five_month_pin_short_year_end_group_closes_on_jan_1():
+    htf = [_at(2025, 6, 1), _at(2025, 11, 1), _at(2026, 1, 1)]
+    base = [_at(2025, 12, 31), _at(2026, 1, 1), _at(2026, 1, 2)]
+    out = align_htf_to_base(
+        times_ms(base), htf, [1.0, 2.0, 3.0], 150 * D_MS,
+        base_interval_ms=D_MS, htf_resolution="5M",
+    )
+    assert out == [1.0, 2.0, 2.0]
+
+
+def test_year_pin_closes_on_the_next_jan_1():
+    htf = [_at(2024, 1, 1), _at(2025, 1, 1)]
+    base = [_at(2024, 12, 31), _at(2025, 1, 1)]
+    out = align_htf_to_base(
+        times_ms(base), htf, [1.0, 2.0], 365 * D_MS,
+        base_interval_ms=D_MS, htf_resolution="YEAR",
+    )
+    assert out == [None, 1.0]

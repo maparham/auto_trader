@@ -26,6 +26,7 @@ from auto_trader.core.candle_aggregate import (
 from auto_trader.core.candle_accumulator import CANDLE_ACCUMULATOR
 from auto_trader.core.candle_cache import CANDLE_CACHE
 from auto_trader.core.models import Candle, Resolution
+from auto_trader.core.timeframe import TimeframeError, canonicalize
 
 from ..auth import verify_ws
 from .. import deps
@@ -34,6 +35,14 @@ from .charts import _candle_dto
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _stream_resolution(res_raw: str) -> tuple[str | None, str | None]:
+    """(canonical resolution, None) or (None, reason) for a /ws/candles param."""
+    try:
+        return canonicalize(res_raw), None
+    except TimeframeError as e:
+        return None, str(e)
 
 
 def _accum_params(
@@ -114,6 +123,12 @@ async def ws_candles(websocket: WebSocket) -> None:
     async def _fatal(detail: str) -> None:
         await websocket.send_json({"type": "error", "detail": detail, "fatal": True})
         await websocket.close()
+
+    canon, bad = _stream_resolution(res_raw)
+    if canon is None:
+        # A malformed resolution can never succeed on retry.
+        return await _fatal(bad)
+    res_raw = canon
 
     is_ig = isinstance(broker, IGBroker)
     is_mt5 = isinstance(broker, MT5Broker)

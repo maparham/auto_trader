@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.registry import CROSSES, INDICATORS, WRAPPERS
-from auto_trader.strategy.expr.tfs import TF_RESOLUTIONS, tf_resolution
+from auto_trader.strategy.expr.tfs import tf_resolution
 
 if TYPE_CHECKING:
     from auto_trader.indicators.registry import ResolvedInstance
@@ -45,7 +45,7 @@ def _check_predicate(node: N.Predicate) -> None:
         if isinstance(base, N.Tf) and tf_resolution(base.tf) is None:
             raise ExprError(
                 "unknown_tf",
-                f"Unknown timeframe {base.tf}. Try one of: {', '.join(TF_RESOLUTIONS)}.",
+                f"Unknown timeframe {base.tf}. Use a number and a unit, like 7m, 6H, 2D, 3W or 2M.",
                 base.start, base.end,
             )
         base = base.base
@@ -188,7 +188,7 @@ def _walk(node: N.Node, *, is_exit: bool,
         if tf_resolution(node.tf) is None:
             raise ExprError(
                 "unknown_tf",
-                f"Unknown timeframe {node.tf}. Try one of: {', '.join(TF_RESOLUTIONS)}.",
+                f"Unknown timeframe {node.tf}. Use a number and a unit, like 7m, 6H, 2D, 3W or 2M.",
                 node.start, node.end,
             )
         # A pane pinned in its own settings is already a pinned series; pinning

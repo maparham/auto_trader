@@ -421,3 +421,34 @@ describe("drawSrLevels off-pane culling", () => {
     expect(edge.some((c) => c.startsWith("fillText:"))).toBe(false);
   });
 });
+
+describe("computeSrLevels MTF short last intraday bucket", () => {
+  // 7H pin on a 1h chart: buckets 00/07/14/21 UTC; the 21:00 one closes at
+  // the 00:00 reset, so it reaches the 00:00 bar and a level touched there
+  // ends on the 23:00 bar, not 03:00 the next day.
+  const H = 3600_000;
+  const D0 = Date.UTC(2026, 0, 5);
+  const at = (h: number): KLineData =>
+    ({ timestamp: D0 + h * H, open: 100, high: 101, low: 99, close: 100, volume: 1 }) as KLineData;
+  const chartBars = Array.from({ length: 10 }, (_, k) => at(20 + k)); // 20:00 .. 05:00
+  const mtf = {
+    timeframe: "HOUR_7",
+    htfMs: 7 * H,
+    chartMs: H,
+    htfStarts: [D0 + 14 * H, D0 + 21 * H, D0 + 24 * H],
+    htfSupport: [100, 101, 102] as Array<number | undefined>,
+    htfResistance: [110, 111, 112] as Array<number | undefined>,
+    htfLevels: [{ price: 100, halfWidth: 5, touches: 2, firstTs: D0 + 14 * H, lastTs: D0 + 21 * H }],
+  };
+
+  it("the 00:00 bar reads the short 21:00 bucket", () => {
+    const { points } = computeSrLevels(chartBars, CFG, { mtf });
+    expect(points[3].support).toBe(100); // 23:00
+    expect(points[4].support).toBe(101); // 00:00
+  });
+
+  it("the level ends on the 21:00 bucket's last chart bar", () => {
+    const { levels } = computeSrLevels(chartBars, CFG, { mtf });
+    expect(levels[0].lastIdx).toBe(3); // 23:00
+  });
+});

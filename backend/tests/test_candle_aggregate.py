@@ -10,6 +10,7 @@ from auto_trader.core.candle_aggregate import (
     fold,
     is_derived,
     resolution_seconds,
+    rule_for,
 )
 from auto_trader.core.models import Candle, Resolution
 
@@ -210,3 +211,102 @@ def test_aggregate_stream_seeds_partial_bucket_on_reconnect():
     assert out[0].candle.open == 8
     assert out[0].candle.high == 30
     assert out[0].candle.close == 12
+
+
+def _tsh(y, mo, d, h, mi=0):
+    return int(datetime(y, mo, d, h, mi, tzinfo=timezone.utc).timestamp())
+
+
+def test_rule_for_custom_bases():
+    assert rule_for("MINUTE_7").base is Resolution.MINUTE
+    assert rule_for("MINUTE_90").base is Resolution.MINUTE_30
+    assert rule_for("MINUTE_20").base is Resolution.MINUTE_5
+    assert rule_for("HOUR_6").base is Resolution.HOUR
+    assert rule_for("HOUR_8").base is Resolution.HOUR  # never HOUR_4
+    assert rule_for("HOUR_6").group == 360 and rule_for("HOUR_6").kind == "minute"
+    assert rule_for("DAY_2").kind == "day" and rule_for("DAY_2").base is Resolution.DAY
+    assert rule_for("MONTH_5").kind == "month"
+    assert rule_for("HOUR_4") is None and rule_for("SECOND_5") is None
+    assert rule_for("HOUR_99") is None and rule_for("FOO") is None
+
+
+def test_derived_mapping_is_open_but_iterates_builtins():
+    assert "HOUR_6" in DERIVED and DERIVED.get("DAY_2") is not None
+    assert "HOUR_4" not in DERIVED and DERIVED.get("FOO") is None
+    assert is_derived("MINUTE_7") and not is_derived("MINUTE_5")
+    assert len(set(DERIVED)) == 8
+
+
+def test_five_hour_resets_daily_with_short_last_bar():
+    r = rule_for("HOUR_5")
+    assert bucket_open(_tsh(2026, 7, 5, 21), r) == _tsh(2026, 7, 5, 20)
+    assert bucket_open(_tsh(2026, 7, 6, 0), r) == _tsh(2026, 7, 6, 0)
+    assert bucket_open(_tsh(2026, 7, 6, 4, 59), r) == _tsh(2026, 7, 6, 0)
+    # The 20:00 bar is 4h: it ends at midnight, not at 01:00.
+    assert bucket_end(_tsh(2026, 7, 5, 20), r) == _tsh(2026, 7, 6, 0)
+    assert bucket_end(_tsh(2026, 7, 5, 16), r) == _tsh(2026, 7, 5, 20)
+
+
+def test_seven_minute_resets_at_midnight():
+    r = rule_for("MINUTE_7")
+    # 1440 = 205*7 + 5: the last bar of the day starts 23:55 and lasts 5 minutes.
+    assert bucket_open(_tsh(2026, 7, 5, 23, 57), r) == _tsh(2026, 7, 5, 23, 55)
+    assert bucket_end(_tsh(2026, 7, 5, 23, 57), r) == _tsh(2026, 7, 6, 0)
+    assert bucket_open(_tsh(2026, 7, 6, 0, 6), r) == _tsh(2026, 7, 6, 0)
+
+
+def test_fold_seven_minute_across_midnight_splits_buckets():
+    r = rule_for("MINUTE_7")
+    bars = [
+        Candle(datetime(2026, 7, 5, 23, 58, tzinfo=timezone.utc), 1, 2, 0.5, 1.5, 1),
+        Candle(datetime(2026, 7, 5, 23, 59, tzinfo=timezone.utc), 1.5, 3, 1, 2, 1),
+        Candle(datetime(2026, 7, 6, 0, 0, tzinfo=timezone.utc), 2, 2.5, 1.8, 2.2, 1),
+    ]
+    out = fold(bars, r)
+    assert [c.time.hour for c in out] == [23, 0]
+    assert out[0].high == 3 and out[0].close == 2 and out[1].open == 2
+
+
+def test_ninety_minute_fold_from_thirty():
+    r = rule_for("MINUTE_90")
+    bars = [
+        Candle(datetime(2026, 7, 5, h, m, tzinfo=timezone.utc), 1, 1 + i, 1, 1, 1)
+        for i, (h, m) in enumerate([(0, 0), (0, 30), (1, 0), (1, 30)])
+    ]
+    out = fold(bars, r)
+    assert [(c.time.hour, c.time.minute) for c in out] == [(0, 0), (1, 30)]
+    assert out[0].high == 3
+
+
+def test_day_two_groups_preserve_offset():
+    r = rule_for("DAY_2")
+    t = _ts(2026, 7, 5)
+    o = bucket_open(t, r)
+    assert o in (t, t - 86400)
+    assert bucket_end(t, r) == o + 2 * 86400
+    assert bucket_open(o + 86400, r) == o
+
+
+def test_five_month_groups_are_january_anchored_with_short_tail():
+    r = rule_for("MONTH_5")
+    assert bucket_open(_ts(2026, 3, 10), r) == _ts(2026, 1, 1)
+    assert bucket_open(_ts(2026, 7, 10), r) == _ts(2026, 6, 1)
+    assert bucket_open(_ts(2026, 12, 10), r) == _ts(2026, 11, 1)
+    assert bucket_end(_ts(2026, 12, 10), r) == _ts(2027, 1, 1)  # Nov-Dec, short
+    assert bucket_end(_ts(2026, 7, 10), r) == _ts(2026, 11, 1)
+
+
+def test_base_count_for_custom_kinds():
+    assert base_count_for(rule_for("HOUR_6"), 10) == 60
+    assert base_count_for(rule_for("MINUTE_90"), 10) == 30
+    assert base_count_for(rule_for("DAY_2"), 10) == 20
+    assert base_count_for(rule_for("HOUR_23"), 100) == 1000  # capped
+
+
+def test_resolution_seconds_rejects_garbage():
+    import pytest
+    from auto_trader.core.timeframe import TimeframeError
+
+    assert resolution_seconds("HOUR_6") == 21600
+    with pytest.raises(TimeframeError):
+        resolution_seconds("HOUR_99")

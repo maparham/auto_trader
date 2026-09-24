@@ -16,9 +16,8 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { analyze, type Token } from "./parser";
-import { CROSS_FNS, INDICATOR_SPECS, TIMEFRAMES, WRAPPER_ARITY, PREDICATE_FNS, COUNT_FN } from "./catalog";
+import { CROSS_FNS, INDICATOR_SPECS, WRAPPER_ARITY, PREDICATE_FNS, COUNT_FN, tfSeconds } from "./catalog";
 
-const TF_ALIASES = new Set(TIMEFRAMES.map((t) => t.alias));
 const CROSS_SET = new Set<string>(CROSS_FNS);
 const PREDICATE_SET = new Set<string>(PREDICATE_FNS);
 
@@ -91,7 +90,7 @@ function classify(
   if (OPERATOR_TYPES.has(tok.type)) return "operator";
   if (LOGIC_TYPES.has(tok.type)) return "logic";
   if (tok.type !== "NAME") return null;
-  if (prev?.type === "AT") return TF_ALIASES.has(value) ? "timeframe" : "variable";
+  if (prev?.type === "AT") return tfSeconds(value) != null ? "timeframe" : "variable";
   if (prev?.type === "DOT") return "field";
   // Object.hasOwn (not `in`) so inherited Object.prototype members — a token
   // literally named `toString` or `constructor` — never count as registered.

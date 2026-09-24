@@ -42,19 +42,23 @@ def fold_arrays(
         return ts, ohlc
     if rule.kind == "minute":
         span = rule.group * 60
-        buckets = ts - ts % span
+        day = ts - ts % 86400
+        buckets = day + ((ts - day) // span) * span
+    elif rule.kind == "day":
+        buckets = ts - ((ts // 86400) % rule.group) * 86400
     elif rule.kind == "week":
         buckets = ts - ((ts // _WEEK) % rule.group) * _WEEK
     else:
-        # Calendar buckets. Months-since-1970 make the group arithmetic flat:
-        # bucket_open aligns month groups within the calendar year, and the
-        # group sizes divide 12, so flooring the flat index is identical.
+        # Calendar buckets on a flat months-since-1970 index. 1970 starts in
+        # January, so idx % 12 is the month of the year and month groups
+        # re-anchor to January every year, exactly like bucket_open.
         months = ts.astype("datetime64[s]").astype("datetime64[M]")
         if rule.kind == "year":
             starts = months.astype("datetime64[Y]").astype("datetime64[M]")
         else:
             idx = months.astype(np.int64)
-            starts = ((idx // rule.group) * rule.group).astype("datetime64[M]")
+            year0 = idx - idx % 12
+            starts = (year0 + ((idx - year0) // rule.group) * rule.group).astype("datetime64[M]")
         buckets = starts.astype("datetime64[s]").astype(np.int64)
 
     firsts = np.concatenate([[0], np.flatnonzero(np.diff(buckets)) + 1])

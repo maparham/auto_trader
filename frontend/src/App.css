@@ -4341,6 +4341,55 @@
    visible (not hover-revealed) so it's discoverable — the whole point of the
    star over the old right-click menu. Only non-default intervals render it. */
 .interval-dropdown li .ind-star.tf-star { opacity: 1; }
+/* Custom-timeframe rows pair a star and a delete button; group them so
+   `.interval-dropdown li`'s space-between keeps the star aligned with every
+   other row's star instead of drifting to the middle. */
+.interval-dropdown .tf-actions { display: inline-flex; align-items: center; gap: 4px; }
+.interval-dropdown .tf-delete {
+  opacity: .6; background: transparent; border: none; color: var(--text-faint); cursor: pointer;
+  padding: 0; border-radius: 4px;
+}
+.interval-dropdown .tf-delete:hover { opacity: 1; color: var(--danger); }
+/* Custom-timeframe form: size field and unit segments share one box so the
+   pair reads as a single value ("7" + "m"), and the button below previews the
+   canonical label it will add. Every rule is scoped two classes deep so it
+   beats `.toolbar button`'s accent fill by specificity, and leaves InfoTip or
+   Tooltip triggers alone. Selected unit is muted gray, never accent blue. */
+.custom-tf-form { display: flex; flex-direction: column; gap: 6px; padding: 4px 8px 6px; }
+.custom-tf-form .custom-tf-field {
+  display: flex; align-items: stretch; height: 26px;
+  border: 1px solid var(--border); border-radius: 5px; overflow: hidden;
+  background: var(--bg);
+}
+.custom-tf-form .custom-tf-field:focus-within { border-color: var(--text-faint); }
+.custom-tf-form .custom-tf-field.invalid { border-color: var(--danger); }
+.custom-tf-form .custom-tf-field input {
+  flex: 1 1 auto; min-width: 0; width: 100%; border: none; outline: none;
+  background: transparent; color: var(--text); padding: 0 5px;
+  font: inherit; font-variant-numeric: tabular-nums; text-align: right;
+}
+.custom-tf-form .custom-tf-field input::placeholder { color: var(--text-faint); }
+.custom-tf-form .custom-tf-units { display: flex; border-left: 1px solid var(--border); }
+.custom-tf-form .custom-tf-units button {
+  width: 16px; padding: 0; border: none; border-radius: 0;
+  background: transparent; color: var(--text-faint); cursor: pointer;
+  font: inherit; font-size: 12px;
+}
+.custom-tf-form .custom-tf-units button:hover { color: var(--text); background: var(--hover); }
+.custom-tf-form .custom-tf-units button.on { color: var(--text); background: var(--hover-strong); }
+.custom-tf-form .custom-tf-units button:focus-visible,
+.custom-tf-form .custom-tf-add:focus-visible { outline: 1px solid var(--text-faint); outline-offset: -1px; }
+.custom-tf-form .custom-tf-add {
+  width: 100%; height: 24px; padding: 0 8px;
+  background: var(--hover); color: var(--text); border: none; border-radius: 5px;
+  cursor: pointer; font: inherit; font-size: 12px;
+}
+.custom-tf-form .custom-tf-add:hover:not(:disabled) { background: var(--hover-strong); }
+.custom-tf-form .custom-tf-add:disabled { color: var(--text-faint); background: transparent; cursor: default; }
+.custom-tf-form .custom-tf-error {
+  min-height: 24px; display: flex; align-items: center;
+  color: var(--danger); font-size: 11px; line-height: 1.2;
+}
 
 /* TradingView-style borderless toolbar button (Alert): transparent with a subtle
    gray rounded highlight on hover / when selected. Scoped under .toolbar to beat

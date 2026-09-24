@@ -14,6 +14,9 @@ import type {
   CompletionResult,
 } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
+import { loadCustomResolutions } from "../persist";
+import { ALL_PERIODS, customPeriods } from "../feed";
+import { isNativeTf, tfSecondsOf } from "../timeframe";
 import {
   CANDLE_FIELDS,
   CANDLE_FIELD_DETAILS,
@@ -202,11 +205,29 @@ export function completionsFor(
   const tfMatch = /@([A-Za-z0-9]*)$/.exec(before);
   if (tfMatch) {
     const prefix = tfMatch[1].toLowerCase();
-    return TIMEFRAMES.filter((t) => t.alias.toLowerCase().startsWith(prefix)).map((t) => ({
-      label: t.alias,
-      type: "keyword",
-      detail: t.resolution,
-    }));
+    // The suggestion list, the built-in derived set (3m, 2W ... 1Y) and the
+    // user's saved custom timeframes (through customPeriods: canonical, junk
+    // dropped), deduped by resolution and listed by duration.
+    const derived = ALL_PERIODS.filter(
+      (p) => !p.resolution.startsWith("SECOND") && !isNativeTf(p.resolution),
+    );
+    const seen = new Set<string>();
+    const all: Array<{ alias: string; resolution: string }> = [];
+    for (const t of [
+      ...TIMEFRAMES,
+      ...[...derived, ...customPeriods(loadCustomResolutions())].map((p) => ({
+        alias: p.label,
+        resolution: p.resolution,
+      })),
+    ]) {
+      if (seen.has(t.resolution)) continue;
+      seen.add(t.resolution);
+      all.push(t);
+    }
+    all.sort((a, b) => (tfSecondsOf(a.resolution) ?? 0) - (tfSecondsOf(b.resolution) ?? 0));
+    return all
+      .filter((t) => t.alias.toLowerCase().startsWith(prefix))
+      .map((t) => ({ label: t.alias, type: "keyword", detail: t.resolution }));
   }
 
   // Bare word: rank catalog names by how well they match the current prefix.

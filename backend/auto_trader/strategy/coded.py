@@ -236,6 +236,7 @@ class StrategyContext:
             arr = align_htf_to_base(
                 base_ms, htf, values_fn(htf), htf_ms,
                 base_interval_ms=base_interval_ms_of(self._strategy.base_timeframe),
+                htf_resolution=tf,
             )
         self._cache[cache_key] = arr
         return arr

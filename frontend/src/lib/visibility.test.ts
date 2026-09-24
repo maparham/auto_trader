@@ -170,3 +170,32 @@ describe("detectPreset", () => {
     }
   });
 });
+
+describe("minute timeframes of an hour or more (custom TFs)", () => {
+  it("normalizes MINUTE_N with N >= 60 to fractional hours", () => {
+    expect(parseResolution("MINUTE_90")).toEqual({ unit: "hours", value: 1.5 });
+    expect(parseResolution("MINUTE_59")).toEqual({ unit: "minutes", value: 59 });
+  });
+  it("shows on 90m and 1439m with the default model", () => {
+    expect(isVisibleOnResolution(defaultVisibility(), "MINUTE_90")).toBe(true);
+    expect(isVisibleOnResolution(defaultVisibility(), "MINUTE_1439")).toBe(true);
+    expect(isVisibleOnResolution(defaultVisibility(), "MINUTE_75")).toBe(true);
+  });
+  it("Only <90m> gives a sane hours range that shows on 90m and nowhere else", () => {
+    const m = applyPreset(defaultVisibility(), "MINUTE_90", "only");
+    expect(m.units.hours).toEqual({ on: true, min: 1.5, max: 1.5 });
+    expect(m.units.minutes.on).toBe(false);
+    expect(isVisibleOnResolution(m, "MINUTE_90")).toBe(true);
+    expect(isVisibleOnResolution(m, "HOUR")).toBe(false);
+    expect(isVisibleOnResolution(m, "HOUR_2")).toBe(false);
+    expect(detectPreset(m, "MINUTE_90")).toBe("only");
+  });
+  it("finer/coarser around 90m split at 1.5 hours", () => {
+    const finer = applyPreset(defaultVisibility(), "MINUTE_90", "finer");
+    expect(isVisibleOnResolution(finer, "HOUR")).toBe(true);
+    expect(isVisibleOnResolution(finer, "HOUR_2")).toBe(false);
+    const coarser = applyPreset(defaultVisibility(), "MINUTE_90", "coarser");
+    expect(isVisibleOnResolution(coarser, "HOUR")).toBe(false);
+    expect(isVisibleOnResolution(coarser, "HOUR_2")).toBe(true);
+  });
+});

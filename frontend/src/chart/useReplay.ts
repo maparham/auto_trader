@@ -52,7 +52,7 @@ import {
   pickJumpTarget,
   saveReplaySession,
 } from "../lib/replaySession";
-import { mtfBucketMs, refreshFormingBarThrottled, refreshMtfIndicators, setHtfCursorClamp } from "../lib/mtfCoordinator";
+import { mtfBucketKey, refreshFormingBarThrottled, refreshMtfIndicators, setHtfCursorClamp } from "../lib/mtfCoordinator";
 import {
   backtestRenderFlags,
   ownsBacktestPanel,
@@ -429,7 +429,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     (atMs?: number): number | null => {
       const res = storeResRef.current;
       const cursorMs = atMs ?? latest.current.state.cursorMs;
-      const n = revealedCount(barsRef.current, cursorMs, nominalMs(res));
+      const n = revealedCount(barsRef.current, cursorMs, nominalMs(res), res);
       return n > 0 ? barsRef.current[n - 1].close : null;
     },
     [nominalMs],
@@ -536,7 +536,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
         // top of it (the strategy reveal's markers and equity pane) has to know
         // to rebuild, and a true→false `loading` pair can be batched away.
         setState((s) => ({ ...s, loading: false, storeSeq: s.storeSeq + 1 }));
-        return revealedBars(bars, cursorMs, nominalMs(res));
+        return revealedBars(bars, cursorMs, nominalMs(res), res);
       } catch (err) {
         if (seq !== reqSeq.current) return [];
         setState((s) => ({
@@ -573,7 +573,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
       const facade = handle.dataFacadeRef.current;
       if (!chart || !facade) return;
       const res = storeResRef.current;
-      const revealed = revealedBars(barsRef.current, cursorMs, nominalMs(res));
+      const revealed = revealedBars(barsRef.current, cursorMs, nominalMs(res), res);
       if (!revealed.length) return;
       if (appended) {
         // One new bar at the right edge: push it so the view is untouched (a
@@ -599,7 +599,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     // barsFor) would refill on the first step and supersede that very load.
     if (!barsRef.current.length) return;
     const res = storeResRef.current;
-    if (!needsBuffer(barsRef.current, cur.state.cursorMs, nominalMs(res), REFILL_MARGIN)) return;
+    if (!needsBuffer(barsRef.current, cur.state.cursorMs, nominalMs(res), REFILL_MARGIN, res)) return;
     refillingRef.current = true;
     // CAPTURED, not incremented — unlike the other three fetch paths. A refill is
     // background work for the store a load already established, so it must never
@@ -652,6 +652,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           barsRef.current,
           latest.current.state.cursorMs,
           nominalMs(res),
+          res,
         );
         if (!canAdvance) {
           const next = nextProbeWindowSec(
@@ -706,8 +707,8 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     // Only step onto a bar that already has a LOADED successor (hasLoadedSuccessor
     // carries the why, and refillIfNeeded's end-of-session check reads the SAME
     // predicate so the two cannot drift apart).
-    const next = hasLoadedSuccessor(barsRef.current, cur.state.cursorMs, nominal)
-      ? nextCursorMs(barsRef.current, cur.state.cursorMs, nominal)
+    const next = hasLoadedSuccessor(barsRef.current, cur.state.cursorMs, nominal, res)
+      ? nextCursorMs(barsRef.current, cur.state.cursorMs, nominal, res)
       : null;
     if (next == null) {
       setState((s) => ({ ...s, playing: false }));
@@ -725,7 +726,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     }));
     // Advance the book over the bar this step just revealed, BEFORE painting it,
     // so the fills and the candle land in the same frame.
-    const idx = revealedCount(barsRef.current, next, nominal) - 1;
+    const idx = revealedCount(barsRef.current, next, nominal, res) - 1;
     const newBar = barsRef.current[idx];
     // Fills only ever happen when the cursor moves PAST the high-water mark: a
     // replayed-again bar must not re-trigger the orders it already filled.
@@ -744,7 +745,12 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     // that is reporting on a cursor which would no longer be the session's. The
     // card is a terminal state; leave the chart where the reveal describes it.
     if (cur.state.mode !== "active" || reportOpenRef.current) return;
-    const prev = prevCursorMs(barsRef.current, cur.state.cursorMs, nominalMs(storeResRef.current));
+    const prev = prevCursorMs(
+      barsRef.current,
+      cur.state.cursorMs,
+      nominalMs(storeResRef.current),
+      storeResRef.current,
+    );
     if (prev == null) return;
     // High-water is NEVER lowered: rewind is a view-only move, so trades cannot
     // un-happen and no order may be placed until the cursor returns.
@@ -934,7 +940,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
             setState((s) => ({ ...s, loading: false, error: OUTAGE_MSG }));
             return;
           }
-          const cursor = cursorForStartTs(bars, startTs, nominalMs(res));
+          const cursor = cursorForStartTs(bars, startTs, nominalMs(res), res);
           if (cursor == null) {
             setState((s) => ({ ...s, loading: false, error: "No candles at that point. Pick another." }));
             return;
@@ -1036,7 +1042,7 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
           if (partial) sawPartial = true;
           let store = bars;
           const placeCursor = () => {
-            const c = cursorForStartTs(store, targetMs, nominalMs(res));
+            const c = cursorForStartTs(store, targetMs, nominalMs(res), res);
             if (c != null) return c;
             // No bar at or before the target, but bars after it: the window's
             // context side never left the closure either, so the pre-gap bar is
@@ -1045,11 +1051,11 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
             // sides. Two bars, so the close is a real successor timestamp, not
             // the nominal-width guess.
             if (store.length >= 2 && store[0].timestamp > targetMs) {
-              return cursorForStartTs(store, store[0].timestamp, nominalMs(res));
+              return cursorForStartTs(store, store[0].timestamp, nominalMs(res), res);
             }
             return null;
           };
-          let cursor = cursorForStartTs(store, targetMs, nominalMs(res));
+          let cursor = cursorForStartTs(store, targetMs, nominalMs(res), res);
           // A null here is not necessarily the history floor — a target inside
           // a closure WIDER than the window (a crude-oil weekend is ~49h;
           // MINUTE_5's forward buffer is ~17h) looks identical: the window
@@ -1461,9 +1467,8 @@ export function useReplay(handle: ChartHandle, deps: ReplayDeps): ReplayApi {
     // because the fold changes INSIDE a bucket, which is exactly the span the
     // refetch machinery deliberately skips.
     refreshFormingBarThrottled(chart);
-    const bucket = mtfBucketMs(chart);
-    if (!bucket) return; // nothing pinned to a higher timeframe: nothing to refresh
-    const idx = Math.floor(state.cursorMs / bucket);
+    const idx = mtfBucketKey(chart, state.cursorMs);
+    if (idx == null) return; // nothing pinned to a higher timeframe: nothing to refresh
     if (mtfBucketRef.current === idx) return;
     if (mtfBucketRef.current === null) {
       // Session entry: the load effect's own refresh covers this cursor.

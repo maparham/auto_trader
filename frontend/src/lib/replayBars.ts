@@ -8,6 +8,7 @@
 // resolution re-derives its own visible set from it.
 import type { KLineData } from "klinecharts";
 import { RESOLUTION_SECONDS } from "./feed";
+import { barEndMs } from "./timeframe";
 
 /** Nominal bar width in ms. Only ever a FALLBACK for the newest loaded bar (see
  * barCloseMs): RESOLUTION_SECONDS' derived entries (WEEK_2, MONTH_*, YEAR) are
@@ -19,10 +20,22 @@ export function nominalMsFor(resolution: string): number {
 /** When bar `i` closes. The next bar's timestamp is the truth (correct for the
  * calendar-bucketed derived timeframes the backend folds, where a nominal width
  * is wrong by days); the nominal width covers the newest loaded bar, which has
- * no successor yet. */
-export function barCloseMs(bars: readonly KLineData[], i: number, nominalMs: number): number {
+ * no successor yet. Given `resolution`, that newest bar ends where the grammar
+ * says (barEndMs): a custom intraday bucket resets at 00:00 UTC, so the day's
+ * last 5H bar (20:00) closes at midnight, not 01:00.
+ *
+ * Every helper below takes the same optional trailing `resolution` and passes it
+ * down, so the step guard and the refill check keep reading one predicate. */
+export function barCloseMs(
+  bars: readonly KLineData[],
+  i: number,
+  nominalMs: number,
+  resolution?: string,
+): number {
   const next = bars[i + 1];
-  return next ? next.timestamp : bars[i].timestamp + nominalMs;
+  if (next) return next.timestamp;
+  const ts = bars[i].timestamp;
+  return (resolution != null ? barEndMs(resolution, ts) : null) ?? ts + nominalMs;
 }
 
 /** How many bars are CLOSED at or before the cursor. Bars are ascending, so this
@@ -31,12 +44,13 @@ export function revealedCount(
   bars: readonly KLineData[],
   cursorMs: number,
   nominalMs: number,
+  resolution?: string,
 ): number {
   let lo = 0;
   let hi = bars.length; // count of revealed bars, in [0, length]
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (barCloseMs(bars, mid, nominalMs) <= cursorMs) lo = mid + 1;
+    if (barCloseMs(bars, mid, nominalMs, resolution) <= cursorMs) lo = mid + 1;
     else hi = mid;
   }
   return lo;
@@ -47,8 +61,9 @@ export function revealedBars(
   bars: readonly KLineData[],
   cursorMs: number,
   nominalMs: number,
+  resolution?: string,
 ): KLineData[] {
-  return bars.slice(0, revealedCount(bars, cursorMs, nominalMs));
+  return bars.slice(0, revealedCount(bars, cursorMs, nominalMs, resolution));
 }
 
 /** Cursor after one step forward, or null when the loaded bars are exhausted
@@ -57,9 +72,10 @@ export function nextCursorMs(
   bars: readonly KLineData[],
   cursorMs: number,
   nominalMs: number,
+  resolution?: string,
 ): number | null {
-  const n = revealedCount(bars, cursorMs, nominalMs);
-  return n < bars.length ? barCloseMs(bars, n, nominalMs) : null;
+  const n = revealedCount(bars, cursorMs, nominalMs, resolution);
+  return n < bars.length ? barCloseMs(bars, n, nominalMs, resolution) : null;
 }
 
 /** Cursor after one step back, or null when a step would leave the chart blank
@@ -68,9 +84,10 @@ export function prevCursorMs(
   bars: readonly KLineData[],
   cursorMs: number,
   nominalMs: number,
+  resolution?: string,
 ): number | null {
-  const n = revealedCount(bars, cursorMs, nominalMs);
-  return n >= 2 ? barCloseMs(bars, n - 2, nominalMs) : null;
+  const n = revealedCount(bars, cursorMs, nominalMs, resolution);
+  return n >= 2 ? barCloseMs(bars, n - 2, nominalMs, resolution) : null;
 }
 
 /** Cursor for a chosen START timestamp: the close of the bar that CONTAINS it,
@@ -80,10 +97,11 @@ export function cursorForStartTs(
   bars: readonly KLineData[],
   startTs: number,
   nominalMs: number,
+  resolution?: string,
 ): number | null {
   for (let i = bars.length - 1; i >= 0; i--) {
     if (bars[i].timestamp <= startTs) {
-      return barCloseMs(bars, i, nominalMs) > startTs ? barCloseMs(bars, i, nominalMs) : null;
+      return barCloseMs(bars, i, nominalMs, resolution) > startTs ? barCloseMs(bars, i, nominalMs, resolution) : null;
     }
   }
   return null;
@@ -156,8 +174,9 @@ export function hasLoadedSuccessor(
   bars: readonly KLineData[],
   cursorMs: number,
   nominalMs: number,
+  resolution?: string,
 ): boolean {
-  return revealedCount(bars, cursorMs, nominalMs) + 1 < bars.length;
+  return revealedCount(bars, cursorMs, nominalMs, resolution) + 1 < bars.length;
 }
 
 /** The next window to probe when a refill window came back with no bar past the
@@ -188,8 +207,9 @@ export function needsBuffer(
   cursorMs: number,
   nominalMs: number,
   margin: number,
+  resolution?: string,
 ): boolean {
-  return bars.length - revealedCount(bars, cursorMs, nominalMs) <= margin;
+  return bars.length - revealedCount(bars, cursorMs, nominalMs, resolution) <= margin;
 }
 
 /** The [from, to] SECOND window a replay load asks the candles API for: enough

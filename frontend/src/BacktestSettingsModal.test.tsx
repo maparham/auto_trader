@@ -1301,6 +1301,35 @@ describe("risk sync load normalization write-back", () => {
   });
 });
 
+describe("BacktestSettingsModal timeframe picker", () => {
+  // A config already targeting a custom timeframe since deleted from the saved
+  // list falls out of periodGroups(loadCustomResolutions()) entirely; the
+  // <select> must still surface it as an option (labeled, not raw) rather than
+  // silently showing no matching option while cfg.range.resolution keeps
+  // naming the deleted TF.
+  it("keeps a resolution missing from the saved-custom list selectable", () => {
+    const cfg = defaultBacktestConfig();
+    cfg.range = { ...cfg.range, resolution: "MINUTE_7" };
+    renderModal(cfg);
+    const select = document.querySelector(".bt-tf-select") as HTMLSelectElement;
+    expect(select.value).toBe("MINUTE_7");
+    const opt = [...select.options].find((o) => o.value === "MINUTE_7");
+    expect(opt?.textContent).toBe("7m");
+  });
+
+  // Live-only seconds periods are filtered out of the rendered options, so a
+  // config naming one must count as missing too, or the select has no match.
+  it("keeps a live-only resolution the selects filter out selectable", () => {
+    const cfg = defaultBacktestConfig();
+    cfg.range = { ...cfg.range, resolution: "SECOND_5" };
+    renderModal(cfg);
+    const select = document.querySelector(".bt-tf-select") as HTMLSelectElement;
+    expect(select.value).toBe("SECOND_5");
+    const opts = [...select.options].filter((o) => o.value === "SECOND_5");
+    expect(opts).toHaveLength(1);
+  });
+});
+
 describe("BacktestSettingsModal walk-forward Period layout", () => {
   it("shows the From/To range picker without selecting Custom, and hides the mode seg + Windows", () => {
     renderModal();

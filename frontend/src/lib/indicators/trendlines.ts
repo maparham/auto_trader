@@ -40,6 +40,7 @@ import { isPivotAt } from "./pivots";
 import { atrSeries, rmaNext, trueRangeAt } from "../atr";
 import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { minPositiveGap } from "../barInterval";
+import { htfBarEndMs } from "../mtfForming";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "./shared";
 import {
   MAX_LIVE,
@@ -2254,6 +2255,7 @@ export function alignMtfTrendlines(
       true,
       mtf.formingIdx,
       mtf.chartMs,
+      mtf.timeframe,
     ),
   );
   const out: TrendlinesCalcPoint[] = ts.map((_, i) => {
@@ -2281,7 +2283,9 @@ export function alignMtfTrendlines(
     // The flagged forming entry is usable from its OPEN, exactly as the
     // alignment above admitted it — lineIdx must be the index those values
     // came from, or selectDrawnLines' === match against projectAt breaks.
-    (sameTf || j + 1 === mtf.formingIdx ? starts[j + 1] : starts[j + 1] + htfMs) <= t
+    (sameTf || j + 1 === mtf.formingIdx
+      ? starts[j + 1]
+      : htfBarEndMs(starts[j + 1], htfMs, mtf.timeframe ?? undefined)) <= t
   )
     j++;
   out[out.length - 1] = {
@@ -2539,7 +2543,8 @@ function htfExtremeSnap(
     const hit = memo.get(key);
     if (hit !== undefined) return hit;
     const t0 = starts[j];
-    const t1 = t0 + htfMs;
+    // True close: a short last intraday bucket ends at the 00:00 reset.
+    const t1 = htfBarEndMs(t0, htfMs, mtf.timeframe ?? undefined);
     let out = toChart(j);
     if (dataList[0].timestamp <= t0 && dataList[n - 1].timestamp >= t1 - barMs) {
       // First chart bar at/after the HTF bar's open (timestamps ascending).

@@ -633,3 +633,34 @@ def test_a_gap_straddling_window_is_still_rejected_on_a_coarser_series(tmp_path,
     data = client.post("/api/patterns/search", json=_body(query=query)).json()
     gap_motif_ts = 1_700_000_000 + 46 * 86_400
     assert all(m["ts"] != gap_motif_ts for m in data["matches"])
+
+
+def test_fold_arrays_matches_bucket_open_for_custom_kinds():
+    import numpy as np
+
+    from auto_trader.core.candle_aggregate import bucket_open, rule_for
+    from auto_trader.core.pattern_series import fold_arrays
+
+    # 1m bars across two midnights, and daily bars across two years.
+    minute_ts = np.arange(1_751_760_000 - 3600, 1_751_760_000 + 86400 + 3600, 60, dtype=np.int64)
+    day_ts = np.arange(1_735_689_600, 1_735_689_600 + 800 * 86400, 86400, dtype=np.int64)
+    for res, ts in (("MINUTE_7", minute_ts), ("HOUR_5", minute_ts),
+                    ("DAY_3", day_ts), ("MONTH_5", day_ts), ("MONTH_4", day_ts)):
+        rule = rule_for(res)
+        ohlc = np.ones((len(ts), 4))
+        got, _ = fold_arrays(ts, ohlc, rule)
+        want = sorted({bucket_open(int(t), rule) for t in ts})
+        assert got.tolist() == want, res
+
+
+def test_alias_resolution_finds_the_canonical_series(client):
+    # "5m" is canonicalized at the router boundary, so it reads the MINUTE_5
+    # history instead of missing the cache key.
+    r = client.post("/api/patterns/search", json=_body(resolution="5m"))
+    assert r.status_code == 200, r.text
+
+
+def test_invalid_resolution_is_422_with_the_grammar_reason(client):
+    r = client.post("/api/patterns/search", json=_body(resolution="HOUR_99"))
+    assert r.status_code == 422, r.text
+    assert "between 1 and 24" in r.json()["detail"]

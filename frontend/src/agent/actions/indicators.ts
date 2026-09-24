@@ -2,7 +2,7 @@
 // the same code paths the UI uses (addIndicatorInstance / removeIndicatorById
 // + persistence), so agent edits persist and mirror like human edits.
 import { ActionError, registerAction } from "../registry";
-import { focusedChart } from "./chart";
+import { agentPeriod, focusedChart } from "./chart";
 import {
   addIndicatorInstance,
   removeIndicatorById,
@@ -15,7 +15,6 @@ import {
   loadIndicatorConfigs,
 } from "../../lib/persist/artifacts";
 import { BASE_TEMPLATES } from "../../lib/customIndicators";
-import { ALL_PERIODS, periodByResolution } from "../../lib/feed";
 import { applyTrendlinesTimeframe } from "../../lib/mtfCoordinator";
 import { parseTrendlinesConfig } from "../../lib/indicators/trendlinesOutputs";
 
@@ -99,7 +98,7 @@ export function registerIndicatorActions(): void {
         extendData: { type: "object", description: "fields merged onto the instance's extendData" },
         timeframe: {
           type: "string",
-          description: "TRENDLINES only: a resolution (DAY) or label (1D) at or above the chart's, or \"chart\" to unpin",
+          description: "TRENDLINES only: a resolution (DAY) or label (1D, 4H, 90m, 2M; m is minutes, M is months) at or above the chart's, or \"chart\" to unpin",
         },
       },
       required: ["id"],
@@ -126,13 +125,11 @@ export function registerIndicatorActions(): void {
         const wanted = String(args.timeframe);
         if (wanted === "chart") timeframe = null;
         else {
-          const period =
-            periodByResolution(wanted) ??
-            ALL_PERIODS.find((p) => p.label.toLowerCase() === wanted.toLowerCase());
+          const period = agentPeriod(wanted);
           if (!period) {
             throw new ActionError(
               "INVALID_ARGS",
-              `unknown timeframe: ${wanted} (chart, or one of ${ALL_PERIODS.map((p) => p.label).join(", ")})`,
+              `unknown timeframe: ${wanted}. Use "chart", a resolution (HOUR_4, HOUR_6) or a label (4H, 6H, 90m, 2D, 3W, 2M); m is minutes, M is months. Limits: minutes 1 to 1439, hours 1 to 24, days 1 to 365, weeks 1 to 52, months 1 to 12.`,
             );
           }
           timeframe = period.resolution;

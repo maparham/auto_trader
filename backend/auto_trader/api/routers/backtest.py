@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.timeframe import canonicalize
 from auto_trader.core.models import Candle, Side
 from auto_trader.core import progress as pr
 from auto_trader.core.run_store import RUN_STORE
@@ -159,6 +160,7 @@ async def backtest(req: BacktestRequest, request: Request) -> BacktestResponse:
     posted `candles`, but only bars at/after `tradeFromTime` are tradeable or
     returned (D6) — that split is what lets a long indicator be fully warm on
     the trading window's first bar."""
+    req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     req.broker = deps.resolve_broker(request, req.broker)
     user = current_user(request)
     if not req.candles:
@@ -797,6 +799,7 @@ async def _prefetch_sweep_htf(
 
 @router.post("/api/backtest/sweep/jobs", response_model=SweepJobSubmitResponse)
 async def submit_sweep_job(req: BacktestRequest, request: Request, target: str = "local"):
+    req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     req.broker = deps.resolve_broker(request, req.broker)
     # target=remote: the remote compute host owns validation/probe/job creation, but
     # it must never fetch bars from a broker (COMPUTE_ONLY blocks that). So the local
@@ -1036,6 +1039,7 @@ def _validate_wfo_combo_hygiene(wf) -> None:
 
 @router.post("/api/backtest/walkforward/jobs", response_model=WfoJobSubmitResponse)
 async def submit_wfo_job(req: BacktestRequest, request: Request, target: str = "local"):
+    req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     req.broker = deps.resolve_broker(request, req.broker)
     # target=remote: fill req.htfCandles from the LOCAL cache, then forward
     # verbatim — the COMPUTE_ONLY remote host runs on shipped bars and never

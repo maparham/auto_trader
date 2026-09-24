@@ -13,6 +13,8 @@ import {
 } from "../../lib/signals";
 import { loadBacktestLastUsed, saveBacktestLastUsed } from "../../lib/persist";
 import { defaultBacktestConfig, type BacktestConfig } from "../../lib/backtestConfig";
+import { canonicalTf } from "../../lib/timeframe";
+import { agentPeriod } from "./agentPeriod";
 
 // How long to wait for a run to actually start before giving up (no chart
 // focused means nothing is subscribed to the run request).
@@ -25,6 +27,22 @@ const FINISH_POLL_MS = 15;
 
 function currentConfig(): BacktestConfig {
   return loadBacktestLastUsed() ?? defaultBacktestConfig();
+}
+
+// range.resolution is stored as the canonical resolution the rest of the app
+// keys on ("6H" and "6h" become HOUR_6), read the way chart.timeframe.set reads
+// it (agentPeriod). Invalid input fails with the grammar's own reason.
+function canonicalRangeResolution(raw: unknown): string {
+  const wanted = String(raw);
+  const period = agentPeriod(wanted);
+  if (period && !period.resolution.startsWith("SECOND")) return period.resolution;
+  let reason = "backtests need a timeframe of 1 minute or more";
+  try {
+    canonicalTf(wanted);
+  } catch (e) {
+    reason = (e as Error).message;
+  }
+  throw new ActionError("INVALID_ARGS", `range.resolution: ${reason}`);
 }
 
 export function registerBacktestActions(): void {
@@ -47,7 +65,10 @@ export function registerBacktestActions(): void {
       required: ["patch"],
     },
     handler: async (args) => {
-      const merged = { ...currentConfig(), ...(args.patch as Partial<BacktestConfig>) };
+      const patch = { ...(args.patch as Partial<BacktestConfig>) };
+      const res = patch.range?.resolution;
+      if (res != null) patch.range = { ...patch.range!, resolution: canonicalRangeResolution(res) };
+      const merged = { ...currentConfig(), ...patch };
       saveBacktestLastUsed(merged as BacktestConfig);
       return merged;
     },

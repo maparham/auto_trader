@@ -53,6 +53,7 @@ import { UP, DOWN } from "../lib/chartTheme";
 import { isSynthetic } from "../lib/syntheticRegistry";
 import { chartColors, type BidAskStyle, type Theme } from "../theme";
 import { RESOLUTION_SECONDS, type LiveStatus } from "../lib/feed";
+import { barEndMs } from "../lib/timeframe";
 import { type AlertCondition, type AlertTrigger } from "../lib/persist";
 import { type ExitCluster } from "../lib/tradeMarkers";
 import type { CurveLabelsHandle } from "../CurveLabels";
@@ -702,11 +703,11 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
           // would otherwise tick to 0:00 and freeze. Show "closed" in its place.
           countdown = "closed";
         } else if (statusRef.current === "live") {
-          const resSec = RESOLUTION_SECONDS[resRef.current] ?? 60;
-          const rem = Math.max(
-            0,
-            Math.floor((last.timestamp + resSec * 1000 - Date.now()) / 1000),
-          );
+          // barEndMs: a custom intraday bar that ends the day is short.
+          const endMs =
+            barEndMs(resRef.current, last.timestamp) ??
+            last.timestamp + (RESOLUTION_SECONDS[resRef.current] ?? 60) * 1000;
+          const rem = Math.max(0, Math.floor((endMs - Date.now()) / 1000));
           countdown = fmtCountdown(rem);
         }
         // Width of the price-axis column, so the pill fills it exactly (its left
@@ -1020,6 +1021,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
           if (side !== "bid") drawLevel(bidRef.current, st.bidColor);
         }
         const sel = selectedIndicator.value;
+        // The chart's nominal bar width for the dot phase (see paintSelectionDots).
+        const selBarMs = (RESOLUTION_SECONDS[resRef.current] ?? 0) * 1000 || null;
         if (sel) {
           paintSelectionDots(
             ctx,
@@ -1027,6 +1030,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
             sel,
             chartColors[themeRef.current].bg,
             chart.getBarSpace().bar,
+            selBarMs,
           );
           // Crossing dots: where the selected curve crosses every other
           // candle-pane curve, painted after the handles so they sit on top.
@@ -1049,6 +1053,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
             { paneId: "candle_pane", name: hovName },
             chartColors[themeRef.current].bg,
             chart.getBarSpace().bar,
+            selBarMs,
           );
         }
         // Hovering an indicator's CURVE (any pane) shows it in selected mode too —
@@ -1063,6 +1068,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
             curveHov,
             chartColors[themeRef.current].bg,
             chart.getBarSpace().bar,
+            selBarMs,
           );
         }
         // AVWAP anchor grab handle — only while AVWAP is selected and its anchor

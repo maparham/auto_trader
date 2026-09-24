@@ -23,10 +23,12 @@ from contextlib import asynccontextmanager, nullcontext, suppress
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from auto_trader.brokers.paper_exec import PaperExecutionBroker
 from auto_trader.brokers.registry import build_registry
 from auto_trader.core.tick_store import TICK_STORE
+from auto_trader.core.timeframe import TimeframeError
 
 from . import deps
 from .auth import auth_enabled, install_auth
@@ -195,6 +197,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Chartkar API", version="0.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(TimeframeError)
+async def _timeframe_error(_request, exc: TimeframeError) -> JSONResponse:
+    # Any resolution the grammar rejects is the caller's input error: 422 with
+    # the reason ("hours must be between 1 and 24"), never a 500.
+    return JSONResponse({"detail": str(exc)}, status_code=422)
+
 
 # Clerk auth. Installed BEFORE CORSMiddleware so CORS wraps it (Starlette
 # stacks later-added middleware outside earlier ones) and auth 401s carry

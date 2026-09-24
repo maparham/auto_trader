@@ -492,3 +492,56 @@ describe("fetchRecentWithStatus in-flight coalescing", () => {
     expect(r.bars.length).toBe(1);
   });
 });
+
+import {
+  RESOLUTION_SECONDS,
+  periodByResolution,
+  periodGroups,
+  quickBarPeriods,
+  oneTfLower,
+  pinnableTimeframes,
+  isBuiltinResolution,
+} from "./feed";
+
+describe("custom timeframes in feed", () => {
+  it("isBuiltinResolution knows every listed period and nothing else", () => {
+    for (const r of ["MINUTE", "HOUR_4", "WEEK", "MINUTE_3", "MONTH", "YEAR", "SECOND_5"]) {
+      expect(isBuiltinResolution(r)).toBe(true);
+    }
+    for (const r of ["HOUR_6", "MINUTE_90", "DAY_2", "4H", "junk"]) {
+      expect(isBuiltinResolution(r)).toBe(false);
+    }
+  });
+  it("sizes any grammar timeframe", () => {
+    expect(RESOLUTION_SECONDS["HOUR_6"]).toBe(21600);
+    expect(RESOLUTION_SECONDS["MINUTE_120"]).toBe(7200);
+    expect(RESOLUTION_SECONDS["FOO"]).toBeUndefined();
+    expect(Object.keys(RESOLUTION_SECONDS)).toContain("HOUR_4");
+    expect(Object.keys(RESOLUTION_SECONDS)).not.toContain("HOUR_6");
+  });
+  it("synthesizes periods", () => {
+    expect(periodByResolution("HOUR_6")).toEqual({ resolution: "HOUR_6", label: "6H" });
+    expect(periodByResolution("MINUTE_120")).toEqual({ resolution: "HOUR_2", label: "2H" });
+    expect(periodByResolution("HOUR_4")?.label).toBe("4H");
+    expect(periodByResolution("FOO")).toBeUndefined();
+  });
+  it("groups the custom list after the built-ins", () => {
+    const groups = periodGroups(["DAY_2", "MINUTE_120", "HOUR_2", "HOUR_4", "junk"]);
+    const custom = groups[groups.length - 1];
+    expect(custom.label).toBe("Custom");
+    expect(custom.periods.map((p) => p.label)).toEqual(["2H", "2D"]);
+    expect(periodGroups([]).some((g) => g.label === "Custom")).toBe(false);
+  });
+  it("quick bar dedupes non-canonical favorites", () => {
+    const bar = quickBarPeriods(["MINUTE_120", "HOUR_2"]);
+    expect(bar.filter((p) => p.resolution === "HOUR_2")).toHaveLength(1);
+  });
+  it("nominal hours and zoom ladder accept custom", () => {
+    expect(nominalBarHours("6H")).toBe(6);
+    expect(oneTfLower("HOUR_6", [])?.resolution).toBe("HOUR_4");
+  });
+  it("pinnable includes custom favorites at or above the chart", () => {
+    expect(pinnableTimeframes("HOUR", ["HOUR_6", "MINUTE_7"]).map((p) => p.resolution)).toContain("HOUR_6");
+    expect(pinnableTimeframes("HOUR", ["HOUR_6", "MINUTE_7"]).map((p) => p.resolution)).not.toContain("MINUTE_7");
+  });
+});

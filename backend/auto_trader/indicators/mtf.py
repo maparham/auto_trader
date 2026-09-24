@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.candle_aggregate import bucket_end, resolution_seconds, rule_for
+from auto_trader.core.timeframe import TimeframeError, canonicalize
 from auto_trader.core.models import Candle
 
 
@@ -30,6 +31,7 @@ def align_htf_to_base(
     htf_ms: int,
     *,
     base_interval_ms: int | None = None,
+    htf_resolution: str | None = None,
 ) -> list[float | None]:
     """Each base bar at time t takes the value of the most recent HTF bar whose
     CLOSE (open timestamp + htf_ms) is at or before t. Inputs sorted ascending;
@@ -44,15 +46,24 @@ def align_htf_to_base(
     whatever window this call happens to cover. Without it (older callers) the
     interval is inferred as the SMALLEST positive base-bar gap — the true
     interval across session/weekend holes, but wrong in exactly that
-    anomalous-bar case."""
+    anomalous-bar case.
+
+    `htf_resolution` (the pin's timeframe, canonical or alias) sets the true
+    close of a non-native intraday bar (7H, 90m): buckets reset at 00:00 UTC,
+    so the day's last one is short and closes at midnight, not a full span
+    later. Same rule as the frontend's barEndMs (alignHtfToChart via
+    htfBarEndMs). Month and year pins close at their true calendar end (the
+    next group's first day). Natives, day/week pins and an absent or unknown
+    resolution keep the nominal open + htf_ms."""
     interval = base_interval_ms if base_interval_ms is not None else _min_positive_gap(base_times_ms)
     same_tf = interval == htf_ms
+    close_of = _close_fn(htf_resolution, htf_ms)
     out: list[float | None] = [None] * len(base_times_ms)
     j = -1
     for i, t in enumerate(base_times_ms):
         while j + 1 < len(htf_candles):
             open_ms = int(htf_candles[j + 1].time.timestamp() * 1000)
-            usable_at = open_ms if same_tf else open_ms + htf_ms
+            usable_at = open_ms if same_tf else close_of(open_ms)
             if usable_at <= t:
                 j += 1
             else:
@@ -60,6 +71,31 @@ def align_htf_to_base(
         if j >= 0:
             out[i] = htf_values[j]
     return out
+
+
+_DAY_MS = 86_400_000
+
+
+def _close_fn(htf_resolution: str | None, htf_ms: int):
+    """open_ms -> close_ms for align_htf_to_base's closed-bar gate. Looked up
+    once per call, outside the bar loop."""
+    rule = None
+    if htf_resolution:
+        try:
+            rule = rule_for(canonicalize(htf_resolution))
+        except (TimeframeError, ValueError):
+            rule = None
+    if rule is None or rule.kind in ("day", "week"):
+        return lambda open_ms: open_ms + htf_ms
+    if rule.kind in ("month", "year"):
+        # Calendar buckets: the true end (next group's first day; the short
+        # year-end group and YEAR end on Jan 1), never open + 30d * N, which
+        # gates a 31-day month closed a day early (lookahead).
+        return lambda open_ms: bucket_end(open_ms // 1000, rule) * 1000
+    span_ms = rule.group * 60_000
+    # min(open + span, next 00:00 UTC), computed from the open directly (no
+    # re-snap), exactly as the frontend's barEndMs does.
+    return lambda open_ms: min(open_ms + span_ms, open_ms - open_ms % _DAY_MS + _DAY_MS)
 
 
 def _min_positive_gap(times_ms: Sequence[int]) -> int | None:

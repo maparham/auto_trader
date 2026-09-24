@@ -12,8 +12,7 @@ import { PERF_DIAG_ON, recordBars, recordFetch } from "./perfDiag";
 import { getSynthetic, isSynthetic } from "./syntheticRegistry";
 import { withImpersonation } from "./impersonation";
 import { isDemoMode } from "./demoMode";
-// Pin aliases ("4H") only — the canonical table below is this file's own.
-import { tfSeconds } from "./expr/catalog";
+import { tfLabel, tfSecondsOf, tryCanonicalTf } from "./timeframe";
 
 export interface Period {
   resolution: string; // backend Resolution value, or a SECONDS_INTERVALS key
@@ -114,19 +113,58 @@ export const ALL_PERIODS: Period[] = [
 
 const PERIOD_BY_RESOLUTION = new Map(ALL_PERIODS.map((p) => [p.resolution, p]));
 
+// Whether a canonical resolution key is one of the listed built-in periods
+// (quick-bar defaults, derived and live-only seconds). Custom timeframes are
+// everything else the grammar accepts.
+export function isBuiltinResolution(resolution: string): boolean {
+  return PERIOD_BY_RESOLUTION.has(resolution);
+}
+
 // The fixed defaults that always occupy the quick bar and can't be removed.
 export const DEFAULT_RESOLUTIONS = new Set(PERIODS.map((p) => p.resolution));
 
+// A built-in Period when known, else a synthesized one for any grammar
+// timeframe (label or canonical, see lib/timeframe.ts) except the seconds keys,
+// which exist only as the listed live-only periods. undefined when invalid.
 export function periodByResolution(resolution: string): Period | undefined {
-  return PERIOD_BY_RESOLUTION.get(resolution);
+  const hit = PERIOD_BY_RESOLUTION.get(resolution);
+  if (hit) return hit;
+  const canon = tryCanonicalTf(resolution);
+  if (canon == null || canon.startsWith("SECOND")) return undefined;
+  return PERIOD_BY_RESOLUTION.get(canon) ?? { resolution: canon, label: tfLabel(canon) };
 }
 
-// Timeframes an indicator may pin to: the chart's own timeframe or higher. A
-// pin equal to the chart differs from "Chart" mode under wait-for-closes — it
-// updates only on bar close instead of tracking the forming bar.
-export function pinnableTimeframes(chartResolution: string): Period[] {
+// The saved custom timeframes as Periods: canonical, de-duplicated, built-ins
+// and invalid entries dropped, ascending by duration.
+export function customPeriods(custom: string[]): Period[] {
+  const seen = new Map<string, Period>();
+  for (const raw of custom) {
+    const canon = tryCanonicalTf(raw);
+    if (canon == null || canon.startsWith("SECOND") || isBuiltinResolution(canon)) continue;
+    seen.set(canon, { resolution: canon, label: tfLabel(canon) });
+  }
+  return [...seen.values()].sort(
+    (a, b) => (RESOLUTION_SECONDS[a.resolution] ?? 0) - (RESOLUTION_SECONDS[b.resolution] ?? 0),
+  );
+}
+
+// PERIOD_GROUPS plus the user's "Custom" group (omitted when empty).
+export function periodGroups(custom: string[]): PeriodGroup[] {
+  const periods = customPeriods(custom);
+  return periods.length ? [...PERIOD_GROUPS, { label: "Custom", periods }] : PERIOD_GROUPS;
+}
+
+// Timeframes an indicator may pin to: the chart's own timeframe or higher,
+// from the native periods plus the user's custom ones. A pin equal to the chart
+// differs from "Chart" mode under wait-for-closes: it updates only on bar close
+// instead of tracking the forming bar.
+export function pinnableTimeframes(chartResolution: string, custom: string[] = []): Period[] {
   const chartSecs = RESOLUTION_SECONDS[chartResolution] ?? 0;
-  return PERIODS.filter((p) => (RESOLUTION_SECONDS[p.resolution] ?? 0) >= chartSecs);
+  return [...PERIODS, ...customPeriods(custom)]
+    .filter((p) => (RESOLUTION_SECONDS[p.resolution] ?? 0) >= chartSecs)
+    .sort(
+      (a, b) => (RESOLUTION_SECONDS[a.resolution] ?? 0) - (RESOLUTION_SECONDS[b.resolution] ?? 0),
+    );
 }
 
 // True when a pinned MTF timeframe is finer than the chart's — reachable by
@@ -933,8 +971,8 @@ export function openLive(
   };
 }
 
-// Seconds per resolution bucket — used for scroll-back window math (task 6).
-export const RESOLUTION_SECONDS: Record<string, number> = {
+// Seconds per built-in resolution bucket; used for scroll-back window math.
+const BUILTIN_RESOLUTION_SECONDS: Record<string, number> = {
   SECOND: 1,
   SECOND_5: 5,
   SECOND_10: 10,
@@ -961,6 +999,20 @@ export const RESOLUTION_SECONDS: Record<string, number> = {
   YEAR: 31536000,
 };
 
+// Seconds per resolution bucket for ANY timeframe the grammar accepts (see
+// lib/timeframe.ts), so custom timeframes flow through every existing
+// `RESOLUTION_SECONDS[res] ?? 60` lookup. Enumeration still lists only the
+// built-ins, so read it by key; never snapshot it with Object.entries.
+export const RESOLUTION_SECONDS: Record<string, number> = new Proxy(BUILTIN_RESOLUTION_SECONDS, {
+  get(target, key) {
+    if (typeof key !== "string") return undefined;
+    return target[key] ?? tfSecondsOf(key) ?? undefined;
+  },
+  has(target, key) {
+    return typeof key === "string" && (key in target || tfSecondsOf(key) != null);
+  },
+});
+
 /** NOMINAL hours per bar for a resolution — the width the resolution *means*,
  * never one measured off the candles.
  *
@@ -976,7 +1028,8 @@ export const RESOLUTION_SECONDS: Record<string, number> = {
  * the same pair the backend's `tf_resolution(pin) or pin` accepts. null when the
  * name is unknown, so callers choose their own fallback. */
 export function nominalBarHours(resolution: string): number | null {
-  const secs = RESOLUTION_SECONDS[resolution] ?? tfSeconds(resolution);
+  // The Proxy parses pin aliases ("4H", "D") through the grammar too.
+  const secs = RESOLUTION_SECONDS[resolution];
   return secs != null && secs > 0 ? secs / 3600 : null;
 }
 
@@ -994,13 +1047,23 @@ export function quickBarPeriods(favoriteResolutions: string[]): Period[] {
   const byRes = new Map(PERIODS.map((p) => [p.resolution, p]));
   for (const r of favoriteResolutions) {
     const p = periodByResolution(r);
-    if (p) byRes.set(r, p);
+    if (p) byRes.set(p.resolution, p);
   }
   return [...byRes.values()].sort(
     (a, b) =>
       (RESOLUTION_SECONDS[a.resolution] ?? 0) -
       (RESOLUTION_SECONDS[b.resolution] ?? 0),
   );
+}
+
+// The quick bar plus the ACTIVE period when it isn't on it (a seconds or custom
+// TF), slotted in by duration so the row still reads shortest to longest. The
+// active entry is `active` itself, so callers can tell it apart by identity.
+export function quickBarWithActive(quickBar: Period[], active: Period): Period[] {
+  if (quickBar.some((p) => p.resolution === active.resolution)) return quickBar;
+  const secs = RESOLUTION_SECONDS[active.resolution] ?? 0;
+  const at = quickBar.findIndex((p) => (RESOLUTION_SECONDS[p.resolution] ?? 0) > secs);
+  return at < 0 ? [...quickBar, active] : [...quickBar.slice(0, at), active, ...quickBar.slice(at)];
 }
 
 // The enabled quick-bar period immediately FINER than `currentResolution`

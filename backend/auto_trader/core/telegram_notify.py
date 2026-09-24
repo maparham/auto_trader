@@ -33,6 +33,8 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from auto_trader.core.timeframe import TimeframeError, label
+
 log = logging.getLogger(__name__)
 
 _LINK_CODE_TTL_SECONDS = 600
@@ -75,6 +77,17 @@ _TIMEFRAME_LABELS = {
     "MINUTE": "1m", "MINUTE_5": "5m", "MINUTE_15": "15m", "MINUTE_30": "30m",
     "HOUR": "1h", "HOUR_4": "4h", "DAY": "1D", "WEEK": "1W",
 }
+
+
+def _timeframe_label(timeframe: str) -> str:
+    """Caption label: the historical wording for natives, the grammar label for
+    anything else, the raw string when neither applies."""
+    if timeframe in _TIMEFRAME_LABELS:
+        return _TIMEFRAME_LABELS[timeframe]
+    try:
+        return label(timeframe)
+    except TimeframeError:
+        return timeframe
 
 
 def _format_fired_time(payload: dict) -> str:
@@ -336,7 +349,7 @@ class TelegramNotify:
             # without matplotlib in minimal test environments.
             from auto_trader.core.alert_chart import render_alert_chart
 
-            tf_label = _TIMEFRAME_LABELS.get(timeframe, timeframe)
+            tf_label = _timeframe_label(timeframe)
             cond = _CONDITION_LABELS.get(
                 payload.get("condition"), payload.get("condition") or ""
             )

@@ -810,3 +810,21 @@ describe("boolean AST shape", () => {
     expect(row.parts[1].kind).toBe("Compare");
   });
 });
+
+describe("custom timeframe pins", () => {
+  it("accepts grammar pins", () => {
+    for (const tf of ["6H", "90m", "2D", "3W", "4M", "D", "1Y"]) {
+      expect(analyze(`candle.close@${tf} > candle.close`).error).toBeNull();
+    }
+  });
+  it("rejects bad pins with the grammar hint", () => {
+    const r = analyze("candle.close@6h > candle.close");
+    expect(r.error?.code).toBe("unknown_tf");
+    expect(r.error?.message).toBe(
+      "Unknown timeframe 6h. Use a number and a unit, like 7m, 6H, 2D, 3W or 2M.",
+    );
+  });
+  it("rejects seconds pins", () => {
+    expect(analyze("candle.close@SECOND_5 > candle.close").error?.code).toBe("unknown_tf");
+  });
+});

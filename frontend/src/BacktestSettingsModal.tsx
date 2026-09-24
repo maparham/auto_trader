@@ -54,7 +54,7 @@ import { captureIndicatorAppearance, liveExprInstances } from "./lib/indicators"
 import { collectPortableInstances, rewriteConfigInstanceRefs } from "./lib/ruleClipboard";
 import { applyPortableInstances, useRuleClipboard } from "./lib/useRuleClipboard";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
-import { RESOLUTION_SECONDS, PERIOD_GROUPS, periodByResolution } from "./lib/feed";
+import { RESOLUTION_SECONDS, periodGroups, periodByResolution } from "./lib/feed";
 import {
   type BacktestConfig,
   type RangeConfig,
@@ -131,6 +131,7 @@ import {
   saveWfoSchedule,
   loadBacktestPanelPinned,
   saveBacktestPanelPinned,
+  loadCustomResolutions,
 } from "./lib/persist";
 
 interface Props {
@@ -2024,6 +2025,24 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   const chartTfLabel = periodByResolution(resolution)?.label;
   const chartOptionLabel = chartTfLabel ? `Chart (${chartTfLabel})` : "Chart";
 
+  // A config already targeting a custom timeframe since deleted from the saved
+  // list falls out of periodGroups(loadCustomResolutions()) entirely, which
+  // would leave the controlled <select> showing no matching option (and the
+  // browser silently falling back to the first one) while cfg.range.resolution
+  // still names the deleted TF. Same "stay visible and reselectable-away-from"
+  // treatment as IndicatorSettings' pinBelowChart precedent: surface it as its
+  // own option so the select's value always has a match.
+  // The groups exactly as both timeframe selects render them (live-only
+  // seconds dropped, empty groups gone), so "missing" means "no rendered match".
+  const tfGroups = periodGroups(loadCustomResolutions())
+    .map((group) => ({ ...group, periods: group.periods.filter((p) => !p.liveOnly) }))
+    .filter((group) => group.periods.length > 0);
+  const currentTfRes = cfg.range.resolution;
+  const missingCurrentTf =
+    currentTfRes && !tfGroups.some((g) => g.periods.some((p) => p.resolution === currentTfRes))
+      ? periodByResolution(currentTfRes)
+      : undefined;
+
   const timeframeSelect = (
     <label className="bt-tf-inline">
       <span className="bt-tf-label">
@@ -2036,19 +2055,18 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
         onChange={(e) => setRange({ resolution: e.target.value || undefined })}
       >
         <option value="">{chartOptionLabel}</option>
-        {PERIOD_GROUPS.map((group) => {
-          const periods = group.periods.filter((p) => !p.liveOnly);
-          if (periods.length === 0) return null;
-          return (
-            <optgroup key={group.label} label={group.label}>
-              {periods.map((p) => (
-                <option key={p.resolution} value={p.resolution}>
-                  {p.label}
-                </option>
-              ))}
-            </optgroup>
-          );
-        })}
+        {missingCurrentTf && (
+          <option value={currentTfRes}>{missingCurrentTf.label}</option>
+        )}
+        {tfGroups.map((group) => (
+          <optgroup key={group.label} label={group.label}>
+            {group.periods.map((p) => (
+              <option key={p.resolution} value={p.resolution}>
+                {p.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
       </select>
     </label>
   );
@@ -2397,19 +2415,18 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
                             onChange={(e) => setRange({ resolution: e.target.value || undefined })}
                           >
                             <option value="">{chartOptionLabel}</option>
-                            {PERIOD_GROUPS.map((group) => {
-                              const periods = group.periods.filter((p) => !p.liveOnly);
-                              if (periods.length === 0) return null;
-                              return (
-                                <optgroup key={group.label} label={group.label}>
-                                  {periods.map((p) => (
-                                    <option key={p.resolution} value={p.resolution}>
-                                      {p.label}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              );
-                            })}
+                            {missingCurrentTf && (
+                              <option value={currentTfRes}>{missingCurrentTf.label}</option>
+                            )}
+                            {tfGroups.map((group) => (
+                              <optgroup key={group.label} label={group.label}>
+                                {group.periods.map((p) => (
+                                  <option key={p.resolution} value={p.resolution}>
+                                    {p.label}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
                           </select>
                           <select
                             className="bt-wfo-gs"

@@ -248,3 +248,17 @@ describe("nextProbeWindowSec", () => {
     expect(nextProbeWindowSec({ fromSec: 1_000, toSec: NOW }, NOW)).toBeNull();
   });
 });
+
+describe("non-uniform custom bar widths", () => {
+  it("newest 5H bar of the day closes at midnight, not 01:00", () => {
+    const d = Date.UTC(2026, 6, 5);
+    const bars = [{ timestamp: d + 20 * 3_600_000 }] as never[];
+    expect(barCloseMs(bars, 0, nominalMsFor("HOUR_5"), "HOUR_5")).toBe(d + 24 * 3_600_000);
+  });
+  it("revealedCount honors the short last bar", () => {
+    const d = Date.UTC(2026, 6, 5);
+    const bars = [{ timestamp: d + 20 * 3_600_000 }] as never[];
+    expect(revealedCount(bars, d + 24 * 3_600_000, nominalMsFor("HOUR_5"), "HOUR_5")).toBe(1);
+    expect(revealedCount(bars, d + 24 * 3_600_000, nominalMsFor("HOUR_5"))).toBe(0);
+  });
+});

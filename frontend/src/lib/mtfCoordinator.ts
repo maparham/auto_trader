@@ -21,9 +21,11 @@ import {
   type MtfSeriesBase,
 } from "./mtf";
 import { fetchHtfInterval, htfIntervalKey } from "./htfBarCache";
-import { foldFormingBar, formingOpenMs } from "./mtfForming";
+import { foldFormingBar, formingOpenMs, htfBarEndMs } from "./mtfForming";
 import { fetchSpanParallel } from "./historyPaging";
 import { barCloseMs } from "./replayBars";
+import { bucketOpenMs } from "./timeframe";
+import { declaredBarMs, setDeclaredBarMs } from "./barInterval";
 import { indTypeOf, templateMaKind, type MaExtend } from "./customIndicators";
 import { computePivotBarsSince } from "./indicators/pivotBarsSince";
 import {
@@ -188,15 +190,14 @@ const htfCursors = new WeakMap<Chart, () => number>();
 // the real interval instead of a gap-inferred guess (mirror of the backend's
 // base_interval_ms fix; see the nominalBarHours doc note on why gaps lie).
 // Same WeakMap idiom as htfCursors: nothing to leak on chart disposal.
-const chartIntervals = new WeakMap<Chart, number>();
-
+// The map itself lives in barInterval.ts so the backtest overlays and painters
+// read the same declared width.
 export function setChartIntervalMs(chart: Chart, ms: number | null): void {
-  if (ms && ms > 0) chartIntervals.set(chart, ms);
-  else chartIntervals.delete(chart);
+  setDeclaredBarMs(chart, ms);
 }
 
 function chartIntervalOf(chart: Chart): number | undefined {
-  return chartIntervals.get(chart);
+  return declaredBarMs(chart);
 }
 
 export function setHtfCursorClamp(
@@ -374,11 +375,12 @@ export function clampHtfBars(
   bars: KLineData[],
   cursorMs: number,
   nominalMs: number,
+  resolution?: string,
 ): KLineData[] {
   if (!cursorMs) return bars;
   const out: KLineData[] = [];
   for (let i = 0; i < bars.length; i++) {
-    if (barCloseMs(bars, i, nominalMs) <= cursorMs) out.push(bars[i]);
+    if (barCloseMs(bars, i, nominalMs, resolution) <= cursorMs) out.push(bars[i]);
     else break; // ascending: everything after this is later still
   }
   return out;
@@ -407,11 +409,14 @@ function prepFormingBars(
   chart: Chart,
   htf: KLineData[],
   htfMs: number,
+  timeframe: string,
 ): FormingPrep {
   const data = chart.getDataList();
   const newestMs = data.length ? data[data.length - 1].timestamp : 0;
+  // Closed = ended by the chart's newest bar, where the grammar says the bar
+  // ends (a custom 5H 20:00 bucket ends at midnight, not 01:00).
   const closed = newestMs
-    ? htf.filter((b) => b.timestamp + htfMs <= newestMs)
+    ? htf.filter((b) => htfBarEndMs(b.timestamp, htfMs, timeframe) <= newestMs)
     : htf;
   // First fetched bar past the closed cut = the broker's own partial forming
   // bar. Its timestamp is the authoritative bucket open (calendar timeframes
@@ -422,11 +427,12 @@ function prepFormingBars(
     closed.map((b) => b.timestamp),
     htfMs,
     seed,
+    timeframe,
   );
   const cursorMs = htfCursors.get(chart)?.() ?? 0;
   const forming =
     openMs != null
-      ? foldFormingBar(data, openMs, htfMs, seed, cursorMs || undefined)
+      ? foldFormingBar(data, openMs, htfMs, seed, cursorMs || undefined, timeframe)
       : null;
   const bars = forming ? [...closed, forming] : closed;
   return {
@@ -466,17 +472,33 @@ function readWaitClose(ind: { extendData?: object } | null): boolean {
  * a correctness input: the clamp itself is applied at fetch time, whoever
  * triggered the fetch. */
 export function mtfBucketMs(chart: Chart): number {
-  let smallest = 0;
+  return smallestPin(chart)?.ms ?? 0;
+}
+
+/** The smallest pinned width and the timeframe that has it. */
+function smallestPin(chart: Chart): { ms: number; tf: string } | null {
+  let best: { ms: number; tf: string } | null = null;
   for (const [, byName] of getIndicatorsByPane(chart)) {
     for (const [, ind] of byName) {
       const tf = (ind.extendData as { mtf?: MtfSeriesBase } | undefined)?.mtf
         ?.timeframe;
       if (!tf) continue;
       const ms = (nominalBarHours(tf) ?? 0) * 3_600_000;
-      if (ms > 0 && (smallest === 0 || ms < smallest)) smallest = ms;
+      if (ms > 0 && (best === null || ms < best.ms)) best = { ms, tf };
     }
   }
-  return smallest;
+  return best;
+}
+
+/** Key of the smallest pinned bucket containing `ts` (its open, in ms), or
+ * null when nothing is pinned. A change of key between two cursor positions or
+ * ticks is a bucket crossing. The open comes from the grammar (bucketOpenMs),
+ * so a pin that does not divide the day (5H, 7m) crosses where its buckets
+ * really reset at 00:00 UTC, not on an epoch grid. */
+export function mtfBucketKey(chart: Chart, ts: number): number | null {
+  const pin = smallestPin(chart);
+  if (!pin) return null;
+  return bucketOpenMs(pin.tf, ts) ?? Math.floor(ts / pin.ms) * pin.ms;
 }
 
 /**
@@ -621,7 +643,7 @@ async function fetchHtfBars(
   // the cache would leak one cell's cursor into another's series.
   const cursorMs = htfCursors.get(chart)?.() ?? 0;
   return {
-    htf: clampHtfBars(res.bars, cursorMs, htfMs),
+    htf: clampHtfBars(res.bars, cursorMs, htfMs, timeframe),
     htfMs,
     failed: res.failed,
     // The interval this call ASKED for. On a successful walk the caller
@@ -710,7 +732,7 @@ export async function applyMaTimeframe(
   const fp =
     waitClose || !dockedAt(chart, askToMs, htfMs)
       ? null
-      : prepFormingBars(chart, htf, htfMs);
+      : prepFormingBars(chart, htf, htfMs, timeframe);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     epic,
@@ -842,7 +864,7 @@ export async function applyPivotBandsTimeframe(
   const fp =
     waitClose || !dockedAt(chart, askToMs, htfMs)
       ? null
-      : prepFormingBars(chart, htf, htfMs);
+      : prepFormingBars(chart, htf, htfMs, timeframe);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     epic,
@@ -970,7 +992,7 @@ export async function applySrLevelsTimeframe(
   const fp =
     waitClose || !dockedAt(chart, askToMs, htfMs)
       ? null
-      : prepFormingBars(chart, htf, htfMs);
+      : prepFormingBars(chart, htf, htfMs, timeframe);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     epic,
@@ -1121,11 +1143,11 @@ export async function applyTrendlinesTimeframe(
   const fp =
     waitClose || !dockedAt(chart, askToMs, htfMs)
       ? null
-      : prepFormingBars(chart, htf, htfMs);
+      : prepFormingBars(chart, htf, htfMs, timeframe);
   const bars = fp
     ? fp.bars
     : newestMs
-      ? htf.filter((b) => b.timestamp + htfMs <= newestMs)
+      ? htf.filter((b) => htfBarEndMs(b.timestamp, htfMs, timeframe) <= newestMs)
       : htf;
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
@@ -1240,7 +1262,7 @@ export async function applyFvgTimeframe(
   const fp =
     waitClose || !dockedAt(chart, askToMs, htfMs)
       ? null
-      : prepFormingBars(chart, htf, htfMs);
+      : prepFormingBars(chart, htf, htfMs, timeframe);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     epic,
@@ -1396,7 +1418,7 @@ export async function applySlopeTimeframe(
   const fp =
     waitClose || !dockedAt(chart, askToMs, htfMs)
       ? null
-      : prepFormingBars(chart, htf, htfMs);
+      : prepFormingBars(chart, htf, htfMs, timeframe);
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     epic,
@@ -1556,11 +1578,12 @@ export function refreshFormingBar(chart: Chart): void {
         closed.map((b) => b.timestamp),
         htfMs,
         seed,
+        timeframe,
       );
       const cursorMs = htfCursors.get(chart)?.() ?? 0;
       const forming =
         openMs != null
-          ? foldFormingBar(data, openMs, htfMs, seed, cursorMs || undefined)
+          ? foldFormingBar(data, openMs, htfMs, seed, cursorMs || undefined, timeframe)
           : null;
       const bars = forming ? [...closed, forming] : closed;
       const extra: Pick<

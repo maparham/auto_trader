@@ -29,7 +29,7 @@ vi.mock("../theme", async (importOriginal) => {
 
 // Controlled HTF fetch: each test swaps the implementation.
 const fetchRangeStrict = vi.fn<(...args: unknown[]) => Promise<KLineData[]>>();
-const RES_SECONDS: Record<string, number> = { MINUTE_5: 300, MINUTE_15: 900, MONTH: 2_592_000 };
+const RES_SECONDS: Record<string, number> = { MINUTE_5: 300, MINUTE_15: 900, HOUR: 3600, HOUR_5: 18_000, MONTH: 2_592_000 };
 vi.mock("./feed", () => ({
   fetchRangeStrict: (...args: unknown[]) => fetchRangeStrict(...args),
   RESOLUTION_SECONDS: RES_SECONDS,
@@ -710,6 +710,39 @@ describe("forming-bar mode (waitClose: false)", () => {
     // for a pin at the broker's history edge — the OIL_CRUDE/US100 freeze loop.
     expect(after.coveredFromMs).toBe(before.coveredFromMs);
     expect(after.coveredToMs).toBe(before.coveredToMs);
+  });
+
+  it("a custom 5H pin closes the day's short 20:00 bucket at midnight (00:00-01:00 on a 1H chart)", async () => {
+    // 5H buckets reset daily at 00:00 UTC: 00, 05, 10, 15, 20, and the 20:00
+    // bucket is 4h long. At 00:xx the 20:00 bar is CLOSED and the forming bucket
+    // is the new day's 00:00 one; folding [20:00, 01:00) would swallow it.
+    const DAY = 86_400_000;
+    const H1 = 3_600_000;
+    const midnight = 116 * DAY; // 10_022_400_000
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) => {
+      const out: KLineData[] = [];
+      for (let d = Math.floor(((fromSec as number) * 1000) / DAY) * DAY; d <= (toSec as number) * 1000; d += DAY)
+        for (const h of [0, 5, 10, 15, 20]) {
+          const t = d + h * H1;
+          if (t >= (fromSec as number) * 1000 && t <= (toSec as number) * 1000) out.push(bar(t));
+        }
+      return Promise.resolve(out);
+    });
+    const data: KLineData[] = [];
+    for (let t = midnight - 4 * H1; t <= midnight; t += H1)
+      data.push({ timestamp: t, open: 5, high: 7, low: 1, close: 5, volume: 1 } as KLineData);
+    const f = fakeChart({ indType: "EMA", mtf: { timeframe: "HOUR_5", waitClose: false } });
+    (f.chart as { getDataList: () => KLineData[] }).getDataList = () => data;
+    await applyEma(f.chart, "HOUR_5");
+    const mtf = f.overrides.at(-1)!.patch.extendData?.mtf as {
+      formingIdx?: number;
+      htfStarts: number[];
+      htfClosed?: KLineData[];
+    };
+    expect(mtf.htfClosed!.at(-1)!.timestamp).toBe(midnight - 4 * H1);
+    expect(mtf.formingIdx).toBe(mtf.htfStarts.length - 1);
+    expect(mtf.htfStarts.at(-1)).toBe(midnight);
+    expect(mtf.htfStarts.at(-2)).toBe(midnight - 4 * H1);
   });
 
   it("a fetch failure's fallback shape keeps waitClose, so the retry re-enters forming mode", async () => {

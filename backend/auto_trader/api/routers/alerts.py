@@ -21,6 +21,7 @@ from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.push_notify import PUSH
 from auto_trader.core.telegram_notify import TELEGRAM
+from auto_trader.core.timeframe import TimeframeError, canonicalize
 
 from ..deps import current_user
 from .state import broadcast_to_user
@@ -89,6 +90,11 @@ def _validate_params(kind: str, params: dict[str, Any]) -> None:
         not isinstance(timeframe, str) or not (1 <= len(timeframe) <= 20)
     ):
         raise HTTPException(422, "params.timeframe must be a short string")
+    if timeframe is not None:
+        try:
+            params["timeframe"] = canonicalize(timeframe)
+        except TimeframeError as e:
+            raise HTTPException(422, f"params.timeframe: {e}") from None
 
 
 class CreateAlertBody(BaseModel):

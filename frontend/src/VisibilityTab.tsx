@@ -13,7 +13,7 @@ import {
   applyPreset,
   detectPreset,
 } from "./lib/visibility";
-import { PERIOD_GROUPS } from "./lib/feed";
+import { periodByResolution } from "./lib/feed";
 
 interface Props {
   model: VisibilityModel;
@@ -22,12 +22,12 @@ interface Props {
   currentResolution: string;
 }
 
-const RESOLUTION_LABEL: Record<string, string> = Object.fromEntries(
-  PERIOD_GROUPS.flatMap((g) => g.periods.map((p) => [p.resolution, p.label])),
-);
-
 function presetLabels(currentResolution: string): { value: VisPreset; label: string }[] {
-  const tf = RESOLUTION_LABEL[currentResolution] ?? currentResolution;
+  // periodByResolution synthesizes a label for any valid timeframe (built-in,
+  // saved custom, or one from a chart still on a since-deleted custom TF), so
+  // this always reflects the live saved-custom list rather than a snapshot
+  // frozen at module load.
+  const tf = periodByResolution(currentResolution)?.label ?? currentResolution;
   return [
     { value: "all", label: "All intervals" },
     { value: "finer", label: `${tf} & lower` },
@@ -126,11 +126,15 @@ export default function VisibilityTab({ model, onChange, showAutoHide, currentRe
                 type="number"
                 min={1}
                 max={r.max}
+                step="any"
                 disabled={!u.on}
                 aria-label={`${r.label} min`}
                 value={u.min}
                 onChange={(e) => patchUnit(r.unit, { min: Number(e.target.value) })}
               />
+              {/* Integer steps: a fractional bound (90m = 1.5 hours) shows
+                  rounded here and is only rewritten when the slider itself is
+                  dragged; the number inputs (step "any") keep the fraction. */}
               <input
                 className="vis-slider"
                 type="range"
@@ -146,6 +150,7 @@ export default function VisibilityTab({ model, onChange, showAutoHide, currentRe
                 type="number"
                 min={1}
                 max={r.max}
+                step="any"
                 disabled={!u.on}
                 aria-label={`${r.label} max`}
                 value={u.max}

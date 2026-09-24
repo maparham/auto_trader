@@ -12,7 +12,7 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-const { buildSlopeMaPills, fmtCountdown } = await import("./chartPainters");
+const { buildSlopeMaPills, fmtCountdown, paintSelectionDots } = await import("./chartPainters");
 
 const bar = (t: number, c: number): KLineData =>
   ({ timestamp: t, open: c, high: c, low: c, close: c, volume: 1 }) as KLineData;
@@ -118,5 +118,35 @@ describe("fmtCountdown", () => {
     expect(fmtCountdown(59 * 60 + 7)).toBe("59:07");
     expect(fmtCountdown(5)).toBe("0:05");
     expect(fmtCountdown(0)).toBe("0:00");
+  });
+});
+
+describe("paintSelectionDots bar width", () => {
+  // Bars every 6 minutes plus one short 1-minute bar: the smallest gap reads
+  // 1m, which would dot EVERY bar (6k minutes is always a multiple of 6).
+  const W = 6 * 60_000;
+  const ts = [...Array.from({ length: 36 }, (_, i) => i * W), 35 * W + 60_000];
+  const cache = [
+    { paneId: "candle_pane", name: "EMA", color: "#000", coords: ts.map((t, i) => ({ t, x: i, y: 0 })) },
+  ] as never;
+  const fakeCtx = () => {
+    let arcs = 0;
+    const ctx = {
+      beginPath: () => {}, fill: () => {}, stroke: () => {},
+      arc: () => { arcs++; },
+    } as unknown as CanvasRenderingContext2D;
+    return { ctx, arcs: () => arcs };
+  };
+
+  it("uses the chart's declared bar width when given", () => {
+    const { ctx, arcs } = fakeCtx();
+    paintSelectionDots(ctx, cache, { paneId: "candle_pane", name: "EMA" }, "#fff", 8, W);
+    expect(arcs()).toBe(6);
+  });
+
+  it("falls back to the smallest gap without one", () => {
+    const { ctx, arcs } = fakeCtx();
+    paintSelectionDots(ctx, cache, { paneId: "candle_pane", name: "EMA" }, "#fff", 8);
+    expect(arcs()).toBe(36);
   });
 });

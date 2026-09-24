@@ -253,3 +253,21 @@ def test_same_tf_pin_survives_an_anomalous_partial_bar():
     pinned = series_of(expr("SLOPE.5 > 0"), base, "HOUR", {"HOUR": base},
                        _pinned("HOUR"))
     assert pinned == unpinned
+
+
+def test_a_non_native_intraday_pin_closes_its_short_last_bucket_at_midnight():
+    """candle.close@7H on a 1H base: the 21:00 bucket is 3h long and closes at
+    the 00:00 reset, so the 00:00 base bar reads it (parity with the chart's
+    alignHtfToChart, mtf.test.ts). The nominal close (04:00) would hold the
+    14:00 bucket's value four bars too long."""
+    from datetime import datetime, timedelta, timezone
+
+    from auto_trader.core.models import Candle
+
+    t0 = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    base = [Candle(time=t0 + timedelta(hours=h), open=1.0, high=1.0, low=1.0,
+                   close=1.0, volume=1.0) for h in range(20, 26)]
+    h7 = [Candle(time=t0 + timedelta(hours=h), open=c, high=c, low=c, close=c, volume=1.0)
+          for h, c in ((0, 10.0), (7, 20.0), (14, 30.0), (21, 40.0), (24, 50.0))]
+    got = series_of(parse("candle.close@7H > 0").left, base, "HOUR", {"HOUR_7": h7}, {})
+    assert got == [20.0, 30.0, 30.0, 30.0, 40.0, 40.0]

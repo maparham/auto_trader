@@ -14,6 +14,18 @@
 
 import type { KLineData } from "klinecharts";
 
+import { barEndMs } from "./timeframe";
+
+/**
+ * When the HTF bar opening at `openMs` closes. Given the pinned `timeframe`,
+ * the grammar decides (barEndMs): a custom intraday bucket resets at 00:00 UTC,
+ * so the day's last 5H bar (20:00) closes at midnight, not 01:00. Without one,
+ * or for a key the grammar cannot read, the nominal width stands.
+ */
+export function htfBarEndMs(openMs: number, htfMs: number, timeframe?: string): number {
+  return (timeframe != null ? barEndMs(timeframe, openMs) : null) ?? openMs + htfMs;
+}
+
 /**
  * Open timestamp (ms) of the forming HTF bucket.
  *
@@ -21,16 +33,19 @@ import type { KLineData } from "klinecharts";
  * returned one: the calendar-bucketed timeframes (weeks, months, year) do not
  * have nominal spans, so `lastClosedStart + htfMs` can land inside or past the
  * true bucket. Without a fetched partial, the nominal derivation is the best
- * available. Null when there is nothing to derive from.
+ * available, read through the grammar when `timeframe` is given (the next
+ * open after a short end-of-day bucket is midnight). Null when there is
+ * nothing to derive from.
  */
 export function formingOpenMs(
   closedStarts: number[],
   htfMs: number,
   fetchedFormingBar?: KLineData,
+  timeframe?: string,
 ): number | null {
   if (fetchedFormingBar) return fetchedFormingBar.timestamp;
   if (!closedStarts.length || !(htfMs > 0)) return null;
-  return closedStarts[closedStarts.length - 1] + htfMs;
+  return htfBarEndMs(closedStarts[closedStarts.length - 1], htfMs, timeframe);
 }
 
 /**
@@ -40,6 +55,8 @@ export function formingOpenMs(
  * union, and the newest close wins). `cursorMs` clamps the fold under replay:
  * candles after the cursor do not exist yet. Null when neither seed nor any
  * in-bucket candle exists — the caller then simply has no forming bar.
+ * `timeframe` lets the grammar end the bucket (a short end-of-day bucket
+ * closes at midnight, so the new day's candles stay out of it).
  */
 export function foldFormingBar(
   chartBars: KLineData[],
@@ -47,8 +64,9 @@ export function foldFormingBar(
   htfMs: number,
   seed?: KLineData,
   cursorMs?: number,
+  timeframe?: string,
 ): KLineData | null {
-  const closeMs = openMs + htfMs;
+  const closeMs = htfBarEndMs(openMs, htfMs, timeframe);
   let out: KLineData | null = seed ? { ...seed, timestamp: openMs } : null;
   // Volume is NOT summed across seed + chart candles: the seed (the broker's
   // own partial HTF bar) already aggregates the bucket's trades up to fetch

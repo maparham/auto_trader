@@ -19,6 +19,30 @@ describe("completionsFor", () => {
     expect(opts).toContain("4H");
     expect(opts).toContain("D");
   });
+  it("offers the built-in derived timeframes after '@'", () => {
+    const opts = completionsFor("close@2", 7).map((o) => o.label);
+    expect(opts).toContain("2W");
+    expect(opts).toContain("2M");
+    const all = completionsFor("close@", 6).map((o) => o.label);
+    for (const tf of ["3m", "2W", "3W", "6W", "1M", "2M", "3M", "1Y"]) expect(all).toContain(tf);
+    expect(new Set(all).size).toBe(all.length);
+  });
+  it("lists '@' timeframes in duration order, saved custom ones included", async () => {
+    const { MemStorage } = await import("../testMemStorage");
+    const g = globalThis as { localStorage?: unknown };
+    const prev = g.localStorage;
+    const mem = new MemStorage();
+    mem.setItem("auto-trader.customResolutions", JSON.stringify(["HOUR_6"]));
+    g.localStorage = mem;
+    try {
+      const all = completionsFor("close@", 6).map((o) => o.label);
+      expect(all).toEqual([
+        "3m", "5m", "15m", "30m", "1H", "4H", "6H", "D", "W", "2W", "3W", "1M", "6W", "2M", "3M", "1Y",
+      ]);
+    } finally {
+      g.localStorage = prev;
+    }
+  });
   it("ranks indicators by prefix on a bare word", () => {
     const opts = completionsFor("EM", 2).map((o) => o.label);
     expect(opts[0]).toBe("EMA");
@@ -218,5 +242,50 @@ describe("instance-vs-candle precedence in the dot branch", () => {
     const opts = completionsFor("MYcandle.cl", 11, { instances: [] }).map((c) => c.label);
     expect(opts).toContain("close");
     expect(completionAnchor("MYcandle.cl", 11, { instances: [] })).toBe(9);
+  });
+});
+
+describe("custom timeframe completions", () => {
+  it("offers the saved custom timeframes after '@'", async () => {
+    const { MemStorage } = await import("../testMemStorage");
+    const g = globalThis as { localStorage?: unknown };
+    const prev = g.localStorage;
+    const mem = new MemStorage();
+    mem.setItem("auto-trader.customResolutions", JSON.stringify(["HOUR_6"]));
+    g.localStorage = mem;
+    try {
+      const opts = completionsFor("EMA(9)@6", 8);
+      expect(opts.map((o) => o.label)).toContain("6H");
+      expect(opts.find((o) => o.label === "6H")?.detail).toBe("HOUR_6");
+    } finally {
+      g.localStorage = prev;
+    }
+  });
+
+  it("offers custom timeframes canonical, deduped and without junk", async () => {
+    const { MemStorage } = await import("../testMemStorage");
+    const g = globalThis as { localStorage?: unknown };
+    const prev = g.localStorage;
+    const mem = new MemStorage();
+    mem.setItem(
+      "auto-trader.customResolutions",
+      JSON.stringify(["MINUTE_120", "HOUR_4", "junk"]),
+    );
+    g.localStorage = mem;
+    try {
+      const baseline = completionsFor("EMA(9)@", 7);
+      mem.setItem("auto-trader.customResolutions", JSON.stringify([]));
+      const without = completionsFor("EMA(9)@", 7);
+      mem.setItem(
+        "auto-trader.customResolutions",
+        JSON.stringify(["MINUTE_120", "HOUR_4", "junk"]),
+      );
+      const had = new Set(without.map((o) => o.label));
+      const added = baseline.filter((o) => !had.has(o.label));
+      expect(added.map((o) => [o.label, o.detail])).toEqual([["2H", "HOUR_2"]]);
+      expect(baseline.map((o) => o.label)).not.toContain("junk");
+    } finally {
+      g.localStorage = prev;
+    }
   });
 });

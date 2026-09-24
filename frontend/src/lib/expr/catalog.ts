@@ -8,6 +8,7 @@
 // This is the file's only import; candlePatterns.ts pulls klinecharts as
 // TYPE-ONLY, so the catalog stays runtime-dependency-free.
 import { PATTERN_PREDICATE_FNS } from "../indicators/candlePatterns";
+import { tfSecondsOf, tryCanonicalTf } from "../timeframe";
 
 export interface CatalogEntry {
   name: string;
@@ -80,10 +81,9 @@ export const CANDLE_FIELD_DETAILS: Record<(typeof CANDLE_FIELDS)[number], string
   wickBottom: "Lower wick: min(open, close) − low",
 };
 
-// Mirrors backend strategy/expr/tfs.py TF_RESOLUTIONS (the pin aliases the
-// backend accepts) — `seconds` is the nominal bar width, duplicated from
-// feed.ts RESOLUTION_SECONDS so this catalog stays dependency-free for the
-// parser's warm-up math.
+// Pin SUGGESTIONS for the palette and completion only: validity is the
+// timeframe grammar (lib/timeframe.ts, see tfSeconds below), so any label like
+// 6H or 90m pins fine without being listed here.
 export const TIMEFRAMES: Array<{ alias: string; resolution: string; seconds: number }> = [
   { alias: "5m", resolution: "MINUTE_5", seconds: 300 },
   { alias: "15m", resolution: "MINUTE_15", seconds: 900 },
@@ -94,10 +94,12 @@ export const TIMEFRAMES: Array<{ alias: string; resolution: string; seconds: num
   { alias: "W", resolution: "WEEK", seconds: 604800 },
 ];
 
-/** Nominal bar width for a pin alias (or canonical resolution); null if unknown. */
+/** Nominal bar width for a pin: any grammar timeframe (label or canonical),
+ *  except the live-only seconds keys, which have no history to pin to. */
 export function tfSeconds(tf: string): number | null {
-  const hit = TIMEFRAMES.find((t) => t.alias === tf || t.resolution === tf);
-  return hit ? hit.seconds : null;
+  const canon = tryCanonicalTf(tf);
+  if (canon == null || canon.startsWith("SECOND")) return null;
+  return tfSecondsOf(canon);
 }
 
 // Arity + argument kind for indicators, matching registry.IndicatorSpec.

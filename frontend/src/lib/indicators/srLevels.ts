@@ -28,6 +28,7 @@ import { fullLine } from "./shared";
 import { isPivotAt } from "./pivots";
 import { atrSeries } from "../atr";
 import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
+import { htfBarEndMs } from "../mtfForming";
 // Config shape, defaults, parser, output names and warm-up live in the leaf
 // (no klinecharts) so the expression bridge can read them from a node context;
 // re-exported here so every existing `from "./indicators/srLevels"` import
@@ -94,13 +95,15 @@ export function computeSrLevels(
     // from an HTF bar that closes later — same contract as PivotBands.
     const ts = dataList.map((k) => k.timestamp);
     const htfBars = mtf.htfStarts.map((t) => ({ timestamp: t }) as KLineData);
-    const sup = alignHtfToChart(ts, htfBars, mtf.htfSupport, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs);
-    const res = alignHtfToChart(ts, htfBars, mtf.htfResistance, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs);
+    const sup = alignHtfToChart(ts, htfBars, mtf.htfSupport, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs, mtf.timeframe);
+    const res = alignHtfToChart(ts, htfBars, mtf.htfResistance, mtf.htfMs, true, mtf.formingIdx, mtf.chartMs, mtf.timeframe);
     const points = ts.map((_, i) => ({
       support: sup[i] ?? undefined,
       resistance: res[i] ?? undefined,
     }));
     const htfMs = mtf.htfMs;
+    // An HTF bar's true close: a short last intraday bucket ends at 00:00 UTC.
+    const barEnd = (open: number) => htfBarEndMs(open, htfMs, mtf.timeframe ?? undefined);
     // Map each stashed level's timestamps onto chart bar indices: the zone
     // starts at the first chart bar inside its first pivot's HTF bar; its last
     // touch anchors to the final chart bar of the HTF bar holding that touch's
@@ -120,7 +123,7 @@ export function computeSrLevels(
       mtf.chartMs ?? (ts.length > 1 ? ts[1] - ts[0] : htfMs);
     const snapFirst = (firstTs: number, price: number, fallback: number): number => {
       if (!(htfMs > chartMs)) return fallback;
-      const spanEnd = firstTs + htfMs;
+      const spanEnd = barEnd(firstTs);
       if (ts[0] > firstTs || ts[ts.length - 1] < spanEnd - chartMs) return fallback;
       let best = fallback;
       let bestD = Infinity;
@@ -138,7 +141,7 @@ export function computeSrLevels(
     };
     const levels: SrLevel[] = (mtf.htfLevels ?? []).map((lv) => {
       const first = ts.findIndex((t) => t >= lv.firstTs);
-      const afterLast = ts.findIndex((t) => t >= lv.lastTs + htfMs);
+      const afterLast = ts.findIndex((t) => t >= barEnd(lv.lastTs));
       return {
         price: lv.price,
         halfWidth: lv.halfWidth,

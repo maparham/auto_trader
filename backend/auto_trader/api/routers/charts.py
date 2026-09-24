@@ -13,6 +13,7 @@ from auto_trader.core.candle_aggregate import DERIVED
 from auto_trader.core.candle_cache import CANDLE_CACHE, active_backfills
 from auto_trader.core.models import Candle, Resolution
 from auto_trader.core.synthetic import SyntheticError, combine, symbols, parse
+from auto_trader.core.timeframe import canonicalize
 from auto_trader.indicators.series_api import compute_indicator_series
 
 from .. import deps, history_jobs
@@ -200,6 +201,7 @@ def _base_resolution(resolution: str) -> Resolution:
     Derived views (MONTH, 2W, ...) fold from their base on read (see
     candle_aggregate.fold), so cache-facing routes always address the base
     series. Every derived view over the same base addresses the same key."""
+    resolution = canonicalize(resolution)
     rule = DERIVED.get(resolution)
     if rule is not None:
         return rule.base

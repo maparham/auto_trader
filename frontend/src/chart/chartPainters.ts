@@ -58,14 +58,19 @@ export function paintSelectionDots(
   sel: { paneId: string; name: string },
   fill: string,
   barSpace: number,
+  declaredBarMs?: number | null,
 ): void {
   for (const line of cache) {
     if (line.paneId !== sel.paneId || line.name !== sel.name) continue;
     const coords = line.coords;
     if (coords.length < 2) continue;
-    // Bar interval (ms): the smallest positive gap between adjacent bars (so
+    // Bar interval (ms): the chart's declared width when the caller has it (a
+    // custom timeframe's short end-of-day bar would make the gap guess lie),
+    // else the smallest positive gap between adjacent bars (so
     // weekend/overnight gaps don't distort the per-bar phase used for anchoring).
-    const barMs = minPositiveGap(coords.map((c) => c.t));
+    const barMs = declaredBarMs && declaredBarMs > 0
+      ? declaredBarMs
+      : minPositiveGap(coords.map((c) => c.t));
     if (barMs == null) continue;
     // Octave-thin when zoomed out so dots never crowd, but only by doubling the
     // step (a multiple of the base) so the surviving dots stay anchored to the

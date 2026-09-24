@@ -123,6 +123,11 @@ describe("indicator actions", () => {
         controller.chart, "US100", "TRENDLINES", "candle_pane", expect.any(Object), null, "capital",
       );
       expect(loadIndicatorConfigs("t1.c1").TRENDLINES?.extendData).toBeUndefined();
+      // Lowercase h/d/w suffixes pin too (only m vs M is case-sensitive).
+      await invokeAction("indicator.set", { id: "TRENDLINES", timeframe: "4h" }, ctx);
+      expect(apply).toHaveBeenLastCalledWith(
+        controller.chart, "US100", "TRENDLINES", "candle_pane", expect.any(Object), "HOUR_4", "capital",
+      );
     });
 
     it("re-detects a pinned Trendlines instance when only calcParams change", async () => {

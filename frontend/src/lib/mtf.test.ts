@@ -260,3 +260,71 @@ describe("alignHtfToChart formingIdx", () => {
     ]);
   });
 });
+
+describe("alignHtfToChart short last intraday bucket", () => {
+  // A 7H pin tiles each UTC day 00/07/14/21, and the 21:00 bucket is short:
+  // it closes at the 00:00 reset, not 04:00. Parity with the backend's
+  // align_htf_to_base (tests/test_mtf_align.py).
+  const H = 3_600_000;
+  const DAY = 24 * H;
+  const htfMs = 7 * H;
+  const htfBars = [0, 7, 14, 21, 24].map((h) => ({ timestamp: h * H }) as never);
+  const vals = [10, 20, 30, 40, 50];
+  const chartTs = [20, 21, 22, 23, 24, 25].map((h) => h * H);
+
+  it("the 00:00 base bar sees the 21:00 bucket when the pin timeframe is given", () => {
+    const out = alignHtfToChart(chartTs, htfBars, vals, htfMs, true, undefined, H, "HOUR_7");
+    expect(out).toEqual([20, 30, 30, 30, 40, 40]);
+    expect(chartTs[4]).toBe(DAY);
+  });
+
+  it("an alias pin reads the same close", () => {
+    const out = alignHtfToChart(chartTs, htfBars, vals, htfMs, true, undefined, H, "7H");
+    expect(out).toEqual([20, 30, 30, 30, 40, 40]);
+  });
+
+  it("without the timeframe it keeps the nominal close (open + htfMs)", () => {
+    const out = alignHtfToChart(chartTs, htfBars, vals, htfMs, true, undefined, H);
+    expect(out).toEqual([20, 30, 30, 30, 30, 30]);
+  });
+
+  it("native pins keep the nominal close", () => {
+    const h4 = [0, 4, 8].map((h) => ({ timestamp: h * H }) as never);
+    const ts = [3, 4, 7, 8].map((h) => h * H);
+    expect(alignHtfToChart(ts, h4, [1, 2, 3], 4 * H, true, undefined, H, "HOUR_4")).toEqual([
+      undefined, 1, 1, 2,
+    ]);
+  });
+});
+
+describe("alignHtfToChart calendar bucket ends", () => {
+  // Month and year pins close at the true calendar end. Parity with the
+  // backend's align_htf_to_base (tests/test_mtf_align.py).
+  const D = 86_400_000;
+  const at = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d);
+  const bars = (ts: number[]) => ts.map((t) => ({ timestamp: t }) as never);
+
+  it("a 1M October bucket closes on Nov 1, not Oct 31", () => {
+    const htf = bars([at(2025, 10, 1), at(2025, 11, 1)]);
+    const ts = [at(2025, 10, 31), at(2025, 11, 1)];
+    expect(alignHtfToChart(ts, htf, [1, 2], 30 * D, true, undefined, D, "MONTH")).toEqual([
+      undefined, 1,
+    ]);
+  });
+
+  it("a 5M short Nov-Dec bucket closes on Jan 1", () => {
+    const htf = bars([at(2025, 6, 1), at(2025, 11, 1), at(2026, 1, 1)]);
+    const ts = [at(2025, 12, 31), at(2026, 1, 1), at(2026, 1, 2)];
+    expect(alignHtfToChart(ts, htf, [1, 2, 3], 150 * D, true, undefined, D, "5M")).toEqual([
+      1, 2, 2,
+    ]);
+  });
+
+  it("a YEAR bucket closes on the next Jan 1", () => {
+    const htf = bars([at(2024, 1, 1), at(2025, 1, 1)]);
+    const ts = [at(2024, 12, 31), at(2025, 1, 1)];
+    expect(alignHtfToChart(ts, htf, [1, 2], 365 * D, true, undefined, D, "YEAR")).toEqual([
+      undefined, 1,
+    ]);
+  });
+});

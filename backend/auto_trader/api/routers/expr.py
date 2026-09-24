@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from auto_trader.core import progress as pr
 from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.timeframe import canonicalize
 from auto_trader.core.models import Candle
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.closeness import (
@@ -93,6 +94,7 @@ def _all_row_nodes(req: ExprBacktestRequest, instances=None) -> list[N.Node]:
 
 @router.post("/api/expr/backtest")
 async def expr_backtest(req: ExprBacktestRequest, request: Request):
+    req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     req.broker = deps.resolve_broker(request, req.broker)
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")
@@ -256,6 +258,7 @@ async def submit_expr_sweep_job(req: ExprBacktestRequest, request: Request):
     a shared singleton), so there is no separate expr poll/cancel route. HTF is
     combo-invariant for a lit: sweep (timeframes are name tokens, never sweepable
     number literals), so req.htfCandles ships to the workers as-is."""
+    req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     req.broker = deps.resolve_broker(request, req.broker)
     if req.sweep is None or not req.sweep.combos:
         raise HTTPException(422, "sweep.combos is required")
@@ -302,6 +305,7 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest, request: Request):
     """Walk-forward over expression rules. Combos carry lit:/risk: targets; the
     fold windows own the period. Polled via the shared GET
     /api/backtest/walkforward/jobs/{id} route (WFO_JOBS is a singleton)."""
+    req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     # Imported lazily to match the _result_to_response pattern above: backtest.py
     # loads many things at module time and both routers are registered together.
     # There is no cycle (backtest.py does not import this module), so this is a
@@ -366,6 +370,7 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest, request: Request):
 
 @router.post("/api/expr/series")
 async def expr_series(req: ExprSeriesRequest, request: Request):
+    req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     req.broker = deps.resolve_broker(request, req.broker)
     instances = request_instances(req)
     try:
@@ -426,6 +431,10 @@ async def expr_series(req: ExprSeriesRequest, request: Request):
 
 @router.post("/api/expr/closeness")
 async def expr_closeness(req: ExprClosenessRequest, request: Request):
+    # TimeframeError -> 422 (app handler); canonical keys also make the
+    # display == base comparison below see "60m" and HOUR as one timeframe.
+    req.baseResolution = canonicalize(req.baseResolution)
+    req.displayResolution = canonicalize(req.displayResolution)
     req.broker = deps.resolve_broker(request, req.broker)
     instances = request_instances(req)
     try:

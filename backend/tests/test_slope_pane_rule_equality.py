@@ -196,8 +196,13 @@ def test_a_pinned_ref_uses_the_pin_s_NOMINAL_bar_width():
     base_ms = [int(c.time.timestamp() * 1000) for c in base]
     month_ms = resolution_seconds("MONTH") * 1000
 
+    # Aligned exactly as series_of aligns a pinned ref: htf_resolution makes a
+    # month close at its true calendar end, so a 31-day month's last day still
+    # reads the previous month (open + 30d would gate it closed a day early).
+    # This test is about bar WIDTH, so the alignment must match series_of's.
     nominal = align_htf_to_base(
-        base_ms, htf, slope_line_series(htf, cfg, 3, 720.0), month_ms
+        base_ms, htf, slope_line_series(htf, cfg, 3, 720.0), month_ms,
+        htf_resolution="MONTH",
     )
     assert actual == nominal
 
@@ -206,7 +211,8 @@ def test_a_pinned_ref_uses_the_pin_s_NOMINAL_bar_width():
     # path used to measure. Pinning the divergence keeps the fix from silently
     # reverting to "close enough".
     inferred = align_htf_to_base(
-        base_ms, htf, slope_line_series(htf, cfg, 3, 672.0), month_ms
+        base_ms, htf, slope_line_series(htf, cfg, 3, 672.0), month_ms,
+        htf_resolution="MONTH",
     )
     defined = [(a, b) for a, b in zip(actual, inferred) if a is not None and b is not None]
     assert defined, "nothing to compare — the fixture produced no defined values"

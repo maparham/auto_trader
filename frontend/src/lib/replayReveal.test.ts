@@ -45,6 +45,16 @@ describe("revealBarMs", () => {
     expect(revealBarMs("YEAR")).toBeGreaterThanOrEqual(366 * DAY);
   });
 
+  it("pads aliases of the calendar buckets by their canonical name", () => {
+    // MONTH_12 is YEAR, 1M and MONTH_1 are MONTH, 1Y is YEAR.
+    expect(revealBarMs("MONTH_12")).toBe(revealBarMs("YEAR"));
+    expect(revealBarMs("1Y")).toBe(revealBarMs("YEAR"));
+    expect(revealBarMs("1M")).toBe(revealBarMs("MONTH"));
+    expect(revealBarMs("MONTH_1")).toBe(revealBarMs("MONTH"));
+    expect(revealBarMs("MONTH_12")).toBeGreaterThanOrEqual(366 * DAY);
+    expect(revealBarMs("1M")).toBeGreaterThanOrEqual(31 * DAY);
+  });
+
   it("gives every day-or-wider bucket an hour of DST slack", () => {
     // A daily bar spanning a fall-back transition is 25 hours long.
     expect(revealBarMs("DAY")).toBe(DAY + HOUR);
@@ -62,7 +72,8 @@ describe("revealBarMs", () => {
     // Fail-safe: if we cannot say when this result's bars close, we cannot say
     // any of its fills has happened. A legacy/corrupt record shows an empty
     // reveal instead of a leaking one.
-    expect(revealBarMs("1m")).toBe(Infinity);
+    // "1m" is a grammar label now (one minute), so probe a truly invalid one.
+    expect(revealBarMs("6h")).toBe(Infinity);
     expect(revealBarMs("")).toBe(Infinity);
     const out = filterResultToCursor(
       { ...result, resolution: "not-a-resolution" } as StoredBacktestResult,
@@ -330,5 +341,12 @@ describe("openTradesAtCursor", () => {
       const opened = openTradesAtCursor(withOpen, cursor).map((t) => t.entryTime);
       expect(opened.filter((e) => closed.includes(e))).toEqual([]);
     }
+  });
+});
+
+describe("custom timeframe reveal widths", () => {
+  it("reveal width for custom months is padded to 31 days a month", () => {
+    expect(revealBarMs("MONTH_4")).toBe(4 * 31 * 86_400_000 + 3_600_000);
+    expect(revealBarMs("HOUR_6")).toBe(6 * 3_600_000);
   });
 });

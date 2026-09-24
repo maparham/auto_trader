@@ -49,7 +49,7 @@ import { loadSettings } from "../theme";
 import { indTypeOf } from "../lib/customIndicators";
 import { applyVisibleRange, scrollTsToCenter } from "../lib/chartSync";
 import {
-  mtfBucketMs,
+  mtfBucketKey,
   refreshFormingBarThrottled,
   refreshMtfIndicators,
 } from "../lib/mtfCoordinator";
@@ -197,7 +197,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
   // prevEpicRef/prevResRef can't tell a mount apart (they seed from the current
   // props), and only a mount restores the saved view position.
   const didInitRef = useRef(false);
-  // Live twin of useReplay's mtfBucketRef: the epoch-grid HTF bucket index the
+  // Live twin of useReplay's mtfBucketRef: the HTF bucket key (mtfBucketKey) the
   // last tick landed in. A tick crossing into a NEW bucket means the stashed
   // forming fold's bucket just closed — refreshFormingBar alone cannot
   // graduate it (it re-derives the SAME open from the stashed closed bars and
@@ -1230,11 +1230,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           // inside, no-op when nothing opted in. When the tick lands in a NEW
           // HTF bucket, the fold alone can't advance (it ignores candles past
           // the stashed bucket's close), so run the full refetch instead —
-          // the live twin of useReplay's bucket-crossing refresh, same
-          // epoch-grid approximation (errs stale, self-corrects next crossing).
-          const bucket = mtfBucketMs(chart);
-          if (bucket) {
-            const idx = Math.floor(k.timestamp / bucket);
+          // the live twin of useReplay's bucket-crossing refresh, on the
+          // grammar's bucket grid (a 5H pin crosses at 00:00 UTC too).
+          const idx = mtfBucketKey(chart, k.timestamp);
+          if (idx != null) {
             if (liveMtfBucketRef.current === null) {
               liveMtfBucketRef.current = idx; // load's own refresh covered this bucket
             } else if (idx !== liveMtfBucketRef.current && !liveMtfRefreshingRef.current) {

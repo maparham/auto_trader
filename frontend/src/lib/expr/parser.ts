@@ -16,7 +16,6 @@ import {
   PATTERN_FN_SET,
   PATTERN_WARMUP,
   COUNT_FN,
-  TIMEFRAMES,
   WRAPPER_ARITY,
   tfSeconds,
 } from "./catalog";
@@ -697,7 +696,7 @@ function checkPredicate(node: PredicateNode): void {
     if (base.kind === "Tf" && tfSeconds(base.tf) === null) {
       throw new ExprErr(
         "unknown_tf",
-        `Unknown timeframe ${base.tf}. Try one of: ${TIMEFRAMES.map((t) => t.alias).join(", ")}.`,
+        `Unknown timeframe ${base.tf}. Use a number and a unit, like 7m, 6H, 2D, 3W or 2M.`,
         base.start, base.end,
       );
     }
@@ -771,7 +770,7 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
       if (tfSeconds(node.tf) === null) {
         throw new ExprErr(
           "unknown_tf",
-          `Unknown timeframe ${node.tf}. Try one of: ${TIMEFRAMES.map((t) => t.alias).join(", ")}.`,
+          `Unknown timeframe ${node.tf}. Use a number and a unit, like 7m, 6H, 2D, 3W or 2M.`,
           node.start, node.end,
         );
       }

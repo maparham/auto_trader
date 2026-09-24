@@ -44,7 +44,7 @@ import type { OpenStrategyTrade } from "./replayReveal";
 import type { WfoScheme, TradeZone as TradeZoneWire } from "../api";
 import { buildSignalGlyphs, isEntryFill } from "./signalGlyphs";
 import { tradeZones, zoneLabels } from "./tradeZones";
-import { minPositiveGap } from "./barInterval";
+import { chartBarMs } from "./barInterval";
 import { RESOLUTION_SECONDS } from "./feed";
 import {
   saveBacktestResult,
@@ -371,7 +371,7 @@ export function fitBacktestTrades(chart: Chart, result: StoredBacktestResult): v
   if (!data || data.length < 2) return;
   const firstTs = data[0].timestamp;
   const lastTs = data[data.length - 1].timestamp;
-  const barMs = minPositiveGap(data.map((k) => k.timestamp)) || 1;
+  const barMs = chartBarMs(chart, data.map((k) => k.timestamp)) || 1;
   let minEntry = Infinity;
   let maxExit = -Infinity;
   for (const t of trades) {
@@ -1453,8 +1453,9 @@ function zonePoints(
   // straddle a session/overnight/weekend break (or the seam between loaded
   // history and a freshly appended live bar) and run to hours or days, which
   // would balloon the zone's right edge for a short-lived trade. See
-  // minPositiveGap.
-  const barMs = (data && minPositiveGap(data.map((k) => k.timestamp))) || 1;
+  // minPositiveGap. The chart's declared width wins when registered: on a
+  // custom timeframe the smallest gap is the day's short last bar.
+  const barMs = (data && chartBarMs(chart, data.map((k) => k.timestamp))) || 1;
   if (data && data.length > 0) {
     const firstTs = data[0].timestamp;
     const lastTs = data[data.length - 1].timestamp;

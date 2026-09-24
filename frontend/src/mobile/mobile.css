@@ -482,3 +482,25 @@ body.m-mobile .ss-exch { display: none; }
   font-weight: 500;
   text-decoration: none;
 }
+
+/* Timeframe sheet (MobilePeriodSheet): each group is a grid of tap-sized
+   chips instead of one long list, so the whole picker fits a phone screen.
+   The current timeframe is muted, not accent, like every other sheet. */
+.m-tf-sheet { padding: 4px 16px 12px; }
+.m-tf-group + .m-tf-group { margin-top: 12px; }
+.m-tf-group-label { margin: 0 0 6px; font-size: 13px; font-weight: 500; color: var(--text-faint); }
+.m-tf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
+.m-tf-chip {
+  height: 40px; border: 1px solid var(--border); border-radius: 8px;
+  background: none; color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums;
+}
+.m-tf-chip:active { background: var(--hover); }
+.m-tf-chip[aria-pressed="true"] { background: var(--hover-strong); border-color: var(--text-faint); font-weight: 600; }
+/* The shared add form (components/CustomTimeframeForm) at touch size: the
+   desktop dropdown sizes it for a 150px menu. */
+.m-tf-group .custom-tf-form { padding: 8px 0 0; gap: 8px; }
+.m-tf-group .custom-tf-form .custom-tf-field { height: 44px; border-radius: 8px; }
+.m-tf-group .custom-tf-form .custom-tf-field input { font-size: 16px; padding: 0 10px; }
+.m-tf-group .custom-tf-form .custom-tf-units button { width: 40px; font-size: 15px; }
+.m-tf-group .custom-tf-form .custom-tf-add { height: 40px; border-radius: 8px; font-size: 15px; }
+.m-tf-group .custom-tf-form .custom-tf-error { min-height: 40px; font-size: 13px; }

@@ -7,9 +7,8 @@ import ChartCore from "../ChartCore";
 import MobileDrawBar from "./MobileDrawBar";
 import MobileChartStrip from "./MobileChartStrip";
 import MobileIndicatorsSheet from "./MobileIndicatorsSheet";
-import Sheet from "./Sheet";
+import MobilePeriodSheet from "./MobilePeriodSheet";
 import { loadSettings } from "../theme";
-import { PERIODS } from "../lib/feed";
 import { requestSymbolSearch } from "../lib/signals";
 import { brokerLabel } from "../lib/trading";
 import { isDemoMode } from "../lib/demoMode";
@@ -216,20 +215,14 @@ export default function MobileChartView({ active = true }: { active?: boolean })
         )}
       </div>
       {periodSheetOpen && (
-        <Sheet title="Period" onClose={() => setPeriodSheetOpen(false)}>
-          {PERIODS.map((p) => (
-            <button
-              key={p.resolution}
-              className={`m-sheet-row${p.resolution === period?.resolution ? " m-sheet-row-on" : ""}`}
-              onClick={() => {
-                mobilePeriod.set(p);
-                setPeriodSheetOpen(false);
-              }}
-            >
-              {p.label}
-            </button>
-          ))}
-        </Sheet>
+        <MobilePeriodSheet
+          current={period}
+          onPick={(p) => {
+            mobilePeriod.set(p);
+            setPeriodSheetOpen(false);
+          }}
+          onClose={() => setPeriodSheetOpen(false)}
+        />
       )}
       {indicatorsSheetOpen && (
         <MobileIndicatorsSheet onClose={() => setIndicatorsSheetOpen(false)} />

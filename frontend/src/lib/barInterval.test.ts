@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { minPositiveGap } from "./barInterval";
+import { chartBarMs, minPositiveGap, setDeclaredBarMs } from "./barInterval";
 
 const MIN = 5 * 60_000; // 5-minute bars
 
@@ -27,5 +27,27 @@ describe("minPositiveGap", () => {
     expect(minPositiveGap([])).toBeNull();
     expect(minPositiveGap([42])).toBeNull();
     expect(minPositiveGap([10, 10, 10])).toBeNull();
+  });
+});
+
+describe("chartBarMs", () => {
+  // A 1439m chart: each day is one 1439m bar plus a 1-minute short bar, so
+  // the smallest gap reads 1 minute.
+  const W = 1439 * 60_000;
+  const DAY = 86_400_000;
+  const times = [0, W, DAY, DAY + W, 2 * DAY];
+
+  it("prefers the chart's declared bar width over the gap guess", () => {
+    const chart = {};
+    setDeclaredBarMs(chart, W);
+    expect(chartBarMs(chart, times)).toBe(W);
+  });
+
+  it("falls back to the smallest gap when nothing is declared", () => {
+    expect(chartBarMs({}, times)).toBe(60_000);
+    const chart = {};
+    setDeclaredBarMs(chart, W);
+    setDeclaredBarMs(chart, null);
+    expect(chartBarMs(chart, times)).toBe(60_000);
   });
 });

@@ -46,6 +46,36 @@ describe("backtest actions", () => {
     expect(again.codedStrategy).toBe("sma_cross.py");
   });
 
+  it("config.set canonicalizes range.resolution", async () => {
+    const merged = (await invokeAction(
+      "backtest.config.set",
+      { patch: { range: { mode: "bars", bars: 500, resolution: "6H" } } },
+      CTX(),
+    )) as any;
+    expect(merged.range.resolution).toBe("HOUR_6");
+    const lower = (await invokeAction(
+      "backtest.config.set",
+      { patch: { range: { mode: "bars", bars: 500, resolution: "6h" } } },
+      CTX(),
+    )) as any;
+    expect(lower.range.resolution).toBe("HOUR_6");
+    const again = (await invokeAction("backtest.config.get", {}, CTX())) as any;
+    expect(again.range.resolution).toBe("HOUR_6");
+  });
+
+  it("config.set rejects an invalid range.resolution with the grammar message", async () => {
+    await expect(
+      invokeAction(
+        "backtest.config.set",
+        { patch: { range: { mode: "bars", resolution: "HOUR_25" } } },
+        CTX(),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ARGS", message: expect.stringContaining("hours must be between 1 and 24") });
+    await expect(
+      invokeAction("backtest.config.set", { patch: { range: { mode: "bars", resolution: "7x" } } }, CTX()),
+    ).rejects.toMatchObject({ code: "INVALID_ARGS" });
+  });
+
   it("backtest.run bumps the run-request signal and resolves on completion", async () => {
     let bumped = 0;
     const unsub = backtestRunRequest.subscribe(() => {

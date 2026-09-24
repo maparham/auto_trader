@@ -433,9 +433,39 @@ describe("chart view writes", () => {
     }));
     await invokeAction("chart.timeframe.set", { resolution: "4H" }, ctx);
     expect(calls).toEqual([{ resolution: "HOUR_4", label: "4H" }]);
+    // Any grammar timeframe works; case matters (m minutes, M months).
+    await invokeAction("chart.timeframe.set", { resolution: "13m" }, ctx);
+    await invokeAction("chart.timeframe.set", { resolution: "HOUR_6" }, ctx);
+    await invokeAction("chart.timeframe.set", { resolution: "1M" }, ctx);
+    expect(calls.slice(1)).toEqual([
+      { resolution: "MINUTE_13", label: "13m" },
+      { resolution: "HOUR_6", label: "6H" },
+      { resolution: "MONTH", label: "1M" },
+    ]);
+    // Lowercase h/d/w/y suffixes are accepted (only m vs M is case-sensitive).
+    await invokeAction("chart.timeframe.set", { resolution: "4h" }, ctx);
+    await invokeAction("chart.timeframe.set", { resolution: "1d" }, ctx);
+    await invokeAction("chart.timeframe.set", { resolution: "d" }, ctx);
+    await invokeAction("chart.timeframe.set", { resolution: "w" }, ctx);
+    expect(calls.slice(4)).toEqual([
+      { resolution: "HOUR_4", label: "4H" },
+      { resolution: "DAY", label: "1D" },
+      { resolution: "DAY", label: "1D" },
+      { resolution: "WEEK", label: "1W" },
+    ]);
+    // m stays minutes and M stays months.
+    await invokeAction("chart.timeframe.set", { resolution: "2m" }, ctx);
+    await invokeAction("chart.timeframe.set", { resolution: "2M" }, ctx);
+    expect(calls.slice(8)).toEqual([
+      { resolution: "MINUTE_2", label: "2m" },
+      { resolution: "MONTH_2", label: "2M" },
+    ]);
     await expect(
-      invokeAction("chart.timeframe.set", { resolution: "13m" }, ctx),
-    ).rejects.toThrow(/unknown timeframe/);
+      invokeAction("chart.timeframe.set", { resolution: "25h" }, ctx),
+    ).rejects.toThrow(/unknown timeframe: 25h\. Use a resolution/);
+    await expect(
+      invokeAction("chart.timeframe.set", { resolution: "7q" }, ctx),
+    ).rejects.toThrow(/unknown timeframe: 7q/);
   });
 
   it("range.set scrolls to the target and sets bar space for the window", async () => {

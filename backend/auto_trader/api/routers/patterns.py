@@ -19,6 +19,7 @@ from auto_trader.core.pattern_matchers import MATCHERS, Matcher
 from auto_trader.core.pattern_scan import DEFAULT_SCALES, Match, prefix_sums, scan
 from auto_trader.core.pattern_shape import query_kernel, smooth_close
 from auto_trader.core.pattern_series import PATTERN_SERIES, Series
+from auto_trader.core.timeframe import canonicalize
 
 from .. import deps
 from ..schemas import (
@@ -117,6 +118,9 @@ async def search_patterns(req: PatternSearchRequest, request: Request) -> Patter
     # data by broker (restricted brokers keep their own cached series), so it
     # goes through the same admin gate as every other broker-carrying route.
     broker = deps.resolve_broker(request, req.broker)
+    # Canonical before the PatternSeriesCache lookup, so "4H" finds the HOUR_4
+    # history; TimeframeError -> 422 (app handler) for anything the grammar rejects.
+    req.resolution = canonicalize(req.resolution)
 
     query = np.array([[b.o, b.h, b.l, b.c] for b in req.query], dtype=np.float64)
     if not np.isfinite(query).all():

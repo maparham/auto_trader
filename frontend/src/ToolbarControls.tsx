@@ -6,9 +6,12 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { MouseEvent } from "react";
 import {
-  PERIOD_GROUPS,
+  periodGroups,
+  periodByResolution,
   quickBarPeriods,
+  quickBarWithActive,
   DEFAULT_RESOLUTIONS,
+  isBuiltinResolution,
   type Instrument,
   type Period,
 } from "./lib/feed";
@@ -24,12 +27,15 @@ import { loadTriggered, loadTriggeredSeen } from "./lib/alertsApi";
 import {
   loadFavoriteResolutions,
   saveFavoriteResolutions,
+  loadCustomResolutions,
+  saveCustomResolutions,
 } from "./lib/persist";
 import type { ChartController } from "./lib/chartController";
 import { applyCandleFit } from "./chart/candleFit";
 import { BellIcon } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
 import Tooltip from "./components/Tooltip";
+import CustomTimeframeForm from "./components/CustomTimeframeForm";
 import { isSynthetic } from "./lib/syntheticRegistry";
 
 // Shared dropdown caret — the same SVG chevron the symbol chip uses, so every
@@ -93,6 +99,10 @@ export function IntervalControls({
   // interval dropdown (defaults are always present and have no star).
   const [favResolutions, setFavResolutions] = useState<string[]>(loadFavoriteResolutions);
 
+  // Saved custom timeframes (global preference), shown in their own "Custom"
+  // group at the bottom of the interval dropdown, with an "Add custom" form.
+  const [customResolutions, setCustomResolutions] = useState<string[]>(loadCustomResolutions);
+
   // grouped interval menu (TV-style; quick-bar stays fixed)
   const [intervalOpen, setIntervalOpen] = useState(false);
   const intervalMenuRef = useRef<HTMLDivElement>(null);
@@ -123,32 +133,67 @@ export function IntervalControls({
     });
   }
 
+  // Add a custom timeframe (global preference) and select it. A built-in (4H)
+  // or an already-saved custom timeframe just gets selected, not re-added.
+  function addCustomResolution(resolution: string) {
+    const period = periodByResolution(resolution);
+    if (!period) return;
+    if (!isBuiltinResolution(resolution)) {
+      setCustomResolutions((prev) => {
+        if (prev.includes(resolution)) return prev;
+        const next = [...prev, resolution];
+        saveCustomResolutions(next);
+        return next;
+      });
+    }
+    onPeriod(period);
+    setIntervalOpen(false);
+  }
+
+  // Remove a saved custom timeframe, unpinning it from the quick bar too.
+  function removeCustomResolution(resolution: string) {
+    setCustomResolutions((prev) => {
+      const next = prev.filter((r) => r !== resolution);
+      saveCustomResolutions(next);
+      return next;
+    });
+    setFavResolutions((prev) => {
+      if (!prev.includes(resolution)) return prev;
+      const next = prev.filter((r) => r !== resolution);
+      saveFavoriteResolutions(next);
+      return next;
+    });
+  }
+
   // Merged quick bar: defaults (1m–1W) ∪ pinned favorites, duration-sorted.
   const quickBar = quickBarPeriods(favResolutions);
+  const intervalGroups = periodGroups(customResolutions);
 
   return (
     <div className="periods">
-      {quickBar.map((p) => (
-        <Tooltip key={p.resolution} content={`${p.label} interval`}>
-          <button
-            className={p.resolution === period.resolution ? "on" : ""}
-            onClick={() => onPeriod(p)}
-          >
-            {p.label}
-          </button>
-        </Tooltip>
-      ))}
-      {/* When the active interval isn't on the quick-bar (e.g. a seconds TF),
-          surface it as a highlighted chip just left of the dropdown toggle. */}
-      {quickBar.every((p) => p.resolution !== period.resolution) && (
-        <Tooltip content={`${period.label} interval`}>
-          <button
-            className="on extra-period"
-            onClick={() => setIntervalOpen((v) => !v)}
-          >
-            {period.label}
-          </button>
-        </Tooltip>
+      {/* The quick bar plus, when the active interval isn't on it (a seconds or
+          custom TF), that interval as a highlighted chip in its duration slot,
+          so the whole row always reads shortest to longest. */}
+      {quickBarWithActive(quickBar, period).map((p) =>
+        p === period && !quickBar.includes(p) ? (
+          <Tooltip key={p.resolution} content={`${p.label} interval`}>
+            <button
+              className="on extra-period"
+              onClick={() => setIntervalOpen((v) => !v)}
+            >
+              {p.label}
+            </button>
+          </Tooltip>
+        ) : (
+          <Tooltip key={p.resolution} content={`${p.label} interval`}>
+            <button
+              className={p.resolution === period.resolution ? "on" : ""}
+              onClick={() => onPeriod(p)}
+            >
+              {p.label}
+            </button>
+          </Tooltip>
+        ),
       )}
       {/* TV-style grouped interval menu (adds the live-only seconds group). */}
       <div className="menu interval-menu" ref={intervalMenuRef}>
@@ -162,7 +207,7 @@ export function IntervalControls({
         </Tooltip>
         {intervalOpen && (
           <div className="dropdown interval-dropdown">
-            {PERIOD_GROUPS.map((g) => (
+            {intervalGroups.map((g) => (
               <div key={g.label} className="interval-group">
                 <div className="interval-group-label">{g.label}</div>
                 <ul>
@@ -179,44 +224,68 @@ export function IntervalControls({
                         {p.label}
                         {p.liveOnly && <span className="live-only">live</span>}
                       </span>
-                      {/* Defaults (1m–1W) are always on the quick bar; only the
-                          other intervals get a favourite toggle. The star is
-                          always visible (not hover-revealed) for discoverability. */}
-                      {!DEFAULT_RESOLUTIONS.has(p.resolution) && (
-                        <Tooltip
-                          content={
-                            favResolutions.includes(p.resolution)
-                              ? "Remove from quick bar"
-                              : "Add to quick bar"
-                          }
-                        >
-                          <button
-                            className={
-                              "ind-star tf-star" +
-                              (favResolutions.includes(p.resolution) ? " on" : "")
-                            }
-                            aria-label={
+                      <span className="tf-actions">
+                        {/* Defaults (1m–1W) are always on the quick bar; only the
+                            other intervals get a favourite toggle. The star is
+                            always visible (not hover-revealed) for discoverability. */}
+                        {!DEFAULT_RESOLUTIONS.has(p.resolution) && (
+                          <Tooltip
+                            content={
                               favResolutions.includes(p.resolution)
                                 ? "Remove from quick bar"
                                 : "Add to quick bar"
                             }
-                            aria-pressed={favResolutions.includes(p.resolution)}
-                            onClick={(e) => {
-                              e.stopPropagation(); // toggle only; don't switch interval
-                              toggleFavResolution(p.resolution);
-                            }}
                           >
-                            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                              <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
-                            </svg>
-                          </button>
-                        </Tooltip>
-                      )}
+                            <button
+                              className={
+                                "ind-star tf-star" +
+                                (favResolutions.includes(p.resolution) ? " on" : "")
+                              }
+                              aria-label={
+                                favResolutions.includes(p.resolution)
+                                  ? "Remove from quick bar"
+                                  : "Add to quick bar"
+                              }
+                              aria-pressed={favResolutions.includes(p.resolution)}
+                              onClick={(e) => {
+                                e.stopPropagation(); // toggle only; don't switch interval
+                                toggleFavResolution(p.resolution);
+                              }}
+                            >
+                              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                                <path d="M12 17.3l-5.4 3.3 1.5-6.2L3 10.2l6.3-.5L12 4l2.7 5.7 6.3.5-5.1 4.2 1.5 6.2z" />
+                              </svg>
+                            </button>
+                          </Tooltip>
+                        )}
+                        {g.label === "Custom" && (
+                          <Tooltip content="Delete custom timeframe">
+                            <button
+                              className="tf-delete"
+                              aria-label={`Delete ${p.label}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeCustomResolution(p.resolution);
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </Tooltip>
+                        )}
+                      </span>
                     </li>
                   ))}
                 </ul>
+                {g.label === "Custom" && <CustomTimeframeForm onAdd={addCustomResolution} />}
               </div>
             ))}
+            {/* No saved custom timeframes yet: the Custom group is just the form. */}
+            {!intervalGroups.some((g) => g.label === "Custom") && (
+              <div className="interval-group">
+                <div className="interval-group-label">Custom</div>
+                <CustomTimeframeForm onAdd={addCustomResolution} />
+              </div>
+            )}
           </div>
         )}
       </div>

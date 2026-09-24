@@ -426,6 +426,18 @@ export function saveFavoriteResolutions(list: string[]): void {
   save(FAVORITE_RESOLUTIONS_KEY, list);
 }
 
+// Custom timeframes (GLOBAL preference): canonical resolution strings the user
+// defined in the interval dropdown ("Add custom"). The grammar needs no
+// registry, so this list only drives what the menus offer; a chart already on
+// a deleted custom timeframe keeps working.
+const CUSTOM_RESOLUTIONS_KEY = `${PREFIX}.customResolutions`;
+export function loadCustomResolutions(): string[] {
+  return load<string[]>(CUSTOM_RESOLUTIONS_KEY, []);
+}
+export function saveCustomResolutions(list: string[]): void {
+  save(CUSTOM_RESOLUTIONS_KEY, list);
+}
+
 // --- recently opened symbols (PER BROKER, mirrored) --------------------------
 //
 // A personal MRU list: the epics of symbols the user recently opened from the

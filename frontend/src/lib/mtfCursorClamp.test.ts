@@ -18,9 +18,9 @@ vi.mock("klinecharts", () => ({
 
 // Controlled HTF fetch, so an apply* can be driven end to end.
 const fetchRangeStrict = vi.fn<(...args: unknown[]) => Promise<KLineData[]>>();
-const RES_SECONDS: Record<string, number> = { MINUTE_15: 900, HOUR: 3600, DAY: 86_400 };
-// Pin aliases, the way feed's nominalBarHours falls through to expr/catalog's
-// tfSeconds — an alias must score a real width, not 0.
+const RES_SECONDS: Record<string, number> = { MINUTE_15: 900, HOUR: 3600, HOUR_5: 18_000, DAY: 86_400 };
+// Pin aliases, the way feed's nominalBarHours reads them through the timeframe
+// grammar: an alias must score a real width, not 0.
 const ALIAS_SECONDS: Record<string, number> = { "1H": 3600, D: 86_400 };
 vi.mock("./feed", () => ({
   fetchRangeStrict: (...args: unknown[]) => fetchRangeStrict(...args),
@@ -31,7 +31,7 @@ vi.mock("./feed", () => ({
   },
 }));
 
-const { clampHtfBars, mtfBucketMs, setHtfCursorClamp, applyMaTimeframe } =
+const { clampHtfBars, mtfBucketKey, mtfBucketMs, setHtfCursorClamp, applyMaTimeframe } =
   await import("./mtfCoordinator");
 
 const HOUR = 3_600_000;
@@ -97,6 +97,27 @@ describe("mtfBucketMs", () => {
     expect(mtfBucketMs(chartWith([{ name: "EMA", extendData: { mtf: { timeframe: "1H" } } }]))).toBe(
       HOUR,
     );
+  });
+});
+
+describe("mtfBucketKey", () => {
+  const H = HOUR;
+  const d = Date.UTC(2026, 6, 5);
+
+  it("is null when nothing is pinned", () => {
+    expect(mtfBucketKey(chartWith([{ name: "MACD" }]), d)).toBeNull();
+  });
+
+  it("crosses a 5H pin's buckets at 05:00 and 00:00 UTC, not on the epoch grid", () => {
+    const chart = chartWith([
+      { name: "EMA", extendData: { mtf: { timeframe: "DAY" } } },
+      { name: "EMA2", extendData: { mtf: { timeframe: "HOUR_5" } } },
+    ]);
+    const key = (ms: number) => mtfBucketKey(chart, ms);
+    expect(key(d + 4 * H + 59 * 60_000)).toBe(key(d));
+    expect(key(d + 5 * H)).not.toBe(key(d + 4 * H));
+    expect(key(d + 23 * H)).toBe(key(d + 20 * H));
+    expect(key(d + 24 * H)).not.toBe(key(d + 23 * H));
   });
 });
 

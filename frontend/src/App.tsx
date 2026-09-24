@@ -227,13 +227,13 @@ const DEFAULT_PERIOD: Period =
 // survives a reload but isn't shared with sibling tabs) — see the activeId state.
 const ACTIVE_TAB_SESSION_KEY = "auto-trader.activeTabId";
 
-// Bar duration per native resolution — the trade-list scroll poll uses it to
-// tell whether the series on the chart is already the switched-to interval.
-// Derived from the feed's own table so a new resolution can't silently
-// disable the spacing guard.
-const RESOLUTION_MS: Record<string, number> = Object.fromEntries(
-  Object.entries(RESOLUTION_SECONDS).map(([r, secs]) => [r, secs * 1000]),
-);
+// Bar duration per resolution, for the trade-box scroll padding. A direct
+// RESOLUTION_SECONDS read (its Proxy covers custom timeframes), never a
+// snapshot of its entries, which list the built-ins only.
+const resolutionMs = (r: string): number | null => {
+  const secs = RESOLUTION_SECONDS[r];
+  return secs != null ? secs * 1000 : null;
+};
 
 // Pointer to the ONE trade box the trade-list panel has sketched (one box at a
 // time by design: clicking a row replaces the previous one, wherever it lives).
@@ -1382,7 +1382,7 @@ export default function App() {
         }
         const targetPeriod = target ? PERIODS.find((x) => x.resolution === target) : undefined;
         if (targetPeriod) {
-          switchedResMs = RESOLUTION_MS[targetPeriod.resolution] ?? null;
+          switchedResMs = resolutionMs(targetPeriod.resolution);
           // This cell only — deliberately narrower than setCellPeriod's
           // interval-sync broadcast: the jump is about reading ONE trade.
           setTabs((ts) =>
@@ -1427,7 +1427,7 @@ export default function App() {
       // the chart to keep it readable. ~10 bars each side.
       const finalResMs =
         switchedResMs ??
-        (cellNow ? RESOLUTION_MS[cellNow.period.resolution] : null) ??
+        (cellNow ? resolutionMs(cellNow.period.resolution) : null) ??
         DAY_S * 1000;
       const pad = Math.max((to - from) * 0.6, 10 * finalResMs);
       const tryScroll = (attempt: number) => {

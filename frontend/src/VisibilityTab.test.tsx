@@ -60,4 +60,39 @@ describe("VisibilityTab", () => {
     render(<VisibilityTab model={m} onChange={vi.fn()} showAutoHide={false} currentResolution={RES} />);
     expect((screen.getByLabelText("Visible on") as HTMLSelectElement).value).toBe("coarser");
   });
+
+  describe("fractional hour bounds (90m)", () => {
+    const R90 = "MINUTE_90";
+
+    it("the 'Only 90m' preset round-trips through the tab and stays detected", () => {
+      const onChange = vi.fn();
+      const { rerender } = render(
+        <VisibilityTab model={defaultVisibility()} onChange={onChange} showAutoHide={false} currentResolution={R90} />,
+      );
+      fireEvent.change(screen.getByLabelText("Visible on"), { target: { value: "only" } });
+      const only = onChange.mock.calls.at(-1)![0];
+      expect(only.units.hours).toEqual({ on: true, min: 1.5, max: 1.5 });
+      rerender(<VisibilityTab model={only} onChange={onChange} showAutoHide={false} currentResolution={R90} />);
+      expect((screen.getByLabelText("Visible on") as HTMLSelectElement).value).toBe("only");
+      expect((screen.getByLabelText("Hours min") as HTMLInputElement).value).toBe("1.5");
+      expect((screen.getByLabelText("Hours max") as HTMLInputElement).value).toBe("1.5");
+    });
+
+    it("the hour number inputs accept fractional values", () => {
+      const m = applyPreset(defaultVisibility(), R90, "only");
+      render(<VisibilityTab model={m} onChange={vi.fn()} showAutoHide={false} currentResolution={R90} />);
+      expect(screen.getByLabelText("Hours min").getAttribute("step")).toBe("any");
+      expect(screen.getByLabelText("Hours max").getAttribute("step")).toBe("any");
+    });
+
+    it("editing one bound keeps the other bound's fraction", () => {
+      const onChange = vi.fn();
+      const m = applyPreset(defaultVisibility(), R90, "only");
+      render(<VisibilityTab model={m} onChange={onChange} showAutoHide={false} currentResolution={R90} />);
+      fireEvent.change(screen.getByLabelText("Hours max"), { target: { value: "4" } });
+      expect(onChange.mock.calls.at(-1)![0].units.hours).toEqual({ on: true, min: 1.5, max: 4 });
+      fireEvent.change(screen.getByLabelText("Hours min"), { target: { value: "1" } });
+      expect(onChange.mock.calls.at(-1)![0].units.hours).toEqual({ on: true, min: 1, max: 1.5 });
+    });
+  });
 });

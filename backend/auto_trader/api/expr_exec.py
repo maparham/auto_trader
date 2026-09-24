@@ -85,19 +85,21 @@ def _tf_span(tf: str, instances=None) -> tuple[int, str]:
     guard such a pin reaches resolution_seconds() and 500s on an uncaught
     ValueError. Name the offending pane so the user can fix the pane, not guess.
     """
-    res = tf_resolution(tf) or tf
-    try:
-        return resolution_seconds(res), res
-    except (ValueError, KeyError):
-        owner = _pin_owner(tf, instances)
-        where = (f"{owner} is pinned to timeframe '{tf}'" if owner
-                 else f"timeframe '{tf}' is not supported")
-        raise HTTPException(422, {
-            "code": "unsupported_timeframe",
-            "message": f"{where}, which backtests cannot compute. Change that "
-                       f"indicator's timeframe or unpin it.",
-            "start": None, "end": None, "group": None, "row": None,
-        })
+    res = tf_resolution(tf)
+    if res is not None:
+        try:
+            return resolution_seconds(res), res
+        except (ValueError, KeyError):
+            pass
+    owner = _pin_owner(tf, instances)
+    where = (f"{owner} is pinned to timeframe '{tf}'" if owner
+             else f"timeframe '{tf}' is not supported")
+    raise HTTPException(422, {
+        "code": "unsupported_timeframe",
+        "message": f"{where}, which backtests cannot compute. Change that "
+                   f"indicator's timeframe or unpin it.",
+        "start": None, "end": None, "group": None, "row": None,
+    })
 
 
 def _same_tf(a: str, b: str) -> bool:

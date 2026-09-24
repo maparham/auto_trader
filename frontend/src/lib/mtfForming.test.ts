@@ -72,3 +72,26 @@ describe("foldFormingBar", () => {
     expect(b).toEqual(bar(open, 10, 12, 8, 8.5));
   });
 });
+
+describe("custom intraday buckets reset at 00:00 UTC (short last bar of the day)", () => {
+  // 5H buckets open at 00, 05, 10, 15, 20 UTC; the 20:00 bucket ends at midnight.
+  const DAY = 24 * H;
+  const d20 = 10 * DAY + 20 * H;
+  const midnight = 11 * DAY;
+
+  it("formingOpenMs derives the next open from the grammar, not lastStart + htfMs", () => {
+    expect(formingOpenMs([10 * DAY + 15 * H, d20], 5 * H, undefined, "HOUR_5")).toBe(midnight);
+    // Without a timeframe the nominal width still stands (unchanged behavior).
+    expect(formingOpenMs([d20], 5 * H)).toBe(d20 + 5 * H);
+  });
+
+  it("foldFormingBar closes the 20:00 bucket at midnight, excluding the new day's bars", () => {
+    const chart = [
+      bar(d20, 10, 11, 9, 10.5),
+      bar(d20 + 3 * H, 10.5, 12, 10, 11),
+      bar(midnight, 50, 60, 40, 55), // next day's 00:00 bucket: excluded
+    ];
+    const b = foldFormingBar(chart, d20, 5 * H, undefined, undefined, "HOUR_5");
+    expect(b).toEqual(bar(d20, 10, 12, 9, 11));
+  });
+});

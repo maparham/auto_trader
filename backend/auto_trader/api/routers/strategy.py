@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 
 from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.timeframe import canonicalize
 from auto_trader.core.models import Candle, Side
 from auto_trader.engine.risk import stop_level, target_level
 from auto_trader.strategy.base import Context, Strategy
@@ -109,6 +110,7 @@ def _atr(spec, series: dict[str, list[float | None]], i: int) -> float | None:
 
 @router.post("/api/strategy/evaluate", response_model=EvaluateResponse)
 async def evaluate_strategy(req: EvaluateRequest, request: Request) -> EvaluateResponse:
+    req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     req.broker = deps.resolve_broker(request, req.broker)
     if not req.candles:
         raise HTTPException(422, "candles must not be empty")

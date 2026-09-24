@@ -8,6 +8,7 @@
 
 import type { KLineData } from "klinecharts";
 import { minPositiveGap } from "./barInterval";
+import { htfBarEndMs } from "./mtfForming";
 
 export type PriceSource =
   | "close"
@@ -349,7 +350,8 @@ export function htfCoverageStartMs(
  *
  * Each chart bar at time `t` takes the value of the most recent HTF bar that is
  * already "usable" at `t`. With waitClose=true (the only v1 mode) an HTF bar is
- * usable only at/after its CLOSE time (open timestamp + htfMs); with
+ * usable only at/after its CLOSE time (htfBarEndMs: open + htfMs, or the
+ * 00:00 UTC reset for a short last intraday bucket when `timeframe` is given); with
  * waitClose=false it is usable from its open. Both input arrays must be sorted
  * ascending by time and `htfValues[i]` corresponds to `htfBars[i]`.
  *
@@ -378,8 +380,14 @@ export function alignHtfToChart(
    * 24h (same miss the nominalBarHours doc note warns about). Optional so
    * stashes written before this field existed keep the inferred behavior. */
   chartMs?: number,
+  /** The pin's timeframe. A closed bar becomes usable at its true close
+   * (htfBarEndMs, the same rule clampHtfBars uses): a non-native intraday pin
+   * (7H, 90m) ends the day on a short bucket that closes at 00:00 UTC, not a
+   * full span later. Omitted: the nominal open + htfMs. */
+  timeframe?: string | null,
 ): Array<number | undefined> {
   const out: Array<number | undefined> = new Array(chartTimestamps.length).fill(undefined);
+  const tf = timeframe ?? undefined;
   // Same-timeframe pin: when the chart's own bar interval equals the HTF
   // width, the closed-bar gate would delay every value one bar for nothing —
   // the value belongs to the bar that produced it, exactly as the unpinned
@@ -396,7 +404,7 @@ export function alignHtfToChart(
       const next = htfBars[j + 1];
       const usableAt =
         waitClose && !sameTf && j + 1 !== formingIdx
-          ? next.timestamp + htfMs
+          ? htfBarEndMs(next.timestamp, htfMs, tf)
           : next.timestamp;
       if (usableAt <= t) j++;
       else break;

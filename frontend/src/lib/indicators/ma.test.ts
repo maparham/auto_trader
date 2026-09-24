@@ -131,7 +131,7 @@ describe("computeMa slopeState", () => {
     const htfMs = 4 * 60_000;
     const pts = computeMa(bars, "ema", 9, {
       mtf: {
-        timeframe: "HOUR", // any truthy value; the mtf block below is what matters
+        timeframe: "MINUTE_4", // must name the same span as htfMs (the close reads it)
         htfStarts: [-2 * htfMs, -htfMs, 0], // two CLOSED HTF bars before the chart + one at 0
         htfSeries: [100, 101, 102], // steadily rising natively
         htfMs,

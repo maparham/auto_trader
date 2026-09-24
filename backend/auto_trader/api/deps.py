@@ -43,6 +43,7 @@ from auto_trader.core.candle_aggregate import (
     is_derived,
 )
 from auto_trader.core.candle_cache import CANDLE_CACHE
+from auto_trader.core.timeframe import canonicalize
 from auto_trader.core.models import Candle, Resolution
 from auto_trader.core.tick_store import TICK_STORE
 
@@ -380,14 +381,16 @@ async def _fetch_symbol_candles(
     # Resolve an unnamed broker BEFORE anything keys off broker_id (breaker,
     # candle cache, tick store) so an empty id never becomes a cache key.
     broker_id = broker_id or default_broker_id()
+    # One canonical key per timeframe (MINUTE_120 and HOUR_2 share a cache);
+    # raises TimeframeError -> 422 for anything the grammar rejects.
+    resolution = canonicalize(resolution)
     _reject_symbol_fetch_on_compute_host(epic, resolution)
     if resolution in SECONDS_INTERVALS:
         return await TICK_STORE.bars(broker_id, epic, SECONDS_INTERVALS[resolution], bars)
     if is_derived(resolution):
-        # 3m, 2W/3W/6W, 1M/2M/3M, 1Y aren't native resolutions: fold the cached base
-        # series (1m for 3m; DAY/WEEK for the rest) into buckets on read. The cache
-        # only ever sees the native base series (no derived rows), so its backfill
-        # gives us full history.
+        # Non-native timeframes (3m, 6H, 2D, 2W, 4M, 1Y, ...) fold the cached base
+        # series on read. The cache only ever sees the native base series (no
+        # derived rows), so its backfill gives us full history.
         rule = DERIVED[resolution]
         base = rule.base
         base_key = (broker_id, epic, base.value, price_side)

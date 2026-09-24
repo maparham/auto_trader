@@ -95,6 +95,7 @@ import { periodByResolution, pinnableTimeframes, pinBelowChart } from "./lib/fee
 import {
   saveIndicatorConfig,
   loadIndicatorConfigs,
+  loadCustomResolutions,
   type SavedIndicatorConfig,
 } from "./lib/persist";
 import InfoTip from "./components/InfoTip";
@@ -1047,15 +1048,27 @@ function IndicatorSettingsForm({
   // Pinnable: the chart's own timeframe or higher. A pin that dropped BELOW the
   // chart (the chart timeframe was raised past it) isn't offered, but must stay
   // visible and reselectable-away-from — flagged; it renders on chart bars.
+  const pinnable = pinnableTimeframes(chartResolution, loadCustomResolutions());
+  // A pin on a custom timeframe since deleted from the saved list is neither
+  // below chart nor in `pinnable` (pinnableTimeframes only offers SAVED custom
+  // timeframes) — same "stay visible and reselectable-away-from" treatment as
+  // pinBelowChart above, so the select doesn't silently show the wrong option.
+  const belowChart = pinBelowChart(timeframe, chartResolution);
+  const deletedCustomPin =
+    !belowChart &&
+    timeframe !== "chart" &&
+    !pinnable.some((p) => p.resolution === timeframe) &&
+    periodByResolution(timeframe);
   const timeframeOptions = [
     { resolution: "chart", label: chartOptionLabel },
-    ...(pinBelowChart(timeframe, chartResolution)
+    ...(belowChart
       ? [{
           resolution: timeframe,
           label: `${periodByResolution(timeframe)?.label ?? timeframe} (below chart)`,
         }]
       : []),
-    ...pinnableTimeframes(chartResolution),
+    ...(deletedCustomPin ? [{ resolution: timeframe, label: deletedCustomPin.label }] : []),
+    ...pinnable,
   ];
 
   // Line-type figures, paired with their effective default colors so the Style

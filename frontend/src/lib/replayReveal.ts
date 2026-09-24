@@ -37,6 +37,7 @@
 // a nominal width is not safe here: see that function's note.
 import type { StoredBacktestResult } from "./persist";
 import { RESOLUTION_SECONDS } from "./feed";
+import { tryCanonicalTf } from "./timeframe";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -76,8 +77,13 @@ const CALENDAR_MAX_MS: Record<string, number> = {
  * corrupt or legacy record shows an empty reveal rather than a leaking one.
  */
 export function revealBarMs(resolution: string): number {
-  const calendarMax = CALENDAR_MAX_MS[resolution];
-  const nominalMs = (RESOLUTION_SECONDS[resolution] ?? 0) * 1000;
+  // Canonical first, so an alias pads like its canonical bucket (MONTH_12 and
+  // 1Y are YEAR, 1M and MONTH_1 are MONTH). Grammar months (MONTH_4, "5M") pad
+  // the same way: 31 days a month.
+  const key = tryCanonicalTf(resolution) ?? resolution;
+  const m = /^MONTH_(\d+)$/.exec(key);
+  const calendarMax = CALENDAR_MAX_MS[key] ?? (m ? 31 * Number(m[1]) * DAY_MS : undefined);
+  const nominalMs = (RESOLUTION_SECONDS[key] ?? 0) * 1000;
   if (calendarMax == null && nominalMs <= 0) return Infinity;
   const width = calendarMax ?? nominalMs;
   return width >= DAY_MS ? width + HOUR_MS : width;
