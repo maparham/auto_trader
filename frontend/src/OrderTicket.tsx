@@ -703,14 +703,16 @@ function EditTicket({
   // A typed SL/TP must stay on the valid side of the latest price (long: SL below /
   // TP above; short reversed). When set on the wrong side we flag the field red,
   // show why, and block Update — rather than bounce off the broker. Price source: the
-  // live stream when available, else the position's marked price backed out of its
-  // uPnL (so validation still works between live ticks). null → can't judge → skip
-  // (let the broker have the final say).
+  // live stream when available, else the broker's own mark from the positions poll,
+  // else the price backed out of the uPnL (so validation still works between live
+  // ticks). The mark comes first because a live account's uPnL is in the account
+  // currency and may carry swap, so the backed-out price can sit far off. null →
+  // can't judge → skip (let the broker have the final say).
   const mark =
     trade.kind === "position" && trade.upnl != null && trade.quantity > 0
       ? trade.priceLevel + (long ? 1 : -1) * (trade.upnl / trade.quantity)
       : null;
-  const latest = getLivePrice(trade.epic) ?? mark;
+  const latest = getLivePrice(trade.epic) ?? trade.mark ?? mark;
   const sideValid = (field: "stop" | "tp", level: number | null): boolean => {
     if (level == null || latest == null) return true;
     const below = field === "stop" ? long : !long;
