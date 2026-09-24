@@ -37,6 +37,8 @@ const TAB_GAP = 6;
 
 // 1x1 transparent GIF handed to setDragImage so the browser's faded chip
 // snapshot never shows — the .tab-float clone below is the visible drag image.
+const NO_TABS: ReadonlySet<string> = new Set();
+
 const emptyImg = typeof Image === "undefined" ? null : new Image();
 if (emptyImg != null)
   emptyImg.src =
@@ -68,15 +70,28 @@ function ChipContent({
   cellCount,
   closedTip,
   alertBadge = false,
+  snapshotBadge = false,
 }: {
   lead: ChartCell;
   cellCount: number;
   closedTip: string | null;
   alertBadge?: boolean;
+  snapshotBadge?: boolean;
 }) {
   return (
     <>
       <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="tab-icon" />
+      {/* Camera on a tab restored from a snapshot (read-only until Unlock), so
+          it can't be mistaken for the live chart of the same symbol. Leading,
+          not trailing: the trailing items fade out under the hover ×. */}
+      {snapshotBadge && (
+        <span className="tab-snapshot-badge" aria-label="Snapshot view">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+            <circle cx="12" cy="13" r="4" />
+          </svg>
+        </span>
+      )}
       <span className="tab-symbol">
         {isSynthetic(lead.symbol.epic) ? (lead.symbol.name ?? lead.symbol.epic) : lead.symbol.epic}
       </span>
@@ -122,6 +137,8 @@ interface Props {
   // Tabs with an unseen alert firing (App-owned, cleared on visit) — their chips
   // show a bell dot.
   alertTabIds: ReadonlySet<string>;
+  // Tabs holding a read-only snapshot view (camera badge on the chip).
+  snapshotTabIds?: ReadonlySet<string>;
   onSelect: (id: string) => void;
   onAdd: () => void;
   onClose: (id: string) => void;
@@ -155,6 +172,7 @@ export default function TabBar({
   activeId,
   closedEpics,
   alertTabIds,
+  snapshotTabIds = NO_TABS,
   onSelect,
   onAdd,
   onClose,
@@ -758,6 +776,7 @@ export default function TabBar({
         // never stacks a second bubble on the chip's).
         const tipLines = t.cells.map((c) => `${c.symbol.name} · ${c.period.label}`);
         if (closedTip) tipLines.push(closedTip);
+        if (snapshotTabIds.has(t.id)) tipLines.push("Snapshot view (read-only)");
         if (alertTabIds.has(t.id)) tipLines.push("Alert fired");
         return (
         <Tooltip key={t.id} asChild content={tipLines} disabled={dragId != null}>
@@ -875,6 +894,7 @@ export default function TabBar({
             cellCount={t.cells.length}
             closedTip={closedTip}
             alertBadge={alertTabIds.has(t.id)}
+            snapshotBadge={snapshotTabIds.has(t.id)}
           />
           <button
             className="tab-close"
@@ -940,6 +960,7 @@ export default function TabBar({
               cellCount={draggedTab.cells.length}
               closedTip={floatClosedTip}
               alertBadge={alertTabIds.has(draggedTab.id)}
+              snapshotBadge={snapshotTabIds.has(draggedTab.id)}
             />
           </div>,
           document.body,

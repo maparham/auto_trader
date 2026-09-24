@@ -535,6 +535,10 @@
   animation: tab-alert-pulse 1.6s ease-in-out infinite;
 }
 .tab-alert-badge svg { display: block; }
+/* Camera on a snapshot-view tab: muted, leading (next to the symbol icon) so
+   the hover close x never hides it. */
+.tab-snapshot-badge { line-height: 0; color: var(--text-dim); }
+.tab-snapshot-badge svg { display: block; }
 /* Gentle ring-the-bell pulse so the badge catches the eye without strobing. */
 @keyframes tab-alert-pulse {
   0%, 100% { transform: scale(1); }

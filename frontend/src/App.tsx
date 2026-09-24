@@ -1671,8 +1671,17 @@ export default function App() {
   // Unlocking a snapshot view clears the cell controller's readOnly flag;
   // re-render so focusedReadOnly recomputes (toolbar swap, DrawSidebar, gallery
   // save button).
-  const [, bumpSnapViewTick] = useReducer((n: number) => n + 1, 0);
+  const [snapViewTick, bumpSnapViewTick] = useReducer((n: number) => n + 1, 0);
   useEffect(() => snapshotViewChanged.subscribe(() => bumpSnapViewTick()), []);
+  // Tabs whose cells include a read-only snapshot view (scope still carries its
+  // snapshotMeta), for the camera badge. snapViewTick re-runs this on Unlock.
+  const snapshotTabIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const t of tabs)
+      if (t.cells.some((c) => loadSnapshotMeta(c.scope) != null)) ids.add(t.id);
+    return ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs, snapViewTick]);
   // Closing the trading panel exits edit mode AND drops the trade selection (the
   // chart pills + row highlight clear). Done here — a state transition — rather than
   // in OrderTicket's unmount cleanup, which StrictMode fires spuriously on mount.
@@ -2611,6 +2620,7 @@ export default function App() {
         activeId={active?.id ?? ""}
         closedEpics={epicClosed}
         alertTabIds={alertTabIds}
+        snapshotTabIds={snapshotTabIds}
         onSelect={selectTabFromBar}
         onAdd={addTab}
         onClose={closeTab}
