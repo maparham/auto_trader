@@ -689,8 +689,12 @@ export default function App() {
       return;
     }
     let alive = true;
-    const load = () => {
-      if (document.hidden) return; // pause when the tab is hidden
+    // The first load runs even in a hidden tab (one opened in the background
+    // would otherwise show the paper currency and no margin buffer until
+    // shown), like the trades feed's first refresh. Only the poll pauses, and
+    // showing the tab refreshes at once instead of waiting out the interval.
+    const load = (force = false) => {
+      if (!force && document.hidden) return;
       fetchAccountSummary(activeAccount)
         .then((s) => {
           if (alive) setAccountSummary(s);
@@ -702,11 +706,16 @@ export default function App() {
           if (e instanceof BrokerBlockedError) reportBrokerBlocked(e.message);
         });
     };
-    load();
+    load(true);
     const timer = setInterval(load, 6_000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       alive = false;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, [activeAccount]);
 
