@@ -209,6 +209,15 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
   // match guarantees an exact/prefix epic always appears. Otherwise the active chip
   // filters the cached catalogue.
   const shown = useMemo(() => {
+    // Typing searches within the selected chip. Recent is the landing view, not
+    // a choice, so a search from it (and from All) covers the whole catalogue.
+    const types = categories.find((c) => c.key === cat)?.types;
+    const inScope = (m: Instrument) =>
+      cat === "favorites"
+        ? favEpics.has(m.epic)
+        : types
+          ? m.type != null && types.includes(m.type)
+          : true;
     if (query.trim()) {
       if (!term) return []; // formula mode, empty active symbol → the hint shows
       const t = term.toLowerCase();
@@ -219,7 +228,7 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
       const out: Instrument[] = [];
       for (const m of [...searchHits, ...local]) {
         const key = m.epic.toUpperCase();
-        if (!seen.has(key)) {
+        if (!seen.has(key) && inScope(m)) {
           seen.add(key);
           out.push(m);
         }
@@ -236,9 +245,8 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
         .filter((m): m is Instrument => m !== undefined);
     }
     if (cat === "all") return all;
-    const types = categories.find((c) => c.key === cat)?.types ?? [];
-    return all.filter((m) => m.type != null && types.includes(m.type));
-  }, [query, term, searchHits, cat, categories, all, favorites, recentEpics]);
+    return all.filter(inScope);
+  }, [query, term, searchHits, cat, categories, all, favorites, favEpics, recentEpics]);
 
   const loading = term ? searching : catalogueLoading;
 
@@ -397,10 +405,12 @@ export default function SymbolSearchModal({ current, brokerId, onPick, onClose }
           {chips.map((c) => (
             <button
               key={c.key}
-              className={!query.trim() && cat === c.key ? "on" : ""}
+              className={cat === c.key && (!query.trim() || c.key !== "recent") ? "on" : ""}
               onClick={() => {
                 setCat(c.key);
-                setQuery(""); // a chip click leaves search mode
+                // Other chips narrow the running search; Recent is a list, not a
+                // scope, so picking it leaves search mode.
+                if (c.key === "recent") setQuery("");
               }}
             >
               {c.label}

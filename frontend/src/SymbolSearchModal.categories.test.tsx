@@ -85,6 +85,29 @@ describe("SymbolSearchModal — broker-declared categories", () => {
     expect(screen.queryByText("etf cfd")).toBeNull();
   });
 
+  it("keeps a typed search inside the selected chip", async () => {
+    renderModal("yfinance");
+    fireEvent.click(screen.getByText("Stocks"));
+    await waitFor(() => expect(screen.queryByText("AAPL")).not.toBeNull());
+    // "p" matches Apple (stock) and SPDR S&P 500 ETF by name.
+    fireEvent.change(screen.getByPlaceholderText("Symbol or name…"), {
+      target: { value: "p" },
+    });
+    await waitFor(() => expect(screen.queryByText("AAPL")).not.toBeNull());
+    expect(screen.queryByText("SPY")).toBeNull();
+    expect(screen.getByText("Stocks").className).toBe("on");
+
+    // Switching chips narrows the same search instead of clearing it.
+    fireEvent.click(screen.getByText("ETFs"));
+    await waitFor(() => expect(screen.queryByText("SPY")).not.toBeNull());
+    expect(screen.queryByText("AAPL")).toBeNull();
+
+    // All searches the whole catalogue.
+    fireEvent.click(screen.getByText("All"));
+    await waitFor(() => expect(screen.queryByText("AAPL")).not.toBeNull());
+    expect(screen.queryByText("SPY")).not.toBeNull();
+  });
+
   it("shows no type chips for a broker that declares none", async () => {
     renderModal("oanor");
     await waitFor(() => expect(screen.queryByText("All")).not.toBeNull());
