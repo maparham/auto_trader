@@ -992,6 +992,39 @@ function IndicatorSettingsForm({
     return null;
   }
 
+  // Render-only inputs the meta puts on the Style tab (Trendlines' pivot
+  // marks/line stats/dimming, Auto Fib's past-fib opacity): same genExtend
+  // state and row shapes as the Inputs tab. Shared so each caller stays a
+  // one-line hook into the same chunking/rendering rules.
+  function styleTabMetaInputs() {
+    return groupInputs(inputs.filter((inp) => inp.tab === "style")).map((chunk) => (
+      <Fragment key={chunk[0].key}>
+        {chunk[0].section && <div className="ind-group">{chunk[0].section}</div>}
+        {/* Any run of CHECKBOXES shares the beside-the-box row, a grouped
+            lone one too (Debug mode), so it reads like its neighbours; any
+            other chunk renders one row per input so a mixed group never
+            drops its tail. */}
+        {(chunk.length > 1 || chunk[0].group) && chunk.every((inp) => inp.type === "boolean") ? (
+          <div className="ind-pair2-bool">
+            {chunk.map((inp) => (
+              <div className="ind-field" key={inp.key}>
+                {controlFor(inp, true)}
+                {tipFor(inp)}
+              </div>
+            ))}
+          </div>
+        ) : (
+          chunk.map((inp) => (
+            <div key={inp.key} className={inp.wide ? "ind-row" : "ind-row ind-row-cols"}>
+              {labelFor(inp)}
+              {controlFor(inp)}
+            </div>
+          ))
+        )}
+      </Fragment>
+    ));
+  }
+
   // --- SESSIONS: editable per-session list (extendData.sessions) ---
   // The whole indicator config is this list. Hours are LOCAL time in each session's
   // timezone (Inputs tab); colours live in the Style tab. Writes merge live
@@ -3190,6 +3223,10 @@ function IndicatorSettingsForm({
                     sharedStyle="solid"
                     trendLabel="Trend line"
                   />
+                  {/* Render-only input the meta puts on this tab (past-fib
+                      opacity): same genExtend state and row shapes as the
+                      Inputs tab. */}
+                  {styleTabMetaInputs()}
                 </>
               )}
               {/* FVG: zone tint per direction + one shared fill opacity (editing
@@ -3263,32 +3300,7 @@ function IndicatorSettingsForm({
                   {/* Render-only inputs the meta puts on this tab (pivot
                       marks, line stats, dimming): same genExtend state and
                       row shapes as the Inputs tab. */}
-                  {groupInputs(inputs.filter((inp) => inp.tab === "style")).map((chunk) => (
-                    <Fragment key={chunk[0].key}>
-                      {chunk[0].section && <div className="ind-group">{chunk[0].section}</div>}
-                      {/* Any run of CHECKBOXES shares the beside-the-box row,
-                          a grouped lone one too (Debug mode), so it reads like
-                          its neighbours; any other chunk renders one row per
-                          input so a mixed group never drops its tail. */}
-                      {(chunk.length > 1 || chunk[0].group) && chunk.every((inp) => inp.type === "boolean") ? (
-                        <div className="ind-pair2-bool">
-                          {chunk.map((inp) => (
-                            <div className="ind-field" key={inp.key}>
-                              {controlFor(inp, true)}
-                              {tipFor(inp)}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        chunk.map((inp) => (
-                          <div key={inp.key} className={inp.wide ? "ind-row" : "ind-row ind-row-cols"}>
-                            {labelFor(inp)}
-                            {controlFor(inp)}
-                          </div>
-                        ))
-                      )}
-                    </Fragment>
-                  ))}
+                  {styleTabMetaInputs()}
                 </>
               )}
               {/* RSI Style — mirrors TradingView's RSI Style tab. Every row has a

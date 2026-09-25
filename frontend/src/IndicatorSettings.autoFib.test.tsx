@@ -59,4 +59,10 @@ describe("Auto Fib settings", () => {
     // A pane with no saved fib starts extended right.
     expect(fib.extend).toBe("right");
   });
+
+  it("offers Past fib opacity on the Style tab", () => {
+    open();
+    fireEvent.click(screen.getByRole("button", { name: "Style" }));
+    expect(screen.getByLabelText("Past fib opacity")).toBeTruthy();
+  });
 });
