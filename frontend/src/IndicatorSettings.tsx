@@ -2892,8 +2892,11 @@ function IndicatorSettingsForm({
                     <InfoTip
                       title="Wait for timeframe closes"
                       text={[
-                        "Checked: uses only closed higher-timeframe bars — values update once per higher-timeframe close and never repaint.",
-                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar — and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
+                        "Checked: uses only closed higher-timeframe bars.",
+                        "Values update once per higher-timeframe close and never repaint.",
+                        "Unchecked: also folds in the current, unfinished higher-timeframe bar.",
+                        "Values then reach the newest bar but can repaint until it closes.",
+                        "Backtests always wait for closes.",
                       ]}
                     />
                   </span>
