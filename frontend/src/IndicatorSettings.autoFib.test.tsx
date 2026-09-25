@@ -87,10 +87,18 @@ describe("Auto Fib settings", () => {
     expect(ind.extendData.showPivots).toBe(true);
   });
 
-  it("offers Past fib opacity on the Style tab", () => {
+  it("pairs Past fibs with Past opacity on the Inputs tab", () => {
+    open();
+    const opacity = screen.getByLabelText("Past opacity");
+    // Stacked-label pair: both fields share one .ind-pair2 row.
+    expect(opacity.closest(".ind-pair2")).toBe(screen.getByLabelText("Past fibs").closest(".ind-pair2"));
+    expect(opacity.closest(".ind-pair2")).not.toBeNull();
+  });
+
+  it("puts Show pivots beside its checkbox, not in the value column", () => {
     open();
     fireEvent.click(screen.getByRole("button", { name: "Style" }));
-    expect(screen.getByLabelText("Past fib opacity")).toBeTruthy();
+    expect(screen.getByLabelText("Show pivots").closest(".ind-pair2-bool")).not.toBeNull();
   });
 
   it("Cancel reverts a Style-tab edit on a fresh pane", () => {
@@ -111,7 +119,8 @@ describe("Auto Fib settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Style" }));
     fireEvent.click(screen.getByLabelText("Reverse"));
     fireEvent.click(screen.getByLabelText("Level 0.236"));
-    fireEvent.change(screen.getByLabelText("Past fib opacity"), { target: { value: "60" } });
+    fireEvent.click(screen.getByRole("button", { name: "Inputs" }));
+    fireEvent.change(screen.getByLabelText("Past opacity"), { target: { value: "60" } });
     expect(ind.extendData.pastOpacity).toBe(60);
     fireEvent.click(screen.getByText("Cancel", { selector: "button" }));
     expect(autoFibFibConfig(ind.extendData)).toEqual(saved);

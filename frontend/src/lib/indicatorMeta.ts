@@ -559,10 +559,12 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     inputs: [
       {
         ...num(0, "Pivot Length"),
+        group: "pivot",
         tip: ["Bars required on each side of a swing high or low.", "Higher finds bigger swings and confirms them later."],
       },
       {
         ...num(1, "Min Swing (×ATR)", { min: 0, step: 0.1 }),
+        group: "pivot",
         tip: ["A pivot counts only if its leg from the last opposite pivot is at least this many ATR(14).", "0 = off."],
       },
       {
@@ -572,6 +574,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         source: "extend",
         field: "pastCount",
         section: "History",
+        group: "history",
         default: 0,
         min: 0,
         max: 10,
@@ -580,11 +583,11 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
       {
         key: "pastOpacity",
-        label: "Past fib opacity",
+        label: "Past opacity",
         type: "number",
         source: "extend",
         field: "pastOpacity",
-        tab: "style",
+        group: "history",
         default: 35,
         min: 5,
         max: 100,
@@ -600,6 +603,9 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         field: "showPivots",
         section: "Marks",
         tab: "style",
+        // A group of one: the beside-the-box checkbox row Trendlines' marks
+        // use, instead of a box stranded in the right-hand column.
+        group: "marks",
         default: false,
         tip: [
           "Marks every swing a fib can anchor to: up under a low, down over a high.",
