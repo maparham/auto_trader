@@ -40,6 +40,8 @@ import {
 } from "./indicators/srLevelsOutputs";
 import { SPIKE_OUTPUTS, parseSpikeConfig, spikeWarmup } from "./indicators/spikeOutputs";
 import { RSI_OUTPUTS, parseRsiRefConfig, rsiWarmup } from "./indicators/rsiOutputs";
+import { autoFibOutputs, autoFibWarmup, parseAutoFibConfig } from "./indicators/autoFibOutputs";
+import type { AutoFibExtend } from "./indicators/autoFib"; // erased at build; no runtime edge
 import type { SrLevelsExtend } from "./indicators/srLevels"; // erased at build; no runtime edge
 import type { ExprInstance } from "./expr/catalog";
 // Display vocabularies, both from klinecharts-free modules so this stays a pure,
@@ -62,6 +64,7 @@ export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set([
   "SR_LEVELS",
   "SPIKE",
   "RSI",
+  "AUTO_FIB",
 ]);
 
 /** A live chart pane, flattened to just what the expression layer reads. */
@@ -171,8 +174,8 @@ export function synthesizeExprInstances(
     }
     // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
     // kept, as there), atrLength's 14 (single-length pane).
-    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE and RSI
-    // outputs are fixed names, not lengths, so nothing about the pane's params
+    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE, RSI and AUTO_FIB
+    // outputs are fixed names or level names, not lengths, so nothing about the pane's params
     // is recoverable from a ref — an empty list takes every default.
     const calcParams =
       type === "FVG" ||
@@ -181,7 +184,8 @@ export function synthesizeExprInstances(
       type === "PIVOT_ANALYSIS" ||
       type === "SR_LEVELS" ||
       type === "SPIKE" ||
-      type === "RSI"
+      type === "RSI" ||
+      type === "AUTO_FIB"
         ? []
         : type === "ATR"
           ? [lengths[0] ?? 14]
@@ -308,6 +312,12 @@ export function exprWarmupByRef(
       return (SPIKE_OUTPUTS as readonly string[]).includes(output)
         ? spikeWarmup(parseSpikeConfig(inst.calcParams))
         : 0;
+    // Every AUTO_FIB output shares one floor (ATR(14) warm-up plus a full
+    // pivot window); an output the pane's current levels do not expose costs 0.
+    if (inst.type === "AUTO_FIB")
+      return autoFibOutputs(inst.extendData).includes(output)
+        ? autoFibWarmup(parseAutoFibConfig(inst.calcParams))
+        : 0;
     if (inst.type === "RSI") return rsiWarmup(parseRsiRefConfig(inst.calcParams, inst.extendData), output);
     if (inst.type !== "SLOPE") return 0;
     return slopeWarmup(inst.calcParams, (inst.extendData ?? {}) as SlopeExtend, output);
@@ -407,6 +417,19 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         // is deliberately absent: it caps the DRAWN set, and naming it here
         // would read as "the operand only sees the top N".
         detail: `pivot ${cfg.pivotLen} · ${cfg.atrMult}x ATR · touches ${cfg.minTouches}+`,
+      });
+      continue;
+    }
+    if (inst.type === "AUTO_FIB") {
+      const ext = (inst.extendData ?? {}) as AutoFibExtend;
+      const cfg = parseAutoFibConfig(inst.calcParams);
+      out.push({
+        id: inst.id,
+        // Level outputs follow the pane's ENABLED levels, so editing a level
+        // is what makes a rule that read it fail loudly.
+        outputs: autoFibOutputs(inst.extendData),
+        timeframe: ext.mtf?.timeframe ?? null,
+        detail: cfg.minSwingAtr > 0 ? `pivot ${cfg.pivotLen} · swing ${cfg.minSwingAtr}x ATR` : `pivot ${cfg.pivotLen}`,
       });
       continue;
     }

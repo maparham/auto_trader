@@ -344,5 +344,14 @@
     "literals": [] },
   { "expr": "SR_LEVELS.bogus > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":15},
     "instances": {"SR_LEVELS": {"type":"SR_LEVELS","calcParams":[11,0.5,2,8,500],"extendData":{}}},
+    "literals": [] },
+  { "expr": "candle.close > AUTO_FIB.f0_618", "isExit": false, "error": null,
+    "instances": {"AUTO_FIB": {"type":"AUTO_FIB","calcParams":[5,0],"extendData":{}}},
+    "literals": [] },
+  { "expr": "AUTO_FIB.bogus > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":14},
+    "instances": {"AUTO_FIB": {"type":"AUTO_FIB","calcParams":[5,0],"extendData":{}}},
+    "literals": [] },
+  { "expr": "AUTO_FIB.fm0_236 > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":16},
+    "instances": {"AUTO_FIB": {"type":"AUTO_FIB","calcParams":[5,0],"extendData":{}}},
     "literals": [] }
 ]

@@ -301,3 +301,30 @@ describe("SR_LEVELS instances", () => {
     });
   });
 });
+
+describe("AUTO_FIB instances", () => {
+  const live = [
+    { id: "AUTO_FIB", type: "AUTO_FIB", calcParams: [5, 0], extendData: {} },
+    { id: "AUTO_FIB2", type: "AUTO_FIB", calcParams: [8, 1.5], extendData: { mtf: { timeframe: "HOUR_4" } } },
+  ];
+
+  it("lists the base outputs plus every enabled level, and the pin", () => {
+    const [a, b] = exprInstancesFor(live);
+    expect(a.outputs).toEqual(["high", "low", "dir", "f0", "f0_236", "f0_382", "f0_5", "f0_618", "f0_786", "f1"]);
+    expect([a.timeframe, a.detail]).toEqual([null, "pivot 5"]);
+    expect([b.timeframe, b.detail]).toEqual(["HOUR_4", "pivot 8 · swing 1.5x ATR"]);
+  });
+
+  it("costs an exposed output the pane's floor and anything else 0", () => {
+    const warm = exprWarmupByRef(live);
+    expect(warm("AUTO_FIB", "f0_618")).toBe(14 + 2 * 5);
+    expect(warm("AUTO_FIB2", "high")).toBe(14 + 2 * 8);
+    expect(warm("AUTO_FIB", "fm0_236")).toBe(0);
+  });
+
+  it("synthesizes a default pane for a ref with no stored snapshot", () => {
+    expect(synthesizeExprInstances(["candle.close > AUTO_FIB.f0_618"], new Set())).toEqual({
+      AUTO_FIB: { type: "AUTO_FIB", calcParams: [], extendData: {} },
+    });
+  });
+});

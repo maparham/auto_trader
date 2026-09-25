@@ -355,3 +355,16 @@ describe("SR_LEVELS panes", () => {
     expect(chartIndicatorToExprToken("SR_LEVELS", CP, {}, {})).toBeNull();
   });
 });
+
+describe("AUTO_FIB panes", () => {
+  it("emits an instance ref, honouring a live figure key", () => {
+    expect(chartIndicatorToExprToken("AUTO_FIB", [5, 0], {}, { instanceId: "AUTO_FIB" })).toBe("AUTO_FIB.high");
+    expect(
+      chartIndicatorToExprToken("AUTO_FIB", [5, 0], {}, { instanceId: "AUTO_FIB2", figureKey: "f0_618" }),
+    ).toBe("AUTO_FIB2.f0_618");
+    expect(
+      chartIndicatorToExprToken("AUTO_FIB", [5, 0], {}, { instanceId: "AUTO_FIB", figureKey: "fm0_236" }),
+    ).toBe("AUTO_FIB.high");
+    expect(chartIndicatorToExprToken("AUTO_FIB", [5, 0], {}, {})).toBeNull();
+  });
+});

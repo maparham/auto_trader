@@ -9,8 +9,8 @@
 //      INDICATORS): EMA / SMA / RSI / VOLMA / VOL. The token restates the
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
-//      rule — SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS and
-//      SR_LEVELS (the
+//      rule — SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS and
+//      AUTO_FIB (the
 //      EXPR_INSTANCE_TYPES set; keep a case here for every member), as
 //      "<instanceId>.<output>" (e.g. "SLOPE.50",
 //      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
@@ -40,6 +40,7 @@ import { PIVOT_BANDS_OUTPUTS } from "./indicators/pivotBandsOutputs";
 import { PIVOT_ANALYSIS_OUTPUTS } from "./indicators/pivotAnalysisOutputs";
 import { SR_LEVELS_OUTPUTS } from "./indicators/srLevelsOutputs";
 import { SPIKE_OUTPUTS } from "./indicators/spikeOutputs";
+import { autoFibOutputs } from "./indicators/autoFibOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -224,6 +225,16 @@ export function chartIndicatorToExprToken(
         ? (key as string)
         : SPIKE_OUTPUTS[0];
       return `${id}.${output}`;
+    }
+    // AUTO_FIB is figure-less like TRENDLINES, so a click arrives without a
+    // figureKey and takes outputs[0], high. A key is honoured only while it is
+    // one of the pane's live outputs (its enabled levels).
+    case "AUTO_FIB": {
+      const id = opts?.instanceId;
+      if (!id) return null;
+      const outs = autoFibOutputs(extendData);
+      const key = opts?.figureKey;
+      return `${id}.${key && outs.includes(key) ? key : outs[0]}`;
     }
     default:
       return null;
