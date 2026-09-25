@@ -599,7 +599,7 @@
 }
 .tab-symbol { font-weight: 600; }
 .tab-period { color: var(--text-faint); }
-/* Live-bar % change (tab context menu > Show bar change %). Tabular digits so
+/* Today's % change (tab context menu > Show day change %). Tabular digits so
    a ticking value does not jiggle the chip width. */
 .tab-bar-change { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-faint); }
 .tab-bar-change.up { color: var(--pos); }

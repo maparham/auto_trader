@@ -1,30 +1,25 @@
-// Live-bar % change on tab chips: per tab from the tab context menu
+// Today's % change on tab chips: per tab from the tab context menu
 // (ChartTab.barChange), all tabs from Appearance > Tabs (Settings.tabBarChange,
-// the default, off). For every distinct lead (epic,
-// resolution) across the tabs: seed from the latest fetched bar, then follow
-// the live stream. Background tabs mount no ChartCore, so this runs its own
-// feeds, and only for the tabs that show it.
+// the default, off). Always the DAILY change, whatever timeframe the chart
+// shows: the live day bar's close vs the previous day's close (vs today's open
+// when there is no previous bar). One feed per distinct lead epic: seed from
+// the last two fetched day bars, then follow the live day stream. Background
+// tabs mount no ChartCore, so this runs its own feeds, and only for the tabs
+// that show it.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KLineData } from "klinecharts";
 import { fetchRecent, openLive } from "./feed";
 import type { PriceSide } from "../theme";
 
-export interface BarLead {
-  epic: string;
-  resolution: string;
-}
+const DAY = "DAY";
 
-export function barLeadKey(epic: string, resolution: string): string {
-  return JSON.stringify([epic, resolution]);
-}
-
-/** Close vs open of one bar, in percent; null when it can't be computed. */
-export function barChangePct(bar: Pick<KLineData, "open" | "close"> | undefined): number | null {
-  if (bar == null || !Number.isFinite(bar.open) || !Number.isFinite(bar.close) || bar.open === 0) {
+/** Last price vs a reference price, in percent; null when it can't be computed. */
+export function dayChangePct(close: number | undefined, ref: number | undefined): number | null {
+  if (close == null || ref == null || !Number.isFinite(close) || !Number.isFinite(ref) || ref === 0) {
     return null;
   }
-  return ((bar.close - bar.open) / bar.open) * 100;
+  return ((close - ref) / ref) * 100;
 }
 
 /** "+0.42%" / "-1.30%" / "0.00%". */
@@ -37,17 +32,14 @@ export function fmtBarChange(pct: number): string {
 // Ticks land far faster than a chip needs to repaint; coalesce them.
 const FLUSH_MS = 1000;
 
-/** % change of the live bar per lead, keyed by barLeadKey. */
+/** Today's % change per epic. */
 export function useTabBarChange(
-  leads: BarLead[],
+  epics: string[],
   brokerId: string,
   priceSide: PriceSide,
 ): Record<string, number> {
-  // Stable key so the diff below runs only when the SET of leads changes.
-  const leadsKey = useMemo(
-    () => JSON.stringify([...new Set(leads.map((l) => barLeadKey(l.epic, l.resolution)))].sort()),
-    [leads],
-  );
+  // Stable key so the diff below runs only when the SET of epics changes.
+  const leadsKey = useMemo(() => JSON.stringify([...new Set(epics)].sort()), [epics]);
   const [pcts, setPcts] = useState<Record<string, number>>({});
   const pending = useRef<Record<string, number>>({});
   // One feed per lead, kept across renders so toggling one tab opens or
@@ -84,24 +76,41 @@ export function useTabBarChange(
     }
     // A lead shown again briefly keeps its old value in `pcts` (callers read
     // only the leads they show) until this feed's first value flushes.
-    for (const key of keys) {
-      if (map.has(key)) continue;
-      const [epic, resolution] = JSON.parse(key) as [string, string];
+    for (const epic of keys) {
+      if (map.has(epic)) continue;
       let closed = false;
       let live = false;
+      // The day bar being tracked and the close before it. A live frame for a
+      // newer day rolls today's bar into the reference.
+      let cur: KLineData | undefined;
+      let prevClose: number | undefined;
       const put = (bar: KLineData | undefined) => {
-        const pct = barChangePct(bar);
-        if (pct != null) pending.current[key] = pct;
+        if (bar == null) return;
+        if (cur != null && bar.timestamp > cur.timestamp) prevClose = cur.close;
+        if (cur == null || !(bar.timestamp < cur.timestamp)) cur = bar;
+        const pct = dayChangePct(cur.close, prevClose ?? cur.open);
+        if (pct != null) pending.current[epic] = pct;
       };
-      void fetchRecent(epic, resolution, 1, priceSide, brokerId)
+      void fetchRecent(epic, DAY, 2, priceSide, brokerId)
         .then((bars) => {
-          // A live frame already beat the seed; it is the newer bar.
-          if (!closed && !live) put(bars[bars.length - 1]);
+          if (closed) return;
+          if (!live) {
+            prevClose = bars[bars.length - 2]?.close;
+            put(bars[bars.length - 1]);
+            return;
+          }
+          // A live frame already beat the seed; it is the newer bar, but it
+          // still needs the reference: the last seeded day before it.
+          if (prevClose == null && cur != null) {
+            const t = cur.timestamp;
+            prevClose = bars.filter((b) => b.timestamp < t).pop()?.close;
+            put(cur);
+          }
         })
         .catch(() => {});
       const handle = openLive(
         epic,
-        resolution,
+        DAY,
         (k) => {
           if (closed) return;
           live = true;
@@ -111,7 +120,7 @@ export function useTabBarChange(
         priceSide,
         brokerId,
       );
-      map.set(key, {
+      map.set(epic, {
         close: () => {
           closed = true;
           handle.close();

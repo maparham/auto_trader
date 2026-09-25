@@ -1,17 +1,22 @@
 // @vitest-environment jsdom
-// Live-bar % change on the tab chips: per tab from the context menu
+// Today's % change on the tab chips (daily, whatever the chart timeframe): per tab from the context menu
 // (ChartTab.barChange), else the global default (Settings.tabBarChange, off).
 import { it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 
-const liveCbs: Array<(k: { open: number; close: number }) => void> = [];
+type Bar = { timestamp: number; open: number; close: number };
+const liveCbs: Array<(k: Bar) => void> = [];
 const closeLive = vi.fn();
 vi.mock("./lib/feed", async () => {
   const actual = await vi.importActual<typeof import("./lib/feed")>("./lib/feed");
   return {
     ...actual,
-    fetchRecent: vi.fn().mockResolvedValue([{ open: 100, close: 101 }]),
-    openLive: vi.fn((_e: string, _r: string, cb: (k: { open: number; close: number }) => void) => {
+    // Yesterday closed at 100; today opened at 99 and is at 101.
+    fetchRecent: vi.fn().mockResolvedValue([
+      { timestamp: 1, open: 95, close: 100 },
+      { timestamp: 2, open: 99, close: 101 },
+    ]),
+    openLive: vi.fn((_e: string, _r: string, cb: (k: Bar) => void) => {
       liveCbs.push(cb);
       return { close: closeLive };
     }),
@@ -19,8 +24,8 @@ vi.mock("./lib/feed", async () => {
 });
 
 import TabBar from "./TabBar";
-import { openLive } from "./lib/feed";
-import { barChangePct, fmtBarChange } from "./lib/tabBarChange";
+import { fetchRecent, openLive } from "./lib/feed";
+import { dayChangePct, fmtBarChange } from "./lib/tabBarChange";
 import type { ChartTab } from "./lib/persist";
 import type { Period } from "./lib/feed";
 
@@ -28,6 +33,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   liveCbs.length = 0;
   vi.mocked(openLive).mockClear();
+  vi.mocked(fetchRecent).mockClear();
   closeLive.mockClear();
 });
 afterEach(() => {
@@ -68,9 +74,9 @@ function renderBar(props: Partial<React.ComponentProps<typeof TabBar>> = {}) {
   );
 }
 
-it("formats close vs open as a signed percent", () => {
-  expect(barChangePct({ open: 100, close: 101.5 })).toBeCloseTo(1.5);
-  expect(barChangePct({ open: 0, close: 1 })).toBeNull();
+it("formats close vs reference as a signed percent", () => {
+  expect(dayChangePct(101.5, 100)).toBeCloseTo(1.5);
+  expect(dayChangePct(1, 0)).toBeNull();
   expect(fmtBarChange(1.5)).toBe("+1.50%");
   expect(fmtBarChange(-0.25)).toBe("-0.25%");
   expect(fmtBarChange(-0.001)).toBe("0.00%");
@@ -86,7 +92,7 @@ it("the context menu offers the toggle even with one tab", () => {
   const onToggle = vi.fn();
   renderBar({ onToggleBarChange: onToggle });
   fireEvent.contextMenu(document.querySelector('[data-tab-id="t1"]')!);
-  const item = screen.getByRole("menuitemcheckbox", { name: /show bar change/i });
+  const item = screen.getByRole("menuitemcheckbox", { name: /show day change/i });
   expect(item.getAttribute("aria-checked")).toBe("false");
   fireEvent.click(item);
   expect(onToggle).toHaveBeenCalledWith("t1");
@@ -105,8 +111,11 @@ it("a tab's own flag beats the global default, both ways", () => {
   expect(vi.mocked(openLive).mock.calls.map((c) => c[0])).toEqual(["US100"]);
 });
 
-it("on: seeds from the latest bar, then follows live ticks", async () => {
+it("on: daily change vs yesterday's close, whatever the chart timeframe", async () => {
   renderBar({ showBarChange: true, onToggleBarChange: vi.fn() });
+  // The chart is 1h, but the feeds are daily.
+  expect(vi.mocked(openLive).mock.calls[0][1]).toBe("DAY");
+  expect(vi.mocked(fetchRecent).mock.calls[0][1]).toBe("DAY");
   await act(async () => {
     await Promise.resolve();
     vi.advanceTimersByTime(1000);
@@ -115,11 +124,17 @@ it("on: seeds from the latest bar, then follows live ticks", async () => {
   expect(el()?.textContent).toBe("+1.00%");
   expect(el()?.classList.contains("up")).toBe(true);
   act(() => {
-    liveCbs[0]({ open: 100, close: 98 });
+    liveCbs[0]({ timestamp: 2, open: 99, close: 98 });
     vi.advanceTimersByTime(1000);
   });
   expect(el()?.textContent).toBe("-2.00%");
   expect(el()?.classList.contains("down")).toBe(true);
+  // A new day rolls today's close (98) into the reference.
+  act(() => {
+    liveCbs[0]({ timestamp: 3, open: 98, close: 99.96 });
+    vi.advanceTimersByTime(1000);
+  });
+  expect(el()?.textContent).toBe("+2.00%");
 });
 
 it("toggling one tab opens or closes only that lead's feed", () => {

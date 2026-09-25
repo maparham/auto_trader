@@ -14,7 +14,7 @@ import MergeTabsMenu from "./MergeTabsMenu";
 import { isSynthetic } from "./lib/syntheticRegistry";
 import { catalogueMatches, matchingTabIds } from "./lib/tabSearch";
 import type { PriceSide, TabStrip } from "./theme";
-import { barLeadKey, fmtBarChange, useTabBarChange } from "./lib/tabBarChange";
+import { fmtBarChange, useTabBarChange } from "./lib/tabBarChange";
 import { fetchAllMarkets, type Instrument } from "./lib/feed";
 
 // Where the floating clone of the dragged chip sits for a given cursor point:
@@ -198,7 +198,7 @@ interface Props {
   onOpenSymbol: (s: Instrument) => void;
   // Strip layout (Settings / Appearance): wrapping rows or one scrolling row.
   strip?: TabStrip;
-  // Live-bar % change on the chips: each tab's own ChartTab.barChange, else
+  // Today's % change on the chips: each tab's own ChartTab.barChange, else
   // this default (Settings.tabBarChange). The context menu toggles one tab.
   // The feeds run here, not in App, so ticks re-render only the bar.
   showBarChange?: boolean;
@@ -232,18 +232,14 @@ export default function TabBar({
   const leadOf = (t: ChartTab) => t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0];
   const showsBarChange = (t: ChartTab) => t.barChange ?? showBarChange;
   const barChanges = useTabBarChange(
-    tabs.filter(showsBarChange).map((t) => {
-      const lead = leadOf(t);
-      return { epic: lead.symbol.epic, resolution: lead.period.resolution };
-    }),
+    tabs.filter(showsBarChange).map((t) => leadOf(t).symbol.epic),
     brokerId,
     priceSide,
   );
   const hasCtxItems = tabs.length > 1 || onToggleBarChange != null;
   const barChangeOf = (t: ChartTab): number | null => {
     if (!showsBarChange(t)) return null;
-    const lead = leadOf(t);
-    return barChanges[barLeadKey(lead.symbol.epic, lead.period.resolution)] ?? null;
+    return barChanges[leadOf(t).symbol.epic] ?? null;
   };
   const searchHits = matchingTabIds(tabs, searchQuery);
   const scrolls = strip === "scroll";
@@ -976,7 +972,7 @@ export default function TabBar({
             ...(onToggleBarChange && ctxTab
               ? [
                   {
-                    label: "Show bar change %",
+                    label: "Show day change %",
                     checked: showsBarChange(ctxTab),
                     onClick: () => onToggleBarChange(ctxTab.id),
                   },

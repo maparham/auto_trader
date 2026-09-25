@@ -25,7 +25,7 @@ import {
 interface Props {
   settings: Settings;
   onChange: (s: Settings) => void;
-  // Bar change % on every tab: sets the default and clears per-tab choices.
+  // Day change % on every tab: sets the default and clears per-tab choices.
   onBarChangeAll?: (on: boolean) => void;
 }
 
@@ -122,7 +122,7 @@ export default function AppearanceMenu({ settings, onChange, onBarChangeAll }: P
 
           {onBarChangeAll && (
             <div className="appr-label appr-switch-row">
-              <span id="appr-bar-change">Bar change % on all tabs</span>
+              <span id="appr-bar-change">Day change % on all tabs</span>
               <button
                 type="button"
                 role="switch"
