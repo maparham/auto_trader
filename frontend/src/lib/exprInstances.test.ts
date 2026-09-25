@@ -317,8 +317,8 @@ describe("AUTO_FIB instances", () => {
 
   it("costs an exposed output the pane's floor and anything else 0", () => {
     const warm = exprWarmupByRef(live);
-    expect(warm("AUTO_FIB", "f0_618")).toBe(14 + 2 * 5);
-    expect(warm("AUTO_FIB2", "high")).toBe(14 + 2 * 8);
+    expect(warm("AUTO_FIB", "f0_618")).toBe(14 + 2 * 5 + 200);
+    expect(warm("AUTO_FIB2", "high")).toBe(14 + 2 * 8 + 200);
     expect(warm("AUTO_FIB", "fm0_236")).toBe(0);
   });
 

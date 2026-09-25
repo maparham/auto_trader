@@ -131,7 +131,7 @@ def test_level_price_and_warmup():
     assert fib_level_price(110, 90, 1, False, 0) == 110
     assert fib_level_price(110, 90, -1, False, 0) == 90
     assert fib_level_price(110, 90, 1, True, 0) == 90
-    assert auto_fib_warmup(parse_auto_fib_config([5, 0], {}), "f0_618") == 24
+    assert auto_fib_warmup(parse_auto_fib_config([5, 0], {}), "f0_618") == 14 + 10 + 200
     assert auto_fib_warmup(CFG, "bogus") == 0
 
 

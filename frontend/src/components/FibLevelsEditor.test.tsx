@@ -35,4 +35,14 @@ describe("FibLevelsEditor", () => {
     fireEvent.change(screen.getByLabelText("Extend"), { target: { value: "right" } });
     expect(onChange.mock.calls[0][0].extend).toBe("right");
   });
+
+  it("never commits a cleared or half-typed ratio", () => {
+    const onChange = setup();
+    const box = screen.getByLabelText("Level 2 ratio") as HTMLInputElement;
+    fireEvent.change(box, { target: { value: "" } });
+    fireEvent.change(box, { target: { value: "-" } });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.change(box, { target: { value: "0.3" } });
+    expect(onChange.mock.calls[0][0].levels[1].value).toBe(0.3);
+  });
 });

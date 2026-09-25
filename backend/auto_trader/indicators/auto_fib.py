@@ -21,6 +21,9 @@ from auto_trader.core.models import Candle
 from auto_trader.indicators.core import atr_series
 
 AUTO_FIB_ATR_LEN = 14
+# autoFibOutputs.ts AUTO_FIB_PAIR_REACH: bars reached back for the latest high
+# and low, which can be of any age. Bounded because warm-up sizes fetches.
+AUTO_FIB_PAIR_REACH = 200
 BASE_OUTPUTS = ("high", "low", "dir")
 # frontend fibConfig.ts DEFAULT_LEVELS as (value, enabled); colours are
 # draw-only and not needed here.
@@ -243,6 +246,8 @@ def auto_fib_series(
 
 
 def auto_fib_warmup(cfg: AutoFibConfig, output: str) -> int:
-    """ATR(14) warm-up plus one full pivot window; 0 for an output this config
-    does not expose."""
-    return AUTO_FIB_ATR_LEN + 2 * cfg.pivot_len if output in auto_fib_outputs(cfg) else 0
+    """ATR(14) warm-up, one full pivot window and the pair reach; 0 for an
+    output this config does not expose."""
+    if output not in auto_fib_outputs(cfg):
+        return 0
+    return AUTO_FIB_ATR_LEN + 2 * cfg.pivot_len + AUTO_FIB_PAIR_REACH

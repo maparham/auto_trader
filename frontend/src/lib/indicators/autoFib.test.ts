@@ -141,6 +141,14 @@ describe("computeAutoFib MTF branch", () => {
     expect(out[0].loIdx).toBe(4); // flat span: ties keep the first bar
   });
 
+  it("treats a null or out-of-range pair index as no pair instead of throwing", () => {
+    const idx = [null, 0, 7] as unknown as Array<number | undefined>;
+    const { points, pairs: out } = computeAutoFib(flat, CFG, { mtf: { ...mtf, htfFibPairIdx: idx } });
+    expect(points[4]).toEqual({});
+    expect(points[8]).toEqual({ high: 110, low: 90, dir: -1 });
+    expect(out).toHaveLength(1);
+  });
+
   it("snaps only the last 11 mapped pairs (calc runs every tick)", () => {
     // 30 HTF bars, pair p active on HTF bar p; each pair's high trades on the
     // third chart bar of its HTF bar. Pair 29 closes past the loaded bars, so

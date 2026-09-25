@@ -86,10 +86,19 @@ export function autoFibOutputs(extendData: unknown): string[] {
   ];
 }
 
-/** Bars before the first pair can exist: ATR(14) warm-up plus one full pivot
- * window. Mirrors backend auto_fib_warmup. */
+/** Extra bars a run reaches back for the latest high AND latest low. Unlike a
+ * moving average, the current pair can hang on a pivot of any age (a long trend
+ * confirms no low), so a warm-up of one pivot window gave a backtest's first
+ * bars no fib, or a different one than the chart. Bounded on purpose: warm-up
+ * sizes history fetches, and an unbounded reach is the Trendlines freeze. A
+ * pair older than this can still differ at the very start of a run. Mirrors
+ * backend AUTO_FIB_PAIR_REACH. */
+export const AUTO_FIB_PAIR_REACH = 200;
+
+/** Bars of history before a value can match the chart: ATR(14) warm-up, one
+ * full pivot window, and the pair reach. Mirrors backend auto_fib_warmup. */
 export function autoFibWarmup(cfg: AutoFibConfig): number {
-  return AUTO_FIB_ATR_LEN + 2 * cfg.pivotLen;
+  return AUTO_FIB_ATR_LEN + 2 * cfg.pivotLen + AUTO_FIB_PAIR_REACH;
 }
 
 /** Price of ratio r on the pair. Level 0 sits on the LATER anchor (the high

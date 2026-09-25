@@ -214,13 +214,18 @@ function mapMtf(
   const htfBars = htfStarts.map((t) => ({ timestamp: t }) as KLineData);
   // The same closed-bar rule as every MTF series: a chart bar never sees a
   // pair whose HTF confirm bar closes in its future.
+  // A stash that went through JSON (persistence, a clipboard) holds null for
+  // an HTF bar with no pair, and an index can outlive a shorter pair list; both
+  // read as "no pair" rather than reaching src[p] and throwing inside calc.
+  const valid = (p: number | null | undefined): p is number =>
+    typeof p === "number" && src[p] !== undefined;
   const aligned = alignHtfToChart(ts, htfBars, pairIdx, htfMs, true, mtf.formingIdx, mtf.chartMs, mtf.timeframe);
-  const points = aligned.map((p) => pointOf(p === undefined ? undefined : src[p]));
+  const points = aligned.map((p) => pointOf(valid(p) ? src[p] : undefined));
   // One forward pass: the aligned index never decreases, so each pair is one run.
   const runs: Array<{ p: number; start: number }> = [];
   for (let i = 0; i < aligned.length; i++) {
     const p = aligned[i];
-    if (p === undefined) continue;
+    if (!valid(p)) continue;
     if (!runs.length || runs[runs.length - 1].p !== p) runs.push({ p, start: i });
   }
   const chartMs = mtf.chartMs ?? (ts.length > 1 ? ts[1] - ts[0] : htfMs);

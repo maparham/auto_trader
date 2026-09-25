@@ -5,9 +5,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import IndicatorSettings from "./IndicatorSettings";
+import { refreshMtfIndicators } from "./lib/mtfCoordinator";
 import { TRENDLINES_DEFAULTS } from "./lib/indicators/trendlinesOutputs";
 
-afterEach(cleanup);
+// Cancel asks the coordinator to refetch a reverted pin; the fake chart below
+// has no candles to serve that, so the call itself is what is asserted.
+vi.mock("./lib/mtfCoordinator", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  refreshMtfIndicators: vi.fn(() => Promise.resolve()),
+}));
+
+afterEach(() => {
+  cleanup();
+  vi.mocked(refreshMtfIndicators).mockClear();
+});
 
 // klinecharts 10's merge(): objects and arrays recurse into the SAME target
 // object, anything else (null included) is assigned, cloned on the way in.
@@ -87,5 +98,27 @@ describe("Cancel restores extendData for every type", () => {
     fireEvent.click(screen.getByLabelText("Dim broken levels"));
     cancel();
     expect((ind.extendData.zoneStyle as { dimBroken: boolean }).dimBroken).toBe(true);
+  });
+
+  it("leaves an HTF stash the coordinator refreshed while the modal was open", () => {
+    const ind = open("SR_LEVELS", [15, 0.5, 2, 8, 500], {
+      mtf: { timeframe: "HOUR_4", htfStarts: [1, 2], htfMs: 4 },
+    });
+    // A tick folds a newer bar into the stash while the modal is open.
+    (ind.extendData.mtf as { htfStarts: number[] }).htfStarts.push(3);
+    cancel();
+    expect((ind.extendData.mtf as { htfStarts: number[] }).htfStarts).toEqual([1, 2, 3]);
+    expect(refreshMtfIndicators).not.toHaveBeenCalled();
+  });
+
+  it("puts back the original pin and asks for a refetch when the pin changed", () => {
+    const ind = open("SR_LEVELS", [15, 0.5, 2, 8, 500], {
+      mtf: { timeframe: "HOUR_4", htfStarts: [1, 2], htfMs: 4 },
+    });
+    // What a timeframe switch in the modal leaves behind.
+    ind.extendData.mtf = { timeframe: "DAY", htfStarts: [9], htfMs: 24 };
+    cancel();
+    expect(ind.extendData.mtf).toEqual({ timeframe: "HOUR_4" });
+    expect(refreshMtfIndicators).toHaveBeenCalledTimes(1);
   });
 });

@@ -28,7 +28,7 @@ import {
   SMOOTHING_TYPES,
   type IndicatorInputDef,
 } from "./lib/indicatorMeta";
-import { applyAutoFibTimeframe, applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, refreshMtfOnVisibilityChange, setMtfWaitClose } from "./lib/mtfCoordinator";
+import { applyAutoFibTimeframe, applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, refreshMtfIndicators, refreshMtfOnVisibilityChange, setMtfWaitClose } from "./lib/mtfCoordinator";
 import { autoFibFibConfig, parseAutoFibConfig } from "./lib/indicators/autoFibOutputs";
 import type { FibConfig } from "./lib/fibConfig";
 import FibLevelsEditor from "./components/FibLevelsEditor";
@@ -223,9 +223,31 @@ type OriginalSnapshot = {
   styles: ReturnType<typeof cloneStyles>;
   /** A deep COPY. klinecharts merges every extendData write into the live
    * object in place, so a reference would see each edit and Cancel would write
-   * the edited values back onto themselves. */
+   * the edited values back onto themselves. Its `mtf` holds only the pin
+   * (timeframe + waitClose): the HTF stash under it is runtime data the
+   * coordinator keeps refreshing while the modal is open, so it is neither
+   * copied nor restored (see pinOf). */
   extendData: MaExtend | null;
 };
+
+/** The persisted half of `extendData.mtf`: what the user chose, never the
+ * runtime stash the coordinator writes beside it. */
+function pinOf(mtf: unknown): { timeframe: string | null; waitClose?: false } | null {
+  if (!mtf || typeof mtf !== "object") return null;
+  const m = mtf as { timeframe?: unknown; waitClose?: unknown };
+  const timeframe = typeof m.timeframe === "string" && m.timeframe ? m.timeframe : null;
+  return { timeframe, ...(m.waitClose === false ? { waitClose: false as const } : {}) };
+}
+
+/** The open-time snapshot of extendData: a deep copy with `mtf` cut down to
+ * its pin, so opening settings never copies a years-deep HTF stash. */
+function snapshotExtend(ext: unknown): MaExtend | null {
+  if (!ext || typeof ext !== "object") return null;
+  const { mtf, ...rest } = ext as Record<string, unknown>;
+  const copy = deepCopy(rest);
+  const pin = pinOf(mtf);
+  return (pin ? { ...copy, mtf: pin } : copy) as MaExtend;
+}
 
 /** A deep copy that later in-place merges into the source cannot reach.
  * structuredClone refuses functions; JSON is the fallback, and a value neither
@@ -244,17 +266,29 @@ function deepCopy<T>(v: T): T {
 
 /** The extendData patch that turns `live` back into `orig`: every key whose
  * value differs, a key the pane did not have set to null. Unchanged keys are
- * left out, so Cancel after a small edit does not rewrite the MTF stash. */
+ * left out. `mtf` is compared by its pin only, so a stash the coordinator
+ * refreshed while the modal was open is left alone; when the pin itself
+ * changed, the patch carries the bare original pin and `repin` asks the
+ * caller to have the coordinator fetch that timeframe's bars again. */
 function extendRestorePatch(
   orig: Record<string, unknown>,
   live: Record<string, unknown>,
-): Record<string, unknown> {
+): { patch: Record<string, unknown>; repin: boolean } {
   const patch: Record<string, unknown> = {};
+  let repin = false;
   for (const k of new Set([...Object.keys(orig), ...Object.keys(live)])) {
+    if (k === "mtf") {
+      const was = pinOf(orig.mtf);
+      if (JSON.stringify(was) !== JSON.stringify(pinOf(live.mtf))) {
+        patch.mtf = was ?? null;
+        repin = true;
+      }
+      continue;
+    }
     const was = orig[k] ?? null;
     if (JSON.stringify(was) !== JSON.stringify(live[k] ?? null)) patch[k] = deepCopy(was);
   }
-  return patch;
+  return { patch, repin };
 }
 
 /** The shell around the form. Nothing is persisted until Ok: every edit is a
@@ -279,7 +313,7 @@ export default function IndicatorSettings(props: Props) {
     // (apply()/setLine()) would otherwise mutate this "original" snapshot too,
     // making Cancel just re-apply the already-edited value instead of reverting it.
     styles: cloneStyles(ind0?.styles ?? null),
-    extendData: deepCopy((ind0?.extendData ?? null) as MaExtend | null),
+    extendData: snapshotExtend(ind0?.extendData),
   });
   const [tab, setTab] = useState<Tab>("inputs");
   const [gen, setGen] = useState(0);
@@ -1847,11 +1881,15 @@ function IndicatorSettingsForm({
     // object or array must be cleared first or its old entries survive.
     const liveExt = ((getIndicator(chart, paneId, name) as Indicator | null)?.extendData ??
       {}) as Record<string, unknown>;
-    const restore = extendRestorePatch(
+    const { patch: restore, repin } = extendRestorePatch(
       (original.current.extendData ?? {}) as Record<string, unknown>,
       liveExt,
     );
     if (Object.keys(restore).length) overrideExtend(chart, paneId, name, restore);
+    // A reverted pin left a bare `mtf` with no HTF bars: the coordinator's
+    // coverage guard refuses it, so this refetches the original timeframe (and
+    // an unpinned pane simply computes on the chart's own bars).
+    if (repin) void refreshMtfIndicators(chart, epic, brokerId);
     // The restore rewrites the parent's extendData wholesale (incl. showAccel and
     // accel params), so re-sync the companion: toggle-accel-then-Cancel must not
     // leave an orphaned pane (or a missing one).

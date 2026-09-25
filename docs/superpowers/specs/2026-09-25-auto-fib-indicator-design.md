@@ -102,7 +102,7 @@ Follows `applySrLevelsTimeframe` / `buildSrMtf` exactly:
 - Coordinator wiring: warmup const, a `refreshFormingBar` branch, a
   `refreshMtfIndicatorsUncoalesced` branch with the `covered(warmup)` guard,
   and the new `htf*` stash keys in `MTF_RUNTIME_KEYS`.
-- Warmup (fetch depth): `14 + 2 * pivotLen` HTF bars plus the shared
+- Warmup (fetch depth): `14 + 2 * pivotLen + 200` HTF bars plus the shared
   `HTF_WARMUP_BARS`. No `pastCount` multiplier (Trendlines freeze lesson);
   past fibs older than the fetched span are simply not drawn.
 
@@ -126,7 +126,8 @@ Follows `applySrLevelsTimeframe` / `buildSrMtf` exactly:
   `_is_pivot_at` copy (as each module keeps), and an `IndicatorSeriesSpec` in
   `registry.py` with `timeframe=lambda cfg: cfg.timeframe`. A shared case in
   `lib/expr/corpus.json` pins validation on both stacks.
-- Operand warmup: `14 + 2 * pivotLen` (ATR warm-up plus one pivot window).
+- Operand warmup: `14 + 2 * pivotLen + 200` (ATR warm-up, one pivot window,
+  and a bounded 200-bar reach for the latest high and low, which can be old).
 
 ## Registration points
 

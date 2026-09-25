@@ -2,6 +2,7 @@
 // per-level width/dash) and the trend line / reverse / labels switches. Shared
 // by the fib drawing tools (DrawingSettings) and the Auto Fib indicator
 // (IndicatorSettings); both keep their config as a FibConfig.
+import { useState } from "react";
 import ColorLineStylePicker, { type LineStyleOpt } from "../ColorLineStylePicker";
 import type { FibConfig, FibLevel } from "../lib/fibConfig";
 
@@ -21,6 +22,22 @@ const LINE_STYLES = ["solid", "dashed"] as LineStyleOpt[];
 export default function FibLevelsEditor({ fib, onChange, sharedSize, sharedStyle, trendLabel }: Props) {
   const setLevel = (i: number, patch: Partial<FibLevel>) =>
     onChange({ ...fib, levels: fib.levels.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  // The ratio box's raw text while it has focus. Text on the way to a number
+  // ("", "-", "0.") is not one, and committing Number() of it saved 0 or NaN:
+  // a NaN level is dropped on reload, and on Auto Fib the ratio also names a
+  // rule operand. Only a finite parse is written; blur shows the saved value.
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const editRatio = (i: number, raw: string) => {
+    setDrafts((d) => ({ ...d, [i]: raw }));
+    const n = Number(raw);
+    if (raw.trim() !== "" && Number.isFinite(n)) setLevel(i, { value: n });
+  };
+  const endRatio = (i: number) =>
+    setDrafts((d) => {
+      const next = { ...d };
+      delete next[i];
+      return next;
+    });
   return (
     <>
       <div className="ind-row">
@@ -49,8 +66,9 @@ export default function FibLevelsEditor({ fib, onChange, sharedSize, sharedStyle
               type="number"
               step="any"
               aria-label={`Level ${i + 1} ratio`}
-              value={l.value}
-              onChange={(e) => setLevel(i, { value: Number(e.target.value) })}
+              value={drafts[i] ?? String(l.value)}
+              onChange={(e) => editRatio(i, e.target.value)}
+              onBlur={() => endRatio(i)}
             />
             {/* Everything here is THIS level's: colour, and width/dash stored
                 as per-level overrides that win over the shared line style.

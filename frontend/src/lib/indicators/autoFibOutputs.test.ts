@@ -83,7 +83,7 @@ describe("fibLevelPrice", () => {
 });
 
 describe("autoFibWarmup", () => {
-  it("is ATR(14) plus one full pivot window", () => {
-    expect(autoFibWarmup({ pivotLen: 5, minSwingAtr: 0 })).toBe(24);
+  it("is ATR(14), one full pivot window and the pair reach", () => {
+    expect(autoFibWarmup({ pivotLen: 5, minSwingAtr: 0 })).toBe(14 + 10 + 200);
   });
 });
