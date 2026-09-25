@@ -242,14 +242,10 @@ test("chart replay: the strategy reveal shows only what the cursor has passed", 
   // The cell's SCOPE, epic and resolution, read back out of the session record
   // rather than assumed.
   //
-  // They cannot be assumed, and assuming them is what made the first version of
-  // this test assert nothing: `seedSingleChartDefault` writes
-  // `auto-trader.layout.L0`, but the app's per-broker migration discards that on
-  // first load and falls back to a SCRATCH workspace whose tab id is minted at
-  // random per run (`tab.tab-msy0dysn-1`, and a different one next time). So the
-  // cell's real scope is not `tab.t1`, a saved backtest written under
-  // `auto-trader.tab.t1.backtest.US100` is never the key `loadBacktestResult`
-  // reads, and the Strategy button stays disabled forever.
+  // Assuming them is what once made this test assert nothing: when the seed
+  // wrote keys the app ignored, the app minted its own random tab id, a saved
+  // backtest written under `auto-trader.tab.t1.backtest.US100` was never the
+  // key `loadBacktestResult` read, and the Strategy button stayed disabled.
   //
   // `auto-trader.replaySessions` is a flat map keyed by exactly that cell scope,
   // and the record carries the epic and resolution too — so once a session

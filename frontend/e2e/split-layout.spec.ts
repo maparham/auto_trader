@@ -45,9 +45,7 @@ test("split layout cells have independent drawings", async ({ page }) => {
 
   // Focus cell `i` by clicking its center, and WAIT until the focus actually moved
   // (avoids racing the focus re-render before driving the toolbar). Read focus
-  // from the DOM (`.chart-cell.focused`): the workspace no longer lives under the
-  // legacy `auto-trader.layout.<id>` key the seed writes (layouts moved under
-  // `auto-trader.b.<broker>.`), so the stored body is not a stable place to look.
+  // from the DOM (`.chart-cell.focused`), which is what the user sees.
   const focusCell = async (i: number) => {
     const box = await cellCanvas(i).boundingBox();
     await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);

@@ -15,9 +15,8 @@ test("close button removes a cell and downgrades the layout", async ({ page }) =
   await expect(page.locator(".chart-cell")).toHaveCount(4);
 
   // Active tab state (cell ids + layout kind) from persisted storage. No named
-  // layout is active here — seedSingleChartDefault's flat keys are pruned by the
-  // per-broker migration, so the app runs on the broker-scoped SCRATCH workspace
-  // (`auto-trader.b.<broker>.scratch`) — same read pattern as detach-cell.spec.ts.
+  // layout is active here, so the app runs on the broker-scoped SCRATCH workspace
+  // (`auto-trader.b.<broker>.scratch`) that seedSingleChartDefault seeds.
   const tabState = () =>
     page.evaluate(() => {
       const k = Object.keys(localStorage).find((key) => /^auto-trader\.b\.[^.]+\.scratch$/.test(key));

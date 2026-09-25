@@ -1,38 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
-
-// seedTwoChartTabs (helpers.ts) seeds the pre-per-broker-isolation flat keys
-// (`auto-trader.layout.*`), which resolveStartup() no longer reads — workspace
-// roots are broker-scoped now (`auto-trader.b.<broker>.*`, see persist.ts). Seed
-// the device-local SCRATCH workspace directly under the default broker ("capital",
-// per persist.ts's brokerFromActiveAccount fallback) instead, same shape/ids the
-// brief's snippet expects (t1/t2).
-async function seedTwoTabsScratch(page: Page, epicA = "US100", epicB = "OIL_CRUDE"): Promise<void> {
-  await page.addInitScript(
-    ([a, b]: [string, string]) => {
-      if (sessionStorage.getItem("__seeded")) return;
-      localStorage.clear();
-      const period = { resolution: "HOUR", label: "1H" };
-      const tab = (id: string, epic: string) => ({
-        id,
-        layout: "1",
-        activeCellId: `${id}-c0`,
-        cells: [
-          {
-            id: `${id}-c0`,
-            symbol: { epic, name: epic, status: null, pricePrecision: 2 },
-            period,
-            scope: `tab.${id}`,
-          },
-        ],
-      });
-      const ws = { tabs: [tab("t1", a), tab("t2", b)], activeTabId: "t1" };
-      localStorage.setItem("auto-trader.b.capital.scratch", JSON.stringify(ws));
-      sessionStorage.setItem("__seeded", "1");
-    },
-    [epicA, epicB] as [string, string],
-  );
-}
+import { test, expect } from "@playwright/test";
+import { seedSingleChartDefault, seedTwoChartTabs, stubStateApi } from "./helpers";
 
 // Detach (default click): the handle next to maximize MOVES the cell into a NEW
 // one-cell tab — its scope content travels along and the source tab's layout
@@ -223,7 +190,7 @@ test("detaching the primary cell keeps the survivors' scope intact", async ({ pa
 });
 
 test("?tab= startup param activates that tab and is stripped from the URL", async ({ page }) => {
-  await seedTwoTabsScratch(page);
+  await seedTwoChartTabs(page);
   await stubStateApi(page);
   await page.goto("/?tab=t2"); // second seeded tab id (seedTwoTabsScratch)
   await page.locator(".tab-bar").waitFor();

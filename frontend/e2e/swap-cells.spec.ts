@@ -15,10 +15,8 @@ test("border swap button exchanges adjacent cells", async ({ page }) => {
   await expect(page.locator(".chart-cell")).toHaveCount(2);
 
   // Active tab state (cell ids) from persisted storage. No named layout is
-  // active here — seedSingleChartDefault's flat keys are pruned by the
-  // per-broker migration, so the app runs on the broker-scoped SCRATCH
-  // workspace (`auto-trader.b.<broker>.scratch`) — same read pattern as
-  // close-cell.spec.ts.
+  // active here, so the app runs on the broker-scoped SCRATCH workspace
+  // (`auto-trader.b.<broker>.scratch`) that seedSingleChartDefault seeds.
   const cellIds = () =>
     page.evaluate(() => {
       const k = Object.keys(localStorage).find((key) => /^auto-trader\.b\.[^.]+\.scratch$/.test(key));

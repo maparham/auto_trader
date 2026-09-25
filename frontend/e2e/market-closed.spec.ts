@@ -1,36 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
-
-// Two one-cell tabs on distinct epics, the first active, in the device-local
-// scratch workspace. Workspace roots are per broker (`auto-trader.b.<broker>.*`,
-// capital on a fresh browser), so the seed must use the prefixed key; an
-// unprefixed one is ignored and the app boots its one-tab default instead.
-async function seedTwoChartTabs(page: Page, epicA: string, epicB: string): Promise<void> {
-  await page.addInitScript(
-    ([a, b]: [string, string]) => {
-      if (sessionStorage.getItem("__seeded")) return;
-      localStorage.clear();
-      const period = { resolution: "HOUR", label: "1H" };
-      const tab = (id: string, epic: string) => ({
-        id,
-        layout: "1",
-        activeCellId: `${id}-c0`,
-        cells: [
-          {
-            id: `${id}-c0`,
-            symbol: { epic, name: epic, status: null, pricePrecision: 2 },
-            period,
-            scope: `tab.${id}`,
-          },
-        ],
-      });
-      const ws = { tabs: [tab("t1", a), tab("t2", b)], activeTabId: "t1" };
-      localStorage.setItem("auto-trader.b.capital.scratch", JSON.stringify(ws));
-      sessionStorage.setItem("__seeded", "1");
-    },
-    [epicA, epicB] as [string, string],
-  );
-}
+import { test, expect } from "@playwright/test";
+import { seedSingleChartDefault, seedTwoChartTabs, stubStateApi } from "./helpers";
 
 // When the lead cell's market is closed (closed:true from /api/market/{epic},
 // derived server-side from the instrument's opening hours), the tab shows a

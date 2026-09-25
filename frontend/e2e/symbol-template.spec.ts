@@ -67,14 +67,9 @@ async function waitForData(page: Page) {
 
 // Drawing count for the FOCUSED tab's primary cell scope, from storage.
 //
-// NOTE: this test seeds via seedSingleChartDefault (bare `auto-trader.layout.*`
-// keys), but persist.ts's per-broker workspace isolation (see its header comment)
-// means resolveStartup() no longer reads those — workspace roots are broker-scoped
-// (`auto-trader.b.<broker>.*`). With no per-broker layout/default present, the app
-// falls back to its own default single-chart workspace and persists live edits to
-// the device-local per-broker SCRATCH key. Read the active tab from there instead
-// of the legacy (now-pruned) `activeLayoutId`/`layout.<id>` keys — same fix already
-// applied in detach-cell.spec.ts's readActiveScratchTab.
+// seedSingleChartDefault seeds the device-local per-broker SCRATCH workspace
+// (`auto-trader.b.<broker>.scratch`), and with no named layout active the app
+// persists live edits there too, so the active tab is read from that key.
 async function focusedDrawingCount(page: Page): Promise<number> {
   return page.evaluate(() => {
     const k = Object.keys(localStorage).find((key) => /^auto-trader\.b\.[^.]+\.scratch$/.test(key));
