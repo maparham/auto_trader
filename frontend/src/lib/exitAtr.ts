@@ -4,7 +4,8 @@
 // holds a price); ATR mode is only another view of that price and another way to
 // type it, so chart-line drags, validation and Update are untouched.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { KLineData } from "klinecharts";
 import { atrSeries } from "./atr";
 import { fetchRecent } from "./feed";
 import { PREFIX, load, save } from "./persist/core";
@@ -23,7 +24,11 @@ export const DEFAULT_ATR_LENGTH = 14;
 const MAX_ATR_LENGTH = 500;
 // The backend caps one /api/candles fetch at 1000 bars.
 const MAX_BARS = 1000;
-const ATR_REFRESH_MS = 60_000;
+// The chart's own bars are re-read this often (cheap, no network); a fetch
+// fallback refreshes every minute, or sooner after a failure.
+const CHART_POLL_MS = 3_000;
+const FETCH_REFRESH_MS = 60_000;
+const FETCH_RETRY_MS = 10_000;
 
 /** Coerce a typed/stored length to a whole number in [1, 500]; junk → 14. */
 export function normalizeAtrLength(v: unknown): number {
@@ -32,9 +37,11 @@ export function normalizeAtrLength(v: unknown): number {
   return Math.min(n, MAX_ATR_LENGTH);
 }
 
-/** Bars to fetch for a stable Wilder ATR: ~10 lengths of warm-up, 300 floor. */
+/** Bars to fetch for a stable Wilder ATR: ~10 lengths of warm-up. The 500
+ *  floor is the chart's own initial load, so the request coalesces with it and
+ *  hits the backend's warm cache instead of a cold build. */
 export function atrFetchBars(length: number): number {
-  return Math.min(MAX_BARS, Math.max(300, length * 10));
+  return Math.min(MAX_BARS, Math.max(500, length * 10));
 }
 
 /** The level `mult` ATRs from `ref`, on the `up` side (long TP / short SL = up),
@@ -56,10 +63,7 @@ export function atrMultiple(level: number, ref: number, atr: number, up: boolean
 }
 
 /** Latest ATR(length) value (the forming bar, like the chart legend), or null. */
-export function latestAtr(
-  candles: Parameters<typeof atrSeries>[0],
-  length: number,
-): number | null {
+export function latestAtr(candles: KLineData[], length: number): number | null {
   const s = atrSeries(candles, length);
   for (let i = s.length - 1; i >= 0; i--) {
     const v = s[i];
@@ -96,9 +100,13 @@ export function useExitAtrPrefs(): [ExitAtrPrefs, (p: Partial<ExitAtrPrefs>) => 
 
 // --- live ATR value ----------------------------------------------------------
 
-/** Latest ATR(length) for an epic on a timeframe, refreshed every minute.
- *  `enabled` false (no row in ATR mode, or a replay session running) fetches
- *  nothing: a blind replay must not pull today's candles. */
+/** Latest ATR(length) for an epic on a timeframe.
+ *  `chartCandles` reads the focused chart's loaded bars (pass it only when the
+ *  chart shows this epic): that is the same series the user sees, needs no
+ *  network, and works for custom timeframes a cold fetch can time out on. Only
+ *  when the chart has too few bars does it fall back to fetching.
+ *  `enabled` false (no row in ATR mode, or a replay session running) reads and
+ *  fetches nothing: a blind replay must not pull today's candles. */
 export function useLatestAtr(opts: {
   epic: string;
   resolution: string | undefined;
@@ -106,19 +114,45 @@ export function useLatestAtr(opts: {
   priceSide: PriceSide;
   brokerId: string | undefined;
   enabled: boolean;
+  chartCandles?: () => KLineData[] | undefined;
 }): number | null {
-  const { epic, resolution, length, priceSide, brokerId, enabled } = opts;
+  const { epic, resolution, length, priceSide, brokerId, enabled, chartCandles } = opts;
   const [atr, setAtr] = useState<number | null>(null);
+  // Latest getter in a ref: App passes a fresh closure every render, which must
+  // not restart the effect (and its fetch) each time.
+  const chartRef = useRef(chartCandles);
+  chartRef.current = chartCandles;
   useEffect(() => {
     setAtr(null);
     if (!enabled || !resolution) return;
     let alive = true;
-    const tick = () =>
+    let inflight = false;
+    let nextFetch = 0;
+    const tick = () => {
+      const bars = chartRef.current?.();
+      const fromChart = bars && bars.length ? latestAtr(bars, length) : null;
+      if (fromChart != null) {
+        setAtr(fromChart);
+        return;
+      }
+      if (inflight || Date.now() < nextFetch) return;
+      inflight = true;
       fetchRecent(epic, resolution, atrFetchBars(length), priceSide, brokerId)
-        .then((bars) => alive && setAtr(latestAtr(bars, length)))
-        .catch(() => alive && setAtr(null));
+        .then((b) => {
+          if (!alive) return;
+          const v = latestAtr(b, length);
+          setAtr(v);
+          nextFetch = Date.now() + (v != null ? FETCH_REFRESH_MS : FETCH_RETRY_MS);
+        })
+        .catch(() => {
+          if (alive) nextFetch = Date.now() + FETCH_RETRY_MS;
+        })
+        .finally(() => {
+          inflight = false;
+        });
+    };
     tick();
-    const id = setInterval(tick, ATR_REFRESH_MS);
+    const id = setInterval(tick, CHART_POLL_MS);
     return () => {
       alive = false;
       clearInterval(id);

@@ -40,8 +40,8 @@ describe("normalizeAtrLength", () => {
 });
 
 describe("atrFetchBars", () => {
-  it("fetches ten lengths with a 300 floor and the 1000 cap", () => {
-    expect(atrFetchBars(14)).toBe(300);
+  it("fetches ten lengths with a 500 floor and the 1000 cap", () => {
+    expect(atrFetchBars(14)).toBe(500);
     expect(atrFetchBars(50)).toBe(500);
     expect(atrFetchBars(200)).toBe(1000);
   });

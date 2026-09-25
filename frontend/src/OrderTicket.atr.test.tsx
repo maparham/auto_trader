@@ -46,7 +46,7 @@ describe("OrderTicket exits in ATRs", () => {
 
     fireEvent.change(screen.getByLabelText("Take profit unit"), { target: { value: "atr" } });
     await waitFor(() =>
-      expect(feed.fetchRecent).toHaveBeenCalledWith("US100", "HOUR", 300, "mid", "capital"),
+      expect(feed.fetchRecent).toHaveBeenCalledWith("US100", "HOUR", 500, "mid", "capital"),
     );
 
     // Toggling on in ATR mode seeds 1 ATR above a long's entry.

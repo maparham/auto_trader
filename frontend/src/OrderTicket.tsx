@@ -53,6 +53,7 @@ import {
   type ExitUnit,
 } from "./lib/exitAtr";
 import { periodByResolution } from "./lib/feed";
+import type { KLineData } from "klinecharts";
 import Tooltip from "./components/Tooltip";
 import ExpirySelect from "./components/ExpirySelect";
 import { expiryToApi, isValidExpiry } from "./lib/expiry";
@@ -90,6 +91,9 @@ interface Props {
   resolution?: string;
   priceSide?: PriceSide;
   brokerId?: string;
+  // The focused chart's loaded bars (it shows `epic`), read for the ATR so
+  // it matches the chart without a fetch.
+  chartCandles?: () => KLineData[] | undefined;
 }
 
 // Real-money accounts are the live env (key "{broker}:live"); the backend enforces
@@ -111,6 +115,7 @@ export default function OrderTicket({
   resolution,
   priceSide = "mid",
   brokerId,
+  chartCandles,
 }: Props) {
   // A chart-staged draft (the price-axis "+" menu's Buy/Sell limit items) is placed
   // on draftOrderSignal BEFORE this ticket mounts; seed local state from it (same-epic
@@ -216,6 +221,7 @@ export default function OrderTicket({
     priceSide,
     brokerId,
     enabled: !replaying && !editTrade && (atrPrefs.tp === "atr" || atrPrefs.sl === "atr"),
+    chartCandles,
   });
 
   // The edited trade can vanish mid-edit (a position hits SL/TP, an order fills or
@@ -466,6 +472,8 @@ export default function OrderTicket({
         resolution={resolution}
         priceSide={priceSide}
         brokerId={brokerId}
+        // Only the focused chart's own symbol can borrow its bars.
+        chartCandles={editTrade.epic === epic ? chartCandles : undefined}
       />
     );
   }
@@ -657,6 +665,7 @@ function EditTicket({
   resolution,
   priceSide,
   brokerId,
+  chartCandles,
 }: {
   trade: TradeView;
   account: TradeAccount;
@@ -664,6 +673,7 @@ function EditTicket({
   resolution?: string;
   priceSide: PriceSide;
   brokerId?: string;
+  chartCandles?: () => KLineData[] | undefined;
 }) {
   const [pending, setPending] = useState<PendingEdit>(
     () => pendingEditsSignal.value[trade.id] ?? {},
@@ -710,6 +720,7 @@ function EditTicket({
     priceSide,
     brokerId,
     enabled: atrPrefs.tp === "atr" || atrPrefs.sl === "atr",
+    chartCandles,
   });
 
   function patch(p: PendingEdit) {
