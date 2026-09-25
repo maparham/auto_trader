@@ -219,3 +219,96 @@ describe("AUTO_FIB_TEMPLATE draw", () => {
     expect(calls.filter((c) => c.startsWith("text:"))).toHaveLength(2); // current only
   });
 });
+
+describe("Show pivots", () => {
+  it("lists every counted pivot, and only counted ones", () => {
+    const { pivots } = computeAutoFibPairs(triangle([110, 110, 110, 110]), CFG);
+    expect(pivots.slice(0, 3)).toEqual([
+      { idx: 4, kind: "high" },
+      { idx: 8, kind: "low" },
+      { idx: 12, kind: "high" },
+    ]);
+    // The swing filter drops pivots 4, 8 and 12 (ATR not warm yet).
+    const filtered = computeAutoFibPairs(triangle([110, 110, 110, 110]), { pivotLen: 2, minSwingAtr: 0.01 });
+    expect(filtered.pivots[0]).toEqual({ idx: 16, kind: "low" });
+  });
+
+  it("puts the marks on the last row only when the option is on", () => {
+    const bars = triangle([110, 110, 110, 110]);
+    expect(computeAutoFib(bars, CFG, {}).marks).toBeUndefined();
+    const { marks } = computeAutoFib(bars, CFG, { showPivots: true });
+    expect(marks?.idxs.slice(0, 2)).toEqual([4, 8]);
+    expect(marks?.highs[4]).toBe(111);
+    expect(marks?.lows[8]).toBe(99);
+  });
+
+  it("snaps pinned pivots like the anchors and hides one not yet usable", () => {
+    const H = 3600_000;
+    const t0 = 1700000000000;
+    const bars = Array.from({ length: 12 }, (_, i) => bar(100, i));
+    bars[2] = bar(109, 2); // high 110 inside HTF bar 0
+    const { marks, pairs } = computeAutoFib(bars, CFG, {
+      showPivots: true,
+      mtf: {
+        timeframe: "HOUR_4",
+        chartMs: H,
+        htfMs: 4 * H,
+        htfStarts: [t0, t0 + 4 * H, t0 + 8 * H],
+        htfFibPairIdx: [0, 0, 0],
+        htfFibPairs: [{ hiTs: t0, hiPrice: 110, loTs: t0 + 4 * H, loPrice: 99, dir: -1 }],
+        htfFibPivots: [
+          { ts: t0, kind: "high", price: 110 },
+          { ts: t0 + 4 * H, kind: "low", price: 99 },
+          // Later than the newest usable pair's anchors: not on the chart yet.
+          { ts: t0 + 8 * H, kind: "high", price: 101 },
+        ],
+      },
+    });
+    expect(marks?.idxs).toEqual([2, 4]);
+    expect(pairs[0].hiIdx).toBe(2); // the anchor and its mark agree
+  });
+
+  async function paintMarks(showPivots: boolean) {
+    const { AUTO_FIB_TEMPLATE } = await import("./autoFib");
+    const calls: string[] = [];
+    const ctx: Record<string, unknown> = {
+      strokeStyle: "", fillStyle: "", lineWidth: 0, font: "", textAlign: "", textBaseline: "", globalAlpha: 1,
+      save: () => {}, restore: () => {}, beginPath: () => {}, moveTo: () => {}, lineTo: () => {},
+      closePath: () => {}, rect: () => {}, clip: () => {}, setLineDash: () => {}, fillText: () => {},
+      stroke: () => calls.push("stroke"),
+      fill: () => calls.push("fill"),
+    };
+    const highs: number[] = [];
+    const lows: number[] = [];
+    highs[5] = 110;
+    lows[8] = 90;
+    highs[12] = 105;
+    const marks = { idxs: [5, 8, 12], kinds: ["high", "low", "high"], highs, lows };
+    const pair = { hiIdx: 5, hiPrice: 110, loIdx: 8, loPrice: 90, dir: -1, startIdx: 10, endIdx: null };
+    (AUTO_FIB_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
+      ctx,
+      chart: { getDataList: () => new Array(20), getSize: () => ({ width: 40 }) },
+      indicator: {
+        result: [{}, { pairs: [pair], marks }],
+        calcParams: [5, 0],
+        extendData: { showPivots, fib: { levels: [], extend: "none", reverse: false, trendLine: false, labels: false } },
+        paneId: "candle_pane",
+        precision: 2,
+      },
+      bounding: { width: 500, height: 400 },
+      xAxis: { convertToPixel: (i: number) => i * 10 },
+      yAxis: { convertToPixel: (p: number) => 300 - p },
+    });
+    return calls;
+  }
+
+  it("paints stemmed anchors and plain pivots when on, nothing when off", async () => {
+    // The fib strokes come first; the marks are Trendlines' three batches on
+    // top: stemmed anchors (fill), major swings (fill, none here) and the
+    // plain pivot (stroke).
+    const on = await paintMarks(true);
+    const off = await paintMarks(false);
+    expect(on.slice(off.length)).toEqual(["fill", "fill", "stroke"]);
+    expect(off).not.toContain("fill");
+  });
+});

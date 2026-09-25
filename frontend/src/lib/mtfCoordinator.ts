@@ -1112,7 +1112,7 @@ function buildAutoFibMtf(
   timeframe: string,
   htfMs: number,
 ): AutoFibExtend["mtf"] {
-  const { pairOf, pairs } = computeAutoFibPairs(bars, config);
+  const { pairOf, pairs, pivots } = computeAutoFibPairs(bars, config);
   return {
     timeframe,
     htfStarts: bars.map((b) => b.timestamp),
@@ -1124,6 +1124,13 @@ function buildAutoFibMtf(
       loTs: bars[p.loIdx].timestamp,
       loPrice: p.loPrice,
       dir: p.dir,
+    })),
+    // The counted pivots, for Show pivots. Stashed always (a setting flip must
+    // not wait on a refetch); small next to the bars themselves.
+    htfFibPivots: pivots.map((v) => ({
+      ts: bars[v.idx].timestamp,
+      kind: v.kind,
+      price: v.kind === "high" ? bars[v.idx].high : bars[v.idx].low,
     })),
   };
 }

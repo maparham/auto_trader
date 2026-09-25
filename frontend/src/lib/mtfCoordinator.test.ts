@@ -1180,6 +1180,7 @@ describe("applyAutoFibTimeframe", () => {
     expect(mtf.htfFibPairIdx).toHaveLength(mtf.htfStarts.length);
     // Flat fixture bars: no pivots, so no pairs. The shape is what is pinned.
     expect(mtf.htfFibPairs).toEqual([]);
+    expect((mtf as { htfFibPivots?: unknown[] }).htfFibPivots).toEqual([]);
   });
 
   it("is restored by the refresh pass, so the pin survives a reload", async () => {

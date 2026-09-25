@@ -14,7 +14,7 @@
 import type { Indicator, IndicatorDrawParams, IndicatorTemplate, KLineData } from "klinecharts";
 import { fibLevelSegments, type FibConfig } from "../fibConfig";
 import { isPivotAt } from "./pivots";
-import { isSignificantSwing } from "./trendlines";
+import { isSignificantSwing, paintPivotMarks, type TrendPivots } from "./trendlines";
 import { atrSeries } from "../atr";
 import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { htfBarEndMs } from "../mtfForming";
@@ -59,13 +59,20 @@ interface Anchor {
   price: number;
 }
 
+/** A pivot that counted: it passed the swing filter, so a fib can anchor to
+ * it. What "Show pivots" marks. */
+export interface AutoFibPivot {
+  idx: number;
+  kind: "high" | "low";
+}
+
 /** Walk the bars once. `pairOf[i]` is the index of the pair current at bar i
  * (undefined before the first pair). Index 0 is a real pair: compare with
  * `=== undefined`, never by truthiness. */
 export function computeAutoFibPairs(
   dataList: KLineData[],
   cfg: AutoFibConfig,
-): { pairOf: Array<number | undefined>; pairs: AutoFibPair[] } {
+): { pairOf: Array<number | undefined>; pairs: AutoFibPair[]; pivots: AutoFibPivot[] } {
   const len = dataList.length;
   const n = cfg.pivotLen;
   const highs = dataList.map((d) => d.high);
@@ -79,6 +86,7 @@ export function computeAutoFibPairs(
   let hi: Anchor | null = null;
   let lo: Anchor | null = null;
   const pairs: AutoFibPair[] = [];
+  const pivots: AutoFibPivot[] = [];
   const pairOf: Array<number | undefined> = new Array(len).fill(undefined);
 
   for (let i = 0; i < len; i++) {
@@ -97,6 +105,7 @@ export function computeAutoFibPairs(
         }
         if (kind === "high") hi = { idx: k, price: highs[k] };
         else lo = { idx: k, price: lows[k] };
+        pivots.push({ idx: k, kind });
         changed = true;
       }
       if (changed && hi !== null && lo !== null) {
@@ -124,7 +133,7 @@ export function computeAutoFibPairs(
     }
     if (pairs.length) pairOf[i] = pairs.length - 1;
   }
-  return { pairOf, pairs };
+  return { pairOf, pairs, pivots };
 }
 
 /** One operand series (`high`, `low`, `dir` or a level name) over the bars.
@@ -162,16 +171,27 @@ export interface AutoFibMtfPair {
   dir: 1 | -1;
 }
 
+/** One counted HTF pivot, keyed by TIMESTAMP like the pairs. */
+export interface AutoFibMtfPivot {
+  ts: number; // open of the HTF bar holding the pivot
+  kind: "high" | "low";
+  price: number;
+}
+
 export interface AutoFibExtend {
   fib?: FibConfig; // levels, colours, extend, reverse, trend line, labels
   pastCount?: number; // earlier fibs to draw dimmed, 0..AUTO_FIB_MAX_PAST
   pastOpacity?: number; // percent
+  // Mark every counted pivot (plain arrow) and the anchors of the fibs on the
+  // chart (stemmed arrow), with Trendlines' glyphs. Render-only.
+  showPivots?: boolean;
   // Set by the MTF coordinator (applyAutoFibTimeframe); calc re-aligns it.
   mtf?: MtfSeriesBase & {
     htfStarts?: number[];
     htfMs?: number;
     htfFibPairIdx?: Array<number | undefined>; // pair current on each HTF bar
     htfFibPairs?: AutoFibMtfPair[];
+    htfFibPivots?: AutoFibMtfPivot[];
   };
   hideLegendValue?: boolean;
 }
@@ -182,9 +202,11 @@ export interface AutoFibPoint {
   dir?: number;
 }
 
-/** calc row. The pair list rides on the LAST row only; draw reads it there. */
+/** calc row. The pair list (and, with Show pivots on, the pivot marks in
+ * chart bar space) ride on the LAST row only; draw reads them there. */
 export interface AutoFibRow extends AutoFibPoint {
   pairs?: AutoFibPair[];
+  marks?: TrendPivots;
 }
 
 const pointOf = (q: { hiPrice: number; loPrice: number; dir: number } | undefined): AutoFibPoint =>
@@ -209,7 +231,8 @@ function mapMtf(
   htfMs: number,
   pairIdx: Array<number | undefined>,
   src: AutoFibMtfPair[],
-): { points: AutoFibPoint[]; pairs: AutoFibPair[] } {
+  srcPivots: AutoFibMtfPivot[] | null,
+): { points: AutoFibPoint[]; pairs: AutoFibPair[]; marks?: TrendPivots } {
   const ts = dataList.map((k) => k.timestamp);
   const htfBars = htfStarts.map((t) => ({ timestamp: t }) as KLineData);
   // The same closed-bar rule as every MTF series: a chart bar never sees a
@@ -270,20 +293,62 @@ function mapMtf(
       endIdx: j + 1 < runs.length ? runs[j + 1].start : null,
     };
   });
-  return { points, pairs };
+  if (!srcPivots) return { points, pairs };
+  // Pivot marks, snapped by the same rule as the anchors so an anchor's mark
+  // lands on its fib. Every pivot is snapped: each scan covers only its own
+  // HTF bar, so the total is bounded by the loaded chart bars. A pivot whose
+  // HTF bar has not closed on the chart yet is not shown: its pair is not
+  // either (closed-bar rule).
+  const lastUsable = runs.length ? src[runs[runs.length - 1].p] : undefined;
+  const cutoff = lastUsable ? Math.max(lastUsable.hiTs, lastUsable.loTs) : -Infinity;
+  const placed = srcPivots
+    .filter((v) => v.ts <= cutoff)
+    .map((v) => ({ ...v, idx: snap(v.ts, v.price, v.kind, idxAt(v.ts)) }))
+    .sort((a, b) => a.idx - b.idx);
+  return { points, pairs, marks: pivotMarks(placed, ts.length) };
+}
+
+/** Pivots in chart bar space as the TrendPivots shape paintPivotMarks reads:
+ * ascending idxs, and the price held at that idx in highs or lows. */
+function pivotMarks(
+  placed: ReadonlyArray<{ idx: number; kind: "high" | "low"; price: number }>,
+  len: number,
+): TrendPivots {
+  const highs: number[] = new Array(len);
+  const lows: number[] = new Array(len);
+  const idxs: number[] = [];
+  const kinds: Array<"high" | "low"> = [];
+  for (const v of placed) {
+    if (v.idx < 0 || v.idx >= len) continue;
+    idxs.push(v.idx);
+    kinds.push(v.kind);
+    if (v.kind === "high") highs[v.idx] = v.price;
+    else lows[v.idx] = v.price;
+  }
+  return { idxs, kinds, highs, lows };
 }
 
 export function computeAutoFib(
   dataList: KLineData[],
   cfg: AutoFibConfig,
-  ext?: Pick<AutoFibExtend, "mtf">,
-): { points: AutoFibPoint[]; pairs: AutoFibPair[] } {
+  ext?: Pick<AutoFibExtend, "mtf" | "showPivots">,
+): { points: AutoFibPoint[]; pairs: AutoFibPair[]; marks?: TrendPivots } {
   const mtf = ext?.mtf;
+  const wantMarks = ext?.showPivots === true;
   if (mtf?.timeframe && mtf.htfStarts && mtf.htfMs && mtf.htfFibPairIdx && mtf.htfFibPairs) {
-    return mapMtf(dataList, mtf, mtf.htfStarts, mtf.htfMs, mtf.htfFibPairIdx, mtf.htfFibPairs);
+    return mapMtf(
+      dataList, mtf, mtf.htfStarts, mtf.htfMs, mtf.htfFibPairIdx, mtf.htfFibPairs,
+      wantMarks ? (mtf.htfFibPivots ?? []) : null,
+    );
   }
-  const { pairOf, pairs } = computeAutoFibPairs(dataList, cfg);
-  return { points: pairOf.map((p) => pointOf(p === undefined ? undefined : pairs[p])), pairs };
+  const { pairOf, pairs, pivots } = computeAutoFibPairs(dataList, cfg);
+  const points = pairOf.map((p) => pointOf(p === undefined ? undefined : pairs[p]));
+  if (!wantMarks) return { points, pairs };
+  const placed = pivots.map((v) => ({
+    ...v,
+    price: v.kind === "high" ? dataList[v.idx].high : dataList[v.idx].low,
+  }));
+  return { points, pairs, marks: pivotMarks(placed, dataList.length) };
 }
 
 const TREND_COLOR = "#787b86"; // the fib drawing's anchor connector
@@ -292,8 +357,8 @@ const LABEL_FONT = "12px -apple-system, system-ui, sans-serif";
 function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>): boolean {
   const { ctx, chart, indicator, bounding, xAxis, yAxis } = params;
   const result = (indicator.result ?? []) as AutoFibRow[];
-  const pairs = result[result.length - 1]?.pairs;
-  if (!pairs?.length) return true;
+  const lastRow = result[result.length - 1];
+  const pairs = lastRow?.pairs ?? [];
   const ext = (indicator.extendData ?? {}) as AutoFibExtend;
   const fib = autoFibFibConfig(ext);
   const pastCount = Math.min(AUTO_FIB_MAX_PAST, Math.max(0, Math.floor(Number(ext.pastCount) || 0)));
@@ -308,11 +373,12 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
   const W = bounding.width;
   const H = bounding.height;
   const clampX = (x: number) => Math.min(W + DRAW_CLIP_PAD, Math.max(-DRAW_CLIP_PAD, x));
+  const firstDrawn = Math.max(0, pairs.length - 1 - pastCount);
 
   ctx.save();
   ctx.font = LABEL_FONT;
   ctx.textBaseline = "bottom";
-  for (let p = Math.max(0, pairs.length - 1 - pastCount); p < pairs.length; p++) {
+  for (let p = firstDrawn; p < pairs.length; p++) {
     const pair = pairs[p];
     const current = pair.endIdx === null;
     const up = pair.dir > 0;
@@ -363,6 +429,27 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
   }
   ctx.setLineDash([]);
   ctx.restore();
+  // Pivot marks go on top of the fibs, and paint even with no fib yet: a pane
+  // whose filter admitted pivots of one kind only still shows them.
+  if (ext.showPivots && lastRow?.marks) {
+    const used = new Set<number>();
+    for (let p = firstDrawn; p < pairs.length; p++) {
+      used.add(pairs[p].hiIdx);
+      used.add(pairs[p].loIdx);
+    }
+    paintPivotMarks(
+      ctx,
+      lastRow.marks,
+      (j) => xAxis.convertToPixel(j),
+      (price) => yAxis.convertToPixel(price),
+      W - axisWidth - 4,
+      H,
+      used,
+      true,
+      true,
+      TREND_COLOR,
+    );
+  }
   return true; // the fibs replace any default figure drawing
 }
 
@@ -376,13 +463,13 @@ export const AUTO_FIB_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   // figures to hang selection handles on (no ZONE_ONLY_TYPES entry needed).
   figures: [],
   calc: (dataList: KLineData[], ind: Indicator) => {
-    const { points, pairs } = computeAutoFib(
+    const { points, pairs, marks } = computeAutoFib(
       dataList,
       parseAutoFibConfig(ind.calcParams),
       (ind.extendData ?? {}) as AutoFibExtend,
     );
     const out = points as AutoFibRow[];
-    if (out.length) out[out.length - 1] = { ...out[out.length - 1], pairs };
+    if (out.length) out[out.length - 1] = { ...out[out.length - 1], pairs, ...(marks ? { marks } : {}) };
     return out;
   },
   draw: (params) => drawAutoFib(params as IndicatorDrawParams<AutoFibRow, unknown, unknown>),

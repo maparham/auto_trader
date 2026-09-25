@@ -80,6 +80,13 @@ describe("Auto Fib settings", () => {
     expect(fib.extend).toBe("right");
   });
 
+  it("offers Show pivots on the Style tab as a plain extendData flag", () => {
+    const { ind } = open();
+    fireEvent.click(screen.getByRole("button", { name: "Style" }));
+    fireEvent.click(screen.getByLabelText("Show pivots"));
+    expect(ind.extendData.showPivots).toBe(true);
+  });
+
   it("offers Past fib opacity on the Style tab", () => {
     open();
     fireEvent.click(screen.getByRole("button", { name: "Style" }));

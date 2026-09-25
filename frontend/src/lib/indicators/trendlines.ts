@@ -2932,7 +2932,7 @@ export function drawnPivotIdxs(lines: readonly TrendLine[]): Set<number> {
  * the right edge instead of running the whole series: on a zoomed-in pane of
  * a long history that is the difference between a handful of carets and
  * thousands of off-pane transforms per frame. */
-function paintPivotMarks(
+export function paintPivotMarks(
   ctx: CanvasRenderingContext2D,
   pivots: TrendPivots,
   xAt: (j: number, kind: PivotKind) => number,
