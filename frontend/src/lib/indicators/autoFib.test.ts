@@ -13,7 +13,7 @@ vi.mock("klinecharts", () => ({
 }));
 
 import type { KLineData } from "klinecharts";
-import { autoFibSeries, computeAutoFibPairs } from "./autoFib";
+import { autoFibSeries, computeAutoFib, computeAutoFibPairs } from "./autoFib";
 import { autoFibFibConfig } from "./autoFibOutputs";
 
 /** high = close + 1, low = close - 1, open = close. */
@@ -100,5 +100,114 @@ describe("autoFibSeries", () => {
     expect(autoFibSeries(bars, CFG, fib, "f0_5")[9]).toBeUndefined();
     // Not an output of this pane: all undefined.
     expect(autoFibSeries(bars, CFG, fib, "fm0_236").every((v) => v === undefined)).toBe(true);
+  });
+});
+
+describe("computeAutoFib MTF branch", () => {
+  const H = 3600_000;
+  const t0 = 1700000000000;
+  const flat = Array.from({ length: 12 }, (_, i) => bar(100, i)); // high 101, low 99
+  const pairs = [
+    { hiTs: t0, hiPrice: 110, loTs: t0 + 4 * H, loPrice: 90, dir: -1 as const },
+    { hiTs: t0 + 8 * H, hiPrice: 120, loTs: t0 + 4 * H, loPrice: 90, dir: 1 as const },
+  ];
+  const mtf = {
+    timeframe: "HOUR_4",
+    chartMs: H,
+    htfMs: 4 * H,
+    htfStarts: [t0, t0 + 4 * H, t0 + 8 * H],
+    htfFibPairIdx: [0, 0, 1] as Array<number | undefined>,
+    htfFibPairs: pairs,
+  };
+
+  it("shows pair 0 when it is the only pair on screen (closed bars only)", () => {
+    const { points, pairs: out } = computeAutoFib(flat, CFG, { mtf });
+    expect(points[3]).toEqual({});
+    expect(points[4]).toEqual({ high: 110, low: 90, dir: -1 });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ startIdx: 4, endIdx: null, hiPrice: 110 });
+  });
+
+  it("admits the forming bar from its open and closes the previous pair there", () => {
+    const { pairs: out } = computeAutoFib(flat, CFG, { mtf: { ...mtf, formingIdx: 2 } });
+    expect(out.map((p) => [p.startIdx, p.endIdx])).toEqual([[4, 8], [8, null]]);
+  });
+
+  it("snaps an anchor to the chart candle holding the HTF extreme", () => {
+    const bars = flat.slice();
+    bars[2] = bar(109, 2); // high 110, inside HTF bar 0 (chart bars 0..3)
+    const { pairs: out } = computeAutoFib(bars, CFG, { mtf });
+    expect(out[0].hiIdx).toBe(2);
+    expect(out[0].loIdx).toBe(4); // flat span: ties keep the first bar
+  });
+
+  it("snaps only the last 11 mapped pairs (calc runs every tick)", () => {
+    // 30 HTF bars, pair p active on HTF bar p; each pair's high trades on the
+    // third chart bar of its HTF bar. Pair 29 closes past the loaded bars, so
+    // 29 pairs map (0..28) and only 18..28 are snapped.
+    const bars = Array.from({ length: 120 }, (_, i) => bar(i % 4 === 2 ? 109 : 100, i));
+    const deep = {
+      timeframe: "HOUR_4",
+      chartMs: H,
+      htfMs: 4 * H,
+      htfStarts: Array.from({ length: 30 }, (_, p) => t0 + p * 4 * H),
+      htfFibPairIdx: Array.from({ length: 30 }, (_, p) => p) as Array<number | undefined>,
+      htfFibPairs: Array.from({ length: 30 }, (_, p) => ({
+        hiTs: t0 + p * 4 * H, hiPrice: 110, loTs: t0 + p * 4 * H, loPrice: 99, dir: 1 as const,
+      })),
+    };
+    const { pairs: out } = computeAutoFib(bars, CFG, { mtf: deep });
+    expect(out).toHaveLength(29);
+    expect(out[17].hiIdx).toBe(17 * 4); // unsnapped: first bar of its HTF bar
+    expect(out[18].hiIdx).toBe(18 * 4 + 2); // snapped onto the wick
+    expect(out[28].hiIdx).toBe(28 * 4 + 2);
+  });
+});
+
+describe("AUTO_FIB_TEMPLATE draw", () => {
+  function fakeCtx() {
+    const calls: string[] = [];
+    const ctx: Record<string, unknown> = {
+      strokeStyle: "", fillStyle: "", lineWidth: 0, font: "", textAlign: "", textBaseline: "", globalAlpha: 1,
+      save: () => {}, restore: () => {}, beginPath: () => {}, moveTo: () => {}, lineTo: () => {},
+      setLineDash: () => {},
+      stroke: () => calls.push(`stroke:${ctx.globalAlpha}`),
+      fillText: (t: string) => calls.push(`text:${t}`),
+    };
+    return { ctx, calls };
+  }
+
+  async function paint(pastCount: number) {
+    const { AUTO_FIB_TEMPLATE } = await import("./autoFib");
+    const { ctx, calls } = fakeCtx();
+    const mk = (s: number, e: number | null) => ({ hiIdx: s - 2, hiPrice: 110, loIdx: s - 4, loPrice: 90, dir: 1, startIdx: s, endIdx: e });
+    const result = [{}, { pairs: [mk(10, 20), mk(20, 30), mk(30, null)] }];
+    (AUTO_FIB_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
+      ctx,
+      chart: { getDataList: () => new Array(40), getSize: () => ({ width: 40 }) },
+      indicator: {
+        result,
+        calcParams: [5, 0],
+        extendData: { pastCount, fib: { levels: [{ value: 0, enabled: true, color: "#111" }, { value: 1, enabled: true, color: "#222" }], extend: "none", reverse: false, trendLine: false, labels: true } },
+        paneId: "candle_pane",
+        precision: 2,
+      },
+      bounding: { width: 500, height: 400 },
+      xAxis: { convertToPixel: (i: number) => i * 10 },
+      yAxis: { convertToPixel: (p: number) => 300 - p },
+    });
+    return calls;
+  }
+
+  it("draws only the current fib by default, with labels", async () => {
+    const calls = await paint(0);
+    expect(calls.filter((c) => c.startsWith("stroke:"))).toEqual(["stroke:1", "stroke:1"]);
+    expect(calls).toContain("text:0 (110.00)");
+  });
+
+  it("adds pastCount earlier fibs, dimmed and unlabelled", async () => {
+    const calls = await paint(1);
+    expect(calls.filter((c) => c === "stroke:0.35")).toHaveLength(2);
+    expect(calls.filter((c) => c.startsWith("text:"))).toHaveLength(2); // current only
   });
 });

@@ -22,6 +22,7 @@ export * from "./indicators/pivotBands";
 export * from "./indicators/pivotBarsSince";
 export * from "./indicators/pivotAnalysis";
 export * from "./indicators/srLevels";
+export * from "./indicators/autoFib";
 export * from "./indicators/fvg";
 export * from "./indicators/trendlines";
 export * from "./indicators/curveLabels";
@@ -41,6 +42,7 @@ import { PIVOT_BANDS_TEMPLATE } from "./indicators/pivotBands";
 import { PIVOT_BARS_SINCE_TEMPLATE } from "./indicators/pivotBarsSince";
 import { PIVOT_ANALYSIS_TEMPLATE } from "./indicators/pivotAnalysis";
 import { SR_LEVELS_TEMPLATE } from "./indicators/srLevels";
+import { AUTO_FIB_TEMPLATE } from "./indicators/autoFib";
 import { FVG_TEMPLATE } from "./indicators/fvg";
 import { TRENDLINES_TEMPLATE } from "./indicators/trendlines";
 import { SLOPE_TEMPLATE, SLOPE_ACCEL_TEMPLATE } from "./indicators/slope";
@@ -67,6 +69,7 @@ export type CustomIndicatorType =
   | "PIVOT_BARS_SINCE"
   | "PIVOT_ANALYSIS"
   | "SR_LEVELS"
+  | "AUTO_FIB"
   | "FVG"
   | "TRENDLINES"
   | "SLOPE"
@@ -89,6 +92,7 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   PIVOT_BARS_SINCE: PIVOT_BARS_SINCE_TEMPLATE,
   PIVOT_ANALYSIS: PIVOT_ANALYSIS_TEMPLATE,
   SR_LEVELS: SR_LEVELS_TEMPLATE,
+  AUTO_FIB: AUTO_FIB_TEMPLATE,
   FVG: FVG_TEMPLATE,
   TRENDLINES: TRENDLINES_TEMPLATE,
   SLOPE: SLOPE_TEMPLATE,
@@ -126,6 +130,7 @@ export const OVERLAY_INDICATORS = new Set([
   "PIVOT_BANDS",
   "PIVOT_ANALYSIS",
   "SR_LEVELS",
+  "AUTO_FIB",
   "SPIKE",
   "FVG",
   // TRENDLINES draws through the candle pane's y-axis (projectAt prices), so it

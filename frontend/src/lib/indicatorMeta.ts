@@ -555,6 +555,47 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Support / Resistance Levels",
     desc: "Clusters confirmed fractal swing highs and lows into major support/resistance zones. Each zone's price is the average of its touches; opacity and the ×N tag show touch count. Zones below the current close tint green (support), above tint red (resistance). Nearest support and resistance are available as rule operands. Pivots confirm Pivot Length bars late (no repaint).",
   },
+  AUTO_FIB: {
+    inputs: [
+      {
+        ...num(0, "Pivot Length"),
+        tip: ["Bars required on each side of a swing high or low.", "Higher finds bigger swings and confirms them later."],
+      },
+      {
+        ...num(1, "Min Swing (×ATR)", { min: 0, step: 0.1 }),
+        tip: ["A pivot counts only if its leg from the last opposite pivot is at least this many ATR(14).", "0 = off."],
+      },
+      {
+        key: "pastCount",
+        label: "Past fibs",
+        type: "number",
+        source: "extend",
+        field: "pastCount",
+        section: "History",
+        default: 0,
+        min: 0,
+        max: 10,
+        step: 1,
+        tip: ["Also draw this many earlier fibs, dimmed.", "0 = only the current fib."],
+      },
+      {
+        key: "pastOpacity",
+        label: "Past fib opacity",
+        type: "number",
+        source: "extend",
+        field: "pastOpacity",
+        tab: "style",
+        default: 35,
+        min: 5,
+        max: 100,
+        step: 5,
+        suffix: "%",
+        tip: "How faded the past fibs paint.",
+      },
+    ],
+    title: "Auto Fib Retracement",
+    desc: "Draws a fib retracement between the latest confirmed swing high and swing low and redraws it as new swings confirm. Level 0 sits on the later swing. Pivots confirm Pivot Length bars late (no repaint). High, low, direction and every enabled level are available as rule operands.",
+  },
   SPIKE: {
     inputs: [
       {
