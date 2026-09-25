@@ -3108,6 +3108,8 @@
 /* Fib settings: two-column level grid — checkbox · value · picker · remove. The
    full color+style picker per row needs more width than the 360px default. */
 .ind-settings-fib { width: 400px; }
+/* Extend's select sits beside its label, not across the wide fib modal. */
+.ind-row.fib-extend-row { justify-content: flex-start; gap: 12px; }
 .fib-levels { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin: 8px 0; }
 .fib-level { display: flex; align-items: center; gap: 6px; }
 .fib-level input[type="number"] { width: 64px; }

@@ -40,7 +40,7 @@ export default function FibLevelsEditor({ fib, onChange, sharedSize, sharedStyle
     });
   return (
     <>
-      <div className="ind-row">
+      <div className="ind-row fib-extend-row">
         <label htmlFor="fib-extend">Extend</label>
         <select
           id="fib-extend"
