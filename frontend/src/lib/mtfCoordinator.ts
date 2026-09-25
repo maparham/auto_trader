@@ -41,6 +41,12 @@ import {
   type SrLevelsConfig,
   type SrLevelsExtend,
 } from "./indicators/srLevels";
+import { computeAutoFibPairs, type AutoFibExtend } from "./indicators/autoFib";
+import {
+  autoFibWarmup,
+  parseAutoFibConfig,
+  type AutoFibConfig,
+} from "./indicators/autoFibOutputs";
 import {
   computeTrendlines,
   setTrendlinesHtfBars,
@@ -1031,6 +1037,97 @@ function buildSrMtf(
   };
 }
 
+/**
+ * Point Auto Fib at a higher timeframe (or back to the chart timeframe when
+ * `timeframe` is null/"chart"). Same shape as applySrLevelsTimeframe: fetch
+ * the HTF candles, run the chart-TF pair detector on them, and stash the pair
+ * current on each HTF bar plus the pairs (anchors keyed by TIMESTAMP); calc
+ * aligns the index with waitClose semantics (no lookahead). The fetch reach is
+ * the operand warm-up only: past fibs older than the fetched span are simply
+ * not drawn, never fetched for (the Trendlines freeze lesson).
+ */
+export async function applyAutoFibTimeframe(
+  chart: Chart,
+  epic: string,
+  name: string,
+  paneId: string,
+  config: AutoFibConfig,
+  timeframe: string | null,
+  brokerId?: string,
+  needed?: NeededInterval,
+): Promise<void> {
+  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
+  const ind = getIndicator(chart, paneId, name) as { extendData?: AutoFibExtend } | null;
+  const waitClose = readWaitClose(ind);
+  const ext: AutoFibExtend = { ...(ind?.extendData ?? {}) };
+  const calcParams = [config.pivotLen, config.minSwingAtr];
+
+  if (!timeframe || timeframe === "chart") {
+    clearMtfRetry(chart, paneId, name);
+    ext.mtf = { timeframe: null };
+    overrideExtend(chart, paneId, name, ext, calcParams);
+    return;
+  }
+
+  const need = needed ?? neededOf(chart);
+  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
+    chart,
+    epic,
+    timeframe,
+    autoFibWarmup(config),
+    brokerId,
+    need,
+    ind?.extendData?.mtf,
+  );
+  const proceed = mtfFetchTail(
+    chart,
+    paneId,
+    name,
+    timeframe,
+    failed,
+    htf.length > 0,
+    ind?.extendData?.mtf,
+    ext,
+    calcParams,
+    () => applyAutoFibTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, needed),
+  );
+  if (!proceed) return;
+  const fp =
+    waitClose || !dockedAt(chart, askToMs, htfMs)
+      ? null
+      : prepFormingBars(chart, htf, htfMs, timeframe);
+  ext.mtf = {
+    chartMs: chartIntervalOf(chart),
+    epic,
+    ...buildAutoFibMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
+    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
+    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
+  };
+  overrideExtend(chart, paneId, name, ext, calcParams);
+}
+
+function buildAutoFibMtf(
+  bars: KLineData[],
+  config: AutoFibConfig,
+  timeframe: string,
+  htfMs: number,
+): AutoFibExtend["mtf"] {
+  const { pairOf, pairs } = computeAutoFibPairs(bars, config);
+  return {
+    timeframe,
+    htfStarts: bars.map((b) => b.timestamp),
+    htfMs,
+    htfFibPairIdx: pairOf,
+    htfFibPairs: pairs.map((p) => ({
+      hiTs: bars[p.hiIdx].timestamp,
+      hiPrice: p.hiPrice,
+      loTs: bars[p.loIdx].timestamp,
+      loPrice: p.loPrice,
+      dir: p.dir,
+    })),
+  };
+}
+
 // A trendline reaches back to its oldest anchor, and only Max Span bounds that
 // — which is 0 = OFF by default, so the off state needs the LARGER reach, not a
 // zero one. With no span ceiling the pairing width is the honest stand-in: a
@@ -1647,6 +1744,8 @@ export function refreshFormingBar(chart: Chart): void {
         );
       } else if (type === "SR_LEVELS") {
         built = buildSrMtf(bars, parseSrConfig(ind.calcParams), timeframe, htfMs);
+      } else if (type === "AUTO_FIB") {
+        built = buildAutoFibMtf(bars, parseAutoFibConfig(ind.calcParams), timeframe, htfMs);
       } else if (type === "TRENDLINES") {
         setTrendlinesHtfBars(chart, id, bars);
         built = buildTrendlinesMtf(
@@ -1931,6 +2030,10 @@ async function refreshMtfIndicatorsUncoalesced(
             need,
           ),
         );
+      } else if (type === "AUTO_FIB") {
+        const cfg = parseAutoFibConfig(ind.calcParams);
+        if (covered(autoFibWarmup(cfg))) return;
+        jobs.push(applyAutoFibTimeframe(chart, epic, id, paneId, cfg, tf, brokerId, need));
       } else if (type === "TRENDLINES") {
         const cfg = parseTrendlinesConfig(ind.calcParams, ind.extendData);
         if (covered(tlWarmup(cfg))) return;

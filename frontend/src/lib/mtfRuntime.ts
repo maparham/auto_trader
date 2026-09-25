@@ -26,6 +26,9 @@ export const MTF_RUNTIME_KEYS = [
   // S/R Levels: the per-HTF-bar nearest support and resistance series.
   "htfSupport",
   "htfResistance",
+  // Auto Fib: the pair current on each HTF bar and the pair list.
+  "htfFibPairIdx",
+  "htfFibPairs",
   // Trendlines: the config-driven operand rows, the detected line list, the
   // per-HTF-bar pivot arrays and the HTF ATR the merge tolerances are
   // measured in.

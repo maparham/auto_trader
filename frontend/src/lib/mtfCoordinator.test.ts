@@ -39,7 +39,7 @@ vi.mock("./feed", () => ({
   nominalBarHours: (res: string) => (RES_SECONDS[res] ? RES_SECONDS[res] / 3600 : null),
 }));
 
-const { applyMaTimeframe, applySlopeTimeframe, applyTrendlinesTimeframe, refreshMtfIndicators, refreshMtfOnVisibilityChange, setChartIntervalMs } =
+const { applyMaTimeframe, applySlopeTimeframe, applyTrendlinesTimeframe, applyAutoFibTimeframe, refreshMtfIndicators, refreshMtfOnVisibilityChange, setChartIntervalMs } =
   await import("./mtfCoordinator");
 const { TRENDLINES_DEFAULTS, MAX_PAIR_PIVOTS } = await import("./indicators/trendlinesOutputs");
 const { slopeLineSeries } = await import("./indicators/slope");
@@ -1149,5 +1149,55 @@ describe("stampTrendlinesFloors", () => {
     const second = (overrides.at(-1)!.patch.extendData as { tlFloorTs?: number })
       .tlFloorTs!;
     expect(second).toBeLessThan(first);
+  });
+});
+
+describe("applyAutoFibTimeframe", () => {
+  const apply = (chart: Chart, timeframe: string | null) =>
+    applyAutoFibTimeframe(chart, "EPIC", "af1", "candle_pane", { pivotLen: 5, minSwingAtr: 0 }, timeframe);
+
+  it("clears the stash and writes the params when the pin is released", async () => {
+    const { chart, overrides } = fakeChart({ mtf: { timeframe: "MINUTE_15", htfStarts: [1] } });
+    await apply(chart, null);
+    expect(overrides[0].patch.extendData?.mtf).toEqual({ timeframe: null });
+    expect(overrides[0].patch.calcParams).toEqual([5, 0]);
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
+  });
+
+  it("stashes one pair index per HTF bar", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const { chart, overrides } = fakeChart();
+    await apply(chart, "MINUTE_15");
+    const mtf = overrides.at(-1)!.patch.extendData?.mtf as {
+      timeframe: string;
+      htfStarts: number[];
+      htfFibPairIdx: unknown[];
+      htfFibPairs: unknown[];
+    };
+    expect(mtf.timeframe).toBe("MINUTE_15");
+    expect(mtf.htfFibPairIdx).toHaveLength(mtf.htfStarts.length);
+    // Flat fixture bars: no pivots, so no pairs. The shape is what is pinned.
+    expect(mtf.htfFibPairs).toEqual([]);
+  });
+
+  it("is restored by the refresh pass, so the pin survives a reload", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const ind = {
+      paneId: "candle_pane",
+      name: "AUTO_FIB",
+      calcParams: [5, 0],
+      extendData: { indType: "AUTO_FIB", mtf: { timeframe: "MINUTE_15" } },
+    };
+    const chart = {
+      getDataList: () => [bar(10_000_000_000), bar(10_000_300_000)],
+      getIndicators: () => [ind],
+      overrideIndicator: () => true,
+    } as unknown as Chart;
+    await refreshMtfIndicators(chart, "EPIC");
+    expect(fetchRangeStrict).toHaveBeenCalled();
   });
 });
