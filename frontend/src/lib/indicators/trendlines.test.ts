@@ -2160,6 +2160,10 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     // opaque.
     expect(dimmed.touchMarks.length).toBeGreaterThan(0);
     expect(dimmed.touchMarks.every((m) => m.alpha === TL_DIM_ALPHA)).toBe(true);
+    // And the pin handle: an opaque chevron at the end of a faded line reads
+    // as a live line's marker.
+    expect(dimmed.handleStrokes.length).toBeGreaterThan(0);
+    expect(dimmed.handleStrokes.every((s) => s.alpha === TL_DIM_ALPHA)).toBe(true);
   });
 
   it("paints the dim at the pane's own opacity, clamped", () => {
@@ -2331,7 +2335,7 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
   });
 
   // The rest of the Style tab: width and dash are the LINE's alone (the
-  // handle keeps its own weight and stays solid), opacity fades the group.
+  // handle keeps its own weight and stays undashed), opacity fades the group.
   const styled = (styleExt: Record<string, unknown>) =>
     record(bars(), params(3), "lastbar", undefined, undefined, false, false, undefined, undefined, false, false, false, undefined, styleExt);
   it("strokes the line at extendData.lineWidth and the handle at its own weight", () => {

@@ -3372,11 +3372,10 @@ function drawTrendlines(
   const hideDrawn = ext?.debug === true && ext.debugShowDrawn === false;
   for (const line of drawn) {
     if (hideDrawn) continue;
-    // ONE alpha for the whole line, computed before the stroke and reused at
-    // every site that restores it below (the pin handle paints at full
-    // opacity and hands it back). Recomputing the dim test at those sites is
-    // how the touch rings and the ×N tag snapped back to full opacity while
-    // the stroke itself faded correctly.
+    // ONE alpha for the whole line and everything it carries (rings, crossing
+    // dots, pin handle, ×N tag), computed once before the stroke. Recomputing
+    // the dim test per site is how the touch rings and the ×N tag once
+    // snapped back to full opacity while the stroke itself faded correctly.
     const alpha =
       (trendlineDimmed(line, lastIdx, ext) ? trendlineDimAlpha(ext) : 1) * lineStyle.opacity;
     const key = lineKey(line, dataList, starts);
@@ -3521,9 +3520,8 @@ function drawTrendlines(
     if (showCrossings) {
       ctx.save();
       ctx.fillStyle = lineColor;
-      // Full strength even on a dimmed line: the mark is an event, and
-      // dimming is about the line's standing, not whether the event happened.
-      ctx.globalAlpha = 1;
+      // The line's own alpha: a dimmed line dims everything it carries.
+      ctx.globalAlpha = look.alpha;
       // Filled crossing dots shrink when zoomed out so they stay proportional
       // to the candles rather than dominating a compressed bar.
       const crossScale = Math.max(0.5, Math.min(1, barPx > 0 ? barPx / 8 : 1));
@@ -3610,7 +3608,8 @@ function drawTrendlines(
       // would run, "click to run me on". Pinned: a bar across the line, an end
       // stop the line has already passed, "click to cut me back".
       const ang = Math.atan2(yRing - y0, xRing - x0);
-      ctx.globalAlpha = 1;
+      // At the line's own alpha, like the rings and the tag: a dimmed line
+      // dims everything it carries.
       ctx.lineWidth = TL_HANDLE_STROKE;
       ctx.beginPath();
       if (isPinned) {
@@ -3632,7 +3631,6 @@ function drawTrendlines(
       }
       ctx.stroke();
       ctx.lineWidth = 1;
-      ctx.globalAlpha = look.alpha;
     }
     if (!showStats) continue;
     const label = trendlineStatsLabel(line.touches, line.crossings);
