@@ -28,7 +28,10 @@ import {
   SMOOTHING_TYPES,
   type IndicatorInputDef,
 } from "./lib/indicatorMeta";
-import { applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, refreshMtfOnVisibilityChange, setMtfWaitClose } from "./lib/mtfCoordinator";
+import { applyAutoFibTimeframe, applyFvgTimeframe, applyPivotBandsTimeframe, applySlopeTimeframe, applySrLevelsTimeframe, applyTrendlinesTimeframe, refreshMtfOnVisibilityChange, setMtfWaitClose } from "./lib/mtfCoordinator";
+import { autoFibFibConfig, parseAutoFibConfig } from "./lib/indicators/autoFibOutputs";
+import type { FibConfig } from "./lib/fibConfig";
+import FibLevelsEditor from "./components/FibLevelsEditor";
 import {
   legacyMergeAtr,
   legacyNearPrice,
@@ -327,6 +330,9 @@ function IndicatorSettingsForm({
   // Trendlines: same MTF shape as S/R Levels — the pin is on the Inputs tab and
   // the detector runs on the pinned timeframe's own bars, lines and all.
   const isTrendlines = type === "TRENDLINES";
+  // Auto Fib: same MTF shape as S/R Levels (pin on the Inputs tab), and its
+  // levels are the fib drawing tool's editor on the Style tab.
+  const isAutoFib = type === "AUTO_FIB";
   // Candle Patterns: figure-less main-pane overlay, no numeric calcParams. Its
   // whole config (pattern toggles, show-labels, colours) is a small extendData
   // object edited on the Inputs tab (colours included, unlike EMA/MA).
@@ -580,6 +586,9 @@ function IndicatorSettingsForm({
   const [fvgZone, setFvgZone] = useState<FvgZoneStyle>(() =>
     fvgZoneStyleOf((ind?.extendData ?? {}) as FvgExtend),
   );
+
+  // --- AUTO_FIB: fib levels/extend/reverse/labels (draw + operand names, on extendData.fib) ---
+  const [autoFib, setAutoFib] = useState<FibConfig>(() => autoFibFibConfig(ind?.extendData));
 
   // --- TRENDLINES: line colour / width / dash / opacity (draw-only, on
   // extendData.lineColor / lineWidth / lineStyle / lineOpacity) ---
@@ -1178,6 +1187,8 @@ function IndicatorSettingsForm({
     // Trendlines persists only the chosen timeframe; the HTF lines and series
     // are re-detected by the coordinator on load, exactly as S/R Levels does.
     if (isTrendlines && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
+    // Auto Fib: same MTF persistence contract as S/R Levels.
+    if (isAutoFib && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
     if (isSlope) {
       // slopePeriod/smoothing/colorByDirection don't ride genExtend (they're not
       // meta-declared selects) — persist them explicitly so they survive reload.
@@ -1205,6 +1216,10 @@ function IndicatorSettingsForm({
     }
     if (isFvg && JSON.stringify(fvgZone) !== JSON.stringify(FVG_ZONE_STYLE_DEFAULTS)) {
       extendData.zoneStyle = fvgZone;
+    }
+    if (isAutoFib && JSON.stringify(autoFib) !== JSON.stringify(autoFibFibConfig({}))) {
+      // Persist only a customized fib, so a plain pane carries no `fib` key.
+      extendData.fib = autoFib;
     }
     if (isTrendlines) {
       // Draw-only; each key persists only when it differs from the default so
@@ -1341,6 +1356,22 @@ function IndicatorSettingsForm({
       name,
       paneId,
       parseSrConfig(nextCp ?? calcParams),
+      tf === "chart" ? null : tf,
+      brokerId,
+    );
+  }
+
+  // Push an Auto Fib config (chart-TF or MTF) through the coordinator, which
+  // re-detects the pairs on the pinned timeframe's own bars (mirrors
+  // applySrLevels above).
+  function applyAutoFib(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
+    const tf = next.timeframe ?? timeframe;
+    void applyAutoFibTimeframe(
+      chart,
+      epic,
+      name,
+      paneId,
+      parseAutoFibConfig(nextCp ?? calcParams),
       tf === "chart" ? null : tf,
       brokerId,
     );
@@ -1503,6 +1534,18 @@ function IndicatorSettingsForm({
     });
   }
 
+  // AUTO_FIB levels: no recompute (the pairs do not depend on them), so a
+  // plain extendData override is the whole live-update path.
+  function patchAutoFib(next: FibConfig): void {
+    setAutoFib(next);
+    const live = getIndicator(chart, paneId, name) as Indicator | null;
+    chart.overrideIndicator({
+      paneId,
+      name,
+      extendData: { ...((live?.extendData as object) ?? {}), fib: next },
+    });
+  }
+
   // FVG zone style: draw-only, so a plain extendData override (merged over the
   // live indicator's) is the whole live-update path — no recompute.
   function patchFvgZone(p: Partial<FvgZoneStyle>): void {
@@ -1596,6 +1639,11 @@ function IndicatorSettingsForm({
       // must recompute the stashed HTF levels, not just re-align them.
       apply({ calcParams: nextCp });
       applySrLevels({}, nextCp);
+    } else if (isAutoFib && timeframe !== "chart") {
+      // Pivot Length / Min Swing feed the detector, so under a pin the HTF
+      // pairs must be found again, not re-aligned.
+      apply({ calcParams: nextCp });
+      applyAutoFib({}, nextCp);
     } else if (isTrendlines && timeframe !== "chart") {
       // Same contract again: every trendline param feeds the DETECTOR, so under
       // an active timeframe the HTF lines must be found again, not re-aligned.
@@ -1926,7 +1974,7 @@ function IndicatorSettingsForm({
 
   return (
     <FloatingModal
-      className={`ind-settings${type === "PREV_HL" ? " ind-settings-wide" : type === "TRENDLINES" ? " ind-settings-tl" : ""}`}
+      className={`ind-settings${type === "PREV_HL" ? " ind-settings-wide" : type === "TRENDLINES" ? " ind-settings-tl" : type === "AUTO_FIB" ? " ind-settings-fib" : ""}`}
       title={<strong>{shortName}</strong>}
       onClose={cancel}
       closeLabel="Cancel"
@@ -2805,6 +2853,51 @@ function IndicatorSettingsForm({
                     />
                   </span>
                 </>
+              ) : isAutoFib ? (
+                <>
+                  {/* Higher-timeframe pairs detected on native HTF bars, aligned
+                      onto the chart bars (no lookahead), same as S/R Levels. */}
+                  <div className="ind-row ind-row-cols">
+                    <span className="ind-row-head">
+                      <label>Timeframe</label>
+                      <InfoTip
+                        title="Timeframe"
+                        text={["Find the swings on this timeframe instead of the chart's.", "A higher timeframe draws the bigger swing, e.g. the daily fib on a 5m chart."]}
+                      />
+                    </span>
+                    <select
+                      value={timeframe}
+                      onChange={(e) => {
+                        setTimeframe(e.target.value);
+                        applyAutoFib({ timeframe: e.target.value });
+                      }}
+                    >
+                      {timeframeOptions.map((p) => (
+                        <option key={p.resolution} value={p.resolution}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="ind-row-head">
+                    <label className="ind-check">
+                      <input
+                        type="checkbox"
+                        checked={waitClose}
+                        disabled={timeframe === "chart"}
+                        onChange={(e) => toggleWaitClose(e.target.checked, () => applyAutoFib())}
+                      />
+                      <span>Wait for timeframe closes</span>
+                    </label>
+                    <InfoTip
+                      title="Wait for timeframe closes"
+                      text={[
+                        "Checked: uses only closed higher-timeframe bars — values update once per higher-timeframe close and never repaint.",
+                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar — and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
+                      ]}
+                    />
+                  </span>
+                </>
               ) : isFvg ? (
                 <>
                   {/* Higher-timeframe gaps detected on native HTF bars, aligned
@@ -2899,7 +2992,7 @@ function IndicatorSettingsForm({
                 <div className="ind-row ind-row-cols">
                   <span className="ind-row-head">
                     <label>Timeframe</label>
-                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, S/R Levels, FVG and Trendlines." />
+                    <InfoTip title="Timeframe" text="Higher-timeframe mode is only on EMA, MA, Pivot Bands, Slope, S/R Levels, FVG, Trendlines and Auto Fib." />
                   </span>
                   <select value="chart" disabled>
                     <option value="chart">{chartOptionLabel}</option>
@@ -3082,6 +3175,18 @@ function IndicatorSettingsForm({
                       text="Zones price has closed through since their last touch render as ghosts: emptied fill, dashed outline, struck touch count. Off: every zone draws at full strength."
                     />
                   </span>
+                </>
+              )}
+              {isAutoFib && (
+                <>
+                  <div className="ind-group">Levels</div>
+                  <FibLevelsEditor
+                    fib={autoFib}
+                    onChange={patchAutoFib}
+                    sharedSize={1}
+                    sharedStyle="solid"
+                    trendLabel="Trend line"
+                  />
                 </>
               )}
               {/* FVG: zone tint per direction + one shared fill opacity (editing
