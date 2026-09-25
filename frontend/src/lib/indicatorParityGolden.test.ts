@@ -28,6 +28,8 @@ import { vwapFrom } from "./indicators/vwap";
 import { computeSrLevels } from "./indicators/srLevels";
 import { computeFvg } from "./indicators/fvg";
 import { computeTrendlines } from "./indicators/trendlines";
+import { autoFibSeries } from "./indicators/autoFib";
+import { defaultFibConfig } from "./fibConfig";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(HERE, "../../../backend/tests/fixtures/indicator_golden.json");
@@ -183,6 +185,12 @@ describe("indicator parity golden fixture", () => {
     expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, extendLeft: 1, maxCrossings: 1 }).points))
       .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, maxCrossings: 1 }).points));
 
+    // AUTO_FIB: configs mirrored by test_indicator_parity.test_auto_fib.
+    const AF_FIB = { ...defaultFibConfig(), extend: "right" as const };
+    const AF_BASE = { pivotLen: 3, minSwingAtr: 0 };
+    const AF_SWING = { pivotLen: 3, minSwingAtr: 1.5 };
+    const af = (cfg: typeof AF_BASE, output: string) => toNull(autoFibSeries(candles, cfg, AF_FIB, output));
+
     const series: Record<string, Array<number | null>> = {
       EMA_9: toNull(ema9Base),
       EMA_21: toNull(maSeries(candles, "ema", 21, {}).base),
@@ -199,6 +207,15 @@ describe("indicator parity golden fixture", () => {
       "EMA_9~3": toNull(ema9Slope3),
       SR_SUPPORT: toNull(srPoints.map((p) => p.support ?? null)),
       SR_RESISTANCE: toNull(srPoints.map((p) => p.resistance ?? null)),
+      AUTO_FIB_HIGH: af(AF_BASE, "high"),
+      AUTO_FIB_LOW: af(AF_BASE, "low"),
+      AUTO_FIB_DIR: af(AF_BASE, "dir"),
+      AUTO_FIB_F0_618: af(AF_BASE, "f0_618"),
+      AUTO_FIB_F1: af(AF_BASE, "f1"),
+      AUTO_FIB_ATR_F0_5: af(AF_SWING, "f0_5"),
+      "AUTO_FIB_F0_618@HOUR_4": toNull(
+        alignHtfToChart(baseTimestamps, htfCandles, autoFibSeries(htfCandles, AF_BASE, AF_FIB, "f0_618"), htfMs, true),
+      ),
       FVG_BULL_TOP: toNull(fvgPoints.map((p) => p.bullTop ?? null)),
       FVG_BULL_BOTTOM: toNull(fvgPoints.map((p) => p.bullBottom ?? null)),
       FVG_BEAR_TOP: toNull(fvgPoints.map((p) => p.bearTop ?? null)),

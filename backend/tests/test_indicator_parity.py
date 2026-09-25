@@ -101,6 +101,40 @@ def test_sr_levels(golden):
         assert_series_equal(sr_series(cfg, output, candles, 1.0), expected, key)
 
 
+def test_auto_fib(golden, golden_raw):
+    from auto_trader.indicators.auto_fib import auto_fib_series, parse_auto_fib_config
+    from auto_trader.indicators.mtf import align_htf_to_base
+
+    candles, _, series = golden
+    # Configs mirrored by indicatorParityGolden.test.ts VALUE FOR VALUE.
+    base = parse_auto_fib_config([3, 0], {})
+    swing = parse_auto_fib_config([3, 1.5], {})
+    for cfg, output, key in (
+        (base, "high", "AUTO_FIB_HIGH"),
+        (base, "low", "AUTO_FIB_LOW"),
+        (base, "dir", "AUTO_FIB_DIR"),
+        (base, "f0_618", "AUTO_FIB_F0_618"),
+        (base, "f1", "AUTO_FIB_F1"),
+        (swing, "f0_5", "AUTO_FIB_ATR_F0_5"),
+    ):
+        expected = series[key]
+        assert any(v is not None for v in expected), f"{key}: golden is all-None"
+        assert_series_equal(auto_fib_series(cfg, output, candles, 1.0), expected, key)
+    # Both directions occur, so the ordering branches are exercised.
+    assert {1, -1} <= {v for v in series["AUTO_FIB_DIR"] if v is not None}
+
+    htf = [
+        Candle(
+            time=datetime.fromtimestamp(c["time"], tz=timezone.utc),
+            open=c["open"], high=c["high"], low=c["low"], close=c["close"], volume=c["volume"],
+        )
+        for c in golden_raw["htfCandles"]
+    ]
+    base_ms = [c["time"] * 1000 for c in golden_raw["candles"]]
+    aligned = align_htf_to_base(base_ms, htf, auto_fib_series(base, "f0_618", htf, 4.0), 4 * 3600 * 1000)
+    assert_series_equal(aligned, series["AUTO_FIB_F0_618@HOUR_4"], "AUTO_FIB_F0_618@HOUR_4")
+
+
 def test_fvg(golden):
     from auto_trader.indicators.fvg import FvgConfig, fvg_series
 
