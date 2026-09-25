@@ -1030,6 +1030,9 @@ export default function App() {
               trading={settings.trading}
               accountSummary={accountSummary}
               replaying={focusedReplaying}
+              resolution={period?.resolution}
+              priceSide={settings.priceSide}
+              brokerId={brokerId}
             />
           </aside>
         )}
