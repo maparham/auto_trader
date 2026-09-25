@@ -25,6 +25,7 @@ import ColorLineStylePicker, { type LineStyleOpt } from "./ColorLineStylePicker"
 import { hexToRgba, rgbaToHexAlpha } from "./lib/lineStyle";
 import VisibilityTab from "./VisibilityTab";
 import { type VisibilityModel, defaultVisibility } from "./lib/visibility";
+import FibLevelsEditor from "./components/FibLevelsEditor";
 import { toast } from "./lib/notify";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
@@ -709,109 +710,13 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
                       />
                     </div>
                   </div>
-                  <div className="ind-row">
-                    <label>Extend</label>
-                    <select
-                      value={fib.extend}
-                      onChange={(e) =>
-                        applyFib({ ...fib, extend: e.target.value as FibConfig["extend"] })
-                      }
-                    >
-                      <option value="none">Don't extend</option>
-                      <option value="left">Extend left</option>
-                      <option value="right">Extend right</option>
-                      <option value="both">Extend both</option>
-                    </select>
-                  </div>
-                  <div className="fib-levels">
-                    {fib.levels.map((l, i) => (
-                      <div className="fib-level" key={i}>
-                        <input
-                          type="checkbox"
-                          checked={l.enabled}
-                          onChange={(e) =>
-                            applyFib({
-                              ...fib,
-                              levels: fib.levels.map((x, j) =>
-                                j === i ? { ...x, enabled: e.target.checked } : x,
-                              ),
-                            })
-                          }
-                        />
-                        <input
-                          type="number"
-                          step="any"
-                          value={l.value}
-                          onChange={(e) =>
-                            applyFib({
-                              ...fib,
-                              levels: fib.levels.map((x, j) =>
-                                j === i ? { ...x, value: Number(e.target.value) } : x,
-                              ),
-                            })
-                          }
-                        />
-                        {/* Same full picker as the Lines row, but everything here is
-                            THIS level's: color, and width/dash stored as per-level
-                            overrides that win over the shared line style. Unset
-                            overrides display the shared values. */}
-                        <ColorLineStylePicker
-                          color={l.color}
-                          onColor={(c) =>
-                            applyFib({
-                              ...fib,
-                              levels: fib.levels.map((x, j) =>
-                                j === i ? { ...x, color: c } : x,
-                              ),
-                            })
-                          }
-                          size={l.size ?? size}
-                          onSize={(s) =>
-                            applyFib({
-                              ...fib,
-                              levels: fib.levels.map((x, j) => (j === i ? { ...x, size: s } : x)),
-                            })
-                          }
-                          lineStyle={l.style ?? (style === 'dashed' ? "dashed" : "solid")}
-                          onLineStyle={(s) =>
-                            applyFib({
-                              ...fib,
-                              levels: fib.levels.map((x, j) =>
-                                j === i ? { ...x, style: s === "dashed" ? "dashed" : "solid" } : x,
-                              ),
-                            })
-                          }
-                          lineStyleOptions={["solid", "dashed"] as LineStyleOpt[]}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <label className="ind-check">
-                    <input
-                      type="checkbox"
-                      checked={fib.trendLine}
-                      onChange={(e) => applyFib({ ...fib, trendLine: e.target.checked })}
-                    />
-                    {/* Same flag, different line: the retracement's dashed
-                        anchor-to-anchor connector, the channel's width leg. */}
-                    <span>{name === "fibChannel" ? "Width line" : "Trend line"}</span>
-                  </label>
-                  <label className="ind-check">
-                    <input
-                      type="checkbox"
-                      checked={fib.reverse}
-                      onChange={(e) => applyFib({ ...fib, reverse: e.target.checked })}
-                    />
-                    <span>Reverse</span>
-                  </label>
-                  <label className="ind-check">
-                    <input
-                      type="checkbox"
-                      checked={fib.labels}
-                      onChange={(e) => applyFib({ ...fib, labels: e.target.checked })}
-                    />
-                    <span>Levels</span>
-                  </label>
+                  <FibLevelsEditor
+                    fib={fib}
+                    onChange={applyFib}
+                    sharedSize={size}
+                    sharedStyle={style === "dashed" ? "dashed" : "solid"}
+                    trendLabel={name === "fibChannel" ? "Width line" : "Trend line"}
+                  />
                 </>
               ) : (
                 <div className="ind-row ind-style-row">
