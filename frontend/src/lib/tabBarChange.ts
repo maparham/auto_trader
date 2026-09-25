@@ -1,18 +1,50 @@
 // Today's % change on tab chips: per tab from the tab context menu
 // (ChartTab.barChange), all tabs from Appearance > Tabs (Settings.tabBarChange,
 // the default, off). Always the DAILY change, whatever timeframe the chart
-// shows: the live day bar's close vs the previous day's close (vs today's open
-// when there is no previous bar). One feed per distinct lead epic: seed from
-// the last two fetched day bars, then follow the live day stream. Background
-// tabs mount no ChartCore, so this runs its own feeds, and only for the tabs
-// that show it.
+// shows: the last price vs the previous day's close. One feed per distinct
+// lead epic. Background tabs mount no ChartCore, so this runs its own feeds,
+// and only for the tabs that show it.
+//
+// The reference comes from the last two DAY bars, polled; the price from
+// that poll and, between polls, a MINUTE stream. A DAY stream alone is not
+// enough: Capital pushes its DAY OHLC lazily and the backend yields nothing
+// until the first one, so a DAY socket can sit silent for minutes, and with
+// ~30 chips some streams never deliver at all. So the poll carries the chip
+// and the stream only makes it tick. A failed or degraded poll (the backend
+// could not refresh the tail) retries sooner: at boot every chip fetches at
+// once and some time out. Until a fresh poll lands, a live frame from a newer
+// day rolls the seeded day forward (the cache holds closed bars only, so a
+// stale tail is usually just missing today's bar).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KLineData } from "klinecharts";
-import { fetchRecent, openLive } from "./feed";
+import { fetchRecentWithStatus, openLive } from "./feed";
 import type { PriceSide } from "../theme";
 
-const DAY = "DAY";
+const DAY_MS = 86_400_000;
+// A live frame further than this past the seeded day means the seed is stale
+// (not a weekend or holiday gap): wait for a fresh seed instead of rolling.
+const MAX_ROLL_MS = 5 * DAY_MS;
+const POLL_MS = 60_000;
+const SEED_RETRY_MS = [2_000, 5_000, 15_000, 30_000];
+// Seeds in flight at once, so a boot with ~30 chips does not queue every
+// fetch behind the browser's per-host connection cap and time them out.
+const SEED_CONCURRENCY = 4;
+
+let seedsInFlight = 0;
+const seedQueue: Array<() => void> = [];
+async function limitSeed<T>(run: () => Promise<T>): Promise<T> {
+  if (seedsInFlight >= SEED_CONCURRENCY) {
+    await new Promise<void>((resolve) => seedQueue.push(resolve));
+  }
+  seedsInFlight += 1;
+  try {
+    return await run();
+  } finally {
+    seedsInFlight -= 1;
+    seedQueue.shift()?.();
+  }
+}
 
 /** Last price vs a reference price, in percent; null when it can't be computed. */
 export function dayChangePct(close: number | undefined, ref: number | undefined): number | null {
@@ -79,42 +111,61 @@ export function useTabBarChange(
     for (const epic of keys) {
       if (map.has(epic)) continue;
       let closed = false;
-      let live = false;
-      // The day bar being tracked and the close before it. A live frame for a
-      // newer day rolls today's bar into the reference.
-      let cur: KLineData | undefined;
-      let prevClose: number | undefined;
-      const put = (bar: KLineData | undefined) => {
-        if (bar == null) return;
-        if (cur != null && bar.timestamp > cur.timestamp) prevClose = cur.close;
-        if (cur == null || !(bar.timestamp < cur.timestamp)) cur = bar;
-        const pct = dayChangePct(cur.close, prevClose ?? cur.open);
+      let retryTimer: ReturnType<typeof setTimeout> | undefined;
+      // The seeded day (its bar open), the close it is measured against, and
+      // the latest price. `live` is the newest stream frame, kept so a frame
+      // that beats the seed still counts once the seed lands.
+      let dayT: number | undefined;
+      let ref: number | undefined;
+      let price: number | undefined;
+      let live: KLineData | undefined;
+      const emit = () => {
+        const pct = dayChangePct(price, ref);
         if (pct != null) pending.current[epic] = pct;
       };
-      void fetchRecent(epic, DAY, 2, priceSide, brokerId)
-        .then((bars) => {
-          if (closed) return;
-          if (!live) {
-            prevClose = bars[bars.length - 2]?.close;
-            put(bars[bars.length - 1]);
-            return;
-          }
-          // A live frame already beat the seed; it is the newer bar, but it
-          // still needs the reference: the last seeded day before it.
-          if (prevClose == null && cur != null) {
-            const t = cur.timestamp;
-            prevClose = bars.filter((b) => b.timestamp < t).pop()?.close;
-            put(cur);
-          }
-        })
-        .catch(() => {});
+      const applyLive = (k: KLineData) => {
+        live = k;
+        if (dayT == null) return;
+        if (k.timestamp >= dayT + DAY_MS) {
+          if (k.timestamp >= dayT + MAX_ROLL_MS) return;
+          // A newer day: the old day's last price is the new reference.
+          ref = price;
+          dayT += Math.floor((k.timestamp - dayT) / DAY_MS) * DAY_MS;
+        } else if (k.timestamp < dayT) {
+          return;
+        }
+        price = k.close;
+        emit();
+      };
+      const seed = (attempt: number) => {
+        void limitSeed(() => fetchRecentWithStatus(epic, "DAY", 2, priceSide, brokerId))
+          .then(({ bars, degraded }) => {
+            if (closed) return;
+            const last = bars[bars.length - 1];
+            // Empty is a 404: no daily history for this epic, nothing to poll.
+            if (last == null) return;
+            dayT = last.timestamp;
+            ref = bars[bars.length - 2]?.close ?? last.open;
+            price = last.close;
+            emit();
+            // A frame that beat this poll only matters if it is from a newer day.
+            if (live && live.timestamp >= dayT + DAY_MS) applyLive(live);
+            if (degraded) retry(attempt);
+            else next(0, POLL_MS);
+          })
+          .catch(() => retry(attempt));
+      };
+      const next = (attempt: number, ms: number) => {
+        if (!closed) retryTimer = setTimeout(() => seed(attempt), ms);
+      };
+      const retry = (attempt: number) =>
+        next(attempt + 1, SEED_RETRY_MS[attempt] ?? POLL_MS);
+      seed(0);
       const handle = openLive(
         epic,
-        DAY,
+        "MINUTE",
         (k) => {
-          if (closed) return;
-          live = true;
-          put(k);
+          if (!closed) applyLive(k);
         },
         undefined,
         priceSide,
@@ -123,6 +174,7 @@ export function useTabBarChange(
       map.set(epic, {
         close: () => {
           closed = true;
+          clearTimeout(retryTimer);
           handle.close();
         },
       });

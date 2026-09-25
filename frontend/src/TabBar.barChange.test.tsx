@@ -5,17 +5,21 @@ import { it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 
 type Bar = { timestamp: number; open: number; close: number };
+const DAY_MS = 86_400_000;
+const D1 = Date.UTC(2026, 8, 24); // yesterday's bar
+const D2 = D1 + DAY_MS; // today's bar
+// Yesterday closed at 100; today opened at 99 and is at 101.
+const SEED = [
+  { timestamp: D1, open: 95, close: 100 },
+  { timestamp: D2, open: 99, close: 101 },
+];
 const liveCbs: Array<(k: Bar) => void> = [];
 const closeLive = vi.fn();
 vi.mock("./lib/feed", async () => {
   const actual = await vi.importActual<typeof import("./lib/feed")>("./lib/feed");
   return {
     ...actual,
-    // Yesterday closed at 100; today opened at 99 and is at 101.
-    fetchRecent: vi.fn().mockResolvedValue([
-      { timestamp: 1, open: 95, close: 100 },
-      { timestamp: 2, open: 99, close: 101 },
-    ]),
+    fetchRecentWithStatus: vi.fn(),
     openLive: vi.fn((_e: string, _r: string, cb: (k: Bar) => void) => {
       liveCbs.push(cb);
       return { close: closeLive };
@@ -24,7 +28,7 @@ vi.mock("./lib/feed", async () => {
 });
 
 import TabBar from "./TabBar";
-import { fetchRecent, openLive } from "./lib/feed";
+import { fetchRecentWithStatus, openLive } from "./lib/feed";
 import { dayChangePct, fmtBarChange } from "./lib/tabBarChange";
 import type { ChartTab } from "./lib/persist";
 import type { Period } from "./lib/feed";
@@ -33,7 +37,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   liveCbs.length = 0;
   vi.mocked(openLive).mockClear();
-  vi.mocked(fetchRecent).mockClear();
+  vi.mocked(fetchRecentWithStatus).mockReset();
+  vi.mocked(fetchRecentWithStatus).mockResolvedValue({ bars: SEED, degraded: null, partial: null } as never);
   closeLive.mockClear();
 });
 afterEach(() => {
@@ -111,30 +116,89 @@ it("a tab's own flag beats the global default, both ways", () => {
   expect(vi.mocked(openLive).mock.calls.map((c) => c[0])).toEqual(["US100"]);
 });
 
+const flush = async () => {
+  await act(async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    vi.advanceTimersByTime(1000);
+  });
+};
+const chip = () => document.querySelector(".tab-bar-change");
+
 it("on: daily change vs yesterday's close, whatever the chart timeframe", async () => {
   renderBar({ showBarChange: true, onToggleBarChange: vi.fn() });
-  // The chart is 1h, but the feeds are daily.
-  expect(vi.mocked(openLive).mock.calls[0][1]).toBe("DAY");
-  expect(vi.mocked(fetchRecent).mock.calls[0][1]).toBe("DAY");
-  await act(async () => {
-    await Promise.resolve();
-    vi.advanceTimersByTime(1000);
-  });
-  const el = () => document.querySelector(".tab-bar-change");
-  expect(el()?.textContent).toBe("+1.00%");
-  expect(el()?.classList.contains("up")).toBe(true);
-  act(() => {
-    liveCbs[0]({ timestamp: 2, open: 99, close: 98 });
-    vi.advanceTimersByTime(1000);
-  });
-  expect(el()?.textContent).toBe("-2.00%");
-  expect(el()?.classList.contains("down")).toBe(true);
-  // A new day rolls today's close (98) into the reference.
-  act(() => {
-    liveCbs[0]({ timestamp: 3, open: 98, close: 99.96 });
-    vi.advanceTimersByTime(1000);
-  });
-  expect(el()?.textContent).toBe("+2.00%");
+  // The chart is 1h: the reference is daily, the price a minute stream.
+  expect(vi.mocked(fetchRecentWithStatus).mock.calls[0][1]).toBe("DAY");
+  expect(vi.mocked(openLive).mock.calls[0][1]).toBe("MINUTE");
+  await flush();
+  expect(chip()?.textContent).toBe("+1.00%");
+  expect(chip()?.classList.contains("up")).toBe(true);
+  act(() => liveCbs[0]({ timestamp: D2 + 3_600_000, open: 98.5, close: 98 }));
+  await flush();
+  expect(chip()?.textContent).toBe("-2.00%");
+  expect(chip()?.classList.contains("down")).toBe(true);
+  // A new day rolls the last price (98) into the reference.
+  act(() => liveCbs[0]({ timestamp: D2 + DAY_MS + 60_000, open: 98, close: 99.96 }));
+  await flush();
+  expect(chip()?.textContent).toBe("+2.00%");
+});
+
+it("a seed missing today's bar is rolled forward by the first live frame", async () => {
+  // The cache held closed bars only: [day before, yesterday].
+  vi.mocked(fetchRecentWithStatus).mockResolvedValue({
+    bars: [
+      { timestamp: D1 - DAY_MS, open: 90, close: 95 },
+      { timestamp: D1, open: 95, close: 100 },
+    ],
+    degraded: null,
+    partial: null,
+  } as never);
+  renderBar({ showBarChange: true });
+  // A frame that beats the seed still counts once the seed lands.
+  act(() => liveCbs[0]({ timestamp: D2 + 60_000, open: 101, close: 102 }));
+  await flush();
+  expect(chip()?.textContent).toBe("+2.00%");
+});
+
+it("a stale seed is not rolled across weeks", async () => {
+  vi.mocked(fetchRecentWithStatus).mockResolvedValue({
+    bars: [
+      { timestamp: D1 - 30 * DAY_MS, open: 90, close: 95 },
+      { timestamp: D1 - 29 * DAY_MS, open: 95, close: 100 },
+    ],
+    degraded: null,
+    partial: null,
+  } as never);
+  renderBar({ showBarChange: true });
+  await flush();
+  const before = chip()?.textContent;
+  act(() => liveCbs[0]({ timestamp: D2 + 60_000, open: 101, close: 150 }));
+  await flush();
+  expect(chip()?.textContent).toBe(before);
+});
+
+it("a failed or degraded seed is retried", async () => {
+  vi.mocked(fetchRecentWithStatus)
+    .mockRejectedValueOnce(new Error("Request timed out after 10s"))
+    .mockResolvedValueOnce({ bars: [{ timestamp: D1, open: 1, close: 1 }, { timestamp: D2, open: 1, close: 1 }], degraded: "broker fetch failed", partial: null } as never);
+  renderBar({ showBarChange: true });
+  await flush();
+  expect(chip()).toBeNull();
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  await flush();
+  expect(chip()?.textContent).toBe("0.00%");
+  await act(async () => { vi.advanceTimersByTime(5000); });
+  await flush();
+  expect(vi.mocked(fetchRecentWithStatus)).toHaveBeenCalledTimes(3);
+  expect(chip()?.textContent).toBe("+1.00%");
+});
+
+it("no daily history (404, empty) is not retried", async () => {
+  vi.mocked(fetchRecentWithStatus).mockResolvedValue({ bars: [], degraded: null, partial: null } as never);
+  renderBar({ showBarChange: true });
+  await flush();
+  await act(async () => { vi.advanceTimersByTime(60_000); });
+  expect(vi.mocked(fetchRecentWithStatus)).toHaveBeenCalledOnce();
+  expect(chip()).toBeNull();
 });
 
 it("toggling one tab opens or closes only that lead's feed", () => {
