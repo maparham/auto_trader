@@ -221,23 +221,40 @@ type OriginalSnapshot = {
   calcParams: number[];
   visible: boolean;
   styles: ReturnType<typeof cloneStyles>;
+  /** A deep COPY. klinecharts merges every extendData write into the live
+   * object in place, so a reference would see each edit and Cancel would write
+   * the edited values back onto themselves. */
   extendData: MaExtend | null;
-  /** AUTO_FIB only: deep copies of the keys its settings edit live. extendData
-   * above is the live object, which every edit merges into in place, so it
-   * cannot revert them. */
-  autoFib?: { fib: unknown; pastCount: unknown; pastOpacity: unknown };
 };
 
-/** Deep-copy the Auto Fib keys Cancel must restore, or undefined for any
- * other type. */
-function autoFibSnapshot(ind: Indicator | null): OriginalSnapshot["autoFib"] {
-  if (!ind || indTypeOf(ind) !== "AUTO_FIB") return undefined;
-  const ext = (ind.extendData ?? {}) as Record<string, unknown>;
-  return {
-    fib: ext.fib == null ? null : structuredClone(ext.fib),
-    pastCount: ext.pastCount ?? null,
-    pastOpacity: ext.pastOpacity ?? null,
-  };
+/** A deep copy that later in-place merges into the source cannot reach.
+ * structuredClone refuses functions; JSON is the fallback, and a value neither
+ * can copy stays shared (the old behaviour) rather than breaking the modal. */
+function deepCopy<T>(v: T): T {
+  try {
+    return structuredClone(v);
+  } catch {
+    try {
+      return JSON.parse(JSON.stringify(v)) as T;
+    } catch {
+      return v;
+    }
+  }
+}
+
+/** The extendData patch that turns `live` back into `orig`: every key whose
+ * value differs, a key the pane did not have set to null. Unchanged keys are
+ * left out, so Cancel after a small edit does not rewrite the MTF stash. */
+function extendRestorePatch(
+  orig: Record<string, unknown>,
+  live: Record<string, unknown>,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  for (const k of new Set([...Object.keys(orig), ...Object.keys(live)])) {
+    const was = orig[k] ?? null;
+    if (JSON.stringify(was) !== JSON.stringify(live[k] ?? null)) patch[k] = deepCopy(was);
+  }
+  return patch;
 }
 
 /** The shell around the form. Nothing is persisted until Ok: every edit is a
@@ -262,8 +279,7 @@ export default function IndicatorSettings(props: Props) {
     // (apply()/setLine()) would otherwise mutate this "original" snapshot too,
     // making Cancel just re-apply the already-edited value instead of reverting it.
     styles: cloneStyles(ind0?.styles ?? null),
-    extendData: (ind0?.extendData ?? null) as MaExtend | null,
-    autoFib: autoFibSnapshot(ind0),
+    extendData: deepCopy((ind0?.extendData ?? null) as MaExtend | null),
   });
   const [tab, setTab] = useState<Tab>("inputs");
   const [gen, setGen] = useState(0);
@@ -1825,8 +1841,17 @@ function IndicatorSettingsForm({
         calcParams: original.current.calcParams,
         visible: original.current.visible,
         styles: original.current.styles ?? { lines: [] },
-        extendData: original.current.extendData ?? {},
       });
+    // extendData goes back as a DIFF through overrideExtend: klinecharts only
+    // merges, so a key the edit added must be written as null, and a nested
+    // object or array must be cleared first or its old entries survive.
+    const liveExt = ((getIndicator(chart, paneId, name) as Indicator | null)?.extendData ??
+      {}) as Record<string, unknown>;
+    const restore = extendRestorePatch(
+      (original.current.extendData ?? {}) as Record<string, unknown>,
+      liveExt,
+    );
+    if (Object.keys(restore).length) overrideExtend(chart, paneId, name, restore);
     // The restore rewrites the parent's extendData wholesale (incl. showAccel and
     // accel params), so re-sync the companion: toggle-accel-then-Cancel must not
     // leave an orphaned pane (or a missing one).
@@ -1834,18 +1859,6 @@ function IndicatorSettingsForm({
     // Same for the bars-since pane: toggling it on and then cancelling must not
     // leave an orphan (nor lose one that was already on).
     if (isPivotBands) syncPivotBarsSinceCompanion(chart, name);
-    // Auto Fib's live edits merged into the snapshot's own extendData, so the
-    // restore above wrote them back. Put the deep-copied keys back instead;
-    // null removes a key the pane did not have (overrideExtend clears the
-    // nested fib first so dropped levels land too).
-    const af = original.current.autoFib;
-    if (isAutoFib && af) {
-      overrideExtend(chart, paneId, name, {
-        fib: af.fib == null ? null : structuredClone(af.fib),
-        pastCount: af.pastCount,
-        pastOpacity: af.pastOpacity,
-      });
-    }
     // The Type/Envelope live preview retitles shortName/figures, which the
     // snapshot restore above does not carry: revert them from the original
     // extendData or a cancelled VWMA preview keeps its label while the curve
