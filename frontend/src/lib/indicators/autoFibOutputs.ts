@@ -37,13 +37,15 @@ export function parseAutoFibConfig(calcParams: unknown): AutoFibConfig {
 }
 
 /** The pane's fib config: extendData.fib when present, else the drawing
- * tool's defaults extended right, so a fresh pane reaches the last bar. */
+ * tool's defaults extended right, so a fresh pane reaches the last bar. A null
+ * fib counts as absent: Cancel nulls the key to remove an edit (a merge cannot
+ * delete it), and the Python side reads any non-dict fib as the defaults too. */
 export function autoFibFibConfig(extendData: unknown): FibConfig {
   const fib =
     extendData && typeof extendData === "object"
       ? (extendData as { fib?: unknown }).fib
       : undefined;
-  return fib === undefined ? { ...defaultFibConfig(), extend: "right" } : asFibConfig(fib);
+  return fib == null ? { ...defaultFibConfig(), extend: "right" } : asFibConfig(fib);
 }
 
 /** Rule-operand name for a level ratio, or null when it gets none.

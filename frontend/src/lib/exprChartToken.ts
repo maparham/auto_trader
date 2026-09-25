@@ -9,7 +9,7 @@
 //      INDICATORS): EMA / SMA / RSI / VOLMA / VOL. The token restates the
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
-//      rule — SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS and
+//      rule: SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS and
 //      AUTO_FIB (the
 //      EXPR_INSTANCE_TYPES set; keep a case here for every member), as
 //      "<instanceId>.<output>" (e.g. "SLOPE.50",

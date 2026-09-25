@@ -53,6 +53,10 @@ describe("autoFibOutputs", () => {
     ]);
     expect(autoFibOutputs(undefined)).not.toContain("fm0_236");
   });
+  it("reads a nulled fib (Cancel's removal) as no fib key", () => {
+    expect(autoFibFibConfig({ fib: null }).extend).toBe("right");
+    expect(autoFibFibConfig({ fib: null })).toEqual(autoFibFibConfig({}));
+  });
   it("lists enabled levels only, in level order, first duplicate wins", () => {
     const fib = defaultFibConfig();
     fib.levels = [

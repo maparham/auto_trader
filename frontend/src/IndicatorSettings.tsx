@@ -222,7 +222,23 @@ type OriginalSnapshot = {
   visible: boolean;
   styles: ReturnType<typeof cloneStyles>;
   extendData: MaExtend | null;
+  /** AUTO_FIB only: deep copies of the keys its settings edit live. extendData
+   * above is the live object, which every edit merges into in place, so it
+   * cannot revert them. */
+  autoFib?: { fib: unknown; pastCount: unknown; pastOpacity: unknown };
 };
+
+/** Deep-copy the Auto Fib keys Cancel must restore, or undefined for any
+ * other type. */
+function autoFibSnapshot(ind: Indicator | null): OriginalSnapshot["autoFib"] {
+  if (!ind || indTypeOf(ind) !== "AUTO_FIB") return undefined;
+  const ext = (ind.extendData ?? {}) as Record<string, unknown>;
+  return {
+    fib: ext.fib == null ? null : structuredClone(ext.fib),
+    pastCount: ext.pastCount ?? null,
+    pastOpacity: ext.pastOpacity ?? null,
+  };
+}
 
 /** The shell around the form. Nothing is persisted until Ok: every edit is a
  * live preview on the chart, Cancel restores the opening snapshot, and Ok is
@@ -247,6 +263,7 @@ export default function IndicatorSettings(props: Props) {
     // making Cancel just re-apply the already-edited value instead of reverting it.
     styles: cloneStyles(ind0?.styles ?? null),
     extendData: (ind0?.extendData ?? null) as MaExtend | null,
+    autoFib: autoFibSnapshot(ind0),
   });
   const [tab, setTab] = useState<Tab>("inputs");
   const [gen, setGen] = useState(0);
@@ -1567,8 +1584,9 @@ function IndicatorSettingsForm({
     });
   }
 
-  // AUTO_FIB levels: no recompute (the pairs do not depend on them), so a
-  // plain extendData override is the whole live-update path.
+  // AUTO_FIB levels: the pairs do not depend on them, so no coordinator
+  // re-walk is needed; a plain extendData override is the whole live-update
+  // path (klinecharts still recalcs on it, which is cheap here).
   function patchAutoFib(next: FibConfig): void {
     setAutoFib(next);
     const live = getIndicator(chart, paneId, name) as Indicator | null;
@@ -1816,6 +1834,18 @@ function IndicatorSettingsForm({
     // Same for the bars-since pane: toggling it on and then cancelling must not
     // leave an orphan (nor lose one that was already on).
     if (isPivotBands) syncPivotBarsSinceCompanion(chart, name);
+    // Auto Fib's live edits merged into the snapshot's own extendData, so the
+    // restore above wrote them back. Put the deep-copied keys back instead;
+    // null removes a key the pane did not have (overrideExtend clears the
+    // nested fib first so dropped levels land too).
+    const af = original.current.autoFib;
+    if (isAutoFib && af) {
+      overrideExtend(chart, paneId, name, {
+        fib: af.fib == null ? null : structuredClone(af.fib),
+        pastCount: af.pastCount,
+        pastOpacity: af.pastOpacity,
+      });
+    }
     // The Type/Envelope live preview retitles shortName/figures, which the
     // snapshot restore above does not carry: revert them from the original
     // extendData or a cancelled VWMA preview keeps its label while the curve
