@@ -25,10 +25,14 @@ also a rule operand.
 - A pivot at bar `k` is confirmed at bar `k + pivotLen` (no lookahead, never
   repaints).
 - Optional ATR filter `minSwingAtr` (default 0 = off): a pivot only counts when
-  the leg from the last counted opposite pivot is at least `minSwingAtr ×
-  ATR(14)` at `k`. Reuses Trendlines' exported `isSignificantSwing` semantics,
-  including "no earlier opposite pivot ⇒ reject" when the filter is on. The
-  opposite pool is just the last counted pivot of the other kind.
+  the leg from the most recent opposite fractal pivot strictly before `k` is at
+  least `minSwingAtr × ATR(14)` at `k`. Exactly Trendlines' `isSignificantSwing`:
+  the opposite pool is every raw fractal pivot of the other kind (counted or
+  not, Trendlines' `turns`), no earlier opposite pivot rejects, and ATR not yet
+  warm at `k` rejects.
+- Deliberate difference from Trendlines: with the filter off, pivots count
+  from the first bar. Trendlines skips every pivot until ATR(14) is warm at
+  the confirm bar; Auto Fib needs no ATR then, so it does not wait.
 
 ### 2. Anchors and direction
 
@@ -41,15 +45,16 @@ also a rule operand.
   `p0 + (p1 - p0) * r`, with `p0`/`p1` the level-0/level-1 anchor prices.
 - `dir = +1` when the later anchor is the high (an up-leg, retracing down),
   `-1` when the later anchor is the low.
-- Tie (a pivot high and a pivot low on the same bar `k`, an outside bar): the low is treated as earlier when
-  `close[k] >= open[k]`, else the high. Deterministic, mirrored in Python.
+- Tie (a pivot high and a pivot low on the same bar `k`, an outside bar):
+  the low is treated as earlier when `close[k] >= open[k]`, else the high. Deterministic, mirrored in Python.
 - Every time `lastHigh` or `lastLow` changes once a pair exists, the current
   pair is pushed onto the history and a new pair starts at the confirm bar.
 
 ### 3. History (past fibs)
 
 - Setting **Past fibs** `pastCount` (default 0, max 10): the previous N pairs
-  are drawn dimmed (`pastOpacity`, default 0.35), no labels, no trend line.
+  are drawn dimmed (`pastOpacity`, a percent, default 35), no labels, no trend
+  line.
 - A past pair's lines span from its earlier anchor to the confirm bar where it
   was replaced. The current pair spans from its earlier anchor to the last
   bar, then `FibConfig.extend` applies (default for the indicator: `right`).
@@ -64,8 +69,8 @@ also a rule operand.
 - Drawing: a ctx port of the `fibonacciLine` overlay's figures (level lines,
   per-level color/width/dash, right-edge labels "ratio (price)", dashed trend
   line), reusing `fibLevelSegments` from `fibConfig.ts` for the geometry.
-  The template draws everything itself (`draw` returns true) and is added to
-  `ZONE_ONLY_TYPES` in `chart/chartGeometry.ts`.
+  The template declares `figures: []` and draws everything itself (`draw`
+  returns true), like Trendlines, so `ZONE_ONLY_TYPES` needs no entry.
 
 ### 5. Params
 
@@ -83,13 +88,17 @@ Follows `applySrLevelsTimeframe` / `buildSrMtf` exactly:
   `mtf.waitClose`, both in the Settings panel like SR Levels.
 - `applyAutoFibTimeframe` fetches HTF bars through `fetchHtfBars`, folds the
   forming bar when not waiting for closes, runs the same compute on HTF bars,
-  and stashes pairs as `{earlierTs, earlierPrice, laterTs, laterPrice,
-  confirmTs, dir}`.
-- In `calc`, each anchor maps to the chart candle inside its HTF bar whose
-  high (for a high anchor) or low (for a low anchor) is closest to the anchor
-  price (SR's `snapFirst` idea). Confirm/replace times map through
-  `htfBarEndMs`, so a pair only appears on chart bars after its HTF confirm
-  bar has closed.
+  and stashes `htfFibPairIdx` (per HTF bar, the index of the pair active on
+  it) plus `htfFibPairs` (`{hiTs, hiPrice, loTs, loPrice, dir}`).
+- In `calc`, `htfFibPairIdx` goes through `alignHtfToChart` like every other
+  MTF series, so waitClose, the forming bar and same-timeframe pins behave as
+  elsewhere. A pair starts on the first chart bar that reads its index and
+  ends where the next index begins. Each anchor maps to the chart candle
+  inside its HTF bar whose high (high anchor) or low (low anchor) is closest
+  to the anchor price (SR's `snapFirst` rule, same fallbacks). Calc runs on
+  every tick, so start/end come from one forward pass over the aligned index
+  series, and only the last 11 pairs (the most `pastCount` can draw) are
+  snapped; older pairs keep the unsnapped first-bar index.
 - Coordinator wiring: warmup const, a `refreshFormingBar` branch, a
   `refreshMtfIndicatorsUncoalesced` branch with the `covered(warmup)` guard,
   and the new `htf*` stash keys in `MTF_RUNTIME_KEYS`.
@@ -100,9 +109,11 @@ Follows `applySrLevelsTimeframe` / `buildSrMtf` exactly:
 ## Rule operands
 
 - Outputs: `high`, `low`, `dir`, plus one output per **enabled** level in
-  `extendData.fib.levels`, in level order. Name from the ratio: `f` + value
-  with `.` → `_` and a leading `-` → `m` (0 → `f0`, 0.618 → `f0_618`,
-  1.618 → `f1_618`, -0.236 → `fm0_236`). Duplicate values keep the first.
+  `extendData.fib.levels`, in level order. Name from the ratio: `f`, then `m`
+  when negative, then `|value|` rounded to 4 decimals (ties away from zero)
+  with trailing zeros dropped and `.` → `_` (0 → `f0`, 0.618 → `f0_618`,
+  1.618 → `f1_618`, -0.236 → `fm0_236`). Duplicate names keep the first;
+  `|value| >= 1e6` gets no output (still drawn).
 - Consequence (accepted): disabling or editing a level invalidates rules that
   referenced it; validation reports the unknown output as today.
 - Per bar, every output reads the pair active at that bar (latest counted
@@ -113,7 +124,8 @@ Follows `applySrLevelsTimeframe` / `buildSrMtf` exactly:
 - Backend: `indicators/auto_fib.py` with `parse_auto_fib_config`,
   `auto_fib_outputs`, `auto_fib_series`, `auto_fib_warmup`, a private
   `_is_pivot_at` copy (as each module keeps), and an `IndicatorSeriesSpec` in
-  `registry.py` with `timeframe=lambda cfg: cfg.timeframe`.
+  `registry.py` with `timeframe=lambda cfg: cfg.timeframe`. A shared case in
+  `lib/expr/corpus.json` pins validation on both stacks.
 - Operand warmup: `14 + 2 * pivotLen` (ATR warm-up plus one pivot window).
 
 ## Registration points
@@ -122,7 +134,7 @@ Follows `applySrLevelsTimeframe` / `buildSrMtf` exactly:
 `OVERLAY_INDICATORS`), `indicatorMeta.ts` (inputs/title/desc),
 `IndicatorSettings.tsx` (MTF block, apply routing, style block with the shared
 levels editor, past-fib inputs, MTF InfoTip list), `mtfCoordinator.ts`,
-`mtfRuntime.ts`, `chartGeometry.ts`. Add menus, legend timeframe badge and
+`mtfRuntime.ts`. Add menus, legend timeframe badge and
 `indicator.add` pick it up automatically. Agent `indicator.set` timeframe
 pinning stays Trendlines-only (out of scope).
 
