@@ -661,6 +661,103 @@ async function fetchHtfBars(
   };
 }
 
+/** What one indicator type plugs into applyHtfPin. */
+interface HtfPinSpec<E> {
+  /** The extendData to write: the live one plus this type's own config fields. */
+  extend: (live: E) => E;
+  calcParams: unknown[];
+  /** HTF bars of history needed before the view's left edge. */
+  warmup: (ext: E) => number;
+  /** The stash on the bars the pin computes on (forming bar folded or not). */
+  build: (bars: KLineData[], timeframe: string, htfMs: number, ext: E) => object | undefined;
+  /** The bars to compute on when no forming bar is folded (default: all fetched). */
+  closedBars?: (htf: KLineData[], htfMs: number, timeframe: string) => KLineData[];
+  /** Runs after every write of the stash or of the cleared pin (companion panes). */
+  after?: () => void;
+}
+
+/**
+ * The body every apply*Timeframe shares: cancel a pending retry, fetch the HTF
+ * candles, fold the forming bar when not waiting for closes, stash what `build`
+ * computes on them, and stamp the covered interval. A null/"chart" timeframe
+ * clears the pin instead. Config comes from the caller, not re-read from live
+ * extendData, so a param change can't race the write.
+ */
+async function applyHtfPin<E extends { mtf?: unknown }>(
+  chart: Chart,
+  epic: string,
+  name: string,
+  paneId: string,
+  timeframe: string | null,
+  brokerId: string | undefined,
+  needed: NeededInterval | undefined,
+  spec: HtfPinSpec<E>,
+): Promise<void> {
+  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
+  const ind = getIndicator(chart, paneId, name) as { extendData?: E } | null;
+  const waitClose = readWaitClose(ind);
+  const ext = spec.extend((ind?.extendData ?? {}) as E);
+  const prev = ind?.extendData?.mtf as MtfSeriesBase | undefined;
+  const write = () => {
+    overrideExtend(chart, paneId, name, ext as Record<string, unknown>, spec.calcParams);
+    spec.after?.();
+  };
+
+  if (!timeframe || timeframe === "chart") {
+    clearMtfRetry(chart, paneId, name);
+    ext.mtf = { timeframe: null };
+    write();
+    return;
+  }
+
+  const need = needed ?? neededOf(chart);
+  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
+    chart,
+    epic,
+    timeframe,
+    spec.warmup(ext),
+    brokerId,
+    need,
+    prev,
+  );
+  const proceed = mtfFetchTail(
+    chart,
+    paneId,
+    name,
+    timeframe,
+    failed,
+    htf.length > 0,
+    prev,
+    ext,
+    spec.calcParams,
+    () => applyHtfPin(chart, epic, name, paneId, timeframe, brokerId, needed, spec),
+  );
+  if (!proceed) return;
+  // The forming fold only exists DOCKED at the live edge: a detached interval
+  // (deep-history jump) has no bucket adjoining the chart's newest candles to
+  // fold. The pin's waitClose choice must survive the detached shape anyway.
+  const fp =
+    waitClose || !dockedAt(chart, askToMs, htfMs)
+      ? null
+      : prepFormingBars(chart, htf, htfMs, timeframe);
+  const bars = fp ? fp.bars : (spec.closedBars?.(htf, htfMs, timeframe) ?? htf);
+  ext.mtf = {
+    chartMs: chartIntervalOf(chart),
+    epic,
+    ...spec.build(bars, timeframe, htfMs, ext),
+    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
+    // A completed walk is final for its ask: stamp how far back it ASKED so
+    // the refresh pass can call this covered even when the bars stop short
+    // (see MtfSeriesBase.coveredFromMs). Without it every deep history
+    // extension re-walked and re-computed on EVERY refresh trigger, the
+    // recurring multi-second freeze after a years-deep pattern jump. Never on
+    // a failed walk: the retry path owns that, and a transient outage may
+    // genuinely have more to give.
+    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
+  };
+  write();
+}
+
 /**
  * Point an EMA/MA at a higher timeframe (or back to the chart timeframe when
  * `timeframe` is null/"chart"). Fetches the HTF candles, computes the MA on
@@ -682,76 +779,17 @@ export async function applyMaTimeframe(
   // viewport reader, falling back to the full loaded span.
   needed?: NeededInterval,
 ): Promise<void> {
-  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as {
-    extendData?: MaExtend;
-  } | null;
-  const waitClose = readWaitClose(ind);
-  const ext: MaExtend = { ...(ind?.extendData ?? {}), ...config.options };
-
-  if (!timeframe || timeframe === "chart") {
-    clearMtfRetry(chart, paneId, name);
-    ext.mtf = { timeframe: null };
-    overrideExtend(chart, paneId, name, ext, [config.length]);
-    return;
-  }
-
-  // Reach back the MA length + the smoothing window, so the smoothing MA's own
-  // warmup never lands on the oldest visible bars.
-  const sm = config.options.smoothing;
-  const smLen = sm && sm.type !== "none" ? Number(sm.length) || 0 : 0;
-  const need = needed ?? neededOf(chart);
-  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
-    chart,
-    epic,
-    timeframe,
-    config.length + smLen,
-    brokerId,
-    need,
-    ind?.extendData?.mtf,
-  );
-  const proceed = mtfFetchTail(
-    chart,
-    paneId,
-    name,
-    timeframe,
-    failed,
-    htf.length > 0,
-    ind?.extendData?.mtf,
-    ext,
-    [config.length],
-    () =>
-      applyMaTimeframe(
-        chart,
-        epic,
-        name,
-        paneId,
-        config,
-        timeframe,
-        brokerId,
-        needed,
-      ),
-  );
-  if (!proceed) return;
-  // The forming fold only exists DOCKED at the live edge: a detached interval
-  // (deep-history jump) has no bucket adjoining the chart's newest candles to
-  // fold. The pin's waitClose choice must survive the detached shape anyway.
-  const fp =
-    waitClose || !dockedAt(chart, askToMs, htfMs)
-      ? null
-      : prepFormingBars(chart, htf, htfMs, timeframe);
-  ext.mtf = {
-    chartMs: chartIntervalOf(chart),
-    epic,
-    ...buildMaMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
-    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
-    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
-    // and the trendlines stamp below): without this every deep history
-    // extension re-walked and re-computed this type on EVERY refresh trigger
-    // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
-  };
-  overrideExtend(chart, paneId, name, ext, [config.length]);
+  return applyHtfPin<MaExtend>(chart, epic, name, paneId, timeframe, brokerId, needed, {
+    extend: (live) => ({ ...live, ...config.options }),
+    calcParams: [config.length],
+    // Reach back the MA length + the smoothing window, so the smoothing MA's
+    // own warmup never lands on the oldest visible bars.
+    warmup: () => {
+      const sm = config.options.smoothing;
+      return config.length + (sm && sm.type !== "none" ? Number(sm.length) || 0 : 0);
+    },
+    build: (bars, tf, htfMs) => buildMaMtf(bars, config, tf, htfMs),
+  });
 }
 
 /** Base + smoothing computed on the native HTF bars (smoothing before
@@ -810,81 +848,19 @@ export async function applyPivotBandsTimeframe(
   brokerId?: string,
   needed?: NeededInterval,
 ): Promise<void> {
-  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as {
-    extendData?: PivotBandsExtend;
-  } | null;
-  const waitClose = readWaitClose(ind);
-  const ext: PivotBandsExtend = {
-    ...(ind?.extendData ?? {}),
-    mode: config.mode,
-    source: config.source,
-  };
-  const calcParams = [config.n, config.k];
-
-  if (!timeframe || timeframe === "chart") {
-    clearMtfRetry(chart, paneId, name);
-    ext.mtf = { timeframe: null };
-    overrideExtend(chart, paneId, name, ext, calcParams);
+  return applyHtfPin<PivotBandsExtend>(chart, epic, name, paneId, timeframe, brokerId, needed, {
+    extend: (live) => ({ ...live, mode: config.mode, source: config.source }),
+    calcParams: [config.n, config.k],
+    warmup: () => pivotWarmup(config.n, config.k),
+    // Reuse the exact chart-TF math on the HTF bars: computePivotBands already
+    // carries each side's value forward (dense after the first pivot) and bakes
+    // in the N-bar confirmation lag, so the aligned series stays gap-free and
+    // honest.
+    build: (bars, tf, htfMs) => buildPivotBandsMtf(bars, config, tf, htfMs),
     // The bars-since companion is derived from this extendData: re-sync so it
-    // drops the stale HTF counts and counts in chart bars again.
-    syncPivotBarsSinceCompanion(chart, name);
-    return;
-  }
-
-  const need = needed ?? neededOf(chart);
-  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
-    chart,
-    epic,
-    timeframe,
-    pivotWarmup(config.n, config.k),
-    brokerId,
-    need,
-    ind?.extendData?.mtf,
-  );
-  const proceed = mtfFetchTail(
-    chart,
-    paneId,
-    name,
-    timeframe,
-    failed,
-    htf.length > 0,
-    ind?.extendData?.mtf,
-    ext,
-    calcParams,
-    () =>
-      applyPivotBandsTimeframe(
-        chart,
-        epic,
-        name,
-        paneId,
-        config,
-        timeframe,
-        brokerId,
-        needed,
-      ),
-  );
-  if (!proceed) return;
-  // Reuse the exact chart-TF math on the HTF bars: computePivotBands already
-  // carries each side's value forward (dense after the first pivot) and bakes in
-  // the N-bar confirmation lag, so the aligned series stays gap-free and honest.
-  const fp =
-    waitClose || !dockedAt(chart, askToMs, htfMs)
-      ? null
-      : prepFormingBars(chart, htf, htfMs, timeframe);
-  ext.mtf = {
-    chartMs: chartIntervalOf(chart),
-    epic,
-    ...buildPivotBandsMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
-    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
-    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
-    // and the trendlines stamp below): without this every deep history
-    // extension re-walked and re-computed this type on EVERY refresh trigger
-    // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
-  };
-  overrideExtend(chart, paneId, name, ext, calcParams);
-  syncPivotBarsSinceCompanion(chart, name);
+    // follows the new stash (or, unpinned, counts in chart bars again).
+    after: () => syncPivotBarsSinceCompanion(chart, name),
+  });
 }
 
 function buildPivotBandsMtf(
@@ -940,78 +916,21 @@ export async function applySrLevelsTimeframe(
   brokerId?: string,
   needed?: NeededInterval,
 ): Promise<void> {
-  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as {
-    extendData?: SrLevelsExtend;
-  } | null;
-  const waitClose = readWaitClose(ind);
-  const ext: SrLevelsExtend = { ...(ind?.extendData ?? {}) };
-  const calcParams = [
-    config.pivotLen,
-    config.atrMult,
-    config.minTouches,
-    config.maxLevels,
-    config.maxBars,
-  ];
-
-  if (!timeframe || timeframe === "chart") {
-    clearMtfRetry(chart, paneId, name);
-    ext.mtf = { timeframe: null };
-    overrideExtend(chart, paneId, name, ext, calcParams);
-    return;
-  }
-
-  const need = needed ?? neededOf(chart);
-  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
-    chart,
-    epic,
-    timeframe,
-    srWarmup(config),
-    brokerId,
-    need,
-    ind?.extendData?.mtf,
-  );
-  const proceed = mtfFetchTail(
-    chart,
-    paneId,
-    name,
-    timeframe,
-    failed,
-    htf.length > 0,
-    ind?.extendData?.mtf,
-    ext,
-    calcParams,
-    () =>
-      applySrLevelsTimeframe(
-        chart,
-        epic,
-        name,
-        paneId,
-        config,
-        timeframe,
-        brokerId,
-        needed,
-      ),
-  );
-  if (!proceed) return;
-  // Reuse the exact chart-TF math on the HTF bars: clustering, touch gating and
-  // the pivot-confirmation lag are all baked into the stashed series/levels.
-  const fp =
-    waitClose || !dockedAt(chart, askToMs, htfMs)
-      ? null
-      : prepFormingBars(chart, htf, htfMs, timeframe);
-  ext.mtf = {
-    chartMs: chartIntervalOf(chart),
-    epic,
-    ...buildSrMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
-    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
-    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
-    // and the trendlines stamp below): without this every deep history
-    // extension re-walked and re-computed this type on EVERY refresh trigger
-    // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
-  };
-  overrideExtend(chart, paneId, name, ext, calcParams);
+  return applyHtfPin<SrLevelsExtend>(chart, epic, name, paneId, timeframe, brokerId, needed, {
+    extend: (live) => ({ ...live }),
+    calcParams: [
+      config.pivotLen,
+      config.atrMult,
+      config.minTouches,
+      config.maxLevels,
+      config.maxBars,
+    ],
+    warmup: () => srWarmup(config),
+    // Reuse the exact chart-TF math on the HTF bars: clustering, touch gating
+    // and the pivot-confirmation lag are all baked into the stashed
+    // series/levels.
+    build: (bars, tf, htfMs) => buildSrMtf(bars, config, tf, htfMs),
+  });
 }
 
 function buildSrMtf(
@@ -1056,54 +975,12 @@ export async function applyAutoFibTimeframe(
   brokerId?: string,
   needed?: NeededInterval,
 ): Promise<void> {
-  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as { extendData?: AutoFibExtend } | null;
-  const waitClose = readWaitClose(ind);
-  const ext: AutoFibExtend = { ...(ind?.extendData ?? {}) };
-  const calcParams = [config.pivotLen, config.minSwingAtr];
-
-  if (!timeframe || timeframe === "chart") {
-    clearMtfRetry(chart, paneId, name);
-    ext.mtf = { timeframe: null };
-    overrideExtend(chart, paneId, name, ext, calcParams);
-    return;
-  }
-
-  const need = needed ?? neededOf(chart);
-  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
-    chart,
-    epic,
-    timeframe,
-    autoFibWarmup(config),
-    brokerId,
-    need,
-    ind?.extendData?.mtf,
-  );
-  const proceed = mtfFetchTail(
-    chart,
-    paneId,
-    name,
-    timeframe,
-    failed,
-    htf.length > 0,
-    ind?.extendData?.mtf,
-    ext,
-    calcParams,
-    () => applyAutoFibTimeframe(chart, epic, name, paneId, config, timeframe, brokerId, needed),
-  );
-  if (!proceed) return;
-  const fp =
-    waitClose || !dockedAt(chart, askToMs, htfMs)
-      ? null
-      : prepFormingBars(chart, htf, htfMs, timeframe);
-  ext.mtf = {
-    chartMs: chartIntervalOf(chart),
-    epic,
-    ...buildAutoFibMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
-    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
-    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
-  };
-  overrideExtend(chart, paneId, name, ext, calcParams);
+  return applyHtfPin<AutoFibExtend>(chart, epic, name, paneId, timeframe, brokerId, needed, {
+    extend: (live) => ({ ...live }),
+    calcParams: [config.pivotLen, config.minSwingAtr],
+    warmup: () => autoFibWarmup(config),
+    build: (bars, tf, htfMs) => buildAutoFibMtf(bars, config, tf, htfMs),
+  });
 }
 
 function buildAutoFibMtf(
@@ -1184,89 +1061,29 @@ export async function applyTrendlinesTimeframe(
   brokerId?: string,
   needed?: NeededInterval,
 ): Promise<void> {
-  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as {
-    extendData?: TrendlinesExtend;
-  } | null;
-  const waitClose = readWaitClose(ind);
-  const ext: TrendlinesExtend = { ...(ind?.extendData ?? {}) };
-  // Object.values ORDER IS the calcParams order (TrendlinesConfig's key order
-  // mirrors the slot order documented in trendlinesOutputs.ts), so a param
-  // added to the interface reaches the pane with no line to update here.
-  const calcParams = Object.values(config);
-
-  if (!timeframe || timeframe === "chart") {
-    clearMtfRetry(chart, paneId, name);
-    ext.mtf = { timeframe: null };
-    overrideExtend(chart, paneId, name, ext, calcParams);
-    return;
-  }
-
-  const need = needed ?? neededOf(chart);
-  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
-    chart,
-    epic,
-    timeframe,
-    tlWarmup(config),
-    brokerId,
-    need,
-    ind?.extendData?.mtf,
-  );
-  const proceed = mtfFetchTail(
-    chart,
-    paneId,
-    name,
-    timeframe,
-    failed,
-    htf.length > 0,
-    ind?.extendData?.mtf,
-    ext,
-    calcParams,
-    () =>
-      applyTrendlinesTimeframe(
-        chart,
-        epic,
-        name,
-        paneId,
-        config,
-        timeframe,
-        brokerId,
-        needed,
-      ),
-  );
-  if (!proceed) return;
-  // CLOSED HTF BARS ONLY. The forming bar is never usable to an operand (calc
-  // aligns with waitClose), so letting it seed or break a line would put
-  // geometry on the chart that no rule can read, and repaint it when the bar
-  // finishes.
-  // Forming mode appends the folded forming bucket past the closed cut;
-  // otherwise the closed filter alone (the forming bar is never usable to a
-  // waitClose operand, so letting it seed or break a line would put geometry
-  // on the chart that no rule can read, and repaint it when the bar finishes).
-  const data = chart.getDataList();
-  const newestMs = data.length ? data[data.length - 1].timestamp : 0;
-  const fp =
-    waitClose || !dockedAt(chart, askToMs, htfMs)
-      ? null
-      : prepFormingBars(chart, htf, htfMs, timeframe);
-  const bars = fp
-    ? fp.bars
-    : newestMs
-      ? htf.filter((b) => htfBarEndMs(b.timestamp, htfMs, timeframe) <= newestMs)
-      : htf;
-  setTrendlinesHtfBars(chart, name, bars);
-  ext.mtf = {
-    chartMs: chartIntervalOf(chart),
-    epic,
-    ...buildTrendlinesMtf(bars, config, timeframe, htfMs),
-    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
-    // A completed walk is final for its ask: stamp how far back it ASKED so
-    // the refresh pass can call this covered even when the bars stop short
-    // (see MtfSeriesBase.coveredFromMs). Never on a failed walk — the retry
-    // path owns that, and a transient outage may genuinely have more to give.
-    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
-  };
-  overrideExtend(chart, paneId, name, ext, calcParams);
+  return applyHtfPin<TrendlinesExtend>(chart, epic, name, paneId, timeframe, brokerId, needed, {
+    extend: (live) => ({ ...live }),
+    // Object.values ORDER IS the calcParams order (TrendlinesConfig's key order
+    // mirrors the slot order documented in trendlinesOutputs.ts), so a param
+    // added to the interface reaches the pane with no line to update here.
+    calcParams: Object.values(config),
+    warmup: () => tlWarmup(config),
+    // CLOSED HTF BARS ONLY unless the forming bucket is folded in. The forming
+    // bar is never usable to a waitClose operand, so letting it seed or break a
+    // line would put geometry on the chart that no rule can read, and repaint
+    // it when the bar finishes.
+    closedBars: (htf, htfMs, tf) => {
+      const data = chart.getDataList();
+      const newestMs = data.length ? data[data.length - 1].timestamp : 0;
+      return newestMs
+        ? htf.filter((b) => htfBarEndMs(b.timestamp, htfMs, tf) <= newestMs)
+        : htf;
+    },
+    build: (bars, tf, htfMs) => {
+      setTrendlinesHtfBars(chart, name, bars);
+      return buildTrendlinesMtf(bars, config, tf, htfMs);
+    },
+  });
 }
 
 function buildTrendlinesMtf(
@@ -1315,72 +1132,14 @@ export async function applyFvgTimeframe(
   brokerId?: string,
   needed?: NeededInterval,
 ): Promise<void> {
-  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as {
-    extendData?: FvgExtend;
-  } | null;
-  const waitClose = readWaitClose(ind);
-  const ext: FvgExtend = { ...(ind?.extendData ?? {}) };
-  const calcParams = [config.minSize, config.maxBars, config.maxGaps];
-
-  if (!timeframe || timeframe === "chart") {
-    clearMtfRetry(chart, paneId, name);
-    ext.mtf = { timeframe: null };
-    overrideExtend(chart, paneId, name, ext, calcParams);
-    return;
-  }
-
-  const need = needed ?? neededOf(chart);
-  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
-    chart,
-    epic,
-    timeframe,
-    fvgReachBack(config),
-    brokerId,
-    need,
-    ind?.extendData?.mtf,
-  );
-  const proceed = mtfFetchTail(
-    chart,
-    paneId,
-    name,
-    timeframe,
-    failed,
-    htf.length > 0,
-    ind?.extendData?.mtf,
-    ext,
-    calcParams,
-    () =>
-      applyFvgTimeframe(
-        chart,
-        epic,
-        name,
-        paneId,
-        config,
-        timeframe,
-        brokerId,
-        needed,
-      ),
-  );
-  if (!proceed) return;
-  // Reuse the exact chart-TF math on the HTF bars: detection, the size filter and
-  // wick-driven mitigation are all baked into the stashed series/gaps.
-  const fp =
-    waitClose || !dockedAt(chart, askToMs, htfMs)
-      ? null
-      : prepFormingBars(chart, htf, htfMs, timeframe);
-  ext.mtf = {
-    chartMs: chartIntervalOf(chart),
-    epic,
-    ...buildFvgMtf(fp ? fp.bars : htf, config, timeframe, htfMs),
-    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
-    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
-    // and the trendlines stamp below): without this every deep history
-    // extension re-walked and re-computed this type on EVERY refresh trigger
-    // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
-  };
-  overrideExtend(chart, paneId, name, ext, calcParams);
+  return applyHtfPin<FvgExtend>(chart, epic, name, paneId, timeframe, brokerId, needed, {
+    extend: (live) => ({ ...live }),
+    calcParams: [config.minSize, config.maxBars, config.maxGaps],
+    warmup: () => fvgReachBack(config),
+    // Reuse the exact chart-TF math on the HTF bars: detection, the size filter
+    // and wick-driven mitigation are all baked into the stashed series/gaps.
+    build: (bars, tf, htfMs) => buildFvgMtf(bars, config, tf, htfMs),
+  });
 }
 
 function buildFvgMtf(
@@ -1438,107 +1197,51 @@ export async function applySlopeTimeframe(
   brokerId?: string,
   needed?: NeededInterval,
 ): Promise<void> {
-  cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
-  const ind = getIndicator(chart, paneId, name) as {
-    extendData?: SlopeExtend;
-  } | null;
-  const waitClose = readWaitClose(ind);
-  const ext: SlopeExtend = {
-    ...(ind?.extendData ?? {}),
-    ...config.options,
-    maType: config.maType,
-    units: config.units,
-  };
-  const calcParams = config.lengths;
-
-  if (!timeframe || timeframe === "chart") {
-    clearMtfRetry(chart, paneId, name);
-    ext.mtf = { timeframe: null };
-    overrideExtend(chart, paneId, name, ext, calcParams);
-    // The companion mirrors the parent's extendData (here: the cleared MTF stash).
-    syncAccelCompanion(chart, name);
-    return;
-  }
-
-  // Reach back the longest MA length + slope period + accel period (+ both
-  // smoothing windows) so the HTF left edge is populated for every line.
-  const smLen =
-    config.smoothing && config.smoothing.type !== "none"
-      ? Number(config.smoothing.length) || 0
-      : 0;
-  const aSmLen =
-    ext.accelSmoothing && ext.accelSmoothing.type !== "none"
-      ? Number(ext.accelSmoothing.length) || 0
-      : 0;
-  const n2 = slopePeriodOf(ext.accelPeriod, 3);
-  const need = needed ?? neededOf(chart);
-  const { htf, htfMs, failed, askFromMs, askToMs } = await fetchHtfBars(
-    chart,
-    epic,
-    timeframe,
-    Math.max(...config.lengths) +
-      config.slopeN +
-      smLen +
-      (ext.showAccel ? n2 + aSmLen : 0),
-    brokerId,
-    need,
-    ind?.extendData?.mtf,
-  );
-  const proceed = mtfFetchTail(
-    chart,
-    paneId,
-    name,
-    timeframe,
-    failed,
-    htf.length > 0,
-    ind?.extendData?.mtf,
-    ext,
-    calcParams,
-    () =>
-      applySlopeTimeframe(
-        chart,
-        epic,
-        name,
-        paneId,
-        config,
-        timeframe,
-        brokerId,
-        needed,
-      ),
-  );
-  if (!proceed) return;
-  // Slope computed on native HTF bars, BEFORE alignHtfToChart forward-fills.
-  //
-  // barHours is the PINNED timeframe's nominal width, not one measured off the
-  // fetched HTF bars: the rule path has no bars to measure and computes exactly
-  // this number (evaluate.py's pinned IndicatorRef branch passes
-  // `_tf_hours(tf_res)`), so measuring here would make the plotted line and the
-  // rule operand two different series. A MONTH pin's smallest gap is a 28-day
-  // February — 672h against the nominal 720h, a ~7% silent divergence — and
-  // inferBarHours falls back to 1.0 when fewer than two HTF bars have loaded,
-  // which for a DAY pin is a 24x error. `timeframe` is a canonical resolution
-  // here, but nominalBarHours accepts a pin alias too, matching the backend's
-  // `tf_resolution(pin) or pin`. The infer fallback covers only a resolution
-  // name in neither table — which fetchHtfBars above would already have paged
-  // at its own 1h default, so there is nothing better to fall back to.
-  const fp =
-    waitClose || !dockedAt(chart, askToMs, htfMs)
-      ? null
-      : prepFormingBars(chart, htf, htfMs, timeframe);
-  ext.mtf = {
-    chartMs: chartIntervalOf(chart),
-    epic,
-    ...buildSlopeMtf(fp ? fp.bars : htf, config, ext, timeframe, htfMs),
-    ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
-    // A completed walk is final for its ask (see MtfSeriesBase.coveredFromMs
-    // and the trendlines stamp below): without this every deep history
-    // extension re-walked and re-computed this type on EVERY refresh trigger
-    // — the recurring multi-second freeze after a years-deep pattern jump.
-    ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
-  };
-  overrideExtend(chart, paneId, name, ext, calcParams);
-  // The companion mirrors the parent's extendData (including the MTF stash).
-  syncAccelCompanion(chart, name);
+  return applyHtfPin<SlopeExtend>(chart, epic, name, paneId, timeframe, brokerId, needed, {
+    extend: (live) => ({
+      ...live,
+      ...config.options,
+      maType: config.maType,
+      units: config.units,
+    }),
+    calcParams: config.lengths,
+    // Reach back the longest MA length + slope period + accel period (+ both
+    // smoothing windows) so the HTF left edge is populated for every line.
+    warmup: (ext) => {
+      const smLen =
+        config.smoothing && config.smoothing.type !== "none"
+          ? Number(config.smoothing.length) || 0
+          : 0;
+      const aSmLen =
+        ext.accelSmoothing && ext.accelSmoothing.type !== "none"
+          ? Number(ext.accelSmoothing.length) || 0
+          : 0;
+      const n2 = slopePeriodOf(ext.accelPeriod, 3);
+      return (
+        Math.max(...config.lengths) +
+        config.slopeN +
+        smLen +
+        (ext.showAccel ? n2 + aSmLen : 0)
+      );
+    },
+    // Slope computed on native HTF bars, BEFORE alignHtfToChart forward-fills.
+    //
+    // barHours is the PINNED timeframe's nominal width, not one measured off
+    // the fetched HTF bars: the rule path has no bars to measure and computes
+    // exactly this number (evaluate.py's pinned IndicatorRef branch passes
+    // `_tf_hours(tf_res)`), so measuring here would make the plotted line and
+    // the rule operand two different series. A MONTH pin's smallest gap is a
+    // 28-day February: 672h against the nominal 720h, a ~7% silent divergence.
+    // inferBarHours falls back to 1.0 when fewer than two HTF bars have loaded,
+    // which for a DAY pin is a 24x error. `timeframe` is a canonical resolution
+    // here, but nominalBarHours accepts a pin alias too, matching the backend's
+    // `tf_resolution(pin) or pin`. The infer fallback covers only a resolution
+    // name in neither table, which fetchHtfBars would already have paged at
+    // its own 1h default, so there is nothing better to fall back to.
+    build: (bars, tf, htfMs, ext) => buildSlopeMtf(bars, config, ext, tf, htfMs),
+    // The companion mirrors the parent's extendData (including the MTF stash).
+    after: () => syncAccelCompanion(chart, name),
+  });
 }
 
 function buildSlopeMtf(

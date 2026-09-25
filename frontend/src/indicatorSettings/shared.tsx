@@ -1,8 +1,10 @@
 // Shared helpers + static config tables used across IndicatorSettings' shell
 // and its per-family panel modules: color parsing, the clearable IntInput,
 // the LineDraft line-style model, and the static option/label tables for the
-// RSI and PREV_HL families plus the generic curve-label type set.
+// RSI and PREV_HL families plus the generic curve-label type set, and the
+// Timeframe + "Wait for timeframe closes" rows every pinnable type shows.
 import { useState } from "react";
+import InfoTip from "../components/InfoTip";
 import type { PrevHlAgg, RsiElement, RsiSmoothType } from "../lib/customIndicators";
 import type { LineStyleOpt } from "../ColorLineStylePicker";
 
@@ -174,6 +176,69 @@ export function IntInput({
       }}
       onBlur={() => setDraft(null)}
     />
+  );
+}
+
+const WAIT_CLOSE_TIP = [
+  "Checked: uses only closed higher-timeframe bars.",
+  "Values update once per higher-timeframe close and never repaint.",
+  "Unchecked: also folds in the current, unfinished higher-timeframe bar.",
+  "Values then reach the newest bar but can repaint until it closes.",
+  "Live rules read these values too. Backtests always wait for closes.",
+];
+
+// The higher-timeframe pin: a Timeframe select plus its "Wait for timeframe
+// closes" box, shared by every type that can be pinned. `rowClass` keeps each
+// caller's own row layout (MA's is a plain row).
+export function TimeframePinRows({
+  timeframe,
+  options,
+  onTimeframe,
+  waitClose,
+  onWaitClose,
+  tip,
+  rowClass = "ind-row ind-row-cols",
+}: {
+  timeframe: string;
+  options: { resolution: string; label: string }[];
+  onTimeframe: (tf: string) => void;
+  waitClose: boolean;
+  onWaitClose: (next: boolean) => void;
+  tip?: string | string[];
+  rowClass?: string;
+}) {
+  return (
+    <>
+      <div className={rowClass}>
+        {tip ? (
+          <span className="ind-row-head">
+            <label>Timeframe</label>
+            <InfoTip title="Timeframe" text={tip} />
+          </span>
+        ) : (
+          <label>Timeframe</label>
+        )}
+        <select value={timeframe} onChange={(e) => onTimeframe(e.target.value)}>
+          {options.map((p) => (
+            <option key={p.resolution} value={p.resolution}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <span className="ind-row-head">
+        <label className="ind-check">
+          <input
+            type="checkbox"
+            checked={waitClose}
+            disabled={timeframe === "chart"}
+            onChange={(e) => onWaitClose(e.target.checked)}
+          />
+          <span>Wait for timeframe closes</span>
+        </label>
+        <InfoTip title="Wait for timeframe closes" text={WAIT_CLOSE_TIP} />
+      </span>
+    </>
   );
 }
 

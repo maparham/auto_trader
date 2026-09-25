@@ -174,7 +174,32 @@ import {
   toColor,
   type PrevHlKind,
   type LineDraft,
+  TimeframePinRows,
 } from "./indicatorSettings/shared";
+
+// The Timeframe row's tip per pinnable type (Pivot Bands shows none).
+const TIMEFRAME_TIPS: Record<string, string[]> = {
+  SLOPE: [
+    "Compute the slope on this timeframe instead of the chart's.",
+    "A higher timeframe gives a steadier, slower trend read.",
+  ],
+  SR_LEVELS: [
+    "Detect and cluster the levels on this timeframe instead of the chart's.",
+    "A higher timeframe surfaces the bigger, slower zones, e.g. daily levels on a 5m chart.",
+  ],
+  AUTO_FIB: [
+    "Find the swings on this timeframe instead of the chart's.",
+    "A higher timeframe draws the bigger swing, e.g. the daily fib on a 5m chart.",
+  ],
+  FVG: [
+    "Detect the gaps on this timeframe instead of the chart's.",
+    "A higher timeframe surfaces the bigger, slower imbalances, e.g. 1h gaps on a 5m chart.",
+  ],
+  TRENDLINES: [
+    "Detect the lines on this timeframe instead of the chart's.",
+    "A higher timeframe gives fewer, longer trends, e.g. daily lines on a 15m chart.",
+  ],
+};
 
 interface Props {
   chart: Chart;
@@ -400,6 +425,9 @@ function IndicatorSettingsForm({
   // Auto Fib: same MTF shape as S/R Levels (pin on the Inputs tab), and its
   // levels are the fib drawing tool's editor on the Style tab.
   const isAutoFib = type === "AUTO_FIB";
+  // The pinnable types besides EMA/MA (which has its own panel): one Timeframe
+  // + "Wait for timeframe closes" block, one persistence rule, one apply.
+  const isHtfPinned = isPivotBands || isSlope || isSrLevels || isFvg || isTrendlines || isAutoFib;
   // Candle Patterns: figure-less main-pane overlay, no numeric calcParams. Its
   // whole config (pattern toggles, show-labels, colours) is a small extendData
   // object edited on the Inputs tab (colours included, unlike EMA/MA).
@@ -1274,21 +1302,10 @@ function IndicatorSettingsForm({
     if (isMa) {
       maConfig(extendData, type, source, offset, smoothType, smoothLen, timeframe, maType, envelope, waitClose);
     }
-    // Pivot Bands persists only the chosen timeframe (never the bulky HTF series);
-    // refreshMtfIndicators refetches it on reload, like EMA/MA.
-    if (isPivotBands && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
-    // Slope persists only the chosen timeframe (never the bulky HTF series);
-    // refreshMtfIndicators refetches it on reload, like Pivot Bands/EMA/MA.
-    if (isSlope && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
-    // S/R Levels: same MTF persistence contract as Pivot Bands/Slope.
-    if (isSrLevels && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
-    // FVG: same MTF persistence contract as S/R Levels.
-    if (isFvg && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
-    // Trendlines persists only the chosen timeframe; the HTF lines and series
-    // are re-detected by the coordinator on load, exactly as S/R Levels does.
-    if (isTrendlines && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
-    // Auto Fib: same MTF persistence contract as S/R Levels.
-    if (isAutoFib && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
+    // Every other pinnable type persists only the chosen timeframe and its
+    // waitClose choice (never the bulky HTF series); refreshMtfIndicators
+    // refetches and recomputes it on reload, like EMA/MA.
+    if (isHtfPinned && timeframe !== "chart") extendData.mtf = { timeframe, ...(waitClose ? {} : { waitClose: false }) };
     if (isSlope) {
       // slopePeriod/smoothing/colorByDirection don't ride genExtend (they're not
       // meta-declared selects) — persist them explicitly so they survive reload.
@@ -1444,71 +1461,30 @@ function IndicatorSettingsForm({
     syncPivotBarsSinceCompanion(chart, name);
   }
 
-  // Push an S/R Levels config (chart-TF or MTF) through the coordinator, which
-  // refetches + recomputes the levels on the higher timeframe's native bars when
-  // one is set (mirrors applyPivotBands above). Params come from the explicit
-  // override so a calcParam change never races setState.
-  function applySrLevels(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
+  // Push an S/R Levels, Auto Fib, FVG or Trendlines config (chart-TF or MTF)
+  // through the coordinator, which re-detects on the higher timeframe's native
+  // bars when one is set. Pivot Bands and Slope route to their own applies
+  // above/below. Params come from the explicit override so a calcParam change
+  // never races setState.
+  function applyPin(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
+    if (isPivotBands) return applyPivotBands(next);
+    if (isSlope) return applySlope(next);
     const tf = next.timeframe ?? timeframe;
-    void applySrLevelsTimeframe(
-      chart,
-      epic,
-      name,
-      paneId,
-      parseSrConfig(nextCp ?? calcParams),
-      tf === "chart" ? null : tf,
-      brokerId,
-    );
-  }
-
-  // Push an Auto Fib config (chart-TF or MTF) through the coordinator, which
-  // re-detects the pairs on the pinned timeframe's own bars (mirrors
-  // applySrLevels above).
-  function applyAutoFib(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
-    const tf = next.timeframe ?? timeframe;
-    void applyAutoFibTimeframe(
-      chart,
-      epic,
-      name,
-      paneId,
-      parseAutoFibConfig(nextCp ?? calcParams),
-      tf === "chart" ? null : tf,
-      brokerId,
-    );
-  }
-
-  // Push an FVG config (chart-TF or MTF) through the coordinator, which refetches
-  // + recomputes the gaps on the higher timeframe's native bars when one is set
-  // (mirrors applySrLevels above). Params come from the explicit override so a
-  // calcParam change never races setState.
-  function applyFvg(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
-    const tf = next.timeframe ?? timeframe;
-    void applyFvgTimeframe(
-      chart,
-      epic,
-      name,
-      paneId,
-      parseFvgConfig(nextCp ?? calcParams),
-      tf === "chart" ? null : tf,
-      brokerId,
-    );
-  }
-
-  // Push a Trendlines config (chart-TF or MTF) through the coordinator, which
-  // re-detects the lines on the higher timeframe's native bars when one is set
-  // (mirrors applySrLevels above). Params come from the explicit override so a
-  // calcParam change never races setState.
-  function applyTrendlines(next: Partial<{ timeframe: string }> = {}, nextCp?: number[]) {
-    const tf = next.timeframe ?? timeframe;
-    void applyTrendlinesTimeframe(
-      chart,
-      epic,
-      name,
-      paneId,
-      parseTrendlinesConfig(nextCp ?? calcParams, ind?.extendData),
-      tf === "chart" ? null : tf,
-      brokerId,
-    );
+    const pin = tf === "chart" ? null : tf;
+    const cp = nextCp ?? calcParams;
+    if (isSrLevels) void applySrLevelsTimeframe(chart, epic, name, paneId, parseSrConfig(cp), pin, brokerId);
+    else if (isAutoFib) void applyAutoFibTimeframe(chart, epic, name, paneId, parseAutoFibConfig(cp), pin, brokerId);
+    else if (isFvg) void applyFvgTimeframe(chart, epic, name, paneId, parseFvgConfig(cp), pin, brokerId);
+    else if (isTrendlines)
+      void applyTrendlinesTimeframe(
+        chart,
+        epic,
+        name,
+        paneId,
+        parseTrendlinesConfig(cp, ind?.extendData),
+        pin,
+        brokerId,
+      );
   }
 
   // Push a Slope config (chart-TF or MTF) through the coordinator, which refetches
@@ -1730,26 +1706,12 @@ function IndicatorSettingsForm({
       // coordinator (which also writes calcParams).
       apply({ calcParams: nextCp });
       applyPivotBands({ n: nextCp[0], k: nextCp[1] });
-    } else if (isFvg && timeframe !== "chart") {
-      // Same contract as S/R Levels: a param change under an active timeframe
-      // must recompute the stashed HTF gaps, not just re-align them.
+    } else if ((isFvg || isSrLevels || isAutoFib || isTrendlines) && timeframe !== "chart") {
+      // Same contract as Pivot Bands: every one of these params feeds the
+      // DETECTOR, so under an active timeframe the HTF stash must be computed
+      // again, not just re-aligned.
       apply({ calcParams: nextCp });
-      applyFvg({}, nextCp);
-    } else if (isSrLevels && timeframe !== "chart") {
-      // Same contract as Pivot Bands: a param change under an active timeframe
-      // must recompute the stashed HTF levels, not just re-align them.
-      apply({ calcParams: nextCp });
-      applySrLevels({}, nextCp);
-    } else if (isAutoFib && timeframe !== "chart") {
-      // Pivot Length / Min Swing feed the detector, so under a pin the HTF
-      // pairs must be found again, not re-aligned.
-      apply({ calcParams: nextCp });
-      applyAutoFib({}, nextCp);
-    } else if (isTrendlines && timeframe !== "chart") {
-      // Same contract again: every trendline param feeds the DETECTOR, so under
-      // an active timeframe the HTF lines must be found again, not re-aligned.
-      apply({ calcParams: nextCp });
-      applyTrendlines({}, nextCp);
+      applyPin({}, nextCp);
       // isSlope has no calcParam-sourced input left (MA Lengths is the dedicated
       // editor below, which writes calcParams + calls applySlope directly), so
       // this generic setParam path is never reached for SLOPE.
@@ -1780,7 +1742,7 @@ function IndicatorSettingsForm({
     // Same contract as setParam's per-slot write: every trendline param feeds
     // the DETECTOR, so under an active timeframe the HTF lines must be found
     // again, not re-aligned.
-    if (isTrendlines && timeframe !== "chart") applyTrendlines({}, nextCp);
+    if (isTrendlines && timeframe !== "chart") applyPin({}, nextCp);
   }
 
   // Edit a line's STYLE (color/opacity/width), keyed by figure key so the TV
@@ -2838,273 +2800,20 @@ function IndicatorSettingsForm({
                   setPrevHlRolling={setPrevHlRolling}
                   setPrevHlTimezone={setPrevHlTimezone}
                 />
-              ) : isPivotBands ? (
-                <>
-                  {/* Higher-timeframe swings aligned onto the chart bars (no
-                      lookahead), same as EMA/MA. */}
-                  <div className="ind-row ind-row-cols">
-                    <label>Timeframe</label>
-                    <select
-                      value={timeframe}
-                      onChange={(e) => {
-                        setTimeframe(e.target.value);
-                        applyPivotBands({ timeframe: e.target.value });
-                      }}
-                    >
-                      {timeframeOptions.map((p) => (
-                        <option key={p.resolution} value={p.resolution}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="ind-row-head">
-                    <label className="ind-check">
-                      <input
-                        type="checkbox"
-                        checked={waitClose}
-                        disabled={timeframe === "chart"}
-                        onChange={(e) => toggleWaitClose(e.target.checked, () => applyPivotBands())}
-                      />
-                      <span>Wait for timeframe closes</span>
-                    </label>
-                    <InfoTip
-                      title="Wait for timeframe closes"
-                      text={[
-                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
-                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
-                      ]}
-                    />
-                  </span>
-                </>
-              ) : isSlope ? (
-                <>
-                  {/* Higher-timeframe slope computed on native HTF bars, aligned
-                      onto the chart bars (no lookahead), same as EMA/MA. */}
-                  <div className="ind-row ind-row-cols">
-                    <span className="ind-row-head">
-                      <label>Timeframe</label>
-                      <InfoTip
-                        title="Timeframe"
-                        text="Compute the slope on this timeframe instead of the chart's. A higher timeframe gives a steadier, slower trend read."
-                      />
-                    </span>
-                    <select
-                      value={timeframe}
-                      onChange={(e) => {
-                        setTimeframe(e.target.value);
-                        applySlope({ timeframe: e.target.value });
-                      }}
-                    >
-                      {timeframeOptions.map((p) => (
-                        <option key={p.resolution} value={p.resolution}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="ind-row-head">
-                    <label className="ind-check">
-                      <input
-                        type="checkbox"
-                        checked={waitClose}
-                        disabled={timeframe === "chart"}
-                        onChange={(e) => toggleWaitClose(e.target.checked, () => applySlope())}
-                      />
-                      <span>Wait for timeframe closes</span>
-                    </label>
-                    <InfoTip
-                      title="Wait for timeframe closes"
-                      text={[
-                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
-                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
-                      ]}
-                    />
-                  </span>
-                </>
-              ) : isSrLevels ? (
-                <>
-                  {/* Higher-timeframe levels clustered on native HTF bars, aligned
-                      onto the chart bars (no lookahead), same as Pivot Bands. */}
-                  <div className="ind-row ind-row-cols">
-                    <span className="ind-row-head">
-                      <label>Timeframe</label>
-                      <InfoTip
-                        title="Timeframe"
-                        text="Detect and cluster the levels on this timeframe instead of the chart's. A higher timeframe surfaces the bigger, slower zones (e.g. daily levels on a 5m chart)."
-                      />
-                    </span>
-                    <select
-                      value={timeframe}
-                      onChange={(e) => {
-                        setTimeframe(e.target.value);
-                        applySrLevels({ timeframe: e.target.value });
-                      }}
-                    >
-                      {timeframeOptions.map((p) => (
-                        <option key={p.resolution} value={p.resolution}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="ind-row-head">
-                    <label className="ind-check">
-                      <input
-                        type="checkbox"
-                        checked={waitClose}
-                        disabled={timeframe === "chart"}
-                        onChange={(e) => toggleWaitClose(e.target.checked, () => applySrLevels())}
-                      />
-                      <span>Wait for timeframe closes</span>
-                    </label>
-                    <InfoTip
-                      title="Wait for timeframe closes"
-                      text={[
-                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
-                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
-                      ]}
-                    />
-                  </span>
-                </>
-              ) : isAutoFib ? (
-                <>
-                  {/* Higher-timeframe pairs detected on native HTF bars, aligned
-                      onto the chart bars (no lookahead), same as S/R Levels. */}
-                  <div className="ind-row ind-row-cols">
-                    <span className="ind-row-head">
-                      <label>Timeframe</label>
-                      <InfoTip
-                        title="Timeframe"
-                        text={["Find the swings on this timeframe instead of the chart's.", "A higher timeframe draws the bigger swing, e.g. the daily fib on a 5m chart."]}
-                      />
-                    </span>
-                    <select
-                      value={timeframe}
-                      onChange={(e) => {
-                        setTimeframe(e.target.value);
-                        applyAutoFib({ timeframe: e.target.value });
-                      }}
-                    >
-                      {timeframeOptions.map((p) => (
-                        <option key={p.resolution} value={p.resolution}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="ind-row-head">
-                    <label className="ind-check">
-                      <input
-                        type="checkbox"
-                        checked={waitClose}
-                        disabled={timeframe === "chart"}
-                        onChange={(e) => toggleWaitClose(e.target.checked, () => applyAutoFib())}
-                      />
-                      <span>Wait for timeframe closes</span>
-                    </label>
-                    <InfoTip
-                      title="Wait for timeframe closes"
-                      text={[
-                        "Checked: uses only closed higher-timeframe bars.",
-                        "Values update once per higher-timeframe close and never repaint.",
-                        "Unchecked: also folds in the current, unfinished higher-timeframe bar.",
-                        "Values then reach the newest bar but can repaint until it closes.",
-                        "Backtests always wait for closes.",
-                      ]}
-                    />
-                  </span>
-                </>
-              ) : isFvg ? (
-                <>
-                  {/* Higher-timeframe gaps detected on native HTF bars, aligned
-                      onto the chart bars (no lookahead), same as S/R Levels. */}
-                  <div className="ind-row ind-row-cols">
-                    <span className="ind-row-head">
-                      <label>Timeframe</label>
-                      <InfoTip
-                        title="Timeframe"
-                        text="Detect the gaps on this timeframe instead of the chart's. A higher timeframe surfaces the bigger, slower imbalances (e.g. 1h gaps on a 5m chart)."
-                      />
-                    </span>
-                    <select
-                      value={timeframe}
-                      onChange={(e) => {
-                        setTimeframe(e.target.value);
-                        applyFvg({ timeframe: e.target.value });
-                      }}
-                    >
-                      {timeframeOptions.map((p) => (
-                        <option key={p.resolution} value={p.resolution}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="ind-row-head">
-                    <label className="ind-check">
-                      <input
-                        type="checkbox"
-                        checked={waitClose}
-                        disabled={timeframe === "chart"}
-                        onChange={(e) => toggleWaitClose(e.target.checked, () => applyFvg())}
-                      />
-                      <span>Wait for timeframe closes</span>
-                    </label>
-                    <InfoTip
-                      title="Wait for timeframe closes"
-                      text={[
-                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
-                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
-                      ]}
-                    />
-                  </span>
-                </>
-              ) : isTrendlines ? (
-                <>
-                  {/* Higher-timeframe lines detected on native HTF bars, aligned
-                      onto the chart bars (no lookahead), same as S/R Levels. */}
-                  <div className="ind-row ind-row-cols">
-                    <span className="ind-row-head">
-                      <label>Timeframe</label>
-                      <InfoTip
-                        title="Timeframe"
-                        text="Detect the lines on this timeframe instead of the chart's. A higher timeframe gives fewer, longer trends (e.g. daily lines on a 15m chart)."
-                      />
-                    </span>
-                    <select
-                      value={timeframe}
-                      onChange={(e) => {
-                        setTimeframe(e.target.value);
-                        applyTrendlines({ timeframe: e.target.value });
-                      }}
-                    >
-                      {timeframeOptions.map((p) => (
-                        <option key={p.resolution} value={p.resolution}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="ind-row-head">
-                    <label className="ind-check">
-                      <input
-                        type="checkbox"
-                        checked={waitClose}
-                        disabled={timeframe === "chart"}
-                        onChange={(e) => toggleWaitClose(e.target.checked, () => applyTrendlines())}
-                      />
-                      <span>Wait for timeframe closes</span>
-                    </label>
-                    <InfoTip
-                      title="Wait for timeframe closes"
-                      text={[
-                        "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
-                        "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so lines and values extend to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
-                      ]}
-                    />
-                  </span>
-                </>
+              ) : isHtfPinned ? (
+                // Computed on the pinned timeframe's native bars, aligned onto
+                // the chart bars (no lookahead), same as EMA/MA.
+                <TimeframePinRows
+                  timeframe={timeframe}
+                  options={timeframeOptions}
+                  tip={TIMEFRAME_TIPS[type]}
+                  onTimeframe={(tf) => {
+                    setTimeframe(tf);
+                    applyPin({ timeframe: tf });
+                  }}
+                  waitClose={waitClose}
+                  onWaitClose={(next) => toggleWaitClose(next, () => applyPin())}
+                />
               ) : (
                 <div className="ind-row ind-row-cols">
                   <span className="ind-row-head">

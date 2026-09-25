@@ -9,6 +9,7 @@
 import type { Chart } from "klinecharts";
 import { getIndicator } from "../lib/indicators";
 import InfoTip from "../components/InfoTip";
+import { TimeframePinRows } from "./shared";
 import { PRICE_SOURCES, SMOOTHING_TYPES } from "../lib/indicatorMeta";
 import { applyMaTimeframe } from "../lib/mtfCoordinator";
 import type { MaExtend, AvwapExtend, BandMode, BandSetting } from "../lib/customIndicators";
@@ -274,40 +275,17 @@ export function MaInputsPanel({
       )}
 
       <div className="ind-group">Calculation</div>
-      <div className="ind-row">
-        <label>Timeframe</label>
-        <select
-          value={timeframe}
-          onChange={(e) => {
-            setTimeframe(e.target.value);
-            applyMa({ timeframe: e.target.value });
-          }}
-        >
-          {timeframeOptions.map((p) => (
-            <option key={p.resolution} value={p.resolution}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <span className="ind-row-head">
-        <label className="ind-check">
-          <input
-            type="checkbox"
-            checked={waitClose}
-            disabled={timeframe === "chart"}
-            onChange={(e) => onWaitClose(e.target.checked)}
-          />
-          <span>Wait for timeframe closes</span>
-        </label>
-        <InfoTip
-          title="Wait for timeframe closes"
-          text={[
-            "Checked: uses only closed higher-timeframe bars \u2014 values update once per higher-timeframe close and never repaint.",
-            "Unchecked: also folds the current, unfinished higher-timeframe bar from the chart's own candles, so the line extends to the newest bar \u2014 and can repaint until that bar closes. Live rules read these values too; backtests always wait for closes.",
-          ]}
-        />
-      </span>
+      <TimeframePinRows
+        rowClass="ind-row"
+        timeframe={timeframe}
+        options={timeframeOptions}
+        onTimeframe={(tf) => {
+          setTimeframe(tf);
+          applyMa({ timeframe: tf });
+        }}
+        waitClose={waitClose}
+        onWaitClose={onWaitClose}
+      />
     </>
   );
 }
