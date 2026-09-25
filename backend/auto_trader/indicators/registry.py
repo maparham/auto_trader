@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from auto_trader.core.models import Candle
+from auto_trader.indicators import auto_fib as _af
 from auto_trader.indicators import atr as _atr
 from auto_trader.indicators import fvg as _fvg
 from auto_trader.indicators import pivot_analysis as _pa
@@ -38,6 +39,13 @@ class IndicatorSeriesSpec:
 
 
 SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
+    "AUTO_FIB": IndicatorSeriesSpec(
+        parse_config=_af.parse_auto_fib_config,
+        outputs=_af.auto_fib_outputs,
+        series=_af.auto_fib_series,
+        warmup=_af.auto_fib_warmup,
+        timeframe=lambda cfg: cfg.timeframe,
+    ),
     "ATR": IndicatorSeriesSpec(
         parse_config=_atr.parse_atr_config,
         outputs=_atr.atr_outputs,
