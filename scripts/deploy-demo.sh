@@ -15,7 +15,7 @@
 # CLERK_AUTHORIZED_PARTIES. VITE_CLERK_PUBLISHABLE_KEY is baked into the
 # frontend build. The preflight check fails the deploy if Clerk vars are missing.
 #
-# Broker credentials and TELEGRAM_BOT_TOKEN are SYNCED to the box from
+# Broker credentials and the prod Telegram token are SYNCED to the box from
 # backend/.env on every backend deploy (see "backend: sync credentials" below,
 # and SYNC_KEYS), so rotating a key means editing backend/.env and re-running
 # this script — never hand-editing /etc/auto-trader/demo.env. Only those keys
@@ -24,13 +24,12 @@
 # read from the local file and never removed. COMPUTE_* is deliberately NOT
 # synced: it points at this laptop.
 #
-# TELEGRAM_BOT_TOKEN enables Telegram alert delivery for hosted users, and is
-# currently the SAME bot as the laptop's. The backend long-polls getUpdates and
-# only one process may poll a token, so a local backend run with that line
-# active STEALS /start link codes from the hosted app. Comment it out in
-# backend/.env while working locally: the sync skips absent keys, so the box
-# keeps the value it already has. A second BotFather bot for prod would end the
-# conflict for good.
+# Telegram: prod and the laptop run SEPARATE bots, because the backend
+# long-polls getUpdates and only one process may poll a token (a shared bot let
+# a local run steal hosted /start link codes). backend/.env's plain
+# TELEGRAM_BOT_TOKEN is the laptop's dev bot and is NEVER synced. The prod
+# bot's token lives in backend/.env as PROD_TELEGRAM_BOT_TOKEN and lands on the
+# box renamed to TELEGRAM_BOT_TOKEN; leave it out and the box keeps its value.
 #
 # Optional box env: CLERK_SECRET_KEY — backend only, powers the admin console
 # Users panel (/admin). Without it the panel reports "Clerk not configured".
@@ -91,7 +90,8 @@ CRED_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|OANOR_[A-
 # admin-gate check below applies (a deploy that pushes broker creds needs the
 # gate), so folding a non-broker key into it would let a Telegram-only .env
 # waive that gate.
-SYNC_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|OANOR_[A-Z_]*|TELEGRAM_BOT_TOKEN)='
+# PROD_TELEGRAM_BOT_TOKEN, never the plain key: see the Telegram note above.
+SYNC_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|OANOR_[A-Z_]*|PROD_TELEGRAM_BOT_TOKEN)='
 LOCAL_ENV="$ROOT/backend/.env"
 SYNC_CREDS=0
 if [ "$DO_BACKEND" = 1 ] && [ -f "$LOCAL_ENV" ] \
@@ -150,6 +150,7 @@ if [ "$DO_BACKEND" = 1 ]; then
     # Only keys PRESENT in the local file are touched, so commenting one out
     # locally leaves the box's existing value alone rather than clearing it.
     grep -E "$SYNC_KEYS.+" "$LOCAL_ENV" \
+      | sed 's/^PROD_TELEGRAM_BOT_TOKEN=/TELEGRAM_BOT_TOKEN=/' \
       | "${SSH[@]}" "$HOST" '
       set -e
       incoming="$(mktemp)"; merged="$(mktemp)"
