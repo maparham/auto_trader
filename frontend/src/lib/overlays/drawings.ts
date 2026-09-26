@@ -30,7 +30,7 @@ export abstract class OverlayDrawings extends OverlayTools {
    *  `value` (the drop price, used only until the first auto-fit). Returns the
    *  new overlay id. */
   pastePatternGhost(ts: number, value: number, ghost: GhostPattern): string | null {
-    if (!this.chart || this.readOnly) return null;
+    if (!this.canPlaceDrawing() || this.readOnly) return null;
     const seed = this.seedFromDefault("patternGhost");
     const extendData: DrawingExtra = { ...asDrawingExtra(seed?.extendData), ghost };
     const id = this.create("drawing", "patternGhost", [{ timestamp: ts, value }], seed?.styles, undefined, {
@@ -204,6 +204,16 @@ export abstract class OverlayDrawings extends OverlayTools {
   // at a price from the "+" menu); without, klinecharts enters interactive draw.
   addDrawing(name: string, points?: SavedOverlay["points"]): string | null {
     if (this.readOnly) return null; // snapshot view: no new drawings
+    // Not hydrated yet: an interactive tool waits for rehydrate() to arm it (see
+    // deferredTool); an in-place draw has nothing to wait for and is refused.
+    if (!this.canPlaceDrawing()) {
+      if (!points) {
+        this.cancelDrawing();
+        this.deferredTool = name;
+      }
+      return null;
+    }
+    this.deferredTool = null;
     // Re-arming replaces the in-progress tool: klinecharts keeps ONE progress slot
     // and silently overwrites it WITHOUT firing onRemoved, which would strand the
     // previous overlay's id in `entries` forever (getOverlayById(ghost) → null, so
@@ -248,6 +258,10 @@ export abstract class OverlayDrawings extends OverlayTools {
   // fires onRemoved, same as clearMeasure() above already relies on).
   // Returns true if there was something to cancel (caller preventDefaults).
   cancelDrawing(): boolean {
+    if (this.deferredTool) {
+      this.deferredTool = null;
+      return true;
+    }
     if (!this.drawingInProgress || !this.pendingDrawId) return false;
     this.chart?.removeOverlay({ id: this.pendingDrawId });
     // Belt-and-braces: don't rely solely on onRemoved firing (it does today, but a
@@ -270,6 +284,7 @@ export abstract class OverlayDrawings extends OverlayTools {
     zLevel?: number;
     extendData?: unknown;
   }): string | null {
+    if (!this.canPlaceDrawing()) return null; // it would never be saved (see deferredTool)
     const id = this.create("drawing", spec.name, spec.points, spec.styles, spec.lock, {
       visible: spec.visible,
       zLevel: spec.zLevel,

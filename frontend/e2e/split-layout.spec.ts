@@ -13,10 +13,9 @@ test("split layout cells have independent drawings", async ({ page }) => {
 
   // Switch the active tab to a two-column layout (2 independent cells).
   // The split picker is the glyph-only button in the tab bar (no "Layout" text).
-  // The added cell pre-paints from the session bar cache, but its drawings only
-  // rehydrate (and persistence only opens) once its own candle fetch lands.
-  // Waiting for that fetch works around a known app bug (BACKLOG: "Drawings
-  // placed during a cache pre-paint are lost").
+  // The added cell pre-paints from the session bar cache, but a drawing tool
+  // only arms once its own candle fetch lands and its drawings rehydrate, so a
+  // click before that places nothing. Wait for the fetch before drawing.
   const cell2Candles = page.waitForResponse(
     (r) => r.url().includes("/api/candles?") && r.url().includes("US100"),
   );

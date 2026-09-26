@@ -14,19 +14,6 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Deferred / forward-looking
 
-- **Drawings placed during a cache pre-paint are lost** (bug, unfixed): a new
-  tab or split cell on a series already in the session bar cache paints those
-  bars at once (`chart/useLiveMarketData.ts` pre-paint), so the drawing tools
-  work before the cell's own candle fetch lands. Until then `persist()`
-  (`lib/overlays/persistence.ts`) is gated on `hydratedEpic`, and the
-  `overlays.rehydrate()` that follows the fetch rebuilds from storage, so a line
-  drawn in that 1-2 s window shows, is never saved, and vanishes. Repro: open a
-  second tab on the same symbol and place a horizontal line immediately (3/3 in
-  an e2e probe). Fix directions, not chosen: hydrate overlays at pre-paint (a
-  second rebuild per remount, and it cancels a placement in progress), or block
-  placement until the cell is hydrated. tab-drawings and split-layout wait on
-  the candle fetch to step around it.
-
 - **Replay "Reveal strategy" enabled over a pruned backtest** (minor):
   `useReplay` decides the button's enabled state before the startup
   `pruneStaleBacktests` runs, so resuming a replay whose saved backtest is over

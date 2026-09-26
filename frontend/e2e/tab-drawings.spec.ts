@@ -54,10 +54,9 @@ test("tabs on the same symbol+period have independent drawings", async ({ page }
   await expect.poll(overlayCount).toBe(1);
 
   // Tab 2 on the SAME symbol + period. Its chart pre-paints instantly from the
-  // session bar cache (tab 1's bars), but its drawings only rehydrate, and
-  // persistence only opens, once its own candle fetch lands. Waiting for that
-  // fetch works around a known app bug (BACKLOG: "Drawings placed during a
-  // cache pre-paint are lost"): a line drawn before it is wiped by rehydrate.
+  // session bar cache (tab 1's bars), but a drawing tool only arms once its own
+  // candle fetch lands and its drawings rehydrate (drawing-prepaint.spec.ts), so
+  // wait for that fetch before drawing.
   const tab2Candles = page.waitForResponse(
     (r) => r.url().includes("/api/candles?") && r.url().includes("US100"),
   );

@@ -289,7 +289,7 @@ export abstract class OverlayTools extends OverlayAlerts {
   // this overlay-name's saved default (like addDrawing) so per-name colors/templates
   // apply. Persistent — the overlay stays after placement.
   startTimeRange(startTs: number): string | null {
-    if (!this.chart || this.readOnly) return null;
+    if (!this.canPlaceDrawing() || this.readOnly) return null;
     this.clearTimeRangeDraft();
     this.timeRangeStartTs = startTs;
     this.drawingInProgress = true; // suppress lock click-align during the press-drag

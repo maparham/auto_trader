@@ -251,6 +251,7 @@ export abstract class OverlayManagerBase {
     this.draggingAlert = false;
     this.draggingAlertId = null;
     this.drawingInProgress = false;
+    this.deferredTool = null;
     this.hydratedEpic = null;
     this.rightClickClaimedAt = 0;
   }
@@ -407,6 +408,19 @@ export abstract class OverlayManagerBase {
   // drawingInProgress in addDrawing's interactive branch), so cancelDrawing knows
   // WHICH overlay to remove. Cleared everywhere drawingInProgress is cleared.
   protected pendingDrawId: string | null = null;
+
+  // A drawing tool armed before this cell's drawings rehydrated for its epic
+  // (a new tab or split pre-painting cached bars, or a symbol switch still
+  // loading). Arming then would let the user place a line that persist() refuses
+  // to save and rehydrate() then wipes, so the tool waits here and rehydrate()
+  // arms it once the stored drawings are in place.
+  protected deferredTool: string | null = null;
+
+  // Whether a new drawing can be placed and saved right now: entries reflect
+  // this.epic, which is persist()'s own write gate (see hydratedEpic).
+  protected canPlaceDrawing(): boolean {
+    return !!this.chart && this.hydratedEpic === this.epic;
+  }
 
   // Sidebar "hide all drawings" eye — SESSION-ONLY master switch layered over
   // per-drawing intent (extendData.userVisible), so toggling it never rewrites

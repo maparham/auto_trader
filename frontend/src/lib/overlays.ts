@@ -496,6 +496,10 @@ export class OverlayManager extends OverlayDrawings {
       if (map.size > 0) for (const fn of this.idRemapListeners) fn(map);
     }
     this.notifyAlerts();
+    // Arm a tool picked while this epic was still loading (see deferredTool).
+    const deferred = this.deferredTool;
+    this.deferredTool = null;
+    if (deferred && !this.readOnly) this.addDrawing(deferred);
   }
 
   // NOTE: alert FIRING lives in the BACKEND (the single authority, running with

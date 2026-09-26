@@ -1416,6 +1416,78 @@ describe("OverlayManager cancelDrawing (Esc cancels an in-progress drawing)", ()
   });
 });
 
+// A new tab or split on an already-loaded series pre-paints cached bars before
+// its own fetch lands and rehydrate() runs. persist() refuses to write until then
+// and rehydrate() rebuilds from storage, so a line placed in that window showed,
+// was never saved, and vanished. Placement now waits for the rehydrate.
+describe("OverlayManager placement before the first rehydrate", () => {
+  function unhydrated() {
+    const chart = new FakeChart();
+    const m = new OverlayManager();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    m.attach(chart as any, fakeFacade(chart));
+    m.setScope("tab.A");
+    m.setEpic("US100");
+    return { chart, m };
+  }
+
+  it("defers an interactive tool until rehydrate, then arms it", () => {
+    const { chart, m } = unhydrated();
+    expect(m.addDrawing("segment")).toBeNull();
+    expect(m.isDrawing()).toBe(false);
+    expect(chart.getOverlays({})).toHaveLength(0);
+
+    m.rehydrate();
+    expect(m.isDrawing()).toBe(true);
+    expect(chart.getOverlays({}).map((o) => o.name)).toEqual(["segment"]);
+  });
+
+  it("the latest tool picked while loading is the one armed", () => {
+    const { chart, m } = unhydrated();
+    m.addDrawing("segment");
+    m.addDrawing("horizontalStraightLine");
+    m.rehydrate();
+    expect(chart.getOverlays({}).map((o) => o.name)).toEqual(["horizontalStraightLine"]);
+  });
+
+  it("Esc drops a deferred tool, so rehydrate arms nothing", () => {
+    const { chart, m } = unhydrated();
+    m.addDrawing("segment");
+    expect(m.cancelDrawing()).toBe(true);
+    expect(m.cancelDrawing()).toBe(false);
+    m.rehydrate();
+    expect(m.isDrawing()).toBe(false);
+    expect(chart.getOverlays({})).toHaveLength(0);
+  });
+
+  it("refuses in-place draws until rehydrate, then places and saves them", () => {
+    const { m } = unhydrated();
+    expect(m.addDrawing("horizontalStraightLine", [{ value: 5 }])).toBeNull();
+    expect(m.placeDrawing({ name: "segment", points: [{ value: 1 }, { value: 2 }] })).toBeNull();
+    expect(m.startTimeRange(1_000)).toBeNull();
+    m.rehydrate();
+    expect(m.addDrawing("horizontalStraightLine", [{ value: 5 }])).toBeTruthy();
+    expect(P.loadDrawings("tab.A", "US100")).toHaveLength(1);
+  });
+
+  it("a symbol switch defers a tool until the new epic rehydrates", () => {
+    const { chart, m } = setup(); // US100, rehydrated
+    m.setEpic("BTCUSD");
+    expect(m.addDrawing("segment")).toBeNull();
+    m.rehydrate();
+    expect(m.isDrawing()).toBe(true);
+    expect(chart.getOverlays({}).map((o) => o.name)).toEqual(["segment"]);
+  });
+
+  it("a read-only snapshot rehydrate drops the deferred tool", () => {
+    const { m } = unhydrated();
+    m.addDrawing("segment");
+    m.setReadOnly(true);
+    m.rehydrate();
+    expect(m.isDrawing()).toBe(false);
+  });
+});
+
 // A trendline whose second anchor sits to the RIGHT of the last candle (projected
 // into the future) gets NO timestamp from klinecharts — only a dataIndex. Persisting
 // must encode that anchor as an extrapolated timestamp (last bar + n × bar width),
