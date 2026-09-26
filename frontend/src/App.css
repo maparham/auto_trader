@@ -5109,7 +5109,7 @@
   background: transparent; border: none; color: var(--text-dim);
 }
 .sel-trigger.ot-unit:hover, .sel-trigger.ot-unit.on { color: var(--text); }
-.sel-trigger.ot-unit > .sel-caret { color: inherit; font-size: 10px; }
+.sel-trigger.ot-unit > .sel-caret { color: inherit; font-size: 10px; transform: translateY(-2px); }
 .ot-atr-len {
   width: 34px; padding: 1px 4px; font: inherit; font-size: 11px; color: var(--text);
   background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px;
