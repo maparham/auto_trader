@@ -282,3 +282,6 @@ node_modules/.vite/
 
 # git worktrees for isolated feature work
 .worktrees/
+
+# Playwright MCP screenshots, snapshots and console logs
+.playwright-mcp/
