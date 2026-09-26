@@ -331,6 +331,13 @@ const MAX_EMPTY_WINDOWS = 6;
 // coarse timeframes whose windows already span years.
 const MAX_EMPTY_GAP_SEC = 14 * 86400;
 
+// A glow-emphasised indicator name, or null while that indicator's settings
+// are open on this (focused) chart: the wide stroke hides the colour and width
+// being tuned.
+function unlessEditing(focused: boolean | undefined, name: string | null | undefined): string | null {
+  return name && !(focused && indicatorSettingsRequest.value?.name === name) ? name : null;
+}
+
 export default function ChartCore({
   cellId,
   tabId,
@@ -1036,36 +1043,40 @@ export default function ChartCore({
   // Trendlines paints its own lines, so it has no handles: selecting it from
   // its legend row, or hovering that row, makes every line glow instead. A
   // click on one line selects the instance but glows only that line.
+  // Neither glows while its settings are open (see unlessEditing).
   useEffect(() => {
     const sync = () => {
       const c = chartRef.current;
-      if (c) emphasizeTrendlines(c, selectedIndicator.value?.name, legendHoverName.value);
+      if (c) emphasizeTrendlines(c, unlessEditing(focused, selectedIndicator.value?.name), unlessEditing(focused, legendHoverName.value));
     };
-    const offSel = selectedIndicator.subscribe(sync);
-    const offHov = legendHoverName.subscribe(sync);
-    return () => {
-      offSel();
-      offHov();
-    };
-  }, [selectedIndicator, legendHoverName]);
+    sync();
+    const offs = [
+      selectedIndicator.subscribe(sync),
+      legendHoverName.subscribe(sync),
+      indicatorSettingsRequest.subscribe(sync),
+    ];
+    return () => offs.forEach((off) => off());
+  }, [selectedIndicator, legendHoverName, focused]);
   // Auto Fib glows the same way, and also while the mouse is on one of its
   // lines (curveHover): its lines carry no handles to show.
   useEffect(() => {
     const sync = () => {
       const c = chartRef.current;
       if (c)
-        emphasizeAutoFibs(c, selectedIndicator.value?.name, [
-          curveHover.value?.name,
-          legendHoverName.value,
+        emphasizeAutoFibs(c, unlessEditing(focused, selectedIndicator.value?.name), [
+          unlessEditing(focused, curveHover.value?.name),
+          unlessEditing(focused, legendHoverName.value),
         ]);
     };
+    sync();
     const offs = [
       selectedIndicator.subscribe(sync),
       legendHoverName.subscribe(sync),
       curveHover.subscribe(sync),
+      indicatorSettingsRequest.subscribe(sync),
     ];
     return () => offs.forEach((off) => off());
-  }, [selectedIndicator, legendHoverName, curveHover]);
+  }, [selectedIndicator, legendHoverName, curveHover, focused]);
   useEffect(
     () => indicatorOverlayRepaint.subscribe(() => redrawRef.current()),
     [],

@@ -107,6 +107,7 @@ export class OverlayManager extends OverlayDrawings {
       onDrawEnd: () => {
         this.drawingInProgress = false;
         this.pendingDrawId = null;
+        this.syncSelectGlow(); // placed: a selected drawing gets its glow now
         // Measure is transient: don't persist. Freeze it and let the owner disarm
         // the one-shot ruler; the frozen box stays until the next interaction.
         if (isMeasure) {
@@ -180,6 +181,11 @@ export class OverlayManager extends OverlayDrawings {
         // (long ⇄ short): reflect the opposite leg live, before klinecharts
         // moves the dragged point itself — see maybeFlipTrade.
         if (isTrade) this.maybeFlipTrade(e);
+        // Drop the glow for the drag (see syncSelectGlow).
+        if (isDrawing && this.draggingDrawingId !== e.overlay.id) {
+          this.draggingDrawingId = e.overlay.id;
+          this.syncSelectGlow();
+        }
         // Shift snap while dragging an endpoint/corner: returning true tells
         // klinecharts to SKIP its own point update so our snapped point stands.
         if (isDrawing && isShiftHeld() && this.maybeSnapPressed(e)) return true;
@@ -217,6 +223,10 @@ export class OverlayManager extends OverlayDrawings {
         // klinecharts drags one point at a time — pull the other one back into
         // line before this drop is persisted.
         if (isTrade) this.settleTradeDrag(e.overlay);
+        if (this.draggingDrawingId !== null) {
+          this.draggingDrawingId = null;
+          this.syncSelectGlow();
+        }
         // A ghost decides on release whether the drag placed it by hand.
         if (e.overlay.name === GHOST_NAME) this.settleGhostDrag(e.overlay);
         this.persist(); // a dragged drawing endpoint
@@ -265,6 +275,7 @@ export class OverlayManager extends OverlayDrawings {
         // too, or it sticks true and the lock hover-align stays silently disabled.
         this.drawingInProgress = false;
         this.pendingDrawId = null;
+        if (this.draggingDrawingId === e.overlay.id) this.draggingDrawingId = null;
         if (this.hoveredAlertId === e.overlay.id) {
           // Removing the hovered alert won't fire onMouseLeave, so restore the
           // crosshair (line + label) here or it stays stuck hidden.

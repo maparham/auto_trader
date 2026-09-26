@@ -203,6 +203,9 @@ export abstract class OverlayManagerBase {
   private drawingListener: (() => void) | null = null;
   // The drawing currently carrying the selection glow (see syncSelectGlow).
   protected glowDrawingId: string | null = null;
+  // The drawing being dragged (first onPressedMoving to onPressedMoveEnd). It
+  // loses its glow for the gesture so fine adjustment sees the bare line.
+  protected draggingDrawingId: string | null = null;
 
   // dataFacade is optional only so unit tests can construct a manager without the
   // v10 data pipeline; production (ChartCore) always passes it, and applyOlderBars
@@ -242,6 +245,7 @@ export abstract class OverlayManagerBase {
     this.hoveredDrawingId = null;
     this.selectedDrawingId = null;
     this.glowDrawingId = null;
+    this.draggingDrawingId = null;
     this.emphasizedDrawingId = null;
     this.emphasisBase = undefined;
     this.draggingAlert = false;
@@ -353,9 +357,12 @@ export abstract class OverlayManagerBase {
   // translucent under-stroke (drawn by the `line` figure in touchHitSlop.ts),
   // so it reads as selected even with both end dots off screen. The marker
   // rides on the live line style only; cloneStyles strips it from every
-  // snapshot.
-  private syncSelectGlow(): void {
-    const next = this.selectedDrawingId && this.entries.get(this.selectedDrawingId) === "drawing" ? this.selectedDrawingId : null;
+  // snapshot. No glow while the drawing is being placed or dragged: the wide
+  // stroke hides the exact line the user is lining up.
+  protected syncSelectGlow(): void {
+    const id = this.selectedDrawingId;
+    const busy = id === this.draggingDrawingId || (this.drawingInProgress && id === this.pendingDrawId);
+    const next = id && !busy && this.entries.get(id) === "drawing" ? id : null;
     if (next === this.glowDrawingId) return;
     if (this.glowDrawingId) this.setSelectGlow(this.glowDrawingId, false);
     this.glowDrawingId = next;
