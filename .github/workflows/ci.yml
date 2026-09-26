@@ -1,0 +1,89 @@
+name: CI
+
+# Tests run on every push and pull request. A push to main that passes both
+# test jobs deploys to https://chartkar.app through scripts/deploy-demo.sh.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          # Matches the production box's venv.
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      # --extra dev: respx lives in optional-dependencies, not the dev group.
+      - run: uv sync --locked --extra dev
+      - name: ruff (same scope as the pre-commit hook)
+        run: uvx ruff check auto_trader scripts
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx vitest run
+      # vite build, not `npm run build`: tsc -b still carries a known error
+      # backlog, so it cannot gate yet.
+      - run: npx vite build
+
+  deploy:
+    needs: [backend, frontend]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # deploy-demo.sh builds in a worktree that symlinks these node_modules.
+      - run: npm ci
+        working-directory: frontend
+      - name: SSH key for the Lightsail box
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Pinned host key, never ssh-keyscan at run time.
+          echo '3.139.146.5 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBrrJqP/X1mJVNwNK+ZUjsQgXUb0GkyMl6cNkk1I5EA9' >> ~/.ssh/known_hosts
+      # No backend/.env exists here, so the credential sync is skipped and the
+      # box keeps its current broker and Telegram values.
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: scripts/deploy-demo.sh

@@ -38,6 +38,8 @@
 # secret key ever appears in the bundle.
 #
 # Prereqs: `wrangler login` (pages:write), ssh access via ~/.ssh/id_ed25519.
+# CI (.github/workflows/ci.yml) runs this on every green push to main, with
+# CLOUDFLARE_API_TOKEN in place of `wrangler login` and a deploy-only key.
 #
 # Usage: scripts/deploy-demo.sh [--frontend-only | --backend-only]
 
@@ -173,6 +175,13 @@ if [ "$DO_BACKEND" = 1 ]; then
   # the package install below finds it already satisfied.
   bridge_rev=$(grep -A2 'name = "agent-ui-bridge"' backend/uv.lock | sed -n 's/.*python#\([0-9a-f]*\)".*/\1/p' | head -1)
   [ -n "$bridge_rev" ] || { echo "could not read the agent-ui-bridge commit from backend/uv.lock" >&2; exit 1; }
+  # The repo is public, so a CI deploy's log is too: never dump production
+  # journal lines (user ids, admin emails, audit lines) into it.
+  if [ -n "${CI:-}" ]; then
+    log_tail="echo 'backend failed to come up; see journalctl -u auto-trader-demo on the box' >&2"
+  else
+    log_tail="echo 'backend failed to come up; last log lines:' >&2; sudo journalctl -u auto-trader-demo -n 20 --no-pager >&2"
+  fi
   echo "==> backend: pip install (agent-ui-bridge@${bridge_rev:0:7}) + restart auto-trader-demo"
   "${SSH[@]}" "$HOST" "
     set -e
@@ -183,8 +192,7 @@ if [ "$DO_BACKEND" = 1 ]; then
       sleep 1
       if curl -sf -m 5 http://127.0.0.1:8010/health >/dev/null; then exit 0; fi
     done
-    echo 'backend failed to come up; last log lines:' >&2
-    sudo journalctl -u auto-trader-demo -n 20 --no-pager >&2
+    $log_tail
     exit 1
   "
 fi
