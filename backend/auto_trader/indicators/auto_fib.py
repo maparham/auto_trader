@@ -221,23 +221,29 @@ def auto_fib_outputs(cfg: AutoFibConfig) -> tuple[str, ...]:
 
 # The last pair walk: a rule reading several outputs of one instance asks for
 # each separately over the same candle list, and only pivot_len and
-# min_swing_atr feed the walk. One entry, holding the list itself so its id
-# cannot be reused; the length and the last bar catch a list that grew or had
-# its forming bar updated in place. Replaced as one tuple, so a concurrent
-# reader sees either the old entry or the new one.
+# min_swing_atr feed the walk. One entry, keyed on the list's id plus its
+# length, first bar and last bar (a tick updates the last bar in place). The
+# list itself is NOT held, so a finished backtest's candles are not pinned in
+# memory; a new list reusing a dead one's id would also have to match all of
+# that fingerprint to be mistaken for it. An in-place edit to a middle bar is
+# not detected; nothing in the app edits candles that way. Replaced as one
+# tuple, so a concurrent reader sees either the old entry or the new one.
 _last_walk: tuple | None = None
+
+
+def _bar_key(c: Candle | None) -> tuple | None:
+    return (c.time, c.open, c.high, c.low, c.close) if c is not None else None
 
 
 def _pairs_for(cfg: AutoFibConfig, candles: Sequence[Candle]) -> tuple[list[int | None], list[Pair]]:
     global _last_walk
-    tail = candles[-1] if candles else None
-    key = (cfg.pivot_len, cfg.min_swing_atr, len(candles),
-           (tail.time, tail.open, tail.high, tail.low, tail.close) if tail else None)
+    key = (id(candles), cfg.pivot_len, cfg.min_swing_atr, len(candles),
+           _bar_key(candles[0] if candles else None), _bar_key(candles[-1] if candles else None))
     hit = _last_walk
-    if hit is not None and hit[0] is candles and hit[1] == key:
-        return hit[2]
+    if hit is not None and hit[0] == key:
+        return hit[1]
     walk = compute_pairs(cfg, candles)
-    _last_walk = (candles, key, walk)
+    _last_walk = (key, walk)
     return walk
 
 

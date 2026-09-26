@@ -168,3 +168,20 @@ def test_outputs_of_one_series_share_one_pair_walk(monkeypatch):
     auto_fib_series(cfg, "high", list(cs), 1.0)
     auto_fib_series(parse_auto_fib_config([3, 0], {}), "high", cs, 1.0)
     assert len(calls) == 5
+
+
+def test_pair_walk_memo_does_not_pin_the_candles():
+    """The memo must let a finished run's candle list be freed."""
+    import gc
+    import weakref
+
+    class Bars(list):  # plain lists cannot be weakly referenced
+        pass
+
+    cfg = parse_auto_fib_config([2, 0], {})
+    cs = Bars(triangle([110, 120]))
+    auto_fib_series(cfg, "high", cs, 1.0)
+    ref = weakref.ref(cs)
+    del cs
+    gc.collect()
+    assert ref() is None

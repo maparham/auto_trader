@@ -180,7 +180,7 @@ describe("AUTO_FIB_TEMPLATE draw", () => {
       save: () => {}, restore: () => {}, beginPath: () => {}, moveTo: () => {}, lineTo: () => {},
       setLineDash: () => {},
       stroke: () => calls.push(`stroke:${ctx.globalAlpha}`),
-      fillText: (t: string) => calls.push(`text:${t}`),
+      fillText: (t: string, x: number) => calls.push(`text:${t}`, `textx:${x}`),
     };
     return { ctx, calls };
   }
@@ -202,7 +202,7 @@ describe("AUTO_FIB_TEMPLATE draw", () => {
         result,
         name: "fib",
         calcParams: [5, 0],
-        extendData: { pastCount, ...extra, fib: { levels: [{ value: 0, enabled: true, color: "#111" }, { value: 1, enabled: true, color: "#222" }], extend: "none", reverse: false, trendLine: false, labels: true } },
+        extendData: { pastCount, fib: { levels: [{ value: 0, enabled: true, color: "#111" }, { value: 1, enabled: true, color: "#222" }], extend: "none", reverse: false, trendLine: false, labels: true }, ...extra },
         paneId: "candle_pane",
         precision: 2,
       },
@@ -237,10 +237,50 @@ describe("AUTO_FIB_TEMPLATE draw", () => {
     expect(glow(await paint(0), 0.25) + glow(await paint(0), 0.12)).toBe(0);
   });
 
+  it("glows the past fibs too, at their dimmed strength", async () => {
+    // A past fib is a hit target, so hovering one must light it, not only
+    // the current fib elsewhere on the chart.
+    const calls = await paint(1, { emphasis: "select" });
+    expect(calls.filter((c) => c === "stroke:0.25")).toHaveLength(2);
+    expect(calls.filter((c) => c === `stroke:${0.25 * 0.35}`)).toHaveLength(2);
+  });
+
+  it("puts extended labels at the pane's right edge (bounding already stops at the axis)", async () => {
+    const calls = await paint(0, { fib: { levels: [{ value: 0, enabled: true, color: "#111" }], extend: "right", reverse: false, trendLine: false, labels: true } });
+    expect(calls).toContain("textx:496"); // W 500 - 4
+  });
+
   it("adds pastCount earlier fibs, dimmed and unlabelled", async () => {
     const calls = await paint(1);
     expect(calls.filter((c) => c === "stroke:0.35")).toHaveLength(2);
     expect(calls.filter((c) => c.startsWith("text:"))).toHaveLength(2); // current only
+  });
+});
+
+describe("AUTO_FIB_TEMPLATE calc", () => {
+  it("reuses its rows when only render state changed, recomputes when the inputs did", async () => {
+    const { AUTO_FIB_TEMPLATE } = await import("./autoFib");
+    const calc = (AUTO_FIB_TEMPLATE as { calc: (d: KLineData[], i: unknown) => unknown }).calc;
+    const data = triangle([110, 120, 130]);
+    const ind = { calcParams: [2, 0], extendData: {} as Record<string, unknown> };
+    const first = calc(data, ind);
+    // A hover glow or a colour edit writes extendData, and klinecharts calcs on
+    // every write: nothing the rows depend on moved, so the same rows return.
+    ind.extendData.emphasis = "hover";
+    ind.extendData.pastCount = 3;
+    expect(calc(data, ind)).toBe(first);
+    // Show pivots adds the marks: a new calc.
+    ind.extendData.showPivots = true;
+    const withMarks = calc(data, ind);
+    expect(withMarks).not.toBe(first);
+    // A new bar, an edited last bar, new params: each recomputes.
+    const grown = [...data, bar(100, data.length)];
+    expect(calc(grown, ind)).not.toBe(withMarks);
+    const edited = [...grown.slice(0, -1), bar(140, grown.length - 1)];
+    const e1 = calc(edited, ind);
+    expect(e1).not.toBe(calc(grown, ind));
+    ind.calcParams = [3, 0];
+    expect(calc(edited, ind)).not.toBe(e1);
   });
 });
 

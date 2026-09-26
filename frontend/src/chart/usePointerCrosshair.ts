@@ -231,7 +231,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // Same for the other self-painted lines (Auto Fib): the instance's
       // lines glow (via curveHover, see ChartCore) and its card lights.
       const paintedHit =
-        lineHit || tlHit || avwapAnchorMode.value || overlays.getHoveredDrawingId() || !c
+        lineHit || tlHit || avwapAnchorMode.value || overlays.getHoveredDrawingId()
           ? null
           : hitPaintedLine(c, lx, ly, TL_LINE_HIT);
       const curveHit =

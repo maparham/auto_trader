@@ -223,6 +223,20 @@ describe("applyMaTimeframe fetch-failure retry", () => {
     expect(ext.source).toBe("open");
   });
 
+  it("a failed fetch keeps the stash another apply wrote while it was in flight", async () => {
+    const stale = { timeframe: "MINUTE_15", htfStarts: [1], htfSeries: [1], htfMs: HTF_MS };
+    const fresh = { timeframe: "MINUTE_15", htfStarts: [1, 2], htfSeries: [1, 2], htfMs: HTF_MS };
+    const { chart, overrides } = fakeChart({ mtf: stale });
+    // A concurrent apply (a refresh pass, a settings edit) lands its stash
+    // during this fetch, which then fails with nothing to show.
+    fetchRangeStrict.mockImplementation(() => {
+      chart.overrideIndicator({ paneId: "candle_pane", name: "ema1", extendData: { mtf: fresh } });
+      return Promise.reject(new Error("candles fetch failed: 503"));
+    });
+    await applyEma(chart, "MINUTE_15");
+    expect(overrides.at(-1)!.patch.extendData?.mtf).toEqual(fresh);
+  });
+
   it("two charts with the same indicator name keep independent retry chains", async () => {
     fetchRangeStrict.mockRejectedValue(new Error("candles fetch failed: 503"));
     const a = fakeChart();

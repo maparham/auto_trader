@@ -196,9 +196,9 @@ export interface AutoFibExtend {
     htfFibPivots?: AutoFibMtfPivot[];
   };
   hideLegendValue?: boolean;
-  /** The current fib glows: "select" when the instance is selected, "hover"
+  /** The drawn fibs glow: "select" when the instance is selected, "hover"
    * while the mouse is on one of its lines or its legend row. SESSION-ONLY,
-   * written by useTrendlineMenu's emphasis and never saved. */
+   * written by chart/autoFibEmphasis.ts and never saved. */
   emphasis?: "select" | "hover" | null;
 }
 
@@ -374,8 +374,6 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
     (chart as { getSymbol?: () => { pricePrecision?: number } | null }).getSymbol?.()?.pricePrecision ??
     indicator.precision ??
     2;
-  // bounding.width runs under the y-axis strip; labels must stop short of it.
-  const axisWidth = chart.getSize(indicator.paneId, "yAxis")?.width ?? 0;
   const W = bounding.width;
   const H = bounding.height;
   const clampX = (x: number) => Math.min(W + DRAW_CLIP_PAD, Math.max(-DRAW_CLIP_PAD, x));
@@ -425,16 +423,17 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
       painted.push({ x0: x1, y0: s.y, x1: x2, y1: s.y });
       ctx.strokeStyle = s.color;
       // Selected or hovered: a wide translucent under-stroke, like a picked
-      // trendline's.
-      if (current && glowAlpha) {
-        ctx.globalAlpha = glowAlpha;
+      // trendline's, on every drawn fib (a past one is a hit target too), past
+      // ones at their dimmed strength.
+      if (glowAlpha) {
+        ctx.globalAlpha = glowAlpha * (current ? 1 : pastAlpha);
         ctx.lineWidth = (s.size ?? 1) + TL_SELECT_GLOW;
         ctx.setLineDash([]);
         ctx.beginPath();
         ctx.moveTo(x1, s.y);
         ctx.lineTo(x2, s.y);
         ctx.stroke();
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = current ? 1 : pastAlpha;
       }
       ctx.lineWidth = s.size ?? 1;
       ctx.setLineDash(s.style === "dashed" ? [4, 4] : []);
@@ -443,10 +442,11 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
       ctx.lineTo(x2, s.y);
       ctx.stroke();
       if (current && fib.labels) {
-        const atEdge = x2 >= W - axisWidth - 1;
+        // bounding is the main area: it already stops at the price axis.
+        const atEdge = x2 >= W - 1;
         ctx.fillStyle = s.color;
         ctx.textAlign = atEdge ? "right" : "left";
-        ctx.fillText(s.label, atEdge ? W - axisWidth - 4 : x2 + 4, s.y - 2);
+        ctx.fillText(s.label, atEdge ? W - 4 : x2 + 4, s.y - 2);
       }
     }
   }
@@ -466,7 +466,7 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
       lastRow.marks,
       (j) => xAxis.convertToPixel(j),
       (price) => yAxis.convertToPixel(price),
-      W - axisWidth - 4,
+      W - 4,
       H,
       used,
       true,
@@ -475,6 +475,38 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
     );
   }
   return true; // the fibs replace any default figure drawing
+}
+
+// klinecharts calcs on EVERY overrideIndicator (it deep-clones the previous
+// instance, so its figures never compare equal), including the render-only
+// writes: a hover glow, a colour, pastCount. The last rows are kept per
+// instance (klinecharts passes the same object to every calc) and returned
+// while nothing they depend on moved: the bars (length, first bar, last bar,
+// which a tick updates in place), the params, Show pivots, and the MTF stash
+// (a new object on every coordinator write, plus the fields a merge in place
+// can flip).
+const LAST_CALC = new WeakMap<object, { key: unknown[]; out: AutoFibRow[] }>();
+
+function calcKey(dataList: KLineData[], calcParams: unknown[] | undefined, ext: AutoFibExtend): unknown[] {
+  const first = dataList[0];
+  const last = dataList[dataList.length - 1];
+  const mtf = ext.mtf;
+  return [
+    dataList.length,
+    first?.timestamp,
+    last?.timestamp,
+    last?.open,
+    last?.high,
+    last?.low,
+    last?.close,
+    JSON.stringify(calcParams ?? []),
+    ext.showPivots === true,
+    mtf,
+    mtf?.timeframe,
+    mtf?.waitClose,
+    mtf?.formingIdx,
+    mtf?.htfStarts?.length,
+  ];
 }
 
 // Auto Fib: calcParams = [pivotLen, minSwingAtr].
@@ -488,13 +520,14 @@ export const AUTO_FIB_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   // line figures, so no line-cache entry and no ZONE_ONLY_TYPES entry).
   figures: [],
   calc: (dataList: KLineData[], ind: Indicator) => {
-    const { points, pairs, marks } = computeAutoFib(
-      dataList,
-      parseAutoFibConfig(ind.calcParams),
-      (ind.extendData ?? {}) as AutoFibExtend,
-    );
+    const ext = (ind.extendData ?? {}) as AutoFibExtend;
+    const key = calcKey(dataList, ind.calcParams, ext);
+    const prev = LAST_CALC.get(ind);
+    if (prev && prev.key.length === key.length && prev.key.every((v, i) => v === key[i])) return prev.out;
+    const { points, pairs, marks } = computeAutoFib(dataList, parseAutoFibConfig(ind.calcParams), ext);
     const out = points as AutoFibRow[];
     if (out.length) out[out.length - 1] = { ...out[out.length - 1], pairs, ...(marks ? { marks } : {}) };
+    LAST_CALC.set(ind, { key, out });
     return out;
   },
   draw: (params) => drawAutoFib(params as IndicatorDrawParams<AutoFibRow, unknown, unknown>),

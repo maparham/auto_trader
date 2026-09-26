@@ -720,6 +720,10 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
     need,
     prev,
   );
+  // Re-read after the await: another apply may have stashed newer bars
+  // meanwhile, and a failed fetch must keep those, not the pre-fetch stash.
+  const liveMtf = (getIndicator(chart, paneId, name) as { extendData?: E } | null)?.extendData
+    ?.mtf as MtfSeriesBase | undefined;
   const proceed = mtfFetchTail(
     chart,
     paneId,
@@ -727,7 +731,7 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
     timeframe,
     failed,
     htf.length > 0,
-    prev,
+    liveMtf,
     ext,
     spec.calcParams,
     () => applyHtfPin(chart, epic, name, paneId, timeframe, brokerId, needed, spec),
