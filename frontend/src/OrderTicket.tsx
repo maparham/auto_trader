@@ -104,6 +104,13 @@ const isRealMoneyAccount = (account: TradeAccount) => account.endsWith(":live");
 
 const QUOTE_POLL_MS = 1500;
 const DEFAULT_BRACKET = 0.005; // seed staged SL/TP / limit offset at ±0.5%
+
+/** The level a TP/SL starts at when toggled on (or re-seeded): 1 ATR from `ref`
+ *  when its row is in ATR mode and an ATR is known, else DEFAULT_BRACKET. */
+function seedExit(ref: number, up: boolean, atr: number | null, precision: number): number {
+  if (atr != null) return levelFromAtr(ref, 1, atr, up, precision);
+  return Number((up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET)).toFixed(precision));
+}
 type OrderType = "market" | "limit" | "stop";
 
 export default function OrderTicket({
@@ -224,7 +231,6 @@ export default function OrderTicket({
     brokerId,
     enabled: !replaying && !editTrade && (atrPrefs.tp === "atr" || atrPrefs.sl === "atr"),
     chartCandles,
-    livePrice: quote?.mid ?? null,
   });
 
   // The edited trade can vanish mid-edit (a position hits SL/TP, an order fills or
@@ -296,12 +302,10 @@ export default function OrderTicket({
       : null;
     const ref = entry ?? mid;
     // Same rule as bracket(): a row in ATR mode re-seeds 1 ATR out.
-    const seed = (on: boolean, kind: "tp" | "sl") => {
-      if (!on) return null;
-      const up = kind === "tp" ? long : !long;
-      if (atrPrefs[kind] === "atr" && atrValue != null) return levelFromAtr(ref, 1, atrValue, up, precision);
-      return round(up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET));
-    };
+    const seed = (on: boolean, kind: "tp" | "sl") =>
+      on
+        ? seedExit(ref, kind === "tp" ? long : !long, atrPrefs[kind] === "atr" ? atrValue : null, precision)
+        : null;
     draftOrderSignal.set({
       epic,
       side,
@@ -342,10 +346,7 @@ export default function OrderTicket({
     const long = side === "buy";
     const up = kind === "tp" ? long : !long;
     // A row in ATR mode starts 1 ATR out, so the field reads 1.00.
-    if (atrPrefs[kind] === "atr" && atrValue != null && ref) {
-      return levelFromAtr(ref, 1, atrValue, up, precision);
-    }
-    return round(up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET));
+    return seedExit(ref, up, atrPrefs[kind] === "atr" ? atrValue : null, precision);
   }
 
   function toggleExit(kind: "tp" | "sl", on: boolean) {
@@ -729,7 +730,6 @@ function EditTicket({
     brokerId,
     enabled: atrPrefs.tp === "atr" || atrPrefs.sl === "atr",
     chartCandles,
-    livePrice: getLivePrice(trade.epic) ?? trade.mark ?? null,
   });
 
   function patch(p: PendingEdit) {
@@ -757,13 +757,16 @@ function EditTicket({
     const reference = isOrder ? ref : latest;
     const base = reference ?? ref;
     const up = kind === "tp" ? long : !long;
-    // A row in ATR mode starts 1 ATR from the same base as the % seed (the
-    // latest price for a position, so a trade that has run more than 1 ATR
-    // doesn't seed a level the clamp then pins one tick from the market).
-    let v =
-      atrPrefs[kind] === "atr" && atrValue != null
-        ? levelFromAtr(base, 1, atrValue, up, precision)
-        : round(up ? base * (1 + DEFAULT_BRACKET) : base * (1 - DEFAULT_BRACKET));
+    const atr = atrPrefs[kind] === "atr" ? atrValue : null;
+    // A row in ATR mode starts 1 ATR from the entry, which is what its multiple
+    // measures from, so the field reads 1.00. When the market has already run
+    // past that level (a position more than 1 ATR in profit for a TP, or in loss
+    // for a stop) it starts 1 ATR from the latest price instead, rather than
+    // letting the clamp below pin it one tick from the market.
+    let v = atr != null ? seedExit(ref, up, atr, precision) : seedExit(base, up, null, precision);
+    if (atr != null && reference != null && (up ? v <= reference : v >= reference)) {
+      v = seedExit(reference, up, atr, precision);
+    }
     if (reference != null) {
       const tick = Number((10 ** -precision).toFixed(precision));
       v = round(clampLevelToPrice(kind === "sl" ? "stop" : "tp", trade.side, reference, v, tick));
@@ -912,7 +915,7 @@ function EditTicket({
           onChange={(v) => setExit("tp", v)}
           onBreakeven={canBreakevenTarget ? setBreakevenTarget : undefined}
           breakevenTip="Move the take-profit to your entry price, so the trade closes flat if price recovers to entry."
-          atr={exitAtrView(atrPrefs, setAtrPrefs, "tp", atrValue, ref, long, precision, resolution)}
+          atr={exitAtrView(atrPrefs, setAtrPrefs, "tp", atrValue, ref, long, precision, resolution, !isOrder)}
         />
         <ExitRow
           label="Stop loss"
@@ -928,7 +931,7 @@ function EditTicket({
           onChange={(v) => setExit("sl", v)}
           onBreakeven={canBreakeven ? setBreakeven : undefined}
           breakevenTip="Move the stop-loss to your entry price, so the trade can't turn into a loss from here."
-          atr={exitAtrView(atrPrefs, setAtrPrefs, "sl", atrValue, ref, long, precision, resolution)}
+          atr={exitAtrView(atrPrefs, setAtrPrefs, "sl", atrValue, ref, long, precision, resolution, !isOrder)}
         />
       </div>
 
@@ -962,8 +965,10 @@ function exitAtrView(
   long: boolean,
   precision: number,
   resolution: string | undefined,
+  allowNonPositive = false,
 ): ExitAtrView {
   return {
+    allowNonPositive,
     unit: prefs[kind],
     onUnit: (u) => setPrefs({ [kind]: u }),
     length: prefs.length,
@@ -992,6 +997,10 @@ export interface ExitAtrView {
   up: boolean; // the exit's valid side (long TP / short SL sit above ref)
   precision: number;
   tfLabel: string | null; // the timeframe the ATR is computed on
+  // An open position's exits may legitimately sit at or past entry (a stop at
+  // breakeven, a target at entry for a loser), which the form's own price rules
+  // judge. Everywhere else a multiple of zero or less is on the wrong side.
+  allowNonPositive: boolean;
 }
 
 function ExitRow({
@@ -1035,11 +1044,12 @@ function ExitRow({
   const atrInput = atrReady && on;
   const multiple =
     atrReady && value != null ? atrMultiple(value, atr.ref!, atr.atr!, atr.up) : null;
-  // A typed multiple of zero is not a level; flag it until a real one lands
-  // (the field's floor snaps it up on blur).
-  const [badMultiple, setBadMultiple] = useState(false);
+  // Zero or negative ATRs put the level on the entry or past it: wrong-sided
+  // unless the form's own price rules own that call (allowNonPositive).
+  const wrongSide = atrInput && multiple != null && multiple <= 0 && !atr.allowNonPositive;
   // The length commits on blur or Enter, not per keystroke: every commit is a
-  // persisted write and restarts the ATR read (maybe a fetch).
+  // persisted write and restarts the ATR read (maybe a fetch). An empty or
+  // zero entry commits nothing, so the field reverts on blur.
   const lenDraft = useRef<number | null>(null);
   const commitLength = () => {
     if (atr && lenDraft.current != null) atr.onLength(normalizeAtrLength(lenDraft.current));
@@ -1079,11 +1089,9 @@ function ExitRow({
                     <NumberField
                       className="ot-atr-len num"
                       ariaLabel="ATR length"
-                      floor={1}
-                      step={1}
                       value={atr.length}
                       onChange={(n) => {
-                        lenDraft.current = n;
+                        lenDraft.current = n >= 1 ? n : null;
                       }}
                     />
                   </span>
@@ -1114,27 +1122,29 @@ function ExitRow({
       </div>
       <div
         className={`ot-input-row${on ? "" : " disabled"}${
-          invalid || (atrInput && badMultiple) ? " invalid" : ""
+          invalid || wrongSide ? " invalid" : ""
         }`}
       >
         {atrInput ? (
+          // No floor: clearing the field and leaving it commits nothing, so the
+          // level stays put and the field reverts (a floor would commit a
+          // near-zero multiple, parking the stop on the entry).
           <NumberField
             className="ot-input num"
             ariaLabel={`${label} in ATRs`}
-            floor={0.01}
+            signed
             value={multiple != null ? Number(multiple.toFixed(2)) : undefined}
-            onChange={(m) => {
-              setBadMultiple(!(m > 0));
-              if (m > 0) onChange(String(levelFromAtr(atr.ref!, m, atr.atr!, atr.up, atr.precision)));
-            }}
+            onChange={(m) =>
+              onChange(String(levelFromAtr(atr.ref!, m, atr.atr!, atr.up, atr.precision)))
+            }
           />
         ) : (
           <input
             className="ot-input num"
             type="number"
             step="any"
-            min={atrMode ? undefined : min}
-            max={atrMode ? undefined : max}
+            min={min}
+            max={max}
             disabled={!on}
             value={on && value != null ? value : ""}
             placeholder="—"
@@ -1147,7 +1157,7 @@ function ExitRow({
             ? ""
             : atrMode
               ? !atrReady
-                ? "ATR n/a"
+                ? `ATR n/a${pctText ? ` · ${pctText}` : ""}`
                 : value != null
                   ? `${value.toFixed(atr.precision)} · ${pctText}`
                   : ""

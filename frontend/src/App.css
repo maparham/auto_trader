@@ -5093,7 +5093,12 @@
 .ot-chevron { color: var(--text-faint); transition: transform 0.15s ease; }
 .ot-chevron.open { transform: rotate(180deg); }
 .ot-exit { display: flex; flex-direction: column; gap: 4px; }
-.ot-exit-head { display: flex; align-items: center; justify-content: space-between; }
+/* Wraps when the label (ATR unit + length) and the actions (Set Breakeven +
+   switch) can't share the sidebar's width; the actions stay right-aligned. */
+.ot-exit-head {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; row-gap: 4px;
+}
 /* "Take profit, [price|ATR] [14]": the unit reads as part of the label, with a
    small caret; ATR mode adds a compact length box after it. */
 .ot-exit-label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -5122,7 +5127,7 @@
 .ot-switch.on .ot-switch-knob { transform: translateX(16px); }
 
 /* Compact secondary action under the Stop-loss row: moves SL to the entry price. */
-.ot-exit-head-actions { display: flex; align-items: center; gap: 8px; }
+.ot-exit-head-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .ot-be-btn {
   white-space: nowrap;
   padding: 3px 8px;

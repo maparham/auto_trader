@@ -7,10 +7,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { KLineData } from "klinecharts";
 import { atrSeries } from "./atr";
-import { declaredIntervalMs, fetchRecent } from "./feed";
+import { fetchRecent } from "./feed";
 import { PREFIX, load, save } from "./persist/core";
 import { Signal } from "./signals";
 import type { PriceSide } from "../theme";
+import type { SeriesStamp } from "../chart/seriesStamp";
 
 export type ExitUnit = "price" | "atr";
 
@@ -45,7 +46,8 @@ export function atrFetchBars(length: number): number {
 }
 
 /** The level `mult` ATRs from `ref`, on the `up` side (long TP / short SL = up),
- *  rounded to the instrument's precision. */
+ *  rounded to the instrument's precision. A nonzero multiple always lands at
+ *  least one tick away, so an ATR smaller than a tick can't round onto `ref`. */
 export function levelFromAtr(
   ref: number,
   mult: number,
@@ -53,7 +55,11 @@ export function levelFromAtr(
   up: boolean,
   precision: number,
 ): number {
-  return Number((ref + (up ? 1 : -1) * mult * atr).toFixed(precision));
+  const sign = (up ? 1 : -1) * Math.sign(mult);
+  const level = Number((ref + (up ? 1 : -1) * mult * atr).toFixed(precision));
+  if (sign === 0 || level !== Number(ref.toFixed(precision))) return level;
+  const tick = 10 ** -precision;
+  return Number((ref + sign * tick).toFixed(precision));
 }
 
 /** How many ATRs `level` sits from `ref`, positive on the `up` side (the valid
@@ -72,40 +78,28 @@ export function latestAtr(candles: KLineData[], length: number): number | null {
   return null;
 }
 
-// The chart's bars are only trusted when they are this instrument's LIVE series
-// on this timeframe. Right after a symbol or timeframe switch the chart still
-// holds the previous series until its reload lands, and a deep Go-to-date loads
-// a historical window with no live edge; ATR from either would be wrong.
-const MAX_STALE_MS = 4 * 86_400_000; // covers a weekend or a holiday close
-const MAX_PRICE_GAP = 0.1; // last close vs the live price, as a fraction
-
+/** The focused chart's loaded bars plus the stamp saying which series they
+ *  are (chart/seriesStamp.ts); `stamp` is absent while a load is in flight. */
 export interface ChartBars {
-  ticker: string | undefined; // the instrument the chart declares
+  stamp: SeriesStamp | undefined;
   bars: KLineData[];
 }
 
-/** True when the chart's bars can stand in for a fetch: same instrument, bar
- *  spacing equal to the resolution's interval, a recent last bar, and a last
- *  close near the live price (when one is known). */
+/** True when the chart's bars can stand in for a fetch: painted for this epic
+ *  and timeframe by the live load (not mid-switch, not a replay slice or a
+ *  detached Go-to-date window) and long enough for the length. */
 export function chartBarsUsable(
   chart: ChartBars,
-  opts: { epic: string; resolution: string; length: number; nowMs: number; livePrice: number | null },
+  opts: { epic: string; resolution: string; length: number },
 ): boolean {
-  const { bars } = chart;
-  const intervalMs = declaredIntervalMs(opts.resolution);
-  if (chart.ticker !== opts.epic || intervalMs == null || bars.length <= opts.length) return false;
-  // Smallest gap over the tail: session breaks only ever widen a gap, so the
-  // minimum is the true bar spacing.
-  let minGap = Infinity;
-  for (let i = Math.max(1, bars.length - 30); i < bars.length; i++) {
-    const g = bars[i].timestamp - bars[i - 1].timestamp;
-    if (g > 0 && g < minGap) minGap = g;
-  }
-  if (Math.abs(minGap - intervalMs) > intervalMs * 0.01) return false;
-  const last = bars[bars.length - 1];
-  if (opts.nowMs - last.timestamp > Math.max(5 * intervalMs, MAX_STALE_MS)) return false;
-  const px = opts.livePrice;
-  return px == null || !(px > 0) || Math.abs(last.close - px) / px <= MAX_PRICE_GAP;
+  const { stamp, bars } = chart;
+  return (
+    stamp != null &&
+    stamp.live &&
+    stamp.epic === opts.epic &&
+    stamp.resolution === opts.resolution &&
+    bars.length > opts.length
+  );
 }
 
 // --- persisted unit + length (global preference) ----------------------------
@@ -175,7 +169,6 @@ export function useLatestAtr(opts: {
   brokerId: string | undefined;
   enabled: boolean;
   chartCandles?: () => ChartBars | undefined;
-  livePrice: number | null; // sanity anchor for the chart's bars
 }): number | null {
   const { epic, resolution, length, priceSide, brokerId, enabled, chartCandles } = opts;
   const [atr, setAtr] = useState<number | null>(null);
@@ -183,8 +176,6 @@ export function useLatestAtr(opts: {
   // not restart the effect (and its fetch) each time.
   const chartRef = useRef(chartCandles);
   chartRef.current = chartCandles;
-  const priceRef = useRef(opts.livePrice);
-  priceRef.current = opts.livePrice;
   useEffect(() => {
     setAtr(null);
     if (!enabled || !resolution) return;
@@ -195,7 +186,7 @@ export function useLatestAtr(opts: {
       const chart = chartRef.current?.();
       const usable =
         chart != null &&
-        chartBarsUsable(chart, { epic, resolution, length, nowMs: Date.now(), livePrice: priceRef.current });
+        chartBarsUsable(chart, { epic, resolution, length });
       const fromChart = usable ? latestAtr(chart.bars, length) : null;
       if (fromChart != null) {
         setAtr(fromChart);

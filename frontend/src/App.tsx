@@ -128,6 +128,7 @@ import { useNamedLayouts } from "./app/useNamedLayouts";
 import { useIndicatorSync } from "./app/useIndicatorSync";
 import { useAppAgentActions } from "./app/useAppAgentActions";
 import { useAlertFiredNotices } from "./app/useAlertFiredNotices";
+import { chartSeriesStamp } from "./chart/seriesStamp";
 import "./App.css";
 
 // One-time rename of the persisted real-money Capital account key
@@ -1035,7 +1036,7 @@ export default function App() {
               brokerId={brokerId}
               chartCandles={() => {
                 const c = focusedController?.chart;
-                return c ? { ticker: c.getSymbol()?.ticker, bars: c.getDataList() } : undefined;
+                return c ? { stamp: chartSeriesStamp(c), bars: c.getDataList() } : undefined;
               }}
             />
           </aside>

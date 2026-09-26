@@ -15,6 +15,12 @@ describe("levelFromAtr / atrMultiple", () => {
     expect(levelFromAtr(100, 1.5, 2, false, 2)).toBe(97);
   });
 
+  it("keeps a nonzero multiple at least one tick from the reference", () => {
+    expect(levelFromAtr(20_000, 1, 0.4, true, 0)).toBe(20_001);
+    expect(levelFromAtr(20_000, 1, 0.4, false, 0)).toBe(19_999);
+    expect(levelFromAtr(20_000, 0, 0.4, true, 0)).toBe(20_000);
+  });
+
   it("rounds to the instrument precision", () => {
     expect(levelFromAtr(1.1, 1, 0.00123456, true, 5)).toBe(1.10123);
   });
@@ -65,37 +71,30 @@ describe("latestAtr", () => {
 });
 
 describe("chartBarsUsable", () => {
-  const HOUR = 3_600_000;
-  const now = 1_790_000_000_000;
-  const series = (n: number, stepMs: number, lastMs: number, close = 100): KLineData[] =>
-    Array.from({ length: n }, (_, i) => ({
-      timestamp: lastMs - (n - 1 - i) * stepMs, open: close, high: close + 1, low: close - 1, close,
-    }));
-  const opts = { epic: "US100", resolution: "HOUR", length: 14, nowMs: now, livePrice: 100 };
+  const bars = Array.from({ length: 100 }, (_, i) => ({
+    timestamp: i * 3_600_000, open: 100, high: 101, low: 99, close: 100,
+  }));
+  const opts = { epic: "US100", resolution: "HOUR", length: 14 };
+  const live = { epic: "US100", resolution: "HOUR", live: true };
 
-  it("accepts the live series of this epic and timeframe", () => {
-    expect(chartBarsUsable({ ticker: "US100", bars: series(100, HOUR, now - HOUR) }, opts)).toBe(true);
+  it("accepts bars stamped as this epic's live series on this timeframe", () => {
+    expect(chartBarsUsable({ stamp: live, bars }, opts)).toBe(true);
   });
 
-  it("rejects another instrument's ticker", () => {
-    expect(chartBarsUsable({ ticker: "EURUSD", bars: series(100, HOUR, now) }, opts)).toBe(false);
+  it("rejects bars while a load is in flight (no stamp)", () => {
+    expect(chartBarsUsable({ stamp: undefined, bars }, opts)).toBe(false);
   });
 
-  it("rejects bars of another timeframe still loaded after a switch", () => {
-    expect(chartBarsUsable({ ticker: "US100", bars: series(100, 60_000, now) }, opts)).toBe(false);
+  it("rejects another epic or timeframe", () => {
+    expect(chartBarsUsable({ stamp: { ...live, epic: "EURUSD" }, bars }, opts)).toBe(false);
+    expect(chartBarsUsable({ stamp: { ...live, resolution: "MINUTE" }, bars }, opts)).toBe(false);
   });
 
-  it("rejects a historical window (Go-to-date far in the past)", () => {
-    const old = now - 400 * 86_400_000;
-    expect(chartBarsUsable({ ticker: "US100", bars: series(100, HOUR, old) }, opts)).toBe(false);
-  });
-
-  it("rejects the previous symbol's bars once the new ticker is declared", () => {
-    const bars = series(100, HOUR, now, 20_000);
-    expect(chartBarsUsable({ ticker: "US100", bars }, opts)).toBe(false);
+  it("rejects a replay slice or detached Go-to-date window", () => {
+    expect(chartBarsUsable({ stamp: { ...live, live: false }, bars }, opts)).toBe(false);
   });
 
   it("rejects too few bars for the length", () => {
-    expect(chartBarsUsable({ ticker: "US100", bars: series(10, HOUR, now) }, opts)).toBe(false);
+    expect(chartBarsUsable({ stamp: live, bars: bars.slice(0, 10) }, opts)).toBe(false);
   });
 });

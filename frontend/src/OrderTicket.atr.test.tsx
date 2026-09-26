@@ -62,9 +62,13 @@ describe("OrderTicket exits in ATRs", () => {
     expect(screen.getByText("105.00 · +5.00%")).toBeTruthy();
   });
 
-  it("flags a zero multiple instead of silently ignoring it", async () => {
+  // Each test picks ATR itself: the unit preference is module-global, so a
+  // test must not lean on one an earlier test left behind.
+  async function renderInAtrMode() {
     render(<OrderTicket epic="US100" trading={trading} resolution="HOUR" brokerId="capital" />);
     await waitFor(() => expect(draftOrderSignal.value).not.toBeNull());
+    fireEvent.click(screen.getByLabelText("Take profit unit"));
+    fireEvent.click(screen.getByRole("option", { name: "ATR" }));
     await waitFor(() => expect(feed.fetchRecent).toHaveBeenCalled());
     // Let the ATR fetch land before toggling, so the seed is ATR-based.
     await act(async () => {
@@ -72,10 +76,21 @@ describe("OrderTicket exits in ATRs", () => {
     });
     await act(async () => fireEvent.click(screen.getAllByRole("switch")[0]));
     await waitFor(() => expect(draftOrderSignal.value?.takeProfit).toBe(102));
+    return screen.getByLabelText("Take profit in ATRs") as HTMLInputElement;
+  }
 
-    const input = screen.getByLabelText("Take profit in ATRs") as HTMLInputElement;
+  it("flags a zero multiple as wrong-sided", async () => {
+    const input = await renderInAtrMode();
     fireEvent.change(input, { target: { value: "0" } });
-    expect(draftOrderSignal.value?.takeProfit).toBe(102);
+    expect(draftOrderSignal.value?.takeProfit).toBe(100);
     expect(input.closest(".ot-input-row")?.classList.contains("invalid")).toBe(true);
+  });
+
+  it("clearing the multiple and leaving the field keeps the level", async () => {
+    const input = await renderInAtrMode();
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+    expect(draftOrderSignal.value?.takeProfit).toBe(102);
+    expect(input.value).toBe("1");
   });
 });

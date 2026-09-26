@@ -57,6 +57,7 @@ import { setLivePrice } from "../lib/trading";
 import { isSynthetic, setSyntheticPrecision } from "../lib/syntheticRegistry";
 import type { LiveStatus } from "../lib/feed";
 import type { ChartHandle, RangeReq } from "./chartHandle";
+import { stampChartSeries } from "./seriesStamp";
 
 export interface LiveMarketDataDeps {
   symbol: Instrument;
@@ -247,6 +248,8 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     const chart = handle.chartRef.current;
     const dataFacade = handle.dataFacadeRef.current;
     if (!chart || !dataFacade) return;
+    // Until this run paints, the loaded bars are not this series (seriesStamp.ts).
+    stampChartSeries(chart, null);
     let cancelled = false;
     let retryTimer: number | null = null;
     // Whether THIS run painted live-series bars (pre-paint or loaded). Gates the
@@ -556,6 +559,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         if (cached && cached.length > 0) {
           handle.cursorSecRef.current = Math.floor(cached[0].timestamp / 1000);
           dataFacade.setBars(cached, !period.liveOnly);
+          stampChartSeries(chart, { epic: symbol.epic, resolution: period.resolution, live: true });
           if (restoreView && restoreView.barSpace > 0) chart.setBarSpace(restoreView.barSpace);
           if (centerTargetTs != null) scrollTsToCenter(chart, centerTargetTs);
           else chart.scrollToRealTime();
@@ -716,6 +720,11 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         // empty fetchRange windows that walk back for nothing.
         dataFacade.setBars(bars, !period.liveOnly);
       }
+      stampChartSeries(handle.chartRef.current, {
+        epic: symbol.epic,
+        resolution: period.resolution,
+        live: !replaying && !detachedMode,
+      });
       if (isSynthetic(symbol.epic) && bars.length > 0) {
         const p = synthPrecision(bars[bars.length - 1].close);
         setFetchedPrecision(p);
