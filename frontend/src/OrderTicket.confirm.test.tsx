@@ -17,7 +17,7 @@ const market = vi.hoisted(() => ({
   subscribeTrades: vi.fn<(cb: (t: unknown[]) => void) => () => void>(() => () => {}),
   getLivePrice: vi.fn(() => 30009.4),
   refreshTrades: vi.fn(),
-  placeOrder: vi.fn(async () => ({ status: "filled", filled_quantity: 1, fill_price: 30010.4 })),
+  placeOrder: vi.fn(async (_req: unknown) => ({ status: "filled", filled_quantity: 1, fill_price: 30010.4 })),
 }));
 vi.mock("./lib/trading", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/trading")>()),
