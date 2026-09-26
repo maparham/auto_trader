@@ -57,6 +57,53 @@ jobs:
       # backlog, so it cannot gate yet.
       - run: npx vite build
 
+  # Playwright against a real dev stack (uvicorn :8000 + vite :5173), no broker
+  # credentials. Deliberately not in deploy's `needs`: it reports, it does not
+  # gate.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 25
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: uv sync --locked
+        working-directory: backend
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Start backend and vite
+        run: |
+          (cd backend && nohup uv run uvicorn auto_trader.api.app:app --port 8000 > "$RUNNER_TEMP/backend.log" 2>&1 &)
+          (cd frontend && nohup npx vite --port 5173 --strictPort > "$RUNNER_TEMP/vite.log" 2>&1 &)
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8000/health >/dev/null && curl -sf http://localhost:5173/ >/dev/null && exit 0
+            sleep 2
+          done
+          echo "stack did not come up" >&2
+          tail -n 40 "$RUNNER_TEMP/backend.log" "$RUNNER_TEMP/vite.log" >&2
+          exit 1
+      - run: npx playwright test --reporter=list --trace=retain-on-failure
+        working-directory: frontend
+      - name: Server logs
+        if: failure()
+        run: tail -n 80 "$RUNNER_TEMP/backend.log" "$RUNNER_TEMP/vite.log"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: frontend/test-results/
+          retention-days: 7
+
   deploy:
     needs: [backend, frontend]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
