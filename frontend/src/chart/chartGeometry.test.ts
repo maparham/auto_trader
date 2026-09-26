@@ -12,7 +12,7 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-import { buildLineCache, tradeSpineX, draftLabelX, TRADE_SPINE_GAP, TRADE_SPINE_FALLBACK_W, TRADE_SPINE_MIN_X } from "./chartGeometry";
+import { buildLineCache, tradeSpineX, draftLabelX, priceRowY, TRADE_SPINE_GAP, TRADE_SPINE_FALLBACK_W, TRADE_SPINE_MIN_X } from "./chartGeometry";
 
 interface FakeInd {
   paneId: string;
@@ -115,5 +115,24 @@ describe("draftLabelX", () => {
 
   it("falls back to the far-left slot when the pane is not measurable yet", () => {
     expect(draftLabelX(0)).toBe(6);
+  });
+});
+
+describe("priceRowY", () => {
+  const chartAt = (y: number | undefined) =>
+    ({ convertToPixel: () => [{ y }] }) as unknown as Parameters<typeof priceRowY>[0];
+
+  it("rounds the pixel row of a price", () => {
+    expect(priceRowY(chartAt(120.6), 5)).toBe(121);
+  });
+
+  it("gives no row when the pane has no height", () => {
+    // A cell on a background tab keeps painting at zero height, where
+    // klinecharts maps every price to +/-Infinity: a pill placed there
+    // reached React as style.top = -Infinity.
+    expect(priceRowY(chartAt(-Infinity), 101.2)).toBeUndefined();
+    expect(priceRowY(chartAt(Infinity), 101.2)).toBeUndefined();
+    expect(priceRowY(chartAt(NaN), 101.2)).toBeUndefined();
+    expect(priceRowY(chartAt(undefined), 101.2)).toBeUndefined();
   });
 });

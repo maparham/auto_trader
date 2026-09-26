@@ -59,7 +59,7 @@ import { type AlertCondition, type AlertTrigger } from "../lib/persist";
 import { type ExitCluster } from "../lib/tradeMarkers";
 import type { CurveLabelsHandle } from "../CurveLabels";
 import type { ChartHandle } from "./chartHandle";
-import { tradeSpineX } from "./chartGeometry";
+import { priceRowY, tradeSpineX } from "./chartGeometry";
 
 // Module-const from ChartCore (.ba-tag height; stacks bid/ask clear of the price pill).
 const BA_TAG_H = 18;
@@ -348,13 +348,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     ctx.rect(0, 0, w, paneH);
     ctx.clip();
 
-    const yOf = (v: number | null): number | null => {
-      if (v == null) return null;
-      const y = first(
-        chart.convertToPixel([{ value: v }], { paneId: "candle_pane", absolute: true }),
-      ).y;
-      return y == null ? null : Math.round(y);
-    };
+    const yOf = (v: number | null): number | null => (v == null ? null : priceRowY(chart, v) ?? null);
     // Colour carries ONE meaning here — profit/loss: green = target leg, red = stop leg.
     // The position itself is de-hued to a neutral slate (it holds no direction the P/L
     // number doesn't already show), so the two accent colours read as accents, not blocks.
@@ -689,13 +683,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       const totalW = containerRef.current?.clientWidth ?? 0;
       if (mainW > 0 && totalW > mainW) setAxisW(totalW - mainW);
     }
-    // Round the pixel y: these pills center with transform: translateY(-50%) over
-    // an even height, so a fractional top would land their text on half-pixels
-    // (blurry). Rounding the top keeps it crisp.
-    const yOf = (value: number): number | undefined => {
-      const y = first(chart.convertToPixel([{ value }], { paneId: "candle_pane", absolute: true })).y;
-      return y == null ? undefined : Math.round(y);
-    };
+    // Rounded, and undefined off a zero-height (background) pane: see priceRowY.
+    const yOf = (value: number): number | undefined => priceRowY(chart, value);
 
     // Last-price pill y + height, captured so the bid/ask pills below can stack
     // around it instead of hiding behind it on a tight spread (TradingView does

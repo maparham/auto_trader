@@ -12,6 +12,17 @@ import {
   type PivotAnalysisPoint,
 } from "../lib/indicators/pivotAnalysis";
 
+/** The candle pane's pixel row for a price, rounded (the axis pills centre with
+ * translateY(-50%) over an even height, so a fractional top blurs their text),
+ * or undefined when there is no finite row. A cell on a background tab keeps
+ * painting at zero height, where klinecharts maps every price to +/-Infinity;
+ * a pill placed there reached React as style.top = -Infinity. */
+export function priceRowY(chart: Pick<Chart, "convertToPixel">, value: number): number | undefined {
+  const r = chart.convertToPixel([{ value }], { paneId: "candle_pane", absolute: true });
+  const y = (Array.isArray(r) ? r[0] : r)?.y;
+  return y != null && Number.isFinite(y) ? Math.round(y) : undefined;
+}
+
 // How close (px) a click/cursor must be to a curve to select/hover it.
 export const HIT_TOLERANCE_PX = 6;
 // How close (px) the cursor must come to a trade/alert line for the price guide (the
