@@ -268,7 +268,13 @@ def test_sweep_job_status_cursor_and_list(strategies):
     assert mine[0]["running"] is False and "createdAt" in mine[0]
 
 
-def test_sweep_job_cancel_and_unknown_404(strategies):
+def test_sweep_job_cancel_and_unknown_404(strategies, tmp_path):
+    # Slow each combo down so the cancel always lands mid-run. With the fast
+    # strategy a quick machine finishes all 6 combos before the cancel POST,
+    # and the job ends done rather than cancelled.
+    (tmp_path / "sweep.py").write_text(
+        "import time\n" + SWEEP_STRAT.replace(
+            "def on_bar(ctx):\n", "def on_bar(ctx):\n    time.sleep(0.05)\n"))
     candles = make_candles(20)
     req = sweep_request(candles, [{"param:n": n} for n in range(3, 9)])
     sub = client.post("/api/backtest/sweep/jobs", json=req)
