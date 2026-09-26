@@ -1,13 +1,16 @@
 import { test, expect, type Page } from "@playwright/test";
-import { stubStateApi } from "./helpers";
+import { e2eBroker, stubStateApi, type E2EBroker } from "./helpers";
 
 // Two one-cell tabs in the device-local scratch workspace (per-broker key —
 // same seeding approach as detach-cell.spec.ts), plus a drawing on t2's
 // primary scope so the test can assert content moves with the merged cell.
-async function seedTwoTabs(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+// Resolves to the seeded scratch key, for specs that read it back.
+async function seedTwoTabs(page: Page): Promise<string> {
+  const b = await e2eBroker(page);
+  await page.addInitScript(({ root, cache }: E2EBroker) => {
     if (sessionStorage.getItem("__seeded")) return;
     localStorage.clear();
+    localStorage.setItem("brokersCache", cache);
     const period = { resolution: "HOUR", label: "1H" };
     const tab = (id: string, epic: string) => ({
       id,
@@ -23,13 +26,14 @@ async function seedTwoTabs(page: Page): Promise<void> {
       ],
     });
     const ws = { tabs: [tab("t1", "US100"), tab("t2", "OIL_CRUDE")], activeTabId: "t1" };
-    localStorage.setItem("auto-trader.b.capital.scratch", JSON.stringify(ws));
+    localStorage.setItem(`${root}.scratch`, JSON.stringify(ws));
     localStorage.setItem(
       "auto-trader.tab.t2.drawings.OIL_CRUDE",
       JSON.stringify([{ name: "horizontalStraightLine", points: [{ value: 70 }] }]),
     );
     sessionStorage.setItem("__seeded", "1");
-  });
+  }, b);
+  return `${b.root}.scratch`;
 }
 
 // Boot the app and wait until its startup hydrate has finished. The hydrate
@@ -50,10 +54,13 @@ async function gotoHydrated(page: Page): Promise<void> {
 
 // t1 = 1 cell, t2 = 2 cells, t3 = 2 cells — exercises the checklist's live
 // 4-cell cap: t2 and t3 each fit alone (1+2<=4) but not together (1+2+2>4).
-async function seedThreeTabs(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+// Resolves to the seeded scratch key, for specs that read it back.
+async function seedThreeTabs(page: Page): Promise<string> {
+  const b = await e2eBroker(page);
+  await page.addInitScript(({ root, cache }: E2EBroker) => {
     if (sessionStorage.getItem("__seeded")) return;
     localStorage.clear();
+    localStorage.setItem("brokersCache", cache);
     const period = { resolution: "HOUR", label: "1H" };
     const oneCellTab = (id: string, epic: string) => ({
       id,
@@ -91,9 +98,10 @@ async function seedThreeTabs(page: Page): Promise<void> {
       tabs: [oneCellTab("t1", "US100"), twoCellTab("t2", "OIL_CRUDE"), twoCellTab("t3", "GOLD")],
       activeTabId: "t1",
     };
-    localStorage.setItem("auto-trader.b.capital.scratch", JSON.stringify(ws));
+    localStorage.setItem(`${root}.scratch`, JSON.stringify(ws));
     sessionStorage.setItem("__seeded", "1");
-  });
+  }, b);
+  return `${b.root}.scratch`;
 }
 
 test("merge checklist disables a row live once the running total would exceed 4 cells", async ({ page }) => {
@@ -135,7 +143,7 @@ test("merge checklist disables a row live once the running total would exceed 4 
 });
 
 test("context-menu merge collapses t2 into t1 with content, focus and crosshair sync", async ({ page }) => {
-  await seedTwoTabs(page);
+  const scratch = await seedTwoTabs(page);
   await stubStateApi(page);
   await page.goto("/");
   await page.locator(".tab-bar").waitFor();
@@ -153,8 +161,8 @@ test("context-menu merge collapses t2 into t1 with content, focus and crosshair 
   // scope purged. Poll — the scratch autosave effect commits asynchronously.
   await expect
     .poll(() =>
-      page.evaluate(() => {
-        const ws = JSON.parse(localStorage.getItem("auto-trader.b.capital.scratch") || "null");
+      page.evaluate((scratch) => {
+        const ws = JSON.parse(localStorage.getItem(scratch) || "null");
         const t = ws?.tabs?.[0];
         return {
           tabCount: ws?.tabs?.length,
@@ -164,7 +172,7 @@ test("context-menu merge collapses t2 into t1 with content, focus and crosshair 
           moved: localStorage.getItem("auto-trader.tab.t1.cell.t2-c0.drawings.OIL_CRUDE") != null,
           purged: localStorage.getItem("auto-trader.tab.t2.drawings.OIL_CRUDE") == null,
         };
-      }),
+      }, scratch),
     )
     .toEqual({
       tabCount: 1,
@@ -200,7 +208,7 @@ test("dropping a chip on another chip's center merges the two tabs", async ({ pa
 });
 
 test("dragging a chip onto the chart merges it into the active tab", async ({ page }) => {
-  await seedTwoTabs(page);
+  const scratch = await seedTwoTabs(page);
   await stubStateApi(page);
   await page.goto("/");
   await page.locator(".tab-bar").waitFor();
@@ -218,10 +226,10 @@ test("dragging a chip onto the chart merges it into the active tab", async ({ pa
   // Order: existing t1 cell first (drop was "after").
   await expect
     .poll(() =>
-      page.evaluate(() => {
-        const ws = JSON.parse(localStorage.getItem("auto-trader.b.capital.scratch") || "null");
+      page.evaluate((scratch) => {
+        const ws = JSON.parse(localStorage.getItem(scratch) || "null");
         return ws?.tabs?.[0]?.cells?.map((c: { id: string }) => c.id);
-      }),
+      }, scratch),
     )
     .toEqual(["t1-c0", "t2-c0"]);
 });
@@ -254,7 +262,7 @@ test("merging the middle chip via a chart drop leaves no stranded drag state on 
 });
 
 test("dragging a chip onto the chart's left half inserts before the existing cell", async ({ page }) => {
-  await seedTwoTabs(page);
+  const scratch = await seedTwoTabs(page);
   await stubStateApi(page);
   await page.goto("/");
   await page.locator(".tab-bar").waitFor();
@@ -272,10 +280,10 @@ test("dragging a chip onto the chart's left half inserts before the existing cel
   // Order: incoming t2 cell first (drop was "before").
   await expect
     .poll(() =>
-      page.evaluate(() => {
-        const ws = JSON.parse(localStorage.getItem("auto-trader.b.capital.scratch") || "null");
+      page.evaluate((scratch) => {
+        const ws = JSON.parse(localStorage.getItem(scratch) || "null");
         return ws?.tabs?.[0]?.cells?.map((c: { id: string }) => c.id);
-      }),
+      }, scratch),
     )
     .toEqual(["t2-c0", "t1-c0"]);
 });
@@ -303,7 +311,7 @@ test("releasing a chip on the dead zone between drop targets cancels instead of 
 });
 
 test("Undo restores the pre-merge tabs with content back under the old scope", async ({ page }) => {
-  await seedTwoTabs(page);
+  const scratch = await seedTwoTabs(page);
   await stubStateApi(page);
   await gotoHydrated(page);
 
@@ -335,14 +343,14 @@ test("Undo restores the pre-merge tabs with content back under the old scope", a
   // and the restored workspace persisted (synchronous rule).
   await expect
     .poll(() =>
-      page.evaluate(() => {
-        const ws = JSON.parse(localStorage.getItem("auto-trader.b.capital.scratch") || "null");
+      page.evaluate((scratch) => {
+        const ws = JSON.parse(localStorage.getItem(scratch) || "null");
         return {
           tabCount: ws?.tabs?.length,
           restored: localStorage.getItem("auto-trader.tab.t2.drawings.OIL_CRUDE") != null,
           purged: localStorage.getItem("auto-trader.tab.t1.cell.t2-c0.drawings.OIL_CRUDE") == null,
         };
-      }),
+      }, scratch),
     )
     .toEqual({ tabCount: 2, restored: true, purged: true });
 });

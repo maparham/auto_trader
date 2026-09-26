@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
+import { e2eBroker, seedSingleChartDefault, stubStateApi, type E2EBroker } from "./helpers";
 
 // RSI must match TradingView: a SINGLE curve of length 14, not klinecharts'
 // built-in three lengths ([6,12,24] → three lines). Two paths are covered:
@@ -63,8 +63,10 @@ test("a saved three-length RSI collapses to one line on reload", async ({ page }
   // saved with the OLD three-length params. Stub the API so the real backend
   // can't clobber the seed.
   await stubStateApi(page);
-  await page.addInitScript(() => {
+  const b = await e2eBroker(page);
+  await page.addInitScript(({ root, cache }: E2EBroker) => {
     localStorage.clear();
+    localStorage.setItem("brokersCache", cache);
     const tabId = "seed";
     const scope = `tab.${tabId}`;
     const sym = { epic: "US100", name: "US Tech 100", status: null, pricePrecision: 2 };
@@ -74,14 +76,14 @@ test("a saved three-length RSI collapses to one line on reload", async ({ page }
       activeTabId: tabId,
     };
     // The workspace is per broker now: the unsaved one lives in the broker's
-    // `scratch` key (Capital is the default data broker).
-    localStorage.setItem("auto-trader.b.capital.scratch", JSON.stringify(ws));
+    // `scratch` key.
+    localStorage.setItem(`${root}.scratch`, JSON.stringify(ws));
     localStorage.setItem(`auto-trader.${scope}.indicators`, JSON.stringify([{ id: "RSI", type: "RSI" }]));
     localStorage.setItem(
       `auto-trader.${scope}.indicatorConfig`,
       JSON.stringify({ RSI: { calcParams: [9, 0, 0] } }),
     );
-  });
+  }, b);
   await page.goto("/");
   await page.locator(".tab-bar").waitFor();
 

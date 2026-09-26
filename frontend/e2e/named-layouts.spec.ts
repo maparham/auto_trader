@@ -1,13 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
+import { e2eBroker } from "./helpers";
 
 // Named workspace layouts: a layout = the whole tab set saved under a name. The
 // list of layouts + the default sync across instances (backend-mirrored); the
 // ACTIVE layout is per browser tab. A brand-new broker (no layouts at all) opens
 // on a default chart; one that HAS layouts but no default opens blank.
 //
-// Workspace roots are per broker (`auto-trader.b.<broker>.*`); a fresh browser
-// resolves to capital, so every seeded key below carries that prefix.
-const ROOT = "auto-trader.b.capital";
+// Workspace roots are per broker (`auto-trader.b.<broker>.*`); every seeded key
+// below carries the root of the broker the app boots on (see e2eBroker).
 const cell = (tabId: string, epic: string, resolution: string, label: string) => ({
   id: `${tabId}-c0`,
   symbol: { epic, name: epic, status: null, pricePrecision: 2 },
@@ -55,17 +55,19 @@ test("saved layouts but no default opens blank, with the layout manager availabl
   // lacked these keys would prune them on hydrate). No default, no active.
   const index = [{ id: "L1", name: "Mine" }];
   const body = { tabs: [oneCellTab("t1", "US100")], activeTabId: "t1" };
+  const { root, cache } = await e2eBroker(page);
   await statefulBackend(page, {
-    [`${ROOT}.layouts`]: index,
-    [`${ROOT}.layout.L1`]: body,
+    [`${root}.layouts`]: index,
+    [`${root}.layout.L1`]: body,
   });
   await page.addInitScript(
-    ([root, idx, b]: [string, unknown, unknown]) => {
+    ([r, c, idx, b]: [string, string, unknown, unknown]) => {
       localStorage.clear();
-      localStorage.setItem(`${root}.layouts`, JSON.stringify(idx));
-      localStorage.setItem(`${root}.layout.L1`, JSON.stringify(b));
+      localStorage.setItem("brokersCache", c);
+      localStorage.setItem(`${r}.layouts`, JSON.stringify(idx));
+      localStorage.setItem(`${r}.layout.L1`, JSON.stringify(b));
     },
-    [ROOT, index, body] as [string, unknown, unknown],
+    [root, cache, index, body] as [string, string, unknown, unknown],
   );
   await page.goto("/");
   await page.locator(".toolbar").waitFor();
@@ -115,15 +117,20 @@ test("save current as a named layout, set default, reload applies it", async ({ 
 test("a second device shows the synced default even with empty local storage", async ({ page }) => {
   // Backend already holds a layout + default (as if saved on another device).
   // Two tabs, so it can't be mistaken for the one-tab brand-new default.
+  const { root, cache } = await e2eBroker(page);
   await statefulBackend(page, {
-    [`${ROOT}.layouts`]: [{ id: "L1", name: "Shared" }],
-    [`${ROOT}.defaultLayoutId`]: "L1",
-    [`${ROOT}.layout.L1`]: {
+    [`${root}.layouts`]: [{ id: "L1", name: "Shared" }],
+    [`${root}.defaultLayoutId`]: "L1",
+    [`${root}.layout.L1`]: {
       tabs: [oneCellTab("t1", "US100"), oneCellTab("t2", "OIL_CRUDE", "DAY", "1D")],
       activeTabId: "t1",
     },
   });
-  await page.addInitScript(() => localStorage.clear()); // brand-new device
+  // Brand-new device: nothing local but the broker list.
+  await page.addInitScript((c: string) => {
+    localStorage.clear();
+    localStorage.setItem("brokersCache", c);
+  }, cache);
   await page.goto("/");
   await page.locator(".toolbar").waitFor();
   await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
