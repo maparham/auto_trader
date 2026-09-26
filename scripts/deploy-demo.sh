@@ -233,4 +233,11 @@ CORS="$(curl -s -m 15 -o /dev/null -w '%{http_code}' -X OPTIONS \
 SITE="$(curl -s -m 15 -o /dev/null -w '%{http_code}' https://chartkar.app/)"
 [ "$SITE" = 200 ] || { echo "FAIL: site returned $SITE" >&2; exit 1; }
 
+# What the box's backend now runs, for CI's skip-unchanged-backend check.
+# Outside backend/, which rsync --delete would wipe; written only after the
+# smoke test, so a failed deploy never claims to be live.
+if [ "$DO_BACKEND" = 1 ]; then
+  "${SSH[@]}" "$HOST" "echo $(git -C "$ROOT" rev-parse HEAD) > /opt/auto-trader/.deployed-backend-sha"
+fi
+
 echo "==> deployed $HEAD_SHA — https://chartkar.app"
