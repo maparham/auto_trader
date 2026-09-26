@@ -39,6 +39,11 @@ import MobileApp from "./MobileApp";
 import { mobileTabSignal } from "./mobileChartState";
 import { hydrateAlerts } from "../lib/alertsApi";
 
+// The top-level test at the bottom has no describe-level cleanup. Without
+// this, its tree stays mounted into env teardown and React's scheduler throws
+// "window is not defined" as an unhandled error.
+afterEach(cleanup);
+
 describe("MobileApp shell", () => {
   beforeEach(() => mobileTabSignal.set("chart"));
   afterEach(cleanup);

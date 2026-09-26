@@ -122,7 +122,9 @@ def test_distance_is_scale_and_level_invariant():
     s1, s2 = prefix_sums(ohlc - ohlc.mean())
     d_self = window_distances(ohlc - ohlc.mean(), s1, s2, query)[50]
     d_scaled = window_distances(ohlc - ohlc.mean(), s1, s2, scaled)[50]
-    assert d_scaled == pytest.approx(d_self, abs=1e-9)
+    # Both are float noise around 0 (a window against itself). The noise
+    # differs by BLAS build: ~4e-9 apart on Linux CI, so 1e-9 was too tight.
+    assert d_scaled == pytest.approx(d_self, abs=1e-6)
 
 
 def test_distance_is_a_per_component_rms_so_lengths_compare():
