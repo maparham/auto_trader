@@ -6,7 +6,7 @@
 import type { Chart, Overlay, OverlayEvent, DeepPartial, OverlayStyle, OverlayMode } from "klinecharts";
 import { effectiveMagnetMode, magnetSignal, magnetInvertSignal } from "../magnet";
 import type { SavedOverlay } from "../persist";
-import { bumpAlerts } from "../signals";
+import { bumpAlerts, drawingSettingsRequest } from "../signals";
 import { snapScreenAngle, snapSquare, isShiftHeld, type Pt } from "../snapAngle";
 import type { ChartDataFacade } from "../../chart/chartDataFacade";
 import { SELECT_GLOW_KEY } from "../touchHitSlop";
@@ -357,11 +357,15 @@ export abstract class OverlayManagerBase {
   // translucent under-stroke (drawn by the `line` figure in touchHitSlop.ts),
   // so it reads as selected even with both end dots off screen. The marker
   // rides on the live line style only; cloneStyles strips it from every
-  // snapshot. No glow while the drawing is being placed or dragged: the wide
-  // stroke hides the exact line the user is lining up.
-  protected syncSelectGlow(): void {
+  // snapshot. No glow while the drawing is being placed, dragged or tuned in
+  // its settings: the wide stroke hides the exact line the user is adjusting.
+  // ChartCore calls this when the settings open or close.
+  syncSelectGlow(): void {
     const id = this.selectedDrawingId;
-    const busy = id === this.draggingDrawingId || (this.drawingInProgress && id === this.pendingDrawId);
+    const busy =
+      id === this.draggingDrawingId ||
+      (this.drawingInProgress && id === this.pendingDrawId) ||
+      id === drawingSettingsRequest.value?.id;
     const next = id && !busy && this.entries.get(id) === "drawing" ? id : null;
     if (next === this.glowDrawingId) return;
     if (this.glowDrawingId) this.setSelectGlow(this.glowDrawingId, false);

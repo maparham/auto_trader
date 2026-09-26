@@ -1077,6 +1077,8 @@ export default function ChartCore({
     ];
     return () => offs.forEach((off) => off());
   }, [selectedIndicator, legendHoverName, curveHover, focused]);
+  // A drawing's glow goes the same way while its settings are open.
+  useEffect(() => drawingSettingsRequest.subscribe(() => overlays.syncSelectGlow()), [overlays]);
   useEffect(
     () => indicatorOverlayRepaint.subscribe(() => redrawRef.current()),
     [],
