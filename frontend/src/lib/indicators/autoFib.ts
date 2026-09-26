@@ -19,6 +19,8 @@ import { atrSeries } from "../atr";
 import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { htfBarEndMs } from "../mtfForming";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "./shared";
+import { setPaintedLines, type PaintedLine } from "./paintedLines";
+import { TL_HOVER_GLOW_ALPHA, TL_SELECT_GLOW, TL_SELECT_GLOW_ALPHA } from "./trendlineMarks";
 import {
   AUTO_FIB_ATR_LEN,
   AUTO_FIB_DEFAULTS,
@@ -194,6 +196,10 @@ export interface AutoFibExtend {
     htfFibPivots?: AutoFibMtfPivot[];
   };
   hideLegendValue?: boolean;
+  /** The current fib glows: "select" when the instance is selected, "hover"
+   * while the mouse is on one of its lines or its legend row. SESSION-ONLY,
+   * written by useTrendlineMenu's emphasis and never saved. */
+  emphasis?: "select" | "hover" | null;
 }
 
 export interface AutoFibPoint {
@@ -374,6 +380,10 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
   const H = bounding.height;
   const clampX = (x: number) => Math.min(W + DRAW_CLIP_PAD, Math.max(-DRAW_CLIP_PAD, x));
   const firstDrawn = Math.max(0, pairs.length - 1 - pastCount);
+  const glowAlpha =
+    ext.emphasis === "select" ? TL_SELECT_GLOW_ALPHA : ext.emphasis === "hover" ? TL_HOVER_GLOW_ALPHA : 0;
+  // Every level line as painted, for the chart's hover / click hit-test.
+  const painted: PaintedLine[] = [];
 
   ctx.save();
   ctx.font = LABEL_FONT;
@@ -412,7 +422,20 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
     for (const s of segs) {
       // The canvas is shared with the panes above and below.
       if (s.y < 0 || s.y > H) continue;
+      painted.push({ x0: x1, y0: s.y, x1: x2, y1: s.y });
       ctx.strokeStyle = s.color;
+      // Selected or hovered: a wide translucent under-stroke, like a picked
+      // trendline's.
+      if (current && glowAlpha) {
+        ctx.globalAlpha = glowAlpha;
+        ctx.lineWidth = (s.size ?? 1) + TL_SELECT_GLOW;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(x1, s.y);
+        ctx.lineTo(x2, s.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       ctx.lineWidth = s.size ?? 1;
       ctx.setLineDash(s.style === "dashed" ? [4, 4] : []);
       ctx.beginPath();
@@ -429,6 +452,7 @@ function drawAutoFib(params: IndicatorDrawParams<AutoFibRow, unknown, unknown>):
   }
   ctx.setLineDash([]);
   ctx.restore();
+  setPaintedLines(chart, indicator.paneId, indicator.name, painted.length ? painted : null);
   // Pivot marks go on top of the fibs, and paint even with no fib yet: a pane
   // whose filter admitted pivots of one kind only still shows them.
   if (ext.showPivots && lastRow?.marks) {
@@ -459,8 +483,9 @@ export const AUTO_FIB_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   series: "price",
   precision: 2,
   calcParams: [AUTO_FIB_DEFAULTS.pivotLen, AUTO_FIB_DEFAULTS.minSwingAtr],
-  // Figure-less like Trendlines: draw paints everything, so there are no line
-  // figures to hang selection handles on (no ZONE_ONLY_TYPES entry needed).
+  // Figure-less like Trendlines: draw paints everything and records its lines
+  // in paintedLines, which is what the chart's hover and click hit-test (no
+  // line figures, so no line-cache entry and no ZONE_ONLY_TYPES entry).
   figures: [],
   calc: (dataList: KLineData[], ind: Indicator) => {
     const { points, pairs, marks } = computeAutoFib(

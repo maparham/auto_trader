@@ -55,6 +55,8 @@ import { useTrendlinePins } from "./chart/useTrendlinePins";
 import { emphasizeTrendlines, useTrendlineMenu } from "./chart/useTrendlineMenu";
 import { useTrendlineDebug } from "./chart/useTrendlineDebug";
 import { hitTrendline, TL_LINE_HIT, TL_LINE_HIT_TOUCH } from "./lib/indicators/trendlineMarks";
+import { hitPaintedLine } from "./lib/indicators/paintedLines";
+import { emphasizeAutoFibs } from "./chart/autoFibEmphasis";
 import { compactHides } from "./chart/compactChrome";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
 import CurveLabels, { type CurveLabelsHandle } from "./CurveLabels";
@@ -1046,6 +1048,24 @@ export default function ChartCore({
       offHov();
     };
   }, [selectedIndicator, legendHoverName]);
+  // Auto Fib glows the same way, and also while the mouse is on one of its
+  // lines (curveHover): its lines carry no handles to show.
+  useEffect(() => {
+    const sync = () => {
+      const c = chartRef.current;
+      if (c)
+        emphasizeAutoFibs(c, selectedIndicator.value?.name, [
+          curveHover.value?.name,
+          legendHoverName.value,
+        ]);
+    };
+    const offs = [
+      selectedIndicator.subscribe(sync),
+      legendHoverName.subscribe(sync),
+      curveHover.subscribe(sync),
+    ];
+    return () => offs.forEach((off) => off());
+  }, [selectedIndicator, legendHoverName, curveHover]);
   useEffect(
     () => indicatorOverlayRepaint.subscribe(() => redrawRef.current()),
     [],
@@ -2056,7 +2076,16 @@ export default function ChartCore({
       const touch = (e as Partial<PointerEvent>).pointerType === "touch";
       const curveHit = hitTestCache(lineCacheRef.current, x, y);
       const tlHit = curveHit ? null : hitTrendline(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
-      const hit = curveHit ?? (tlHit ? { paneId: tlHit.paneId, name: tlHit.name, figKey: "" } : null);
+      // Auto Fib paints its own lines too, recorded in paintedLines.
+      const paintedHit =
+        curveHit || tlHit ? null : hitPaintedLine(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
+      const hit =
+        curveHit ??
+        (tlHit
+          ? { paneId: tlHit.paneId, name: tlHit.name, figKey: "" }
+          : paintedHit
+            ? { ...paintedHit, figKey: "" }
+            : null);
       if (hit && controller.indicatorPickArmed.value) {
         // "Pick from chart" is armed: publish the clicked instance for the panel
         // to turn into an expression token, rather than selecting it on the chart.
@@ -2295,7 +2324,8 @@ export default function ChartCore({
       // A trendline counts as its instance's curve.
       const touch = (e as Partial<PointerEvent>).pointerType === "touch";
       const hit = hitTestCache(lineCacheRef.current, x, y)
-        ?? hitTrendline(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
+        ?? hitTrendline(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT)
+        ?? hitPaintedLine(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
       if (hit) {
         if (!snapViewRef.current) indicatorSettingsRequest.set({ paneId: hit.paneId, name: hit.name });
         return;

@@ -50,6 +50,7 @@ import { subscribeCrosshairWrites } from "./crosshairWrites";
 import { fmtPrice } from "../lib/priceFormat";
 import { hitAnyTrendlineHandle } from "../lib/indicators/trendlines";
 import { hitTrendline, TL_LINE_HIT } from "../lib/indicators/trendlineMarks";
+import { hitPaintedLine } from "../lib/indicators/paintedLines";
 import { hoverTrendline } from "./useTrendlineMenu";
 import type { SelectedIndicator } from "../lib/chartController";
 import type { ChartHandle } from "./chartHandle";
@@ -227,7 +228,14 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
           ? null
           : hitTrendline(c, lx, ly, TL_LINE_HIT);
       hoverTrendline(c, tlHit ? { paneId: tlHit.paneId, name: tlHit.name, key: tlHit.seg.key } : null);
-      const curveHit = lineHit ?? (tlHit ? { paneId: tlHit.paneId, name: tlHit.name } : null);
+      // Same for the other self-painted lines (Auto Fib): the instance's
+      // lines glow (via curveHover, see ChartCore) and its card lights.
+      const paintedHit =
+        lineHit || tlHit || avwapAnchorMode.value || overlays.getHoveredDrawingId() || !c
+          ? null
+          : hitPaintedLine(c, lx, ly, TL_LINE_HIT);
+      const curveHit =
+        lineHit ?? (tlHit ? { paneId: tlHit.paneId, name: tlHit.name } : paintedHit);
       const ch = curveHover.value;
       if (ch?.paneId !== curveHit?.paneId || ch?.name !== curveHit?.name) {
         curveHover.set(curveHit);

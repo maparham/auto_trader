@@ -113,6 +113,7 @@ import {
   mirrorPivotBarsSinceCompanion,
   syncPivotBarsSinceCompanion,
   getIndicator,
+  SESSION_GESTURE_KEYS,
 } from "./lib/indicators";
 import { EXPR_INSTANCE_TYPES } from "./lib/exprInstances";
 import { renameInstanceEverywhere } from "./lib/renameInstance";
@@ -302,6 +303,8 @@ function extendRestorePatch(
   const patch: Record<string, unknown> = {};
   let repin = false;
   for (const k of new Set([...Object.keys(orig), ...Object.keys(live)])) {
+    // A hover or selection glow is the chart's to clear, not Cancel's.
+    if ((SESSION_GESTURE_KEYS as readonly string[]).includes(k)) continue;
     if (k === "mtf") {
       const was = pinOf(orig.mtf);
       if (JSON.stringify(was) !== JSON.stringify(pinOf(live.mtf))) {

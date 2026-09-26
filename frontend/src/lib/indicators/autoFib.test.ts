@@ -185,18 +185,24 @@ describe("AUTO_FIB_TEMPLATE draw", () => {
     return { ctx, calls };
   }
 
-  async function paint(pastCount: number) {
+  async function paint(pastCount: number, extra: Record<string, unknown> = {}) {
     const { AUTO_FIB_TEMPLATE } = await import("./autoFib");
     const { ctx, calls } = fakeCtx();
     const mk = (s: number, e: number | null) => ({ hiIdx: s - 2, hiPrice: 110, loIdx: s - 4, loPrice: 90, dir: 1, startIdx: s, endIdx: e });
     const result = [{}, { pairs: [mk(10, 20), mk(20, 30), mk(30, null)] }];
+    const chart = {
+      getDataList: () => new Array(40),
+      getSize: () => ({ width: 40 }),
+      getIndicators: () => [{ name: "fib", visible: true }],
+    };
     (AUTO_FIB_TEMPLATE as { draw: (p: unknown) => boolean }).draw({
       ctx,
-      chart: { getDataList: () => new Array(40), getSize: () => ({ width: 40 }) },
+      chart,
       indicator: {
         result,
+        name: "fib",
         calcParams: [5, 0],
-        extendData: { pastCount, fib: { levels: [{ value: 0, enabled: true, color: "#111" }, { value: 1, enabled: true, color: "#222" }], extend: "none", reverse: false, trendLine: false, labels: true } },
+        extendData: { pastCount, ...extra, fib: { levels: [{ value: 0, enabled: true, color: "#111" }, { value: 1, enabled: true, color: "#222" }], extend: "none", reverse: false, trendLine: false, labels: true } },
         paneId: "candle_pane",
         precision: 2,
       },
@@ -204,13 +210,31 @@ describe("AUTO_FIB_TEMPLATE draw", () => {
       xAxis: { convertToPixel: (i: number) => i * 10 },
       yAxis: { convertToPixel: (p: number) => 300 - p },
     });
-    return calls;
+    return Object.assign(calls, { chart });
   }
 
   it("draws only the current fib by default, with labels", async () => {
     const calls = await paint(0);
     expect(calls.filter((c) => c.startsWith("stroke:"))).toEqual(["stroke:1", "stroke:1"]);
     expect(calls).toContain("text:0 (110.00)");
+  });
+
+  it("records the painted level lines as hit targets", async () => {
+    const { hitPaintedLine } = await import("./paintedLines");
+    const { chart } = await paint(1);
+    // Current fib: level 0 at the high (y 190), x from its low anchor (260)
+    // to the last bar (390).
+    expect(hitPaintedLine(chart, 300, 192, 6)).toEqual({ paneId: "candle_pane", name: "fib" });
+    // Past fib's span (160..300) at its level 1 (y 210).
+    expect(hitPaintedLine(chart, 170, 210, 6)?.name).toBe("fib");
+    expect(hitPaintedLine(chart, 300, 150, 6)).toBeNull();
+  });
+
+  it("glows the current fib when selected, fainter when hovered", async () => {
+    const glow = (calls: string[], alpha: number) => calls.filter((c) => c === `stroke:${alpha}`).length;
+    expect(glow(await paint(0, { emphasis: "select" }), 0.25)).toBe(2);
+    expect(glow(await paint(0, { emphasis: "hover" }), 0.12)).toBe(2);
+    expect(glow(await paint(0), 0.25) + glow(await paint(0), 0.12)).toBe(0);
   });
 
   it("adds pastCount earlier fibs, dimmed and unlabelled", async () => {

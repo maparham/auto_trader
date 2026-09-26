@@ -40,6 +40,7 @@ import { INSET_CAPABLE, insetTemplate } from "./indicators/inset";
 import { hiddenAware } from "./indicators/hiddenCalc";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
 import { dropTrendlineHandles } from "./indicators/trendlines";
+import { dropPaintedLines } from "./indicators/paintedLines";
 import { noteDebugOn } from "./indicators/trendlinesDebugStore";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
 import {
@@ -60,6 +61,11 @@ import {
 import type { ChartController } from "./chartController";
 import { overrideExtend } from "./overrideExtend";
 export { overrideExtend };
+
+/** extendData keys a live gesture writes (a picked, hovered or glowing line)
+ * and nothing may save, restore or copy: a stale one would leave a line lit
+ * with nothing left to clear it. */
+export const SESSION_GESTURE_KEYS = ["selectedLine", "hoveredLine", "emphasized", "emphasis"] as const;
 
 // v10 replaced v9's chart.getIndicatorByPaneId(paneId, name) with a flat
 // filter-based getIndicators({ paneId, name }). This helper restores the single
@@ -605,10 +611,8 @@ export function applyIndicator(
   // from one) can still carry it, so drop it here rather than resurrect pins the
   // user cannot remember making.
   delete (extendData as { pinned?: unknown }).pinned;
-  // Same for the picked trendline: a selection is a live gesture, not config.
-  delete (extendData as { selectedLine?: unknown }).selectedLine;
-  delete (extendData as { hoveredLine?: unknown }).hoveredLine;
-  delete (extendData as { emphasized?: unknown }).emphasized;
+  // Same for a picked or glowing line: a selection is a live gesture, not config.
+  for (const k of SESSION_GESTURE_KEYS) delete (extendData as Record<string, unknown>)[k];
   // Debug mode is a live gesture like a selection: never restored from a
   // saved config, so it cannot leak into alert snapshots, the public demo,
   // templates or pastes.
@@ -1256,6 +1260,7 @@ export function removeIndicatorById(chart: Chart, scope: string, id: string): vo
   // A removed pane never draws again, so its recorded TRENDLINES pin handles
   // would stay clickable-looking (the cursor turns to a pointer) forever.
   dropTrendlineHandles(chart, id);
+  dropPaintedLines(chart, id);
   noteDebugOn(chart, id, false);
   deleteIndicatorConfig(scope, id);
 }
