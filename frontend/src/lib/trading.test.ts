@@ -300,3 +300,15 @@ describe("applyEditedLevels expiry", () => {
     expect(calls[1].clear_expiry).toBe(true);
   });
 });
+
+describe("trades feed on a data-only source", () => {
+  it("never asks the backend for positions or orders (it would 422)", async () => {
+    const t = await import("./trading");
+    t.noteDataOnlyBrokers([{ key: "dukascopy:data", broker: "dukascopy", env: "data", dataOnly: true } as never]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]"));
+    t.setTradesAccount("dukascopy:data");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchSpy.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("dukascopy"))).toEqual([]);
+    fetchSpy.mockRestore();
+  });
+});

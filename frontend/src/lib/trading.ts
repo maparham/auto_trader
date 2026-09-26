@@ -554,6 +554,13 @@ export function setTradesAccount(account: TradeAccount): void {
 
 async function _refresh(): Promise<void> {
   const account = _account;
+  // A data-only source (Dukascopy, Yahoo) has no positions or orders; asking
+  // only earns a 422. This is the default account on a host without broker
+  // credentials, e.g. the public demo.
+  if (isDataOnlyBroker(brokerOf(account))) {
+    tradesSignal.set([]);
+    return;
+  }
   try {
     const [positions, orders] = await Promise.all([
       fetchPositions(account),
