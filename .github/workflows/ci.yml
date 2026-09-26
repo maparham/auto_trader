@@ -31,8 +31,10 @@ jobs:
           cache-dependency-glob: backend/uv.lock
       # --extra dev: respx lives in optional-dependencies, not the dev group.
       - run: uv sync --locked --extra dev
+      # Pinned: newer ruff widens the default rule set and flags ~400 lines
+      # the pre-commit hook's local ruff accepts.
       - name: ruff (same scope as the pre-commit hook)
-        run: uvx ruff check auto_trader scripts
+        run: uvx ruff@0.9.10 check auto_trader scripts
       - run: uv run pytest -q
 
   frontend:
@@ -44,10 +46,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 25
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # Node 25 matches local dev; its built-in sessionStorage is what
+      # wfoRun.test.ts expects.
       - run: npx vitest run
       # vite build, not `npm run build`: tsc -b still carries a known error
       # backlog, so it cannot gate yet.
@@ -65,7 +69,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 25
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       # deploy-demo.sh builds in a worktree that symlinks these node_modules.
