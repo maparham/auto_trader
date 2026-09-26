@@ -35,6 +35,7 @@ const trading = { confirmLineEdits: true } as unknown as TradingSettings;
 
 afterEach(() => {
   cleanup();
+  feed.fetchRecent.mockClear();
   setTradeSelected(null);
   draftOrderSignal.set(null);
 });
@@ -44,7 +45,8 @@ describe("OrderTicket exits in ATRs", () => {
     render(<OrderTicket epic="US100" trading={trading} resolution="HOUR" brokerId="capital" />);
     await waitFor(() => expect(draftOrderSignal.value).not.toBeNull());
 
-    fireEvent.change(screen.getByLabelText("Take profit unit"), { target: { value: "atr" } });
+    fireEvent.click(screen.getByLabelText("Take profit unit"));
+    fireEvent.click(screen.getByRole("option", { name: "ATR" }));
     await waitFor(() =>
       expect(feed.fetchRecent).toHaveBeenCalledWith("US100", "HOUR", 500, "mid", "capital"),
     );
@@ -54,10 +56,26 @@ describe("OrderTicket exits in ATRs", () => {
     await waitFor(() => expect(draftOrderSignal.value?.takeProfit).toBe(102));
 
     const input = screen.getByLabelText("Take profit in ATRs") as HTMLInputElement;
-    expect(input.value).toBe("1.00");
-    fireEvent.focus(input);
+    expect(input.value).toBe("1");
     fireEvent.change(input, { target: { value: "2.5" } });
     expect(draftOrderSignal.value?.takeProfit).toBe(105);
     expect(screen.getByText("105.00 · +5.00%")).toBeTruthy();
+  });
+
+  it("flags a zero multiple instead of silently ignoring it", async () => {
+    render(<OrderTicket epic="US100" trading={trading} resolution="HOUR" brokerId="capital" />);
+    await waitFor(() => expect(draftOrderSignal.value).not.toBeNull());
+    await waitFor(() => expect(feed.fetchRecent).toHaveBeenCalled());
+    // Let the ATR fetch land before toggling, so the seed is ATR-based.
+    await act(async () => {
+      await feed.fetchRecent.mock.results.at(-1)?.value;
+    });
+    await act(async () => fireEvent.click(screen.getAllByRole("switch")[0]));
+    await waitFor(() => expect(draftOrderSignal.value?.takeProfit).toBe(102));
+
+    const input = screen.getByLabelText("Take profit in ATRs") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "0" } });
+    expect(draftOrderSignal.value?.takeProfit).toBe(102);
+    expect(input.closest(".ot-input-row")?.classList.contains("invalid")).toBe(true);
   });
 });

@@ -1033,7 +1033,10 @@ export default function App() {
               resolution={period?.resolution}
               priceSide={settings.priceSide}
               brokerId={brokerId}
-              chartCandles={() => focusedController?.chart?.getDataList()}
+              chartCandles={() => {
+                const c = focusedController?.chart;
+                return c ? { ticker: c.getSymbol()?.ticker, bars: c.getDataList() } : undefined;
+              }}
             />
           </aside>
         )}

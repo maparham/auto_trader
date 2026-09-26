@@ -5097,25 +5097,18 @@
 /* "Take profit, [price|ATR] [14]": the unit reads as part of the label, with a
    small caret; ATR mode adds a compact length box after it. */
 .ot-exit-label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.ot-unit {
-  field-sizing: content; /* as wide as the chosen option, not the widest one */
-  appearance: none; -webkit-appearance: none; background: transparent; border: none;
-  /* explicit line box + vertical padding, or the select clips descenders (the p) */
-  padding: 1px 11px 2px 0; margin: 0; font: inherit; line-height: 1.3; height: auto;
-  color: var(--text-dim); cursor: pointer;
-  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
-    linear-gradient(135deg, currentColor 50%, transparent 50%);
-  background-position: right 4px center, right 1px center;
-  background-size: 3px 3px, 3px 3px;
-  background-repeat: no-repeat;
+/* SelectMenu trigger restyled as inline label text (compound selector so it
+   beats .sel-trigger's boxed field look regardless of order). */
+.sel-trigger.ot-unit {
+  width: auto; gap: 3px; padding: 1px 0 2px; line-height: 1.3;
+  background: transparent; border: none; color: var(--text-dim);
 }
-.ot-unit:hover, .ot-unit:focus-visible { color: var(--text); outline: none; }
+.sel-trigger.ot-unit:hover, .sel-trigger.ot-unit.on { color: var(--text); }
+.sel-trigger.ot-unit > .sel-caret { color: inherit; font-size: 10px; }
 .ot-atr-len {
   width: 34px; padding: 1px 4px; font: inherit; font-size: 11px; color: var(--text);
   background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px;
-  -moz-appearance: textfield;
 }
-.ot-atr-len::-webkit-inner-spin-button, .ot-atr-len::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .ot-atr-len:focus { outline: none; border-color: var(--accent); }
 .ot-switch {
   width: 34px; height: 18px; border-radius: 9px; border: none; cursor: pointer;

@@ -13,7 +13,7 @@
 // never mirrored into local state (avoids the snap-back bug class). A MARKET
 // order has no chart lines, so its SL/TP live in local state and submit instantly.
 
-import { useEffect, useRef, useState, type InputHTMLAttributes } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   applyEditedLevels,
   mergeTradeLevels,
@@ -49,12 +49,14 @@ import {
   normalizeAtrLength,
   useExitAtrPrefs,
   useLatestAtr,
+  type ChartBars,
   type ExitAtrPrefs,
   type ExitUnit,
 } from "./lib/exitAtr";
 import { periodByResolution } from "./lib/feed";
-import type { KLineData } from "klinecharts";
 import Tooltip from "./components/Tooltip";
+import NumberField from "./components/NumberField";
+import SelectMenu from "./components/SelectMenu";
 import ExpirySelect from "./components/ExpirySelect";
 import { expiryToApi, isValidExpiry } from "./lib/expiry";
 
@@ -91,9 +93,9 @@ interface Props {
   resolution?: string;
   priceSide?: PriceSide;
   brokerId?: string;
-  // The focused chart's loaded bars (it shows `epic`), read for the ATR so
-  // it matches the chart without a fetch.
-  chartCandles?: () => KLineData[] | undefined;
+  // The focused chart's loaded bars and the instrument it declares, read for
+  // the ATR so it matches the chart without a fetch (see chartBarsUsable).
+  chartCandles?: () => ChartBars | undefined;
 }
 
 // Real-money accounts are the live env (key "{broker}:live"); the backend enforces
@@ -222,6 +224,7 @@ export default function OrderTicket({
     brokerId,
     enabled: !replaying && !editTrade && (atrPrefs.tp === "atr" || atrPrefs.sl === "atr"),
     chartCandles,
+    livePrice: quote?.mid ?? null,
   });
 
   // The edited trade can vanish mid-edit (a position hits SL/TP, an order fills or
@@ -292,16 +295,21 @@ export default function OrderTicket({
       ? round(long ? mid * (1 - DEFAULT_BRACKET) : mid * (1 + DEFAULT_BRACKET))
       : null;
     const ref = entry ?? mid;
-    const seed = (on: boolean, up: boolean) =>
-      on ? round(up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET)) : null;
+    // Same rule as bracket(): a row in ATR mode re-seeds 1 ATR out.
+    const seed = (on: boolean, kind: "tp" | "sl") => {
+      if (!on) return null;
+      const up = kind === "tp" ? long : !long;
+      if (atrPrefs[kind] === "atr" && atrValue != null) return levelFromAtr(ref, 1, atrValue, up, precision);
+      return round(up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET));
+    };
     draftOrderSignal.set({
       epic,
       side,
       quantity: Number(quantity) || 1,
       type: isLimit ? "limit" : "market",
       price: entry,
-      stop: seed(d?.stop != null, !long),
-      takeProfit: seed(d?.takeProfit != null, long),
+      stop: seed(d?.stop != null, "sl"),
+      takeProfit: seed(d?.takeProfit != null, "tp"),
       expiresAt: d?.expiresAt ?? null,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -673,7 +681,7 @@ function EditTicket({
   resolution?: string;
   priceSide: PriceSide;
   brokerId?: string;
-  chartCandles?: () => KLineData[] | undefined;
+  chartCandles?: () => ChartBars | undefined;
 }) {
   const [pending, setPending] = useState<PendingEdit>(
     () => pendingEditsSignal.value[trade.id] ?? {},
@@ -721,6 +729,7 @@ function EditTicket({
     brokerId,
     enabled: atrPrefs.tp === "atr" || atrPrefs.sl === "atr",
     chartCandles,
+    livePrice: getLivePrice(trade.epic) ?? trade.mark ?? null,
   });
 
   function patch(p: PendingEdit) {
@@ -748,11 +757,12 @@ function EditTicket({
     const reference = isOrder ? ref : latest;
     const base = reference ?? ref;
     const up = kind === "tp" ? long : !long;
-    // A row in ATR mode starts 1 ATR from the entry (what its multiple measures
-    // from), then takes the same clamps as the % seed.
+    // A row in ATR mode starts 1 ATR from the same base as the % seed (the
+    // latest price for a position, so a trade that has run more than 1 ATR
+    // doesn't seed a level the clamp then pins one tick from the market).
     let v =
       atrPrefs[kind] === "atr" && atrValue != null
-        ? levelFromAtr(ref, 1, atrValue, up, precision)
+        ? levelFromAtr(base, 1, atrValue, up, precision)
         : round(up ? base * (1 + DEFAULT_BRACKET) : base * (1 - DEFAULT_BRACKET));
     if (reference != null) {
       const tick = Number((10 ** -precision).toFixed(precision));
@@ -966,41 +976,10 @@ function exitAtrView(
   };
 }
 
-// A number input that keeps the user's raw text while it has focus, so a
-// derived value (an ATR multiple recomputed from the rounded level, or a length
-// that rejects "") can't fight the keystrokes; it resyncs from `value` on blur.
-function BufferedNumberInput({
-  value,
-  format,
-  onCommit,
-  ...rest
-}: {
-  value: number | null;
-  format: (n: number) => string;
-  onCommit: (n: number) => void;
-} & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange">) {
-  const [text, setText] = useState<string | null>(null);
-  return (
-    <input
-      {...rest}
-      type="number"
-      value={text ?? (value != null ? format(value) : "")}
-      onFocus={(e) => {
-        setText(value != null ? format(value) : "");
-        rest.onFocus?.(e);
-      }}
-      onBlur={(e) => {
-        setText(null);
-        rest.onBlur?.(e);
-      }}
-      onChange={(e) => {
-        setText(e.target.value);
-        const n = Number(e.target.value);
-        if (e.target.value !== "" && Number.isFinite(n)) onCommit(n);
-      }}
-    />
-  );
-}
+const EXIT_UNIT_OPTIONS = [
+  { value: "price", label: "price" },
+  { value: "atr", label: "ATR" },
+] as const;
 
 /** What an exit row needs to show and take its level in ATRs. */
 export interface ExitAtrView {
@@ -1049,11 +1028,23 @@ function ExitRow({
   atr?: ExitAtrView;
 }) {
   const atrMode = atr?.unit === "atr";
-  // ATR mode needs a live ATR and a reference price; without them the field is
-  // read-only (the level itself is still a valid price, so Update isn't blocked).
+  // ATR mode needs a live ATR and a reference price. Without them the row falls
+  // back to the price field, so an active level is never hidden (and Update
+  // isn't blocked: the level itself is still a valid price).
   const atrReady = atrMode && atr.atr != null && atr.ref != null;
+  const atrInput = atrReady && on;
   const multiple =
     atrReady && value != null ? atrMultiple(value, atr.ref!, atr.atr!, atr.up) : null;
+  // A typed multiple of zero is not a level; flag it until a real one lands
+  // (the field's floor snaps it up on blur).
+  const [badMultiple, setBadMultiple] = useState(false);
+  // The length commits on blur or Enter, not per keystroke: every commit is a
+  // persisted write and restarts the ATR read (maybe a fetch).
+  const lenDraft = useRef<number | null>(null);
+  const commitLength = () => {
+    if (atr && lenDraft.current != null) atr.onLength(normalizeAtrLength(lenDraft.current));
+    lenDraft.current = null;
+  };
   const pctText = pct != null ? `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%` : "";
   const atrTip = atr
     ? [
@@ -1070,26 +1061,32 @@ function ExitRow({
           {label},{" "}
           {atr ? (
             <>
-              <select
+              <SelectMenu
                 className="ot-unit"
-                aria-label={`${label} unit`}
+                ariaLabel={`${label} unit`}
                 value={atr.unit}
-                onChange={(e) => atr.onUnit(e.target.value as ExitUnit)}
-              >
-                <option value="price">price</option>
-                <option value="atr">ATR</option>
-              </select>
+                options={EXIT_UNIT_OPTIONS}
+                onChange={(v) => atr.onUnit(v as ExitUnit)}
+              />
               {atrMode && (
                 <Tooltip content={atrTip}>
-                  <BufferedNumberInput
-                    className="ot-atr-len num"
-                    aria-label="ATR length"
-                    min={1}
-                    step={1}
-                    value={atr.length}
-                    format={String}
-                    onCommit={(n) => n >= 1 && atr.onLength(normalizeAtrLength(n))}
-                  />
+                  <span
+                    onBlur={commitLength}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLElement).blur();
+                    }}
+                  >
+                    <NumberField
+                      className="ot-atr-len num"
+                      ariaLabel="ATR length"
+                      floor={1}
+                      step={1}
+                      value={atr.length}
+                      onChange={(n) => {
+                        lenDraft.current = n;
+                      }}
+                    />
+                  </span>
                 </Tooltip>
               )}
             </>
@@ -1115,20 +1112,20 @@ function ExitRow({
           </button>
         </div>
       </div>
-      <div className={`ot-input-row${on ? "" : " disabled"}${invalid ? " invalid" : ""}`}>
-        {atrMode ? (
-          <BufferedNumberInput
+      <div
+        className={`ot-input-row${on ? "" : " disabled"}${
+          invalid || (atrInput && badMultiple) ? " invalid" : ""
+        }`}
+      >
+        {atrInput ? (
+          <NumberField
             className="ot-input num"
-            aria-label={`${label} in ATRs`}
-            step={0.1}
-            disabled={!on || !atrReady}
-            value={on ? multiple : null}
-            format={(n) => n.toFixed(2)}
-            placeholder="—"
-            aria-invalid={invalid}
-            onCommit={(m) => {
-              if (!atrReady || m <= 0) return;
-              onChange(String(levelFromAtr(atr.ref!, m, atr.atr!, atr.up, atr.precision)));
+            ariaLabel={`${label} in ATRs`}
+            floor={0.01}
+            value={multiple != null ? Number(multiple.toFixed(2)) : undefined}
+            onChange={(m) => {
+              setBadMultiple(!(m > 0));
+              if (m > 0) onChange(String(levelFromAtr(atr.ref!, m, atr.atr!, atr.up, atr.precision)));
             }}
           />
         ) : (
@@ -1136,8 +1133,8 @@ function ExitRow({
             className="ot-input num"
             type="number"
             step="any"
-            min={min}
-            max={max}
+            min={atrMode ? undefined : min}
+            max={atrMode ? undefined : max}
             disabled={!on}
             value={on && value != null ? value : ""}
             placeholder="—"

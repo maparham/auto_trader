@@ -3,6 +3,7 @@ import type { KLineData } from "klinecharts";
 import {
   atrFetchBars,
   atrMultiple,
+  chartBarsUsable,
   latestAtr,
   levelFromAtr,
   normalizeAtrLength,
@@ -60,5 +61,41 @@ describe("latestAtr", () => {
   it("is null with fewer bars than the length", () => {
     const candles = Array.from({ length: 5 }, (_, i) => bar(i, 12, 10, 11));
     expect(latestAtr(candles, 14)).toBeNull();
+  });
+});
+
+describe("chartBarsUsable", () => {
+  const HOUR = 3_600_000;
+  const now = 1_790_000_000_000;
+  const series = (n: number, stepMs: number, lastMs: number, close = 100): KLineData[] =>
+    Array.from({ length: n }, (_, i) => ({
+      timestamp: lastMs - (n - 1 - i) * stepMs, open: close, high: close + 1, low: close - 1, close,
+    }));
+  const opts = { epic: "US100", resolution: "HOUR", length: 14, nowMs: now, livePrice: 100 };
+
+  it("accepts the live series of this epic and timeframe", () => {
+    expect(chartBarsUsable({ ticker: "US100", bars: series(100, HOUR, now - HOUR) }, opts)).toBe(true);
+  });
+
+  it("rejects another instrument's ticker", () => {
+    expect(chartBarsUsable({ ticker: "EURUSD", bars: series(100, HOUR, now) }, opts)).toBe(false);
+  });
+
+  it("rejects bars of another timeframe still loaded after a switch", () => {
+    expect(chartBarsUsable({ ticker: "US100", bars: series(100, 60_000, now) }, opts)).toBe(false);
+  });
+
+  it("rejects a historical window (Go-to-date far in the past)", () => {
+    const old = now - 400 * 86_400_000;
+    expect(chartBarsUsable({ ticker: "US100", bars: series(100, HOUR, old) }, opts)).toBe(false);
+  });
+
+  it("rejects the previous symbol's bars once the new ticker is declared", () => {
+    const bars = series(100, HOUR, now, 20_000);
+    expect(chartBarsUsable({ ticker: "US100", bars }, opts)).toBe(false);
+  });
+
+  it("rejects too few bars for the length", () => {
+    expect(chartBarsUsable({ ticker: "US100", bars: series(10, HOUR, now) }, opts)).toBe(false);
   });
 });

@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KLineData } from "klinecharts";
 import { atrSeries } from "./atr";
-import { fetchRecent } from "./feed";
+import { declaredIntervalMs, fetchRecent } from "./feed";
 import { PREFIX, load, save } from "./persist/core";
 import { Signal } from "./signals";
 import type { PriceSide } from "../theme";
@@ -72,24 +72,84 @@ export function latestAtr(candles: KLineData[], length: number): number | null {
   return null;
 }
 
+// The chart's bars are only trusted when they are this instrument's LIVE series
+// on this timeframe. Right after a symbol or timeframe switch the chart still
+// holds the previous series until its reload lands, and a deep Go-to-date loads
+// a historical window with no live edge; ATR from either would be wrong.
+const MAX_STALE_MS = 4 * 86_400_000; // covers a weekend or a holiday close
+const MAX_PRICE_GAP = 0.1; // last close vs the live price, as a fraction
+
+export interface ChartBars {
+  ticker: string | undefined; // the instrument the chart declares
+  bars: KLineData[];
+}
+
+/** True when the chart's bars can stand in for a fetch: same instrument, bar
+ *  spacing equal to the resolution's interval, a recent last bar, and a last
+ *  close near the live price (when one is known). */
+export function chartBarsUsable(
+  chart: ChartBars,
+  opts: { epic: string; resolution: string; length: number; nowMs: number; livePrice: number | null },
+): boolean {
+  const { bars } = chart;
+  const intervalMs = declaredIntervalMs(opts.resolution);
+  if (chart.ticker !== opts.epic || intervalMs == null || bars.length <= opts.length) return false;
+  // Smallest gap over the tail: session breaks only ever widen a gap, so the
+  // minimum is the true bar spacing.
+  let minGap = Infinity;
+  for (let i = Math.max(1, bars.length - 30); i < bars.length; i++) {
+    const g = bars[i].timestamp - bars[i - 1].timestamp;
+    if (g > 0 && g < minGap) minGap = g;
+  }
+  if (Math.abs(minGap - intervalMs) > intervalMs * 0.01) return false;
+  const last = bars[bars.length - 1];
+  if (opts.nowMs - last.timestamp > Math.max(5 * intervalMs, MAX_STALE_MS)) return false;
+  const px = opts.livePrice;
+  return px == null || !(px > 0) || Math.abs(last.close - px) / px <= MAX_PRICE_GAP;
+}
+
 // --- persisted unit + length (global preference) ----------------------------
 
 const PREFS_KEY = `${PREFIX}.orderTicketExitUnits`;
 const unit = (v: unknown): ExitUnit => (v === "atr" ? "atr" : "price");
 
-function loadPrefs(): ExitAtrPrefs {
-  const raw = load<Partial<ExitAtrPrefs>>(PREFS_KEY, {});
+function parsePrefs(stored: unknown): ExitAtrPrefs {
+  const raw: Partial<ExitAtrPrefs> = stored && typeof stored === "object" ? stored : {};
   return { tp: unit(raw.tp), sl: unit(raw.sl), length: normalizeAtrLength(raw.length ?? DEFAULT_ATR_LENGTH) };
 }
 
 // Lazily created so the first read happens after persist hydration, and shared
 // so the new-order and edit forms (parent and child) agree on the units.
 let prefsSignal: Signal<ExitAtrPrefs> | null = null;
-const prefsStore = () => (prefsSignal ??= new Signal(loadPrefs()));
+const prefsStore = () => (prefsSignal ??= new Signal(parsePrefs(load<unknown>(PREFS_KEY, null))));
+
+const samePrefs = (a: ExitAtrPrefs, b: ExitAtrPrefs) =>
+  a.tp === b.tp && a.sl === b.sl && a.length === b.length;
+
+/** Re-read storage: a /ws/state push or another tab may have written the key
+ *  since the signal was created. */
+function refreshPrefs(): void {
+  // Nothing stored (or storage unavailable): the in-memory value stands.
+  const stored = load<unknown>(PREFS_KEY, undefined);
+  if (stored === undefined) return;
+  const fresh = parsePrefs(stored);
+  if (!samePrefs(fresh, prefsStore().value)) prefsStore().set(fresh);
+}
 
 export function useExitAtrPrefs(): [ExitAtrPrefs, (p: Partial<ExitAtrPrefs>) => void] {
   const [prefs, setPrefs] = useState(() => prefsStore().value);
-  useEffect(() => prefsStore().subscribe(setPrefs), []);
+  useEffect(() => {
+    const off = prefsStore().subscribe(setPrefs);
+    refreshPrefs(); // on every mount (the ticket opening)
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PREFS_KEY) refreshPrefs();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      off();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
   const update = (p: Partial<ExitAtrPrefs>) => {
     const next = { ...prefsStore().value, ...p };
     save(PREFS_KEY, next);
@@ -101,10 +161,10 @@ export function useExitAtrPrefs(): [ExitAtrPrefs, (p: Partial<ExitAtrPrefs>) => 
 // --- live ATR value ----------------------------------------------------------
 
 /** Latest ATR(length) for an epic on a timeframe.
- *  `chartCandles` reads the focused chart's loaded bars (pass it only when the
- *  chart shows this epic): that is the same series the user sees, needs no
- *  network, and works for custom timeframes a cold fetch can time out on. Only
- *  when the chart has too few bars does it fall back to fetching.
+ *  `chartCandles` reads the focused chart's loaded bars: the same series the
+ *  user sees, no network, and it works for custom timeframes a cold fetch can
+ *  time out on. They are used only while chartBarsUsable says they are this
+ *  epic's live series; otherwise the hook fetches.
  *  `enabled` false (no row in ATR mode, or a replay session running) reads and
  *  fetches nothing: a blind replay must not pull today's candles. */
 export function useLatestAtr(opts: {
@@ -114,7 +174,8 @@ export function useLatestAtr(opts: {
   priceSide: PriceSide;
   brokerId: string | undefined;
   enabled: boolean;
-  chartCandles?: () => KLineData[] | undefined;
+  chartCandles?: () => ChartBars | undefined;
+  livePrice: number | null; // sanity anchor for the chart's bars
 }): number | null {
   const { epic, resolution, length, priceSide, brokerId, enabled, chartCandles } = opts;
   const [atr, setAtr] = useState<number | null>(null);
@@ -122,6 +183,8 @@ export function useLatestAtr(opts: {
   // not restart the effect (and its fetch) each time.
   const chartRef = useRef(chartCandles);
   chartRef.current = chartCandles;
+  const priceRef = useRef(opts.livePrice);
+  priceRef.current = opts.livePrice;
   useEffect(() => {
     setAtr(null);
     if (!enabled || !resolution) return;
@@ -129,8 +192,11 @@ export function useLatestAtr(opts: {
     let inflight = false;
     let nextFetch = 0;
     const tick = () => {
-      const bars = chartRef.current?.();
-      const fromChart = bars && bars.length ? latestAtr(bars, length) : null;
+      const chart = chartRef.current?.();
+      const usable =
+        chart != null &&
+        chartBarsUsable(chart, { epic, resolution, length, nowMs: Date.now(), livePrice: priceRef.current });
+      const fromChart = usable ? latestAtr(chart.bars, length) : null;
       if (fromChart != null) {
         setAtr(fromChart);
         return;
