@@ -2088,12 +2088,15 @@ export default function ChartCore({
       // wider finger slop.
       const touch = (e as Partial<PointerEvent>).pointerType === "touch";
       const curveHit = hitTestCache(lineCacheRef.current, x, y);
-      const tlHit = curveHit ? null : hitTrendline(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
-      // Auto Fib paints its own lines too, recorded in paintedLines. A drawing
-      // under the pointer wins, as it does on hover: klinecharts selects it
-      // from this same click, and the fib must not be selected alongside.
+      // A drawing under the pointer wins over the self-painted lines, as it
+      // does on hover: klinecharts selects it from this same click, and a
+      // trendline or fib must not be selected alongside it.
+      const drawingHovered = !!overlays.getHoveredDrawingId();
+      const tlHit =
+        curveHit || drawingHovered ? null : hitTrendline(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
+      // Auto Fib paints its own lines too, recorded in paintedLines.
       const paintedHit =
-        curveHit || tlHit || overlays.getHoveredDrawingId()
+        curveHit || tlHit || drawingHovered
           ? null
           : hitPaintedLine(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
       const hit =
