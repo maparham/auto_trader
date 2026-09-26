@@ -219,12 +219,34 @@ def auto_fib_outputs(cfg: AutoFibConfig) -> tuple[str, ...]:
     return BASE_OUTPUTS + tuple(name for name, _ in cfg.levels)
 
 
+# The last pair walk: a rule reading several outputs of one instance asks for
+# each separately over the same candle list, and only pivot_len and
+# min_swing_atr feed the walk. One entry, holding the list itself so its id
+# cannot be reused; the length and the last bar catch a list that grew or had
+# its forming bar updated in place. Replaced as one tuple, so a concurrent
+# reader sees either the old entry or the new one.
+_last_walk: tuple | None = None
+
+
+def _pairs_for(cfg: AutoFibConfig, candles: Sequence[Candle]) -> tuple[list[int | None], list[Pair]]:
+    global _last_walk
+    tail = candles[-1] if candles else None
+    key = (cfg.pivot_len, cfg.min_swing_atr, len(candles),
+           (tail.time, tail.open, tail.high, tail.low, tail.close) if tail else None)
+    hit = _last_walk
+    if hit is not None and hit[0] is candles and hit[1] == key:
+        return hit[2]
+    walk = compute_pairs(cfg, candles)
+    _last_walk = (candles, key, walk)
+    return walk
+
+
 def auto_fib_series(
     cfg: AutoFibConfig, output: str, candles: Sequence[Candle], bar_hours: float
 ) -> list[float | None]:
     # Dispatch on the NAME; an unknown one is the validation layer's error, so
     # it yields an all-None series here.
-    pair_of, pairs = compute_pairs(cfg, candles)
+    pair_of, pairs = _pairs_for(cfg, candles)
     ratio = dict(cfg.levels).get(output)
     out: list[float | None] = []
     for p in pair_of:

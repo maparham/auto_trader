@@ -142,3 +142,29 @@ def test_registry_entry_and_pin():
     assert spec.timeframe(cfg) == "HOUR_4"
     assert spec.timeframe(spec.parse_config([5, 0], {"mtf": {"timeframe": "chart"}})) is None
     assert spec.outputs(cfg)[:3] == ("high", "low", "dir")
+
+
+def test_outputs_of_one_series_share_one_pair_walk(monkeypatch):
+    """A rule reading several outputs (.high, .f0_618, ...) walks the pivots
+    once per candle list, not once per output; a changed list walks again."""
+    import auto_trader.indicators.auto_fib as af
+
+    calls = []
+    real = af.compute_pairs
+    monkeypatch.setattr(af, "compute_pairs", lambda cfg, cs: calls.append(1) or real(cfg, cs))
+    cfg = parse_auto_fib_config([2, 0], {})
+    cs = triangle([110, 120, 130])
+    for out in auto_fib_outputs(cfg):
+        auto_fib_series(cfg, out, cs, 1.0)
+    assert len(calls) == 1
+    # Levels and reverse do not feed the walk: a different level set reuses it.
+    auto_fib_series(parse_auto_fib_config([2, 0], {"fib": {"reverse": True}}), "f0_618", cs, 1.0)
+    assert len(calls) == 1
+    # A new bar, an edited last bar, another list or another pivot length: walk again.
+    cs.append(bar(100, len(cs)))
+    auto_fib_series(cfg, "high", cs, 1.0)
+    cs[-1] = bar(150, len(cs) - 1)
+    auto_fib_series(cfg, "high", cs, 1.0)
+    auto_fib_series(cfg, "high", list(cs), 1.0)
+    auto_fib_series(parse_auto_fib_config([3, 0], {}), "high", cs, 1.0)
+    assert len(calls) == 5
