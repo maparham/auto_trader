@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
+import { seedSingleChartDefault, skipUnlessCapital, stubStateApi } from "./helpers";
 
 // Trade-list panel end-to-end: import a sheet, click a row → the trade's chart
 // opens (a fresh tab when nothing shows the symbol) with the trade sketched as
@@ -37,6 +37,7 @@ const boxPointer = (page: import("@playwright/test").Page) =>
   page.evaluate(() => localStorage.getItem("auto-trader.tradeListBox"));
 
 test("import a sheet, click rows, get one trade box on the symbol's chart", async ({ page }) => {
+  await skipUnlessCapital(page, "its symbol catalogue resolves MSFT");
   await seedSingleChartDefault(page);
   await stubStateApi(page);
   await page.goto("/");

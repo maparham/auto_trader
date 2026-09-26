@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { seedSingleChartDefault, seedTwoChartTabs, stubStateApi } from "./helpers";
+import { seedSingleChartDefault, seedTwoChartTabs, skipUnlessCapital, stubStateApi } from "./helpers";
 
 // When the lead cell's market is closed (closed:true from /api/market/{epic},
 // derived server-side from the instrument's opening hours), the tab shows a
@@ -89,6 +89,7 @@ test("a backgrounded tab's closed market still badges (App-level epic poll)", as
 });
 
 test("a closed market hides the legend live dot", async ({ page }) => {
+  await skipUnlessCapital(page, "a live price stream");
   // The dot signals live *streaming*, but the WS connects to OUR backend, which
   // stays up when the market is closed — so the dot must also gate on the
   // market's open/closed state, not just the socket status.
@@ -123,6 +124,7 @@ test("a closed market hides the legend live dot", async ({ page }) => {
 });
 
 test("an open market shows the legend live dot", async ({ page }) => {
+  await skipUnlessCapital(page, "a live price stream");
   // Positive control for the test above: with the market open and the stream
   // connected, the dot must appear — proving its absence when closed is the
   // gating, not a never-connected socket.

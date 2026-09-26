@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { test, type Page } from "@playwright/test";
 
 // Workspace roots are per broker (`auto-trader.b.<broker>.*`, see persist/core.ts).
 // The seeds write the device-local SCRATCH workspace of the broker the app boots
@@ -22,6 +22,13 @@ export async function e2eBroker(page: Page): Promise<E2EBroker> {
   const info = (await (await page.request.get("/api/brokers")).json()) as { data: string[] };
   const broker = info.data.includes("capital") ? "capital" : info.data[0];
   return { root: `auto-trader.b.${broker}`, cache: JSON.stringify(info) };
+}
+
+// Some behaviour exists only on Capital: a live price stream, its symbol
+// catalogue. Skip such a test on a backend without Capital credentials (CI).
+export async function skipUnlessCapital(page: Page, why: string): Promise<void> {
+  const { root } = await e2eBroker(page);
+  test.skip(root !== "auto-trader.b.capital", `needs Capital: ${why}`);
 }
 
 async function seedScratchTabs(page: Page, tabs: SeedTab[]): Promise<void> {
