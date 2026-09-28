@@ -6,7 +6,6 @@ import Toolbar from "./Toolbar";
 import SnapshotToolbar from "./SnapshotToolbar";
 import DrawSidebar from "./DrawSidebar";
 import WorkspacePatternPanel from "./WorkspacePatternPanel";
-import TradeListPanel from "./TradeListPanel";
 import { setPatternSeriesProvider } from "./lib/patternPanelStore";
 import { anyCellInReadout, subscribeReplayingCells } from "./lib/replayingCells";
 import LayoutPicker from "./LayoutPicker";
@@ -15,15 +14,10 @@ import {
   isCellReplaying,
 } from "./lib/chartSync";
 import AppearanceMenu from "./AppearanceMenu";
-import SettingsModal from "./Settings";
-import BacktestSettingsModal from "./BacktestSettingsModal";
 import { defaultBacktestConfig } from "./lib/backtestConfig";
 import { loadBacktestLastUsed, saveBacktestLastUsed } from "./lib/persist";
-import LiveTradingPanel from "./LiveTradingPanel";
 import AlertModal from "./AlertModal";
-import IndicatorSettings from "./IndicatorSettings";
-import DrawingSettings from "./DrawingSettings";
-import AlertsSidebar, { type AlertNavTarget, type VisibleCell } from "./AlertsSidebar";
+import type { AlertNavTarget, VisibleCell } from "./AlertsSidebar";
 import ConfirmDialog from "./ConfirmDialog";
 import AgentConfirmHost from "./agent/AgentConfirmHost";
 import { initAgentBridge } from "./agent";
@@ -36,7 +30,6 @@ import TradeExitClusterPopover from "./TradeExitClusterPopover";
 import TradeMarkerLabelPopover from "./TradeMarkerLabelPopover";
 import BacktestSignalPopover from "./BacktestSignalPopover";
 import Snackbar from "./Snackbar";
-import OrderTicket from "./OrderTicket";
 import PositionsPanel from "./PositionsPanel";
 import SnapshotGallery from "./SnapshotGallery";
 import DemoCta from "./DemoCta";
@@ -48,6 +41,19 @@ import {
 import { registerCustomOverlays } from "./lib/customOverlays";
 import { installMagnetModifierKeys } from "./lib/magnet";
 import { matchingCellIds } from "./lib/tabSearch";
+import { lazyChunk } from "./components/lazyChunk";
+
+// Panels and modals that are closed at boot load on first open, keeping them
+// (and the backtest/indicator settings trees behind them) out of the initial
+// bundle. Each is already conditionally rendered below.
+const TradeListPanel = lazyChunk(() => import("./TradeListPanel"));
+const SettingsModal = lazyChunk(() => import("./Settings"));
+const BacktestSettingsModal = lazyChunk(() => import("./BacktestSettingsModal"));
+const LiveTradingPanel = lazyChunk(() => import("./LiveTradingPanel"));
+const IndicatorSettings = lazyChunk(() => import("./IndicatorSettings"));
+const DrawingSettings = lazyChunk(() => import("./DrawingSettings"));
+const AlertsSidebar = lazyChunk(() => import("./AlertsSidebar"));
+const OrderTicket = lazyChunk(() => import("./OrderTicket"));
 import { registerPositionLine } from "./lib/positionLines";
 import type { ChartController } from "./lib/chartController";
 import {

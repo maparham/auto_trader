@@ -4,8 +4,6 @@ import { ClerkProvider, SignedIn, SignedOut } from '@clerk/clerk-react'
 import './index.css'
 import App from './App.tsx'
 import SnapshotApp from './SnapshotApp.tsx'
-import MobileApp from './mobile/MobileApp.tsx'
-import AdminApp from './admin/AdminApp.tsx'
 import ClerkTokenBridge from './components/ClerkTokenBridge.tsx'
 import AccountGate from './components/AccountGate.tsx'
 import ImpersonationBanner from './components/ImpersonationBanner.tsx'
@@ -20,6 +18,11 @@ import { isDemoPreview } from './lib/demoPreview.ts'
 import { shouldBootMobile } from './lib/mobileBoot.ts'
 import { shouldBootAdmin } from './lib/adminBoot.ts'
 import { startShellStatusMirror } from './lib/shellStatus.ts'
+import { lazyChunk } from './components/lazyChunk.tsx'
+
+// Boot modes other than the desktop app load their own chunk.
+const MobileApp = lazyChunk(() => import('./mobile/MobileApp.tsx'))
+const AdminApp = lazyChunk(() => import('./admin/AdminApp.tsx'))
 
 // A tab opened before a deploy asks for chunk hashes the new deploy no longer
 // serves (the rule editor loads lazily). Reload once to pick up the new

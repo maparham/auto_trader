@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import App from "./App";
-import MobileApp from "./mobile/MobileApp";
 import { setDemoMode } from "./lib/demoMode";
 import { setPersistBroker } from "./lib/persist/core";
 import { fetchDemoSnapshot, seedDemoLayout } from "./lib/demoSnapshot";
 import { exitDemoPreview } from "./lib/demoPreview";
+import { lazyChunk } from "./components/lazyChunk";
+
+const MobileApp = lazyChunk(() => import("./mobile/MobileApp"));
 
 /** Signed-out visitors boot the real app in a read-only demo instead of the
  *  sign-in card. `setDemoMode()` / `setPersistBroker()` run at the top of the

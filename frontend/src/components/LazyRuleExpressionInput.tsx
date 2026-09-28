@@ -4,21 +4,12 @@
 // same box, so the row does not jump. If the chunk cannot load at all (a tab
 // that outlived a deploy and could not reload), the row stays on that text
 // rather than taking the whole app down.
-import { Component, lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense } from "react";
+import { ChunkBoundary } from "./lazyChunk";
 import type { RuleExpressionInputProps } from "./RuleExpressionInput";
 import "./RuleExpressionInput.css";
 
 const RuleExpressionInput = lazy(() => import("./RuleExpressionInput"));
-
-class ChunkBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-  render() {
-    return this.state.failed ? this.props.fallback : this.props.children;
-  }
-}
 
 export default function LazyRuleExpressionInput(props: RuleExpressionInputProps) {
   const fallback = (
