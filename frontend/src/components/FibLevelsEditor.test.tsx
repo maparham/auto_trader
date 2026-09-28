@@ -46,23 +46,38 @@ describe("FibLevelsEditor", () => {
     expect(onChange.mock.calls[0][0].levels[1].value).toBe(0.3);
   });
 
-  it("sets one colour and line style on every level, replacing overrides", () => {
+  it("sets line style on every level and leaves their colours mixed", () => {
     const onChange = vi.fn();
     const fib = defaultFibConfig();
     fib.levels[2] = { ...fib.levels[2], size: 3, style: "solid" };
     render(
       <FibLevelsEditor fib={fib} onChange={onChange} sharedSize={1} sharedStyle="solid" trendLabel="Trend line" allLevelsStyle />,
     );
-    expect(screen.getByText("All levels")).toBeTruthy();
-    // The All levels picker renders ahead of the per-level ones.
-    fireEvent.click(document.querySelector(".clsp-swatch")!);
+    // All levels row: [colour picker, line style picker], ahead of the levels.
+    fireEvent.click(document.querySelectorAll(".clsp-swatch")[1]);
     const presets = document.querySelectorAll(".clsp-preset");
     fireEvent.click(presets[1]); // 2px
     fireEvent.click(presets[5]); // dashed
-    fireEvent.click(document.querySelectorAll(".clsp-cell")[1]); // #d1d4dc
-    expect(onChange.mock.calls[0][0].levels.every((l: { size?: number }) => l.size === 2)).toBe(true);
+    const sized = onChange.mock.calls[0][0].levels;
+    expect(sized.every((l: { size?: number }) => l.size === 2)).toBe(true);
+    expect(sized.map((l: { color: string }) => l.color)).toEqual(fib.levels.map((l) => l.color));
     expect(onChange.mock.calls[1][0].levels.every((l: { style?: string }) => l.style === "dashed")).toBe(true);
-    expect(onChange.mock.calls[2][0].levels.every((l: { color: string }) => l.color === "#d1d4dc")).toBe(true);
+  });
+
+  it("sets colour on every level and leaves their line styles alone", () => {
+    const onChange = vi.fn();
+    const fib = defaultFibConfig();
+    fib.levels[2] = { ...fib.levels[2], size: 3, style: "dashed" };
+    render(
+      <FibLevelsEditor fib={fib} onChange={onChange} sharedSize={1} sharedStyle="solid" trendLabel="Trend line" allLevelsStyle />,
+    );
+    fireEvent.click(document.querySelectorAll(".clsp-swatch")[0]);
+    expect(document.querySelectorAll(".clsp-preset").length).toBe(0);
+    fireEvent.click(document.querySelectorAll(".clsp-cell")[1]); // #d1d4dc
+    const next = onChange.mock.calls[0][0].levels;
+    expect(next.every((l: { color: string }) => l.color === "#d1d4dc")).toBe(true);
+    expect(next[2]).toMatchObject({ size: 3, style: "dashed" });
+    expect(next[0].size).toBeUndefined();
   });
 
   it("hides the All levels row unless asked", () => {

@@ -15,8 +15,8 @@ interface Props {
   /** The trendLine switch's label: the retracement's anchor connector, or a
    * fib channel's width leg. Same flag, different line. */
   trendLabel: string;
-  /** Show an "All levels" colour/width/dash picker that writes one line style
-   * onto every level, replacing their per-level colours and overrides. Auto Fib only: the fib
+  /** Show an "All levels" row: a colour picker and a width/dash picker, each
+   * writing just its own property onto every level. Auto Fib only: the fib
    * drawings already have their own shared Line row. */
   allLevelsStyle?: boolean;
 }
@@ -64,10 +64,15 @@ export default function FibLevelsEditor({ fib, onChange, sharedSize, sharedStyle
       {allLevelsStyle && (
         <div className="ind-row fib-extend-row">
           <label>All levels</label>
+          {/* Two pickers so each axis applies alone: recolouring keeps every
+              level's width/dash, restyling keeps their mixed colours. */}
           <ColorLineStylePicker
-            title="Color & line style for all levels"
+            title="Color for all levels"
             color={first?.color ?? "#787b86"}
             onColor={(c) => setAll({ color: c })}
+          />
+          <ColorLineStylePicker
+            title="Line style for all levels"
             size={first?.size ?? sharedSize}
             onSize={(s) => setAll({ size: s })}
             lineStyle={first?.style ?? sharedStyle}
