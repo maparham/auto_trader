@@ -45,4 +45,26 @@ describe("FibLevelsEditor", () => {
     fireEvent.change(box, { target: { value: "0.3" } });
     expect(onChange.mock.calls[0][0].levels[1].value).toBe(0.3);
   });
+
+  it("sets one line style on every level, replacing overrides", () => {
+    const onChange = vi.fn();
+    const fib = defaultFibConfig();
+    fib.levels[2] = { ...fib.levels[2], size: 3, style: "solid" };
+    render(
+      <FibLevelsEditor fib={fib} onChange={onChange} sharedSize={1} sharedStyle="solid" trendLabel="Trend line" allLevelsStyle />,
+    );
+    expect(screen.getByText("All levels")).toBeTruthy();
+    // The All levels picker renders ahead of the per-level ones.
+    fireEvent.click(document.querySelector(".clsp-swatch")!);
+    const presets = document.querySelectorAll(".clsp-preset");
+    fireEvent.click(presets[1]); // 2px
+    fireEvent.click(presets[5]); // dashed
+    expect(onChange.mock.calls[0][0].levels.every((l: { size?: number }) => l.size === 2)).toBe(true);
+    expect(onChange.mock.calls[1][0].levels.every((l: { style?: string }) => l.style === "dashed")).toBe(true);
+  });
+
+  it("hides the All levels row unless asked", () => {
+    setup();
+    expect(screen.queryByText("All levels")).toBeNull();
+  });
 });

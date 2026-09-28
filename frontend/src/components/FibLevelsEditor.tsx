@@ -15,13 +15,21 @@ interface Props {
   /** The trendLine switch's label: the retracement's anchor connector, or a
    * fib channel's width leg. Same flag, different line. */
   trendLabel: string;
+  /** Show an "All levels" width/dash picker that writes one line style onto
+   * every level, replacing their per-level overrides. Auto Fib only: the fib
+   * drawings already have their own shared Line row. */
+  allLevelsStyle?: boolean;
 }
 
 const LINE_STYLES = ["solid", "dashed"] as LineStyleOpt[];
 
-export default function FibLevelsEditor({ fib, onChange, sharedSize, sharedStyle, trendLabel }: Props) {
+export default function FibLevelsEditor({ fib, onChange, sharedSize, sharedStyle, trendLabel, allLevelsStyle }: Props) {
   const setLevel = (i: number, patch: Partial<FibLevel>) =>
     onChange({ ...fib, levels: fib.levels.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  const setAll = (patch: Partial<FibLevel>) => onChange({ ...fib, levels: fib.levels.map((x) => ({ ...x, ...patch })) });
+  // The All levels picker previews the first level's effective style; after a
+  // pick every level carries it, so it reads true from then on.
+  const first = fib.levels[0];
   // The ratio box's raw text while it has focus. Text on the way to a number
   // ("", "-", "0.") is not one, and committing Number() of it saved 0 or NaN:
   // a NaN level is dropped on reload, and on Auto Fib the ratio also names a
@@ -53,6 +61,19 @@ export default function FibLevelsEditor({ fib, onChange, sharedSize, sharedStyle
           <option value="both">Extend both</option>
         </select>
       </div>
+      {allLevelsStyle && (
+        <div className="ind-row fib-extend-row">
+          <label>All levels</label>
+          <ColorLineStylePicker
+            title="Line style for all levels"
+            size={first?.size ?? sharedSize}
+            onSize={(s) => setAll({ size: s })}
+            lineStyle={first?.style ?? sharedStyle}
+            onLineStyle={(s) => setAll({ style: s === "dashed" ? "dashed" : "solid" })}
+            lineStyleOptions={LINE_STYLES}
+          />
+        </div>
+      )}
       <div className="fib-levels">
         {fib.levels.map((l, i) => (
           <div className="fib-level" key={i}>

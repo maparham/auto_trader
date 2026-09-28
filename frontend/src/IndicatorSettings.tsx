@@ -3014,6 +3014,7 @@ function IndicatorSettingsForm({
                     sharedSize={1}
                     sharedStyle="solid"
                     trendLabel="Trend line"
+                    allLevelsStyle
                   />
                   {/* Render-only input the meta puts on this tab (past-fib
                       opacity): same genExtend state and row shapes as the
