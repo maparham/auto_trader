@@ -46,7 +46,7 @@ describe("FibLevelsEditor", () => {
     expect(onChange.mock.calls[0][0].levels[1].value).toBe(0.3);
   });
 
-  it("sets one line style on every level, replacing overrides", () => {
+  it("sets one colour and line style on every level, replacing overrides", () => {
     const onChange = vi.fn();
     const fib = defaultFibConfig();
     fib.levels[2] = { ...fib.levels[2], size: 3, style: "solid" };
@@ -59,8 +59,10 @@ describe("FibLevelsEditor", () => {
     const presets = document.querySelectorAll(".clsp-preset");
     fireEvent.click(presets[1]); // 2px
     fireEvent.click(presets[5]); // dashed
+    fireEvent.click(document.querySelectorAll(".clsp-cell")[1]); // #d1d4dc
     expect(onChange.mock.calls[0][0].levels.every((l: { size?: number }) => l.size === 2)).toBe(true);
     expect(onChange.mock.calls[1][0].levels.every((l: { style?: string }) => l.style === "dashed")).toBe(true);
+    expect(onChange.mock.calls[2][0].levels.every((l: { color: string }) => l.color === "#d1d4dc")).toBe(true);
   });
 
   it("hides the All levels row unless asked", () => {
