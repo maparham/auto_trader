@@ -29,7 +29,7 @@ import {
 import { useHoldDrag } from "./useHoldDrag";
 import { startPullDrag } from "./usePullPanel";
 
-export function openTab(tab: ChartTab, cellIndex: number): void {
+function openTab(tab: ChartTab, cellIndex: number): void {
   const i = Math.min(Math.max(cellIndex, 0), tab.cells.length - 1);
   const cell = tab.cells[i];
   lastCellByTab.set(tab.id, i);
@@ -129,7 +129,6 @@ export default function MobileTabOverview({
   // one place left to catch it and revert to the real order.
   useEffect(() => {
     if (drag.draggingId === null) setPreview(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag.draggingId]);
 
   const addTab = () =>

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import { render, fireEvent, act, cleanup } from "@testing-library/react";
 import { useHoldDrag, HOLD_MS } from "./useHoldDrag";
 
@@ -16,7 +16,7 @@ function List(props: { h: Parameters<typeof useHoldDrag>[0] }) {
 }
 
 describe("useHoldDrag", () => {
-  let h: { onTap: ReturnType<typeof vi.fn>; onHold: ReturnType<typeof vi.fn>; onOver: ReturnType<typeof vi.fn>; onDrop: ReturnType<typeof vi.fn> };
+  let h: { onTap: Mock<(id: string) => void>; onHold: Mock<(id: string) => void>; onOver: Mock<(id: string, overId: string) => void>; onDrop: Mock<(id: string) => void> };
   const originalElementFromPoint = document.elementFromPoint;
   beforeEach(() => {
     vi.useFakeTimers();
