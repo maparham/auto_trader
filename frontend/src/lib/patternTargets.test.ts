@@ -18,6 +18,7 @@ const target = (cellId: string, epic = "US100", resolution = "MINUTE_5"): Patter
   label: "5m",
   showMatch: vi.fn(),
   clearMatchBands: vi.fn(),
+  clearSelectionBand: vi.fn(),
 });
 
 beforeEach(() => clearPatternTargets());

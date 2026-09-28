@@ -26,6 +26,7 @@ export function renameInstanceEverywhere(
   oldId: string,
   newId: string,
 ): { ok: true } | { ok: false; error: RenameInstanceError } {
+  if (!controller.chart) return { ok: false, error: "invalid" };
   const result = renameIndicatorInstance(controller.chart, controller.scope, epic, oldId, newId);
   if (!result.ok) return result;
   const next = controller.indicators.value.map((i) => (i.id === oldId ? { ...i, id: newId } : i));

@@ -124,10 +124,11 @@ function readCenterBarTs(chart: NonNullable<ChartHandle["chartRef"]["current"]>)
   if (!data || data.length < 2) return null;
   const w = chart.getSize("candle_pane", "main")?.width ?? 0;
   if (w <= 1) return null;
-  const pt = chart.convertFromPixel({ x: Math.round(w / 2), y: 1 }, { paneId: "candle_pane" }) as
-    | { timestamp?: number }
+  const pts = chart.convertFromPixel([{ x: Math.round(w / 2), y: 1 }], { paneId: "candle_pane" }) as
+    | Array<{ timestamp?: number }>
     | null
     | undefined;
+  const pt = pts?.[0];
   return pt?.timestamp != null ? Math.min(pt.timestamp, data[data.length - 1].timestamp) : null;
 }
 

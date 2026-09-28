@@ -166,7 +166,11 @@ export class HistoryManager {
   // observable. Same shape as lib/signals Signal.subscribe (useSyncExternalStore).
   private listeners = new Set<() => void>();
 
-  constructor(readonly scope: string) {}
+  readonly scope: string;
+
+  constructor(scope: string) {
+    this.scope = scope;
+  }
 
   setApplier(fn: ((deltas: AppliedDelta[]) => void) | null): void {
     this.applier = fn;

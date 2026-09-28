@@ -62,7 +62,8 @@ describe("apiFetch 401 retry", () => {
     setTokenGetter(getter);
     const signOut = vi.fn();
     setUnauthorizedHandler(signOut);
-    const fetchMock = vi.fn(async () => res(fetchMock.mock.calls.length === 1 ? 401 : 200));
+    let calls = 0;
+    const fetchMock = vi.fn<typeof fetch>(async () => res(++calls === 1 ? 401 : 200));
     vi.stubGlobal("fetch", fetchMock);
 
     const out = await apiFetch("http://x/api/y");
@@ -77,7 +78,7 @@ describe("apiFetch 401 retry", () => {
     setTokenGetter(async () => "t");
     const signOut = vi.fn();
     setUnauthorizedHandler(signOut);
-    const fetchMock = vi.fn(async () => res(401));
+    const fetchMock = vi.fn<typeof fetch>(async () => res(401));
     vi.stubGlobal("fetch", fetchMock);
 
     const out = await apiFetch("http://x/api/y");
@@ -90,7 +91,7 @@ describe("apiFetch 401 retry", () => {
     setTokenGetter(async (opts?: { fresh?: boolean }) => (opts?.fresh ? null : "t"));
     const signOut = vi.fn();
     setUnauthorizedHandler(signOut);
-    const fetchMock = vi.fn(async () => res(401));
+    const fetchMock = vi.fn<typeof fetch>(async () => res(401));
     vi.stubGlobal("fetch", fetchMock);
 
     await apiFetch("http://x/api/y");
@@ -102,7 +103,7 @@ describe("apiFetch 401 retry", () => {
     setTokenGetter(async () => "t");
     const signOut = vi.fn();
     setUnauthorizedHandler(signOut);
-    const fetchMock = vi.fn(async () => res(500));
+    const fetchMock = vi.fn<typeof fetch>(async () => res(500));
     vi.stubGlobal("fetch", fetchMock);
 
     const out = await apiFetch("http://x/api/y");

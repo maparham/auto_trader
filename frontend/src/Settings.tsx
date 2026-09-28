@@ -2,6 +2,7 @@
 // (defaults a freshly-created alert inherits). Structured so more tabs/rows drop in.
 
 import { useEffect, useMemo, useState } from "react";
+import type { JSX } from "react";
 import CloseButton from "./CloseButton";
 import NotificationSettings from "./NotificationSettings";
 import { isDemoMode } from "./lib/demoMode";

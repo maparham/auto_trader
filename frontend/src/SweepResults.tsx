@@ -10,7 +10,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { SweepRow } from "./api";
-import { axisColumnLabel, comboAxisLabel, comboAxisText, comboFallbackText, type SweepAxis } from "./lib/sweep";
+import { axisColumnLabel, comboAxisText, comboFallbackText, type SweepAxis } from "./lib/sweep";
 import { axisTicks, buildHeatIndex, cellKey, heatTier, type HeatTick } from "./lib/sweepHeat";
 import { plateauCenter, withPlateau } from "./lib/sweepPlateau";
 import { withDsr } from "./lib/deflatedSharpe";
@@ -726,7 +726,6 @@ const SweepHeatmap = memo(function SweepHeatmap({
   onApply,
   disabled,
   plateauAction,
-  onRefine,
 }: {
   rows: SweepRow[];
   axes: SweepAxis[];

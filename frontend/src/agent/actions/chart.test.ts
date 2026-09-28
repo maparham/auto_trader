@@ -275,7 +275,7 @@ describe("chart.screenshot", () => {
     );
     const chart = Object.assign(fakeChart(), {
       getDom: () => ({ getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }) }),
-      getConvertPictureUrl: (_ov: boolean, type: string) => "data:image/png;base64,QUJD",
+      getConvertPictureUrl: () => "data:image/png;base64,QUJD",
     });
     provide(chart as never);
     const res = await invokeAction("chart.screenshot", {}, ctx) as { image_base64: string; via: string };

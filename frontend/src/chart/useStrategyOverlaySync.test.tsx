@@ -80,7 +80,7 @@ function setup(scope: string) {
   return { chart, live, controller };
 }
 
-const bolls = (live: { name: string }[]) => live.filter((i) => i.name.startsWith("BOLL"));
+const bolls = (live: { name: string; calcParams?: unknown[] }[]) => live.filter((i) => i.name.startsWith("BOLL"));
 
 describe("useStrategyOverlaySync", () => {
   it("creates the band from the persisted config and params on mount", async () => {

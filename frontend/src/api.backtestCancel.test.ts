@@ -6,7 +6,7 @@ afterEach(() => vi.restoreAllMocks());
 const okResponse = { ok: true, json: async () => ({}) } as Response;
 
 it("cancelBacktestRun POSTs the cancel route and swallows a 404 (run already done)", async () => {
-  const fetchMock = vi.fn(async () => ({ ok: false, status: 404 }) as Response);
+  const fetchMock = vi.fn<typeof fetch>(async () => ({ ok: false, status: 404 }) as Response);
   vi.stubGlobal("fetch", fetchMock);
   await expect(cancelBacktestRun("pid-1")).resolves.toBeUndefined();
   const [url, init] = fetchMock.mock.calls[0];
@@ -15,7 +15,7 @@ it("cancelBacktestRun POSTs the cancel route and swallows a 404 (run already don
 });
 
 it("runBacktest threads an AbortSignal into fetch", async () => {
-  const fetchMock = vi.fn(async () => okResponse);
+  const fetchMock = vi.fn<typeof fetch>(async () => okResponse);
   vi.stubGlobal("fetch", fetchMock);
   const ctl = new AbortController();
   await runBacktest({ epic: "X" } as never, ctl.signal);
@@ -23,7 +23,7 @@ it("runBacktest threads an AbortSignal into fetch", async () => {
 });
 
 it("runExprBacktest threads an AbortSignal into fetch", async () => {
-  const fetchMock = vi.fn(async () => okResponse);
+  const fetchMock = vi.fn<typeof fetch>(async () => okResponse);
   vi.stubGlobal("fetch", fetchMock);
   const ctl = new AbortController();
   await runExprBacktest({ epic: "X" } as never, ctl.signal);

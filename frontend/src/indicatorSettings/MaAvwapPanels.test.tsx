@@ -34,6 +34,8 @@ function renderPanel(timeframe: string) {
       setMaType={() => {}}
       envelope={false}
       setEnvelope={() => {}}
+      waitClose
+      onWaitClose={() => {}}
       applyMa={() => {}}
     />,
   );

@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   claimSidePanel,
-  endSidePanelRestore,
   registerSidePanel,
   resetSidePanelsForTest,
 } from "./sidePanels";

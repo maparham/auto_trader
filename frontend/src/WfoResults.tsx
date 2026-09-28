@@ -3,6 +3,7 @@
 // WfoRunState mirror (live run or archive reconstruction); all numbers come
 // from the backend result payload, nothing is recomputed here.
 import { memo, useState, useSyncExternalStore } from "react";
+import type { JSX } from "react";
 import type { SweepRow, WfoFold, WfoScheme } from "./api";
 import type { WfoRunState } from "./lib/signals";
 import {

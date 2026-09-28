@@ -208,8 +208,8 @@ describe("rewriteConfigInstanceRefs", () => {
   it("rewrites instance refs across all four rule groups, leaving the rest of the cfg alone", () => {
     const cfg = {
       ...defaultBacktestConfig(),
-      longEntry: { combine: "all", rules: [{ expr: "SLOPE#a1.9 > 0", enabled: true }] },
-      shortExit: { combine: "all", rules: [{ expr: "ATR1.to14 > 1" }, { expr: "EMA(9) > 0" }] },
+      longEntry: { combine: "AND" as const, rules: [{ expr: "SLOPE#a1.9 > 0", enabled: true }] },
+      shortExit: { combine: "AND" as const, rules: [{ expr: "ATR1.to14 > 1" }, { expr: "EMA(9) > 0" }] },
     };
     const out = rewriteConfigInstanceRefs(cfg, { "SLOPE#a1": "SLOPE#b2", ATR1: "ATR" });
     expect(out.longEntry.rules[0]).toEqual({ expr: "SLOPE#b2.9 > 0", enabled: true });
@@ -223,7 +223,7 @@ describe("rewriteConfigInstanceRefs", () => {
   it("an empty id map returns the cfg unchanged", () => {
     const cfg = {
       ...defaultBacktestConfig(),
-      longEntry: { combine: "all", rules: [{ expr: "SLOPE.9 > 0" }] },
+      longEntry: { combine: "AND" as const, rules: [{ expr: "SLOPE.9 > 0" }] },
     };
     expect(rewriteConfigInstanceRefs(cfg, {})).toEqual(cfg);
   });

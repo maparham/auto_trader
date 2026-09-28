@@ -38,7 +38,15 @@ function cfg(overrides: Partial<BacktestConfig>): BacktestConfig {
     shortExit: { combine: "AND", rules: [] },
     longEnabled: true,
     shortEnabled: true,
-    costs: { quantity: 1, commissionPerSide: 0, slippage: { kind: "fixed", value: 0, atrMult: 0 }, startingCash: 10_000 },
+    costs: {
+      quantity: 1,
+      commissionPerSide: 0,
+      slippage: { kind: "fixed", value: 0, atrMult: 0 },
+      spread: 0,
+      finLongDailyPct: 0,
+      finShortDailyPct: 0,
+      startingCash: 10_000,
+    },
     ...overrides,
   };
 }

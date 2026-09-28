@@ -905,7 +905,7 @@ describe("Pivot Bands' bars-since-pivot companion pane", () => {
     return { chart, inds };
   }
 
-  const companionOf = (inds: Array<{ name: string }>) =>
+  const companionOf = (inds: Array<{ name: string; calcParams?: unknown[]; extendData?: unknown }>) =>
     inds.find((i) => i.name === pivotBarsSinceCompanionId("PIVOT_BANDS"));
 
   it("is off by default: a plain Pivot Bands spawns no second pane", () => {

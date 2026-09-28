@@ -26,7 +26,6 @@ vi.mock("./lib/backtest", () => ({
 vi.mock("./lib/indicators", () => ({ liveExprInstances: () => [] }));
 
 import {
-  backtestClearRequest,
   backtestDurationSignal,
   backtestResultSignal,
   backtestSelectNoticeSignal,

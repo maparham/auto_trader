@@ -126,7 +126,7 @@ const MIN_W = 340;
 const MIN_CHART_W = 260;
 
 export default function PatternMatchesPanel(props: Props) {
-  const { result, loading, error, epic, resolution, broker, priceSide, timezone, onDismiss } = props;
+  const { result, loading, error, epic, resolution, broker, priceSide, timezone } = props;
 
   // User-dragged sidebar width, null until the splitter is used: the CSS
   // defaults (400px / 606px in All mode) stay in charge until then. The panel

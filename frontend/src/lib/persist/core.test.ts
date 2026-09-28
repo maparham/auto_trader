@@ -141,7 +141,7 @@ describe("save() mirror skipping (no-op writes)", () => {
     const puts: string[] = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: unknown, opts?: { method?: string; body?: string }) => {
+      vi.fn(async (_url: unknown, opts?: { method?: string; body?: string }) => {
         if (opts?.method === "PUT") puts.push(opts.body ?? "");
         return { ok: true, json: async () => ({}) };
       }),

@@ -43,7 +43,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
     ["Logic", LOGIC],
     ["Conditions", CONDITIONS],
     ["Patterns", PATTERNS],
-  ] as const).map(([title, entries]: [string, CatalogEntry[]]) => ({
+  ] as const).map(([title, entries]: readonly [string, CatalogEntry[]]) => ({
     title,
     items: entries.map((entry) => ({
       key: entry.name,

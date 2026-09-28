@@ -9,7 +9,7 @@ afterEach(cleanup);
 describe("WfoConfig", () => {
   it("multi-selects train spans (matrix) and reports objective changes", () => {
     const onChange = vi.fn();
-    render(<WfoConfig cfg={{ ...DEFAULT_WFO_CONFIG, trainSpans: ["3m"] }} onChange={onChange} comboTotal={12} droppedAxes={[]} />);
+    render(<WfoConfig cfg={{ ...DEFAULT_WFO_CONFIG, trainSpans: ["3m"] }} onChange={onChange} droppedAxes={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "6m" }));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ trainSpans: ["3m", "6m"] }));
     fireEvent.click(screen.getByRole("button", { name: /best/i }));
@@ -18,7 +18,7 @@ describe("WfoConfig", () => {
 
   it("deselecting the last train span is blocked", () => {
     const onChange = vi.fn();
-    render(<WfoConfig cfg={{ ...DEFAULT_WFO_CONFIG, trainSpans: ["3m"] }} onChange={onChange} comboTotal={1} droppedAxes={[]} />);
+    render(<WfoConfig cfg={{ ...DEFAULT_WFO_CONFIG, trainSpans: ["3m"] }} onChange={onChange} droppedAxes={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "3m" }));
     expect(onChange).not.toHaveBeenCalled();
   });

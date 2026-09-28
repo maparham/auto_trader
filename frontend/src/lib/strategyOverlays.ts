@@ -13,9 +13,9 @@ import {
   addIndicatorInstance,
   getIndicatorById,
   removeIndicatorById,
-  type IndicatorInstance,
 } from "./indicators";
 import {
+  type IndicatorInstance,
   loadIndicatorConfigs,
   saveIndicatorConfig,
   saveIndicators,

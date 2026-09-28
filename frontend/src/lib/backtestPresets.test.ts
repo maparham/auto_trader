@@ -6,7 +6,8 @@ import {
   loadPresets, putPreset, renamePreset, deletePreset, newPreset,
   serializePresets, parsePresets, type BacktestPreset,
 } from "./backtestPresets";
-import { defaultBacktestConfig } from "./backtestConfig";
+import { defaultBacktestConfig, type RiskConfig } from "./backtestConfig";
+import type { CodedStrategyConfig } from "./codedConfig";
 
 const ORIGIN = { symbol: "TEST", timeframe: "MINUTE" };
 const make = (name: string): BacktestPreset =>
@@ -225,11 +226,11 @@ describe("backtestPresets serialization", () => {
 });
 
 describe("preset codedCfg", () => {
-  const codedCfg = () => ({
+  const codedCfg = (): CodedStrategyConfig => ({
     params: { bb_dev: 1.5, gated: true },
     longExit: { combine: "AND", rules: [{ expr: "ATR1.to14 > 1", enabled: true }] },
     shortExit: { combine: "OR", rules: [] },
-    longRisk: { sl: { mode: "atr", value: 2 } },
+    longRisk: { sl: { mode: "atr", value: 2 } } as unknown as RiskConfig,
     riskSynced: false,
   });
 

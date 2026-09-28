@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import PatternMatchesPanel from "./PatternMatchesPanel";
-import type { PatternMatch, PatternSearchResult } from "./lib/patternSearch";
+import type { PatternMatch, PatternSearchResult, SourceOutcome } from "./lib/patternSearch";
 
 // The unreachable-match rows toast instead of jumping; keep the real notifier
 // (and its DOM) out of the panel's tests.
@@ -26,7 +26,9 @@ const match = (over: Partial<PatternMatch> = {}): PatternMatch => ({
   ...over,
 });
 
-const result = (over: Partial<PatternSearchResult> = {}): PatternSearchResult => ({
+type PanelResult = PatternSearchResult & { sources?: SourceOutcome[] };
+
+const result = (over: Partial<PanelResult> = {}): PanelResult => ({
   matches: [match()],
   scanned: 412_031,
   series: { oldestTs: 1_600_000_000, newestTs: 1_700_002_000, bars: 412_040 },

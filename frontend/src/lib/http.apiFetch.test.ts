@@ -15,14 +15,14 @@ afterEach(() => {
 });
 
 it("passes through untouched when no token getter is registered", async () => {
-  const spy = vi.fn(async () => new Response("{}", { status: 200 }));
+  const spy = vi.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
   vi.stubGlobal("fetch", spy);
   await apiFetch("http://x/api/y", { method: "POST" });
   expect(spy).toHaveBeenCalledWith("http://x/api/y", { method: "POST" });
 });
 
 it("attaches the bearer header when a token is available", async () => {
-  const spy = vi.fn(async () => new Response("{}", { status: 200 }));
+  const spy = vi.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
   vi.stubGlobal("fetch", spy);
   setTokenGetter(async () => "tok-123");
   await apiFetch("http://x/api/y");
@@ -31,7 +31,7 @@ it("attaches the bearer header when a token is available", async () => {
 });
 
 it("preserves caller-supplied headers alongside the bearer header", async () => {
-  const spy = vi.fn(async () => new Response("{}", { status: 200 }));
+  const spy = vi.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
   vi.stubGlobal("fetch", spy);
   setTokenGetter(async () => "tok-123");
   await apiFetch("http://x/api/y", {

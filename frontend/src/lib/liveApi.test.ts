@@ -6,10 +6,6 @@ const REQ: EvaluateRequest = {
   epic: "EURUSD", resolution: "MINUTE",
   candles: [{ time: 1700, open: 10, high: 10, low: 10, close: 10, volume: 0 }],
   series: {},
-  longEntry: { combine: "AND", rules: [] },
-  longExit: { combine: "AND", rules: [] },
-  shortEntry: { combine: "AND", rules: [] },
-  shortExit: { combine: "AND", rules: [] },
   longEnabled: true, shortEnabled: true,
   position: null,
 };

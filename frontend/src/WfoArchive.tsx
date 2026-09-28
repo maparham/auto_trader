@@ -3,6 +3,7 @@
 // back into the results panel on row click. This is the design's ranking view
 // (9.4): score leads, net profit is intentionally absent from the summaries.
 import { useEffect, useState } from "react";
+import type { JSX } from "react";
 import {
   listWfoArchives,
   getWfoArchive,

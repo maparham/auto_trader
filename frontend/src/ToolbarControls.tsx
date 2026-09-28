@@ -4,7 +4,7 @@
 // toolbars compose the exact same DOM for the controls they have in common.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { MouseEvent } from "react";
+import type { JSX, MouseEvent } from "react";
 import {
   periodGroups,
   periodByResolution,

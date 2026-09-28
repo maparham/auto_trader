@@ -12,7 +12,7 @@ import type { TimeWindowDef } from "../lib/indicators/timeHighlight";
 // painting until the next page load. The fake chart merges the same way, so a
 // writer that sends one override still fails here.
 function sessionAt(n: number): SessionDef {
-  return { name: `S${n}`, start: "00:00", end: "01:00", tz: "UTC", color: "#111" } as SessionDef;
+  return { name: `S${n}`, start: "00:00", end: "01:00", tz: "UTC", color: "#111" } as unknown as SessionDef;
 }
 function windowAt(n: number): TimeWindowDef {
   return { name: `W${n}`, start: "00:00", end: "01:00" } as unknown as TimeWindowDef;

@@ -184,11 +184,11 @@ describe("PresetsTab expr instance snapshot", () => {
   // A cfg whose rules reference a pane by instance — the case the snapshot exists for.
   const refCfg = (expr = "SLOPE#a1.9 > 0"): BacktestConfig => ({
     ...defaultBacktestConfig(),
-    longEntry: { combine: "all", rules: [{ expr, enabled: true }] },
+    longEntry: { combine: "AND", rules: [{ expr, enabled: true }] },
   });
 
   it("Save as… snapshots the referenced panes via the injected capture", () => {
-    const captureExprInstances = vi.fn(() => ({ "SLOPE#a1": PAYLOAD }));
+    const captureExprInstances = vi.fn((_exprs: string[]) => ({ "SLOPE#a1": PAYLOAD }));
     setup({ cfg: refCfg(), captureExprInstances });
     saveAs("Refs");
     // The capture receives the EFFECTIVE expression rows, not the raw cfg.
@@ -198,14 +198,14 @@ describe("PresetsTab expr instance snapshot", () => {
 
   it("Save refreshes the snapshot on the active preset", () => {
     putPreset(newPreset("Refs", defaultBacktestConfig(), { symbol: "T", timeframe: "M" }, 1));
-    const captureExprInstances = vi.fn(() => ({ "SLOPE#a1": PAYLOAD }));
+    const captureExprInstances = vi.fn((_exprs: string[]) => ({ "SLOPE#a1": PAYLOAD }));
     setup({ cfg: refCfg(), activeName: "Refs", captureExprInstances });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(loadPresets().Refs.exprInstances).toEqual({ "SLOPE#a1": PAYLOAD });
   });
 
   it("a config with no instance refs stores no snapshot", () => {
-    const captureExprInstances = vi.fn(() => ({ "SLOPE#a1": PAYLOAD }));
+    const captureExprInstances = vi.fn((_exprs: string[]) => ({ "SLOPE#a1": PAYLOAD }));
     setup({ captureExprInstances });
     saveAs("Plain");
     expect(loadPresets().Plain.exprInstances).toBeUndefined();
@@ -233,10 +233,10 @@ describe("PresetsTab expr instance snapshot", () => {
     });
     // Chart answers, but only ATR1 is live: SLOPE#a1 keeps its stored snapshot,
     // and STALE (no longer referenced by any rule) is dropped.
-    const captureExprInstances = vi.fn(() => ({ ATR1: FRESH }));
+    const captureExprInstances = vi.fn((_exprs: string[]) => ({ ATR1: FRESH }));
     const cfg: BacktestConfig = {
       ...refCfg(),
-      shortExit: { combine: "all", rules: [{ expr: "ATR1.to14 > 1" }] },
+      shortExit: { combine: "AND", rules: [{ expr: "ATR1.to14 > 1" }] },
       longEnabled: false,
     };
     setup({ cfg, activeName: "Refs", captureExprInstances });
@@ -252,7 +252,7 @@ describe("PresetsTab expr instance snapshot", () => {
       ...defaultCodedCfg(),
       longExit: { combine: "AND", rules: [{ expr: "ATR1.to14 > 1", enabled: true }] },
     });
-    const captureExprInstances = vi.fn(() => ({ ATR1: PAYLOAD }));
+    const captureExprInstances = vi.fn((_exprs: string[]) => ({ ATR1: PAYLOAD }));
     const cfg: BacktestConfig = { ...refCfg(), mode: "coded", codedStrategy: "bb.py" };
     setup({ cfg, captureExprInstances });
     saveAs("Coded");
@@ -272,7 +272,7 @@ describe("PresetsTab expr instance snapshot", () => {
       ...defaultCodedCfg(),
       longExit: { combine: "AND", rules: [{ expr: "ATR1.to14 > 1", enabled: true }] },
     });
-    const captureExprInstances = vi.fn(() => ({ "SLOPE#a1": PAYLOAD }));
+    const captureExprInstances = vi.fn((_exprs: string[]) => ({ "SLOPE#a1": PAYLOAD }));
     const cfg: BacktestConfig = { ...refCfg(), mode: "rules", codedStrategy: "bb.py" };
     setup({ cfg, captureExprInstances });
     saveAs("Rules");
@@ -324,7 +324,7 @@ describe("PresetsTab expr instance snapshot", () => {
   });
 
   it("the stored snapshot wins over synthesis for the ids it covers", () => {
-    const stored = { ...refCfg(), shortEntry: { combine: "all" as const, rules: [{ expr: "ATR1.14 > 1" }] } };
+    const stored = { ...refCfg(), shortEntry: { combine: "AND" as const, rules: [{ expr: "ATR1.14 > 1" }] } };
     putPreset({
       ...newPreset("Mixed", stored, { symbol: "T", timeframe: "M" }, 1),
       exprInstances: { "SLOPE#a1": PAYLOAD },

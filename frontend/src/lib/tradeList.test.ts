@@ -220,6 +220,7 @@ describe("trade list library", () => {
     ],
     label: "sheet",
     skipped: 0,
+    flagged: [],
   });
 
   async function lib() {

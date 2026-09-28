@@ -1426,7 +1426,7 @@ export function refreshFormingBar(chart: Chart): void {
       const ext = { ...(ind.extendData ?? {}) } as MaExtend &
         PivotBandsExtend &
         SlopeExtend;
-      let built: object | null = null;
+      let built: object | null | undefined = null;
       if (type === "EMA" || type === "MA") {
         built = buildMaMtf(
           bars,
@@ -1493,7 +1493,7 @@ export function refreshFormingBar(chart: Chart): void {
         ...built,
         ...extra,
       } as typeof ext.mtf;
-      overrideExtend(chart, paneId, id, ext, ind.calcParams ?? []);
+      overrideExtend(chart, paneId, id, ext as unknown as Record<string, unknown>, ind.calcParams ?? []);
       // The companions mirror the parent's extendData, forming bar included.
       if (type === "PIVOT_BANDS") syncPivotBarsSinceCompanion(chart, id);
       if (type === "SLOPE") syncAccelCompanion(chart, id);

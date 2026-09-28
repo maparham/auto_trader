@@ -915,7 +915,7 @@ export function syncPivotBarsSinceCompanion(chart: Chart, parentId: string): voi
         ? { styles: parent.styles as unknown as Partial<IndicatorStyle> }
         : {}),
     });
-    overrideExtend(chart, companionPaneId, companionId, nextExt as Record<string, unknown>);
+    overrideExtend(chart, companionPaneId, companionId, nextExt as unknown as Record<string, unknown>);
     return;
   }
 
@@ -930,7 +930,7 @@ export function syncPivotBarsSinceCompanion(chart: Chart, parentId: string): voi
     {
       name: companionId,
       calcParams: parent.calcParams,
-      extendData: nextExt as Record<string, unknown>,
+      extendData: nextExt as unknown as Record<string, unknown>,
       ...(parent.visible === false ? { visible: false } : {}),
     },
     false,
@@ -990,7 +990,7 @@ export function mirrorPivotBarsSinceCompanion(
       chart,
       companionPaneId,
       companionId,
-      pivotBarsSinceExt(patch.extendData) as Record<string, unknown>,
+      pivotBarsSinceExt(patch.extendData) as unknown as Record<string, unknown>,
     );
 }
 
@@ -1379,7 +1379,7 @@ export function renameIndicatorInstance(
   if (!ind) return { ok: false, error: "invalid" };
   const type = indTypeOf(ind);
   const config: SavedIndicatorConfig = {
-    calcParams: ind.calcParams,
+    calcParams: ind.calcParams as number[],
     extendData: withoutInset({ ...((ind.extendData as Record<string, unknown> | undefined) ?? {}) }),
     visible: ind.visible,
     styles: ind.styles?.lines
