@@ -1163,6 +1163,15 @@ describe("stampTrendlinesFloors", () => {
     const second = (overrides.at(-1)!.patch.extendData as { tlFloorTs?: number })
       .tlFloorTs!;
     expect(second).toBeLessThan(first);
+    // The left stamp leads by a view-width, so a small further scroll left
+    // lands inside it and rebuilds nothing.
+    expect(second).toBeLessThan(first - 5_000_000 - (v.toMs - v.fromMs) + 1);
+    const stamps = overrides.length;
+    v = { fromMs: v.fromMs - 1_000_000, toMs: v.toMs - 1_000_000 };
+    setViewportReader(chart, () => ({ ...v }));
+    stampTrendlinesFloors(chart);
+    setViewportReader(chart, null);
+    expect(overrides.length).toBe(stamps);
   });
 });
 

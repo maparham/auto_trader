@@ -85,6 +85,7 @@ import {
   getIndicatorsByPane,
 } from "./indicators";
 import { overrideExtend } from "./overrideExtend";
+import { clearIndicatorBusy, markIndicatorBusy } from "./indicatorBusy";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
 // so a wide asked span needs several windows — kept under the cap.
@@ -278,6 +279,11 @@ function dockedAt(chart: Chart, askToMs: number, htfMs: number): boolean {
 // ordinary scrolling near the floor never churns recalcs, while returning to
 // the live edge after a deep jump drops the deep-history compute cost.
 const FLOOR_REBASE_SCREENS = 4;
+// How many view-widths PAST the wanted floor a leftward stamp reaches. Every
+// stamp rebuilds the detector, so a stamp that landed exactly on the wanted
+// floor made each small scroll left a full rebuild. The lead lets the next few
+// left scrolls land inside what the last rebuild already covered.
+const FLOOR_LEAD_SCREENS = 1;
 
 /**
  * Stamp the viewport-derived compute floor onto every CHART-TIMEFRAME
@@ -326,11 +332,17 @@ export function stampTrendlinesFloors(chart: Chart): void {
         wantedFloor < cur ||
         wantedFloor > cur + FLOOR_REBASE_SCREENS * viewSpanMs;
       if (!move) return;
+      // The first stamp and a far-right rebase land on the wanted floor; only
+      // an ordinary left move takes the lead, since that is the one repeated.
+      const floor =
+        cur != null && wantedFloor < cur
+          ? wantedFloor - FLOOR_LEAD_SCREENS * viewSpanMs
+          : wantedFloor;
       overrideExtend(
         chart,
         paneId,
         id,
-        { ...(ind.extendData ?? {}), tlFloorTs: wantedFloor },
+        { ...(ind.extendData ?? {}), tlFloorTs: floor },
         ind.calcParams ?? [],
       );
     });
@@ -1064,6 +1076,28 @@ export async function applyTrendlinesTimeframe(
   timeframe: string | null,
   brokerId?: string,
   needed?: NeededInterval,
+): Promise<void> {
+  // Busy on the legend for the fetch and the HTF compute. Held on the object
+  // present now: an instance removed and re-added mid-fetch is a new object,
+  // and the stale mark goes with the old one.
+  const ind = getIndicator(chart, paneId, name);
+  if (ind && timeframe && timeframe !== "chart") markIndicatorBusy(ind);
+  try {
+    await applyTrendlinesPin(chart, epic, name, paneId, config, timeframe, brokerId, needed);
+  } finally {
+    if (ind && timeframe && timeframe !== "chart") clearIndicatorBusy(ind);
+  }
+}
+
+function applyTrendlinesPin(
+  chart: Chart,
+  epic: string,
+  name: string,
+  paneId: string,
+  config: TrendlinesConfig,
+  timeframe: string | null,
+  brokerId: string | undefined,
+  needed: NeededInterval | undefined,
 ): Promise<void> {
   return applyHtfPin<TrendlinesExtend>(chart, epic, name, paneId, timeframe, brokerId, needed, {
     extend: (live) => ({ ...live }),

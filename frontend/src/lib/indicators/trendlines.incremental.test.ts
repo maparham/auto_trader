@@ -17,6 +17,7 @@ import {
   parseTrendlinesConfig,
   TRENDLINES_DEFAULTS,
 } from "./trendlinesOutputs";
+import { isIndicatorBusy } from "../indicatorBusy";
 
 // Deterministic random walk with enough wiggle to confirm pivots and seed
 // lines (asserted below, so the equivalence checks are never vacuous).
@@ -230,6 +231,29 @@ describe("createTrendlinesSession", () => {
     const other = calc(bars, ind2);
     expect(other.length).toBe(bars.length);
     expect(other.slice(0, -1)).toEqual(ref.points.slice(0, -1));
+  });
+
+  it("defers a big rebuild behind the busy mark, then matches the inline result", async () => {
+    const bars = synthBars(2500);
+    const ind = { calcParams: [], extendData: undefined } as unknown as Indicator;
+    const calc = TRENDLINES_TEMPLATE.calc as (
+      d: KLineData[],
+      i: Indicator,
+    ) => TrendlinesCalcPoint[] | Promise<TrendlinesCalcPoint[]>;
+    const out = calc(bars, ind);
+    expect(out).toBeInstanceOf(Promise);
+    expect(isIndicatorBusy(ind)).toBe(true);
+    // A tick landing while the rebuild is pending chains behind it.
+    const next = calc(bars, ind);
+    expect(next).toBeInstanceOf(Promise);
+    const rows = await next;
+    await out;
+    expect(isIndicatorBusy(ind)).toBe(false);
+    const ref = computeTrendlines(bars, cfg);
+    expect(rows[rows.length - 1].lines).toEqual(ref.lines);
+    // Once built, a tick is incremental again and runs inline.
+    tick(bars, lcg(3));
+    expect(calc(bars, ind)).not.toBeInstanceOf(Promise);
   });
 
   it("handles short series (below ATR warm-up) and empty input", () => {

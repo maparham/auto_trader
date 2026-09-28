@@ -42,6 +42,7 @@ import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { minPositiveGap } from "../barInterval";
 import { htfBarEndMs } from "../mtfForming";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "./shared";
+import { afterNextPaint, clearIndicatorBusy, markIndicatorBusy } from "../indicatorBusy";
 import {
   cloneToolFor,
   dropTrendlineSegments,
@@ -1229,6 +1230,11 @@ export interface TrendlinesSession {
     atr: number[];
     pivots: TrendPivots;
   };
+  /** How many bars the next compute with these inputs rebuilds from scratch:
+   * 0 when it can reuse the cache (a tick or an append), else the span from
+   * the floor to the newest bar. The calc reads it to decide whether a
+   * rebuild is big enough to defer behind the legend's busy mark. */
+  rebuildSpan(dataList: KLineData[], cfg: TrendlinesConfig, floorTs?: number): number;
 }
 
 /** First index with timestamp >= ts (dataList ascending); 0 for ts<=first. */
@@ -1275,7 +1281,21 @@ export function createTrendlinesSession(): TrendlinesSession {
   let lastBaseTs = 0;
   let lastFloorIdx = 0;
 
+  const reusable = (dataList: KLineData[], key: string, floorIdx: number): boolean =>
+    base !== null &&
+    dataList === ref &&
+    key === cfgKey &&
+    floorIdx === lastFloorIdx &&
+    dataList.length >= baseCount + 1 &&
+    (baseCount === 0 || dataList[baseCount - 1]?.timestamp === lastBaseTs);
+
   return {
+    rebuildSpan(dataList, cfg, floorTs) {
+      const n = dataList.length;
+      if (n === 0) return 0;
+      const floorIdx = Math.min(floorIdxOf(dataList, floorTs), n - 1);
+      return reusable(dataList, JSON.stringify(cfg), floorIdx) ? 0 : n - floorIdx;
+    },
     compute(dataList, cfg, floorTs) {
       const n = dataList.length;
       if (n === 0) {
@@ -1296,15 +1316,7 @@ export function createTrendlinesSession(): TrendlinesSession {
       // right rebase deliberately drops deep-history cost. Appends never move
       // the index (the prefix under a fixed floorTs is untouched).
       const floorIdx = Math.min(floorIdxOf(dataList, floorTs), n - 1);
-      const usable =
-        base !== null &&
-        dataList === ref &&
-        key === cfgKey &&
-        floorIdx === lastFloorIdx &&
-        n >= baseCount + 1 &&
-        (baseCount === 0 ||
-          dataList[baseCount - 1]?.timestamp === lastBaseTs);
-      if (!usable) {
+      if (!reusable(dataList, key, floorIdx)) {
         base = buildTlState(dataList, n - 1, cfg, floorIdx);
         baseCount = n - 1;
         ref = dataList;
@@ -3732,6 +3744,42 @@ export function trendlineStatsLabel(touches: number, crossings: number): string 
 }
 
 const TL_CALC_SESSIONS = new WeakMap<Indicator, TrendlinesSession>();
+// Deferred-calc bookkeeping (see TRENDLINES_TEMPLATE.calc): the in-flight
+// chain, the newest calc's generation, and the first bar's timestamp the
+// current rows were computed against (a change means a prepend shifted them).
+const TL_PENDING = new WeakMap<Indicator, Promise<TrendlinesCalcPoint[]>>();
+const TL_GEN = new WeakMap<Indicator, number>();
+const TL_FIRST_TS = new WeakMap<Indicator, number>();
+/** A rebuild over fewer bars than this runs inline: it is quick enough that a
+ * busy mark would only flicker. */
+const TL_DEFER_BARS = 2000;
+
+function sessionRows(
+  session: TrendlinesSession,
+  dataList: KLineData[],
+  ind: Indicator,
+): TrendlinesCalcPoint[] {
+  const ext = ind.extendData as TrendlinesExtend | undefined;
+  const { points, lines, atr, pivots } = session.compute(
+    dataList,
+    parseTrendlinesConfig(ind.calcParams, ext),
+    ext?.tlFloorTs,
+  );
+  if (dataList.length) TL_FIRST_TS.set(ind, dataList[0].timestamp);
+  // The session already returns a fresh top-level array (prefix rows shared,
+  // read-only by contract — see createTrendlinesSession), so replacing the
+  // last row here mutates nothing cached.
+  const out = points as TrendlinesCalcPoint[];
+  if (out.length)
+    out[out.length - 1] = {
+      ...out[out.length - 1],
+      lines,
+      atr: atr[atr.length - 1],
+      pivots,
+      lineIdx: out.length - 1,
+    };
+  return out;
+}
 
 export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Trendlines",
@@ -3771,24 +3819,37 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
       session = createTrendlinesSession();
       TL_CALC_SESSIONS.set(ind, session);
     }
-    const { points, lines, atr, pivots } = session.compute(
-      dataList,
-      parseTrendlinesConfig(ind.calcParams, ext),
-      ext?.tlFloorTs,
-    );
-    // The session already returns a fresh top-level array (prefix rows shared,
-    // read-only by contract — see createTrendlinesSession), so replacing the
-    // last row here mutates nothing cached.
-    const out = points as TrendlinesCalcPoint[];
-    if (out.length)
-      out[out.length - 1] = {
-        ...out[out.length - 1],
-        lines,
-        atr: atr[atr.length - 1],
-        pivots,
-        lineIdx: out.length - 1,
-      };
-    return out;
+    const s = session;
+    const floorTs = ext?.tlFloorTs;
+    const pending = TL_PENDING.get(ind);
+    if (!pending && s.rebuildSpan(dataList, parseTrendlinesConfig(ind.calcParams, ext), floorTs) < TL_DEFER_BARS)
+      return sessionRows(s, dataList, ind);
+    // A BIG REBUILD (a floor move, a history prepend, a config change over a
+    // long series) runs synchronously and freezes the chart, so it goes behind
+    // the legend's busy mark: mark, let a frame paint, then compute. klinecharts
+    // awaits calc, so a promise here is fine. Every calc that lands while one
+    // is pending chains behind it, keeping results in order, and only the
+    // newest in the chain computes: the rest hand back the current rows,
+    // which the newest one overwrites anyway.
+    const gen = (TL_GEN.get(ind) ?? 0) + 1;
+    TL_GEN.set(ind, gen);
+    // A prepend shifts every bar index, so the prior rows would draw their
+    // lines on the wrong candles for as long as the compute takes. Blank them.
+    if (TL_FIRST_TS.get(ind) !== dataList[0]?.timestamp) ind.result = [];
+    markIndicatorBusy(ind);
+    const run = (pending ?? Promise.resolve())
+      .then(afterNextPaint)
+      .then(() =>
+        TL_GEN.get(ind) === gen
+          ? sessionRows(s, dataList, ind)
+          : (ind.result as TrendlinesCalcPoint[]),
+      )
+      .finally(() => {
+        clearIndicatorBusy(ind);
+        if (TL_PENDING.get(ind) === run) TL_PENDING.delete(ind);
+      });
+    TL_PENDING.set(ind, run);
+    return run;
   },
   draw: (params) =>
     drawTrendlines(

@@ -11,7 +11,7 @@
 // crosshair pixel. ChartCore subscribes OnCrosshairChange and calls our
 // updateValues(dataIndex|null); null = no crosshair → fall back to the last bar.
 
-import { useEffect, useImperativeHandle, useRef, useState, type Ref, type RefObject } from "react";
+import { createContext, useContext, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore, type Ref, type RefObject } from "react";
 import { type Chart, type Indicator, type KLineData } from "klinecharts";
 import type { ChartController } from "./lib/chartController";
 import InfoTip from "./components/InfoTip";
@@ -43,6 +43,7 @@ import {
 import { periodByResolution } from "./lib/feed";
 import { trendlineStyleOf, type TrendlinesExtend } from "./lib/indicators/trendlines";
 import { fmtPrice } from "./lib/priceFormat";
+import { isIndicatorBusy, subscribeIndicatorBusy } from "./lib/indicatorBusy";
 
 const UP = "#26a69a";
 const DOWN = "#ef5350";
@@ -440,6 +441,7 @@ export default function ChartLegend({
   };
 
   return (
+    <LegendChartContext.Provider value={getChart}>
     <>
     <div
       className="chart-legend"
@@ -668,6 +670,7 @@ export default function ChartLegend({
       />
     ))}
     </>
+    </LegendChartContext.Provider>
   );
 }
 
@@ -676,6 +679,19 @@ export default function ChartLegend({
 // per-pane <SubPaneLegend>, so both cards look and behave identically. The figure
 // value spans register into figureValuesRef so updateValues can fill them without
 // a React re-render (same imperative path as the OHLC row).
+// The legend's chart getter, for rows that look up their live indicator object
+// (the busy mark is keyed by it). A context rather than one more prop threaded
+// through IndicatorGroup and SubPaneLegend.
+const LegendChartContext = createContext<() => Chart | null>(() => null);
+
+/** True while the named indicator is mid-compute (see lib/indicatorBusy). */
+function useIndicatorBusy(name: string): boolean {
+  const getChart = useContext(LegendChartContext);
+  return useSyncExternalStore(subscribeIndicatorBusy, () =>
+    isIndicatorBusy(getChart()?.getIndicators({ name })[0]),
+  );
+}
+
 function IndicatorRow({
   row,
   selected,
@@ -705,6 +721,7 @@ function IndicatorRow({
   onMoveUp?: () => void;
   onMoveDown?: () => void;
 }) {
+  const busy = useIndicatorBusy(row.name);
   return (
     <div
       className={`cl-row cl-ind${selected ? " cl-selected" : ""}${
@@ -719,6 +736,11 @@ function IndicatorRow({
         {row.shortName}
         {row.calcParamsText}
       </span>
+      {busy && (
+        <Tooltip content="Computing">
+          <span className="cl-busy" aria-label="Computing" />
+        </Tooltip>
+      )}
       {row.warn && (
         <InfoTip text={row.warn} className="cl-warn">
           <WarnTriangleIcon />
