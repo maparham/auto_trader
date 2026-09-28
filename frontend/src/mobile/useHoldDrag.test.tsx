@@ -79,4 +79,24 @@ describe("useHoldDrag", () => {
     expect(h.onTap).not.toHaveBeenCalled();
     expect(h.onHold).not.toHaveBeenCalled();
   });
+
+  it("a second finger's pointerup during a hold is ignored; the original finger's up still completes the gesture", () => {
+    const { getByTestId } = render(<List h={h} />);
+    down(getByTestId("a"));
+    act(() => { vi.advanceTimersByTime(HOLD_MS); });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    expect(h.onHold).not.toHaveBeenCalled();
+    expect(h.onTap).not.toHaveBeenCalled();
+    up();
+    expect(h.onHold).toHaveBeenCalledWith("a");
+  });
+
+  it("unmounting mid-hold fires no callback after the timer would elapse", () => {
+    const { getByTestId, unmount } = render(<List h={h} />);
+    down(getByTestId("a"));
+    unmount();
+    act(() => { vi.advanceTimersByTime(HOLD_MS); });
+    expect(h.onTap).not.toHaveBeenCalled();
+    expect(h.onHold).not.toHaveBeenCalled();
+  });
 });

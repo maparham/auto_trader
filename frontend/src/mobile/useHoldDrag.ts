@@ -6,6 +6,10 @@ import { useEffect, useRef, useState } from "react";
 
 export const HOLD_MS = 350;
 export const SLOP_PX = 8;
+// A second, smaller threshold than SLOP_PX: once lifted, a tiny jitter should
+// not itself start a drag, but it should take less movement than the
+// pre-hold scroll slop since the finger is now deliberately held down.
+const DRAG_START_PX = 4;
 
 export interface HoldDragHandlers {
   onTap(id: string): void;
@@ -31,6 +35,7 @@ export function useHoldDrag(h: HoldDragHandlers) {
   const onPointerDown = (e: React.PointerEvent, id: string) => {
     if (e.button > 0) return;
     cleanupRef.current?.();
+    const pointerId = e.pointerId;
     const sx = e.clientX;
     const sy = e.clientY;
     let lifted = false;
@@ -43,13 +48,14 @@ export function useHoldDrag(h: HoldDragHandlers) {
     }, HOLD_MS);
 
     const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       const dist = Math.hypot(ev.clientX - sx, ev.clientY - sy);
       if (!lifted) {
         if (dist > SLOP_PX) { cancelled = true; clearTimeout(timer); }
         return;
       }
       if (!dragging) {
-        if (dist < 4) return;
+        if (dist < DRAG_START_PX) return;
         dragging = true;
         setDraggingId(id);
       }
@@ -71,8 +77,8 @@ export function useHoldDrag(h: HoldDragHandlers) {
       else if (lifted) hRef.current.onHold(id);
       else if (!cancelled) hRef.current.onTap(id);
     };
-    const onUp = () => finish(true);
-    const onCancel = () => finish(false);
+    const onUp = (ev: PointerEvent) => { if (ev.pointerId === pointerId) finish(true); };
+    const onCancel = (ev: PointerEvent) => { if (ev.pointerId === pointerId) finish(false); };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
