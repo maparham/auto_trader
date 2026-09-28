@@ -40,10 +40,22 @@ export function subscribeIndicatorBusy(l: () => void): () => void {
 /** Resolves once the browser has painted a frame, so a busy mark set just
  * before a synchronous compute is actually on screen while it runs. The rAF
  * lands before the paint; the timeout after it lands after. Without rAF (node
- * tests) it resolves on the next microtask. */
+ * tests) it resolves on the next microtask.
+ *
+ * Capped at PAINT_WAIT_CAP_MS: Chrome pauses rAF in a background tab or an
+ * occluded window, and an uncapped wait held a deferred compute for 23 s in
+ * one of those, spinner on, lines stale. Nothing paints there anyway. */
+const PAINT_WAIT_CAP_MS = 100;
+
 export function afterNextPaint(): Promise<void> {
   if (typeof requestAnimationFrame !== "function") return Promise.resolve();
-  return new Promise((resolve) =>
-    requestAnimationFrame(() => setTimeout(resolve, 0)),
-  );
+  return new Promise((resolve) => {
+    const cap = setTimeout(resolve, PAINT_WAIT_CAP_MS);
+    requestAnimationFrame(() =>
+      setTimeout(() => {
+        clearTimeout(cap);
+        resolve();
+      }, 0),
+    );
+  });
 }
