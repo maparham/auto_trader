@@ -15,7 +15,7 @@ function loadIds(): Set<string> {
   }
 }
 
-let ids = loadIds();
+const ids = loadIds();
 
 /** Bumped whenever the set changes, so the dock re-renders its badges. */
 export const strategyDealsVersion = new Signal<number>(0);

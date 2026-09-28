@@ -46,9 +46,7 @@ function paint(
       // 20 hourly bars starting at the entry's timestamp.
       getDataList: () =>
         Array.from({ length: 20 }, (_, i) => ({ timestamp: 1_000_000 + i * 60_000 })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any) as OverlayFigure[];
 }
 
@@ -178,9 +176,7 @@ describe("trade overlay caption", () => {
       chart: {
         getSymbol: () => ({ pricePrecision: 2 }),
         getDataList: () => [],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any) as OverlayFigure[];
     expect(texts(figures)).toContain("A+ setup");
   });

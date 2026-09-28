@@ -419,7 +419,6 @@ export default function ChartLegend({
   // initial values painted; ChartCore also calls updateValues on tick/crosshair).
   useEffect(() => {
     updateValues(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     // collapsedGroups for the same reason as `collapsed`: expanding a group
     // re-mounts its member rows (fresh, empty value spans) without changing
     // `rows`, so nothing would fill them until the next tick or crosshair move.

@@ -25,7 +25,9 @@ export function useSectionCollapse(title: string) {
         const all = loadCollapsedSections();
         all[title] = next;
         localStorage.setItem(SECTION_COLLAPSE_KEY, JSON.stringify(all));
-      } catch {}
+      } catch {
+        /* storage unavailable: the section still toggles for this session */
+      }
       return next;
     });
   };

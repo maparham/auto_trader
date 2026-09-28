@@ -79,7 +79,6 @@ export function WfoArchive(props: {
         if (alive) setRows([]);
       });
     return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [epic, allEpics]);
 
   const open = (id: string) => {

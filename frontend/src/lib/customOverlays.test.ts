@@ -20,9 +20,7 @@ function edges(centreXs: number[], bar: number): { left: number; right: number }
   const figures = matchBand.createPointFigures!({
     coordinates: centreXs.map((x) => ({ x, y: 0 })),
     bounding: { height: 400, width: 800, left: 0, right: 0, top: 0, bottom: 0 },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     chart: stubChart(bar) as any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any) as Array<{ attrs: { coordinates: Array<{ x: number }> } }>;
   const xs = figures[0].attrs.coordinates.map((c) => c.x);
   return { left: Math.min(...xs), right: Math.max(...xs) };
@@ -66,9 +64,7 @@ describe("matchBand geometry (encloses the candles, does not stop at their centr
     const figures = matchBand.createPointFigures!({
       coordinates: [{ x: 10, y: 0 }],
       bounding: { height: 400, width: 800, left: 0, right: 0, top: 0, bottom: 0 },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       chart: stubChart(10) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);
     expect(figures).toEqual([]);
   });
@@ -77,9 +73,7 @@ describe("matchBand geometry (encloses the candles, does not stop at their centr
     const figures = matchBand.createPointFigures!({
       coordinates: [{ x: 10, y: 0 }, { x: 50, y: 0 }],
       bounding: { height: 400, width: 800, left: 0, right: 0, top: 0, bottom: 0 },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       chart: stubChart(10) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any) as unknown as Array<Record<string, unknown>>;
     const ys = (figures[0].attrs as { coordinates: Array<{ y: number }> }).coordinates.map((c) => c.y);
     expect(Math.min(...ys)).toBe(0);
@@ -147,7 +141,6 @@ describe("patternGhost", () => {
           ghostFit: opts.fit,
           ghostStyle: opts.style,
         },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any,
       coordinates: [{ x: 300, y: 200 }],
       bounding: { height: 400, width: 800, left: 0, right: 0, top: 0, bottom: 0 },
@@ -156,14 +149,10 @@ describe("patternGhost", () => {
         getDataList: () => opts.dataList ?? CANDLES,
         getPeriod: () => ({ span: 5, type: "minute" }),
         getSymbol: () => ({ ticker: "US100", pricePrecision: 2 }),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any,
       // A linear price axis is all the geometry needs.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       yAxis: { convertToPixel: (v: number) => 1000 - v / 100 } as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       xAxis: null as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any) as unknown as Array<Record<string, unknown>>;
   }
 
@@ -214,15 +203,11 @@ describe("patternGhost", () => {
 
   it("draws nothing without a copied shape", () => {
     const figures = patternGhost.createPointFigures!({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       overlay: { points: [{ timestamp: 1, value: 1 }], extendData: {} } as any,
       coordinates: [{ x: 10, y: 10 }],
       bounding: { height: 400, width: 800, left: 0, right: 0, top: 0, bottom: 0 },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       chart: {} as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       yAxis: { convertToPixel: (v: number) => v } as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);
     expect(figures).toEqual([]);
   });

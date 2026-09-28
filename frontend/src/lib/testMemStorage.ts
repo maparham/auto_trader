@@ -3,6 +3,8 @@
 // in-memory stand-in installed before that import.
 export class MemStorage {
   #m = new Map<string, string>();
+  // Mirrors lib.dom's Storage index signature, which is `any`.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 
   get length(): number {

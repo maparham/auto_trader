@@ -138,21 +138,21 @@ export function patchExprLiterals(
  *
  * When ordinals drop, the panel shows: "Removed sweep ranges no longer match this rule."
  */
-export function reanchorRanges(
+export function reanchorRanges<T>(
   _prevLiterals: LiteralSpan[],
   nextLiterals: LiteralSpan[],
-  ranges: Record<string, any>,
+  ranges: Record<string, T>,
   side: "long" | "short",
   group: "entry" | "exit",
   rowIdx: number,
-): { kept: Record<string, any>; dropped: string[] } {
+): { kept: Record<string, T>; dropped: string[] } {
   // Build a set of ordinals that exist in nextLiterals for fast lookup
   const nextOrdinals = new Set(nextLiterals.map((lit) => lit.ordinal));
 
   // Build the prefix for this row to identify which keys belong to it
   const rowPrefix = `lit:${side}.${group}.${rowIdx}.`;
 
-  const kept: Record<string, any> = {};
+  const kept: Record<string, T> = {};
   const dropped: string[] = [];
 
   // Iterate through the current ranges

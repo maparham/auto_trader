@@ -76,7 +76,6 @@ export default function ChartRangeBar({
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calOpen]);
 
   const submitDate = (e: FormEvent) => {

@@ -207,14 +207,12 @@ function fakeFacade(chart: FakeChart) {
     onLoadRequest: () => {},
     onForwardPrepend: null,
     getBars: () => chart.getDataList(),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
 }
 
 function setup() {
   const chart = new FakeChart();
   const m = new OverlayManager();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   m.attach(chart as any, fakeFacade(chart));
   m.setScope("tab.A");
   m.setEpic("US100");
@@ -544,7 +542,6 @@ describe("OverlayManager alert lookup + selection survives rehydrate (sidebar na
 // reconcile-as-full-resync fixes.
 describe("OverlayManager global alerts shared across same-epic cells", () => {
   const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const priceLines = (c: FakeChart) => [...c.overlays.values()].filter((o: any) => o.name === "alertPriceLine");
 
   function twoCells() {
@@ -570,7 +567,6 @@ describe("OverlayManager global alerts shared across same-epic cells", () => {
     b.reconcileAlerts(); // the alerts signal would call this
     const lines = priceLines(cb);
     expect(lines).toHaveLength(1);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((lines[0] as any).points[0].value).toBe(100);
   });
 
@@ -588,7 +584,6 @@ describe("OverlayManager global alerts shared across same-epic cells", () => {
     b.reconcileAlerts();
     a.updateAlert(ovId, 105, cfg); // drag/edit in A → storage 105
     b.reconcileAlerts();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((priceLines(cb)[0] as any).points[0].value).toBe(105);
   });
 
@@ -671,7 +666,6 @@ describe("OverlayManager symbol-change persist guard", () => {
 // hydrating guard and writing a half-removed list back to the shared key.
 describe("OverlayManager reconcile re-entrancy (self-triggered alerts signal)", () => {
   const cfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const priceLines = (c: FakeChart) => [...c.overlays.values()].filter((o: any) => o.name === "alertPriceLine");
 
   it("removing multiple alerts via a wired signal terminates and doesn't resurrect storage", () => {
@@ -726,7 +720,6 @@ describe("OverlayManager alert-write decoupling (persist is drawings-only)", () 
     // has materialised its line. The line must not be drawn twice.
     const unsub = alertsChanged.subscribe(() => m.reconcileAlerts());
     const ovId = m.addAlert(100, cfg)!;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lines = [...chart.overlays.values()].filter((o: any) => o.name === "alertPriceLine");
     unsub();
     expect(lines).toHaveLength(1);
@@ -772,7 +765,6 @@ describe("OverlayManager cross-tab shared-storage stomp (two same-epic/scope cel
   function cell() {
     const chart = new FakeChart();
     const m = new OverlayManager();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     m.attach(chart as any);
     m.setScope("tab.A");
     m.setEpic("US100");
@@ -1424,7 +1416,6 @@ describe("OverlayManager placement before the first rehydrate", () => {
   function unhydrated() {
     const chart = new FakeChart();
     const m = new OverlayManager();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     m.attach(chart as any, fakeFacade(chart));
     m.setScope("tab.A");
     m.setEpic("US100");
@@ -1662,7 +1653,6 @@ describe("future-anchored drawing points survive persist/rehydrate", () => {
     const m = new OverlayManager();
     const facade = fakeFacade(chart);
     const setBars = vi.spyOn(facade, "setBars");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     m.attach(chart as any, facade);
     m.setScope("tab.A");
     m.setEpic("US100");
@@ -1685,7 +1675,6 @@ describe("future-anchored drawing points survive persist/rehydrate", () => {
     const chart = new FakeChart();
     const facade = fakeFacade(chart);
     const m = new OverlayManager();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     m.attach(chart as any, facade);
     m.setScope("tab.A");
     m.setEpic("US100");

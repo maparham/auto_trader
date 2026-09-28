@@ -164,7 +164,6 @@ export default function OrderTicket({
   useEffect(() => {
     disarm();
     return () => window.clearTimeout(armTimer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [side, quantity, epic, orderType, account]);
 
   const isLimit = orderType === "limit";
@@ -324,7 +323,6 @@ export default function OrderTicket({
     if (myDraft && myDraft.quantity !== (Number(quantity) || 0)) {
       draftOrderSignal.set({ ...myDraft, quantity: Number(quantity) || 0 });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quantity, myDraft]);
 
   function patchDraft(p: Partial<DraftOrder>) {

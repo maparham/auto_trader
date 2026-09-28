@@ -30,7 +30,6 @@ function fakeChart(bars: { timestamp: number }[] = []) {
       calls.push({ fn: "remove", id: arg.id, arg });
     },
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return { chart: chart as any, calls };
 }
 

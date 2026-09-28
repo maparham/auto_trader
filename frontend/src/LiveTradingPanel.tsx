@@ -106,7 +106,6 @@ export default function LiveTradingPanel({ epic, resolution, brokerId, accounts,
   );
   useEffect(() => {
     setLiveCoded(cfg.codedStrategy ? loadCodedCfg("live", cfg.codedStrategy) : defaultCodedCfg());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg.codedStrategy]);
   const updateCoded = (c: CodedStrategyConfig) => {
     setLiveCoded(c);

@@ -211,7 +211,6 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
         setDemoLoadError(null);
       })
       .catch((e) => setDemoLoadError(e instanceof Error ? e.message : String(e)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, isAdmin, demoLoaded]);
 
   const captureDemoBacktest = () => {

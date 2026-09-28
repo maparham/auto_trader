@@ -111,6 +111,11 @@ import {
   type BacktestTab,
 } from "./backtestSettings/shared";
 
+// The four rule groups as both cfg and codedCfg carry them, read by key.
+type RuleRowsByKey = Partial<
+  Record<"longEntry" | "longExit" | "shortEntry" | "shortExit", { rules?: { enabled?: boolean; expr?: string }[] }>
+>;
+
 // Re-exported so LiveTradingPanel and the tests keep importing from here.
 export { RiskSection } from "./backtestSettings/RiskScalingSections";
 export { RuleGroupSection } from "./backtestSettings/RuleBuilder";
@@ -380,7 +385,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
   );
   useEffect(() => {
     setHoldout(loadHoldout(sweepContext(cfg.mode, cfg.codedStrategy)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg.mode, cfg.codedStrategy]);
   const changeHoldoutPct = (pct: number | null) => {
     const key = sweepCtx();
@@ -417,7 +421,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       ["short", "exit", "shortExit"],
     ] as const) {
       const sideOff = (side === "long" ? cfg.longEnabled : cfg.shortEnabled) === false;
-      (((src as any)?.[key]?.rules ?? []) as { enabled?: boolean }[]).forEach((r, i) => {
+      ((src as RuleRowsByKey | null | undefined)?.[key]?.rules ?? []).forEach((r, i) => {
         if (sideOff || r.enabled === false) out.add(`${side}.${group}.${i}`);
       });
     }
@@ -470,7 +474,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
       );
       return kept.length === axes.length ? axes : kept;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStrategy, cfg.mode]);
   // Drop lit: axes whose literal vanished after an expression edit / row delete.
   useEffect(() => {
@@ -485,7 +488,7 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     ).map(([side, group, key]) => ({
       side,
       group,
-      exprs: (((src as any)?.[key]?.rules ?? []) as any[]).map((r: any) => r.expr ?? ""),
+      exprs: ((src as RuleRowsByKey | null | undefined)?.[key]?.rules ?? []).map((r) => r.expr ?? ""),
     }));
     setSweepAxes((axes) => {
       const next = pruneLitAxes(axes, groups);
@@ -992,7 +995,6 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, epic, sweepSectionOpen]);
   const {
     panelWidth, resetPanelWidth, onResizeStart, pinned, setPinned, hidden, chartHost,

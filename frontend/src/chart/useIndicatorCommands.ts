@@ -288,7 +288,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   const pasteIndicator = useCallback(async () => {
     const c = chartRef.current;
     if (!c || snapViewRef.current) return; // read-only snapshot view: no paste
-    let text = "";
+    let text: string;
     try {
       text = (await navigator.clipboard?.readText()) ?? "";
     } catch {
@@ -372,7 +372,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   const pasteDrawing = useCallback(async (): Promise<boolean> => {
     const c = chartRef.current;
     if (!c || snapViewRef.current) return false; // read-only snapshot view: no paste
-    let text = "";
+    let text: string;
     try {
       text = (await navigator.clipboard?.readText()) ?? "";
     } catch {

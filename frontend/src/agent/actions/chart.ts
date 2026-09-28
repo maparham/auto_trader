@@ -109,7 +109,7 @@ export function registerChartActions(): void {
       // Clipped to the chart container so the agent sees the chart, not the
       // whole app.
       const probe = await probeTabBridgeDetailed();
-      let useExtension = Boolean(probe.hello);
+      const useExtension = Boolean(probe.hello);
       // Set when a DETECTED extension stopped answering mid-call; a probe
       // that answered with an error frame (orphaned content script) is the
       // same situation, just caught earlier.
@@ -146,7 +146,6 @@ export function registerChartActions(): void {
           // script was orphaned by a reload, most likely): tabBridge.ts has
           // already invalidated the cached hello. Fall through to the canvas
           // path below instead of failing outright.
-          useExtension = false;
           extensionTimedOut = true;
         }
       }

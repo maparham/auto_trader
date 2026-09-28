@@ -103,11 +103,11 @@ function harness() {
     cellId: "cell.A",
     setActiveRange: () => {},
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // Called as a plain function: the test drives the hook's refs directly.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   useRangeNavigation(handle as any, deps as any);
   const run = async (token: RangeReq) => {
     handle.pendingRangeRef.current = token;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (handle.ensureCoverageAndFitRef.current as any)(token);
   };
   return { run, fitVisibleRange, scrollTsToCenter };
@@ -222,7 +222,7 @@ function jumpHarness(oldestMs: number, detached: { targetMs: number } | null = n
   };
   // Not a component: the hook calls no React hooks of its own (see the note on
   // the harness above), so it runs as a plain function here.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, react-hooks/rules-of-hooks
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const { goToRange, onGoToDate, onRangePick } = useRangeNavigation(handle as any, deps as any);
   // The walk clears the pending token when it settles — the signal that the
   // .then branch (and so the warning decision) has actually run.

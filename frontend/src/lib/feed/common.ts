@@ -53,7 +53,7 @@ export async function fetchWithTimeout(
     return await apiFetch(url, { signal: ctrl.signal });
   } catch (err) {
     if (ctrl.signal.aborted) {
-      throw new Error(`Request timed out after ${timeoutMs / 1000}s`);
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s`, { cause: err });
     }
     throw err; // genuine network error (refused / DNS / offline) — surface as-is
   } finally {

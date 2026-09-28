@@ -333,7 +333,6 @@ export default function PresetsTab({
     // cascade. (Covers both setStates inside refresh(): setPresets is the re-read,
     // and setImportNote retires a stale import note the same way every other
     // library mutation does.)
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
     // `active`/`dirty` are read at completion time on purpose — a later edit must
     // not retroactively attach or detach this run — so they are NOT deps.

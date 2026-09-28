@@ -784,7 +784,6 @@ describe("boolean operators", () => {
 // test_expr_parser_bool.py (test_precedence_and_binds_tighter_than_or,
 // test_chained_same_op_flattens, test_not_wraps_the_whole_comparison).
 describe("boolean AST shape", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const parse = (src: string): any => parseRowForTests(src);
 
   it("binds and tighter than or", () => {

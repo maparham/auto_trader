@@ -797,7 +797,6 @@ export default function ChartCore({
         backtestDrillRequestSignal.set(null); // consume before acting (re-entry guard)
         drillInRef.current(req.resolution, req.fromMs, req.toMs);
       }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
@@ -4866,7 +4865,6 @@ export default function ChartCore({
       if (t) clearTimeout(t);
       chart.unsubscribeAction("onVisibleRangeChange", onRange);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [redraw]);
 
   // The DOM legend's values track the crosshair (TradingView-style): on each

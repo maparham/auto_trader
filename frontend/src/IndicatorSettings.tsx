@@ -908,7 +908,6 @@ function IndicatorSettingsForm({
     return () => timers.forEach(clearTimeout);
     // calcParams is the trigger, not an input: a new params array means a
     // recompute is on its way.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chart, paneId, name, calcParams]);
 
   function statFor(inp: IndicatorInputDef) {

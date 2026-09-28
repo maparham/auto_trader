@@ -174,7 +174,6 @@ export default function BacktestPanel({ codedRun }: { codedRun?: boolean }) {
   useEffect(() => {
     if (!demo || demoSelectedIndex != null || demoBacktests.length === 0) return;
     selectDemoBacktest(0, demoBacktests[0].result);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demo, demoBacktests, demoSelectedIndex]);
   const demoRow = demo ? (
     <div className="bt-results-messages bt-demo-row">

@@ -281,7 +281,7 @@ export async function fetchBrokers(): Promise<BrokerInfo> {
     }
     return info;
   } catch (err) {
-    if (ctrl.signal.aborted) throw new Error(`brokers timed out`);
+    if (ctrl.signal.aborted) throw new Error(`brokers timed out`, { cause: err });
     throw err;
   } finally {
     clearTimeout(timer);
