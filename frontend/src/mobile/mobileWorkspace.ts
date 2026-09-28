@@ -1,20 +1,28 @@
-// Read-only mirror of the desktop workspace for the mobile shell: which saved
-// layout to show as the chart strip, flattened to an ordered cell list.
+// Mirror of the desktop workspace for the mobile shell: which saved layout the
+// chart strip shows, flattened to an ordered cell list. Mobile edits to that
+// layout go through mobileLayoutEdit.ts, the only writer.
 //
-// Only SAVED layouts are mirrorable — the unsaved scratch workspace and the
+// Only SAVED layouts are mirrorable: the unsaved scratch workspace and the
 // per-tab activeLayoutId are deliberately device-local (see persist/workspace.ts
-// "Sync split"), so they never reach another device. We therefore mirror the
-// default-marked layout when one exists, else the first saved layout.
+// "Sync split"). Which layout the phone shows is device-local too: the phone's
+// own pick, else the default-marked layout, else the first saved layout.
 import { Signal } from "../lib/signals";
 import {
+  PREFIX,
+  load,
+  saveLocal,
   loadLayouts,
   loadLayout,
   loadDefaultLayoutId,
+  type LayoutMeta,
   type Workspace,
   type ChartCell,
 } from "../lib/persist";
 
+export const MOBILE_LAYOUT_KEY = `${PREFIX}.mobileLayoutId`;
+
 export interface MirroredWorkspace {
+  id: string;
   name: string;
   ws: Workspace;
 }
@@ -22,11 +30,27 @@ export interface MirroredWorkspace {
 export function mirroredWorkspace(): MirroredWorkspace | null {
   const layouts = loadLayouts();
   if (!layouts.length) return null;
+  const pick = load<string | null>(MOBILE_LAYOUT_KEY, null);
   const defId = loadDefaultLayoutId();
-  const meta = layouts.find((l) => l.id === defId) ?? layouts[0];
+  const meta =
+    layouts.find((l) => l.id === pick) ?? layouts.find((l) => l.id === defId) ?? layouts[0];
   const ws = loadLayout(meta.id);
-  return ws ? { name: meta.name, ws } : null;
+  return ws ? { id: meta.id, name: meta.name, ws } : null;
 }
+
+export function mobileLayoutList(): LayoutMeta[] {
+  return loadLayouts();
+}
+
+export function setMobileLayout(id: string): void {
+  saveLocal(MOBILE_LAYOUT_KEY, id);
+  bumpMobileWorkspace();
+}
+
+// Which cell of a split tab the phone last showed, so reopening the tab from
+// the overview lands where the user left it. In memory only: a fresh load
+// starts every tab on its first cell.
+export const lastCellByTab = new Map<string, number>();
 
 export interface FlatCell {
   tabIndex: number;

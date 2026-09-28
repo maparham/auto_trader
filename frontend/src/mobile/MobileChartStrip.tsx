@@ -1,7 +1,7 @@
 // Horizontally scrollable strip mirroring the desktop's saved layout: one chip
-// per desktop chart cell, grouped by tab (divider between tabs). Read-only —
-// tapping a chip shows that cell's chart (exact scope, so its drawings and
-// indicators) without ever writing the desktop workspace.
+// per desktop chart cell, grouped by tab (divider between tabs). Tapping a chip
+// shows that cell's chart (exact scope, so its drawings and indicators) without
+// ever writing the desktop workspace.
 //
 // A leading magnifier is the mobile twin of the desktop tab-bar "find open
 // symbol" search: typing filters the chips to matching cells (same matcher as
@@ -12,6 +12,7 @@ import {
   mirroredWorkspace,
   flattenCells,
   mobileWorkspaceVersion,
+  lastCellByTab,
   type FlatCell,
 } from "./mobileWorkspace";
 import { mobileChartScope, mobilePeriod, setMobileSymbol } from "./mobileChartState";
@@ -42,6 +43,7 @@ export default function MobileChartStrip() {
   const open = (f: FlatCell) => {
     setMobileSymbol(f.cell.symbol, undefined, f.cell.scope);
     mobilePeriod.set(f.cell.period);
+    lastCellByTab.set(mirror.ws.tabs[f.tabIndex].id, mirror.ws.tabs[f.tabIndex].cells.indexOf(f.cell));
     closeSearch();
   };
 

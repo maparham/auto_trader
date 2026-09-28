@@ -176,8 +176,12 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   // Device-local on purpose, same as desktop's active account: picking mt5 on
   // the phone must not drag every desktop tab onto mt5.
   `${PREFIX}.mobileAccount`,
+  // Which saved layout the mobile shell shows (mobile/mobileWorkspace). Device-local
+  // on purpose, same as desktop's activeLayoutId: picking a layout on the phone must
+  // not change which layout other devices see as their default.
+  `${PREFIX}.mobileLayoutId`,
 ]);
-function isDeviceLocalKey(k: string): boolean {
+export function isDeviceLocalKey(k: string): boolean {
   return (
     DEVICE_LOCAL_FLAT_KEYS.has(k) ||
     (k.startsWith(`${PREFIX}.b.`) &&
