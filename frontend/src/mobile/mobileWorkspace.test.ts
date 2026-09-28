@@ -34,6 +34,21 @@ describe("mobileWorkspace", () => {
     expect(mirroredWorkspace()).toBeNull();
   });
 
+  it("mirrors the default-marked saved layout", () => {
+    saveLayout("l1", "first", wsTabs([{ id: "t1", layout: "1", cells: [cell("c1", "US100", "s1")], activeCellId: "c1" }]));
+    saveLayout("l2", "main", wsTabs([{ id: "t2", layout: "1", cells: [cell("c2", "GOLD", "s2")], activeCellId: "c2" }]));
+    saveDefaultLayoutId("l2");
+    const m = mirroredWorkspace();
+    expect(m?.id).toBe("l2");
+    expect(m?.name).toBe("main");
+    expect(m?.ws.tabs[0].cells[0].symbol.epic).toBe("GOLD");
+  });
+
+  it("falls back to the first saved layout without a default", () => {
+    saveLayout("l1", "first", wsTabs([{ id: "t1", layout: "1", cells: [cell("c1", "US100", "s1")], activeCellId: "c1" }]));
+    expect(mirroredWorkspace()?.name).toBe("first");
+  });
+
   it("flattens tabs into ordered cells with tab indexes", () => {
     const w = wsTabs([
       { id: "t1", layout: "2h", cells: [cell("c1", "US100", "s1"), cell("c2", "GOLD", "s2")], activeCellId: "c1" },
