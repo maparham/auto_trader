@@ -68,6 +68,24 @@ describe("MobileTabOverview", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("pointer-tapping the grip calls onPullEnd once and doesn't also fire onClose via the click", () => {
+    const onClose = vi.fn();
+    const onPull = vi.fn();
+    const onPullEnd = vi.fn();
+    render(<MobileTabOverview open onClose={onClose} onPull={onPull} onPullEnd={onPullEnd} />);
+    const grip = screen.getByRole("button", { name: "Hide tabs" });
+    grip.setPointerCapture = vi.fn();
+    fireEvent.pointerDown(grip, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(grip, { clientY: 100, pointerId: 1 });
+    // A real pointer tap fires a trailing click event (detail >= 1); the
+    // handler's e.detail === 0 gate exists precisely so that doesn't also
+    // call onClose on top of the pointer-driven onPullEnd(0).
+    fireEvent.click(grip, { detail: 1 });
+    expect(onPullEnd).toHaveBeenCalledTimes(1);
+    expect(onPullEnd).toHaveBeenCalledWith(0);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("the filter narrows the chips and shows the empty state", async () => {
     render(<MobileTabOverview open onClose={() => {}} />);
     await userEvent.type(screen.getByRole("searchbox", { name: "Find tab" }), "gbp");

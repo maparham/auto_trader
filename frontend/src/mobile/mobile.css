@@ -389,7 +389,7 @@ body.m-mobile .floating-modal {
 
 /* Tab overview: pulled down from under the chart strip, covering the chart
    body. Wrapped chips mirror the desktop tab bar. */
-.m-tab-ov-host { position: absolute; inset: 0; z-index: 20; pointer-events: none; overflow: hidden; }
+.m-tab-ov-host { position: absolute; inset: 0; z-index: 70; pointer-events: none; overflow: hidden; }
 .m-tab-ov-host > .m-tab-ov { pointer-events: auto; }
 .m-tab-ov-host[style*="--pull"] > .m-tab-ov { transition: none; transform: translateY(min(0px, calc(-100% + max(0px, var(--pull))))); }
 .m-tab-ov-host[style*="--pull"] > .m-tab-ov.open { transform: translateY(min(0px, var(--pull))); }

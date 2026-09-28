@@ -38,7 +38,7 @@ describe("MobileChartStrip", () => {
 
   it("renders nothing without a saved layout", () => {
     render(<MobileChartStrip onPull={() => {}} onPullEnd={() => {}} />);
-    expect(screen.queryAllByRole("tab").length).toBe(0);
+    expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryAllByRole("button", { name: /5m|1H/ }).length).toBe(0);
   });
 
