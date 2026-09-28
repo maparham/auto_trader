@@ -386,6 +386,33 @@ body.m-mobile .floating-modal {
 .m-chart-strip-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
 .m-chart-strip-empty { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-faint); white-space: nowrap; }
 
+/* Tab overview: pulled down from under the chart strip, covering the chart
+   body. Wrapped chips mirror the desktop tab bar. */
+.m-tab-ov { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--bg); transform: translateY(-100%); transition: transform .24s cubic-bezier(.2,.8,.2,1); }
+.m-tab-ov.open { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) { .m-tab-ov { transition: none; } }
+.m-tab-ov-head { display: flex; align-items: center; gap: 6px; padding: 8px; }
+.m-tab-ov-head select, .m-tab-ov-head input { min-width: 0; font: inherit; font-size: 14px; color: var(--text); background: none; border: 1px solid var(--border); border-radius: 12px; padding: 4px 10px; }
+.m-tab-ov-head select { flex: 0 1 auto; max-width: 110px; }
+.m-tab-ov-head input { flex: 1; }
+.m-tab-ov-add { flex: 0 0 auto; width: 30px; height: 28px; border: 1px solid var(--border); border-radius: 12px; background: none; color: var(--text); font-size: 18px; line-height: 1; }
+.m-tab-ov-count { padding: 0 10px 6px; font-size: 11px; color: var(--text-faint); letter-spacing: .04em; text-transform: uppercase; }
+.m-tab-ov-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 8px 12px; touch-action: pan-y; }
+.m-tab-ov-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.m-tab-ov-chip { border: 1px solid var(--border); background: none; color: var(--text-dim); border-radius: 12px; padding: 6px 12px; font-size: 13px; white-space: nowrap; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.m-tab-ov-chip.active { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+.m-tab-ov-chip.lifted { transform: scale(1.05); transition: transform .12s; }
+.m-tab-ov-chip.dragging { opacity: .6; }
+.m-tab-ov-more { color: var(--text-faint); font-size: 11px; }
+.m-tab-ov-empty { padding: 16px 4px; font-size: 13px; color: var(--text-faint); }
+.m-tab-ov-grip { flex: 0 0 22px; display: flex; align-items: center; justify-content: center; border: 0; border-top: 1px solid var(--border); background: none; touch-action: none; }
+.m-tab-ov-grip i, .m-chart-strip-pull i { width: 36px; height: 4px; border-radius: 2px; background: var(--text-faint); }
+.m-tab-ov-scrim { position: absolute; inset: 0; display: flex; align-items: flex-end; background: color-mix(in srgb, #000 35%, transparent); }
+.m-tab-ov-menu { width: 100%; display: grid; gap: 6px; padding: 12px; background: var(--bg); border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; }
+.m-tab-ov-menu button { text-align: left; padding: 10px 12px; font: inherit; color: var(--text); background: none; border: 1px solid var(--border); border-radius: 10px; }
+.m-tab-ov-menu button.danger { color: var(--down, #ef5350); }
+.m-tab-ov-menu button:disabled { opacity: .4; }
+
 /* Broker chip in the chart top bar (broker switching). Fixed-shrink so a long
    broker label can't squeeze the symbol name out entirely. */
 .m-chart-broker {
