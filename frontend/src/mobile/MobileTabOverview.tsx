@@ -27,6 +27,7 @@ import {
   setMobileSymbol,
 } from "./mobileChartState";
 import { useHoldDrag } from "./useHoldDrag";
+import { startPullDrag } from "./usePullPanel";
 
 export function openTab(tab: ChartTab, cellIndex: number): void {
   const i = Math.min(Math.max(cellIndex, 0), tab.cells.length - 1);
@@ -39,7 +40,17 @@ export function openTab(tab: ChartTab, cellIndex: number): void {
 const shows = (tab: ChartTab, scope: string | undefined) =>
   !!scope && tab.cells.some((c) => c.scope === scope);
 
-export default function MobileTabOverview({ open, onClose }: { open: boolean; onClose(): void }) {
+export default function MobileTabOverview({
+  open,
+  onClose,
+  onPull,
+  onPullEnd,
+}: {
+  open: boolean;
+  onClose(): void;
+  onPull?(dy: number): void;
+  onPullEnd?(dy: number): void;
+}) {
   useSyncExternalStore(
     (fn) => mobileWorkspaceVersion.subscribe(fn),
     () => mobileWorkspaceVersion.value,
@@ -215,7 +226,16 @@ export default function MobileTabOverview({ open, onClose }: { open: boolean; on
           <div className="m-tab-ov-empty">No tab has that symbol. Tap + to open it in a new tab.</div>
         )}
       </div>
-      <button className="m-tab-ov-grip" aria-label="Hide tabs" onClick={onClose}><i /></button>
+      <button
+        className="m-tab-ov-grip"
+        aria-label="Hide tabs"
+        onPointerDown={(e) => startPullDrag(e, onPull, onPullEnd)}
+        onClick={(e) => {
+          if (e.detail === 0) onClose();
+        }}
+      >
+        <i />
+      </button>
       {menuTab && (
         <div className="m-tab-ov-scrim" onClick={(e) => { if (e.target === e.currentTarget) setMenuId(null); }}>
           <div className="m-tab-ov-menu">

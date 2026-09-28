@@ -7,8 +7,10 @@ import ChartCore from "../ChartCore";
 import MobileDrawBar from "./MobileDrawBar";
 import DrawingContextMenu from "../DrawingContextMenu";
 import MobileChartStrip from "./MobileChartStrip";
+import MobileTabOverview from "./MobileTabOverview";
 import MobileIndicatorsSheet from "./MobileIndicatorsSheet";
 import MobilePeriodSheet from "./MobilePeriodSheet";
+import { usePullPanel } from "./usePullPanel";
 import { loadSettings } from "../theme";
 import { requestSymbolSearch } from "../lib/signals";
 import { brokerLabel } from "../lib/trading";
@@ -41,6 +43,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
     (fn) => mobilePeriod.subscribe(fn),
     () => mobilePeriod.value,
   );
+  const pull = usePullPanel();
   const [periodSheetOpen, setPeriodSheetOpen] = useState(false);
   const [brokerSheetOpen, setBrokerSheetOpen] = useState(false);
   const [indicatorsSheetOpen, setIndicatorsSheetOpen] = useState(false);
@@ -155,8 +158,21 @@ export default function MobileChartView({ active = true }: { active?: boolean })
           )}
         </div>
       )}
-      {!viewMode.chromeHidden && <MobileChartStrip />}
+      {!viewMode.chromeHidden && <MobileChartStrip onPull={pull.onPull} onPullEnd={pull.onPullEnd} />}
       <div className="m-chart-body">
+        {!viewMode.chromeHidden && (
+          <div
+            className="m-tab-ov-host"
+            style={pull.dragOffset != null ? { ["--pull" as string]: `${pull.dragOffset}px` } : undefined}
+          >
+            <MobileTabOverview
+              open={pull.open}
+              onClose={() => pull.setOpen(false)}
+              onPull={pull.onPull}
+              onPullEnd={pull.onPullEnd}
+            />
+          </div>
+        )}
         {/* One control, one spot: top of the price axis, where no candle,
             legend or drawing lives. Its icon names what the tap does next:
             maximize, restore, or (rotated) turn back to portrait, since

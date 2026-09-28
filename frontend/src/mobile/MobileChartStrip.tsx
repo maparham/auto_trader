@@ -18,8 +18,15 @@ import {
 import { mobileChartScope, mobilePeriod, setMobileSymbol } from "./mobileChartState";
 import { matchingCellIds } from "../lib/tabSearch";
 import { requestSymbolSearch } from "../lib/signals";
+import { startPullDrag } from "./usePullPanel";
 
-export default function MobileChartStrip() {
+export default function MobileChartStrip({
+  onPull,
+  onPullEnd,
+}: {
+  onPull?(dy: number): void;
+  onPullEnd?(dy: number): void;
+}) {
   useSyncExternalStore(
     (fn) => mobileWorkspaceVersion.subscribe(fn),
     () => mobileWorkspaceVersion.value,
@@ -31,10 +38,23 @@ export default function MobileChartStrip() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
 
+  const bar = (
+    <button
+      className="m-chart-strip-pull"
+      aria-label="Show all tabs"
+      onPointerDown={(e) => startPullDrag(e, onPull, onPullEnd)}
+      onClick={(e) => {
+        if (e.detail === 0) onPullEnd?.(0);
+      }}
+    >
+      <i />
+    </button>
+  );
+
   const mirror = mirroredWorkspace();
-  if (!mirror) return null;
+  if (!mirror) return bar;
   const all = flattenCells(mirror.ws);
-  if (!all.length) return null;
+  if (!all.length) return bar;
 
   const closeSearch = () => {
     setSearchOpen(false);
@@ -55,72 +75,75 @@ export default function MobileChartStrip() {
   const cells = filtering ? all.filter((f) => hits.has(`${f.tabIndex}:${f.cell.id}`)) : all;
 
   return (
-    <div className="m-chart-strip" role="tablist" aria-label={`Layout: ${mirror.name}`}>
-      {all.length > 1 && (
-        searchOpen ? (
-          <span className="m-chart-strip-search">
-            <input
-              type="search"
-              className="m-chart-strip-input"
-              placeholder="Find chart"
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && filtering && cells.length) open(cells[0]);
-                else if (e.key === "Escape") closeSearch();
-              }}
-            />
-            <button className="m-chart-strip-icon" aria-label="Close search" onClick={closeSearch}>
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+    <>
+      <div className="m-chart-strip" role="tablist" aria-label={`Layout: ${mirror.name}`}>
+        {all.length > 1 && (
+          searchOpen ? (
+            <span className="m-chart-strip-search">
+              <input
+                type="search"
+                className="m-chart-strip-input"
+                placeholder="Find chart"
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && filtering && cells.length) open(cells[0]);
+                  else if (e.key === "Escape") closeSearch();
+                }}
+              />
+              <button className="m-chart-strip-icon" aria-label="Close search" onClick={closeSearch}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                     stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6 6 18" />
+                </svg>
+              </button>
+            </span>
+          ) : (
+            <button
+              className="m-chart-strip-icon"
+              aria-label="Find open chart"
+              onClick={() => setSearchOpen(true)}
+            >
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
                    stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
-                <path d="M6 6l12 12M18 6 6 18" />
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
               </svg>
             </button>
-          </span>
-        ) : (
-          <button
-            className="m-chart-strip-icon"
-            aria-label="Find open chart"
-            onClick={() => setSearchOpen(true)}
-          >
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-                 stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" />
-              <path d="m20 20-3.5-3.5" />
-            </svg>
-          </button>
-        )
-      )}
-      {filtering && cells.length === 0 && (
-        <span className="m-chart-strip-empty">
-          No open chart
-          <button
-            className="m-chart-strip-chip"
-            onClick={() => {
-              closeSearch();
-              requestSymbolSearch();
-            }}
-          >
-            Search all symbols
-          </button>
-        </span>
-      )}
-      {cells.map((f, i) => {
-        const active = scope?.scope === f.cell.scope && scope?.epic === f.cell.symbol.epic;
-        const newTab = i > 0 && cells[i - 1].tabIndex !== f.tabIndex;
-        return (
-          <span key={f.cell.scope + f.cell.symbol.epic} className="m-chart-strip-group">
-            {newTab && <span className="m-chart-strip-divider" aria-hidden />}
+          )
+        )}
+        {filtering && cells.length === 0 && (
+          <span className="m-chart-strip-empty">
+            No open chart
             <button
-              className={"m-chart-strip-chip" + (active ? " active" : "")}
-              onClick={() => open(f)}
+              className="m-chart-strip-chip"
+              onClick={() => {
+                closeSearch();
+                requestSymbolSearch();
+              }}
             >
-              {f.cell.symbol.epic} {f.cell.period.label}
+              Search all symbols
             </button>
           </span>
-        );
-      })}
-    </div>
+        )}
+        {cells.map((f, i) => {
+          const active = scope?.scope === f.cell.scope && scope?.epic === f.cell.symbol.epic;
+          const newTab = i > 0 && cells[i - 1].tabIndex !== f.tabIndex;
+          return (
+            <span key={f.cell.scope + f.cell.symbol.epic} className="m-chart-strip-group">
+              {newTab && <span className="m-chart-strip-divider" aria-hidden />}
+              <button
+                className={"m-chart-strip-chip" + (active ? " active" : "")}
+                onClick={() => open(f)}
+              >
+                {f.cell.symbol.epic} {f.cell.period.label}
+              </button>
+            </span>
+          );
+        })}
+      </div>
+      {bar}
+    </>
   );
 }

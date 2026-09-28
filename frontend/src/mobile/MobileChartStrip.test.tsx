@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { installMemStorage } from "../lib/testMemStorage";
 import { saveLayout, type Workspace } from "../lib/persist";
@@ -37,8 +37,9 @@ describe("MobileChartStrip", () => {
   });
 
   it("renders nothing without a saved layout", () => {
-    const { container } = render(<MobileChartStrip />);
-    expect(container.firstChild).toBeNull();
+    render(<MobileChartStrip onPull={() => {}} onPullEnd={() => {}} />);
+    expect(screen.queryAllByRole("tab").length).toBe(0);
+    expect(screen.queryAllByRole("button", { name: /5m|1H/ }).length).toBe(0);
   });
 
   it("re-reads the layout when the workspace version bumps", async () => {
@@ -114,6 +115,29 @@ describe("MobileChartStrip", () => {
       ]));
       render(<MobileChartStrip />);
       expect(screen.queryByRole("button", { name: "Find open chart" })).toBeNull();
+    });
+  });
+
+  describe("grab bar", () => {
+    it("reports a drag distance and its end", () => {
+      saveLayout("l1", "main", ws([
+        { id: "t1", layout: "1", cells: [cell("c1", "US100", "tab.t1")], activeCellId: "c1" },
+      ]));
+      const onPull = vi.fn();
+      const onPullEnd = vi.fn();
+      render(<MobileChartStrip onPull={onPull} onPullEnd={onPullEnd} />);
+      const bar = screen.getByRole("button", { name: "Show all tabs" });
+      bar.setPointerCapture = vi.fn();
+      fireEvent.pointerDown(bar, { clientY: 100, pointerId: 1 });
+      fireEvent.pointerMove(bar, { clientY: 180, pointerId: 1 });
+      fireEvent.pointerUp(bar, { clientY: 180, pointerId: 1 });
+      expect(onPull).toHaveBeenLastCalledWith(80);
+      expect(onPullEnd).toHaveBeenCalledWith(80);
+    });
+
+    it("shows the bar even with no saved layout, so + stays reachable", () => {
+      render(<MobileChartStrip onPull={() => {}} onPullEnd={() => {}} />);
+      expect(screen.getByRole("button", { name: "Show all tabs" })).toBeTruthy();
     });
   });
 });
