@@ -108,7 +108,7 @@ describe("hydrateAlerts", () => {
     expect(loadStoredAlert("US100", "al-1", broker)).toMatchObject({ id: "al-1" });
     expect(loadAllAlerts(broker)).toEqual([{ epic: "US100", alerts: loadAlerts("US100", broker) }]);
     expect(loadTriggered()).toHaveLength(1);
-    expect(loadTriggered()[0]).toMatchObject({ epic: "US100", alertId: "al-1", price: 101 });
+    expect(loadTriggered()[0]).toMatchObject({ epic: "US100", alertId: "al-1", price: 101, broker });
     expect(loadTriggeredSeen()).toBe(4000);
   });
 });
@@ -352,7 +352,7 @@ describe("applyAlertEvent", () => {
     expect(handled).toBe(true);
     expect(cb).toHaveBeenCalledWith(payload);
     expect(loadTriggered().length).toBe(before + 1);
-    expect(loadTriggered()[0]).toMatchObject({ epic: "US100", alertId: "al-9", price: 123 });
+    expect(loadTriggered()[0]).toMatchObject({ epic: "US100", alertId: "al-9", price: 123, broker: "b1" });
   });
 
   it("non-alert keys return false and change nothing", () => {

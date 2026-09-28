@@ -734,7 +734,7 @@ export const alertFired = new Signal<{ epic: string } | null>(null);
 // banner click handlers. A plain holder, not a Signal — it's called, not
 // observed (same idiom as sweepCancelServer above).
 export const alertNavHandler: {
-  current: ((epic: string, savedId: string, precision: number) => void) | null;
+  current: ((epic: string, savedId: string, precision: number, broker?: string) => void) | null;
 } = { current: null };
 
 // Request to open the symbol-search modal. The modal itself lives in Toolbar

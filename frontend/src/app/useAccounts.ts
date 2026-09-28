@@ -61,15 +61,24 @@ export function useAccounts(isDirty: boolean, tradingSettings: Settings["trading
   // that broker: the last one used there (if still registered), else its paper
   // account, else its first registered account. brokerId is derived from the account,
   // so this is the single lever that drives the per-broker workspace swap.
-  const selectBroker = (broker: string) => {
-    if (broker === brokerId) return;
+  const accountFor = (broker: string): TradeAccount => {
     const ofBroker = accounts.filter((a) => a.broker === broker);
     const remembered = lastAccountByBroker.current[broker];
-    const next =
+    return (
       (remembered && ofBroker.some((a) => a.key === remembered) && remembered) ||
       ofBroker.find((a) => a.env === "paper")?.key ||
       ofBroker[0]?.key ||
-      `${broker}:paper`;
+      `${broker}:paper`
+    );
+  };
+  // The switch itself, for a caller that already asked the user (an alert on
+  // another broker confirms once, folding the unsaved-changes warning in).
+  const switchBrokerConfirmed = (broker: string) => {
+    if (broker !== brokerId) setActiveAccount(accountFor(broker));
+  };
+  const selectBroker = (broker: string) => {
+    if (broker === brokerId) return;
+    const next = accountFor(broker);
     // Switching broker swaps the WHOLE workspace (the broker-switch effect reseeds
     // from the incoming broker's saved state), which discards in-memory edits that
     // autosave-off mode deliberately left unsaved. `isDirty` is true ONLY in that
@@ -195,5 +204,13 @@ export function useAccounts(isDirty: boolean, tradingSettings: Settings["trading
   useEffect(() => {
     setAccountSnapshot(accountSnapshotFrom(accountSummary, tradingSettings));
   }, [accountSummary, tradingSettings]);
-  return { accounts, activeAccount, setActiveAccount, brokerId, selectBroker, accountSummary };
+  return {
+    accounts,
+    activeAccount,
+    setActiveAccount,
+    brokerId,
+    selectBroker,
+    switchBrokerConfirmed,
+    accountSummary,
+  };
 }

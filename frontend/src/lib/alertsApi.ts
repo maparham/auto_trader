@@ -114,6 +114,8 @@ export interface TriggeredAlert {
   message: string;
   precision?: number;
   alertId?: string;
+  /** The broker the alert lives on; absent on rows from older backends. */
+  broker?: string;
 }
 
 export interface FiredPayload {
@@ -190,6 +192,7 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
     message: row.message,
     precision: row.precision,
     alertId: row.alert_id,
+    broker: row.broker,
   };
 }
 
@@ -517,6 +520,7 @@ export function applyAlertEvent(key: string, value: unknown): boolean {
         message: payload.message,
         precision: payload.precision,
         alertId: payload.id,
+        broker: payload.broker,
       },
       ...triggeredCache,
     ].slice(0, TRIGGERED_CAP);

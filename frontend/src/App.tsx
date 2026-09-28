@@ -81,9 +81,11 @@ import {
   type Instrument,
 } from "./lib/feed";
 import {
+  brokerLabel,
   isDataOnlyBroker,
   migrateCapitalLiveAccountKeys,
 } from "./lib/trading";
+import { toast } from "./lib/notify";
 import {
   loadStoredAlert,
   updateStoredAlert,
@@ -268,10 +270,15 @@ export default function App() {
   // the structure-signature effect in useTabActions when anything structural changes.
   const [pendingUndo, setPendingUndo] = useState<PendingUndo | null>(null);
 
-  const { accounts, activeAccount, setActiveAccount, brokerId, selectBroker, accountSummary } = useAccounts(
-    isDirty,
-    settings.trading,
-  );
+  const {
+    accounts,
+    activeAccount,
+    setActiveAccount,
+    brokerId,
+    selectBroker,
+    switchBrokerConfirmed,
+    accountSummary,
+  } = useAccounts(isDirty, settings.trading);
 
   // Live chart instances + controllers, keyed by cell id. Declared ahead of
   // useBackendSync, whose push handler reads it.
@@ -511,18 +518,84 @@ export default function App() {
   // is idempotent and guarded, so calling it now resolves an already-mounted cell
   // and harmlessly no-ops for a freshly-opened tab (the alertsChanged/ready path
   // resolves that later).
-  const openAlert = async (epic: string, target: AlertNavTarget, precisionGuess: number) => {
+  //
+  // An alert on ANOTHER broker (a firing or a history row: those span every
+  // broker) needs the whole workspace swapped first, which is a big jump, so it
+  // asks once (folding in the unsaved-layout warning selectBroker would give),
+  // then parks the request in pendingBrokerNavRef until the incoming broker's
+  // tabs have landed (see the effect below).
+  const pendingBrokerNavRef = useRef<{
+    broker: string;
+    fromBroker: string;
+    tabsBefore: ChartTab[];
+    epic: string;
+    target: AlertNavTarget;
+    precision: number;
+  } | null>(null);
+  const openAlert = async (
+    epic: string,
+    target: AlertNavTarget,
+    precisionGuess: number,
+    broker?: string,
+  ) => {
+    const fromBroker = brokerIdRef.current;
+    if (broker && broker !== fromBroker) {
+      if (accounts.length && !accounts.some((a) => a.broker === broker)) {
+        toast(`${brokerLabel(broker)} is not available, so ${epic} cannot be opened.`);
+        return;
+      }
+      requestConfirm({
+        title: "Switch broker?",
+        message:
+          `This alert is on ${brokerLabel(broker)}. Switch from ${brokerLabel(fromBroker)} to open ${epic}?` +
+          (isDirty ? " Unsaved changes to this layout will be discarded." : ""),
+        confirmLabel: "Switch",
+        onConfirm: () => {
+          pendingBrokerNavRef.current = {
+            broker,
+            fromBroker,
+            tabsBefore: tabsRef.current,
+            epic,
+            target,
+            precision: precisionGuess,
+          };
+          switchBrokerConfirmed(broker);
+        },
+      });
+      return;
+    }
     const { cellId } = await jumpToEpic(epic, precisionGuess);
     pendingSelectRef.current = { epic, cellId, ...target };
     resolvePendingSelect();
   };
+  // Finish a cross-broker alert jump once the swap is done. The broker flips a
+  // render before the incoming workspace (useBackendSync reseeds in an effect),
+  // so wait for the tabs to change too: jumping on the outgoing tabs would open
+  // the epic there. Anything else (the switch never happened, or the user went
+  // to a third broker) drops the request.
+  useEffect(() => {
+    const p = pendingBrokerNavRef.current;
+    if (!p) return;
+    if (brokerId === p.fromBroker) {
+      if (tabs !== p.tabsBefore) pendingBrokerNavRef.current = null;
+      return;
+    }
+    if (brokerId !== p.broker) {
+      pendingBrokerNavRef.current = null;
+      return;
+    }
+    if (tabs === p.tabsBefore) return;
+    pendingBrokerNavRef.current = null;
+    void openAlert(p.epic, p.target, p.precision);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brokerId, tabs]);
 
   // A fired alert's toast/banner clicks navigate through this handler (the
   // fired callback is registered outside React and can't reach openAlert
   // directly). Re-assigned every render so it always closes over current tabs.
   useEffect(() => {
-    alertNavHandler.current = (epic, savedId, precision) =>
-      void openAlert(epic, { savedId }, precision);
+    alertNavHandler.current = (epic, savedId, precision, broker) =>
+      void openAlert(epic, { savedId }, precision, broker);
   });
   useEffect(() => () => { alertNavHandler.current = null; }, []);
 

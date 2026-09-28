@@ -15,6 +15,7 @@ import type { ChartController } from "./lib/chartController";
 import type { ChartTab, AlertCondition } from "./lib/persist";
 import type { OverlayManager } from "./lib/overlays";
 import { fmtPrice } from "./lib/priceFormat";
+import { brokerLabel } from "./lib/trading";
 import {
   alertsChanged,
   alertsPanelOpen,
@@ -136,7 +137,14 @@ interface Props {
   brokerId: string;
   // Open (or reuse) the chart for an alert and select its line. precisionGuess seeds
   // a freshly-opened tab when no chart for the epic is on screen.
-  onOpenAlert: (epic: string, target: AlertNavTarget, precisionGuess: number) => void;
+  // `broker` is set for a history row, which may sit on another broker; App then
+  // confirms before switching to it.
+  onOpenAlert: (
+    epic: string,
+    target: AlertNavTarget,
+    precisionGuess: number,
+    broker?: string,
+  ) => void;
 }
 
 type Tab = "live" | "history";
@@ -678,19 +686,26 @@ export default function AlertsSidebar({
                 const target: AlertNavTarget = t.alertId
                   ? { savedId: t.alertId }
                   : { hint: { condition: t.condition, level: t.level, precision: hp } };
-                const onChart = targetVisible(t.epic, target);
+                // History spans every broker. A firing on another one is never
+                // "on chart" here (a same-named epic on this broker is a different
+                // instrument), and going to it asks before switching broker.
+                const foreign = t.broker != null && t.broker !== brokerId;
+                const onChart = !foreign && targetVisible(t.epic, target);
                 return (
                 <div
                   key={`${t.time}-${i}`}
                   className={`ap-row ap-row-hist${onChart ? " ap-row-clickable" : ""}${
-                    targetSelected(t.epic, target) ? " selected" : ""
-                  }${targetHovered(t.epic, target) ? " hovered" : ""}`}
+                    onChart && targetSelected(t.epic, target) ? " selected" : ""
+                  }${onChart && targetHovered(t.epic, target) ? " hovered" : ""}`}
                   onClick={onChart ? () => toggleSelectTarget(t.epic, target) : undefined}
                   onMouseEnter={onChart ? () => hoverTarget(t.epic, target, true) : undefined}
                   onMouseLeave={onChart ? () => hoverTarget(t.epic, target, false) : undefined}
                 >
                   <div className="ap-row-main">
-                    <span className="ap-sym">{t.epic}</span>
+                    <span className="ap-sym">
+                      {t.epic}
+                      {foreign && <span className="ap-broker">{brokerLabel(t.broker!)}</span>}
+                    </span>
                     <span className="ap-time">{ago(t.time, now)}</span>
                   </div>
                   <div className="ap-cond">
@@ -707,7 +722,7 @@ export default function AlertsSidebar({
                         className="ap-icon-btn"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onOpenAlert(t.epic, target, hp);
+                          onOpenAlert(t.epic, target, hp, t.broker);
                         }}
                       >
                         <GoToIcon />

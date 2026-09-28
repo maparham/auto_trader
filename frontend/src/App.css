@@ -791,6 +791,7 @@
 .ap-row-main { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .ap-sym { font-weight: 600; color: var(--text); }
 .ap-time { color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
+.ap-broker { margin-left: 6px; font-weight: 400; font-size: 11px; color: var(--text-faint); }
 .ap-cond { color: var(--text-dim); margin-top: 2px; }
 .ap-at { color: var(--text-faint); }
 .ap-msg { color: var(--text-dim); margin-top: 4px; font-size: 12px; font-style: italic; }

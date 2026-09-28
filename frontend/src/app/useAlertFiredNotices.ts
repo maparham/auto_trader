@@ -24,7 +24,8 @@ export function useAlertFiredNotices() {
       const detail = p.message || `@ ${fmtPrice(p.level, prec)}`;
       const body = `${p.epic} ${p.message ? "\u00b7 " : ""}${detail}`;
       // Click either surface to jump to a chart on this epic and select the line.
-      const goTo = () => alertNavHandler.current?.(p.epic, p.id, prec);
+      // The broker rides along: a firing on another broker asks before switching.
+      const goTo = () => alertNavHandler.current?.(p.epic, p.id, prec, p.broker);
       // Per-alert dedupe key: an "every" alert oscillating around its level
       // coalesces into the existing toast / replaces the banner, never stacks.
       const key = `${p.epic}|${p.id}`;
