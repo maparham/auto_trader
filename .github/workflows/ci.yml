@@ -1,7 +1,7 @@
 name: CI
 
-# Tests run on every push and pull request. A push to main that passes both
-# test jobs deploys to https://chartkar.app through scripts/deploy-demo.sh.
+# Tests run on every push and pull request. A push to main that passes all
+# three test jobs deploys to https://chartkar.app through scripts/deploy-demo.sh.
 on:
   push:
     branches: [main]
@@ -58,8 +58,7 @@ jobs:
       - run: npx vite build
 
   # Playwright against a real dev stack (uvicorn :8000 + vite :5173), no broker
-  # credentials. Deliberately not in deploy's `needs`: it reports, it does not
-  # gate.
+  # credentials. Gates deploy; Playwright retries once on CI to absorb flakes.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -105,7 +104,7 @@ jobs:
           retention-days: 7
 
   deploy:
-    needs: [backend, frontend]
+    needs: [backend, frontend, e2e]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
