@@ -50,7 +50,15 @@ export default function MobileTabOverview({ open, onClose }: { open: boolean; on
   )?.scope;
   const [query, setQuery] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
-  const [preview, setPreview] = useState<string[] | null>(null);
+  const [preview, setPreviewState] = useState<string[] | null>(null);
+  // Mirrors `preview` synchronously so onDrop can read the latest reorder
+  // even when it runs in the same tick as the last onOver, without waiting
+  // for a render to land between the last move and pointerup.
+  const previewRef = useRef<string[] | null>(null);
+  const setPreview = (next: string[] | null) => {
+    previewRef.current = next;
+    setPreviewState(next);
+  };
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const mirror = mirroredWorkspace();
@@ -68,30 +76,30 @@ export default function MobileTabOverview({ open, onClose }: { open: boolean; on
     if (el && bodyRef.current) bodyRef.current.scrollTop = Math.max(0, el.offsetTop - 10);
   }, [open]);
 
+  const openChip = (id: string) => {
+    const t = byId.get(id);
+    if (!t) return;
+    openTab(t, lastCellByTab.get(id) ?? 0);
+    onClose();
+  };
+
   const drag = useHoldDrag({
-    onTap(id) {
-      const t = byId.get(id);
-      if (!t) return;
-      openTab(t, lastCellByTab.get(id) ?? 0);
-      onClose();
-    },
+    onTap: openChip,
     onHold(id) {
       setMenuId(id);
     },
     onOver(id, overId) {
-      setPreview((cur) => {
-        const ids = cur ?? visible.map((t) => t.id);
-        const from = ids.indexOf(id);
-        const to = ids.indexOf(overId);
-        if (from < 0 || to < 0) return cur;
-        const next = [...ids];
-        next.splice(from, 1);
-        next.splice(to, 0, id);
-        return next;
-      });
+      const cur = previewRef.current ?? visible.map((t) => t.id);
+      const from = cur.indexOf(id);
+      const to = cur.indexOf(overId);
+      if (from < 0 || to < 0) return;
+      const next = [...cur];
+      next.splice(from, 1);
+      next.splice(to, 0, id);
+      setPreview(next);
     },
     onDrop(id) {
-      const ids = (preview ?? []).filter((x) => byId.has(x));
+      const ids = (previewRef.current ?? []).filter((x) => byId.has(x));
       setPreview(null);
       if (!byId.has(id) || !ids.length) return;
       // Visible tabs refill the slots they held in the full list; hidden tabs
@@ -102,9 +110,20 @@ export default function MobileTabOverview({ open, onClose }: { open: boolean; on
     },
   });
 
+  // A drag that ends without a drop (pointercancel, or a new pointerdown
+  // superseding the gesture) never calls onDrop, so it never clears the
+  // local reorder preview on its own. The hook always drops draggingId back
+  // to null when a gesture ends, dropped or not, so that transition is the
+  // one place left to catch it and revert to the real order.
+  useEffect(() => {
+    if (drag.draggingId === null) setPreview(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag.draggingId]);
+
   const addTab = () =>
     requestSymbolPick((s) => {
       const t = addMobileTab(s, mobilePeriod.value ?? DEFAULT_PERIOD);
+      setQuery("");
       openTab(t, 0);
       onClose();
     });
@@ -131,7 +150,7 @@ export default function MobileTabOverview({ open, onClose }: { open: boolean; on
   const menuTab = menuId ? byId.get(menuId) : undefined;
 
   return (
-    <div className={"m-tab-ov" + (open ? " open" : "")} aria-hidden={!open}>
+    <div className={"m-tab-ov" + (open ? " open" : "")} aria-hidden={!open} inert={!open}>
       <div className="m-tab-ov-head">
         <select
           id="m-tab-ov-layout"
@@ -172,6 +191,13 @@ export default function MobileTabOverview({ open, onClose }: { open: boolean; on
                     (drag.draggingId === t.id ? " dragging" : "")
                   }
                   onPointerDown={(e) => drag.onPointerDown(e, t.id)}
+                  // The hook only reacts to pointer gestures, so a keyboard
+                  // activation (Enter/Space on a focused button) would
+                  // otherwise do nothing. Browsers fire a synthetic click
+                  // with detail 0 for those; a real mouse click has
+                  // detail >= 1 and is already handled via onPointerDown, so
+                  // gating on detail === 0 avoids a double-open there.
+                  onClick={(e) => { if (e.detail === 0) openChip(t.id); }}
                   onContextMenu={(e) => e.preventDefault()}
                 >
                   {c.symbol.epic} {c.period.label}

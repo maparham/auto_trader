@@ -27,6 +27,8 @@ const tab = (id: string, ...epics: string[]) => ({
 });
 const seed = () => saveLayout("a", "Main", { tabs: [tab("t1", "US100"), tab("t2", "GOLD"), tab("t3", "EURUSD", "GBPUSD", "USDJPY")], activeTabId: "" } as unknown as Workspace);
 const order = () => loadLayout("a")!.tabs.map((t) => t.id);
+const chipOrder = () =>
+  Array.from(document.querySelectorAll("[data-drag-id]")).map((el) => el.getAttribute("data-drag-id"));
 
 describe("MobileTabOverview", () => {
   beforeEach(() => {
@@ -53,6 +55,15 @@ describe("MobileTabOverview", () => {
     const onClose = vi.fn();
     render(<MobileTabOverview open onClose={onClose} />);
     await userEvent.click(screen.getByRole("button", { name: "GOLD 1H" }));
+    expect(mobileChartScope.value).toEqual({ epic: "GOLD", scope: "tab.t2" });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("Enter on a focused chip opens the tab (keyboard access)", async () => {
+    const onClose = vi.fn();
+    render(<MobileTabOverview open onClose={onClose} />);
+    screen.getByRole("button", { name: "GOLD 1H" }).focus();
+    await userEvent.keyboard("{Enter}");
     expect(mobileChartScope.value).toEqual({ epic: "GOLD", scope: "tab.t2" });
     expect(onClose).toHaveBeenCalled();
   });
@@ -129,6 +140,18 @@ describe("MobileTabOverview", () => {
       act(() => bumpMobileWorkspace());
       fireEvent.pointerUp(window, { pointerId: 1 });
       expect(order()).toEqual(["t1", "t3"]);
+    });
+
+    it("a cancelled drag (pointercancel) reverts the chip order to the layout's real order", () => {
+      render(<MobileTabOverview open onClose={() => {}} />);
+      document.elementFromPoint = vi.fn(() => screen.getByRole("button", { name: "US100 1H" }));
+      hold(screen.getByRole("button", { name: "GOLD 1H" }));
+      fireEvent.pointerMove(window, { clientX: 0, clientY: 40, pointerId: 1 });
+      // The in-panel preview reordered GOLD ahead of US100 before the cancel.
+      expect(chipOrder()).toEqual(["t2", "t1", "t3"]);
+      fireEvent.pointerCancel(window, { pointerId: 1 });
+      expect(chipOrder()).toEqual(["t1", "t2", "t3"]);
+      expect(order()).toEqual(["t1", "t2", "t3"]);
     });
   });
 });
