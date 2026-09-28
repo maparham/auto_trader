@@ -7,7 +7,8 @@
 // instead of going through OverlayManager; everything else calls
 // controller.overlays.addDrawing(name). A magnet toggle and, when a drawing
 // is selected, Edit/Delete actions round out the strip, and a ⋯ handle beside
-// the drawing opens its menu (MobileDrawingHandle).
+// the drawing opens its menu (MobileDrawingHandle), and one beside the touch
+// crosshair opens the chart menu (MobileCrosshairHandle).
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { getSupportedOverlays } from "klinecharts";
 import DrawGlyph from "../DrawIcons";
@@ -18,6 +19,7 @@ import { mobileChartCtx } from "./mobileChartState";
 import { isDemoMode } from "../lib/demoMode";
 import { toast } from "../lib/notify";
 import MobileDrawingHandle from "./MobileDrawingHandle";
+import MobileCrosshairHandle from "./MobileCrosshairHandle";
 
 export default function MobileDrawBar() {
   const ctx = useSyncExternalStore(
@@ -80,6 +82,7 @@ export default function MobileDrawBar() {
 
   return (
     <>
+      <MobileCrosshairHandle chart={ctx.chart} overlays={controller.overlays} hidden={selectedId != null} />
       {selectedId != null && (
         <MobileDrawingHandle chart={ctx.chart} overlays={controller.overlays} selectedId={selectedId} />
       )}

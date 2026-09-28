@@ -820,6 +820,18 @@ export const drawingSettingsRequest = new Signal<{ id: string } | null>(null);
 // its own chart holds. Fire-and-forget, so it never needs resetting.
 export const drawingMenuRequest = new Signal<{ id: string; x: number; y: number } | null>(null);
 
+// Open the chart's own context menu (Paste, Copy timestamp, price actions) on a
+// phone, where no right-click exists. The mobile crosshair handle sets it: x/y
+// is the crosshair's page point (the price and time the menu acts on), menuX/Y
+// where the menu opens. Each ChartCore answers only for its own chart.
+export const chartMenuRequest = new Signal<{
+  chart: unknown;
+  x: number;
+  y: number;
+  menuX: number;
+  menuY: number;
+} | null>(null);
+
 // Bumped when an indicator's own-canvas overlay (e.g. the Slope's on-chart MA
 // curves, drawn outside klinecharts) needs an immediate repaint after a settings
 // change. ChartCore subscribes and re-runs its redraw loop. Without this the

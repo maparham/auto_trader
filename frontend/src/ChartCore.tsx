@@ -96,6 +96,7 @@ import {
   snapshotViewChanged,
   indicatorOverlayRepaint,
   patternClipboard,
+  chartMenuRequest,
   type PendingEdit,
   type TradeLineField,
   type DraftOrder,
@@ -2412,11 +2413,21 @@ export default function ChartCore({
         return;
       }
       e.preventDefault();
+      openChartMenuAt(e.clientX, e.clientY, e.clientX, e.clientY);
+    };
+
+    // The chart menu for the point (clientX, clientY), opened at (atX, atY).
+    // A right-click passes the cursor for both; the phone's crosshair handle
+    // (chartMenuRequest) passes the crosshair point and its own spot.
+    const openChartMenuAt = (clientX: number, clientY: number, atX: number, atY: number) => {
+      const c = chartRef.current;
+      if (!c) return;
+      const rect = el.getBoundingClientRect();
       // Price under the cursor at right-click, so buy/sell-limit (and alert/line)
       // actions in the menu land on the confluence level the user just eyeballed —
       // computed fresh from clientY (not plusPriceRef) so it skips the alert/trade
       // snapping onMove applies and honours the raw-cursor-price behaviour.
-      const menuY = e.clientY - rect.top;
+      const menuY = clientY - rect.top;
       // Only the candle pane's y-axis is a price. Over a sub-pane (RSI/MACD/Volume)
       // convertFromPixel still returns an EXTRAPOLATED number, not null — so guard on
       // the candle pane's own bounds (mirroring onMove's candleBottom check) and leave
@@ -2433,9 +2444,12 @@ export default function ChartCore({
       // like overPriceAxis above), which already clamps a click in the whitespace
       // past either end to that end bar. Unlike price, this is meaningful over a
       // sub-pane too, so it's read for every non-axis right-click.
-      const ts = rangePickTsAtX(e.clientX);
-      setChartMenu({ x: e.clientX, y: e.clientY, price, ts });
+      const ts = rangePickTsAtX(clientX);
+      setChartMenu({ x: atX, y: atY, price, ts });
     };
+    const offChartMenuRequest = chartMenuRequest.subscribe((req) => {
+      if (req && req.chart === chartRef.current) openChartMenuAt(req.x, req.y, req.menuX, req.menuY);
+    });
 
     // AVWAP anchor drag + the manual horizontal-line drag (trade SL/TP/entry +
     // alert lines) now live in chart/useLineDrag.ts, which attaches onAnchorDown
@@ -3836,6 +3850,7 @@ export default function ChartCore({
       clearPress();
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);
+      offChartMenuRequest();
       el.removeEventListener("mousedown", onZoomDown, true);
       el.removeEventListener("mousedown", onPatternPanDown, true);
       el.removeEventListener("contextmenu", onPatternPanContextMenu, true);
