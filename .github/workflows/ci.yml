@@ -53,9 +53,11 @@ jobs:
       # Node 25 matches local dev; its built-in sessionStorage is what
       # wfoRun.test.ts expects.
       - run: npx vitest run
-      # vite build, not `npm run build`: tsc -b still carries a known error
-      # backlog, so it cannot gate yet.
-      - run: npx vite build
+      # Errors fail the job; warnings (exhaustive-deps, only-export-components)
+      # are reported only.
+      - run: npx eslint .
+      # tsc -b, then vite build.
+      - run: npm run build
 
   # Playwright against a real dev stack (uvicorn :8000 + vite :5173), no broker
   # credentials. Gates deploy; Playwright retries once on CI to absorb flakes.
