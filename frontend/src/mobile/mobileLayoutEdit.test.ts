@@ -6,6 +6,7 @@ import {
   loadLayout,
   loadLayouts,
   loadDefaultLayoutId,
+  deleteLayout,
   PREFIX,
   type Workspace,
 } from "../lib/persist";
@@ -112,5 +113,25 @@ describe("mobileLayoutEdit", () => {
     undo();
     undo();
     expect(epics()).toEqual(["US100", "GOLD", "EURUSD"]);
+  });
+
+  it("skips the purge when a concurrent save still has the tab (close reverted underneath it)", () => {
+    localStorage.setItem(`${PREFIX}.tab.t2.drawings`, "[1]");
+    closeMobileTab("t2");
+    // A concurrent desktop write re-saves the layout with t2 back in it
+    // before the undo window elapses.
+    saveLayout("a", "Main", ws(tab("t1", "US100"), tab("t2", "GOLD"), tab("t3", "EURUSD", "GBPUSD")));
+    vi.advanceTimersByTime(UNDO_MS);
+    expect(localStorage.getItem(`${PREFIX}.tab.t2.drawings`)).toBe("[1]");
+  });
+
+  it("undo re-arms the purge when the layout is gone by the time it fires", () => {
+    localStorage.setItem(`${PREFIX}.tab.t2.drawings`, "[1]");
+    const undo = closeMobileTab("t2")!;
+    deleteLayout("a"); // t2 was already removed from "a", so this doesn't purge it itself
+    undo(); // restoring editLayout("a", ...) fails: the layout no longer exists
+    expect(localStorage.getItem(`${PREFIX}.tab.t2.drawings`)).toBe("[1]");
+    vi.advanceTimersByTime(UNDO_MS);
+    expect(localStorage.getItem(`${PREFIX}.tab.t2.drawings`)).toBeNull();
   });
 });

@@ -123,4 +123,13 @@ describe("symbol pick routing", () => {
     await closeSymbolSearch();
     expect(symbolPickTarget.value).toBeNull();
   });
+
+  it("with no pending pick target, a pick switches the chart's symbol", async () => {
+    symbolPickTarget.set(null);
+    mobileSymbol.set(null);
+    act(() => symbolSearchRequest.set(symbolSearchRequest.value + 1));
+    await pickSymbol("NVDA");
+    expect(symbolPickTarget.value).toBeNull();
+    expect(mobileSymbol.value?.epic).toBe("NVDA");
+  });
 });

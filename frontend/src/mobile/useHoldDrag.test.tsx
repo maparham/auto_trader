@@ -99,4 +99,25 @@ describe("useHoldDrag", () => {
     expect(h.onTap).not.toHaveBeenCalled();
     expect(h.onHold).not.toHaveBeenCalled();
   });
+
+  it("registers the document touchmove(passive:false) listener only while lifted", () => {
+    const addSpy = vi.spyOn(document, "addEventListener");
+    const removeSpy = vi.spyOn(document, "removeEventListener");
+    const touchmoveAdds = () => addSpy.mock.calls.filter((c) => c[0] === "touchmove");
+    const touchmoveRemoves = () => removeSpy.mock.calls.filter((c) => c[0] === "touchmove");
+    try {
+      const { getByTestId } = render(<List h={h} />);
+      down(getByTestId("a"));
+      expect(touchmoveAdds()).toHaveLength(0);
+      act(() => { vi.advanceTimersByTime(HOLD_MS); });
+      expect(touchmoveAdds()).toHaveLength(1);
+      expect(touchmoveAdds()[0][2]).toEqual({ passive: false });
+      expect(touchmoveRemoves()).toHaveLength(0);
+      up();
+      expect(touchmoveRemoves()).toHaveLength(1);
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
+  });
 });

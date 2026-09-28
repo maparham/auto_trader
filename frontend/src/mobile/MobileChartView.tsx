@@ -68,6 +68,13 @@ export default function MobileChartView({ active = true }: { active?: boolean })
     (fn) => mobileViewMode.subscribe(fn),
     () => mobileViewMode.value,
   );
+  // The overview host unmounts while the chrome is hidden, but `pull.open`
+  // is component state and outlives that unmount — close it here so
+  // rotating (or restoring) the chrome back doesn't reopen it by itself.
+  useEffect(() => {
+    if (viewMode.chromeHidden) pull.setOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode.chromeHidden]);
   const ctx = useSyncExternalStore(
     (fn) => mobileChartCtx.subscribe(fn),
     () => mobileChartCtx.value,
@@ -161,10 +168,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
       {!viewMode.chromeHidden && <MobileChartStrip onPull={pull.onPull} onPullEnd={pull.onPullEnd} />}
       <div className="m-chart-body">
         {!viewMode.chromeHidden && (
-          <div
-            className="m-tab-ov-host"
-            style={pull.dragOffset != null ? { ["--pull" as string]: `${pull.dragOffset}px` } : undefined}
-          >
+          <div className="m-tab-ov-host" ref={pull.hostRef}>
             <MobileTabOverview
               open={pull.open}
               onClose={() => pull.setOpen(false)}

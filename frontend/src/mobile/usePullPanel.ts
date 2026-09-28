@@ -1,6 +1,12 @@
 // Open state for the tab overview plus the live pull distance, so the panel
 // follows the finger while the strip's grab bar (or the panel's grip) drags.
-import { useState } from "react";
+//
+// The live distance is NOT React state: MobileChartView hosts the panel and
+// also hosts ChartCore, so a re-render on every pointermove would re-render
+// the whole chart underneath a drag. Instead the drag writes the `--pull`
+// custom property and a `.pulling` class straight onto the host element via
+// a ref, imperatively, and only `open` (which changes rarely) is state.
+import { useRef, useState } from "react";
 
 export const OPEN_PX = 60;
 const TAP_PX = 4;
@@ -36,14 +42,23 @@ export function startPullDrag(
 
 export function usePullPanel() {
   const [open, setOpen] = useState(false);
-  const [dragOffset, setDragOffset] = useState<number | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
   return {
     open,
     setOpen,
-    dragOffset,
-    onPull: (dy: number) => setDragOffset(dy),
+    hostRef,
+    onPull: (dy: number) => {
+      const el = hostRef.current;
+      if (!el) return;
+      el.classList.add("pulling");
+      el.style.setProperty("--pull", `${dy}px`);
+    },
     onPullEnd: (dy: number) => {
-      setDragOffset(null);
+      const el = hostRef.current;
+      if (el) {
+        el.classList.remove("pulling");
+        el.style.removeProperty("--pull");
+      }
       if (Math.abs(dy) < TAP_PX) setOpen((o) => !o);
       else if (dy > OPEN_PX) setOpen(true);
       else if (dy < -OPEN_PX) setOpen(false);

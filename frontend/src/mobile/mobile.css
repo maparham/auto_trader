@@ -391,8 +391,8 @@ body.m-mobile .floating-modal {
    body. Wrapped chips mirror the desktop tab bar. */
 .m-tab-ov-host { position: absolute; inset: 0; z-index: 70; pointer-events: none; overflow: hidden; }
 .m-tab-ov-host > .m-tab-ov { pointer-events: auto; }
-.m-tab-ov-host[style*="--pull"] > .m-tab-ov { transition: none; transform: translateY(min(0px, calc(-100% + max(0px, var(--pull))))); }
-.m-tab-ov-host[style*="--pull"] > .m-tab-ov.open { transform: translateY(min(0px, var(--pull))); }
+.m-tab-ov-host.pulling > .m-tab-ov { transition: none; transform: translateY(min(0px, calc(-100% + max(0px, var(--pull))))); }
+.m-tab-ov-host.pulling > .m-tab-ov.open { transform: translateY(min(0px, var(--pull))); }
 .m-tab-ov { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); transform: translateY(-100%); transition: transform .24s cubic-bezier(.2,.8,.2,1); }
 .m-tab-ov.open { transform: translateY(0); }
 @media (prefers-reduced-motion: reduce) { .m-tab-ov { transition: none; } }

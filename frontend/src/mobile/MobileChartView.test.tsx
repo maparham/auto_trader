@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { installMemStorage } from "../lib/testMemStorage";
 import { brokerRoot } from "../lib/persist";
@@ -12,10 +12,14 @@ const demoFlag = vi.hoisted(() => ({ on: false }));
 vi.mock("../lib/demoMode", () => ({ isDemoMode: () => demoFlag.on, setDemoMode: () => {} }));
 afterEach(cleanup);
 
+// Tracks ChartCore render count (finding 3: a pull-drag must not re-render
+// the whole chart underneath it).
+const chartCoreRenders = vi.hoisted(() => ({ n: 0 }));
 vi.mock("../ChartCore", () => ({
-  default: (p: { symbol: { epic: string }; theme: string }) => (
-    <div data-testid="chartcore" data-epic={p.symbol.epic} data-theme={p.theme} />
-  ),
+  default: (p: { symbol: { epic: string }; theme: string }) => {
+    chartCoreRenders.n++;
+    return <div data-testid="chartcore" data-epic={p.symbol.epic} data-theme={p.theme} />;
+  },
 }));
 
 vi.mock("../lib/feed", async (importOriginal) => ({
@@ -107,6 +111,25 @@ describe("MobileChartView", () => {
     mobileSettingsVersion.set(mobileSettingsVersion.value + 1);
     await waitFor(() => expect(screen.getByTestId("chartcore").dataset.theme).toBe(next));
   });
+
+  it("moves the pull imperatively on the overview host without re-rendering ChartCore (finding 3)", async () => {
+    const { container } = render(<MobileChartView />);
+    await waitFor(() => screen.getByTestId("chartcore"));
+    chartCoreRenders.n = 0;
+    const bar = screen.getByRole("button", { name: "Show all tabs" });
+    bar.setPointerCapture = vi.fn();
+    const host = container.querySelector(".m-tab-ov-host") as HTMLElement;
+    expect(host).not.toBeNull();
+    fireEvent.pointerDown(bar, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(bar, { clientY: 150, pointerId: 1 });
+    expect(host.classList.contains("pulling")).toBe(true);
+    expect(host.style.getPropertyValue("--pull")).toBe("50px");
+    expect(chartCoreRenders.n).toBe(0);
+    fireEvent.pointerUp(bar, { clientY: 150, pointerId: 1 });
+    expect(host.classList.contains("pulling")).toBe(false);
+    expect(host.style.getPropertyValue("--pull")).toBe("");
+    expect(chartCoreRenders.n).toBe(0);
+  });
 });
 
 describe("MobileChartView chrome-only mode", () => {
@@ -135,6 +158,24 @@ describe("MobileChartView chrome-only mode", () => {
     } finally {
       demoFlag.on = false;
     }
+  });
+
+  it("closes the tab overview when the chrome hides, so it doesn't reopen by itself on restoring it", async () => {
+    const { container } = render(<MobileChartView />);
+    await waitFor(() => screen.getByTestId("chartcore"));
+    const bar = screen.getByRole("button", { name: "Show all tabs" });
+    bar.setPointerCapture = vi.fn();
+    // A tap-length pull (dy below the tap threshold) toggles the overview open.
+    fireEvent.pointerDown(bar, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(bar, { clientY: 100, pointerId: 1 });
+    expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
+    await act(async () => {
+      mobileViewMode.set({ chromeHidden: true, landscape: false });
+    });
+    await act(async () => {
+      mobileViewMode.set({ chromeHidden: false, landscape: false });
+    });
+    expect(container.querySelector(".m-tab-ov.open")).toBeNull();
   });
 });
 

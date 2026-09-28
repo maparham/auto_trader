@@ -51,6 +51,14 @@ describe("MobileTabOverview", () => {
     expect(screen.getByRole("button", { name: "GOLD 1H" }).classList.contains("active")).toBe(true);
   });
 
+  it("does not mark a chip active when the scope matches but the epic differs", () => {
+    // Same scope string as t2's cell, but a different epic (e.g. a symbol
+    // change raced ahead of the scope) — must not read as "showing" t2.
+    mobileChartScope.set({ epic: "SILVER", scope: "tab.t2" });
+    render(<MobileTabOverview open onClose={() => {}} />);
+    expect(screen.getByRole("button", { name: "GOLD 1H" }).classList.contains("active")).toBe(false);
+  });
+
   it("tap opens the tab's chart and closes the overview", async () => {
     const onClose = vi.fn();
     render(<MobileTabOverview open onClose={onClose} />);
@@ -86,7 +94,7 @@ describe("MobileTabOverview", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("the filter narrows the chips and shows the empty state", async () => {
+  it("the filter narrows the chips and shows the no-match empty state", async () => {
     render(<MobileTabOverview open onClose={() => {}} />);
     await userEvent.type(screen.getByRole("searchbox", { name: "Find tab" }), "gbp");
     expect(screen.getByRole("button", { name: "EURUSD 1H +2" })).toBeTruthy();
@@ -94,7 +102,13 @@ describe("MobileTabOverview", () => {
     expect(screen.getByText("1 of 3 tabs")).toBeTruthy();
     await userEvent.clear(screen.getByRole("searchbox", { name: "Find tab" }));
     await userEvent.type(screen.getByRole("searchbox", { name: "Find tab" }), "zzz");
-    expect(screen.getByText(/No tab has that symbol/)).toBeTruthy();
+    expect(screen.getByText("No tab has that symbol. Tap + to open it in a new tab.")).toBeTruthy();
+  });
+
+  it("shows the no-tabs empty state with an empty query and nothing saved", () => {
+    localStorage.clear();
+    render(<MobileTabOverview open onClose={() => {}} />);
+    expect(screen.getByText("No tabs yet. Tap + to open one.")).toBeTruthy();
   });
 
   it("+ routes through symbol search and opens the new tab", async () => {

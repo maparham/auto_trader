@@ -70,6 +70,14 @@ export function setMobileTabSymbol(tabId: string, symbol: Instrument): void {
   });
 }
 
+// True when `tabId` still shows up in some saved layout's body. A concurrent
+// desktop write can revert a mobile close (re-add the tab, or restore an
+// older body that never dropped it) inside the undo window; purging the
+// tab's scope out from under it would orphan the still-live cell.
+function tabInAnySavedLayout(tabId: string): boolean {
+  return loadLayouts().some((l) => !!loadLayout(l.id)?.tabs.some((t) => t.id === tabId));
+}
+
 export function closeMobileTab(tabId: string): (() => void) | null {
   const m = mirroredWorkspace();
   if (!m) return null;
@@ -77,19 +85,27 @@ export function closeMobileTab(tabId: string): (() => void) | null {
   if (idx < 0 || m.ws.tabs.length === 1) return null;
   const tab = m.ws.tabs[idx];
   editLayout(m.id, (ts) => ts.filter((t) => t.id !== tabId));
-  let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-    timer = null;
-    purgeTabScope(tabId);
-  }, UNDO_MS);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const armPurge = () => {
+    timer = setTimeout(() => {
+      timer = null;
+      if (!tabInAnySavedLayout(tabId)) purgeTabScope(tabId);
+    }, UNDO_MS);
+  };
+  armPurge();
   return () => {
     if (!timer) return;
     clearTimeout(timer);
     timer = null;
     // Back into the layout it came from, even if the phone switched since.
-    editLayout(m.id, (ts) => {
+    const restored = editLayout(m.id, (ts) => {
       const next = [...ts];
       next.splice(Math.min(idx, next.length), 0, tab);
       return next;
     });
+    // The layout is gone (deleted, or the broker family switched under it):
+    // the tab never made it back into a saved layout, so re-arm the purge
+    // rather than leaving its scope orphaned forever.
+    if (!restored) armPurge();
   };
 }

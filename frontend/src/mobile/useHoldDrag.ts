@@ -18,12 +18,6 @@ export interface HoldDragHandlers {
   onDrop(id: string): void;
 }
 
-// Once an item is lifted, page scrolling must not steal the drag.
-let touchLock = false;
-if (typeof document !== "undefined") {
-  document.addEventListener("touchmove", (e) => { if (touchLock) e.preventDefault(); }, { passive: false });
-}
-
 export function useHoldDrag(h: HoldDragHandlers) {
   const hRef = useRef(h);
   hRef.current = h;
@@ -41,9 +35,13 @@ export function useHoldDrag(h: HoldDragHandlers) {
     let lifted = false;
     let dragging = false;
     let cancelled = false;
+    // Once an item is lifted, page scrolling must not steal the drag. The
+    // listener is only live while lifted (added here, removed in finish)
+    // rather than for the document's whole lifetime.
+    const preventTouchScroll = (e: TouchEvent) => e.preventDefault();
     const timer = setTimeout(() => {
       lifted = true;
-      touchLock = true;
+      document.addEventListener("touchmove", preventTouchScroll, { passive: false });
       setLiftedId(id);
     }, HOLD_MS);
 
@@ -65,7 +63,7 @@ export function useHoldDrag(h: HoldDragHandlers) {
     };
     const finish = (fire: boolean) => {
       clearTimeout(timer);
-      touchLock = false;
+      document.removeEventListener("touchmove", preventTouchScroll);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);

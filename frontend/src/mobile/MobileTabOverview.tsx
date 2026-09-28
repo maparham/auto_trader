@@ -37,8 +37,9 @@ export function openTab(tab: ChartTab, cellIndex: number): void {
   mobilePeriod.set(cell.period);
 }
 
-const shows = (tab: ChartTab, scope: string | undefined) =>
-  !!scope && tab.cells.some((c) => c.scope === scope);
+const shows = (tab: ChartTab, chartScope: { epic: string; scope: string } | null | undefined) =>
+  !!chartScope &&
+  tab.cells.some((c) => c.scope === chartScope.scope && c.symbol.epic === chartScope.epic);
 
 export default function MobileTabOverview({
   open,
@@ -55,10 +56,10 @@ export default function MobileTabOverview({
     (fn) => mobileWorkspaceVersion.subscribe(fn),
     () => mobileWorkspaceVersion.value,
   );
-  const scope = useSyncExternalStore(
+  const chartScope = useSyncExternalStore(
     (fn) => mobileChartScope.subscribe(fn),
     () => mobileChartScope.value,
-  )?.scope;
+  );
   const [query, setQuery] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
   const [preview, setPreviewState] = useState<string[] | null>(null);
@@ -141,7 +142,7 @@ export default function MobileTabOverview({
 
   const closeTab = (t: ChartTab) => {
     setMenuId(null);
-    if (shows(t, scope)) {
+    if (shows(t, chartScope)) {
       const i = all.indexOf(t);
       const neighbour = all[i + 1] ?? all[i - 1];
       if (neighbour) openTab(neighbour, 0);
@@ -154,7 +155,7 @@ export default function MobileTabOverview({
     setMenuId(null);
     requestSymbolPick((s) => {
       setMobileTabSymbol(t.id, s);
-      if (shows(t, scope)) setMobileSymbol(s, undefined, t.cells[0].scope);
+      if (shows(t, chartScope)) setMobileSymbol(s, undefined, t.cells[0].scope);
     });
   };
 
@@ -197,7 +198,7 @@ export default function MobileTabOverview({
                   data-drag-id={t.id}
                   className={
                     "m-tab-ov-chip" +
-                    (shows(t, scope) ? " active" : "") +
+                    (shows(t, chartScope) ? " active" : "") +
                     (drag.liftedId === t.id ? " lifted" : "") +
                     (drag.draggingId === t.id ? " dragging" : "")
                   }
@@ -223,7 +224,9 @@ export default function MobileTabOverview({
             })}
           </div>
         ) : (
-          <div className="m-tab-ov-empty">No tab has that symbol. Tap + to open it in a new tab.</div>
+          <div className="m-tab-ov-empty">
+            {q ? "No tab has that symbol. Tap + to open it in a new tab." : "No tabs yet. Tap + to open one."}
+          </div>
         )}
       </div>
       <button
