@@ -37,6 +37,15 @@ export const mobilePeriod = new Signal<Period | null>(null);
 // stale value can't be read for a symbol it wasn't resolved for.
 export const mobileChartScope = new Signal<{ epic: string; scope: string } | null>(null);
 
+// One-shot redirect for the next symbol-search pick: the tab overview's "+"
+// and "Change symbol" reuse the shell's symbol search, but the pick belongs
+// to them rather than to the chart. MobileModals clears it on pick and close.
+export const symbolPickTarget = new Signal<((s: Instrument) => void) | null>(null);
+export function requestSymbolPick(fn: (s: Instrument) => void): void {
+  symbolPickTarget.set(fn);
+  requestSymbolSearch();
+}
+
 // The only place mobileSymbol should be set from: keeps mobileChartScope
 // resolved in lockstep with it so every symbol change (boot, symbol search
 // pick) carries a freshly-resolved scope, and nothing re-resolves the scope

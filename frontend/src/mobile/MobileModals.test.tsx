@@ -1,12 +1,22 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act, cleanup } from "@testing-library/react";
+import { render, screen, act, cleanup, fireEvent } from "@testing-library/react";
 
 vi.mock("../AlertModal", () => ({ default: () => <div data-testid="alert-modal" /> }));
 vi.mock("../DrawingSettings", () => ({ default: () => <div data-testid="drawing-settings" /> }));
 vi.mock("../IndicatorSettings", () => ({ default: () => <div data-testid="indicator-settings" /> }));
 vi.mock("../ConfirmDialog", () => ({ default: () => <div data-testid="confirm" /> }));
-vi.mock("../SymbolSearchModal", () => ({ default: () => <div data-testid="symbol-search" /> }));
+// The pick epic is a hoisted ref (not a plain module-scope let) because
+// vi.mock factories run before the rest of this file's top-level code.
+const { mockPickEpic } = vi.hoisted(() => ({ mockPickEpic: { current: "NVDA" } }));
+vi.mock("../SymbolSearchModal", () => ({
+  default: ({ onPick, onClose }: { onPick: (s: { epic: string }) => void; onClose: () => void }) => (
+    <div data-testid="symbol-search">
+      <button onClick={() => onPick({ epic: mockPickEpic.current })}>pick</button>
+      <button onClick={onClose}>close</button>
+    </div>
+  ),
+}));
 vi.mock("../Settings", () => ({ default: () => <div data-testid="chart-settings" /> }));
 
 import MobileModals from "./MobileModals";
@@ -20,7 +30,13 @@ import {
   symbolSearchRequest,
   openSettings,
 } from "../lib/signals";
-import { mobileChartCtx, mobileSymbol, mobileTabSignal } from "./mobileChartState";
+import {
+  mobileChartCtx,
+  mobileSymbol,
+  mobileTabSignal,
+  requestSymbolPick,
+  symbolPickTarget,
+} from "./mobileChartState";
 
 describe("MobileModals", () => {
   beforeEach(() => {
@@ -70,5 +86,41 @@ describe("MobileModals", () => {
     expect(screen.queryByTestId("chart-settings")).toBeNull();
     act(() => openSettings());
     expect(screen.getByTestId("chart-settings")).toBeTruthy();
+  });
+});
+
+describe("symbol pick routing", () => {
+  beforeEach(() => {
+    render(<MobileModals />);
+  });
+
+  afterEach(cleanup);
+
+  async function pickSymbol(epic: string) {
+    mockPickEpic.current = epic;
+    const btn = await screen.findByText("pick");
+    fireEvent.click(btn);
+  }
+
+  async function closeSymbolSearch() {
+    const btn = await screen.findByText("close");
+    fireEvent.click(btn);
+  }
+
+  it("a pending pick target gets the symbol instead of the chart", async () => {
+    const got: string[] = [];
+    mobileSymbol.set(null);
+    act(() => requestSymbolPick((s) => got.push(s.epic)));
+    // pick "NVDA" through the mocked modal
+    await pickSymbol("NVDA");
+    expect(got).toEqual(["NVDA"]);
+    expect(mobileSymbol.value).toBeNull();
+    expect(symbolPickTarget.value).toBeNull();
+  });
+
+  it("closing the modal drops the pending target", async () => {
+    act(() => requestSymbolPick(() => {}));
+    await closeSymbolSearch();
+    expect(symbolPickTarget.value).toBeNull();
   });
 });

@@ -40,6 +40,7 @@ import {
   setMobileSymbol,
   mobileAccount,
   mobileSettingsVersion,
+  symbolPickTarget,
 } from "./mobileChartState";
 
 function useSignal<T>(sig: Signal<T>): T {
@@ -254,10 +255,16 @@ export default function MobileModals() {
           current={symbol}
           brokerId={brokerId}
           onPick={(s: Instrument) => {
-            setMobileSymbol(s, brokerId);
+            const target = symbolPickTarget.value;
+            symbolPickTarget.set(null);
+            if (target) target(s);
+            else setMobileSymbol(s, brokerId);
             setSymModalOpen(false);
           }}
-          onClose={() => setSymModalOpen(false)}
+          onClose={() => {
+            symbolPickTarget.set(null);
+            setSymModalOpen(false);
+          }}
         />
       )}
 
