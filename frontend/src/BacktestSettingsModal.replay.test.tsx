@@ -42,6 +42,12 @@ import { defaultBacktestConfig } from "./lib/backtestConfig";
 import { Signal } from "./lib/signals";
 import { ChartController } from "./lib/chartController";
 
+// The rule editor is a lazy chunk in the app; load it eagerly here so it never
+// resolves after the test (and its environment) has torn down.
+vi.mock("./components/LazyRuleExpressionInput", async () => ({
+  default: (await import("./components/RuleExpressionInput")).default,
+}));
+
 function controllerFor(replaying: boolean): ChartController {
   const c = new ChartController("cell-1", "scope-1");
   c.replaying.set(replaying);

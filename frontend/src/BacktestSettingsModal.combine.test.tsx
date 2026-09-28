@@ -7,6 +7,12 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, fireEvent, cleanup, screen } from "@testing-library/react";
 import { RuleGroupSection } from "./BacktestSettingsModal";
 
+// The rule editor is a lazy chunk in the app; load it eagerly here so it never
+// resolves after the test (and its environment) has torn down.
+vi.mock("./components/LazyRuleExpressionInput", async () => ({
+  default: (await import("./components/RuleExpressionInput")).default,
+}));
+
 const twoRules = {
   combine: "AND" as const,
   rules: [

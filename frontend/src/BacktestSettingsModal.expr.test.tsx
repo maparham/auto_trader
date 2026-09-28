@@ -11,6 +11,12 @@ import { render, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { RuleGroupSection } from "./BacktestSettingsModal";
 
+// The rule editor is a lazy chunk in the app; load it eagerly here so it never
+// resolves after the test (and its environment) has torn down.
+vi.mock("./components/LazyRuleExpressionInput", async () => ({
+  default: (await import("./components/RuleExpressionInput")).default,
+}));
+
 describe("RuleGroupSection (expression mode)", () => {
   it("edits a row's expression text", async () => {
     const onChange = vi.fn();

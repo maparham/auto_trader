@@ -52,6 +52,12 @@ import {
 import { backtestPanelHiddenSignal, backtestRunningSignal, sweepStateSignal } from "./lib/signals";
 import { ChartController } from "./lib/chartController";
 
+// The rule editor is a lazy chunk in the app; load it eagerly here so it never
+// resolves after the test (and its environment) has torn down.
+vi.mock("./components/LazyRuleExpressionInput", async () => ({
+  default: (await import("./components/RuleExpressionInput")).default,
+}));
+
 afterEach(cleanup);
 beforeEach(() => {
   localStorage.clear();

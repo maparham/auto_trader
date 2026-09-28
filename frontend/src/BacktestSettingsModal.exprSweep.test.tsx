@@ -7,6 +7,12 @@ import { render, fireEvent, cleanup } from "@testing-library/react";
 import { RuleGroupSection } from "./BacktestSettingsModal";
 import type { RangeAxis } from "./lib/sweep";
 
+// The rule editor is a lazy chunk in the app; load it eagerly here so it never
+// resolves after the test (and its environment) has torn down.
+vi.mock("./components/LazyRuleExpressionInput", async () => ({
+  default: (await import("./components/RuleExpressionInput")).default,
+}));
+
 function baseSweep(overrides: Record<string, unknown> = {}) {
   return {
     axes: [] as RangeAxis[],

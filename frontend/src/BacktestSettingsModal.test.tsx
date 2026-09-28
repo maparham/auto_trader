@@ -71,6 +71,12 @@ import { sweepStateSignal, sweepAxesSignal, sweepTargetSignal, backtestRunningSi
 import type { SweepRow } from "./api";
 import { saveSweepAxes } from "./lib/sweepMemory";
 
+// The rule editor is a lazy chunk in the app; load it eagerly here so it never
+// resolves after the test (and its environment) has torn down.
+vi.mock("./components/LazyRuleExpressionInput", async () => ({
+  default: (await import("./components/RuleExpressionInput")).default,
+}));
+
 // See VisibilityTab.test.tsx: vitest isn't run with jest-style globals, so RTL's
 // automatic cleanup never registers. Without this each render leaks into the next.
 afterEach(cleanup);
