@@ -10,7 +10,7 @@ import type { Chart } from "klinecharts";
 import type { OverlayManager } from "../lib/overlays";
 import { chartMenuRequest } from "../lib/signals";
 import { subscribeCrosshairWrites, type CrosshairPoint } from "../chart/crosshairWrites";
-import { spotNear } from "./MobileDrawingHandle";
+import { positionedHost, spotNear } from "./MobileDrawingHandle";
 
 /** Half the handle's size, matching MobileDrawingHandle's clamp. */
 const HALF = 18;
@@ -49,7 +49,6 @@ export default function MobileCrosshairHandle({
     let fingerDown = false;
     const update = () => {
       const el = ref.current;
-      const host = el?.offsetParent;
       if (!el) return;
       const point = pointRef.current;
       const show = handleShows({
@@ -59,11 +58,11 @@ export default function MobileCrosshairHandle({
         hidden: hiddenRef.current,
         drawing: overlays.isDrawing(),
       });
-      const spot = show && point && host ? spotNear(point, root.clientWidth, root.clientHeight) : null;
+      const spot = show && point ? spotNear(point, root.clientWidth, root.clientHeight) : null;
       el.hidden = !spot;
-      if (!spot || !host) return;
+      if (!spot) return;
       const a = root.getBoundingClientRect();
-      const b = host.getBoundingClientRect();
+      const b = positionedHost(el).getBoundingClientRect();
       el.style.transform = `translate(${a.left - b.left + spot.x - HALF}px, ${a.top - b.top + spot.y - HALF}px)`;
     };
     updateRef.current = update;

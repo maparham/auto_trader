@@ -53,8 +53,6 @@ describe("MobileCrosshairHandle", () => {
     root = createRoot(host);
     act(() => root!.render(<MobileCrosshairHandle chart={chart} overlays={overlays} hidden={hidden} />));
     const btn = host.querySelector("button")!;
-    // jsdom has no layout, so offsetParent is always null; point it at the host.
-    Object.defineProperty(btn, "offsetParent", { get: () => host });
     return { chart, dom, store, btn };
   }
 

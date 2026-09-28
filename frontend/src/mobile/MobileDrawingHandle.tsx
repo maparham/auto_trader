@@ -45,6 +45,18 @@ if (typeof window !== "undefined") {
   );
 }
 
+/**
+ * The element the handle's absolute position is measured from. Not
+ * offsetParent: that is null while the handle is hidden (display: none), and
+ * the handle has to be placed before it can show.
+ */
+export function positionedHost(el: HTMLElement): HTMLElement {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (getComputedStyle(p).position !== "static") return p;
+  }
+  return document.body;
+}
+
 /** The handle's centre for an anchor point, in chart-root px, or null off screen. */
 export function spotNear(p: Pt, width: number, height: number): Pt | null {
   if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
@@ -149,9 +161,9 @@ export default function MobileDrawingHandle({
       raf = requestAnimationFrame(place);
       const el = ref.current;
       const root = chart.getDom?.();
-      const host = el?.offsetParent;
       const d = overlays.getDrawing(selectedId);
-      if (!el || !root || !host || !d) return;
+      if (!el || !root || !d) return;
+      const host = positionedHost(el);
       const pts = d.points.map(toPixel);
       reanchor(root, pts);
       let spot: Pt | null;
