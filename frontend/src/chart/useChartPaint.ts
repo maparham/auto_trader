@@ -255,6 +255,10 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
   } = handle;
 
   const { selectedIndicator, legendHoverName, curveHover } = controller;
+  // redraw is built once, so it reads the timeframe label through a ref: a
+  // captured period.label would name the mount-time timeframe forever.
+  const periodLabelRef = useRef(period.label);
+  periodLabelRef.current = period.label;
 
   // tradeDashes memo for the redraw loop below — recomputed only when the
   // aggregate clusters or the loaded-bar window change (see use site).
@@ -442,6 +446,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       ctx.stroke();
     }
     ctx.restore(); // release the candle-pane clip
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, []);
   handle.paintBracketRef.current = paintBracket;
 
@@ -516,6 +521,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       }
     }
     ctx.restore();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, []);
 
   // Recompute the axis overlays (live price+countdown pill, alert label pills)
@@ -633,6 +639,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     ctx.textBaseline = "middle";
     ctx.fillText(label, pillX + padX, pillY + pillH / 2 + 0.5);
     ctx.restore();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [fmtSeparatorLabel, timezone, theme]);
   handle.paintSeparatorRef.current = paintSeparator;
 
@@ -1120,7 +1127,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // setState when the shallow signature changes (add/remove/visibility/recolor),
     // then push the latest values imperatively (for the crosshair bar, or the last
     // bar when no crosshair) — never a React re-render per crosshair pixel.
-    const { rows, sig } = buildLegendRows(chart, period.label);
+    const { rows, sig } = buildLegendRows(chart, periodLabelRef.current);
     if (sig !== legendRowsSigRef.current) {
       legendRowsSigRef.current = sig;
       setLegendRows(rows);
@@ -1351,6 +1358,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     paintSlopeMa();
     // Period-start separator follows the same geometry (via ref so it isn't a dep).
     handle.paintSeparatorRef.current();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [paintBracket, paintSlopeMa]);
   handle.redrawRef.current = redraw;
 

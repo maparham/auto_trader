@@ -283,7 +283,7 @@ export function useTrendlineDebug({ chartRef, containerRef, overlays, scope, epi
     ? undo : null;
   useEffect(() => {
     if (undo && !undoLive) setUndo(null);
-  });
+  }, [undo, undoLive]);
 
   const doUndo = () => {
     if (!undoLive) return;

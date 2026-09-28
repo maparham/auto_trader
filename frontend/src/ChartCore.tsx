@@ -1034,6 +1034,7 @@ export default function ChartCore({
         setSelectedName(s?.name ?? null);
         redrawRef.current();
       }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [],
   );
   // Hovering an indicator's legend row also shows its curve in "selected mode"
@@ -1328,6 +1329,7 @@ export default function ChartCore({
           }
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [positionPill],
   );
 
@@ -3798,6 +3800,7 @@ export default function ChartCore({
       onReady?.(cellId, chart, controller);
     }
     return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- teardown acts on whatever is current then
       wsRef.current?.close();
       unsubAnchor();
       unsubMeasureArm();
@@ -3961,6 +3964,7 @@ export default function ChartCore({
     if (lastPriceHiddenRef.current) {
       chartRef.current?.setStyles({ candle: { priceMark: { last: { line: { show: false } } } } });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [theme, symbol.epic, effPrecision, period.label, status, crosshair]);
 
   // Resolve the epic's authoritative precision + open/closed status on symbol
@@ -4048,6 +4052,7 @@ export default function ChartCore({
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [symbol.epic, brokerId]);
 
   // A market open/closed change must repaint the price pill (the redraw reads the
@@ -4055,6 +4060,7 @@ export default function ChartCore({
   // App-level epic poll, so this cell only needs to refresh its own price label.
   useEffect(() => {
     handle.redrawRef.current();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [marketClosed]);
 
   // Apply precision to the chart whenever it resolves (the async fetch lands after
@@ -4066,6 +4072,7 @@ export default function ChartCore({
     overlays.setPricePrecision(effPrecision); // keep alert-level rounding in lockstep
     handle.redrawRef.current(); // re-place the price/bid/ask pills at the new decimals
     tradeMarkersDrawRef.current(); // entry labels carry the price at this precision
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [effPrecision]);
 
   // Timezone changes -> retime the axis ("" follows the browser), and rebucket the
@@ -4205,6 +4212,7 @@ export default function ChartCore({
       ? (ts: number) =>
           fmt({ dateTimeFormat: dtf!, timestamp: ts, template: "YYYY-MM-DD HH:mm", type: "crosshair" })
       : () => "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [
     clock,
     dateFormat,
@@ -4769,6 +4777,7 @@ export default function ChartCore({
   // here too so hiding the redundant bid/ask side updates at once on a side switch.
   useEffect(() => {
     handle.redrawRef.current();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [bidAsk, bidAskStyle, priceSide]);
 
   // 1s tick keeps the countdown live and tracks slow price/scroll drift.
@@ -4835,6 +4844,7 @@ export default function ChartCore({
       chart?.unsubscribeAction('onZoom', scheduleRedraw);
       chart?.unsubscribeAction('onPaneDrag', scheduleRedraw);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [redraw]);
 
   // Viewport-scoped indicator coverage trigger: when the visible range settles
@@ -4941,6 +4951,7 @@ export default function ChartCore({
     };
     chart?.subscribeAction('onCrosshairChange', onCrosshair);
     return () => chart?.unsubscribeAction('onCrosshairChange', onCrosshair);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [cellId]);
 
   // Receive sibling cells' crosshair broadcasts for this tab and paint a vertical
@@ -4969,9 +4980,11 @@ export default function ChartCore({
       if (syncedTsRef.current != null) {
         syncedTsRef.current = null;
         handle.redrawRef.current();
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- teardown acts on whatever is current then
         legendHandleRef.current?.updateValues(legendBarIdxRef.current());
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [tabId, cellId, syncCrosshair]);
 
   // Date-range link — BROADCAST. When the link is on, publish this cell's visible

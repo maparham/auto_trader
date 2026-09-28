@@ -359,6 +359,7 @@ export const SweepResults = memo(function SweepResults(props: {
   // DSR first (deflated by THIS table's row count), plateau second so the
   // fresh objects withPlateau returns are the ones the spike Set (identity
   // membership) and the render both see.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const { rows: scoredRows, spikes } = useMemo(() => withPlateau(withDsr(rows), axes), [rows, rows.length, axes]);
   // Memoized so a scroll-driven re-render (the virtualization hook lives in this
   // component and updates on every scroll frame) doesn't rebuild the spike set.
@@ -753,15 +754,19 @@ const SweepHeatmap = memo(function SweepHeatmap({
   // never be the same axis.
   const pickX = (t: string) => { if (t === yAxis?.target) setYSel(xAxis.target); setXSel(t); };
   const pickY = (t: string) => { if (t === xAxis.target) setXSel(yAxis?.target ?? null); setYSel(t); };
+  // rows.length: rows is mutated in place while a sweep streams (see below).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const xTicks = useMemo(() => axisTicks(xAxis, rows), [xAxis, rows, rows.length]);
   const yTicks = useMemo<(HeatTick | null)[]>(
     () => (yAxis ? axisTicks(yAxis, rows) : [null]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [yAxis, rows, rows.length],
   );
   // cellKey -> best row, one O(rows) pass (rows is mutated in place during a
   // streaming sweep, so length joins the deps as the change signal).
   const heatIndex = useMemo(
     () => buildHeatIndex(rows, xAxis, yAxis, metric),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, rows.length, xAxis, yAxis, metric],
   );
 

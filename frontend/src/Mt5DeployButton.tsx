@@ -69,11 +69,12 @@ export default function Mt5DeployButton() {
 
   // Tick the countdown down locally between polls so it reads smoothly; the poll
   // re-syncs it (and resets on activity). Only runs while a countdown is showing.
+  const counting = remaining != null;
   useEffect(() => {
-    if (remaining == null) return;
+    if (!counting) return;
     const id = setInterval(() => setRemaining((r) => (r == null ? r : Math.max(0, r - 1))), 1000);
     return () => clearInterval(id);
-  }, [remaining == null]);
+  }, [counting]);
 
   // One-shot re-read after a failed action: for a cost signal, a false "off"
   // (or "on") must be corrected immediately, not 12s later.

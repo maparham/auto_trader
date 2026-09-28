@@ -571,7 +571,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     // The price-axis strip is a klinecharts DOM element that sits over the
     // chart-wrap, so mousemove on wrap stops firing when the cursor slides onto
     // it. We need onMove to keep running there so onAxis can be set to true.
-    containerRef.current?.addEventListener("mousemove", onMove);
+    el.addEventListener("mousemove", onMove);
 
     // Touch path. `touchInput` remembers the input kind of the LAST pointer to
     // touch the chart (capture phase, so klinecharts' own handlers can't hide
@@ -600,9 +600,9 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     });
 
     return () => {
-      wrapRef.current?.removeEventListener("mousemove", onMove);
-      wrapRef.current?.removeEventListener("mouseleave", onLeave);
-      containerRef.current?.removeEventListener("mousemove", onMove);
+      wrap?.removeEventListener("mousemove", onMove);
+      wrap?.removeEventListener("mouseleave", onLeave);
+      el.removeEventListener("mousemove", onMove);
       el.removeEventListener("pointerdown", onPointer, true);
       el.removeEventListener("pointermove", onPointer, true);
       offWrites();

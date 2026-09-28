@@ -53,6 +53,8 @@ export function useDockPanels() {
     saveBacktestOpen(open);
   };
   // Restored open-state reaches the toolbar's Backtest button the same way.
+  // Mount only: later changes go through openBacktestCfg, which sets it itself.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { backtestPanelOpenSignal.set(showBacktestCfg); }, []);
   // The backtest panel's open-state is component state, so its "close yourself"
   // callback has to be registered from here (lib/sidePanels.ts). Registered once

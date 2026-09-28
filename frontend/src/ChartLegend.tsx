@@ -422,6 +422,8 @@ export default function ChartLegend({
     // collapsedGroups for the same reason as `collapsed`: expanding a group
     // re-mounts its member rows (fresh, empty value spans) without changing
     // `rows`, so nothing would fill them until the next tick or crosshair move.
+    // updateValues is rebuilt each render; the run that matters sees the fresh one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, subPanes, insetLegend, ctx.symbol, ctx.precision, collapsed, collapsedGroups]);
 
   // Hovering a row drives BOTH the gray border + icon reveal (CSS, via this

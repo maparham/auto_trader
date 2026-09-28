@@ -213,7 +213,7 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
       open(clientX, clientY, hit);
       return true;
     },
-    [chartRef, hitAt, open],
+    [hitAt, open],
   );
 
   // Pick on click / tap, and the touch hold on the picked line. Pointer

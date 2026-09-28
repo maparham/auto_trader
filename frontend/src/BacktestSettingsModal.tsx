@@ -201,6 +201,8 @@ export default function BacktestSettingsModal({ initial, epic, brokerId, resolut
     }
     const t = setTimeout(() => saveBacktestLastUsed(cfg), 400);
     return () => clearTimeout(t);
+    // `initial` only matters on the first run, and it never changes after mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg]);
   // Flush the latest config when the modal unmounts, so an edit made inside the
   // debounce window right before closing isn't dropped by the timer cleanup above.

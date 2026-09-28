@@ -79,6 +79,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     const all = c ? getIndicatorsByPane(c) : undefined;
     for (const [paneId, inds] of all ?? []) if (inds.has(name)) return paneId;
     return "candle_pane";
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, []);
 
   // DOM legend action-icon handlers (mirror the OnTooltipIconClick routing used by
@@ -126,10 +127,12 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // coverage-guarded, so the hide direction can call it just the same.
     void refreshMtfOnVisibilityChange(c);
     handle.redrawRef.current();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [paneIdOf, period.resolution]);
   const onLegendOpenSettings = useCallback((name: string) => {
     if (snapViewRef.current) return; // read-only snapshot view
     indicatorSettingsRequest.set({ paneId: paneIdOf(name), name });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [paneIdOf]);
   const onLegendRemove = useCallback((name: string) => {
     const c = chartRef.current;
@@ -143,6 +146,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // indicator was the selected one; an unselected removal would otherwise linger
     // until the next 1s tick).
     handle.redrawRef.current();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [controller, scope, indicatorRemoved]);
   const onLegendSelectRow = useCallback((name: string, figureKey?: string) => {
     const paneId = paneIdOf(name);
@@ -165,6 +169,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     if (cur?.paneId === paneId && cur?.name === name) return;
     selectedIndicator.set({ paneId, name });
     handle.redrawRef.current();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [paneIdOf, controller]);
 
   // Snapshot an indicator's full live config (type + calcParams / visibility /
@@ -196,6 +201,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
         } satisfies SavedIndicatorConfig,
       };
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [],
   );
 
@@ -222,6 +228,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       handle.redrawRef.current();
       return true;
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [controller, scope, period.resolution],
   );
 
@@ -278,6 +285,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       if (!snap) return;
       toast(addFromConfig(snap.type, snap.config) ? `Duplicated ${snap.label}` : `Can't duplicate ${snap.label}`);
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [liveIndicatorConfig, addFromConfig],
   );
 
@@ -324,6 +332,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       return;
     }
     toast(added.length === 1 ? `Pasted ${added[0].type}` : `Pasted ${added.length} ${added[0].type}`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [addFromConfig]);
 
   // Ctrl/Cmd+C: copy the SELECTED indicator (if any). Returns true when it acted, so
@@ -334,6 +343,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     if (!sel) return false;
     copyIndicator(sel.paneId, sel.name);
     return true;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [copyIndicator]);
 
   // --- drawing clipboard (mirrors the indicator clipboard: system clipboard +
@@ -418,6 +428,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     });
     if (id) toast("Pasted drawing");
     return true;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [overlays]);
 
   // Delete/Backspace: remove the selected drawing (TradingView behaviour).
@@ -464,6 +475,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     // period.resolution is read above, so it has to be a dependency (the legend eye
     // path lists it for the same reason); an empty array would freeze it at the
     // first-render value and stale it on every timeframe switch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [period.resolution]);
   const removeOn = useCallback(
     (_paneId: string, name: string) => {
@@ -476,6 +488,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       indicatorRemoved.set(name);
       handle.redrawRef.current();
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [controller, scope, indicatorRemoved],
   );
 
@@ -524,6 +537,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       if (sel) selectedIndicator.set({ paneId: paneIdOf(sel.name), name: sel.name });
       handle.redrawRef.current();
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [controller, scope, paneIdOf, selectedIndicator, period.resolution],
   );
 
@@ -550,6 +564,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       if (sel) selectedIndicator.set({ paneId: paneIdOf(sel.name), name: sel.name });
       handle.redrawRef.current();
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [paneIdOf, scope, controller, selectedIndicator],
   );
 
@@ -610,6 +625,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       window.addEventListener("pointercancel", cancel);
       paneDragCleanupRef.current = cleanup;
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [reorderPaneByName],
   );
 
@@ -661,6 +677,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
         { label: "Remove", icon: MenuIcons.remove, danger: true, onClick: () => removeOn(paneId, name) },
       ];
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
     [copyIndicator, duplicateIndicator, toggleVisibleOn, removeOn, reorderPaneByName, setIndicatorInset],
   );
 
@@ -668,6 +685,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
   const onLegendOpenMenu = useCallback((name: string, x: number, y: number) => {
     if (snapViewRef.current) return; // read-only snapshot view: no ⋯ edit menu
     setIndMenu({ x, y, paneId: paneIdOf(name), name });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [paneIdOf]);
 
   return {

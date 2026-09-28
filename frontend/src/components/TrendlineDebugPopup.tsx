@@ -92,6 +92,9 @@ export default function TrendlineDebugPopup(p: TrendlineDebugPopupProps) {
   const vh = typeof window === "undefined" ? Infinity : window.innerHeight;
   const ref = useRef<HTMLDivElement>(null);
   const [h, setH] = useState(0);
+  // Re-measured after EVERY render (content changes the height); the
+  // equality check ends the loop after one extra pass.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     const next = ref.current?.offsetHeight ?? 0;
     if (next !== h) setH(next);

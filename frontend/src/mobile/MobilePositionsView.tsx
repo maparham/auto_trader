@@ -134,6 +134,7 @@ export default function MobilePositionsView() {
     (fn) => mobileSettingsVersion.subscribe(fn),
     () => mobileSettingsVersion.value,
   );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const trading = useMemo(() => loadSettings().trading, [settingsVersion]);
   const cur = summary?.currency ?? trading.accountCurrency;
 

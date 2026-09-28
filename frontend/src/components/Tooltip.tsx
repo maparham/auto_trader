@@ -193,6 +193,8 @@ export default function Tooltip({
     return () => {
       openTips.delete(entry);
     };
+    // hide() touches only refs and state setters, so any render's copy works.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, off]);
 
   // Hide on scroll (capture, so nested scrollers count), resize, and Escape.
@@ -220,6 +222,8 @@ export default function Tooltip({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onPointer, true);
     };
+    // hide() touches only refs and state setters, so any render's copy works.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const lines = Array.isArray(content) ? content : [content];

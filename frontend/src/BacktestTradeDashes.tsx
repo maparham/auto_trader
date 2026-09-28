@@ -130,10 +130,13 @@ export default function BacktestTradeDashes({
         setDashes(next);
       },
     }),
+    // clearHoverIfOwned reads only refs and module signals: any copy works.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
   // On unmount (cell removed / backtest cleared) drop an effect THIS layer
   // opened; gated on hoveredRef so unrelated cells' hovers survive.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => clearHoverIfOwned, []);
 
   if (dashes.length === 0) return null;

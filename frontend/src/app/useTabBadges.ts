@@ -1,7 +1,7 @@
 // The tab chips' badges: the unseen-alert bell (an alert fired for an epic the
 // user wasn't looking at) and the market-closed crescent for every tab's lead
 // epic, including background tabs whose charts aren't mounted.
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { alertFired } from "../lib/signals";
 import { fetchMarketMeta } from "../lib/feed";
 import { PREFIX, load, saveLocal, type ChartTab } from "../lib/persist";
@@ -21,18 +21,22 @@ export function useUnseenAlertTabs(tabs: ChartTab[], active: ChartTab | undefine
   // stale in-memory snapshot — and the storage listener folds other tabs'
   // writes into this tab's state.
   const [unseenAlertEpics, setUnseenAlertEpics] = useState<ReadonlySet<string>>(readUnseen);
-  const mutateUnseen = (mutate: (s: Set<string>) => boolean) => {
+  // The alert subscription below outlives renders, so the state comparison
+  // must read the latest set, not the one from the render that subscribed.
+  const unseenRef = useRef(unseenAlertEpics);
+  unseenRef.current = unseenAlertEpics;
+  const mutateUnseen = useCallback((mutate: (s: Set<string>) => boolean) => {
     const cur = readUnseen();
     const changed = mutate(cur);
     // Sync state whenever it differs from the (possibly externally-updated)
     // result, not only when the mutation changed storage — otherwise a silently
     // dropped saveLocal (quota) leaves in-memory badges diverged forever.
-    const stateDiffers =
-      cur.size !== unseenAlertEpics.size || [...cur].some((e) => !unseenAlertEpics.has(e));
+    const seen = unseenRef.current;
+    const stateDiffers = cur.size !== seen.size || [...cur].some((e) => !seen.has(e));
     if (!changed && !stateDiffers) return;
     if (changed) saveLocal(UNSEEN_KEY, [...cur]);
     setUnseenAlertEpics(cur);
-  };
+  }, []);
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       // key === null is localStorage.clear() — the set is gone there too.
@@ -67,7 +71,7 @@ export function useUnseenAlertTabs(tabs: ChartTab[], active: ChartTab | undefine
           return;
         mutateUnseen((s) => (s.has(f.epic) ? false : (s.add(f.epic), true)));
       }),
-    [active],
+    [active, mutateUnseen],
   );
   // Viewing a tab (it's active AND the browser tab is visible) marks the epics
   // it shows as seen.
@@ -79,7 +83,7 @@ export function useUnseenAlertTabs(tabs: ChartTab[], active: ChartTab | undefine
       for (const c of active.cells) changed = s.delete(c.symbol.epic) || changed;
       return changed;
     });
-  }, [active, unseenAlertEpics, visTick]);
+  }, [active, unseenAlertEpics, visTick, mutateUnseen]);
   const alertTabIds = useMemo(() => {
     const ids = new Set<string>();
     for (const t of tabs)
