@@ -5,6 +5,22 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Vendor code in its own chunks: every push to main redeploys, and without
+  // this each deploy invalidated the whole bundle for returning visitors.
+  // CodeMirror is deliberately absent: it rides the rule editor's lazy chunk.
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 3 },
+            { name: 'klinecharts', test: /node_modules[\\/]klinecharts[\\/]/, priority: 2 },
+            { name: 'clerk', test: /node_modules[\\/]@clerk[\\/]/, priority: 1 },
+          ],
+        },
+      },
+    },
+  },
   // Proxy /api (REST + WS) to the shared backend so a dev server on a non-default
   // port (e.g. e2e running its own instance on :5199) can reach it without hitting
   // the backend's CORS allowlist (which only permits the default :5173 origin).

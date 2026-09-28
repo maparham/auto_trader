@@ -21,6 +21,22 @@ import { shouldBootMobile } from './lib/mobileBoot.ts'
 import { shouldBootAdmin } from './lib/adminBoot.ts'
 import { startShellStatusMirror } from './lib/shellStatus.ts'
 
+// A tab opened before a deploy asks for chunk hashes the new deploy no longer
+// serves (the rule editor loads lazily). Reload once to pick up the new
+// build; the timestamp guard stops a loop if the reload fails the same way.
+window.addEventListener('vite:preloadError', (event) => {
+  const KEY = 'chunkReloadAt'
+  try {
+    const last = Number(sessionStorage.getItem(KEY) ?? 0)
+    if (Date.now() - last < 10_000) return
+    sessionStorage.setItem(KEY, String(Date.now()))
+  } catch {
+    return
+  }
+  event.preventDefault()
+  window.location.reload()
+})
+
 // The publishable key doubles as the feature switch: unset (local dev) renders
 // exactly the pre-auth tree — no provider, no sign-in, no behavior change.
 const clerkKey = (

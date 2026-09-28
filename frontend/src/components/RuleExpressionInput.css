@@ -36,6 +36,20 @@
   padding: 0;
 }
 
+/* Plain-text stand-in while the editor chunk loads (LazyRuleExpressionInput).
+   Padding matches .cm-content; line-height matches CodeMirror's 1.4. */
+.rule-expr-fallback {
+  padding: 5px 8px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre;
+  overflow: hidden;
+}
+
+.rule-expr-fallback-ph {
+  color: var(--text-dim);
+}
+
 /* Numeric-literal (sweepable knob) underline. */
 .cm-sweep-literal {
   text-decoration: underline dotted var(--text-dim);

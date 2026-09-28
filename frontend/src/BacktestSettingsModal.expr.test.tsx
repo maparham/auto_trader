@@ -7,12 +7,12 @@
 // wiring (CM updateListener -> RuleExpressionInput onChange -> RuleGroupSection
 // write-back). The assertion is the brief's, unchanged.
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { RuleGroupSection } from "./BacktestSettingsModal";
 
 describe("RuleGroupSection (expression mode)", () => {
-  it("edits a row's expression text", () => {
+  it("edits a row's expression text", async () => {
     const onChange = vi.fn();
     const { container } = render(
       <RuleGroupSection
@@ -25,7 +25,12 @@ describe("RuleGroupSection (expression mode)", () => {
       />,
     );
 
-    const editorEl = container.querySelector(".cm-editor") as HTMLElement;
+    // The editor is a lazy chunk (LazyRuleExpressionInput): wait for it.
+    const editorEl = await waitFor(() => {
+      const el = container.querySelector(".cm-editor") as HTMLElement | null;
+      if (!el) throw new Error("editor not loaded yet");
+      return el;
+    });
     const view = EditorView.findFromDOM(editorEl)!;
     view.dispatch({ changes: { from: 0, insert: "EMA(9) > 0" } });
 

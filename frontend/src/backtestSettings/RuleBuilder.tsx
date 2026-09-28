@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { RangeChip } from "../components/RangeChip";
-import RuleExpressionInput from "../components/RuleExpressionInput";
+import RuleExpressionInput from "../components/LazyRuleExpressionInput";
 import RulePalette from "../components/RulePalette";
 import Tooltip from "../components/Tooltip";
 import { cloneRule, type Combine, type Rule, type RuleGroup } from "../lib/backtestConfig";

@@ -523,7 +523,13 @@ describe("chart pane list feeding the rule editors", () => {
     controller.chart = null; // cell has not mounted its chart yet
     renderWithRule(controller);
 
-    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement)!;
+    // The editor is a lazy chunk (LazyRuleExpressionInput): wait for it.
+    const editorEl = await waitFor(() => {
+      const el = document.querySelector(".cm-editor") as HTMLElement | null;
+      if (!el) throw new Error("editor not loaded yet");
+      return el;
+    });
+    const view = EditorView.findFromDOM(editorEl)!;
     expect(view.state.doc.toString()).toBe("SLOPE.9 > 0");
     // No panes yet, so the reference reads as unknown.
     await waitFor(() => {
