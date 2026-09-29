@@ -135,6 +135,8 @@ describe("MobileTabOverview", () => {
       render(<MobileTabOverview open onClose={() => {}} />);
       hold(screen.getByRole("button", { name: "GOLD 1H" }));
       fireEvent.pointerUp(window, { pointerId: 1 });
+      // The hold's trailing click is swallowed for a moment; tap after it.
+      act(() => { vi.advanceTimersByTime(500); });
       fireEvent.click(screen.getByRole("button", { name: "Close tab" }));
       expect(order()).toEqual(["t1", "t3"]);
       expect(mobileChartScope.value?.scope).toBe("tab.t3");

@@ -18,6 +18,23 @@ export interface HoldDragHandlers {
   onDrop(id: string): void;
 }
 
+// Eat the one click that trails a pointerup. The timeout drops the guard when
+// no click comes (a drag released off-target fires none), so it can never
+// swallow a later, deliberate tap.
+function swallowNextClick(): void {
+  const eat = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    done();
+  };
+  const done = () => {
+    window.removeEventListener("click", eat, true);
+    clearTimeout(t);
+  };
+  window.addEventListener("click", eat, true);
+  const t = setTimeout(done, 400);
+}
+
 export function useHoldDrag(h: HoldDragHandlers) {
   const hRef = useRef(h);
   hRef.current = h;
@@ -71,6 +88,10 @@ export function useHoldDrag(h: HoldDragHandlers) {
       setLiftedId(null);
       setDraggingId(null);
       if (!fire) return;
+      // The browser follows the release with a click on whatever is now under
+      // the finger. After a hold that is the menu's backdrop, opened by onHold
+      // a moment earlier, which the click would close again. Swallow it.
+      if (lifted) swallowNextClick();
       if (dragging) hRef.current.onDrop(id);
       else if (lifted) hRef.current.onHold(id);
       else if (!cancelled) hRef.current.onTap(id);

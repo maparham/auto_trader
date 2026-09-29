@@ -100,6 +100,36 @@ describe("useHoldDrag", () => {
     expect(h.onHold).not.toHaveBeenCalled();
   });
 
+  it("swallows the click that trails a hold, but not a later tap", () => {
+    const { getByTestId } = render(<List h={h} />);
+    const clicked = vi.fn();
+    document.body.addEventListener("click", clicked);
+    try {
+      down(getByTestId("a"));
+      act(() => { vi.advanceTimersByTime(HOLD_MS); });
+      up();
+      fireEvent.click(document.body);
+      expect(clicked).not.toHaveBeenCalled();
+      fireEvent.click(document.body);
+      expect(clicked).toHaveBeenCalledTimes(1);
+    } finally {
+      document.body.removeEventListener("click", clicked);
+    }
+  });
+
+  it("does not swallow the click after a plain tap", () => {
+    const { getByTestId } = render(<List h={h} />);
+    const clicked = vi.fn();
+    document.body.addEventListener("click", clicked);
+    try {
+      down(getByTestId("a")); up();
+      fireEvent.click(document.body);
+      expect(clicked).toHaveBeenCalledTimes(1);
+    } finally {
+      document.body.removeEventListener("click", clicked);
+    }
+  });
+
   it("registers the document touchmove(passive:false) listener only while lifted", () => {
     const addSpy = vi.spyOn(document, "addEventListener");
     const removeSpy = vi.spyOn(document, "removeEventListener");
