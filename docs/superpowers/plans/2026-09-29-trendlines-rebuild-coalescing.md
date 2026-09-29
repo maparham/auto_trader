@@ -316,10 +316,12 @@ In `trendlinesDebugDraw.test.ts`, the "paints debug when nothing is drawn" test 
 and the two call sites:
 
 ```ts
-    await draw(); // starts the async run
+    await draw(); // calc settles and computes; this draw kicks off the async debug explain
     await vi.waitFor(() => expect(chartStub.overrideIndicator).toHaveBeenCalled());
-    await draw(); // paints the landed result
+    await draw(); // paints the landed debug result
 ```
+
+Keep real timers here. Each `draw()` builds a fresh indicator object, so both calcs are deferred first computes and each waits the real 250 ms window (about 0.5 s added). Fake timers would save that but fight `vi.waitFor` and the explain kickoff; not worth it.
 
 - [ ] **Step 7: Run every file that calls the template's calc, plus the typecheck**
 

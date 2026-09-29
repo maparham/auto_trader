@@ -75,8 +75,17 @@ calc (rebuild)  ->  mark busy, blank rows on a prepend, bump gen
 
 - `TL_SETTLE_MS` is 250, just over the 200 ms viewport-pass debounce, so a
   prepend and the floor stamp that follows it land in one window.
-- Each new calc for the instance restarts the window, so a run of prepends
-  from one fast drag also collapses into one compute.
+- Each new REBUILD calc for the instance restarts the window, so a run of
+  prepends from one fast drag also collapses into one compute. A tick
+  (same list, same config, same floor as the previous calc) does not restart
+  it, or live ticks every 100 ms would hold the rebuild off forever.
+- The window is capped at `TL_SETTLE_MAX_MS` (1000) from its first bump, so
+  a continuous drag that prepends every 100 ms still computes within 1 s.
+- While a rebuild is pending, the session has not seen the newest list yet,
+  so `rebuildSpan` would misclassify. Calc therefore classifies a pending-path
+  call by comparing its inputs (list object, config key, floor) with the
+  previous calc's, kept in a per-instance WeakMap. Only when nothing is
+  pending does it ask `rebuildSpan`.
 - The existing generation check stays the arbiter: only the newest calc in
   the chain computes. Older links resolve with the current rows, as they do
   today.
