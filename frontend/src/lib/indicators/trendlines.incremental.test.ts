@@ -3,7 +3,7 @@
 // on EVERY tick (klinecharts _addData -> _calcIndicator over the full series),
 // and a from-scratch run costs ~30ms at BTCUSD bar counts — the session is what
 // makes that tick path O(last bar) instead.
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KLineData } from "klinecharts";
 import type { Indicator } from "klinecharts";
 import {
@@ -277,5 +277,132 @@ describe("createTrendlinesSession", () => {
       // on the incremental path would be a pool the fork mutated wrongly.
       expect(inc.pivots).toEqual(ref.pivots);
     }
+  });
+});
+
+describe("TRENDLINES_TEMPLATE.calc rebuild coalescing", () => {
+  type Rows = TrendlinesCalcPoint[];
+  const calc = TRENDLINES_TEMPLATE.calc as (
+    d: KLineData[],
+    i: Indicator,
+  ) => Rows | Promise<Rows>;
+  const mkInd = () =>
+    ({ calcParams: [], extendData: undefined, result: [] }) as unknown as Indicator;
+  // A prepend: klinecharts builds a NEW list with older bars in front.
+  const prepended = (bars: KLineData[], k: number): KLineData[] => {
+    const older = synthBars(k, 11).map((b, j) => ({
+      ...b,
+      timestamp: bars[0].timestamp - (k - j) * 60_000,
+    }));
+    return [...older, ...bars];
+  };
+  const settled = (p: Promise<Rows>) => {
+    const s = { done: false, rows: null as Rows | null };
+    p.then((r) => {
+      s.done = true;
+      s.rows = r;
+    });
+    return s;
+  };
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("a 400-bar first compute runs inline with no busy mark", () => {
+    const ind = mkInd();
+    const out = calc(synthBars(400), ind);
+    expect(out).not.toBeInstanceOf(Promise);
+    expect(isIndicatorBusy(ind)).toBe(false);
+  });
+
+  it("a 600-bar rebuild is deferred behind the busy mark and the settle window", async () => {
+    const ind = mkInd();
+    const bars = synthBars(600);
+    const out = calc(bars, ind);
+    expect(out).toBeInstanceOf(Promise);
+    expect(isIndicatorBusy(ind)).toBe(true);
+    const s = settled(out as Promise<Rows>);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(s.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(s.done).toBe(true);
+    expect(isIndicatorBusy(ind)).toBe(false);
+    const ref = computeTrendlines(bars, cfg);
+    expect(s.rows![s.rows!.length - 1].lines).toEqual(ref.lines);
+  });
+
+  it("an append-only calc on a big built list stays inline", async () => {
+    const ind = mkInd();
+    const bars = synthBars(2500);
+    const first = calc(bars, ind);
+    await vi.advanceTimersByTimeAsync(300);
+    await first;
+    tick(bars, lcg(3));
+    expect(calc(bars, ind)).not.toBeInstanceOf(Promise);
+    expect(isIndicatorBusy(ind)).toBe(false);
+  });
+
+  it("a prepend then a floor stamp 200 ms later compute once, from the newest inputs", async () => {
+    const ind = mkInd();
+    const bars = synthBars(1500);
+    const built = calc(bars, ind);
+    await vi.advanceTimersByTimeAsync(300);
+    await built;
+    const more = prepended(bars, 300);
+    const p1 = settled(calc(more, ind) as Promise<Rows>);
+    await vi.advanceTimersByTimeAsync(200);
+    (ind as { extendData: unknown }).extendData = { tlFloorTs: more[100].timestamp };
+    const p2 = settled(calc(more, ind) as Promise<Rows>);
+    // 250 ms after the FIRST calc: still waiting, because the second pushed the window.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(p1.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(p1.done && p2.done).toBe(true);
+    // The older link did not compute: it handed back the current (blanked) rows.
+    expect(p1.rows).toBe(ind.result);
+    expect(p2.rows!.length).toBe(more.length);
+  });
+
+  it("prepend then tick computes once from the newest list", async () => {
+    const ind = mkInd();
+    const bars = synthBars(1500);
+    const built = calc(bars, ind);
+    await vi.advanceTimersByTimeAsync(300);
+    await built;
+    const more = prepended(bars, 300);
+    const p1 = settled(calc(more, ind) as Promise<Rows>);
+    tick(more, lcg(9));
+    const p2 = settled(calc(more, ind) as Promise<Rows>);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(p1.rows).toBe(ind.result);
+    const ref = computeTrendlines(more, cfg);
+    expect(p2.rows![p2.rows!.length - 1].lines).toEqual(ref.lines);
+  });
+
+  it("ticks do not starve the rebuild", async () => {
+    const ind = mkInd();
+    const bars = synthBars(1500);
+    const p = settled(calc(bars, ind) as Promise<Rows>);
+    const rand = lcg(4);
+    for (let t = 0; t < 3; t++) {
+      await vi.advanceTimersByTimeAsync(100);
+      tick(bars, rand);
+      void calc(bars, ind);
+    }
+    // 300 ms in: the ticks did not push the 250 ms window.
+    expect(p.done).toBe(true);
+  });
+
+  it("a prepend burst is capped at TL_SETTLE_MAX_MS", async () => {
+    const ind = mkInd();
+    let bars = synthBars(1500);
+    const first = settled(calc(bars, ind) as Promise<Rows>);
+    for (let t = 0; t < 12 && !first.done; t++) {
+      await vi.advanceTimersByTimeAsync(100);
+      bars = prepended(bars, 50);
+      void calc(bars, ind);
+    }
+    // Prepends every 100 ms would slide a pure 250 ms window forever.
+    expect(first.done).toBe(true);
   });
 });

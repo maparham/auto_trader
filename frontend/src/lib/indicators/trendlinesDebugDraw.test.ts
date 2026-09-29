@@ -174,9 +174,9 @@ describe("debug paint", () => {
       getVisibleRange: () => ({ from: 0, to: bars.length - 1 }),
       overrideIndicator: vi.fn(),
     };
-    const draw = () => {
+    const draw = async () => {
       const { ctx } = recCtx();
-      const result = TRENDLINES_TEMPLATE.calc!(bars, { calcParams, extendData: ext } as never);
+      const result = await TRENDLINES_TEMPLATE.calc!(bars, { calcParams, extendData: ext } as never);
       TRENDLINES_TEMPLATE.draw!({
         ctx, chart: chartStub,
         indicator: { result, calcParams, extendData: ext, paneId: "candle_pane", name: "TL_DBG" },
@@ -185,9 +185,9 @@ describe("debug paint", () => {
         yAxis: { convertToPixel: (p: number) => 1000 - p / 100, convertFromPixel: (y: number) => (1000 - y) * 100 },
       } as never);
     };
-    draw(); // starts the async run
+    await draw(); // calc settles and computes; this draw kicks off the async debug explain
     await vi.waitFor(() => expect(chartStub.overrideIndicator).toHaveBeenCalled());
-    draw(); // paints the landed result
+    await draw(); // paints the landed debug result
     // The draw's own landed result, so the probed candidate is the one drawn.
     const landed = debugState(chartStub, "TL_DBG").result!;
     expect(landed.candidates.some((x) => x.drawn)).toBe(false);

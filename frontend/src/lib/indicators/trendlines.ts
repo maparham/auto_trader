@@ -3750,9 +3750,49 @@ const TL_CALC_SESSIONS = new WeakMap<Indicator, TrendlinesSession>();
 const TL_PENDING = new WeakMap<Indicator, Promise<TrendlinesCalcPoint[]>>();
 const TL_GEN = new WeakMap<Indicator, number>();
 const TL_FIRST_TS = new WeakMap<Indicator, number>();
-/** A rebuild over fewer bars than this runs inline: it is quick enough that a
- * busy mark would only flicker. */
-const TL_DEFER_BARS = 2000;
+/** A rebuild on a list shorter than this runs inline: it is quick enough that
+ * a busy mark would only flicker. Measured on a 10k-bar list, a rebuild the
+ * floor held under 2000 bars still froze for 301 ms, so the list length, not
+ * the rebuilt span, decides. */
+const TL_DEFER_MIN_BARS = 500;
+/** A deferred rebuild waits until this long has passed with no newer rebuild
+ * for the instance. Just over ChartCore's 200 ms viewport-pass debounce, so a
+ * prepend and the floor stamp that follows it land in one compute. */
+const TL_SETTLE_MS = 250;
+/** ...but never longer than this after the first one, so a drag that prepends
+ * every 100 ms still gets its lines. */
+const TL_SETTLE_MAX_MS = 1000;
+// Per instance: the settle deadline, and the inputs of the last calc (a
+// pending chain cannot ask the session, which has not seen the newest list).
+const TL_SETTLE = new WeakMap<Indicator, { until: number; hardUntil: number }>();
+const TL_LAST_IN = new WeakMap<
+  Indicator,
+  { list: KLineData[]; key: string; floorTs: number | undefined }
+>();
+
+function bumpSettle(ind: Indicator): void {
+  const now = Date.now();
+  const w = TL_SETTLE.get(ind);
+  TL_SETTLE.set(ind, {
+    until: now + TL_SETTLE_MS,
+    hardUntil: w ? w.hardUntil : now + TL_SETTLE_MAX_MS,
+  });
+}
+
+/** Resolves once the instance's deadline has passed. setTimeout, not rAF: a
+ * hidden tab throttles timers but still converges. */
+function waitSettled(ind: Indicator): Promise<void> {
+  return new Promise((resolve) => {
+    const check = () => {
+      const w = TL_SETTLE.get(ind);
+      if (!w) return resolve();
+      const wait = Math.min(w.until, w.hardUntil) - Date.now();
+      if (wait <= 0) return resolve();
+      setTimeout(check, wait);
+    };
+    check();
+  });
+}
 
 function sessionRows(
   session: TrendlinesSession,
@@ -3821,16 +3861,32 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     }
     const s = session;
     const floorTs = ext?.tlFloorTs;
+    const cfg = parseTrendlinesConfig(ind.calcParams, ext);
+    const key = JSON.stringify(cfg);
+    const last = TL_LAST_IN.get(ind);
+    TL_LAST_IN.set(ind, { list: dataList, key, floorTs });
     const pending = TL_PENDING.get(ind);
-    if (!pending && s.rebuildSpan(dataList, parseTrendlinesConfig(ind.calcParams, ext), floorTs) < TL_DEFER_BARS)
-      return sessionRows(s, dataList, ind);
-    // A BIG REBUILD (a floor move, a history prepend, a config change over a
-    // long series) runs synchronously and freezes the chart, so it goes behind
-    // the legend's busy mark: mark, let a frame paint, then compute. klinecharts
-    // awaits calc, so a promise here is fine. Every calc that lands while one
-    // is pending chains behind it, keeping results in order, and only the
-    // newest in the chain computes: the rest hand back the current rows,
-    // which the newest one overwrites anyway.
+    if (!pending) {
+      if (s.rebuildSpan(dataList, cfg, floorTs) === 0 || dataList.length < TL_DEFER_MIN_BARS)
+        return sessionRows(s, dataList, ind);
+      bumpSettle(ind);
+    } else if (
+      !last ||
+      last.list !== dataList ||
+      last.key !== key ||
+      last.floorTs !== floorTs
+    ) {
+      // A rebuild landing on a pending chain pushes the window. A tick (same
+      // list, appended in place) does not, or a live feed would starve it.
+      bumpSettle(ind);
+    }
+    // A REBUILD (a prepend, a floor move, a config change, a first compute on
+    // a long list) runs synchronously and freezes the chart, so it goes behind
+    // the legend's busy mark: mark, let the burst settle, let a frame paint,
+    // then compute. klinecharts awaits calc, so a promise here is fine. Every
+    // calc that lands while one is pending chains behind it, keeping results
+    // in order, and only the newest in the chain computes: the rest hand back
+    // the current rows, which the newest one overwrites anyway.
     const gen = (TL_GEN.get(ind) ?? 0) + 1;
     TL_GEN.set(ind, gen);
     // A prepend shifts every bar index, so the prior rows would draw their
@@ -3838,12 +3894,13 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     if (TL_FIRST_TS.get(ind) !== dataList[0]?.timestamp) ind.result = [];
     markIndicatorBusy(ind);
     const run = (pending ?? Promise.resolve())
+      .then(() => waitSettled(ind))
       .then(afterNextPaint)
-      .then(() =>
-        TL_GEN.get(ind) === gen
-          ? sessionRows(s, dataList, ind)
-          : (ind.result as TrendlinesCalcPoint[]),
-      )
+      .then(() => {
+        if (TL_GEN.get(ind) !== gen) return ind.result as TrendlinesCalcPoint[];
+        TL_SETTLE.delete(ind);
+        return sessionRows(s, dataList, ind);
+      })
       .finally(() => {
         clearIndicatorBusy(ind);
         if (TL_PENDING.get(ind) === run) TL_PENDING.delete(ind);
