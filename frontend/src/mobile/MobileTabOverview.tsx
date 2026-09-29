@@ -4,7 +4,7 @@
 // Every edit goes through mobileLayoutEdit.ts.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ChartTab } from "../lib/persist";
-import { toast } from "../lib/notify";
+import { dismissToast, toast } from "../lib/notify";
 import { DEFAULT_PERIOD } from "../app/workspace";
 import {
   mirroredWorkspace,
@@ -139,6 +139,16 @@ export default function MobileTabOverview({
       onClose();
     });
 
+  const moveTab = (id: string, delta: number) => {
+    const ids = all.map((t) => t.id);
+    const from = ids.indexOf(id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    ids.splice(from, 1);
+    ids.splice(to, 0, id);
+    setMobileTabOrder(ids);
+  };
+
   const closeTab = (t: ChartTab) => {
     setMenuId(null);
     if (shows(t, chartScope)) {
@@ -146,8 +156,9 @@ export default function MobileTabOverview({
       const neighbour = all[i + 1] ?? all[i - 1];
       if (neighbour) openTab(neighbour, 0);
     }
-    const undo = closeMobileTab(t.id);
-    if (undo) toast("Tab closed. Tap to undo", { onClick: undo, duration: UNDO_MS });
+    const key = `tab-closed-${t.id}`;
+    const undo = closeMobileTab(t.id, () => dismissToast(key));
+    if (undo) toast("Tab closed. Tap to undo", { onClick: undo, duration: UNDO_MS, key });
   };
 
   const changeSymbol = (t: ChartTab) => {
@@ -209,6 +220,17 @@ export default function MobileTabOverview({
                   // detail >= 1 and is already handled via onPointerDown, so
                   // gating on detail === 0 avoids a double-open there.
                   onClick={(e) => { if (e.detail === 0) openChip(t.id); }}
+                  // Keyboard twins of the touch gestures: the menu key (or
+                  // Shift+F10) stands in for a hold, Alt+arrows for a drag.
+                  onKeyDown={(e) => {
+                    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                      e.preventDefault();
+                      setMenuId(t.id);
+                    } else if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+                      e.preventDefault();
+                      moveTab(t.id, e.key === "ArrowLeft" ? -1 : 1);
+                    }
+                  }}
                   onContextMenu={(e) => e.preventDefault()}
                 >
                   {c.symbol.epic} {c.period.label}

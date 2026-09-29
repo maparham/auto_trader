@@ -139,5 +139,12 @@ describe("MobileChartStrip", () => {
       render(<MobileChartStrip onPull={() => {}} onPullEnd={() => {}} />);
       expect(screen.getByRole("button", { name: "Show all tabs" })).toBeTruthy();
     });
+
+    it("tells assistive tech whether the overview is open", () => {
+      const { rerender } = render(<MobileChartStrip overviewOpen={false} />);
+      expect(screen.getByRole("button", { name: "Show all tabs" }).getAttribute("aria-expanded")).toBe("false");
+      rerender(<MobileChartStrip overviewOpen />);
+      expect(screen.getByRole("button", { name: "Show all tabs" }).getAttribute("aria-expanded")).toBe("true");
+    });
   });
 });

@@ -81,6 +81,17 @@ describe("mobileLayoutEdit", () => {
     expect(closeMobileTab("nope")).toBeNull();
   });
 
+  it("close calls onExpire when the undo window ends, and not after an undo", () => {
+    const expired = vi.fn();
+    closeMobileTab("t2", expired);
+    vi.advanceTimersByTime(UNDO_MS);
+    expect(expired).toHaveBeenCalledTimes(1);
+    const expired2 = vi.fn();
+    closeMobileTab("t1", expired2)!();
+    vi.advanceTimersByTime(UNDO_MS);
+    expect(expired2).not.toHaveBeenCalled();
+  });
+
   it("close removes the tab now and purges its scope only after UNDO_MS", () => {
     localStorage.setItem(`${PREFIX}.tab.t2.drawings`, "[1]");
     closeMobileTab("t2");

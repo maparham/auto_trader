@@ -165,7 +165,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
           )}
         </div>
       )}
-      {!viewMode.chromeHidden && <MobileChartStrip onPull={pull.onPull} onPullEnd={pull.onPullEnd} />}
+      {!viewMode.chromeHidden && <MobileChartStrip overviewOpen={pull.open} onPull={pull.onPull} onPullEnd={pull.onPullEnd} />}
       <div className="m-chart-body">
         {!viewMode.chromeHidden && (
           <div className="m-tab-ov-host" ref={pull.hostRef}>

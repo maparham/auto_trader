@@ -21,9 +21,11 @@ import { requestSymbolSearch } from "../lib/signals";
 import { startPullDrag } from "./usePullPanel";
 
 export default function MobileChartStrip({
+  overviewOpen = false,
   onPull,
   onPullEnd,
 }: {
+  overviewOpen?: boolean;
   onPull?(dy: number): void;
   onPullEnd?(dy: number): void;
 }) {
@@ -42,6 +44,7 @@ export default function MobileChartStrip({
     <button
       className="m-chart-strip-pull"
       aria-label="Show all tabs"
+      aria-expanded={overviewOpen}
       onPointerDown={(e) => startPullDrag(e, onPull, onPullEnd)}
       onClick={(e) => {
         if (e.detail === 0) onPullEnd?.(0);

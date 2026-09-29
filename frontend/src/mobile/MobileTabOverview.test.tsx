@@ -45,6 +45,18 @@ describe("MobileTabOverview", () => {
     expect(screen.getByText("3 tabs")).toBeTruthy();
   });
 
+  it("the menu key opens a chip's menu and Alt+arrows reorder it", async () => {
+    render(<MobileTabOverview open onClose={() => {}} />);
+    screen.getByRole("button", { name: "GOLD 1H" }).focus();
+    await userEvent.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    expect(order()).toEqual(["t2", "t1", "t3"]);
+    await userEvent.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    expect(order()).toEqual(["t2", "t1", "t3"]);
+    screen.getByRole("button", { name: "GOLD 1H" }).focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    expect(screen.getByRole("button", { name: "Close tab" })).toBeTruthy();
+  });
+
   it("marks the tab now shown as active", () => {
     mobileChartScope.set({ epic: "GOLD", scope: "tab.t2" });
     render(<MobileTabOverview open onClose={() => {}} />);

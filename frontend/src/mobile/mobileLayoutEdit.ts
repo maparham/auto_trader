@@ -78,7 +78,10 @@ function tabInAnySavedLayout(tabId: string): boolean {
   return loadLayouts().some((l) => !!loadLayout(l.id)?.tabs.some((t) => t.id === tabId));
 }
 
-export function closeMobileTab(tabId: string): (() => void) | null {
+// `onExpire` runs when the undo window closes without an undo, so the caller
+// can take down an Undo control that would otherwise outlive it (a toast's own
+// countdown pauses while the page is hidden; this timer does not).
+export function closeMobileTab(tabId: string, onExpire?: () => void): (() => void) | null {
   const m = mirroredWorkspace();
   if (!m) return null;
   const idx = m.ws.tabs.findIndex((t) => t.id === tabId);
@@ -90,6 +93,7 @@ export function closeMobileTab(tabId: string): (() => void) | null {
     timer = setTimeout(() => {
       timer = null;
       if (!tabInAnySavedLayout(tabId)) purgeTabScope(tabId);
+      onExpire?.();
     }, UNDO_MS);
   };
   armPurge();
