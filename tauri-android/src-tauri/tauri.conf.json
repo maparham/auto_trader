@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Chartkar",
+  "version": "0.1.0",
+  "identifier": "app.chartkar.android",
+  "build": {
+    "frontendDist": "../../frontend/dist-android",
+    "beforeBuildCommand": "../scripts/build-frontend.sh"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [{ "label": "main", "title": "Chartkar" }],
+    "security": { "csp": null }
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [
+        {
+          "scheme": ["https"],
+          "host": "chartkar.app",
+          "pathPrefix": ["/app-auth/callback"],
+          "appLink": true
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.png"]
+  }
+}
