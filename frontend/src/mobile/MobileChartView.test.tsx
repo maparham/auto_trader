@@ -130,6 +130,55 @@ describe("MobileChartView", () => {
     expect(host.style.getPropertyValue("--pull")).toBe("");
     expect(chartCoreRenders.n).toBe(0);
   });
+
+  it("closes the overview when tapping outside it, not when tapping inside it", async () => {
+    const { container } = render(<MobileChartView />);
+    await waitFor(() => screen.getByTestId("chartcore"));
+    const bar = screen.getByRole("button", { name: "Show all tabs" });
+    bar.setPointerCapture = vi.fn();
+    fireEvent.pointerDown(bar, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerUp(bar, { clientY: 100, pointerId: 1 });
+    expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Find tab"));
+    expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
+
+    const host = container.querySelector(".m-tab-ov-host") as HTMLElement;
+    fireEvent.click(host);
+    expect(container.querySelector(".m-tab-ov.open")).toBeNull();
+  });
+
+  it("opens on a big downward swipe anywhere in the chart body, not just the handle", async () => {
+    const { container } = render(<MobileChartView />);
+    await waitFor(() => screen.getByTestId("chartcore"));
+    const body = container.querySelector(".m-chart-body") as HTMLElement;
+    fireEvent.pointerDown(body, { clientX: 50, clientY: 200, pointerId: 7 });
+    fireEvent.pointerMove(window, { clientX: 52, clientY: 240, pointerId: 7 });
+    expect(container.querySelector(".m-tab-ov.open")).toBeNull();
+    fireEvent.pointerMove(window, { clientX: 54, clientY: 310, pointerId: 7 });
+    expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
+    fireEvent.pointerUp(window, { pointerId: 7 });
+  });
+
+  it("ignores a mostly sideways swipe in the chart body", async () => {
+    const { container } = render(<MobileChartView />);
+    await waitFor(() => screen.getByTestId("chartcore"));
+    const body = container.querySelector(".m-chart-body") as HTMLElement;
+    fireEvent.pointerDown(body, { clientX: 50, clientY: 200, pointerId: 8 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 230, pointerId: 8 });
+    fireEvent.pointerUp(window, { pointerId: 8 });
+    expect(container.querySelector(".m-tab-ov.open")).toBeNull();
+  });
+
+  it("ignores a swipe that starts on a button in the chart body", async () => {
+    const { container } = render(<MobileChartView />);
+    await waitFor(() => screen.getByTestId("chartcore"));
+    const restore = screen.getByLabelText("Chart only");
+    fireEvent.pointerDown(restore, { clientX: 50, clientY: 200, pointerId: 9 });
+    fireEvent.pointerMove(window, { clientX: 52, clientY: 320, pointerId: 9 });
+    fireEvent.pointerUp(window, { pointerId: 9 });
+    expect(container.querySelector(".m-tab-ov.open")).toBeNull();
+  });
 });
 
 describe("MobileChartView chrome-only mode", () => {

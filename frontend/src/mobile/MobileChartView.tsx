@@ -2,7 +2,7 @@
 // the freshest heartbeat for the active data broker (falls back to the first
 // favorite, then symbol search), then renders a compact top bar (symbol /
 // period / indicators) above a full-bleed ChartCore.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import ChartCore from "../ChartCore";
 import MobileDrawBar from "./MobileDrawBar";
 import DrawingContextMenu from "../DrawingContextMenu";
@@ -10,7 +10,7 @@ import MobileChartStrip from "./MobileChartStrip";
 import MobileTabOverview from "./MobileTabOverview";
 import MobileIndicatorsSheet from "./MobileIndicatorsSheet";
 import MobilePeriodSheet from "./MobilePeriodSheet";
-import { usePullPanel } from "./usePullPanel";
+import { useAnywherePull, usePullPanel } from "./usePullPanel";
 import { loadSettings } from "../theme";
 import { requestSymbolSearch } from "../lib/signals";
 import { brokerLabel } from "../lib/trading";
@@ -44,6 +44,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
     () => mobilePeriod.value,
   );
   const pull = usePullPanel();
+  const chartBodyRef = useRef<HTMLDivElement | null>(null);
   const [periodSheetOpen, setPeriodSheetOpen] = useState(false);
   const [brokerSheetOpen, setBrokerSheetOpen] = useState(false);
   const [indicatorsSheetOpen, setIndicatorsSheetOpen] = useState(false);
@@ -75,6 +76,18 @@ export default function MobileChartView({ active = true }: { active?: boolean })
     if (viewMode.chromeHidden) pull.setOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode.chromeHidden]);
+  // A downward swipe that misses the handle still opens the overview, as
+  // long as it isn't a tap on a control or an in-progress drawing.
+  const skipAnywherePull = useCallback((target: EventTarget | null) => {
+    if (mobileChartCtx.value?.controller.overlays.isDrawing()) return true;
+    return target instanceof Element && !!target.closest("button, input, select, .m-drawing-handle, .m-crosshair-handle");
+  }, []);
+  // pull.setOpen (a useState setter) is stable; pull itself is a fresh
+  // object every render, so depending on it here would re-arm the listener
+  // (and could drop a gesture in progress) on every unrelated re-render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const openFromAnywhere = useCallback(() => pull.setOpen(true), [pull.setOpen]);
+  useAnywherePull(chartBodyRef, !pull.open && !viewMode.chromeHidden, skipAnywherePull, openFromAnywhere);
   const ctx = useSyncExternalStore(
     (fn) => mobileChartCtx.subscribe(fn),
     () => mobileChartCtx.value,
@@ -166,9 +179,13 @@ export default function MobileChartView({ active = true }: { active?: boolean })
         </div>
       )}
       {!viewMode.chromeHidden && <MobileChartStrip overviewOpen={pull.open} onPull={pull.onPull} onPullEnd={pull.onPullEnd} />}
-      <div className="m-chart-body">
+      <div className="m-chart-body" ref={chartBodyRef}>
         {!viewMode.chromeHidden && (
-          <div className="m-tab-ov-host" ref={pull.hostRef}>
+          <div
+            className="m-tab-ov-host"
+            ref={pull.hostRef}
+            onClick={(e) => { if (pull.open && e.target === e.currentTarget) pull.setOpen(false); }}
+          >
             <MobileTabOverview
               open={pull.open}
               onClose={() => pull.setOpen(false)}

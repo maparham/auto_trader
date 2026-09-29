@@ -269,7 +269,12 @@ export default function MobileTabOverview({
           if (e.detail === 0) onClose();
         }}
       >
-        <i />
+        <span className="m-tab-ov-grip-i">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+               stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M6 15l6-6 6 6" />
+          </svg>
+        </span>
       </button>
       {menuTab && (
         <div className="m-tab-ov-scrim" onClick={(e) => { if (e.target === e.currentTarget) setMenuId(null); }}>

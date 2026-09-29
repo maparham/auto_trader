@@ -372,7 +372,12 @@ body.m-mobile .floating-modal {
 
 /* Desktop-layout mirror strip (Chart tab, under the top bar). */
 .m-chart-strip { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 4px 8px; scrollbar-width: none; }
-.m-chart-strip-pull { display: flex; align-items: center; justify-content: center; width: 100%; height: 26px; padding: 0; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); touch-action: none; }
+/* The button keeps a full-width, touch-friendly height; only the pill inside
+   it (.m-chart-strip-pull-i) is visually compact. Any downward swipe in the
+   chart body already opens the overview too (see useAnywherePull), so this
+   only needs to be a visual hint, not the main grab target. */
+.m-chart-strip-pull { display: flex; align-items: center; justify-content: center; width: 100%; height: 16px; padding: 0; border: 0; background: none; touch-action: none; }
+.m-chart-strip-pull-i { display: flex; align-items: center; justify-content: center; width: 44px; height: 15px; border: 1px solid var(--border); border-top: none; border-radius: 0 0 10px 10px; background: var(--surface); color: var(--text-dim); box-shadow: 0 3px 7px rgba(0,0,0,.3); }
 .m-chart-strip-group { display: flex; align-items: center; gap: 6px; }
 .m-chart-strip-divider { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
 .m-chart-strip-chip { flex: 0 0 auto; border: 1px solid var(--border); background: none; color: var(--text-dim); border-radius: 12px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
@@ -392,6 +397,10 @@ body.m-mobile .floating-modal {
    handful of tabs don't leave a wall of empty space under them. */
 .m-tab-ov-host { position: absolute; inset: 0; z-index: 70; pointer-events: none; overflow: hidden; }
 .m-tab-ov-host > .m-tab-ov { pointer-events: auto; }
+/* While open, the host itself catches taps in the area below the panel
+   (chart is otherwise inert underneath) so a tap outside the drawer closes
+   it instead of falling through to the chart. */
+.m-tab-ov-host:has(> .m-tab-ov.open) { pointer-events: auto; }
 .m-tab-ov-host.pulling > .m-tab-ov { transition: none; transform: translateY(min(0px, calc(-100% + max(0px, var(--pull))))); }
 .m-tab-ov-host.pulling > .m-tab-ov.open { transform: translateY(min(0px, var(--pull))); }
 .m-tab-ov { position: absolute; top: 0; left: 0; right: 0; max-height: min(60vh, 100%); display: flex; flex-direction: column; overflow: hidden; background: var(--bg); border-bottom: 1px solid var(--border); box-shadow: 0 12px 24px -8px color-mix(in srgb, #000 45%, transparent); transform: translateY(-100%); transition: transform .24s cubic-bezier(.2,.8,.2,1); }
@@ -413,8 +422,10 @@ body.m-mobile .floating-modal {
 .m-tab-ov-chip.dragging { opacity: .6; }
 .m-tab-ov-more { color: var(--text-faint); font-size: 11px; }
 .m-tab-ov-empty { padding: 16px 4px; font-size: 13px; color: var(--text-faint); }
-.m-tab-ov-grip { flex: 0 0 26px; display: flex; align-items: center; justify-content: center; border: 0; border-top: 1px solid var(--border); background: var(--surface); touch-action: none; }
-.m-tab-ov-grip i, .m-chart-strip-pull i { width: 44px; height: 5px; border-radius: 3px; background: var(--text-dim); }
+/* The button keeps a full-width, touch-friendly height; only the pill inside
+   it (.m-tab-ov-grip-i) is visually compact, matching the strip's handle. */
+.m-tab-ov-grip { flex: 0 0 26px; display: flex; align-items: center; justify-content: center; border: 0; border-top: 1px solid var(--border); background: none; touch-action: none; }
+.m-tab-ov-grip-i { display: flex; align-items: center; justify-content: center; width: 44px; height: 15px; margin-top: -1px; border: 1px solid var(--border); border-bottom: none; border-radius: 10px 10px 0 0; background: var(--surface); color: var(--text-dim); box-shadow: 0 -3px 7px rgba(0,0,0,.3); }
 .m-tab-ov-scrim { position: absolute; inset: 0; display: flex; align-items: flex-end; background: color-mix(in srgb, #000 35%, transparent); }
 .m-tab-ov-menu { width: 100%; display: grid; gap: 6px; padding: 12px; background: var(--bg); border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; }
 .m-tab-ov-menu button { text-align: left; padding: 10px 12px; font: inherit; color: var(--text); background: none; border: 1px solid var(--border); border-radius: 10px; }

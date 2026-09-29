@@ -50,7 +50,12 @@ export default function MobileChartStrip({
         if (e.detail === 0) onPullEnd?.(0);
       }}
     >
-      <i />
+      <span className="m-chart-strip-pull-i">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+             stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d={overviewOpen ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"} />
+        </svg>
+      </span>
     </button>
   );
 
