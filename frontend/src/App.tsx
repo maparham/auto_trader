@@ -720,6 +720,27 @@ export default function App() {
     openTab,
   });
 
+  // Every merge gesture (chip onto chip, chip onto chart, context menu) asks
+  // first: a drag that ends a few pixels off lands as a merge by accident.
+  const confirmMergeTabs = (
+    targetId: string,
+    sourceIds: string[],
+    position?: "before" | "after",
+  ) => {
+    const label = (id: string) => {
+      const t = tabs.find((x) => x.id === id);
+      const lead = t ? (t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0]) : null;
+      return lead ? `${lead.symbol.name} · ${lead.period.label}` : "tab";
+    };
+    const names = sourceIds.map(label).join(", ");
+    requestConfirm({
+      title: "Merge tabs?",
+      message: `Merge ${names} into ${label(targetId)}? You can undo right after.`,
+      confirmLabel: "Merge",
+      onConfirm: () => mergeTabs(targetId, sourceIds, position),
+    });
+  };
+
   const {
     switchLayout,
     saveActiveLayout,
@@ -872,7 +893,7 @@ export default function App() {
         onClose={closeTab}
         onReorder={reorderTab}
         canMerge={(s, d) => canMergeTabs(tabs, s, d)}
-        onMerge={mergeTabs}
+        onMerge={confirmMergeTabs}
         onDragActive={setDragTabId}
         searchQuery={tabSearchQuery}
         onSearchQuery={setTabSearchQuery}
@@ -1043,7 +1064,7 @@ export default function App() {
                   : null
               }
               onMergeDrop={(pos) => {
-                if (dragTabId && active) mergeTabs(active.id, [dragTabId], pos);
+                if (dragTabId && active) confirmMergeTabs(active.id, [dragTabId], pos);
                 setDragTabId(null);
               }}
             />
