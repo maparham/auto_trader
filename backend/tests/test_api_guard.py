@@ -91,3 +91,13 @@ def test_cors_origins_env_extends_allowlist(monkeypatch):
     origins = cors_origins()
     assert origins[:2] == ["http://localhost:5173", "http://127.0.0.1:5173"]
     assert origins[2:] == ["https://demo.pages.dev", "https://chartkar.app"]
+
+
+def test_cors_origins_accepts_the_android_app_origin(monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", "https://chartkar.app,http://tauri.localhost")
+    from auto_trader.api.guard import cors_origins
+
+    origins = cors_origins()
+    assert "http://tauri.localhost" in origins
+    # Exact match: the https variant is a different origin.
+    assert "https://tauri.localhost" not in origins

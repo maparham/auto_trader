@@ -52,6 +52,15 @@ def test_wrong_azp_rejected(clerk):
         auth.verify_token(clerk_fake.make_token(azp="https://evil.example"))
 
 
+def test_android_app_azp_accepted_when_listed(clerk, monkeypatch):
+    """The Android app's webview mints tokens with its own origin as azp.
+    Matching is exact, so the http and https variants are distinct."""
+    monkeypatch.setenv(auth.AUTHORIZED_PARTIES_ENV, "https://chartkar.app,http://tauri.localhost")
+    assert auth.verify_token(clerk_fake.make_token(azp="http://tauri.localhost")) == "user_123"
+    with pytest.raises(auth.AuthError):
+        auth.verify_token(clerk_fake.make_token(azp="https://tauri.localhost"))
+
+
 def test_azp_unchecked_when_parties_unset(clerk, monkeypatch):
     monkeypatch.delenv(auth.AUTHORIZED_PARTIES_ENV)
     assert auth.verify_token(clerk_fake.make_token(azp=None)) == "user_123"
