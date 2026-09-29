@@ -720,8 +720,8 @@ export default function App() {
     openTab,
   });
 
-  // Every merge gesture (chip onto chip, chip onto chart, context menu) asks
-  // first: a drag that ends a few pixels off lands as a merge by accident.
+  // Drag merges (chip onto chip, chip onto chart) ask first: a drag that ends
+  // a few pixels off lands as a merge by accident. The context menu doesn't.
   const confirmMergeTabs = (
     targetId: string,
     sourceIds: string[],
@@ -894,6 +894,7 @@ export default function App() {
         onReorder={reorderTab}
         canMerge={(s, d) => canMergeTabs(tabs, s, d)}
         onMerge={confirmMergeTabs}
+        onMergePicked={mergeTabs}
         onDragActive={setDragTabId}
         searchQuery={tabSearchQuery}
         onSearchQuery={setTabSearchQuery}

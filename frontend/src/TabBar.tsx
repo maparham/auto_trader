@@ -180,6 +180,9 @@ interface Props {
   // 4-cell cap; onMerge performs the merge (sources merge in the given order).
   canMerge: (sourceId: string, targetId: string) => boolean;
   onMerge: (targetId: string, sourceIds: string[]) => void;
+  // The context menu's checklist already ends in an explicit Merge click, so
+  // App can route it past the confirm that guards the drag gestures.
+  onMergePicked?: (targetId: string, sourceIds: string[]) => void;
   // A chip drag started/ended (id or null) — App shows ChartGrid's merge
   // overlay while a chip is in flight.
   onDragActive: (tabId: string | null) => void;
@@ -218,6 +221,7 @@ export default function TabBar({
   onReorder,
   canMerge,
   onMerge,
+  onMergePicked = onMerge,
   onDragActive,
   trailing,
   searchQuery,
@@ -991,7 +995,7 @@ export default function TabBar({
           y={mergePick.y}
           tabs={tabs}
           targetId={mergePick.tabId}
-          onMerge={(sourceIds) => onMerge(mergePick.tabId, sourceIds)}
+          onMerge={(sourceIds) => onMergePicked(mergePick.tabId, sourceIds)}
           onClose={() => setMergePick(null)}
         />
       )}
