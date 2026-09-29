@@ -9,6 +9,7 @@ import { TRENDLINES_DEFAULTS } from "./trendlinesOutputs";
 import { synthBars } from "./trendlinesSynth.testutil";
 import { projectAt, TRENDLINES_TEMPLATE } from "./trendlines";
 import { hitTrendline } from "./trendlineMarks";
+import { isIndicatorBusy } from "../indicatorBusy";
 
 const bars = synthBars(900);
 const res = explain(runDebugSync({
@@ -174,9 +175,12 @@ describe("debug paint", () => {
       getVisibleRange: () => ({ from: 0, to: bars.length - 1 }),
       overrideIndicator: vi.fn(),
     };
-    const draw = async () => {
+    // One instance across draws: a 900-bar first compute is deferred and lands
+    // on the instance, and the later calcs reuse its session inline.
+    const ind = { calcParams, extendData: ext, result: [], name: "TL_DBG" };
+    const draw = () => {
       const { ctx } = recCtx();
-      const result = await TRENDLINES_TEMPLATE.calc!(bars, { calcParams, extendData: ext } as never);
+      const result = TRENDLINES_TEMPLATE.calc!(bars, ind as never);
       TRENDLINES_TEMPLATE.draw!({
         ctx, chart: chartStub,
         indicator: { result, calcParams, extendData: ext, paneId: "candle_pane", name: "TL_DBG" },
@@ -185,9 +189,11 @@ describe("debug paint", () => {
         yAxis: { convertToPixel: (p: number) => 1000 - p / 100, convertFromPixel: (y: number) => (1000 - y) * 100 },
       } as never);
     };
-    await draw(); // calc settles and computes; this draw kicks off the async debug explain
+    TRENDLINES_TEMPLATE.calc!(bars, ind as never); // starts the deferred first compute
+    await vi.waitFor(() => expect(isIndicatorBusy(ind)).toBe(false), { timeout: 2000 });
+    draw(); // kicks off the async debug explain
     await vi.waitFor(() => expect(chartStub.overrideIndicator).toHaveBeenCalled());
-    await draw(); // paints the landed debug result
+    draw(); // paints the landed debug result
     // The draw's own landed result, so the probed candidate is the one drawn.
     const landed = debugState(chartStub, "TL_DBG").result!;
     expect(landed.candidates.some((x) => x.drawn)).toBe(false);

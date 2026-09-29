@@ -31,6 +31,7 @@
 // identical (see core.py's parity contract).
 
 import type {
+  Chart,
   Indicator,
   IndicatorDrawParams,
   IndicatorTemplate,
@@ -3744,12 +3745,31 @@ export function trendlineStatsLabel(touches: number, crossings: number): string 
 }
 
 const TL_CALC_SESSIONS = new WeakMap<Indicator, TrendlinesSession>();
-// Deferred-calc bookkeeping (see TRENDLINES_TEMPLATE.calc): the in-flight
-// chain, the newest calc's generation, and the first bar's timestamp the
-// current rows were computed against (a change means a prepend shifted them).
-const TL_PENDING = new WeakMap<Indicator, Promise<TrendlinesCalcPoint[]>>();
-const TL_GEN = new WeakMap<Indicator, number>();
+// Deferred-calc bookkeeping (see TRENDLINES_TEMPLATE.calc): the waiting
+// out-of-band rebuild, and the first bar's timestamp the current rows were
+// computed against (a change means a prepend shifted them).
+const TL_PENDING = new WeakMap<Indicator, Promise<void>>();
 const TL_FIRST_TS = new WeakMap<Indicator, number>();
+// Charts that can host a Trendlines instance. A deferred rebuild finds its
+// instance's chart here to ask for the recalc that paints the new rows.
+const TL_CHARTS = new Set<Chart>();
+
+/** Called by ChartCore when a chart is ready; the returned function drops it
+ * on teardown. */
+export function registerTrendlinesChart(chart: Chart): () => void {
+  TL_CHARTS.add(chart);
+  return () => TL_CHARTS.delete(chart);
+}
+
+function requestRecalc(ind: Indicator): void {
+  for (const c of TL_CHARTS) {
+    if (!c.getIndicators().some((i) => i === ind)) continue;
+    // Any override makes klinecharts recalc (see hiddenCalc.ts). The session
+    // is built by now, so that calc is incremental and runs inline.
+    c.overrideIndicator({ name: ind.name });
+    return;
+  }
+}
 /** A rebuild on a list shorter than this runs inline: it is quick enough that
  * a busy mark would only flicker. Measured on a 10k-bar list, a rebuild the
  * floor held under 2000 bars still froze for 301 ms, so the list length, not
@@ -3777,6 +3797,42 @@ function bumpSettle(ind: Indicator): void {
     until: now + TL_SETTLE_MS,
     hardUntil: w ? w.hardUntil : now + TL_SETTLE_MAX_MS,
   });
+}
+
+/** The rows to show while a rebuild waits: the current ones, or none after a
+ * prepend, which shifts every bar index and would put the old lines on the
+ * wrong candles. */
+function staleRows(ind: Indicator, dataList: KLineData[]): TrendlinesCalcPoint[] {
+  if (TL_FIRST_TS.get(ind) !== dataList[0]?.timestamp) return [];
+  return (ind.result as TrendlinesCalcPoint[] | undefined) ?? [];
+}
+
+/** Run a rebuild OUTSIDE klinecharts' calc batch. klinecharts awaits every
+ * calc in a batch before it lays the chart out, so a calc promise that waits
+ * out the settle window would hold back ticks and every other indicator for
+ * that long. Instead calc returns at once, and this computes later, stores the
+ * rows, and asks for a recalc to paint them. */
+function scheduleRebuild(ind: Indicator, s: TrendlinesSession): void {
+  markIndicatorBusy(ind);
+  let ok = false;
+  const run = waitSettled(ind)
+    .then(afterNextPaint)
+    .then(() => {
+      const inp = TL_LAST_IN.get(ind);
+      if (!inp) return;
+      ind.result = sessionRows(s, inp.list, ind);
+      ok = true;
+    })
+    .catch((e) => console.error("Trendlines rebuild failed", e))
+    .finally(() => {
+      TL_PENDING.delete(ind);
+      TL_SETTLE.delete(ind);
+      clearIndicatorBusy(ind);
+      // Not after a failure: the recalc would schedule the same failing
+      // rebuild again, every 250 ms, for as long as the chart is open.
+      if (ok) requestRecalc(ind);
+    });
+  TL_PENDING.set(ind, run);
 }
 
 /** Resolves once the instance's deadline has passed. setTimeout, not rAF: a
@@ -3865,48 +3921,22 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     const key = JSON.stringify(cfg);
     const last = TL_LAST_IN.get(ind);
     TL_LAST_IN.set(ind, { list: dataList, key, floorTs });
-    const pending = TL_PENDING.get(ind);
-    if (!pending) {
-      if (s.rebuildSpan(dataList, cfg, floorTs) === 0 || dataList.length < TL_DEFER_MIN_BARS)
-        return sessionRows(s, dataList, ind);
-      bumpSettle(ind);
-    } else if (
-      !last ||
-      last.list !== dataList ||
-      last.key !== key ||
-      last.floorTs !== floorTs
-    ) {
-      // A rebuild landing on a pending chain pushes the window. A tick (same
-      // list, appended in place) does not, or a live feed would starve it.
-      bumpSettle(ind);
+    if (TL_PENDING.has(ind)) {
+      // A rebuild is already waiting and will compute from the newest inputs.
+      // A rebuild-kind calc pushes its window; a tick (same list, appended in
+      // place) does not, or a live feed would starve it.
+      if (!last || last.list !== dataList || last.key !== key || last.floorTs !== floorTs)
+        bumpSettle(ind);
+      return staleRows(ind, dataList);
     }
+    if (s.rebuildSpan(dataList, cfg, floorTs) === 0 || dataList.length < TL_DEFER_MIN_BARS)
+      return sessionRows(s, dataList, ind);
     // A REBUILD (a prepend, a floor move, a config change, a first compute on
-    // a long list) runs synchronously and freezes the chart, so it goes behind
-    // the legend's busy mark: mark, let the burst settle, let a frame paint,
-    // then compute. klinecharts awaits calc, so a promise here is fine. Every
-    // calc that lands while one is pending chains behind it, keeping results
-    // in order, and only the newest in the chain computes: the rest hand back
-    // the current rows, which the newest one overwrites anyway.
-    const gen = (TL_GEN.get(ind) ?? 0) + 1;
-    TL_GEN.set(ind, gen);
-    // A prepend shifts every bar index, so the prior rows would draw their
-    // lines on the wrong candles for as long as the compute takes. Blank them.
-    if (TL_FIRST_TS.get(ind) !== dataList[0]?.timestamp) ind.result = [];
-    markIndicatorBusy(ind);
-    const run = (pending ?? Promise.resolve())
-      .then(() => waitSettled(ind))
-      .then(afterNextPaint)
-      .then(() => {
-        if (TL_GEN.get(ind) !== gen) return ind.result as TrendlinesCalcPoint[];
-        TL_SETTLE.delete(ind);
-        return sessionRows(s, dataList, ind);
-      })
-      .finally(() => {
-        clearIndicatorBusy(ind);
-        if (TL_PENDING.get(ind) === run) TL_PENDING.delete(ind);
-      });
-    TL_PENDING.set(ind, run);
-    return run;
+    // a long list) would freeze the chart, so it goes behind the legend's busy
+    // mark and waits for the burst to settle, out of band (scheduleRebuild).
+    bumpSettle(ind);
+    scheduleRebuild(ind, s);
+    return staleRows(ind, dataList);
   },
   draw: (params) =>
     drawTrendlines(

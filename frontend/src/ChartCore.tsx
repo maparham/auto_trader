@@ -56,6 +56,7 @@ import { emphasizeTrendlines, useTrendlineMenu } from "./chart/useTrendlineMenu"
 import { useTrendlineDebug } from "./chart/useTrendlineDebug";
 import { hitTrendline, TL_LINE_HIT, TL_LINE_HIT_TOUCH } from "./lib/indicators/trendlineMarks";
 import { hitPaintedLine } from "./lib/indicators/paintedLines";
+import { registerTrendlinesChart } from "./lib/indicators/trendlines";
 import { emphasizeAutoFibs } from "./chart/autoFibEmphasis";
 import { compactHides } from "./chart/compactChrome";
 import CandleCacheStatsModal from "./CandleCacheStatsModal";
@@ -1961,6 +1962,8 @@ export default function ChartCore({
     const chart = init(el);
     if (!chart) return;
     chartRef.current = chart;
+    // Lets a deferred Trendlines rebuild find this chart to repaint its rows.
+    const unregisterTrendlinesChart = registerTrendlinesChart(chart);
     // Initial declared-interval registration (see the resolution-keyed effect
     // above — it runs before this init on first mount and finds no chart).
     setChartIntervalMs(chart, declaredIntervalMs(period.resolution));
@@ -3884,6 +3887,7 @@ export default function ChartCore({
       controller.programmaticMove = null;
       registerBacktestPager(chart, null);
       setViewportReader(chart, null);
+      unregisterTrendlinesChart();
       const w = window as unknown as { __charts?: Map<string, Chart> };
       w.__charts?.delete(cellId);
       if (el) dispose(el);

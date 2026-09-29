@@ -44,8 +44,8 @@ the other indicators' prepend cost.
 
 ## Design
 
-All changes are in the calc path of `frontend/src/lib/indicators/trendlines.ts`.
-The coordinator and ChartCore do not change.
+The changes are in the calc path of `frontend/src/lib/indicators/trendlines.ts`,
+plus a one-line chart registration in ChartCore (see 2b).
 
 ### 1. Defer by kind, not by span
 
@@ -93,10 +93,26 @@ calc (rebuild)  ->  mark busy, blank rows on a prepend, bump gen
   it like today (the `pending` check stays first), so a live tick never
   computes on a half-updated session.
 
+### 2b. Out of band, not a calc promise
+
+klinecharts awaits every calc in a batch before it lays the chart out, and
+holds later batches until then. A calc promise that waits out the settle
+window would therefore freeze ticks and every other indicator on the chart
+for that long (found in the final review; the first cut did exactly that).
+
+So calc never returns a promise. A rebuild-kind calc returns the current rows
+at once (none after a prepend) and schedules the rebuild outside klinecharts.
+When it has computed, it stores the rows on the instance and asks for a
+recalc through `chart.overrideIndicator({ name })`. By then the session is
+built, so that calc is incremental and runs inline. ChartCore registers each
+chart with `registerTrendlinesChart` so the rebuild can find its instance's
+chart. A compute that throws is logged and does not ask for the recalc, or
+it would retry forever; its window state is cleared either way.
+
 Cost: after a prepend the lines stay blank, with the spinner showing, for
 about 250 ms plus the compute, instead of flashing through several
-intermediate states. The candles, other indicators and scrolling stay live
-during the wait.
+intermediate states. The candles, other indicators, ticks and scrolling stay
+live during the wait.
 
 ### 3. Timer hygiene
 
