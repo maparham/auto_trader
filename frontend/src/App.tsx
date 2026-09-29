@@ -735,7 +735,7 @@ export default function App() {
     const names = sourceIds.map(label).join(", ");
     requestConfirm({
       title: "Merge tabs?",
-      message: `Merge ${names} into ${label(targetId)}? You can undo right after.`,
+      message: `Merge ${names} into ${label(targetId)}?`,
       confirmLabel: "Merge",
       onConfirm: () => mergeTabs(targetId, sourceIds, position),
     });
