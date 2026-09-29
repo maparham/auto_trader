@@ -54,8 +54,9 @@ build). Sharing one project would mean `cfg` gates on most of `main.rs`.
 The frontend already has the seam: `lib/shellBridge.ts` (`inShell`,
 `shellInvoke`) is true inside any Tauri webview, and `ShellTicketSignIn`
 already consumes `?__clerk_ticket=`. The Android app implements the same
-`browser_sign_in` command name, so the sign-in button needs no new frontend
-branch beyond the return path.
+`browser_sign_in` command name, but the frontend still needs two small
+branches (see "Frontend changes for the handoff" below): the button's
+success check, and the handoff page's return path.
 
 `inShell()` is also true in the desktop shell, so Android-only behavior
 (hidden `<SignIn />` card, hidden push toggle, `return=app` handoff) keys on
@@ -104,8 +105,23 @@ user agent says Android.
      again" on the sign-in screen. Never a silent drop.
    - Mismatch: drop the link without navigating; the pending state stays.
 
-`parseShellAuthParams` grows a second shape: `return=app` with a `state` and
-no port. The desktop loopback shape is unchanged.
+## Frontend changes for the handoff
+
+- Button success check. `ShellTicketSignIn.tsx:65-67` treats any
+  non-number reply from `browser_sign_in` as failure (the desktop returns
+  its loopback port; `browser_auth.rs:79-80` documents that contract).
+  Android's command returns `true` once the browser is opened, `null` on
+  failure (as `shellInvoke` already maps errors). The check becomes
+  "`number` or `true` is success". No fake port.
+- Params type. `ShellAuthParams` (`shellAuthBoot.ts:5-8`) becomes a union:
+  `{ kind: "loopback", port, state }` (today's shape, unchanged parsing) and
+  `{ kind: "app", state }` (`return=app`, no port). `parseShellAuthParams`
+  returns the app shape when `return=app` and a state are present, and
+  ignores any port in that case.
+- Handoff page. `ShellAuthHandoff.tsx:37-40` builds the `127.0.0.1` URL
+  unconditionally today. After the mint it branches on `kind`: loopback
+  keeps the `window.location.replace`; app stores the token and renders
+  the "Return to Chartkar" intent-URL button instead of navigating.
 
 ## Hosting
 
@@ -119,9 +135,13 @@ no port. The desktop loopback shape is unchanged.
 ## Web push inside the app
 
 `MobileApp.tsx:80` registers `/alert-sw.js` and `pushClient.ts` drives the
-push subscription. Neither works in an Android WebView. Until sub-project B,
-hide the push toggle and skip the service worker registration when
-`inAndroidApp()` is true. Telegram and in-app alert delivery are unaffected.
+push subscription. Neither works in an Android WebView. `pushSupported()`
+(`pushClient.ts:13-19`) already hides the toggle when `PushManager` is
+missing, but whether the WebView exposes it is unverified (spike step 1).
+Until sub-project B, hide the push toggle and skip the service worker
+registration when `inAndroidApp()` is true anyway, so the app never offers
+push that cannot deliver. Telegram and in-app alert delivery are
+unaffected.
 
 ## Spike first
 
@@ -133,6 +153,15 @@ spike is kept; the outcome is a go / adjust note appended to this spec.
    Frontend API at `clerk.chartkar.app` relies on its `__client` cookie,
    which is cross-site from the app origin. Check whether a session survives
    a reload and an app restart.
+   Second risk: `http://tauri.localhost` may not count as a secure context in
+   Android WebView (only https, exact `http://localhost` and `file://` are
+   guaranteed; see tauri-apps/wry#1710). That can disable WebCrypto,
+   service workers and other APIs clerk-js uses. Check
+   `window.isSecureContext`, `crypto.subtle`, `'PushManager' in window`, and
+   that Clerk initializes and completes a ticket sign-in at all, not just
+   that a session persists. If not secure, try Tauri's https scheme option
+   (`useHttpsScheme`, origin `https://tauri.localhost`) before plan B; the
+   chosen origin is what goes into the two backend allowlists.
    Plan B, named up front: the headless clerk-js build with
    `standardBrowser: false` and a token cache in app storage (what
    clerk-expo does), passed to `ClerkProvider` through its `Clerk` prop.
@@ -172,8 +201,9 @@ release cycle. No forced-update mechanism in this sub-project.
 - `versionCode` derived from the app version.
 - Play gates:
   - Testing track: personal developer accounts must run a closed test with
-    at least 12 testers for 14 days before production access. Internal
-    track first, then that closed test, is the required path.
+    at least 12 testers for 14 consecutive days before production access
+    (accounts created after 2023-11-13). The internal track is optional but
+    useful for the first smoke builds; the closed test is the actual gate.
   - Account deletion: apps with sign-up must offer an in-app or web path to
     delete the account, linked in the console. Check whether Clerk's
     `<UserProfile />` delete option covers it; if not, add a web page.
@@ -195,7 +225,9 @@ release cycle. No forced-update mechanism in this sub-project.
 
 - Rust unit tests: callback URL parsing; state match, mismatch, expiry, and
   nothing pending; state read back after a simulated restart.
-- Frontend unit tests: `parseShellAuthParams` for the `return=app` shape;
+- Frontend unit tests: `parseShellAuthParams` for both union shapes (app
+  shape ignores a stray port); the sign-in button treating `true` as
+  success and `null` as failure;
   the handoff page rendering an intent-URL button instead of redirecting;
   the fallback URL carrying no ticket; the push toggle and `<SignIn />`
   card hidden when `inAndroidApp()`; the back handler closing the
