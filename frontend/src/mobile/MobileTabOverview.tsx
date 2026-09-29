@@ -193,6 +193,17 @@ export default function MobileTabOverview({
           onChange={(e) => setQuery(e.target.value)}
         />
         <button className="m-tab-ov-add" aria-label="New tab" onClick={addTab}>+</button>
+        <button
+          className="m-tab-ov-refresh"
+          aria-label="Refresh page"
+          onClick={() => window.location.reload()}
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+               stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+            <path d="M20 11A8 8 0 1 0 18.5 16" />
+            <path d="M20 4v7h-7" />
+          </svg>
+        </button>
       </div>
       <div className="m-tab-ov-count">
         {q ? `${visible.length} of ${all.length} tabs` : `${all.length} tabs`}

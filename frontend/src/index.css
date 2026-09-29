@@ -11,7 +11,11 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { margin: 0; height: 100%; }
+/* overscroll-behavior-y stops a downward drag from ever falling through to
+   the browser's native pull-to-refresh, which otherwise races our own
+   pull-down gesture (mobile tab overview) and sometimes wins, reloading the
+   page instead of opening it. */
+html, body, #root { margin: 0; height: 100%; overscroll-behavior-y: none; }
 /* #root holds the impersonation banner (when present) stacked above the
    page's own top-level view (.app/.admin-page/etc). Flex column + the view
    taking the remainder (see .app's flex sizing in App.css) means an optional

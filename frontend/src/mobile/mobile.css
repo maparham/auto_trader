@@ -372,7 +372,7 @@ body.m-mobile .floating-modal {
 
 /* Desktop-layout mirror strip (Chart tab, under the top bar). */
 .m-chart-strip { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 4px 8px; scrollbar-width: none; }
-.m-chart-strip-pull { display: flex; align-items: center; justify-content: center; width: 100%; height: 16px; padding: 0; border: 0; border-bottom: 1px solid var(--border); background: none; touch-action: none; }
+.m-chart-strip-pull { display: flex; align-items: center; justify-content: center; width: 100%; height: 26px; padding: 0; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); touch-action: none; }
 .m-chart-strip-group { display: flex; align-items: center; gap: 6px; }
 .m-chart-strip-divider { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
 .m-chart-strip-chip { flex: 0 0 auto; border: 1px solid var(--border); background: none; color: var(--text-dim); border-radius: 12px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
@@ -387,22 +387,25 @@ body.m-mobile .floating-modal {
 .m-chart-strip-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
 .m-chart-strip-empty { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-faint); white-space: nowrap; }
 
-/* Tab overview: pulled down from under the chart strip, covering the chart
-   body. Wrapped chips mirror the desktop tab bar. */
+/* Tab overview: pulled down from under the chart strip. Sized to its
+   content (capped by max-height) rather than the full chart body, so a
+   handful of tabs don't leave a wall of empty space under them. */
 .m-tab-ov-host { position: absolute; inset: 0; z-index: 70; pointer-events: none; overflow: hidden; }
 .m-tab-ov-host > .m-tab-ov { pointer-events: auto; }
 .m-tab-ov-host.pulling > .m-tab-ov { transition: none; transform: translateY(min(0px, calc(-100% + max(0px, var(--pull))))); }
 .m-tab-ov-host.pulling > .m-tab-ov.open { transform: translateY(min(0px, var(--pull))); }
-.m-tab-ov { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); transform: translateY(-100%); transition: transform .24s cubic-bezier(.2,.8,.2,1); }
+.m-tab-ov { position: absolute; top: 0; left: 0; right: 0; max-height: min(60vh, 100%); display: flex; flex-direction: column; overflow: hidden; background: var(--bg); border-bottom: 1px solid var(--border); box-shadow: 0 12px 24px -8px color-mix(in srgb, #000 45%, transparent); transform: translateY(-100%); transition: transform .24s cubic-bezier(.2,.8,.2,1); }
 .m-tab-ov.open { transform: translateY(0); }
 @media (prefers-reduced-motion: reduce) { .m-tab-ov { transition: none; } }
 .m-tab-ov-head { display: flex; align-items: center; gap: 6px; padding: 8px; }
 .m-tab-ov-head select, .m-tab-ov-head input { min-width: 0; font: inherit; font-size: 14px; color: var(--text); background: none; border: 1px solid var(--border); border-radius: 12px; padding: 4px 10px; }
 .m-tab-ov-head select { flex: 0 1 auto; max-width: 110px; }
 .m-tab-ov-head input { flex: 1; }
-.m-tab-ov-add { flex: 0 0 auto; width: 30px; height: 28px; border: 1px solid var(--border); border-radius: 12px; background: none; color: var(--text); font-size: 18px; line-height: 1; }
+.m-tab-ov-add, .m-tab-ov-refresh { flex: 0 0 auto; width: 30px; height: 28px; border: 1px solid var(--border); border-radius: 12px; background: none; color: var(--text); }
+.m-tab-ov-add { font-size: 18px; line-height: 1; }
+.m-tab-ov-refresh { display: inline-flex; align-items: center; justify-content: center; color: var(--text-dim); }
 .m-tab-ov-count { padding: 0 10px 6px; font-size: 11px; color: var(--text-faint); letter-spacing: .04em; text-transform: uppercase; }
-.m-tab-ov-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 8px 12px; touch-action: pan-y; }
+.m-tab-ov-body { position: relative; flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: 2px 8px 12px; touch-action: pan-y; }
 .m-tab-ov-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .m-tab-ov-chip { border: 1px solid var(--border); background: none; color: var(--text-dim); border-radius: 12px; padding: 6px 12px; font-size: 13px; white-space: nowrap; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .m-tab-ov-chip.active { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
@@ -410,8 +413,8 @@ body.m-mobile .floating-modal {
 .m-tab-ov-chip.dragging { opacity: .6; }
 .m-tab-ov-more { color: var(--text-faint); font-size: 11px; }
 .m-tab-ov-empty { padding: 16px 4px; font-size: 13px; color: var(--text-faint); }
-.m-tab-ov-grip { flex: 0 0 22px; display: flex; align-items: center; justify-content: center; border: 0; border-top: 1px solid var(--border); background: none; touch-action: none; }
-.m-tab-ov-grip i, .m-chart-strip-pull i { width: 36px; height: 4px; border-radius: 2px; background: var(--text-faint); }
+.m-tab-ov-grip { flex: 0 0 26px; display: flex; align-items: center; justify-content: center; border: 0; border-top: 1px solid var(--border); background: var(--surface); touch-action: none; }
+.m-tab-ov-grip i, .m-chart-strip-pull i { width: 44px; height: 5px; border-radius: 3px; background: var(--text-dim); }
 .m-tab-ov-scrim { position: absolute; inset: 0; display: flex; align-items: flex-end; background: color-mix(in srgb, #000 35%, transparent); }
 .m-tab-ov-menu { width: 100%; display: grid; gap: 6px; padding: 12px; background: var(--bg); border-top: 1px solid var(--border); border-radius: 14px 14px 0 0; }
 .m-tab-ov-menu button { text-align: left; padding: 10px 12px; font: inherit; color: var(--text); background: none; border: 1px solid var(--border); border-radius: 10px; }
