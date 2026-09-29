@@ -43,7 +43,10 @@ build). Sharing one project would mean `cfg` gates on most of `main.rs`.
 - Plugins: `tauri-plugin-opener` (open the browser), `tauri-plugin-deep-link`
   (receive the App Link), `tauri-plugin-store` (persist pending sign-in
   state). No hand-written Kotlin unless the spike requires it.
-- The bundled page is served from `http://tauri.localhost`. That origin must
+- The bundled page is served from `http://tauri.localhost` by default. That
+  is provisional: spike step 1 may switch it to `https://tauri.localhost`
+  (`useHttpsScheme`), and both allowlists below match the exact string, so
+  the wrong scheme 401s every call. Whichever origin the spike picks must
   be added to BOTH backend allowlists:
   - `CORS_ORIGINS` (`api/guard.py`), so the browser lets responses through.
   - `CLERK_AUTHORIZED_PARTIES` (`api/auth.py:152`), because session tokens
@@ -85,6 +88,8 @@ user agent says Android.
    - Why a tap: Chrome only follows an intent navigation on a user gesture.
    - The intent pins the package, so no other app can receive the ticket.
    - The fallback URL carries no ticket.
+   - Build the URL with `URLSearchParams` (ticket, state) and
+     `encodeURIComponent` (the fallback URL), never by string concatenation.
    - Minting on load keeps the gesture intact but starts the token's 5
      minute TTL at page load, not at the tap. The page says so if the tap
      comes late (the ticket then fails in step 5 and the user retries).
