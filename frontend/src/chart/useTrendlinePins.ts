@@ -19,10 +19,12 @@ import {
   type TrendlinesExtend,
 } from "../lib/indicators/trendlines";
 import { overrideExtend } from "../lib/overrideExtend";
+import type { OverlayManager } from "../lib/overlays";
 
 interface Args {
   chartRef: React.MutableRefObject<Chart | null>;
   containerRef: React.RefObject<HTMLElement | null>;
+  overlays: OverlayManager;
 }
 
 /** getIndicators' result as a flat list, whichever of klinecharts' two shapes
@@ -93,7 +95,7 @@ export function togglePin(
  * as a click. Ordinary clicks wobble a pixel or two; a pan travels tens. */
 const TL_CLICK_SLOP = 4;
 
-export function useTrendlinePins({ chartRef, containerRef }: Args): void {
+export function useTrendlinePins({ chartRef, containerRef, overlays }: Args): void {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -115,6 +117,9 @@ export function useTrendlinePins({ chartRef, containerRef }: Args): void {
       if (e.button !== 0) return;
       const chart = chartRef.current;
       if (!chart) return;
+      // Drawings paint above indicators, so a drawing under the pointer gets
+      // the press, even where its handle sits exactly on a pin.
+      if (overlays.getHoveredDrawingId()) return;
       const rect = el.getBoundingClientRect();
       const px = e.clientX - rect.left;
       const py = e.clientY - rect.top;
@@ -153,5 +158,5 @@ export function useTrendlinePins({ chartRef, containerRef }: Args): void {
       el.removeEventListener("mousedown", onDown, true);
       window.removeEventListener("mouseup", onUp, true);
     };
-  }, [chartRef, containerRef]);
+  }, [chartRef, containerRef, overlays]);
 }

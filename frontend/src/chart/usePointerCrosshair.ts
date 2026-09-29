@@ -264,7 +264,10 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // inline style — klinecharts paints its own cursor on the canvas, and only
       // `.chart-wrap.cur-* canvas` (with !important) beats it.
       const overTlHandle =
-        !avwapAnchorMode.value && !!c && hitAnyTrendlineHandle(c, lx, ly);
+        !avwapAnchorMode.value &&
+        !overlays.getHoveredDrawingId() &&
+        !!c &&
+        hitAnyTrendlineHandle(c, lx, ly);
       const nextCursor = avwapAnchorMode.value
         ? ""
         : overAnchor

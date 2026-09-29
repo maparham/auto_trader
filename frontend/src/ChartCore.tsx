@@ -1782,7 +1782,7 @@ export default function ChartCore({
   const patternCapable = !isSynthetic(symbol.epic) && !period.liveOnly && !snapView;
   // Click a trendline's end handle to run it on to the pane edge (and again to
   // release). Capture-phase, so it claims the press before the chart pans.
-  useTrendlinePins({ chartRef, containerRef });
+  useTrendlinePins({ chartRef, containerRef, overlays });
   // Pick a trendline, then Highlight / Hide / To drawing from its menu. The
   // right-click entry is read through a ref by the once-mounted contextmenu
   // handler below.
