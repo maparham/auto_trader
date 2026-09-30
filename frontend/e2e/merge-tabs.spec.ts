@@ -52,6 +52,13 @@ async function gotoHydrated(page: Page): Promise<void> {
   await dialled;
 }
 
+// Drag merges (chip onto chip, chip onto chart) ask first; accept the dialog.
+async function confirmMerge(page: Page): Promise<void> {
+  const dialog = page.locator(".confirm-modal");
+  await expect(dialog).toContainText("Merge tabs?");
+  await dialog.getByRole("button", { name: "Merge" }).click();
+}
+
 // t1 = 1 cell, t2 = 2 cells, t3 = 2 cells — exercises the checklist's live
 // 4-cell cap: t2 and t3 each fit alone (1+2<=4) but not together (1+2+2>4).
 // Resolves to the seeded scratch key, for specs that read it back.
@@ -202,6 +209,7 @@ test("dropping a chip on another chip's center merges the two tabs", async ({ pa
   await tabs.nth(1).dragTo(tabs.nth(0), {
     targetPosition: { x: b.width / 2, y: b.height / 2 },
   });
+  await confirmMerge(page);
 
   await expect(tabs).toHaveCount(1);
   await expect(page.locator(".chart-cell")).toHaveCount(2);
@@ -220,6 +228,7 @@ test("dragging a chip onto the chart merges it into the active tab", async ({ pa
   await page.locator(".tab-bar .tab").nth(1).dragTo(grid, {
     targetPosition: { x: g.width * 0.75, y: g.height / 2 },
   });
+  await confirmMerge(page);
 
   await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
   await expect(page.locator(".chart-cell")).toHaveCount(2);
@@ -253,6 +262,7 @@ test("merging the middle chip via a chart drop leaves no stranded drag state on 
   await page.locator(".tab-bar .tab").nth(1).dragTo(grid, {
     targetPosition: { x: g.width * 0.75, y: g.height / 2 },
   });
+  await confirmMerge(page);
 
   // t2 merged into t1 (1+2=3 cells); t3 remains its own tab and has slid
   // into t2's old slot (index 1).
@@ -274,6 +284,7 @@ test("dragging a chip onto the chart's left half inserts before the existing cel
   await page.locator(".tab-bar .tab").nth(1).dragTo(grid, {
     targetPosition: { x: g.width * 0.25, y: g.height / 2 },
   });
+  await confirmMerge(page);
 
   await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
   await expect(page.locator(".chart-cell")).toHaveCount(2);
