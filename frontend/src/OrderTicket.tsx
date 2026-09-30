@@ -11,7 +11,7 @@
 // Single source of truth: while composing a LIMIT, `draftOrderSignal` holds
 // price/SL/TP — the inputs and the draggable chart lines are both views of it,
 // never mirrored into local state (avoids the snap-back bug class). A MARKET
-// order has no chart lines, so its SL/TP live in local state and submit instantly.
+// order uses the same draft for its SL/TP; it just has no entry price.
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -96,7 +96,14 @@ interface Props {
   // The focused chart's loaded bars and the instrument it declares, read for
   // the ATR so it matches the chart without a fetch (see chartBarsUsable).
   chartCandles?: () => ChartBars | undefined;
+  // Called once a submitted order has filled or been placed, after the button's
+  // brief confirmation flash. The docked ticket closes itself through this; a
+  // ticket with no caller (the mobile Trade tab) just resets for the next order.
+  onDone?: () => void;
 }
+
+// How long the action button shows its green "Filled" state before onDone.
+const DONE_FLASH_MS = 1200;
 
 // Real-money accounts are the live env (key "{broker}:live"); the backend enforces
 // the same gate, this just drives the extra client-side confirm.
@@ -125,6 +132,7 @@ export default function OrderTicket({
   priceSide = "mid",
   brokerId,
   chartCandles,
+  onDone,
 }: Props) {
   // A chart-staged draft (the price-axis "+" menu's Buy/Sell limit items) is placed
   // on draftOrderSignal BEFORE this ticket mounts; seed local state from it (same-epic
@@ -144,6 +152,10 @@ export default function OrderTicket({
   // before that lands; this ref is set before the first await and gates the second.
   const submittingRef = useRef(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // The just-filled confirmation shown on the action button, or null.
+  const [done, setDone] = useState<string | null>(null);
+  const doneTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(doneTimer.current), []);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [draft, setDraft] = useState<DraftOrder | null>(draftOrderSignal.value);
   const [positions, setPositions] = useState<TradeView[]>([]);
@@ -158,6 +170,14 @@ export default function OrderTicket({
     window.clearTimeout(armTimer.current);
     setArmed(false);
   };
+
+  // A fill flash belongs to the order just placed: switching symbol, account or
+  // opening an edit drops it, so its pending onDone can't close the panel the
+  // user has moved on to.
+  useEffect(() => {
+    window.clearTimeout(doneTimer.current);
+    setDone(null);
+  }, [epic, account, editId]);
 
   // An armed confirm is for one exact order: any change to its shape (or the
   // account it would hit) drops back to the unarmed button.
@@ -316,7 +336,7 @@ export default function OrderTicket({
       expiresAt: d?.expiresAt ?? null,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [side, orderType, epic, mid, editId]);
+  }, [side, orderType, epic, mid, editId, myDraft == null]);
 
   // Keep the draft quantity in sync with the Units field.
   useEffect(() => {
@@ -415,18 +435,34 @@ export default function OrderTicket({
         expires_at: expiryToApi(expMs),
         confirm: realMoney,
       });
+      // Only a real fill (or a limit left resting) is a done order. "unknown"
+      // means the broker never answered, so the order may or may not exist:
+      // keep the form as it was and say so rather than flash a green check.
+      const placed =
+        result.status === "filled" ||
+        result.status === "partially_filled" ||
+        (isLimit && result.status === "pending");
       if (result.status === "rejected") {
         setMsg(`Rejected — ${result.reason || "unknown"}`);
+      } else if (!placed) {
+        setMsg(
+          `Order status ${result.status}${result.reason ? ` (${result.reason})` : ""}. Check your positions before retrying.`,
+        );
+        refreshTrades();
       } else {
         // Clear the draft (its lines hand off to the new position/order's lines);
         // the maintenance effect re-seeds a fresh draft for the next order.
+        // Clearing it also drops the SL/TP fields; reset the size too so the
+        // form reads as spent rather than ready to fire the same order again.
         draftOrderSignal.set(null);
-        if (isLimit) {
-          setMsg("Limit order placed");
-        } else {
-          const px = result.fill_price != null ? result.fill_price.toFixed(precision) : "?";
-          setMsg(`Filled ${result.filled_quantity} @ ${px}`);
-        }
+        setQuantity("1");
+        const px = result.fill_price != null ? result.fill_price.toFixed(precision) : "?";
+        setDone(isLimit ? "Limit order placed" : `Filled ${result.filled_quantity} @ ${px}`);
+        window.clearTimeout(doneTimer.current);
+        doneTimer.current = window.setTimeout(() => {
+          setDone(null);
+          onDone?.();
+        }, DONE_FLASH_MS);
         refreshTrades();
       }
     } catch (e) {
@@ -644,14 +680,20 @@ export default function OrderTicket({
       )}
 
       <button
-        className={`ot-action ot-action-${side}${armed ? " ot-action-armed" : ""}`}
-        disabled={busy}
+        className={`ot-action ot-action-${done ? "done" : side}${armed ? " ot-action-armed" : ""}`}
+        disabled={busy || done != null}
         onClick={submit}
       >
-        <span className="ot-action-verb">{armed ? `Confirm ${actionWord}` : actionWord}</span>
-        <span className="ot-action-detail">
-          {armed ? `real money · ${actionDetail}` : actionDetail}
-        </span>
+        {done ? (
+          <span className="ot-action-verb">✓ {done}</span>
+        ) : (
+          <>
+            <span className="ot-action-verb">{armed ? `Confirm ${actionWord}` : actionWord}</span>
+            <span className="ot-action-detail">
+              {armed ? `real money · ${actionDetail}` : actionDetail}
+            </span>
+          </>
+        )}
       </button>
 
       <div className={`ot-msg${msg ? " show" : ""}`}>{msg ?? ""}</div>

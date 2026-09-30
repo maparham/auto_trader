@@ -79,6 +79,7 @@ import {
   setTradeSelected,
   discardPendingEdit,
   snapshotsGalleryOpen,
+  tradePanelOpen,
 } from "./lib/signals";
 import { reportView } from "./lib/viewHeartbeat";
 import { jumpToEpic as runEpicJump, type EpicJumpDeps, type ReuseSlot } from "./lib/epicJump";
@@ -1139,6 +1140,7 @@ export default function App() {
                 const c = focusedController?.chart;
                 return c ? { stamp: chartSeriesStamp(c), bars: c.getDataList() } : undefined;
               }}
+              onDone={() => tradePanelOpen.set(false)}
             />
           </aside>
         )}

@@ -79,3 +79,58 @@ describe("real-money confirm (no window.confirm: dead in WKWebView)", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+describe("after a fill", () => {
+  it("flashes the fill on the button, resets the size, then calls onDone", async () => {
+    vi.useFakeTimers();
+    const onDone = vi.fn();
+    render(<OrderTicket epic="US100" trading={trading} account="capital:paper" onDone={onDone} />);
+    fireEvent.change(screen.getByDisplayValue("1"), { target: { value: "10" } });
+    expect(screen.getByDisplayValue("10")).toBeTruthy();
+    fireEvent.click(actionButton());
+    await act(async () => {});
+    expect(market.placeOrder.mock.calls[0][0]).toMatchObject({ quantity: 10 });
+    expect(actionButton().textContent).toContain("Filled 1 @");
+    expect(actionButton().disabled).toBe(true);
+    expect(screen.queryByDisplayValue("10")).toBeNull();
+    expect(screen.getByDisplayValue("1")).toBeTruthy();
+    expect(onDone).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1500));
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unknown outcome keeps the form and never reports a fill", async () => {
+    vi.useFakeTimers();
+    market.placeOrder.mockResolvedValueOnce({
+      status: "unknown",
+      filled_quantity: 0,
+      fill_price: null,
+      reason: "submit failed (no response)",
+    } as never);
+    const onDone = vi.fn();
+    render(<OrderTicket epic="US100" trading={trading} account="capital:paper" onDone={onDone} />);
+    fireEvent.change(screen.getByDisplayValue("1"), { target: { value: "10" } });
+    fireEvent.click(actionButton());
+    await act(async () => {});
+    expect(actionButton().textContent).not.toContain("Filled");
+    expect(screen.getByText(/no response/)).toBeTruthy();
+    expect(screen.getByDisplayValue("10")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(1500));
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("switching symbol mid-flash cancels the pending close", async () => {
+    vi.useFakeTimers();
+    const onDone = vi.fn();
+    const { rerender } = render(
+      <OrderTicket epic="US100" trading={trading} account="capital:paper" onDone={onDone} />,
+    );
+    fireEvent.click(actionButton());
+    await act(async () => {});
+    expect(actionButton().textContent).toContain("Filled");
+    rerender(<OrderTicket epic="DE40" trading={trading} account="capital:paper" onDone={onDone} />);
+    expect(actionButton().textContent).not.toContain("Filled");
+    act(() => vi.advanceTimersByTime(1500));
+    expect(onDone).not.toHaveBeenCalled();
+  });
+});

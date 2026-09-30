@@ -5167,6 +5167,8 @@
 .ot-action:disabled { opacity: 0.6; cursor: default; }
 .ot-action-buy { background: var(--accent); }
 .ot-action-sell { background: var(--neg); }
+/* post-fill confirmation; full opacity although the button is disabled */
+.ot-action-done, .ot-action-done:disabled { background: var(--pos); opacity: 1; }
 .ot-action-verb { font-size: 15px; font-weight: 600; }
 .ot-action-detail { font-size: 11px; opacity: 0.9; }
 /* real-money two-step confirm: first click arms, second deals (auto-disarms) */
