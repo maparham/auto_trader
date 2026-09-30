@@ -144,12 +144,12 @@ export function periodGroups(custom: string[]): PeriodGroup[] {
 }
 
 // Timeframes an indicator may pin to: the chart's own timeframe or higher,
-// from the native periods plus the user's custom ones. A pin equal to the chart
-// differs from "Chart" mode under wait-for-closes: it updates only on bar close
-// instead of tracking the forming bar.
+// from the native and derived periods plus the user's custom ones. A pin equal
+// to the chart differs from "Chart" mode under wait-for-closes: it updates only
+// on bar close instead of tracking the forming bar.
 export function pinnableTimeframes(chartResolution: string, custom: string[] = []): Period[] {
   const chartSecs = RESOLUTION_SECONDS[chartResolution] ?? 0;
-  return [...PERIODS, ...customPeriods(custom)]
+  return [...PERIODS, ...MINUTE_DERIVED_PERIODS, ...DERIVED_PERIODS, ...customPeriods(custom)]
     .filter((p) => (RESOLUTION_SECONDS[p.resolution] ?? 0) >= chartSecs)
     .sort(
       (a, b) => (RESOLUTION_SECONDS[a.resolution] ?? 0) - (RESOLUTION_SECONDS[b.resolution] ?? 0),

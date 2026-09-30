@@ -399,12 +399,25 @@ describe("MTF pin helpers", () => {
       "HOUR_4",
       "DAY",
       "WEEK",
+      "WEEK_2",
+      "WEEK_3",
+      "MONTH",
+      "WEEK_6",
+      "MONTH_2",
+      "MONTH_3",
+      "YEAR",
     ]);
   });
 
   it("pinnableTimeframes excludes lower timeframes", async () => {
     const { pinnableTimeframes } = await import("./feed");
-    expect(pinnableTimeframes("WEEK").map((p) => p.resolution)).toEqual(["WEEK"]);
+    expect(pinnableTimeframes("MONTH").map((p) => p.resolution)).toEqual([
+      "MONTH",
+      "WEEK_6",
+      "MONTH_2",
+      "MONTH_3",
+      "YEAR",
+    ]);
   });
 
   it("pinBelowChart flags a pin finer than the chart", async () => {
