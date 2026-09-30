@@ -3787,7 +3787,7 @@ const TL_SETTLE_MAX_MS = 1000;
 const TL_SETTLE = new WeakMap<Indicator, { until: number; hardUntil: number }>();
 const TL_LAST_IN = new WeakMap<
   Indicator,
-  { list: KLineData[]; key: string; floorTs: number | undefined }
+  { list: KLineData[]; cfg: TrendlinesConfig; floorTs: number | undefined }
 >();
 
 function bumpSettle(ind: Indicator): void {
@@ -3854,11 +3854,12 @@ function sessionRows(
   session: TrendlinesSession,
   dataList: KLineData[],
   ind: Indicator,
+  cfg?: TrendlinesConfig,
 ): TrendlinesCalcPoint[] {
   const ext = ind.extendData as TrendlinesExtend | undefined;
   const { points, lines, atr, pivots } = session.compute(
     dataList,
-    parseTrendlinesConfig(ind.calcParams, ext),
+    cfg ?? parseTrendlinesConfig(ind.calcParams, ext),
     ext?.tlFloorTs,
   );
   if (dataList.length) TL_FIRST_TS.set(ind, dataList[0].timestamp);
@@ -3918,19 +3919,23 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     const s = session;
     const floorTs = ext?.tlFloorTs;
     const cfg = parseTrendlinesConfig(ind.calcParams, ext);
-    const key = JSON.stringify(cfg);
     const last = TL_LAST_IN.get(ind);
-    TL_LAST_IN.set(ind, { list: dataList, key, floorTs });
+    TL_LAST_IN.set(ind, { list: dataList, cfg, floorTs });
     if (TL_PENDING.has(ind)) {
       // A rebuild is already waiting and will compute from the newest inputs.
       // A rebuild-kind calc pushes its window; a tick (same list, appended in
       // place) does not, or a live feed would starve it.
-      if (!last || last.list !== dataList || last.key !== key || last.floorTs !== floorTs)
+      if (
+        !last ||
+        last.list !== dataList ||
+        last.floorTs !== floorTs ||
+        JSON.stringify(last.cfg) !== JSON.stringify(cfg)
+      )
         bumpSettle(ind);
       return staleRows(ind, dataList);
     }
     if (s.rebuildSpan(dataList, cfg, floorTs) === 0 || dataList.length < TL_DEFER_MIN_BARS)
-      return sessionRows(s, dataList, ind);
+      return sessionRows(s, dataList, ind, cfg);
     // A REBUILD (a prepend, a floor move, a config change, a first compute on
     // a long list) would freeze the chart, so it goes behind the legend's busy
     // mark and waits for the burst to settle, out of band (scheduleRebuild).

@@ -385,13 +385,35 @@ describe("TRENDLINES_TEMPLATE.calc rebuild coalescing", () => {
   it("a prepend burst is capped at TL_SETTLE_MAX_MS", async () => {
     const h = harness(synthBars(1500));
     h.run();
-    for (let t = 0; t < 11; t++) {
+    let t = 0;
+    for (; t < 20; t++) {
       await vi.advanceTimersByTimeAsync(100);
+      if (h.recalcs) break;
       h.list = prepended(h.list, 50);
       h.run();
     }
-    // Prepends every 100 ms would slide a pure 250 ms window forever.
-    expect(h.recalcs).toBeGreaterThanOrEqual(1);
+    // Prepends every 100 ms would slide a pure 250 ms window forever; the cap
+    // lands the compute at about 1 s, on the newest list.
+    expect(h.recalcs).toBe(1);
+    expect(t).toBeLessThanOrEqual(10);
+    expect(lastLines(h.ind.result as Rows)).toEqual(computeTrendlines(h.list, cfg).lines);
+  });
+
+  it("a config change during the window pushes it and computes with the new config", async () => {
+    const h = harness(synthBars(1500));
+    await build(h);
+    h.list = prepended(h.list, 300);
+    h.run();
+    await vi.advanceTimersByTimeAsync(200);
+    const params = Object.values({ ...TRENDLINES_DEFAULTS, minTouches: 3 });
+    (h.ind as { calcParams: unknown }).calcParams = params;
+    h.run();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.recalcs).toBe(1);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(h.recalcs).toBe(2);
+    const ref = computeTrendlines(h.list, parseTrendlinesConfig(params as never));
+    expect(lastLines(h.ind.result as Rows)).toEqual(ref.lines);
   });
 
   it("a failed compute neither loops nor leaves a stale window behind", async () => {
