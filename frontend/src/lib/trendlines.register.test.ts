@@ -34,16 +34,17 @@ describe("TRENDLINES registration", () => {
     expect(OVERLAY_INDICATORS.has("TRENDLINES")).toBe(true);
   });
 
-  it("has settings metadata for all twenty-nine params and the extend select", () => {
+  it("has settings metadata for all thirty-two params and the extend select", () => {
     const inputs = resolveInputs("TRENDLINES", undefined);
-    // Twenty-nine calcParams: the twenty-seven numeric ones (One line per
+    // Thirty-two calcParams: the twenty-seven numeric ones (One line per
     // pivot became the integer Max lines per pivot; the merge tolerance is a
     // calcParam because a merged-away line must stop reporting to rules,
-    // which only the calc can arrange), plus Lookback (number) and Extend
-    // Left (boolean). The extra numbers are the three dim thresholds and the
+    // which only the calc can arrange), plus Lookback (number), Extend Left
+    // (boolean), the two fan-merge bands (numbers) and Keep the nearest in a
+    // fan (boolean). The extra numbers are the three dim thresholds and the
     // dim opacity, which choose an alpha and so are render-only.
-    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(29);
-    expect(inputs.filter((i) => i.type === "number")).toHaveLength(32);
+    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(32);
+    expect(inputs.filter((i) => i.type === "number")).toHaveLength(34);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
     // metadata, so assert the named title too or this test passes on a miss.
@@ -75,6 +76,8 @@ describe("TRENDLINES registration", () => {
       ["Extend"],
       ["Max lines per pivot"],
       ["Merge lines within", "Merge lines within (%)"],
+      ["Merge fanned lines within", "Merge fanned lines within (%)"],
+      ["Keep the nearest in a fan"],
     ]);
   });
 
@@ -101,7 +104,7 @@ describe("TRENDLINES registration", () => {
     expect(style.every((i) => i.source === "extend")).toBe(true);
     expect(groupInputs(style).map((c) => c.map((i) => i.label))).toEqual([
       ["Show pivots", "Mark line pivots", "Show pivot depth"],
-      ["Mark crossings", "Show line stats"],
+      ["Mark crossings", "Show line stats", "Fan edges only"],
       ["Dim opacity"],
       ["Dim after touching"],
       ["Dim if crossed"],
