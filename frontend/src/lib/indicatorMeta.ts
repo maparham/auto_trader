@@ -1154,6 +1154,21 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        key: "showStrength",
+        label: "Show strength rank",
+        type: "boolean",
+        source: "extend",
+        field: "showStrength",
+        tab: "style",
+        group: "lineMarks",
+        default: TRENDLINES_EXTEND_DEFAULTS.showStrength,
+        tip: [
+          "Writes #1, #2, ... at each line's right end: #1 is the strongest.",
+          "Strength: most pivots, then longest span, then fewest crossings.",
+          "Ranked among all lines passing the filters, drawn or not.",
+        ],
+      },
+      {
         key: "dimOpacity",
         label: "Dim opacity",
         type: "number",

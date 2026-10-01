@@ -214,6 +214,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
   showLinePivots: true,
   showCrossings: true,
   showStats: true,
+  showStrength: false,
   showPivotDepth: false,
   debug: false,
   // Which debug layers paint (Debug tab checkboxes).

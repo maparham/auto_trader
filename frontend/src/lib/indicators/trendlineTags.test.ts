@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clearTagRow, trendlineStatsLabel } from "./trendlines";
+import { clearTagRow, strengthRank, trendlineStatsLabel, type TrendLine } from "./trendlines";
 
 describe("clearTagRow", () => {
   it("keeps the requested row when nothing is there", () => {
@@ -27,6 +27,11 @@ describe("clearTagRow", () => {
   it("still spells the tag", () => {
     expect(trendlineStatsLabel(3, 1)).toBe("3 ○ 1 ●");
   });
+
+  it("appends the strength rank when given one", () => {
+    expect(trendlineStatsLabel(3, 1, 5)).toBe("3 ○ 1 ● #5");
+    expect(trendlineStatsLabel(2, 0, 1)).toBe("2 ○ #1");
+  });
 });
 
 describe("clearTagRow near the pane bottom", () => {
@@ -37,5 +42,24 @@ describe("clearTagRow near the pane bottom", () => {
   it("keeps its own y when nothing is free", () => {
     const placed = Array.from({ length: 20 }, (_, i) => ({ x: 100, y: i * 14, w: 40 }));
     expect(clearTagRow(placed, 100, 48, 40, 200)).toBe(48);
+  });
+});
+
+describe("strengthRank", () => {
+  const line = (touches: number, i1: number, crossings: number): TrendLine =>
+    ({ i1, p1: 100, i2: i1 + 10, p2: 100, touches, lastTouchIdx: 200, crossings, touchIdxs: [] }) as unknown as TrendLine;
+
+  it("orders by pivots, then span, then fewest crossings", () => {
+    const strong = line(4, 0, 5);
+    const long = line(2, 0, 9);
+    const clean = line(2, 100, 1);
+    const pool = [clean, long, strong];
+    expect(strengthRank(pool, strong)).toBe(1);
+    expect(strengthRank(pool, long)).toBe(2);
+    expect(strengthRank(pool, clean)).toBe(3);
+  });
+
+  it("gives a line outside the pool the place it would take", () => {
+    expect(strengthRank([line(3, 0, 0)], line(5, 0, 0))).toBe(1);
   });
 });

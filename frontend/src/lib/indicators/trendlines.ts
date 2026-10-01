@@ -274,6 +274,16 @@ export function rankLines(a: TrendLine, b: TrendLine): number {
   return a.p1 - b.p1;
 }
 
+/** A line's place in the rankLines order among `passing` (1 = strongest).
+ * Counted, not looked up, so a line that is not itself in `passing` gets the
+ * place it WOULD take. Display only: the "#k" on the end tag and the debug
+ * popup. Nothing selects by it. */
+export function strengthRank(passing: readonly TrendLine[], line: TrendLine): number {
+  let k = 1;
+  for (const p of passing) if (p !== line && rankLines(p, line) < 0) k++;
+  return k;
+}
+
 /** THE LIVE-CAP SURVIVAL ORDER, which is NOT rankLines and must not become it.
  *
  * rankLines answers "which lines does the user read this bar" and leads with
@@ -1516,6 +1526,10 @@ export interface TrendlinesExtend {
   /** Write each drawn line's touch and crossing counts at its right end
    * ("3 ○ 2 ●"). ON by default. Render-only. */
   showStats?: boolean;
+  /** Append each drawn line's strength rank ("#3") to its end tag: its
+   * place in the rankLines order among the lines passing every filter on the
+   * last bar. OFF by default. Render-only. */
+  showStrength?: boolean;
   /** How faded a dimmed line paints, as a PERCENT of full opacity. Absent
    * takes TL_DIM_ALPHA. Governs every dim on the pane, whatever put a line
    * into it: "dimmed" is one visual state, and a second knob would only let a
@@ -3159,6 +3173,7 @@ function drawTrendlines(
   const showAll = ext?.showPivots ?? TRENDLINES_EXTEND_DEFAULTS.showPivots;
   const showLineUsed = ext?.showLinePivots ?? TRENDLINES_EXTEND_DEFAULTS.showLinePivots;
   const showStats = ext?.showStats ?? TRENDLINES_EXTEND_DEFAULTS.showStats;
+  const showStrength = ext?.showStrength ?? TRENDLINES_EXTEND_DEFAULTS.showStrength;
   const showCrossings = ext?.showCrossings ?? TRENDLINES_EXTEND_DEFAULTS.showCrossings;
   const showDepth = ext?.showPivotDepth ?? TRENDLINES_EXTEND_DEFAULTS.showPivotDepth;
   const paintMarks = (used: ReadonlySet<number>, depths: ReadonlyMap<number, number> | null): void => {
@@ -3328,13 +3343,19 @@ function drawTrendlines(
   // below paints the nearest line first and it claims the first tag slot;
   // tl_nearest equals tl_1.
   const depths = showDepth ? new Map<number, number>() : null;
-  const drawn = selectDrawnLines(poolable(last.lines, lastIdx, cfg), lastIdx, lastClose, cfg.maxLines, {
+  const pool = poolable(last.lines, lastIdx, cfg);
+  const gate = trendlineGate(lastIdx, lastClose, last.atr, cfg);
+  const drawn = selectDrawnLines(pool, lastIdx, lastClose, cfg.maxLines, {
     tol: mergeTolerance(cfg, last.atr, lastClose),
     keep: pinnedLines,
     perPivot: cfg.maxPerPivot,
-    pass: trendlineGate(lastIdx, lastClose, last.atr, cfg),
+    pass: gate,
     depthsOut: depths ?? undefined,
   });
+  // Ranked against every line passing the filters, not just the drawn ones,
+  // so "#5" means the same as in the debug popup. A pin outside that set
+  // gets no rank.
+  const rankPool = showStrength ? pool.filter(gate) : null;
   if (!drawn.length) {
     paintMarks(NO_PIVOTS_USED, depths);
     setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
@@ -3645,8 +3666,9 @@ function drawTrendlines(
       ctx.stroke();
       ctx.lineWidth = 1;
     }
-    if (!showStats) continue;
-    const label = trendlineStatsLabel(line.touches, line.crossings);
+    const rank = rankPool?.includes(line) ? strengthRank(rankPool, line) : undefined;
+    if (!showStats && rank === undefined) continue;
+    const label = showStats ? trendlineStatsLabel(line.touches, line.crossings, rank) : `#${rank}`;
     const wTag = ctx.measureText(label).width;
     const xTag = Math.min(xRing + TL_HANDLE_RADIUS + 5, tagRight - wTag);
     let yTag =
@@ -3738,10 +3760,9 @@ export function clearTagRow(
  * markers the chart paints: "3 ○" (pivots, hollow rings), "3 ○ 2 ●"
  * (plus crossings, filled dots). Crossings are omitted at zero, since
  * most lines have none and the tag would just repeat itself down the pane. */
-export function trendlineStatsLabel(touches: number, crossings: number): string {
-  const p = `${touches} ○`;
-  if (crossings <= 0) return p;
-  return `${p} ${crossings} ●`;
+export function trendlineStatsLabel(touches: number, crossings: number, rank?: number): string {
+  const p = crossings > 0 ? `${touches} ○ ${crossings} ●` : `${touches} ○`;
+  return rank === undefined ? p : `${p} #${rank}`;
 }
 
 const TL_CALC_SESSIONS = new WeakMap<Indicator, TrendlinesSession>();

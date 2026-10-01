@@ -10,6 +10,7 @@ import {
   GATE_GROUP, whatIfFate, type DebugCandidate, type TlDebugResult, type Verdict,
 } from "../lib/indicators/trendlinesDebugExplain";
 import { proposeChanges, type FixResult, type SettingChange } from "../lib/indicators/trendlinesDebugFix";
+import { strengthRank } from "../lib/indicators/trendlines";
 
 const FIELD_SLOTS = Object.keys(TRENDLINES_DEFAULTS) as Array<keyof TrendlinesConfig>;
 
@@ -118,6 +119,12 @@ export default function TrendlineDebugPopup(p: TrendlineDebugPopupProps) {
       <div className="tl-dbg-state">
         {cand.drawn ? "Drawn." : cand.outranked ? "Passes every filter. Outranked." : "Blocked."}
       </div>
+      {cand.drawn || cand.outranked ? (
+        <div className="tl-dbg-note">
+          Strength #{strengthRank(res.passing, cand.line)} of {res.passing.length}
+          <InfoTip text={["#1 is the strongest.", "Most pivots, then longest span, then fewest crossings.", "Among the lines passing every filter."]} />
+        </div>
+      ) : null}
       <table className="tl-dbg-gates">
         <tbody>
           {rows.map((v, n) => {
