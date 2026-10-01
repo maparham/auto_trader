@@ -1154,6 +1154,20 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        key: "fanEdges",
+        label: "Fan edges only",
+        type: "boolean",
+        source: "extend",
+        field: "fanEdges",
+        tab: "style",
+        group: "lineMarks",
+        default: TRENDLINES_EXTEND_DEFAULTS.fanEdges,
+        tip: [
+          "Where several drawn lines meet at one swing, the steepest and the flattest keep full strength.",
+          "The lines between them are dimmed. Rules still read them.",
+        ],
+      },
+      {
         key: "dimOpacity",
         label: "Dim opacity",
         type: "number",
@@ -1336,6 +1350,50 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: [
           "Same rule, as a percent of price. The tighter of the two boxes is the band.",
           "Empty: off.",
+        ],
+      },
+      {
+        ...num(29, "Merge fanned lines within", { min: 0, step: 0.01 }),
+        group: "fan",
+        default: TL.fanAtr,
+        unbounded: true,
+        suffix: "ATR/bar",
+        range: {
+          label: "Merge fanned lines within",
+          dual: true,
+          tip: [
+            "Lines through the same swing at nearly the same angle are one line, so only one is kept.",
+            "Slope gap in ATR(14) per bar, and as a percent of the kept line's slope; the tighter of the two is the band.",
+            "Lines meeting at a swing from clearly different angles stay.",
+            "A merged line leaves the chart and stops reporting to rules. Empty: off.",
+          ],
+        },
+        tip: [
+          "Lines through the same swing at nearly the same angle are one line, so only one is kept.",
+          "Slope gap in ATR(14) per bar. Empty: off.",
+        ],
+      },
+      {
+        ...num(30, "Merge fanned lines within (%)", { min: 0, step: 1 }),
+        group: "fan",
+        default: TL.fanPct,
+        unbounded: true,
+        suffix: "%",
+        tip: [
+          "Same rule, as a percent of the kept line's slope. The tighter of the two boxes is the band.",
+          "Empty: off.",
+        ],
+      },
+      {
+        key: "p31",
+        label: "Keep the nearest in a fan",
+        type: "boolean",
+        source: "calcParam",
+        index: 31,
+        default: false,
+        tip: [
+          "Off: a fan keeps its strongest line (most pivots, then span, then fewest crossings).",
+          "On: it keeps the line nearest to price.",
         ],
       },
     ],

@@ -1168,6 +1168,7 @@ export function stepTrendlinesBar(
     keep: NO_PINS,
     perPivot: cfg.maxPerPivot,
     pass: trendlineGate(i, close, a, cfg),
+    fan: fanTolerance(cfg, a),
   });
   let nearestV = 0;
   let nearestD = Infinity;
@@ -1530,6 +1531,9 @@ export interface TrendlinesExtend {
    * place in the rankLines order among the lines passing every filter on the
    * last bar. OFF by default. Render-only. */
   showStrength?: boolean;
+  /** Dim the drawn lines inside a fan, keeping its two edges (fanInnerLines).
+   * OFF by default. Render-only. */
+  fanEdges?: boolean;
   /** How faded a dimmed line paints, as a PERCENT of full opacity. Absent
    * takes TL_DIM_ALPHA. Governs every dim on the pane, whatever put a line
    * into it: "dimmed" is one visual state, and a second knob would only let a
@@ -1738,6 +1742,8 @@ export { TL_DEDUPE_ATR };
 export interface TrendlineDedupe {
   tol: number;
   keep: ReadonlySet<TrendLine>;
+  /** The fan merge for this bar (fanTolerance); null or absent = off. */
+  fan?: FanBand | null;
   /** Max lines per pivot (cfg.maxPerPivot); 0 or absent = no cap. */
   perPivot?: number;
   /** The per-line filters for this bar (trendlineGate); absent = none. */
@@ -1779,6 +1785,42 @@ export function trendlineDimAlpha(
   const pct = ext?.dimOpacity;
   if (typeof pct !== "number" || !Number.isFinite(pct)) return TL_DIM_ALPHA;
   return Math.min(100, Math.max(10, pct)) / 100;
+}
+
+/** FAN EDGES ONLY: the drawn lines to dim because they sit INSIDE a fan.
+ * A fan is three or more drawn lines through one bar (touchIdxs, anchor or
+ * touch). Its steepest and flattest members are its edges and stay at full
+ * strength; they bound the range the others repeat. A line is dimmed when it
+ * belongs to a fan and is the edge of none, so a line that leads anywhere
+ * keeps its strength. Render-only: it restyles, never chooses, so the rules
+ * still read every line. Slopes are compared cross-multiplied, like fanClose. */
+export function fanInnerLines(drawn: readonly TrendLine[]): Set<TrendLine> {
+  const atBar = new Map<number, TrendLine[]>();
+  for (const line of drawn)
+    for (const b of new Set(line.touchIdxs)) {
+      const at = atBar.get(b);
+      if (at) at.push(line);
+      else atBar.set(b, [line]);
+    }
+  // a's slope minus b's, signed, times both spans.
+  const steeper = (a: TrendLine, b: TrendLine) =>
+    (a.p2 - a.p1) * (b.i2 - b.i1) - (b.p2 - b.p1) * (a.i2 - a.i1);
+  const inner = new Set<TrendLine>();
+  const edge = new Set<TrendLine>();
+  for (const at of atBar.values()) {
+    if (at.length < 3) continue;
+    let lo = at[0];
+    let hi = at[0];
+    for (const l of at) {
+      if (steeper(l, lo) < 0) lo = l;
+      if (steeper(l, hi) > 0) hi = l;
+    }
+    edge.add(lo);
+    edge.add(hi);
+    for (const l of at) if (l !== lo && l !== hi) inner.add(l);
+  }
+  for (const l of edge) inner.delete(l);
+  return inner;
 }
 
 /** True when a line should paint faded: well touched, or long untouched.
@@ -2187,6 +2229,85 @@ function* nearestFirstLazy(
   }
 }
 
+/** The fan merge's band for one bar: `atr` is fanAtr ATR(14) of price per
+ * bar (null while the ATR is unwarmed or the box is off), `pct` the fraction
+ * of the kept line's own slope (null when off). Null when both are off, which
+ * is how a pane without the setting skips the pass entirely. Ported to Python
+ * as fan_tolerance. */
+export interface FanBand {
+  atr: number | null;
+  pct: number | null;
+  /** 0 keeps the strongest member of a fan (rankLines), 1 the nearest. */
+  keep: number;
+}
+
+export function fanTolerance(cfg: TrendlinesConfig, atr: number | null | undefined): FanBand | null {
+  const a = cfg.fanAtr > 0 && typeof atr === "number" && Number.isFinite(atr) ? cfg.fanAtr * atr : null;
+  const p = cfg.fanPct > 0 ? cfg.fanPct / 100 : null;
+  return a === null && p === null ? null : { atr: a, pct: p, keep: cfg.fanKeep };
+}
+
+/** True when `line` fans off `kept`: their slopes differ by at most the band.
+ * Cross-multiplied by both spans (exact positive integers) so there is no
+ * division, like withinSlope: |rise_k * span_l - rise_l * span_k| is the
+ * slope gap times span_k * span_l. Both halves must hold: the tighter wins. */
+export function fanClose(kept: TrendLine, line: TrendLine, band: FanBand): boolean {
+  const sk = kept.i2 - kept.i1;
+  const sl = line.i2 - line.i1;
+  const rk = kept.p2 - kept.p1;
+  const diff = Math.abs(rk * sl - (line.p2 - line.p1) * sk);
+  if (band.atr !== null && diff > band.atr * sk * sl) return false;
+  if (band.pct !== null && diff > band.pct * Math.abs(rk) * sl) return false;
+  return true;
+}
+
+/** THE FAN MERGE. Lines through one swing at nearly the same angle are one
+ * line drawn several times from different far anchors: they agree at the
+ * shared bar and only drift apart slowly, so the level merge (which needs
+ * them close along the WHOLE overlap) lets every one through, and a fresh
+ * swing grows a sheaf.
+ *
+ * Walked in keep order (strongest first by rankLines, or nearest first), a
+ * line joins the first kept line it shares a bar with (touchIdxs, the bars
+ * Max lines per pivot counts) whose slope is within the band, and is dropped;
+ * otherwise it is kept. Lines through the same swing at clearly different
+ * angles stay: those are different trends that meet there.
+ *
+ * Returns the kept lines in INPUT order, so the stage 3 walk downstream sees
+ * the order it always did. `intoOut`, when given, records each dropped line's
+ * keeper (the debug popup's winner). Indexed by bar, so the cost is the
+ * lines times their touches times the keepers at each bar, not n squared.
+ * Ported to Python as fan_merge. */
+export function fanMerge(
+  lines: readonly TrendLine[],
+  atIdx: number,
+  close: number,
+  band: FanBand,
+  intoOut?: Map<TrendLine, TrendLine>,
+): TrendLine[] {
+  const order = band.keep === 1 ? nearestFirst(lines, atIdx, close) : [...lines].sort(rankLines);
+  const atBar = new Map<number, TrendLine[]>();
+  const dropped = new Set<TrendLine>();
+  for (const line of order) {
+    let into: TrendLine | undefined;
+    for (const b of line.touchIdxs) {
+      into = atBar.get(b)?.find((k) => fanClose(k, line, band));
+      if (into) break;
+    }
+    if (into) {
+      dropped.add(line);
+      intoOut?.set(line, into);
+      continue;
+    }
+    for (const b of line.touchIdxs) {
+      const at = atBar.get(b);
+      if (!at) atBar.set(b, [line]);
+      else if (at[at.length - 1] !== line) at.push(line);
+    }
+  }
+  return dropped.size ? lines.filter((l) => !dropped.has(l)) : [...lines];
+}
+
 /** The DRAWN set, and the whole pipeline in one call. `lines` is poolable's
  * output (the permanent half of stage 2). Stage 2 finishes here: the per-bar
  * filters (`dedupe.pass`, trendlineGate) drop every line that fails them,
@@ -2236,7 +2357,11 @@ export function selectDrawnLines(
   // Stage 2 (each line on its own) BEFORE ordering, so a line no filter would
   // show can never hold a slot.
   const pass = dedupe?.pass;
-  const passing = pass ? lines.filter(pass) : lines;
+  const gated = pass ? lines.filter(pass) : lines;
+  // The fan merge sits between the stages: it reads lines against each other,
+  // but over the whole gate-passing set, since its "keep the strongest" mode
+  // needs every member of a fan before the nearest first walk starts.
+  const passing = dedupe?.fan ? fanMerge(gated, atIdx, close, dedupe.fan) : gated;
   // Stage 3 (lines against each other): merge, per pivot, Max Trendlines.
   // A capped walk without debug depths stops early, so it reads the order
   // lazily (nearestFirstLazy); everything else sorts in full.
@@ -3240,7 +3365,7 @@ function drawTrendlines(
           yPx: (price) => yAxis.convertToPixel(price),
           width: bounding.width, height: bounding.height, tagRight,
           selectedKey: sel, hoveredKey: ext.hoveredLine,
-          winnerKey: selCand?.fate?.kind === "merged" ? res.keyOf(selCand.fate.into) : undefined,
+          winnerKey: selCand?.fate?.kind === "merged" || selCand?.fate?.kind === "fanMerged" ? res.keyOf(selCand.fate.into) : undefined,
           target: tgt,
           expanded: entry.expanded,
           matchKeys: lk ? lk.keys : null,
@@ -3350,6 +3475,7 @@ function drawTrendlines(
     keep: pinnedLines,
     perPivot: cfg.maxPerPivot,
     pass: gate,
+    fan: fanTolerance(cfg, last.atr),
     depthsOut: depths ?? undefined,
   });
   // Ranked against every line passing the filters, not just the drawn ones,
@@ -3404,6 +3530,7 @@ function drawTrendlines(
   ctx.lineDashOffset = 0;
   // Debug tab: the drawn layer can be switched off to see the rest.
   const hideDrawn = ext?.debug === true && ext.debugShowDrawn === false;
+  const fanInner = (ext?.fanEdges ?? TRENDLINES_EXTEND_DEFAULTS.fanEdges) ? fanInnerLines(drawn) : null;
   for (const line of drawn) {
     if (hideDrawn) continue;
     // ONE alpha for the whole line and everything it carries (rings, crossing
@@ -3411,7 +3538,7 @@ function drawTrendlines(
     // the dim test per site is how the touch rings and the ×N tag once
     // snapped back to full opacity while the stroke itself faded correctly.
     const alpha =
-      (trendlineDimmed(line, lastIdx, ext) ? trendlineDimAlpha(ext) : 1) * lineStyle.opacity;
+      (trendlineDimmed(line, lastIdx, ext) || fanInner?.has(line) ? trendlineDimAlpha(ext) : 1) * lineStyle.opacity;
     const key = lineKey(line, dataList, starts);
     const isPinned = pins.has(key);
     const look = markedLineStyle(

@@ -7,6 +7,7 @@
 // repeat, at most MAX_ROUNDS times.
 import {
   buildTlState,
+  fanTolerance,
   mergeTolerance,
   lineKey,
   poolable,
@@ -82,6 +83,7 @@ function needFor(v: Verdict, cfg: TrendlinesConfig): number | null {
     // when m sits exactly on one, so no extra step down is needed to keep the
     // tolerance strictly below the merge gap (sameTrend merges at <= tol).
     case "merged": return m === null ? null : Math.max(0, floorTo(m - 1e-9, 0.01));
+    case "fanMerged": return m === null ? null : Math.max(0, floorTo(m - 1e-9, 0.01));
     case "perPivot": return m;
     case "maxLines": return m !== null && m <= MAX_MAX_LINES ? m : null;
     case "liveCap": return null;
@@ -104,7 +106,7 @@ export function proposeChanges(
     const to = normalizeField(v.field, raw, cfg);
     const prev = byField.get(v.field);
     const loosen = (a: number, b: number) =>
-      v.gate.startsWith("min") || ["fractal", "unconfirmed", "size", "reach", "slopeMin", "backClearance", "merged"].includes(v.gate)
+      v.gate.startsWith("min") || ["fractal", "unconfirmed", "size", "reach", "slopeMin", "backClearance", "merged", "fanMerged"].includes(v.gate)
         ? Math.min(a, b) : Math.max(a, b);
     byField.set(v.field, {
       field: v.field, from: cfg[v.field] as number, to: round(prev ? loosen(prev.to, to) : to), pool: POOL_FIELDS.has(v.field),
@@ -188,6 +190,7 @@ export function drawnKeys(input: DebugRunInput, cfg: TrendlinesConfig): Set<stri
     keep: new Set(),
     perPivot: cfg.maxPerPivot,
     pass: trendlineGate(i, close, st.atr[i], cfg),
+    fan: fanTolerance(cfg, st.atr[i]),
   });
   return new Set(drawn.map((l) => lineKey(l, input.bars, input.starts)));
 }

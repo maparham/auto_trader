@@ -133,6 +133,7 @@ describe("indicator parity golden fixture", () => {
       majorPivots: 0, majorLen: 30, majorSizeAtr: 0,
       lookbackBars: 0,
       extendLeft: 0,
+      fanAtr: 0, fanPct: 0, fanKeep: 0,
     };
     const tlPoints = computeTrendlines(candles, TL_CFG).points;
     // One variant per gate, each against its own off state in TL_CFG, so a port
@@ -172,6 +173,11 @@ describe("indicator parity golden fixture", () => {
       // exercises the ceiling fallback to the unextended line.
       EXTEND: { extendLeft: 1, minTouches: 3 },
       EXTEND_CROSS: { extendLeft: 1, maxCrossings: 1 },
+      // The fan merge: each band alone, then the nearest keep mode, which
+      // must pick different keepers than the strongest one somewhere.
+      FAN: { fanAtr: 0.05 },
+      FAN_PCT: { fanPct: 25 },
+      FAN_NEAR: { fanAtr: 0.05, fanKeep: 1 },
     };
     const tlVariantSeries: Record<string, Array<number | null>> = {};
     for (const [name, patch] of Object.entries(TL_VARIANTS)) {
@@ -184,6 +190,8 @@ describe("indicator parity golden fixture", () => {
     }
     expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, extendLeft: 1, maxCrossings: 1 }).points))
       .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, maxCrossings: 1 }).points));
+    expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, fanAtr: 0.05, fanKeep: 1 }).points))
+      .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, fanAtr: 0.05 }).points));
 
     // AUTO_FIB: configs mirrored by test_indicator_parity.test_auto_fib.
     const AF_FIB = { ...defaultFibConfig(), extend: "right" as const };

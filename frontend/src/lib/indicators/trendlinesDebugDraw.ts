@@ -49,6 +49,7 @@ export function reasonTag(c: DebugCandidate): string {
   // current gate (explain tallies it as "passes").
   if (!v) return "passes gates";
   if (v.gate === "merged") return "merged";
+  if (v.gate === "fanMerged") return "fan merged";
   if (v.gate === "liveCap") return "live cap";
   return `${GATE_GROUP[v.gate]} ${fmt(v.measured)}/${fmt(v.limit)}`.slice(0, 24);
 }

@@ -7,6 +7,8 @@ import { isPivotAt } from "./pivots";
 import {
   aboveSlope,
   addLevelPositions,
+  fanMerge,
+  fanTolerance,
   hasBackClearance,
   hasSwingReach,
   isSignificantSwing,
@@ -34,7 +36,7 @@ export type Gate =
   | "lookback" | "slopeMax" | "slopeMin" | "backClearance" | "liveCap" | "stale"
   | "maxTouches" | "maxSpan" | "maxTouchSpacing" | "minTouchSpacing" | "maxCrossings"
   | "minTouches" | "minSpan" | "minCrossings" | "distanceAtr" | "distancePct"
-  | "merged" | "perPivot" | "maxLines";
+  | "fanMerged" | "merged" | "perPivot" | "maxLines";
 
 /** Pipeline order: the first failing gate in this order is the primary reason. */
 export const GATE_ORDER: Gate[] = [
@@ -42,7 +44,7 @@ export const GATE_ORDER: Gate[] = [
   "lookback", "slopeMax", "slopeMin", "backClearance", "liveCap", "stale",
   "maxTouches", "maxSpan", "maxTouchSpacing", "minTouchSpacing", "maxCrossings",
   "minTouches", "minSpan", "minCrossings", "distanceAtr", "distancePct",
-  "merged", "perPivot", "maxLines",
+  "fanMerged", "merged", "perPivot", "maxLines",
 ];
 
 /** The strip's reason groups, one short word each. */
@@ -54,7 +56,7 @@ export const GATE_GROUP: Record<Gate, string> = {
   maxTouchSpacing: "spacing", minTouchSpacing: "spacing",
   maxCrossings: "crossings", minCrossings: "crossings",
   distanceAtr: "distance", distancePct: "distance",
-  merged: "outranked", perPivot: "outranked", maxLines: "outranked",
+  fanMerged: "outranked", merged: "outranked", perPivot: "outranked", maxLines: "outranked",
 };
 
 export interface Verdict {
@@ -78,6 +80,8 @@ const OFF_AT_ZERO: ReadonlySet<Gate> = new Set<Gate>([
 export type Fate =
   | { kind: "drawn" }
   | { kind: "merged"; into: TrendLine; gap: number }
+  /** Dropped by the fan merge; `gap` is the slope gap in price per bar. */
+  | { kind: "fanMerged"; into: TrendLine; gap: number }
   | { kind: "perPivot"; need: number }
   | { kind: "maxLines"; rank: number };
 
@@ -322,6 +326,16 @@ function fateVerdict(f: Fate, cfg: TrendlinesConfig, atrI: number | null, close:
       ? { gate: "merged", field: "mergeAtr", measured: f.gap / (atrI as number), limit: cfg.mergeAtr, pass: false }
       : { gate: "merged", field: "mergePct", measured: (f.gap / Math.abs(close)) * 100, limit: cfg.mergePct, pass: false };
   }
+  if (f.kind === "fanMerged") {
+    const useAtr = cfg.fanAtr > 0 && atrI !== null && atrI > 0;
+    const keptSlope = Math.abs((f.into.p2 - f.into.p1) / (f.into.i2 - f.into.i1));
+    return useAtr
+      ? { gate: "fanMerged", field: "fanAtr", measured: f.gap / (atrI as number), limit: cfg.fanAtr, pass: false }
+      : {
+          gate: "fanMerged", field: "fanPct", measured: keptSlope > 0 ? (f.gap / keptSlope) * 100 : null,
+          limit: cfg.fanPct, pass: false,
+        };
+  }
   if (f.kind === "perPivot")
     return { gate: "perPivot", field: "maxPerPivot", measured: f.need, limit: cfg.maxPerPivot, pass: false };
   if (f.kind === "maxLines")
@@ -341,8 +355,7 @@ export function explain(run: DebugRun, close: number = evalCloseOf(run)): TlDebu
   const keyOf = (l: TrendLine) => lineKey(l, input.bars, input.starts);
   const atrI = st.atr[i];
   const passing = poolable(st.lines, i, cfg).filter(trendlineGate(i, close, st.atr[i], cfg));
-  const ranked = nearestFirst(passing, i, close);
-  const fates = explainSelection(ranked, i, mergeTolerance(cfg, st.atr[i], close), cfg.maxPerPivot, cfg.maxLines);
+  const fates = selectionFates(passing, i, close, cfg, st.atr[i]);
   const candidates: DebugCandidate[] = [];
   const byKey = new Map<string, DebugCandidate>();
   const push = (line: TrendLine, rec: DebugRecord | null) => {
@@ -404,9 +417,22 @@ export function explain(run: DebugRun, close: number = evalCloseOf(run)): TlDebu
  * the popup's answer for a recorded line that passes every per-line gate. */
 export function whatIfFate(res: TlDebugResult, line: TrendLine): Fate {
   const i = res.evalIdx;
-  const ranked = nearestFirst([...res.passing, line], i, res.close);
-  const fates = explainSelection(
-    ranked, i, mergeTolerance(res.cfg, res.atr[i], res.close), res.cfg.maxPerPivot, res.cfg.maxLines,
-  );
+  const fates = selectionFates([...res.passing, line], i, res.close, res.cfg, res.atr[i]);
   return fates.get(line) ?? { kind: "drawn" };
+}
+
+/** Every gate-passing line's fate: the fan merge (selectDrawnLines runs it
+ * between the stages), then explainSelection over the survivors. */
+function selectionFates(
+  passing: readonly TrendLine[], i: number, close: number, cfg: TrendlinesConfig, atrI: number | null,
+): Map<TrendLine, Fate> {
+  const band = fanTolerance(cfg, atrI);
+  const into = new Map<TrendLine, TrendLine>();
+  const kept = band ? fanMerge(passing, i, close, band, into) : passing;
+  const fates = explainSelection(nearestFirst(kept, i, close), i, mergeTolerance(cfg, atrI, close), cfg.maxPerPivot, cfg.maxLines);
+  for (const [line, k] of into) {
+    const gap = Math.abs((k.p2 - k.p1) / (k.i2 - k.i1) - (line.p2 - line.p1) / (line.i2 - line.i1));
+    fates.set(line, { kind: "fanMerged", into: k, gap });
+  }
+  return fates;
 }

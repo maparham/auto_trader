@@ -190,6 +190,9 @@ _TL_VARIANTS = {
     "LOOKBACK": dict(lookback_bars=50),
     "EXTEND": dict(extend_left=1, min_touches=3),
     "EXTEND_CROSS": dict(extend_left=1, max_crossings=1),
+    "FAN": dict(fan_atr=0.05),
+    "FAN_PCT": dict(fan_pct=25),
+    "FAN_NEAR": dict(fan_atr=0.05, fan_keep=1),
 }
 
 

@@ -156,6 +156,15 @@ export interface TrendlinesConfig {
   // Projection bars of its first anchor), counting the crossings on the way.
   // Skipped when the extended line would break a ceiling. 0 = off, 1 = on.
   extendLeft: number;
+  // The FAN merge, IN THE CALC, before the nearest first walk: two lines that
+  // share a pivot (an anchor or a touch at the same bar) and whose slopes
+  // differ by at most the band are one fan, and only one member stays. The
+  // band is the tighter of fanAtr ATR(14) per bar and fanPct % of the kept
+  // line's own slope, each 0 = off. fanKeep 0 keeps the strongest member
+  // (rankLines), 1 the nearest to the close. See fanMerge.
+  fanAtr: number;
+  fanPct: number;
+  fanKeep: number;
 }
 
 /** KEY ORDER IS THE calcParams ORDER (mtfCoordinator builds HTF params from
@@ -191,6 +200,9 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   majorSizeAtr: MAJOR_SIZE_ATR,
   lookbackBars: 0,
   extendLeft: 0,
+  fanAtr: 0,
+  fanPct: 0,
+  fanKeep: 0,
 };
 
 /** DEFAULT merge tolerance, in ATR(14): the value the mergeAtr slot starts
@@ -215,6 +227,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
   showCrossings: true,
   showStats: true,
   showStrength: false,
+  fanEdges: false,
   showPivotDepth: false,
   debug: false,
   // Which debug layers paint (Debug tab checkboxes).
@@ -229,7 +242,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  * maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing, minTouchSpacing,
  * minCrossings, maxCrossings, pierceMult, minBackBars, maxDistAtr,
  * maxDistPct, mergeAtr, maxPerPivot, mergePct, majorPivots, majorLen,
- * majorSizeAtr, lookbackBars, extendLeft]. Mirrored by backend parse_trendlines_config.
+ * majorSizeAtr, lookbackBars, extendLeft, fanAtr, fanPct, fanKeep]. Mirrored by backend parse_trendlines_config.
  *
  * `extendData` is read ONLY to migrate panes saved before slots 19 to 22
  * existed, and only while the slot in question is ABSENT (a present slot, 0
@@ -307,6 +320,9 @@ export function parseTrendlinesConfig(
     majorSizeAtr: numAt(26, d.majorSizeAtr, true),
     lookbackBars: zeroInt(27, d.lookbackBars),
     extendLeft: Math.min(1, zeroInt(28, d.extendLeft)),
+    fanAtr: numAt(29, d.fanAtr, true),
+    fanPct: numAt(30, d.fanPct, true),
+    fanKeep: Math.min(1, zeroInt(31, d.fanKeep)),
   };
 }
 

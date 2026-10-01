@@ -27,11 +27,11 @@ export function settingLabel(field: keyof TrendlinesConfig): string {
 const GATE_TEXT: Partial<Record<Verdict["gate"], string>> = {
   unconfirmed: "Not confirmed yet", fractal: "Not a pivot", window: "Too far back to pair",
   liveCap: `Dropped by the ${MAX_LIVE} live line cap`, stale: "Untouched too long",
-  merged: "Merged into a nearer line", perPivot: "Too many lines at a pivot", maxLines: "Past Max Trendlines",
+  fanMerged: "Merged into its fan", merged: "Merged into a nearer line", perPivot: "Too many lines at a pivot", maxLines: "Past Max Trendlines",
 };
 
 const FATE_TEXT: Record<string, string> = {
-  merged: "merged", perPivot: "too many at a pivot", maxLines: "past Max Trendlines",
+  fanMerged: "merged into its fan", merged: "merged", perPivot: "too many at a pivot", maxLines: "past Max Trendlines",
 };
 
 const fmt = (n: number | null) =>
@@ -154,7 +154,7 @@ export default function TrendlineDebugPopup(p: TrendlineDebugPopupProps) {
           })}
         </tbody>
       </table>
-      {cand.fate?.kind === "merged" ? <div className="tl-dbg-note">Winner glows on the chart.</div> : null}
+      {cand.fate?.kind === "merged" || cand.fate?.kind === "fanMerged" ? <div className="tl-dbg-note">Winner glows on the chart.</div> : null}
       {extra && extra.kind !== "drawn" ? (
         <div className="tl-dbg-note">If it were live it would still lose: {FATE_TEXT[extra.kind] ?? extra.kind}.</div>
       ) : null}

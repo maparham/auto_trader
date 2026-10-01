@@ -63,7 +63,7 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 #  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
 #  max_dist_pct, merge_atr, max_per_pivot, merge_pct, major_pivots,
 #  major_len, major_size_atr, lookback_bars, extend_left]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR, 0, 0)
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR, 0, 0, 0.0, 0.0, 0)
 # The distance "Only lines near price" drew at, in ATR(14): what a pane saved
 # with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
 # trendlinesOutputs.ts.
@@ -135,6 +135,14 @@ class TrendlinesConfig:
     # max_proj_bars of i1), counting the crossings on the way; skipped when the
     # extended line would break a ceiling. 0 = off, 1 = on (mirrors the TS).
     extend_left: int = 0
+    # The fan merge, before the nearest first walk: lines sharing a bar
+    # (touch_idxs) whose slopes differ by at most the band are one fan and one
+    # member stays. The band is the tighter of fan_atr ATR(14) per bar and
+    # fan_pct % of the kept line's slope, each 0 = off. fan_keep 0 keeps the
+    # strongest (rank_key), 1 the nearest. Mirrors TS fanMerge.
+    fan_atr: float = 0.0
+    fan_pct: float = 0.0
+    fan_keep: int = 0
     timeframe: str | None = None
 
 
@@ -240,6 +248,9 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         major_size_atr=num_at(26, d[26], True),
         lookback_bars=zero_int(27, d[27]),
         extend_left=min(1, zero_int(28, d[28])),
+        fan_atr=num_at(29, d[29], True),
+        fan_pct=num_at(30, d[30], True),
+        fan_keep=min(1, zero_int(31, d[31])),
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
@@ -274,6 +285,62 @@ def merge_tolerance(cfg: TrendlinesConfig, atr_i: float | None, close: float) ->
         if pct < tol:
             tol = pct
     return 0.0 if tol == math.inf else tol
+
+
+@dataclass(frozen=True, slots=True)
+class FanBand:
+    """Mirrors TS FanBand: atr is fan_atr x ATR(14) in price per bar (None
+    while unwarmed or off), pct the fraction of the kept line's slope (None
+    when off), keep 0 strongest / 1 nearest."""
+
+    atr: float | None
+    pct: float | None
+    keep: int
+
+
+def fan_tolerance(cfg: TrendlinesConfig, atr_i: float | None) -> FanBand | None:
+    """Mirrors TS fanTolerance: None when both halves are off."""
+    a = cfg.fan_atr * atr_i if cfg.fan_atr > 0 and atr_i is not None and math.isfinite(atr_i) else None
+    p = cfg.fan_pct / 100 if cfg.fan_pct > 0 else None
+    return None if a is None and p is None else FanBand(a, p, cfg.fan_keep)
+
+
+def fan_close(kept: TrendLine, line: TrendLine, band: FanBand) -> bool:
+    """Mirrors TS fanClose: the slope gap, cross-multiplied by both spans."""
+    sk = kept.i2 - kept.i1
+    sl = line.i2 - line.i1
+    rk = kept.p2 - kept.p1
+    diff = abs(rk * sl - (line.p2 - line.p1) * sk)
+    if band.atr is not None and diff > band.atr * sk * sl:
+        return False
+    if band.pct is not None and diff > band.pct * abs(rk) * sl:
+        return False
+    return True
+
+
+def fan_merge(
+    lines: list[TrendLine], at_idx: int, close: float, band: FanBand
+) -> list[TrendLine]:
+    """Mirrors TS fanMerge: walked strongest first (rank_key) or nearest first,
+    a line sharing a bar with an earlier kept line at a slope within the band
+    is dropped. Returns the kept lines in input order."""
+    order = nearest_first(lines, at_idx, close) if band.keep == 1 else sorted(lines, key=rank_key)
+    at_bar: dict[int, list[TrendLine]] = {}
+    dropped: set[int] = set()
+    for line in order:
+        into = None
+        for b in line.touch_idxs:
+            into = next((k for k in at_bar.get(b, ()) if fan_close(k, line, band)), None)
+            if into is not None:
+                break
+        if into is not None:
+            dropped.add(id(line))
+            continue
+        for b in line.touch_idxs:
+            at = at_bar.setdefault(b, [])
+            if not at or at[-1] is not line:
+                at.append(line)
+    return [line for line in lines if id(line) not in dropped]
 
 
 def same_trend(a: TrendLine, b: TrendLine, at_idx: int, tol: float) -> bool:
@@ -966,12 +1033,12 @@ def compute_trendlines(
         close = closes[i]
         point: dict[str, float] = {}
         dist_tol = max_distance_tol(cfg, a, close)
-        ranked = nearest_first(
-            [line for line in poolable(lines, i, cfg)
-             if trendline_gate(line, i, close, dist_tol, cfg)],
-            i,
-            close,
-        )
+        passing = [line for line in poolable(lines, i, cfg)
+                   if trendline_gate(line, i, close, dist_tol, cfg)]
+        band = fan_tolerance(cfg, a)
+        if band is not None:
+            passing = fan_merge(passing, i, close, band)
+        ranked = nearest_first(passing, i, close)
         drawn = select_levels(
             ranked, i, merge_tolerance(cfg, a, close), cfg.max_per_pivot, cfg.max_lines
         )

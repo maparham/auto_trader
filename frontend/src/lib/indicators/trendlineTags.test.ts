@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { clearTagRow, strengthRank, trendlineStatsLabel, type TrendLine } from "./trendlines";
+import {
+  clearTagRow, fanInnerLines, fanMerge, fanTolerance, strengthRank, trendlineStatsLabel, type TrendLine,
+} from "./trendlines";
+import { TRENDLINES_DEFAULTS } from "./trendlinesOutputs";
 
 describe("clearTagRow", () => {
   it("keeps the requested row when nothing is there", () => {
@@ -61,5 +64,68 @@ describe("strengthRank", () => {
 
   it("gives a line outside the pool the place it would take", () => {
     expect(strengthRank([line(3, 0, 0)], line(5, 0, 0))).toBe(1);
+  });
+});
+
+describe("fanMerge", () => {
+  // A line from (i1, p1) to the shared pivot at bar 100, price 50.
+  const ray = (i1: number, p1: number, touches = 2, extra: number[] = []): TrendLine =>
+    ({
+      i1, p1, i2: 100, p2: 50, touches, lastTouchIdx: 100, crossings: 0, touchIdxs: [i1, 100, ...extra],
+    }) as unknown as TrendLine;
+  const band = (over: Partial<typeof TRENDLINES_DEFAULTS>) =>
+    fanTolerance({ ...TRENDLINES_DEFAULTS, ...over }, 1)!;
+
+  it("is off when both boxes are", () => {
+    expect(fanTolerance(TRENDLINES_DEFAULTS, 1)).toBeNull();
+  });
+
+  it("keeps the strongest of lines through one pivot at nearly one angle", () => {
+    // Slopes -0.5 and -0.52 per bar: 0.02 apart, inside a 0.05 band.
+    const weak = ray(0, 100);
+    const strong = ray(50, 76, 3, [70]);
+    expect(fanMerge([weak, strong], 100, 50, band({ fanAtr: 0.05 }))).toEqual([strong]);
+  });
+
+  it("keeps the nearest instead when asked", () => {
+    const a = ray(0, 100);
+    const b = ray(50, 76, 3, [70]);
+    // At bar 110 a is at 45 and b at 44.8: with the close at 46, a is nearer.
+    expect(fanMerge([b, a], 110, 46, band({ fanAtr: 0.05, fanKeep: 1 }))).toEqual([a]);
+  });
+
+  it("leaves lines meeting at a pivot from different angles", () => {
+    const steep = ray(0, 150);
+    const flat = ray(0, 60);
+    expect(fanMerge([steep, flat], 100, 50, band({ fanAtr: 0.05 }))).toEqual([steep, flat]);
+  });
+
+  it("never merges lines with no bar in common", () => {
+    const a = ray(0, 100);
+    const b = { ...ray(0, 100), touchIdxs: [1, 99] } as TrendLine;
+    expect(fanMerge([a, b], 100, 50, band({ fanAtr: 1 }))).toEqual([a, b]);
+  });
+
+  it("measures the percent band against the kept line's slope", () => {
+    const strong = ray(50, 75, 3); // -0.5 per bar
+    const near = ray(0, 110); // -0.6 per bar: 20% off
+    expect(fanMerge([strong, near], 100, 50, band({ fanPct: 25 }))).toEqual([strong]);
+    expect(fanMerge([strong, near], 100, 50, band({ fanPct: 15 }))).toEqual([strong, near]);
+  });
+});
+
+describe("fanInnerLines", () => {
+  const ray = (i1: number, p1: number): TrendLine =>
+    ({ i1, p1, i2: 100, p2: 50, touchIdxs: [i1, 100] }) as unknown as TrendLine;
+
+  it("dims the lines between a fan's steepest and flattest member", () => {
+    const steep = ray(0, 150);
+    const mid = ray(0, 100);
+    const flat = ray(0, 60);
+    expect([...fanInnerLines([mid, steep, flat])]).toEqual([mid]);
+  });
+
+  it("leaves two lines alone: both are edges", () => {
+    expect(fanInnerLines([ray(0, 150), ray(0, 60)]).size).toBe(0);
   });
 });
