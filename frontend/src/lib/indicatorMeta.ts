@@ -1154,21 +1154,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        key: "showStrength",
-        label: "Show strength rank",
-        type: "boolean",
-        source: "extend",
-        field: "showStrength",
-        tab: "style",
-        group: "lineMarks",
-        default: TRENDLINES_EXTEND_DEFAULTS.showStrength,
-        tip: [
-          "Writes #1, #2, ... at each line's right end: #1 is the strongest.",
-          "Strength: most pivots, then longest span, then fewest crossings.",
-          "Ranked among all lines passing the filters, drawn or not.",
-        ],
-      },
-      {
         key: "dimOpacity",
         label: "Dim opacity",
         type: "number",
@@ -1294,6 +1279,20 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tab: "debug",
         default: TRENDLINES_EXTEND_DEFAULTS.debugShowDrawn,
         tip: ["The indicator's own lines. Off shows only the candidates."],
+      },
+      {
+        key: "showStrength",
+        label: "Show strength rank",
+        type: "boolean",
+        source: "extend",
+        field: "showStrength",
+        tab: "debug",
+        default: TRENDLINES_EXTEND_DEFAULTS.showStrength,
+        tip: [
+          "Writes #1, #2, ... at each line's right end: #1 is the strongest.",
+          "Strength: most pivots, then longest span, then fewest crossings.",
+          "Ranked among all lines passing the filters, drawn or not.",
+        ],
       },
       {
         ...num(22, "Max lines per pivot", { min: 0, step: 1 }),
