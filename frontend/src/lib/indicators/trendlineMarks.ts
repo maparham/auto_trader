@@ -175,6 +175,13 @@ export function distToSegment(
   return Math.hypot(px - (x0 + t * dx), py - (y0 + t * dy));
 }
 
+type IndicatorLookup = {
+  getIndicators?: (f: { paneId: string; name: string }) => Array<{ visible?: boolean }>;
+};
+
+const isHidden = (chart: object, paneId: string, name: string): boolean =>
+  (chart as IndicatorLookup).getIndicators?.({ paneId, name })[0]?.visible === false;
+
 export interface TrendlineHit {
   paneId: string;
   name: string;
@@ -198,10 +205,15 @@ export function hitTrendline(
     const cut = k.indexOf(":");
     const paneId = k.slice(0, cut);
     if (paneId !== "candle_pane") continue;
+    // A hidden instance stops drawing, so its last frame's segments linger
+    // here. Hit-testing them would let invisible lines take hover and picks,
+    // and the stale mark would light the line the moment it is shown again.
+    const name = k.slice(cut + 1);
+    if (isHidden(chart, paneId, name)) continue;
     for (const seg of segs) {
       const d = distToSegment(px, py, seg.x0, seg.y0, seg.x1, seg.y1);
       if (d > slop) continue;
-      if (!best || d < best.d) best = { paneId, name: k.slice(cut + 1), seg, d };
+      if (!best || d < best.d) best = { paneId, name, seg, d };
     }
   }
   return best ? { paneId: best.paneId, name: best.name, seg: best.seg } : null;

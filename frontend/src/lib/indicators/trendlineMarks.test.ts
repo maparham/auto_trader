@@ -162,6 +162,17 @@ describe("drawTrendlines with marks", () => {
     expect(hitTrendline(chart, s.x0, s.y0 - 40, 6)).toBeNull();
   });
 
+  it("a hidden instance's lingering segments take no hits", () => {
+    const { chart, strokes } = theLine();
+    const s = strokes[0];
+    const live = { visible: false };
+    const c = chart as typeof chart & { getIndicators: () => Array<{ visible: boolean }> };
+    c.getIndicators = () => [live];
+    expect(hitTrendline(c, (s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2, 6)).toBeNull();
+    live.visible = true;
+    expect(hitTrendline(c, (s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2, 6)).not.toBeNull();
+  });
+
   it("hidden: one faint 1px stroke and no rings or tags", () => {
     const { hit, arcs: arcsBefore } = theLine();
     expect(arcsBefore).toBeGreaterThan(0);
