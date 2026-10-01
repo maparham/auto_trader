@@ -21,6 +21,7 @@ import {
   initMobileAccount,
   mobileAccount,
   mobileBroker,
+  mobileAccountFor,
   mobileChartScope,
   mobileSymbol,
   setMobileAccount,
@@ -142,6 +143,34 @@ describe("setMobileAccount", () => {
     mobileSymbol.set(IBM);
     setMobileAccount(mobileAccount.value);
     expect(mobileSymbol.value).toBe(IBM); // no reboot
+  });
+
+  it("keeps the chart on an env switch within the same broker", () => {
+    mobileAccount.set("capital:paper");
+    mobileSymbol.set(IBM);
+    setMobileAccount("capital:demo");
+    expect(getTradesAccount()).toBe("capital:demo");
+    expect(mobileSymbol.value).toBe(IBM);
+  });
+});
+
+describe("mobileAccountFor", () => {
+  const accounts = [
+    { key: "capital:paper", broker: "capital", env: "paper", isRealMoney: false },
+    { key: "capital:demo", broker: "capital", env: "demo", isRealMoney: false },
+    { key: "mt5:demo", broker: "mt5", env: "demo", isRealMoney: false },
+  ];
+
+  it("lands on paper, else the first account, for a broker never used", () => {
+    expect(mobileAccountFor("capital", accounts)).toBe("capital:paper");
+    expect(mobileAccountFor("mt5", accounts)).toBe("mt5:demo");
+  });
+
+  it("returns to the env last used on that broker", () => {
+    mobileAccount.set("capital:paper");
+    setMobileAccount("capital:demo");
+    setMobileAccount("mt5:demo");
+    expect(mobileAccountFor("capital", accounts)).toBe("capital:demo");
   });
 });
 

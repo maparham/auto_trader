@@ -1,18 +1,21 @@
-// Broker/account picker for the mobile shell, opened from the chart top bar's
-// broker chip. Lists the backend's registered accounts (GET /api/brokers,
-// seeded from the last-good cache so it renders instantly and survives a
-// transient backend hiccup — same pattern as desktop's selector) and hands the
-// pick to setMobileAccount, which repoints the whole shell (chart, trade tab,
+// Broker picker for the mobile shell, opened from the chart top bar's broker
+// chip. Like desktop's BrokerSelector it lists one row per BROKER (GET
+// /api/brokers, seeded from the last-good cache so it renders instantly and
+// survives a transient backend hiccup); the env within a broker (paper / demo
+// / live) is picked on the positions tab, as desktop picks it in the dock. A
+// pick lands on that broker's last-used account (mobileAccountFor) and goes
+// through setMobileAccount, which repoints the whole shell (chart, trade tab,
 // alerts, layout mirror).
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Sheet from "./Sheet";
 import {
   brokerLabel,
+  brokerOf,
   cachedBrokers,
   fetchBrokers,
   type BrokerAccount,
 } from "../lib/trading";
-import { mobileAccount, setMobileAccount } from "./mobileChartState";
+import { mobileAccount, mobileAccountFor, setMobileAccount } from "./mobileChartState";
 
 export default function MobileBrokerSheet({ onClose }: { onClose: () => void }) {
   const account = useSyncExternalStore(
@@ -35,19 +38,23 @@ export default function MobileBrokerSheet({ onClose }: { onClose: () => void }) 
     };
   }, []);
 
+  // Distinct brokers in registry order.
+  const brokers = useMemo(() => [...new Set(accounts.map((a) => a.broker))], [accounts]);
+  const active = brokerOf(account);
+
   return (
     <Sheet title="Broker" onClose={onClose}>
-      {accounts.length === 0 && <div className="m-broker-empty">No brokers registered.</div>}
-      {accounts.map((a) => (
+      {brokers.length === 0 && <div className="m-broker-empty">No brokers registered.</div>}
+      {brokers.map((b) => (
         <button
-          key={a.key}
-          className={`m-sheet-row${a.key === account ? " m-sheet-row-on" : ""}`}
+          key={b}
+          className={`m-sheet-row${b === active ? " m-sheet-row-on" : ""}`}
           onClick={() => {
-            setMobileAccount(a.key);
+            if (b !== active) setMobileAccount(mobileAccountFor(b, accounts));
             onClose();
           }}
         >
-          {brokerLabel(a.broker)} · {a.env}
+          {brokerLabel(b)}
         </button>
       ))}
     </Sheet>

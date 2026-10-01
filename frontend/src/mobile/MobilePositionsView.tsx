@@ -12,7 +12,9 @@
 // disappears once the server confirms via the next trades poll.
 //
 // The stat math (P&L marking, equity, margins) is lib/accountStats.ts, shared
-// with the dock.
+// with the dock. The strip also carries the dock's env tabs (paper / demo /
+// live of the active broker): the broker sheet picks the broker only, and an
+// env switch here keeps the chart, as in the dock.
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   subscribeTrades,
@@ -26,13 +28,16 @@ import {
   brokerLabel,
   brokerOf,
   isRealMoneyAccount,
+  cachedBrokers,
+  fetchBrokers,
+  type BrokerAccount,
   type TradeView,
   type AccountSummary,
 } from "../lib/trading";
 import { accountStats, enrichTrade, type EnrichedTrade } from "../lib/accountStats";
 import { groupPositions, type PositionGroup } from "../lib/positionGroups";
 import { loadSettings } from "../theme";
-import { mobileSettingsVersion, showMobileEpic } from "./mobileChartState";
+import { mobileAccount, mobileSettingsVersion, setMobileAccount, showMobileEpic } from "./mobileChartState";
 import { requestConfirm } from "../lib/signals";
 import { toast } from "../lib/notify";
 import Sheet from "./Sheet";
@@ -89,6 +94,15 @@ function rankRows(rows: EnrichedTrade[], sort: SortState, tab: TableTab, key: st
   return { key, rank };
 }
 
+// Env tab label and risk tier, as the dock's account strip (PositionsPanel.tsx).
+function envLabel(env: string): string {
+  return env.charAt(0).toUpperCase() + env.slice(1);
+}
+function acctTier(a: BrokerAccount): "paper" | "demo" | "live" {
+  if (a.isRealMoney) return "live";
+  return a.env === "paper" ? "paper" : "demo";
+}
+
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div className="pp-stat">
@@ -112,9 +126,32 @@ export default function MobilePositionsView() {
   // Paper P&L marks to the chart's live price: re-render on each tick.
   useEffect(() => subscribeLivePrices(() => setTick((n) => n + 1)), []);
 
+  // Re-render (and refetch the summary) when the env tabs or the broker sheet
+  // switch the account.
+  useSyncExternalStore(
+    (fn) => mobileAccount.subscribe(fn),
+    () => mobileAccount.value,
+  );
+  const account = getTradesAccount();
+  const [accounts, setAccounts] = useState<BrokerAccount[]>(() => cachedBrokers()?.exec ?? []);
+  useEffect(() => {
+    let alive = true;
+    fetchBrokers()
+      .then((info) => {
+        if (alive) setAccounts(info.exec);
+      })
+      .catch(() => {
+        /* cached seed stays */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    fetchAccountSummary(getTradesAccount())
+    setSummary(null);
+    fetchAccountSummary(account)
       .then((s) => {
         if (!cancelled) setSummary(s);
       })
@@ -124,10 +161,15 @@ export default function MobilePositionsView() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [account]);
 
-  const account = getTradesAccount();
   const broker = brokerOf(account);
+  // The active broker's accounts; at least the active one before /api/brokers loads.
+  const ofBroker = accounts.filter((a) => a.broker === broker);
+  const acctTabs: BrokerAccount[] =
+    ofBroker.length > 0
+      ? ofBroker
+      : [{ key: account, broker, env: account.split(":")[1] ?? "paper", isRealMoney: isRealMoneyAccount(account) }];
   const live = isRealMoneyAccount(account);
   // Read once, and again when the settings sheet saves (not on every price tick).
   const settingsVersion = useSyncExternalStore(
@@ -277,11 +319,27 @@ export default function MobilePositionsView() {
       )}
 
       <div className="pp-bar">
-        <span className="pp-acct-broker">
-          {brokerLabel(broker)}
-          {summary == null && !live && " · Paper account"}
-          {live && <span className="m-pos-live">LIVE</span>}
-        </span>
+        <span className="pp-acct-broker">{brokerLabel(broker)}</span>
+        <div className="pp-acct-tabs" role="tablist" aria-label="Account">
+          {acctTabs.map((a) => {
+            const isActive = a.key === account;
+            const t = acctTier(a);
+            return (
+              <button
+                key={a.key}
+                className={`pp-acct-tab ${t}${isActive ? " active" : ""}`}
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => {
+                  if (!isActive) setMobileAccount(a.key);
+                }}
+              >
+                <span className={`env-dot ${t}`} aria-hidden="true" />
+                {envLabel(a.env)}
+              </button>
+            );
+          })}
+        </div>
         <div className="pp-acct">
           <Stat
             label="Unrealized P&L"

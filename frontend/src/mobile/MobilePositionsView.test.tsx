@@ -9,6 +9,7 @@ const getTradesAccount = vi.fn();
 const fetchAccountSummary = vi.fn();
 const closePosition = vi.fn();
 const cancelWorkingOrder = vi.fn();
+const fetchBrokers = vi.fn();
 
 vi.mock("../lib/trading", async (orig) => ({
   ...(await orig<object>()),
@@ -18,6 +19,7 @@ vi.mock("../lib/trading", async (orig) => ({
   fetchAccountSummary: (...args: unknown[]) => fetchAccountSummary(...args),
   closePosition: (...args: unknown[]) => closePosition(...args),
   cancelWorkingOrder: (...args: unknown[]) => cancelWorkingOrder(...args),
+  fetchBrokers: (...args: unknown[]) => fetchBrokers(...args),
 }));
 
 const toast = vi.fn();
@@ -28,7 +30,7 @@ vi.mock("../lib/notify", async (orig) => ({
 
 import MobilePositionsView from "./MobilePositionsView";
 import { confirmRequest } from "../lib/signals";
-import { mobileSymbol, mobileTabSignal } from "./mobileChartState";
+import { mobileAccount, mobileSymbol, mobileTabSignal } from "./mobileChartState";
 import type { TradeView, AccountSummary } from "../lib/trading";
 
 afterEach(() => {
@@ -84,8 +86,10 @@ describe("MobilePositionsView", () => {
     fetchAccountSummary.mockReset();
     closePosition.mockReset();
     cancelWorkingOrder.mockReset();
+    fetchBrokers.mockReset();
     toast.mockReset();
 
+    fetchBrokers.mockResolvedValue({ data: [], exec: [] });
     getTradesAccount.mockReturnValue("capital:paper");
     subscribeTrades.mockImplementation((fn: (t: TradeView[]) => void) => {
       fn([position, order]);
@@ -209,10 +213,22 @@ describe("MobilePositionsView", () => {
     expect(screen.queryByText("US100")).toBeNull();
   });
 
-  it("names the paper account when the account summary is null", async () => {
-    fetchAccountSummary.mockResolvedValue(null);
+  it("tabs the active broker's envs and switches account on tap", async () => {
+    getTradesAccount.mockReturnValue("capital:paper");
+    mobileAccount.set("capital:paper");
+    fetchBrokers.mockResolvedValue({
+      data: [],
+      exec: [
+        { key: "capital:paper", broker: "capital", env: "paper", isRealMoney: false },
+        { key: "capital:demo", broker: "capital", env: "demo", isRealMoney: false },
+        { key: "mt5:demo", broker: "mt5", env: "demo", isRealMoney: false },
+      ],
+    });
     render(<MobilePositionsView />);
-    await waitFor(() => expect(screen.getByText(/Paper account/)).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
+    expect(screen.getByRole("tab", { name: "Paper" }).getAttribute("aria-selected")).toBe("true");
+    await userEvent.click(screen.getByRole("tab", { name: "Demo" }));
+    expect(mobileAccount.value).toBe("capital:demo");
   });
 
   it("opens a detail sheet on tap and routes Close through requestConfirm", async () => {

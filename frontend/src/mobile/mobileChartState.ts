@@ -12,7 +12,10 @@ import {
   DEFAULT_ACCOUNT,
   brokerOf,
   cachedBrokers,
+  loadLastAccountByBroker,
+  saveLastAccountByBroker,
   setTradesAccount,
+  type BrokerAccount,
   type TradeAccount,
 } from "../lib/trading";
 import { load, saveLocal, setPersistBroker } from "../lib/persist/core";
@@ -184,12 +187,37 @@ export async function showMobileEpic(epic: string, precision = 2): Promise<void>
   mobileTabSignal.set("chart");
 }
 
-/** Switch the mobile shell to a different broker account (broker sheet). */
-export function setMobileAccount(account: TradeAccount): void {
-  if (account === mobileAccount.value) return;
+/** The account a broker pick lands on, as desktop's tab-bar selector picks it
+ * (useAccounts.accountFor): the last one used on that broker if still
+ * registered, else its paper account, else its first. The last-used map is
+ * the same device-local one desktop keeps. */
+export function mobileAccountFor(broker: string, accounts: BrokerAccount[]): TradeAccount {
+  const ofBroker = accounts.filter((a) => a.broker === broker);
+  const remembered = loadLastAccountByBroker()[broker];
+  return (
+    (remembered && ofBroker.some((a) => a.key === remembered) && remembered) ||
+    ofBroker.find((a) => a.env === "paper")?.key ||
+    ofBroker[0]?.key ||
+    `${broker}:paper`
+  );
+}
+
+function storeMobileAccount(account: TradeAccount): void {
   saveLocal(MOBILE_ACCOUNT_KEY, account);
+  saveLastAccountByBroker({ ...loadLastAccountByBroker(), [brokerOf(account)]: account });
   mobileAccount.set(account);
   applyMobileAccount(account);
+}
+
+/** Switch the mobile shell to a different broker account. A different broker
+ * swaps the workspace and reboots the chart; an env switch WITHIN the same
+ * broker (the positions tab's account tabs) keeps the chart, as desktop's
+ * dock account strip does. */
+export function setMobileAccount(account: TradeAccount): void {
+  if (account === mobileAccount.value) return;
+  const sameBroker = brokerOf(account) === brokerOf(mobileAccount.value);
+  storeMobileAccount(account);
+  if (sameBroker) return;
   // Reboot the chart on the new broker: clearing symbol+scope unmounts
   // ChartCore (the view early-returns), then the boot lands the new market.
   mobileSymbol.set(null);
