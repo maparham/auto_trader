@@ -1169,6 +1169,7 @@ export function stepTrendlinesBar(
     perPivot: cfg.maxPerPivot,
     pass: trendlineGate(i, close, a, cfg),
     fan: fanTolerance(cfg, a),
+    strongFirst: cfg.pivotStrong === 1,
   });
   let nearestV = 0;
   let nearestD = Infinity;
@@ -1746,6 +1747,8 @@ export interface TrendlineDedupe {
   fan?: FanBand | null;
   /** Max lines per pivot (cfg.maxPerPivot); 0 or absent = no cap. */
   perPivot?: number;
+  /** Rank the per-pivot cap by strength, not walk order (cfg.pivotStrong). */
+  strongFirst?: boolean;
   /** The per-line filters for this bar (trendlineGate); absent = none. */
   pass?: (line: TrendLine) => boolean;
   /** DEBUG: when given, filled with the pivot depths (pivotDepths) of this
@@ -2114,7 +2117,9 @@ export function selectLevels(
   maxPerPivot: number,
   maxLines: number,
   depthsOut?: Map<number, number>,
+  strongFirst = false,
 ): TrendLine[] {
+  if (strongFirst && maxPerPivot >= 1) return selectLevelsStrong(ranked, atIdx, tol, maxPerPivot, maxLines, depthsOut);
   const leaders: TrendLine[] = [];
   const proj: number[] = [];
   const pos = new Map<number, Map<number, number>>();
@@ -2138,6 +2143,58 @@ export function selectLevels(
     out.push(line);
   }
   if (depthsOut) for (const [b, m] of pos) depthsOut.set(b, m.size);
+  return out;
+}
+
+/** The merge pass alone: each level's leader (its nearest member), in walk
+ * order. Shared by the strength-ranked cap, which needs every leader before
+ * it can rank them. */
+export function levelLeaders(ranked: Iterable<TrendLine>, atIdx: number, tol: number): TrendLine[] {
+  const leaders: TrendLine[] = [];
+  const proj: number[] = [];
+  for (const line of ranked) {
+    const p = projectAt(line, atIdx);
+    if (tol > 0 && leaders.some((g, idx) => Math.abs(proj[idx] - p) <= tol && sameTrend(g, line, atIdx, tol)))
+      continue;
+    leaders.push(line);
+    proj.push(p);
+  }
+  return leaders;
+}
+
+/** Each leader's per-pivot need when the positions at every bar are ordered
+ * by STRENGTH (rankLines, stable over walk order) instead of walk order.
+ * Same top-N test as pivotCapNeeded; a level's position depends only on the
+ * stronger levels through the same bar, so raising the cap still only ever
+ * adds lines. Ported to Python as strong_cap_needs. */
+export function strongCapNeeds(leaders: readonly TrendLine[], depthsOut?: Map<number, number>): Map<TrendLine, number> {
+  const byStrength = [...leaders].sort(rankLines);
+  const pos = new Map<number, Map<number, number>>();
+  byStrength.forEach((line, lvl) => addLevelPositions(pos, line, lvl));
+  const need = new Map<TrendLine, number>();
+  byStrength.forEach((line, lvl) => need.set(line, pivotCapNeeded(line, pos, lvl)));
+  if (depthsOut) for (const [b, m] of pos) depthsOut.set(b, m.size);
+  return need;
+}
+
+/** selectLevels with "Keep the strongest at a pivot": merge into levels in
+ * walk order, rank the cap by strength, then take the survivors in walk
+ * order up to Max Trendlines. No early stop: ranking needs every level. */
+function selectLevelsStrong(
+  ranked: Iterable<TrendLine>,
+  atIdx: number,
+  tol: number,
+  maxPerPivot: number,
+  maxLines: number,
+  depthsOut?: Map<number, number>,
+): TrendLine[] {
+  const leaders = levelLeaders(ranked, atIdx, tol);
+  const need = strongCapNeeds(leaders, depthsOut);
+  const out: TrendLine[] = [];
+  for (const line of leaders) {
+    if (maxLines > 0 && out.length >= maxLines) break;
+    if ((need.get(line) ?? 1) <= maxPerPivot) out.push(line);
+  }
   return out;
 }
 
@@ -2371,7 +2428,7 @@ export function selectDrawnLines(
       maxLines > 0 && !dedupe.depthsOut
         ? nearestFirstLazy(passing, atIdx, close)
         : nearestFirst(passing, atIdx, close);
-    shown = selectLevels(ranked, atIdx, dedupe.tol, dedupe.perPivot ?? 0, maxLines, dedupe.depthsOut);
+    shown = selectLevels(ranked, atIdx, dedupe.tol, dedupe.perPivot ?? 0, maxLines, dedupe.depthsOut, dedupe.strongFirst);
   } else {
     const ranked = nearestFirst(passing, atIdx, close);
     shown = maxLines > 0 ? ranked.slice(0, maxLines) : ranked;
@@ -3476,6 +3533,7 @@ function drawTrendlines(
     perPivot: cfg.maxPerPivot,
     pass: gate,
     fan: fanTolerance(cfg, last.atr),
+    strongFirst: cfg.pivotStrong === 1,
     depthsOut: depths ?? undefined,
   });
   // Ranked against every line passing the filters, not just the drawn ones,

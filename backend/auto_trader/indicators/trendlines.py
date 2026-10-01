@@ -63,7 +63,7 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 #  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
 #  max_dist_pct, merge_atr, max_per_pivot, merge_pct, major_pivots,
 #  major_len, major_size_atr, lookback_bars, extend_left]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR, 0, 0, 0.0, 0.0, 0)
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR, 0, 0, 0.0, 0.0, 0, 0)
 # The distance "Only lines near price" drew at, in ATR(14): what a pane saved
 # with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
 # trendlinesOutputs.ts.
@@ -143,6 +143,9 @@ class TrendlinesConfig:
     fan_atr: float = 0.0
     fan_pct: float = 0.0
     fan_keep: int = 0
+    # Max lines per pivot ranks the levels at each bar by strength (rank_key)
+    # instead of walk order: 0 = nearest, 1 = strongest. Mirrors TS.
+    pivot_strong: int = 0
     timeframe: str | None = None
 
 
@@ -251,6 +254,7 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         fan_atr=num_at(29, d[29], True),
         fan_pct=num_at(30, d[30], True),
         fan_keep=min(1, zero_int(31, d[31])),
+        pivot_strong=min(1, zero_int(32, d[32])),
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
@@ -414,12 +418,37 @@ def nearest_first(lines: list[TrendLine], at_idx: int, close: float) -> list[Tre
     return sorted(lines, key=lambda line: (abs(project_at(line, at_idx) - close), rank_key(line)))
 
 
+def level_leaders(ranked: list[TrendLine], at_idx: int, tol: float) -> list[TrendLine]:
+    """Mirrors TS levelLeaders: the merge pass alone, leaders in walk order."""
+    leaders: list[TrendLine] = []
+    proj: list[float] = []
+    for line in ranked:
+        p = project_at(line, at_idx)
+        if tol > 0 and any(
+            abs(proj[idx] - p) <= tol and same_trend(g, line, at_idx, tol)
+            for idx, g in enumerate(leaders)
+        ):
+            continue
+        leaders.append(line)
+        proj.append(p)
+    return leaders
+
+
+def strong_cap_needs(leaders: list[TrendLine]) -> dict[int, int]:
+    """Mirrors TS strongCapNeeds: each leader's per-pivot need (keyed by id)
+    with the positions at every bar ordered by rank_key (stable)."""
+    by_strength = sorted(leaders, key=rank_key)
+    pos = level_positions(by_strength)
+    return {id(line): pivot_cap_needed(line, pos, lvl) for lvl, line in enumerate(by_strength)}
+
+
 def select_levels(
     ranked: list[TrendLine],
     at_idx: int,
     tol: float,
     max_per_pivot: int,
     max_lines: int,
+    strong_first: bool = False,
 ) -> list[TrendLine]:
     """Mirrors TS selectLevels (without the debug depths), stage 3: `ranked`
     is the gate-passing lines in walk order (nearest_first: nearest to the
@@ -427,7 +456,18 @@ def select_levels(
     level's leader is its nearest gate-passing member), per-pivot cap, then
     stop once max_lines leaders are accepted (0 = uncapped). The stop is exact
     because a leader's positions are fixed at insertion (see the TS
-    docstring)."""
+    docstring). With strong_first the cap ranks by strength instead
+    (selectLevelsStrong in the TS): every leader first, then no early stop."""
+    if strong_first and max_per_pivot >= 1:
+        leaders_s = level_leaders(ranked, at_idx, tol)
+        need = strong_cap_needs(leaders_s)
+        out_s: list[TrendLine] = []
+        for line in leaders_s:
+            if max_lines > 0 and len(out_s) >= max_lines:
+                break
+            if need[id(line)] <= max_per_pivot:
+                out_s.append(line)
+        return out_s
     leaders: list[TrendLine] = []
     proj: list[float] = []
     pos: dict[int, dict[int, int]] = {}
@@ -1040,7 +1080,8 @@ def compute_trendlines(
             passing = fan_merge(passing, i, close, band)
         ranked = nearest_first(passing, i, close)
         drawn = select_levels(
-            ranked, i, merge_tolerance(cfg, a, close), cfg.max_per_pivot, cfg.max_lines
+            ranked, i, merge_tolerance(cfg, a, close), cfg.max_per_pivot, cfg.max_lines,
+            cfg.pivot_strong == 1,
         )
         nearest_v = 0.0
         nearest_d = math.inf

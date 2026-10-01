@@ -193,6 +193,8 @@ _TL_VARIANTS = {
     "FAN": dict(fan_atr=0.05),
     "FAN_PCT": dict(fan_pct=25),
     "FAN_NEAR": dict(fan_atr=0.05, fan_keep=1),
+    "PIVOT_STRONG": dict(max_per_pivot=1, pivot_strong=1),
+    "PIVOT_STRONG_MERGE": dict(max_per_pivot=2, merge_atr=1, pivot_strong=1),
 }
 
 

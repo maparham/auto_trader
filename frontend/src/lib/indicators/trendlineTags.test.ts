@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  clearTagRow, fanInnerLines, fanMerge, fanTolerance, strengthRank, trendlineStatsLabel, type TrendLine,
+  clearTagRow, fanInnerLines, fanMerge, fanTolerance, selectLevels, strengthRank, trendlineStatsLabel, type TrendLine,
 } from "./trendlines";
 import { TRENDLINES_DEFAULTS } from "./trendlinesOutputs";
 
@@ -127,5 +127,21 @@ describe("fanInnerLines", () => {
 
   it("leaves two lines alone: both are edges", () => {
     expect(fanInnerLines([ray(0, 150), ray(0, 60)]).size).toBe(0);
+  });
+});
+
+describe("selectLevels with Keep the strongest at a pivot", () => {
+  // Three lines through bar 100: the nearest is the weakest.
+  const at = (i1: number, p1: number, touches: number): TrendLine =>
+    ({ i1, p1, i2: 100, p2: 50, touches, lastTouchIdx: 100, crossings: 0, touchIdxs: [i1, 100] }) as unknown as TrendLine;
+  const near = at(90, 51, 2);
+  const mid = at(50, 70, 3);
+  const strong = at(0, 120, 5);
+
+  it("keeps the nearest by default and the strongest when asked", () => {
+    const walk = [near, mid, strong];
+    expect(selectLevels(walk, 100, 0, 1, 0)).toEqual([near]);
+    expect(selectLevels(walk, 100, 0, 1, 0, undefined, true)).toEqual([strong]);
+    expect(selectLevels(walk, 100, 0, 2, 0, undefined, true)).toEqual([mid, strong]);
   });
 });

@@ -1319,6 +1319,18 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        key: "p32",
+        label: "Keep the strongest at a pivot",
+        type: "boolean",
+        source: "calcParam",
+        index: 32,
+        default: false,
+        tip: [
+          "Off: at each swing, Max lines per pivot keeps the lines nearest to price.",
+          "On: it keeps the strongest (most pivots, then span, then fewest crossings).",
+        ],
+      },
+      {
         ...num(21, "Merge lines within", { min: 0, step: 0.1 }),
         group: "merge",
         // The tolerance IS the switch: 0 merges nothing.

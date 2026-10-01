@@ -191,6 +191,7 @@ export function drawnKeys(input: DebugRunInput, cfg: TrendlinesConfig): Set<stri
     perPivot: cfg.maxPerPivot,
     pass: trendlineGate(i, close, st.atr[i], cfg),
     fan: fanTolerance(cfg, st.atr[i]),
+    strongFirst: cfg.pivotStrong === 1,
   });
   return new Set(drawn.map((l) => lineKey(l, input.bars, input.starts)));
 }

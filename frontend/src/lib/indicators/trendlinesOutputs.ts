@@ -165,6 +165,9 @@ export interface TrendlinesConfig {
   fanAtr: number;
   fanPct: number;
   fanKeep: number;
+  // Max lines per pivot ranks the levels at each bar by STRENGTH (rankLines)
+  // instead of the walk order (nearest first): 0 = nearest, 1 = strongest.
+  pivotStrong: number;
 }
 
 /** KEY ORDER IS THE calcParams ORDER (mtfCoordinator builds HTF params from
@@ -203,6 +206,7 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   fanAtr: 0,
   fanPct: 0,
   fanKeep: 0,
+  pivotStrong: 0,
 };
 
 /** DEFAULT merge tolerance, in ATR(14): the value the mergeAtr slot starts
@@ -242,7 +246,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  * maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing, minTouchSpacing,
  * minCrossings, maxCrossings, pierceMult, minBackBars, maxDistAtr,
  * maxDistPct, mergeAtr, maxPerPivot, mergePct, majorPivots, majorLen,
- * majorSizeAtr, lookbackBars, extendLeft, fanAtr, fanPct, fanKeep]. Mirrored by backend parse_trendlines_config.
+ * majorSizeAtr, lookbackBars, extendLeft, fanAtr, fanPct, fanKeep, pivotStrong]. Mirrored by backend parse_trendlines_config.
  *
  * `extendData` is read ONLY to migrate panes saved before slots 19 to 22
  * existed, and only while the slot in question is ABSENT (a present slot, 0
@@ -323,6 +327,7 @@ export function parseTrendlinesConfig(
     fanAtr: numAt(29, d.fanAtr, true),
     fanPct: numAt(30, d.fanPct, true),
     fanKeep: Math.min(1, zeroInt(31, d.fanKeep)),
+    pivotStrong: Math.min(1, zeroInt(32, d.pivotStrong)),
   };
 }
 

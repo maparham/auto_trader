@@ -19,7 +19,10 @@ const run = (patch: Partial<TrendlinesConfig> = {}) =>
 
 describe("explainSelection", () => {
   it("its drawn set is exactly selectLevels' output", () => {
-    for (const patch of [{}, { maxLines: 1 }, { maxPerPivot: 1 }, { mergeAtr: 1 }]) {
+    for (const patch of [
+      {}, { maxLines: 1 }, { maxPerPivot: 1 }, { mergeAtr: 1 },
+      { maxPerPivot: 1, pivotStrong: 1 }, { maxPerPivot: 2, mergeAtr: 1, pivotStrong: 1, maxLines: 2 },
+    ]) {
       const r = run(patch);
       const cfg = r.input.cfg;
       const i = r.input.evalIdx;
@@ -27,9 +30,10 @@ describe("explainSelection", () => {
       const passing = poolable(r.st.lines, i, cfg).filter(trendlineGate(i, close, r.st.atr[i], cfg));
       const ranked = nearestFirst(passing, i, close);
       const tol = mergeTolerance(cfg, r.st.atr[i], close);
-      const fates = explainSelection(ranked, i, tol, cfg.maxPerPivot, cfg.maxLines);
+      const strong = cfg.pivotStrong === 1;
+      const fates = explainSelection(ranked, i, tol, cfg.maxPerPivot, cfg.maxLines, strong);
       const drawn = ranked.filter((l) => fates.get(l)?.kind === "drawn");
-      expect(drawn).toEqual(selectLevels(ranked, i, tol, cfg.maxPerPivot, cfg.maxLines));
+      expect(drawn).toEqual(selectLevels(ranked, i, tol, cfg.maxPerPivot, cfg.maxLines, undefined, strong));
     }
   });
 });

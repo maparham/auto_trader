@@ -133,7 +133,7 @@ describe("indicator parity golden fixture", () => {
       majorPivots: 0, majorLen: 30, majorSizeAtr: 0,
       lookbackBars: 0,
       extendLeft: 0,
-      fanAtr: 0, fanPct: 0, fanKeep: 0,
+      fanAtr: 0, fanPct: 0, fanKeep: 0, pivotStrong: 0,
     };
     const tlPoints = computeTrendlines(candles, TL_CFG).points;
     // One variant per gate, each against its own off state in TL_CFG, so a port
@@ -178,6 +178,10 @@ describe("indicator parity golden fixture", () => {
       FAN: { fanAtr: 0.05 },
       FAN_PCT: { fanPct: 25 },
       FAN_NEAR: { fanAtr: 0.05, fanKeep: 1 },
+      // The strength-ranked per-pivot cap, alone and behind the merge. Each
+      // must differ from its nearest-ranked twin (checked below).
+      PIVOT_STRONG: { maxPerPivot: 1, pivotStrong: 1 },
+      PIVOT_STRONG_MERGE: { maxPerPivot: 2, mergeAtr: 1, pivotStrong: 1 },
     };
     const tlVariantSeries: Record<string, Array<number | null>> = {};
     for (const [name, patch] of Object.entries(TL_VARIANTS)) {
@@ -190,6 +194,10 @@ describe("indicator parity golden fixture", () => {
     }
     expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, extendLeft: 1, maxCrossings: 1 }).points))
       .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, maxCrossings: 1 }).points));
+    expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, maxPerPivot: 1, pivotStrong: 1 }).points))
+      .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, maxPerPivot: 1 }).points));
+    expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, maxPerPivot: 2, mergeAtr: 1, pivotStrong: 1 }).points))
+      .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, maxPerPivot: 2, mergeAtr: 1 }).points));
     expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, fanAtr: 0.05, fanKeep: 1 }).points))
       .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, fanAtr: 0.05 }).points));
 

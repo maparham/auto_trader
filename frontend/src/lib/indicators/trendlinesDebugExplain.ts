@@ -10,6 +10,7 @@ import {
   fanMerge,
   fanTolerance,
   hasBackClearance,
+  levelLeaders,
   hasSwingReach,
   isSignificantSwing,
   lineKey,
@@ -21,6 +22,7 @@ import {
   projectAt,
   sameTrend,
   sideSign,
+  strongCapNeeds,
   swingStrength,
   trendlineGate,
   withinLookback,
@@ -143,7 +145,12 @@ export function explainSelection(
   tol: number,
   maxPerPivot: number,
   maxLines: number,
+  strongFirst = false,
 ): Map<TrendLine, Fate> {
+  // Strength-ranked cap: positions need every leader first, so the needs
+  // come from strongCapNeeds and the walk below reads them instead of the
+  // running positions. Same merge, same Max Trendlines count.
+  const strong = strongFirst && maxPerPivot >= 1 ? strongCapNeeds(levelLeaders(ranked, atIdx, tol)) : null;
   const leaders: TrendLine[] = [];
   const proj: number[] = [];
   const pos = new Map<number, Map<number, number>>();
@@ -172,7 +179,7 @@ export function explainSelection(
     proj.push(p);
     addLevelPositions(pos, line, lvl);
     if (maxPerPivot >= 1) {
-      const need = pivotCapNeeded(line, pos, lvl);
+      const need = strong ? (strong.get(line) ?? 1) : pivotCapNeeded(line, pos, lvl);
       if (need > maxPerPivot) {
         fates.set(line, { kind: "perPivot", need });
         continue;
@@ -429,7 +436,9 @@ function selectionFates(
   const band = fanTolerance(cfg, atrI);
   const into = new Map<TrendLine, TrendLine>();
   const kept = band ? fanMerge(passing, i, close, band, into) : passing;
-  const fates = explainSelection(nearestFirst(kept, i, close), i, mergeTolerance(cfg, atrI, close), cfg.maxPerPivot, cfg.maxLines);
+  const fates = explainSelection(
+    nearestFirst(kept, i, close), i, mergeTolerance(cfg, atrI, close), cfg.maxPerPivot, cfg.maxLines, cfg.pivotStrong === 1,
+  );
   for (const [line, k] of into) {
     const gap = Math.abs((k.p2 - k.p1) / (k.i2 - k.i1) - (line.p2 - line.p1) / (line.i2 - line.i1));
     fates.set(line, { kind: "fanMerged", into: k, gap });

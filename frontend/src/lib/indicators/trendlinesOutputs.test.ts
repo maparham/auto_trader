@@ -21,7 +21,7 @@ describe("TRENDLINES_DEFAULTS", () => {
       "maxSlopeAtr", "minSlopeAtr", "maxTouchSpacing", "minTouchSpacing",
       "minCrossings", "maxCrossings", "pierceMult", "minBackBars", "maxDistAtr", "maxDistPct", "mergeAtr", "maxPerPivot", "mergePct",
       "majorPivots", "majorLen", "majorSizeAtr", "lookbackBars", "extendLeft",
-      "fanAtr", "fanPct", "fanKeep",
+      "fanAtr", "fanPct", "fanKeep", "pivotStrong",
     ]);
   });
   it("shares one pool, so pairing reaches 40 pivots back", () => {
@@ -44,7 +44,7 @@ describe("parseTrendlinesConfig", () => {
     expect(parseTrendlinesConfig("junk")).toEqual(TRENDLINES_DEFAULTS);
   });
   it("reads every slot in order", () => {
-    const p = [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3, 5, 40, 1.5, 500, 1, 0.05, 20, 1];
+    const p = [4, 0.5, 3, 30, 100, 9, 3, 6, 25, 7, 300, 0.2, 0.01, 60, 3, 1, 4, 0.4, 12, 2.5, 1.5, 0.75, 1, 0.3, 5, 40, 1.5, 500, 1, 0.05, 20, 1, 1];
     expect(parseTrendlinesConfig(p)).toEqual({
       pivotLen: 4, touchMult: 0.5, minTouches: 3, minSpanBars: 30, maxProjBars: 100,
       maxLines: 9, minSwingAtr: 3, minSwingReach: 6, pairPivots: 25, maxTouches: 7,
@@ -52,7 +52,7 @@ describe("parseTrendlinesConfig", () => {
       minTouchSpacing: 3, minCrossings: 1, maxCrossings: 4, pierceMult: 0.4,
       minBackBars: 12, maxDistAtr: 2.5, maxDistPct: 1.5, mergeAtr: 0.75, maxPerPivot: 1, mergePct: 0.3,
       majorPivots: 5, majorLen: 40, majorSizeAtr: 1.5, lookbackBars: 500, extendLeft: 1,
-      fanAtr: 0.05, fanPct: 20, fanKeep: 1,
+      fanAtr: 0.05, fanPct: 20, fanKeep: 1, pivotStrong: 1,
     });
   });
   // Slope is SIGNED (rising +, falling -), so its two slots are the only ones
