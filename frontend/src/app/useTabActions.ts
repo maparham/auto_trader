@@ -321,17 +321,30 @@ export function useTabActions({
     });
   };
 
-  // Full inverse of the last merge or tab close: storage goes back first
-  // (merge: content moves back to the old scopes, carrying post-merge edits;
-  // close: the purged keys are rewritten), then the snapshot tab array is
-  // restored and the workspace persisted with the same durable rule the merge
-  // used.
+  // Full inverse of the last merge: content moves back to the old scopes
+  // (carrying post-merge edits), the snapshot tab array is restored, and the
+  // workspace is persisted with the same durable rule the merge used.
+  // A close-undo only puts the closed tab back: its keys are rewritten and the
+  // tab re-inserted at its old index in the CURRENT array. No sync save, same
+  // as the close itself: the autosave effect (or the dirty flag with autosave
+  // off) handles it, so unrelated unsaved edits are never committed here.
   const undoTabEdit = () => {
     const u = pendingUndo;
     if (!u) return;
     setPendingUndo(null); // before setTabs — the sig effect must not race it
+    if (u.closed) {
+      const { tab, idx, purged } = u.closed;
+      restoreScopeEntries(purged);
+      setTabs((ts) => {
+        if (ts.some((t) => t.id === tab.id)) return ts;
+        const next = [...ts];
+        next.splice(Math.min(idx, next.length), 0, tab);
+        return next;
+      });
+      setActiveId(u.prevActiveId);
+      return;
+    }
     unmergeScopes(u.pairs);
-    if (u.purged) restoreScopeEntries(u.purged);
     const ws: Workspace = { tabs: u.prevTabs, activeTabId: "" };
     if (activeLayoutId && layoutName != null) {
       saveLayout(activeLayoutId, layoutName, ws);
@@ -384,10 +397,10 @@ export function useTabActions({
     if (id === activeId) setActiveId(neighbour);
     const lead = closed.cells.find((c) => c.id === closed.activeCellId) ?? closed.cells[0];
     setPendingUndo({
-      prevTabs: tabs,
+      prevTabs: next,
       prevActiveId: activeId,
       pairs: [],
-      purged,
+      closed: { tab: closed, idx, purged },
       label: lead ? `Closed ${lead.symbol.name} · ${lead.period.label}` : "Tab closed",
       sigAfter: structureSig(next),
       targetId: neighbour,
