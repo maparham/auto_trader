@@ -20,7 +20,13 @@ export type PendingUndo = {
   prevTabs: ChartTab[];
   prevActiveId: string;
   pairs: Array<{ from: string; to: string }>;
-  closed?: { tab: ChartTab; idx: number; purged: Array<[string, string]> };
+  closed?: {
+    tab: ChartTab;
+    idx: number;
+    purged: Array<[string, string]>;
+    wasActive: boolean;
+    alignAnchor?: number;
+  };
   label: string;
   sigAfter: string;
   // The snackbar anchors under this chip: the merged tab, or the tab that

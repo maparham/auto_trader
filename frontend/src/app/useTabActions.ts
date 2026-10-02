@@ -4,7 +4,7 @@
 // stored content commit the workspace synchronously.
 import { useEffect, type Dispatch, type SetStateAction } from "react";
 import { flushPendingAutoSaves } from "../lib/templateAutosave";
-import { clearAlignAnchor } from "../lib/chartSync";
+import { clearAlignAnchor, getAlignAnchor, setAlignAnchor } from "../lib/chartSync";
 import { isDemoMode } from "../lib/demoMode";
 import { writeSnapshotToScope } from "../lib/snapshots";
 import { saveSnapshotOfChart } from "../lib/snapshotSave";
@@ -333,15 +333,18 @@ export function useTabActions({
     if (!u) return;
     setPendingUndo(null); // before setTabs — the sig effect must not race it
     if (u.closed) {
-      const { tab, idx, purged } = u.closed;
+      const { tab, idx, purged, wasActive, alignAnchor } = u.closed;
       restoreScopeEntries(purged);
+      if (alignAnchor != null) setAlignAnchor(tab.id, alignAnchor);
       setTabs((ts) => {
         if (ts.some((t) => t.id === tab.id)) return ts;
         const next = [...ts];
         next.splice(Math.min(idx, next.length), 0, tab);
         return next;
       });
-      setActiveId(u.prevActiveId);
+      // Only steal focus back when the closed tab was the active one; a tab
+      // closed in the background returns in the background.
+      if (wasActive) setActiveId(tab.id);
       return;
     }
     unmergeScopes(u.pairs);
@@ -389,6 +392,7 @@ export function useTabActions({
     // with the timer (cancelAutoSave in ChartCore's cleanup only drops it).
     flushPendingAutoSaves();
     const purged = readTabScope(id);
+    const alignAnchor = getAlignAnchor(id);
     purgeTabScope(id);
     clearAlignAnchor(id); // drop this tab's sticky lock anchor so the map doesn't leak
     const next = tabs.filter((t) => t.id !== id);
@@ -400,7 +404,7 @@ export function useTabActions({
       prevTabs: next,
       prevActiveId: activeId,
       pairs: [],
-      closed: { tab: closed, idx, purged },
+      closed: { tab: closed, idx, purged, wasActive: id === activeId, alignAnchor },
       label: lead ? `Closed ${lead.symbol.name} · ${lead.period.label}` : "Tab closed",
       sigAfter: structureSig(next),
       targetId: neighbour,
