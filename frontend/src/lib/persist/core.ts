@@ -793,3 +793,31 @@ export function purgeScope(scope: string): void {
 export function purgeTabScope(id: string): void {
   purgeScope(primaryCellScope(id));
 }
+
+// In-memory copy of every key purgeTabScope would remove, taken just before a
+// tab close so the close-undo can put the content back. Held in memory only:
+// a reload drops the offer along with the snapshot, never leaving a trash
+// scope behind in storage or the backend.
+export function readTabScope(id: string): Array<[string, string]> {
+  const prefix = `${PREFIX}.${primaryCellScope(id)}.`;
+  const out: Array<[string, string]> = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith(prefix)) continue;
+    const v = localStorage.getItem(k);
+    if (v != null) out.push([k, v]);
+  }
+  return out;
+}
+
+// Write a readTabScope copy back (and mirror it), the inverse of the purge.
+export function restoreScopeEntries(entries: Array<[string, string]>): void {
+  for (const [k, v] of entries) {
+    try {
+      localStorage.setItem(k, v);
+      mirrorSet(k, v);
+    } catch {
+      // quota: best effort, the tab still comes back with what fitted
+    }
+  }
+}

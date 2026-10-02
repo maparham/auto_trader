@@ -272,8 +272,8 @@ export default function App() {
   // Autosave: when off, edits accumulate as dirty until the user manually saves.
   const [autosave, setAutosaveState] = useState<boolean>(loadAutosave);
   const [isDirty, setIsDirty] = useState(false);
-  // One-shot undo offer for the last merge: the pre-merge snapshot plus the
-  // scope moves to reverse. Cleared by time (Snackbar), by undo/dismiss, or by
+  // One-shot undo offer for the last merge or tab close: the pre-gesture
+  // snapshot plus the storage to put back. Cleared by time (Snackbar), by undo/dismiss, or by
   // the structure-signature effect in useTabActions when anything structural changes.
   const [pendingUndo, setPendingUndo] = useState<PendingUndo | null>(null);
 
@@ -702,7 +702,7 @@ export default function App() {
     closeCell,
     swapCells,
     mergeTabs,
-    undoMerge,
+    undoTabEdit,
     reorderTab,
     closeTab,
   } = useTabActions({
@@ -1333,12 +1333,14 @@ export default function App() {
         />
       )}
 
-      {/* Transient undo offer for the last tab merge (bottom-center). */}
+      {/* Transient undo offer for the last tab merge or close. Keyed by the
+          offer so a newer one restarts the countdown instead of inheriting it. */}
       {pendingUndo && (
         <Snackbar
+          key={pendingUndo.sigAfter}
           message={pendingUndo.label}
           actionLabel="Undo"
-          onAction={undoMerge}
+          onAction={undoTabEdit}
           onDismiss={() => setPendingUndo(null)}
           anchorSelector={`.tab-bar .tab[data-tab-id="${pendingUndo.targetId}"]`}
         />

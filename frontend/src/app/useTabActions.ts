@@ -23,6 +23,8 @@ import {
   mergeTabInto,
   unmergeScopes,
   pushRecentSymbol,
+  readTabScope,
+  restoreScopeEntries,
   type ChartTab,
   type Workspace,
   type ChartSnapshot,
@@ -319,14 +321,17 @@ export function useTabActions({
     });
   };
 
-  // Full inverse of the last merge: content moves back to the old scopes
-  // (carrying post-merge edits), the snapshot tab array is restored, and the
-  // workspace is persisted with the same durable rule the merge used.
-  const undoMerge = () => {
+  // Full inverse of the last merge or tab close: storage goes back first
+  // (merge: content moves back to the old scopes, carrying post-merge edits;
+  // close: the purged keys are rewritten), then the snapshot tab array is
+  // restored and the workspace persisted with the same durable rule the merge
+  // used.
+  const undoTabEdit = () => {
     const u = pendingUndo;
     if (!u) return;
     setPendingUndo(null); // before setTabs — the sig effect must not race it
     unmergeScopes(u.pairs);
+    if (u.purged) restoreScopeEntries(u.purged);
     const ws: Workspace = { tabs: u.prevTabs, activeTabId: "" };
     if (activeLayoutId && layoutName != null) {
       saveLayout(activeLayoutId, layoutName, ws);
@@ -360,19 +365,33 @@ export function useTabActions({
   // the closed tab's namespaced layout keys (covers all its cells via the primary
   // prefix). NOTE: this purges per-cell content even for a saved layout's tab — the
   // user explicitly closed it; the layout body simply records one fewer tab.
+  // There is no confirm, so the close offers the same one-shot undo as a merge:
+  // the purged keys are held in memory and written back if the user undoes.
   const closeTab = (id: string) => {
+    const idx = tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const closed = tabs[idx];
     // Land any pending (≤800ms debounce) template autosaves before the purge
     // wipes the scope storage they'd capture from — else those last edits die
     // with the timer (cancelAutoSave in ChartCore's cleanup only drops it).
     flushPendingAutoSaves();
+    const purged = readTabScope(id);
     purgeTabScope(id);
     clearAlignAnchor(id); // drop this tab's sticky lock anchor so the map doesn't leak
-    setTabs((ts) => {
-      const idx = ts.findIndex((t) => t.id === id);
-      const next = ts.filter((t) => t.id !== id);
-      if (id === activeId) setActiveId(next[Math.min(idx, next.length - 1)]?.id ?? "");
-      return next;
+    const next = tabs.filter((t) => t.id !== id);
+    const neighbour = next[Math.min(idx, next.length - 1)]?.id ?? "";
+    setTabs(next);
+    if (id === activeId) setActiveId(neighbour);
+    const lead = closed.cells.find((c) => c.id === closed.activeCellId) ?? closed.cells[0];
+    setPendingUndo({
+      prevTabs: tabs,
+      prevActiveId: activeId,
+      pairs: [],
+      purged,
+      label: lead ? `Closed ${lead.symbol.name} · ${lead.period.label}` : "Tab closed",
+      sigAfter: structureSig(next),
+      targetId: neighbour,
     });
   };
-  return { addTab, openSymbolTab, detachCell, restoreSnapshot, saveCurrentSnapshot, closeCell, swapCells, mergeTabs, undoMerge, reorderTab, closeTab };
+  return { addTab, openSymbolTab, detachCell, restoreSnapshot, saveCurrentSnapshot, closeCell, swapCells, mergeTabs, undoTabEdit, reorderTab, closeTab };
 }
