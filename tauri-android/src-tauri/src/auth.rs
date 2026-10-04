@@ -87,6 +87,72 @@ pub fn app_url(current: &url::Url, key: &str, value: &str) -> url::Url {
     u
 }
 
+use tauri::Manager;
+use tauri_plugin_store::StoreExt;
+
+const STORE_FILE: &str = "auth.json";
+const PENDING_KEY: &str = "pending";
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn load_pending(app: &tauri::AppHandle) -> Option<Pending> {
+    let store = app.store(STORE_FILE).ok()?;
+    serde_json::from_value(store.get(PENDING_KEY)?).ok()
+}
+
+fn save_pending(app: &tauri::AppHandle, p: Option<&Pending>) -> Result<(), String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    match p {
+        Some(p) => store.set(PENDING_KEY, serde_json::to_value(p).map_err(|e| e.to_string())?),
+        None => {
+            store.delete(PENDING_KEY);
+        }
+    }
+    store.save().map_err(|e| e.to_string())
+}
+
+/// Start (or restart) a browser sign-in. Returns true once the browser is
+/// opened; the frontend button accepts true (Android) or a port (desktop).
+#[tauri::command]
+pub fn browser_sign_in(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_opener::OpenerExt;
+    let p = Pending { state: random_state(), expires_at: now_secs() + TTL_SECS };
+    save_pending(&app, Some(&p))?; // persisted: the app may be killed while in the browser
+    app.opener()
+        .open_url(handoff_url(&p.state), None::<&str>)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Deep-link entry, for both a warm app and a cold start.
+pub fn handle_urls(app: &tauri::AppHandle, urls: &[url::Url]) {
+    for raw in urls {
+        let Some((ticket, state)) = parse_callback(raw.as_str()) else { continue };
+        let pending = load_pending(app);
+        let target = match decide(pending.as_ref(), &state, ticket, now_secs()) {
+            Outcome::Mismatch => continue,
+            Outcome::Accept(t) => {
+                let _ = save_pending(app, None);
+                ("__clerk_ticket", t)
+            }
+            Outcome::Expired => {
+                let _ = save_pending(app, None);
+                ("auth_error", "expired".to_string())
+            }
+        };
+        if let Some(w) = app.get_webview_window("main") {
+            if let Ok(cur) = w.url() {
+                let _ = w.navigate(app_url(&cur, target.0, &target.1));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
