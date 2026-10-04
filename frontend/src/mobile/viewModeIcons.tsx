@@ -29,13 +29,16 @@ export function RestoreIcon() {
   );
 }
 
-/** Turn the screen: one arc with an arrowhead. In the top bar it enters
- *  landscape; on the axis chip while rotated it turns back to portrait. */
+/** Turn the screen: a sideways phone under a half-turn arrow. A bare
+ *  circular arrow read as the page-refresh button, so the phone carries the
+ *  meaning. In the top bar it enters landscape; on the axis chip while
+ *  rotated it turns back to portrait. */
 export function RotateIcon() {
   return (
     <svg {...common}>
-      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
-      <path d="M13.5 2.5v3.2h-3.2" />
+      <rect x="2" y="8" width="12" height="6.5" rx="1.5" />
+      <path d="M3.5 5.5a5.5 5.5 0 0 1 9 0" />
+      <path d="M12.8 2.6v2.9h-2.9" />
     </svg>
   );
 }

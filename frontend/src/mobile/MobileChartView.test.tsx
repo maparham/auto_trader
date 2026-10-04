@@ -112,71 +112,66 @@ describe("MobileChartView", () => {
     await waitFor(() => expect(screen.getByTestId("chartcore").dataset.theme).toBe(next));
   });
 
-  it("moves the pull imperatively on the overview host without re-rendering ChartCore (finding 3)", async () => {
+  it("moves the grip's pull imperatively on the overview host without re-rendering ChartCore (finding 3)", async () => {
     const { container } = render(<MobileChartView />);
     await waitFor(() => screen.getByTestId("chartcore"));
+    fireEvent.click(screen.getByRole("button", { name: "Show all tabs" }));
     chartCoreRenders.n = 0;
-    const bar = screen.getByRole("button", { name: "Show all tabs" });
-    bar.setPointerCapture = vi.fn();
+    const grip = screen.getByRole("button", { name: "Hide tabs" });
+    grip.setPointerCapture = vi.fn();
     const host = container.querySelector(".m-tab-ov-host") as HTMLElement;
-    expect(host).not.toBeNull();
-    fireEvent.pointerDown(bar, { clientY: 100, pointerId: 1 });
-    fireEvent.pointerMove(bar, { clientY: 150, pointerId: 1 });
+    fireEvent.pointerDown(grip, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(grip, { clientY: 250, pointerId: 1 });
     expect(host.classList.contains("pulling")).toBe(true);
-    expect(host.style.getPropertyValue("--pull")).toBe("50px");
+    expect(host.style.getPropertyValue("--pull")).toBe("-50px");
     expect(chartCoreRenders.n).toBe(0);
-    fireEvent.pointerUp(bar, { clientY: 150, pointerId: 1 });
+    fireEvent.pointerUp(grip, { clientY: 250, pointerId: 1 });
     expect(host.classList.contains("pulling")).toBe(false);
     expect(host.style.getPropertyValue("--pull")).toBe("");
-    expect(chartCoreRenders.n).toBe(0);
+  });
+
+  it("the handle opens on a tap or a downward drag", async () => {
+    const { container } = render(<MobileChartView />);
+    await waitFor(() => screen.getByTestId("chartcore"));
+    const bar = screen.getByRole("button", { name: "Show all tabs" });
+    bar.setPointerCapture = vi.fn();
+    fireEvent.pointerDown(bar, { clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(bar, { clientY: 200, pointerId: 1 });
+    fireEvent.pointerUp(bar, { clientY: 200, pointerId: 1 });
+    expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
+    fireEvent.click(bar);
+    expect(container.querySelector(".m-tab-ov.open")).toBeNull();
+    fireEvent.click(bar);
+    expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
   });
 
   it("closes the overview when tapping outside it, not when tapping inside it", async () => {
     const { container } = render(<MobileChartView />);
     await waitFor(() => screen.getByTestId("chartcore"));
-    const bar = screen.getByRole("button", { name: "Show all tabs" });
-    bar.setPointerCapture = vi.fn();
-    fireEvent.pointerDown(bar, { clientY: 100, pointerId: 1 });
-    fireEvent.pointerUp(bar, { clientY: 100, pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Show all tabs" }));
     expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
 
-    fireEvent.click(screen.getByLabelText("Find tab"));
+    fireEvent.pointerDown(screen.getByLabelText("Find tab"));
     expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
 
     const host = container.querySelector(".m-tab-ov-host") as HTMLElement;
-    fireEvent.click(host);
+    fireEvent.pointerDown(host);
+    expect(container.querySelector(".m-tab-ov.open")).toBeNull();
+
+    // Outside the chart body too: the top bar closes it as well.
+    fireEvent.click(screen.getByRole("button", { name: "Show all tabs" }));
+    expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
+    fireEvent.pointerDown(container.querySelector(".m-chart-topbar") as HTMLElement);
     expect(container.querySelector(".m-tab-ov.open")).toBeNull();
   });
 
-  it("opens on a big downward swipe anywhere in the chart body, not just the handle", async () => {
+  it("never opens on a downward swipe in the chart body", async () => {
     const { container } = render(<MobileChartView />);
     await waitFor(() => screen.getByTestId("chartcore"));
     const body = container.querySelector(".m-chart-body") as HTMLElement;
     fireEvent.pointerDown(body, { clientX: 50, clientY: 200, pointerId: 7 });
-    fireEvent.pointerMove(window, { clientX: 52, clientY: 240, pointerId: 7 });
-    expect(container.querySelector(".m-tab-ov.open")).toBeNull();
-    fireEvent.pointerMove(window, { clientX: 54, clientY: 310, pointerId: 7 });
-    expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
+    fireEvent.pointerMove(window, { clientX: 54, clientY: 400, pointerId: 7 });
     fireEvent.pointerUp(window, { pointerId: 7 });
-  });
-
-  it("ignores a mostly sideways swipe in the chart body", async () => {
-    const { container } = render(<MobileChartView />);
-    await waitFor(() => screen.getByTestId("chartcore"));
-    const body = container.querySelector(".m-chart-body") as HTMLElement;
-    fireEvent.pointerDown(body, { clientX: 50, clientY: 200, pointerId: 8 });
-    fireEvent.pointerMove(window, { clientX: 200, clientY: 230, pointerId: 8 });
-    fireEvent.pointerUp(window, { pointerId: 8 });
-    expect(container.querySelector(".m-tab-ov.open")).toBeNull();
-  });
-
-  it("ignores a swipe that starts on a button in the chart body", async () => {
-    const { container } = render(<MobileChartView />);
-    await waitFor(() => screen.getByTestId("chartcore"));
-    const restore = screen.getByLabelText("Chart only");
-    fireEvent.pointerDown(restore, { clientX: 50, clientY: 200, pointerId: 9 });
-    fireEvent.pointerMove(window, { clientX: 52, clientY: 320, pointerId: 9 });
-    fireEvent.pointerUp(window, { pointerId: 9 });
     expect(container.querySelector(".m-tab-ov.open")).toBeNull();
   });
 });
@@ -212,11 +207,7 @@ describe("MobileChartView chrome-only mode", () => {
   it("closes the tab overview when the chrome hides, so it doesn't reopen by itself on restoring it", async () => {
     const { container } = render(<MobileChartView />);
     await waitFor(() => screen.getByTestId("chartcore"));
-    const bar = screen.getByRole("button", { name: "Show all tabs" });
-    bar.setPointerCapture = vi.fn();
-    // A tap-length pull (dy below the tap threshold) toggles the overview open.
-    fireEvent.pointerDown(bar, { clientY: 100, pointerId: 1 });
-    fireEvent.pointerUp(bar, { clientY: 100, pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Show all tabs" }));
     expect(container.querySelector(".m-tab-ov.open")).not.toBeNull();
     await act(async () => {
       mobileViewMode.set({ chromeHidden: true, landscape: false });

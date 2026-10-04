@@ -1,19 +1,21 @@
 // Open state for the tab overview plus the live pull distance, so the panel
-// follows the finger while the strip's grab bar (or the panel's grip) drags.
+// follows the finger while the strip (its handle, or a downward swipe
+// anywhere on the chip row) or the panel's grip drags. A swipe on the chart
+// itself never opens it, since a stray pull while panning or pinching kept
+// dropping the overview over the chart.
 //
 // The live distance is NOT React state: MobileChartView hosts the panel and
 // also hosts ChartCore, so a re-render on every pointermove would re-render
 // the whole chart underneath a drag. Instead the drag writes the `--pull`
 // custom property and a `.pulling` class straight onto the host element via
 // a ref, imperatively, and only `open` (which changes rarely) is state.
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 export const OPEN_PX = 60;
 const TAP_PX = 4;
-// A bare downward swipe anywhere in the chart body needs more distance than
-// the dedicated handle before it commits, since it has to stay out of the
-// way of chart panning and drawing.
-const ANYWHERE_OPEN_PX = 90;
+// How far a swipe on the chip row must travel, mostly downward, before it
+// becomes a pull rather than a tap or a sideways scroll of the chips.
+const SWIPE_PX = 8;
 
 // Shared pointer-drag handler for a grab bar / grip: tracks vertical
 // movement from pointerdown, reports live delta via onPull, and the final
@@ -44,60 +46,53 @@ export function startPullDrag(
   el.addEventListener("pointercancel", end);
 }
 
-// Catches a downward pull that misses the small handle: any single-finger
-// drag starting inside `containerEl`, once it's clearly a downward swipe
-// (more vertical distance than horizontal) past ANYWHERE_OPEN_PX, opens the
-// panel. Never captures the pointer or calls preventDefault, so it only ever
-// adds a reading of the same touch stream; chart panning, zooming and
-// drawing keep working exactly as before, and a swipe that turns out to be
-// sideways or upward is dropped without side effects. `skip(target)` excuses
-// gestures starting on a control with its own drag semantics (buttons, the
-// drawing tools, an in-progress drawing).
-export function useAnywherePull(
-  containerRef: React.RefObject<HTMLElement | null>,
-  enabled: boolean,
-  skip: (target: EventTarget | null) => boolean,
-  onOpen: () => void,
+// A downward swipe on the chip row: the row keeps scrolling sideways and its
+// chips keep their taps, and only a gesture that goes mostly down past
+// SWIPE_PX turns into the same live pull as the handle's. Needs
+// `touch-action: pan-x` on the row, or the browser claims the vertical move
+// and cancels the pointer. Once a pull starts, the click that would follow
+// on whatever chip the finger started on is swallowed.
+export function startSwipePull(
+  e: React.PointerEvent<HTMLElement>,
+  onPull?: (dy: number) => void,
+  onPullEnd?: (dy: number) => void,
 ): void {
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || !enabled) return;
-    let pointerId: number | null = null;
-    let sx = 0;
-    let sy = 0;
-    let live = false;
-    const reset = () => { pointerId = null; live = false; };
-    const onDown = (e: PointerEvent) => {
-      if (pointerId !== null || e.button > 0 || skip(e.target)) return;
-      pointerId = e.pointerId;
-      sx = e.clientX;
-      sy = e.clientY;
+  if (e.button > 0) return;
+  const el = e.currentTarget;
+  const id = e.pointerId;
+  const sx = e.clientX;
+  const sy = e.clientY;
+  let dy = 0;
+  let live = false;
+  const move = (ev: PointerEvent) => {
+    if (ev.pointerId !== id) return;
+    const dx = ev.clientX - sx;
+    dy = ev.clientY - sy;
+    if (!live) {
+      if (Math.abs(dx) < SWIPE_PX && Math.abs(dy) < SWIPE_PX) return;
+      if (dy <= 0 || Math.abs(dx) > dy) { end(); return; }
       live = true;
-    };
-    const onMove = (e: PointerEvent) => {
-      if (!live || e.pointerId !== pointerId) return;
-      const dx = e.clientX - sx;
-      const dy = e.clientY - sy;
-      if (dy < 0 || Math.abs(dx) > Math.abs(dy)) { live = false; return; }
-      if (dy > ANYWHERE_OPEN_PX) { reset(); onOpen(); }
-    };
-    const onUp = (e: PointerEvent) => { if (e.pointerId === pointerId) reset(); };
-    // Capture phase: the chart library's own canvas handlers call
-    // stopPropagation to manage panning/zooming, which would otherwise stop
-    // these events before they ever reached a bubble-phase listener here.
-    // Capture on an ancestor (and window, above everything) always fires
-    // first, so it can't be silenced by something the target does later.
-    el.addEventListener("pointerdown", onDown, true);
-    window.addEventListener("pointermove", onMove, true);
-    window.addEventListener("pointerup", onUp, true);
-    window.addEventListener("pointercancel", onUp, true);
-    return () => {
-      el.removeEventListener("pointerdown", onDown, true);
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", onUp, true);
-      window.removeEventListener("pointercancel", onUp, true);
-    };
-  }, [containerRef, enabled, skip, onOpen]);
+      el.setPointerCapture(id);
+    }
+    onPull?.(dy);
+  };
+  const swallowClick = (ev: MouseEvent) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+  };
+  const end = (ev?: PointerEvent) => {
+    if (ev && ev.pointerId !== id) return;
+    el.removeEventListener("pointermove", move);
+    el.removeEventListener("pointerup", end);
+    el.removeEventListener("pointercancel", end);
+    if (!live) return;
+    el.addEventListener("click", swallowClick, { capture: true, once: true });
+    setTimeout(() => el.removeEventListener("click", swallowClick, true), 0);
+    onPullEnd?.(dy);
+  };
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
 }
 
 export function usePullPanel() {

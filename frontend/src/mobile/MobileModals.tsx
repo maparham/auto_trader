@@ -6,6 +6,7 @@
 // than per-cell. Desktop-only signals (backtest drill, trade editor) are not
 // hosted here — they simply have no listener on mobile.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import type { Signal } from "../lib/signals";
 import {
   alertModalRequest,
@@ -106,7 +107,10 @@ export default function MobileModals() {
     prevDraftRef.current = draftOrder;
   }, [draftOrder]);
 
-  return (
+  // Portaled to <body>: inside .m-app (position: fixed, so its own stacking
+  // context) the modals' z-index stayed trapped under body-level portals
+  // like the positions Sheet, which then hid the close-position confirm.
+  return createPortal(
     <div className="m-modal-host">
       {/* Alerts are backend-owned and the demo principal cannot create them,
           same gate as desktop App. */}
@@ -280,6 +284,7 @@ export default function MobileModals() {
           onClose={() => confirmRequest.set(null)}
         />
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }

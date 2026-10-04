@@ -135,6 +135,43 @@ describe("MobileChartStrip", () => {
       expect(onPullEnd).toHaveBeenCalledWith(80);
     });
 
+    it("a downward swipe on a chip pulls, and swallows the chip's click", () => {
+      saveLayout("l1", "main", ws([
+        { id: "t1", layout: "1", cells: [cell("c1", "US100", "tab.t1"), cell("c2", "GOLD", "tab.t1")], activeCellId: "c1" },
+      ]));
+      const onPull = vi.fn();
+      const onPullEnd = vi.fn();
+      render(<MobileChartStrip onPull={onPull} onPullEnd={onPullEnd} />);
+      const row = screen.getByRole("tablist");
+      row.setPointerCapture = vi.fn();
+      const chip = screen.getByRole("button", { name: /GOLD/ });
+      fireEvent.pointerDown(chip, { clientX: 50, clientY: 100, pointerId: 2 });
+      fireEvent.pointerMove(row, { clientX: 52, clientY: 170, pointerId: 2 });
+      fireEvent.pointerUp(row, { clientX: 52, clientY: 170, pointerId: 2 });
+      fireEvent.click(chip);
+      expect(onPull).toHaveBeenLastCalledWith(70);
+      expect(onPullEnd).toHaveBeenCalledWith(70);
+      expect(mobileChartScope.value?.epic).not.toBe("GOLD");
+    });
+
+    it("a sideways or upward swipe on the row never pulls", () => {
+      saveLayout("l1", "main", ws([
+        { id: "t1", layout: "1", cells: [cell("c1", "US100", "tab.t1")], activeCellId: "c1" },
+      ]));
+      const onPull = vi.fn();
+      const onPullEnd = vi.fn();
+      render(<MobileChartStrip onPull={onPull} onPullEnd={onPullEnd} />);
+      const row = screen.getByRole("tablist");
+      fireEvent.pointerDown(row, { clientX: 50, clientY: 100, pointerId: 3 });
+      fireEvent.pointerMove(row, { clientX: 120, clientY: 110, pointerId: 3 });
+      fireEvent.pointerUp(row, { clientX: 120, clientY: 110, pointerId: 3 });
+      fireEvent.pointerDown(row, { clientX: 50, clientY: 100, pointerId: 4 });
+      fireEvent.pointerMove(row, { clientX: 50, clientY: 40, pointerId: 4 });
+      fireEvent.pointerUp(row, { clientX: 50, clientY: 40, pointerId: 4 });
+      expect(onPull).not.toHaveBeenCalled();
+      expect(onPullEnd).not.toHaveBeenCalled();
+    });
+
     it("shows the bar even with no saved layout, so + stays reachable", () => {
       render(<MobileChartStrip onPull={() => {}} onPullEnd={() => {}} />);
       expect(screen.getByRole("button", { name: "Show all tabs" })).toBeTruthy();

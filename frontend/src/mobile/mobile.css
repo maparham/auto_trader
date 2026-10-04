@@ -1,3 +1,10 @@
+/* In a mobile browser a downward drag on the chart otherwise triggers
+   pull-to-refresh and reloads the whole app. */
+html:has(body.m-mobile),
+body.m-mobile {
+  overscroll-behavior-y: none;
+}
+
 .m-app {
   position: fixed;
   inset: 0;
@@ -370,13 +377,16 @@ body.m-mobile .floating-modal {
 
 
 /* Desktop-layout mirror strip (Chart tab, under the top bar). */
-.m-chart-strip { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 4px 8px; scrollbar-width: none; }
-/* The button keeps a full-width, touch-friendly height; only the pill inside
-   it (.m-chart-strip-pull-i) is visually compact. Any downward swipe in the
-   chart body already opens the overview too (see useAnywherePull), so this
-   only needs to be a visual hint, not the main grab target. */
-.m-chart-strip-pull { display: flex; align-items: center; justify-content: center; width: 100%; height: 16px; padding: 0; border: 0; background: none; touch-action: none; }
-.m-chart-strip-pull-i { display: flex; align-items: center; justify-content: center; width: 44px; height: 15px; border: 1px solid var(--border); border-top: none; border-radius: 0 0 10px 10px; background: var(--surface); color: var(--text-dim); box-shadow: 0 3px 7px rgba(0,0,0,.3); }
+/* pan-x: the browser keeps the sideways chip scroll but leaves vertical moves
+   to startSwipePull, which turns a downward swipe into the overview pull. */
+.m-chart-strip { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 4px 8px; scrollbar-width: none; touch-action: pan-x; }
+/* A tap or a downward drag here opens the overview; a swipe on the chart
+   itself does not. It sits at the far right, after the search button, in
+   the strip's sticky lead, so it never costs a row of its own. */
+.m-chart-strip-pull { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text-dim); touch-action: none; }
+.m-chart-strip-pull-i { display: flex; }
+/* The handle and search stay pinned at the right while the chips scroll under. */
+.m-chart-strip-lead { position: sticky; right: 0; z-index: 1; flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 6px; background: var(--bg); box-shadow: 8px 0 0 0 var(--bg), -6px 0 0 0 var(--bg); }
 .m-chart-strip-group { display: flex; align-items: center; gap: 6px; }
 .m-chart-strip-divider { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
 .m-chart-strip-chip { flex: 0 0 auto; border: 1px solid var(--border); background: none; color: var(--text-dim); border-radius: 12px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
@@ -384,8 +394,7 @@ body.m-mobile .floating-modal {
 /* Find-open-chart search: magnifier pinned at the strip's left edge so it
    stays reachable while the chips scroll under it. */
 .m-chart-strip-icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text-dim); }
-.m-chart-strip-search { position: sticky; left: 0; z-index: 1; flex: 0 0 auto; display: flex; align-items: center; gap: 4px; background: var(--bg); }
-.m-chart-strip > .m-chart-strip-icon { position: sticky; left: 0; z-index: 1; }
+.m-chart-strip-search { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; background: var(--bg); }
 .m-chart-strip-input { width: 110px; font: inherit; font-size: 14px; color: var(--text); background: none; border: 1px solid var(--border); border-radius: 12px; padding: 3px 10px; outline: none; }
 /* The strip has its own close button; drop the native clear x beside it. */
 .m-chart-strip-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
