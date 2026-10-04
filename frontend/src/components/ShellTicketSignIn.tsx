@@ -6,14 +6,24 @@
 //   pending: the ticket is single-use, so nothing else may also try it.
 // - Offer "Sign in with your browser" when running inside the shell, which
 //   asks the shell (browser_sign_in) to start the loopback handoff.
+//
+// In the Android app the browser is the only sign-in path: the Clerk card is
+// hidden, browser_sign_in replies true, and the app lands back here with
+// ?auth_error=expired when a callback found nothing pending or arrived late.
 import { useEffect, useRef, useState } from "react";
 import { SignIn, useSignIn } from "@clerk/clerk-react";
-import { parseClerkTicket } from "../lib/shellAuthBoot";
-import { inShell, shellInvoke } from "../lib/shellBridge";
+import { parseAuthError, parseClerkTicket } from "../lib/shellAuthBoot";
+import { inAndroidApp, inShell, shellInvoke } from "../lib/shellBridge";
 
 function stripTicketParam(): void {
   const u = new URL(window.location.href);
   u.searchParams.delete("__clerk_ticket");
+  window.history.replaceState(null, "", u.toString());
+}
+
+function stripAuthErrorParam(): void {
+  const u = new URL(window.location.href);
+  u.searchParams.delete("auth_error");
   window.history.replaceState(null, "", u.toString());
 }
 
@@ -22,6 +32,9 @@ export default function ShellTicketSignIn() {
   const [ticket] = useState(() => parseClerkTicket(window.location.search));
   const [ticketFailed, setTicketFailed] = useState(false);
   const [buttonError, setButtonError] = useState(false);
+  // Read once on mount, then stripped so a reload does not repeat it.
+  const [expired] = useState(() => parseAuthError(window.location.search) === "expired");
+  const android = inAndroidApp();
   const tried = useRef(false);
   const { signIn, setActive, isLoaded } = useSignIn();
 
@@ -44,6 +57,10 @@ export default function ShellTicketSignIn() {
     })();
   }, [ticket, isLoaded, signIn, setActive]);
 
+  useEffect(() => {
+    if (expired) stripAuthErrorParam();
+  }, [expired]);
+
   if (ticket && !ticketFailed) {
     return (
       <div style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
@@ -55,15 +72,18 @@ export default function ShellTicketSignIn() {
   return (
     <div style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
       <div style={{ display: "grid", justifyItems: "center", gap: 14 }}>
-        <SignIn />
+        {!android && <SignIn />}
         {inShell() && (
           <div style={{ textAlign: "center" }}>
+            {expired && <div>Sign-in expired, try again.</div>}
             <button
               type="button"
               onClick={() => {
                 setButtonError(false);
-                void shellInvoke("browser_sign_in").then((port) => {
-                  if (typeof port !== "number") setButtonError(true);
+                // Desktop replies with its loopback port, Android with true;
+                // shellInvoke maps a failure to null.
+                void shellInvoke("browser_sign_in").then((reply) => {
+                  if (typeof reply !== "number" && reply !== true) setButtonError(true);
                 });
               }}
               style={{

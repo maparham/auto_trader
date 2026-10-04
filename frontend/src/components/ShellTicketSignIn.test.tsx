@@ -32,7 +32,15 @@ afterEach(() => {
   signInCreate.mockReset();
   setActive.mockReset();
   delete (window as unknown as Record<string, unknown>).__TAURI__;
+  vi.unstubAllGlobals();
 });
+
+const ANDROID_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile Safari/537.36";
+
+function androidApp(invoke: (...a: unknown[]) => Promise<unknown>) {
+  vi.stubGlobal("navigator", { ...navigator, userAgent: ANDROID_UA });
+  (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke } };
+}
 
 it("consumes a ticket, activates the session, and strips the param", async () => {
   window.history.replaceState(null, "", "/?__clerk_ticket=sit_abc");
@@ -72,4 +80,30 @@ it("reports a failed browser_sign_in next to the button", async () => {
   const { getByText, findByText } = render(<ShellTicketSignIn />);
   fireEvent.click(getByText("Sign in with your browser"));
   await findByText(/Could not start browser sign-in/);
+});
+
+it("Android: hides the Clerk card and treats a true reply as success", async () => {
+  const invoke = vi.fn(async () => true);
+  androidApp(invoke);
+  const { queryByTestId, getByText, queryByText } = render(<ShellTicketSignIn />);
+  expect(queryByTestId("clerk-card")).toBeNull();
+  fireEvent.click(getByText("Sign in with your browser"));
+  await waitFor(() => expect(invoke).toHaveBeenCalled());
+  expect(queryByText(/Could not start browser sign-in/)).toBeNull();
+  vi.unstubAllGlobals();
+});
+
+it("Android: shows the expired message from ?auth_error=expired and strips it", () => {
+  androidApp(vi.fn(async () => true));
+  window.history.replaceState(null, "", "/?auth_error=expired");
+  const { getByText } = render(<ShellTicketSignIn />);
+  getByText("Sign-in expired, try again.");
+  expect(window.location.search).not.toContain("auth_error");
+  vi.unstubAllGlobals();
+});
+
+it("desktop shell keeps the Clerk card", () => {
+  (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke: vi.fn(async () => 1) } };
+  const { getByTestId } = render(<ShellTicketSignIn />);
+  getByTestId("clerk-card");
 });

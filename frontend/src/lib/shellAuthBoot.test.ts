@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { appReturnIntentUrl, parseClerkTicket, parseShellAuthParams } from "./shellAuthBoot";
+import {
+  appReturnIntentUrl,
+  parseAuthError,
+  parseClerkTicket,
+  parseShellAuthParams,
+} from "./shellAuthBoot";
 
 describe("parseShellAuthParams", () => {
   it("parses a valid handoff boot", () => {
@@ -63,5 +68,13 @@ describe("parseClerkTicket", () => {
     expect(parseClerkTicket("?__clerk_ticket=sit_abc")).toBe("sit_abc");
     expect(parseClerkTicket("?__clerk_ticket=")).toBeNull();
     expect(parseClerkTicket("?foo=1")).toBeNull();
+  });
+});
+
+describe("parseAuthError", () => {
+  it("recognises only the expired code", () => {
+    expect(parseAuthError("?auth_error=expired")).toBe("expired");
+    expect(parseAuthError("?auth_error=other")).toBeNull();
+    expect(parseAuthError("")).toBeNull();
   });
 });

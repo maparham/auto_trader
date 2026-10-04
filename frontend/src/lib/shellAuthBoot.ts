@@ -39,3 +39,9 @@ export function appReturnIntentUrl(ticket: string, state: string): string {
 export function parseClerkTicket(search: string): string | null {
   return new URLSearchParams(search).get("__clerk_ticket") || null;
 }
+
+/** ?auth_error=expired: set by the Android app when a sign-in callback
+ *  arrived with nothing pending or past its deadline. */
+export function parseAuthError(search: string): "expired" | null {
+  return new URLSearchParams(search).get("auth_error") === "expired" ? "expired" : null;
+}
