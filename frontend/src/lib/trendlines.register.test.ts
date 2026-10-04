@@ -34,16 +34,16 @@ describe("TRENDLINES registration", () => {
     expect(OVERLAY_INDICATORS.has("TRENDLINES")).toBe(true);
   });
 
-  it("has settings metadata for all thirty-two params and the extend select", () => {
+  it("has settings metadata for all thirty-three params and the extend select", () => {
     const inputs = resolveInputs("TRENDLINES", undefined);
-    // Thirty-two calcParams: the twenty-seven numeric ones (One line per
+    // Thirty-three calcParams: the twenty-seven numeric ones (One line per
     // pivot became the integer Max lines per pivot; the merge tolerance is a
     // calcParam because a merged-away line must stop reporting to rules,
     // which only the calc can arrange), plus Lookback (number), Extend Left
     // (boolean), the two fan-merge bands (numbers) and Keep the nearest in a
-    // fan (boolean). The extra numbers are the three dim thresholds and the
+    // fan (boolean), and Keep the strongest at a pivot (boolean). The extra numbers are the three dim thresholds and the
     // dim opacity, which choose an alpha and so are render-only.
-    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(32);
+    expect(inputs.filter((i) => i.source === "calcParam")).toHaveLength(33);
     expect(inputs.filter((i) => i.type === "number")).toHaveLength(34);
     expect(inputs.find((i) => i.key === "extend")?.type).toBe("select");
     // resolveInputs falls back to synthesized generic inputs when a name has no
@@ -75,6 +75,7 @@ describe("TRENDLINES registration", () => {
       ["Extend Left"],
       ["Extend"],
       ["Max lines per pivot"],
+      ["Keep the strongest at a pivot"],
       ["Merge lines within", "Merge lines within (%)"],
       ["Merge fanned lines within", "Merge fanned lines within (%)"],
       ["Keep the nearest in a fan"],
