@@ -118,8 +118,10 @@ fn save_pending(app: &tauri::AppHandle, p: Option<&Pending>) -> Result<(), Strin
 
 /// Start (or restart) a browser sign-in. Returns true once the browser is
 /// opened; the frontend button accepts true (Android) or a port (desktop).
+/// Async so it runs off the main thread: Tauri runs sync commands there, and
+/// the store write below round-trips through it.
 #[tauri::command]
-pub fn browser_sign_in(app: tauri::AppHandle) -> Result<bool, String> {
+pub async fn browser_sign_in(app: tauri::AppHandle) -> Result<bool, String> {
     use tauri_plugin_opener::OpenerExt;
     let p = Pending { state: random_state(), expires_at: now_secs() + TTL_SECS };
     save_pending(&app, Some(&p))?; // persisted: the app may be killed while in the browser
@@ -129,29 +131,50 @@ pub fn browser_sign_in(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Deep-link entry, for both a warm app and a cold start.
-pub fn handle_urls(app: &tauri::AppHandle, urls: &[url::Url]) {
+/// Where a callback sends the app: the query key and value to load.
+pub type Target = (&'static str, String);
+
+/// Turns callback URLs into the page to load, clearing the pending state on
+/// a hit. The last callback that is not a mismatch wins. Reads the store,
+/// whose path lookup round-trips through Android's main thread, so call it
+/// from a worker thread only.
+pub fn resolve_urls(app: &tauri::AppHandle, urls: &[url::Url]) -> Option<Target> {
+    let mut out = None;
     for raw in urls {
         let Some((ticket, state)) = parse_callback(raw.as_str()) else { continue };
         let pending = load_pending(app);
-        let target = match decide(pending.as_ref(), &state, ticket, now_secs()) {
+        out = match decide(pending.as_ref(), &state, ticket, now_secs()) {
             Outcome::Mismatch => continue,
             Outcome::Accept(t) => {
                 let _ = save_pending(app, None);
-                ("__clerk_ticket", t)
+                Some(("__clerk_ticket", t))
             }
             Outcome::Expired => {
                 let _ = save_pending(app, None);
-                ("auth_error", "expired".to_string())
+                Some(("auth_error", "expired".to_string()))
             }
         };
-        if let Some(w) = app.get_webview_window("main") {
-            if let Ok(cur) = w.url() {
-                let _ = w.navigate(app_url(&cur, target.0, &target.1));
-            }
+    }
+    out
+}
+
+/// Loads the target in the main window. Blocks on the webview, which
+/// round-trips through Android's main thread, so call it from a worker
+/// thread only (lib.rs spawns one); inline on the main thread it deadlocks.
+pub fn go_to(app: &tauri::AppHandle, target: &Target) {
+    if let Some(w) = app.get_webview_window("main") {
+        if let Ok(cur) = w.url() {
+            let _ = w.navigate(app_url(&cur, target.0, &target.1));
         }
     }
 }
+
+/// A cold start's callback URLs, held until the first page load finishes: a
+/// navigation issued before that is overwritten by the initial load. Kept
+/// raw because resolving them reads the store, and the store's path lookup
+/// also round-trips through Android's main thread, where setup runs.
+#[derive(Default)]
+pub struct ColdStart(pub std::sync::Mutex<Option<Vec<url::Url>>>);
 
 #[cfg(test)]
 mod tests {
