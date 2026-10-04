@@ -243,3 +243,44 @@ release cycle. No forced-update mechanism in this sub-project.
   with a saved password, killed-process sign-in, sign-out and back in, back
   button with a sheet open, rotation.
   Android builds are CPU-heavy on the laptop; ask before running them.
+
+## Spike findings (2026-10-04)
+
+Run on a Pixel 8a (Android 17, WebView Chrome 153) with a debug arm64 build.
+
+- **Origin:** `http://tauri.localhost`. It is a secure context
+  (`isSecureContext` true, `crypto.subtle` present), so the https scheme is
+  not needed and the origin stays as planned. `PushManager` is absent and
+  `serviceWorker` present, which matches Task 4's choice to hide web push.
+- **Backend reach:** `fetch("https://api.chartkar.app/api/brokers")` fails
+  with a CORS error. Expected until Task 2 Step 4 adds the origin to
+  `CORS_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` on the box.
+- **Clerk session:** blocked. The production frontend API answers 400 to
+  every request from the app: "Production Keys are only allowed for domain
+  chartkar.app ... The Request HTTP Origin header must be equal to or a
+  subdomain of the requesting URL." The app never renders. Clerk's documented
+  remedy for browser-like stacks (Electron, Capacitor, extensions) is the
+  production instance's `allowed_origins` setting, set through the Backend
+  API with the production secret key (`PATCH https://api.clerk.com/v1/instance`
+  with `{"allowed_origins": ["http://tauri.localhost"]}`). A clerk/javascript
+  issue (#4725) reports a Tauri app still failing with `tauri://localhost`
+  listed, so this needs proving on the device before Tasks 5 to 10.
+  Steps 3 and 4 (embedded sign-in, ticket sign-in) are therefore not run yet.
+- **Back button:** with a sheet open, back closed the whole app. Wry's
+  default handler only calls `WebView.canGoBack()`, which skips history
+  entries pushed without a user gesture. Resolved in `cd9b8e2c`:
+  `MainActivity` disables Wry's handler and asks the page first through
+  `window.__chartkarBack()`, and `backStack.ts` keeps a plain closer stack
+  with no history entries. Verified on the device: a sheet closes, the tab
+  overview closes, stacked ones close top first, nothing open leaves the app.
+- **16 KB pages:** NDK r27 linked the library at 4 KB, and Android showed a
+  compatibility warning on launch. `tauri-android/src-tauri/.cargo/config.toml`
+  passes `-z max-page-size=16384` for the 64-bit targets; the LOAD segments
+  read 0x4000, `zipalign -c -P 16` passes, and the warning is gone.
+
+**Decision: Adjust, pending two config changes by the owner.** (1) Set
+`allowed_origins` on the production Clerk instance; (2) add the origin to the
+box env (Task 2 Step 4). Then rerun Steps 2 to 4. If Clerk still refuses the
+origin, fall back to Plan B (headless clerk-js with `standardBrowser: false`)
+or to loading `https://chartkar.app` itself in the WebView, which puts the
+page on the instance's own domain.
