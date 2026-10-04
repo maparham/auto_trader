@@ -51,6 +51,7 @@ import {
   markedLineStyle,
   setTrendlineSegments,
   tsAtIndex,
+  TL_BOLD_EXTRA,
   TL_SELECT_GLOW,
   TL_SELECT_GLOW_ALPHA,
   TL_HOVER_GLOW_ALPHA,
@@ -1610,6 +1611,14 @@ export interface TrendlinesExtend {
   /** Render-only opacity of the whole line group (stroke, rings, tag), 0..1,
    * absent = 1. Multiplies the dim fade rather than replacing it. */
   lineOpacity?: number;
+  /** Render-only look of a HIGHLIGHTED line (the line menu's Highlight mark).
+   * Each key absent follows the line's own style, except width, which
+   * defaults to the line width plus TL_BOLD_EXTRA. Colour also tints that
+   * line's rings, dots, handle and tag. */
+  highlightColor?: string;
+  highlightWidth?: number;
+  highlightStyle?: TrendlineStyleOpt;
+  highlightOpacity?: number;
   /** Per-line Hide / Highlight marks, per epic (see trendlineMarks.ts).
    * Render-only and PERSISTED: it rides the saved config like the style keys
    * above, so it survives reloads and reaches the user's other devices. */
@@ -1648,6 +1657,24 @@ export function trendlineStyleOf(ext: TrendlinesExtend | undefined): {
     width: typeof w === "number" && Number.isFinite(w) && w >= 1 ? w : 1,
     style: ext?.lineStyle === "dashed" || ext?.lineStyle === "dotted" ? ext.lineStyle : "solid",
     opacity: typeof o === "number" && Number.isFinite(o) ? Math.min(1, Math.max(0, o)) : 1,
+  };
+}
+
+/** The effective look of a highlighted line, resolved over the instance's own
+ * style (see TrendlinesExtend.highlightColor). Same flooring and clamping as
+ * trendlineStyleOf. */
+export function trendlineHighlightStyleOf(ext: TrendlinesExtend | undefined): {
+  color: string; width: number; style: TrendlineStyleOpt; opacity: number;
+} {
+  const base = trendlineStyleOf(ext);
+  const w = ext?.highlightWidth;
+  const o = ext?.highlightOpacity;
+  const st = ext?.highlightStyle;
+  return {
+    color: ext?.highlightColor || base.color,
+    width: typeof w === "number" && Number.isFinite(w) && w >= 1 ? w : base.width + TL_BOLD_EXTRA,
+    style: st === "solid" || st === "dashed" || st === "dotted" ? st : base.style,
+    opacity: typeof o === "number" && Number.isFinite(o) ? Math.min(1, Math.max(0, o)) : base.opacity,
   };
 }
 
@@ -3311,6 +3338,8 @@ function drawTrendlines(
   const lineStyle = trendlineStyleOf(ext);
   const lineColor = lineStyle.color;
   const lineDash = trendlineDash(lineStyle.style);
+  const hlStyle = trendlineHighlightStyleOf(ext);
+  const hlDash = trendlineDash(hlStyle.style);
   // NORMALISED, not merely defaulted. A pane saved under a spelling this pane
   // no longer offers ("apex") would otherwise reach lineExtent as an unknown
   // string, fall through every branch and draw the full projection horizon
@@ -3599,10 +3628,14 @@ function drawTrendlines(
       (trendlineDimmed(line, lastIdx, ext) || fanInner?.has(line) ? trendlineDimAlpha(ext) : 1) * lineStyle.opacity;
     const key = lineKey(line, dataList, starts);
     const isPinned = pins.has(key);
+    const isBold = marks.bold.has(key) && !marks.hidden.has(key);
     const look = markedLineStyle(
       { width: lineStyle.width, alpha, opacity: lineStyle.opacity },
-      { hidden: marks.hidden.has(key), bold: marks.bold.has(key) },
+      { hidden: marks.hidden.has(key), bold: isBold },
+      hlStyle,
     );
+    // A highlighted line and everything it carries take the highlight colour.
+    const color = isBold ? hlStyle.color : lineColor;
     // The line's end under the MODE alone: what the stroke reverts to when a
     // pin is released. (The handle no longer rides it — see below — it sits at
     // the newest bar, which likewise never travels to the pane edge with a
@@ -3638,7 +3671,7 @@ function drawTrendlines(
     // uses below, and on the chart timeframe it lands on the same pixel.
     const onSegment = (x: number): number =>
       x1 === x0 ? y0 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
-    ctx.strokeStyle = lineColor;
+    ctx.strokeStyle = color;
     const seg = clipSegmentToRect(
       x0, y0, x1, y1,
       -DRAW_CLIP_PAD, -DRAW_CLIP_PAD,
@@ -3659,7 +3692,7 @@ function drawTrendlines(
     // Width and dash belong to the LINE alone: both go back to solid, 1px
     // right after the stroke so the rings, handle and tag keep their shape.
     ctx.lineWidth = look.width;
-    ctx.setLineDash(lineDash);
+    ctx.setLineDash(isBold ? hlDash : lineDash);
     // Stroke only the near-pane portion (see clipSegmentToRect: an unclipped
     // MTF ray is millions of pixels long and stalls the compositor). The pad
     // is deliberately GENEROUS: a chart-timeframe ray overshoots by a few
@@ -3738,7 +3771,7 @@ function drawTrendlines(
     // close, and a crossing no nearby candle shows gets no mark at all.
     if (showCrossings) {
       ctx.save();
-      ctx.fillStyle = lineColor;
+      ctx.fillStyle = color;
       // The line's own alpha: a dimmed line dims everything it carries.
       ctx.globalAlpha = look.alpha;
       // Filled crossing dots shrink when zoomed out so they stay proportional

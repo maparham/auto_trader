@@ -58,6 +58,7 @@ import {
   TL_LINE_COLOR,
   trendlineDash,
   trendlineStyleOf,
+  trendlineHighlightStyleOf,
   TRENDLINES_TEMPLATE,
   findLeftStart,
   extendedCopy,
@@ -3428,5 +3429,19 @@ describe("Extend Left: shortenIfBroken", () => {
   it("never touches a line Extend Left did not move", () => {
     const p = plain();
     expect(shortenIfBroken(p, 25, c({ maxSpanBars: 1 }), closes)).toBe(p);
+  });
+});
+
+describe("trendlineHighlightStyleOf", () => {
+  it("follows the line style, two pixels wider, when nothing is set", () => {
+    expect(trendlineHighlightStyleOf({ lineColor: "#123456", lineWidth: 2, lineStyle: "dotted", lineOpacity: 0.3 }))
+      .toEqual({ color: "#123456", width: 4, style: "dotted", opacity: 0.3 });
+  });
+  it("uses its own keys, floored and clamped like the line style", () => {
+    expect(trendlineHighlightStyleOf({
+      highlightColor: "#ff0000", highlightWidth: 3, highlightStyle: "dashed", highlightOpacity: 7,
+    })).toEqual({ color: "#ff0000", width: 3, style: "dashed", opacity: 1 });
+    expect(trendlineHighlightStyleOf({ highlightWidth: 0.2, highlightStyle: "apex" as never }))
+      .toEqual({ color: TL_LINE_COLOR, width: 3, style: "solid", opacity: 1 });
   });
 });

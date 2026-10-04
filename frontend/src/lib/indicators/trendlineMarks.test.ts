@@ -49,6 +49,11 @@ describe("markedLineStyle", () => {
       width: 2 + TL_BOLD_EXTRA, alpha: 0.9, furniture: true,
     });
   });
+  it("bold takes the highlight width and opacity when given", () => {
+    expect(markedLineStyle(base, { hidden: false, bold: true }, { width: 4, opacity: 0.5 })).toEqual({
+      width: 4, alpha: 0.5, furniture: true,
+    });
+  });
   it("unmarked keeps the style as is", () => {
     expect(markedLineStyle(base, { hidden: false, bold: false })).toEqual({
       width: 2, alpha: 0.4, furniture: true,

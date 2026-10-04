@@ -39,7 +39,13 @@ import {
   parseTrendlinesConfig,
   TL_NEAR_PRICE_ATR,
 } from "./lib/indicators/trendlinesOutputs";
-import { TL_LINE_COLOR, trendlineStyleOf, type TrendlinesExtend, type TrendPivots } from "./lib/indicators/trendlines";
+import {
+  TL_LINE_COLOR,
+  trendlineHighlightStyleOf,
+  trendlineStyleOf,
+  type TrendlinesExtend,
+  type TrendPivots,
+} from "./lib/indicators/trendlines";
 import {
   slopeLengths,
   type SlopeExtend,
@@ -238,6 +244,24 @@ function trendlineExtendOf(d: TrendlineStyleDraft): Partial<TrendlinesExtend> {
   if (d.width !== 1) out.lineWidth = d.width;
   if (d.style !== "solid") out.lineStyle = d.style;
   if (d.opacity !== 1) out.lineOpacity = d.opacity;
+  return out;
+}
+
+/** The Trendlines highlight overrides the user has actually set. Sparse on
+ * purpose: an absent key follows the line's own style (see
+ * trendlineHighlightStyleOf), so restyling the line restyles an untouched
+ * highlight with it. */
+type TrendlineHighlightDraft = Pick<
+  TrendlinesExtend,
+  "highlightColor" | "highlightWidth" | "highlightStyle" | "highlightOpacity"
+>;
+
+function trendlineHighlightOf(ext: TrendlinesExtend | undefined): TrendlineHighlightDraft {
+  const out: TrendlineHighlightDraft = {};
+  if (ext?.highlightColor !== undefined) out.highlightColor = ext.highlightColor;
+  if (ext?.highlightWidth !== undefined) out.highlightWidth = ext.highlightWidth;
+  if (ext?.highlightStyle !== undefined) out.highlightStyle = ext.highlightStyle;
+  if (ext?.highlightOpacity !== undefined) out.highlightOpacity = ext.highlightOpacity;
   return out;
 }
 
@@ -693,6 +717,13 @@ function IndicatorSettingsForm({
   const [trendlineStyle, setTrendlineStyle] = useState<TrendlineStyleDraft>(() =>
     trendlineStyleOf(ind?.extendData as TrendlinesExtend | undefined),
   );
+  const [trendlineHighlight, setTrendlineHighlight] = useState<TrendlineHighlightDraft>(() =>
+    trendlineHighlightOf(ind?.extendData as TrendlinesExtend | undefined),
+  );
+  const trendlineHighlightLook = trendlineHighlightStyleOf({
+    ...trendlineExtendOf(trendlineStyle),
+    ...trendlineHighlight,
+  });
 
   // --- PREV_HL: per-instance timezone override + per-boundary length/agg (Inputs) ---
   // "chart" = follow the global chart axis zone; an IANA name buckets this
@@ -1343,7 +1374,7 @@ function IndicatorSettingsForm({
     if (isTrendlines) {
       // Draw-only; each key persists only when it differs from the default so
       // a plain instance carries none of them.
-      Object.assign(extendData, trendlineExtendOf(trendlineStyle));
+      Object.assign(extendData, trendlineExtendOf(trendlineStyle), trendlineHighlight);
     }
     if (isAvwap) {
       avwapConfig(extendData, avwapSource, bandMode, bands);
@@ -1652,6 +1683,14 @@ function IndicatorSettingsForm({
       lineStyle: next.style,
       lineOpacity: next.opacity,
     });
+  }
+
+  // Highlighted-line look: draw-only like the line style above. Only the
+  // fields the user touches become overrides; the rest keep following the line.
+  function patchTrendlineHighlight(patch: TrendlineHighlightDraft): void {
+    const next = { ...trendlineHighlight, ...patch };
+    setTrendlineHighlight(next);
+    overrideExtend(chart, paneId, name, { ...next });
   }
 
   // Pivots High/Low connector: draw-only, so a plain extendData override (merged
@@ -3087,6 +3126,31 @@ function IndicatorSettingsForm({
                         onSize={(w) => patchTrendlineStyle({ width: w })}
                         lineStyle={trendlineStyle.style}
                         onLineStyle={(st) => patchTrendlineStyle({ style: st })}
+                      />
+                    </div>
+                  </div>
+                  <div className="ind-row ind-style-row">
+                    <span className="ind-row-head">
+                      <label>Highlighted</label>
+                      <InfoTip
+                        title="Highlighted"
+                        text={[
+                          "Look of a line marked Highlight from its right-click menu.",
+                          "Untouched fields follow the line style above.",
+                          "Width defaults to the line width plus 2.",
+                        ]}
+                      />
+                    </span>
+                    <div className="ind-line-controls">
+                      <ColorLineStylePicker
+                        color={trendlineHighlightLook.color}
+                        onColor={(hex) => patchTrendlineHighlight({ highlightColor: hex })}
+                        opacity={trendlineHighlightLook.opacity}
+                        onOpacity={(a) => patchTrendlineHighlight({ highlightOpacity: a })}
+                        size={trendlineHighlightLook.width}
+                        onSize={(w) => patchTrendlineHighlight({ highlightWidth: w })}
+                        lineStyle={trendlineHighlightLook.style}
+                        onLineStyle={(st) => patchTrendlineHighlight({ highlightStyle: st })}
                       />
                     </div>
                   </div>

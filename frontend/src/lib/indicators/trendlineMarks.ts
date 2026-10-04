@@ -69,15 +69,20 @@ export function toggleMark(
 /** How one drawn line paints given its marks. Hidden wins over bold. A hidden
  * line drops its furniture (rings, crossing dots, pin handle, ×N tag, pivot
  * stems) so it takes no tag slot and nothing about it competes for attention;
- * a bold line ignores the dim fade so it stands at the instance's own
- * opacity. */
+ * a bold line ignores the dim fade so it stands at the highlight opacity
+ * (the instance's own when no highlight style is given). */
 export function markedLineStyle(
   base: { width: number; alpha: number; opacity: number },
   marks: { hidden: boolean; bold: boolean },
+  highlight?: { width: number; opacity: number },
 ): { width: number; alpha: number; furniture: boolean } {
   if (marks.hidden) return { width: 1, alpha: TL_HIDDEN_ALPHA, furniture: false };
   if (marks.bold)
-    return { width: base.width + TL_BOLD_EXTRA, alpha: base.opacity, furniture: true };
+    return {
+      width: highlight?.width ?? base.width + TL_BOLD_EXTRA,
+      alpha: highlight?.opacity ?? base.opacity,
+      furniture: true,
+    };
   return { width: base.width, alpha: base.alpha, furniture: true };
 }
 
