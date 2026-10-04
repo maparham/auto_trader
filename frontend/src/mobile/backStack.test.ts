@@ -1,17 +1,11 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
-import { pushBackCloser } from "./backStack";
-
-afterEach(() => vi.restoreAllMocks());
-
-function pressBack() {
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}
+import { expect, it, vi } from "vitest";
+import { handleBackPress, pushBackCloser } from "./backStack";
 
 it("back closes the sheet that registered", () => {
   const close = vi.fn();
   pushBackCloser(close);
-  pressBack();
+  expect(handleBackPress()).toBe(true);
   expect(close).toHaveBeenCalledOnce();
 });
 
@@ -20,27 +14,46 @@ it("closes only the topmost when two are stacked", () => {
   const top = vi.fn();
   pushBackCloser(bottom);
   pushBackCloser(top);
-  pressBack();
+  handleBackPress();
   expect(top).toHaveBeenCalledOnce();
   expect(bottom).not.toHaveBeenCalled();
-  pressBack();
+  handleBackPress();
   expect(bottom).toHaveBeenCalledOnce();
 });
 
-it("closing from the UI pops its history entry without calling the closer", () => {
-  const back = vi.spyOn(window.history, "back").mockImplementation(() => pressBack());
+it("a sheet closed from its own UI no longer takes the press", () => {
   const close = vi.fn();
   const release = pushBackCloser(close);
   release();
-  expect(back).toHaveBeenCalledOnce();
+  expect(handleBackPress()).toBe(false);
   expect(close).not.toHaveBeenCalled();
 });
 
 it("release after a back press is a no-op", () => {
-  const back = vi.spyOn(window.history, "back");
+  const other = vi.fn();
+  pushBackCloser(other);
   const close = vi.fn();
   const release = pushBackCloser(close);
-  pressBack();
+  handleBackPress();
   release();
+  // The sheet underneath is still registered.
+  expect(handleBackPress()).toBe(true);
+  expect(other).toHaveBeenCalledOnce();
+});
+
+it("with nothing open the press goes to the shell", () => {
+  expect(handleBackPress()).toBe(false);
+  expect((window as unknown as { __chartkarBack?: () => boolean }).__chartkarBack).toBe(handleBackPress);
+});
+
+it("never touches browser history", () => {
+  const push = vi.spyOn(window.history, "pushState");
+  const back = vi.spyOn(window.history, "back");
+  const release = pushBackCloser(vi.fn());
+  release();
+  pushBackCloser(vi.fn());
+  handleBackPress();
+  expect(push).not.toHaveBeenCalled();
   expect(back).not.toHaveBeenCalled();
+  vi.restoreAllMocks();
 });

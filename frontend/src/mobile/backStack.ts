@@ -1,39 +1,36 @@
 // Android back closes the topmost open sheet before it navigates or leaves
-// the app. Each open sheet pushes one history entry and a closer; the back
-// press pops the entry and runs the top closer. Closing a sheet from its own
-// UI pops its entry with history.back() and skips that one popstate, so the
-// two paths stay in sync. Android app only: the web app keeps its history
-// untouched.
+// the app. Each open sheet registers a closer; the Android shell (MainActivity)
+// asks the page first on every back press through window.__chartkarBack, which
+// runs the top closer. No history entries: a WebView's own back skips entries
+// pushed without a user gesture, and under StrictMode's double effects a
+// pushState racing the cleanup's history.back() left the stack and the
+// history out of step. Android app only: elsewhere nothing registers.
 import { useEffect, useRef } from "react";
 import { inAndroidApp } from "../lib/shellBridge";
 
 type Closer = () => void;
 
 const stack: Closer[] = [];
-let skipNextPop = false;
-let installed = false;
 
-function onPop(): void {
-  if (skipNextPop) {
-    skipNextPop = false;
-    return;
-  }
-  stack.pop()?.();
+/** One back press: closes the topmost sheet. True means a sheet took the
+ *  press; false lets the shell go back in the WebView or leave the app. */
+export function handleBackPress(): boolean {
+  const top = stack.pop();
+  if (!top) return false;
+  top();
+  return true;
+}
+if (typeof window !== "undefined") {
+  (window as unknown as { __chartkarBack?: () => boolean }).__chartkarBack = handleBackPress;
 }
 
+/** Registers a closer for an open sheet; the returned release drops it when
+ *  the sheet closes some other way (its own UI, a tap outside). */
 export function pushBackCloser(close: Closer): () => void {
-  if (!installed) {
-    window.addEventListener("popstate", onPop);
-    installed = true;
-  }
   stack.push(close);
-  window.history.pushState({ chartkarSheet: true }, "");
   return () => {
     const i = stack.lastIndexOf(close);
-    if (i === -1) return; // already closed by a back press
-    stack.splice(i, 1);
-    skipNextPop = true;
-    window.history.back();
+    if (i !== -1) stack.splice(i, 1);
   };
 }
 
