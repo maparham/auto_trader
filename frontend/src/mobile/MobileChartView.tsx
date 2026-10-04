@@ -11,6 +11,7 @@ import MobileTabOverview from "./MobileTabOverview";
 import MobileIndicatorsSheet from "./MobileIndicatorsSheet";
 import MobilePeriodSheet from "./MobilePeriodSheet";
 import { usePullPanel } from "./usePullPanel";
+import { useBackClose } from "./backStack";
 import { loadSettings } from "../theme";
 import { requestSymbolSearch } from "../lib/signals";
 import { brokerLabel } from "../lib/trading";
@@ -44,6 +45,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
     () => mobilePeriod.value,
   );
   const pull = usePullPanel();
+  useBackClose(pull.open, () => pull.setOpen(false));
   const [periodSheetOpen, setPeriodSheetOpen] = useState(false);
   const [brokerSheetOpen, setBrokerSheetOpen] = useState(false);
   const [indicatorsSheetOpen, setIndicatorsSheetOpen] = useState(false);

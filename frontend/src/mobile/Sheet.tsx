@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useBackClose } from "./backStack";
 
 export default function Sheet({
   title,
@@ -10,6 +11,8 @@ export default function Sheet({
   onClose: () => void;
   children: ReactNode;
 }) {
+  // A Sheet is mounted only while open, so it holds a back entry for its life.
+  useBackClose(true, onClose);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
