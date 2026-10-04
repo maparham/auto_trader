@@ -284,3 +284,20 @@ box env (Task 2 Step 4). Then rerun Steps 2 to 4. If Clerk still refuses the
 origin, fall back to Plan B (headless clerk-js with `standardBrowser: false`)
 or to loading `https://chartkar.app` itself in the WebView, which puts the
 page on the instance's own domain.
+
+### Rerun after the config changes (2026-10-04, evening)
+
+`allowed_origins` on the production Clerk instance and the box env now carry
+`http://tauri.localhost`. From the production build: the API answers 200
+(CORS passes), Clerk's frontend API answers 200 and clerk-js loads, and the
+full browser round trip (app, chartkar.app handoff, Return to Chartkar,
+ticket) signs the app in and shows the live workspace.
+
+**Blocker: the session does not survive a restart.** Clerk keeps the client
+in its `__client` cookie on `clerk.chartkar.app` with `SameSite=Lax`. From
+`http://tauri.localhost` every Clerk request is cross-site, so the WebView
+never stores it (only Cloudflare's `SameSite=None` cookies appear there, even
+with third-party cookies allowed). Kill the app and it comes back signed out.
+Options: Clerk's native mode (clerk-js `standardBrowser: false` with the
+client token kept in app storage, as Clerk's Expo SDK does), or loading
+`https://chartkar.app` itself in the WebView so Clerk is first party.
