@@ -5,13 +5,16 @@
 // distinct from the per-alert `notify.push` channel default in Settings.
 
 import { API_BASE, apiFetch } from "./http";
+import { inAndroidApp } from "./shellBridge";
 
 const SW_PATH = "/alert-sw.js";
 
 /** Feature-detect Push API + service worker support (Safari on some OSes,
- *  and any non-secure-context page, lack one or both). */
+ *  and any non-secure-context page, lack one or both). Always false in the
+ *  Android app: a WebView cannot deliver web push, and FCM is sub-project B. */
 export function pushSupported(): boolean {
   return (
+    !inAndroidApp() &&
     typeof navigator !== "undefined" &&
     "serviceWorker" in navigator &&
     "PushManager" in globalThis

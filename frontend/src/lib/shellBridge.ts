@@ -31,3 +31,10 @@ export async function shellInvoke(
     return null;
   }
 }
+
+/** True only inside the Android app (tauri-android/). The desktop shell is
+ *  also a Tauri webview, so Android-only behavior must key on this, never on
+ *  inShell() alone. */
+export function inAndroidApp(): boolean {
+  return inShell() && typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { inShell, shellInvoke } from "./shellBridge";
+import { inAndroidApp, inShell, shellInvoke } from "./shellBridge";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -29,4 +29,18 @@ describe("shellBridge", () => {
     (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke } };
     await expect(shellInvoke("ping")).resolves.toBeNull();
   });
+});
+
+function ua(value: string) {
+  vi.stubGlobal("navigator", { ...navigator, userAgent: value });
+}
+
+it("is true only inside a Tauri webview on Android", () => {
+  const w = window as unknown as Record<string, unknown>;
+  ua("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36");
+  expect(inAndroidApp()).toBe(false); // Android Chrome, no shell
+  w.__TAURI__ = { core: {} };
+  expect(inAndroidApp()).toBe(true);
+  ua("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15");
+  expect(inAndroidApp()).toBe(false); // desktop shell
 });

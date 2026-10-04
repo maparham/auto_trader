@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { pushSupported, isSubscribed, subscribePush, unsubscribePush } from "./pushClient";
@@ -20,6 +21,16 @@ describe("pushSupported", () => {
   it("true when both are present", () => {
     vi.stubGlobal("navigator", { serviceWorker: {} });
     vi.stubGlobal("PushManager", function PushManager() {});
+    expect(pushSupported()).toBe(true);
+  });
+
+  it("reports push unsupported inside the Android app even if the WebView exposes the APIs", () => {
+    const w = window as unknown as Record<string, unknown>;
+    vi.stubGlobal("PushManager", function PushManager() {});
+    vi.stubGlobal("navigator", { ...navigator, serviceWorker: {}, userAgent: "Mozilla/5.0 (Linux; Android 14)" });
+    w.__TAURI__ = { core: {} };
+    expect(pushSupported()).toBe(false);
+    delete w.__TAURI__;
     expect(pushSupported()).toBe(true);
   });
 });

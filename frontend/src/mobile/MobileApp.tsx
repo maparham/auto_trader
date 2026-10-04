@@ -15,6 +15,7 @@ import MobileSettingsSheet from "./MobileSettingsSheet";
 import { GearIcon } from "./viewModeIcons";
 import DemoCta from "../DemoCta";
 import { isDemoMode } from "../lib/demoMode";
+import { inAndroidApp } from "../lib/shellBridge";
 import { initMobileAccount, mobileTabSignal, type MobileTab } from "./mobileChartState";
 import { isWorkspaceKey, bumpMobileWorkspace } from "./mobileWorkspace";
 import { initViewMode, mobileViewMode, setChromeHidden } from "./mobileViewMode";
@@ -76,6 +77,7 @@ export default function MobileApp({ banner }: { banner?: ReactNode } = {}) {
   }, []);
 
   useEffect(() => {
+    if (inAndroidApp()) return; // no web push in the app; FCM is sub-project B
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/alert-sw.js").catch(() => {});
     }
