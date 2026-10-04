@@ -17,6 +17,8 @@ import { shouldShowSignIn } from './lib/demoBoot.ts'
 import { isDemoPreview } from './lib/demoPreview.ts'
 import { shouldBootMobile } from './lib/mobileBoot.ts'
 import { shouldBootAdmin } from './lib/adminBoot.ts'
+import AppAuthCallbackPage from './components/AppAuthCallbackPage.tsx'
+import { shouldBootAppAuthCallback } from './lib/appAuthCallbackBoot.ts'
 import { startShellStatusMirror } from './lib/shellStatus.ts'
 import { lazyChunk } from './components/lazyChunk.tsx'
 
@@ -80,13 +82,19 @@ const bootDemoPreview = isDemoPreview()
 // token), and the path wins over the mobile boot.
 const bootAdmin = shouldBootAdmin()
 
+// /app-auth/callback opened in a browser instead of the Android app: a static
+// notice, rendered outside the Clerk tree so Clerk never sees the ticket.
+const bootAppAuthCallback = shouldBootAppAuthCallback()
+
 // Colour the native shell's menu-bar glyph by live-engine status. No-op in a
 // plain browser.
 startShellStatusMirror()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {snapshotParams ? (
+    {bootAppAuthCallback ? (
+      <AppAuthCallbackPage />
+    ) : snapshotParams ? (
       <SnapshotApp />
     ) : CLERK_ENABLED && clerkKey ? (
       <ClerkProvider publishableKey={clerkKey} afterSignOutUrl="/" localization={CLERK_TEXT}>

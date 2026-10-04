@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.chartkar.android",
+      "sha256_cert_fingerprints": ["97:36:7A:3C:2B:3B:B7:D8:7E:BA:58:42:C1:43:41:8D:D5:0E:21:F3:28:F5:38:69:07:B3:A6:EC:EB:3B:51:D0"]
+    }
+  }
+]
