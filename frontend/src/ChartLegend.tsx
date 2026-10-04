@@ -445,8 +445,11 @@ export default function ChartLegend({
     <>
     <div
       className="chart-legend"
-      onMouseEnter={() => setBandHover(true)}
-      onMouseLeave={() => {
+      // Pointer events, not mouse ones, so a touch tap can be told apart: a tap
+      // fires the compatibility mouseenter and never a mouseleave, which left
+      // the crosshair hidden and the row's lines glowing after the finger lifted.
+      onPointerEnter={(e) => { if (e.pointerType !== "touch") setBandHover(true); }}
+      onPointerLeave={() => {
         setBandHover(false);
         setRowHover(null);
       }}
@@ -727,8 +730,8 @@ function IndicatorRow({
       className={`cl-row cl-ind${selected ? " cl-selected" : ""}${
         highlighted ? " cl-curve-hover" : ""
       }${row.visible ? "" : " cl-hidden"}`}
-      onMouseEnter={() => setRowHover(row.name)}
-      onMouseLeave={() => setRowHover(null)}
+      onPointerEnter={(e) => { if (e.pointerType !== "touch") setRowHover(row.name); }}
+      onPointerLeave={() => setRowHover(null)}
       onClick={() => onSelectRow(row.name)}
       onDoubleClick={() => onOpenSettings(row.name)}
     >

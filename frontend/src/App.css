@@ -3951,7 +3951,6 @@
 /* TradingView-style highlight: an opaque card with a border on hover/selection
    (gray = hover, blue = selected). Opaque bg so it reads as a solid card over the
    candles in any theme. No shadow (flat look). */
-.cl-ind:hover,
 .cl-ind.cl-curve-hover,
 .cl-ind.cl-selected {
   background: var(--surface);
@@ -3963,6 +3962,22 @@
 /* After the gray rule so a selected indicator keeps its blue border even while its
    curve (or row) is hovered. */
 .cl-ind.cl-selected { border-color: var(--accent); }
+/* Hover-driven reveal only where a pointer can hover: on a touch screen a tap
+   leaves :hover stuck on the row (taps on the chart canvas never move it), so
+   the card and icons stayed up after the selection cleared. Touch relies on
+   .cl-selected alone. */
+@media (hover: hover) {
+  .cl-ind:hover {
+    background: var(--surface);
+    border-color: var(--text-dim);
+    text-shadow: none;
+  }
+  .cl-ind.cl-selected:hover { border-color: var(--accent); }
+  .cl-ind:hover .cl-icons { opacity: 1; }
+  .cl-ind:hover .cl-icons.cl-icons-hidden-eye .cl-icon:not(:first-child) {
+    opacity: 1; pointer-events: auto;
+  }
+}
 
 /* Action icons (eye/gear/trash): hidden until the row is hovered/selected. A
    HIDDEN indicator always keeps just its unhide eye visible (cl-icons-hidden-eye),
@@ -3971,14 +3986,12 @@
   display: inline-flex; align-items: center; margin-left: 8px;
   opacity: 0; transition: opacity 0.08s;
 }
-.cl-ind:hover .cl-icons,
 .cl-ind.cl-curve-hover .cl-icons,
 .cl-ind.cl-selected .cl-icons { opacity: 1; }
 .cl-icons.cl-icons-hidden-eye { opacity: 1; }
 /* When idle (row not hovered/selected) a hidden indicator shows ONLY its first
    icon (the unhide eye); the gear/trash stay hidden until hover/selection. */
 .cl-icons.cl-icons-hidden-eye .cl-icon:not(:first-child) { opacity: 0; pointer-events: none; }
-.cl-ind:hover .cl-icons.cl-icons-hidden-eye .cl-icon:not(:first-child),
 .cl-ind.cl-curve-hover .cl-icons.cl-icons-hidden-eye .cl-icon:not(:first-child),
 .cl-ind.cl-selected .cl-icons.cl-icons-hidden-eye .cl-icon:not(:first-child) {
   opacity: 1; pointer-events: auto;

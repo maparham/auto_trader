@@ -34,12 +34,13 @@ function renderLegend(
   getChart: () => import("klinecharts").Chart | null = () => null,
   onRemove = vi.fn(),
   onCopyGroup = vi.fn(),
+  controller = new ChartController("cell-1", "scope-1"),
 ) {
   const noop = () => {};
   render(
     <ChartLegend
       getChart={getChart}
-      controller={new ChartController("cell-1", "scope-1")}
+      controller={controller}
       ctx={{
         symbol: "OIL_CRUDE",
         period: "1H",
@@ -249,5 +250,34 @@ describe("the group trash removes every member", () => {
     // about to have no rows at all.
     expect(onRemove).toHaveBeenCalledTimes(3);
     expect(document.querySelectorAll(".cl-group-rows .cl-ind")).toHaveLength(3);
+  });
+});
+
+describe("a touch tap leaves no hover behind", () => {
+  // A tap fires the compatibility mouseenter and never a mouseleave, so hover
+  // driven off mouse events stayed on after the finger lifted: the row's lines
+  // kept glowing and the crosshair stayed hidden.
+  it("a touch pointer sets neither the row hover nor the band hover", () => {
+    const controller = new ChartController("cell-1", "scope-1");
+    renderLegend([row("EMA", "EMA", "(20)")], vi.fn(), () => null, vi.fn(), vi.fn(), controller);
+    const ind = document.querySelector(".cl-ind")!;
+    fireEvent.pointerEnter(document.querySelector(".chart-legend")!, { pointerType: "touch" });
+    fireEvent.pointerEnter(ind, { pointerType: "touch" });
+    expect(controller.legendHoverName.value).toBeNull();
+    expect(controller.legendHovered.value).toBe(false);
+  });
+
+  it("a mouse pointer still drives both, and leaving clears them", () => {
+    const controller = new ChartController("cell-1", "scope-1");
+    renderLegend([row("EMA", "EMA", "(20)")], vi.fn(), () => null, vi.fn(), vi.fn(), controller);
+    const band = document.querySelector(".chart-legend")!;
+    const ind = document.querySelector(".cl-ind")!;
+    fireEvent.pointerEnter(band, { pointerType: "mouse" });
+    fireEvent.pointerEnter(ind, { pointerType: "mouse" });
+    expect(controller.legendHoverName.value).toBe("EMA");
+    expect(controller.legendHovered.value).toBe(true);
+    fireEvent.pointerLeave(band, { pointerType: "mouse" });
+    expect(controller.legendHoverName.value).toBeNull();
+    expect(controller.legendHovered.value).toBe(false);
   });
 });

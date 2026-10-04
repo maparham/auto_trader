@@ -5,9 +5,13 @@ body.m-mobile {
   overscroll-behavior-y: none;
 }
 
+/* The top inset keeps the top bar clear of the status bar where the page runs
+   edge to edge (the Android app's WebView); a browser tab reports 0. The tab
+   bar already pads for the bottom inset. */
 .m-app {
   position: fixed;
   inset: 0;
+  padding-top: env(safe-area-inset-top);
   display: flex;
   flex-direction: column;
   background: var(--bg);
