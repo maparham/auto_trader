@@ -301,3 +301,15 @@ with third-party cookies allowed). Kill the app and it comes back signed out.
 Options: Clerk's native mode (clerk-js `standardBrowser: false` with the
 client token kept in app storage, as Clerk's Expo SDK does), or loading
 `https://chartkar.app` itself in the WebView so Clerk is first party.
+
+### Decision (2026-10-04): load chartkar.app in the WebView
+
+Chosen over Clerk's native mode. `frontendDist` is now
+`https://chartkar.app`, so the page is first party to Clerk and the session
+lives in its normal cookies. Verified on the device: browser sign-in signs the
+app in, and the session survives a reinstall and a kill seconds after sign-in
+(`MainActivity` flushes cookies in `onPause`; the WebView otherwise writes
+them about every 30 s). The bundled-frontend build script is gone; web
+deploys reach the app directly. The `http://tauri.localhost` entries added to
+Clerk `allowed_origins` and the box's `CORS_ORIGINS` /
+`CLERK_AUTHORIZED_PARTIES` are no longer needed and can be removed.

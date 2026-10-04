@@ -1,6 +1,7 @@
 package app.chartkar.android
 
 import android.os.Bundle
+import android.webkit.CookieManager
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -14,6 +15,14 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+  }
+
+  // The WebView writes cookies to disk on its own schedule (about every 30 s),
+  // so swiping the app away right after sign-in lost Clerk's session cookie.
+  // Flush whenever the app leaves the foreground.
+  override fun onPause() {
+    super.onPause()
+    CookieManager.getInstance().flush()
   }
 
   override fun onWebViewCreate(webView: WebView) {

@@ -32,5 +32,5 @@ dist-ssr
 # Agent task-tracking scratch (never committed)
 .superpowers/
 
-# Android app bundle build (tauri-android/scripts/build-frontend.sh)
+# Old Android bundle build output (no longer produced)
 dist-android/

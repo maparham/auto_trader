@@ -1,9 +1,11 @@
 # Chartkar Android app
 
-Tauri 2 Android app. The UI is the regular `frontend/` production build,
-bundled into the APK; only data comes from the hosted backend
-(`https://api.chartkar.app`). Sign-in happens in the user's default browser
-and returns to the app through an Android App Link.
+Tauri 2 Android app. The WebView loads the hosted site itself
+(`https://chartkar.app`), so every web deploy reaches the app at once and
+Clerk runs first party: a bundled UI on `http://tauri.localhost` could sign
+in but lost the session on restart, because Clerk's `SameSite=Lax` client
+cookie is never stored cross-site. Sign-in happens in the user's default
+browser and returns to the app through an Android App Link.
 
 Design: `docs/superpowers/specs/2026-09-29-android-app-design.md`.
 
@@ -26,6 +28,12 @@ cargo tauri android dev          # debug build on an emulator or USB device
 cargo tauri android build --aab  # release bundle for Play
 ```
 
-Both run `scripts/build-frontend.sh` first, which builds `frontend/` into
-`frontend/dist-android` with the same API base and Clerk key the hosted
-build uses (`scripts/deploy-demo.sh`).
+No frontend build step: the app shows whatever is deployed to chartkar.app.
+To point a debug build at a local dev server instead (adb reverse the ports
+first), override the URL:
+
+```bash
+adb reverse tcp:5173 tcp:5173 && adb reverse tcp:8000 tcp:8000
+cargo tauri android build --debug --apk --target aarch64 \
+  --config '{"build":{"frontendDist":"http://localhost:5173"}}'
+```

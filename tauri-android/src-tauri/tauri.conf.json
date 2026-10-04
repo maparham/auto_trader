@@ -4,8 +4,7 @@
   "version": "0.1.0",
   "identifier": "app.chartkar.android",
   "build": {
-    "frontendDist": "../../frontend/dist-android",
-    "beforeBuildCommand": "../scripts/build-frontend.sh"
+    "frontendDist": "https://chartkar.app"
   },
   "app": {
     "withGlobalTauri": true,
