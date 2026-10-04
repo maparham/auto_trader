@@ -6,6 +6,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { API_BASE } from "../lib/http";
+import { appReturnIntentUrl } from "../lib/shellAuthBoot";
 import ShellAuthHandoff from "./ShellAuthHandoff";
 
 const replace = vi.fn();
@@ -26,7 +27,7 @@ it("mints a token and redirects it to the loopback listener", async () => {
     new Response(JSON.stringify({ token: "sit_abc" }), { status: 200 }),
   );
   vi.stubGlobal("fetch", fetchMock);
-  render(<ShellAuthHandoff params={{ port: 49213, state: "n0nce" }} />);
+  render(<ShellAuthHandoff params={{ kind: "loopback", port: 49213, state: "n0nce" }} />);
   await waitFor(() => expect(replace).toHaveBeenCalled());
   expect(fetchMock).toHaveBeenCalledWith(
     `${API_BASE}/api/auth/shell-token`,
@@ -41,7 +42,7 @@ it("shows the error and does not redirect when the mint fails", async () => {
   stubLocation();
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
   const { findByText } = render(
-    <ShellAuthHandoff params={{ port: 49213, state: "n0nce" }} />,
+    <ShellAuthHandoff params={{ kind: "loopback", port: 49213, state: "n0nce" }} />,
   );
   await findByText(/failed \(503\)/);
   expect(replace).not.toHaveBeenCalled();
@@ -56,9 +57,20 @@ it("mints exactly once across a StrictMode double-mount", async () => {
   const { StrictMode } = await import("react");
   render(
     <StrictMode>
-      <ShellAuthHandoff params={{ port: 49213, state: "n0nce" }} />
+      <ShellAuthHandoff params={{ kind: "loopback", port: 49213, state: "n0nce" }} />
     </StrictMode>,
   );
   await waitFor(() => expect(replace).toHaveBeenCalled());
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("app shape: mints, does not navigate, and shows a return link", async () => {
+  stubLocation();
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(JSON.stringify({ token: "sit_abc" }), { status: 200 }),
+  ));
+  const { findByRole } = render(<ShellAuthHandoff params={{ kind: "app", state: "s1" }} />);
+  const link = await findByRole("link", { name: "Return to Chartkar" });
+  expect(link.getAttribute("href")).toBe(appReturnIntentUrl("sit_abc", "s1"));
+  expect(replace).not.toHaveBeenCalled();
 });
