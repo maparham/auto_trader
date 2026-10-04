@@ -366,13 +366,14 @@ test("Undo restores the pre-merge tabs with content back under the old scope", a
     .toEqual({ tabCount: 2, restored: true, purged: true });
 });
 
-test("snackbar disappears on a structural tab change instead of offering a stale undo", async ({ page }) => {
+test("a structural tab change drops the stale merge undo instead of offering it", async ({ page }) => {
   await seedThreeTabs(page);
   await stubStateApi(page);
   await gotoHydrated(page);
 
   // Merge t3 (GOLD) into t1 via the checklist, then close t2 — a structural
-  // change unrelated to the merge. The undo snapshot is stale → snackbar gone.
+  // change unrelated to the merge. The merge's undo snapshot is stale, so its
+  // offer goes; the close brings its own Undo, which replaces it.
   await page.locator(".tab-bar .tab").first().click({ button: "right" });
   await page.locator(".ctxmenu .ctx-item", { hasText: "Merge into this tab" }).click();
   await page.locator(".merge-menu .merge-row", { hasText: "GOLD" }).click();
@@ -380,7 +381,8 @@ test("snackbar disappears on a structural tab change instead of offering a stale
   await expect(page.locator(".snackbar")).toBeVisible();
 
   await page.locator(".tab-bar .tab", { hasText: "OIL_CRUDE" }).locator(".tab-close").click();
-  await expect(page.locator(".snackbar")).toHaveCount(0);
+  await expect(page.locator(".snackbar")).toHaveCount(1);
+  await expect(page.locator(".snackbar-msg")).toHaveText(/^(Closed|Tab closed)/);
   await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
 });
 
