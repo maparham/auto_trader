@@ -33,6 +33,10 @@ _BASE_URL = "https://api.oanor.com/irr-api"
 _MAX_ROWS = 365  # upstream hard cap on /v1/history limit
 _MIN_REQUEST_INTERVAL = 0.6  # free tier allows 2 req/s; stay politely under
 _SYMBOLS_TTL = 3600.0  # catalogue changes rarely; cache /v1/symbols in-process
+# The free tier is 2000 calls/MONTH (~65/day), and the data only moves a few
+# times a day, so history and price are cached per symbol in-process.
+_HISTORY_TTL = 6 * 3600.0
+_PRICE_TTL = 3600.0
 _DAY = timedelta(days=1)
 
 
@@ -112,6 +116,10 @@ class OanorBroker(MarketDataBroker):
         self._last_request = 0.0
         self._symbols_cache: list[dict] | None = None
         self._symbols_cached_at = 0.0
+        # (path, symbol) -> (fetched_at, payload); in-flight fetches are shared
+        # so a burst of chart/watchlist requests costs one upstream call.
+        self._payload_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+        self._inflight: dict[tuple[str, str], asyncio.Task] = {}
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -126,8 +134,26 @@ class OanorBroker(MarketDataBroker):
             finally:
                 self._last_request = time.monotonic()
 
+    async def _get_cached(self, path: str, params: dict, ttl: float) -> dict:
+        """_get with a per-(path, symbol) TTL cache. Failures are not cached,
+        so they still reach the circuit breaker."""
+        key = (path, params["symbol"])
+        hit = self._payload_cache.get(key)
+        if hit is not None and time.monotonic() - hit[0] < ttl:
+            return hit[1]
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.ensure_future(self._get(path, params))
+            self._inflight[key] = task
+            task.add_done_callback(lambda _t: self._inflight.pop(key, None))
+        payload = await asyncio.shield(task)
+        self._payload_cache[key] = (time.monotonic(), payload)
+        return payload
+
     async def _fetch_daily(self, epic: str) -> list[Candle]:
-        payload = await self._get("/v1/history", {"symbol": epic, "limit": _MAX_ROWS})
+        payload = await self._get_cached(
+            "/v1/history", {"symbol": epic, "limit": _MAX_ROWS}, _HISTORY_TTL
+        )
         rows = (payload.get("data") or {}).get("history") or []
         return _rows_to_candles(rows)
 
@@ -170,7 +196,7 @@ class OanorBroker(MarketDataBroker):
         The latest price is the field oanor labels `open` — see the swap note
         on _rows_to_candles. Reading `close` here reported the day's OPENING
         rate as the live level."""
-        payload = await self._get("/v1/price", {"symbol": epic})
+        payload = await self._get_cached("/v1/price", {"symbol": epic}, _PRICE_TTL)
         close = (payload.get("data") or {}).get("open")
         if not close:
             return (None, None)

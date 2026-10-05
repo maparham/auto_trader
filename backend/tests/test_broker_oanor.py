@@ -230,3 +230,67 @@ def test_http_errors_propagate(monkeypatch, broker):
             "usd", Resolution.DAY,
             datetime(2026, 6, 1, tzinfo=timezone.utc),
             datetime(2026, 6, 2, tzinfo=timezone.utc)))
+
+
+def test_history_is_cached_across_resolutions_and_calls(monkeypatch, broker):
+    # The free tier is a monthly quota: chart loads, WEEK folds and recent-N
+    # tails of one symbol must share a single upstream fetch.
+    calls = _patch_api(monkeypatch, [_history_payload(
+        ["2026/06/09", "2026/06/08", "2026/06/07"])])
+    start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 30, tzinfo=timezone.utc)
+    asyncio.run(broker.get_candles("usd", Resolution.DAY, start, end))
+    asyncio.run(broker.get_candles("usd", Resolution.WEEK, start, end))
+    asyncio.run(broker.get_recent_candles("usd", Resolution.DAY, 2))
+    assert len(calls) == 1
+
+
+def test_history_cache_expires_after_ttl(monkeypatch, broker):
+    from auto_trader.brokers import oanor
+
+    calls = _patch_api(monkeypatch, [_history_payload(["2026/06/09"])] * 2)
+    clock = [1000.0]
+    monkeypatch.setattr(oanor.time, "monotonic", lambda: clock[0])
+    asyncio.run(broker.get_recent_candles("usd", Resolution.DAY, 1))
+    clock[0] += oanor._HISTORY_TTL + 1
+    asyncio.run(broker.get_recent_candles("usd", Resolution.DAY, 1))
+    assert len(calls) == 2
+
+
+def test_concurrent_history_requests_share_one_fetch(monkeypatch, broker):
+    calls = _patch_api(monkeypatch, [_history_payload(["2026/06/09"])])
+
+    async def burst():
+        return await asyncio.gather(*[
+            broker.get_recent_candles("usd", Resolution.DAY, 1) for _ in range(5)])
+
+    results = asyncio.run(burst())
+    assert len(calls) == 1 and all(len(r) == 1 for r in results)
+
+
+def test_quote_is_cached(monkeypatch, broker):
+    payload = {"status": "ok", "data": {"open": 1785100}}
+    calls = _patch_api(monkeypatch, [payload])
+    asyncio.run(broker.get_quote("usd"))
+    assert asyncio.run(broker.get_quote("usd")) == (1785100.0, 1785100.0)
+    assert len(calls) == 1
+
+
+def test_failed_fetch_is_not_cached(monkeypatch, broker):
+    from auto_trader.brokers import oanor
+
+    good = _history_payload(["2026/06/09"])
+    calls = []
+
+    async def flaky(client, path, params):
+        calls.append(path)
+        if len(calls) == 1:
+            raise httpx.HTTPStatusError(
+                "429", request=httpx.Request("GET", "https://x"),
+                response=httpx.Response(429))
+        return good
+
+    monkeypatch.setattr(oanor, "_api_get", flaky)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(broker.get_recent_candles("usd", Resolution.DAY, 1))
+    assert len(asyncio.run(broker.get_recent_candles("usd", Resolution.DAY, 1))) == 1
