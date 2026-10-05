@@ -37,3 +37,37 @@ adb reverse tcp:5173 tcp:5173 && adb reverse tcp:8000 tcp:8000
 cargo tauri android build --debug --apk --target aarch64 \
   --config '{"build":{"frontendDist":"http://localhost:5173"}}'
 ```
+
+## Release
+
+Upload key: `~/keys/chartkar-upload.jks` (alias `upload`), password in
+`~/keys/chartkar-upload.properties`. Both live outside the repo; back them up
+in a password manager. Gradle reads them through
+`src-tauri/gen/android/keystore.properties` (gitignored, same content); with
+no such file a release build is left unsigned.
+
+```bash
+cd tauri-android/src-tauri
+cargo tauri android build --aab   # all four ABIs, signed with the upload key
+# -> gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab
+```
+
+Bump `version` in `tauri.conf.json` for every upload (Tauri derives
+`versionCode` from it).
+
+`frontend/public/.well-known/assetlinks.json` lists the debug and upload key
+fingerprints. After enrolling in Play App Signing, add the app-signing key's
+SHA-256 from Play Console > Setup > App signing, or the App Link will not
+verify for Play installs.
+
+### Play gates
+
+| Gate | Status |
+| --- | --- |
+| Developer account | not started |
+| Internal testing upload | not started |
+| Closed test, 12 testers for 14 days (new personal accounts) | not started |
+| Account deletion reachable in the app | to check: Clerk "Allow users to delete their accounts" |
+| Data safety form (email, alert and trading settings, broker connections) | not started |
+| Privacy policy URL `https://chartkar.app/privacy/` | exists |
+
