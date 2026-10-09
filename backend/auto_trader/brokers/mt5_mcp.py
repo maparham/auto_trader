@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -64,6 +65,9 @@ from auto_trader.core.models import (
     Side,
     WorkingOrder,
 )
+
+# MT5 server dates: "2026.09.22 20:00:00".
+_MT5_DATE = re.compile(r"^(\d{4})\.(\d{2})\.(\d{2})")
 
 if TYPE_CHECKING:
     from auto_trader.brokers.registry import BrokerRegistry
@@ -315,7 +319,9 @@ class MT5MCPBroker(MarketDataBroker):
 
     def _to_utc(self, s: str) -> datetime:
         """Server-time "2026.09.22 20:00:00" (or ISO) -> aware UTC."""
-        s = str(s).replace(".", "-", 2).replace("T", " ").rstrip("Z")
+        # Only the date's dots: an ISO answer with ".mmm" has no date dots, and a
+        # blind replace(".", "-", 2) turned its millisecond dot into a dash.
+        s = _MT5_DATE.sub(r"\1-\2-\3", str(s)).replace("T", " ").rstrip("Z")
         return datetime.fromisoformat(s).replace(tzinfo=timezone.utc) - self._offset
 
     def _to_server(self, dt: datetime, *, ms: bool = False) -> str:

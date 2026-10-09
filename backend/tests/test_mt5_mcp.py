@@ -188,6 +188,15 @@ def test_server_time_offset_converts_both_ways():
     assert b._to_server(datetime(2026, 9, 22, 20, 0, tzinfo=timezone.utc)) == "2026-09-22T23:00:00"
 
 
+def test_to_utc_keeps_the_millisecond_dot_on_iso_input():
+    # The terminal's tick history answers ISO dates with a ".mmm" suffix; only
+    # the date's dots may become dashes, or "13:57:04.172" turns into "-172".
+    b = _broker({}, offset=180)
+    want = datetime(2026, 10, 9, 10, 57, 4, 172000, tzinfo=timezone.utc)
+    assert b._to_utc("2026-10-09 13:57:04.172") == want
+    assert b._to_utc("2026.10.09 13:57:04.172") == want
+
+
 def test_week_buckets_open_on_sunday_server_time():
     b = _broker({})
     wed = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
