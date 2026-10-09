@@ -1,0 +1,30 @@
+# Headless Chromium for Telegram alert chart snapshots, in its OWN cgroup.
+#
+# The API (auto-trader-demo) attaches to it over CDP via SNAPSHOT_CDP_URL
+# instead of launching Chromium as a child. A child counted toward the API's
+# MemoryHigh, and on 2026-10-09 one render pushed that cgroup into reclaim and
+# froze every chart request for five minutes. Here a heavy render hits this
+# unit's own cap: no swap, so it is OOM-killed at once rather than thrashing,
+# systemd restarts it, and that snapshot falls back to matplotlib.
+#
+# Installed by scripts/deploy-demo.sh. "$$" is systemd's escape for a literal "$".
+[Unit]
+Description=Chartkar snapshot browser (headless Chromium, CDP on 127.0.0.1:9223)
+After=network.target
+
+[Service]
+User=ec2-user
+# The newest headless shell Playwright installed, so a playwright upgrade on
+# the box needs no unit edit.
+ExecStart=/bin/sh -c 'exec "$$(ls -d /home/ec2-user/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | sort -V | tail -1)" \
+  --remote-debugging-address=127.0.0.1 --remote-debugging-port=9223 \
+  --user-data-dir=/tmp/chartkar-snapshot-browser \
+  --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --mute-audio'
+Restart=always
+RestartSec=3
+MemoryHigh=300M
+MemoryMax=380M
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

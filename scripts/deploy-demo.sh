@@ -183,6 +183,29 @@ if [ "$DO_BACKEND" = 1 ]; then
   else
     log_tail="echo 'backend failed to come up; last log lines:' >&2; sudo journalctl -u auto-trader-demo -n 20 --no-pager >&2"
   fi
+  # Chromium for alert snapshots runs in its own unit (own memory cgroup), and
+  # the API attaches over CDP; see the unit file for why. Install or update the
+  # unit, and point the API at it, before the API restart below.
+  echo "==> backend: snapshot browser unit"
+  "${SSH[@]}" "$HOST" 'cat > /tmp/chartkar-snapshot-browser.service' \
+    < "$WT/deploy/demo/chartkar-snapshot-browser.service"
+  "${SSH[@]}" "$HOST" '
+    set -e
+    unit=/etc/systemd/system/chartkar-snapshot-browser.service
+    if ! sudo cmp -s /tmp/chartkar-snapshot-browser.service "$unit"; then
+      sudo cp /tmp/chartkar-snapshot-browser.service "$unit"
+      sudo systemctl daemon-reload
+      sudo systemctl enable chartkar-snapshot-browser >/dev/null 2>&1
+      sudo systemctl restart chartkar-snapshot-browser
+    else
+      sudo systemctl enable --now chartkar-snapshot-browser >/dev/null 2>&1
+    fi
+    rm -f /tmp/chartkar-snapshot-browser.service
+    if ! sudo grep -q "^SNAPSHOT_CDP_URL=" /etc/auto-trader/demo.env; then
+      echo "SNAPSHOT_CDP_URL=http://127.0.0.1:9223" | sudo tee -a /etc/auto-trader/demo.env >/dev/null
+    fi
+  '
+
   echo "==> backend: pip install (agent-ui-bridge@${bridge_rev:0:7}) + restart auto-trader-demo"
   "${SSH[@]}" "$HOST" "
     set -e

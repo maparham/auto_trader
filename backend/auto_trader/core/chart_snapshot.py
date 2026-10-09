@@ -10,6 +10,14 @@ and then text; nothing here may raise out of render_live_chart.
 Playwright is OPTIONAL exactly like matplotlib: imported lazily, feature off
 when missing. One browser per process, lazily launched, relaunched on death;
 renders are capped at _MAX_CONCURRENT with queueing inside the caller's budget.
+
+SNAPSHOT_CDP_URL (e.g. http://127.0.0.1:9223) attaches to a Chromium that some
+other supervisor runs (deploy/demo/chartkar-snapshot-browser.service) instead
+of launching one as a child. On the hosted box that keeps Chromium out of the
+API's memory cgroup: a child counted toward the API's MemoryHigh, and one heavy
+render froze the whole API in reclaim for five minutes. There is no fallback to
+an in-process launch when the attach fails, since that would bring the freeze
+back; the render just returns None.
 """
 
 from __future__ import annotations
@@ -108,10 +116,7 @@ async def _drive_browser(url: str, width: int, height: int, timeout_s: float) ->
         if _browser is None or not _browser.is_connected():
             if _pw is None:
                 _pw = await async_playwright().start()
-            # --no-sandbox: the renderer only ever loads our own frontend
-            # (never third-party/untrusted content), and containers run as
-            # root, where Chrome's sandbox refuses to start at all.
-            _browser = await _pw.chromium.launch(headless=True, args=["--no-sandbox"])
+            _browser = await _open_browser(_pw)
     context = await _browser.new_context(
         viewport={"width": width, "height": height},
         device_scale_factor=_DEVICE_SCALE,
@@ -132,3 +137,13 @@ async def _drive_browser(url: str, width: int, height: int, timeout_s: float) ->
         return await el.screenshot(type="png")
     finally:
         await context.close()
+
+
+async def _open_browser(pw):
+    cdp = os.environ.get("SNAPSHOT_CDP_URL", "").strip()
+    if cdp:
+        return await pw.chromium.connect_over_cdp(cdp, timeout=5_000)
+    # --no-sandbox: the renderer only ever loads our own frontend
+    # (never third-party/untrusted content), and containers run as
+    # root, where Chrome's sandbox refuses to start at all.
+    return await pw.chromium.launch(headless=True, args=["--no-sandbox"])

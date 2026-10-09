@@ -67,3 +67,36 @@ async def test_drive_failure_returns_none(monkeypatch):
 
     monkeypatch.setattr(cs, "_drive_browser", boom)
     assert await cs.render_live_chart("u1", PAYLOAD) is None
+
+
+class _FakeChromium:
+    def __init__(self):
+        self.calls = []
+
+    async def connect_over_cdp(self, url, timeout=None):
+        self.calls.append(("cdp", url))
+        return "attached"
+
+    async def launch(self, headless=True, args=None):
+        self.calls.append(("launch", args))
+        return "launched"
+
+
+class _FakePw:
+    def __init__(self):
+        self.chromium = _FakeChromium()
+
+
+async def test_cdp_url_attaches_instead_of_launching(monkeypatch):
+    monkeypatch.setenv("SNAPSHOT_CDP_URL", "http://127.0.0.1:9223")
+    pw = _FakePw()
+    assert await cs._open_browser(pw) == "attached"
+    assert pw.chromium.calls == [("cdp", "http://127.0.0.1:9223")]
+
+
+async def test_no_cdp_url_launches_a_child(monkeypatch):
+    monkeypatch.delenv("SNAPSHOT_CDP_URL", raising=False)
+    pw = _FakePw()
+    assert await cs._open_browser(pw) == "launched"
+    assert pw.chromium.calls == [("launch", ["--no-sandbox"])]
+

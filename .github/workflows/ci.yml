@@ -145,7 +145,7 @@ jobs:
           deployed=$(ssh -o BatchMode=yes ec2-user@3.139.146.5 'cat /opt/auto-trader/.deployed-backend-sha' 2>/dev/null || true)
           if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] \
              && [ -n "$deployed" ] && git cat-file -e "$deployed^{commit}" 2>/dev/null \
-             && git diff --quiet "$deployed" HEAD -- backend scripts/deploy-demo.sh; then
+             && git diff --quiet "$deployed" HEAD -- backend scripts/deploy-demo.sh deploy/demo; then
             echo "backend unchanged since ${deployed:0:7}, skipping it"
             echo "flag=--frontend-only" >> "$GITHUB_OUTPUT"
           else
