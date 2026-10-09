@@ -40,6 +40,14 @@ _PRICE_TTL = 3600.0
 _DAY = timedelta(days=1)
 
 
+class OanorQuotaExhausted(RuntimeError):
+    """The monthly call quota is spent. Raised without contacting upstream
+    until the quota resets, so pollers stop burning requests on 429s.
+    `broker_paused` routes it down the alert engine's quiet, slow-retry path."""
+
+    broker_paused = True
+
+
 def _parse_date(s: str) -> datetime:
     """oanor Gregorian date "2026/06/10" → UTC-midnight datetime (bar open)."""
     return datetime.strptime(s, "%Y/%m/%d").replace(tzinfo=timezone.utc)
@@ -120,17 +128,43 @@ class OanorBroker(MarketDataBroker):
         # so a burst of chart/watchlist requests costs one upstream call.
         self._payload_cache: dict[tuple[str, str], tuple[float, dict]] = {}
         self._inflight: dict[tuple[str, str], asyncio.Task] = {}
+        # Epoch seconds until which the monthly quota is known to be spent.
+        self._quota_blocked_until = 0.0
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    def _check_quota(self) -> None:
+        if time.time() < self._quota_blocked_until:
+            reset = datetime.fromtimestamp(self._quota_blocked_until, timezone.utc)
+            raise OanorQuotaExhausted(f"oanor monthly quota spent until {reset:%Y-%m-%d %H:%M} UTC")
+
+    def _note_quota(self, exc: httpx.HTTPStatusError) -> None:
+        """A 429 that reports zero quota left blocks every call until the
+        advertised reset. A plain rate-limit 429 keeps the normal retry path."""
+        headers = exc.response.headers
+        if exc.response.status_code != 429 or headers.get("x-quota-remaining") != "0":
+            return
+        try:
+            reset = float(headers["x-quota-reset"])
+        except (KeyError, ValueError):
+            reset = time.time() + 3600.0  # no reset given: check back hourly
+        self._quota_blocked_until = reset
+
     async def _get(self, path: str, params: dict) -> dict:
+        self._check_quota()
         async with self._throttle:
+            self._check_quota()
             wait = self._last_request + _MIN_REQUEST_INTERVAL - time.monotonic()
             if wait > 0:
                 await asyncio.sleep(wait)
             try:
                 return await _api_get(self._client, path, params)
+            except httpx.HTTPStatusError as e:
+                self._note_quota(e)
+                if self._quota_blocked_until:
+                    self._check_quota()
+                raise
             finally:
                 self._last_request = time.monotonic()
 

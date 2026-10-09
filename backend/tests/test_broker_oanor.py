@@ -294,3 +294,49 @@ def test_failed_fetch_is_not_cached(monkeypatch, broker):
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(broker.get_recent_candles("usd", Resolution.DAY, 1))
     assert len(asyncio.run(broker.get_recent_candles("usd", Resolution.DAY, 1))) == 1
+
+
+def _quota_429():
+    return httpx.HTTPStatusError(
+        "429", request=httpx.Request("GET", "https://x"),
+        response=httpx.Response(429, headers={
+            "x-quota-remaining": "0", "x-quota-reset": "1793491200",
+            "x-ratelimit-scope": "monthly"}))
+
+
+def test_spent_monthly_quota_blocks_calls_until_reset(monkeypatch, broker):
+    # Prod: every alert poll re-hit upstream for another 429 once the 2000
+    # calls/month were gone. After the first quota 429 nothing goes out.
+    from auto_trader.brokers import oanor
+
+    calls = []
+
+    async def spent(client, path, params):
+        calls.append(path)
+        raise _quota_429()
+
+    monkeypatch.setattr(oanor, "_api_get", spent)
+    monkeypatch.setattr(oanor.time, "time", lambda: 1793491200 - 60)
+    for _ in range(3):
+        with pytest.raises(oanor.OanorQuotaExhausted):
+            asyncio.run(broker.get_quote("eur"))
+    assert len(calls) == 1
+
+    monkeypatch.setattr(oanor.time, "time", lambda: 1793491200 + 1)
+    with pytest.raises(httpx.HTTPStatusError):  # stale reset header: plain error
+        asyncio.run(broker.get_quote("eur"))
+    assert len(calls) == 2  # past the reset it asks upstream again
+
+
+def test_quota_error_takes_the_alert_engines_quiet_path():
+    from auto_trader.brokers.oanor import OanorQuotaExhausted
+    from auto_trader.core.alert_engine import _is_broker_paused
+
+    try:
+        try:
+            raise OanorQuotaExhausted("spent")
+        except OanorQuotaExhausted as inner:
+            raise RuntimeError("wrapped") from inner
+    except RuntimeError as e:
+        assert _is_broker_paused(e)
+    assert not _is_broker_paused(RuntimeError("other"))
