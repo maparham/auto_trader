@@ -408,3 +408,143 @@ def _multipart_field(request: httpx.Request, name: str) -> str:
     start = body.find(b"\r\n\r\n", idx) + 4
     end = body.find(b"\r\n--", start)
     return body[start:end].decode()
+
+
+# ---- _headline helper -------------------------------------------------------
+
+
+def test_headline_price_and_indicator_forms():
+    from auto_trader.core.telegram_notify import _headline
+
+    base = {"epic": "US100", "condition": "crossing_up", "level": 21400.0, "price": 21430.0}
+    assert _headline(base, 1) == "US100 crossed up 21400.0"
+    ind = {**base, "label": "EMA 50 (1H)", "target": "price"}
+    assert _headline(ind, 1) == "US100 crossed up EMA 50 (1H) 21400.0"
+    val = {**base, "label": "RSI 14 (1H)", "target": "value", "condition": "greater", "level": 70.0}
+    assert _headline(val, 1) == "US100 RSI 14 (1H) above 70"
+    # ATR sub-1 value: 6 sig figs without trailing zeros
+    atr = {**base, "label": "ATR 14 (1H)", "target": "value", "condition": "greater", "level": 0.0015}
+    assert _headline(atr, 1) == "US100 ATR 14 (1H) above 0.0015"
+    # Extreme values: very small (1m FX ATR) and very large (JPY-priced MA)
+    atr_tiny = {**base, "label": "ATR 14 (1m)", "target": "value", "condition": "greater", "level": 0.00005}
+    assert _headline(atr_tiny, 1) == "US100 ATR 14 (1m) above 0.00005"
+    ma_jpy = {**base, "label": "MA 20 (1H)", "target": "value", "condition": "crossing_up", "level": 1234570.0}
+    assert _headline(ma_jpy, 1) == "US100 MA 20 (1H) crossed up 1234570"
+
+
+@pytest.mark.anyio
+async def test_snapshot_title_format_for_price_alerts(monkeypatch, store):
+    """Price alert snapshots use the original format: EPIC · TF · CONDITION LEVEL @ PRICE · TIME"""
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+    title_captured = {}
+
+    def fake_render(candles, level, price, precision, title):
+        title_captured["title"] = title
+        return b"\x89PNG"
+
+    monkeypatch.setattr("asyncio.to_thread", lambda fn, *args: fake_render(*args))
+    await TELEGRAM._render_snapshot("u1", _payload(kind="price_level"))
+    assert "US100 · 15m · crossed up 100.00 @ 100.50" in title_captured["title"]
+    assert "UTC" in title_captured["title"]
+
+
+@pytest.mark.anyio
+async def test_snapshot_title_format_for_indicator_price_target(monkeypatch, store):
+    """Indicator price-target snapshots: EPIC · TF · LABEL @ PRICE · TIME (no condition/level shown)"""
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+    title_captured = {}
+
+    def fake_render(candles, level, price, precision, title):
+        title_captured["title"] = title
+        return b"\x89PNG"
+
+    monkeypatch.setattr("asyncio.to_thread", lambda fn, *args: fake_render(*args))
+    payload = _payload(
+        kind="indicator", label="EMA 50 (1H)", target="price",
+        condition="crossing_up", level=100.0
+    )
+    await TELEGRAM._render_snapshot("u1", payload)
+    assert "US100 · 15m · EMA 50 (1H) @ 100.50" in title_captured["title"]
+    assert "UTC" in title_captured["title"]
+
+
+@pytest.mark.anyio
+async def test_snapshot_title_format_for_indicator_value_target(monkeypatch, store):
+    """Indicator value-target snapshots: EPIC · TF · LABEL CONDITION LEVEL @ PRICE · TIME"""
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+    title_captured = {}
+
+    def fake_render(candles, level, price, precision, title):
+        title_captured["title"] = title
+        return b"\x89PNG"
+
+    monkeypatch.setattr("asyncio.to_thread", lambda fn, *args: fake_render(*args))
+    payload = _payload(
+        kind="indicator", label="RSI 14 (1H)", target="value",
+        condition="greater", level=70.0, subject=70.5
+    )
+    await TELEGRAM._render_snapshot("u1", payload)
+    assert "US100 · 15m · RSI 14 (1H) above 70 @ 100.50" in title_captured["title"]
+    assert "UTC" in title_captured["title"]
+
+
+@pytest.mark.anyio
+async def test_snapshot_title_format_for_atr_sub1(monkeypatch, store):
+    """ATR sub-1 values format with 6 sig figs without trailing zeros"""
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+    title_captured = {}
+
+    def fake_render(candles, level, price, precision, title):
+        title_captured["title"] = title
+        return b"\x89PNG"
+
+    monkeypatch.setattr("asyncio.to_thread", lambda fn, *args: fake_render(*args))
+    payload = _payload(
+        kind="indicator", label="ATR 14 (1H)", target="value",
+        condition="greater", level=0.0015, subject=0.0015, price=1.1234
+    )
+    await TELEGRAM._render_snapshot("u1", payload)
+    assert "US100 · 15m · ATR 14 (1H) above 0.0015 @ 1.12" in title_captured["title"]
+    assert "UTC" in title_captured["title"]
+
+
+@pytest.mark.anyio
+async def test_price_alert_caption_format(store):
+    """Price alert captions show: 🔔 EPIC CONDITION LEVEL · now PRICE"""
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+    caption = await TELEGRAM._build_caption(_payload(kind="price_level"))
+    assert "🔔 US100 crossed up 100.00 · now 100.50" in caption
+    assert "🕒" in caption
+
+
+@pytest.mark.anyio
+async def test_value_target_caption_shows_subject(store):
+    """Value-target alert captions show subject (indicator value) not price"""
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+    payload = _payload(
+        kind="indicator", label="RSI 14 (1H)", target="value",
+        condition="greater", level=70.0, subject=70.5
+    )
+    caption = await TELEGRAM._build_caption(payload)
+    assert "🔔 US100 RSI 14 (1H) above 70 · now 70.5" in caption
+    assert "🕒" in caption
+
+
+@pytest.mark.anyio
+async def test_atr_sub1_caption_format(store):
+    """ATR sub-1 value captions format with 6 sig figs"""
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+    payload = _payload(
+        kind="indicator", label="ATR 14 (1H)", target="value",
+        condition="greater", level=0.0015, subject=0.0015
+    )
+    caption = await TELEGRAM._build_caption(payload)
+    assert "🔔 US100 ATR 14 (1H) above 0.0015 · now 0.0015" in caption
+    assert "🕒" in caption

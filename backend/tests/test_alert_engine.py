@@ -10,9 +10,15 @@ module is the glue: registry, per-tick baseline advance, and the firing pipeline
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+
+import pytest
 
 from auto_trader.core.alert_engine import AlertEngine
 from auto_trader.core.alert_store import AlertStore
+from auto_trader.core.models import Candle
+
+H = 3_600_000
 
 
 def make_engine(tmp_path):
@@ -98,22 +104,48 @@ def test_editing_level_resets_baseline(tmp_path):
     asyncio.run(main())
 
 
-def test_disarm_rearm_refire_for_every(tmp_path):
-    # margin = |level| * 5e-4 = 100 * 5e-4 = 0.05
+def test_every_fires_once_per_bar_and_restart_does_not_refire(tmp_path):
+    M = 60_000
+    t0 = 1_700_000_000_000 - (1_700_000_000_000 % M)
+
     async def main():
         eng, store, sent, notified = make_engine(tmp_path)
         created = await store.create("u1", row(level=100.0, trigger="every"))
         eng.on_alert_changed("u1", created, "al-1")
-        await eng.on_tick("capital", "US100", 99.0, None, None)
-        await eng.on_tick("capital", "US100", 101.0, None, None)   # crosses -> fires, disarms
-        await eng.on_tick("capital", "US100", 100.02, None, None)  # inside margin -> stays disarmed
-        fired = [m for _, m in sent if m["key"] == "__alerts__:fired"]
-        assert len(fired) == 1  # no refire yet — hasn't cleared the margin
-        await eng.on_tick("capital", "US100", 101.0, None, None)   # clears margin above -> re-arms
-        assert len([m for _, m in sent if m["key"] == "__alerts__:fired"]) == 1  # re-arm alone doesn't fire
-        await eng.on_tick("capital", "US100", 99.0, None, None)    # crosses down while armed -> fires
-        fired = [m for _, m in sent if m["key"] == "__alerts__:fired"]
-        assert len(fired) == 2
+        fired = lambda: [m for _, m in sent if m["key"] == "__alerts__:fired"]  # noqa: E731
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=t0 + 1)
+        await eng.on_tick("capital", "US100", 101.0, None, None, t_ms=t0 + 2)   # fires
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=t0 + 3)    # same bar: blocked
+        await eng.on_tick("capital", "US100", 101.0, None, None, t_ms=t0 + 4)   # same bar: blocked
+        assert len(fired()) == 1
+        # Restart inside the same minute: state rebuilt from triggered history.
+        eng2, _, sent2, _ = make_engine(tmp_path)
+        await eng2.start()
+        try:
+            await eng2.on_tick("capital", "US100", 99.0, None, None, t_ms=t0 + 5)
+            await eng2.on_tick("capital", "US100", 101.0, None, None, t_ms=t0 + 6)
+            assert [m for _, m in sent2 if m["key"] == "__alerts__:fired"] == []
+            await eng2.on_tick("capital", "US100", 99.0, None, None, t_ms=t0 + M + 1)  # next bar
+            assert len([m for _, m in sent2 if m["key"] == "__alerts__:fired"]) == 1
+        finally:
+            await eng2.stop()
+    asyncio.run(main())
+
+
+def test_greater_fires_once_per_bar_while_true_at_engine_level(tmp_path):
+    M = 60_000
+    t0 = 1_700_000_000_000 - (1_700_000_000_000 % M)
+
+    async def main():
+        eng, store, sent, notified = make_engine(tmp_path)
+        created = await store.create("u1", row(level=100.0, condition="greater", trigger="every"))
+        eng.on_alert_changed("u1", created, "al-1")
+        fired = lambda: [m for _, m in sent if m["key"] == "__alerts__:fired"]  # noqa: E731
+        await eng.on_tick("capital", "US100", 101.0, None, None, t_ms=t0 + 1)       # fires
+        await eng.on_tick("capital", "US100", 102.0, None, None, t_ms=t0 + 2)       # still > 100, same bar: blocked
+        assert len(fired()) == 1
+        await eng.on_tick("capital", "US100", 103.0, None, None, t_ms=t0 + M + 1)   # next bar: fires again
+        assert len(fired()) == 2
     asyncio.run(main())
 
 
@@ -371,4 +403,285 @@ def test_price_side_change_mid_session_clears_user_baselines(tmp_path, monkeypat
         await eng.on_tick("capital", "US100", 105.0, 99.0, 107.0)  # crosses down on bid, genuine 2nd sample
         fired = [m for _, m in sent if m["key"] == "__alerts__:fired"]
         assert len(fired) == 1
+    asyncio.run(main())
+
+
+def ind_row(id="al-i", **params):
+    p = {"indicator": "MA", "calcParams": [3], "config": {"maType": "sma", "source": "close"},
+         "line": "value", "timeframe": "HOUR", "target": "price", "value": None,
+         "condition": "crossing_up", "trigger": "every", "evalOn": "close",
+         "link": {"scope": "s", "instanceId": "MA"}}
+    p.update(params)
+    return {**row(id=id), "kind": "indicator", "params": p}
+
+
+def hourly(closes, start_h):
+    return [Candle(datetime.fromtimestamp((start_h + i) * H / 1000, tz=timezone.utc), x, x, x, x, 1.0)
+            for i, x in enumerate(closes)]
+
+
+def make_ind_engine(tmp_path, bars_ref):
+    eng, store, sent, notified = make_engine(tmp_path)
+
+    async def loader(broker, epic, res, side, count):
+        return list(bars_ref[0])[-count:], False
+
+    eng.configure(store=store, get_broker=lambda b: None,
+                  broadcast=eng._broadcast, notifiers=eng._notifiers, load_bars=loader)
+    return eng, store, sent
+
+
+def test_close_mode_fires_on_closed_bar_cross(tmp_path):
+    async def main():
+        bars = [hourly([10, 10, 10, 9], 6)]          # SMA3 at 9h close = 9.67, close 9 below
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", ind_row())
+        eng.on_alert_changed("u1", created, "al-i")
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=10 * H + 5)   # seed
+        await asyncio.sleep(0)  # let the backgrounded first seed (F17) run
+        bars[0] = hourly([10, 10, 10, 9, 12], 6)    # 10h bar closes at 12 > SMA3 (10.33)
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=11 * H + 5)
+        fired = [m["value"] for _, m in sent if m["key"] == "__alerts__:fired"]
+        assert len(fired) == 1
+        assert fired[0]["label"] == "SMA 3 (1H)" and fired[0]["target"] == "price"
+        assert fired[0]["level"] == pytest.approx((10 + 9 + 12) / 3)
+        assert fired[0]["price"] == 12.0
+    asyncio.run(main())
+
+
+def test_fire_writes_the_resolved_level_into_triggered_history(tmp_path):
+    # Only the broadcast payload was ever asserted before; `triggered.level`
+    # (what GET /api/alerts/triggered and the Telegram caption read back) is
+    # a SEPARATE write in `_fire` and must carry the same resolved level.
+    async def main():
+        bars = [hourly([10, 10, 10, 9], 6)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", ind_row())
+        eng.on_alert_changed("u1", created, "al-i")
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=10 * H + 5)
+        await asyncio.sleep(0)
+        bars[0] = hourly([10, 10, 10, 9, 12], 6)
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=11 * H + 5)
+        rows = await store.list_triggered("u1")
+        assert rows[0]["level"] == pytest.approx((10 + 9 + 12) / 3)
+    asyncio.run(main())
+
+
+def test_indicator_alert_does_not_fire_during_warmup(tmp_path):
+    # Not just the status: a close that would obviously "cross" any
+    # reasonable level must still not fire while the series is below its
+    # indicator's warm-up (hub.values() returns None -> kind.resolve() is
+    # never even called).
+    async def main():
+        bars = [hourly([10], 9)]  # 1 bar; SMA3 needs 3 and is never ready here
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", ind_row(condition="crossing_up"))
+        eng.on_alert_changed("u1", created, "al-i")
+        await eng.on_tick("capital", "US100", 5.0, None, None, t_ms=10 * H + 5)
+        await asyncio.sleep(0)
+        bars[0] = hourly([10, 50], 9)  # 50 would cross almost anything
+        await eng.on_tick("capital", "US100", 50.0, None, None, t_ms=11 * H + 5)
+        assert [m for _, m in sent if m["key"] == "__alerts__:fired"] == []
+        assert eng.status("u1", "al-i") == "waiting_for_data"
+    asyncio.run(main())
+
+
+def test_bid_side_user_resyncs_hub_needs_on_first_resolution(tmp_path, monkeypatch):
+    # F2 regression: a user's FIRST price-side resolution (cache miss -> a
+    # non-mid side) is not a "flip" (there is no previous cached side), but
+    # the hub's needs were registered under "mid" (on_alert_changed's own
+    # price_side_for call landed on the cache-miss default) and must still be
+    # resynced to the bid SeriesKey, or this user's indicator alerts never
+    # see a `closed` series and never fire.
+    async def main():
+        import json as _json
+
+        import auto_trader.core.alert_engine as alert_engine_mod
+        from auto_trader.core.state_store import StateStore
+
+        state_store = StateStore(str(tmp_path / "state.db"))
+        monkeypatch.setattr(alert_engine_mod, "STATE_STORE", state_store)
+        await state_store.set("u1", "auto-trader.settings", _json.dumps({"priceSide": "bid"}))
+
+        bars = [hourly([10, 10, 10, 9], 6)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", ind_row())
+        eng.on_alert_changed("u1", created, "al-i")
+
+        await eng.on_tick("capital", "US100", 12.0, 11.9, 12.1, t_ms=10 * H + 5)
+        await asyncio.sleep(0)  # let the backgrounded first seed (F17) run
+        bars[0] = hourly([10, 10, 10, 9, 12], 6)
+        await eng.on_tick("capital", "US100", 12.0, 11.9, 12.1, t_ms=11 * H + 5)
+        assert len([m for _, m in sent if m["key"] == "__alerts__:fired"]) == 1
+    asyncio.run(main())
+
+
+def test_close_mode_ignores_ticks_between_closes(tmp_path):
+    async def main():
+        bars = [hourly([10, 10, 10, 9], 6)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", ind_row())
+        eng.on_alert_changed("u1", created, "al-i")
+        for i, px in enumerate([8.0, 20.0, 8.0, 20.0]):   # wild intrabar ticks, same bar
+            await eng.on_tick("capital", "US100", px, None, None, t_ms=10 * H + 5 + i)
+        assert [m for _, m in sent if m["key"] == "__alerts__:fired"] == []
+    asyncio.run(main())
+
+
+def test_indicator_status_waiting_until_warm(tmp_path):
+    async def main():
+        bars = [hourly([10], 9)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", ind_row())
+        eng.on_alert_changed("u1", created, "al-i")
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=10 * H + 5)
+        assert eng.status("u1", "al-i") == "waiting_for_data"
+        assert eng.status("u1", "al-1") is None
+    asyncio.run(main())
+
+
+def test_toggle_off_on_within_a_bar_does_not_refire(tmp_path):
+    M = 60_000
+    t0 = 1_700_000_000_000 - (1_700_000_000_000 % M)
+
+    async def main():
+        eng, store, sent, notified = make_engine(tmp_path)
+        created = await store.create("u1", row(level=100.0, trigger="every"))
+        eng.on_alert_changed("u1", created, "al-1")
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=t0 + 1)
+        await eng.on_tick("capital", "US100", 101.0, None, None, t_ms=t0 + 2)   # fires
+        eng.on_alert_changed("u1", dict(created, active=0), "al-1")
+        eng.on_alert_changed("u1", dict(created, active=1), "al-1")
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=t0 + 3)
+        await eng.on_tick("capital", "US100", 101.0, None, None, t_ms=t0 + 4)   # same bar: blocked
+        assert len([m for _, m in sent if m["key"] == "__alerts__:fired"]) == 1
+    asyncio.run(main())
+
+
+def test_once_indicator_fire_drops_its_series_from_hub_needs(tmp_path):
+    async def main():
+        bars = [hourly([10, 10, 10, 9], 6)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", ind_row(trigger="once"))
+        eng.on_alert_changed("u1", created, "al-i")
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=10 * H + 5)
+        await asyncio.sleep(0)
+        assert eng._hub.has_feed("capital", "US100")
+        bars[0] = hourly([10, 10, 10, 9, 12], 6)
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=11 * H + 5)
+        assert len([m for _, m in sent if m["key"] == "__alerts__:fired"]) == 1
+        assert not eng._hub.has_feed("capital", "US100")
+    asyncio.run(main())
+
+
+def test_one_raising_alert_does_not_block_others_on_the_tick(tmp_path, monkeypatch):
+    import auto_trader.core.alert_kinds as kinds_mod
+
+    real = kinds_mod.PRICE_LEVEL.resolve
+
+    def flaky(params, price, values):
+        if params["level"] == 50.0:
+            raise RuntimeError("boom")
+        return real(params, price, values)
+
+    monkeypatch.setattr(kinds_mod.PRICE_LEVEL, "resolve", flaky)
+
+    async def main():
+        eng, store, sent, notified = make_engine(tmp_path)
+        bad = await store.create("u1", row(id="al-bad", level=50.0))
+        good = await store.create("u1", row(id="al-1", level=100.0))
+        eng.on_alert_changed("u1", bad, "al-bad")
+        eng.on_alert_changed("u1", good, "al-1")
+        await eng.on_tick("capital", "US100", 99.0, None, None)
+        await eng.on_tick("capital", "US100", 101.0, None, None)
+        fired = [m["value"]["id"] for _, m in sent if m["key"] == "__alerts__:fired"]
+        assert fired == ["al-1"]
+    asyncio.run(main())
+
+
+def test_hub_sample_error_does_not_block_price_alerts(tmp_path):
+    async def main():
+        bars = [hourly([10, 10, 10, 9], 6)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        ind = await store.create("u1", ind_row())
+        eng.on_alert_changed("u1", ind, "al-i")
+        price = await store.create("u1", row())
+        eng.on_alert_changed("u1", price, "al-1")
+
+        async def broken(*a, **kw):
+            raise RuntimeError("hub down")
+
+        eng._hub.on_sample = broken
+        await eng.on_tick("capital", "US100", 99.0, None, None)
+        await eng.on_tick("capital", "US100", 101.0, None, None)
+        fired = [m["value"]["id"] for _, m in sent if m["key"] == "__alerts__:fired"]
+        assert fired == ["al-1"]
+    asyncio.run(main())
+
+
+def test_price_side_store_error_keeps_cached_side(tmp_path, monkeypatch):
+    async def main():
+        import json as _json
+
+        import auto_trader.core.alert_engine as alert_engine_mod
+        from auto_trader.core.state_store import StateStore
+
+        state_store = StateStore(str(tmp_path / "state.db"))
+        monkeypatch.setattr(alert_engine_mod, "STATE_STORE", state_store)
+        monkeypatch.setattr(alert_engine_mod, "_PRICE_SIDE_TTL_SECONDS", 0)
+        eng, store, sent, notified = make_engine(tmp_path)
+        await state_store.set("u1", "auto-trader.settings", _json.dumps({"priceSide": "bid"}))
+        await eng._refresh_price_side("u1")
+        assert eng.price_side_for("u1") == "bid"
+
+        async def broken(user_id):
+            raise RuntimeError("db locked")
+
+        monkeypatch.setattr(state_store, "get_all", broken)
+        synced = []
+        monkeypatch.setattr(eng, "_sync_needs", lambda: synced.append(1))
+        await eng._refresh_price_side("u1")
+        assert eng.price_side_for("u1") == "bid"
+        assert synced == []
+    asyncio.run(main())
+
+
+def test_status_broadcast_debounces_and_uses_row_status(tmp_path, monkeypatch):
+    async def main():
+        import auto_trader.core.alert_engine as alert_engine_mod
+
+        bars = [hourly([10], 9)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", ind_row())
+        eng.on_alert_changed("u1", created, "al-i")
+        # The loop must not rescan the registry per row via status().
+        monkeypatch.setattr(eng, "status", lambda *a: (_ for _ in ()).throw(AssertionError("status() called")))
+        clock = [1000.0]
+        monkeypatch.setattr(alert_engine_mod.time, "monotonic", lambda: clock[0])
+        changed = lambda: [m for _, m in sent if m["key"] == "__alerts__:changed"]  # noqa: E731
+        await eng._broadcast_status_changes()        # first sighting
+        clock[0] += 5
+        await eng._broadcast_status_changes()        # held 5 s: not yet
+        assert changed() == []
+        clock[0] += 6
+        await eng._broadcast_status_changes()        # held 11 s: announced
+        assert len(changed()) == 1
+        clock[0] += 20
+        await eng._broadcast_status_changes()        # unchanged: not again
+        assert len(changed()) == 1
+    asyncio.run(main())
+
+
+def test_paused_indicator_alert_reports_no_status(tmp_path):
+    # A paused (inactive) indicator alert has no series registered, so it
+    # would read "waiting_for_data" forever. Like a price alert it reports no
+    # status at all, and the status broadcast skips it.
+    async def main():
+        bars = [hourly([10, 10, 10, 9], 6)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", {**ind_row(), "active": 0})
+        eng.on_alert_changed("u1", created, "al-i")
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=10 * H + 5)
+        await asyncio.sleep(0)
+        assert eng.status("u1", "al-i") is None
     asyncio.run(main())

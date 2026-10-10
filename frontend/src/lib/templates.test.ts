@@ -650,3 +650,72 @@ describe("captureDefaultTemplate includeIds", () => {
     expect(all.indicators.map((i) => i.id)).toEqual(["EMA#1"]); // AVWAP filtered
   });
 });
+
+describe("replaceSymbolTemplate: indicator alert links", () => {
+  it("unlinks (no delete, no dialog) an alert whose instance the replace removed, even when the add re-mints its bare id", async () => {
+    const A = await import("./alertsApi");
+    const S = await import("./signals");
+    const { getPersistBroker } = await import("./persist/core");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) } as Response));
+    S.confirmRequest.set(null);
+    const broker = getPersistBroker();
+    await A.addIndicatorAlert({
+      kind: "indicator", id: "al-tpl", epic: EPIC, broker, condition: "crossing", trigger: "every",
+      message: "", expiresAt: null, precision: 2,
+      notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      params: {
+        identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
+        line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+        link: { scope: SCOPE, instanceId: "EMA" },
+      },
+    });
+    // Cell: EMA(50) carrying the alert. Template: EMA(9), so the EMA(50) is
+    // removed and a new EMA added; the mint reuses the freed bare name.
+    P.saveIndicators(SCOPE, [{ id: "EMA", type: "EMA" }]);
+    P.saveIndicatorConfig(SCOPE, "EMA", { calcParams: [50] });
+    vi.mocked(I.mintInstanceId).mockReturnValueOnce("EMA");
+    const t: import("./persist").SymbolTemplate = {
+      epic: EPIC,
+      indicators: [{ id: "EMA#t", type: "EMA" }],
+      indicatorConfigs: { "EMA#t": { calcParams: [9] } },
+      drawings: [], avwapAnchors: {}, savedAt: 1,
+    };
+    T.replaceSymbolTemplate(stubChart, stubController, SCOPE, EPIC, t);
+    await Promise.resolve();
+    const kept = A.loadAllIndicatorAlerts(broker).find((a) => a.id === "al-tpl");
+    expect(kept).toBeDefined();
+    expect(kept?.params.link).toBeNull();
+    expect(S.confirmRequest.value).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the link of an instance the replace kept", async () => {
+    const A = await import("./alertsApi");
+    const { getPersistBroker } = await import("./persist/core");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) } as Response));
+    const broker = getPersistBroker();
+    await A.addIndicatorAlert({
+      kind: "indicator", id: "al-tpl-kept", epic: EPIC, broker, condition: "crossing", trigger: "every",
+      message: "", expiresAt: null, precision: 2,
+      notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      params: {
+        identity: { indicator: "MA", calcParams: [9], config: { maType: "ema", source: "close" }, priceTarget: true },
+        line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+        link: { scope: SCOPE, instanceId: "EMA" },
+      },
+    });
+    P.saveIndicators(SCOPE, [{ id: "EMA", type: "EMA" }]);
+    P.saveIndicatorConfig(SCOPE, "EMA", { calcParams: [9] });
+    const t: import("./persist").SymbolTemplate = {
+      epic: EPIC,
+      indicators: [{ id: "EMA#t", type: "EMA" }],
+      indicatorConfigs: { "EMA#t": { calcParams: [9] } },
+      drawings: [], avwapAnchors: {}, savedAt: 1,
+    };
+    T.replaceSymbolTemplate(stubChart, stubController, SCOPE, EPIC, t);
+    await Promise.resolve();
+    expect(A.loadAllIndicatorAlerts(broker).find((a) => a.id === "al-tpl-kept")?.params.link)
+      .toEqual({ scope: SCOPE, instanceId: "EMA" });
+    vi.unstubAllGlobals();
+  });
+});

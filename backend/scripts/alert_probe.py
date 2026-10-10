@@ -6,6 +6,7 @@ own broker feed, independent of any open UI. Run:
 
     cd backend && python3 -m scripts.alert_probe
     cd backend && python3 -m scripts.alert_probe --epic BTCUSD --broker capital-live
+    cd backend && python3 -m scripts.alert_probe --indicator --epic BTCUSD --broker capital-live
 
 Flow: (1) fetch the current quote for --epic via GET /api/market/{epic}/details
 (the broker-provided snapshot's bid/offer — same route the chart's instrument
@@ -68,27 +69,38 @@ def _quote(client: httpx.Client, epic: str, broker: str) -> float:
     return bid
 
 
-def main(url: str, epic: str, broker: str, timeout: float) -> int:
+def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = False) -> int:
     alert_id = f"al-probe-{uuid.uuid4()}"
     with httpx.Client(base_url=url, timeout=10.0) as client:
         print(f"connecting to {url}")
 
-        try:
-            bid = _quote(client, epic, broker)
-        except (httpx.HTTPError, RuntimeError) as e:
-            print(f"FAIL: could not fetch quote for {broker}:{epic}: {e}")
-            return 1
-        level = bid - 0.0001
-        print(f"{broker}:{epic} bid={bid} -> alert level={level} condition=greater")
-
-        body = {
-            "id": alert_id,
-            "broker": broker,
-            "epic": epic,
-            "kind": "price_level",
-            "params": {"level": level, "condition": "greater", "trigger": "once"},
-            "message": "alert_probe e2e check",
-        }
+        if indicator:
+            body = {
+                "id": alert_id, "broker": broker, "epic": epic, "kind": "indicator",
+                "params": {
+                    "indicator": "MA", "calcParams": [2], "config": {"maType": "sma"},
+                    "line": "value", "timeframe": "MINUTE", "target": "value", "value": -1e12,
+                    "condition": "greater", "trigger": "once", "evalOn": "intrabar", "link": None,
+                },
+                "message": "alert_probe e2e check",
+            }
+            print(f"{broker}:{epic} SMA 2 value > -1e12 (fires once warm, intrabar)")
+        else:
+            try:
+                bid = _quote(client, epic, broker)
+            except (httpx.HTTPError, RuntimeError) as e:
+                print(f"FAIL: could not fetch quote for {broker}:{epic}: {e}")
+                return 1
+            level = bid - 0.0001
+            print(f"{broker}:{epic} bid={bid} -> alert level={level} condition=greater")
+            body = {
+                "id": alert_id,
+                "broker": broker,
+                "epic": epic,
+                "kind": "price_level",
+                "params": {"level": level, "condition": "greater", "trigger": "once"},
+                "message": "alert_probe e2e check",
+            }
         resp = client.post("/api/alerts", json=body)
         try:
             resp.raise_for_status()
@@ -147,5 +159,8 @@ if __name__ == "__main__":
     ap.add_argument("--epic", default="US100", help="epic to alert on (default US100)")
     ap.add_argument("--broker", default="capital", help="data broker id (default capital)")
     ap.add_argument("--timeout", type=float, default=30.0, help="seconds to wait for the trigger (default 30)")
+    ap.add_argument("--indicator", action="store_true",
+                     help="probe an indicator alert (SMA 2 value greater than -1e12 on 1m, intrabar) "
+                          "instead of a price-level alert")
     ns = ap.parse_args()
-    sys.exit(main(ns.url, ns.epic, ns.broker, ns.timeout))
+    sys.exit(main(ns.url, ns.epic, ns.broker, ns.timeout, ns.indicator))

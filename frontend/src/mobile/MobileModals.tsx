@@ -12,6 +12,7 @@ import {
   alertModalRequest,
   alertEditRequest,
   alertGlobalEditRequest,
+  indicatorAlertRequest,
   confirmRequest,
   requestConfirm,
   indicatorSettingsRequest,
@@ -28,6 +29,7 @@ import type { Instrument } from "../lib/feed";
 import { brokerOf } from "../lib/trading";
 import { isDemoMode } from "../lib/demoMode";
 import AlertModal from "../AlertModal";
+import IndicatorAlertModal from "../IndicatorAlertModal";
 import SettingsModal from "../Settings";
 import DrawingSettings from "../DrawingSettings";
 import IndicatorSettings from "../IndicatorSettings";
@@ -55,6 +57,7 @@ export default function MobileModals() {
   const alertReq = useSignal(alertModalRequest);
   const alertEdit = useSignal(alertEditRequest);
   const alertGlobalEdit = useSignal(alertGlobalEditRequest);
+  const indAlertReq = useSignal(indicatorAlertRequest);
   const indSettings = useSignal(indicatorSettingsRequest);
   const drawSettings = useSignal(drawingSettingsRequest);
   const confirm = useSignal(confirmRequest);
@@ -125,6 +128,15 @@ export default function MobileModals() {
             alertModalRequest.set(null);
           }}
           onClose={() => alertModalRequest.set(null)}
+        />
+      )}
+
+      {!isDemoMode() && indAlertReq && (
+        <IndicatorAlertModal
+          request={indAlertReq}
+          defaults={settings.alertDefaults}
+          now={Date.now()}
+          onClose={() => indicatorAlertRequest.set(null)}
         />
       )}
 
@@ -279,8 +291,10 @@ export default function MobileModals() {
           title={confirm.title}
           message={confirm.message}
           confirmLabel={confirm.confirmLabel}
+          cancelLabel={confirm.cancelLabel}
           details={confirm.details}
           onConfirm={confirm.onConfirm}
+          onCancel={confirm.onCancel}
           onClose={() => confirmRequest.set(null)}
         />
       )}

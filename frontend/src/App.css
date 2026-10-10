@@ -793,7 +793,6 @@
 .ap-time { color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
 .ap-broker { margin-left: 6px; font-weight: 400; font-size: 11px; color: var(--text-faint); }
 .ap-cond { color: var(--text-dim); margin-top: 2px; }
-.ap-at { color: var(--text-faint); }
 .ap-msg { color: var(--text-dim); margin-top: 4px; font-size: 12px; font-style: italic; }
 .ap-row-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
 /* History rows have no badge — push their lone go-to action to the right edge. */
@@ -804,6 +803,11 @@
 }
 /* The badge as a control (alert line start): same chip, but clickable — so it
    needs the button reset plus a hover cue the static badge doesn't have. */
+/* Badges on the left of an indicator alert row (trigger + waiting for data). */
+.ap-row-badges { display: flex; align-items: center; gap: 4px; }
+/* Indicator alert still warming up (or its feed is down): dashed, so it reads
+   as a state rather than another setting. */
+.ap-badge-wait { border-style: dashed; }
 .ap-badge-btn {
   background: transparent; font: inherit; font-size: 11px; line-height: inherit;
   cursor: pointer;
@@ -2456,6 +2460,17 @@
 .al-pair-field > span { color: var(--text-dim); }
 .al-pair-field select { min-width: 0; }
 .al-pair-field .al-expiry { min-width: 0; }
+.al-trigger-row { display: flex; align-items: center; gap: 6px; }
+.al-trigger-row select { flex: 1; min-width: 0; }
+/* Indicator alert dialog's Compare/Evaluate radio rows reuse .al-field but lay
+   their options out inline instead of stacked. */
+.al-field[role="radiogroup"] {
+  flex-direction: row; align-items: center; flex-wrap: wrap; gap: 14px;
+}
+.al-field[role="radiogroup"] > span { width: auto; }
+.al-field[role="radiogroup"] label {
+  display: flex; align-items: center; gap: 6px; cursor: pointer; flex-shrink: 0;
+}
 .al-value { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .al-message {
   flex: 1; resize: vertical; min-height: 34px; font: inherit;
@@ -3383,6 +3398,9 @@
    label (50) so the selected alert reads clearly; otherwise it stays at 45, below
    the price label, which always wins. Mirrors .alert-pill.selected. */
 .alert-tag.selected { z-index: 51; }
+/* An indicator "price vs line" alert's bell: the tag without a price, and
+   clickable (opens the alert's edit dialog). */
+.alert-tag.ind-bell { pointer-events: auto; cursor: pointer; padding: 0 4px; font: inherit; }
 
 /* TV-style descriptive pill on the alert line (hover/selected). Unlike the
    axis tag this is interactive (delete button), so it opts back into pointer
@@ -4005,6 +4023,10 @@
   -webkit-font-smoothing: antialiased;
 }
 .cl-icon:hover { color: var(--text); }
+/* The legend's alert bell when the indicator cannot take an alert: dimmed and
+   inert, but still hoverable so its tooltip can say why. */
+.cl-icon[aria-disabled="true"],
+.cl-icon[aria-disabled="true"]:hover { color: var(--text-faint); cursor: default; }
 /* The ⋯ "more" button uses an SVG (the Material Symbols subset lacks more_horiz),
    so size the glyph here instead of via font-size. */
 .cl-icon-svg svg { width: 16px; height: 16px; fill: currentColor; }

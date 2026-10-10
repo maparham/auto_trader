@@ -17,6 +17,8 @@ import {
 import { BASE_TEMPLATES } from "../../lib/customIndicators";
 import { applyTrendlinesTimeframe } from "../../lib/mtfCoordinator";
 import { parseTrendlinesConfig } from "../../lib/indicators/trendlinesOutputs";
+import { syncAlertsAfterEdit, syncAlertsAfterRemove } from "../../lib/indicatorAlertSync";
+import { checkAlertable } from "../../lib/alertableIndicators";
 
 // Everything this action can add: the custom templates plus a curated
 // allowlist of klinecharts native indicator types known to work through this
@@ -181,11 +183,20 @@ export function registerIndicatorActions(): void {
         if (timeframe) ext.mtf = { timeframe, ...(prev?.waitClose === false ? { waitClose: false } : {}) };
         else delete ext.mtf;
       }
+      const finalCalcParams = calcParams ?? saved.calcParams;
       saveIndicatorConfig(scope, id, {
         ...saved,
         ...(calcParams ? { calcParams } : {}),
         extendData: Object.keys(ext).length ? ext : undefined,
       });
+      // Same edit-sync as the settings modal (IndicatorSettings ok()): linked
+      // alerts follow the new identity, or the user is asked to delete or keep
+      // them when the new settings can't be alerted on. Each alert is checked
+      // on its OWN timeframe, and hasVolume is true because the volume rule
+      // only gates creating an alert.
+      if (type) {
+        syncAlertsAfterEdit(scope, id, (tf) => checkAlertable(type, finalCalcParams, ext, tf, true));
+      }
       return { id, cellId, calcParams: calcParams ?? saved.calcParams, extendData: ext };
     },
   });
@@ -207,6 +218,7 @@ export function registerIndicatorActions(): void {
         throw new ActionError("NOT_FOUND", `no indicator with id ${id}`);
       }
       removeIndicatorById(chart, scope, id);
+      syncAlertsAfterRemove(scope, id);
       const next = cur.filter((i) => i.id !== id);
       controller.indicators.set(next);
       saveIndicators(scope, next);

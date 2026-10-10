@@ -35,7 +35,11 @@ import { type VisibilityModel, defaultVisibility, isVisibleOnResolution } from "
 import { refreshMtfOnVisibilityChange } from "../lib/mtfCoordinator";
 import { stripMtfRuntime } from "../lib/mtfRuntime";
 import { noteDebugOn } from "../lib/indicators/trendlinesDebugStore";
-import { indicatorSettingsRequest } from "../lib/signals";
+import { indicatorAlertRequest, indicatorSettingsRequest } from "../lib/signals";
+import { buildIndicatorAlertDraft } from "./indicatorAlertDraft";
+import { isDemoMode } from "../lib/demoMode";
+import { isSynthetic } from "../lib/syntheticRegistry";
+import { syncAlertsAfterRemove } from "../lib/indicatorAlertSync";
 import { pickTrendline } from "./useTrendlineMenu";
 import { toast } from "../lib/notify";
 import { MenuIcons } from "../lib/menuIcons";
@@ -55,6 +59,10 @@ export interface IndicatorCommandsDeps {
   setIndMenu: React.Dispatch<
     React.SetStateAction<{ x: number; y: number; paneId: string; name: string } | null>
   >;
+  // What an indicator alert draft needs from the cell beyond the indicator
+  // itself. A ref so the callbacks read the live symbol/broker without
+  // re-creating on every change. quoteOnly = the broker has no live stream.
+  alertContext: React.MutableRefObject<{ epic: string; broker: string; precision: number; quoteOnly: boolean }>;
 }
 
 /** An indicator's extendData with every computed field dropped: the MTF
@@ -70,7 +78,7 @@ function authoredExtend(
 }
 
 export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommandsDeps) {
-  const { cellId, scope, period, snapViewRef, wrapRef, setPaneDropTop, setIndMenu } = deps;
+  const { cellId, scope, period, snapViewRef, wrapRef, setPaneDropTop, setIndMenu, alertContext } = deps;
   const { chartRef, epicRef, overlays, controller } = handle;
   const { selectedIndicator, indicatorRemoved } = controller;
 
@@ -138,6 +146,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     const c = chartRef.current;
     if (!c || snapViewRef.current) return; // read-only snapshot view
     removeIndicatorById(c, scope, name);
+    syncAlertsAfterRemove(scope, name);
     const next = controller.indicators.value.filter((i) => i.id !== name);
     controller.indicators.set(next);
     saveIndicators(scope, next);
@@ -482,6 +491,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       const c = chartRef.current;
       if (!c) return;
       removeIndicatorById(c, scope, name);
+      syncAlertsAfterRemove(scope, name);
       const next = controller.indicators.value.filter((i) => i.id !== name);
       controller.indicators.set(next);
       saveIndicators(scope, next);
@@ -535,6 +545,10 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       // reorderPaneByName does it below.
       const sel = selectedIndicator.value;
       if (sel) selectedIndicator.set({ paneId: paneIdOf(sel.name), name: sel.name });
+      // controller.indicators.set above reconciled the alert lines BEFORE the
+      // instance came back (between remove and applyIndicator), dropping its
+      // line; now that it exists in its new home, redraw (or skip, if inset) it.
+      controller.indicatorAlerts.reconcile();
       handle.redrawRef.current();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
@@ -629,6 +643,31 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     [reorderPaneByName],
   );
 
+  // "Add alert" on an indicator: a draft, the reason it cannot have one, or
+  // null to hide the entry. Shared by the legend bell and the menu item.
+  const alertDraftFor = useCallback((paneId: string, name: string) => {
+    const c = chartRef.current;
+    if (!c || snapViewRef.current) return null; // read-only snapshot view
+    // Same gates as the toolbar's price-alert bell: the demo has no alert
+    // dialog or /api/alerts, and a synthetic (SYN_) chart has no backend feed
+    // an alert could ever seed from or fire on.
+    if (isDemoMode() || isSynthetic(alertContext.current.epic)) return null;
+    return buildIndicatorAlertDraft({
+      chart: c, paneId, name, scope, resolution: period.resolution, ...alertContext.current,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, stable for the mount
+  }, [scope, period.resolution]);
+
+  const onLegendAddAlert = useCallback((name: string) => {
+    const r = alertDraftFor(paneIdOf(name), name);
+    if (r && "draft" in r) indicatorAlertRequest.set({ mode: "create", draft: r.draft });
+  }, [alertDraftFor, paneIdOf]);
+
+  const legendAlertCheck = useCallback((name: string): { reason: string | null } | null => {
+    const r = alertDraftFor(paneIdOf(name), name);
+    return r === null ? null : { reason: "reason" in r ? r.reason : null };
+  }, [alertDraftFor, paneIdOf]);
+
   // The shared TradingView-style menu, used by both triggers (legend row + curve).
   const indicatorMenuItems = useCallback(
     (paneId: string, name: string): MenuItem[] => {
@@ -657,6 +696,14 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
           icon: MenuIcons.settings,
           onClick: () => indicatorSettingsRequest.set({ paneId, name }),
         },
+        ...((): MenuItem[] => {
+          const r = alertDraftFor(paneId, name);
+          if (r === null) return [];
+          const label = "Add alert";
+          return "draft" in r
+            ? [{ label, icon: MenuIcons.bell, onClick: () => indicatorAlertRequest.set({ mode: "create", draft: r.draft }) }]
+            : [{ label, icon: MenuIcons.bell, disabled: true, disabledReason: r.reason, onClick: () => {} }];
+        })(),
         { label: "Copy", icon: MenuIcons.copy, onClick: () => copyIndicator(paneId, name) },
         { label: "Duplicate", icon: MenuIcons.clone, onClick: () => duplicateIndicator(paneId, name) },
         {
@@ -678,7 +725,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       ];
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
-    [copyIndicator, duplicateIndicator, toggleVisibleOn, removeOn, reorderPaneByName, setIndicatorInset],
+    [copyIndicator, duplicateIndicator, toggleVisibleOn, removeOn, reorderPaneByName, setIndicatorInset, alertDraftFor],
   );
 
   // The legend's ⋯ "more" button opens the menu (anchored below the button).
@@ -709,5 +756,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     startPaneReorderDrag,
     indicatorMenuItems,
     onLegendOpenMenu,
+    onLegendAddAlert,
+    legendAlertCheck,
   };
 }

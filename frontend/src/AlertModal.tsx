@@ -3,24 +3,14 @@
 // "+" axis menu (prefilled with the cursor price), both via the alertModalRequest
 // signal, and from the sidebar/line for editing via alertEditRequest.
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
+import AlertCommonFields, { useAlertCommonState } from "./components/AlertCommonFields";
 import type { AlertCondition, AlertNotifyChannels, AlertTrigger } from "./lib/persist";
-import { openSettings } from "./lib/signals";
 import type { AlertDefaults } from "./theme";
-import {
-  CONDITIONS,
-  expiryOptions,
-  matchExpiryOption,
-  formatExpiryShort,
-  formatExpiryLong,
-  localInputToMs,
-  msToLocalInput,
-  resolveExpiry,
-  type ExpiryOption,
-} from "./lib/alertUi";
+import { CONDITIONS } from "./lib/alertUi";
 
 interface AlertDraft {
   condition: AlertCondition;
@@ -56,25 +46,6 @@ interface Props {
   onClose: () => void;
 }
 
-const ALL_ON: AlertNotifyChannels = {
-  toast: true,
-  browser: true,
-  sound: true,
-  push: true,
-  telegram: true,
-};
-
-// Channel order + labels, shared with Settings' alert defaults. "App"/"Browser"/
-// "Sound" fire in THIS tab; Push and Telegram are delivered by the BACKEND, so
-// they arrive with no tab open.
-const CHANNELS = [
-  ["toast", "App"],
-  ["browser", "Browser"],
-  ["sound", "Sound"],
-  ["push", "Push"],
-  ["telegram", "Telegram"],
-] as const;
-
 export default function AlertModal({
   epic,
   price,
@@ -91,16 +62,7 @@ export default function AlertModal({
     initial?.condition ?? defaults.condition,
   );
   const [value, setValue] = useState(price ? String(price) : "");
-  const [trigger, setTrigger] = useState<AlertTrigger>(initial?.trigger ?? defaults.trigger);
-  const [message, setMessage] = useState(initial?.message ?? "");
-  // Expiry as a concrete timestamp (ms) or null for open-ended. New alerts resolve
-  // the default intent (duration → now+ms); edits keep the stored expiresAt.
-  const [expiresAt, setExpiresAt] = useState<number | null>(
-    isEdit ? initial?.expiresAt ?? null : resolveExpiry(defaults.expiry, now),
-  );
-  const [notify, setNotify] = useState<AlertNotifyChannels>(
-    initial?.notify ?? (isEdit ? ALL_ON : defaults.notify),
-  );
+  const common = useAlertCommonState(initial, defaults, now, isEdit);
   const [startAtCreation, setStartAtCreation] = useState(
     initial?.startAtCreation ?? (isEdit ? true : defaults.startAtCreation),
   );
@@ -113,10 +75,10 @@ export default function AlertModal({
     if (!valid) return;
     onCreate(num, {
       condition,
-      trigger,
-      message: message.trim() || autoMsg,
-      expiresAt,
-      notify,
+      trigger: common.trigger,
+      message: common.message.trim() || autoMsg,
+      expiresAt: common.expiresAt,
+      notify: common.notify,
       startAtCreation,
     });
   }
@@ -189,66 +151,7 @@ export default function AlertModal({
             </div>
           </div>
 
-          {/* Trigger + Expiration share a row — each field stacks its own label
-              above its own control, so the label doesn't crowd the control. */}
-          <div className="al-row al-pair">
-            <label className="al-pair-field">
-              <span>Trigger</span>
-              <select value={trigger} onChange={(e) => setTrigger(e.target.value as AlertTrigger)}>
-                <option value="once">Once only</option>
-                <option value="every">Every time</option>
-              </select>
-            </label>
-            <div className="al-pair-field">
-              <span>Expiration</span>
-              <ExpiryField
-                expiresAt={expiresAt}
-                now={now}
-                onChange={setExpiresAt}
-              />
-            </div>
-          </div>
-
-          <label className="al-field">
-            <span>Message</span>
-            <textarea
-              className="al-message"
-              rows={2}
-              value={message}
-              placeholder={autoMsg}
-              onChange={(e) => setMessage(e.target.value)}
-            />
-          </label>
-
-          <div className="al-field">
-            <span>Notifications</span>
-            <div className="al-notify-toggles">
-              {CHANNELS.map(([ch, label]) => (
-                <label key={ch} className="al-notify-chip">
-                  <input
-                    type="checkbox"
-                    checked={notify[ch] ?? true}
-                    onChange={(e) => setNotify({ ...notify, [ch]: e.target.checked })}
-                  />
-                  {label}
-                  {/* Deep link to Settings → Alerts, where Telegram gets
-                      linked (and Push enabled). Settings stacks above this
-                      modal (backdrop z 2000 vs 1500), so the draft survives. */}
-                  {ch === "telegram" && (
-                    <Tooltip content="Notification settings — connect Telegram">
-                      <button
-                        type="button"
-                        className="al-settings-link"
-                        onClick={(e) => { e.preventDefault(); openSettings("alerts"); }}
-                      >
-                        ⚙
-                      </button>
-                    </Tooltip>
-                  )}
-                </label>
-              ))}
-            </div>
-          </div>
+          <AlertCommonFields state={common} now={now} autoMsg={autoMsg} />
 
           {/* Where the line starts. A plain checkbox + sentence (the .notify-toggle
               row Settings uses for the same shape), not a chip — the chip's fill
@@ -270,113 +173,5 @@ export default function AlertModal({
           </label>
         </div>
     </FloatingModal>
-  );
-}
-
-// Per-alert expiration, TradingView-style: a custom dropdown whose button shows the
-// resolved time ("July 22, 2026 at 19:05") and whose menu lists each option with its
-// concrete time dimmed on the right. "Custom date" reveals a datetime picker. The
-// stored value is always an absolute timestamp (or null), independent of render time.
-function ExpiryField({
-  expiresAt,
-  now,
-  onChange,
-}: {
-  expiresAt: number | null;
-  now: number;
-  onChange: (ms: number | null) => void;
-}) {
-  const options = expiryOptions(now);
-  // Once the user picks "Custom date" we keep that mode even if the chosen time
-  // happens to match a preset (matches TradingView). Default to custom when editing
-  // an alert whose expiry isn't one of the presets.
-  const [custom, setCustom] = useState(matchExpiryOption(expiresAt, now) === "custom");
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const active = custom ? "custom" : matchExpiryOption(expiresAt, now);
-
-  useEffect(() => {
-    if (!open) return;
-    // Capture phase: the modal body calls stopPropagation on mousedown, which would
-    // otherwise stop this from ever firing on clicks elsewhere inside the modal.
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown, true);
-    return () => document.removeEventListener("mousedown", onDown, true);
-  }, [open]);
-
-  function pick(id: string) {
-    const opt = options.find((o) => o.id === id);
-    if (!opt || opt.id === "custom") {
-      setCustom(true);
-      // Seed the custom picker from the current value, or end of day if open-ended.
-      if (expiresAt == null) {
-        const eod = options.find(
-          (o): o is Extract<ExpiryOption, { expiresAt: number }> => o.id === "eod",
-        )!;
-        onChange(eod.expiresAt);
-      }
-    } else {
-      setCustom(false);
-      onChange("expiresAt" in opt ? opt.expiresAt : null);
-    }
-    setOpen(false);
-  }
-
-  return (
-    <div className="al-expiry" ref={ref}>
-      <button
-        type="button"
-        className={`al-expiry-trigger${open ? " open" : ""}`}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span>{formatExpiryLong(expiresAt)}</span>
-        <svg className="al-expiry-caret" viewBox="0 0 24 24" width="11" height="11" fill="none"
-          stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true">
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
-      {open && (
-        <div className="al-expiry-menu">
-          {options.map((o) => (
-            <button
-              type="button"
-              key={o.id}
-              className={`al-expiry-opt${active === o.id ? " sel" : ""}${
-                o.id === "custom" ? " custom" : ""
-              }`}
-              onClick={() => pick(o.id)}
-            >
-              <span className="al-expiry-opt-label">{o.label}</span>
-              <span className="al-expiry-opt-time">
-                {o.id === "open" ? (
-                  "Won't expire"
-                ) : o.id === "custom" ? (
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
-                    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <rect x="3" y="4.5" width="18" height="16" rx="2" />
-                    <line x1="3" y1="9.5" x2="21" y2="9.5" />
-                    <line x1="8" y1="2.5" x2="8" y2="6" />
-                    <line x1="16" y1="2.5" x2="16" y2="6" />
-                  </svg>
-                ) : (
-                  formatExpiryShort(o.expiresAt)
-                )}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-      {active === "custom" && (
-        <input
-          type="datetime-local"
-          className="al-datetime"
-          value={expiresAt != null ? msToLocalInput(expiresAt) : ""}
-          onChange={(e) => onChange(localInputToMs(e.target.value))}
-        />
-      )}
-    </div>
   );
 }

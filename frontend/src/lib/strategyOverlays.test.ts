@@ -108,4 +108,40 @@ describe("syncStrategyOverlays", () => {
     expect(cleared).toEqual(current); // only the managed one went away
     expect(live.some((i) => i.name === user!.id)).toBe(true);
   });
+
+  it("unlinks (no delete, no dialog) alerts on a managed instance it removed", async () => {
+    const A = await import("./alertsApi");
+    const S = await import("./signals");
+    const { getPersistBroker } = await import("./persist/core");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) } as Response));
+    S.confirmRequest.set(null);
+    const broker = getPersistBroker();
+    const { chart } = fakeChart();
+    const user = addIndicatorInstance(chart, scope, "US100", "EMA")!;
+    const withManaged = syncStrategyOverlays(chart, scope, "US100", [user], [
+      { indicator: "BOLL", calcParams: [20, 3] },
+    ]);
+    const managedId = withManaged.find((i) => i.type === "BOLL")!.id;
+    const mk = (id: string, instanceId: string) => ({
+      kind: "indicator" as const, id, epic: "US100", broker, condition: "crossing" as const, trigger: "every" as const,
+      message: "", expiresAt: null, precision: 2,
+      notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      params: {
+        identity: { indicator: "MA" as const, calcParams: [20], config: { maType: "ema", source: "close" }, priceTarget: true },
+        line: "value" as const, timeframe: "HOUR", target: "price" as const, value: null, evalOn: "close" as const,
+        link: { scope, instanceId },
+      },
+    });
+    await A.addIndicatorAlert(mk("al-so-managed", managedId));
+    await A.addIndicatorAlert(mk("al-so-user", user.id));
+
+    syncStrategyOverlays(chart, scope, "US100", withManaged, []);
+    await Promise.resolve();
+
+    const all = A.loadAllIndicatorAlerts(broker);
+    expect(all.find((a) => a.id === "al-so-managed")?.params.link).toBeNull();
+    expect(all.find((a) => a.id === "al-so-user")?.params.link).toEqual({ scope, instanceId: user.id });
+    expect(S.confirmRequest.value).toBeNull();
+    vi.unstubAllGlobals();
+  });
 });

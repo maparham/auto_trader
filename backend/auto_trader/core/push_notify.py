@@ -114,6 +114,9 @@ class PushNotify:
                 "condition": payload.get("condition"),
                 "message": payload.get("message"),
                 "precision": payload.get("precision"),
+                "label": payload.get("label"),
+                "target": payload.get("target"),
+                "subject": payload.get("subject"),
             }
         )
         for sub in subs:

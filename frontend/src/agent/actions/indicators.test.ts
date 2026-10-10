@@ -152,6 +152,30 @@ describe("indicator actions", () => {
       await expect(invokeAction("indicator.set", { id: "RSI#x1" }, ctx)).rejects.toThrow(/nothing to set/);
     });
 
+    it("an identity change goes through the alert edit-sync like the settings modal", async () => {
+      const A = await import("../../lib/alertsApi");
+      const { getPersistBroker } = await import("../../lib/persist/core");
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) } as Response));
+      const broker = getPersistBroker();
+      await A.addIndicatorAlert({
+        kind: "indicator", id: "al-agent-set", epic: "US100", broker, condition: "crossing", trigger: "every",
+        message: "", expiresAt: null, precision: 2,
+        notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+        params: {
+          identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
+          line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+          link: { scope: "t1.c1", instanceId: "EMA" },
+        },
+      });
+      const controller = provide();
+      liveInstance(controller, "EMA", "EMA");
+      await invokeAction("indicator.set", { id: "EMA", calcParams: [20] }, ctx);
+      expect(A.linkedAlerts("t1.c1", "EMA")[0]?.params.identity).toEqual({
+        indicator: "MA", calcParams: [20], config: { maType: "ema", source: "close" }, priceTarget: true,
+      });
+      vi.unstubAllGlobals();
+    });
+
     it("still patches calcParams alone", async () => {
       const controller = provide();
       liveInstance(controller, "RSI#x1", "RSI");

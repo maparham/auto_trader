@@ -66,7 +66,7 @@ def test_poll_loop_calls_on_tick_with_mid(tmp_path):
 
         ticks: list[tuple] = []
 
-        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+        async def fake_on_tick(broker_id, epic, mid, bid, ask, **kw):
             ticks.append((broker_id, epic, mid, bid, ask))
 
         eng.on_tick = fake_on_tick
@@ -93,7 +93,7 @@ def test_poll_loop_stops_on_cancel(tmp_path):
 
         calls = []
 
-        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+        async def fake_on_tick(broker_id, epic, mid, bid, ask, **kw):
             calls.append(1)
 
         eng.on_tick = fake_on_tick
@@ -117,7 +117,7 @@ def test_poll_loop_survives_get_quote_error_and_backs_off(tmp_path):
 
         ticks = []
 
-        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+        async def fake_on_tick(broker_id, epic, mid, bid, ask, **kw):
             ticks.append(mid)
 
         eng.on_tick = fake_on_tick
@@ -224,7 +224,7 @@ def test_stream_feed_dispatches_to_capital_stream_and_feeds_on_tick(tmp_path, mo
 
         ticks = []
 
-        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+        async def fake_on_tick(broker_id, epic, mid, bid, ask, **kw):
             ticks.append((broker_id, epic, mid, bid, ask))
 
         eng.on_tick = fake_on_tick
@@ -267,7 +267,7 @@ def test_stream_feed_returns_true_when_it_yields_and_is_not_interrupted(tmp_path
 
         ticks = []
 
-        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+        async def fake_on_tick(broker_id, epic, mid, bid, ask, **kw):
             ticks.append((broker_id, epic, mid, bid, ask))
 
         eng.on_tick = fake_on_tick
@@ -312,7 +312,7 @@ def test_stream_feed_times_out_on_silent_stream_and_returns_false(tmp_path, monk
 
         ticks = []
 
-        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+        async def fake_on_tick(broker_id, epic, mid, bid, ask, **kw):
             ticks.append(1)
 
         eng.on_tick = fake_on_tick
@@ -352,7 +352,7 @@ def test_feed_loop_falls_back_to_polling_after_repeated_stream_failures(tmp_path
 
         ticks = []
 
-        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+        async def fake_on_tick(broker_id, epic, mid, bid, ask, **kw):
             ticks.append((mid, bid, ask))
 
         eng.on_tick = fake_on_tick
@@ -379,7 +379,7 @@ def test_poll_feed_max_duration_returns_after_deadline(tmp_path):
 
         ticks = []
 
-        async def fake_on_tick(broker_id, epic, mid, bid, ask):
+        async def fake_on_tick(broker_id, epic, mid, bid, ask, **kw):
             ticks.append(1)
 
         eng.on_tick = fake_on_tick

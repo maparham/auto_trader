@@ -151,6 +151,7 @@ async def lifespan(app: FastAPI):
         get_broker=deps.get_data,
         broadcast=state_router.broadcast_to_user,
         notifiers=[TELEGRAM.notifier, PUSH.notifier],
+        load_bars=deps.load_alert_bars,
     )
     telegram_poller = asyncio.create_task(TELEGRAM.run_poller())
     try:

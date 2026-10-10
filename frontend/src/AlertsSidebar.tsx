@@ -14,7 +14,6 @@ import Tooltip from "./components/Tooltip";
 import type { ChartController } from "./lib/chartController";
 import type { ChartTab, AlertCondition } from "./lib/persist";
 import type { OverlayManager } from "./lib/overlays";
-import { fmtPrice } from "./lib/priceFormat";
 import { brokerLabel } from "./lib/trading";
 import {
   alertsChanged,
@@ -22,6 +21,7 @@ import {
   alertEditRequest,
   alertGlobalEditRequest,
   bumpAlerts,
+  indicatorAlertRequest,
   requestConfirm,
 } from "./lib/signals";
 import {
@@ -33,10 +33,18 @@ import {
   deleteStoredAlert,
   updateStoredAlert,
   normalizeAlert,
-  CONDITION_LABELS,
   type TriggeredAlert,
   type SavedAlert,
 } from "./lib/persist";
+import {
+  alertLabel,
+  TRIGGER_LABELS,
+  triggeredLabel,
+  loadIndicatorAlerts,
+  loadAllIndicatorAlerts,
+  deleteIndicatorAlert,
+  type IndicatorAlert,
+} from "./lib/alertsApi";
 
 // Where an alert's line starts, as a clickable badge beside the trigger one. The
 // state is worth showing on the row (a full-width line is the exception now), and
@@ -119,6 +127,91 @@ function TrashIcon() {
       <polyline points="3 6 5 6 21 6" />
       <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
     </svg>
+  );
+}
+
+// An indicator alert that cannot evaluate yet (warm-up history, feed down).
+function WaitingBadge() {
+  return (
+    <Tooltip content={["Not enough candles yet, or the feed is down", "It fires once data arrives"]}>
+      <span className="ap-badge ap-badge-wait">waiting for data</span>
+    </Tooltip>
+  );
+}
+
+// One indicator alert row, shared by the current-chart and all-symbols lists.
+// No line to select or jump to (the alert follows an indicator, not a price
+// level), so the row and its go-to icon just focus the epic via `onFocus`.
+function IndicatorAlertRow({
+  a,
+  epic,
+  precision,
+  onFocus,
+}: {
+  a: IndicatorAlert;
+  epic: string;
+  precision: number;
+  onFocus?: () => void;
+}) {
+  const edit = () => indicatorAlertRequest.set({ mode: "edit", id: a.id });
+  return (
+    <div
+      className={`ap-row${onFocus ? " ap-row-clickable" : ""}`}
+      onClick={onFocus}
+      onDoubleClick={edit}
+    >
+      <div className="ap-row-main">
+        <span className="ap-sym">{epic}</span>
+        <span className="ap-cond">{alertLabel(a, precision)}</span>
+      </div>
+      {a.message && <div className="ap-msg">{a.message}</div>}
+      <div className="ap-row-meta">
+        <span className="ap-row-badges">
+          <span className="ap-badge">{TRIGGER_LABELS[a.trigger]}</span>
+          {a.status === "waiting_for_data" && <WaitingBadge />}
+        </span>
+        <div className="ap-row-actions">
+          {onFocus && (
+            <Tooltip content="Go to chart">
+            <button
+              className="ap-icon-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onFocus();
+              }}
+            >
+              <GoToIcon />
+            </button>
+            </Tooltip>
+          )}
+          <Tooltip content="Edit alert">
+          <button
+            className="ap-icon-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              edit();
+            }}
+          >
+            <EditIcon />
+          </button>
+          </Tooltip>
+          <Tooltip content="Delete alert">
+          <button
+            className="ap-icon-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              requestConfirm({
+                message: `Delete this alert on ${epic}?`,
+                onConfirm: () => deleteIndicatorAlert(a.id),
+              });
+            }}
+          >
+            <TrashIcon />
+          </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -284,12 +377,33 @@ export default function AlertsSidebar({
   // levels, so a dragged line shows its current price. Re-pulled each render via
   // the tick above; epic changes (rehydrate) also bump alertsChanged.
   const live = sortAlerts([...(overlays?.getAlerts() ?? [])], () => epic);
+  // Indicator alerts on the open symbol, listed after its price rows. Expired
+  // ones are dropped like the all-symbols price rows (they can never fire).
+  // They have no price level, so the price sorts fall back to creation time
+  // (same direction) instead of ordering by a meaningless stand-in.
+  const sortIndicator = (list: IndicatorAlert[]) => {
+    const kept = list.filter((a) => a.expiresAt == null || now <= a.expiresAt);
+    if (sortKey === "price-asc" || sortKey === "price-desc") {
+      const dir = sortKey === "price-asc" ? 1 : -1;
+      return [...kept].sort((x, y) => dir * ((x.createdAt ?? 0) - (y.createdAt ?? 0)));
+    }
+    return sortAlerts(
+      kept.map((a) => ({ a, message: a.message, level: 0, createdAt: a.createdAt })),
+      () => "",
+    ).map((w) => w.a);
+  };
+  const liveInd = sortIndicator(loadIndicatorAlerts(epic, brokerId));
 
   // All-alerts mode: collect saved alerts from every tab/cell. We read the
   // backend-backed alerts cache (the same source the charts read) so we see
   // alerts on symbols not currently on-screen. Re-read on every alertsChanged bump (the
   // `now` tick above handles that). Grouped by epic, sorted price-descending.
-  type AllGroup = { epic: string; precision: number; alerts: SavedAlert[] };
+  type AllGroup = {
+    epic: string;
+    precision: number;
+    alerts: SavedAlert[];
+    indicators: IndicatorAlert[];
+  };
   const allGroups: AllGroup[] = (() => {
     if (!showAll) return [];
     // Build a precision map from open cells so we can format prices correctly.
@@ -319,6 +433,15 @@ export default function AlertsSidebar({
       });
     };
     for (const { epic: ep, alerts } of loadAllAlerts(brokerId)) addToBucket(ep, alerts);
+    // Indicator alerts group by epic alongside the price ones; an epic with only
+    // indicator alerts still gets a group.
+    const indByEpic = new Map<string, IndicatorAlert[]>();
+    for (const a of loadAllIndicatorAlerts(brokerId)) {
+      const list = indByEpic.get(a.epic);
+      if (list) list.push(a);
+      else indByEpic.set(a.epic, [a]);
+      if (!byEpic.has(a.epic)) byEpic.set(a.epic, new Map());
+    }
 
     // Fractional digit count of a level (capped), to format symbols with no open cell.
     const decimalsOf = (n: number): number => {
@@ -331,16 +454,23 @@ export default function AlertsSidebar({
       // Off-screen symbols have no open cell in precMap; fall back to inferring the
       // precision from the levels themselves (≥2) rather than the focused cell's, so
       // an FX level like 1.08234 doesn't render as '1.08' under a US100 (prec 2) focus.
-      const inferred = Math.max(2, ...alerts.map((a) => decimalsOf(a.level)));
-      return { epic: ep, precision: precMap.get(ep) ?? inferred, alerts };
+      const indicators = sortIndicator(indByEpic.get(ep) ?? []);
+      const inferred = Math.max(
+        2,
+        ...alerts.map((a) => decimalsOf(a.level)),
+        ...indicators.map((a) => a.precision),
+      );
+      return { epic: ep, precision: precMap.get(ep) ?? inferred, alerts, indicators };
     });
     // Sort groups: symbol sorts apply at group level; others keep alpha order.
     if (sortKey === "symbol-za") groups.sort((a, b) => b.epic.localeCompare(a.epic));
     else groups.sort((a, b) => a.epic.localeCompare(b.epic));
-    return groups;
+    // An epic whose indicator alerts all expired leaves an empty group behind.
+    return groups.filter((g) => g.alerts.length + g.indicators.length > 0);
   })();
 
-  const totalAll = allGroups.reduce((s, g) => s + g.alerts.length, 0);
+  const totalAll = allGroups.reduce((s, g) => s + g.alerts.length + g.indicators.length, 0);
+  const liveCount = live.length + liveInd.length;
   // History is persisted; re-read on every firing (alertsChanged) and on mount.
   const [historyState, setHistoryState] = useState<TriggeredAlert[]>(loadTriggered);
   useEffect(
@@ -373,7 +503,7 @@ export default function AlertsSidebar({
           >
             Alerts{showAll
               ? (totalAll ? ` (${totalAll})` : "")
-              : (live.length ? ` (${live.length})` : "")}
+              : (liveCount ? ` (${liveCount})` : "")}
           </button>
           <button
             className={tab === "history" ? "on" : ""}
@@ -501,14 +631,12 @@ export default function AlertsSidebar({
                             self-identify — same ap-sym lead as the current-chart
                             and history rows. */}
                         <span className="ap-sym">{g.epic}</span>
-                        <span className="ap-cond">
-                          {CONDITION_LABELS[a.condition]} {a.level.toFixed(g.precision)}
-                        </span>
+                        <span className="ap-cond">{alertLabel(a, g.precision)}</span>
                       </div>
                       {a.message && <div className="ap-msg">{a.message}</div>}
                       <div className="ap-row-meta">
                         <span className="ap-badge">
-                          {a.trigger === "once" ? "Once" : "Every time"}
+                          {TRIGGER_LABELS[a.trigger]}
                         </span>
                         <LineStartBadge
                           on={a.startAtCreation ?? true}
@@ -565,7 +693,7 @@ export default function AlertsSidebar({
                             onClick={(e) => {
                               e.stopPropagation();
                               requestConfirm({
-                                message: `Delete alert ${CONDITION_LABELS[a.condition]} ${a.level.toFixed(g.precision)} on ${g.epic}?`,
+                                message: `Delete alert ${alertLabel(a, g.precision)} on ${g.epic}?`,
                                 onConfirm: () => {
                                   // Storage-level delete (the alert's chart may be
                                   // closed); open cells + the engine reconcile off the bump.
@@ -583,19 +711,29 @@ export default function AlertsSidebar({
                     </div>
                     );
                   })}
+                  {g.indicators.map((a) => (
+                    <IndicatorAlertRow
+                      key={a.id}
+                      a={a}
+                      epic={g.epic}
+                      precision={g.precision}
+                      onFocus={() => onOpenAlert(g.epic, {}, g.precision)}
+                    />
+                  ))}
                 </div>
               ))
             )
           ) : (
             // Current-chart mode: live overlay levels, supports hover/select.
-            live.length === 0 ? (
+            liveCount === 0 ? (
               <div className="ap-empty">
                 No active alerts on <strong>{epic}</strong>.
                 <br />
                 Use the bell to create one.
               </div>
             ) : (
-              live.map((a) => (
+              <>
+              {live.map((a) => (
                 <div
                   key={a.id}
                   className={`ap-row ap-row-clickable${a.selected ? " selected" : ""}${
@@ -608,14 +746,12 @@ export default function AlertsSidebar({
                 >
                   <div className="ap-row-main">
                     <span className="ap-sym">{epic}</span>
-                    <span className="ap-cond">
-                      {CONDITION_LABELS[a.condition]} {fmtPrice(a.level, precision)}
-                    </span>
+                    <span className="ap-cond">{alertLabel(a, precision)}</span>
                   </div>
                   {a.message && <div className="ap-msg">{a.message}</div>}
                   <div className="ap-row-meta">
                     <span className="ap-badge">
-                      {a.trigger === "once" ? "Once" : "Every time"}
+                      {TRIGGER_LABELS[a.trigger]}
                     </span>
                     <LineStartBadge
                       on={a.startAtCreation}
@@ -652,7 +788,7 @@ export default function AlertsSidebar({
                         onClick={(e) => {
                           e.stopPropagation();
                           requestConfirm({
-                            message: `Delete alert ${CONDITION_LABELS[a.condition]} ${fmtPrice(a.level, precision)} on ${epic}?`,
+                            message: `Delete alert ${alertLabel(a, precision)} on ${epic}?`,
                             onConfirm: () => overlays?.remove(a.id),
                           });
                         }}
@@ -663,7 +799,11 @@ export default function AlertsSidebar({
                     </div>
                   </div>
                 </div>
-              ))
+              ))}
+              {liveInd.map((a) => (
+                <IndicatorAlertRow key={a.id} a={a} epic={epic} precision={precision} />
+              ))}
+              </>
             )
           )}
         </div>
@@ -711,8 +851,7 @@ export default function AlertsSidebar({
                   <div className="ap-cond">
                     {/* History is cross-symbol: format with the firing's own
                         precision, falling back to the focused one for old rows. */}
-                    {CONDITION_LABELS[t.condition]} {t.level.toFixed(hp)}
-                    <span className="ap-at"> @ {t.price.toFixed(hp)}</span>
+                    {triggeredLabel(t, hp)}
                   </div>
                   {t.message && <div className="ap-msg">{t.message}</div>}
                   <div className="ap-row-meta ap-row-meta-end">

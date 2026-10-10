@@ -6,8 +6,12 @@ import userEvent from "@testing-library/user-event";
 const loadAllAlerts = vi.fn();
 const deleteStoredAlert = vi.fn();
 const loadTriggered = vi.fn();
+const loadAllIndicatorAlerts = vi.fn();
+const deleteIndicatorAlert = vi.fn();
 vi.mock("../lib/alertsApi", async (orig) => ({
   ...(await orig<object>()),
+  loadAllIndicatorAlerts: (...args: unknown[]) => loadAllIndicatorAlerts(...args),
+  deleteIndicatorAlert: (...args: unknown[]) => deleteIndicatorAlert(...args),
   loadAllAlerts: (...args: unknown[]) => loadAllAlerts(...args),
   deleteStoredAlert: (...args: unknown[]) => deleteStoredAlert(...args),
   loadTriggered: (...args: unknown[]) => loadTriggered(...args),
@@ -25,8 +29,9 @@ import {
   confirmRequest,
   alertGlobalEditRequest,
   alertModalRequest,
+  indicatorAlertRequest,
 } from "../lib/signals";
-import type { SavedAlert, TriggeredAlert } from "../lib/alertsApi";
+import type { IndicatorAlert, SavedAlert, TriggeredAlert } from "../lib/alertsApi";
 
 afterEach(() => {
   cleanup();
@@ -34,7 +39,33 @@ afterEach(() => {
   alertGlobalEditRequest.set(null);
   alertModalRequest.set(null);
   mobileSymbol.set(null);
+  indicatorAlertRequest.set(null);
 });
+
+function indAlert(over: Partial<IndicatorAlert> = {}): IndicatorAlert {
+  return {
+    kind: "indicator",
+    id: "ind1",
+    epic: "US100",
+    broker: "capital",
+    condition: "crossing_up",
+    trigger: "once",
+    message: "ema cross",
+    expiresAt: null,
+    notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+    precision: 2,
+    params: {
+      identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
+      line: "value",
+      timeframe: "HOUR",
+      target: "price",
+      value: null,
+      evalOn: "close",
+      link: null,
+    },
+    ...over,
+  };
+}
 
 function alert(over: Partial<SavedAlert> = {}): SavedAlert {
   return {
@@ -52,7 +83,10 @@ describe("MobileAlertsView", () => {
     loadAllAlerts.mockReset();
     deleteStoredAlert.mockReset();
     loadTriggered.mockReset();
+    loadAllIndicatorAlerts.mockReset();
+    deleteIndicatorAlert.mockReset();
     fetchQuote.mockReset();
+    loadAllIndicatorAlerts.mockReturnValue([]);
     loadAllAlerts.mockReturnValue([]);
     loadTriggered.mockReturnValue([]);
   });
@@ -131,5 +165,30 @@ describe("MobileAlertsView", () => {
 
     expect(fetchQuote).toHaveBeenCalledWith("US100");
     await waitFor(() => expect(alertModalRequest.value).toEqual({ price: 100 }));
+  });
+
+  it("lists indicator alerts with their label and a waiting for data badge", async () => {
+    loadAllIndicatorAlerts.mockReturnValue([indAlert({ status: "waiting_for_data" })]);
+
+    render(<MobileAlertsView />);
+
+    expect(screen.getByText("Crossing Up EMA 50 (1H)")).toBeTruthy();
+    expect(screen.getByText("ema cross")).toBeTruthy();
+    expect(screen.getByText("waiting for data")).toBeTruthy();
+
+    await userEvent.click(screen.getByText("Crossing Up EMA 50 (1H)"));
+    expect(indicatorAlertRequest.value).toEqual({ mode: "edit", id: "ind1" });
+  });
+
+  it("an evaluating indicator alert has no waiting badge; delete confirms then deletes", async () => {
+    loadAllIndicatorAlerts.mockReturnValue([indAlert({ status: "ok" })]);
+
+    render(<MobileAlertsView />);
+    expect(screen.queryByText("waiting for data")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /delete alert/i }));
+    expect(confirmRequest.value?.message).toBe("Delete this alert on US100?");
+    confirmRequest.value!.onConfirm();
+    expect(deleteIndicatorAlert).toHaveBeenCalledWith("ind1");
   });
 });

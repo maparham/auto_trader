@@ -9,10 +9,12 @@ drives every active alert off live ticks even with no browser tab open:
 - a registry `dict[(broker, epic) -> list[(user_id, row)]]`, built at start
   from `AlertStore.list_all()` and mutated by `on_alert_changed` (the API
   router calls this after every alert write/delete);
-- per-alert engine-owned state keyed `(user_id, alert_id)`: `armed`,
-  `baseline` (previous price sample), and `sig` (a signature of
-  level/condition/trigger — a changed sig on a KNOWN key means the alert was
-  reconfigured, so its baseline resets and it re-arms, same as the TS engine);
+- per-alert engine-owned state keyed `(user_id, alert_id)`: `baseline`
+  (previous intrabar `(subject, level)` pair; close-mode alerts read the
+  previous closed bar from the hub instead), `last_fired_bar`, and `sig` (the
+  kind's signature of the alert's evaluation params: a changed sig on a KNOWN
+  key means the alert was reconfigured, so its baseline and last-fired bar
+  reset); "every" fires at most once per bar (alert_eval.py);
 - `on_tick` evaluates every alert on a (broker, epic) against one price
   sample, prunes expired alerts, and on a fire runs `_fire`: record
   triggered-history, broadcast to `/ws/state`, then best-effort notifiers
@@ -36,9 +38,14 @@ import logging
 import time
 from typing import Any, Awaitable, Callable
 
-from auto_trader.core.alert_eval import evaluate_alert
+from auto_trader.core.alert_bars import Sample, period_start
+from auto_trader.core.alert_eval import Pair, evaluate_alert
+from auto_trader.core.alert_indicators import IndicatorHub, Loader, SeriesKey
+from auto_trader.core.alert_kinds import AlertKind, kind_of
 from auto_trader.core.alert_store import AlertStore
+from auto_trader.core.models import Candle
 from auto_trader.core.state_store import STATE_STORE
+from auto_trader.indicators.alertable import IndicatorKey
 
 log = logging.getLogger(__name__)
 
@@ -59,11 +66,6 @@ STREAM_STALE_SECONDS = 300.0
 # bar before _feed_loop stops retrying streaming and falls back to polling
 # for one backoff cycle.
 _STREAM_FAILURE_THRESHOLD = 2
-
-
-def _alert_sig(params: dict) -> str:
-    return f"{params.get('level')}|{params.get('condition')}|{params.get('trigger')}"
-
 
 
 def _is_broker_paused(exc: BaseException) -> bool:
@@ -97,8 +99,13 @@ class AlertEngine:
         self._registry: dict[tuple[str, str], list[tuple[str, dict]]] = {}
 
         # per-alert engine-owned tick state, keyed (user_id, alert_id)
-        self._armed: dict[tuple[str, str], bool] = {}
-        self._baseline: dict[tuple[str, str], float | None] = {}
+        self._last_fired_bar: dict[tuple[str, str], int] = {}
+        self._baseline: dict[tuple[str, str], Pair | None] = {}
+        self._hub: IndicatorHub | None = None
+        # status debounce: key -> (status, since_monotonic); last broadcast status
+        self._status_seen: dict[tuple[str, str], tuple[str, float]] = {}
+        self._status_sent: dict[tuple[str, str], str] = {}
+        self._status_task: asyncio.Task | None = None
         self._sig: dict[tuple[str, str], str] = {}
 
         # price-side cache: user_id -> (side, cached_at_monotonic)
@@ -132,6 +139,7 @@ class AlertEngine:
         get_broker: Callable[[str], Any],
         broadcast: Callable[[str, dict], Awaitable[None]],
         notifiers: list[Callable[[str, dict], Awaitable[None]]] | None = None,
+        load_bars: Loader | None = None,
     ) -> None:
         self._store = store
         self._get_broker = get_broker
@@ -139,6 +147,9 @@ class AlertEngine:
         # Stored by reference (not copied) so a caller (lifespan) can append a
         # notifier — e.g. web push, Telegram — registered after configure().
         self._notifiers = notifiers if notifiers is not None else []
+        # Indicator alerts need closed bars; without a loader (most tests)
+        # they simply never become ready and never fire.
+        self._hub = IndicatorHub(load_bars) if load_bars is not None else None
 
     # ---- lifecycle ----
 
@@ -155,10 +166,12 @@ class AlertEngine:
         # Same class of bug as the Event above: engine-owned per-alert state
         # left over from a PRIOR lifespan (ALERT_ENGINE is a module singleton;
         # tests cycle multiple app lifespans against it) must not leak into
-        # this one — a stale `armed`/`baseline` could misread the first tick
-        # of a freshly (re)started engine as a crossing.
+        # this one — a stale `baseline` could misread the first tick of a
+        # freshly (re)started engine as a crossing.
         self._registry.clear()
-        self._armed.clear()
+        self._last_fired_bar.clear()
+        self._status_seen.clear()
+        self._status_sent.clear()
         self._baseline.clear()
         self._sig.clear()
         self._price_side_cache.clear()
@@ -167,6 +180,9 @@ class AlertEngine:
         for user_id, row in all_rows:
             key = (row["broker"], row["epic"])
             self._registry.setdefault(key, []).append((user_id, row))
+        await self._rebuild_last_fired()
+        self._safe_sync_needs()
+        self._status_task = asyncio.create_task(self._status_loop())
         self._reconcile_feeds()
         self._expiry_task = asyncio.create_task(self._expiry_loop())
         self._reconciler_task = asyncio.create_task(self._reconciler_loop())
@@ -175,13 +191,14 @@ class AlertEngine:
         draining = [t for tasks in self._draining.values() for t in tasks]
         tasks = [
             t for t in (
-                self._expiry_task, self._reconciler_task,
+                self._expiry_task, self._reconciler_task, self._status_task,
                 *self._feed_tasks.values(), *draining,
             )
             if t is not None
         ]
         self._expiry_task = None
         self._reconciler_task = None
+        self._status_task = None
         self._feed_tasks = {}
         self._draining = {}
         for task in tasks:
@@ -369,7 +386,7 @@ class AlertEngine:
                 return yielded_any
             yielded_any = True
             reset_backoff()
-            await self.on_tick(broker_id, epic, bar.candle.close, bar.bid, bar.ask)
+            await self.on_tick(broker_id, epic, bar.candle.close, bar.bid, bar.ask, bar=bar.candle)
 
     async def _poll_feed(
         self, broker: Any, broker_id: str, epic: str,
@@ -441,15 +458,20 @@ class AlertEngine:
                 # An inactive alert is skipped by on_tick, so its baseline
                 # would otherwise freeze at whatever price it last saw while
                 # active. Forget its tick state now so a later re-enable
-                # starts armed with an empty baseline — the first tick after
+                # starts with an empty baseline — the first tick after
                 # re-enabling can't misread the price drift while it was off
-                # as a crossing.
-                self._forget(state_key)
+                # as a crossing. The last-fired bar is KEPT: toggling an
+                # alert off and on must not let it fire twice in one bar.
+                self._forget(state_key, keep_last_fired=True)
 
+        self._sync_needs()
         self._reconcile_event.set()
 
-    def _forget(self, state_key: tuple[str, str]) -> None:
-        self._armed.pop(state_key, None)
+    def _forget(self, state_key: tuple[str, str], *, keep_last_fired: bool = False) -> None:
+        if not keep_last_fired:
+            self._last_fired_bar.pop(state_key, None)
+        self._status_seen.pop(state_key, None)
+        self._status_sent.pop(state_key, None)
         self._baseline.pop(state_key, None)
         self._sig.pop(state_key, None)
         self._snoozed.pop(state_key, None)
@@ -458,7 +480,8 @@ class AlertEngine:
 
     def snooze(self, user_id: str, alert_id: str, seconds: float) -> None:
         """Suppress firings for one alert until now+seconds. Evaluation state
-        (baseline/armed) keeps advancing normally — only the fire is muted."""
+        (baseline) keeps advancing normally — only the fire is muted, and a
+        muted fire does not record a last-fired bar."""
         self._snoozed[(user_id, alert_id)] = int(time.time() * 1000 + seconds * 1000)
 
     def _is_snoozed(self, state_key: tuple[str, str], now_ms: int) -> bool:
@@ -522,16 +545,27 @@ class AlertEngine:
                 if candidate in ("bid", "mid", "ask"):
                     side = candidate
         except Exception:
-            side = "mid"
+            # A transient store error is not a setting change: keep the
+            # cached side, or a bid/ask user would read as a flip to "mid"
+            # (baselines cleared, hub series dropped and cold-reseeded).
+            side = prev_side or "mid"
 
         self._price_side_cache[user_id] = (side, time.monotonic())
 
+        # The hub's needs were registered under whatever price_side_for
+        # returned BEFORE this resolution - "mid" on a cache miss, same as
+        # price_side_for's own default. Resync whenever the side actually
+        # differs from that, not only on a FLIP (prev_side is not None):
+        # a user's very FIRST resolution to a non-mid side is not a flip,
+        # but the hub is still on the wrong SeriesKey until this runs.
+        if side != (prev_side or "mid"):
+            self._sync_needs()
         # A side flip (e.g. mid -> bid) mid-session means every existing
         # baseline for this user was sampled on the OLD side; comparing it
-        # against a price on the new side can misread as a crossing. Port of
-        # alertEngine.ts's setPriceSide, which clears baselines for the same
-        # reason. `prev_side is None` (first-ever resolution, no flip) is
-        # exempt.
+        # against a price on the new side can misread as a crossing. Port
+        # of alertEngine.ts's setPriceSide, which clears baselines for the
+        # same reason. The first-ever resolution (prev_side is None) is
+        # exempt: there is no stale baseline to clear.
         if prev_side is not None and side != prev_side:
             self._clear_baselines_for_user(user_id)
 
@@ -541,73 +575,218 @@ class AlertEngine:
                 if owner == user_id:
                     self._baseline[(owner, row["id"])] = None
 
+    # ---- indicator series + status ----
+
+    def _series_key(self, user_id: str, row: dict, kind: AlertKind) -> SeriesKey:
+        return (row["broker"], row["epic"], kind.bar_resolution(row["params"]),
+                self.price_side_for(user_id))
+
+    def _sync_needs(self) -> None:
+        """Tell the hub which series/indicators active indicator alerts need."""
+        if self._hub is None:
+            return
+        needs: dict[SeriesKey, set[IndicatorKey]] = {}
+        for entries in self._registry.values():
+            for user_id, row in entries:
+                kind = kind_of(row)
+                ind = kind.indicator_key(row["params"]) if kind and row.get("active", 1) else None
+                if ind is not None:
+                    needs.setdefault(self._series_key(user_id, row, kind), set()).add(ind)
+        self._hub.set_needs(needs)
+
+    def _safe_sync_needs(self) -> None:
+        """`_sync_needs` for paths that must not fail (start, deletes): a
+        broken indicator row must not take price alerts down with it."""
+        try:
+            self._sync_needs()
+        except Exception:
+            log.warning("alert indicator needs sync failed", exc_info=True)
+
+    async def _rebuild_last_fired(self) -> None:
+        """Map each alert's latest fire time back onto its bar, so a restart
+        inside a bar cannot fire an "every" alert a second time in it."""
+        assert self._store is not None
+        rows = {(u, r["id"]): r for entries in self._registry.values() for u, r in entries}
+        for user_id, alert_id, t in await self._store.last_fired_times():
+            row = rows.get((user_id, alert_id))
+            kind = kind_of(row) if row else None
+            if kind is not None:
+                self._last_fired_bar[(user_id, alert_id)] = period_start(
+                    t, kind.bar_resolution(row["params"])
+                )
+
+    def status(self, user_id: str, alert_id: str) -> str | None:
+        """"ok" / "waiting_for_data" for an active indicator alert; None for a
+        price alert, a paused alert or an unknown id."""
+        for entries in self._registry.values():
+            for owner, row in entries:
+                if owner == user_id and row["id"] == alert_id:
+                    return self._row_status(user_id, row)
+        return None
+
+    def _row_status(self, user_id: str, row: dict) -> str | None:
+        """`status` for a row already in hand (no registry scan). A paused
+        row has no series registered, so it reports nothing (like a price
+        alert) rather than "waiting_for_data" forever."""
+        if not row.get("active", 1):
+            return None
+        kind = kind_of(row)
+        ind = kind.indicator_key(row["params"]) if kind else None
+        if ind is None:
+            return None
+        ok = self._hub is not None and self._hub.ready(self._series_key(user_id, row, kind), ind)
+        return "ok" if ok else "waiting_for_data"
+
+    _STATUS_HOLD_SECONDS = 10.0
+
+    async def _status_loop(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(2)
+                await self._broadcast_status_changes()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning("alert status loop failed", exc_info=True)
+
+    async def _broadcast_status_changes(self) -> None:
+        """Debounced: a status must hold for _STATUS_HOLD_SECONDS before it
+        is announced, so a flapping series does not spam clients. The
+        broadcast is the generic "alerts changed" nudge; clients refetch."""
+        assert self._broadcast is not None
+        now = time.monotonic()
+        changed: dict[str, tuple[str, str]] = {}
+        for entries in self._registry.values():
+            for user_id, row in entries:
+                key = (user_id, row["id"])
+                st = self._row_status(user_id, row)
+                if st is None:
+                    continue
+                seen = self._status_seen.get(key)
+                if seen is None or seen[0] != st:
+                    self._status_seen[key] = (st, now)
+                    continue
+                if now - seen[1] >= self._STATUS_HOLD_SECONDS and self._status_sent.get(key) != st:
+                    self._status_sent[key] = st
+                    changed[user_id] = (row["broker"], row["epic"])
+        for user_id, (broker, epic) in changed.items():
+            await self._broadcast(user_id, {
+                "key": "__alerts__:changed",
+                "value": {"broker": broker, "epic": epic, "origin": "engine"},
+            })
+
     # ---- tick evaluation ----
 
     async def on_tick(
-        self, broker: str, epic: str, mid: float, bid: float | None, ask: float | None
+        self, broker: str, epic: str, mid: float, bid: float | None, ask: float | None,
+        *, t_ms: int | None = None, bar: Candle | None = None,
     ) -> None:
         # Callers must not invoke on_tick concurrently for the same (broker,
-        # epic) — the per-alert state machine below (sig -> baseline -> armed
-        # -> evaluate -> fire) has no suspension point once it starts, so two
-        # overlapping calls for the same feed could interleave and process
-        # samples out of order. Task 4's feed drivers run one task per
-        # (broker, epic) pair, so this holds. The price-side refresh (the one
-        # await that touches storage) is hoisted above the loop for exactly
-        # this reason.
+        # epic): one feed task per pair guarantees it (see _feed_tasks). The
+        # awaits that touch storage or the candle cache (price-side refresh,
+        # hub sample) run before the per-alert loop for that reason.
         assert self._store is not None, "configure() must be called before on_tick()"
         entries = list(self._registry.get((broker, epic), []))
         now_ms = int(time.time() * 1000)
+        t_ms = now_ms if t_ms is None else t_ms
 
         for owner in {user_id for user_id, _ in entries}:
             await self._refresh_price_side(owner)
 
+        closed: set[SeriesKey] = set()
+        if self._hub is not None and self._hub.has_feed(broker, epic):
+            try:
+                closed = await self._hub.on_sample(broker, epic, Sample(t_ms, mid, bid, ask, bar))
+            except Exception:
+                # Never let the hub back off the whole feed: price alerts on
+                # this (broker, epic) still evaluate below.
+                log.warning("alert indicator hub sample failed for %s/%s", broker, epic, exc_info=True)
+                closed = set()
+
         for user_id, row in entries:
             if not row.get("active", 1):
                 continue
-
-            alert_id = row["id"]
-            state_key = (user_id, alert_id)
-
             expires_at = row.get("expires_at")
             if expires_at is not None and expires_at <= now_ms:
                 await self._expire_one(user_id, row)
                 continue
+            try:
+                await self._evaluate_one(user_id, row, mid, bid, ask, t_ms, now_ms, closed)
+            except Exception:
+                # One bad alert must not stop every other alert on this feed
+                # (an escaping error backs the whole feed task off).
+                log.warning("alert evaluation failed for user=%s alert=%s", user_id, row["id"], exc_info=True)
 
-            side = self.price_side_for(user_id)
-            if side == "bid" and bid is not None:
-                price = bid
-            elif side == "ask" and ask is not None:
-                price = ask
-            else:
-                price = mid
+    async def _evaluate_one(
+        self, user_id: str, row: dict, mid: float, bid: float | None, ask: float | None,
+        t_ms: int, now_ms: int, closed: set[SeriesKey],
+    ) -> None:
+        state_key = (user_id, row["id"])
+        kind = kind_of(row)
+        if kind is None:
+            return
+        params = row.get("params", {})
 
-            params = row.get("params", {})
-            sig = _alert_sig(params)
-            prev_sig = self._sig.get(state_key)
-            if prev_sig is not None and prev_sig != sig:
-                self._baseline[state_key] = None
-                self._armed[state_key] = True
-            self._sig[state_key] = sig
+        sig = kind.sig(params)
+        prev_sig = self._sig.get(state_key)
+        if prev_sig is not None and prev_sig != sig:
+            self._baseline[state_key] = None
+            self._last_fired_bar.pop(state_key, None)
+        self._sig[state_key] = sig
 
-            # Advance the baseline every tick — read prev BEFORE overwriting.
+        side = self.price_side_for(user_id)
+        price = bid if side == "bid" and bid is not None else ask if side == "ask" and ask is not None else mid
+
+        ind = kind.indicator_key(params)
+        # One bar clock for every alert: the period the sample falls in.
+        # A close-mode fire happens in the bar AFTER the one that closed,
+        # so its next chance is the following close; a restart rebuilds
+        # this from the fire time with the same function.
+        bar_open = period_start(t_ms, kind.bar_resolution(params))
+        if kind.eval_on(params) == "close":
+            # Close mode needs no baseline of its own: the previous pair
+            # is the closed bar before the last one, read from the hub.
+            # Restart-safe, and intrabar ticks cannot move it.
+            skey = self._series_key(user_id, row, kind)
+            if self._hub is None or skey not in closed:
+                return
+            last, before = self._hub.last_closed(skey), self._hub.prev_closed(skey)
+            vals = self._hub.values(skey, ind, intrabar=False)
+            pvals = self._hub.prev_values(skey, ind)
+            cur = kind.resolve(params, last.close, vals) if last and vals else None
+            prev = kind.resolve(params, before.close, pvals) if before and pvals else None
+            if cur is None:
+                return
+            record_price = last.close
+        else:
+            vals = None
+            if ind is not None:
+                skey = self._series_key(user_id, row, kind)
+                vals = self._hub.values(skey, ind, intrabar=True) if self._hub else None
+                if vals is None:
+                    self._baseline[state_key] = None  # no stale pair across a gap
+                    return
+            cur = kind.resolve(params, price, vals)
+            if cur is None:
+                return
+            record_price = price
             prev = self._baseline.get(state_key)
-            self._baseline[state_key] = price
+            self._baseline[state_key] = cur
 
-            armed = self._armed.get(state_key, True)
-
-            result = evaluate_alert(
-                prev, price, params.get("level"), params.get("condition"),
-                params.get("trigger"), armed,
-            )
-
-            if result.next_armed != armed:
-                self._armed[state_key] = result.next_armed
-
-            if result.fired and not self._is_snoozed(state_key, now_ms):
-                await self._fire(user_id, row, price)
-
-            if result.remove:
-                await self._delete_and_forget(user_id, row)
+        result = evaluate_alert(
+            prev, cur, params.get("condition"), params.get("trigger"),
+            bar_open, self._last_fired_bar.get(state_key),
+        )
+        if result.fired and not self._is_snoozed(state_key, now_ms):
+            # Record last_fired_bar ONLY when the fire actually happens:
+            # a snoozed "fire" must not block the real one once the
+            # snooze lapses (test_telegram_rich_alerts.py pins a second
+            # crossing in the same minute, right after snooze, still
+            # firing).
+            self._last_fired_bar[state_key] = bar_open
+            await self._fire(user_id, row, record_price, cur, kind, t_ms)
+        if result.remove:
+            await self._delete_and_forget(user_id, row)
 
     async def _expire_one(self, user_id: str, row: dict) -> None:
         await self._delete_and_forget(user_id, row)
@@ -623,6 +802,7 @@ class AlertEngine:
                 self._registry[key] = kept
             else:
                 del self._registry[key]
+        self._safe_sync_needs()
         await self._broadcast(
             user_id,
             {
@@ -631,13 +811,19 @@ class AlertEngine:
             },
         )
 
-    async def _fire(self, user_id: str, row: dict, price: float) -> None:
+    async def _fire(
+        self, user_id: str, row: dict, price: float, pair: Pair, kind: AlertKind, fired_at: int,
+    ) -> None:
         assert self._store is not None and self._broadcast is not None
         params = row.get("params", {})
-        level = params.get("level")
+        # The resolved level: the fixed level for a price alert, the
+        # indicator line (or the fixed value) for an indicator alert.
+        level = pair[1]
         condition = params.get("condition")
 
-        now_ms = int(time.time() * 1000)
+        # The sample time: equal to now for live feeds, and the value the
+        # restart rebuild maps back through `period_start`.
+        now_ms = fired_at
         triggered_id = await self._store.add_triggered(
             user_id,
             {
@@ -678,6 +864,7 @@ class AlertEngine:
             "triggered_id": triggered_id,
             "time": now_ms,
         }
+        payload.update(kind.payload_extras(params, pair))
         await self._broadcast(user_id, {"key": "__alerts__:fired", "value": payload})
 
         for notifier in self._notifiers or []:

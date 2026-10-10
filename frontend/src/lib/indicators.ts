@@ -60,6 +60,7 @@ import {
 } from "./persist";
 import type { ChartController } from "./chartController";
 import { overrideExtend } from "./overrideExtend";
+import { reconcileLinksForScope } from "./indicatorAlertSync";
 export { overrideExtend };
 
 /** extendData keys a live gesture writes (a picked, hovered or glowing line)
@@ -1335,6 +1336,10 @@ export function syncIndicatorsFromStorage(
     }
   }
   controller.indicators.set(next);
+  // An instance undo/redo or a layout sync removed takes its alerts' links
+  // with it (unlinked, not deleted). Rebuilt ids come from storage, so they
+  // are the same instances and keep their links.
+  void reconcileLinksForScope(scope, new Set(next.map((i) => i.id)));
   // Re-assert visibility and hide-all state after rebuilds, so the sidebar
   // hide-all switch persists across undo.
   applyIndicatorVisibility(chart, resolution, controller.indicatorsHidden.value);

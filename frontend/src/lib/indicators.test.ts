@@ -1153,3 +1153,48 @@ describe("diffIndicatorSync", () => {
     });
   });
 });
+
+describe("syncIndicatorsFromStorage: indicator alert links", () => {
+  it("unlinks (no delete, no dialog) alerts on an instance the storage sync removed", async () => {
+    const { syncIndicatorsFromStorage } = await import("./indicators");
+    const { fakeChart } = await import("./testFakeChart");
+    const A = await import("./alertsApi");
+    const S = await import("./signals");
+    const { getPersistBroker } = await import("./persist/core");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) } as Response));
+    S.confirmRequest.set(null);
+    const scope = "tab.undo";
+    const broker = getPersistBroker();
+    const { chart } = fakeChart();
+    const ema = addIndicatorInstance(chart, scope, "US100", "EMA")!;
+    const rsi = addIndicatorInstance(chart, scope, "US100", "RSI")!;
+    let value = [ema, rsi];
+    const controller = {
+      indicators: { get value() { return value; }, set: (v: typeof value) => { value = v; } },
+      indicatorsHidden: { value: false },
+    } as unknown as import("./chartController").ChartController;
+    const mk = (id: string, instanceId: string) => ({
+      kind: "indicator" as const, id, epic: "US100", broker, condition: "crossing" as const, trigger: "every" as const,
+      message: "", expiresAt: null, precision: 2,
+      notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      params: {
+        identity: { indicator: "MA" as const, calcParams: [20], config: { maType: "ema", source: "close" }, priceTarget: true },
+        line: "value" as const, timeframe: "HOUR", target: "price" as const, value: null, evalOn: "close" as const,
+        link: { scope, instanceId },
+      },
+    });
+    await A.addIndicatorAlert(mk("al-undo-ema", ema.id));
+    await A.addIndicatorAlert(mk("al-undo-rsi", rsi.id));
+
+    // Undo of the EMA add: storage now holds only the RSI.
+    persist.saveIndicators(scope, [rsi]);
+    syncIndicatorsFromStorage(chart, controller, scope, "US100", "HOUR", new Set());
+    await Promise.resolve();
+
+    const all = A.loadAllIndicatorAlerts(broker);
+    expect(all.find((a) => a.id === "al-undo-ema")?.params.link).toBeNull();
+    expect(all.find((a) => a.id === "al-undo-rsi")?.params.link).toEqual({ scope, instanceId: rsi.id });
+    expect(S.confirmRequest.value).toBeNull();
+    vi.unstubAllGlobals();
+  });
+});

@@ -74,6 +74,7 @@ import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAgg
 import BacktestTradeDashes, { type BacktestTradeDashesHandle } from "./BacktestTradeDashes";
 import {
   alertEditRequest,
+  indicatorAlertRequest,
   requestConfirm,
   indicatorSettingsRequest,
   drawingSettingsRequest,
@@ -195,6 +196,7 @@ import { fetchSplits, type Split } from "./lib/splits";
 import {
   brokerLabel,
   subscribeTrades,
+  supportsStreaming,
   type TradeView,
   type OrderSide,
 } from "./lib/trading";
@@ -246,7 +248,7 @@ import { useChartPaint } from "./chart/useChartPaint";
 import { useIndicatorCommands } from "./chart/useIndicatorCommands";
 import { useLineDrag, type TradeLinePx } from "./chart/useLineDrag";
 import { usePointerCrosshair } from "./chart/usePointerCrosshair";
-import AlertTags from "./chart/AlertTags";
+import AlertTags, { type IndicatorBellTag } from "./chart/AlertTags";
 import TradePills from "./chart/TradePills";
 
 // klinecharts' own initial bar spacing (its DEFAULT_BAR_SPACE, not exported) — used to
@@ -1170,6 +1172,7 @@ export default function ChartCore({
   // when the bid/ask display is off, the feed is down, or the side is unknown.
   const [bidTag, setBidTag] = useState<{ y: number; price: number; w: number } | null>(null);
   const [askTag, setAskTag] = useState<{ y: number; price: number; w: number } | null>(null);
+  const [indicatorBells, setIndicatorBells] = useState<IndicatorBellTag[]>([]);
   const [alertTags, setAlertTags] = useState<
     Array<{
       id: string;
@@ -3909,6 +3912,7 @@ export default function ChartCore({
     slopeArmed,
     selectedIndicator,
     overlays,
+    indicatorAlerts: controller.indicatorAlerts,
     ANCHOR_GRAB_PX,
     precisionRef,
     confirmLineEditsRef,
@@ -4741,6 +4745,7 @@ export default function ChartCore({
     setBidTag,
     setAskTag,
     setAlertTags,
+    setIndicatorBells,
     setTradePills,
     setAxisW,
     setLegendRows,
@@ -4787,6 +4792,7 @@ export default function ChartCore({
     themeRef,
     anchorPxRef,
     period,
+    scope,
   });
 
 
@@ -4852,10 +4858,20 @@ export default function ChartCore({
     // The BACKEND can fire/remove an alert on THIS (active) epic and push the
     // change down /ws/state; reconcile the on-chart lines off the signal so a
     // "once" alert it deleted also vanishes from the chart.
-    const unsubAlerts = alertsChanged.subscribe(() => overlays.reconcileAlerts());
+    const unsubAlerts = alertsChanged.subscribe(() => {
+      overlays.reconcileAlerts();
+      controller.indicatorAlerts.reconcile();
+      handle.redrawRef.current(); // indicator alert bells (no overlay listener fires for them)
+    });
+    // An indicator alert's line lives in its indicator's pane, which comes and
+    // goes with the indicator: re-home (or drop) the lines on any add/remove.
+    const unsubIndAlertPanes = controller.indicators.subscribe(() => controller.indicatorAlerts.reconcile());
+    const unsubIndAlertRemoved = indicatorRemoved.subscribe(() => controller.indicatorAlerts.reconcile());
     return () => {
       overlays.setAlertsListener(null);
       unsubAlerts();
+      unsubIndAlertPanes();
+      unsubIndAlertRemoved();
       ro.disconnect();
       window.removeEventListener("pointerup", onPointerUp);
       if (redrawRaf != null) cancelAnimationFrame(redrawRaf);
@@ -5128,6 +5144,13 @@ export default function ChartCore({
     return () => clearInterval(h);
   }, [anyVisibleExpiry]);
 
+  // Read by the indicator "Add alert" entries (legend bell, menu) when they
+  // build a draft. quoteOnly: no live stream, so a volume-weighted line has no
+  // intrabar volume and the dialog disables "As it happens".
+  const alertContext = useRef({ epic: symbol.epic, broker: brokerId, precision, quoteOnly: false });
+  alertContext.current = {
+    epic: symbol.epic, broker: brokerId, precision, quoteOnly: !supportsStreaming(brokerId),
+  };
   const {
     onLegendToggleVisible,
     onLegendOpenSettings,
@@ -5143,6 +5166,8 @@ export default function ChartCore({
     startPaneReorderDrag,
     indicatorMenuItems,
     onLegendOpenMenu,
+    onLegendAddAlert,
+    legendAlertCheck,
   } = useIndicatorCommands(handle, {
     cellId,
     scope,
@@ -5151,6 +5176,7 @@ export default function ChartCore({
     wrapRef,
     setPaneDropTop,
     setIndMenu,
+    alertContext,
   });
 
   // Delete/Backspace fallback at document level. The wrap's own onKeyDown only
@@ -5723,6 +5749,8 @@ export default function ChartCore({
         onCopyGroup={copyIndicatorGroup}
         onSelectRow={onLegendSelectRow}
         onOpenMenu={onLegendOpenMenu}
+        onAddAlert={onLegendAddAlert}
+        alertCheck={legendAlertCheck}
         onMove={reorderPaneByName}
         onStartReorder={startPaneReorderDrag}
         // Both entry points are withdrawn for a masked session (see sessionMasked);
@@ -5968,7 +5996,13 @@ export default function ChartCore({
         // explicit 100% avoids a pre-first-paint window where it collapses to 0.
         style={{ position: "absolute", top: 0, left: 0, right: 0, height: "100%", overflow: "hidden", pointerEvents: "none" }}
       >
-      <AlertTags tags={alertTags} priceTag={priceTag} precision={precision} />
+      <AlertTags
+        tags={alertTags}
+        bells={indicatorBells}
+        onBellClick={(id) => indicatorAlertRequest.set({ mode: "edit", id })}
+        priceTag={priceTag}
+        precision={precision}
+      />
 
       {/* TV-style descriptive pill on the line itself — shown while the line is
           hovered/selected (or the pill itself is hovered). Follows the cursor's x

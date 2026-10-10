@@ -13,6 +13,8 @@ import { API_BASE, apiFetch } from "./http";
 import { getPersistBroker, registerAlertsRouter } from "./persist/core";
 import { bumpAlerts } from "./signals";
 import { toast } from "./notify";
+import { ALERTABLE, type IndicatorIdentity, indicatorAlertLabel } from "./alertableIndicators";
+import { fmtPrice } from "./priceFormat";
 
 // --- types (re-homed from persist/alerts.ts) ---------------------------------
 
@@ -53,7 +55,46 @@ export interface SavedAlert {
   // (absent = on). Purely cosmetic — the backend's firing signature ignores it —
   // so an alert says nothing about the bars that predate it.
   startAtCreation?: boolean;
+  kind?: "price_level";
 }
+
+export type EvalOn = "close" | "intrabar";
+export type AlertTarget = "price" | "value";
+
+export const TRIGGER_LABELS: Record<AlertTrigger, string> = {
+  once: "Once only",
+  every: "Once per bar",
+};
+
+export interface IndicatorAlertParams {
+  identity: IndicatorIdentity;
+  line: "value";
+  timeframe: string;
+  target: AlertTarget;
+  value: number | null;
+  evalOn: EvalOn;
+  // The chart cell + instance the alert follows. null once the user kept the
+  // alert after removing (or un-alertably editing) its indicator.
+  link: { scope: string; instanceId: string } | null;
+}
+
+export interface IndicatorAlert {
+  kind: "indicator";
+  id: string;
+  epic: string;
+  broker: string;
+  condition: AlertCondition;
+  trigger: AlertTrigger;
+  message: string;
+  expiresAt: number | null;
+  notify: AlertNotifyChannels;
+  createdAt?: number;
+  precision: number;
+  params: IndicatorAlertParams;
+  status?: "ok" | "waiting_for_data";
+}
+
+export type AnyAlert = SavedAlert | IndicatorAlert;
 
 const ALL_CHANNELS: AlertNotifyChannels = {
   toast: true,
@@ -116,6 +157,8 @@ export interface TriggeredAlert {
   alertId?: string;
   /** The broker the alert lives on; absent on rows from older backends. */
   broker?: string;
+  label?: string;
+  target?: AlertTarget;
 }
 
 export interface FiredPayload {
@@ -130,6 +173,10 @@ export interface FiredPayload {
   notify: Partial<AlertNotifyChannels>;
   /** Server firing moment (ms epoch); absent on payloads from older backends. */
   time?: number;
+  label?: string;
+  target?: AlertTarget;
+  evalOn?: EvalOn;
+  trigger?: AlertTrigger;
 }
 
 // --- wire shape (server) ------------------------------------------------------
@@ -139,13 +186,7 @@ interface AlertRow {
   broker: string;
   epic: string;
   kind: string;
-  params: {
-    level: number;
-    condition: AlertCondition;
-    trigger: AlertTrigger;
-    timeframe?: string;
-    startAtCreation?: boolean;
-  };
+  params: Record<string, unknown>;
   message: string;
   expires_at: number | null;
   notify?: Partial<AlertNotifyChannels>;
@@ -153,6 +194,7 @@ interface AlertRow {
   active: number;
   created_at: number;
   updated_at: number;
+  status?: "ok" | "waiting_for_data";
 }
 
 interface TriggeredRow {
@@ -166,20 +208,77 @@ interface TriggeredRow {
   condition: AlertCondition;
   message: string;
   precision?: number;
+  alert?: { params?: Record<string, unknown> } | null;
 }
 
 function rowToSavedAlert(row: AlertRow): SavedAlert {
+  const p = row.params as Record<string, unknown>;
   return normalizeAlert({
     id: row.id,
-    level: row.params.level,
-    condition: row.params.condition,
-    trigger: row.params.trigger,
+    level: p.level as number,
+    condition: p.condition as AlertCondition,
+    trigger: p.trigger as AlertTrigger,
     message: row.message,
     expiresAt: row.expires_at,
     notify: row.notify as AlertNotifyChannels | undefined,
     createdAt: row.created_at,
-    startAtCreation: row.params.startAtCreation,
+    startAtCreation: p.startAtCreation as boolean | undefined,
   });
+}
+
+function rowToIndicatorAlert(row: AlertRow): IndicatorAlert {
+  const p = row.params as Record<string, unknown>;
+  return {
+    kind: "indicator",
+    id: row.id,
+    epic: row.epic,
+    broker: row.broker,
+    condition: p.condition as AlertCondition,
+    trigger: p.trigger as AlertTrigger,
+    message: row.message,
+    expiresAt: row.expires_at,
+    notify: { ...ALL_CHANNELS, ...(row.notify ?? {}) },
+    createdAt: row.created_at,
+    precision: row.precision,
+    status: row.status,
+    params: {
+      identity: {
+        indicator: p.indicator as IndicatorIdentity["indicator"],
+        calcParams: p.calcParams as number[],
+        config: p.config as Record<string, string>,
+        priceTarget: ALERTABLE[p.indicator as IndicatorIdentity["indicator"]]?.priceTarget ?? false,
+      },
+      line: "value",
+      timeframe: p.timeframe as string,
+      target: p.target as AlertTarget,
+      value: (p.value as number | null) ?? null,
+      evalOn: p.evalOn as EvalOn,
+      link: (p.link as IndicatorAlertParams["link"]) ?? null,
+    },
+  };
+}
+
+function indicatorWireParams(a: { condition: AlertCondition; trigger: AlertTrigger; params: IndicatorAlertParams }) {
+  const { identity, ...rest } = a.params;
+  return {
+    indicator: identity.indicator,
+    calcParams: identity.calcParams,
+    config: identity.config,
+    ...rest,
+    condition: a.condition,
+    trigger: a.trigger,
+  };
+}
+
+function rowToIndicatorAlertLabel(p: Record<string, unknown>): string | undefined {
+  try {
+    return indicatorAlertLabel(
+      { indicator: p.indicator, calcParams: p.calcParams, config: p.config, priceTarget: true } as IndicatorIdentity,
+      p.timeframe as string,
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
@@ -193,6 +292,10 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
     precision: row.precision,
     alertId: row.alert_id,
     broker: row.broker,
+    label: row.alert?.params && row.kind === "indicator"
+      ? rowToIndicatorAlertLabel(row.alert.params)
+      : undefined,
+    target: (row.alert?.params?.target as AlertTarget | undefined) ?? undefined,
   };
 }
 
@@ -200,6 +303,8 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
 
 // Map<broker, Map<epic, SavedAlert[]>>
 let alertsCache = new Map<string, Map<string, SavedAlert[]>>();
+// Map<id, IndicatorAlert>
+let indicatorCache = new Map<string, IndicatorAlert>();
 let triggeredCache: TriggeredAlert[] = [];
 let triggeredSeenCache = 0;
 
@@ -254,14 +359,20 @@ export function hydrateAlerts(): Promise<void> {
       if (alertsRes.ok) {
         const body = (await alertsRes.json()) as { alerts: AlertRow[] };
         const next = new Map<string, Map<string, SavedAlert[]>>();
+        const nextInd = new Map<string, IndicatorAlert>();
         for (const row of body.alerts) {
-          const epics = next.get(row.broker) ?? new Map<string, SavedAlert[]>();
-          if (!next.has(row.broker)) next.set(row.broker, epics);
-          const list = epics.get(row.epic) ?? [];
-          list.push(rowToSavedAlert(row));
-          epics.set(row.epic, list);
+          if (row.kind === "indicator") {
+            nextInd.set(row.id, rowToIndicatorAlert(row));
+          } else {
+            const epics = next.get(row.broker) ?? new Map<string, SavedAlert[]>();
+            if (!next.has(row.broker)) next.set(row.broker, epics);
+            const list = epics.get(row.epic) ?? [];
+            list.push(rowToSavedAlert(row));
+            epics.set(row.epic, list);
+          }
         }
         alertsCache = next;
+        indicatorCache = nextInd;
       }
       if (triggeredRes.ok) {
         const body = (await triggeredRes.json()) as { entries: TriggeredRow[]; seen: number };
@@ -308,6 +419,27 @@ export function loadTriggered(): TriggeredAlert[] {
 
 export function loadTriggeredSeen(): number {
   return triggeredSeenCache;
+}
+
+export function loadIndicatorAlerts(epic: string, broker: string = getPersistBroker()): IndicatorAlert[] {
+  return [...indicatorCache.values()].filter((a) => a.epic === epic && a.broker === broker);
+}
+
+export function loadAllIndicatorAlerts(broker: string = getPersistBroker()): IndicatorAlert[] {
+  return [...indicatorCache.values()].filter((a) => a.broker === broker);
+}
+
+export function linkedAlerts(scope: string, instanceId: string): IndicatorAlert[] {
+  return [...indicatorCache.values()].filter(
+    (a) => a.params.link?.scope === scope && a.params.link.instanceId === instanceId,
+  );
+}
+
+// Every alert linked to any instance in `scope` on `broker`. Scope strings
+// repeat across brokers (each broker has its own workspace), so the bulk
+// reconcile that reads this must not touch another broker's links.
+export function scopeLinkedAlerts(scope: string, broker: string = getPersistBroker()): IndicatorAlert[] {
+  return [...indicatorCache.values()].filter((a) => a.broker === broker && a.params.link?.scope === scope);
 }
 
 // --- optimistic writes -------------------------------------------------------
@@ -473,6 +605,75 @@ export function clearTriggered(): void {
   });
 }
 
+async function sendJson(path: string, method: string, body: unknown): Promise<Response | null> {
+  try {
+    return await apiFetch(url(path, true), {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function reportFailure(res: Response | null, what: string): Promise<void> {
+  let detail = "";
+  try {
+    detail = res ? ((await res.json()) as { detail?: string }).detail ?? "" : "";
+  } catch { /* non-JSON error body */ }
+  toast(detail ? `${what}: ${detail}` : what);
+}
+
+export async function addIndicatorAlert(a: IndicatorAlert): Promise<boolean> {
+  if (indicatorCache.has(a.id)) return true; // idempotent
+  indicatorCache.set(a.id, a);
+  bumpAlerts();
+  const res = await sendJson("/api/alerts", "POST", {
+    id: a.id, broker: a.broker, epic: a.epic, kind: "indicator",
+    params: indicatorWireParams(a), message: a.message, expires_at: a.expiresAt,
+    notify: a.notify, precision: a.precision,
+  });
+  if (res?.ok) return true;
+  indicatorCache.delete(a.id);
+  bumpAlerts();
+  await reportFailure(res, "Alert save failed");
+  return false;
+}
+
+export async function patchIndicatorAlert(
+  id: string,
+  patch: Partial<Pick<IndicatorAlert, "condition" | "trigger" | "message" | "expiresAt" | "notify">> & {
+    params?: Partial<IndicatorAlertParams>;
+  },
+): Promise<boolean> {
+  const prev = indicatorCache.get(id);
+  if (!prev) return false;
+  const next: IndicatorAlert = { ...prev, ...patch, params: { ...prev.params, ...(patch.params ?? {}) } };
+  indicatorCache.set(id, next);
+  bumpAlerts();
+  const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "PATCH", {
+    params: indicatorWireParams(next),
+    message: next.message,
+    expires_at: next.expiresAt,
+    notify: next.notify,
+  });
+  if (res?.ok) return true;
+  // Only restore if still in cache (might be deleted concurrently)
+  if (indicatorCache.has(id)) {
+    indicatorCache.set(id, prev);
+    bumpAlerts();
+  }
+  await reportFailure(res, "Alert update failed");
+  return false;
+}
+
+export function deleteIndicatorAlert(id: string): void {
+  if (!indicatorCache.delete(id)) return;
+  bumpAlerts();
+  void apiFetch(url(`/api/alerts/${encodeURIComponent(id)}`, true), { method: "DELETE" }).catch(() => {});
+}
+
 // --- live event application (from /ws/state pushes, another tab/device or
 // the backend engine) --------------------------------------------------------
 
@@ -521,6 +722,8 @@ export function applyAlertEvent(key: string, value: unknown): boolean {
         precision: payload.precision,
         alertId: payload.id,
         broker: payload.broker,
+        label: payload.label,
+        target: payload.target,
       },
       ...triggeredCache,
     ].slice(0, TRIGGERED_CAP);
@@ -541,3 +744,59 @@ export function applyAlertEvent(key: string, value: unknown): boolean {
 // boot). Runs on first import of this module, which the persist barrel does at
 // app load, well before subscribeToBackendUpdates dials.
 registerAlertsRouter(applyAlertEvent, () => void resyncAlerts());
+
+// Format an indicator value (RSI, ATR, etc.) with up to 6 significant digits,
+// no trailing zeros. 0.0015 -> "0.0015", 70 -> "70", 71.2345678 -> "71.2346".
+export function fmtIndicatorValue(v: number | null): string {
+  if (v === null) return "";
+  return Number(v.toPrecision(6)).toString();
+}
+
+// One phrase for "what this alert watches" (alertLabel, no concrete level)
+// and "what fired/triggered" (firedDetail in useAlertFiredNotices.ts,
+// triggeredLabel below): a value-target indicator alert reads
+// "<indicator> <condition> <level>" (the indicator leads: the level is a
+// plain number on its own scale, e.g. RSI vs 70), everything else reads
+// "<condition> <indicator?> <level?>" (the condition leads: the level, when
+// shown at all, is a point on the price line the user already sees on the
+// chart). `levelText` is omitted entirely (filtered out, not an empty
+// segment) when the caller has no concrete level to show (alertLabel for a
+// price-target indicator alert names only the line, not a value).
+export function conditionPhrase(
+  label: string | undefined,
+  condition: AlertCondition,
+  target: AlertTarget | undefined,
+  levelText: string,
+): string {
+  const cond = CONDITION_LABELS[condition];
+  if (target === "value" && label) return `${label} ${cond} ${levelText}`;
+  return [cond, label, levelText].filter(Boolean).join(" ");
+}
+
+// The one level format for every alert surface (panel, history, toast): a
+// value target is a plain number on the indicator's own scale (6 significant
+// digits, no padding), a price target is a point on the price axis and reads
+// exactly like the axis (fmtPrice, thousands grouped).
+export function levelText(target: AlertTarget, level: number, precision: number): string {
+  return target === "value" ? fmtIndicatorValue(level) : fmtPrice(level, precision);
+}
+
+export function alertLabel(a: AnyAlert, precision: number): string {
+  if (a.kind !== "indicator") {
+    return conditionPhrase(undefined, a.condition, undefined, levelText("price", a.level, precision));
+  }
+  const what = indicatorAlertLabel(a.params.identity, a.params.timeframe);
+  return a.params.target === "value"
+    ? conditionPhrase(
+        what,
+        a.condition,
+        "value",
+        a.params.value == null ? "" : levelText("value", a.params.value, precision),
+      )
+    : conditionPhrase(what, a.condition, "price", "");
+}
+
+export function triggeredLabel(t: TriggeredAlert, hp: number): string {
+  const level = levelText(t.target ?? "price", t.level, hp);
+  return `${conditionPhrase(t.label, t.condition, t.target, level)} @ ${fmtPrice(t.price, hp)}`;
+}

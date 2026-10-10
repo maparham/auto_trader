@@ -18,6 +18,7 @@ import {
 import { indicatorInfo } from "../lib/indicatorMeta";
 import { periodByResolution } from "../lib/feed";
 import { saveIndicators } from "../lib/persist";
+import { syncAlertsAfterRemove } from "../lib/indicatorAlertSync";
 import { EQUITY_INDICATOR } from "../lib/backtest";
 import { indicatorSettingsRequest } from "../lib/signals";
 
@@ -96,6 +97,7 @@ export default function MobileIndicatorsSheet({ onClose }: { onClose: () => void
     const chart = ctx?.chart;
     if (!chart || !controller) return;
     removeIndicatorById(chart, controller.scope, id);
+    syncAlertsAfterRemove(controller.scope, id);
     const next = controller.indicators.value.filter((i) => i.id !== id);
     controller.indicators.set(next);
     saveIndicators(controller.scope, next);

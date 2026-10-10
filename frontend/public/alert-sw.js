@@ -6,9 +6,27 @@ self.addEventListener("push", (event) => {
     const clients = await self.clients.matchAll({ type: "window" });
     if (clients.some((c) => c.focused)) return;
     const prec = p.precision ?? 2;
-    const detail = p.message || `@ ${Number(p.level).toFixed(prec)}`;
+    const conds = {
+      crossing: "crossed",
+      crossing_up: "crossed up",
+      crossing_down: "crossed down",
+      greater: "above",
+      less: "below",
+    };
+    const cond = conds[p.condition] ?? p.condition ?? "";
+    let detail;
+    if (p.message) {
+      detail = p.message;
+    } else if (p.label) {
+      const lvl = p.target === "value" ? Number(Number(p.level).toPrecision(6)).toString() : Number(p.level).toFixed(prec);
+      detail = `${p.label} ${cond} ${lvl}`;
+    } else {
+      const lvl = Number(p.level).toFixed(prec);
+      detail = `@ ${lvl}`;
+    }
+    const now = p.target === "value" ? Number(Number(p.subject).toPrecision(6)).toString() : Number(p.price).toFixed(prec);
     await self.registration.showNotification(`🔔 ${p.epic}`, {
-      body: `${detail} · now ${Number(p.price).toFixed(prec)}`,
+      body: `${detail} · now ${now}`,
       tag: `${p.epic}|${p.id}`,
       data: { epic: p.epic, id: p.id },
     });

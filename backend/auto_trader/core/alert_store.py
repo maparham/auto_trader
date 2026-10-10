@@ -303,7 +303,8 @@ class AlertStore:
         try:
             rows = conn.execute(
                 "SELECT time, alert_id, broker, epic, kind, price, level, condition, "
-                "message, precision FROM triggered WHERE user_id = ? ORDER BY time DESC, rowid DESC",
+                "message, precision, alert_json FROM triggered WHERE user_id = ? "
+                "ORDER BY time DESC, rowid DESC",
                 (user_id,),
             ).fetchall()
             return [dict(r) for r in rows]
@@ -318,6 +319,23 @@ class AlertStore:
         try:
             conn.execute("DELETE FROM triggered WHERE user_id = ?", (user_id,))
             conn.commit()
+        finally:
+            conn.close()
+
+    async def last_fired_times(self) -> list[tuple[str, str, int]]:
+        """(user_id, alert_id, latest fire ms) for every alert that ever fired.
+        The engine rebuilds its once-per-bar state from this on start, so a
+        restart inside a bar cannot fire the same alert twice."""
+        return await asyncio.to_thread(self._last_fired_times_sync)
+
+    def _last_fired_times_sync(self) -> list[tuple[str, str, int]]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT user_id, alert_id, MAX(time) AS t FROM triggered "
+                "GROUP BY user_id, alert_id"
+            ).fetchall()
+            return [(r["user_id"], r["alert_id"], int(r["t"])) for r in rows]
         finally:
             conn.close()
 

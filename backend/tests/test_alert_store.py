@@ -272,8 +272,8 @@ def test_add_triggered_returns_rowid_and_get_triggered_row(tmp_path):
     assert row["user_id"] == USER
     assert row["alert_json"] == "{\"id\": \"a1\"}"
     assert asyncio.run(store.get_triggered_row(rowid + 999)) is None
-    # alert_json is store-internal: the frontend-facing listing must not carry it.
-    assert "alert_json" not in asyncio.run(store.list_triggered(USER))[0]
+    # alert_json is included in list_triggered so the API endpoint can parse it.
+    assert "alert_json" in asyncio.run(store.list_triggered(USER))[0]
 
 
 def test_get_user_by_chat_reverse_lookup(tmp_path):
@@ -315,3 +315,16 @@ def test_alert_json_migration_on_pre_existing_db(tmp_path):
         "condition": "crossing", "alert_json": "{}",
     }))
     assert asyncio.run(store.get_triggered_row(rowid))["alert_json"] == "{}"
+
+
+def test_last_fired_times_and_alert_json(tmp_path):
+    import json
+    store = AlertStore(str(tmp_path / "a.db"))
+    base = {"broker": "capital", "epic": "US100", "kind": "indicator",
+            "price": 1.0, "level": 2.0, "condition": "crossing", "message": "", "precision": 2}
+    asyncio.run(store.add_triggered("u1", {**base, "time": 10, "alert_id": "al-1", "alert_json": json.dumps({"id": "al-1"})}))
+    asyncio.run(store.add_triggered("u1", {**base, "time": 20, "alert_id": "al-1"}))
+    asyncio.run(store.add_triggered("u2", {**base, "time": 15, "alert_id": "al-2"}))
+    assert sorted(asyncio.run(store.last_fired_times())) == [("u1", "al-1", 20), ("u2", "al-2", 15)]
+    rows = asyncio.run(store.list_triggered("u1"))
+    assert json.loads(rows[1]["alert_json"]) == {"id": "al-1"}

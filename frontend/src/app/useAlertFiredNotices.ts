@@ -6,6 +6,16 @@ import { fmtPrice } from "../lib/priceFormat";
 import { notify, playPing, toast } from "../lib/notify";
 import { alertFired, alertNavHandler, bumpAlerts } from "../lib/signals";
 import { setOnAlertFired } from "../lib/persist";
+import { conditionPhrase, levelText, type FiredPayload } from "../lib/alertsApi";
+
+// What fired, one string for the toast and the browser notification. A custom
+// message wins; a price alert keeps "@ level"; an indicator alert names the
+// indicator through the shared conditionPhrase (same wording as the panel).
+export function firedDetail(p: FiredPayload, prec: number): string {
+  if (p.message) return p.message;
+  if (!p.label) return `@ ${fmtPrice(p.level, prec)}`;
+  return conditionPhrase(p.label, p.condition, p.target, levelText(p.target ?? "price", p.level, prec));
+}
 
 export function useAlertFiredNotices() {
   // Alert FIRING lives in the backend now (it runs with no tab open). All this
@@ -21,7 +31,7 @@ export function useAlertFiredNotices() {
       const now = fmtPrice(p.price, prec);
       // Attribution: always lead with the epic, even for a custom message — the
       // sound alone says nothing about WHERE. One `detail` feeds both surfaces.
-      const detail = p.message || `@ ${fmtPrice(p.level, prec)}`;
+      const detail = firedDetail(p, prec);
       const body = `${p.epic} ${p.message ? "\u00b7 " : ""}${detail}`;
       // Click either surface to jump to a chart on this epic and select the line.
       // The broker rides along: a firing on another broker asks before switching.

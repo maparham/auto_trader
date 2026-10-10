@@ -28,7 +28,7 @@ import {
 // card — the user must not be able to remove/edit them via a card. Shared with the
 // reorder engine so the legend's card index and the engine's reorderable order stay
 // in lockstep (see isInternalIndicator in ./lib/indicators).
-import { WarnTriangleIcon } from "./lib/menuIcons";
+import { BellIcon, WarnTriangleIcon } from "./lib/menuIcons";
 import { isInternalIndicator, getIndicatorsByPane } from "./lib/indicators";
 // An inset instance carries an empty `figures` and a neutralised `precision` on
 // purpose (that is what keeps its values out of the price axis and its tick
@@ -167,6 +167,10 @@ export interface Props {
   // Open the indicator context menu (anchored at the ⋯ button) — TradingView's
   // "more" affordance at the end of the legend row.
   onOpenMenu: (name: string, x: number, y: number) => void;
+  // Bell: add an alert on this indicator. alertCheck returns null to hide the
+  // bell (not an alertable type), or a reason string to show it disabled.
+  onAddAlert?: (name: string) => void;
+  alertCheck?: (name: string) => { reason: string | null } | null;
   // Sub-pane reorder: move a pane to a new slot (Task 2's engine) and start a
   // drag-to-reorder session from the legend card's grip handle.
   onMove: (name: string, targetIndex: number) => void;
@@ -286,6 +290,8 @@ export default function ChartLegend({
   onCopyGroup,
   onSelectRow,
   onOpenMenu,
+  onAddAlert,
+  alertCheck,
   onOpenDetails,
   onChangeSymbol,
   cacheBadge,
@@ -570,6 +576,8 @@ export default function ChartLegend({
               onOpenSettings={onOpenSettings}
               onRemove={onRemove}
               onOpenMenu={onOpenMenu}
+              onAddAlert={onAddAlert}
+              alertCheck={alertCheck}
             />
           ) : (
             <IndicatorGroup
@@ -590,6 +598,8 @@ export default function ChartLegend({
               onOpenSettings={onOpenSettings}
               onRemove={onRemove}
               onOpenMenu={onOpenMenu}
+              onAddAlert={onAddAlert}
+              alertCheck={alertCheck}
             />
           ),
         )}
@@ -653,6 +663,8 @@ export default function ChartLegend({
         onOpenSettings={onOpenSettings}
         onRemove={onRemove}
         onOpenMenu={onOpenMenu}
+        onAddAlert={onAddAlert}
+        alertCheck={alertCheck}
       />
     )}
 
@@ -670,6 +682,8 @@ export default function ChartLegend({
         onOpenSettings={onOpenSettings}
         onRemove={onRemove}
         onOpenMenu={onOpenMenu}
+        onAddAlert={onAddAlert}
+        alertCheck={alertCheck}
       />
     ))}
     </>
@@ -706,6 +720,8 @@ function IndicatorRow({
   onOpenSettings,
   onRemove,
   onOpenMenu,
+  onAddAlert,
+  alertCheck,
   onMoveUp,
   onMoveDown,
 }: {
@@ -719,6 +735,8 @@ function IndicatorRow({
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
   onOpenMenu: (name: string, x: number, y: number) => void;
+  onAddAlert?: (name: string) => void;
+  alertCheck?: (name: string) => { reason: string | null } | null;
   // Sub-pane reorder arrows. Present only for sub-pane rows; undefined for candle-pane
   // rows (no arrows) and omitted individually at the top/bottom ends.
   onMoveUp?: () => void;
@@ -797,6 +815,29 @@ function IndicatorRow({
             {row.visible ? ICON_EYE : ICON_EYE_OFF}
           </button>
         </Tooltip>
+        {(() => {
+          const chk = alertCheck?.(row.name);
+          if (!chk || !onAddAlert) return null;
+          const reason = chk.reason;
+          // aria-disabled, not the native attribute, so the button still gets
+          // the hover that shows WHY (same as ContextMenu's disabled items) and
+          // stays a direct .cl-icon child for the hidden-row reveal rules.
+          return (
+            <Tooltip asChild content={reason ?? "Add alert"}>
+              <button
+                className="cl-icon"
+                aria-label="Add alert"
+                aria-disabled={reason !== null}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (reason === null) onAddAlert(row.name);
+                }}
+              >
+                <BellIcon size={12} />
+              </button>
+            </Tooltip>
+          );
+        })()}
         <Tooltip asChild content="Settings">
           <button
             className="cl-icon"
@@ -895,6 +936,8 @@ function IndicatorGroup({
   onOpenSettings,
   onRemove,
   onOpenMenu,
+  onAddAlert,
+  alertCheck,
 }: {
   indType: string;
   rows: LegendRow[];
@@ -912,6 +955,8 @@ function IndicatorGroup({
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
   onOpenMenu: (name: string, x: number, y: number) => void;
+  onAddAlert?: (name: string) => void;
+  alertCheck?: (name: string) => { reason: string | null } | null;
 }) {
   const anyVisible = rows.some((r) => r.visible);
   return (
@@ -986,6 +1031,8 @@ function IndicatorGroup({
               onOpenSettings={onOpenSettings}
               onRemove={onRemove}
               onOpenMenu={onOpenMenu}
+              onAddAlert={onAddAlert}
+              alertCheck={alertCheck}
             />
           ))}
         </div>
@@ -1013,6 +1060,8 @@ function SubPaneLegend({
   onOpenSettings,
   onRemove,
   onOpenMenu,
+  onAddAlert,
+  alertCheck,
 }: {
   data: SubPaneLegendData;
   // Where this card sits in the reorderable sub-pane list, and how to move it.
@@ -1033,6 +1082,8 @@ function SubPaneLegend({
   onOpenSettings: (name: string) => void;
   onRemove: (name: string) => void;
   onOpenMenu: (name: string, x: number, y: number) => void;
+  onAddAlert?: (name: string) => void;
+  alertCheck?: (name: string) => { reason: string | null } | null;
 }) {
   return (
     <div className="chart-legend sub-pane-legend" style={{ top: data.top }}>
@@ -1072,6 +1123,8 @@ function SubPaneLegend({
             onOpenSettings={onOpenSettings}
             onRemove={onRemove}
             onOpenMenu={onOpenMenu}
+            onAddAlert={onAddAlert}
+            alertCheck={alertCheck}
             onMoveUp={
               reorder && reorder.index > 0
                 ? () => reorder.onMove(row.name, reorder.index - 1)

@@ -10,7 +10,8 @@ import {
   type AlertCondition,
   type AlertTrigger,
 } from "../persist";
-import { ALERT_LINE_SELECTED_SIZE, ALERT_LINE_SIZE, ALERT_LINE_STYLE, type AlertConfig, sameAlertCfg } from "./shared";
+import { type AlertConfig, sameAlertCfg } from "./shared";
+import { ALERT_OVERLAY, alertLineStyles } from "./alertLine";
 import { OverlayDisplay } from "./display";
 
 export abstract class OverlayAlerts extends OverlayDisplay {
@@ -112,7 +113,7 @@ export abstract class OverlayAlerts extends OverlayDisplay {
     const emphasized = id === this.selectedAlertId || id === this.hoveredAlertId;
     this.chart?.overrideOverlay({
       id,
-      styles: { line: { size: emphasized ? ALERT_LINE_SELECTED_SIZE : ALERT_LINE_SIZE } },
+      styles: alertLineStyles(emphasized),
       // While emphasized, alertPriceLine extends a startAtCreation line across
       // the whole pane (the anchor dot stays put) so the full level is readable;
       // resting restores the from-creation span. Alerts carry no other
@@ -284,7 +285,8 @@ export abstract class OverlayAlerts extends OverlayDisplay {
 
   // Flip an alert's trigger (once ↔ every) in place — the pill's clickable toggle.
   // Persists + notifies; the alert keeps its stable id, so the backend engine
-  // sees the changed signature (level|condition|trigger) and re-arms + re-seeds it.
+  // sees the changed signature (level|condition|trigger, PriceLevelKind.sig in the
+  // backend's core/alert_kinds.py) and re-arms + re-seeds it.
   toggleAlertTrigger(id: string): void {
     if (!this.chart || this.entries.get(id) !== "alert") return;
     const cfg = this.alertCfg.get(id);
@@ -470,6 +472,9 @@ export abstract class OverlayAlerts extends OverlayDisplay {
     for (const [id, kind] of this.entries) {
       if (kind === "alert") this.chart?.overrideOverlay({ id, visible: !hidden });
     }
+    // The same eye hides this cell's indicator value-alert lines, which live
+    // outside this manager (ChartController wires IndicatorAlertLines here).
+    this.onAlertsHiddenChange?.();
     if (hidden) {
       // A hidden line can't stay hovered/selected: klinecharts fires no onMouseLeave
       // for an overlay that just went invisible, so the emphasis + suppressed
@@ -482,6 +487,9 @@ export abstract class OverlayAlerts extends OverlayDisplay {
     }
     this.alertsListener?.(); // ChartCore: drop/restore the DOM axis tags in lockstep
   }
+
+  // Called after the eye toggle flips (see setAlertsHidden).
+  onAlertsHiddenChange: (() => void) | null = null;
 
   // The single SavedAlert -> AlertConfig mapping. Shared by materializeSavedAlert and
   // reconcileAlerts' re-sync branch so the cached config can't drift between them;
@@ -536,7 +544,7 @@ export abstract class OverlayAlerts extends OverlayDisplay {
     if (existing != null) return existing;
     // Respect the session eye toggle: an alert added/reconciled while "Hide alert
     // lines" is on must materialize hidden, not flash visible.
-    const id = this.create("alert", "alertPriceLine", [{ value: a.level }], ALERT_LINE_STYLE, undefined, {
+    const id = this.create("alert", ALERT_OVERLAY, [{ value: a.level }], alertLineStyles(false), undefined, {
       visible: !this.alertsHidden,
     });
     if (!id) return null;

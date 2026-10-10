@@ -19,6 +19,7 @@ import type { ChartController } from "./chartController";
 import { renameIndicatorInstance, type RenameInstanceError } from "./indicators";
 import { loadBacktestLastUsed, saveBacktestLastUsed, saveIndicators } from "./persist";
 import { rewriteConfigInstanceRefs } from "./ruleClipboard";
+import { relinkAlerts } from "./indicatorAlertSync";
 
 export function renameInstanceEverywhere(
   controller: ChartController,
@@ -34,5 +35,9 @@ export function renameInstanceEverywhere(
   saveIndicators(controller.scope, next);
   const cfg = loadBacktestLastUsed();
   if (cfg) saveBacktestLastUsed(rewriteConfigInstanceRefs(cfg, { [oldId]: newId }));
+  // A rename tears down and recreates the pane under the new id (see above) -
+  // any alert linked to the old {scope, instanceId} must follow, or it silently
+  // stops tracking anything (linkedAlerts would no longer find it by the old id).
+  relinkAlerts(controller.scope, oldId, newId);
   return { ok: true };
 }

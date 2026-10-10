@@ -97,7 +97,7 @@ def test_alert_timeframe_param_canonicalizes():
         "trigger": "once",
         "timeframe": "6H",
     }
-    _validate_params("price_level", params)
+    _validate_params("price_level", params, "capital")
     assert params["timeframe"] == "HOUR_6"
 
 
@@ -114,7 +114,7 @@ def test_alert_timeframe_param_rejects_bad_grammar():
         "timeframe": "HOUR_99",
     }
     with pytest.raises(HTTPException) as e:
-        _validate_params("price_level", params)
+        _validate_params("price_level", params, "capital")
     assert e.value.status_code == 422
 
 

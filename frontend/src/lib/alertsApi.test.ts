@@ -15,8 +15,17 @@ import {
   deleteStoredAlert,
   applyAlertEvent,
   setOnAlertFired,
+  loadIndicatorAlerts,
+  linkedAlerts,
+  addIndicatorAlert,
+  patchIndicatorAlert,
+  deleteIndicatorAlert,
+  alertLabel,
+  triggeredLabel,
+  levelText,
   type SavedAlert,
   type FiredPayload,
+  type IndicatorAlert,
 } from "./alertsApi";
 
 let n = 0;
@@ -360,5 +369,265 @@ describe("applyAlertEvent", () => {
     const handled = applyAlertEvent("__trades__:acct1", { foo: "bar" });
     expect(handled).toBe(false);
     expect(loadTriggered().length).toBe(before);
+  });
+});
+
+function indRow(broker: string, overrides: Record<string, unknown> = {}) {
+  return alertRow({
+    id: "al-ind", broker, kind: "indicator",
+    params: {
+      indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" },
+      line: "value", timeframe: "HOUR", target: "price", value: null,
+      condition: "crossing_up", trigger: "every", evalOn: "close",
+      link: { scope: "tab.t1.cell.c2", instanceId: "EMA" },
+    },
+    status: "waiting_for_data",
+    ...overrides,
+  });
+}
+
+describe("indicator alerts", () => {
+  it("hydrate splits kinds: price lines never see indicator alerts", async () => {
+    const broker = freshBroker();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(String(input).includes("triggered")
+        ? jsonResponse({ entries: [], seen: 0 })
+        : jsonResponse({ alerts: [alertRow({ broker }), indRow(broker)] }))));
+    await hydrateAlerts();
+    expect(loadAlerts("US100", broker).map((a) => a.id)).toEqual(["al-1"]);
+    const ind = loadIndicatorAlerts("US100", broker);
+    expect(ind).toHaveLength(1);
+    expect(ind[0].params.identity.config).toEqual({ maType: "ema", source: "close" });
+    expect(ind[0].status).toBe("waiting_for_data");
+  });
+
+  it("linkedAlerts matches scope and instanceId", async () => {
+    const broker = freshBroker();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(String(input).includes("triggered")
+        ? jsonResponse({ entries: [], seen: 0 })
+        : jsonResponse({ alerts: [
+            indRow(broker),
+            indRow(broker, { id: "al-other", params: { ...indRow(broker).params, link: { scope: "tab.t1.cell.c9", instanceId: "EMA" } } }),
+          ] }))));
+    await hydrateAlerts();
+    expect(linkedAlerts("tab.t1.cell.c2", "EMA").map((a) => a.id)).toEqual(["al-ind"]);
+  });
+
+  it("labels read the same everywhere", () => {
+    const base = {
+      kind: "indicator", id: "x", epic: "US100", broker: "b", condition: "crossing_up", trigger: "every",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2,
+    } as const;
+    const price: IndicatorAlert = { ...base, params: {
+      identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
+      line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close", link: null } };
+    expect(alertLabel(price, 2)).toBe("Crossing Up EMA 50 (1H)");
+    const val: IndicatorAlert = { ...base, condition: "greater", params: {
+      identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
+      line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null } };
+    expect(alertLabel(val, 2)).toBe("RSI 14 (1H) Greater Than 70");
+  });
+
+  it("triggeredLabel puts the condition first for a price target (F18)", () => {
+    const priceTarget = {
+      time: 1, epic: "US100", condition: "crossing_up" as const, level: 21400, price: 21430,
+      message: "", precision: 1, alertId: "a", broker: "b",
+      label: "EMA 50 (1H)", target: "price" as const,
+    };
+    expect(triggeredLabel(priceTarget, 2)).toBe("Crossing Up EMA 50 (1H) 21,400.00 @ 21,430.00");
+    const valueTarget = { ...priceTarget, condition: "greater" as const, level: 70, label: "RSI 14 (1H)", target: "value" as const };
+    expect(triggeredLabel(valueTarget, 2)).toBe("RSI 14 (1H) Greater Than 70 @ 21,430.00");
+  });
+
+  it("addIndicatorAlert posts the wire shape and rolls back on failure", async () => {
+    const broker = freshBroker();
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({}, false, 422)));
+    vi.stubGlobal("fetch", fetchMock);
+    const a: IndicatorAlert = {
+      kind: "indicator", id: "al-z", epic: "US100", broker, condition: "greater", trigger: "once",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2, params: {
+        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
+        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+    };
+    expect(await addIndicatorAlert(a)).toBe(false);
+    const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body.kind).toBe("indicator");
+    expect(body.params).toMatchObject({ indicator: "RSI", calcParams: [14], target: "value", value: 70 });
+    expect(loadIndicatorAlerts("US100", broker)).toEqual([]);
+  });
+
+  it("addIndicatorAlert is idempotent (already cached)", async () => {
+    const broker = freshBroker();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const a: IndicatorAlert = {
+      kind: "indicator", id: "al-idem", epic: "US100", broker, condition: "greater", trigger: "once",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2, params: {
+        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
+        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+    };
+    expect(await addIndicatorAlert(a)).toBe(true);
+    const result = await addIndicatorAlert(a);
+    expect(result).toBe(true); // already present, returns true without POST
+    expect(fetchMock).toHaveBeenCalledTimes(1); // fetch called only once, on first add
+  });
+
+  it("patchIndicatorAlert updates cache and posts the patch", async () => {
+    const broker = freshBroker();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const a: IndicatorAlert = {
+      kind: "indicator", id: "al-patch", epic: "US100", broker, condition: "greater", trigger: "once",
+      message: "m1", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2, params: {
+        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
+        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+    };
+    await addIndicatorAlert(a);
+    fetchMock.mockClear();
+
+    const result = await patchIndicatorAlert(a.id, { message: "m2", condition: "less" });
+    expect(result).toBe(true);
+    expect(loadIndicatorAlerts("US100", broker)[0]).toMatchObject({ message: "m2", condition: "less" });
+    const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body.message).toBe("m2");
+  });
+
+  it("patchIndicatorAlert rolls back on failure", async () => {
+    const broker = freshBroker();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const a: IndicatorAlert = {
+      kind: "indicator", id: "al-rollback", epic: "US100", broker, condition: "greater", trigger: "once",
+      message: "m1", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2, params: {
+        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
+        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+    };
+    await addIndicatorAlert(a);
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue(jsonResponse({}, false, 422));
+
+    const result = await patchIndicatorAlert(a.id, { message: "m2" });
+    expect(result).toBe(false);
+    expect(loadIndicatorAlerts("US100", broker)[0].message).toBe("m1"); // restored
+  });
+
+  it("deleteIndicatorAlert removes from cache", async () => {
+    const broker = freshBroker();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({})));
+    const a: IndicatorAlert = {
+      kind: "indicator", id: "al-delete", epic: "US100", broker, condition: "greater", trigger: "once",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2, params: {
+        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
+        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+    };
+    await addIndicatorAlert(a);
+    deleteIndicatorAlert(a.id);
+    expect(loadIndicatorAlerts("US100", broker)).toEqual([]);
+  });
+
+  it("linkedAlerts excludes same-scope-different-instanceId", async () => {
+    const broker = freshBroker();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(String(input).includes("triggered")
+        ? jsonResponse({ entries: [], seen: 0 })
+        : jsonResponse({ alerts: [
+            indRow(broker),
+            indRow(broker, { id: "al-other", params: { ...indRow(broker).params, link: { scope: "tab.t1.cell.c2", instanceId: "DIFFERENT" } } }),
+          ] }))));
+    await hydrateAlerts();
+    expect(linkedAlerts("tab.t1.cell.c2", "EMA").map((a) => a.id)).toEqual(["al-ind"]);
+    expect(linkedAlerts("tab.t1.cell.c2", "DIFFERENT").map((a) => a.id)).toEqual(["al-other"]);
+  });
+
+  it("alertLabel price-target formats as indicator name only (no level)", () => {
+    const priceAlert: IndicatorAlert = {
+      kind: "indicator", id: "al-price-fmt", epic: "US100", broker: "b", condition: "crossing_up", trigger: "every",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2, params: {
+        identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
+        line: "value", timeframe: "HOUR_4", target: "price", value: null, evalOn: "close", link: null },
+    };
+    expect(alertLabel(priceAlert, 2)).toBe("Crossing Up EMA 50 (4H)");
+  });
+
+  it("alertLabel price-level (SavedAlert) branch", () => {
+    const priceAlert: SavedAlert = {
+      id: "al-saved", level: 100, condition: "greater", trigger: "once", message: "", notify: undefined, expiresAt: null,
+    };
+    expect(alertLabel(priceAlert, 2)).toBe("Greater Than 100.00");
+  });
+
+  it("levelText: value targets use 6 significant digits, price targets group like fmtPrice", () => {
+    expect(levelText("value", 70, 2)).toBe("70");
+    expect(levelText("value", 0.0015, 2)).toBe("0.0015");
+    expect(levelText("price", 21400, 1)).toBe("21,400.0");
+  });
+
+  it("triggeredLabel price_level branch formats level at precision", () => {
+    const triggered = {
+      time: 1, epic: "US100", condition: "greater" as const, level: 100, price: 101,
+      message: "", precision: 2, alertId: "al-trig-price", broker: "b",
+      label: undefined, target: undefined,
+    };
+    expect(triggeredLabel(triggered, 2)).toBe("Greater Than 100.00 @ 101.00");
+  });
+
+  it("alertLabel and triggeredLabel handle ATR sub-1 values (6 sig figs)", () => {
+    const atrAlert: IndicatorAlert = {
+      kind: "indicator", id: "al-atr-small", epic: "EURUSD", broker: "b", condition: "greater", trigger: "once",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 6, params: {
+        identity: { indicator: "ATR", calcParams: [14], config: { smoothing: "rma" }, priceTarget: false },
+        line: "value", timeframe: "HOUR", target: "value", value: 0.0015, evalOn: "close", link: null },
+    };
+    expect(alertLabel(atrAlert, 6)).toBe("ATR 14 (1H) Greater Than 0.0015");
+
+    const triggered = {
+      time: 1, epic: "EURUSD", condition: "greater" as const, level: 0.0015, price: 1.1234,
+      message: "", precision: 6, alertId: "al-atr-small", broker: "b",
+      label: "ATR 14 (1H)", target: "value" as const,
+    };
+    expect(triggeredLabel(triggered, 4)).toBe("ATR 14 (1H) Greater Than 0.0015 @ 1.1234");
+  });
+
+  it("fmtIndicatorValue handles extreme values (tiny and huge)", () => {
+    // 1m FX ATR: very small
+    expect(alertLabel({
+      kind: "indicator", id: "al-tiny", epic: "EURUSD", broker: "b", condition: "greater", trigger: "once",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 6, params: {
+        identity: { indicator: "ATR", calcParams: [14], config: { smoothing: "rma" }, priceTarget: false },
+        line: "value", timeframe: "MINUTE", target: "value", value: 0.00005, evalOn: "close", link: null },
+    }, 6)).toBe("ATR 14 (1m) Greater Than 0.00005");
+
+    // JPY-priced MA: very large (1234567 rounds to 1234570 at 6 sig figs)
+    expect(alertLabel({
+      kind: "indicator", id: "al-huge", epic: "USDJPY", broker: "b", condition: "crossing_up", trigger: "every",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 0, params: {
+        identity: { indicator: "MA", calcParams: [20], config: { maType: "ema", source: "close" }, priceTarget: false },
+        line: "value", timeframe: "HOUR", target: "value", value: 1234570, evalOn: "close", link: null },
+    }, 0)).toBe("EMA 20 (1H) Crossing Up 1234570");
+
+    const tinyTriggered = {
+      time: 1, epic: "EURUSD", condition: "greater" as const, level: 0.00005, price: 1.1234,
+      message: "", precision: 6, alertId: "al-tiny", broker: "b",
+      label: "ATR 14 (1m)", target: "value" as const,
+    };
+    expect(triggeredLabel(tinyTriggered, 4)).toBe("ATR 14 (1m) Greater Than 0.00005 @ 1.1234");
+
+    const hugeTriggered = {
+      time: 1, epic: "USDJPY", condition: "crossing_up" as const, level: 1234570, price: 156.7,
+      message: "", precision: 0, alertId: "al-huge", broker: "b",
+      label: "EMA 20 (1H)", target: "value" as const,
+    };
+    expect(triggeredLabel(hugeTriggered, 1)).toBe("EMA 20 (1H) Crossing Up 1234570 @ 156.7");
   });
 });

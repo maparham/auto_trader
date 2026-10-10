@@ -65,6 +65,7 @@ const DEPS = {
   wrapRef: { current: null },
   setPaneDropTop: () => {},
   setIndMenu: () => {},
+  alertContext: { current: { epic: "US100", broker: "capital", precision: 2, quoteOnly: false } },
 };
 
 const arm = () =>

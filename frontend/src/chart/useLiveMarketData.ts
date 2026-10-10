@@ -425,6 +425,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // Alerts are stored per broker; address them with THIS cell's broker (not the
     // ambient persistBroker the toolbar may flip mid-switch). In lockstep with setEpic.
     overlays.setBroker(brokerId);
+    // Indicator value-alert lines follow the same bind: only this cell's alerts
+    // for this broker, epic and timeframe draw (and a switch drops the rest).
+    controller.indicatorAlerts.attach(chart, scope, brokerId, symbol.epic, period.resolution);
+    controller.indicatorAlerts.reconcile();
     // Backtest markers/equity belong to the previous series — drop the live
     // artifacts immediately (keep the persisted result; rehydrateBacktest below
     // redraws it for the new series once its bars are loaded). Capture the
@@ -931,6 +935,9 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // chart's resolution isn't reliably known at indicator-creation time (a fresh
       // rehydrate runs before this effect ever sets the chart's period).
       applySlopeBarHours(handle.chartRef.current, period.resolution);
+      // A symbol switch can recreate sub-panes under new ids; re-home the
+      // indicator alert lines onto whichever pane their indicator sits in now.
+      controller.indicatorAlerts.reconcile();
       // A symbol switch recreates the sub-panes at their default height, so re-assert
       // the double-click "hide bottom sub-panes" collapse if it's on. forceCollapse
       // (not collapseSubPanes) so it doesn't overwrite the captured heights with the

@@ -45,6 +45,7 @@ import { first } from "./chartPainters";
 import { clampLevelToPrice, clampStopToEntry, getLivePrice } from "../lib/trading";
 import type { SelectedIndicator } from "../lib/chartController";
 import type { OverlayManager } from "../lib/overlays";
+import type { IndicatorAlertLines } from "../lib/overlays/indicatorAlerts";
 import type { ChartHandle } from "./chartHandle";
 
 // A trade line resolved to a pixel-y, as produced by the init-effect-local
@@ -66,6 +67,8 @@ export interface LineDragDeps {
   slopeArmed: Signal<boolean>;
   selectedIndicator: Signal<SelectedIndicator | null>;
   overlays: OverlayManager;
+  // This cell's indicator value-alert lines (indAlertDrag below).
+  indicatorAlerts: IndicatorAlertLines;
   ANCHOR_GRAB_PX: number;
   precisionRef: React.MutableRefObject<number>;
   confirmLineEditsRef: React.MutableRefObject<boolean>;
@@ -98,6 +101,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
     slopeArmed,
     selectedIndicator,
     overlays,
+    indicatorAlerts,
     ANCHOR_GRAB_PX,
     precisionRef,
     confirmLineEditsRef,
@@ -519,6 +523,43 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
       },
     });
 
+    // Indicator value-alert lines (e.g. RSI 70): a locked alertPriceLine in the
+    // indicator's own pane, so the cursor converts against THAT pane's y-axis
+    // (convertPaneId), like the slope threshold above. Moves preview on the
+    // chart only; the release writes params.value once.
+    type IndAlertHit = { alertId: string; paneId: string; convertPaneId: string; d: number };
+    const grabbableIndAlert = (yPix: number): IndAlertHit | null => {
+      const c = chartRef.current;
+      if (!c) return null;
+      if (overlays.getAlertsHidden()) return null; // hidden lines (eye menu) aren't grabbable
+      let best: IndAlertHit | null = null;
+      for (const l of indicatorAlerts.lines()) {
+        const py = first(c.convertToPixel([{ value: l.value }], { paneId: l.paneId, absolute: true })).y;
+        if (py == null) continue;
+        const d = Math.abs(py - yPix);
+        if (d <= ALERT_SNAP_PX && (!best || d < best.d))
+          best = { alertId: l.alertId, paneId: l.paneId, convertPaneId: l.paneId, d };
+      }
+      return best;
+    };
+    let indAlertPending: number | null = null;
+    const indAlertDrag = makeLineDrag<IndAlertHit>({
+      grab: grabbableIndAlert,
+      onMove: (hit, value) => {
+        indAlertPending = value;
+        indicatorAlerts.preview(hit.alertId, value);
+      },
+      onCommit: (hit, moved) => {
+        if (!moved) return false; // a press with no drag: let the normal click handling run
+        if (indAlertPending != null) indicatorAlerts.commit(hit.alertId, indAlertPending);
+        indAlertPending = null;
+        return true; // swallow the trailing click (we handled the gesture)
+      },
+      onAbort: () => {
+        indAlertPending = null;
+      },
+    });
+
     // Expose the in-flight state to the staying crosshair handlers (onMove reads
     // tradeDrag, onLeave reads alertDrag) — they can't see these hook-local closures.
     tradeDragActiveRef.current = () => tradeDrag.isActive();
@@ -528,7 +569,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
     // all kinds. Trade is listed first, so an equal-distance press grabs the trade (an
     // alert must be strictly closer to win) — preserving the prior precedence where the
     // trade handler ran first and only declined to a strictly-nearer alert.
-    const lineDrags: LineDrag[] = [tradeDrag, alertDrag, slopeThDrag];
+    const lineDrags: LineDrag[] = [tradeDrag, alertDrag, slopeThDrag, indAlertDrag];
     const onLineDown = (e: MouseEvent) => {
       if (e.button !== 0 || avwapAnchorMode.value || e.metaKey || e.ctrlKey) return;
       if (measureArmed.value || overlays.isMeasureDrawing()) return; // placing a measure anchor

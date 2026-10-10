@@ -183,7 +183,7 @@ export function leverageFor(t: TradingSettings, type: string | undefined): numbe
   return (type && t.leverage[type]) || t.defaultLeverage;
 }
 
-const DEFAULT_ALERT_DEFAULTS: AlertDefaults = {
+export const DEFAULT_ALERT_DEFAULTS: AlertDefaults = {
   condition: "crossing",
   trigger: "once",
   expiry: { kind: "open" },

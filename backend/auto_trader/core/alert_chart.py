@@ -32,7 +32,7 @@ _DPI = 110
 
 def render_alert_chart(
     candles: list[Candle],
-    level: float,
+    level: float | None,
     fired_price: float,
     precision: int,
     title: str,
@@ -61,7 +61,8 @@ def render_alert_chart(
                 color=color, linewidth=0, zorder=3,
             )
 
-    ax.axhline(level, color=_LEVEL, linewidth=1.1, linestyle=(0, (6, 3)), zorder=4)
+    if level is not None:
+        ax.axhline(level, color=_LEVEL, linewidth=1.1, linestyle=(0, (6, 3)), zorder=4)
     ax.plot(
         [len(candles) - 1], [fired_price],
         marker="o", markersize=6, color=_MARKER,
@@ -72,8 +73,8 @@ def render_alert_chart(
     # only grazed it (e.g. every candle sits above the level).
     lows = [c.low for c in candles]
     highs = [c.high for c in candles]
-    y_min = min(min(lows), level)
-    y_max = max(max(highs), level)
+    y_min = min(lows) if level is None else min(min(lows), level)
+    y_max = max(highs) if level is None else max(max(highs), level)
     pad = (y_max - y_min) * 0.06 or abs(y_max) * 0.001 or 1.0
     ax.set_ylim(y_min - pad, y_max + pad)
     ax.set_xlim(-1, len(candles))

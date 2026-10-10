@@ -44,6 +44,7 @@ import { useDraggable } from "./lib/useDraggable";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import { TIMEZONES, offsetLabel } from "./lib/timezones";
 import { CONDITIONS, DURATION_PRESETS } from "./lib/alertUi";
+import { TRIGGER_LABELS } from "./lib/alertsApi";
 
 interface Props {
   settings: Settings;
@@ -133,8 +134,8 @@ function GoLiveGlyph({ pill }: { pill: JSX.Element }) {
 }
 
 const TRIGGERS: { value: AlertTrigger; label: string }[] = [
-  { value: "once", label: "Once only" },
-  { value: "every", label: "Every time" },
+  { value: "once", label: TRIGGER_LABELS.once },
+  { value: "every", label: TRIGGER_LABELS.every },
 ];
 
 export default function SettingsModal({ settings, onChange, onClose, initialTab }: Props) {

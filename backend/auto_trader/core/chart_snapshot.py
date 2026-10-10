@@ -80,7 +80,7 @@ async def render_live_chart(user_id: str, payload: dict) -> bytes | None:
         width = int(desc.get("width") or 1280)
         height = int(desc.get("height") or 640)
         q: dict[str, str] = {"snapshot": "1", "broker": broker, "epic": epic}
-        if payload.get("level") is not None:
+        if payload.get("level") is not None and payload.get("target") != "value":
             q["level"] = str(payload["level"])
         if payload.get("price") is not None:
             q["price"] = str(payload["price"])

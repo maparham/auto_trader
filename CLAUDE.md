@@ -195,6 +195,17 @@ environment enables the Telegram channel. End-to-end probe:
 `cd backend && python3 -m scripts.alert_probe [--epic EPIC --broker BROKER
 --timeout SECONDS]`.
 
+Alert kinds live in `core/alert_kinds.py` (`price_level`, `indicator`): each
+validates its params and resolves a `(subject, level)` pair; `core/alert_eval.py`
+is the one evaluator. Indicator alerts (MA, RSI, ATR on native timeframes)
+read closed bars through `CANDLE_CACHE` via `core/alert_indicators.py` and the
+alertable registry `indicators/alertable.py` (mirrored by
+`frontend/src/lib/alertableIndicators.ts`, pinned by committed fixtures under
+`backend/tests/fixtures/indicator_parity/`; regenerate with
+`UPDATE_PARITY=1 npx vitest run src/lib/alertableParity.test.ts`). "Every"
+alerts fire at most once per bar of their timeframe. Probe an indicator alert
+with `python3 -m scripts.alert_probe --indicator`.
+
 Telegram alert photos are live chart screenshots: `core/chart_snapshot.py`
 drives a headless Chromium over the frontend's `/?snapshot=1` boot mode,
 reconstructing the user's last-seen view (mirrored `view.<epic>` heartbeat)

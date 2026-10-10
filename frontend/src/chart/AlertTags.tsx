@@ -15,8 +15,17 @@ export interface AlertTagItem {
   selected: boolean;
 }
 
+// A "price vs line" indicator alert's bell, at its indicator line's latest value.
+// A type alias, not an interface: stableArray needs the implicit index signature.
+export type IndicatorBellTag = {
+  id: string;
+  y: number;
+};
+
 interface AlertTagsProps {
   tags: AlertTagItem[];
+  bells?: IndicatorBellTag[];
+  onBellClick?: (id: string) => void;
   priceTag: { y: number; countdown: string | null } | null;
   precision: number;
 }
@@ -25,7 +34,7 @@ interface AlertTagsProps {
  * On-chart alert axis tags: a small bell + level pill anchored to each active
  * alert's y position. Pure props-in — no state, no side effects.
  */
-export default function AlertTags({ tags, priceTag, precision }: AlertTagsProps) {
+export default function AlertTags({ tags, bells, onBellClick, priceTag, precision }: AlertTagsProps) {
   return (
     <>
       {tags.map((t) => {
@@ -59,6 +68,24 @@ export default function AlertTags({ tags, priceTag, precision }: AlertTagsProps)
           </Tooltip>
         );
       })}
+      {/* Indicator "price vs line" alerts: a bell-only pill riding the indicator
+          line's latest value. Clickable (opens the alert's edit dialog), unlike
+          the price tags, so it opts back into pointer events. */}
+      {bells?.map((b) => (
+        <Tooltip key={`ind:${b.id}`} asChild content="Indicator alert">
+          <button
+            type="button"
+            className="alert-tag ind-bell"
+            style={{ top: b.y }}
+            aria-label="Edit indicator alert"
+            onClick={() => onBellClick?.(b.id)}
+          >
+            <span className="at-bell" aria-hidden="true">
+              <BellIcon size={11} />
+            </span>
+          </button>
+        </Tooltip>
+      ))}
     </>
   );
 }

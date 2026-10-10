@@ -1,76 +1,67 @@
-"""Pure price-alert evaluation — Python port of frontend/src/lib/alertEval.ts.
+"""Pure alert evaluation: one decision for every alert kind.
 
-The crossing / once / every / re-arm logic with no storage or feed dependency.
-The TS file remains the reference; its test suite is ported to
-tests/test_alert_eval.py so the two implementations cannot drift while both
-exist (the TS one is deleted at the end of this project).
+Each sample is a `(subject, level)` pair: price vs a fixed level for
+price-level alerts, price vs an indicator line, or an indicator line vs a
+number. A crossing compares the sign of `subject - level` before and after,
+so it holds whichever side moved. `trigger = every` fires at most once per bar
+of the alert's timeframe: the caller passes the current bar's open and the bar
+the alert last fired in. This module is the single implementation (the old
+frontend twin is gone).
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 
-# 5 bps: how far price must clear the level before an "every" alert re-arms.
-RE_ARM_FRACTION = 5e-4
+Pair = tuple[float, float]
 
 
 @dataclass(frozen=True)
 class EvalResult:
     fired: bool
-    next_armed: bool
     remove: bool
 
 
+def _finite(p: Pair) -> bool:
+    return math.isfinite(p[0]) and math.isfinite(p[1])
+
+
+def condition_hit(prev: Pair | None, cur: Pair, condition: str) -> bool:
+    """`greater`/`less` read the current pair alone (may fire on the first
+    sample); crossings need a previous pair. `<=`/`>=` on the BEFORE gap keep
+    the touch-then-cross semantics: a gap of 0 then >0 is a cross up, but a
+    gap going to exactly 0 is only a touch."""
+    if not _finite(cur):
+        return False
+    now = cur[0] - cur[1]
+    if condition == "greater":
+        return now > 0
+    if condition == "less":
+        return now < 0
+    if prev is None or not _finite(prev):
+        return False
+    before = prev[0] - prev[1]
+    up = before <= 0 < now
+    down = before >= 0 > now
+    if condition == "crossing":
+        return up or down
+    if condition == "crossing_up":
+        return up
+    if condition == "crossing_down":
+        return down
+    return False
+
+
 def evaluate_alert(
-    prev: float | None,
-    price: float,
-    level: float,
+    prev: Pair | None,
+    cur: Pair,
     condition: str,
     trigger: str,
-    armed: bool,
+    bar_open: int,
+    last_fired_bar: int | None,
 ) -> EvalResult:
-    """Evaluate one alert against a price tick. `prev` is the previous sample
-    (None on the very first tick — crossings need two samples)."""
-    unchanged = EvalResult(False, armed, False)
-    if not (math.isfinite(price) and math.isfinite(level)):
-        return unchanged
-
-    # Level checks (greater/less) are satisfied by the current price alone, so
-    # they may fire immediately — including when prev is None. Crossings wait.
-    is_level_check = condition in ("greater", "less")
-    if prev is None and not is_level_check:
-        return unchanged
-
-    cross_up = prev is not None and prev <= level < price
-    cross_down = prev is not None and prev >= level > price
-    if condition == "crossing":
-        hit = cross_up or cross_down
-    elif condition == "crossing_up":
-        hit = cross_up
-    elif condition == "crossing_down":
-        hit = cross_down
-    elif condition == "greater":
-        hit = price > level
-    elif condition == "less":
-        hit = price < level
-    else:
-        return unchanged
-
-    if hit and armed:
-        if trigger == "once":
-            return EvalResult(True, False, True)
-        return EvalResult(True, False, False)  # disarm until cleared
-
-    # Re-arm an "every" alert once price has cleared the level by the margin
-    # (level checks re-arm only when the condition is FALSE again past it).
-    if not armed and trigger == "every":
-        margin = max(abs(level) * RE_ARM_FRACTION, 1e-10)
-        if condition == "greater":
-            can_re_arm = price < level - margin
-        elif condition == "less":
-            can_re_arm = price > level + margin
-        else:
-            can_re_arm = abs(price - level) > margin
-        if can_re_arm:
-            return EvalResult(False, True, False)
-    return unchanged
+    if last_fired_bar is not None and bar_open <= last_fired_bar:
+        return EvalResult(False, False)
+    if not condition_hit(prev, cur, condition):
+        return EvalResult(False, False)
+    return EvalResult(True, trigger == "once")

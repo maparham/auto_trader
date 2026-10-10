@@ -1,0 +1,127 @@
+import { describe, it, expect, vi } from "vitest";
+vi.mock("klinecharts", () => ({ registerOverlay: () => {}, registerIndicator: () => {}, registerYAxis: () => {}, getSupportedIndicators: () => [] }));
+const alerts: unknown[] = [];
+vi.mock("../alertsApi", async (orig) => ({
+  ...(await orig<typeof import("../alertsApi")>()),
+  loadIndicatorAlerts: () => alerts,
+  patchIndicatorAlert: vi.fn(() => Promise.resolve(true)),
+}));
+import { IndicatorAlertLines } from "./indicatorAlerts";
+import { patchIndicatorAlert } from "../alertsApi";
+import { ChartController } from "../chartController";
+
+function fakeChart() {
+  const created: Array<Record<string, unknown>> = [];
+  return {
+    created,
+    chart: {
+      createOverlay: (o: Record<string, unknown>) => { created.push(o); return o.id as string; },
+      removeOverlay: vi.fn(),
+      overrideOverlay: vi.fn(),
+      getIndicators: () => [{ name: "RSI", paneId: "pane_rsi" }],
+    },
+  };
+}
+const valueAlert = (scope: string, tf = "HOUR") => ({
+  kind: "indicator", id: "al-1", epic: "US100", broker: "b", condition: "greater", trigger: "every",
+  message: "", expiresAt: null, notify: {}, precision: 2,
+  params: { identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
+    line: "value", timeframe: tf, target: "value", value: 70, evalOn: "close",
+    link: { scope, instanceId: "RSI" } },
+});
+
+describe("IndicatorAlertLines", () => {
+  it("draws a value line in the linked indicator's pane, only for this cell and timeframe", () => {
+    alerts.splice(0, alerts.length, valueAlert("s1"), { ...valueAlert("s2"), id: "al-2" }, { ...valueAlert("s1", "DAY"), id: "al-3" });
+    const { chart, created } = fakeChart();
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    lines.reconcile();
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      paneId: "pane_rsi", points: [{ value: 70 }],
+      lock: true, needDefaultXAxisFigure: false,
+    });
+    // v10 deletes an overlay on right-click unless the handler calls
+    // preventDefault (F8) - prove createAlertLine's handler actually does.
+    const pd = vi.fn();
+    (created[0].onRightClick as (e: { preventDefault: () => void }) => boolean)({ preventDefault: pd });
+    expect(pd).toHaveBeenCalled();
+    expect(lines.lines()).toEqual([{ alertId: "al-1", paneId: "pane_rsi", value: 70 }]);
+  });
+
+  it("moves, then removes, the line as the alert and its pane change", () => {
+    alerts.splice(0, alerts.length, valueAlert("s1"));
+    const inds = [{ name: "RSI", paneId: "pane_rsi" }];
+    const { chart, created } = fakeChart();
+    chart.getIndicators = () => inds;
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    lines.reconcile();
+    lines.reconcile(); // idempotent: no second line
+    expect(created).toHaveLength(1);
+    const a = valueAlert("s1");
+    alerts.splice(0, alerts.length, { ...a, params: { ...a.params, value: 65 } });
+    lines.reconcile();
+    expect(chart.overrideOverlay).toHaveBeenCalledWith({ id: "indalert:al-1", points: [{ value: 65 }] });
+    inds.splice(0); // the RSI pane was removed
+    lines.reconcile();
+    expect(chart.removeOverlay).toHaveBeenCalledWith({ id: "indalert:al-1" });
+    expect(lines.lines()).toEqual([]);
+  });
+
+  it("previews a drag on the chart and commits it as a params.value patch", () => {
+    alerts.splice(0, alerts.length, valueAlert("s1"));
+    const { chart } = fakeChart();
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    lines.reconcile();
+    lines.preview("al-1", 66.5);
+    expect(lines.lines()[0].value).toBe(66.5);
+    expect(patchIndicatorAlert).not.toHaveBeenCalled();
+    lines.commit("al-1", 0.000523456789);
+    expect(patchIndicatorAlert).toHaveBeenCalledWith("al-1", { params: { value: 0.000523457 } });
+    expect(lines.lines()[0].value).toBe(0.000523457);
+  });
+
+  it("follows the Hide alert lines eye: created hidden, re-shown on toggle", () => {
+    alerts.splice(0, alerts.length, valueAlert("s1"));
+    let hidden = true;
+    const { chart, created } = fakeChart();
+    const lines = new IndicatorAlertLines(() => hidden);
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    lines.reconcile();
+    expect(created[0]).toMatchObject({ visible: false });
+    hidden = false;
+    lines.reconcile();
+    expect(chart.overrideOverlay).toHaveBeenCalledWith({ id: "indalert:al-1", visible: true });
+  });
+
+  it("draws no line for an inset instance, and restores it when inset is toggled off", () => {
+    alerts.splice(0, alerts.length, valueAlert("s1"));
+    const inds: Array<Record<string, unknown>> = [{ name: "RSI", paneId: "candle_pane", extendData: { inset: true } }];
+    const { chart, created } = fakeChart();
+    chart.getIndicators = () => inds as never;
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    lines.reconcile();
+    expect(created).toHaveLength(0);
+    expect(lines.lines()).toEqual([]);
+    // setIndicatorInset(off): remove, then re-add in its own sub-pane, then reconcile.
+    inds.splice(0, 1, { name: "RSI", paneId: "pane_rsi2", extendData: {} });
+    lines.reconcile();
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ paneId: "pane_rsi2", points: [{ value: 70 }] });
+  });
+
+  it("ChartController wires the sidebar eye to its indicator alert lines", () => {
+    alerts.splice(0, alerts.length, valueAlert("s1"));
+    const { chart, created } = fakeChart();
+    const ctl = new ChartController("c1", "s1");
+    ctl.indicatorAlerts.attach(chart as never, "s1", "b", "US100", "HOUR");
+    ctl.indicatorAlerts.reconcile();
+    expect(created[0]).toMatchObject({ visible: true });
+    ctl.overlays.setAlertsHidden(true);
+    expect(chart.overrideOverlay).toHaveBeenCalledWith({ id: "indalert:al-1", visible: false });
+  });
+});

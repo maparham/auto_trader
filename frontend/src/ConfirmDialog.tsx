@@ -10,26 +10,34 @@ interface Props {
   title?: string;
   message: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   details?: Array<{ label: string; value: string; tone?: "pos" | "neg" }>;
   onConfirm: () => void;
   onClose: () => void;
+  onCancel?: () => void;
 }
 
 export default function ConfirmDialog({
   title = "Confirm",
   message,
   confirmLabel = "Delete",
+  cancelLabel = "Cancel",
   details,
   onConfirm,
   onClose,
+  onCancel,
 }: Props) {
-  useCloseOnEscape(onClose);
+  const handleCancel = () => {
+    onCancel?.();
+    onClose();
+  };
+  useCloseOnEscape(handleCancel);
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
+    <div className="modal-backdrop" onMouseDown={handleCancel}>
       <div className="modal confirm-modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head confirm-head">
           <span>{title}</span>
-          <CloseButton onClick={onClose} label="Cancel" />
+          <CloseButton onClick={handleCancel} label={cancelLabel} />
         </div>
         <div className="confirm-body">
           {message}
@@ -45,8 +53,8 @@ export default function ConfirmDialog({
           )}
         </div>
         <div className="modal-foot">
-          <button className="ghost" onClick={onClose}>
-            Cancel
+          <button className="ghost" onClick={handleCancel}>
+            {cancelLabel}
           </button>
           <button
             className="confirm-danger"

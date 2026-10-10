@@ -100,3 +100,21 @@ async def test_no_cdp_url_launches_a_child(monkeypatch):
     assert await cs._open_browser(pw) == "launched"
     assert pw.chromium.calls == [("launch", ["--no-sandbox"])]
 
+
+async def test_value_target_alert_skips_the_level_param(monkeypatch):
+    # An RSI-70 alert's "level" is 70, not a price: the live snapshot must
+    # not draw it as a horizontal price line (SnapshotApp.tsx's armReady
+    # draws whatever `level` it's given, with no target-awareness).
+    rows = {("u1", "auto-trader.b.capital.view.US100"): json.dumps(HEARTBEAT)}
+    monkeypatch.setattr(cs, "_state_store", lambda: FakeStore(rows))
+    seen = {}
+
+    async def fake_drive(url, width, height, timeout_s):
+        seen.update(url=url)
+        return b"PNG"
+
+    monkeypatch.setattr(cs, "_drive_browser", fake_drive)
+    monkeypatch.setattr(cs, "_mint_token", lambda user_id: None)
+    payload = {**PAYLOAD, "level": 70.0, "target": "value", "label": "RSI 14 (1H)"}
+    await cs.render_live_chart("u1", payload)
+    assert "level=" not in seen["url"]

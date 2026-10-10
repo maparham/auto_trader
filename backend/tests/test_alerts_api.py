@@ -252,3 +252,114 @@ def test_broadcast_on_create(clerk):
             "key": "__alerts__:changed",
             "value": {"broker": "capital", "epic": "US100", "origin": "tab1"},
         }
+
+
+def _ind_body(**params):
+    p = {
+        "indicator": "MA", "calcParams": [50], "config": {"maType": "ema"},
+        "line": "value", "timeframe": "HOUR", "target": "price", "value": None,
+        "condition": "crossing_up", "trigger": "once", "evalOn": "close",
+        "link": {"scope": "tab.t1.cell.c2", "instanceId": "EMA"},
+    }
+    p.update(params)
+    return _body(id="al-ind", kind="indicator", params=p)
+
+
+def test_indicator_create_round_trip(clerk):
+    r = client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
+    assert r.status_code == 200, r.text
+    assert r.json()["params"]["config"] == {"maType": "ema", "source": "close"}
+
+
+def test_indicator_non_native_timeframe_422(clerk):
+    r = client.post("/api/alerts", json=_ind_body(timeframe="HOUR_2"), headers=_auth("alice"))
+    assert r.status_code == 422 and "timeframe" in r.text
+    r = client.post("/api/alerts", json=_ind_body(timeframe="SECOND_5"), headers=_auth("alice"))
+    assert r.status_code == 422
+
+
+def test_deferred_indicator_422(clerk):
+    r = client.post("/api/alerts", json=_ind_body(indicator="BOLL", calcParams=[20, 2]), headers=_auth("alice"))
+    assert r.status_code == 422 and "not alertable" in r.text
+
+
+def test_indicator_patch_validates_merged_params(clerk):
+    client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
+    r = client.patch("/api/alerts/al-ind", json={"params": {"calcParams": [100]}}, headers=_auth("alice"))
+    assert r.status_code == 200 and r.json()["params"]["calcParams"] == [100]
+    r = client.patch("/api/alerts/al-ind", json={"params": {"calcParams": [0]}}, headers=_auth("alice"))
+    assert r.status_code == 422
+
+
+def test_unknown_config_key_422(clerk):
+    body = _ind_body(config={"maType": "ema", "bogus": "x"})
+    r = client.post("/api/alerts", json=body, headers=_auth("alice"))
+    assert r.status_code == 422 and "config.bogus" in r.text
+
+
+def test_indicator_patch_partial_config_keeps_untouched_keys(clerk):
+    # A PATCH naming only config.maType must not silently drop config.source
+    # back to its default: the merge has to be one level deeper than the
+    # top-level params merge.
+    r = client.post(
+        "/api/alerts", json=_ind_body(config={"maType": "ema", "source": "hl2"}),
+        headers=_auth("alice"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["params"]["config"] == {"maType": "ema", "source": "hl2"}
+
+    r = client.patch(
+        "/api/alerts/al-ind", json={"params": {"config": {"maType": "sma"}}},
+        headers=_auth("alice"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["params"]["config"] == {"maType": "sma", "source": "hl2"}
+
+
+def test_indicator_patch_non_dict_config_422(clerk):
+    # A non-dict config (string/list/null) must fall through to
+    # validate_indicator's own 422, not raise a TypeError from `**` on a
+    # non-mapping during the deep merge.
+    client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
+    r = client.patch(
+        "/api/alerts/al-ind", json={"params": {"config": "notadict"}},
+        headers=_auth("alice"),
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_vwma_intrabar_422_on_quote_only_broker(clerk):
+    # dukascopy is a real registered data-only broker with no credentials
+    # needed in tests (supports_streaming=False); capital (the default body
+    # broker) streams, so this is the one case that actually exercises
+    # `_streams`/`supports_streaming` end to end through the router.
+    body = _ind_body(config={"maType": "vwma"}, evalOn="intrabar")
+    body["broker"] = "dukascopy"
+    r = client.post("/api/alerts", json=body, headers=_auth("alice"))
+    assert r.status_code == 422 and "intrabar" in r.text
+
+
+def test_triggered_entries_carry_parsed_alert(clerk):
+    import json
+    from auto_trader.api.routers import alerts as alerts_router
+    store = alerts_router.ALERT_STORE
+    import asyncio
+    asyncio.run(store.add_triggered("alice", {
+        "time": 5, "alert_id": "al-x", "broker": "capital", "epic": "US100", "kind": "indicator",
+        "price": 1.0, "level": 2.0, "condition": "crossing", "message": "", "precision": 2,
+        "alert_json": json.dumps({"id": "al-x", "params": {"indicator": "RSI"}}),
+    }))
+    r = client.get("/api/alerts/triggered", headers=_auth("alice"))
+    entry = r.json()["entries"][0]
+    assert entry["alert"]["params"]["indicator"] == "RSI" and "alert_json" not in entry
+
+
+def test_list_includes_status_for_indicator_alerts(clerk, monkeypatch):
+    from auto_trader.api.routers import alerts as alerts_router
+    client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
+    client.post("/api/alerts", json=_body(id="al-p"), headers=_auth("alice"))
+    monkeypatch.setattr(alerts_router.ALERT_ENGINE, "status",
+                        lambda u, a: "waiting_for_data" if a == "al-ind" else None)
+    rows = {r["id"]: r for r in client.get("/api/alerts", headers=_auth("alice")).json()["alerts"]}
+    assert rows["al-ind"]["status"] == "waiting_for_data"
+    assert "status" not in rows["al-p"]

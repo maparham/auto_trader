@@ -47,6 +47,7 @@ import {
 } from "./templateSignatures";
 import { withLayoutEventsSuppressed } from "./persist/layoutEvents";
 import { withHistorySuppressed } from "./history";
+import { reconcileLinksForScope } from "./indicatorAlertSync";
 
 // Snapshot a cell's current layout for `epic` into a template. Reads the persisted
 // per-cell stores (authoritative), plus each AVWAP instance's separately-stored
@@ -269,6 +270,11 @@ export function replaceSymbolTemplate(
       controller.indicators.set(full);
       if (controller.subPanesHidden.value && added.some((a) => isSubPaneInstance(a)))
         controller.subPanesHidden.set(false);
+      // Alerts on a removed instance stop following the cell. Only the KEPT
+      // ids count as live: an added instance can be minted under the very
+      // bare name ("EMA") a removed one just freed, and must not adopt its
+      // alert.
+      void reconcileLinksForScope(scope, new Set(kept.map((i) => i.id)));
 
       // --- drawings: the epic's set becomes exactly the template's -------------
       // Order-sensitive signature compare skips the rewrite (and the id-minting

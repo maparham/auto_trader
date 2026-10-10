@@ -155,6 +155,19 @@ export function brokerCategories(brokerId: string): MarketCategory[] {
   return backendCategories[brokerId] ?? [];
 }
 
+// Streaming (supports_streaming) broker ids from /api/brokers. Fed by
+// fetchBrokers / cachedBrokers, mirroring backendCategories. The indicator
+// alert dialog needs it to disable "As it happens" for a VWMA/EVWMA alert on a
+// quote-only broker; without it nothing on the frontend knows which brokers
+// stream. Declared above the module-load cachedBrokers() call on purpose.
+let streamingBrokers: Set<string> = new Set();
+export function noteStreamingBrokers(streaming: string[] | undefined): void {
+  if (streaming) streamingBrokers = new Set(streaming);
+}
+export function supportsStreaming(brokerId: string): boolean {
+  return streamingBrokers.has(brokerId);
+}
+
 // Whether /api/brokers reported this account as admin (hosted: credentialed
 // brokers + dealing unlocked; dev mode: always true). Fed by fetchBrokers /
 // cachedBrokers, mirroring backendLabels — UI cues only, the backend enforces.
@@ -224,6 +237,8 @@ export interface BrokerInfo {
   // Symbol-search chips by broker id (see noteBrokerCategories). Sparse: only
   // brokers that declare any appear.
   categories?: Record<string, MarketCategory[]>;
+  // Data broker ids with a live tick stream (see noteStreamingBrokers).
+  streaming?: string[];
   // Hosted only: whether this account passes the backend's admin gate.
   isAdmin?: boolean;
 }
@@ -245,6 +260,7 @@ export function cachedBrokers(): BrokerInfo | null {
     if (info) {
       noteBrokerLabels(info.labels);
       noteBrokerCategories(info.categories);
+      noteStreamingBrokers(info.streaming);
       noteDataOnlyBrokers(info.exec);
       noteIsAdmin(info.isAdmin);
     }
@@ -272,6 +288,7 @@ export async function fetchBrokers(): Promise<BrokerInfo> {
     const info = (await res.json()) as BrokerInfo;
     noteBrokerLabels(info.labels);
     noteBrokerCategories(info.categories);
+    noteStreamingBrokers(info.streaming);
     noteDataOnlyBrokers(info.exec);
     noteIsAdmin(info.isAdmin);
     try {

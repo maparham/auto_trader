@@ -113,6 +113,14 @@ class BrokerRegistry:
                 for broker_id, broker in self.data.items()
                 if broker_id in data_ids and (categories := getattr(broker, "CATEGORIES", None))
             },
+            # Data brokers with a live tick stream (supports_streaming). The
+            # indicator alert dialog reads it to disable "As it happens" on a
+            # quote-only broker, where volume-weighted lines have no intrabar
+            # volume to work from.
+            "streaming": sorted(
+                bid for bid in data_ids
+                if (broker := self.data.get(bid)) and getattr(broker, "supports_streaming", False)
+            ),
             "exec": exec_items
             # Data-only brokers (a read-only history source like dukascopy, with no
             # executor) get a synthetic pseudo-account so the account-keyed frontend

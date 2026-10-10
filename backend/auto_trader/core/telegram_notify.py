@@ -29,6 +29,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -66,6 +67,28 @@ _CONDITION_LABELS = {
     "greater": "above",
     "less": "below",
 }
+
+
+def _fmt_value(v: float | int) -> str:
+    """Format a numeric value (indicator, level, etc.) with 6 significant digits
+    without trailing zeros, avoiding scientific notation. Uses Decimal to convert
+    .6g output (which may be in scientific notation) to fixed-point form."""
+    return format(Decimal(f"{v:.6g}"), "f")
+
+
+def _headline(payload: dict, precision: int) -> str:
+    """'EPIC <what> <level>': one wording for the caption and the snapshot
+    title. Value-target indicator alerts compare the indicator to a number,
+    using 6 significant digits without trailing zeros."""
+    epic = payload.get("epic")
+    cond = _CONDITION_LABELS.get(payload.get("condition"), payload.get("condition") or "")
+    level = payload.get("level")
+    label = payload.get("label")
+    if label and payload.get("target") == "value":
+        return f"{epic} {label} {cond} {_fmt_value(level)}"
+    parts = [f"{epic}", cond, label, f"{level:.{precision}f}"]
+    return " ".join(p for p in parts if p)
+
 
 # Broker `side` -> (icon, word) for the open-position caption lines.
 _SIDE_LABELS = {
@@ -275,12 +298,13 @@ class TelegramNotify:
 
     async def _build_caption(self, payload: dict) -> str:
         precision = max(0, min(10, payload.get("precision", 2) or 0))
-        level = payload.get("level")
-        price = payload.get("price")
-        epic = payload.get("epic")
-        cond = _CONDITION_LABELS.get(payload.get("condition"), payload.get("condition") or "")
-        head = " ".join(p for p in (f"🔔 {epic}", cond, f"{level:.{precision}f}") if p)
-        lines = [f"{head} · now {price:.{precision}f}"]
+        head = _headline(payload, precision)
+        if payload.get("target") == "value" and payload.get("subject") is not None:
+            subject = payload.get("subject")
+            lines = [f"🔔 {head} · now {_fmt_value(subject)}"]
+        else:
+            price = payload.get("price")
+            lines = [f"🔔 {head} · now {price:.{precision}f}"]
         lines.append(f"🕒 {_format_fired_time(payload)}")
         if payload.get("message"):
             lines.append(str(payload["message"]))
@@ -350,17 +374,21 @@ class TelegramNotify:
             from auto_trader.core.alert_chart import render_alert_chart
 
             tf_label = _timeframe_label(timeframe)
-            cond = _CONDITION_LABELS.get(
-                payload.get("condition"), payload.get("condition") or ""
-            )
-            title = (
-                f"{payload['epic']} · {tf_label} · {cond} "
-                f"{payload['level']:.{precision}f} @ {payload['price']:.{precision}f} "
-                f"· {_format_fired_time(payload)}"
-            )
+            label = payload.get("label")
+            cond = _CONDITION_LABELS.get(payload.get("condition"), payload.get("condition") or "")
+            level = payload.get("level")
+            if label:
+                # Indicator alert: include the label and condition word
+                if payload.get("target") == "value":
+                    title = f"{payload['epic']} · {tf_label} · {label} {cond} {_fmt_value(level)} @ {payload['price']:.{precision}f} · {_format_fired_time(payload)}"
+                else:
+                    title = f"{payload['epic']} · {tf_label} · {label} @ {payload['price']:.{precision}f} · {_format_fired_time(payload)}"
+            else:
+                # Price alert: original format
+                title = f"{payload['epic']} · {tf_label} · {cond} {level:.{precision}f} @ {payload['price']:.{precision}f} · {_format_fired_time(payload)}"
+            line = None if payload.get("target") == "value" else payload["level"]
             return await asyncio.to_thread(
-                render_alert_chart,
-                candles, payload["level"], payload["price"], precision, title,
+                render_alert_chart, candles, line, payload["price"], precision, title,
             )
         except Exception as exc:
             log.warning(

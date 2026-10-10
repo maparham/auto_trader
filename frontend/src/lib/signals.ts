@@ -11,6 +11,7 @@
 import type { GhostPattern } from "./patternGhost";
 import { claimSidePanel, registerSidePanel } from "./sidePanels";
 import type { SidePanelId } from "./sidePanels";
+import type { IndicatorIdentity } from "./alertableIndicators";
 
 type Listener<T> = (value: T) => void;
 
@@ -59,6 +60,23 @@ export const alertGlobalEditRequest = new Signal<
   { epic: string; savedId: string; precision: number } | null
 >(null);
 
+// Request to open the indicator alert modal: create (from an indicator's
+// legend bell or menu) or edit (from the alerts panel). App renders it.
+export interface IndicatorAlertDraft {
+  epic: string;
+  broker: string;
+  precision: number;
+  identity: IndicatorIdentity;
+  timeframe: string;
+  link: { scope: string; instanceId: string };
+  lastValue: number | null;
+  quoteOnly: boolean;
+}
+export type IndicatorAlertRequest =
+  | { mode: "create"; draft: IndicatorAlertDraft }
+  | { mode: "edit"; id: string };
+export const indicatorAlertRequest = new Signal<IndicatorAlertRequest | null>(null);
+
 // A confirmation dialog request. Any destructive action that wants a "are you sure?"
 // gate sets this with a message + an onConfirm callback; App renders one ConfirmDialog
 // for it. The callback runs on confirm, then the dialog closes. null = closed. Carrying
@@ -68,10 +86,13 @@ export interface ConfirmRequest {
   title?: string;
   message: string;
   confirmLabel?: string; // default "Delete"
+  cancelLabel?: string; // default "Cancel"
   // Optional key/value rows shown beneath the message (e.g. all the details of a
   // position about to be closed, with the realized P/L toned green/red).
   details?: Array<{ label: string; value: string; tone?: "pos" | "neg" }>;
   onConfirm: () => void;
+  // Runs when the dialog is dismissed without confirming (Cancel, Escape, backdrop, CloseButton).
+  onCancel?: () => void;
 }
 export const confirmRequest = new Signal<ConfirmRequest | null>(null);
 export function requestConfirm(req: ConfirmRequest): void {

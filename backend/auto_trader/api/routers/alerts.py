@@ -9,19 +9,20 @@ mirroring the `origin`-echo convention `/api/state` uses.
 
 from __future__ import annotations
 
-import math
+import json
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from auto_trader.core.alert_engine import ALERT_ENGINE
+from auto_trader.core.alert_kinds import KINDS
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.push_notify import PUSH
 from auto_trader.core.telegram_notify import TELEGRAM
-from auto_trader.core.timeframe import TimeframeError, canonicalize
 
 from ..deps import current_user
 from .state import broadcast_to_user
@@ -29,9 +30,6 @@ from .state import broadcast_to_user
 router = APIRouter()
 
 _ID_RE = re.compile(r"^al-[A-Za-z0-9-]{1,64}$")
-_KINDS = {"price_level"}
-_CONDITIONS = {"crossing", "crossing_up", "crossing_down", "greater", "less"}
-_TRIGGERS = {"once", "every"}
 _NOTIFY_CHANNELS = ("toast", "browser", "sound", "push", "telegram")
 
 
@@ -41,8 +39,20 @@ def _validate_id(alert_id: str) -> None:
 
 
 def _validate_kind(kind: str) -> None:
-    if kind not in _KINDS:
+    if kind not in KINDS:
         raise HTTPException(422, f"unknown alert kind: {kind!r}")
+
+
+def _streams(broker: str) -> Callable[[], bool]:
+    """Lazy: only VWMA/EVWMA intrabar alerts ask, so price alerts never touch
+    the broker registry."""
+    def check() -> bool:
+        try:
+            from ..deps import get_data
+            return bool(getattr(get_data(broker), "supports_streaming", False))
+        except Exception:
+            return False
+    return check
 
 
 def _validate_precision(precision: int | None) -> None:
@@ -63,38 +73,11 @@ def _validate_expires_at(expires_at: int | None) -> None:
         raise HTTPException(422, "expires_at must be null or a positive integer")
 
 
-def _validate_params(kind: str, params: dict[str, Any]) -> None:
-    if kind != "price_level":
-        return
-    level = params.get("level")
-    # Strict type check (not just float()-coercible): a JSON string like "100"
-    # would otherwise pass float("100") and land in the stored row as a str —
-    # evaluate_alert's math.isfinite(level) then raises TypeError deep inside
-    # AlertEngine.on_tick, silently killing that feed (caught by _feed_loop's
-    # broad except, logged-and-backed-off forever with no user-visible error).
-    if isinstance(level, bool) or not isinstance(level, (int, float)):
-        raise HTTPException(422, "params.level must be a finite number")
-    if not math.isfinite(level):
-        raise HTTPException(422, "params.level must be a finite number")
-    condition = params.get("condition")
-    if condition not in _CONDITIONS:
-        raise HTTPException(422, f"unknown condition: {condition!r}")
-    trigger = params.get("trigger")
-    if trigger not in _TRIGGERS:
-        raise HTTPException(422, f"unknown trigger: {trigger!r}")
-    # Optional: the chart timeframe the alert was created from (drives the
-    # Telegram snapshot's resolution). Free-form because resolutions include
-    # derived ("3m") and seconds strings — just keep junk out of the row.
-    timeframe = params.get("timeframe")
-    if timeframe is not None and (
-        not isinstance(timeframe, str) or not (1 <= len(timeframe) <= 20)
-    ):
-        raise HTTPException(422, "params.timeframe must be a short string")
-    if timeframe is not None:
-        try:
-            params["timeframe"] = canonicalize(timeframe)
-        except TimeframeError as e:
-            raise HTTPException(422, f"params.timeframe: {e}") from None
+def _validate_params(kind: str, params: dict[str, Any], broker: str) -> None:
+    try:
+        KINDS[kind].validate(params, _streams(broker))
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
 
 
 class CreateAlertBody(BaseModel):
@@ -140,7 +123,14 @@ async def _notify(request: Request, row: dict | None, alert_id: str, broker: str
 
 @router.get("/api/alerts")
 async def list_alerts(request: Request) -> dict[str, Any]:
-    rows = await ALERT_STORE.list_user(current_user(request))
+    user = current_user(request)
+    rows = await ALERT_STORE.list_user(user)
+    for r in rows:
+        st = ALERT_ENGINE.status(user, r["id"])
+        if st is None and r.get("kind") == "indicator":
+            st = "waiting_for_data"  # not registered with the engine yet
+        if st is not None:
+            r["status"] = st
     return {"alerts": rows}
 
 
@@ -148,7 +138,7 @@ async def list_alerts(request: Request) -> dict[str, Any]:
 async def create_alert(request: Request, body: CreateAlertBody, origin: str = Query("")) -> dict[str, Any]:
     _validate_id(body.id)
     _validate_kind(body.kind)
-    _validate_params(body.kind, body.params)
+    _validate_params(body.kind, body.params, body.broker)
     _validate_precision(body.precision)
     _validate_expires_at(body.expires_at)
 
@@ -185,6 +175,12 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
 async def get_triggered(request: Request) -> dict[str, Any]:
     user = current_user(request)
     entries = await ALERT_STORE.list_triggered(user)
+    for e in entries:
+        raw = e.pop("alert_json", None)
+        try:
+            e["alert"] = json.loads(raw) if raw else None
+        except ValueError:
+            e["alert"] = None
     seen_raw = await ALERT_STORE.get_meta(user, "triggered_seen")
     seen = int(seen_raw) if seen_raw is not None else 0
     return {"entries": entries, "seen": seen}
@@ -270,15 +266,34 @@ async def patch_alert(
     # store the literal string "null" (params/notify, via json.dumps(None))
     # or trip a sqlite IntegrityError (message/precision) — either way an
     # uncaught 500, plus a stored params=None that later crashes the engine's
-    # _alert_sig(params).get(...) on the next tick.
+    # per-alert evaluation (kind.sig(params) and friends) on the next tick.
     patch = {
         k: v for k, v in body.model_dump(exclude_unset=True).items()
         if v is not None or k == "expires_at"
     }
     if "params" in patch:
         existing = await ALERT_STORE.list_user(user)
-        kind = next((r["kind"] for r in existing if r["id"] == alert_id), "price_level")
-        _validate_params(kind, patch["params"])
+        current = next((r for r in existing if r["id"] == alert_id), None)
+        if current is None:
+            raise HTTPException(404, f"alert not found: {alert_id}")
+        merged = {**current["params"], **patch["params"]}
+        # `config` is itself a nested dict (e.g. {maType, source}); a shallow
+        # merge of `params` would let a patch naming only `config.maType`
+        # drop `config.source` entirely, and validate_indicator default-fills
+        # it back silently instead of 422ing — merge config one level deeper.
+        # Only when BOTH sides are dicts: a patch sending a non-dict config
+        # (string/list/null) must fall through to validate_indicator's own
+        # "params.config must be an object" 422, not blow up `**` on a
+        # non-mapping.
+        patch_config = patch["params"].get("config")
+        current_config = current["params"].get("config")
+        if (
+            "config" in patch["params"]
+            and isinstance(patch_config, dict) and isinstance(current_config, dict)
+        ):
+            merged["config"] = {**current_config, **patch_config}
+        _validate_params(current["kind"], merged, current["broker"])
+        patch["params"] = merged
     if "precision" in patch:
         _validate_precision(patch["precision"])
     if "expires_at" in patch:

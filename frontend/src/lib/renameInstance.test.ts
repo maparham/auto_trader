@@ -122,4 +122,31 @@ describe("renameInstanceEverywhere", () => {
       { id: "FVG2", type: "FVG" },
     ]);
   });
+
+  it("relinks an alert tracking the renamed instance to the new id", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) } as Response));
+    localStorage.clear();
+    const chart = statefulChart([
+      { name: "PIVOT_ANALYSIS", type: "PIVOT_ANALYSIS", calcParams: [34, 34, 0, 0] },
+    ]);
+    const controller = fakeController(chart, "tab.everywhere3", [{ id: "PIVOT_ANALYSIS", type: "PIVOT_ANALYSIS" }]);
+    const { addIndicatorAlert, linkedAlerts } = await import("./alertsApi");
+    await addIndicatorAlert({
+      kind: "indicator", id: "al-rn", epic: "US100", broker: "b", condition: "crossing", trigger: "every",
+      message: "", expiresAt: null,
+      notify: { toast: true, browser: true, sound: true, push: true, telegram: true }, precision: 2,
+      params: {
+        identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
+        line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+        link: { scope: "tab.everywhere3", instanceId: "PIVOT_ANALYSIS" },
+      },
+    });
+
+    const result = renameInstanceEverywhere(controller, "US100", "PIVOT_ANALYSIS", "MyPivots2");
+    expect(result.ok).toBe(true);
+
+    expect(linkedAlerts("tab.everywhere3", "PIVOT_ANALYSIS")).toEqual([]);
+    expect(linkedAlerts("tab.everywhere3", "MyPivots2").map((a) => a.id)).toEqual(["al-rn"]);
+    vi.unstubAllGlobals();
+  });
 });

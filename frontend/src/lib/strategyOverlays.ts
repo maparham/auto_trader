@@ -21,6 +21,7 @@ import {
   saveIndicators,
 } from "./persist";
 import { withHistorySuppressed } from "./history";
+import { reconcileLinksForScope } from "./indicatorAlertSync";
 
 export type { ChartOverlaySpec };
 
@@ -103,7 +104,14 @@ export function syncStrategyOverlays(
       if (inst) next = [...next, inst];
     }
 
-    if (next !== current) saveIndicators(scope, next);
+    if (next !== current) {
+      saveIndicators(scope, next);
+      // Alerts on a managed instance this removed stop following the cell.
+      // Only pre-existing survivors count as live, so a freshly minted
+      // instance never adopts a dangling link under a reused bare name.
+      const before = new Set(current.map((i) => i.id));
+      void reconcileLinksForScope(scope, new Set(next.filter((i) => before.has(i.id)).map((i) => i.id)));
+    }
     return next;
   });
 }

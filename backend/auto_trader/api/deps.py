@@ -223,6 +223,28 @@ async def guarded(
         raise HTTPException(502, f"{label} failed: {e}") from e
 
 
+async def load_alert_bars(
+    broker_id: str, epic: str, resolution: str, side: str, count: int
+) -> tuple[list[Candle], bool]:
+    """Alert-engine loader: the most recent `count` native bars through the
+    same candle cache the charts read. Returns (bars, degraded); degraded
+    means the broker fetch failed and cached bars were served, which the
+    alert hub treats as a failure."""
+    res = Resolution(resolution)
+    broker = get_data(broker_id)
+
+    async def fetch_recent(n: int):
+        return await guarded(
+            broker_id, lambda: broker.get_recent_candles(epic, res, n, side), "alert bars"
+        )
+
+    degraded: dict = {}
+    bars = await CANDLE_CACHE.recent(
+        (broker_id, epic, res.value, side), res.seconds, count, fetch_recent, degraded=degraded
+    )
+    return bars, bool(degraded)
+
+
 def get_exec(account: str) -> ExecutionBroker:
     """The execution broker for an account key ("capital:paper").
 

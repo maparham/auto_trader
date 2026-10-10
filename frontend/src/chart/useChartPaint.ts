@@ -39,7 +39,10 @@ import {
 import { buildLegendRows, buildSubPaneLegends, buildInsetLegend, type LegendRow, type SubPaneLegendData, type ChartLegendHandle } from "../ChartLegend";
 import { insetBandBox, type InsetBandBox } from "../lib/indicators/inset";
 import { slopeMaLines } from "../lib/indicators/slope";
-import { getIndicatorsByPane } from "../lib/indicators";
+import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
+import { loadIndicatorAlerts } from "../lib/alertsApi";
+import { MAIN_LINE_KEY } from "../lib/alertableIndicators";
+import type { IndicatorBellTag } from "./AlertTags";
 import { indTypeOf } from "../lib/customIndicators";
 import { dashSliceBounds, getBacktestAggregate, tradeDashes } from "../lib/backtest";
 import { type AggPill } from "../BacktestAggMarkers";
@@ -113,6 +116,8 @@ export interface ChartPaintDeps {
   setBidTag: React.Dispatch<React.SetStateAction<BaTag>>;
   setAskTag: React.Dispatch<React.SetStateAction<BaTag>>;
   setAlertTags: React.Dispatch<React.SetStateAction<AlertTag[]>>;
+  // Bells for this cell's "price vs line" indicator alerts, on the line's last value.
+  setIndicatorBells: React.Dispatch<React.SetStateAction<IndicatorBellTag[]>>;
   setTradePills: React.Dispatch<React.SetStateAction<TradePill[]>>;
   /** Width of the price-axis column — the trade pills dock against its left edge. */
   setAxisW: React.Dispatch<React.SetStateAction<number>>;
@@ -177,6 +182,9 @@ export interface ChartPaintDeps {
   anchorPxRef: React.MutableRefObject<{ x: number; y: number; ts: number; color: string } | null>;
   // Chart period (redraw reads period.label for the legend rows).
   period: { label: string };
+  // The cell's scope (indicator alerts are linked to one cell). A plain value,
+  // so it is a redraw dep.
+  scope: string;
 }
 
 export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
@@ -185,6 +193,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     setBidTag,
     setAskTag,
     setAlertTags,
+    setIndicatorBells,
     setTradePills,
     setAxisW,
     setLegendRows,
@@ -231,6 +240,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     themeRef,
     anchorPxRef,
     period,
+    scope,
   } = deps;
 
   const {
@@ -241,6 +251,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     tradesRef,
     pendingRef,
     resRef,
+    brokerIdRef,
     priceSideRef,
     bidRef,
     askRef,
@@ -656,6 +667,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       // object/array is built per redraw: the redraw runs on every pan frame,
       // and a fresh-but-equal identity would re-render the whole cell tree.
       setAlertTags((prev) => stableArray(prev, []));
+      setIndicatorBells((prev) => stableArray(prev, []));
       handle.paintSeparatorRef.current();
       return;
     }
@@ -818,6 +830,25 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     }
     if (priceObscured) setPriceTag(null);
     setAlertTags((prev) => stableArray(prev, tags));
+
+    // "Price vs line" indicator alerts (e.g. price crosses EMA 50): no line of
+    // their own, just a bell on the indicator's line at its latest value. Only
+    // the linked cell, on the alert's timeframe, while the eye shows alert lines
+    // and the indicator itself is shown (visible covers Hide indicators and the
+    // per-resolution visibility model, applyIndicatorVisibility).
+    const bells: IndicatorBellTag[] = [];
+    for (const a of overlays.getAlertsHidden() ? [] : loadIndicatorAlerts(epicRef.current, brokerIdRef.current)) {
+      const p = a.params;
+      if (p.target !== "price" || !p.link || p.link.scope !== scope || p.timeframe !== resRef.current) continue;
+      const ind = getIndicatorById(chart, p.link.instanceId);
+      if (!ind || ind.visible === false) continue;
+      const res = (ind.result ?? []) as Array<Record<string, number | undefined>>;
+      const v = res[res.length - 1]?.[MAIN_LINE_KEY[p.identity.indicator]];
+      if (v == null || !Number.isFinite(v)) continue;
+      const y = yOf(v);
+      if (y != null) bells.push({ id: a.id, y });
+    }
+    setIndicatorBells((prev) => stableArray(prev, bells));
     const act = tags.find((t) => t.active);
     if (act) lastActivePillIdRef.current = act.id;
 
@@ -1359,7 +1390,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // Period-start separator follows the same geometry (via ref so it isn't a dep).
     handle.paintSeparatorRef.current();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
-  }, [paintBracket, paintSlopeMa]);
+  }, [paintBracket, paintSlopeMa, scope]);
   handle.redrawRef.current = redraw;
 
   return { paintBracket, paintSeparator, fmtSeparatorLabel, redraw };

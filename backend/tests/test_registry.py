@@ -240,3 +240,9 @@ def test_duplicate_registration_raises() -> None:
     reg.add_data("capital", SimpleNamespace())  # type: ignore[arg-type]
     with pytest.raises(ValueError):
         reg.add_data("capital", SimpleNamespace())  # type: ignore[arg-type]
+
+
+def test_describe_streaming_lists_streaming_brokers() -> None:
+    info = build_registry().describe()
+    assert "capital" in info["streaming"]        # supports_streaming = True
+    assert "dukascopy" not in info["streaming"]  # supports_streaming = False

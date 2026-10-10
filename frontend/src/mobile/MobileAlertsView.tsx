@@ -8,9 +8,13 @@
 import { useState, useSyncExternalStore } from "react";
 import {
   loadAllAlerts,
+  loadAllIndicatorAlerts,
   deleteStoredAlert,
+  deleteIndicatorAlert,
   loadTriggered,
-  CONDITION_LABELS,
+  alertLabel,
+  triggeredLabel,
+  type IndicatorAlert,
   type SavedAlert,
 } from "../lib/alertsApi";
 import {
@@ -18,8 +22,10 @@ import {
   alertGlobalEditRequest,
   alertModalRequest,
   bumpAlerts,
+  indicatorAlertRequest,
   requestConfirm,
 } from "../lib/signals";
+import Tooltip from "../components/Tooltip";
 import { fetchQuote } from "../lib/trading";
 import { mobileAccount, mobileBroker, mobileSymbol } from "./mobileChartState";
 
@@ -49,6 +55,22 @@ export default function MobileAlertsView() {
   const groups = loadAllAlerts(broker);
   const rows: { epic: string; alert: SavedAlert }[] = [];
   for (const g of groups) for (const a of g.alerts) rows.push({ epic: g.epic, alert: a });
+  // Indicator alerts sit after the price rows of their epic (an epic with only
+  // indicator alerts still gets its block, at the end).
+  const indByEpic = new Map<string, IndicatorAlert[]>();
+  for (const a of loadAllIndicatorAlerts(broker)) {
+    const list = indByEpic.get(a.epic);
+    if (list) list.push(a);
+    else indByEpic.set(a.epic, [a]);
+  }
+  const epicOrder = [...new Set([...groups.map((g) => g.epic), ...indByEpic.keys()])];
+  const items: Array<
+    { kind: "price"; epic: string; alert: SavedAlert } | { kind: "indicator"; epic: string; alert: IndicatorAlert }
+  > = [];
+  for (const ep of epicOrder) {
+    for (const r of rows) if (r.epic === ep) items.push({ kind: "price", ...r });
+    for (const a of indByEpic.get(ep) ?? []) items.push({ kind: "indicator", epic: ep, alert: a });
+  }
 
   const history = loadTriggered(); // already newest-first (see alertsApi.ts)
 
@@ -64,11 +86,18 @@ export default function MobileAlertsView() {
   function handleDelete(epic: string, alert: SavedAlert) {
     const precision = precisionFor(epic);
     requestConfirm({
-      message: `Delete alert ${CONDITION_LABELS[alert.condition]} ${alert.level.toFixed(precision)} on ${epic}?`,
+      message: `Delete alert ${alertLabel(alert, precision)} on ${epic}?`,
       onConfirm: () => {
         deleteStoredAlert(epic, alert.id, broker);
         bumpAlerts();
       },
+    });
+  }
+
+  function handleDeleteIndicator(a: IndicatorAlert) {
+    requestConfirm({
+      message: `Delete this alert on ${a.epic}?`,
+      onConfirm: () => deleteIndicatorAlert(a.id),
     });
   }
 
@@ -102,10 +131,42 @@ export default function MobileAlertsView() {
       </div>
       <div className="m-alerts-list">
         {tab === "active" ? (
-          rows.length === 0 ? (
+          items.length === 0 ? (
             <div className="m-alerts-empty">No active alerts.</div>
           ) : (
-            rows.map(({ epic, alert: a }) => {
+            items.map((it) => {
+              if (it.kind === "indicator") {
+                const a = it.alert;
+                return (
+                  <div
+                    key={`${it.epic}-${a.id}`}
+                    className="m-alerts-row"
+                    onClick={() => indicatorAlertRequest.set({ mode: "edit", id: a.id })}
+                  >
+                    <div className="m-alerts-row-main">
+                      <span className="m-alerts-epic">{it.epic}</span>
+                      <span className="m-alerts-cond">{alertLabel(a, a.precision)}</span>
+                    </div>
+                    {a.message && <div className="m-alerts-msg">{a.message}</div>}
+                    {a.status === "waiting_for_data" && (
+                      <Tooltip content={["Not enough candles yet, or the feed is down", "It fires once data arrives"]}>
+                        <span className="m-alerts-wait">waiting for data</span>
+                      </Tooltip>
+                    )}
+                    <button
+                      className="m-alerts-delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteIndicator(a);
+                      }}
+                      aria-label={`Delete alert on ${it.epic}`}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                );
+              }
+              const { epic, alert: a } = it;
               const precision = precisionFor(epic);
               return (
                 <div
@@ -117,9 +178,7 @@ export default function MobileAlertsView() {
                 >
                   <div className="m-alerts-row-main">
                     <span className="m-alerts-epic">{epic}</span>
-                    <span className="m-alerts-cond">
-                      {CONDITION_LABELS[a.condition]} {a.level.toFixed(precision)}
-                    </span>
+                    <span className="m-alerts-cond">{alertLabel(a, precision)}</span>
                   </div>
                   {a.message && <div className="m-alerts-msg">{a.message}</div>}
                   <button
@@ -147,10 +206,7 @@ export default function MobileAlertsView() {
                   <span className="m-alerts-epic">{t.epic}</span>
                   <span className="m-alerts-time">{new Date(t.time).toLocaleString()}</span>
                 </div>
-                <div className="m-alerts-cond">
-                  {CONDITION_LABELS[t.condition]} {t.level.toFixed(precision)}
-                  <span className="m-alerts-at"> @ {t.price.toFixed(precision)}</span>
-                </div>
+                <div className="m-alerts-cond">{triggeredLabel(t, precision)}</div>
                 {t.message && <div className="m-alerts-msg">{t.message}</div>}
               </div>
             );

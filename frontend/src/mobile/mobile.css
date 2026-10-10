@@ -297,7 +297,8 @@ body.m-mobile {
 .m-alerts-cond { color: var(--text-dim, var(--text)); font-size: 13px; }
 .m-alerts-time { margin-left: auto; color: var(--text-secondary, #888); font-size: 12px; }
 .m-alerts-msg { color: var(--text-secondary, #888); font-size: 12px; margin-top: 2px; padding-right: 60px; }
-.m-alerts-at { color: var(--text-secondary, #888); }
+/* Indicator alert still warming up (or its feed is down): a muted chip. */
+.m-alerts-wait { display: inline-block; margin-top: 4px; font-size: 11px; color: var(--text-secondary, #888); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
 .m-alerts-delete { position: absolute; right: 10px; top: 8px; padding: 4px 10px; background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--danger); font-size: 12px; }
 .m-alerts-empty { padding: 24px 16px; color: var(--text-secondary, #888); font-size: 14px; text-align: center; }
 

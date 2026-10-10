@@ -68,3 +68,12 @@ def test_empty_candles_raise():
 def test_precision_out_of_band_is_clamped():
     png = render_alert_chart(_candles(10), level=102.0, fired_price=102.0, precision=99, title="p")
     _assert_png(png)
+
+
+def test_render_without_level_line():
+    from datetime import datetime, timedelta, timezone
+    from auto_trader.core.alert_chart import render_alert_chart
+    from auto_trader.core.models import Candle
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    bars = [Candle(t0 + timedelta(minutes=i), 1, 2, 0.5, 1.5) for i in range(10)]
+    assert render_alert_chart(bars, None, 1.5, 2, "t")[:4] == b"\x89PNG"

@@ -10,6 +10,7 @@
 
 import type { Chart } from "klinecharts";
 import { OverlayManager } from "./overlays";
+import { IndicatorAlertLines } from "./overlays/indicatorAlerts";
 import { Signal } from "./signals";
 import type { IndicatorInstance } from "./persist";
 import { loadScalePriceOnly, loadPriceStretched, savePriceStretched, loadSnapshotMeta } from "./persist";
@@ -61,6 +62,9 @@ export class ChartController {
   readonly scope: string;
   // This cell's overlay manager (drawings + price-alert lines), scoped to the cell.
   readonly overlays = new OverlayManager();
+  // This cell's indicator value-alert lines (drawn in the indicator's own pane).
+  // The sidebar eye ("Hide alert lines") hides them along with the price lines.
+  readonly indicatorAlerts = new IndicatorAlertLines(() => this.overlays.getAlertsHidden());
 
   // Read-only snapshot view: true while this cell's scope carries snapshotMeta
   // (a tab restored from a snapshot is a frozen study copy). THE single sentinel
@@ -278,6 +282,8 @@ export class ChartController {
     this.cellId = cellId;
     this.scope = scope;
     this.overlays.setScope(scope);
+    // The alert-lines eye re-applies to the indicator value-alert lines too.
+    this.overlays.onAlertsHiddenChange = () => this.indicatorAlerts.reconcile();
     this.readOnly.set(loadSnapshotMeta(scope) != null);
     this.scalePriceOnly.set(loadScalePriceOnly(scope));
     // Only the stretched/not distinction survives a reload — see setPriceFit.
