@@ -2,7 +2,7 @@
 // fetches, and the degraded/partial-fill headers they report.
 import type { KLineData } from "klinecharts";
 import type { PriceSide } from "../../theme";
-import { API_BASE as BASE, apiFetch, errorDetail } from "../http";
+import { API_BASE as BASE, apiError, apiFetch, errorDetail } from "../http";
 import { PERF_DIAG_ON, recordBars, recordFetch } from "../perfDiag";
 import { getSynthetic } from "../syntheticRegistry";
 import { type RawCandle, toKLine, DEFAULT_BROKER, fetchWithTimeout } from "./common";
@@ -108,7 +108,9 @@ async function fetchRecentUncoalesced(
         partial: partialHeader(res),
       };
     if (res.status === 404) return { bars: [], degraded: null, partial: null };
-    throw new Error(await errorDetail(res));
+    // apiError, not a bare Error: the status is what lets the chart's no-data
+    // banner say "sign in again" for a 401/403 instead of blaming the broker.
+    throw await apiError(res);
   }
   const qs = new URLSearchParams({
     epic,
@@ -129,9 +131,10 @@ async function fetchRecentUncoalesced(
   }
   // 404 = no data for this epic (unknown / no history) — empty, not an error.
   if (res.status === 404) return { bars: [], degraded: null, partial: null };
-  // Anything else (e.g. 502 from a broker auth / maintenance failure) carries a
-  // detail worth surfacing — throw it so the chart can show why it's blank.
-  throw new Error(await errorDetail(res));
+  // Anything else (e.g. 502 from a broker auth / maintenance failure, or the
+  // 401/403 a dead session gets) carries a detail worth surfacing AND a status
+  // worth classifying — throw it so the chart can show why it's blank.
+  throw await apiError(res);
 }
 
 /** Most recent `bars` candles (no date window). Used for the initial load. */

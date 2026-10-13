@@ -22,7 +22,14 @@ import { detachedWindows, type DetachedTarget } from "./detachedView";
 import { jumpToLive } from "../lib/liveEdge";
 import type { PriceSide } from "../theme";
 import { synthPrecision } from "./chartPainters";
-import { nextHistoryRetryDelayMs, shouldKeepPaintedBars, shouldRetryHistory } from "./noDataPolicy";
+import {
+  classifyLoadFailure,
+  nextHistoryRetryDelayMs,
+  shouldKeepPaintedBars,
+  shouldRetryHistory,
+  type LoadFailure,
+} from "./noDataPolicy";
+import { ApiError } from "../lib/http";
 import { periodFromTf } from "./chartDataFacade";
 import {
   teardownArtifacts,
@@ -83,6 +90,9 @@ export interface LiveMarketDataDeps {
   setLastPrice: (p: number | null) => void;
   setHasData: (v: boolean) => void;
   setLoadError: (v: string | null) => void;
+  // Why the last failed load failed, by status (see noDataPolicy.classifyLoadFailure):
+  // lets the no-data banner name a dead session instead of blaming the broker.
+  setLoadFailure: (v: LoadFailure) => void;
   // The last load's degraded-serve marker (broker unreachable, cached bars
   // served — see feed.CandlesResult); null = healthy/complete.
   setDegraded: (v: string | null) => void;
@@ -171,6 +181,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     setLastPrice,
     setHasData,
     setLoadError,
+    setLoadFailure,
     setDegraded,
     setErrorOpen,
     setFetchedPrecision,
@@ -539,6 +550,9 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // the broker is genuinely unreachable.
     setHasData(false);
     setLoadError(null);
+    // Reset the cause with the message: a fresh load must not inherit the
+    // previous series' "sign in again" (or broker-down) wording.
+    setLoadFailure("unknown");
     setErrorOpen(false);
 
     (async () => {
@@ -604,6 +618,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         if (failed !== undefined && !cancelled) {
           console.warn(`[chart] detached load incomplete for ${symbol.epic}`, failed);
           setLoadError(failed instanceof Error ? failed.message : String(failed));
+          if (failed instanceof ApiError) setLoadFailure(classifyLoadFailure(failed.status));
         }
       } else {
         // Tolerate a failed initial load (offline/DNS/refused/CORS make fetchRecent
@@ -628,7 +643,13 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         } catch (err) {
           console.warn(`[chart] initial load failed for ${symbol.epic}; continuing with no history`, err);
           bars = [];
-          if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+          if (!cancelled) {
+            setLoadError(err instanceof Error ? err.message : String(err));
+            // A transport failure (refused / DNS / offline / timeout) carries no
+            // status, so it classifies "unknown" and the banner keeps its generic
+            // wording. Only a real HTTP status can name a cause.
+            if (err instanceof ApiError) setLoadFailure(classifyLoadFailure(err.status));
+          }
         }
         // This run's painted bars are the live series (loaded now, or kept from
         // the pre-paint/previous run) — eligible for the unmount bar-cache

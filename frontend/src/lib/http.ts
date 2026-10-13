@@ -18,6 +18,28 @@ export const API_BASE =
  */
 export class BrokerBlockedError extends Error {}
 
+/**
+ * A non-2xx API response, carrying the HTTP status. The status is the part a
+ * caller cannot reconstruct from the message: "Not Found" reads the same for a
+ * genuine 404 (this epic has no history) and for the 401/403 a dead session
+ * gets, but they demand opposite things from the user — refresh later vs sign
+ * in again — so callers that must tell them apart branch on `status` instead
+ * of string-matching the detail.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/** The same `errorDetail` text, as an ApiError that keeps the status. */
+export async function apiError(res: Response, fallback?: string): Promise<ApiError> {
+  return new ApiError(res.status, await errorDetail(res, fallback));
+}
+
 /** Throw BrokerBlockedError if a failed response carries the broker-blocked
  *  marker header; otherwise return so the caller raises its usual error. */
 export async function throwIfBrokerBlocked(res: Response): Promise<void> {

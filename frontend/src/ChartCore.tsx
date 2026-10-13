@@ -242,7 +242,7 @@ import {
 import { useLiveMarketData } from "./chart/useLiveMarketData";
 import { shouldDetach, type DetachedTarget } from "./chart/detachedView";
 import { useReplay } from "./chart/useReplay";
-import { classifyNoData, type NoDataKind } from "./chart/noDataPolicy";
+import { classifyNoData, type LoadFailure, type NoDataKind } from "./chart/noDataPolicy";
 import { buildRangeToken, useRangeNavigation } from "./chart/useRangeNavigation";
 import { useChartPaint } from "./chart/useChartPaint";
 import { useIndicatorCommands } from "./chart/useIndicatorCommands";
@@ -1127,6 +1127,10 @@ export default function ChartCore({
   // 401/maintenance), shown in the no-data banner. null when the load just returned
   // empty (404 / closed market) with no error to report.
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Why that load failed, from its status: a dead session (auth) is fixed by
+  // signing in again, a broker outage (broker) by waiting, and "unknown" keeps
+  // the original generic wording. Reset alongside loadError.
+  const [loadFailure, setLoadFailure] = useState<LoadFailure>("unknown");
   // Whether the (long) error detail is expanded in the banner.
   const [errorOpen, setErrorOpen] = useState(false);
   // The last history load was served from the backend's candle cache because the
@@ -4352,6 +4356,7 @@ export default function ChartCore({
     setLastPrice,
     setHasData,
     setLoadError,
+    setLoadFailure,
     setDegraded,
     setErrorOpen,
     setFetchedPrecision,
@@ -5594,8 +5599,10 @@ export default function ChartCore({
       />
       <HistoryJumpPill cellId={cellId} />
       {/* Data-unavailable banner: no candles after a grace period (broker maintenance,
-          auth failure, offline, or an unknown epic). Generic on purpose — a 401 can't
-          be told apart from expired creds, so we don't claim a specific cause. */}
+          auth failure, offline, or an unknown epic). The headline names the cause
+          only when the failed response's status actually identified one (see
+          noDataPolicy.classifyLoadFailure) — a 401/403 means the session is dead,
+          not that the broker is down, and those need opposite things from the user. */}
       {noData === "empty" && (
         <div className="chart-nodata" role="status">
           <div className="chart-nodata-card">
@@ -5610,9 +5617,27 @@ export default function ChartCore({
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
             <span className="chart-nodata-title">No data to display</span>
-            <span className="chart-nodata-hint">
-              Couldn’t load {symbol.epic} — the broker may be temporarily unavailable.
-            </span>
+            {loadFailure === "auth" ? (
+              // Not "Retrying automatically…" under this one: a dead session does
+              // not heal by itself, and a spinner here would promise a recovery
+              // that cannot happen.
+              <>
+                <span className="chart-nodata-hint">
+                  Couldn’t load {symbol.epic} — your session has expired. Sign in
+                  again to restore this chart.
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="chart-nodata-hint">
+                  Couldn’t load {symbol.epic} — the broker may be temporarily unavailable.
+                </span>
+                <span className="chart-nodata-retry">
+                  <span className="chart-nodata-spinner" aria-hidden="true" />
+                  Retrying automatically…
+                </span>
+              </>
+            )}
             {loadError &&
               (loadError.length <= 90 ? (
                 // Short enough to read inline.
@@ -5631,10 +5656,6 @@ export default function ChartCore({
                   {errorOpen && <pre className="chart-nodata-errbox">{loadError}</pre>}
                 </div>
               ))}
-            <span className="chart-nodata-retry">
-              <span className="chart-nodata-spinner" aria-hidden="true" />
-              Retrying automatically…
-            </span>
           </div>
         </div>
       )}

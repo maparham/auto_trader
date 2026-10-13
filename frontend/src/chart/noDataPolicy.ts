@@ -25,6 +25,24 @@ export function classifyNoData(paintedBarCount: number): NoDataKind {
 }
 
 /**
+ * Why a history load came back with nothing, from the failed response's status.
+ * The banner's headline turns on this: a dead session (401/403) is fixed by
+ * signing in again, a broker outage (5xx/429) by waiting, and neither is worth
+ * naming when the status says neither.
+ *
+ * 403 is grouped with 401 deliberately. The backend refuses a WS dial to a
+ * restricted broker with 403, and a candle fetch for a non-admin the same way,
+ * so "your session can't see this broker" is the honest reading for both.
+ */
+export type LoadFailure = "auth" | "broker" | "unknown";
+
+export function classifyLoadFailure(status: number | null | undefined): LoadFailure {
+  if (status === 401 || status === 403) return "auth";
+  if (status === 429 || (status != null && status >= 500)) return "broker";
+  return "unknown";
+}
+
+/**
  * Whether a settled history load should schedule a backoff re-fetch: an empty
  * load (nothing painted), or a degraded one — the backend served cached bars
  * because the broker was unreachable, so the missing tail heals only by

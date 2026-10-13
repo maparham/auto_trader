@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyLoadFailure,
   classifyNoData,
   nextHistoryRetryDelayMs,
   shouldKeepPaintedBars,
@@ -62,5 +63,32 @@ describe("classifyNoData", () => {
   it("is 'stale' when bars from a previous load are still painted", () => {
     expect(classifyNoData(1)).toBe("stale");
     expect(classifyNoData(500)).toBe("stale");
+  });
+});
+
+describe("classifyLoadFailure", () => {
+  it("names a dead session for 401 — the retry in apiFetch already failed", () => {
+    expect(classifyLoadFailure(401)).toBe("auth");
+  });
+
+  it("names a dead session for 403 too (a restricted broker refuses the dial)", () => {
+    expect(classifyLoadFailure(403)).toBe("auth");
+  });
+
+  it("blames the broker for 429 and 5xx", () => {
+    expect(classifyLoadFailure(429)).toBe("broker");
+    expect(classifyLoadFailure(500)).toBe("broker");
+    expect(classifyLoadFailure(502)).toBe("broker");
+    expect(classifyLoadFailure(503)).toBe("broker");
+  });
+
+  it("stays generic for a status that names no cause", () => {
+    expect(classifyLoadFailure(404)).toBe("unknown");
+    expect(classifyLoadFailure(422)).toBe("unknown");
+  });
+
+  it("stays generic when there is no status at all (offline / DNS / timeout)", () => {
+    expect(classifyLoadFailure(null)).toBe("unknown");
+    expect(classifyLoadFailure(undefined)).toBe("unknown");
   });
 });
