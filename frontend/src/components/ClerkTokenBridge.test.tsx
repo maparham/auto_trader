@@ -9,12 +9,13 @@ import { getAuthToken, setTokenGetter } from "../lib/authToken";
 import { setUnauthorizedHandler, apiFetch } from "../lib/http";
 import ClerkTokenBridge from "./ClerkTokenBridge";
 
-const { signOut } = vi.hoisted(() => ({
+const { signOut, getToken } = vi.hoisted(() => ({
   signOut: vi.fn(),
+  getToken: vi.fn(async () => "clerk-tok"),
 }));
 
 vi.mock("@clerk/clerk-react", () => ({
-  useAuth: () => ({ getToken: async () => "clerk-tok" }),
+  useAuth: () => ({ getToken }),
   useClerk: () => ({ signOut }),
 }));
 
@@ -41,4 +42,17 @@ it("registers signOut as the unauthorized handler while mounted", async () => {
   signOut.mockClear();
   await apiFetch("http://x/api/y");
   expect(signOut).not.toHaveBeenCalled();
+});
+
+it("mints a fresh token when the tab becomes visible or the network returns", () => {
+  const { unmount } = render(<ClerkTokenBridge />);
+  getToken.mockClear();
+  document.dispatchEvent(new Event("visibilitychange"));
+  window.dispatchEvent(new Event("online"));
+  expect(getToken).toHaveBeenCalledTimes(2);
+  expect(getToken).toHaveBeenCalledWith({ skipCache: true });
+  unmount();
+  getToken.mockClear();
+  window.dispatchEvent(new Event("online"));
+  expect(getToken).not.toHaveBeenCalled();
 });

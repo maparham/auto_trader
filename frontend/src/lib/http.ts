@@ -1,4 +1,4 @@
-import { getAuthToken, hasTokenGetter } from "./authToken";
+import { AuthTokenTimeoutError, getAuthToken, hasTokenGetter } from "./authToken";
 import { IMPERSONATE_HEADER, impersonatedUserId } from "./impersonation";
 
 // Shared HTTP plumbing for the FastAPI backend: the single base-URL definition
@@ -90,6 +90,30 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
  * token (local dev) it IS fetch. A 401 on an authed call means the session
  * died — notify so the app can sign out cleanly rather than error-spam.
  */
+/** apiFetch for the boot-time pulls (workspace snapshot, alerts) whose
+ *  failure has lasting effects: a failed workspace hydrate leaves backend
+ *  mirroring off for the whole session. A token wait that timed out is
+ *  retried, so a slow first token mint (cold Clerk, poor network) waits up to
+ *  `attempts` timeouts instead of failing the boot after one. */
+export async function apiFetchPatient(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  attempts = 3,
+): Promise<Response> {
+  for (let i = 1; ; i++) {
+    try {
+      return await apiFetch(input, init);
+    } catch (err) {
+      if (!(err instanceof AuthTokenTimeoutError) || i >= attempts) throw err;
+    }
+  }
+}
+
+function rethrowTimeout(err: unknown): null {
+  if (err instanceof AuthTokenTimeoutError) throw err;
+  return null;
+}
+
 export function apiFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -109,7 +133,10 @@ export function apiFetch(
     // session): fall back to a tokenless request and let the backend's 401
     // (and the retry machinery around callers) take over — same stance as the
     // three WebSocket dialers (feed / persist / agent bridge).
-    const token = await getAuthToken().catch(() => null);
+    // A token wait that timed out is the exception: rethrow it, so the caller
+    // sees a transport-style failure and retries, instead of a tokenless 401
+    // whose retry would wait on the same hung getter and then sign out.
+    const token = await getAuthToken().catch(rethrowTimeout);
     if (!token) {
       if (!asUser) return fetch(input, init);
       const headers = new Headers(init?.headers);
@@ -127,7 +154,7 @@ export function apiFetch(
     // token — safe even for writes, since the auth middleware rejected the
     // request before it executed — and sign out only when that retry is also
     // unauthorized. No fresh token at all means the session really is gone.
-    const fresh = await getAuthToken({ fresh: true }).catch(() => null);
+    const fresh = await getAuthToken({ fresh: true }).catch(rethrowTimeout);
     if (fresh) {
       const retryHeaders = new Headers(init?.headers);
       retryHeaders.set("Authorization", `Bearer ${fresh}`);

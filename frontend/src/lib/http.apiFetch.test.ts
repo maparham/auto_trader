@@ -5,8 +5,8 @@ import { installMemStorage } from "./testMemStorage";
 
 installMemStorage();
 
-import { apiFetch, setUnauthorizedHandler } from "./http";
-import { setTokenGetter } from "./authToken";
+import { apiFetch, apiFetchPatient, setUnauthorizedHandler } from "./http";
+import { AuthTokenTimeoutError, TOKEN_TIMEOUT_MS, setTokenGetter } from "./authToken";
 
 afterEach(() => {
   setTokenGetter(null);
@@ -129,4 +129,67 @@ it("attaches the impersonation header on the 401 retry with a fresh token", asyn
   expect(retryHeaders.get("Authorization")).toBe("Bearer tok-fresh");
   expect(retryHeaders.get("X-Impersonate-User")).toBe("user_target");
   setImpersonatedUserId(null);
+});
+
+// A hung Clerk getToken() (dead connection after a laptop wake or network
+// change) used to park every request before fetch was ever called: no error,
+// no retry, a "No data" banner for minutes. The token wait is now bounded.
+it("rejects with AuthTokenTimeoutError when the token getter hangs", async () => {
+  vi.useFakeTimers();
+  try {
+    const spy = vi.fn<typeof fetch>(async () => new Response("{}"));
+    vi.stubGlobal("fetch", spy);
+    setTokenGetter(() => new Promise<string | null>(() => {}));
+    const onAuthFail = vi.fn();
+    setUnauthorizedHandler(onAuthFail);
+    const p = apiFetch("http://x/api/y");
+    const check = expect(p).rejects.toBeInstanceOf(AuthTokenTimeoutError);
+    await vi.advanceTimersByTimeAsync(TOKEN_TIMEOUT_MS);
+    await check;
+    expect(spy).not.toHaveBeenCalled();
+    expect(onAuthFail).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not sign out when the fresh token for the 401 retry hangs", async () => {
+  vi.useFakeTimers();
+  try {
+    const spy = vi.fn<typeof fetch>(async () => new Response("{}", { status: 401 }));
+    vi.stubGlobal("fetch", spy);
+    setTokenGetter((opts?: { fresh?: boolean }) =>
+      opts?.fresh ? new Promise<string | null>(() => {}) : Promise.resolve("tok-stale"),
+    );
+    const onAuthFail = vi.fn();
+    setUnauthorizedHandler(onAuthFail);
+    const p = apiFetch("http://x/api/y");
+    const check = expect(p).rejects.toBeInstanceOf(AuthTokenTimeoutError);
+    await vi.advanceTimersByTimeAsync(TOKEN_TIMEOUT_MS);
+    await check;
+    expect(spy).toHaveBeenCalledOnce();
+    expect(onAuthFail).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("apiFetchPatient retries a token wait that timed out", async () => {
+  vi.useFakeTimers();
+  try {
+    const spy = vi.fn<typeof fetch>(async () => new Response("{}"));
+    vi.stubGlobal("fetch", spy);
+    let calls = 0;
+    setTokenGetter(() =>
+      ++calls === 1 ? new Promise<string | null>(() => {}) : Promise.resolve("tok-late"),
+    );
+    const p = apiFetchPatient("http://x/api/state");
+    await vi.advanceTimersByTimeAsync(TOKEN_TIMEOUT_MS);
+    expect((await p).status).toBe(200);
+    expect(new Headers((spy.mock.calls[0][1] as RequestInit).headers).get("Authorization")).toBe(
+      "Bearer tok-late",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
 });

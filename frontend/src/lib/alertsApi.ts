@@ -9,7 +9,7 @@
 // hydrateAlerts(); writes are optimistic (cache mutated immediately, network
 // call fired after) so the UI never waits on a round trip to feel responsive.
 
-import { API_BASE, apiFetch } from "./http";
+import { API_BASE, apiFetch, apiFetchPatient } from "./http";
 import { getPersistBroker, registerAlertsRouter } from "./persist/core";
 import { bumpAlerts } from "./signals";
 import { toast } from "./notify";
@@ -377,8 +377,8 @@ export function hydrateAlerts(): Promise<void> {
     let refetch = false;
     try {
       const [alertsRes, triggeredRes] = await Promise.all([
-        apiFetch(url("/api/alerts")),
-        apiFetch(url("/api/alerts/triggered")),
+        apiFetchPatient(url("/api/alerts")),
+        apiFetchPatient(url("/api/alerts/triggered")),
       ]);
       if (alertsRes.ok) {
         const body = (await alertsRes.json()) as { alerts: AlertRow[] };

@@ -4,7 +4,7 @@
 // builds on these.
 
 import { defaultBrokerId } from "../brokerDefaults";
-import { API_BASE, apiFetch } from "../http";
+import { API_BASE, apiFetch, apiFetchPatient } from "../http";
 import { CLERK_ENABLED, getAuthToken, hasTokenGetter } from "../authToken";
 import { isDemoMode } from "../demoMode";
 import { isImpersonating, withImpersonation } from "../impersonation";
@@ -454,7 +454,7 @@ export async function hydrateFromBackend(): Promise<boolean> {
   if (typeof fetch === "undefined") return false;
   let snapshot: Record<string, unknown>;
   try {
-    const res = await apiFetch(`${API_BASE}/api/state`);
+    const res = await apiFetchPatient(`${API_BASE}/api/state`);
     if (!res.ok) return false;
     snapshot = (await res.json()) as Record<string, unknown>;
   } catch {
