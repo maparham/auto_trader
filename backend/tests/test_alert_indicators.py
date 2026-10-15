@@ -537,6 +537,10 @@ def test_close_detection_is_broker_offset_safe():
             # new has closed at the broker yet, so nothing is reported.
             now[0] = (closing + 3) * H + 5
             assert await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None)) == set()
+            # ...but the closed values held are still good: intrabar alerts
+            # keep evaluating instead of going blind until the broker closes.
+            assert hub.ready(key4, SMA3)
+            assert hub.values(key4, SMA3, intrabar=True) is not None
             # The broker's bar closes; the pending refresh retries and lands it.
             loader.bars = [b for b in bars if b.time.timestamp() * 1000 <= nxt * H]
             now[0] = nxt * H + 5

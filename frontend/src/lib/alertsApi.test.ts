@@ -386,6 +386,17 @@ function indRow(broker: string, overrides: Record<string, unknown> = {}) {
   });
 }
 
+function indRowAsAlert(broker: string): IndicatorAlert {
+  return {
+    kind: "indicator", id: "al-ind", epic: "US100", broker, condition: "crossing_up", trigger: "every",
+    message: "hi", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+    precision: 2, params: {
+      identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
+      line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+      link: { scope: "tab.t1.cell.c2", instanceId: "EMA" } },
+  };
+}
+
 describe("indicator alerts", () => {
   it("hydrate splits kinds: price lines never see indicator alerts", async () => {
     const broker = freshBroker();
@@ -515,6 +526,27 @@ describe("indicator alerts", () => {
     const result = await patchIndicatorAlert(a.id, { message: "m2" });
     expect(result).toBe(false);
     expect(loadIndicatorAlerts("US100", broker)[0].message).toBe("m1"); // restored
+  });
+
+  it("a hydrate that overlaps an in-flight create neither drops nor keeps a stale snapshot", async () => {
+    const broker = freshBroker();
+    let releasePost: (r: Response) => void = () => {};
+    let gets = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return new Promise<Response>((r) => { releasePost = r; });
+      if (String(input).includes("triggered")) return Promise.resolve(jsonResponse({ entries: [], seen: 0 }));
+      // The first GET predates the server's commit; the re-pull sees the row.
+      gets++;
+      return Promise.resolve(jsonResponse({ alerts: gets === 1 ? [] : [indRow(broker, { id: "al-race" })] }));
+    }));
+    const add = addIndicatorAlert({ ...indRowAsAlert(broker), id: "al-race" });
+    await hydrateAlerts();
+    // Stale snapshot dropped for the indicator cache: the optimistic row stays.
+    expect(loadIndicatorAlerts("US100", broker).map((a) => a.id)).toEqual(["al-race"]);
+    releasePost(jsonResponse({}));
+    expect(await add).toBe(true);
+    await vi.waitFor(() => expect(gets).toBe(2));
+    expect(loadIndicatorAlerts("US100", broker).map((a) => a.id)).toEqual(["al-race"]);
   });
 
   it("deleteIndicatorAlert removes from cache", async () => {

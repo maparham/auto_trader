@@ -339,6 +339,28 @@ function url(path: string, withOrigin = false): string {
 // on every remote push, which can arrive in bursts).
 let inFlightHydrate: Promise<void> | null = null;
 
+// Optimistic indicator-alert writes in flight, and a counter bumped as each
+// one settles. A hydrate that overlapped one may hold a snapshot from before
+// the server applied it, and our own echo of that write is skipped (origin ===
+// CLIENT_ID), so nothing else would correct it: such a snapshot is dropped for
+// the indicator cache and re-pulled once no write is pending.
+let indWritesInFlight = 0;
+let indWriteGen = 0;
+let resyncWhenSettled = false;
+
+function indWriteStart(): void {
+  indWritesInFlight++;
+}
+
+function indWriteSettled(): void {
+  indWritesInFlight--;
+  indWriteGen++;
+  if (indWritesInFlight === 0 && resyncWhenSettled) {
+    resyncWhenSettled = false;
+    void resyncAlerts();
+  }
+}
+
 // hydrateAlerts + the signal bump, as one call. The pairing is what every
 // REMOTE-origin re-pull needs (a hydrate nothing rings leaves the chart lines and
 // the sidebar on the stale set), and keeping it here means persist/core can
@@ -351,6 +373,8 @@ export function resyncAlerts(): Promise<void> {
 export function hydrateAlerts(): Promise<void> {
   if (inFlightHydrate) return inFlightHydrate;
   inFlightHydrate = (async () => {
+    const gen = indWriteGen;
+    let refetch = false;
     try {
       const [alertsRes, triggeredRes] = await Promise.all([
         apiFetch(url("/api/alerts")),
@@ -372,7 +396,9 @@ export function hydrateAlerts(): Promise<void> {
           }
         }
         alertsCache = next;
-        indicatorCache = nextInd;
+        if (indWritesInFlight > 0) resyncWhenSettled = true;
+        else if (gen !== indWriteGen) refetch = true;
+        else indicatorCache = nextInd;
       }
       if (triggeredRes.ok) {
         const body = (await triggeredRes.json()) as { entries: TriggeredRow[]; seen: number };
@@ -385,6 +411,7 @@ export function hydrateAlerts(): Promise<void> {
     } finally {
       inFlightHydrate = null;
     }
+    if (refetch) await resyncAlerts();
   })();
   return inFlightHydrate;
 }
@@ -629,11 +656,13 @@ export async function addIndicatorAlert(a: IndicatorAlert): Promise<boolean> {
   if (indicatorCache.has(a.id)) return true; // idempotent
   indicatorCache.set(a.id, a);
   bumpAlerts();
+  indWriteStart();
   const res = await sendJson("/api/alerts", "POST", {
     id: a.id, broker: a.broker, epic: a.epic, kind: "indicator",
     params: indicatorWireParams(a), message: a.message, expires_at: a.expiresAt,
     notify: a.notify, precision: a.precision,
   });
+  indWriteSettled();
   if (res?.ok) return true;
   indicatorCache.delete(a.id);
   bumpAlerts();
@@ -652,12 +681,14 @@ export async function patchIndicatorAlert(
   const next: IndicatorAlert = { ...prev, ...patch, params: { ...prev.params, ...(patch.params ?? {}) } };
   indicatorCache.set(id, next);
   bumpAlerts();
+  indWriteStart();
   const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "PATCH", {
     params: indicatorWireParams(next),
     message: next.message,
     expires_at: next.expiresAt,
     notify: next.notify,
   });
+  indWriteSettled();
   if (res?.ok) return true;
   // Only restore if still in cache (might be deleted concurrently)
   if (indicatorCache.has(id)) {
@@ -671,7 +702,10 @@ export async function patchIndicatorAlert(
 export function deleteIndicatorAlert(id: string): void {
   if (!indicatorCache.delete(id)) return;
   bumpAlerts();
-  void apiFetch(url(`/api/alerts/${encodeURIComponent(id)}`, true), { method: "DELETE" }).catch(() => {});
+  indWriteStart();
+  void apiFetch(url(`/api/alerts/${encodeURIComponent(id)}`, true), { method: "DELETE" })
+    .catch(() => {})
+    .finally(indWriteSettled);
 }
 
 // --- live event application (from /ws/state pushes, another tab/device or

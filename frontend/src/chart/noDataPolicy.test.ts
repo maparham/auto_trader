@@ -71,8 +71,8 @@ describe("classifyLoadFailure", () => {
     expect(classifyLoadFailure(401)).toBe("auth");
   });
 
-  it("names a dead session for 403 too (a restricted broker refuses the dial)", () => {
-    expect(classifyLoadFailure(403)).toBe("auth");
+  it("names a refused broker for 403, not a dead session", () => {
+    expect(classifyLoadFailure(403)).toBe("forbidden");
   });
 
   it("blames the broker for 429 and 5xx", () => {

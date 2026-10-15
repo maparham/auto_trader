@@ -464,7 +464,7 @@ class AlertEngine:
                 # alert off and on must not let it fire twice in one bar.
                 self._forget(state_key, keep_last_fired=True)
 
-        self._sync_needs()
+        self._safe_sync_needs()
         self._reconcile_event.set()
 
     def _forget(self, state_key: tuple[str, str], *, keep_last_fired: bool = False) -> None:
@@ -559,7 +559,7 @@ class AlertEngine:
         # a user's very FIRST resolution to a non-mid side is not a flip,
         # but the hub is still on the wrong SeriesKey until this runs.
         if side != (prev_side or "mid"):
-            self._sync_needs()
+            self._safe_sync_needs()
         # A side flip (e.g. mid -> bid) mid-session means every existing
         # baseline for this user was sampled on the OLD side; comparing it
         # against a price on the new side can misread as a crossing. Port
@@ -588,15 +588,20 @@ class AlertEngine:
         needs: dict[SeriesKey, set[IndicatorKey]] = {}
         for entries in self._registry.values():
             for user_id, row in entries:
-                kind = kind_of(row)
-                ind = kind.indicator_key(row["params"]) if kind and row.get("active", 1) else None
-                if ind is not None:
-                    needs.setdefault(self._series_key(user_id, row, kind), set()).add(ind)
+                try:
+                    kind = kind_of(row)
+                    ind = kind.indicator_key(row["params"]) if kind and row.get("active", 1) else None
+                    if ind is not None:
+                        needs.setdefault(self._series_key(user_id, row, kind), set()).add(ind)
+                except Exception:
+                    # One malformed row must not drop every other alert's
+                    # series (nor raise out of on_tick / a CRUD call).
+                    log.warning("alert %s: indicator needs skipped", row.get("id"), exc_info=True)
         self._hub.set_needs(needs)
 
     def _safe_sync_needs(self) -> None:
-        """`_sync_needs` for paths that must not fail (start, deletes): a
-        broken indicator row must not take price alerts down with it."""
+        """`_sync_needs` for every caller: a broken indicator row (or a hub
+        error) must not take price alerts or a CRUD call down with it."""
         try:
             self._sync_needs()
         except Exception:

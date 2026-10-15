@@ -5616,8 +5616,9 @@ export default function ChartCore({
       {/* Data-unavailable banner: no candles after a grace period (broker maintenance,
           auth failure, offline, or an unknown epic). The headline names the cause
           only when the failed response's status actually identified one (see
-          noDataPolicy.classifyLoadFailure) — a 401/403 means the session is dead,
-          not that the broker is down, and those need opposite things from the user. */}
+          noDataPolicy.classifyLoadFailure): a 401 means the session is dead and a 403
+          that this account may not use the broker, neither of which is the broker
+          being down. */}
       {noData === "empty" && (
         <div className="chart-nodata" role="status">
           <div className="chart-nodata-card">
@@ -5642,6 +5643,13 @@ export default function ChartCore({
                   again to restore this chart.
                 </span>
               </>
+            ) : loadFailure === "forbidden" ? (
+              // Same no-spinner reasoning: a broker this account may not use
+              // stays refused however often we retry.
+              <span className="chart-nodata-hint">
+                Couldn’t load {symbol.epic}. Your account doesn’t have access to
+                this broker.
+              </span>
             ) : (
               <>
                 <span className="chart-nodata-hint">

@@ -220,8 +220,11 @@ class IndicatorHub:
             # offset broker still lands its close (keep_closed's same rule).
             # Hold the previous close rather than let close-mode re-evaluate
             # the same bar twice; retry on the next sample past the retry
-            # interval.
-            st.ok, st.pending_close = False, True
+            # interval. `st.ok` is left alone: the closed values we hold are
+            # still valid, and flipping it would blind every intrabar alert
+            # on this series (and report waiting_for_data) for up to an hour
+            # on an offset broker, until its bar closes.
+            st.pending_close = True
             return False
         st.series.replace_tail(bars, self._now_ms())
         st.ok, st.pending_close = True, False

@@ -619,6 +619,31 @@ def test_hub_sample_error_does_not_block_price_alerts(tmp_path):
     asyncio.run(main())
 
 
+def test_malformed_indicator_row_does_not_break_needs_or_crud(tmp_path, monkeypatch):
+    import auto_trader.core.alert_kinds as kinds_mod
+
+    real = kinds_mod.INDICATOR.indicator_key
+
+    def flaky(params):
+        if params.get("value") == -1:
+            raise RuntimeError("legacy row")
+        return real(params)
+
+    monkeypatch.setattr(kinds_mod.INDICATOR, "indicator_key", flaky)
+
+    async def main():
+        bars = [hourly([10, 10, 10, 9], 6)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        good = await store.create("u1", ind_row())
+        eng.on_alert_changed("u1", good, "al-i")
+        bad = {**ind_row(id="al-bad"), "params": {**ind_row()["params"], "value": -1}}
+        eng.on_alert_changed("u1", bad, "al-bad")  # must not raise
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=10 * H + 5)
+        await asyncio.sleep(0)
+        assert eng._hub.has_feed("capital", "US100")  # the good row's series survives
+    asyncio.run(main())
+
+
 def test_price_side_store_error_keeps_cached_side(tmp_path, monkeypatch):
     async def main():
         import json as _json
