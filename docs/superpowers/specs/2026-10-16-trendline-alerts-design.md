@@ -80,9 +80,11 @@ condition, trigger (once / every), evalOn (close / intrabar), expiry.
   link: { scope, instanceId, lineKey } }
 ```
 
-- `link` is REQUIRED for this kind (`lineKey` is the segment key, 1 to 64
+- `link` is always sent on create (`lineKey` is the segment key, 1 to 64
   chars), so removing the Trendlines pane finds and offers to delete its
-  line alerts through the existing scope + instanceId match.
+  line alerts through the existing scope + instanceId match. It may become
+  null afterwards: "Keep" in that prompt unlinks the alert, as it does for
+  indicator alerts.
 - All numbers finite; timeframe native.
 
 ### Creating: the server checks the reference
@@ -236,8 +238,8 @@ newest closed bar.
   intrabar path makes no full compute (counted).
 - Parity: a fixture pinning `value`, `held` and `held_sig` per bar, TS
   against Python, beside the existing `indicator_parity` fixtures.
-- Validation: canonical TRENDLINES arrays accepted, a non-canonical one
-  refused; a `line` without a link refused.
+- Validation: canonical TRENDLINES arrays accepted, a non-canonical or
+  over-long one refused; a `line` with a malformed link refused.
 - Frontend: `alertLine` for a plain and a pinned pane (pin-bar slope, not
   chart-bar slope); the menu entry is absent on a debug line and disabled
   on a non-native pin.
