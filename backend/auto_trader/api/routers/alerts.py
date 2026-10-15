@@ -125,8 +125,9 @@ async def _notify(request: Request, row: dict | None, alert_id: str, broker: str
 async def list_alerts(request: Request) -> dict[str, Any]:
     user = current_user(request)
     rows = await ALERT_STORE.list_user(user)
+    statuses = ALERT_ENGINE.statuses(user)
     for r in rows:
-        st = ALERT_ENGINE.status(user, r["id"])
+        st = statuses.get(r["id"])
         if st is None and r.get("kind") == "indicator":
             st = "waiting_for_data"  # not registered with the engine yet
         if st is not None:

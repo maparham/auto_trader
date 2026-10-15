@@ -3,7 +3,7 @@
 // {scope, instanceId} because instance ids repeat across chart cells.
 import { requestConfirm } from "./signals";
 import { supportsStreaming } from "./trading";
-import type { AlertableCheck, IndicatorIdentity } from "./alertableIndicators";
+import { volumeWeighted, type AlertableCheck, type IndicatorIdentity } from "./alertableIndicators";
 import {
   deleteIndicatorAlert, linkedAlerts, patchIndicatorAlert, scopeLinkedAlerts, type IndicatorAlert,
 } from "./alertsApi";
@@ -12,9 +12,6 @@ const sameIdentity = (a: IndicatorIdentity, b: IndicatorIdentity) =>
   a.indicator === b.indicator &&
   JSON.stringify(a.calcParams) === JSON.stringify(b.calcParams) &&
   JSON.stringify(Object.entries(a.config).sort()) === JSON.stringify(Object.entries(b.config).sort());
-
-const volumeWeighted = (id: IndicatorIdentity) =>
-  id.indicator === "MA" && (id.config.maType === "vwma" || id.config.maType === "evwma");
 
 // What an edit does to one timeframe's linked alerts: re-point the ones the
 // new settings still allow, and hand back the ones the server would refuse,

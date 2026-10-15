@@ -6,7 +6,7 @@ import FloatingModal from "./components/FloatingModal";
 import InfoTip from "./components/InfoTip";
 import AlertCommonFields, { useAlertCommonState } from "./components/AlertCommonFields";
 import { CONDITIONS } from "./lib/alertUi";
-import { indicatorAlertLabel } from "./lib/alertableIndicators";
+import { indicatorAlertLabel, volumeWeighted } from "./lib/alertableIndicators";
 import {
   addIndicatorAlert, conditionPhrase, deleteIndicatorAlert, fmtIndicatorValue,
   loadAllIndicatorAlerts, patchIndicatorAlert,
@@ -63,9 +63,7 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
     existing?.params.value != null ? String(existing.params.value)
       : base.lastValue != null ? fmtIndicatorValue(base.lastValue) : "",
   );
-  const volumeWeighted = base.identity.indicator === "MA" &&
-    (base.identity.config.maType === "vwma" || base.identity.config.maType === "evwma");
-  const intrabarBlocked = volumeWeighted && base.quoteOnly;
+  const intrabarBlocked = volumeWeighted(base.identity) && base.quoteOnly;
   const [evalOn, setEvalOn] = useState<EvalOn>(existing?.params.evalOn ?? "close");
   const label = indicatorAlertLabel(base.identity, base.timeframe);
   const num = Number(value);

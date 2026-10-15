@@ -132,7 +132,7 @@ export function checkAlertable(
     const maSource = pickSource(e.source);
     if (maSource === undefined) return { ok: false, reason: "Alerts on this source are coming later" };
     config = { maType: normalizeMaKind(e.maType, templateMaKind(type)), source: maSource };
-    if ((config.maType === "vwma" || config.maType === "evwma") && !hasVolume)
+    if (isVolumeWeightedMa(config.maType) && !hasVolume)
       return { ok: false, reason: "This market has no volume data" };
   } else if (type === "RSI") {
     const rsiSource = pickSource(e.source);
@@ -154,6 +154,14 @@ export function checkAlertable(
   if (warmup(indicator, n, config) > MAX_WARMUP) return { ok: false, reason: "Length too long for alerts" };
   return { ok: true, identity: { indicator, calcParams: [n], config, priceTarget: spec.priceTarget } };
 }
+
+/** A VWMA/EVWMA line: needs volume, and live volume to be read intrabar
+ * (alertable.py volume_weighted is the twin; alert_kinds.py refuses
+ * an intrabar alert on one over a quote-only feed). */
+export const isVolumeWeightedMa = (maType: unknown): boolean => maType === "vwma" || maType === "evwma";
+
+export const volumeWeighted = (id: IndicatorIdentity): boolean =>
+  id.indicator === "MA" && isVolumeWeightedMa(id.config.maType);
 
 export function indicatorLabel(id: IndicatorIdentity): string {
   const n = id.calcParams[0];

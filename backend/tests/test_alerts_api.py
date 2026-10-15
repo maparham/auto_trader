@@ -358,8 +358,8 @@ def test_list_includes_status_for_indicator_alerts(clerk, monkeypatch):
     from auto_trader.api.routers import alerts as alerts_router
     client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
     client.post("/api/alerts", json=_body(id="al-p"), headers=_auth("alice"))
-    monkeypatch.setattr(alerts_router.ALERT_ENGINE, "status",
-                        lambda u, a: "waiting_for_data" if a == "al-ind" else None)
+    monkeypatch.setattr(alerts_router.ALERT_ENGINE, "statuses",
+                        lambda u: {"al-ind": "waiting_for_data"})
     rows = {r["id"]: r for r in client.get("/api/alerts", headers=_auth("alice")).json()["alerts"]}
     assert rows["al-ind"]["status"] == "waiting_for_data"
     assert "status" not in rows["al-p"]

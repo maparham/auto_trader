@@ -629,6 +629,24 @@ class AlertEngine:
                     return self._row_status(user_id, row)
         return None
 
+    def statuses(self, user_id: str) -> dict[str, str]:
+        """`status` for every one of a user's alerts that has one, in a
+        single registry pass (GET /api/alerts would otherwise scan the
+        whole registry once per row)."""
+        out: dict[str, str] = {}
+        for entries in self._registry.values():
+            for owner, row in entries:
+                if owner != user_id:
+                    continue
+                try:
+                    st = self._row_status(user_id, row)
+                except Exception:
+                    log.warning("alert %s: status failed", row.get("id"), exc_info=True)
+                    continue
+                if st is not None:
+                    out[row["id"]] = st
+        return out
+
     def _row_status(self, user_id: str, row: dict) -> str | None:
         """`status` for a row already in hand (no registry scan). A paused
         row has no series registered, so it reports nothing (like a price

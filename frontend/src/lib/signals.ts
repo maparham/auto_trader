@@ -96,7 +96,12 @@ export interface ConfirmRequest {
 }
 export const confirmRequest = new Signal<ConfirmRequest | null>(null);
 export function requestConfirm(req: ConfirmRequest): void {
+  // A request still open when another replaces it was never answered: treat
+  // it as dismissed, or its onCancel (e.g. unlinking an indicator's alerts on
+  // "Keep") would never run.
+  const prev = confirmRequest.value;
   confirmRequest.set(req);
+  if (prev && prev !== req) prev.onCancel?.();
 }
 
 // Request to open the "Save as default template" picker. Toolbar sets it with the

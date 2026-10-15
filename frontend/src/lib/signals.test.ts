@@ -4,6 +4,8 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import {
+  confirmRequest,
+  requestConfirm,
   tradeLineUiSignal,
   editTradeSignal,
   tradePanelOpen,
@@ -60,5 +62,16 @@ describe("setTradeSelected coupling", () => {
     expect(tradeLineUiSignal.value.hidden).toContain("A");
     expect(tradeLineUiSignal.value.selected).toBeNull();
     expect(editTradeSignal.value).toBeNull();
+  });
+});
+
+describe("requestConfirm", () => {
+  it("dismisses a request that a newer one replaces", () => {
+    const cancelled: string[] = [];
+    requestConfirm({ message: "a", onConfirm: () => {}, onCancel: () => cancelled.push("a") });
+    requestConfirm({ message: "b", onConfirm: () => {}, onCancel: () => cancelled.push("b") });
+    expect(cancelled).toEqual(["a"]);
+    expect(confirmRequest.value?.message).toBe("b");
+    confirmRequest.set(null);
   });
 });
