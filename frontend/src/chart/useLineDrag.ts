@@ -57,6 +57,10 @@ export type TradeLinePx = {
   draggable: boolean;
   y: number | undefined;
   emphasized: boolean;
+  // The entry candle's pixel-x the drawn line starts at (null = spans from the
+  // left edge). The click hit-test gates on it so only the DRAWN span selects;
+  // the y-band grab/hover/snap deliberately ignores it (see tradeLineHitTest).
+  anchorX: number | null;
 };
 
 export interface LineDragDeps {

@@ -2,7 +2,7 @@
 // PositionLines reconcile + tradeLineSpecs (pending-merge, labels, draggability).
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { PositionLines, tradeLineSpecs, bracketLabels, tradeLineSpanX, DRAFT_LABEL_X_FALLBACK, type LineSpec } from "./positionLines";
+import { PositionLines, tradeLineSpecs, bracketLabels, tradeLineSpanX, tradeLineAnchorTs, DRAFT_LABEL_X_FALLBACK, type LineSpec } from "./positionLines";
 import type { TradeView } from "./trading";
 
 interface Call {
@@ -147,6 +147,36 @@ describe("tradeLineSpecs", () => {
   it("omits SL/TP lines when unset", () => {
     const specs = tradeLineSpecs({ ...base, trades: [trade()] });
     expect(specs.map((s) => s.key)).toEqual(["D1:price"]);
+  });
+
+  it("carries the trade's open time on every line (the line starts at the entry candle)", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ stop: 95, takeProfit: 105, openedAt: 1_700_000_000_000 })],
+    });
+    expect(specs.map((s) => s.openedAt)).toEqual([
+      1_700_000_000_000,
+      1_700_000_000_000,
+      1_700_000_000_000,
+    ]);
+  });
+
+  it("anchors nothing for a trade with no open time or a draft", () => {
+    const specs = tradeLineSpecs({
+      ...base,
+      trades: [trade({ stop: 95 })], // openedAt: null (legacy row)
+      draft: {
+        epic: "EURUSD",
+        side: "buy",
+        quantity: 1,
+        type: "limit",
+        price: 99,
+        stop: 98,
+        takeProfit: 101,
+        expiresAt: null,
+      },
+    });
+    expect(specs.every((s) => s.openedAt == null)).toBe(true);
   });
 
   it("merges a pending level over the server level (no snap-back)", () => {
@@ -562,12 +592,44 @@ describe("tradeLineSpanX", () => {
     expect(tradeLineSpanX({ emphasized: true, width: W })).toEqual({ startX: 0, endX: W });
   });
 
+  it("starts an anchored line at the entry candle, not the left edge", () => {
+    expect(tradeLineSpanX({ emphasized: true, width: W, anchorX: 420 })).toEqual({
+      startX: 420,
+      endX: W,
+    });
+  });
+
+  it("treats an off-window anchor (<= 0) as full-width", () => {
+    expect(tradeLineSpanX({ emphasized: true, width: W, anchorX: 0 })).toEqual({ startX: 0, endX: W });
+    expect(tradeLineSpanX({ emphasized: true, width: W, anchorX: -40 })).toEqual({ startX: 0, endX: W });
+  });
+
   it("draws nothing at rest", () => {
     expect(tradeLineSpanX({ emphasized: false, width: W })).toBeNull();
   });
 
   it("draws nothing at rest even on a degenerate pane", () => {
     expect(tradeLineSpanX({ emphasized: false, width: 0 })).toBeNull();
+  });
+});
+
+describe("tradeLineAnchorTs", () => {
+  it("keeps an in-window open time", () => {
+    expect(tradeLineAnchorTs(1_000, 2_000)).toBe(1_000);
+  });
+
+  it("clamps a fresh open time to the last bar (no beyond-data extrapolation)", () => {
+    expect(tradeLineAnchorTs(2_000, 1_500)).toBe(1_500);
+  });
+
+  it("passes the open time through when no bars are loaded yet", () => {
+    expect(tradeLineAnchorTs(1_000, undefined)).toBe(1_000);
+  });
+
+  it("anchors nothing for a spec with no usable open time", () => {
+    expect(tradeLineAnchorTs(null, 1_500)).toBeNull();
+    expect(tradeLineAnchorTs(undefined, 1_500)).toBeNull();
+    expect(tradeLineAnchorTs(0, 1_500)).toBeNull();
   });
 });
 
@@ -607,12 +669,13 @@ describe("bracketLabels", () => {
   });
 });
 
-// A trade line is one value-only point and nothing else. It used to carry a second,
-// bar-snapped point so a resting line could stop at its entry candle; that truncation
-// went away when lines became engaged-only, and the per-render scan over every loaded
-// candle that fed it went with it. Pinned here so neither creeps back.
+// A trade line is ONE point. Stamped with the trade's open time, its x resolves
+// from the time scale and the drawn line starts at the entry candle (alert-style);
+// a spec with no open time (draft, legacy row) stays value-only and spans the pane.
+// The anchor is derived O(1) — a clamp against the LAST bar only
+// (tradeLineAnchorTs) — never a per-render scan over the candle list.
 describe("PositionLines point geometry", () => {
-  it("draws one value-only point, with no bar anchor", () => {
+  it("draws one value-only point for a spec with no open time", () => {
     const chart = fakeChart([{ timestamp: 900 }, { timestamp: 1000 }, { timestamp: 1100 }]);
     const lines = new PositionLines(chart.chart, 5);
     lines.render([spec()]);
@@ -622,7 +685,25 @@ describe("PositionLines point geometry", () => {
     expect(arg.points[0]).toEqual({ value: 100 });
   });
 
-  it("never reads the candle list to place a line", () => {
+  it("stamps the point with the open time when the spec carries one", () => {
+    const chart = fakeChart([{ timestamp: 900 }, { timestamp: 1000 }, { timestamp: 1100 }]);
+    const lines = new PositionLines(chart.chart, 5);
+    lines.render([spec({ openedAt: 950 })]);
+    const create = chart.calls.find((c) => c.fn === "create");
+    const arg = create?.arg as { points: { value?: number; timestamp?: number }[] };
+    expect(arg.points).toEqual([{ value: 100, timestamp: 950 }]);
+  });
+
+  it("clamps a fresh open time to the last bar (no beyond-data extrapolation)", () => {
+    const chart = fakeChart([{ timestamp: 900 }, { timestamp: 1000 }]);
+    const lines = new PositionLines(chart.chart, 5);
+    lines.render([spec({ openedAt: 1050 })]);
+    const create = chart.calls.find((c) => c.fn === "create");
+    const arg = create?.arg as { points: { value?: number; timestamp?: number }[] };
+    expect(arg.points).toEqual([{ value: 100, timestamp: 1000 }]);
+  });
+
+  it("never reads the candle list to place an unanchored line", () => {
     const chart = fakeChart([{ timestamp: 900 }, { timestamp: 1000 }]);
     let reads = 0;
     const bars = [{ timestamp: 900 }, { timestamp: 1000 }];
@@ -647,6 +728,43 @@ describe("PositionLines point geometry", () => {
     ];
     lines.render([spec()]);
     expect(chart.calls.filter((c) => c.fn === "override")).toHaveLength(0);
+  });
+
+  it("keeps an in-window anchor stable as history is prepended (no re-reconcile)", () => {
+    // The clamp reads only the LAST bar, so paging older bars in can't move an
+    // already-anchored line — the sig is unchanged and no override fires.
+    const chart = fakeChart([{ timestamp: 1000 }, { timestamp: 1100 }]);
+    const lines = new PositionLines(chart.chart, 5);
+    lines.render([spec({ openedAt: 1050 })]);
+    chart.calls.length = 0;
+    (chart.chart as unknown as { getDataList: () => unknown }).getDataList = () => [
+      { timestamp: 400 },
+      { timestamp: 500 },
+      { timestamp: 1000 },
+      { timestamp: 1100 },
+    ];
+    lines.render([spec({ openedAt: 1050 })]);
+    expect(chart.calls.filter((c) => c.fn === "override")).toHaveLength(0);
+  });
+
+  it("re-anchors once when a fresh trade's clamp overtakes it (new last bar)", () => {
+    // Rendered while the open time sat past the last bar (clamped to it); once a
+    // newer bar lands the honest anchor is the open time itself, and the sig
+    // change must push exactly one override — not leave the stale clamp behind.
+    const chart = fakeChart([{ timestamp: 1000 }]);
+    const lines = new PositionLines(chart.chart, 5);
+    lines.render([spec({ openedAt: 1050 })]);
+    chart.calls.length = 0;
+    (chart.chart as unknown as { getDataList: () => unknown }).getDataList = () => [
+      { timestamp: 1000 },
+      { timestamp: 1100 },
+    ];
+    lines.render([spec({ openedAt: 1050 })]);
+    const overrides = chart.calls.filter((c) => c.fn === "override");
+    expect(overrides).toHaveLength(1);
+    expect((overrides[0].arg as { points: { timestamp?: number }[] }).points).toEqual([
+      { value: 100, timestamp: 1050 },
+    ]);
   });
 });
 

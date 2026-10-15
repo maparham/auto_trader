@@ -180,7 +180,7 @@ import HistoryJumpPill from "./chart/HistoryJumpPill";
 import { beginHistoryJump } from "./lib/historyJump";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
 import { refreshMtfIndicators, refreshMtfOnVisibilityChange, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
-import { PositionLines, tradeLineSpecs, DRAFT_ID, tradeLineSpanX } from "./lib/positionLines";
+import { PositionLines, tradeLineSpecs, DRAFT_ID, tradeLineSpanX, tradeLineAnchorTs } from "./lib/positionLines";
 import {
   TradeMarkers,
   entryMarkerSpecs,
@@ -2240,8 +2240,13 @@ export default function ChartCore({
         selected: tradeUiRef.current.selected,
         dragging: draggingTradeRef.current,
       });
+      // The entry candle's pixel-x per anchored line (null = left edge). Uses the
+      // SAME clamp as the drawn point (tradeLineAnchorTs) so the click hit-test
+      // gates on exactly the span the overlay draws.
+      const lastBarTs = c.getDataList()?.at(-1)?.timestamp;
       return specs.map((s) => {
         const sep = s.key.lastIndexOf(":");
+        const anchorTs = tradeLineAnchorTs(s.openedAt, lastBarTs);
         return {
           id: s.key.slice(0, sep),
           field: s.key.slice(sep + 1) as TradeLineField, // "price" | "stop" | "tp"
@@ -2251,6 +2256,15 @@ export default function ChartCore({
             c.convertToPixel([{ value: s.level }], { paneId: "candle_pane", absolute: true }),
           ).y,
           emphasized: s.emphasized ?? false,
+          anchorX:
+            anchorTs != null
+              ? first(
+                  c.convertToPixel([{ timestamp: anchorTs }], {
+                    paneId: "candle_pane",
+                    absolute: true,
+                  }),
+                ).x ?? null
+              : null,
         };
       });
     };
@@ -2264,12 +2278,12 @@ export default function ChartCore({
     // null. A locked position-entry line ignores klinecharts overlay events, so this
     // manual test (not onMouseEnter) covers every line. Excludes the draft.
     //
-    // Unlike grab/hover/snap (deliberately full-width y-bands so a truncated SL/TP is
-    // still grabbable anywhere), a CLICK must land on the DRAWN line — else clicking
-    // empty chart space at a truncated line's price would select a trade with no visible
-    // line under the cursor. So gate x to each line's resting extent (restingLineEndX,
-    // the same source the overlay draws from); an emphasised line is full-width, so once
-    // revealed it stays clickable across the pane.
+    // Unlike grab/hover/snap (deliberately full-width y-bands so an anchored SL/TP is
+    // still grabbable anywhere along its row), a CLICK must land on the DRAWN line —
+    // else clicking empty chart space at the line's price would select a trade with
+    // no visible line under the cursor. So gate x to each line's drawn extent
+    // (tradeLineSpanX, the same source the overlay draws from): left of the entry
+    // candle there is no ink, so there is nothing to click either.
     const tradeLineHitTest = (
       x: number,
       y: number,
@@ -2285,7 +2299,8 @@ export default function ChartCore({
         if (d > HIT_TOLERANCE_PX || (best && d >= best.d)) continue;
         // No line is drawn for a trade at rest, so there is nothing to click there
         // either — the pill is the resting affordance (see tradeLineSpanX).
-        if (!tradeLineSpanX({ emphasized: t.emphasized, width: mainW })) continue;
+        const span = tradeLineSpanX({ emphasized: t.emphasized, width: mainW, anchorX: t.anchorX });
+        if (!span || x < span.startX) continue;
         best = { id: t.id, field: t.field, d };
       }
       return best ? { id: best.id, field: best.field } : null;

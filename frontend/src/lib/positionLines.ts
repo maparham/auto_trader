@@ -45,6 +45,10 @@ export interface LineSpec {
   // Fully revealed (full width + end marker suppressed) — hover, click-select, or an
   // active drag of this trade. Precomputed by the caller since drag state lives there.
   emphasized?: boolean;
+  // When the trade opened (position) / the order was placed (epoch ms) — the candle
+  // the line starts at, alert-style (see PositionLines.anchorPoints). Absent/null →
+  // the line spans from the left edge (drafts; legacy rows without a creation time).
+  openedAt?: number | null;
   onDragEnd?: (newLevel: number) => void;
 }
 
@@ -177,6 +181,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         highlight,
         selected,
         emphasized,
+        openedAt: t.openedAt,
         onDragEnd: (lvl) => o.onDrag(t.id, "price", lvl),
       });
     }
@@ -190,6 +195,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         highlight,
         selected,
         emphasized,
+        openedAt: t.openedAt,
         onDragEnd: (lvl) => o.onDrag(t.id, "stop", lvl),
       });
     }
@@ -203,6 +209,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         highlight,
         selected,
         emphasized,
+        openedAt: t.openedAt,
         onDragEnd: (lvl) => o.onDrag(t.id, "takeProfit", lvl),
       });
     }
@@ -295,6 +302,22 @@ function asLineExtra(v: unknown): LineExtra {
     : { label: "", color: "#888", highlight: false, selected: false };
 }
 
+/** The timestamp a trade line anchors to (the candle the trade opened IN), or null
+ *  when the line has no anchor and spans from the left edge. CLAMPED TO THE LAST BAR,
+ *  same as alert lines (overlays/alerts.ts alertPoints): a fresh trade's wall-clock
+ *  open time routinely sits PAST the newest candle's timestamp (the forming bar
+ *  opened at its period start), and klinecharts extrapolates a beyond-data timestamp
+ *  into the blank space right of the data instead of clamping. O(1): only the last
+ *  bar is read — no per-render scan over the candle list. Shared by PositionLines
+ *  (the drawn point) and ChartCore's hit-test (the drawn span) so the two can't drift. */
+export function tradeLineAnchorTs(
+  openedAt: number | null | undefined,
+  lastBarTs: number | undefined,
+): number | null {
+  if (openedAt == null || openedAt <= 0) return null;
+  return lastBarTs != null ? Math.min(openedAt, lastBarTs) : openedAt;
+}
+
 /** The span a trade line occupies (px from the pane's left edge), or null when it
  *  must not be drawn at all. The SINGLE source of that decision, shared by the canvas
  *  overlay (what's drawn) and ChartCore's click hit-test (what's clickable) so the two
@@ -303,19 +326,27 @@ function asLineExtra(v: unknown): LineExtra {
  *  A line is ink for a trade you are ENGAGED with — hovered, click-selected, or being
  *  dragged. At rest there is nothing to draw: the axis-docked pill already states the
  *  level and the entry glyph already marks the candle the position opened on, so a
- *  line per level would be pure clutter across the chart body. Engaged, it spans the
- *  pane so the pill's row reads all the way across. */
+ *  line per level would be pure clutter across the chart body. Engaged, it starts at
+ *  the entry candle (alert-style) and runs to the right edge — or spans the whole
+ *  pane when the trade carries no open time to anchor to. */
 export function tradeLineSpanX(o: {
   emphasized: boolean;
   width: number;
+  // The entry candle's x (px), when the line is bar-anchored. An anchor that
+  // resolves off-window (<= 0: the open predates the loaded bars) reads as full-width.
+  anchorX?: number | null;
 }): { startX: number; endX: number } | null {
-  return o.emphasized ? { startX: 0, endX: o.width } : null;
+  if (!o.emphasized) return null;
+  const startX = o.anchorX != null && o.anchorX > 0 ? o.anchorX : 0;
+  return { startX, endX: o.width };
 }
 
-// One-point horizontal line spanning the chart width, drawn only while its trade is
-// engaged (tradeLineSpanX). The single point fixes the y (price); x runs edge to edge.
-// Only a DRAFT carries a label here — real trades pass hideTradeLabels and let their
-// axis-docked pill say it (chart/TradePills.tsx).
+// One-point horizontal line drawn only while its trade is engaged (tradeLineSpanX).
+// The single point fixes the y (price) and — when stamped with the trade's open
+// time — the x the line starts at (the entry candle, alert-style); a value-only
+// point resolves to x=0 and spans the pane. Only a DRAFT carries a label here —
+// real trades pass hideTradeLabels and let their axis-docked pill say it
+// (chart/TradePills.tsx).
 const tradeLine: OverlayTemplate = {
   name: "tradeLine",
   totalStep: 2,
@@ -329,10 +360,9 @@ const tradeLine: OverlayTemplate = {
   createPointFigures: (params) => {
     const { coordinates, bounding, overlay } = params;
     if (coordinates.length < 1) return [];
-    // Point[0] is value-only (x defaults to 0) → its y is the price row and always
-    // resolves. A bar-anchored line adds point[1] at the entry candle; take whichever
-    // y is present so ordering can't strand us with a null.
-    const y = coordinates[0].y ?? coordinates[1]?.y ?? 0;
+    // Point[0] always resolves the price row (bar-anchored or value-only alike).
+    const c0 = coordinates[0];
+    const y = c0.y ?? 0;
     const extra = asLineExtra(overlay.extendData);
     // The line must RECEIVE pointer events to be grabbable when unlocked (we draw
     // no default point handles). When locked it ignores events so it can't be
@@ -340,9 +370,18 @@ const tradeLine: OverlayTemplate = {
     const grabbable = overlay.lock === false;
     const width = bounding.width;
     // Declutter: nothing is drawn unless the trade is engaged (see tradeLineSpanX).
-    const span = tradeLineSpanX({ emphasized: extra.emphasized ?? false, width });
+    // Engaged, a bar-anchored line starts at its entry candle; anything else spans
+    // from the left edge. An anchor at x<=0 (the open predates the loaded bars)
+    // reads as full-width, like an old alert's clamped anchor.
+    const anchored = overlay.points[0]?.timestamp != null && c0.x > 0;
+    const span = tradeLineSpanX({
+      emphasized: extra.emphasized ?? false,
+      width,
+      anchorX: anchored ? c0.x : null,
+    });
     if (!span) return [];
     const { startX, endX } = span;
+    const size = extra.selected || extra.highlight ? 2 : 1;
     const figures: OverlayFigure[] = [
       {
         type: "line",
@@ -355,11 +394,22 @@ const tradeLine: OverlayTemplate = {
           style: "dashed",
           dashedValue: [4, 4],
           color: extra.color,
-          size: extra.selected || extra.highlight ? 2 : 1,
+          size,
         },
         ignoreEvent: !grabbable,
       },
     ];
+    if (anchored) {
+      // A small filled dot at the anchor (same trick as alertPriceLine): a dashed
+      // stroke that just begins mid-pane would otherwise read as a paint glitch.
+      figures.push({
+        type: "circle",
+        attrs: { x: c0.x, y, r: 2 + size },
+        styles: { style: "fill", color: extra.color },
+        // Don't let the dot swallow drags meant for the line.
+        ignoreEvent: true,
+      });
+    }
     if (extra.label) {
       // A ∧/∨ chevron prefixed inside the pill marks the side on entry/limit lines
       // (buy = up, sell = down); SL/TP lines carry no side, so no chevron.
@@ -432,8 +482,20 @@ export class PositionLines {
     return Number(level.toFixed(this.precision));
   }
 
-  private sig(s: LineSpec): string {
-    return `${s.level}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.emphasized ?? false}|${s.labelX ?? ""}`;
+  private sig(s: LineSpec, anchorTs: number | null): string {
+    return `${s.level}|${anchorTs ?? ""}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.emphasized ?? false}|${s.labelX ?? ""}`;
+  }
+
+  // The point a trade line is drawn from. Like an alert line (overlays/alerts.ts
+  // alertPoints), the line starts at the candle the trade was opened IN: a point
+  // stamped with the open time resolves its x from the time scale, while a
+  // value-only point resolves to x=0 and spans the pane (drafts; legacy rows
+  // without a creation time). The clamp to the last bar is tradeLineAnchorTs —
+  // the same clamp ChartCore's hit-test applies, so drawn and clickable agree.
+  private anchorPoints(s: LineSpec): { value: number; timestamp?: number }[] {
+    const bars = s.openedAt != null ? (this.chart.getDataList() ?? []) : [];
+    const ts = tradeLineAnchorTs(s.openedAt, bars[bars.length - 1]?.timestamp);
+    return ts != null ? [{ value: s.level, timestamp: ts }] : [{ value: s.level }];
   }
 
   private onMoveEnd = (e: OverlayEvent<unknown>): boolean => {
@@ -459,12 +521,12 @@ export class PositionLines {
     const seen = new Set<string>();
     for (const spec of specs) {
       seen.add(spec.key);
-      const sig = this.sig(spec);
-      // ONE value-only point: it fixes the price row and drives drag/hit-test, and the
-      // line spans the pane from it. (There used to be a second, bar-anchored point so
-      // a resting line could truncate at its entry candle — that truncation is gone
-      // now that lines draw only while engaged, and with it the per-render bar scan.)
-      const points = [{ value: spec.level }];
+      // ONE point: it fixes the price row and drives drag/hit-test. Stamped with the
+      // trade's open time when it has one, so the drawn line starts at the entry
+      // candle (alert-style) instead of the pane's left edge. The anchor is part of
+      // the sig so a post-load clamp re-anchors an already-drawn line.
+      const points = this.anchorPoints(spec);
+      const sig = this.sig(spec, points[0].timestamp ?? null);
       const extendData = {
         label: spec.label,
         color: spec.color,
