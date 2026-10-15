@@ -427,6 +427,26 @@ const tradeLine: OverlayTemplate = {
         // Don't let the dot swallow drags meant for the line.
         ignoreEvent: true,
       });
+      // Hovering a draggable SL/TP (or an alert) shows klinecharts' default point
+      // handle at the anchor. A locked line (a filled position's entry) gets none,
+      // so mirror it while the cursor is on the line (snapped → fullWidth).
+      if (!grabbable && extra.fullWidth) {
+        const p = params.chart.getStyles().overlay.point;
+        figures.push(
+          {
+            type: "circle",
+            attrs: { x: c0.x, y, r: p.radius + p.borderSize },
+            styles: { style: "fill", color: p.borderColor },
+            ignoreEvent: true,
+          },
+          {
+            type: "circle",
+            attrs: { x: c0.x, y, r: p.radius },
+            styles: { style: "fill", color: p.color },
+            ignoreEvent: true,
+          },
+        );
+      }
     }
     if (extra.label) {
       // A ∧/∨ chevron prefixed inside the pill marks the side on entry/limit lines
