@@ -58,6 +58,10 @@ vi.mock("./api", async () => {
     getCostProfile: (...args: unknown[]) => mockGetCostProfile(...args),
     putCostProfile: (...args: unknown[]) => mockPutCostProfile(...args),
     refetchCostProfile: (...args: unknown[]) => mockRefetchCostProfile(...args),
+    // The sweep editor lists past sweeps on mount. Left real, it hits a closed
+    // port and its console.warn can land after the file tears down, which
+    // vitest reports as an unhandled EnvironmentTeardownError.
+    listSweepArchives: () => Promise.resolve([]),
   };
 });
 
