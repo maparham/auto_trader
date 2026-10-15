@@ -1,7 +1,7 @@
 // Turns a live chart indicator into an alert draft (or the reason it cannot
 // have one). Shared by the legend bell and the indicator menu.
 import type { Chart } from "klinecharts";
-import { checkAlertable, MAIN_LINE_KEY } from "../lib/alertableIndicators";
+import { alertTimeframeOf, checkAlertable, MAIN_LINE_KEY } from "../lib/alertableIndicators";
 import { getIndicator } from "../lib/indicators";
 import { indTypeOf } from "../lib/indicators/shared";
 import type { IndicatorAlertDraft } from "../lib/signals";
@@ -15,10 +15,10 @@ export function buildIndicatorAlertDraft(args: {
   if (!ind) return null;
   const data = args.chart.getDataList();
   const hasVolume = data.slice(-50).some((k) => (k.volume ?? 0) > 0);
-  const check = checkAlertable(
-    indTypeOf(ind), ind.calcParams as unknown[], ind.extendData as Record<string, unknown>,
-    args.resolution, hasVolume,
-  );
+  const ext = ind.extendData as Record<string, unknown>;
+  // A pinned MA alerts on its pin's bars, whatever the chart shows.
+  const timeframe = alertTimeframeOf(ext, args.resolution);
+  const check = checkAlertable(indTypeOf(ind), ind.calcParams as unknown[], ext, timeframe, hasVolume);
   if (!check.ok) return "reason" in check ? { reason: check.reason } : null;
   const result = (ind.result ?? []) as Array<Record<string, number | undefined>>;
   const key = MAIN_LINE_KEY[check.identity.indicator];
@@ -30,7 +30,7 @@ export function buildIndicatorAlertDraft(args: {
   return {
     draft: {
       epic: args.epic, broker: args.broker, precision: args.precision, identity: check.identity,
-      timeframe: args.resolution, link: { scope: args.scope, instanceId: args.name },
+      timeframe, link: { scope: args.scope, instanceId: args.name },
       lastValue, quoteOnly: args.quoteOnly,
     },
   };

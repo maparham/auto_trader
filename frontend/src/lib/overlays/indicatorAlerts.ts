@@ -1,10 +1,12 @@
 // Value-target indicator alerts drawn as dashed alert lines in their
 // indicator's own pane (e.g. 70 in the RSI pane). Only the cell the alert is
-// linked to, and only while it shows the alert's broker, epic and timeframe.
+// linked to, and only while it shows the alert's broker, epic and timeframe
+// (a pinned line's alert is on its pin's timeframe, so any chart shows it).
 // One instance per ChartController; ChartCore re-attaches it on every
 // epic/resolution/broker bind and reconciles it on the alerts signal and on
 // indicator add/remove (the pane the line lives in can come and go).
 import type { Chart } from "klinecharts";
+import { alertTimeframeOf } from "../alertableIndicators";
 import { loadIndicatorAlerts, patchIndicatorAlert } from "../alertsApi";
 import { getIndicatorsByPane } from "../indicators";
 import { isInsetInstance } from "../indicators/inset";
@@ -41,11 +43,15 @@ export class IndicatorAlertLines {
     this.resolution = resolution;
   }
 
-  private paneOf(instanceId: string): string | null {
+  // The pane to draw in, or null. `timeframe` must be the one this instance
+  // alerts on here: the chart's, or its pin's (alertTimeframeOf).
+  private paneOf(instanceId: string, timeframe: string): string | null {
     if (!this.chart) return null;
     for (const [paneId, inds] of getIndicatorsByPane(this.chart)) {
       const ind = inds.get(instanceId);
       if (!ind) continue;
+      if (alertTimeframeOf(ind.extendData as Record<string, unknown> | undefined, this.resolution) !== timeframe)
+        return null;
       // An inset instance sits on candle_pane with its own value scale inside
       // the inset band; candle_pane's y-axis is PRICE, so a line there would
       // draw RSI 70 as a price level. No line until inset-band geometry exists.
@@ -59,8 +65,8 @@ export class IndicatorAlertLines {
     for (const a of loadIndicatorAlerts(this.epic, this.broker)) {
       const p = a.params;
       if (p.target !== "value" || p.value == null || !p.link) continue;
-      if (p.link.scope !== this.scope || p.timeframe !== this.resolution) continue;
-      const paneId = this.paneOf(p.link.instanceId);
+      if (p.link.scope !== this.scope) continue;
+      const paneId = this.paneOf(p.link.instanceId, p.timeframe);
       if (paneId) out.set(a.id, { paneId, value: p.value });
     }
     return out;

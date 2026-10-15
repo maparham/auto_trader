@@ -3,7 +3,7 @@
 // on its own (the two deploy separately), and alertableParity.test.ts plus
 // backend/tests/test_indicator_parity.py keep the two definitions identical.
 import { normalizeMaKind } from "./mtf";
-import { isNativeTf, parseTf, tfLabel } from "./timeframe";
+import { isNativeTf, parseTf, tfLabel, tryCanonicalTf } from "./timeframe";
 
 // The default MA kind for a template that hasn't flipped maType: EMA -> ema,
 // MA -> sma. Deliberately NOT imported from lib/indicators/ma.ts's own
@@ -104,6 +104,13 @@ function warmup(indicator: AlertIndicator, n: number, config: Record<string, str
   return n + 1;
 }
 
+/** The timeframe an alert on this indicator watches: an MA's pin when it has
+ * one (canonical form), else the chart's resolution. */
+export function alertTimeframeOf(ext: Record<string, unknown> | undefined, resolution: string): string {
+  const pin = (ext?.mtf as { timeframe?: string } | undefined)?.timeframe;
+  return (pin && tryCanonicalTf(pin)) || resolution;
+}
+
 export function checkAlertable(
   type: string,
   calcParams: unknown[] | undefined,
@@ -124,7 +131,12 @@ export function checkAlertable(
   let config: Record<string, string>;
   if (type === "EMA" || type === "MA") {
     const mtf = e.mtf as { timeframe?: string } | undefined;
-    if (mtf?.timeframe) return { ok: false, reason: "Alerts on higher-timeframe lines are coming later" };
+    // A pinned line is the plain MA on its pin's bars, so its alert lives on
+    // the pin's timeframe (alertTimeframeOf). Checked against any other
+    // timeframe, it is a different line.
+    if (mtf?.timeframe && tryCanonicalTf(mtf.timeframe) !== tryCanonicalTf(resolution)) {
+      return { ok: false, reason: "Alerts follow the line's pinned timeframe" };
+    }
     if (Number(e.offset ?? 0) !== 0) return { ok: false, reason: "Alerts need the line offset at 0" };
     const sm = e.smoothing as { type?: string } | undefined;
     if (sm?.type && sm.type !== "none") return { ok: false, reason: "Alerts on smoothed lines are coming later" };

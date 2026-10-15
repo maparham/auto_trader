@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkAlertable, indicatorAlertLabel } from "./alertableIndicators";
+import { alertTimeframeOf, checkAlertable, indicatorAlertLabel } from "./alertableIndicators";
 
 describe("checkAlertable", () => {
   it("maps the EMA template to MA/ema with defaults", () => {
@@ -14,13 +14,25 @@ describe("checkAlertable", () => {
     expect(r.ok && r.identity.config).toEqual({ maType: "ema", source: "hl2" });
   });
   it.each([
-    [{ mtf: { timeframe: "HOUR_4" } }, "higher-timeframe"],
+    [{ mtf: { timeframe: "HOUR_4" } }, "pinned timeframe"],
     [{ offset: 2 }, "offset"],
     [{ smoothing: { type: "ema", length: 9 } }, "smoothed"],
   ])("blocks unsupported MA config %j", (ext, word) => {
     const r = checkAlertable("EMA", [50], ext, "HOUR", true);
     expect(r.ok).toBe(false);
     expect(!r.ok && "reason" in r && r.reason).toContain(word);
+  });
+  it("a pinned MA alerts on its pin's timeframe, from any chart", () => {
+    const ext = { mtf: { timeframe: "1D" } };
+    expect(alertTimeframeOf(ext, "HOUR_4")).toBe("DAY");
+    expect(alertTimeframeOf({}, "HOUR_4")).toBe("HOUR_4");
+    expect(checkAlertable("EMA", [55], ext, alertTimeframeOf(ext, "HOUR_4"), true).ok).toBe(true);
+    expect(checkAlertable("EMA", [55], { mtf: { timeframe: "DAY" } }, "DAY", true).ok).toBe(true);
+    // Checked against a different timeframe (a linked alert after a re-pin).
+    expect(checkAlertable("EMA", [55], ext, "HOUR_4", true).ok).toBe(false);
+    // A non-native pin still waits for non-native alerts.
+    const r = checkAlertable("EMA", [55], { mtf: { timeframe: "7H" } }, alertTimeframeOf({ mtf: { timeframe: "7H" } }, "HOUR"), true);
+    expect(!r.ok && "reason" in r && r.reason).toBe("Alerts on this timeframe are coming later");
   });
   // Boundaries computed from backend/auto_trader/indicators/alertable.py's
   // warmup() against MAX_WARMUP (1950): the last length it accepts and the

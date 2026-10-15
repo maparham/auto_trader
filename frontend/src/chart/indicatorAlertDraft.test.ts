@@ -28,6 +28,11 @@ describe("buildIndicatorAlertDraft", () => {
       identity: { indicator: "RSI", calcParams: [14] },
     });
   });
+  it("a pinned MA's draft takes the pin's timeframe", () => {
+    const ind = { name: "EMA", calcParams: [55], extendData: { mtf: { timeframe: "1D" } }, result: [{ ema: 63.1 }] };
+    const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), name: "EMA", paneId: "candle_pane", resolution: "HOUR_4" });
+    expect(r && "draft" in r && r.draft).toMatchObject({ timeframe: "DAY", identity: { indicator: "MA", calcParams: [55] } });
+  });
   it("returns the reason for a non-alertable config", () => {
     const ind = { name: "EMA", calcParams: [50], extendData: { offset: 3 }, result: [] };
     const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), name: "EMA", paneId: "candle_pane" });

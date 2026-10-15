@@ -41,7 +41,7 @@ import { insetBandBox, type InsetBandBox } from "../lib/indicators/inset";
 import { slopeMaLines } from "../lib/indicators/slope";
 import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
 import { loadIndicatorAlerts } from "../lib/alertsApi";
-import { MAIN_LINE_KEY } from "../lib/alertableIndicators";
+import { alertTimeframeOf, MAIN_LINE_KEY } from "../lib/alertableIndicators";
 import type { IndicatorBellTag } from "./AlertTags";
 import { indTypeOf } from "../lib/customIndicators";
 import { dashSliceBounds, getBacktestAggregate, tradeDashes } from "../lib/backtest";
@@ -839,9 +839,12 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     const bells: IndicatorBellTag[] = [];
     for (const a of overlays.getAlertsHidden() ? [] : loadIndicatorAlerts(epicRef.current, brokerIdRef.current)) {
       const p = a.params;
-      if (p.target !== "price" || !p.link || p.link.scope !== scope || p.timeframe !== resRef.current) continue;
+      if (p.target !== "price" || !p.link || p.link.scope !== scope) continue;
       const ind = getIndicatorById(chart, p.link.instanceId);
       if (!ind || ind.visible === false) continue;
+      // A pinned line's alert sits on the pin's timeframe, drawn on any chart.
+      const ext = ind.extendData as Record<string, unknown> | undefined;
+      if (p.timeframe !== alertTimeframeOf(ext, resRef.current)) continue;
       const res = (ind.result ?? []) as Array<Record<string, number | undefined>>;
       const v = res[res.length - 1]?.[MAIN_LINE_KEY[p.identity.indicator]];
       if (v == null || !Number.isFinite(v)) continue;
