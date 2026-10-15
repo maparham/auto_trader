@@ -446,11 +446,13 @@ export abstract class OverlayAlerts extends OverlayDisplay {
           const cfgDrift = !cfg || !sameAlertCfg(cfg, a);
           // Config + creation time BEFORE the points rewrite — alertPoints reads both.
           if (cfgDrift) this.alertCfg.set(ovId, this.cfgFromSaved(a));
+          // A moved alert gets a fresh creation time, so its line must restart there.
+          const createdDrift = (this.alertCreatedAt.get(ovId) ?? 0) !== (a.createdAt ?? 0);
           this.alertCreatedAt.set(ovId, a.createdAt ?? 0);
           // A startAtCreation toggle is cfg drift at an UNCHANGED level, so the
           // points rewrite can't be gated on the level alone or a peer cell would
           // keep drawing from the old x-start.
-          if (levelDrift || cfgDrift) {
+          if (levelDrift || cfgDrift || createdDrift) {
             this.chart!.overrideOverlay({ id: ovId, points: this.alertPoints(ovId, a.level) });
             changed = true;
           }

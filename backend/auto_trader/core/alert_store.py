@@ -200,9 +200,14 @@ class AlertStore:
                     else:
                         merged[field] = patch[field]
             merged["updated_at"] = int(time.time() * 1000)
+            # A moved alert (new level) counts as created now: the chart line
+            # starts at created_at, so it restarts from the move.
+            if merged["params"].get("level") != _row_to_dict(existing)["params"].get("level"):
+                merged["created_at"] = merged["updated_at"]
             conn.execute(
                 "UPDATE alerts SET params = ?, message = ?, expires_at = ?, notify = ?, "
-                "precision = ?, active = ?, updated_at = ? WHERE user_id = ? AND id = ?",
+                "precision = ?, active = ?, created_at = ?, updated_at = ? "
+                "WHERE user_id = ? AND id = ?",
                 (
                     json.dumps(merged["params"]),
                     merged["message"],
@@ -210,6 +215,7 @@ class AlertStore:
                     json.dumps(merged["notify"]),
                     merged["precision"],
                     merged["active"],
+                    merged["created_at"],
                     merged["updated_at"],
                     user_id,
                     alert_id,

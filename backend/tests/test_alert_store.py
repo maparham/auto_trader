@@ -138,6 +138,16 @@ def test_update_merges_patch_and_bumps_updated_at(tmp_path):
     assert row["params"] == {"level": 200, "condition": "below"}
 
 
+def test_update_moving_level_resets_created_at(tmp_path):
+    store = AlertStore(str(tmp_path / "alerts.db"))
+    asyncio.run(store.create(USER, _row()))
+    kept = asyncio.run(store.update(USER, "a1", {"params": {"level": 100.5}, "message": "x"}))
+    assert kept["created_at"] == 1000
+    moved = asyncio.run(store.update(USER, "a1", {"params": {"level": 101}}))
+    assert moved["created_at"] == moved["updated_at"] > 1000
+    assert asyncio.run(store.list_user(USER))[0]["created_at"] == moved["created_at"]
+
+
 def test_update_unknown_id_returns_none(tmp_path):
     store = AlertStore(str(tmp_path / "alerts.db"))
     assert asyncio.run(store.update(USER, "nope", {"message": "x"})) is None

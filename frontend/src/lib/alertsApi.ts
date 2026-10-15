@@ -553,7 +553,8 @@ export function updateStoredAlert(
   const next = raw.map((a) => {
     if (a.id !== id) return a;
     changed = true;
-    return { ...a, level, ...cfg };
+    // A move restarts the alert's life: the backend bumps created_at the same way.
+    return { ...a, level, ...cfg, ...(a.level !== level ? { createdAt: Date.now() } : {}) };
   });
   if (!changed) return;
   setAlerts(epic, broker, next);
