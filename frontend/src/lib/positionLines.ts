@@ -45,6 +45,9 @@ export interface LineSpec {
   // Fully revealed (full width + end marker suppressed) — hover, click-select, or an
   // active drag of this trade. Precomputed by the caller since drag state lives there.
   emphasized?: boolean;
+  // Span the whole pane instead of starting at the entry candle: the line the cursor
+  // is snapped onto, so it stands in for the suppressed crosshair (alert-style).
+  fullWidth?: boolean;
   // When the trade opened (position) / the order was placed (epoch ms) — the candle
   // the line starts at, alert-style (see PositionLines.anchorPoints). Absent/null →
   // the line spans from the left edge (drafts; legacy rows without a creation time).
@@ -107,6 +110,9 @@ export interface SpecBuildOpts {
   // Pill anchor x for the DRAFT lines, from chartGeometry draftLabelX (needs the
   // live pane width, which only the chart knows). Omitted → the far-left fallback.
   draftLabelX?: number;
+  // The line key (`${tradeId}:${field}`) the cursor crosshair is snapped onto: that
+  // line is fully revealed across the whole pane.
+  snappedKey?: string | null;
 }
 
 export const DRAFT_ID = "draft";
@@ -283,6 +289,13 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
       });
     }
   }
+  if (o.snappedKey) {
+    const s = specs.find((x) => x.key === o.snappedKey);
+    if (s) {
+      s.emphasized = true;
+      s.fullWidth = true;
+    }
+  }
   return specs;
 }
 
@@ -293,6 +306,7 @@ interface LineExtra {
   highlight?: boolean;
   selected?: boolean;
   emphasized?: boolean;
+  fullWidth?: boolean;
   labelX?: number;
 }
 
@@ -335,9 +349,10 @@ export function tradeLineSpanX(o: {
   // The entry candle's x (px), when the line is bar-anchored. An anchor that
   // resolves off-window (<= 0: the open predates the loaded bars) reads as full-width.
   anchorX?: number | null;
+  fullWidth?: boolean;
 }): { startX: number; endX: number } | null {
   if (!o.emphasized) return null;
-  const startX = o.anchorX != null && o.anchorX > 0 ? o.anchorX : 0;
+  const startX = !o.fullWidth && o.anchorX != null && o.anchorX > 0 ? o.anchorX : 0;
   return { startX, endX: o.width };
 }
 
@@ -378,6 +393,7 @@ const tradeLine: OverlayTemplate = {
       emphasized: extra.emphasized ?? false,
       width,
       anchorX: anchored ? c0.x : null,
+      fullWidth: extra.fullWidth,
     });
     if (!span) return [];
     const { startX, endX } = span;
@@ -402,9 +418,11 @@ const tradeLine: OverlayTemplate = {
     if (anchored) {
       // A small filled dot at the anchor (same trick as alertPriceLine): a dashed
       // stroke that just begins mid-pane would otherwise read as a paint glitch.
+      // Sized like the alert dot: r 3, r 4 only when click-selected. Hover alone
+      // doesn't grow it, since trade lines only render while emphasized.
       figures.push({
         type: "circle",
-        attrs: { x: c0.x, y, r: 2 + size },
+        attrs: { x: c0.x, y, r: extra.selected ? 4 : 3 },
         styles: { style: "fill", color: extra.color },
         // Don't let the dot swallow drags meant for the line.
         ignoreEvent: true,
@@ -483,7 +501,7 @@ export class PositionLines {
   }
 
   private sig(s: LineSpec, anchorTs: number | null): string {
-    return `${s.level}|${anchorTs ?? ""}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.emphasized ?? false}|${s.labelX ?? ""}`;
+    return `${s.level}|${anchorTs ?? ""}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.emphasized ?? false}|${s.fullWidth ?? false}|${s.labelX ?? ""}`;
   }
 
   // The point a trade line is drawn from. Like an alert line (overlays/alerts.ts
@@ -534,6 +552,7 @@ export class PositionLines {
         highlight: spec.highlight ?? false,
         selected: spec.selected ?? false,
         emphasized: spec.emphasized ?? false,
+        fullWidth: spec.fullWidth ?? false,
         labelX: spec.labelX,
       };
       const existing = this.lines.get(spec.key);

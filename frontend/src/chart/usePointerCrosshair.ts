@@ -96,6 +96,7 @@ export interface PointerCrosshairDeps {
   hoveredFieldRef: React.MutableRefObject<TradeLineField | null>;
   snapActiveRef: React.MutableRefObject<boolean>;
   snapHoverRef: React.MutableRefObject<string | null>;
+  snapTradeKeyRef: React.MutableRefObject<string | null>;
   positionPill: (node: HTMLDivElement) => void;
   tradePillHitTest: (clientX: number, clientY: number) => PillHit | null;
   setCursorMode: (m: "" | "cur-pointer" | "cur-default" | "cur-grab" | "cur-grabbing" | "cur-ns") => void;
@@ -136,6 +137,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     hoveredFieldRef,
     snapActiveRef,
     snapHoverRef,
+    snapTradeKeyRef,
     positionPill,
     tradePillHitTest,
     setCursorMode,
@@ -161,6 +163,13 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       if (plusCrosshairYRef.current !== ny) {
         plusCrosshairYRef.current = ny;
         repaint();
+      }
+    };
+
+    const setSnapTradeKey = (key: string | null) => {
+      if (snapTradeKeyRef.current !== key) {
+        snapTradeKeyRef.current = key;
+        handle.posDrawRef.current();
       }
     };
 
@@ -356,16 +365,15 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // current for this move — so parking on a line shows it at once, and leaving the
       // lines (nothing selected) clears it. Cheap: a no-op clear when nothing's active.
       handle.paintBracketRef.current();
-      // Over ANY alert line — selected or not — the WHOLE "+" affordance (circle + price
-      // box) stays and looks IDENTICAL to a normal hover: the price readout is ALWAYS
-      // visible (the box, z-49, reads on top of the never-hidden amber tag), the shape
-      // never changes as the cursor crosses a line. We only make it click-THROUGH
-      // (`.passthrough` → pointer-events:none) over a line so the mousedown reaches the
-      // canvas and selects/drags the line underneath instead of being swallowed by the
-      // "+" circle that protrudes into the pane. We union getHoveredAlertId (klinecharts'
-      // native onMouseEnter, which can FALSE-NEGATIVE) with a direct alertHitTest so the
-      // line is detected in both bands. ONLY EXCEPTION: while DRAGGING a line, hide the
-      // affordance entirely (the price box would fight the drag).
+      // Over ANY alert line — selected or not — the "+" affordance goes click-THROUGH
+      // (`.passthrough` → pointer-events:none) so the mousedown reaches the canvas and
+      // selects/drags the line underneath instead of being swallowed by the "+" circle
+      // that protrudes into the pane. We union getHoveredAlertId (klinecharts' native
+      // onMouseEnter, which can FALSE-NEGATIVE) with a direct alertHitTest so the line
+      // is detected in both bands. Once inside the tighter ALERT_SNAP_PX magnet band the
+      // pill is hidden outright (below, via snapTarget) rather than just passthrough,
+      // since the line's own label already shows that price. OTHER EXCEPTION: while
+      // DRAGGING a line, hide the affordance entirely (the price box would fight the drag).
       const overAlertId = overlays.getHoveredAlertId() ?? alertHitTestRef.current(x, y);
       // Magnet: the nearest alert line within ALERT_SNAP_PX of the cursor. When set, the
       // price guide snaps onto that line's exact level/y below (so the readout locks to the
@@ -380,7 +388,10 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // a few px off the line), matching the on-line hover affordance. Alert lines
       // are draggable; trade lines use their spec's `draggable` (a filled
       // position's entry is not).
-      const snapTargets: { y: number; level: number; draggable: boolean; isTrade?: boolean; alertId?: string }[] = [];
+      type SnapTarget = {
+        y: number; level: number; draggable: boolean; isTrade?: boolean; alertId?: string; tradeKey?: string;
+      };
+      const snapTargets: SnapTarget[] = [];
       // Hidden alert lines (eye menu) are not snap targets — the magnet must not
       // lock onto (or auto-hover) a line that isn't on screen.
       for (const al of overlays.getAlertsHidden() ? [] : overlays.getAlerts()) {
@@ -392,9 +403,13 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // Trade lines reuse tlp's already-resolved pixel-y (no re-convert). Hidden,
       // un-revealed lines are absent from tlp, so the magnet won't lock onto them.
       for (const t of tlp) {
-        if (t.y != null) snapTargets.push({ y: t.y, level: t.level, draggable: t.draggable, isTrade: true });
+        if (t.y != null) {
+          snapTargets.push({
+            y: t.y, level: t.level, draggable: t.draggable, isTrade: true, tradeKey: `${t.id}:${t.field}`,
+          });
+        }
       }
-      let snapTarget: { y: number; level: number; draggable: boolean; isTrade?: boolean; alertId?: string } | null = null;
+      let snapTarget: SnapTarget | null = null;
       for (const t of snapTargets) {
         if (Math.abs(t.y - y) <= ALERT_SNAP_PX &&
             (snapTarget == null || Math.abs(t.y - y) < Math.abs(snapTarget.y - y))) {
@@ -415,8 +430,12 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
         btn.style.display = "none";
         setPlusCrosshair(null);
         if (snapActiveRef.current) { overlays.setSuppressNativeLine(false); snapActiveRef.current = false; }
+        setSnapTradeKey(null);
         return;
       }
+      // Snapped onto a trade line: draw that line across the whole pane, since it
+      // replaces the (suppressed) crosshair line, same as a snapped alert.
+      setSnapTradeKey(!overTradePillNow && snapTarget?.isTrade ? snapTarget.tradeKey ?? null : null);
       // A trade pill is an opaque chip on top of everything (same rule as the
       // trade-line band above): inside its rect no alert line beneath may take
       // the hover — neither via this snap auto-hover nor via klinecharts' native
@@ -454,14 +473,14 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
         cursorModeRef.current = "cur-ns";
         setCursorMode("cur-ns");
       }
-      // Over a TRADE line (entry/limit, SL, TP, or the staged draft) the "+" pill
-      // stays visible as a click-through price readout, exactly like an alert line:
-      // the cursor's price label must never drop out or hide behind the line's own
-      // pill. Passthrough (pointer-events:none) lets the mousedown reach the canvas
-      // to select/drag the line underneath. Union the 6px hover hit (covers open
-      // positions/orders) with the 5px snap isTrade flag (also covers the draft,
-      // which the hover test skips) — without the hover half, the "+" circle would
-      // swallow clicks in the 5–6px ring where the line is grabbable but unsnapped.
+      // Over a TRADE line (entry/limit, SL, TP, or the staged draft), same as an
+      // alert line: click-through outside the snap band, hidden outright once
+      // inside it (below, via snapTarget). Passthrough (pointer-events:none) lets
+      // the mousedown reach the canvas to select/drag the line underneath. Union
+      // the 6px hover hit (covers open positions/orders) with the 5px snap isTrade
+      // flag (also covers the draft, which the hover test skips) — without the
+      // hover half, the "+" circle would swallow clicks in the 5–6px ring where the
+      // line is grabbable but unsnapped.
       const overTradeLine = hoverTradeId != null || snapTarget?.isTrade === true;
       btn.classList.toggle(
         "passthrough",
@@ -498,26 +517,27 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
         c.convertFromPixel([{ y }], { paneId: "candle_pane", absolute: true }),
       );
       if (pt.value == null) return;
-      // Snapped onto an alert line: lock the guide to the alert's exact level + y; else
-      // it tracks the cursor's price/y as usual.
-      const guideY = snapTarget ? snapTarget.y : y;
-      const guideVal = snapTarget ? snapTarget.level : pt.value;
-      plusPriceRef.current = guideVal;
+      // Snapped onto an alert/trade line: that line already carries its own price
+      // label (AlertTags/TradePills), so the "+" pill would just duplicate it right
+      // on top — hide the whole affordance instead of showing the snapped price.
+      if (snapTarget) {
+        btn.style.display = "none";
+        setPlusCrosshair(null);
+        return;
+      }
+      plusPriceRef.current = pt.value;
       if (plusPriceLabelRef.current) {
-        plusPriceLabelRef.current.textContent = fmtPrice(guideVal, precisionRef.current);
+        plusPriceLabelRef.current.textContent = fmtPrice(pt.value, precisionRef.current);
         // Size the price box to the y-axis column so the number sits inside the
         // axis and the "+" circle's right edge lands on the column's left border.
         plusPriceLabelRef.current.style.width = `${Math.max(0, rect.width - mainW)}px`;
       }
       // Round so the "+" pill (translateY(-50%), even height) stays crisp.
-      btn.style.top = `${Math.round(guideY)}px`;
+      btn.style.top = `${Math.round(y)}px`;
       btn.style.display = "flex";
       // Over the "+", klinecharts dropped its crosshair; keep our guide alive at the
-      // cursor's y. But NOT when snapped onto an alert/trade line: the native line is
-      // already suppressed, and drawing ours at the snapped y would sit right on top of
-      // that line and read as a doubled/messy line. The alert/trade line is its own
-      // guide there, so leave the crosshair line hidden when snapped.
-      setPlusCrosshair(overPlus && snapTarget == null ? guideY : null);
+      // cursor's y (we're not snapped here, so there's no alert/trade line to double).
+      setPlusCrosshair(overPlus ? y : null);
     };
     // Over the legend the pointer belongs to the legend alone: drop every chart
     // hover once on the way in (same as leaving the chart) and skip hit-testing.
@@ -537,6 +557,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       setPlusCrosshair(null);
       setPointerPx(null); // drop the Δ-label hover-enlarge as the cursor leaves
       if (snapActiveRef.current) { overlays.setSuppressNativeLine(false); snapActiveRef.current = false; }
+      setSnapTradeKey(null);
       // Drop a snap-driven alert hover as the cursor leaves (klinecharts' own
       // onMouseLeave covers the on-line case; this covers the wider magnet band).
       if (snapHoverRef.current && !alertDragActiveRef.current()) {

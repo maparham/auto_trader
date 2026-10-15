@@ -3692,13 +3692,14 @@
   height: 22px;
   font-variant-numeric: tabular-nums;
 }
-/* Over ANY alert or trade line (selected or not): keep the WHOLE "+" affordance (circle +
-   price box) looking identical to a normal hover, but go non-interactive (pointer-events:
-   none) so the mousedown passes THROUGH to the canvas — selecting/dragging the line
-   underneath — instead of being swallowed by the "+" circle that protrudes into the pane.
-   The box (z-49) still reads on top of the never-hidden amber alert tag, and — being a
-   later sibling — above a hovered trade pill at the same z (ChartCore toggles this
-   class). */
+/* Over ANY alert or trade line (selected or not, outside the tighter snap band): keep the
+   WHOLE "+" affordance (circle + price box) looking identical to a normal hover, but go
+   non-interactive (pointer-events: none) so the mousedown passes THROUGH to the canvas —
+   selecting/dragging the line underneath — instead of being swallowed by the "+" circle
+   that protrudes into the pane. The box (z-49) still reads on top of the never-hidden
+   amber alert tag, and — being a later sibling — above a hovered trade pill at the same z
+   (ChartCore toggles this class). Once the cursor is within the snap band, ChartCore hides
+   the whole affordance instead (that line's own label already shows the price). */
 .axis-plus.passthrough { pointer-events: none; }
 .axis-plus-icon {
   display: flex; align-items: center; justify-content: center;

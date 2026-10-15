@@ -970,6 +970,8 @@ export default function ChartCore({
   // snapHover is the alert the crosshair has snapped to and auto-hovered, so a leave can
   // clear it.
   const snapHoverRef = useRef<string | null>(null);
+  // The trade line (`${id}:${field}`) the crosshair is snapped onto; drawn full width.
+  const snapTradeKeyRef = useRef<string | null>(null);
   // redraw() is defined far below (useCallback); the once-mounted click handler
   // needs to trigger a repaint after changing the selection, so reach it via ref.
   const redrawRef = useRef<() => void>(() => {});
@@ -2239,6 +2241,7 @@ export default function ChartCore({
         hovered: tradeUiRef.current.hovered,
         selected: tradeUiRef.current.selected,
         dragging: draggingTradeRef.current,
+        snappedKey: snapTradeKeyRef.current,
       });
       // The entry candle's pixel-x per anchored line (null = left edge). Uses the
       // SAME clamp as the drawn point (tradeLineAnchorTs) so the click hit-test
@@ -2256,6 +2259,7 @@ export default function ChartCore({
             c.convertToPixel([{ value: s.level }], { paneId: "candle_pane", absolute: true }),
           ).y,
           emphasized: s.emphasized ?? false,
+          fullWidth: s.fullWidth ?? false,
           anchorX:
             anchorTs != null
               ? first(
@@ -2299,7 +2303,12 @@ export default function ChartCore({
         if (d > HIT_TOLERANCE_PX || (best && d >= best.d)) continue;
         // No line is drawn for a trade at rest, so there is nothing to click there
         // either — the pill is the resting affordance (see tradeLineSpanX).
-        const span = tradeLineSpanX({ emphasized: t.emphasized, width: mainW, anchorX: t.anchorX });
+        const span = tradeLineSpanX({
+          emphasized: t.emphasized,
+          width: mainW,
+          anchorX: t.anchorX,
+          fullWidth: t.fullWidth,
+        });
         if (!span || x < span.startX) continue;
         best = { id: t.id, field: t.field, d };
       }
@@ -3640,6 +3649,7 @@ export default function ChartCore({
                 selected: tradeUiRef.current.selected,
                 dragging: draggingTradeRef.current,
                 selectedField: tradeUiRef.current.selectedField,
+                snappedKey: snapTradeKeyRef.current,
                 // Always-on DOM pills carry the labels now — blank the canvas text so the
                 // two don't double up; just the bare lines are drawn here.
                 hideTradeLabels: true,
@@ -3980,6 +3990,7 @@ export default function ChartCore({
     hoveredFieldRef,
     snapActiveRef,
     snapHoverRef,
+    snapTradeKeyRef,
     positionPill,
     tradePillHitTest,
     setCursorMode,
