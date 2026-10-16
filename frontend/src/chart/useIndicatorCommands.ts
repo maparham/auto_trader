@@ -665,7 +665,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
 
   const legendAlertCheck = useCallback((name: string): { reason: string | null } | null => {
     const r = alertDraftFor(paneIdOf(name), name);
-    return r === null ? null : { reason: "reason" in r ? r.reason : null };
+    return r === null ? null : { reason: null };
   }, [alertDraftFor, paneIdOf]);
 
   // The shared TradingView-style menu, used by both triggers (legend row + curve).
@@ -698,11 +698,9 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
         },
         ...((): MenuItem[] => {
           const r = alertDraftFor(paneId, name);
-          if (r === null) return [];
-          const label = "Add alert";
-          return "draft" in r
-            ? [{ label, icon: MenuIcons.bell, onClick: () => indicatorAlertRequest.set({ mode: "create", draft: r.draft }) }]
-            : [{ label, icon: MenuIcons.bell, disabled: true, disabledReason: r.reason, onClick: () => {} }];
+          return r === null
+            ? []
+            : [{ label: "Add alert", icon: MenuIcons.bell, onClick: () => indicatorAlertRequest.set({ mode: "create", draft: r.draft }) }];
         })(),
         { label: "Copy", icon: MenuIcons.copy, onClick: () => copyIndicator(paneId, name) },
         { label: "Duplicate", icon: MenuIcons.clone, onClick: () => duplicateIndicator(paneId, name) },

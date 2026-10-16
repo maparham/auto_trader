@@ -3,15 +3,17 @@ vi.mock("klinecharts", () => ({
   registerIndicator: () => {}, registerOverlay: () => {}, registerYAxis: () => {},
   getSupportedIndicators: () => [],
 }));
+vi.mock("../lib/indicatorAlertInstance", async (orig) => ({
+  ...(await orig<typeof import("../lib/indicatorAlertInstance")>()),
+  isAlertableType: (type: string) => type === "RSI" || type === "MA",
+}));
 import type { Chart } from "klinecharts";
 import { buildIndicatorAlertDraft } from "./indicatorAlertDraft";
 
-// getIndicator (lib/indicators.ts) calls chart.getIndicators({ paneId, name });
-// the draft also reads getDataList() for the volume check.
-function chartWith(ind: Record<string, unknown> | null, volumes = [10, 10]): Chart {
+// getIndicator (lib/indicators.ts) calls chart.getIndicators({ paneId, name }).
+function chartWith(ind: Record<string, unknown> | null): Chart {
   return {
     getIndicators: () => (ind ? [ind] : []),
-    getDataList: () => volumes.map((v) => ({ volume: v })),
   } as unknown as Chart;
 }
 const args = (chart: Chart) => ({
@@ -20,39 +22,43 @@ const args = (chart: Chart) => ({
 });
 
 describe("buildIndicatorAlertDraft", () => {
-  it("builds a draft with the last value and the cell link", () => {
-    const ind = { name: "RSI", calcParams: [14], extendData: {}, result: [{ val: 40 }, { val: 61.25 }] };
+  it("builds a draft with the stripped instance and the cell link", () => {
+    const ind = { name: "RSI", calcParams: [14], extendData: {} };
     const r = buildIndicatorAlertDraft(args(chartWith(ind)));
     expect(r && "draft" in r && r.draft).toMatchObject({
-      lastValue: 61.25, timeframe: "HOUR", link: { scope: "tab.t1.cell.c2", instanceId: "RSI" },
-      identity: { indicator: "RSI", calcParams: [14] },
+      chartTimeframe: "HOUR",
+      link: { scope: "tab.t1.cell.c2", instanceId: "RSI" },
+      instance: { type: "RSI", calcParams: [14], extendData: {} },
     });
   });
+
   it("a pinned MA's draft takes the pin's timeframe", () => {
-    const ind = { name: "EMA", calcParams: [55], extendData: { mtf: { timeframe: "1D" } }, result: [{ ema: 63.1 }] };
-    const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), name: "EMA", paneId: "candle_pane", resolution: "HOUR_4" });
-    expect(r && "draft" in r && r.draft).toMatchObject({ timeframe: "DAY", identity: { indicator: "MA", calcParams: [55] } });
+    const ind = { name: "MA", calcParams: [55], extendData: { mtf: { timeframe: "1D" } } };
+    const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), name: "MA", paneId: "candle_pane", resolution: "HOUR_4" });
+    expect(r && "draft" in r && r.draft).toMatchObject({
+      chartTimeframe: "DAY",
+      instance: { type: "MA", calcParams: [55], extendData: { mtf: { timeframe: "1D" } } },
+    });
   });
-  it("returns the reason for a non-alertable config", () => {
-    const ind = { name: "EMA", calcParams: [50], extendData: { offset: 3 }, result: [] };
-    const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), name: "EMA", paneId: "candle_pane" });
-    expect(r && "reason" in r && r.reason).toContain("offset");
-  });
-  it("skips trailing undefined values and carries quoteOnly", () => {
-    const ind = { name: "RSI", calcParams: [14], extendData: {}, result: [{ val: 55 }, {}] };
-    const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), quoteOnly: true });
-    expect(r && "draft" in r && r.draft).toMatchObject({ lastValue: 55, quoteOnly: true });
-  });
-  it("hides the entry for an unknown indicator or a non-alertable type", () => {
-    expect(buildIndicatorAlertDraft(args(chartWith(null)))).toBeNull();
-    const ind = { name: "OBV", calcParams: [], extendData: {}, result: [] };
+
+  it("hides the entry for a type not in the alertable set", () => {
+    const ind = { name: "OBV", calcParams: [], extendData: {} };
     expect(buildIndicatorAlertDraft({ ...args(chartWith(ind)), name: "OBV" })).toBeNull();
   });
-  it("a Trendlines pane drafts a nearest-line alert from tl_nearest", () => {
-    const ind = { name: "TRENDLINES", calcParams: [], extendData: {}, result: [{ tl_nearest: 101.5 }] };
-    const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), name: "TRENDLINES", paneId: "candle_pane" });
-    expect(r && "draft" in r && r.draft).toMatchObject({
-      lastValue: 101.5, timeframe: "HOUR", identity: { indicator: "TRENDLINES", config: {}, priceTarget: true },
-    });
+
+  it("hides the entry for an unknown indicator", () => {
+    expect(buildIndicatorAlertDraft(args(chartWith(null)))).toBeNull();
+  });
+
+  it("hides the entry on a seconds chart", () => {
+    const ind = { name: "RSI", calcParams: [14], extendData: {} };
+    const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), resolution: "SECOND_5" });
+    expect(r).toBeNull();
+  });
+
+  it("carries quoteOnly through", () => {
+    const ind = { name: "RSI", calcParams: [14], extendData: {} };
+    const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), quoteOnly: true });
+    expect(r && "draft" in r && r.draft).toMatchObject({ quoteOnly: true });
   });
 });

@@ -11,7 +11,7 @@
 import type { GhostPattern } from "./patternGhost";
 import { claimSidePanel, registerSidePanel } from "./sidePanels";
 import type { SidePanelId } from "./sidePanels";
-import type { IndicatorIdentity } from "./alertableIndicators";
+import type { AlertInstance } from "./indicatorAlertInstance";
 import type { TrendlineAlertLine } from "./indicators/trendlineMarks";
 
 type Listener<T> = (value: T) => void;
@@ -67,10 +67,10 @@ export interface IndicatorAlertDraft {
   epic: string;
   broker: string;
   precision: number;
-  identity: IndicatorIdentity;
-  timeframe: string;
+  instance: AlertInstance;
+  /** The pane's pin, else the chart's resolution (alertTimeframeOf). */
+  chartTimeframe: string;
   link: { scope: string; instanceId: string };
-  lastValue: number | null;
   quoteOnly: boolean;
 }
 export type IndicatorAlertRequest =
