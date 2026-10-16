@@ -21,9 +21,9 @@ import {
   alertEditRequest,
   alertGlobalEditRequest,
   bumpAlerts,
-  indicatorAlertRequest,
   requestConfirm,
 } from "./lib/signals";
+import { requestAlertEdit } from "./lib/alertEdit";
 import {
   loadTriggered,
   loadAllAlerts,
@@ -40,10 +40,10 @@ import {
   alertLabel,
   TRIGGER_LABELS,
   triggeredLabel,
-  loadIndicatorAlerts,
-  loadAllIndicatorAlerts,
+  loadServerAlerts,
+  loadAllServerAlerts,
   deleteIndicatorAlert,
-  type IndicatorAlert,
+  type ServerAlert,
 } from "./lib/alertsApi";
 
 // Where an alert's line starts, as a clickable badge beside the trigger one. The
@@ -148,12 +148,12 @@ function IndicatorAlertRow({
   precision,
   onFocus,
 }: {
-  a: IndicatorAlert;
+  a: ServerAlert;
   epic: string;
   precision: number;
   onFocus?: () => void;
 }) {
-  const edit = () => indicatorAlertRequest.set({ mode: "edit", id: a.id });
+  const edit = () => requestAlertEdit(a.id);
   return (
     <div
       className={`ap-row${onFocus ? " ap-row-clickable" : ""}`}
@@ -381,7 +381,7 @@ export default function AlertsSidebar({
   // ones are dropped like the all-symbols price rows (they can never fire).
   // They have no price level, so the price sorts fall back to creation time
   // (same direction) instead of ordering by a meaningless stand-in.
-  const sortIndicator = (list: IndicatorAlert[]) => {
+  const sortIndicator = (list: ServerAlert[]) => {
     const kept = list.filter((a) => a.expiresAt == null || now <= a.expiresAt);
     if (sortKey === "price-asc" || sortKey === "price-desc") {
       const dir = sortKey === "price-asc" ? 1 : -1;
@@ -392,7 +392,7 @@ export default function AlertsSidebar({
       () => "",
     ).map((w) => w.a);
   };
-  const liveInd = sortIndicator(loadIndicatorAlerts(epic, brokerId));
+  const liveInd = sortIndicator(loadServerAlerts(epic, brokerId));
 
   // All-alerts mode: collect saved alerts from every tab/cell. We read the
   // backend-backed alerts cache (the same source the charts read) so we see
@@ -402,7 +402,7 @@ export default function AlertsSidebar({
     epic: string;
     precision: number;
     alerts: SavedAlert[];
-    indicators: IndicatorAlert[];
+    indicators: ServerAlert[];
   };
   const allGroups: AllGroup[] = (() => {
     if (!showAll) return [];
@@ -435,8 +435,8 @@ export default function AlertsSidebar({
     for (const { epic: ep, alerts } of loadAllAlerts(brokerId)) addToBucket(ep, alerts);
     // Indicator alerts group by epic alongside the price ones; an epic with only
     // indicator alerts still gets a group.
-    const indByEpic = new Map<string, IndicatorAlert[]>();
-    for (const a of loadAllIndicatorAlerts(brokerId)) {
+    const indByEpic = new Map<string, ServerAlert[]>();
+    for (const a of loadAllServerAlerts(brokerId)) {
       const list = indByEpic.get(a.epic);
       if (list) list.push(a);
       else indByEpic.set(a.epic, [a]);

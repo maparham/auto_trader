@@ -6,11 +6,11 @@ import userEvent from "@testing-library/user-event";
 const loadAllAlerts = vi.fn();
 const deleteStoredAlert = vi.fn();
 const loadTriggered = vi.fn();
-const loadAllIndicatorAlerts = vi.fn();
+const loadAllServerAlerts = vi.fn();
 const deleteIndicatorAlert = vi.fn();
 vi.mock("../lib/alertsApi", async (orig) => ({
   ...(await orig<object>()),
-  loadAllIndicatorAlerts: (...args: unknown[]) => loadAllIndicatorAlerts(...args),
+  loadAllServerAlerts: (...args: unknown[]) => loadAllServerAlerts(...args),
   deleteIndicatorAlert: (...args: unknown[]) => deleteIndicatorAlert(...args),
   loadAllAlerts: (...args: unknown[]) => loadAllAlerts(...args),
   deleteStoredAlert: (...args: unknown[]) => deleteStoredAlert(...args),
@@ -83,10 +83,10 @@ describe("MobileAlertsView", () => {
     loadAllAlerts.mockReset();
     deleteStoredAlert.mockReset();
     loadTriggered.mockReset();
-    loadAllIndicatorAlerts.mockReset();
+    loadAllServerAlerts.mockReset();
     deleteIndicatorAlert.mockReset();
     fetchQuote.mockReset();
-    loadAllIndicatorAlerts.mockReturnValue([]);
+    loadAllServerAlerts.mockReturnValue([]);
     loadAllAlerts.mockReturnValue([]);
     loadTriggered.mockReturnValue([]);
   });
@@ -168,7 +168,7 @@ describe("MobileAlertsView", () => {
   });
 
   it("lists indicator alerts with their label and a waiting for data badge", async () => {
-    loadAllIndicatorAlerts.mockReturnValue([indAlert({ status: "waiting_for_data" })]);
+    loadAllServerAlerts.mockReturnValue([indAlert({ status: "waiting_for_data" })]);
 
     render(<MobileAlertsView />);
 
@@ -181,7 +181,7 @@ describe("MobileAlertsView", () => {
   });
 
   it("an evaluating indicator alert has no waiting badge; delete confirms then deletes", async () => {
-    loadAllIndicatorAlerts.mockReturnValue([indAlert({ status: "ok" })]);
+    loadAllServerAlerts.mockReturnValue([indAlert({ status: "ok" })]);
 
     render(<MobileAlertsView />);
     expect(screen.queryByText("waiting for data")).toBeNull();

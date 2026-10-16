@@ -23,6 +23,12 @@ import {
   alertLabel,
   triggeredLabel,
   levelText,
+  addLineAlert,
+  patchLineAlert,
+  loadLineAlerts,
+  loadServerAlerts,
+  linkedLineAlerts,
+  type LineAlert,
   type SavedAlert,
   type FiredPayload,
   type IndicatorAlert,
@@ -661,5 +667,89 @@ describe("indicator alerts", () => {
       label: "EMA 20 (1H)", target: "value" as const,
     };
     expect(triggeredLabel(hugeTriggered, 1)).toBe("EMA 20 (1H) Crossing Up 1234570 @ 156.7");
+  });
+});
+
+function lineRow(broker: string, overrides: Record<string, unknown> = {}) {
+  return alertRow({
+    id: "al-line", broker, kind: "line",
+    params: {
+      timeframe: "HOUR", evalOn: "close", condition: "crossing", trigger: "every",
+      tRef: 9, pRef: 13, slope: 0.5, anchors: { t1: 2, p1: 10, t2: 6, p2: 12 },
+      link: { scope: "tab.t1.cell.c2", instanceId: "TRENDLINES", lineKey: "2:6" },
+    },
+    ...overrides,
+  });
+}
+
+describe("line alerts", () => {
+  it("hydrate keeps line alerts apart from indicator and price alerts", async () => {
+    const broker = freshBroker();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(String(input).includes("triggered")
+        ? jsonResponse({ entries: [], seen: 0 })
+        : jsonResponse({ alerts: [alertRow({ broker }), indRow(broker), lineRow(broker)] }))));
+    await hydrateAlerts();
+    expect(loadIndicatorAlerts("US100", broker).map((a) => a.id)).toEqual(["al-ind"]);
+    expect(loadLineAlerts("US100", broker).map((a) => a.id)).toEqual(["al-line"]);
+    expect(loadServerAlerts("US100", broker).map((a) => a.id).sort()).toEqual(["al-ind", "al-line"]);
+    expect(linkedLineAlerts("tab.t1.cell.c2", "TRENDLINES").map((a) => a.id)).toEqual(["al-line"]);
+    const line = loadLineAlerts("US100", broker)[0];
+    expect(alertLabel(line, 2)).toBe("Crossing Trendline (1H)");
+  });
+
+  it("addLineAlert posts the line wire shape; patchLineAlert sends only what may change", async () => {
+    const broker = freshBroker();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const a: LineAlert = {
+      kind: "line", id: "al-l2", epic: "US100", broker, condition: "crossing", trigger: "once",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2, params: {
+        timeframe: "HOUR", evalOn: "close", tRef: 9, pRef: 13, slope: 0.5,
+        anchors: { t1: 2, p1: 10, t2: 6, p2: 12 }, link: { scope: "s", instanceId: "TRENDLINES", lineKey: "2:6" } },
+    };
+    expect(await addLineAlert(a)).toBe(true);
+    const post = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(post.kind).toBe("line");
+    expect(post.params).toMatchObject({ tRef: 9, slope: 0.5, condition: "crossing", trigger: "once" });
+    expect(await patchLineAlert("al-l2", { condition: "greater", params: { evalOn: "intrabar" } })).toBe(true);
+    const patch = JSON.parse((fetchMock.mock.calls[1] as unknown as [string, RequestInit])[1].body as string);
+    expect(patch.params).toEqual({ evalOn: "intrabar", condition: "greater", trigger: "once" });
+  });
+
+  it("an engine rebase push refreshes the cached tRef/pRef, and a later patch never sends them", async () => {
+    const broker = freshBroker();
+    const id = `al-rebase-${broker}`;
+    let tRef = 9;
+    let pRef = 13;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes("triggered")) return Promise.resolve(jsonResponse({ entries: [], seen: 0 }));
+      if (u.includes(`/api/alerts/${id}`)) return Promise.resolve(jsonResponse({}));
+      const row = lineRow(broker, { id });
+      (row.params as Record<string, unknown>).tRef = tRef;
+      (row.params as Record<string, unknown>).pRef = pRef;
+      return Promise.resolve(jsonResponse({ alerts: [row] }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await hydrateAlerts();
+    expect(loadLineAlerts("US100", broker)[0].params.tRef).toBe(9);
+
+    // The server engine rolls the reference bar forward and broadcasts.
+    tRef = 21;
+    pRef = 19;
+    applyAlertEvent("__alerts__:changed", { broker, epic: "US100", origin: "engine" });
+    await vi.waitFor(() => expect(loadLineAlerts("US100", broker)[0].params).toMatchObject({ tRef: 21, pRef: 19 }));
+
+    expect(await patchLineAlert(id, { message: "m", params: { link: null } })).toBe(true);
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes(`/api/alerts/${id}`)) as unknown as
+      [string, RequestInit];
+    const body = JSON.parse(call[1].body as string);
+    expect(body.params).not.toHaveProperty("tRef");
+    expect(body.params).not.toHaveProperty("pRef");
+    expect(body.params).not.toHaveProperty("slope");
+    expect(body.params).not.toHaveProperty("anchors");
+    expect(body.params).toEqual({ link: null, condition: "crossing", trigger: "every" });
   });
 });

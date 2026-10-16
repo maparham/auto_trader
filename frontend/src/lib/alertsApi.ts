@@ -15,6 +15,7 @@ import { bumpAlerts } from "./signals";
 import { toast } from "./notify";
 import { ALERTABLE, type IndicatorIdentity, indicatorAlertLabel } from "./alertableIndicators";
 import { fmtPrice } from "./priceFormat";
+import { tfLabel } from "./timeframe";
 
 // --- types (re-homed from persist/alerts.ts) ---------------------------------
 
@@ -94,7 +95,34 @@ export interface IndicatorAlert {
   status?: "ok" | "waiting_for_data";
 }
 
-export type AnyAlert = SavedAlert | IndicatorAlert;
+export interface LineAlertParams {
+  timeframe: string;
+  evalOn: EvalOn;
+  /** Reference bar open time and the line there; the server rolls these
+   * forward, the client never sends them after create. */
+  tRef: number;
+  pRef: number;
+  /** Price per bar of `timeframe`. */
+  slope: number;
+  anchors: { t1: number; p1: number; t2: number; p2: number };
+  link: { scope: string; instanceId: string; lineKey: string } | null;
+}
+
+/** A frozen trendline (right-click "Add alert" on a Trendlines line). */
+export interface LineAlert extends Omit<IndicatorAlert, "kind" | "params"> {
+  kind: "line";
+  params: LineAlertParams;
+}
+
+/** Server-evaluated alerts that share one cache: indicator and line. */
+export type ServerAlert = IndicatorAlert | LineAlert;
+
+const isIndicator = (a: ServerAlert): a is IndicatorAlert => a.kind === "indicator";
+const isLine = (a: ServerAlert): a is LineAlert => a.kind === "line";
+
+export const lineAlertLabel = (timeframe: string): string => `Trendline (${tfLabel(timeframe)})`;
+
+export type AnyAlert = SavedAlert | IndicatorAlert | LineAlert;
 
 const ALL_CHANNELS: AlertNotifyChannels = {
   toast: true,
@@ -258,6 +286,33 @@ function rowToIndicatorAlert(row: AlertRow): IndicatorAlert {
   };
 }
 
+function rowToLineAlert(row: AlertRow): LineAlert {
+  const p = row.params as Record<string, unknown>;
+  return {
+    kind: "line",
+    id: row.id,
+    epic: row.epic,
+    broker: row.broker,
+    condition: p.condition as AlertCondition,
+    trigger: p.trigger as AlertTrigger,
+    message: row.message,
+    expiresAt: row.expires_at,
+    notify: { ...ALL_CHANNELS, ...(row.notify ?? {}) },
+    createdAt: row.created_at,
+    precision: row.precision,
+    status: row.status,
+    params: {
+      timeframe: p.timeframe as string,
+      evalOn: p.evalOn as EvalOn,
+      tRef: p.tRef as number,
+      pRef: p.pRef as number,
+      slope: p.slope as number,
+      anchors: p.anchors as LineAlertParams["anchors"],
+      link: (p.link as LineAlertParams["link"]) ?? null,
+    },
+  };
+}
+
 function indicatorWireParams(a: { condition: AlertCondition; trigger: AlertTrigger; params: IndicatorAlertParams }) {
   const { identity, ...rest } = a.params;
   return {
@@ -294,7 +349,9 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
     broker: row.broker,
     label: row.alert?.params && row.kind === "indicator"
       ? rowToIndicatorAlertLabel(row.alert.params)
-      : undefined,
+      : row.alert?.params && row.kind === "line"
+        ? lineAlertLabel(row.alert.params.timeframe as string)
+        : undefined,
     target: (row.alert?.params?.target as AlertTarget | undefined) ?? undefined,
   };
 }
@@ -303,8 +360,8 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
 
 // Map<broker, Map<epic, SavedAlert[]>>
 let alertsCache = new Map<string, Map<string, SavedAlert[]>>();
-// Map<id, IndicatorAlert>
-let indicatorCache = new Map<string, IndicatorAlert>();
+// Map<id, ServerAlert>: indicator and line alerts, both server-evaluated.
+let indicatorCache = new Map<string, ServerAlert>();
 let triggeredCache: TriggeredAlert[] = [];
 let triggeredSeenCache = 0;
 
@@ -383,10 +440,12 @@ export function hydrateAlerts(): Promise<void> {
       if (alertsRes.ok) {
         const body = (await alertsRes.json()) as { alerts: AlertRow[] };
         const next = new Map<string, Map<string, SavedAlert[]>>();
-        const nextInd = new Map<string, IndicatorAlert>();
+        const nextInd = new Map<string, ServerAlert>();
         for (const row of body.alerts) {
           if (row.kind === "indicator") {
             nextInd.set(row.id, rowToIndicatorAlert(row));
+          } else if (row.kind === "line") {
+            nextInd.set(row.id, rowToLineAlert(row));
           } else {
             const epics = next.get(row.broker) ?? new Map<string, SavedAlert[]>();
             if (!next.has(row.broker)) next.set(row.broker, epics);
@@ -449,24 +508,50 @@ export function loadTriggeredSeen(): number {
 }
 
 export function loadIndicatorAlerts(epic: string, broker: string = getPersistBroker()): IndicatorAlert[] {
-  return [...indicatorCache.values()].filter((a) => a.epic === epic && a.broker === broker);
+  return [...indicatorCache.values()].filter(isIndicator).filter((a) => a.epic === epic && a.broker === broker);
 }
 
 export function loadAllIndicatorAlerts(broker: string = getPersistBroker()): IndicatorAlert[] {
-  return [...indicatorCache.values()].filter((a) => a.broker === broker);
+  return [...indicatorCache.values()].filter(isIndicator).filter((a) => a.broker === broker);
 }
 
 export function linkedAlerts(scope: string, instanceId: string): IndicatorAlert[] {
-  return [...indicatorCache.values()].filter(
+  return [...indicatorCache.values()].filter(isIndicator).filter(
     (a) => a.params.link?.scope === scope && a.params.link.instanceId === instanceId,
   );
 }
 
-// Every alert linked to any instance in `scope` on `broker`. Scope strings
-// repeat across brokers (each broker has its own workspace), so the bulk
-// reconcile that reads this must not touch another broker's links.
 export function scopeLinkedAlerts(scope: string, broker: string = getPersistBroker()): IndicatorAlert[] {
-  return [...indicatorCache.values()].filter((a) => a.broker === broker && a.params.link?.scope === scope);
+  return [...indicatorCache.values()].filter(isIndicator)
+    .filter((a) => a.broker === broker && a.params.link?.scope === scope);
+}
+
+export function loadLineAlerts(epic: string, broker: string = getPersistBroker()): LineAlert[] {
+  return [...indicatorCache.values()].filter(isLine).filter((a) => a.epic === epic && a.broker === broker);
+}
+
+/** Indicator and line alerts on one epic: the alerts panel lists both. */
+export function loadServerAlerts(epic: string, broker: string = getPersistBroker()): ServerAlert[] {
+  return [...indicatorCache.values()].filter((a) => a.epic === epic && a.broker === broker);
+}
+
+export function loadAllServerAlerts(broker: string = getPersistBroker()): ServerAlert[] {
+  return [...indicatorCache.values()].filter((a) => a.broker === broker);
+}
+
+export function findServerAlert(id: string): ServerAlert | undefined {
+  return indicatorCache.get(id);
+}
+
+export function linkedLineAlerts(scope: string, instanceId: string): LineAlert[] {
+  return [...indicatorCache.values()].filter(isLine).filter(
+    (a) => a.params.link?.scope === scope && a.params.link.instanceId === instanceId,
+  );
+}
+
+export function scopeLinkedLineAlerts(scope: string, broker: string = getPersistBroker()): LineAlert[] {
+  return [...indicatorCache.values()].filter(isLine)
+    .filter((a) => a.broker === broker && a.params.link?.scope === scope);
 }
 
 // --- optimistic writes -------------------------------------------------------
@@ -678,7 +763,7 @@ export async function patchIndicatorAlert(
   },
 ): Promise<boolean> {
   const prev = indicatorCache.get(id);
-  if (!prev) return false;
+  if (!prev || prev.kind !== "indicator") return false;
   const next: IndicatorAlert = { ...prev, ...patch, params: { ...prev.params, ...(patch.params ?? {}) } };
   indicatorCache.set(id, next);
   bumpAlerts();
@@ -700,6 +785,56 @@ export async function patchIndicatorAlert(
   return false;
 }
 
+export async function addLineAlert(a: LineAlert): Promise<boolean> {
+  if (indicatorCache.has(a.id)) return true; // idempotent
+  indicatorCache.set(a.id, a);
+  bumpAlerts();
+  indWriteStart();
+  const res = await sendJson("/api/alerts", "POST", {
+    id: a.id, broker: a.broker, epic: a.epic, kind: "line",
+    params: { ...a.params, condition: a.condition, trigger: a.trigger },
+    message: a.message, expires_at: a.expiresAt, notify: a.notify, precision: a.precision,
+  });
+  indWriteSettled();
+  if (res?.ok) return true;
+  indicatorCache.delete(a.id);
+  bumpAlerts();
+  await reportFailure(res, "Alert save failed");
+  return false;
+}
+
+/** Only what a user (or a pane removal) may change. The geometry is frozen
+ * and tRef/pRef belong to the server, so they are never sent: the server
+ * merges this into its own params. */
+export async function patchLineAlert(
+  id: string,
+  patch: Partial<Pick<LineAlert, "condition" | "trigger" | "message" | "expiresAt" | "notify">> & {
+    params?: Partial<Pick<LineAlertParams, "evalOn" | "link">>;
+  },
+): Promise<boolean> {
+  const prev = indicatorCache.get(id);
+  if (!prev || prev.kind !== "line") return false;
+  const next: LineAlert = { ...prev, ...patch, params: { ...prev.params, ...(patch.params ?? {}) } };
+  indicatorCache.set(id, next);
+  bumpAlerts();
+  indWriteStart();
+  const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "PATCH", {
+    params: { ...(patch.params ?? {}), condition: next.condition, trigger: next.trigger },
+    message: next.message,
+    expires_at: next.expiresAt,
+    notify: next.notify,
+  });
+  indWriteSettled();
+  if (res?.ok) return true;
+  if (indicatorCache.has(id)) {
+    indicatorCache.set(id, prev);
+    bumpAlerts();
+  }
+  await reportFailure(res, "Alert update failed");
+  return false;
+}
+
+/** Deletes an indicator or a line alert (both live in the server cache). */
 export function deleteIndicatorAlert(id: string): void {
   if (!indicatorCache.delete(id)) return;
   bumpAlerts();
@@ -817,6 +952,7 @@ export function levelText(target: AlertTarget, level: number, precision: number)
 }
 
 export function alertLabel(a: AnyAlert, precision: number): string {
+  if (a.kind === "line") return conditionPhrase(lineAlertLabel(a.params.timeframe), a.condition, "price", "");
   if (a.kind !== "indicator") {
     return conditionPhrase(undefined, a.condition, undefined, levelText("price", a.level, precision));
   }

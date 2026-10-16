@@ -39,8 +39,8 @@ const indAlert = {
 
 vi.mock("./lib/alertsApi", async (orig) => ({
   ...(await orig<typeof import("./lib/alertsApi")>()),
-  loadIndicatorAlerts: () => [indAlert],
-  loadAllIndicatorAlerts: () => [indAlert],
+  loadServerAlerts: () => [indAlert],
+  loadAllServerAlerts: () => [indAlert],
 }));
 
 const { default: AlertsSidebar } = await import("./AlertsSidebar");

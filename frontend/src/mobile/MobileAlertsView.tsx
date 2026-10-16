@@ -8,21 +8,21 @@
 import { useState, useSyncExternalStore } from "react";
 import {
   loadAllAlerts,
-  loadAllIndicatorAlerts,
+  loadAllServerAlerts,
   deleteStoredAlert,
   deleteIndicatorAlert,
   loadTriggered,
   alertLabel,
   triggeredLabel,
-  type IndicatorAlert,
+  type ServerAlert,
   type SavedAlert,
 } from "../lib/alertsApi";
+import { requestAlertEdit } from "../lib/alertEdit";
 import {
   alertsChanged,
   alertGlobalEditRequest,
   alertModalRequest,
   bumpAlerts,
-  indicatorAlertRequest,
   requestConfirm,
 } from "../lib/signals";
 import Tooltip from "../components/Tooltip";
@@ -57,15 +57,15 @@ export default function MobileAlertsView() {
   for (const g of groups) for (const a of g.alerts) rows.push({ epic: g.epic, alert: a });
   // Indicator alerts sit after the price rows of their epic (an epic with only
   // indicator alerts still gets its block, at the end).
-  const indByEpic = new Map<string, IndicatorAlert[]>();
-  for (const a of loadAllIndicatorAlerts(broker)) {
+  const indByEpic = new Map<string, ServerAlert[]>();
+  for (const a of loadAllServerAlerts(broker)) {
     const list = indByEpic.get(a.epic);
     if (list) list.push(a);
     else indByEpic.set(a.epic, [a]);
   }
   const epicOrder = [...new Set([...groups.map((g) => g.epic), ...indByEpic.keys()])];
   const items: Array<
-    { kind: "price"; epic: string; alert: SavedAlert } | { kind: "indicator"; epic: string; alert: IndicatorAlert }
+    { kind: "price"; epic: string; alert: SavedAlert } | { kind: "indicator"; epic: string; alert: ServerAlert }
   > = [];
   for (const ep of epicOrder) {
     for (const r of rows) if (r.epic === ep) items.push({ kind: "price", ...r });
@@ -94,7 +94,7 @@ export default function MobileAlertsView() {
     });
   }
 
-  function handleDeleteIndicator(a: IndicatorAlert) {
+  function handleDeleteIndicator(a: ServerAlert) {
     requestConfirm({
       message: `Delete this alert on ${a.epic}?`,
       onConfirm: () => deleteIndicatorAlert(a.id),
@@ -141,7 +141,7 @@ export default function MobileAlertsView() {
                   <div
                     key={`${it.epic}-${a.id}`}
                     className="m-alerts-row"
-                    onClick={() => indicatorAlertRequest.set({ mode: "edit", id: a.id })}
+                    onClick={() => requestAlertEdit(a.id)}
                   >
                     <div className="m-alerts-row-main">
                       <span className="m-alerts-epic">{it.epic}</span>
