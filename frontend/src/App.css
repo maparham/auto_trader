@@ -2449,6 +2449,7 @@
 .al-field > span { color: var(--text-dim); }
 .al-cond { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; }
 .al-cond .al-operator { flex: 1; min-width: 0; }
+.al-cond .al-operator:only-child { flex: 0 0 auto; width: max-content; max-width: 100%; }
 .al-cond .al-value { flex: 0 0 70px; }
 /* Trigger + Expiration share a row; each field stacks its own label above its
    own control (rather than beside it) so the label doesn't crowd the control. */
@@ -2540,15 +2541,26 @@
 .al-notify-toggles::-webkit-scrollbar { display: none; }
 .al-notify-chip {
   position: relative;
-  display: flex; align-items: center; gap: 4px; width: auto; color: var(--text-dim);
+  display: flex; align-items: center; gap: 6px; width: auto; color: var(--text-faint);
   cursor: pointer; font-size: 12px; white-space: nowrap; padding: 4px 8px;
   border: 1px solid var(--border); border-radius: 999px;
   transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
-.al-notify-chip:hover { border-color: color-mix(in srgb, var(--text) 30%, var(--border)); }
+.al-notify-chip:hover { border-color: color-mix(in srgb, var(--text) 30%, var(--border)); color: var(--text-dim); }
+.al-notify-chip::before {
+  content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%;
+  border: 1.5px solid var(--text-faint);
+}
 .al-notify-chip:has(input:checked) {
   background: color-mix(in srgb, var(--text) 12%, transparent);
-  border-color: transparent; color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 30%, transparent); color: var(--text);
+  font-weight: 600;
+}
+.al-notify-chip:has(input:checked)::before {
+  background: var(--accent); border-color: var(--accent);
+}
+.al-notify-chip:has(input:focus-visible) {
+  outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .al-notify-chip input {
   position: absolute; width: 1px; height: 1px; margin: -1px;
