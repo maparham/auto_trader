@@ -126,9 +126,9 @@ export default function AlertCommonFields({
 
       <div className="al-field">
         <span>Notifications</span>
-        <div className="al-notify-toggles">
+        <div className="notify-toggles">
           {CHANNELS.map(([ch, label]) => (
-            <label key={ch} className="al-notify-chip">
+            <label key={ch} className="notify-toggle">
               <input
                 type="checkbox"
                 checked={state.notify[ch] ?? true}
