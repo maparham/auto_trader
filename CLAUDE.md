@@ -206,6 +206,16 @@ alertable registry `indicators/alertable.py` (mirrored by
 alerts fire at most once per bar of their timeframe. Probe an indicator alert
 with `python3 -m scripts.alert_probe --indicator`.
 
+Trendline alerts come in two forms. The `line` kind is a frozen straight line
+in bars of its timeframe (`tRef`, `pRef`, `slope`), made from a right-clicked
+Trendlines line; the engine rolls `tRef` forward every 1000 bars
+(`LINE_REBASE_BARS`) so it stays inside the 2000-bar seed, and create 422s
+when the chart's reference bar is not one the server holds. Nearest-line
+alerts are `indicator` alerts on `TRENDLINES` with the canonical 33-slot
+calcParams; the hub runs the full Trendlines compute once per close and
+keeps the held line, so close mode judges a cross against one line
+(`resolve_close`) and intrabar only projects it.
+
 Telegram alert photos are live chart screenshots: `core/chart_snapshot.py`
 drives a headless Chromium over the frontend's `/?snapshot=1` boot mode,
 reconstructing the user's last-seen view (mirrored `view.<epic>` heartbeat)

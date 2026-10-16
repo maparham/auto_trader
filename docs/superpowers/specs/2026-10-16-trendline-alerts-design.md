@@ -1,6 +1,6 @@
 # Trendline alerts
 
-Status: designed 2026-10-16, revised after review the same day. Part of
+Status: implemented 2026-10-16 (plan docs/superpowers/plans/2026-10-16-trendline-alerts.md). Part of
 sub-project 2 of the alerts plan (see
 2026-10-10-indicator-value-alerts-design.md, "auto-trendline break").
 
@@ -200,6 +200,37 @@ newest closed bar.
 - Cost: one full Trendlines compute per closed bar per distinct config. The
   plan measures the Python compute on 2000 bars first; if it is too slow
   for 1m, nearest-line alerts refuse 1m.
+  Measured (Task 0): median 399 ms, max 431 ms per full compute on 2000
+  bars, too slow for 1m, so nearest-line alerts refuse 1m
+  (`TRENDLINES_REFUSED_TF = {"MINUTE"}`).
+
+### Accepted deviations
+
+1. **No `series_needs` / `resolve(params, ctx)`.** The real `AlertKind`
+   protocol is `indicator_key` + `resolve(params, price, values)`; the plan
+   added `resolve_close` and `level_sig` to it.
+2. **No new store method.** `AlertStore.update` already merges `params`
+   sub-keys, so the rebase patches `{"params": {"tRef", "pRef"}}` through it.
+3. **`link` stays nullable for `line`.** "Keep" on pane removal unlinks (as
+   for indicator alerts); the menu always sends a link.
+4. **Readiness split from seeding.** `warmup(key)` stays the seed target
+   (MAX_WARMUP for LINE and TRENDLINES); a new `min_bars(key)` gates
+   `ready`. TRENDLINES `ready` does not require non-None values (an empty
+   pane is "ok", not "waiting"), via a new `sparse(key)`.
+5. **Held-line signature is two outputs `a1`, `a2`** (anchor open times in
+   ms) plus `slope`, not one `held_sig` number.
+6. **`held` parity is Python-only.** TS never computes `held`; Python has an
+   invariant test (same anchors on consecutive bars means `held == value`).
+   `value` (tl_nearest) is in the TS/Python parity fixture.
+7. **Line-alert bell only when the chart's timeframe equals the alert's.**
+   The dashed line shows whenever the pane's alert timeframe matches; the
+   bell needs bar-exact projection.
+8. **The 1m decision** is the constant `TRENDLINES_REFUSED_TF`, set from the
+   Task 0 measurement to `{"MINUTE"}`.
+9. **The router checks `tRef` on mid-side bars.** Bar open times are the
+   same on every side, so the create check reads the mid series.
+10. **A pinned line alert's reference skips a forming pin bar.** The
+    reference is always a closed bar the server holds.
 
 ## Engine and hub changes (summary)
 
