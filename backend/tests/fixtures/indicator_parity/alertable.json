@@ -70,5 +70,13 @@
     "wma"
    ]
   }
+ },
+ "TRENDLINES": {
+  "lines": [
+   "value"
+  ],
+  "priceTarget": true,
+  "params": [],
+  "config": {}
  }
 }

@@ -331,6 +331,23 @@ export function parseTrendlinesConfig(
   };
 }
 
+/** calcParams slot order. Mirrors TL_SLOT_FIELDS in indicators/trendlines.py. */
+const TL_SLOT_KEYS: ReadonlyArray<keyof TrendlinesConfig> = [
+  "pivotLen", "touchMult", "minTouches", "minSpanBars", "maxProjBars", "maxLines",
+  "minSwingAtr", "minSwingReach", "pairPivots", "maxTouches", "maxSpanBars",
+  "maxSlopeAtr", "minSlopeAtr", "maxTouchSpacing", "minTouchSpacing", "minCrossings",
+  "maxCrossings", "pierceMult", "minBackBars", "maxDistAtr", "maxDistPct", "mergeAtr",
+  "maxPerPivot", "mergePct", "majorPivots", "majorLen", "majorSizeAtr", "lookbackBars",
+  "extendLeft", "fanAtr", "fanPct", "fanKeep", "pivotStrong",
+];
+
+/** Every slot, resolved (legacy extendData migrations included): what an
+ * alert stores, so the server can re-parse it with no extendData. */
+export function canonicalTrendlinesParams(calcParams: unknown, extendData?: unknown): number[] {
+  const cfg = parseTrendlinesConfig(calcParams, extendData);
+  return TL_SLOT_KEYS.map((k) => cfg[k] as number);
+}
+
 /** The merge tolerance a pane stored while it was render-only: `dedupeAtr`
  * (a finite number >= 0), or 0 for the older "Merge similar lines" checkbox
  * saved unticked (`dedupe: false`). Undefined when neither was written. */

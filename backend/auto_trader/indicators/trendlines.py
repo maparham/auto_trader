@@ -259,6 +259,24 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
     )
 
 
+# calcParams slot order, so a config round-trips to the canonical array an
+# alert stores. Mirrors TL_SLOT_KEYS in trendlinesOutputs.ts.
+TL_SLOT_FIELDS: tuple[str, ...] = (
+    "pivot_len", "touch_mult", "min_touches", "min_span_bars", "max_proj_bars",
+    "max_lines", "min_swing_atr", "min_swing_reach", "pair_pivots", "max_touches",
+    "max_span_bars", "max_slope_atr", "min_slope_atr", "max_touch_spacing",
+    "min_touch_spacing", "min_crossings", "max_crossings", "pierce_mult",
+    "min_back_bars", "max_dist_atr", "max_dist_pct", "merge_atr", "max_per_pivot",
+    "merge_pct", "major_pivots", "major_len", "major_size_atr", "lookback_bars",
+    "extend_left", "fan_atr", "fan_pct", "fan_keep", "pivot_strong",
+)
+
+
+def trendlines_config_params(cfg: TrendlinesConfig) -> list[float]:
+    """The canonical calcParams for a parsed config (every slot, as floats)."""
+    return [float(getattr(cfg, f)) for f in TL_SLOT_FIELDS]
+
+
 def _legacy_near_price(ext: dict[str, Any]) -> bool:
     """Mirrors TS legacyNearPrice."""
     if "declutter" in ext:
@@ -885,10 +903,13 @@ def is_major(line: TrendLine, i: int, cfg: TrendlinesConfig) -> bool:
 
 
 def compute_trendlines(
-    candles: Sequence[Candle], cfg: TrendlinesConfig
+    candles: Sequence[Candle], cfg: TrendlinesConfig, *,
+    nearest_out: list[TrendLine | None] | None = None,
 ) -> tuple[list[dict[str, float]], list[TrendLine]]:
     """Transliteration of TS stepTrendlinesBar over every bar: same loop order,
-    same branch order, same arithmetic order. Returns (points, live lines)."""
+    same branch order, same arithmetic order. Returns (points, live lines).
+    `nearest_out`, when given (length n, all None), receives the line behind
+    tl_nearest at each bar: alert-only, the TS has no twin."""
     n = len(candles)
     points: list[dict[str, float]] = [{} for _ in range(n)]
     if n == 0:
@@ -1085,6 +1106,7 @@ def compute_trendlines(
         )
         nearest_v = 0.0
         nearest_d = math.inf
+        nearest_line: TrendLine | None = None
         # select_levels reads max_lines 0 as uncapped; the parser never yields
         # 0, but a raw cfg can, and it must still emit no tl_k. Mirrors TS.
         shown = min(len(drawn), cfg.max_lines)
@@ -1095,8 +1117,11 @@ def compute_trendlines(
             if d < nearest_d:
                 nearest_d = d
                 nearest_v = v
+                nearest_line = drawn[r]
         if shown:
             point[TL_NEAREST] = nearest_v
+        if nearest_out is not None:
+            nearest_out[i] = nearest_line
         points[i] = point
 
     return points, lines
@@ -1118,3 +1143,6 @@ def trendlines_series(
         return [None] * len(candles)
     points, _lines = compute_trendlines(candles, cfg)
     return [p.get(output) for p in points]
+
+
+TL_DEFAULT_PARAMS: list[float] = trendlines_config_params(parse_trendlines_config([], {}))

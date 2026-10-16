@@ -18,7 +18,7 @@ function templateMaKind(type: string): "ema" | "sma" {
   return type === "EMA" ? "ema" : "sma";
 }
 
-export type AlertIndicator = "MA" | "RSI" | "ATR";
+export type AlertIndicator = "MA" | "RSI" | "ATR" | "TRENDLINES";
 
 const SOURCES = ["close", "open", "high", "low", "hl2", "hlc3", "ohlc4"];
 
@@ -44,10 +44,15 @@ export const ALERTABLE: Record<
     params: [[1, 1000]],
     config: { smoothing: ["rma", "sma", "ema", "wma"] },
   },
+  // calcParams is the CANONICAL full array (canonicalTrendlinesParams),
+  // checked by the parser rather than by ranges, so "params" is empty.
+  TRENDLINES: { lines: ["value"], priceTarget: true, params: [], config: {} },
 };
 
 // The indicator result key that holds the alertable line, per indicator.
-export const MAIN_LINE_KEY: Record<AlertIndicator, string> = { MA: "ma", RSI: "val", ATR: "atr" };
+export const MAIN_LINE_KEY: Record<AlertIndicator, string> = {
+  MA: "ma", RSI: "val", ATR: "atr", TRENDLINES: "tl_nearest",
+};
 
 const DEFERRED = new Set(["AVWAP", "VWAP", "BOLL", "MACD"]);
 
@@ -176,6 +181,7 @@ export const volumeWeighted = (id: IndicatorIdentity): boolean =>
   id.indicator === "MA" && isVolumeWeightedMa(id.config.maType);
 
 export function indicatorLabel(id: IndicatorIdentity): string {
+  if (id.indicator === "TRENDLINES") return "Trendlines nearest";
   const n = id.calcParams[0];
   if (id.indicator === "MA") {
     const base = `${id.config.maType.toUpperCase()} ${n}`;

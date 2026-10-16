@@ -14,6 +14,8 @@ import { ALERTABLE } from "./alertableIndicators";
 import { computeMa } from "./indicators/ma";
 import { computeRsi } from "./indicators/rsi";
 import { computeAtr } from "./indicators/atr";
+import { computeTrendlines } from "./indicators/trendlines";
+import { canonicalTrendlinesParams, parseTrendlinesConfig } from "./indicators/trendlinesOutputs";
 
 const DIR = new URL("../../../backend/tests/fixtures/indicator_parity/", import.meta.url);
 
@@ -44,9 +46,14 @@ const CASES = [
   { indicator: "ATR", calcParams: [14], config: { smoothing: "ema" } },
   { indicator: "ATR", calcParams: [14], config: { smoothing: "sma" } },
   { indicator: "ATR", calcParams: [14], config: { smoothing: "wma" } },
+  { indicator: "TRENDLINES", calcParams: canonicalTrendlinesParams([], {}), config: {} },
 ] as const;
 
 function series(c: (typeof CASES)[number], data: KLineData[]): (number | null)[] {
+  if (c.indicator === "TRENDLINES") {
+    const pts = computeTrendlines(data, parseTrendlinesConfig(c.calcParams, {})).points;
+    return pts.map((p) => (p as Record<string, number | undefined>).tl_nearest ?? null);
+  }
   const n = c.calcParams[0];
   if (c.indicator === "MA")
     return computeMa(data, "ema", n, { maType: c.config.maType, source: c.config.source } as never).map((p) => p.ma ?? null);
