@@ -25,7 +25,7 @@
 
 1. **`ALERT_SPECS` is its own dict** in `indicators/alert_specs.py`, keyed by registry type, instead of new fields on `IndicatorSeriesSpec`. Why: the registry's existing tests and the expression layer construct/compare `IndicatorSeriesSpec` and never need alert data. Cost if wrong: one more import to keep in step; a test pins `ALERT_SPECS.keys() <= SERIES_INDICATORS.keys()`.
 2. **Stored `config` is the parsed config dataclass serialized** (`dataclasses.asdict`, sorted JSON), not a per-indicator `canonical(cfg) -> {calcParams, extendData}`. It is canonical by construction (ignored extendData keys and `3` vs `3.0` vanish in parsing) and needs no per-indicator code. Cost: a config with a field JSON cannot hold (inf, an enum) fails the round-trip test in Task 2 and must be special-cased there.
-3. **Every alert series seeds `MAX_WARMUP` bars** (1950, the cap), not "max(need + 50, 500)". Why: the chart computes on thousands of bars; EMA/RMA and every pivot-based indicator converge closer to the chart with the deepest seed, and the cost is one cached 2000-bar fetch per series. Readiness still uses the registry warm-up.
+3. **Every alert series seeds the full `SEED_CAP`** (`warmup()` returns `MAX_WARMUP`, and the hub's `min(need + 50, SEED_CAP)` makes that 2000 bars), not "max(need + 50, 500)". Why: the chart computes on thousands of bars; EMA/RMA and every pivot-based indicator converge closer to the chart with the deepest seed, and the cost is one cached 2000-bar fetch per series. Readiness still uses the registry warm-up.
 4. **An `event` output alert is stored as `target: "value", value: 0.5, condition: "crossing_up", evalOn: "close"`.** A 0/1 series crossing up through 0.5 is exactly "became 1 on this closed bar", so the evaluator, the engine and dedup need no new condition. Validation forces those four fields for event outputs and 422s `evalOn: "intrabar"`.
 5. **`backend/tests/fixtures/indicator_parity/values.json` is frozen** and becomes the migration golden: it holds the chart's own MA/RSI/ATR/TRENDLINES values for the 12 configs today's alerts allow. `alertableParity.test.ts` (its generator) and `alertable.json` are deleted.
 6. **The legend bell and indicator menu no longer show a disabled entry with a reason.** "Add alert" shows for every alertable type on a non-seconds chart; the reason (if any) shows inside the modal from `describe`, with Create disabled.
@@ -444,6 +444,9 @@ def test_labels_keep_todays_wording():
     assert ALERT_SPECS["ATR"].label(p("ATR", [14], {}), "14") == "ATR 14"
     assert ALERT_SPECS["ATR"].label(p("ATR", [14], {"smoothing": "ema"}), "14") == "ATR 14 ema"
     assert ALERT_SPECS["TRENDLINES"].label(p("TRENDLINES", [], {}), "tl_nearest") == "Trendlines nearest"
+    fib = p("AUTO_FIB", [], {})
+    assert ALERT_SPECS["AUTO_FIB"].label(fib, "f0_618") == "Auto fib 0.618"
+    assert ALERT_SPECS["AUTO_FIB"].label(fib, "fm0_236") == "Auto fib -0.236"
 
 
 def test_output_kinds():
@@ -695,9 +698,11 @@ _SLOPE = AlertSpec(
 def _fib_label(cfg: Any, output: str) -> str:
     if output in ("high", "low"):
         return f"Auto fib {output}"
-    # fib_output_name: "f" or "m" (negative), then the ratio with "." as "_".
-    ratio = output[1:].replace("_", ".")
-    return f"Auto fib {'-' if output[0] == 'm' else ''}{ratio}"
+    # fib_output_name: "f", then "m" when negative, then |ratio| with "." as "_"
+    # (f0_618, fm0_236).
+    body = output[1:]
+    neg = body.startswith("m")
+    return f"Auto fib {'-' if neg else ''}{(body[1:] if neg else body).replace('_', '.')}"
 
 
 _FIB = AlertSpec(
@@ -716,7 +721,6 @@ ALERT_SPECS: dict[str, AlertSpec] = {
 Notes for the implementer:
 - `_ma_outputs` reads `SERIES_INDICATORS["MA"].outputs`; EMA shares the same `ma_outputs` function, so that is correct for both.
 - Check `compute_trendlines`'s real signature for `nearest_out`; `alertable._trendlines_values` calls it as `compute_trendlines(candles, cfg, nearest_out=nearest)`, which is what `_tl_side` copies.
-- Check `fib_output_name` in `auto_fib.py` and fix `_fib_label` if the encoding differs from "f/m + ratio with `_`".
 
 - [ ] **Step 4: Implement `alert_series.py`**
 
@@ -971,6 +975,22 @@ def test_upgrade_params(old, type_, output):
     assert not {"indicator", "calcParams", "line"} & set(new)
     assert new["link"] == common["link"] and new["timeframe"] == "HOUR"
     assert upgrade_params(new) == new
+
+
+def test_upgrade_unknown_legacy_indicator_is_a_value_error():
+    with pytest.raises(ValueError, match="not alertable"):
+        upgrade_params({"indicator": "BOLL", "calcParams": [20], "config": {}})
+
+
+def test_step_level_close_cross_is_prev_close_vs_prev_value():
+    from datetime import datetime, timezone
+    from auto_trader.core.models import Candle
+    p = _new("SR_LEVELS", (), {}, "support", target="price", value=None)
+    INDICATOR.validate(p, lambda: True)
+    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    before, last = Candle(t, 10, 10, 10, 10.0, 1), Candle(t, 9, 9, 9, 9.0, 1)
+    cur, prev = INDICATOR.resolve_close(p, last, before, {"value": 9.5}, {"value": 8.0})
+    assert cur == (9.0, 9.5) and prev == (10.0, 8.0)
 ```
 
 - [ ] **Step 2: Run them to make sure they fail**
@@ -1008,7 +1028,10 @@ def upgrade_params(params: dict) -> dict:
     row it reads."""
     if "indicator" not in params:
         return params
-    type_, ext_of, out_of = _LEGACY[params["indicator"]]
+    legacy = _LEGACY.get(params["indicator"])
+    if legacy is None:
+        raise ValueError(f"params.indicator {params['indicator']!r} is not alertable")
+    type_, ext_of, out_of = legacy
     calc = list(params.get("calcParams") or [])
     ext = ext_of(params.get("config") or {})
     cfg = SERIES_INDICATORS[type_].parse_config(calc, ext)
@@ -1388,7 +1411,7 @@ git commit -m "feat(alerts): migrate stored indicator alerts to the registry sha
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `test_alert_indicators.py` (it already defines `H`, `KEY`, `c()`, `FakeLoader` and `make()`; Task 3 converted its `SMA3`/`SMA5` keys):
+Add to `test_alert_indicators.py` (it already defines `H`, `KEY`, `c()`, `FakeLoader`, `make()` and imports `Sample`; Task 3 converted its `SMA3`/`SMA5` keys):
 
 ```python
 from auto_trader.core.alert_kinds import upgrade_params
@@ -1406,6 +1429,22 @@ def test_peek_cold_series_loads_once_and_registers_nothing():
         assert isinstance(out[RSI3], float)
         assert len(loader.calls) == 1
         assert not hub.has_feed(KEY[0], KEY[1])
+
+    asyncio.run(main())
+
+
+def test_peek_reads_a_ready_live_series():
+    async def main():
+        now = [20 * H + 1]
+        hub, loader, _ = make([c(i * H, float(i % 4)) for i in range(0, 20)], now)
+        hub.set_needs({KEY: {RSI3}})
+        await hub.on_sample(KEY[0], KEY[1], Sample(now[0], 10.0, None, None))
+        await hub.settle()
+        assert hub.ready(KEY, RSI3)
+        calls = len(loader.calls)
+        out = await hub.peek(KEY, [RSI3])
+        assert out[RSI3] == hub.values(KEY, RSI3, intrabar=False)["value"]
+        assert len(loader.calls) == calls  # no extra load
 
     asyncio.run(main())
 
@@ -2186,7 +2225,10 @@ The JSX inside `alert-body` (keep footer, title and `AlertCommonFields` as today
           <div className="al-field">
             <span>Line</span>
             <select className="al-operator" aria-label="Line" value={out?.name}
-              onChange={(e) => { setOutput(e.target.value); setTarget(null); setTyped(false); }}>
+              onChange={(e) => {
+                setOutput(e.target.value); setTarget(null); setTyped(false);
+                if (desc.outputs.find((o) => o.name === e.target.value)?.kind === "event") setEvalOn("close");
+              }}>
               {desc.outputs.map((o) => <option key={o.name} value={o.name}>{o.label}</option>)}
             </select>
           </div>
