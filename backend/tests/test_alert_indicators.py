@@ -574,3 +574,84 @@ def test_gap_close_detection_is_broker_offset_safe():
         assert closed == {key4}
         assert hub.last_closed(key4).close == 7.0
     asyncio.run(main())
+
+
+from auto_trader.indicators.alertable import line_key  # noqa: E402
+from auto_trader.indicators.trendlines import TL_DEFAULT_PARAMS  # noqa: E402
+
+TL = IndicatorKey("TRENDLINES", tuple(TL_DEFAULT_PARAMS), ())
+
+
+def test_line_values_and_bars_after():
+    async def main():
+        now = [10 * H + 5]
+        hub, _, _ = make([c(i * H, float(i)) for i in range(5, 10)], now)
+        ln = line_key(8 * H, 100.0, 0.5)
+        hub.set_needs({KEY: {ln}})
+        await hub.on_sample("capital", "US100", Sample(now[0], 9.0, None, None))
+        await asyncio.sleep(0)
+        assert hub.values(KEY, ln, intrabar=False) == {"value": 100.5}
+        assert hub.values(KEY, ln, intrabar=True) == {"value": 101.0}  # the forming 10h bar
+        assert hub.bars_after(KEY, 8 * H) == 1
+        assert hub.bars_after(KEY, 99 * H) is None
+    asyncio.run(main())
+
+
+def test_line_not_ready_when_tref_missing():
+    async def main():
+        now = [10 * H + 5]
+        hub, _, _ = make([c(i * H, float(i)) for i in range(5, 10)], now)
+        ln = line_key(2 * H, 100.0, 0.5)  # older than every bar the server holds
+        hub.set_needs({KEY: {ln}})
+        await hub.on_sample("capital", "US100", Sample(now[0], 9.0, None, None))
+        await asyncio.sleep(0)
+        assert not hub.ready(KEY, ln)
+        assert hub.values(KEY, ln, intrabar=False) is None
+    asyncio.run(main())
+
+
+def _fake_tl(n):
+    value = [None] * n
+    slope = [None] * n
+    value[-1], slope[-1] = 50.0, 0.25
+    return {"value": value, "held": [None] * n, "slope": slope, "a1": [None] * n, "a2": [None] * n}
+
+
+def test_trendlines_intrabar_projects_without_recompute(monkeypatch):
+    calls = []
+    real = alert_indicators_mod.compute
+
+    def fake(ind, bars):
+        if ind.indicator != "TRENDLINES":
+            return real(ind, bars)
+        calls.append(len(bars))
+        return _fake_tl(len(bars))
+
+    monkeypatch.setattr(alert_indicators_mod, "compute", fake)
+
+    async def main():
+        now = [60 * H + 5]
+        hub, _, t = make([c(i * H, 1.0) for i in range(0, 60)], now)
+        hub.set_needs({KEY: {TL}})
+        await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None))
+        await asyncio.sleep(0)
+        assert len(calls) == 1
+        t[0] = 5.0
+        assert hub.values(KEY, TL, intrabar=True)["value"] == 50.25
+        assert len(calls) == 1  # no forming-bar recompute
+    asyncio.run(main())
+
+
+def test_trendlines_ready_with_no_line(monkeypatch):
+    monkeypatch.setattr(alert_indicators_mod, "compute",
+                        lambda ind, bars: {k: [None] * len(bars) for k in ("value", "held", "slope", "a1", "a2")})
+
+    async def main():
+        now = [60 * H + 5]
+        hub, _, _ = make([c(i * H, 1.0) for i in range(0, 60)], now)
+        hub.set_needs({KEY: {TL}})
+        await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None))
+        await asyncio.sleep(0)
+        assert hub.ready(KEY, TL)  # an empty pane is "ok", it just never fires
+        assert hub.values(KEY, TL, intrabar=True)["value"] is None
+    asyncio.run(main())

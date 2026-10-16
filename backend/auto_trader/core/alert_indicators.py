@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from auto_trader.core.alert_bars import BarSeries, Roll, Sample, candle_ms
 from auto_trader.core.models import Candle
-from auto_trader.indicators.alertable import SEED_CAP, IndicatorKey, compute, warmup
+from auto_trader.indicators.alertable import SEED_CAP, IndicatorKey, compute, min_bars, sparse, warmup
 
 log = logging.getLogger(__name__)
 
@@ -314,10 +314,14 @@ class IndicatorHub:
 
     def ready(self, key: SeriesKey, ind: IndicatorKey) -> bool:
         st = self._states.get(key)
-        if st is None or not st.ok or len(st.series.closed) < warmup(ind):
+        if st is None or not st.ok or len(st.series.closed) < min_bars(ind):
             return False
         vals = st.closed_vals.get(ind)
-        return vals is not None and all(v is not None for v in vals.values())
+        if vals is None:
+            return False
+        # A sparse indicator (Trendlines with no line drawn) is still ready:
+        # its alert has no level and simply does not fire.
+        return sparse(ind) or all(v is not None for v in vals.values())
 
     def values(self, key: SeriesKey, ind: IndicatorKey, intrabar: bool) -> dict[str, float | None] | None:
         if not self.ready(key, ind):
@@ -325,6 +329,12 @@ class IndicatorHub:
         st = self._states[key]
         if not intrabar:
             return st.closed_vals[ind]
+        if ind.indicator == "TRENDLINES":
+            # The held line (nearest at the last close) one bar on: a
+            # projection, never a forming-bar recompute of the whole detector.
+            closed = st.closed_vals[ind]
+            v, s = closed.get("value"), closed.get("slope")
+            return {**closed, "value": v + s if v is not None and s is not None else None}
         now = self._clock()
         hit = st.intrabar.get(ind)
         if hit is not None and now - hit[0] < _INTRABAR_SECONDS:
@@ -357,3 +367,14 @@ class IndicatorHub:
     def forming_open_ms(self, key: SeriesKey) -> int | None:
         st = self._states.get(key)
         return st.series.forming_open_ms if st else None
+
+    def bars_after(self, key: SeriesKey, t_ms: int) -> int | None:
+        """Closed bars after the one opening at `t_ms`, or None if that bar
+        is not in the series (the `line` kind's rebase reads this)."""
+        st = self._states.get(key)
+        if st is None:
+            return None
+        for back, bar in enumerate(reversed(st.series.closed)):
+            if candle_ms(bar) == t_ms:
+                return back
+        return None
