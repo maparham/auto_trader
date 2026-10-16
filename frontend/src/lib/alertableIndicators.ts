@@ -2,6 +2,7 @@
 // Mirror of backend/auto_trader/indicators/alertable.py: the backend validates
 // on its own (the two deploy separately), and alertableParity.test.ts plus
 // backend/tests/test_indicator_parity.py keep the two definitions identical.
+import { canonicalTrendlinesParams, parseTrendlinesConfig, trendlinesWarmup } from "./indicators/trendlinesOutputs";
 import { normalizeMaKind } from "./mtf";
 import { isNativeTf, parseTf, tfLabel, tryCanonicalTf } from "./timeframe";
 
@@ -54,6 +55,10 @@ export const MAIN_LINE_KEY: Record<AlertIndicator, string> = {
   MA: "ma", RSI: "val", ATR: "atr", TRENDLINES: "tl_nearest",
 };
 
+// Mirrors TRENDLINES_REFUSED_TF in alertable.py: a nearest-line alert
+// recomputes the lines on every close, too often on 1m bars.
+export const TRENDLINES_REFUSED_TF: ReadonlySet<string> = new Set<string>(["MINUTE"]);
+
 const DEFERRED = new Set(["AVWAP", "VWAP", "BOLL", "MACD"]);
 
 export interface IndicatorIdentity {
@@ -96,7 +101,11 @@ function barsToDecay(alpha: number): number {
   return Math.ceil(Math.log(1e-3) / Math.log(1 - alpha));
 }
 
-function warmup(indicator: AlertIndicator, n: number, config: Record<string, string>): number {
+function warmup(indicator: AlertIndicator, calcParams: number[], config: Record<string, string>): number {
+  // Twin of alertable.py min_bars for TRENDLINES (trendlines_warmup): ATR(14)
+  // + two pivot confirms + the min span.
+  if (indicator === "TRENDLINES") return trendlinesWarmup(parseTrendlinesConfig(calcParams));
+  const n = calcParams[0];
   if (indicator === "MA") {
     const kind = config.maType;
     if (kind === "sma" || kind === "vwma") return n;
@@ -134,6 +143,23 @@ export function checkAlertable(
   const e = ext ?? {};
   let indicator: AlertIndicator;
   let config: Record<string, string>;
+  if (type === "TRENDLINES") {
+    // The pane's lines are found on its pin's bars, so the alert lives there.
+    const pin = tryCanonicalTf((e.mtf as { timeframe?: string } | undefined)?.timeframe ?? "");
+    if (pin && pin !== tryCanonicalTf(resolution)) {
+      return { ok: false, reason: "Alerts follow the line's pinned timeframe" };
+    }
+    if (!isNativeTf(resolution)) return { ok: false, reason: "Alerts on this timeframe are coming later" };
+    if (TRENDLINES_REFUSED_TF.has(tryCanonicalTf(resolution) ?? resolution)) {
+      return { ok: false, reason: "Nearest-line alerts need 5m or longer" };
+    }
+    const canonical = canonicalTrendlinesParams(calcParams, e);
+    if (warmup("TRENDLINES", canonical, {}) > MAX_WARMUP) return { ok: false, reason: "Length too long for alerts" };
+    return {
+      ok: true,
+      identity: { indicator: "TRENDLINES", calcParams: canonical, config: {}, priceTarget: true },
+    };
+  }
   if (type === "EMA" || type === "MA") {
     const mtf = e.mtf as { timeframe?: string } | undefined;
     // A pinned line is the plain MA on its pin's bars, so its alert lives on
@@ -168,7 +194,7 @@ export function checkAlertable(
   const n = Math.trunc(Number(calcParams?.[0]) || fallback);
   const [lo, hi] = spec.params[0];
   if (n < lo || n > hi) return { ok: false, reason: `Alerts need a length from ${lo} to ${hi}` };
-  if (warmup(indicator, n, config) > MAX_WARMUP) return { ok: false, reason: "Length too long for alerts" };
+  if (warmup(indicator, [n], config) > MAX_WARMUP) return { ok: false, reason: "Length too long for alerts" };
   return { ok: true, identity: { indicator, calcParams: [n], config, priceTarget: spec.priceTarget } };
 }
 

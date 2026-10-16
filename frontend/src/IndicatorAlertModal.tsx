@@ -55,6 +55,8 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
   existing?: IndicatorAlert; isEdit: boolean; defaults: AlertDefaults; now: number; onClose: () => void;
 }) {
   const common = useAlertCommonState(existing, defaults, now, isEdit);
+  // Nearest-line alerts compare price with the line only.
+  const priceOnly = base.identity.indicator === "TRENDLINES";
   const [target, setTarget] = useState<AlertTarget>(
     existing?.params.target ?? (base.identity.priceTarget ? "price" : "value"),
   );
@@ -122,7 +124,13 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
           <span>Indicator</span>
           <strong>{label}</strong>
         </div>
-        {base.identity.priceTarget && (
+        {priceOnly && (
+          <div className="al-field">
+            <span>History</span>
+            <span>Uses the last 2000 bars</span>
+          </div>
+        )}
+        {base.identity.priceTarget && !priceOnly && (
           <div className="al-field" role="radiogroup" aria-label="Compare">
             <label><input type="radio" aria-label="Price vs line" checked={target === "price"} onChange={() => setTarget("price")} /> Price vs line</label>
             <label><input type="radio" aria-label="Value vs number" checked={target === "value"} onChange={() => setTarget("value")} /> Value vs number</label>

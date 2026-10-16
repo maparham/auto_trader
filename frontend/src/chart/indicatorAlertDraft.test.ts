@@ -48,4 +48,11 @@ describe("buildIndicatorAlertDraft", () => {
     const ind = { name: "OBV", calcParams: [], extendData: {}, result: [] };
     expect(buildIndicatorAlertDraft({ ...args(chartWith(ind)), name: "OBV" })).toBeNull();
   });
+  it("a Trendlines pane drafts a nearest-line alert from tl_nearest", () => {
+    const ind = { name: "TRENDLINES", calcParams: [], extendData: {}, result: [{ tl_nearest: 101.5 }] };
+    const r = buildIndicatorAlertDraft({ ...args(chartWith(ind)), name: "TRENDLINES", paneId: "candle_pane" });
+    expect(r && "draft" in r && r.draft).toMatchObject({
+      lastValue: 101.5, timeframe: "HOUR", identity: { indicator: "TRENDLINES", config: {}, priceTarget: true },
+    });
+  });
 });

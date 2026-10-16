@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { alertTimeframeOf, checkAlertable, indicatorAlertLabel } from "./alertableIndicators";
+import { alertTimeframeOf, checkAlertable, indicatorAlertLabel, type IndicatorIdentity } from "./alertableIndicators";
+import { canonicalTrendlinesParams } from "./indicators/trendlinesOutputs";
 
 describe("checkAlertable", () => {
   it("maps the EMA template to MA/ema with defaults", () => {
@@ -83,5 +84,33 @@ describe("checkAlertable", () => {
   it("labels match the backend wording", () => {
     const r = checkAlertable("ATR", [14], { smoothing: "sma" }, "HOUR", true);
     expect(r.ok && indicatorAlertLabel(r.identity, "HOUR")).toBe("ATR 14 sma (1H)");
+  });
+  it("TRENDLINES alerts on the canonical settings, price only, following its pin", () => {
+    const r = checkAlertable("TRENDLINES", [7], {}, "HOUR", true);
+    expect(r.ok && r.identity).toEqual({
+      indicator: "TRENDLINES", calcParams: canonicalTrendlinesParams([7], {}), config: {}, priceTarget: true,
+    });
+    expect(r.ok && r.identity.calcParams).toHaveLength(33);
+    // A legacy extendData migration lands in the canonical array.
+    const legacy = checkAlertable("TRENDLINES", [], { declutter: "pivot" }, "HOUR", true);
+    expect(legacy.ok && legacy.identity.calcParams[22]).toBe(1);
+    const pinned = checkAlertable("TRENDLINES", [], { mtf: { timeframe: "1D" } }, "HOUR", true);
+    expect(!pinned.ok && "reason" in pinned && pinned.reason).toContain("pinned timeframe");
+    expect(checkAlertable("TRENDLINES", [], { mtf: { timeframe: "1D" } }, "DAY", true).ok).toBe(true);
+    const odd = checkAlertable("TRENDLINES", [], {}, "HOUR_2", true);
+    expect(!odd.ok && "reason" in odd && odd.reason).toBe("Alerts on this timeframe are coming later");
+    expect(indicatorAlertLabel((r as { identity: IndicatorIdentity }).identity, "HOUR")).toBe("Trendlines nearest (1H)");
+  });
+  it("TRENDLINES refuses 1m, like the backend's TRENDLINES_REFUSED_TF", () => {
+    const r = checkAlertable("TRENDLINES", [], {}, "MINUTE", true);
+    expect(!r.ok && "reason" in r && r.reason).toBe("Nearest-line alerts need 5m or longer");
+    expect(checkAlertable("TRENDLINES", [], {}, "MINUTE_5", true).ok).toBe(true);
+  });
+  it("TRENDLINES warm-up is ATR 14 + 2 pivots + min span, capped like the backend", () => {
+    // pivotLen 960: 14 + 2 * 960 + default minSpan > 1950, so refused.
+    const r = checkAlertable("TRENDLINES", [960], {}, "HOUR", true);
+    expect(!r.ok && "reason" in r && r.reason).toBe("Length too long for alerts");
+    // A pivot length well inside the cap stays alertable.
+    expect(checkAlertable("TRENDLINES", [900], {}, "HOUR", true).ok).toBe(true);
   });
 });
