@@ -864,6 +864,10 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         if (!p.link || p.link.scope !== scope || p.timeframe !== resRef.current) continue;
         const ind = getIndicatorById(chart, p.link.instanceId);
         if (!ind || ind.visible === false) continue;
+        // Same check the ray uses: a pane re-pinned to another timeframe
+        // hides both the ray and its bell.
+        const ext = ind.extendData as Record<string, unknown> | undefined;
+        if (alertTimeframeOf(ext, resRef.current) !== p.timeframe) continue;
         times ??= chart.getDataList().map((d) => d.timestamp);
         const v = lineLevelNow(p, times);
         if (v == null || !Number.isFinite(v)) continue;
