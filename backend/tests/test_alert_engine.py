@@ -710,3 +710,123 @@ def test_paused_indicator_alert_reports_no_status(tmp_path):
         await asyncio.sleep(0)
         assert eng.status("u1", "al-i") is None
     asyncio.run(main())
+
+
+import auto_trader.core.alert_engine as alert_engine_mod
+import auto_trader.core.alert_indicators as alert_indicators_mod
+from auto_trader.indicators.trendlines import TL_DEFAULT_PARAMS
+
+
+def line_row(id="al-l", **params):
+    p = {"timeframe": "HOUR", "evalOn": "close", "condition": "crossing_up", "trigger": "every",
+         "tRef": 9 * H, "pRef": 9.5, "slope": 0.5,
+         "anchors": {"t1": 6 * H, "p1": 8.0, "t2": 8 * H, "p2": 9.0},
+         "link": {"scope": "s", "instanceId": "TRENDLINES", "lineKey": "k"}}
+    p.update(params)
+    return {**row(id=id), "kind": "line", "params": p}
+
+
+def test_line_close_mode_fires_on_the_projected_level(tmp_path):
+    async def main():
+        bars = [hourly([10, 10, 10, 9], 6)]  # line 9.5 at 9h, close 9 below
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", line_row())
+        eng.on_alert_changed("u1", created, "al-l")
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=10 * H + 5)
+        await asyncio.sleep(0)
+        bars[0] = hourly([10, 10, 10, 9, 12], 6)  # 10h closes at 12 > 10.0
+        await eng.on_tick("capital", "US100", 12.0, None, None, t_ms=11 * H + 5)
+        fired = [m["value"] for _, m in sent if m["key"] == "__alerts__:fired"]
+        assert len(fired) == 1
+        assert fired[0]["level"] == pytest.approx(10.0) and fired[0]["label"] == "Trendline (1H)"
+    asyncio.run(main())
+
+
+def test_line_rebase_moves_the_reference_and_keeps_last_fired(tmp_path, monkeypatch):
+    monkeypatch.setattr(alert_engine_mod, "LINE_REBASE_BARS", 2)
+
+    async def main():
+        bars = [hourly([10, 10, 10, 9], 6)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", line_row(tRef=7 * H, pRef=8.5))
+        eng.on_alert_changed("u1", created, "al-l")
+        await eng.on_tick("capital", "US100", 9.0, None, None, t_ms=10 * H + 5)
+        await asyncio.sleep(0)
+        eng._last_fired_bar[("u1", "al-l")] = 123
+        bars[0] = hourly([10, 10, 10, 9, 9], 6)  # 10h closes: 3 bars after 7h
+        await eng.on_tick("capital", "US100", 9.0, None, None, t_ms=11 * H + 5)
+        saved = (await store.list_user("u1"))[0]["params"]
+        assert saved["tRef"] == 10 * H and saved["pRef"] == pytest.approx(8.5 + 0.5 * 3)
+        assert eng._last_fired_bar[("u1", "al-l")] == 123
+        assert any(m["key"] == "__alerts__:changed" for _, m in sent)
+    asyncio.run(main())
+
+
+def tl_row(id="al-t", **params):
+    return ind_row(id=id, indicator="TRENDLINES", calcParams=list(TL_DEFAULT_PARAMS), config={},
+                   link={"scope": "s", "instanceId": "TRENDLINES"}, **params)
+
+
+def _patch_tl(monkeypatch, last_value, held):
+    real = alert_indicators_mod.compute
+
+    def fake(ind, bars):
+        if ind.indicator != "TRENDLINES":
+            return real(ind, bars)
+        n = len(bars)
+        out = {k: [None] * n for k in ("value", "held", "slope", "a1", "a2")}
+        out["value"][-2], out["value"][-1] = 100.0, last_value
+        out["held"][-1] = held
+        out["slope"][-1], out["a1"][-1], out["a2"][-1] = -0.1, 3.0, 4.0
+        return out
+
+    monkeypatch.setattr(alert_indicators_mod, "compute", fake)
+
+
+def _sixty(last):
+    return hourly([100.0] * 58 + [99.0] + ([last] if last is not None else []), 0)
+
+
+def test_trendlines_switch_without_cross_does_not_fire(tmp_path, monkeypatch):
+    _patch_tl(monkeypatch, last_value=99.0, held=100.2)
+
+    async def main():
+        bars = [_sixty(None)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", tl_row())
+        eng.on_alert_changed("u1", created, "al-t")
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=59 * H + 5)
+        await asyncio.sleep(0)
+        bars[0] = _sixty(99.5)  # below the old line (100.2), above the new one (99.0)
+        await eng.on_tick("capital", "US100", 99.5, None, None, t_ms=60 * H + 5)
+        assert not [m for _, m in sent if m["key"] == "__alerts__:fired"]
+    asyncio.run(main())
+
+
+def test_trendlines_cross_of_the_held_line_fires(tmp_path, monkeypatch):
+    _patch_tl(monkeypatch, last_value=99.0, held=100.2)
+
+    async def main():
+        bars = [_sixty(None)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", tl_row())
+        eng.on_alert_changed("u1", created, "al-t")
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=59 * H + 5)
+        await asyncio.sleep(0)
+        bars[0] = _sixty(100.5)
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 5)
+        fired = [m["value"] for _, m in sent if m["key"] == "__alerts__:fired"]
+        assert len(fired) == 1 and fired[0]["level"] == pytest.approx(100.2)
+    asyncio.run(main())
+
+
+def test_trendlines_intrabar_baseline_resets_on_a_held_line_switch(tmp_path, monkeypatch):
+    async def main():
+        eng, store, _, _ = make_engine(tmp_path)
+        state = ("u1", "al-t")
+        eng._baseline[state] = (99.0, 100.0)
+        eng._level_sig[state] = (1.0, 2.0)
+        assert eng._reset_on_level_switch(state, (3.0, 4.0)) is True
+        assert eng._baseline[state] is None
+        assert eng._reset_on_level_switch(state, (3.0, 4.0)) is False
+    asyncio.run(main())

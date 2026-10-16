@@ -38,7 +38,7 @@ import logging
 import time
 from typing import Any, Awaitable, Callable
 
-from auto_trader.core.alert_bars import Sample, period_start
+from auto_trader.core.alert_bars import Sample, candle_ms, period_start
 from auto_trader.core.alert_eval import Pair, evaluate_alert
 from auto_trader.core.alert_indicators import IndicatorHub, Loader, SeriesKey
 from auto_trader.core.alert_kinds import AlertKind, kind_of
@@ -66,6 +66,10 @@ STREAM_STALE_SECONDS = 300.0
 # bar before _feed_loop stops retrying streaming and falls back to polling
 # for one backoff cycle.
 _STREAM_FAILURE_THRESHOLD = 2
+
+# A `line` alert's reference bar rolls forward once it is this many bars
+# behind the newest close, so it never leaves the 2000-bar seed.
+LINE_REBASE_BARS = 1000
 
 
 def _is_broker_paused(exc: BaseException) -> bool:
@@ -107,6 +111,9 @@ class AlertEngine:
         self._status_sent: dict[tuple[str, str], str] = {}
         self._status_task: asyncio.Task | None = None
         self._sig: dict[tuple[str, str], str] = {}
+        # Held-line signature per alert (nearest-trendline alerts): a change
+        # at a close drops the intrabar baseline so a switch is never a cross.
+        self._level_sig: dict[tuple[str, str], tuple | None] = {}
 
         # price-side cache: user_id -> (side, cached_at_monotonic)
         self._price_side_cache: dict[str, tuple[str, float]] = {}
@@ -173,6 +180,7 @@ class AlertEngine:
         self._status_seen.clear()
         self._status_sent.clear()
         self._baseline.clear()
+        self._level_sig.clear()
         self._sig.clear()
         self._price_side_cache.clear()
         self._snoozed.clear()
@@ -474,7 +482,16 @@ class AlertEngine:
         self._status_sent.pop(state_key, None)
         self._baseline.pop(state_key, None)
         self._sig.pop(state_key, None)
+        self._level_sig.pop(state_key, None)
         self._snoozed.pop(state_key, None)
+
+    def _reset_on_level_switch(self, state_key: tuple[str, str], sig: tuple | None) -> bool:
+        """Drop the intrabar baseline when the watched line changed."""
+        if sig == self._level_sig.get(state_key):
+            return False
+        self._level_sig[state_key] = sig
+        self._baseline[state_key] = None
+        return True
 
     # ---- snooze (Telegram inline button) ----
 
@@ -735,6 +752,7 @@ class AlertEngine:
                 continue
             try:
                 await self._evaluate_one(user_id, row, mid, bid, ask, t_ms, now_ms, closed)
+                await self._maybe_rebase_line(user_id, row, closed)
             except Exception:
                 # One bad alert must not stop every other alert on this feed
                 # (an escaping error backs the whole feed task off).
@@ -776,8 +794,7 @@ class AlertEngine:
             last, before = self._hub.last_closed(skey), self._hub.prev_closed(skey)
             vals = self._hub.values(skey, ind, intrabar=False)
             pvals = self._hub.prev_values(skey, ind)
-            cur = kind.resolve(params, last.close, vals) if last and vals else None
-            prev = kind.resolve(params, before.close, pvals) if before and pvals else None
+            cur, prev = kind.resolve_close(params, last, before, vals, pvals)
             if cur is None:
                 return
             record_price = last.close
@@ -789,6 +806,7 @@ class AlertEngine:
                 if vals is None:
                     self._baseline[state_key] = None  # no stale pair across a gap
                     return
+                self._reset_on_level_switch(state_key, kind.level_sig(params, vals))
             cur = kind.resolve(params, price, vals)
             if cur is None:
                 return
@@ -810,6 +828,36 @@ class AlertEngine:
             await self._fire(user_id, row, record_price, cur, kind, t_ms)
         if result.remove:
             await self._delete_and_forget(user_id, row)
+
+    async def _maybe_rebase_line(self, user_id: str, row: dict, closed: set[SeriesKey]) -> None:
+        """Roll a `line` alert's reference bar forward once it is more than
+        LINE_REBASE_BARS behind the newest close: one multiply from the
+        stored reference, persisted, then the hub need swapped in place.
+        sig excludes tRef/pRef, so baseline and last-fired bar survive."""
+        if row.get("kind") != "line" or self._hub is None or not row.get("active", 1):
+            return
+        kind = kind_of(row)
+        if kind is None:
+            return
+        skey = self._series_key(user_id, row, kind)
+        if skey not in closed:
+            return
+        p = row["params"]
+        n = self._hub.bars_after(skey, int(p["tRef"]))
+        last = self._hub.last_closed(skey)
+        if n is None or n <= LINE_REBASE_BARS or last is None:
+            return
+        assert self._store is not None and self._broadcast is not None
+        patch = {"tRef": candle_ms(last), "pRef": p["pRef"] + p["slope"] * n}
+        saved = await self._store.update(user_id, row["id"], {"params": patch})
+        if saved is None:
+            return
+        row["params"] = saved["params"]  # the registry holds this same dict
+        self._safe_sync_needs()
+        await self._broadcast(user_id, {
+            "key": "__alerts__:changed",
+            "value": {"broker": row["broker"], "epic": row["epic"], "origin": "engine"},
+        })
 
     async def _expire_one(self, user_id: str, row: dict) -> None:
         await self._delete_and_forget(user_id, row)
