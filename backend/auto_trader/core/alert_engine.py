@@ -46,7 +46,7 @@ from auto_trader.core.alert_kinds import AlertKind, kind_of
 from auto_trader.core.alert_store import AlertStore
 from auto_trader.core.models import Candle
 from auto_trader.core.state_store import STATE_STORE
-from auto_trader.indicators.alertable import IndicatorKey
+from auto_trader.indicators.alert_series import IndicatorKey
 
 log = logging.getLogger(__name__)
 

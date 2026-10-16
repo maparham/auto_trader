@@ -13,9 +13,10 @@ from auto_trader.core import timeframe as _tf
 from auto_trader.core.alert_bars import alert_resolution
 from auto_trader.core.alert_eval import Pair
 from auto_trader.core.models import Candle
-from auto_trader.indicators.alertable import (
-    TRENDLINES_REFUSED_TF, IndicatorKey, indicator_label, line_key, validate_indicator, volume_weighted,
-)
+from auto_trader.indicators.alert_series import MAX_WARMUP, IndicatorKey, config_json, config_of, key_of, line_key
+from auto_trader.indicators.alert_specs import ALERT_SPECS, EVENT_LEVEL
+from auto_trader.indicators.registry import SERIES_INDICATORS
+from auto_trader.indicators.trendlines import TL_NEAREST
 
 CONDITIONS = frozenset({"crossing", "crossing_up", "crossing_down", "greater", "less"})
 TRIGGERS = frozenset({"once", "every"})
@@ -118,17 +119,101 @@ class PriceLevelKind:
         return {}
 
 
+_LEGACY = {
+    # old indicator -> (type, extendData from old config, output from length)
+    "MA": ("MA", lambda c: {"maType": c.get("maType", "sma"), "source": c.get("source", "close")}, lambda n: "ma"),
+    "RSI": ("RSI", lambda c: {"source": c.get("source", "close")}, lambda n: "value"),
+    "ATR": ("ATR", lambda c: {"smoothing": c.get("smoothing", "rma")}, lambda n: str(n)),
+    "TRENDLINES": ("TRENDLINES", lambda c: {}, lambda n: TL_NEAREST),
+}
+
+
+def upgrade_params(params: dict) -> dict:
+    """Old `{indicator, calcParams, config, line}` indicator params -> the
+    registry shape. New-shape params come back unchanged. Used by the store
+    migration, by re-arm from triggered history, and by the engine for any
+    row it reads."""
+    if "indicator" not in params:
+        return params
+    legacy = _LEGACY.get(params["indicator"])
+    if legacy is None:
+        raise ValueError(f"params.indicator {params['indicator']!r} is not alertable")
+    type_, ext_of, out_of = legacy
+    calc = list(params.get("calcParams") or [])
+    ext = ext_of(params.get("config") or {})
+    cfg = SERIES_INDICATORS[type_].parse_config(calc, ext)
+    new = {k: v for k, v in params.items() if k not in ("indicator", "calcParams", "config", "line")}
+    new.update(type=type_, config=json.loads(config_json(cfg)), output=out_of(int(calc[0]) if calc else 0))
+    return new
+
+
+def _parsed(params: dict) -> tuple[str, Any]:
+    """(type, parsed config) from `instance` (consumed) or the stored pair."""
+    inst = params.pop("instance", None)
+    if inst is not None:
+        if not isinstance(inst, dict):
+            raise ValueError("params.instance must be {type, calcParams, extendData}")
+        type_ = inst.get("type")
+        if type_ not in ALERT_SPECS:
+            raise ValueError(f"params.instance.type {type_!r} is not alertable")
+        cfg = SERIES_INDICATORS[type_].parse_config(inst.get("calcParams"), inst.get("extendData"))
+        params["type"], params["config"] = type_, json.loads(config_json(cfg))
+        return type_, cfg
+    type_ = params.get("type")
+    if type_ not in ALERT_SPECS or not isinstance(params.get("config"), dict):
+        raise ValueError("params.instance is required")
+    try:
+        return type_, config_of(type_, json.dumps(params["config"], sort_keys=True, allow_nan=False))
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(f"params.config is not a valid {type_} config") from None
+
+
 class IndicatorKind:
+    @staticmethod
+    def refusal_for(type_: str, cfg: Any, timeframe: str) -> str | None:
+        """Why an alert on this pane at this timeframe is refused, or None.
+        Shared by validate and /api/alerts/describe."""
+        try:
+            canon = _tf.canonicalize(timeframe)
+        except _tf.TimeframeError:
+            canon = None
+        if canon is None or not _tf.is_native(canon):
+            return "Alerts on this timeframe are coming later"
+        return ALERT_SPECS[type_].refusal(cfg, canon)
+
     def validate(self, params: dict, streams: Callable[[], bool]) -> None:
-        params["config"] = validate_indicator(
-            params.get("indicator"), params.get("calcParams"), params.get("config", {}),
-            params.get("line"), params.get("target"),
-        )
+        params.update(upgrade_params(params))
+        for stale in ("indicator", "calcParams", "line"):
+            params.pop(stale, None)
+        type_, cfg = _parsed(params)
+        spec, alert = SERIES_INDICATORS[type_], ALERT_SPECS[type_]
+        outs = alert.outputs(cfg)
+        out = params.get("output")
+        if out not in outs:
+            raise ValueError(f"params.output must be one of {sorted(outs)}")
+        pin = spec.timeframe(cfg)
+        if pin:
+            params["timeframe"] = pin
+        o = outs[out]
+        if o.kind == "event":
+            if params.get("evalOn") == "intrabar":
+                raise ValueError("params.evalOn: event alerts fire on a closed bar, not intrabar")
+            params.update(target="value", value=EVENT_LEVEL, condition="crossing_up", evalOn="close")
         _validate_common(params)
         _validate_series_params(params)
-        if params["indicator"] == "TRENDLINES" and params["timeframe"] in TRENDLINES_REFUSED_TF:
-            raise ValueError("params.timeframe: nearest-line alerts need 5m or longer")
-        if params["target"] == "value":
+        reason = self.refusal_for(type_, cfg, params["timeframe"])
+        if reason:
+            raise ValueError(reason)
+        if spec.warmup(cfg, out) > MAX_WARMUP:
+            raise ValueError("params: length too long for alerts")
+        target = params.get("target")
+        if target not in ("price", "value"):
+            raise ValueError("params.target must be 'price' or 'value'")
+        if o.price_only and target != "price":
+            raise ValueError("params.target must be 'price' for this output")
+        if target == "price" and not o.price_scale:
+            raise ValueError("params.target 'price' needs an output on the price axis")
+        if target == "value":
             if not _finite_number(params.get("value")):
                 raise ValueError("params.value must be a finite number")
         else:
@@ -140,8 +225,7 @@ class IndicatorKind:
             and isinstance(link.get("instanceId"), str) and 0 < len(link["instanceId"]) <= 64
         ):
             raise ValueError("params.link must be {scope, instanceId} strings or null")
-        key = IndicatorKey.of(params)
-        if params["evalOn"] == "intrabar" and volume_weighted(key) and not streams():
+        if params["evalOn"] == "intrabar" and alert.needs_volume(cfg) and not streams():
             raise ValueError(
                 "params.evalOn 'intrabar' needs live volume; this broker only has quotes"
             )
@@ -153,18 +237,21 @@ class IndicatorKind:
         return params["evalOn"]
 
     def indicator_key(self, params: dict) -> IndicatorKey:
-        return IndicatorKey.of(params)
+        return key_of(upgrade_params(params))
 
     def resolve(self, params, price, values):
-        line = (values or {}).get(params["line"])
+        line = (values or {}).get("value")
         if line is None or not math.isfinite(line):
             return None
         if params["target"] == "price":
             return (price, line)
         return (line, params["value"])
 
+    def _held_line(self, params: dict) -> bool:
+        return ALERT_SPECS[upgrade_params(params)["type"]].side_series is not None
+
     def resolve_close(self, params, last, before, vals, pvals):
-        if params.get("indicator") != "TRENDLINES":
+        if not self._held_line(params):
             return _resolve_close_default(self, params, last, before, vals, pvals)
         # The line nearest at the previous close, at both bars: `held` is it
         # projected to this bar, the previous `value` is it at its own bar.
@@ -176,17 +263,19 @@ class IndicatorKind:
         return cur, prev
 
     def level_sig(self, params, values):
-        if params.get("indicator") != "TRENDLINES" or not values:
+        if not values or not self._held_line(params):
             return None
         return (values.get("a1"), values.get("a2"))
 
     def label(self, params: dict) -> str:
-        return f"{indicator_label(IndicatorKey.of(params))} ({_tf.label(params['timeframe'])})"
+        p = upgrade_params(params)
+        cfg = config_of(p["type"], json.dumps(p["config"], sort_keys=True, allow_nan=False))
+        return f"{ALERT_SPECS[p['type']].label(cfg, p['output'])} ({_tf.label(p['timeframe'])})"
 
     def sig(self, params: dict) -> str:
-        keys = ("indicator", "calcParams", "config", "line", "target", "value",
-                "timeframe", "evalOn", "condition", "trigger")
-        return json.dumps({k: params.get(k) for k in keys}, sort_keys=True)
+        p = upgrade_params(params)
+        keys = ("type", "config", "output", "target", "value", "timeframe", "evalOn", "condition", "trigger")
+        return json.dumps({k: p.get(k) for k in keys}, sort_keys=True)
 
     def payload_extras(self, params: dict, pair: Pair) -> dict:
         return {

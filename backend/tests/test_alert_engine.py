@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import pytest
 
 from auto_trader.core.alert_engine import AlertEngine
+from auto_trader.core.alert_kinds import upgrade_params
 from auto_trader.core.alert_store import AlertStore
 from auto_trader.core.models import Candle
 
@@ -412,7 +413,7 @@ def ind_row(id="al-i", **params):
          "condition": "crossing_up", "trigger": "every", "evalOn": "close",
          "link": {"scope": "s", "instanceId": "MA"}}
     p.update(params)
-    return {**row(id=id), "kind": "indicator", "params": p}
+    return {**row(id=id), "kind": "indicator", "params": upgrade_params(p)}
 
 
 def hourly(closes, start_h):
@@ -897,7 +898,7 @@ def test_trendlines_intrabar_held_line_switch_end_to_end(tmp_path, monkeypatch):
     _patch_tl_by_len(monkeypatch, {59: (100.0, 1.0, 2.0), 60: (95.0, 3.0, 4.0)})
     # Inline compute here: off-loop, the close tick finds the series not
     # ready and drops the baseline anyway, which would hide a missing reset.
-    monkeypatch.setattr(alert_indicators_mod, "_OFF_LOOP", frozenset())
+    monkeypatch.setattr(alert_indicators_mod, "_off_loop", lambda ind: False)
 
     async def main():
         bars = [_sixty(None)]

@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from auto_trader.core.models import Candle
-from auto_trader.indicators.alertable import ALERTABLE, IndicatorKey, compute
 from auto_trader.indicators.core import (
     atr_series,
     atr_smoothed_series,
@@ -291,33 +290,3 @@ def test_edge_cases():
     assert rsi_series([1.0] * 5, 14) == [None] * 5  # n <= period -> all None
     assert atr_series([], 14) == []
 
-
-# Alertable indicator registry parity: Python matches the chart.
-# The alertable registry is identical on both sides, and every alertable
-# indicator's values equal the frontend's (written by
-# frontend/src/lib/alertableParity.test.ts with UPDATE_PARITY=1).
-
-
-def test_alertable_registry_matches_frontend():
-    assert json.loads((Path(__file__).parent / "fixtures" / "indicator_parity" / "alertable.json").read_text()) == ALERTABLE
-
-
-_ALERTABLE_VALUES = json.loads(
-    (Path(__file__).parent / "fixtures" / "indicator_parity" / "values.json").read_text()
-)
-_ALERTABLE_CANDLES = [
-    Candle(datetime.fromtimestamp(t / 1000, tz=timezone.utc), o, h, l, c, v)
-    for t, o, h, l, c, v in _ALERTABLE_VALUES["candles"]
-]
-
-
-@pytest.mark.parametrize("case", _ALERTABLE_VALUES["cases"], ids=lambda c: f"{c['indicator']}-{c['config']}")
-def test_alertable_values_match_frontend(case):
-    key = IndicatorKey(case["indicator"], tuple(case["calcParams"]), tuple(sorted(case["config"].items())))
-    got = compute(key, _ALERTABLE_CANDLES)["value"]
-    assert len(got) == len(case["values"])
-    for i, (g, want) in enumerate(zip(got, case["values"])):
-        if want is None:
-            assert g is None, i
-        else:
-            assert g == pytest.approx(want, rel=1e-9, abs=1e-12), i

@@ -5,11 +5,20 @@ import auto_trader.core.alert_indicators as alert_indicators_mod
 from auto_trader.core.alert_bars import Sample
 from auto_trader.core.alert_indicators import IndicatorHub
 from auto_trader.core.models import Candle
-from auto_trader.indicators.alertable import IndicatorKey
+from auto_trader.core.alert_kinds import upgrade_params
+from auto_trader.indicators.alert_series import SEED_CAP, key_of
 
 H = 3_600_000
-SMA3 = IndicatorKey("MA", (3,), (("maType", "sma"), ("source", "close")))
-SMA5 = IndicatorKey("MA", (5,), (("maType", "sma"), ("source", "close")))
+
+
+def ind_key(indicator, calc, config=None):
+    return key_of(upgrade_params({
+        "indicator": indicator, "calcParams": list(calc), "config": config or {}, "timeframe": "HOUR",
+    }))
+
+
+SMA3 = ind_key("MA", (3,), {"maType": "sma", "source": "close"})
+SMA5 = ind_key("MA", (5,), {"maType": "sma", "source": "close"})
 KEY = ("capital", "US100", "HOUR", "mid")
 
 
@@ -42,7 +51,7 @@ def test_seed_then_values_ready():
         hub.set_needs({KEY: {SMA3}})
         await hub.on_sample("capital", "US100", Sample(now[0], 10.0, None, None))
         await asyncio.sleep(0)  # let the backgrounded first seed (F17) run
-        assert loader.calls[0] == 3 + 50  # warmup + margin
+        assert loader.calls[0] == SEED_CAP  # every series seeds to the cap
         assert hub.values(KEY, SMA3, intrabar=False) == {"value": (7 + 8 + 9) / 3}
         assert hub.ready(KEY, SMA3)
     asyncio.run(main())
@@ -203,7 +212,15 @@ def test_first_seed_retry_is_gated_not_spammed_on_every_sample():
     asyncio.run(main())
 
 
-def test_growth_reseed_still_reports_a_close_on_the_current_series():
+def _per_need_warmup(monkeypatch):
+    # Every series now seeds to the cap, so adding an indicator never grows
+    # the warm-up on its own. Pin a per-need warm-up (3 for SMA3, 5 for SMA5)
+    # so the growth-reseed path these tests cover is still exercised.
+    monkeypatch.setattr(alert_indicators_mod, "warmup", alert_indicators_mod.min_bars)
+
+
+def test_growth_reseed_still_reports_a_close_on_the_current_series(monkeypatch):
+    _per_need_warmup(monkeypatch)
     # Adding an indicator that needs more warm-up than the series currently
     # has must not swallow a close that lands while the growth reseed is in
     # flight: the CLOSED refresh keeps running against the already-good
@@ -233,7 +250,8 @@ def test_growth_reseed_still_reports_a_close_on_the_current_series():
     asyncio.run(main())
 
 
-def test_growth_reseed_failure_keeps_series_ok_and_reports_close():
+def test_growth_reseed_failure_keeps_series_ok_and_reports_close(monkeypatch):
+    _per_need_warmup(monkeypatch)
     # A growth reseed's fetch can fail (e.g. a transient broker error)
     # without taking the whole series offline: it already has valid closed
     # bars for its EXISTING needs, so a close in that window must still be
@@ -283,7 +301,8 @@ def test_growth_reseed_failure_keeps_series_ok_and_reports_close():
     asyncio.run(main())
 
 
-def test_growth_reseed_skips_a_stale_fetch_that_lands_after_a_fresher_refresh():
+def test_growth_reseed_skips_a_stale_fetch_that_lands_after_a_fresher_refresh(monkeypatch):
+    _per_need_warmup(monkeypatch)
     # A slow growth seed's fetch can land AFTER a faster inline close
     # refresh already moved the tail forward. Applying the slow fetch
     # wholesale would walk last_closed backwards and undo that refresh, so
@@ -576,10 +595,10 @@ def test_gap_close_detection_is_broker_offset_safe():
     asyncio.run(main())
 
 
-from auto_trader.indicators.alertable import line_key  # noqa: E402
+from auto_trader.indicators.alert_series import line_key  # noqa: E402
 from auto_trader.indicators.trendlines import TL_DEFAULT_PARAMS  # noqa: E402
 
-TL = IndicatorKey("TRENDLINES", tuple(TL_DEFAULT_PARAMS), ())
+TL = ind_key("TRENDLINES", TL_DEFAULT_PARAMS)
 
 
 def test_line_values_and_bars_after():

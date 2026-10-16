@@ -1,9 +1,12 @@
+import json
 from datetime import datetime, timezone
 
 import pytest
 
-from auto_trader.core.alert_kinds import INDICATOR, KINDS, LINE, PRICE_LEVEL, kind_of
+from auto_trader.core.alert_kinds import INDICATOR, KINDS, LINE, PRICE_LEVEL, kind_of, upgrade_params
 from auto_trader.core.models import Candle
+from auto_trader.indicators.alert_series import config_json
+from auto_trader.indicators.registry import SERIES_INDICATORS
 from auto_trader.indicators.trendlines import TL_DEFAULT_PARAMS
 
 STREAMS = lambda: True  # noqa: E731
@@ -18,7 +21,7 @@ def ind_params(**kw):
         "link": {"scope": "tab.t1.cell.c2", "instanceId": "EMA"},
     }
     p.update(kw)
-    return p
+    return upgrade_params(p)
 
 
 def test_registry_has_both_kinds():
@@ -39,7 +42,7 @@ def test_indicator_validate_canonicalizes():
     p = ind_params(timeframe="1H")
     INDICATOR.validate(p, STREAMS)
     assert p["timeframe"] == "HOUR"
-    assert p["config"] == {"maType": "ema", "source": "close"}
+    assert (p["type"], p["config"]["ma_type"], p["config"]["source"]) == ("MA", "ema", "close")
 
 
 @pytest.mark.parametrize("override,msg", [
@@ -75,7 +78,7 @@ def test_indicator_label_and_sig():
     p = ind_params()
     INDICATOR.validate(p, STREAMS)
     assert INDICATOR.label(p) == "EMA 50 (1H)"
-    q = dict(p, calcParams=[100])
+    q = dict(p, config={**p["config"], "length": 100})
     assert INDICATOR.sig(p) != INDICATOR.sig(q)
 
 
@@ -173,3 +176,109 @@ def test_no_line_drawn_means_no_level():
     assert LINE.resolve(q, 101.0, {"value": float("inf")}) is None
     assert LINE.resolve(q, 101.0, None) is None
     assert LINE.resolve_close(q, bar(101.0), bar(99.0), {"value": None}, {"value": None}) == (None, None)
+
+
+def _new(type_="RSI", calc=(14,), ext=None, output="value", **kw):
+    p = {
+        "instance": {"type": type_, "calcParams": list(calc), "extendData": ext or {}},
+        "output": output, "timeframe": "HOUR", "target": "value", "value": 70.0,
+        "evalOn": "close", "condition": "crossing", "trigger": "once", "link": None,
+    }
+    p.update(kw)
+    return p
+
+
+def test_instance_is_parsed_and_dropped():
+    p = _new(ext={"source": "hl2", "hideLegendValue": True})
+    INDICATOR.validate(p, lambda: True)
+    assert "instance" not in p and p["type"] == "RSI"
+    cfg = SERIES_INDICATORS["RSI"].parse_config([14], {"source": "hl2"})
+    assert p["config"] == json.loads(config_json(cfg))
+
+
+def test_output_must_exist():
+    with pytest.raises(ValueError, match="params.output"):
+        INDICATOR.validate(_new("MA", (20,), {}, "smoothingMa", target="price"), lambda: True)
+
+
+def test_unregistered_type_is_refused():
+    with pytest.raises(ValueError, match="not alertable"):
+        INDICATOR.validate(_new("BOLL", (20,), {}, "up"), lambda: True)
+
+
+def test_pin_sets_the_alert_timeframe():
+    p = _new("MA", (20,), {"mtf": {"timeframe": "HOUR_4"}}, "ma", target="price")
+    INDICATOR.validate(p, lambda: True)
+    assert p["timeframe"] == "HOUR_4"
+
+
+def test_event_output_is_stored_as_a_cross_up():
+    p = _new(output="bullDiv", condition="greater", value=3.0)
+    INDICATOR.validate(p, lambda: True)
+    assert (p["target"], p["value"], p["condition"], p["evalOn"]) == ("value", 0.5, "crossing_up", "close")
+    with pytest.raises(ValueError, match="intrabar"):
+        INDICATOR.validate(_new(output="bullDiv", evalOn="intrabar"), lambda: True)
+
+
+def test_price_target_needs_a_price_scale_output():
+    with pytest.raises(ValueError, match="target"):
+        INDICATOR.validate(_new(target="price"), lambda: True)
+    with pytest.raises(ValueError, match="target"):
+        INDICATOR.validate(_new("TRENDLINES", (), {}, "tl_nearest", target="value"), lambda: True)
+
+
+def test_volume_weighted_intrabar_needs_streaming():
+    p = _new("MA", (20,), {"maType": "vwma"}, "ma", target="price", evalOn="intrabar")
+    with pytest.raises(ValueError, match="live volume"):
+        INDICATOR.validate(p, lambda: False)
+
+
+def test_trendlines_instance_refuses_one_minute():
+    with pytest.raises(ValueError, match="5m"):
+        INDICATOR.validate(_new("TRENDLINES", (), {}, "tl_nearest", target="price", timeframe="MINUTE"), lambda: True)
+
+
+def test_sig_ignores_spelling_and_unknown_keys():
+    a, b = _new(calc=(14,), ext={"x": 1}), _new(calc=(14.0,))
+    INDICATOR.validate(a, lambda: True)
+    INDICATOR.validate(b, lambda: True)
+    assert INDICATOR.sig(a) == INDICATOR.sig(b)
+
+
+def test_stored_params_revalidate_without_instance():
+    p = _new()
+    INDICATOR.validate(p, lambda: True)
+    again = dict(p)
+    INDICATOR.validate(again, lambda: True)
+    assert again == p
+
+
+@pytest.mark.parametrize("old,type_,output", [
+    ({"indicator": "MA", "calcParams": [20], "config": {"maType": "ema", "source": "hl2"}}, "MA", "ma"),
+    ({"indicator": "RSI", "calcParams": [14], "config": {"source": "close"}}, "RSI", "value"),
+    ({"indicator": "ATR", "calcParams": [14], "config": {"smoothing": "ema"}}, "ATR", "14"),
+])
+def test_upgrade_params(old, type_, output):
+    common = {"line": "value", "timeframe": "HOUR", "target": "value", "value": 1.0, "evalOn": "close",
+              "condition": "crossing", "trigger": "once", "link": {"scope": "s", "instanceId": "X"}}
+    new = upgrade_params({**old, **common})
+    assert new["type"] == type_ and new["output"] == output
+    assert not {"indicator", "calcParams", "line"} & set(new)
+    assert new["link"] == common["link"] and new["timeframe"] == "HOUR"
+    assert upgrade_params(new) == new
+
+
+def test_upgrade_unknown_legacy_indicator_is_a_value_error():
+    with pytest.raises(ValueError, match="not alertable"):
+        upgrade_params({"indicator": "BOLL", "calcParams": [20], "config": {}})
+
+
+def test_step_level_close_cross_is_prev_close_vs_prev_value():
+    from datetime import datetime, timezone
+    from auto_trader.core.models import Candle
+    p = _new("SR_LEVELS", (), {}, "support", target="price", value=None)
+    INDICATOR.validate(p, lambda: True)
+    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    before, last = Candle(t, 10, 10, 10, 10.0, 1), Candle(t, 9, 9, 9, 9.0, 1)
+    cur, prev = INDICATOR.resolve_close(p, last, before, {"value": 9.5}, {"value": 8.0})
+    assert cur == (9.0, 9.5) and prev == (10.0, 8.0)

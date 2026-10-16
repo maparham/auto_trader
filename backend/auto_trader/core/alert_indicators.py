@@ -5,7 +5,7 @@ CANDLE_CACHE.recent, the path the charts read), so the server sees the bars
 the chart sees. A degraded or failed refresh leaves the previous close in
 place and marks the series not ready; no alert evaluates a closed bar built
 from live samples. Values are the existing batch functions (via
-indicators.alertable.compute); intrabar recomputes with the forming bar
+indicators.alert_series.compute); intrabar recomputes with the forming bar
 appended, at most once a second per (series, indicator).
 
 The Trendlines detector is the one expensive compute (hundreds of ms over a
@@ -24,7 +24,9 @@ from dataclasses import dataclass, field
 
 from auto_trader.core.alert_bars import BarSeries, Roll, Sample, candle_ms
 from auto_trader.core.models import Candle
-from auto_trader.indicators.alertable import SEED_CAP, IndicatorKey, compute, min_bars, sparse, warmup
+from auto_trader.indicators.alert_series import (
+    SEED_CAP, IndicatorKey, compute, heavy, min_bars, projects_intrabar, sparse, warmup,
+)
 
 log = logging.getLogger(__name__)
 
@@ -36,12 +38,11 @@ _RETRY_SECONDS = 5.0
 _INTRABAR_SECONDS = 1.0
 # Indicators whose closed values are computed off the event loop, on their
 # own small pool so aligned closes cannot starve the default executor's I/O.
-_OFF_LOOP = frozenset({"TRENDLINES"})
 _OFF_LOOP_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tl-compute")
 
 
 def _off_loop(ind: IndicatorKey) -> bool:
-    return ind.indicator in _OFF_LOOP
+    return heavy(ind)
 
 
 def _has_loop() -> bool:
@@ -470,12 +471,15 @@ class IndicatorHub:
         st = self._states[key]
         if not intrabar:
             return st.closed_vals[ind]
-        if ind.indicator == "TRENDLINES":
+        if projects_intrabar(ind):
             # The held line (nearest at the last close) one bar on: a
             # projection, never a forming-bar recompute of the whole detector.
             closed = st.closed_vals[ind]
             v, s = closed.get("value"), closed.get("slope")
             return {**closed, "value": v + s if v is not None and s is not None else None}
+        if heavy(ind):
+            # Step levels that move only on a close: the last close's value.
+            return st.closed_vals[ind]
         now = self._clock()
         hit = st.intrabar.get(ind)
         if hit is not None and now - hit[0] < _INTRABAR_SECONDS:

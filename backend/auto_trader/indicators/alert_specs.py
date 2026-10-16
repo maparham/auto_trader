@@ -114,7 +114,7 @@ def _tl_side(cfg: Any, output: str, candles: Sequence[Candle]) -> dict[str, list
     """value: the nearest line at bar i. held: the line nearest at bar i-1,
     projected to bar i (a close-mode cross is judged against it). slope /
     a1 / a2: that line's slope per bar and anchor open times, so intrabar can
-    project it and the engine can tell a switch. Moved from alertable.py."""
+    project it and the engine can tell a switch."""
     n = len(candles)
     nearest: list[TrendLine | None] = [None] * n
     points, _ = compute_trendlines(candles, cfg, nearest_out=nearest)

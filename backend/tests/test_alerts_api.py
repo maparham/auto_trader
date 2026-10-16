@@ -311,9 +311,16 @@ def _ind_body(**params):
 
 
 def test_indicator_create_round_trip(clerk):
+    # An old-shape POST (an old frontend tab during deploy) is stored in the
+    # registry shape.
     r = client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
     assert r.status_code == 200, r.text
-    assert r.json()["params"]["config"] == {"maType": "ema", "source": "close"}
+    params = r.json()["params"]
+    assert (params["type"], params["output"]) == ("MA", "ma")
+    assert (params["config"]["length"], params["config"]["ma_type"], params["config"]["source"]) == (50, "ema", "close")
+    assert not {"indicator", "calcParams", "line"} & set(params)
+    stored = client.get("/api/alerts", headers=_auth("alice")).json()["alerts"][0]["params"]
+    assert stored == params
 
 
 def test_duplicate_indicator_alert_409(clerk):
@@ -340,16 +347,13 @@ def test_deferred_indicator_422(clerk):
 
 def test_indicator_patch_validates_merged_params(clerk):
     client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
-    r = client.patch("/api/alerts/al-ind", json={"params": {"calcParams": [100]}}, headers=_auth("alice"))
-    assert r.status_code == 200 and r.json()["params"]["calcParams"] == [100]
-    r = client.patch("/api/alerts/al-ind", json={"params": {"calcParams": [0]}}, headers=_auth("alice"))
+    inst = {"type": "MA", "calcParams": [100], "extendData": {"maType": "ema"}}
+    r = client.patch("/api/alerts/al-ind", json={"params": {"instance": inst}}, headers=_auth("alice"))
+    assert r.status_code == 200 and r.json()["params"]["config"]["length"] == 100
+    assert "instance" not in r.json()["params"]
+    bad = {"type": "BOLL", "calcParams": [20, 2], "extendData": {}}
+    r = client.patch("/api/alerts/al-ind", json={"params": {"instance": bad}}, headers=_auth("alice"))
     assert r.status_code == 422
-
-
-def test_unknown_config_key_422(clerk):
-    body = _ind_body(config={"maType": "ema", "bogus": "x"})
-    r = client.post("/api/alerts", json=body, headers=_auth("alice"))
-    assert r.status_code == 422 and "config.bogus" in r.text
 
 
 def test_indicator_patch_partial_config_keeps_untouched_keys(clerk):
@@ -361,19 +365,21 @@ def test_indicator_patch_partial_config_keeps_untouched_keys(clerk):
         headers=_auth("alice"),
     )
     assert r.status_code == 200, r.text
-    assert r.json()["params"]["config"] == {"maType": "ema", "source": "hl2"}
+    cfg = r.json()["params"]["config"]
+    assert (cfg["ma_type"], cfg["source"]) == ("ema", "hl2")
 
     r = client.patch(
-        "/api/alerts/al-ind", json={"params": {"config": {"maType": "sma"}}},
+        "/api/alerts/al-ind", json={"params": {"config": {"ma_type": "sma"}}},
         headers=_auth("alice"),
     )
     assert r.status_code == 200, r.text
-    assert r.json()["params"]["config"] == {"maType": "sma", "source": "hl2"}
+    cfg = r.json()["params"]["config"]
+    assert (cfg["ma_type"], cfg["source"]) == ("sma", "hl2")
 
 
 def test_indicator_patch_non_dict_config_422(clerk):
     # A non-dict config (string/list/null) must fall through to
-    # validate_indicator's own 422, not raise a TypeError from `**` on a
+    # IndicatorKind.validate's own 422, not raise a TypeError from `**` on a
     # non-mapping during the deep merge.
     client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
     r = client.patch(
