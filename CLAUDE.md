@@ -195,9 +195,11 @@ environment enables the Telegram channel. End-to-end probe:
 `cd backend && python3 -m scripts.alert_probe [--epic EPIC --broker BROKER
 --timeout SECONDS]`.
 
-Alert kinds live in `core/alert_kinds.py` (`price_level`, `indicator`): each
+Alert kinds live in `core/alert_kinds.py` (`price_level`, `indicator`,
+`line`): each
 validates its params and resolves a `(subject, level)` pair; `core/alert_eval.py`
-is the one evaluator. Indicator alerts (MA, RSI, ATR on native timeframes)
+is the one evaluator. Indicator alerts (MA, RSI, ATR, Trendlines nearest
+line on native timeframes)
 read closed bars through `CANDLE_CACHE` via `core/alert_indicators.py` and the
 alertable registry `indicators/alertable.py` (mirrored by
 `frontend/src/lib/alertableIndicators.ts`, pinned by committed fixtures under
@@ -212,9 +214,11 @@ Trendlines line; the engine rolls `tRef` forward every 1000 bars
 (`LINE_REBASE_BARS`) so it stays inside the 2000-bar seed, and create 422s
 when the chart's reference bar is not one the server holds. Nearest-line
 alerts are `indicator` alerts on `TRENDLINES` with the canonical 33-slot
-calcParams; the hub runs the full Trendlines compute once per close and
-keeps the held line, so close mode judges a cross against one line
-(`resolve_close`) and intrabar only projects it.
+calcParams; the hub runs the full Trendlines compute once per close, in a
+worker thread (the series is not ready for it until the result lands, and
+close mode evaluates on the first sample after), and keeps the held line,
+so close mode judges a cross against one line (`resolve_close`) and
+intrabar only projects it. Nearest-line alerts refuse the 1m timeframe.
 
 Telegram alert photos are live chart screenshots: `core/chart_snapshot.py`
 drives a headless Chromium over the frontend's `/?snapshot=1` boot mode,

@@ -236,14 +236,16 @@ newest closed bar.
 
 - `core/alert_kinds.py`: `LineKind` (validate, sig, resolve, label);
   `resolve_close` on the protocol with a default; the link validator allows
-  `lineKey` and requires a link for `line`.
+  `lineKey`; a `line` alert's link is nullable (Keep unlinks it).
 - `core/alert_engine.py`: close mode calls `resolve_close`; the rebase step
   for `line`; the baseline reset on a held-line signature change.
 - `core/alert_indicators.py`: LINE and TRENDLINES branches in `ready`; the
-  held-line cache and the projection-only intrabar path for TRENDLINES.
+  held-line cache and the projection-only intrabar path for TRENDLINES,
+  whose closed compute runs in a worker thread (`closed_now`).
 - `indicators/alertable.py`: LINE and TRENDLINES in `warmup`, `compute`,
   `volume_weighted`, `validate_indicator` and `indicator_label`.
-- Alert store: a narrow patch for `tRef`/`pRef`.
+- Alert store: no new method; the rebase writes `tRef`/`pRef` through
+  `AlertStore.update`, and the PATCH route refuses line geometry.
 
 ## Frontend changes
 
