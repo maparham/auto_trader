@@ -59,6 +59,47 @@ def test_duplicate_id_409(clerk):
     assert r.status_code == 409
 
 
+def test_duplicate_price_level_409(clerk):
+    client.post("/api/alerts", json=_body(), headers=_auth("alice"))
+    r = client.post("/api/alerts", json=_body(id="al-2"), headers=_auth("alice"))
+    assert r.status_code == 409 and "already exists" in r.json()["detail"]
+    # message/notify/expiry differ: still the same thing firing, still a duplicate.
+    r = client.post(
+        "/api/alerts",
+        json=_body(id="al-3", message="different note", expires_at=9_999_999_999_999,
+                   notify={"toast": False}),
+        headers=_auth("alice"),
+    )
+    assert r.status_code == 409
+
+
+def test_not_a_duplicate_across_epic_condition_trigger_or_user(clerk):
+    client.post("/api/alerts", json=_body(), headers=_auth("alice"))
+    assert client.post("/api/alerts", json=_body(id="al-2", epic="US500"), headers=_auth("alice")).status_code == 200
+    assert client.post(
+        "/api/alerts",
+        json=_body(id="al-3", params={"level": 100.0, "condition": "crossing_up", "trigger": "once"}),
+        headers=_auth("alice"),
+    ).status_code == 200
+    assert client.post(
+        "/api/alerts",
+        json=_body(id="al-4", params={"level": 100.0, "condition": "crossing", "trigger": "every"}),
+        headers=_auth("alice"),
+    ).status_code == 200
+    assert client.post("/api/alerts", json=_body(id="al-5"), headers=_auth("bob")).status_code == 200
+
+
+def test_patch_into_a_duplicate_409(clerk):
+    client.post("/api/alerts", json=_body(), headers=_auth("alice"))  # al-1: level 100, crossing, once
+    client.post("/api/alerts", json=_body(id="al-2", params={"level": 90.0, "condition": "crossing", "trigger": "once"}),
+                 headers=_auth("alice"))
+    r = client.patch("/api/alerts/al-2", json={"params": {"level": 100.0}}, headers=_auth("alice"))
+    assert r.status_code == 409 and "already exists" in r.json()["detail"]
+    # Saving an alert's own params back unchanged never 409s against itself.
+    r = client.patch("/api/alerts/al-1", json={"params": {"level": 100.0}}, headers=_auth("alice"))
+    assert r.status_code == 200
+
+
 def test_bad_id_format_422(clerk):
     r = client.post("/api/alerts", json=_body(id="not-valid!"), headers=_auth("alice"))
     assert r.status_code == 422
@@ -275,6 +316,16 @@ def test_indicator_create_round_trip(clerk):
     assert r.json()["params"]["config"] == {"maType": "ema", "source": "close"}
 
 
+def test_duplicate_indicator_alert_409(clerk):
+    client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
+    dup = {**_ind_body(), "id": "al-ind-2"}
+    r = client.post("/api/alerts", json=dup, headers=_auth("alice"))
+    assert r.status_code == 409 and "already exists" in r.json()["detail"]
+    # A different calcParams is a different alert, not a duplicate.
+    other = {**_ind_body(calcParams=[55]), "id": "al-ind-3"}
+    assert client.post("/api/alerts", json=other, headers=_auth("alice")).status_code == 200
+
+
 def test_indicator_non_native_timeframe_422(clerk):
     r = client.post("/api/alerts", json=_ind_body(timeframe="HOUR_2"), headers=_auth("alice"))
     assert r.status_code == 422 and "timeframe" in r.text
@@ -397,6 +448,17 @@ def test_line_create_round_trip(clerk, bars):
     r = client.post("/api/alerts", json=_line_body(), headers=_auth("alice"))
     assert r.status_code == 200, r.text
     assert r.json()["params"]["tRef"] == 9 * H
+
+
+def test_duplicate_line_alert_409(clerk, bars):
+    client.post("/api/alerts", json=_line_body(), headers=_auth("alice"))
+    # tRef/pRef roll forward (engine rebase) and are excluded from the line's
+    # sig; a second alert on the SAME slope/anchors is still the same line.
+    dup = {**_line_body(tRef=10 * H, pRef=100.5), "id": "al-line-2"}
+    r = client.post("/api/alerts", json=dup, headers=_auth("alice"))
+    assert r.status_code == 409 and "already exists" in r.json()["detail"]
+    other = {**_line_body(slope=1.0), "id": "al-line-3"}
+    assert client.post("/api/alerts", json=other, headers=_auth("alice")).status_code == 200
 
 
 def test_line_create_with_unknown_reference_422(clerk, bars):

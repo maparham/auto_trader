@@ -82,6 +82,25 @@ def _validate_params(kind: str, params: dict[str, Any], broker: str) -> None:
         raise HTTPException(422, str(e)) from None
 
 
+async def _check_duplicate(
+    user: str, broker: str, epic: str, kind: str, params: dict[str, Any], *, skip_id: str | None = None,
+) -> None:
+    """Two alerts on the same (broker, epic, kind) that watch the same thing
+    the same way would fire together forever: same `sig()` (the fields each
+    kind's own firing logic reads - level/indicator/line geometry, condition,
+    trigger) is a duplicate regardless of message/notify/expiry, which don't
+    affect what fires. `skip_id` excludes the row a PATCH is editing, so
+    saving an alert's own unchanged params never 409s against itself."""
+    sig = KINDS[kind].sig(params)
+    existing = await ALERT_STORE.list_user(user)
+    for row in existing:
+        if row["id"] == skip_id:
+            continue
+        if row["broker"] == broker and row["epic"] == epic and row["kind"] == kind:
+            if KINDS[kind].sig(row["params"]) == sig:
+                raise HTTPException(409, "An identical alert already exists")
+
+
 async def _check_line_ref(broker: str, epic: str, params: dict[str, Any]) -> None:
     """A `line` alert's reference bar must be one the server holds (closed or
     forming): chart and server bars can disagree (offset grids, lag), and a
@@ -158,6 +177,8 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
     _validate_params(body.kind, body.params, body.broker)
     _validate_precision(body.precision)
     _validate_expires_at(body.expires_at)
+    user = current_user(request)
+    await _check_duplicate(user, body.broker, body.epic, body.kind, body.params)
     if body.kind == "line":
         await _check_line_ref(body.broker, body.epic, body.params)
 
@@ -165,7 +186,6 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
     if body.notify:
         notify.update(body.notify)
 
-    user = current_user(request)
     now = int(time.time() * 1000)
     row = {
         "id": body.id,
@@ -320,6 +340,7 @@ async def patch_alert(
         ):
             merged["config"] = {**current_config, **patch_config}
         _validate_params(current["kind"], merged, current["broker"])
+        await _check_duplicate(user, current["broker"], current["epic"], current["kind"], merged, skip_id=alert_id)
         patch["params"] = merged
     if "precision" in patch:
         _validate_precision(patch["precision"])

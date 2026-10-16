@@ -195,6 +195,12 @@ environment enables the Telegram channel. End-to-end probe:
 `cd backend && python3 -m scripts.alert_probe [--epic EPIC --broker BROKER
 --timeout SECONDS]`.
 
+Create and patch both 409 on a duplicate: same (broker, epic, kind) and the
+same `kind.sig(params)` another of the user's alerts already has (message,
+notify, and expiry don't count, since they don't change what fires). The
+check lives in `api/routers/alerts.py`'s `_check_duplicate`, reusing each
+kind's own `sig()`.
+
 Alert kinds live in `core/alert_kinds.py` (`price_level`, `indicator`,
 `line`): each
 validates its params and resolves a `(subject, level)` pair; `core/alert_eval.py`

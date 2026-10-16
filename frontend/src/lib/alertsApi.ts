@@ -598,19 +598,12 @@ export async function addStoredAlert(
     notify: alert.notify,
     precision,
   };
-  try {
-    const res = await apiFetch(url("/api/alerts", true), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`POST /api/alerts failed: ${res.status}`);
-  } catch {
-    // Rollback: drop the optimistic row.
-    setAlerts(epic, broker, loadAlerts(epic, broker).filter((a) => a.id !== alert.id));
-    bumpAlerts();
-    toast("Alert save failed");
-  }
+  const res = await sendJson("/api/alerts", "POST", body);
+  if (res?.ok) return;
+  // Rollback: drop the optimistic row.
+  setAlerts(epic, broker, loadAlerts(epic, broker).filter((a) => a.id !== alert.id));
+  bumpAlerts();
+  await reportFailure(res, "Alert save failed");
 }
 
 export interface AlertUpdateCfg {
