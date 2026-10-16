@@ -282,3 +282,19 @@ def test_step_level_close_cross_is_prev_close_vs_prev_value():
     before, last = Candle(t, 10, 10, 10, 10.0, 1), Candle(t, 9, 9, 9, 9.0, 1)
     cur, prev = INDICATOR.resolve_close(p, last, before, {"value": 9.5}, {"value": 8.0})
     assert cur == (9.0, 9.5) and prev == (10.0, 8.0)
+
+
+@pytest.mark.parametrize("calc", [["x"], [None], 5, [float("nan")], [True]])
+def test_upgrade_malformed_calc_params_is_a_value_error(calc):
+    with pytest.raises(ValueError, match="params.calcParams"):
+        upgrade_params({"indicator": "RSI", "calcParams": calc, "config": {}})
+
+
+def test_upgrade_non_dict_config_is_a_value_error():
+    with pytest.raises(ValueError, match="params.config"):
+        upgrade_params({"indicator": "MA", "calcParams": [20], "config": ["sma"]})
+
+
+def test_upgrade_atr_output_follows_the_parsed_length():
+    new = upgrade_params({"indicator": "ATR", "calcParams": [14.7], "config": {}, "timeframe": "HOUR"})
+    assert new["output"] == str(new["config"]["length"])

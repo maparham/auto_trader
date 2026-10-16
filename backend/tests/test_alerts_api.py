@@ -345,6 +345,12 @@ def test_deferred_indicator_422(clerk):
     assert r.status_code == 422 and "not alertable" in r.text
 
 
+def test_malformed_old_shape_422(clerk):
+    r = client.post("/api/alerts", json=_ind_body(indicator="RSI", calcParams=["x"], config={}),
+                    headers=_auth("alice"))
+    assert r.status_code == 422 and "params.calcParams" in r.text
+
+
 def test_indicator_patch_validates_merged_params(clerk):
     client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))
     inst = {"type": "MA", "calcParams": [100], "extendData": {"maType": "ema"}}

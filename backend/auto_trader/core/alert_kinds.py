@@ -120,11 +120,11 @@ class PriceLevelKind:
 
 
 _LEGACY = {
-    # old indicator -> (type, extendData from old config, output from length)
-    "MA": ("MA", lambda c: {"maType": c.get("maType", "sma"), "source": c.get("source", "close")}, lambda n: "ma"),
-    "RSI": ("RSI", lambda c: {"source": c.get("source", "close")}, lambda n: "value"),
-    "ATR": ("ATR", lambda c: {"smoothing": c.get("smoothing", "rma")}, lambda n: str(n)),
-    "TRENDLINES": ("TRENDLINES", lambda c: {}, lambda n: TL_NEAREST),
+    # old indicator -> (type, extendData from old config, output from the parsed config)
+    "MA": ("MA", lambda c: {"maType": c.get("maType", "sma"), "source": c.get("source", "close")}, lambda cfg: "ma"),
+    "RSI": ("RSI", lambda c: {"source": c.get("source", "close")}, lambda cfg: "value"),
+    "ATR": ("ATR", lambda c: {"smoothing": c.get("smoothing", "rma")}, lambda cfg: str(cfg.length)),
+    "TRENDLINES": ("TRENDLINES", lambda c: {}, lambda cfg: TL_NEAREST),
 }
 
 
@@ -139,11 +139,22 @@ def upgrade_params(params: dict) -> dict:
     if legacy is None:
         raise ValueError(f"params.indicator {params['indicator']!r} is not alertable")
     type_, ext_of, out_of = legacy
-    calc = list(params.get("calcParams") or [])
-    ext = ext_of(params.get("config") or {})
-    cfg = SERIES_INDICATORS[type_].parse_config(calc, ext)
+    config = params.get("config") or {}
+    if not isinstance(config, dict):
+        raise ValueError("params.config must be an object")
+    calc = params.get("calcParams") or []
+    # The old validator refused non-numeric calcParams; the registry parse
+    # would quietly default them, so keep the legacy shape strict.
+    if not isinstance(calc, list) or not all(_finite_number(x) for x in calc):
+        raise ValueError("params.calcParams must be a list of finite numbers")
+    try:
+        cfg = SERIES_INDICATORS[type_].parse_config(calc, ext_of(config))
+        output = out_of(cfg)
+        cfg_json = json.loads(config_json(cfg))
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+        raise ValueError("params.calcParams is not valid for this indicator") from None
     new = {k: v for k, v in params.items() if k not in ("indicator", "calcParams", "config", "line")}
-    new.update(type=type_, config=json.loads(config_json(cfg)), output=out_of(int(calc[0]) if calc else 0))
+    new.update(type=type_, config=cfg_json, output=output)
     return new
 
 
