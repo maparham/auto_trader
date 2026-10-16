@@ -832,7 +832,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     if (priceObscured) setPriceTag(null);
     setAlertTags((prev) => stableArray(prev, tags));
 
-    // "Price crosses the line" indicator alerts (e.g. price crosses EMA 50): no line of
+    // "Price crosses the curve" indicator alerts (e.g. price crosses EMA 50): no line of
     // their own, just a bell on the indicator's line at its latest value. Only
     // the linked cell, on the alert's timeframe, while the eye shows alert lines
     // and the indicator itself is shown (visible covers Hide indicators and the
