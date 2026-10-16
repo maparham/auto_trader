@@ -18,7 +18,7 @@ import { BASE_TEMPLATES } from "../../lib/customIndicators";
 import { applyTrendlinesTimeframe } from "../../lib/mtfCoordinator";
 import { parseTrendlinesConfig } from "../../lib/indicators/trendlinesOutputs";
 import { syncAlertsAfterEdit, syncAlertsAfterRemove } from "../../lib/indicatorAlertSync";
-import { checkAlertable } from "../../lib/alertableIndicators";
+import { alertInstanceOf } from "../../lib/indicatorAlertInstance";
 
 // Everything this action can add: the custom templates plus a curated
 // allowlist of klinecharts native indicator types known to work through this
@@ -190,12 +190,10 @@ export function registerIndicatorActions(): void {
         extendData: Object.keys(ext).length ? ext : undefined,
       });
       // Same edit-sync as the settings modal (IndicatorSettings ok()): linked
-      // alerts follow the new identity, or the user is asked to delete or keep
-      // them when the new settings can't be alerted on. Each alert is checked
-      // on its OWN timeframe, and hasVolume is true because the volume rule
-      // only gates creating an alert.
+      // alerts follow the pane's new settings, or the user is asked to delete
+      // or keep them when the server refuses the new settings.
       if (type) {
-        syncAlertsAfterEdit(scope, id, (tf) => checkAlertable(type, finalCalcParams, ext, tf, true));
+        void syncAlertsAfterEdit(scope, id, alertInstanceOf(type, finalCalcParams, ext));
       }
       return { id, cellId, calcParams: calcParams ?? saved.calcParams, extendData: ext };
     },

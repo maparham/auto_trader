@@ -162,18 +162,18 @@ describe("indicator actions", () => {
         message: "", expiresAt: null, precision: 2,
         notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
         params: {
-          identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
-          line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+          type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+          timeframe: "HOUR", target: "price", value: null, evalOn: "close",
           link: { scope: "t1.c1", instanceId: "EMA" },
         },
       });
+      const repoint = vi.spyOn(A, "repointIndicatorAlert").mockResolvedValue("ok");
       const controller = provide();
       liveInstance(controller, "EMA", "EMA");
       await invokeAction("indicator.set", { id: "EMA", calcParams: [20] }, ctx);
-      expect(A.linkedAlerts("t1.c1", "EMA")[0]?.params.identity).toEqual({
-        indicator: "MA", calcParams: [20], config: { maType: "ema", source: "close" }, priceTarget: true,
-      });
+      expect(repoint).toHaveBeenCalledWith("al-agent-set", { type: "EMA", calcParams: [20], extendData: {} });
       vi.unstubAllGlobals();
+      repoint.mockRestore();
     });
 
     it("still patches calcParams alone", async () => {

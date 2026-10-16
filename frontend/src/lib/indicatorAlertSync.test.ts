@@ -1,61 +1,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  planSync, reconcileLinksForScope, relinkAlerts, syncAlertsAfterEdit, syncAlertsAfterRemove,
+  reconcileLinksForScope, relinkAlerts, syncAlertsAfterEdit, syncAlertsAfterRemove,
 } from "./indicatorAlertSync";
 import { getPersistBroker } from "./persist/core";
-import { noteStreamingBrokers } from "./trading";
+import * as alertsApi from "./alertsApi";
 import {
   addIndicatorAlert, addLineAlert, alertLabel, findServerAlert, linkedAlerts, linkedLineAlerts,
   loadAllIndicatorAlerts, type IndicatorAlert, type LineAlert,
 } from "./alertsApi";
 import { confirmRequest } from "./signals";
-import type { AlertableCheck } from "./alertableIndicators";
+import type { AlertInstance } from "./indicatorAlertInstance";
 
-const ema = (n: number) => ({ indicator: "MA" as const, calcParams: [n], config: { maType: "ema", source: "close" }, priceTarget: true });
-const alert = (id: string, n: number): IndicatorAlert => ({
-  kind: "indicator", id, epic: "US100", broker: "b", condition: "crossing", trigger: "every", message: "",
-  expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true }, precision: 2,
-  params: { identity: ema(n), line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
-    link: { scope: "s", instanceId: "EMA" } },
-});
+const INSTANCE: AlertInstance = { type: "RSI", calcParams: [21], extendData: {} };
 
 // Fuller factory for tests that round-trip through the real alertsApi cache
 // (relinkAlerts / syncAlertsAfterEdit / syncAlertsAfterRemove read and write
 // the module-level indicator-alert cache via linkedAlerts/patchIndicatorAlert/
 // deleteIndicatorAlert, not plain data).
 function mkAlert(opts: {
-  id: string; n?: number; timeframe?: string; scope: string; instanceId: string; broker?: string;
+  id: string; timeframe?: string; scope: string; instanceId: string; broker?: string;
 }): IndicatorAlert {
   return {
     kind: "indicator", id: opts.id, epic: "US100", broker: opts.broker ?? "b", condition: "crossing", trigger: "every", message: "",
     expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true }, precision: 2,
     params: {
-      identity: ema(opts.n ?? 50), line: "value", timeframe: opts.timeframe ?? "HOUR", target: "price", value: null,
-      evalOn: "close", link: { scope: opts.scope, instanceId: opts.instanceId },
+      type: "MA", config: { maType: "ema", source: "close" }, output: "ma", timeframe: opts.timeframe ?? "HOUR",
+      target: "price", value: null, evalOn: "close", link: { scope: opts.scope, instanceId: opts.instanceId },
     },
   };
 }
-
-describe("planSync", () => {
-  it("patches only alerts whose identity changed", () => {
-    const plan = planSync([alert("a", 50), alert("b", 100)], { ok: true, identity: ema(100) });
-    expect(plan).toEqual({ patch: [{ id: "a", identity: ema(100) }], conflicted: [] });
-  });
-  it("flags a conflict when the new settings are not alertable", () => {
-    const a = alert("a", 50);
-    expect(planSync([a], { ok: false, reason: "x" })).toEqual({ patch: [], conflicted: [a] });
-  });
-  it("a hidden check is never a conflict (F6)", () => {
-    // `hidden` means the chart's CURRENTLY DISPLAYED resolution is a
-    // non-native/seconds view, not that the linked alert's own timeframe
-    // stopped being alertable. Browsing a 5s chart while editing an EMA
-    // must not prompt to delete its hourly alert.
-    expect(planSync([alert("a", 50)], { ok: false, hidden: true })).toEqual({ patch: [], conflicted: [] });
-  });
-  it("does nothing without linked alerts", () => {
-    expect(planSync([], { ok: false, reason: "x" })).toEqual({ patch: [], conflicted: [] });
-  });
-});
 
 // The tests below exercise the real alertsApi module cache (addIndicatorAlert/
 // linkedAlerts/patchIndicatorAlert/deleteIndicatorAlert), so writes need a
@@ -68,6 +41,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("relinkAlerts", () => {
@@ -86,35 +60,46 @@ describe("relinkAlerts", () => {
 });
 
 describe("syncAlertsAfterEdit", () => {
-  it("checks each linked alert against ITS OWN timeframe: patches the alertable group, conflicts the other, in one edit", async () => {
-    await addIndicatorAlert(mkAlert({ id: "al-hour", timeframe: "HOUR", scope: "edit-scope", instanceId: "EMA" }));
-    await addIndicatorAlert(mkAlert({ id: "al-day", timeframe: "DAY", scope: "edit-scope", instanceId: "EMA" }));
+  it("re-points every linked alert to the pane's new settings", async () => {
+    await addIndicatorAlert(mkAlert({ id: "al-a", scope: "edit-scope", instanceId: "RSI" }));
+    await addIndicatorAlert(mkAlert({ id: "al-b", scope: "edit-scope", instanceId: "RSI" }));
+    const repoint = vi.spyOn(alertsApi, "repointIndicatorAlert").mockResolvedValue("ok");
 
-    const checkFor = (timeframe: string): AlertableCheck =>
-      timeframe === "HOUR" ? { ok: true, identity: ema(100) } : { ok: false, reason: "no longer alertable" };
+    await syncAlertsAfterEdit("edit-scope", "RSI", INSTANCE);
 
-    syncAlertsAfterEdit("edit-scope", "EMA", checkFor);
-
-    // The HOUR alert's identity changed (50 -> 100) and was patched...
-    expect(linkedAlerts("edit-scope", "EMA").find((a) => a.id === "al-hour")?.params.identity).toEqual(ema(100));
-    // ...while the DAY alert's own timeframe is no longer alertable, so a
-    // single conflict confirm covers it (not the HOUR one, which is fine).
-    expect(confirmRequest.value?.title).toBe("Indicator alerts");
-    expect(confirmRequest.value?.message).toBe(
-      "These settings can't be alerted on. Delete its 1 alert, or keep it on the old settings?",
-    );
-    confirmRequest.value?.onConfirm();
-    expect(linkedAlerts("edit-scope", "EMA").map((a) => a.id)).toEqual(["al-hour"]);
+    expect(repoint).toHaveBeenCalledWith("al-a", INSTANCE);
+    expect(repoint).toHaveBeenCalledWith("al-b", INSTANCE);
+    expect(confirmRequest.value).toBeNull();
   });
 
-  it("Keep (onCancel) unlinks the conflicted alert instead of deleting it", async () => {
-    await addIndicatorAlert(mkAlert({ id: "al-keep", timeframe: "DAY", scope: "edit-scope-2", instanceId: "EMA" }));
+  it("asks delete or keep for the alerts the server refused", async () => {
+    await addIndicatorAlert(mkAlert({ id: "al-c", scope: "edit-scope-2", instanceId: "RSI" }));
+    await addIndicatorAlert(mkAlert({ id: "al-d", scope: "edit-scope-2", instanceId: "RSI" }));
+    vi.spyOn(alertsApi, "repointIndicatorAlert").mockImplementation(
+      async (id: string) => (id === "al-d" ? "refused" : "ok"),
+    );
 
-    syncAlertsAfterEdit("edit-scope-2", "EMA", () => ({ ok: false, reason: "no longer alertable" }));
+    await syncAlertsAfterEdit("edit-scope-2", "RSI", INSTANCE);
 
-    confirmRequest.value?.onCancel?.();
-    expect(linkedAlerts("edit-scope-2", "EMA")).toEqual([]); // unlinked, not findable by link anymore
-    expect(loadAllIndicatorAlerts("b").find((a) => a.id === "al-keep")?.params.link).toBeNull();
+    expect(confirmRequest.value?.title).toBe("Indicator alerts");
+    expect(confirmRequest.value?.message).toContain("1 alert");
+    confirmRequest.value?.onConfirm();
+    expect(linkedAlerts("edit-scope-2", "RSI").map((a) => a.id)).toEqual(["al-c"]);
+  });
+
+  it("a failed request is not treated as a refusal", async () => {
+    await addIndicatorAlert(mkAlert({ id: "al-e", scope: "edit-scope-3", instanceId: "RSI" }));
+    vi.spyOn(alertsApi, "repointIndicatorAlert").mockResolvedValue("failed");
+
+    await syncAlertsAfterEdit("edit-scope-3", "RSI", INSTANCE);
+
+    expect(confirmRequest.value).toBeNull();
+  });
+
+  it("does nothing without linked alerts", async () => {
+    const repoint = vi.spyOn(alertsApi, "repointIndicatorAlert");
+    await syncAlertsAfterEdit("no-such-scope", "RSI", INSTANCE);
+    expect(repoint).not.toHaveBeenCalled();
   });
 });
 
@@ -175,53 +160,6 @@ describe("reconcileLinksForScope", () => {
   });
 });
 
-describe("default-message alerts after an identity sync", () => {
-  it("keep an empty message, so their display text is recomputed from the new identity", async () => {
-    await addIndicatorAlert(mkAlert({ id: "al-msg", scope: "msg-scope", instanceId: "EMA", n: 50 }));
-    syncAlertsAfterEdit("msg-scope", "EMA", () => ({ ok: true, identity: ema(20) }));
-    const a = linkedAlerts("msg-scope", "EMA")[0];
-    expect(a.message).toBe("");
-    expect(alertLabel(a, 2)).toContain("EMA 20");
-    expect(alertLabel(a, 2)).not.toContain("EMA 50");
-  });
-});
-
-describe("edits the backend would refuse are conflicts, not silent PATCH failures", () => {
-  it("a length past the alert warm-up cap is a conflict", async () => {
-    const { checkAlertable } = await import("./alertableIndicators");
-    await addIndicatorAlert(mkAlert({ id: "al-cap", scope: "cap-scope", instanceId: "EMA" }));
-    syncAlertsAfterEdit("cap-scope", "EMA", (tf) => checkAlertable("EMA", [600], {}, tf, true));
-    expect(confirmRequest.value?.message).toContain("can't be alerted on");
-    expect(linkedAlerts("cap-scope", "EMA")[0].params.identity).toEqual(ema(50)); // not patched
-  });
-
-  it("an edit to VWMA under an intrabar alert on a quote-only broker is a conflict", async () => {
-    const quoteOnly = { ...mkAlert({ id: "al-vw-q", scope: "vw-scope", instanceId: "MA" }), broker: "quotes" };
-    quoteOnly.params = { ...quoteOnly.params, evalOn: "intrabar" };
-    const streaming = { ...mkAlert({ id: "al-vw-s", scope: "vw-scope", instanceId: "MA" }), broker: "streams" };
-    streaming.params = { ...streaming.params, evalOn: "intrabar" };
-    const onClose = { ...mkAlert({ id: "al-vw-c", scope: "vw-scope", instanceId: "MA" }), broker: "quotes" };
-    await addIndicatorAlert(quoteOnly);
-    await addIndicatorAlert(streaming);
-    await addIndicatorAlert(onClose);
-    noteStreamingBrokers(["streams"]);
-    const vwma = { indicator: "MA" as const, calcParams: [20], config: { maType: "vwma", source: "close" }, priceTarget: true };
-
-    syncAlertsAfterEdit("vw-scope", "MA", () => ({ ok: true, identity: vwma }));
-
-    const byId = (id: string) => linkedAlerts("vw-scope", "MA").find((a) => a.id === id);
-    expect(byId("al-vw-s")?.params.identity).toEqual(vwma); // streaming broker: patched
-    expect(byId("al-vw-c")?.params.identity).toEqual(vwma); // on close: patched
-    expect(byId("al-vw-q")?.params.identity).toEqual(ema(50)); // left for the prompt
-    expect(confirmRequest.value?.message).toBe(
-      "These settings can't be alerted on. Delete its 1 alert, or keep it on the old settings?",
-    );
-    confirmRequest.value?.onCancel?.();
-    expect(byId("al-vw-q")).toBeUndefined(); // kept, unlinked
-    noteStreamingBrokers([]);
-  });
-});
-
 // Line alerts share the server-alert cache; these go through the real
 // addLineAlert / linkedLineAlerts like the indicator cases above.
 function mkLine(id: string, scope: string, broker = "b"): LineAlert {
@@ -256,7 +194,9 @@ describe("line alerts follow pane removal, not settings edits", () => {
 
   it("syncAlertsAfterEdit leaves line alerts alone", async () => {
     await addLineAlert(mkLine("al-l-ed", "line-ed"));
-    syncAlertsAfterEdit("line-ed", "TRENDLINES", () => ({ ok: false, reason: "x" }));
+    const repoint = vi.spyOn(alertsApi, "repointIndicatorAlert");
+    await syncAlertsAfterEdit("line-ed", "TRENDLINES", INSTANCE);
+    expect(repoint).not.toHaveBeenCalled();
     expect(confirmRequest.value).toBeNull();
     expect(findServerAlert("al-l-ed")?.params.link).toEqual({ scope: "line-ed", instanceId: "TRENDLINES", lineKey: "k" });
   });
@@ -272,5 +212,14 @@ describe("line alerts follow pane removal, not settings edits", () => {
     await addLineAlert(mkLine("al-l-rc", "line-rc", broker));
     await reconcileLinksForScope("line-rc", new Set());
     expect(findServerAlert("al-l-rc")?.params.link).toBeNull();
+  });
+});
+
+describe("alertLabel still formats from the server-supplied label", () => {
+  it("falls back to the output name when the server hasn't labeled it yet", async () => {
+    await addIndicatorAlert(mkAlert({ id: "al-msg", scope: "msg-scope", instanceId: "EMA" }));
+    const a = linkedAlerts("msg-scope", "EMA")[0];
+    expect(a.message).toBe("");
+    expect(alertLabel(a, 2)).toBe("Crossing ma");
   });
 });

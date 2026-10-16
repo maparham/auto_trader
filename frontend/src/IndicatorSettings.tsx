@@ -113,7 +113,7 @@ import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import SelectMenu from "./components/SelectMenu";
 import { requestIndicatorOverlayRepaint } from "./lib/signals";
-import { checkAlertable } from "./lib/alertableIndicators";
+import { alertInstanceOf } from "./lib/indicatorAlertInstance";
 import { syncAlertsAfterEdit } from "./lib/indicatorAlertSync";
 import {
   mirrorAccelCompanion,
@@ -1935,17 +1935,10 @@ function IndicatorSettingsForm({
       }
     }
     saveIndicatorConfig(scope, name, cfg);
-    // hasVolume: true here - the volume rule only gates CREATING a VWMA/EVWMA
-    // alert; an existing one follows its indicator. Each linked alert is
-    // checked against its OWN timeframe (checkFor's argument), never
-    // chartResolution (F6): the chart's currently-displayed resolution has
-    // nothing to do with whether an existing alert's own native timeframe is
-    // still alertable.
-    syncAlertsAfterEdit(
-      scope,
-      name,
-      (timeframe) => checkAlertable(type, cfg.calcParams, cfg.extendData as Record<string, unknown>, timeframe, true),
-    );
+    // Each linked alert is re-pointed at the pane's new settings; the server
+    // re-validates it against its own timeframe (never chartResolution, F6)
+    // and refuses the ones the new settings can't serve.
+    void syncAlertsAfterEdit(scope, name, alertInstanceOf(type, cfg.calcParams, cfg.extendData));
     onClose();
   }
 

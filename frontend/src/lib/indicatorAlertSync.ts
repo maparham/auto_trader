@@ -2,45 +2,12 @@
 // re-point them, removal asks whether to delete them. Alerts are matched by
 // {scope, instanceId} because instance ids repeat across chart cells.
 import { requestConfirm } from "./signals";
-import { supportsStreaming } from "./trading";
-import { volumeWeighted, type AlertableCheck, type IndicatorIdentity } from "./alertableIndicators";
+import { repointIndicatorAlert } from "./alertsApi";
+import type { AlertInstance } from "./indicatorAlertInstance";
 import {
   deleteIndicatorAlert, linkedAlerts, linkedLineAlerts, patchIndicatorAlert, patchLineAlert,
   scopeLinkedAlerts, scopeLinkedLineAlerts, type IndicatorAlert, type LineAlert,
 } from "./alertsApi";
-
-const sameIdentity = (a: IndicatorIdentity, b: IndicatorIdentity) =>
-  a.indicator === b.indicator &&
-  JSON.stringify(a.calcParams) === JSON.stringify(b.calcParams) &&
-  JSON.stringify(Object.entries(a.config).sort()) === JSON.stringify(Object.entries(b.config).sort());
-
-// What an edit does to one timeframe's linked alerts: re-point the ones the
-// new settings still allow, and hand back the ones the server would refuse,
-// for the "delete or keep" prompt. A VWMA/EVWMA line needs live volume to be
-// read as it happens, so an intrabar alert on a quote-only broker can't
-// follow an edit onto one (alert_kinds.py refuses that PATCH).
-export function planSync(
-  alerts: IndicatorAlert[],
-  check: AlertableCheck,
-  streams: (broker: string) => boolean = supportsStreaming,
-): { patch: Array<{ id: string; identity: IndicatorIdentity }>; conflicted: IndicatorAlert[] } {
-  if (alerts.length === 0) return { patch: [], conflicted: [] };
-  if (!check.ok) {
-    // `hidden` means the CHART's current view can't show an alert entry
-    // point right now (e.g. a seconds chart) - it says nothing about
-    // whether the alert's own (native, already-validated) timeframe is
-    // still alertable. Only a real reason (settings no longer alertable) is
-    // a conflict.
-    return { patch: [], conflicted: "hidden" in check ? [] : alerts };
-  }
-  const changed = alerts.filter((a) => !sameIdentity(a.params.identity, check.identity));
-  const refused = (a: IndicatorAlert) =>
-    volumeWeighted(check.identity) && a.params.evalOn === "intrabar" && !streams(a.broker);
-  return {
-    patch: changed.filter((a) => !refused(a)).map((a) => ({ id: a.id, identity: check.identity })),
-    conflicted: changed.filter(refused),
-  };
-}
 
 const plural = (n: number) => (n === 1 ? "1 alert" : `${n} alerts`);
 const pronoun = (n: number) => (n === 1 ? "it" : "them");
@@ -64,32 +31,16 @@ export function relinkAlerts(scope: string, oldId: string, newId: string): void 
   }
 }
 
-// Line alerts are frozen: an edit never re-points or prompts them, which
-// holds because linkedAlerts returns indicator alerts only.
-export function syncAlertsAfterEdit(
-  scope: string,
-  instanceId: string,
-  checkFor: (timeframe: string) => AlertableCheck,
-): void {
+// Each linked alert is re-pointed at the pane's new settings; the server
+// re-validates every one against its own timeframe and refuses the ones the
+// new settings can't serve (an output that no longer exists, a volume line
+// intrabar on a quote-only broker), and those get the delete-or-keep prompt.
+// Line alerts are frozen: linkedAlerts returns indicator alerts only.
+export async function syncAlertsAfterEdit(scope: string, instanceId: string, instance: AlertInstance): Promise<void> {
   const alerts = linkedAlerts(scope, instanceId);
   if (alerts.length === 0) return;
-  // Alerts on the SAME indicator instance can sit on different native
-  // timeframes (one HOUR alert, one DAY alert); each is checked against ITS
-  // OWN `params.timeframe`, never the chart's currently-displayed
-  // resolution (F6) - the chart's view has nothing to do with whether an
-  // individual alert's own timeframe is still valid.
-  const byTimeframe = new Map<string, IndicatorAlert[]>();
-  for (const a of alerts) {
-    const group = byTimeframe.get(a.params.timeframe) ?? [];
-    group.push(a);
-    byTimeframe.set(a.params.timeframe, group);
-  }
-  const conflicted: IndicatorAlert[] = [];
-  for (const [timeframe, group] of byTimeframe) {
-    const plan = planSync(group, checkFor(timeframe));
-    for (const p of plan.patch) void patchIndicatorAlert(p.id, { params: { identity: p.identity } });
-    conflicted.push(...plan.conflicted);
-  }
+  const results = await Promise.all(alerts.map(async (a) => ({ a, r: await repointIndicatorAlert(a.id, instance) })));
+  const conflicted = results.filter((x) => x.r === "refused").map((x) => x.a);
   if (conflicted.length === 0) return;
   requestConfirm({
     title: "Indicator alerts",

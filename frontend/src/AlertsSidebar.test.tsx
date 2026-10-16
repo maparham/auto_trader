@@ -27,8 +27,9 @@ const indAlert = {
   createdAt: 1,
   precision: 2,
   params: {
-    identity: { indicator: "RSI" as const, calcParams: [14], config: { source: "close" }, priceTarget: false },
-    line: "value" as const,
+    type: "RSI",
+    config: { source: "close" },
+    output: "value",
     timeframe: "HOUR",
     target: "value" as const,
     value: 70,

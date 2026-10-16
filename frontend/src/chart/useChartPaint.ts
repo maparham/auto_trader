@@ -42,7 +42,7 @@ import { slopeMaLines } from "../lib/indicators/slope";
 import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
 import { loadIndicatorAlerts, loadLineAlerts } from "../lib/alertsApi";
 import { lineLevelNow } from "../lib/lineAlertLevel";
-import { alertTimeframeOf, MAIN_LINE_KEY } from "../lib/alertableIndicators";
+import { alertTimeframeOf, chartValueOf } from "../lib/indicatorAlertInstance";
 import type { IndicatorBellTag } from "./AlertTags";
 import { indTypeOf } from "../lib/customIndicators";
 import { dashSliceBounds, getBacktestAggregate, tradeDashes } from "../lib/backtest";
@@ -847,8 +847,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       const ext = ind.extendData as Record<string, unknown> | undefined;
       if (p.timeframe !== alertTimeframeOf(ext, resRef.current)) continue;
       const res = (ind.result ?? []) as Array<Record<string, number | undefined>>;
-      const v = res[res.length - 1]?.[MAIN_LINE_KEY[p.identity.indicator]];
-      if (v == null || !Number.isFinite(v)) continue;
+      const v = chartValueOf(res[res.length - 1], p.output);
+      if (v == null) continue;
       const y = yOf(v);
       if (y != null) bells.push({ id: a.id, y });
     }

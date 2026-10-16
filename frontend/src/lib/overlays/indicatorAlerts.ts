@@ -9,7 +9,7 @@
 // their anchors on the candle pane of the linked cell, while its Trendlines
 // pane alerts on the alert's timeframe.
 import type { Chart } from "klinecharts";
-import { alertTimeframeOf } from "../alertableIndicators";
+import { alertTimeframeOf } from "../indicatorAlertInstance";
 import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlert } from "../alertsApi";
 import { getIndicatorsByPane } from "../indicators";
 import { isInsetInstance } from "../indicators/inset";

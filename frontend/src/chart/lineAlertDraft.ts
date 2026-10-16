@@ -1,6 +1,6 @@
 // Turns a right-clicked trendline into a line-alert draft (or the reason it
 // cannot have one). The menu entry in useTrendlineMenu reads this.
-import { alertTimeframeOf } from "../lib/alertableIndicators";
+import { alertTimeframeOf } from "../lib/indicatorAlertInstance";
 import { isNativeTf, parseTf } from "../lib/timeframe";
 import type { TrendlineSegment } from "../lib/indicators/trendlineMarks";
 import type { LineAlertDraft } from "../lib/signals";

@@ -27,8 +27,7 @@ function fakeChart() {
 const valueAlert = (scope: string, tf = "HOUR") => ({
   kind: "indicator", id: "al-1", epic: "US100", broker: "b", condition: "greater", trigger: "every",
   message: "", expiresAt: null, notify: {}, precision: 2,
-  params: { identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
-    line: "value", timeframe: tf, target: "value", value: 70, evalOn: "close",
+  params: { type: "RSI", config: { source: "close" }, output: "value", timeframe: tf, target: "value", value: 70, evalOn: "close",
     link: { scope, instanceId: "RSI" } },
 });
 
