@@ -528,6 +528,36 @@ class IndicatorHub:
         st = self._states.get(key)
         return st.series.closed[0] if st and st.series.closed else None
 
+    async def peek(self, key: SeriesKey, inds: list[IndicatorKey]) -> dict[IndicatorKey, float | None]:
+        """Each key's latest closed `value`, for the alert dialog's prefill:
+        from the live series when it is ready, else a one-off load of the
+        same seed this hub would use (nothing registered)."""
+        out: dict[IndicatorKey, float | None] = {}
+        cold: list[IndicatorKey] = []
+        for ind in inds:
+            if self.ready(key, ind):
+                out[ind] = self._states[key].closed_vals[ind].get("value")
+            else:
+                cold.append(ind)
+        if not cold:
+            return out
+        scratch = _State(BarSeries(key[2], key[3], cap=SEED_CAP))
+        bars = await self._load(key, scratch, SEED_CAP)
+        if bars is None:
+            return {**out, **{ind: None for ind in cold}}
+        closed = scratch.series.keep_closed(bars, self._now_ms())
+        loop = asyncio.get_running_loop()
+        for ind in cold:
+            try:
+                vals = await loop.run_in_executor(_OFF_LOOP_POOL, compute, ind, closed) if heavy(ind) else compute(ind, closed)
+            except Exception:
+                log.warning("alert indicator peek failed for %s", key, exc_info=True)
+                out[ind] = None
+                continue
+            series = vals.get("value") or []
+            out[ind] = series[-1] if series else None
+        return out
+
     async def bars_since(self, key: SeriesKey, t_ms: int, count: int) -> tuple[int, Candle] | None:
         """A one-off deeper fetch for a `line` alert whose reference bar is
         older than the held series (backend downtime, a long pause): the

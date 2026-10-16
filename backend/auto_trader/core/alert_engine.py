@@ -604,6 +604,13 @@ class AlertEngine:
                 if owner == user_id:
                     self._baseline[(owner, row["id"])] = None
 
+    async def peek_values(
+        self, user_id: str, broker: str, epic: str, timeframe: str, inds: list[IndicatorKey],
+    ) -> dict[IndicatorKey, float | None]:
+        if self._hub is None:
+            return {}
+        return await self._hub.peek((broker, epic, timeframe, self.price_side_for(user_id)), inds)
+
     # ---- indicator series + status ----
 
     def _series_key(self, user_id: str, row: dict, kind: AlertKind) -> SeriesKey:

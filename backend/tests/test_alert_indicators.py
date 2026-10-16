@@ -763,3 +763,41 @@ def test_trendlines_not_ready_on_the_new_bar_until_its_result_lands(monkeypatch)
         await hub.on_sample("capital", "US100", Sample(now[0] + 2, 1.0, None, None))
         assert not hub.closed_now(KEY, TL, set())  # delivered once
     asyncio.run(main())
+
+
+RSI3 = ind_key("RSI", (3,), {"source": "close"})
+
+
+def test_peek_cold_series_loads_once_and_registers_nothing():
+    async def main():
+        now = [20 * H + 1]
+        hub, loader, _ = make([c(i * H, float(i % 4)) for i in range(0, 20)], now)
+        out = await hub.peek(KEY, [RSI3])
+        assert isinstance(out[RSI3], float)
+        assert len(loader.calls) == 1
+        assert not hub.has_feed(KEY[0], KEY[1])
+    asyncio.run(main())
+
+
+def test_peek_reads_a_ready_live_series():
+    async def main():
+        now = [20 * H + 1]
+        hub, loader, _ = make([c(i * H, float(i % 4)) for i in range(0, 20)], now)
+        hub.set_needs({KEY: {RSI3}})
+        await hub.on_sample(KEY[0], KEY[1], Sample(now[0], 10.0, None, None))
+        await hub.settle()
+        assert hub.ready(KEY, RSI3)
+        calls = len(loader.calls)
+        out = await hub.peek(KEY, [RSI3])
+        assert out[RSI3] == hub.values(KEY, RSI3, intrabar=False)["value"]
+        assert len(loader.calls) == calls  # no extra load
+    asyncio.run(main())
+
+
+def test_peek_failed_load_returns_none():
+    async def main():
+        now = [20 * H + 1]
+        hub, loader, _ = make([c(i * H, float(i)) for i in range(0, 20)], now)
+        loader.degraded = True
+        assert await hub.peek(KEY, [RSI3]) == {RSI3: None}
+    asyncio.run(main())
