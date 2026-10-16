@@ -72,9 +72,9 @@ import {
 } from "./lib/backtest";
 import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
 import BacktestTradeDashes, { type BacktestTradeDashesHandle } from "./BacktestTradeDashes";
+import { requestAlertEdit } from "./lib/alertEdit";
 import {
   alertEditRequest,
-  indicatorAlertRequest,
   requestConfirm,
   indicatorSettingsRequest,
   drawingSettingsRequest,
@@ -6060,7 +6060,7 @@ export default function ChartCore({
       <AlertTags
         tags={alertTags}
         bells={indicatorBells}
-        onBellClick={(id) => indicatorAlertRequest.set({ mode: "edit", id })}
+        onBellClick={(id) => requestAlertEdit(id)}
         priceTag={priceTag}
         precision={precision}
       />

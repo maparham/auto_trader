@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 vi.mock("klinecharts", () => ({ registerOverlay: () => {}, registerIndicator: () => {}, registerYAxis: () => {}, getSupportedIndicators: () => [] }));
 const alerts: unknown[] = [];
+const lineAlerts: unknown[] = [];
 vi.mock("../alertsApi", async (orig) => ({
   ...(await orig<typeof import("../alertsApi")>()),
   loadIndicatorAlerts: () => alerts,
+  loadLineAlerts: () => lineAlerts,
   patchIndicatorAlert: vi.fn(() => Promise.resolve(true)),
 }));
 import { IndicatorAlertLines } from "./indicatorAlerts";
@@ -18,7 +20,7 @@ function fakeChart() {
       createOverlay: (o: Record<string, unknown>) => { created.push(o); return o.id as string; },
       removeOverlay: vi.fn(),
       overrideOverlay: vi.fn(),
-      getIndicators: () => [{ name: "RSI", paneId: "pane_rsi" }],
+      getIndicators: () => [{ name: "RSI", paneId: "pane_rsi" }, { name: "TRENDLINES", paneId: "candle_pane", extendData: {} }],
     },
   };
 }
@@ -123,5 +125,31 @@ describe("IndicatorAlertLines", () => {
     expect(created[0]).toMatchObject({ visible: true });
     ctl.overlays.setAlertsHidden(true);
     expect(chart.overrideOverlay).toHaveBeenCalledWith({ id: "indalert:al-1", visible: false });
+  });
+});
+
+const lineAlert = (scope: string, tf = "HOUR") => ({
+  kind: "line", id: "al-l", epic: "US100", broker: "b", condition: "crossing", trigger: "every",
+  message: "", expiresAt: null, notify: {}, precision: 2,
+  params: { timeframe: tf, evalOn: "close", tRef: 9, pRef: 13, slope: 0.5,
+    anchors: { t1: 2, p1: 10, t2: 6, p2: 12 }, link: { scope, instanceId: "TRENDLINES", lineKey: "2:6" } },
+});
+
+describe("IndicatorAlertLines: line alerts", () => {
+  it("draws a dashed ray through the anchors on the linked cell's timeframe only", () => {
+    alerts.splice(0, alerts.length);
+    lineAlerts.splice(0, lineAlerts.length, lineAlert("s1"), { ...lineAlert("s1", "DAY"), id: "al-l2" }, { ...lineAlert("s2"), id: "al-l3" });
+    const { chart, created } = fakeChart();
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    lines.reconcile();
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      id: "lnalert:al-l", name: "rayLine", lock: true,
+      points: [{ timestamp: 2, value: 10 }, { timestamp: 6, value: 12 }],
+    });
+    lineAlerts.splice(0, lineAlerts.length);
+    lines.reconcile();
+    expect(chart.removeOverlay).toHaveBeenCalledWith({ id: "lnalert:al-l" });
   });
 });

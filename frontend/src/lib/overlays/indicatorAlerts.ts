@@ -5,14 +5,18 @@
 // One instance per ChartController; ChartCore re-attaches it on every
 // epic/resolution/broker bind and reconciles it on the alerts signal and on
 // indicator add/remove (the pane the line lives in can come and go).
+// Also the frozen-trendline (`line`) alerts, drawn as a dashed ray through
+// their anchors on the candle pane of the linked cell, while its Trendlines
+// pane alerts on the alert's timeframe.
 import type { Chart } from "klinecharts";
 import { alertTimeframeOf } from "../alertableIndicators";
-import { loadIndicatorAlerts, patchIndicatorAlert } from "../alertsApi";
+import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlert } from "../alertsApi";
 import { getIndicatorsByPane } from "../indicators";
 import { isInsetInstance } from "../indicators/inset";
-import { createAlertLine } from "./alertLine";
+import { alertLineStyles, createAlertLine } from "./alertLine";
 
 const ovId = (alertId: string) => `indalert:${alertId}`;
+const rayId = (alertId: string) => `lnalert:${alertId}`;
 
 type Drawn = { paneId: string; value: number };
 
@@ -23,6 +27,7 @@ export class IndicatorAlertLines {
   private epic = "";
   private resolution = "";
   private drawn = new Map<string, Drawn>();
+  private rays = new Map<string, string>(); // alertId -> geometry key
   // The visibility the drawn lines currently carry (the sidebar eye).
   private shownHidden = false;
 
@@ -35,7 +40,10 @@ export class IndicatorAlertLines {
   attach(chart: Chart, scope: string, broker: string, epic: string, resolution: string): void {
     // A different chart instance (cell remount) owns none of our overlays:
     // forget them rather than removing ids from a chart that never had them.
-    if (chart !== this.chart) this.drawn.clear();
+    if (chart !== this.chart) {
+      this.drawn.clear();
+      this.rays.clear();
+    }
     this.chart = chart;
     this.scope = scope;
     this.broker = broker;
@@ -77,7 +85,8 @@ export class IndicatorAlertLines {
     if (!c) return;
     const want = this.wanted();
     const hidden = this.hidden();
-    if (hidden !== this.shownHidden) {
+    const hiddenChanged = hidden !== this.shownHidden;
+    if (hiddenChanged) {
       for (const id of this.drawn.keys()) c.overrideOverlay({ id: ovId(id), visible: !hidden });
       this.shownHidden = hidden;
     }
@@ -96,6 +105,67 @@ export class IndicatorAlertLines {
         c.overrideOverlay({ id: ovId(id), points: [{ value: w.value }] });
       }
       this.drawn.set(id, w);
+    }
+    this.reconcileRays(c, hidden, hiddenChanged);
+  }
+
+  // Line alerts to draw: linked to this cell, whose Trendlines instance is
+  // here and alerts on the alert's timeframe (a pinned pane, its pin).
+  private wantedRays(): Map<string, LineAlert> {
+    const out = new Map<string, LineAlert>();
+    if (!this.chart) return out;
+    const alerts = loadLineAlerts(this.epic, this.broker);
+    if (alerts.length === 0) return out;
+    const panes = getIndicatorsByPane(this.chart);
+    for (const a of alerts) {
+      const link = a.params.link;
+      if (!link || link.scope !== this.scope) continue;
+      for (const [, inds] of panes) {
+        const ind = inds.get(link.instanceId);
+        if (!ind) continue;
+        const ext = ind.extendData as Record<string, unknown> | undefined;
+        if (alertTimeframeOf(ext, this.resolution) === a.params.timeframe) out.set(a.id, a);
+        break;
+      }
+    }
+    return out;
+  }
+
+  private reconcileRays(c: Chart, hidden: boolean, hiddenChanged: boolean): void {
+    const want = this.wantedRays();
+    for (const [id, geo] of this.rays) {
+      const a = want.get(id)?.params.anchors;
+      if (!a || `${a.t1}:${a.p1}:${a.t2}:${a.p2}` !== geo) {
+        c.removeOverlay({ id: rayId(id) });
+        this.rays.delete(id);
+      } else if (hiddenChanged) {
+        c.overrideOverlay({ id: rayId(id), visible: !hidden });
+      }
+    }
+    for (const [id, a] of want) {
+      if (this.rays.has(id)) continue;
+      const { t1, p1, t2, p2 } = a.params.anchors;
+      const made = c.createOverlay({
+        id: rayId(id),
+        name: "rayLine",
+        points: [
+          { timestamp: t1, value: p1 },
+          { timestamp: t2, value: p2 },
+        ],
+        styles: alertLineStyles(false),
+        visible: !hidden,
+        mode: "normal",
+        needDefaultXAxisFigure: false,
+        needDefaultYAxisFigure: false,
+        // Locked and app-owned: the geometry is frozen with the alert.
+        lock: true,
+        // v10 deletes an overlay on right-click unless the handler prevents it.
+        onRightClick: (e: { preventDefault?: () => void }) => {
+          e.preventDefault?.();
+          return true;
+        },
+      } as never);
+      if (typeof made === "string") this.rays.set(id, `${t1}:${p1}:${t2}:${p2}`);
     }
   }
 

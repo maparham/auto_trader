@@ -40,7 +40,8 @@ import { buildLegendRows, buildSubPaneLegends, buildInsetLegend, type LegendRow,
 import { insetBandBox, type InsetBandBox } from "../lib/indicators/inset";
 import { slopeMaLines } from "../lib/indicators/slope";
 import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
-import { loadIndicatorAlerts } from "../lib/alertsApi";
+import { loadIndicatorAlerts, loadLineAlerts } from "../lib/alertsApi";
+import { lineLevelNow } from "../lib/lineAlertLevel";
 import { alertTimeframeOf, MAIN_LINE_KEY } from "../lib/alertableIndicators";
 import type { IndicatorBellTag } from "./AlertTags";
 import { indTypeOf } from "../lib/customIndicators";
@@ -850,6 +851,25 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       if (v == null || !Number.isFinite(v)) continue;
       const y = yOf(v);
       if (y != null) bells.push({ id: a.id, y });
+    }
+    // Line alerts (a frozen trendline): a bell where the line meets the
+    // axis, only when the chart shows the alert's own timeframe (its bars
+    // are the alert's bars there; on any other timeframe the dashed line
+    // shows without a bell).
+    if (!overlays.getAlertsHidden()) {
+      // Built only once a bell is due: the data list can be long.
+      let times: number[] | null = null;
+      for (const a of loadLineAlerts(epicRef.current, brokerIdRef.current)) {
+        const p = a.params;
+        if (!p.link || p.link.scope !== scope || p.timeframe !== resRef.current) continue;
+        const ind = getIndicatorById(chart, p.link.instanceId);
+        if (!ind || ind.visible === false) continue;
+        times ??= chart.getDataList().map((d) => d.timestamp);
+        const v = lineLevelNow(p, times);
+        if (v == null || !Number.isFinite(v)) continue;
+        const y = yOf(v);
+        if (y != null) bells.push({ id: a.id, y });
+      }
     }
     setIndicatorBells((prev) => stableArray(prev, bells));
     const act = tags.find((t) => t.active);
