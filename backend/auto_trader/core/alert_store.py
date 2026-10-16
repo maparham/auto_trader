@@ -26,10 +26,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 import time
 
 from auto_trader.core.db_migrate import run_migrations, table_columns
+
+log = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS alerts (
@@ -78,6 +81,24 @@ def _migrate_triggered_alert_json(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE triggered ADD COLUMN alert_json TEXT")
 
 
+def _migrate_indicator_params(conn: sqlite3.Connection) -> None:
+    # Indicator alerts move to the series-registry shape ({type, config,
+    # output}); see core/alert_kinds.upgrade_params. A row that cannot be
+    # upgraded is left as is and logged, never dropped.
+    from auto_trader.core.alert_kinds import upgrade_params
+
+    rows = conn.execute("SELECT user_id, id, params FROM alerts WHERE kind = 'indicator'").fetchall()
+    for user_id, alert_id, raw in rows:
+        try:
+            new = upgrade_params(json.loads(raw))
+        except (KeyError, TypeError, ValueError, IndexError):
+            log.warning("alert %s: indicator params could not be upgraded", alert_id, exc_info=True)
+            continue
+        conn.execute(
+            "UPDATE alerts SET params = ? WHERE user_id = ? AND id = ?", (json.dumps(new), user_id, alert_id)
+        )
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
     d.pop("user_id", None)  # caller already has it (list_user's arg, or list_all's tuple)
@@ -95,7 +116,7 @@ class AlertStore:
         self._db_path = db_path
         conn = self._connect()
         try:
-            run_migrations(conn, {1: _migrate_triggered_alert_json})
+            run_migrations(conn, {1: _migrate_triggered_alert_json, 2: _migrate_indicator_params})
         finally:
             conn.close()
 

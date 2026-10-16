@@ -16,6 +16,7 @@ import logging
 from auto_trader.api import deps
 from auto_trader.api.auth import auth_enabled
 from auto_trader.core.alert_engine import ALERT_ENGINE
+from auto_trader.core.alert_kinds import upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.models import Candle
 from auto_trader.core.telegram_notify import AlertHooks
@@ -82,7 +83,16 @@ async def _changed_broadcast(user_id: str, broker: str, epic: str) -> None:
     )
 
 
-async def _rearm(user_id: str, row: dict) -> dict:
+async def _rearm(user_id: str, row: dict) -> dict | None:
+    if row.get("kind") == "indicator":
+        try:
+            row = {**row, "params": upgrade_params(row["params"])}
+        except ValueError:
+            # The stored params predate a registry change this upgrade can't
+            # follow (unknown indicator, malformed calcParams/config) - skip
+            # the re-arm rather than let a bad history row crash the hook.
+            log.warning("rearm: alert %s indicator params could not be upgraded, skipping", row.get("id"))
+            return None
     created = await ALERT_STORE.create(user_id, row)  # ValueError if id exists
     ALERT_ENGINE.on_alert_changed(user_id, created, created["id"])
     await _changed_broadcast(user_id, created["broker"], created["epic"])

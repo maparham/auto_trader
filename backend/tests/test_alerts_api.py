@@ -421,6 +421,29 @@ def test_triggered_entries_carry_parsed_alert(clerk):
     assert entry["alert"]["params"]["indicator"] == "RSI" and "alert_json" not in entry
 
 
+def test_triggered_entries_upgrade_old_shape_indicator_params(clerk):
+    import asyncio
+    import json
+
+    from auto_trader.api.routers import alerts as alerts_router
+    store = alerts_router.ALERT_STORE
+    old_params = {
+        "indicator": "RSI", "calcParams": [14], "config": {"source": "close"}, "line": "value",
+        "timeframe": "HOUR", "target": "value", "value": 70, "evalOn": "close",
+        "condition": "crossing", "trigger": "once", "link": None,
+    }
+    asyncio.run(store.add_triggered("alice", {
+        "time": 5, "alert_id": "al-y", "broker": "capital", "epic": "US100", "kind": "indicator",
+        "price": 1.0, "level": 2.0, "condition": "crossing", "message": "", "precision": 2,
+        "alert_json": json.dumps({"id": "al-y", "kind": "indicator", "params": old_params}),
+    }))
+    r = client.get("/api/alerts/triggered", headers=_auth("alice"))
+    entry = r.json()["entries"][0]
+    assert entry["alert"]["params"]["type"] == "RSI"
+    assert "indicator" not in entry["alert"]["params"]
+    assert entry["alert"]["label"]
+
+
 def test_list_includes_status_for_indicator_alerts(clerk, monkeypatch):
     from auto_trader.api.routers import alerts as alerts_router
     client.post("/api/alerts", json=_ind_body(), headers=_auth("alice"))

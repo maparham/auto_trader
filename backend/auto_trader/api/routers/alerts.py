@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from auto_trader.core.alert_bars import candle_ms
 from auto_trader.core.alert_engine import ALERT_ENGINE
-from auto_trader.core.alert_kinds import KINDS
+from auto_trader.core.alert_kinds import INDICATOR, KINDS, upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.push_notify import PUSH
 from auto_trader.core.telegram_notify import TELEGRAM
@@ -220,6 +220,13 @@ async def get_triggered(request: Request) -> dict[str, Any]:
             e["alert"] = json.loads(raw) if raw else None
         except ValueError:
             e["alert"] = None
+        a = e["alert"]
+        if isinstance(a, dict) and a.get("kind") == "indicator" and isinstance(a.get("params"), dict):
+            try:
+                a["params"] = upgrade_params(a["params"])
+                a["label"] = INDICATOR.label(a["params"])
+            except (KeyError, TypeError, ValueError):
+                pass
     seen_raw = await ALERT_STORE.get_meta(user, "triggered_seen")
     seen = int(seen_raw) if seen_raw is not None else 0
     return {"entries": entries, "seen": seen}

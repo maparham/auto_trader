@@ -147,7 +147,9 @@ class AlertHooks:
       ({side, quantity, open_level, upnl, env} per position); return [] to
       suppress.
     - `rearm(user_id, row)` — recreate a fired `once` alert (store + engine +
-      tab broadcast); raises ValueError when the id already exists.
+      tab broadcast); raises ValueError when the id already exists; returns
+      None (no-op) when an indicator alert's stored params can no longer be
+      upgraded to the current shape.
     - `snooze(user_id, alert_id, seconds)` — mute an `every` alert's firings.
     - `delete(user_id, alert_id)` -> bool — remove an alert (the hook resolves
       the row's broker/epic itself for the tab broadcast).
@@ -155,7 +157,7 @@ class AlertHooks:
 
     get_candles: Callable[[str, str, str, int], Awaitable[list[Any]]]
     get_positions: Callable[[str, str], Awaitable[list[dict]]]
-    rearm: Callable[[str, dict], Awaitable[dict]]
+    rearm: Callable[[str, dict], Awaitable[dict | None]]
     snooze: Callable[[str, str, float], None]
     delete: Callable[[str, str], Awaitable[bool]]
 
@@ -532,11 +534,15 @@ class TelegramNotify:
         if expires_at is not None and expires_at <= int(time.time() * 1000):
             return "Alert already expired.", False
         try:
-            await self._hooks.rearm(user_id, alert_row)
+            created = await self._hooks.rearm(user_id, alert_row)
         except ValueError:
             # Same id already present: the alert exists (double-tap, or it was
             # recreated in the app) — treat as success, clear the button.
             return "Already re-armed ✓", True
+        if created is None:
+            # Indicator params the hook could not upgrade to the current
+            # shape (already logged there) - nothing was recreated.
+            return "Can't re-arm this alert any more.", False
         return "🔁 Re-armed ✓", True
 
     async def _answer_callback(self, cq_id: str, text: str) -> None:
