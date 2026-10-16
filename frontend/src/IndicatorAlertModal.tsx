@@ -130,22 +130,27 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
             <span>Uses the last 2000 bars</span>
           </div>
         )}
-        {base.identity.priceTarget && !priceOnly && (
-          <div className="al-field" role="radiogroup" aria-label="Compare">
-            <label><input type="radio" aria-label="Price crosses the curve" checked={target === "price"} onChange={() => setTarget("price")} /> Price crosses the curve</label>
-            <label><input type="radio" aria-label="Indicator crosses a level" checked={target === "value"} onChange={() => setTarget("value")} /> Indicator crosses a level</label>
-          </div>
-        )}
         <div className="al-field">
           <span>Condition</span>
-          <div className="al-cond">
+          <div className="al-cond al-sentence">
+            {base.identity.priceTarget && !priceOnly ? (
+              <select className="al-operator" aria-label="Compare" value={target}
+                onChange={(e) => setTarget(e.target.value as AlertTarget)}>
+                <option value="price">Price</option>
+                <option value="value">Indicator</option>
+              </select>
+            ) : (
+              <span className="al-subject">{priceOnly ? "Price" : "Indicator"}</span>
+            )}
             <select className="al-operator" aria-label="Alert condition" value={condition}
               onChange={(e) => setCondition(e.target.value as AlertCondition)}>
               {CONDITIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
-            {target === "value" && (
+            {target === "value" ? (
               <input className="al-value" type="number" step="any" aria-label="Alert value"
                 value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+            ) : (
+              <span className="al-subject">the curve</span>
             )}
           </div>
         </div>

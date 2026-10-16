@@ -71,7 +71,8 @@ function existingAlert(over: Partial<IndicatorAlert> = {}): IndicatorAlert {
 describe("IndicatorAlertModal", () => {
   it("oscillators only offer value vs number, prefilled with the last value", () => {
     render(<IndicatorAlertModal request={{ mode: "create", draft: draft() }} defaults={DEFAULT_ALERT_DEFAULTS} now={0} onClose={() => {}} />);
-    expect(screen.queryByLabelText("Price crosses the curve")).toBeNull();
+    expect(screen.queryByLabelText("Compare")).toBeNull();
+    expect(document.querySelector(".al-subject")?.textContent).toBe("Indicator");
     expect((screen.getByLabelText("Alert value") as HTMLInputElement).value).toBe("55.5");
     expect(screen.getByText("RSI 14 (1H)")).toBeTruthy();
   });
@@ -143,16 +144,27 @@ describe("IndicatorAlertModal", () => {
     expect((screen.getByLabelText("As it happens") as HTMLInputElement).disabled).toBe(false);
   });
 
-  it("price-target indicators show the Compare radios, defaulting to Price crosses the curve", () => {
+  it("price-target indicators show the Compare dropdown, defaulting to Price", () => {
     const d = draft({
       identity: { indicator: "MA", calcParams: [20], config: { maType: "sma", source: "close" }, priceTarget: true },
     });
     render(<IndicatorAlertModal request={{ mode: "create", draft: d }} defaults={DEFAULT_ALERT_DEFAULTS} now={0} onClose={() => {}} />);
-    expect((screen.getByLabelText("Price crosses the curve") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Compare") as HTMLSelectElement).value).toBe("price");
+    expect(screen.getByText("the curve")).toBeTruthy();
     expect(screen.queryByLabelText("Alert value")).toBeNull();
 
     fireEvent.click(screen.getByText("Create"));
     const a = add.mock.calls[0][0];
     expect(a.params).toMatchObject({ target: "price", value: null });
+  });
+
+  it("switching Compare to Indicator swaps in the value input", () => {
+    const d = draft({
+      identity: { indicator: "MA", calcParams: [20], config: { maType: "sma", source: "close" }, priceTarget: true },
+    });
+    render(<IndicatorAlertModal request={{ mode: "create", draft: d }} defaults={DEFAULT_ALERT_DEFAULTS} now={0} onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Compare"), { target: { value: "value" } });
+    expect(screen.queryByText("the curve")).toBeNull();
+    expect((screen.getByLabelText("Alert value") as HTMLInputElement).value).toBe("55.5");
   });
 });

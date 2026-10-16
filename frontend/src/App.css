@@ -2443,13 +2443,12 @@
 }
 .al-settings-link:hover { color: var(--text); }
 /* Condition field: label on its own line, operator/value in a row below it —
-   the label doesn't have to compete with the controls for width. Value is
-   fixed-width (it's a number, not prose); operator takes whatever's left. */
+   content-sized (hugs the controls), never stretched to the modal width.
+   Value is fixed-width (it's a number, not prose); operator fits its label. */
 .al-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .al-field > span { color: var(--text-dim); }
-.al-cond { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: center; }
-.al-cond .al-operator { flex: 1; min-width: 0; }
-.al-cond .al-operator:only-child { flex: 0 0 auto; width: max-content; max-width: 100%; }
+.al-cond { flex: 0 0 auto; align-self: flex-start; display: flex; gap: 8px; align-items: center; max-width: 100%; }
+.al-cond .al-operator { flex: 0 0 auto; width: max-content; max-width: 100%; }
 .al-cond .al-value { flex: 0 0 70px; }
 /* Trigger + Expiration share a row; each field stacks its own label above its
    own control (rather than beside it) so the label doesn't crowd the control. */
@@ -2463,8 +2462,8 @@
 .al-pair-field .al-expiry { min-width: 0; }
 .al-trigger-row { display: flex; align-items: center; gap: 6px; }
 .al-trigger-row select { flex: 1; min-width: 0; }
-/* Indicator alert dialog's Compare/Evaluate radio rows reuse .al-field but lay
-   their options out inline instead of stacked. */
+/* Indicator alert dialog's Evaluate radio row reuses .al-field but lays its
+   options out inline instead of stacked. */
 .al-field[role="radiogroup"] {
   flex-direction: row; align-items: center; flex-wrap: wrap; gap: 14px;
 }
@@ -2473,6 +2472,10 @@
   display: flex; align-items: center; gap: 6px; cursor: pointer; flex-shrink: 0;
 }
 .al-value { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+/* The sentence-style Condition row (Price/Indicator, condition, level): a
+   fixed subject or the literal "the curve" reads inline beside the selects
+   at the same height, instead of a separate Compare radio row above it. */
+.al-sentence .al-subject { padding: 0 2px; white-space: nowrap; }
 .al-message {
   flex: 1; resize: vertical; min-height: 34px; font: inherit;
   background: var(--input-bg); color: var(--text);
