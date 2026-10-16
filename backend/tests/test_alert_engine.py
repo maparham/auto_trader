@@ -762,6 +762,38 @@ def test_line_rebase_moves_the_reference_and_keeps_last_fired(tmp_path, monkeypa
     asyncio.run(main())
 
 
+def test_line_reference_older_than_the_seed_is_refetched_and_rebased(tmp_path):
+    """After downtime or a long pause, tRef can predate every held bar: the
+    engine fetches back to it once and rebases, instead of waiting forever."""
+    async def main():
+        bars = [hourly([10] * 10, 6)]  # 6h..15h; tRef 7h
+        window = [4]  # the seed only reaches 12h..15h
+
+        eng, store, sent, _ = make_engine(tmp_path)
+
+        async def loader(broker, epic, res, side, count):
+            return list(bars[0])[-min(count, window[0]):], False
+
+        eng.configure(store=store, get_broker=lambda b: None,
+                      broadcast=eng._broadcast, notifiers=eng._notifiers, load_bars=loader)
+        created = await store.create("u1", line_row(tRef=7 * H, pRef=8.5))
+        eng.on_alert_changed("u1", created, "al-l")
+        await eng.on_tick("capital", "US100", 10.0, None, None, t_ms=16 * H + 5)
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert eng.status("u1", "al-l") == "waiting_for_data"
+        window[0] = 100  # deeper history is there for a deeper fetch
+        bars[0] = hourly([10] * 11, 6)  # 16h closes
+        await eng.on_tick("capital", "US100", 10.0, None, None, t_ms=17 * H + 5)
+        rescue = eng._line_rescue.get(("u1", "al-l"))
+        assert rescue is not None
+        await rescue
+        saved = (await store.list_user("u1"))[0]["params"]
+        assert saved["tRef"] == 16 * H and saved["pRef"] == pytest.approx(8.5 + 0.5 * 9)
+        assert eng.status("u1", "al-l") == "ok"
+    asyncio.run(main())
+
+
 def tl_row(id="al-t", **params):
     return ind_row(id=id, indicator="TRENDLINES", calcParams=list(TL_DEFAULT_PARAMS), config={},
                    link={"scope": "s", "instanceId": "TRENDLINES"}, **params)

@@ -38,6 +38,7 @@ import logging
 import time
 from typing import Any, Awaitable, Callable
 
+from auto_trader.core import timeframe as _tf
 from auto_trader.core.alert_bars import Sample, candle_ms, period_start
 from auto_trader.core.alert_eval import Pair, evaluate_alert
 from auto_trader.core.alert_indicators import IndicatorHub, Loader, SeriesKey
@@ -70,6 +71,10 @@ _STREAM_FAILURE_THRESHOLD = 2
 # A `line` alert's reference bar rolls forward once it is this many bars
 # behind the newest close, so it never leaves the 2000-bar seed.
 LINE_REBASE_BARS = 1000
+# A line alert stranded past the seed (see _maybe_rescue_line) refetches at
+# most this deep, and retries a failed fetch this often.
+LINE_RESCUE_MAX_BARS = 20000
+LINE_RESCUE_RETRY_SECONDS = 600.0
 
 
 def _is_broker_paused(exc: BaseException) -> bool:
@@ -137,6 +142,10 @@ class AlertEngine:
         # point, and on_tick has awaits in it, so the old and new task could
         # otherwise both be inside on_tick for the same (broker, epic) at once.
         self._draining: dict[tuple[str, str], set[asyncio.Task]] = {}
+        # (user_id, alert_id) -> the deeper fetch for a line alert whose tRef
+        # fell out of the held series, and when that was last tried.
+        self._line_rescue: dict[tuple[str, str], asyncio.Task] = {}
+        self._line_rescue_at: dict[tuple[str, str], float] = {}
 
     # ---- configuration ----
 
@@ -184,6 +193,8 @@ class AlertEngine:
         self._sig.clear()
         self._price_side_cache.clear()
         self._snoozed.clear()
+        self._line_rescue.clear()
+        self._line_rescue_at.clear()
         all_rows = await self._store.list_all()
         for user_id, row in all_rows:
             key = (row["broker"], row["epic"])
@@ -200,7 +211,7 @@ class AlertEngine:
         tasks = [
             t for t in (
                 self._expiry_task, self._reconciler_task, self._status_task,
-                *self._feed_tasks.values(), *draining,
+                *self._feed_tasks.values(), *draining, *self._line_rescue.values(),
             )
             if t is not None
         ]
@@ -209,6 +220,7 @@ class AlertEngine:
         self._status_task = None
         self._feed_tasks = {}
         self._draining = {}
+        self._line_rescue = {}
         for task in tasks:
             task.cancel()
         if tasks:
@@ -848,8 +860,56 @@ class AlertEngine:
         p = row["params"]
         n = self._hub.bars_after(skey, int(p["tRef"]))
         last = self._hub.last_closed(skey)
-        if n is None or n <= LINE_REBASE_BARS or last is None:
+        if last is None:
             return
+        if n is None:
+            self._maybe_rescue_line(user_id, row, skey, last)
+            return
+        if n <= LINE_REBASE_BARS:
+            return
+        await self._apply_line_rebase(user_id, row, last, n)
+
+    def _maybe_rescue_line(self, user_id: str, row: dict, skey: SeriesKey, last: Candle) -> None:
+        """tRef is older than the held series (the backend was down, or the
+        alert sat paused, for more bars than the seed holds): the line can
+        no longer resolve and the regular rebase cannot count from it. Fetch
+        back far enough to find tRef, once per LINE_RESCUE_RETRY_SECONDS, in
+        the background so the feed never waits on a deep fetch."""
+        assert self._hub is not None
+        t_ref = int(row["params"]["tRef"])
+        first = self._hub.first_closed(skey)
+        if first is None or t_ref >= candle_ms(first):
+            return
+        key = (user_id, row["id"])
+        now = time.monotonic()
+        if key in self._line_rescue or now - self._line_rescue_at.get(key, -1e18) < LINE_RESCUE_RETRY_SECONDS:
+            return
+        self._line_rescue_at[key] = now
+        period_ms = _tf.seconds(skey[2]) * 1000
+        count = min(LINE_RESCUE_MAX_BARS, (candle_ms(last) - t_ref) // period_ms + 50)
+        hub = self._hub
+
+        async def rescue() -> None:
+            found = await hub.bars_since(skey, t_ref, count)
+            if found is None:
+                log.warning("line alert %s: reference bar %s is out of reach", row["id"], t_ref)
+                return
+            if int(row["params"]["tRef"]) == t_ref:  # not rebased meanwhile
+                await self._apply_line_rebase(user_id, row, found[1], found[0])
+
+        task = asyncio.ensure_future(rescue())
+        self._line_rescue[key] = task
+
+        def done(t: asyncio.Task) -> None:
+            if self._line_rescue.get(key) is t:
+                del self._line_rescue[key]
+            if not t.cancelled() and t.exception() is not None:
+                log.warning("line alert %s: rescue failed", row["id"], exc_info=t.exception())
+
+        task.add_done_callback(done)
+
+    async def _apply_line_rebase(self, user_id: str, row: dict, last: Candle, n: int) -> None:
+        p = row["params"]
         assert self._store is not None and self._broadcast is not None
         patch = {"tRef": candle_ms(last), "pRef": p["pRef"] + p["slope"] * n}
         saved = await self._store.update(user_id, row["id"], {"params": patch})

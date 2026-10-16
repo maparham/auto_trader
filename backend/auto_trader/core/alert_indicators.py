@@ -519,3 +519,25 @@ class IndicatorHub:
             if candle_ms(bar) == t_ms:
                 return back
         return None
+
+    def first_closed(self, key: SeriesKey) -> Candle | None:
+        st = self._states.get(key)
+        return st.series.closed[0] if st and st.series.closed else None
+
+    async def bars_since(self, key: SeriesKey, t_ms: int, count: int) -> tuple[int, Candle] | None:
+        """A one-off deeper fetch for a `line` alert whose reference bar is
+        older than the held series (backend downtime, a long pause): the
+        closed bars after the one opening at `t_ms` and the newest closed
+        bar, both from the same fetch. None when the fetch fails or still
+        does not reach back to `t_ms`."""
+        st = self._states.get(key)
+        if st is None:
+            return None
+        bars = await self._load(key, st, count)
+        if bars is None:
+            return None
+        closed = st.series.keep_closed(bars, self._now_ms())
+        for back, bar in enumerate(reversed(closed)):
+            if candle_ms(bar) == t_ms:
+                return back, closed[-1]
+        return None
