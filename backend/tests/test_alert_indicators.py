@@ -635,6 +635,7 @@ def test_trendlines_intrabar_projects_without_recompute(monkeypatch):
         hub.set_needs({KEY: {TL}})
         await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None))
         await asyncio.sleep(0)
+        await hub.settle()  # the Trendlines compute runs in a worker thread
         assert len(calls) == 1
         t[0] = 5.0
         assert hub.values(KEY, TL, intrabar=True)["value"] == 50.25
@@ -652,6 +653,91 @@ def test_trendlines_ready_with_no_line(monkeypatch):
         hub.set_needs({KEY: {TL}})
         await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None))
         await asyncio.sleep(0)
+        await hub.settle()
         assert hub.ready(KEY, TL)  # an empty pane is "ok", it just never fires
         assert hub.values(KEY, TL, intrabar=True)["value"] is None
+    asyncio.run(main())
+
+
+def test_trendlines_compute_runs_off_the_event_loop(monkeypatch):
+    # A slow Trendlines compute (a blocking sleep standing in for the ~400 ms
+    # detector) must not hold the loop: another need on the same series is
+    # ready at once, and a concurrent coroutine keeps running meanwhile.
+    import threading
+    import time as _time
+    release = threading.Event()
+    real = alert_indicators_mod.compute
+
+    def fake(ind, bars):
+        if ind.indicator != "TRENDLINES":
+            return real(ind, bars)
+        release.wait(1)
+        _time.sleep(0.05)
+        return _fake_tl(len(bars))
+
+    monkeypatch.setattr(alert_indicators_mod, "compute", fake)
+
+    async def main():
+        now = [60 * H + 5]
+        hub, _, _ = make([c(i * H, 1.0) for i in range(0, 60)], now)
+        hub.set_needs({KEY: {TL, SMA3}})
+        await asyncio.wait_for(hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None)), 0.5)
+        await asyncio.sleep(0)  # the background first seed
+        assert hub.ready(KEY, SMA3)  # the cheap need does not wait on Trendlines
+        assert not hub.ready(KEY, TL)  # not ready, never stale
+        ticks = 0
+        for _ in range(5):  # the loop is free while the worker is blocked
+            await asyncio.sleep(0.01)
+            ticks += 1
+        assert ticks == 5 and not hub.ready(KEY, TL)
+        release.set()
+        await hub.settle()
+        assert hub.values(KEY, TL, intrabar=False)["value"] == 50.0
+        # A seed's result only makes the series ready: it is not a close.
+        await hub.on_sample("capital", "US100", Sample(now[0] + 1, 1.0, None, None))
+        assert not hub.closed_now(KEY, TL, set())
+    asyncio.run(main())
+
+
+def test_trendlines_not_ready_on_the_new_bar_until_its_result_lands(monkeypatch):
+    real = alert_indicators_mod.compute
+    gate = {"open": True}
+    import threading
+    release = threading.Event()
+
+    def fake(ind, bars):
+        if ind.indicator != "TRENDLINES":
+            return real(ind, bars)
+        if not gate["open"]:
+            release.wait(1)
+        out = _fake_tl(len(bars))
+        out["value"][-1] = float(len(bars))
+        return out
+
+    monkeypatch.setattr(alert_indicators_mod, "compute", fake)
+
+    async def main():
+        now = [60 * H + 5]
+        bars = [c(i * H, 1.0) for i in range(0, 60)]
+        hub, loader, t = make(bars, now)
+        hub.set_needs({KEY: {TL}})
+        await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None))
+        await asyncio.sleep(0)
+        await hub.settle()
+        assert hub.values(KEY, TL, intrabar=False)["value"] == 60.0
+        gate["open"] = False
+        loader.bars = bars + [c(60 * H, 1.0)]
+        now[0] = 61 * H + 5
+        t[0] += 10
+        closed = await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None))
+        assert closed == {KEY}
+        assert not hub.closed_now(KEY, TL, closed)  # the bar closed, its result is not back
+        assert hub.values(KEY, TL, intrabar=False) is None  # never the previous bar's 60.0
+        release.set()
+        await hub.settle()
+        await hub.on_sample("capital", "US100", Sample(now[0] + 1, 1.0, None, None))
+        assert hub.closed_now(KEY, TL, set())
+        assert hub.values(KEY, TL, intrabar=False)["value"] == 61.0
+        await hub.on_sample("capital", "US100", Sample(now[0] + 2, 1.0, None, None))
+        assert not hub.closed_now(KEY, TL, set())  # delivered once
     asyncio.run(main())

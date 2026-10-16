@@ -7,6 +7,11 @@ place and marks the series not ready; no alert evaluates a closed bar built
 from live samples. Values are the existing batch functions (via
 indicators.alertable.compute); intrabar recomputes with the forming bar
 appended, at most once a second per (series, indicator).
+
+The Trendlines detector is the one expensive compute (hundreds of ms over a
+full seed), so its closed values run in a worker thread: a series whose
+Trendlines result has not landed yet is simply not ready for that key, and
+its close lands through `closed_now` on the first sample after the result.
 """
 from __future__ import annotations
 
@@ -28,6 +33,26 @@ Loader = Callable[[str, str, str, str, int], Awaitable[tuple[list[Candle], bool]
 _TAIL = 5
 _RETRY_SECONDS = 5.0
 _INTRABAR_SECONDS = 1.0
+# Indicators whose closed values are computed off the event loop.
+_OFF_LOOP = frozenset({"TRENDLINES"})
+
+
+def _off_loop(ind: IndicatorKey) -> bool:
+    return ind.indicator in _OFF_LOOP
+
+
+def _has_loop() -> bool:
+    """Off-loop only when there is a running loop to land the result on."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _stamp(bars: list[Candle]) -> tuple:
+    """Which closed history a result is for."""
+    return (candle_ms(bars[0]), candle_ms(bars[-1]), len(bars)) if bars else ()
 
 
 def _at(values: dict[str, list[float | None]], back: int) -> dict[str, float | None]:
@@ -51,6 +76,16 @@ class _State:
     closed_vals: dict[IndicatorKey, dict[str, float | None]] = field(default_factory=dict)
     prev_vals: dict[IndicatorKey, dict[str, float | None]] = field(default_factory=dict)
     intrabar: dict[IndicatorKey, tuple[float, dict[str, float | None]]] = field(default_factory=dict)
+    # Off-loop computes: which closed history each one is for, the in-flight
+    # tasks, results landed since the last sample, and the ones this sample
+    # delivers as a close (read by `closed_now`). Only a result for the
+    # history `on_sample` last reported as a close (`close_stamp`) is
+    # delivered; a seed's result just makes the series ready.
+    close_stamp: tuple | None = None
+    off_stamp: dict[IndicatorKey, tuple] = field(default_factory=dict)
+    off_tasks: dict[IndicatorKey, asyncio.Task] = field(default_factory=dict)
+    landed: set[IndicatorKey] = field(default_factory=set)
+    delivering: set[IndicatorKey] = field(default_factory=set)
 
 
 class IndicatorHub:
@@ -74,7 +109,7 @@ class IndicatorHub:
                 task = self._seed_tasks.pop(key, None)
                 if task is not None:
                     task.cancel()
-                del self._states[key]
+                self._cancel_off_loop(self._states.pop(key))
         for key, inds in needs.items():
             st = self._states.get(key)
             if st is None:
@@ -82,7 +117,10 @@ class IndicatorHub:
             st.needs = set(inds)
             st.closed_vals = {k: v for k, v in st.closed_vals.items() if k in inds}
             st.intrabar = {k: v for k, v in st.intrabar.items() if k in inds}
-            if st.ok and any(k not in st.closed_vals for k in st.needs):
+            for k in [k for k in st.off_tasks if k not in inds]:
+                st.off_tasks.pop(k).cancel()
+            st.off_stamp = {k: v for k, v in st.off_stamp.items() if k in inds}
+            if st.ok and any(k not in st.closed_vals and k not in st.off_tasks for k in st.needs):
                 # A newly needed indicator on an already-warm series: its
                 # closed values come from the bars we already hold (cheap),
                 # so it is ready now rather than at the next bar close. If
@@ -235,8 +273,19 @@ class IndicatorHub:
         bars = st.series.closed
         closed_vals: dict[IndicatorKey, dict[str, float | None]] = {}
         prev_vals: dict[IndicatorKey, dict[str, float | None]] = {}
+        stamp = _stamp(bars)
+        off: list[IndicatorKey] = []
         try:
             for ind in st.needs:
+                if _off_loop(ind) and _has_loop():
+                    if st.off_stamp.get(ind) == stamp and (ind in st.closed_vals or ind in st.off_tasks):
+                        # Same closed history: keep the landed (or in-flight)
+                        # result rather than compute it again.
+                        if ind in st.closed_vals:
+                            closed_vals[ind], prev_vals[ind] = st.closed_vals[ind], st.prev_vals[ind]
+                    else:
+                        off.append(ind)
+                    continue
                 out = compute(ind, bars)
                 closed_vals[ind], prev_vals[ind] = _at(out, 0), _at(out, 1)
         except Exception:
@@ -249,6 +298,60 @@ class IndicatorHub:
         st.closed_vals, st.prev_vals = closed_vals, prev_vals
         st.ok = True
         st.intrabar = {}
+        for ind in off:
+            # Not ready until the worker thread lands this history's values;
+            # never the previous bar's.
+            task = st.off_tasks.pop(ind, None)
+            if task is not None:
+                task.cancel()
+            st.landed.discard(ind)
+            st.delivering.discard(ind)
+            st.off_stamp[ind] = stamp
+            st.off_tasks[ind] = asyncio.ensure_future(self._compute_off_loop(key, st, ind, list(bars), stamp))
+
+    async def _compute_off_loop(
+        self, key: SeriesKey, st: _State, ind: IndicatorKey, bars: list[Candle], stamp: tuple,
+    ) -> None:
+        current = lambda: self._states.get(key) is st and st.off_stamp.get(ind) == stamp  # noqa: E731
+        try:
+            out = await asyncio.to_thread(compute, ind, bars)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Same contract as the inline compute: a broken compute takes
+            # the series offline (the retry path reseeds it) rather than
+            # escape into on_sample.
+            if current():
+                log.warning("alert indicator compute failed for series %s", key, exc_info=True)
+                st.off_stamp.pop(ind, None)
+                st.ok = False
+            return
+        finally:
+            if st.off_tasks.get(ind) is asyncio.current_task():
+                del st.off_tasks[ind]
+        if not current() or ind not in st.needs:
+            return
+        st.closed_vals[ind], st.prev_vals[ind] = _at(out, 0), _at(out, 1)
+        if st.close_stamp == stamp:
+            st.landed.add(ind)
+
+    @staticmethod
+    def _cancel_off_loop(st: _State) -> None:
+        for task in st.off_tasks.values():
+            task.cancel()
+        st.off_tasks.clear()
+
+    async def settle(self) -> None:
+        """Wait for every in-flight background seed and off-loop compute
+        (tests, and anything that needs the hub quiescent)."""
+        while True:
+            tasks = [
+                t for t in (*self._seed_tasks.values(), *(t for st in self._states.values() for t in st.off_tasks.values()))
+                if not t.done()
+            ]
+            if not tasks:
+                return
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     # ---- samples ----
 
@@ -257,6 +360,9 @@ class IndicatorHub:
         for key, st in list(self._states.items()):
             if key[0] != broker or key[1] != epic:
                 continue
+            # Off-loop results that landed since the last sample are this
+            # sample's close for their indicator (see `closed_now`).
+            st.delivering, st.landed = st.landed, set()
             roll = st.series.on_sample(s)
             retry_due = self._clock() - st.last_try >= _RETRY_SECONDS
 
@@ -305,12 +411,23 @@ class IndicatorHub:
                     # off our UTC grid (FX dailies opening 22:00) still
                     # report; `_refresh` uses the same rule.
                     closed.add(key)
+                    st.close_stamp = _stamp(st.series.closed)
             elif roll is Roll.CLOSED or (st.pending_close and retry_due):
                 if await self._refresh(key, st):
                     closed.add(key)
+                    st.close_stamp = _stamp(st.series.closed)
         return closed
 
     # ---- reads ----
+
+    def closed_now(self, key: SeriesKey, ind: IndicatorKey | None, closed: set[SeriesKey]) -> bool:
+        """Whether this sample is a close for `ind` on `key`: the series
+        closed this sample, or for an off-loop indicator, its result for the
+        newest close landed since the previous sample."""
+        if ind is not None and _off_loop(ind):
+            st = self._states.get(key)
+            return st is not None and ind in st.delivering and ind in st.closed_vals
+        return key in closed
 
     def ready(self, key: SeriesKey, ind: IndicatorKey) -> bool:
         st = self._states.get(key)

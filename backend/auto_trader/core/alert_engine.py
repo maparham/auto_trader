@@ -789,7 +789,10 @@ class AlertEngine:
             # is the closed bar before the last one, read from the hub.
             # Restart-safe, and intrabar ticks cannot move it.
             skey = self._series_key(user_id, row, kind)
-            if self._hub is None or skey not in closed:
+            if self._hub is None or not self._hub.closed_now(skey, ind, closed):
+                # An off-loop indicator (Trendlines) closes on the first
+                # sample after its worker-thread result lands, not the
+                # sample that closed the bar.
                 return
             last, before = self._hub.last_closed(skey), self._hub.prev_closed(skey)
             vals = self._hub.values(skey, ind, intrabar=False)

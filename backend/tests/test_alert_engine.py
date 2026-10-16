@@ -813,10 +813,18 @@ def test_trendlines_cross_of_the_held_line_fires(tmp_path, monkeypatch):
         eng.on_alert_changed("u1", created, "al-t")
         await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=59 * H + 5)
         await asyncio.sleep(0)
+        await eng._hub.settle()
         bars[0] = _sixty(100.5)
         await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 5)
+        # The close's Trendlines result comes from a worker thread; it
+        # evaluates on the first sample after it lands.
+        assert not [m for _, m in sent if m["key"] == "__alerts__:fired"]
+        await eng._hub.settle()
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 10)
         fired = [m["value"] for _, m in sent if m["key"] == "__alerts__:fired"]
         assert len(fired) == 1 and fired[0]["level"] == pytest.approx(100.2)
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 15)
+        assert len([m for _, m in sent if m["key"] == "__alerts__:fired"]) == 1  # delivered once
     asyncio.run(main())
 
 
@@ -855,6 +863,9 @@ def test_trendlines_intrabar_held_line_switch_end_to_end(tmp_path, monkeypatch):
     # close must not compare the old line's baseline against the new one.
     # Old line 100 (a1/a2 = 1, 2) at 59 closed bars; new line 95 (3, 4) at 60.
     _patch_tl_by_len(monkeypatch, {59: (100.0, 1.0, 2.0), 60: (95.0, 3.0, 4.0)})
+    # Inline compute here: off-loop, the close tick finds the series not
+    # ready and drops the baseline anyway, which would hide a missing reset.
+    monkeypatch.setattr(alert_indicators_mod, "_OFF_LOOP", frozenset())
 
     async def main():
         bars = [_sixty(None)]
@@ -874,4 +885,50 @@ def test_trendlines_intrabar_held_line_switch_end_to_end(tmp_path, monkeypatch):
         await eng.on_tick("capital", "US100", 94.0, None, None, t_ms=60 * H + 10)
         await eng.on_tick("capital", "US100", 96.0, None, None, t_ms=60 * H + 15)
         assert len(fired()) == 1 and fired()[0]["level"] == pytest.approx(95.0)
+    asyncio.run(main())
+
+
+def test_slow_trendlines_compute_does_not_block_a_price_alert(tmp_path, monkeypatch):
+    # A Trendlines compute stuck in its worker thread must not hold the
+    # event loop: a price alert on another epic still evaluates and fires,
+    # and the nearest-line alert evaluates against the NEW bar once it lands.
+    import threading
+    release = threading.Event()
+    real = alert_indicators_mod.compute
+
+    def fake(ind, bars):
+        if ind.indicator != "TRENDLINES":
+            return real(ind, bars)
+        n = len(bars)
+        if n == 60:
+            release.wait(1)
+        out = {k: [None] * n for k in ("value", "held", "slope", "a1", "a2")}
+        out["value"][-2], out["value"][-1] = 100.0, 99.0
+        out["held"][-1] = 100.2 if n == 60 else 999.0
+        out["slope"][-1], out["a1"][-1], out["a2"][-1] = -0.1, 3.0, 4.0
+        return out
+
+    monkeypatch.setattr(alert_indicators_mod, "compute", fake)
+
+    async def main():
+        bars = [_sixty(None)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", tl_row())
+        eng.on_alert_changed("u1", created, "al-t")
+        price = await store.create("u1", row(id="al-p", epic="DE40", level=50.0))
+        eng.on_alert_changed("u1", price, "al-p")
+        fired = lambda: [m["value"] for _, m in sent if m["key"] == "__alerts__:fired"]  # noqa: E731
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=59 * H + 5)
+        await asyncio.sleep(0)
+        await eng._hub.settle()
+        bars[0] = _sixty(100.5)
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 5)
+        await eng.on_tick("capital", "DE40", 49.0, None, None, t_ms=60 * H + 6)
+        await eng.on_tick("capital", "DE40", 51.0, None, None, t_ms=60 * H + 7)
+        assert [f["epic"] for f in fired()] == ["DE40"]  # Trendlines still in its thread
+        release.set()
+        await eng._hub.settle()
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 10)
+        tl = [f for f in fired() if f["epic"] == "US100"]
+        assert len(tl) == 1 and tl[0]["level"] == pytest.approx(100.2)  # the new bar's held line
     asyncio.run(main())
