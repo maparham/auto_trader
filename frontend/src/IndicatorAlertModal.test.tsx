@@ -71,7 +71,7 @@ function existingAlert(over: Partial<IndicatorAlert> = {}): IndicatorAlert {
 describe("IndicatorAlertModal", () => {
   it("oscillators only offer value vs number, prefilled with the last value", () => {
     render(<IndicatorAlertModal request={{ mode: "create", draft: draft() }} defaults={DEFAULT_ALERT_DEFAULTS} now={0} onClose={() => {}} />);
-    expect(screen.queryByLabelText("Price vs line")).toBeNull();
+    expect(screen.queryByLabelText("Price crosses the line")).toBeNull();
     expect((screen.getByLabelText("Alert value") as HTMLInputElement).value).toBe("55.5");
     expect(screen.getByText("RSI 14 (1H)")).toBeTruthy();
   });
@@ -143,12 +143,12 @@ describe("IndicatorAlertModal", () => {
     expect((screen.getByLabelText("As it happens") as HTMLInputElement).disabled).toBe(false);
   });
 
-  it("price-target indicators show the Compare radios, defaulting to Price vs line", () => {
+  it("price-target indicators show the Compare radios, defaulting to Price crosses the line", () => {
     const d = draft({
       identity: { indicator: "MA", calcParams: [20], config: { maType: "sma", source: "close" }, priceTarget: true },
     });
     render(<IndicatorAlertModal request={{ mode: "create", draft: d }} defaults={DEFAULT_ALERT_DEFAULTS} now={0} onClose={() => {}} />);
-    expect((screen.getByLabelText("Price vs line") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Price crosses the line") as HTMLInputElement).checked).toBe(true);
     expect(screen.queryByLabelText("Alert value")).toBeNull();
 
     fireEvent.click(screen.getByText("Create"));

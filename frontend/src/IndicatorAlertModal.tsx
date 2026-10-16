@@ -132,8 +132,8 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
         )}
         {base.identity.priceTarget && !priceOnly && (
           <div className="al-field" role="radiogroup" aria-label="Compare">
-            <label><input type="radio" aria-label="Price vs line" checked={target === "price"} onChange={() => setTarget("price")} /> Price vs line</label>
-            <label><input type="radio" aria-label="Value vs number" checked={target === "value"} onChange={() => setTarget("value")} /> Value vs number</label>
+            <label><input type="radio" aria-label="Price crosses the line" checked={target === "price"} onChange={() => setTarget("price")} /> Price crosses the line</label>
+            <label><input type="radio" aria-label="Indicator crosses a level" checked={target === "value"} onChange={() => setTarget("value")} /> Indicator crosses a level</label>
           </div>
         )}
         <div className="al-field">
