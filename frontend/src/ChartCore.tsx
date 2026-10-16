@@ -1809,7 +1809,10 @@ export default function ChartCore({
     lineAlert: {
       ctx: alertContext,
       resolutionRef: resRef,
-      blocked: () => isDemoMode() || isSynthetic(epicRef.current) || snapViewRef.current,
+      // Replay too: its newest bar is the truncated replay head, not the
+      // server's, so the line's reference would be wrong.
+      blocked: () => isDemoMode() || isSynthetic(epicRef.current) || snapViewRef.current
+        || (replayRef.current?.isActive() ?? false),
     },
   });
   const trendlineMenuOpenRef = useRef(trendlineMenu.openAt);
