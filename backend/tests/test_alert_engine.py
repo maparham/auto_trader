@@ -830,3 +830,48 @@ def test_trendlines_intrabar_baseline_resets_on_a_held_line_switch(tmp_path, mon
         assert eng._baseline[state] is None
         assert eng._reset_on_level_switch(state, (3.0, 4.0)) is False
     asyncio.run(main())
+
+
+def _patch_tl_by_len(monkeypatch, lines):
+    """Trendlines fake keyed on the closed-bar count: `lines[n]` is the
+    (value, a1, a2) of the held line once n bars have closed (slope 0)."""
+    real = alert_indicators_mod.compute
+
+    def fake(ind, bars):
+        if ind.indicator != "TRENDLINES":
+            return real(ind, bars)
+        n = len(bars)
+        out = {k: [None] * n for k in ("value", "held", "slope", "a1", "a2")}
+        value, a1, a2 = lines[n]
+        out["value"][-1], out["held"][-1], out["slope"][-1] = value, value, 0.0
+        out["a1"][-1], out["a2"][-1] = a1, a2
+        return out
+
+    monkeypatch.setattr(alert_indicators_mod, "compute", fake)
+
+
+def test_trendlines_intrabar_held_line_switch_end_to_end(tmp_path, monkeypatch):
+    # Spec: an intrabar nearest-line alert whose held line changes at a
+    # close must not compare the old line's baseline against the new one.
+    # Old line 100 (a1/a2 = 1, 2) at 59 closed bars; new line 95 (3, 4) at 60.
+    _patch_tl_by_len(monkeypatch, {59: (100.0, 1.0, 2.0), 60: (95.0, 3.0, 4.0)})
+
+    async def main():
+        bars = [_sixty(None)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", tl_row(evalOn="intrabar"))
+        eng.on_alert_changed("u1", created, "al-t")
+        fired = lambda: [m["value"] for _, m in sent if m["key"] == "__alerts__:fired"]  # noqa: E731
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=59 * H + 5)  # seed
+        await asyncio.sleep(0)
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=59 * H + 10)  # baseline under (1, 2)
+        assert eng._baseline[("u1", "al-t")] == (99.0, 100.0)
+        bars[0] = _sixty(99.0)  # the 59h bar closes: held line is now 95 (3, 4)
+        # 99 -> 100.5 crosses only the OLD line (100); both sit above 95.
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 5)
+        assert fired() == []
+        # A real cross of the new held line still fires.
+        await eng.on_tick("capital", "US100", 94.0, None, None, t_ms=60 * H + 10)
+        await eng.on_tick("capital", "US100", 96.0, None, None, t_ms=60 * H + 15)
+        assert len(fired()) == 1 and fired()[0]["level"] == pytest.approx(95.0)
+    asyncio.run(main())
