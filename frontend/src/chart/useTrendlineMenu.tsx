@@ -21,6 +21,9 @@ import ContextMenu, { type MenuItem } from "../ContextMenu";
 import { MenuIcons } from "../lib/menuIcons";
 import { overrideExtend } from "../lib/overrideExtend";
 import { indTypeOf } from "../lib/indicators/shared";
+import { getIndicator } from "../lib/indicators";
+import { lineAlertRequest } from "../lib/signals";
+import { buildLineAlertDraft } from "./lineAlertDraft";
 import { loadIndicatorConfigs, saveIndicatorConfig } from "../lib/persist";
 import type { OverlayManager } from "../lib/overlays";
 import {
@@ -161,6 +164,13 @@ interface Args {
   /** Debug mode's popup: called with every picked line; true when it took
    * the pick (the instance has debug on). */
   onDebugPick?: (hit: TrendlineHit, clientX: number, clientY: number) => boolean;
+  /** "Add alert" on a line. Absent (tests, read-only surfaces) hides it. */
+  lineAlert?: {
+    ctx: React.MutableRefObject<{ epic: string; broker: string; precision: number }>;
+    resolutionRef: React.MutableRefObject<string>;
+    /** Demo, synthetic chart or snapshot view: no alert entry at all. */
+    blocked: () => boolean;
+  };
 }
 
 /** A debug layer line ("dbg:" key): a candidate the detector did not draw,
@@ -173,7 +183,7 @@ interface MenuState {
   hit: TrendlineHit;
 }
 
-export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epicRef, onDebugPick }: Args): {
+export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epicRef, onDebugPick, lineAlert }: Args): {
   /** Right-click entry, for ChartCore's contextmenu handler: opens the menu
    * when a line is under the pointer and says so, so the caller yields. */
   openAt: (clientX: number, clientY: number) => boolean;
@@ -182,6 +192,8 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
   const [menu, setMenu] = useState<MenuState | null>(null);
   const onDebugPickRef = useRef(onDebugPick);
   onDebugPickRef.current = onDebugPick;
+  const lineAlertRef = useRef(lineAlert);
+  lineAlertRef.current = lineAlert;
 
   const hitAt = useCallback(
     (clientX: number, clientY: number, touch: boolean): TrendlineHit | null => {
@@ -325,10 +337,26 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
     };
     const bold = marks.bold.has(key);
     const hidden = marks.hidden.has(key);
+    const alertItems = ((): MenuItem[] => {
+      const la = lineAlertRef.current;
+      const chart = chartRef.current;
+      if (!la || !chart || la.blocked()) return [];
+      const ext = getIndicator(chart, hit.paneId, hit.name)?.extendData as Record<string, unknown> | undefined;
+      const { epic: e, broker, precision } = la.ctx.current;
+      const r = buildLineAlertDraft({
+        seg: hit.seg, ext, resolution: la.resolutionRef.current, scope, instanceId: hit.name,
+        epic: e, broker, precision,
+      });
+      if (r === null) return [];
+      return "draft" in r
+        ? [{ label: "Add alert", icon: MenuIcons.bell, onClick: () => lineAlertRequest.set({ mode: "create", draft: r.draft }) }]
+        : [{ label: "Add alert", icon: MenuIcons.bell, disabled: true, disabledReason: r.reason, onClick: () => {} }];
+    })();
     const items: MenuItem[] = [
       { label: bold ? "Unhighlight" : "Highlight", icon: MenuIcons.highlight, onClick: () => toggle("bold") },
       { label: hidden ? "Unhide" : "Hide", icon: hidden ? MenuIcons.show : MenuIcons.hide, onClick: () => toggle("hidden") },
       { label: "To drawing", icon: MenuIcons.pencil, onClick: () => void trendlineToDrawing(overlays, hit.seg) },
+      ...alertItems,
     ];
     node = <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />;
   }

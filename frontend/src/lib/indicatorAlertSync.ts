@@ -5,7 +5,8 @@ import { requestConfirm } from "./signals";
 import { supportsStreaming } from "./trading";
 import { volumeWeighted, type AlertableCheck, type IndicatorIdentity } from "./alertableIndicators";
 import {
-  deleteIndicatorAlert, linkedAlerts, patchIndicatorAlert, scopeLinkedAlerts, type IndicatorAlert,
+  deleteIndicatorAlert, linkedAlerts, linkedLineAlerts, patchIndicatorAlert, patchLineAlert,
+  scopeLinkedAlerts, scopeLinkedLineAlerts, type IndicatorAlert, type LineAlert,
 } from "./alertsApi";
 
 const sameIdentity = (a: IndicatorIdentity, b: IndicatorIdentity) =>
@@ -44,8 +45,11 @@ export function planSync(
 const plural = (n: number) => (n === 1 ? "1 alert" : `${n} alerts`);
 const pronoun = (n: number) => (n === 1 ? "it" : "them");
 
-function unlink(alerts: IndicatorAlert[]): void {
-  for (const a of alerts) void patchIndicatorAlert(a.id, { params: { link: null } });
+function unlink(alerts: Array<IndicatorAlert | LineAlert>): void {
+  for (const a of alerts) {
+    if (a.kind === "line") void patchLineAlert(a.id, { params: { link: null } });
+    else void patchIndicatorAlert(a.id, { params: { link: null } });
+  }
 }
 
 // Re-point linked alerts' link.instanceId when an instance is renamed (the
@@ -55,8 +59,13 @@ function unlink(alerts: IndicatorAlert[]): void {
 export function relinkAlerts(scope: string, oldId: string, newId: string): void {
   const alerts = linkedAlerts(scope, oldId);
   for (const a of alerts) void patchIndicatorAlert(a.id, { params: { link: { scope, instanceId: newId } } });
+  for (const a of linkedLineAlerts(scope, oldId)) {
+    void patchLineAlert(a.id, { params: { link: { scope, instanceId: newId, lineKey: a.params.link!.lineKey } } });
+  }
 }
 
+// Line alerts are frozen: an edit never re-points or prompts them, which
+// holds because linkedAlerts returns indicator alerts only.
 export function syncAlertsAfterEdit(
   scope: string,
   instanceId: string,
@@ -93,7 +102,8 @@ export function syncAlertsAfterEdit(
 }
 
 export function syncAlertsAfterRemove(scope: string, instanceId: string): void {
-  const alerts = linkedAlerts(scope, instanceId);
+  // A Trendlines pane's line alerts go (or unlink) with it, like its own.
+  const alerts = [...linkedAlerts(scope, instanceId), ...linkedLineAlerts(scope, instanceId)];
   if (alerts.length === 0) return;
   requestConfirm({
     title: "Indicator alerts",
@@ -112,6 +122,11 @@ export function syncAlertsAfterRemove(scope: string, instanceId: string): void {
 // but stops following the cell. Without this the dangling link would be
 // adopted by the next instance minted under the same bare name ("EMA").
 export async function reconcileLinksForScope(scope: string, liveInstanceIds: Set<string>): Promise<void> {
-  const stale = scopeLinkedAlerts(scope).filter((a) => !liveInstanceIds.has(a.params.link!.instanceId));
-  await Promise.all(stale.map((a) => patchIndicatorAlert(a.id, { params: { link: null } })));
+  const live = (id: string) => liveInstanceIds.has(id);
+  const stale = scopeLinkedAlerts(scope).filter((a) => !live(a.params.link!.instanceId));
+  const staleLines = scopeLinkedLineAlerts(scope).filter((a) => !live(a.params.link!.instanceId));
+  await Promise.all([
+    ...stale.map((a) => patchIndicatorAlert(a.id, { params: { link: null } })),
+    ...staleLines.map((a) => patchLineAlert(a.id, { params: { link: null } })),
+  ]);
 }

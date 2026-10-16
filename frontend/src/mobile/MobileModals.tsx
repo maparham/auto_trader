@@ -13,6 +13,7 @@ import {
   alertEditRequest,
   alertGlobalEditRequest,
   indicatorAlertRequest,
+  lineAlertRequest,
   confirmRequest,
   requestConfirm,
   indicatorSettingsRequest,
@@ -30,6 +31,7 @@ import { brokerOf } from "../lib/trading";
 import { isDemoMode } from "../lib/demoMode";
 import AlertModal from "../AlertModal";
 import IndicatorAlertModal from "../IndicatorAlertModal";
+import LineAlertModal from "../LineAlertModal";
 import SettingsModal from "../Settings";
 import DrawingSettings from "../DrawingSettings";
 import IndicatorSettings from "../IndicatorSettings";
@@ -58,6 +60,7 @@ export default function MobileModals() {
   const alertEdit = useSignal(alertEditRequest);
   const alertGlobalEdit = useSignal(alertGlobalEditRequest);
   const indAlertReq = useSignal(indicatorAlertRequest);
+  const lineAlertReq = useSignal(lineAlertRequest);
   const indSettings = useSignal(indicatorSettingsRequest);
   const drawSettings = useSignal(drawingSettingsRequest);
   const confirm = useSignal(confirmRequest);
@@ -137,6 +140,15 @@ export default function MobileModals() {
           defaults={settings.alertDefaults}
           now={Date.now()}
           onClose={() => indicatorAlertRequest.set(null)}
+        />
+      )}
+
+      {!isDemoMode() && lineAlertReq && (
+        <LineAlertModal
+          request={lineAlertReq}
+          defaults={settings.alertDefaults}
+          now={Date.now()}
+          onClose={() => lineAlertRequest.set(null)}
         />
       )}
 

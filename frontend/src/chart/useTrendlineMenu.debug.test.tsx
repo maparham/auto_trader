@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
-import { fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { useTrendlineMenu } from "./useTrendlineMenu";
 
 const hit = {
@@ -26,6 +26,7 @@ function setup(onDebugPick?: (...a: unknown[]) => boolean) {
 
 describe("useTrendlineMenu on a debug line", () => {
   afterEach(cleanup);
+  beforeEach(() => { hit.seg.key = "dbg:1|2"; });
   it("offers Explain and To drawing, never Highlight or Hide", () => {
     const pick = vi.fn(() => true);
     const { result, rerender } = setup(pick);
@@ -45,5 +46,39 @@ describe("useTrendlineMenu on a debug line", () => {
     render(<>{result.current.menu}</>);
     expect(screen.queryByText("Explain")).toBeNull();
     expect(screen.getByText("To drawing")).toBeTruthy();
+  });
+});
+
+function setupReal(blocked = false) {
+  const el = document.createElement("div");
+  return renderHook(() =>
+    useTrendlineMenu({
+      chartRef: { current: { getIndicators: () => [{ name: "TL", paneId: "candle_pane", extendData: {} }] } as never },
+      containerRef: { current: el }, scope: "s", epicRef: { current: "E" },
+      overlays: { isDrawing: () => false, peekOverlayRightClick: () => false } as never,
+      lineAlert: {
+        ctx: { current: { epic: "E", broker: "b", precision: 2 } },
+        resolutionRef: { current: "HOUR" }, blocked: () => blocked,
+      },
+    }),
+  );
+}
+
+describe("useTrendlineMenu on a real line", () => {
+  afterEach(cleanup);
+  beforeEach(() => { hit.seg.key = "1:2"; });
+  it("offers Add alert, disabled with the reason when the line can't take one", () => {
+    const { result } = setupReal();
+    act(() => { result.current.openAt(10, 10); });
+    render(<>{result.current.menu}</>);
+    const item = screen.getByText("Add alert").closest("button");
+    expect(item?.hasAttribute("disabled") || item?.getAttribute("aria-disabled") === "true").toBe(true);
+  });
+  it("a blocked chart (demo, snapshot) has no Add alert", () => {
+    const { result } = setupReal(true);
+    act(() => { result.current.openAt(10, 10); });
+    render(<>{result.current.menu}</>);
+    expect(screen.queryByText("Add alert")).toBeNull();
+    expect(screen.getByText("Highlight")).toBeTruthy();
   });
 });

@@ -5,7 +5,8 @@ import {
 import { getPersistBroker } from "./persist/core";
 import { noteStreamingBrokers } from "./trading";
 import {
-  addIndicatorAlert, alertLabel, linkedAlerts, loadAllIndicatorAlerts, type IndicatorAlert,
+  addIndicatorAlert, addLineAlert, alertLabel, findServerAlert, linkedAlerts, linkedLineAlerts,
+  loadAllIndicatorAlerts, type IndicatorAlert, type LineAlert,
 } from "./alertsApi";
 import { confirmRequest } from "./signals";
 import type { AlertableCheck } from "./alertableIndicators";
@@ -218,5 +219,58 @@ describe("edits the backend would refuse are conflicts, not silent PATCH failure
     confirmRequest.value?.onCancel?.();
     expect(byId("al-vw-q")).toBeUndefined(); // kept, unlinked
     noteStreamingBrokers([]);
+  });
+});
+
+// Line alerts share the server-alert cache; these go through the real
+// addLineAlert / linkedLineAlerts like the indicator cases above.
+function mkLine(id: string, scope: string, broker = "b"): LineAlert {
+  return {
+    kind: "line", id, epic: "US100", broker, condition: "crossing", trigger: "once", message: "",
+    expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true }, precision: 2,
+    params: {
+      timeframe: "HOUR", evalOn: "close", tRef: 9, pRef: 13, slope: 0.5,
+      anchors: { t1: 2, p1: 10, t2: 6, p2: 12 }, link: { scope, instanceId: "TRENDLINES", lineKey: "k" },
+    },
+  };
+}
+
+describe("line alerts follow pane removal, not settings edits", () => {
+  it("syncAlertsAfterRemove offers to delete line alerts too; Keep unlinks them", async () => {
+    await addLineAlert(mkLine("al-l", "line-rm"));
+    syncAlertsAfterRemove("line-rm", "TRENDLINES");
+    expect(confirmRequest.value?.message).toBe("Also delete its 1 alert?");
+    confirmRequest.value?.onCancel?.();
+    expect(linkedLineAlerts("line-rm", "TRENDLINES")).toEqual([]);
+    const kept = findServerAlert("al-l");
+    expect(kept?.kind).toBe("line");
+    expect(kept?.params.link).toBeNull();
+  });
+
+  it("Delete removes a line alert with the pane", async () => {
+    await addLineAlert(mkLine("al-l-del", "line-rm-2"));
+    syncAlertsAfterRemove("line-rm-2", "TRENDLINES");
+    confirmRequest.value?.onConfirm();
+    expect(findServerAlert("al-l-del")).toBeUndefined();
+  });
+
+  it("syncAlertsAfterEdit leaves line alerts alone", async () => {
+    await addLineAlert(mkLine("al-l-ed", "line-ed"));
+    syncAlertsAfterEdit("line-ed", "TRENDLINES", () => ({ ok: false, reason: "x" }));
+    expect(confirmRequest.value).toBeNull();
+    expect(findServerAlert("al-l-ed")?.params.link).toEqual({ scope: "line-ed", instanceId: "TRENDLINES", lineKey: "k" });
+  });
+
+  it("relinkAlerts re-points a line alert and keeps its lineKey", async () => {
+    await addLineAlert(mkLine("al-l-rl", "line-rl"));
+    relinkAlerts("line-rl", "TRENDLINES", "TRENDLINES#2");
+    expect(findServerAlert("al-l-rl")?.params.link).toEqual({ scope: "line-rl", instanceId: "TRENDLINES#2", lineKey: "k" });
+  });
+
+  it("reconcileLinksForScope unlinks a line alert whose pane is gone", async () => {
+    const broker = getPersistBroker();
+    await addLineAlert(mkLine("al-l-rc", "line-rc", broker));
+    await reconcileLinksForScope("line-rc", new Set());
+    expect(findServerAlert("al-l-rc")?.params.link).toBeNull();
   });
 });

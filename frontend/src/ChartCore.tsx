@@ -1796,8 +1796,21 @@ export default function ChartCore({
   // right-click entry is read through a ref by the once-mounted contextmenu
   // handler below.
   const trendlineDebug = useTrendlineDebug({ chartRef, containerRef, overlays, scope, epicRef, brokerIdRef });
+  // Read by the indicator "Add alert" entries (legend bell, menu) and the
+  // trendline menu's "Add alert" when they build a draft. quoteOnly: no live
+  // stream, so a volume-weighted line has no intrabar volume and the dialog
+  // disables "As it happens". effPrecision: `precision` aliases it further down.
+  const alertContext = useRef({ epic: symbol.epic, broker: brokerId, precision: effPrecision, quoteOnly: false });
+  alertContext.current = {
+    epic: symbol.epic, broker: brokerId, precision: effPrecision, quoteOnly: !supportsStreaming(brokerId),
+  };
   const trendlineMenu = useTrendlineMenu({
     chartRef, containerRef, overlays, scope, epicRef, onDebugPick: trendlineDebug.openFor,
+    lineAlert: {
+      ctx: alertContext,
+      resolutionRef: resRef,
+      blocked: () => isDemoMode() || isSynthetic(epicRef.current) || snapViewRef.current,
+    },
   });
   const trendlineMenuOpenRef = useRef(trendlineMenu.openAt);
   trendlineMenuOpenRef.current = trendlineMenu.openAt;
@@ -5175,13 +5188,6 @@ export default function ChartCore({
     return () => clearInterval(h);
   }, [anyVisibleExpiry]);
 
-  // Read by the indicator "Add alert" entries (legend bell, menu) when they
-  // build a draft. quoteOnly: no live stream, so a volume-weighted line has no
-  // intrabar volume and the dialog disables "As it happens".
-  const alertContext = useRef({ epic: symbol.epic, broker: brokerId, precision, quoteOnly: false });
-  alertContext.current = {
-    epic: symbol.epic, broker: brokerId, precision, quoteOnly: !supportsStreaming(brokerId),
-  };
   const {
     onLegendToggleVisible,
     onLegendOpenSettings,
