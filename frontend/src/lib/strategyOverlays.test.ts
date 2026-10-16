@@ -127,8 +127,8 @@ describe("syncStrategyOverlays", () => {
       message: "", expiresAt: null, precision: 2,
       notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
       params: {
-        identity: { indicator: "MA" as const, calcParams: [20], config: { maType: "ema", source: "close" }, priceTarget: true },
-        line: "value" as const, timeframe: "HOUR", target: "price" as const, value: null, evalOn: "close" as const,
+        type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+        timeframe: "HOUR", target: "price" as const, value: null, evalOn: "close" as const,
         link: { scope, instanceId },
       },
     });

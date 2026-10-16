@@ -16,9 +16,11 @@ import {
   applyAlertEvent,
   setOnAlertFired,
   loadIndicatorAlerts,
+  loadAllIndicatorAlerts,
   linkedAlerts,
   addIndicatorAlert,
   patchIndicatorAlert,
+  repointIndicatorAlert,
   deleteIndicatorAlert,
   alertLabel,
   triggeredLabel,
@@ -33,6 +35,7 @@ import {
   type FiredPayload,
   type IndicatorAlert,
 } from "./alertsApi";
+import type { AlertInstance } from "./indicatorAlertInstance";
 
 let n = 0;
 const freshBroker = () => `test-broker-${n++}`;
@@ -381,9 +384,10 @@ describe("applyAlertEvent", () => {
 function indRow(broker: string, overrides: Record<string, unknown> = {}) {
   return alertRow({
     id: "al-ind", broker, kind: "indicator",
+    label: "EMA 50 (1H)",
     params: {
-      indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" },
-      line: "value", timeframe: "HOUR", target: "price", value: null,
+      type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+      timeframe: "HOUR", target: "price", value: null,
       condition: "crossing_up", trigger: "every", evalOn: "close",
       link: { scope: "tab.t1.cell.c2", instanceId: "EMA" },
     },
@@ -396,9 +400,9 @@ function indRowAsAlert(broker: string): IndicatorAlert {
   return {
     kind: "indicator", id: "al-ind", epic: "US100", broker, condition: "crossing_up", trigger: "every",
     message: "hi", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
-    precision: 2, params: {
-      identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
-      line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+    precision: 2, label: "EMA 50 (1H)", params: {
+      type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+      timeframe: "HOUR", target: "price", value: null, evalOn: "close",
       link: { scope: "tab.t1.cell.c2", instanceId: "EMA" } },
   };
 }
@@ -414,7 +418,7 @@ describe("indicator alerts", () => {
     expect(loadAlerts("US100", broker).map((a) => a.id)).toEqual(["al-1"]);
     const ind = loadIndicatorAlerts("US100", broker);
     expect(ind).toHaveLength(1);
-    expect(ind[0].params.identity.config).toEqual({ maType: "ema", source: "close" });
+    expect(ind[0].params.config).toEqual({ maType: "ema", source: "close" });
     expect(ind[0].status).toBe("waiting_for_data");
   });
 
@@ -437,13 +441,13 @@ describe("indicator alerts", () => {
       message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
       precision: 2,
     } as const;
-    const price: IndicatorAlert = { ...base, params: {
-      identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
-      line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close", link: null } };
+    const price: IndicatorAlert = { ...base, label: "EMA 50 (1H)", params: {
+      type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+      timeframe: "HOUR", target: "price", value: null, evalOn: "close", link: null } };
     expect(alertLabel(price, 2)).toBe("Crossing Up EMA 50 (1H)");
-    const val: IndicatorAlert = { ...base, condition: "greater", params: {
-      identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
-      line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null } };
+    const val: IndicatorAlert = { ...base, condition: "greater", label: "RSI 14 (1H)", params: {
+      type: "RSI", config: { source: "close" }, output: "value",
+      timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null } };
     expect(alertLabel(val, 2)).toBe("RSI 14 (1H) Greater Than 70");
   });
 
@@ -466,13 +470,13 @@ describe("indicator alerts", () => {
       kind: "indicator", id: "al-z", epic: "US100", broker, condition: "greater", trigger: "once",
       message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
       precision: 2, params: {
-        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
-        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+        type: "RSI", config: { source: "close" }, output: "value",
+        timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
     };
     expect(await addIndicatorAlert(a)).toBe(false);
     const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
     expect(body.kind).toBe("indicator");
-    expect(body.params).toMatchObject({ indicator: "RSI", calcParams: [14], target: "value", value: 70 });
+    expect(body.params).toMatchObject({ type: "RSI", output: "value", target: "value", value: 70 });
     expect(loadIndicatorAlerts("US100", broker)).toEqual([]);
   });
 
@@ -484,8 +488,8 @@ describe("indicator alerts", () => {
       kind: "indicator", id: "al-idem", epic: "US100", broker, condition: "greater", trigger: "once",
       message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
       precision: 2, params: {
-        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
-        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+        type: "RSI", config: { source: "close" }, output: "value",
+        timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
     };
     expect(await addIndicatorAlert(a)).toBe(true);
     const result = await addIndicatorAlert(a);
@@ -501,8 +505,8 @@ describe("indicator alerts", () => {
       kind: "indicator", id: "al-patch", epic: "US100", broker, condition: "greater", trigger: "once",
       message: "m1", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
       precision: 2, params: {
-        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
-        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+        type: "RSI", config: { source: "close" }, output: "value",
+        timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
     };
     await addIndicatorAlert(a);
     fetchMock.mockClear();
@@ -522,8 +526,8 @@ describe("indicator alerts", () => {
       kind: "indicator", id: "al-rollback", epic: "US100", broker, condition: "greater", trigger: "once",
       message: "m1", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
       precision: 2, params: {
-        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
-        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+        type: "RSI", config: { source: "close" }, output: "value",
+        timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
     };
     await addIndicatorAlert(a);
     fetchMock.mockClear();
@@ -562,8 +566,8 @@ describe("indicator alerts", () => {
       kind: "indicator", id: "al-delete", epic: "US100", broker, condition: "greater", trigger: "once",
       message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
       precision: 2, params: {
-        identity: { indicator: "RSI", calcParams: [14], config: { source: "close" }, priceTarget: false },
-        line: "value", timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+        type: "RSI", config: { source: "close" }, output: "value",
+        timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
     };
     await addIndicatorAlert(a);
     deleteIndicatorAlert(a.id);
@@ -588,9 +592,9 @@ describe("indicator alerts", () => {
     const priceAlert: IndicatorAlert = {
       kind: "indicator", id: "al-price-fmt", epic: "US100", broker: "b", condition: "crossing_up", trigger: "every",
       message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
-      precision: 2, params: {
-        identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
-        line: "value", timeframe: "HOUR_4", target: "price", value: null, evalOn: "close", link: null },
+      precision: 2, label: "EMA 50 (4H)", params: {
+        type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+        timeframe: "HOUR_4", target: "price", value: null, evalOn: "close", link: null },
     };
     expect(alertLabel(priceAlert, 2)).toBe("Crossing Up EMA 50 (4H)");
   });
@@ -621,9 +625,9 @@ describe("indicator alerts", () => {
     const atrAlert: IndicatorAlert = {
       kind: "indicator", id: "al-atr-small", epic: "EURUSD", broker: "b", condition: "greater", trigger: "once",
       message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
-      precision: 6, params: {
-        identity: { indicator: "ATR", calcParams: [14], config: { smoothing: "rma" }, priceTarget: false },
-        line: "value", timeframe: "HOUR", target: "value", value: 0.0015, evalOn: "close", link: null },
+      precision: 6, label: "ATR 14 (1H)", params: {
+        type: "ATR", config: { smoothing: "rma" }, output: "value",
+        timeframe: "HOUR", target: "value", value: 0.0015, evalOn: "close", link: null },
     };
     expect(alertLabel(atrAlert, 6)).toBe("ATR 14 (1H) Greater Than 0.0015");
 
@@ -640,18 +644,18 @@ describe("indicator alerts", () => {
     expect(alertLabel({
       kind: "indicator", id: "al-tiny", epic: "EURUSD", broker: "b", condition: "greater", trigger: "once",
       message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
-      precision: 6, params: {
-        identity: { indicator: "ATR", calcParams: [14], config: { smoothing: "rma" }, priceTarget: false },
-        line: "value", timeframe: "MINUTE", target: "value", value: 0.00005, evalOn: "close", link: null },
+      precision: 6, label: "ATR 14 (1m)", params: {
+        type: "ATR", config: { smoothing: "rma" }, output: "value",
+        timeframe: "MINUTE", target: "value", value: 0.00005, evalOn: "close", link: null },
     }, 6)).toBe("ATR 14 (1m) Greater Than 0.00005");
 
     // JPY-priced MA: very large (1234567 rounds to 1234570 at 6 sig figs)
     expect(alertLabel({
       kind: "indicator", id: "al-huge", epic: "USDJPY", broker: "b", condition: "crossing_up", trigger: "every",
       message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
-      precision: 0, params: {
-        identity: { indicator: "MA", calcParams: [20], config: { maType: "ema", source: "close" }, priceTarget: false },
-        line: "value", timeframe: "HOUR", target: "value", value: 1234570, evalOn: "close", link: null },
+      precision: 0, label: "EMA 20 (1H)", params: {
+        type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+        timeframe: "HOUR", target: "value", value: 1234570, evalOn: "close", link: null },
     }, 0)).toBe("EMA 20 (1H) Crossing Up 1234570");
 
     const tinyTriggered = {
@@ -667,6 +671,43 @@ describe("indicator alerts", () => {
       label: "EMA 20 (1H)", target: "value" as const,
     };
     expect(triggeredLabel(hugeTriggered, 1)).toBe("EMA 20 (1H) Crossing Up 1234570 @ 156.7");
+  });
+
+  it("maps a server row's label and new params", async () => {
+    const broker = freshBroker();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(String(input).includes("triggered")
+        ? jsonResponse({ entries: [], seen: 0 })
+        : jsonResponse({ alerts: [indRow(broker, {
+            label: "RSI 14 (1H)",
+            params: {
+              type: "RSI", config: { source: "close" }, output: "value",
+              timeframe: "HOUR", target: "value", value: 70,
+              condition: "greater", trigger: "every", evalOn: "close", link: null,
+            },
+          })] }))));
+    await hydrateAlerts();
+    const alerts = loadAllIndicatorAlerts(broker);
+    expect(alerts[0].label).toBe("RSI 14 (1H)");
+    expect(alerts[0].params.output).toBe("value");
+  });
+
+  it("alertLabel uses the server label", () => {
+    const a: IndicatorAlert = {
+      kind: "indicator", id: "al-server-label", epic: "US100", broker: "b", condition: "greater", trigger: "every",
+      message: "", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2, label: "RSI 14 (1H)", params: {
+        type: "RSI", config: { source: "close" }, output: "value",
+        timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+    };
+    expect(alertLabel(a, 2)).toContain("RSI 14 (1H)");
+  });
+
+  it("repointIndicatorAlert reports a 422 as refused without a toast", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "x" }, false, 422)));
+    const instance: AlertInstance = { type: "RSI", calcParams: [14], extendData: {} };
+    expect(await repointIndicatorAlert("al-1", instance)).toBe("refused");
+    expect(toastSpy).not.toHaveBeenCalled();
   });
 });
 

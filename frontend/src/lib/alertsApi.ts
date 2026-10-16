@@ -13,7 +13,7 @@ import { API_BASE, apiFetch, apiFetchPatient } from "./http";
 import { getPersistBroker, registerAlertsRouter } from "./persist/core";
 import { bumpAlerts } from "./signals";
 import { toast } from "./notify";
-import { ALERTABLE, type IndicatorIdentity, indicatorAlertLabel } from "./alertableIndicators";
+import { loadAlertableTypes, type AlertInstance } from "./indicatorAlertInstance";
 import { fmtPrice } from "./priceFormat";
 import { tfLabel } from "./timeframe";
 
@@ -68,8 +68,9 @@ export const TRIGGER_LABELS: Record<AlertTrigger, string> = {
 };
 
 export interface IndicatorAlertParams {
-  identity: IndicatorIdentity;
-  line: "value";
+  type: string;
+  config: Record<string, unknown>;
+  output: string;
   timeframe: string;
   target: AlertTarget;
   value: number | null;
@@ -77,6 +78,9 @@ export interface IndicatorAlertParams {
   // The chart cell + instance the alert follows. null once the user kept the
   // alert after removing (or un-alertably editing) its indicator.
   link: { scope: string; instanceId: string } | null;
+  // The pane's live settings, sent on create/repoint only: the server's
+  // registry parser is the one source of truth for type/config/output.
+  instance?: AlertInstance;
 }
 
 export interface IndicatorAlert {
@@ -93,6 +97,8 @@ export interface IndicatorAlert {
   precision: number;
   params: IndicatorAlertParams;
   status?: "ok" | "waiting_for_data";
+  // The server's rendered "what this watches" phrase (registry label + timeframe).
+  label?: string;
 }
 
 export interface LineAlertParams {
@@ -223,6 +229,7 @@ interface AlertRow {
   created_at: number;
   updated_at: number;
   status?: "ok" | "waiting_for_data";
+  label?: string;
 }
 
 interface TriggeredRow {
@@ -236,7 +243,7 @@ interface TriggeredRow {
   condition: AlertCondition;
   message: string;
   precision?: number;
-  alert?: { params?: Record<string, unknown> } | null;
+  alert?: { params?: Record<string, unknown>; label?: string } | null;
 }
 
 function rowToSavedAlert(row: AlertRow): SavedAlert {
@@ -269,14 +276,11 @@ function rowToIndicatorAlert(row: AlertRow): IndicatorAlert {
     createdAt: row.created_at,
     precision: row.precision,
     status: row.status,
+    label: row.label,
     params: {
-      identity: {
-        indicator: p.indicator as IndicatorIdentity["indicator"],
-        calcParams: p.calcParams as number[],
-        config: p.config as Record<string, string>,
-        priceTarget: ALERTABLE[p.indicator as IndicatorIdentity["indicator"]]?.priceTarget ?? false,
-      },
-      line: "value",
+      type: p.type as string,
+      config: (p.config as Record<string, unknown>) ?? {},
+      output: p.output as string,
       timeframe: p.timeframe as string,
       target: p.target as AlertTarget,
       value: (p.value as number | null) ?? null,
@@ -314,26 +318,7 @@ function rowToLineAlert(row: AlertRow): LineAlert {
 }
 
 function indicatorWireParams(a: { condition: AlertCondition; trigger: AlertTrigger; params: IndicatorAlertParams }) {
-  const { identity, ...rest } = a.params;
-  return {
-    indicator: identity.indicator,
-    calcParams: identity.calcParams,
-    config: identity.config,
-    ...rest,
-    condition: a.condition,
-    trigger: a.trigger,
-  };
-}
-
-function rowToIndicatorAlertLabel(p: Record<string, unknown>): string | undefined {
-  try {
-    return indicatorAlertLabel(
-      { indicator: p.indicator, calcParams: p.calcParams, config: p.config, priceTarget: true } as IndicatorIdentity,
-      p.timeframe as string,
-    );
-  } catch {
-    return undefined;
-  }
+  return { ...a.params, condition: a.condition, trigger: a.trigger };
 }
 
 function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
@@ -347,11 +332,9 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
     precision: row.precision,
     alertId: row.alert_id,
     broker: row.broker,
-    label: row.alert?.params && row.kind === "indicator"
-      ? rowToIndicatorAlertLabel(row.alert.params)
-      : row.alert?.params && row.kind === "line"
-        ? lineAlertLabel(row.alert.params.timeframe as string)
-        : undefined,
+    label: row.alert?.label ?? (row.alert?.params && row.kind === "line"
+      ? lineAlertLabel(row.alert.params.timeframe as string)
+      : undefined),
     target: (row.alert?.params?.target as AlertTarget | undefined) ?? undefined,
   };
 }
@@ -424,6 +407,7 @@ function indWriteSettled(): void {
 // trigger a re-sync without importing ./signals itself — that import edge is a
 // module-init hazard (see the note on signals.ts's sweepTarget seed).
 export function resyncAlerts(): Promise<void> {
+  void loadAlertableTypes();
   return hydrateAlerts().then(() => bumpAlerts());
 }
 
@@ -738,7 +722,10 @@ async function reportFailure(res: Response | null, what: string): Promise<void> 
 
 export async function addIndicatorAlert(a: IndicatorAlert): Promise<boolean> {
   if (indicatorCache.has(a.id)) return true; // idempotent
-  indicatorCache.set(a.id, a);
+  // `instance` is wire-only (the server's registry parser consumes it); the
+  // cached optimistic row carries the type/config/output it was created with.
+  const { instance: _i, ...stored } = a.params;
+  indicatorCache.set(a.id, { ...a, params: stored });
   bumpAlerts();
   indWriteStart();
   const res = await sendJson("/api/alerts", "POST", {
@@ -747,11 +734,69 @@ export async function addIndicatorAlert(a: IndicatorAlert): Promise<boolean> {
     notify: a.notify, precision: a.precision,
   });
   indWriteSettled();
-  if (res?.ok) return true;
+  if (res?.ok) {
+    try {
+      indicatorCache.set(a.id, rowToIndicatorAlert((await res.json()) as AlertRow));
+      bumpAlerts();
+    } catch { /* keep the optimistic row */ }
+    return true;
+  }
   indicatorCache.delete(a.id);
   bumpAlerts();
   await reportFailure(res, "Alert save failed");
   return false;
+}
+
+export interface DescribedOutput {
+  name: string;
+  label: string;
+  kind: "level" | "event";
+  priceScale: boolean;
+  priceOnly: boolean;
+}
+
+export interface AlertDescription {
+  type: string;
+  timeframe: string;
+  outputs: DescribedOutput[];
+  lastValues: Record<string, number | null>;
+  needsVolume: boolean;
+  refusal: string | null;
+}
+
+export async function describeIndicatorAlert(body: {
+  broker: string;
+  epic: string;
+  timeframe: string;
+  instance?: AlertInstance;
+  alertId?: string;
+}): Promise<AlertDescription | null> {
+  const res = await sendJson("/api/alerts/describe", "POST", body);
+  if (!res?.ok) return null;
+  try {
+    return (await res.json()) as AlertDescription;
+  } catch {
+    return null;
+  }
+}
+
+/** Point an alert at the pane's current settings. "refused": the server
+ * says these settings can't be alerted on (the caller asks delete or keep). */
+export async function repointIndicatorAlert(
+  id: string,
+  instance: AlertInstance,
+): Promise<"ok" | "refused" | "failed"> {
+  const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "PATCH", { params: { instance } });
+  if (res?.ok) {
+    try {
+      indicatorCache.set(id, rowToIndicatorAlert((await res.json()) as AlertRow));
+      bumpAlerts();
+    } catch { /* the next resync fixes the cache */ }
+    return "ok";
+  }
+  if (res?.status === 422) return "refused";
+  await reportFailure(res, "Alert update failed");
+  return "failed";
 }
 
 export async function patchIndicatorAlert(
@@ -954,7 +999,7 @@ export function alertLabel(a: AnyAlert, precision: number): string {
   if (a.kind !== "indicator") {
     return conditionPhrase(undefined, a.condition, undefined, levelText("price", a.level, precision));
   }
-  const what = indicatorAlertLabel(a.params.identity, a.params.timeframe);
+  const what = a.label ?? a.params.output;
   return a.params.target === "value"
     ? conditionPhrase(
         what,

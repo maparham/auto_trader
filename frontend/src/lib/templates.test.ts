@@ -664,8 +664,8 @@ describe("replaceSymbolTemplate: indicator alert links", () => {
       message: "", expiresAt: null, precision: 2,
       notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
       params: {
-        identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
-        line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+        type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+        timeframe: "HOUR", target: "price", value: null, evalOn: "close",
         link: { scope: SCOPE, instanceId: "EMA" },
       },
     });
@@ -699,8 +699,8 @@ describe("replaceSymbolTemplate: indicator alert links", () => {
       message: "", expiresAt: null, precision: 2,
       notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
       params: {
-        identity: { indicator: "MA", calcParams: [9], config: { maType: "ema", source: "close" }, priceTarget: true },
-        line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+        type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+        timeframe: "HOUR", target: "price", value: null, evalOn: "close",
         link: { scope: SCOPE, instanceId: "EMA" },
       },
     });

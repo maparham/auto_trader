@@ -136,8 +136,8 @@ describe("renameInstanceEverywhere", () => {
       message: "", expiresAt: null,
       notify: { toast: true, browser: true, sound: true, push: true, telegram: true }, precision: 2,
       params: {
-        identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
-        line: "value", timeframe: "HOUR", target: "price", value: null, evalOn: "close",
+        type: "MA", config: { maType: "ema", source: "close" }, output: "ma",
+        timeframe: "HOUR", target: "price", value: null, evalOn: "close",
         link: { scope: "tab.everywhere3", instanceId: "PIVOT_ANALYSIS" },
       },
     });

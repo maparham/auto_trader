@@ -54,9 +54,11 @@ function indAlert(over: Partial<IndicatorAlert> = {}): IndicatorAlert {
     expiresAt: null,
     notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
     precision: 2,
+    label: "EMA 50 (1H)",
     params: {
-      identity: { indicator: "MA", calcParams: [50], config: { maType: "ema", source: "close" }, priceTarget: true },
-      line: "value",
+      type: "MA",
+      config: { maType: "ema", source: "close" },
+      output: "ma",
       timeframe: "HOUR",
       target: "price",
       value: null,
