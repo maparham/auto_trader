@@ -3733,14 +3733,20 @@ function drawTrendlines(
           if (!a || !b || a.timestamp === b.timestamp) return null;
           return { tool, points: [a, b] };
         },
-        // Unpinned, the chart's newest bar is forming, so the reference is
-        // the one before it; under a pin lastIdx is already the newest
-        // CLOSED HTF bar (calc applied the closed-bar rule).
+        // The reference is the newest CLOSED bar of the line's own series.
+        // Unpinned, the chart's newest bar is forming, so it is the one before
+        // it. Under a pin with "Wait for timeframe closes" on, lastIdx is
+        // already closed; with it off, lastIdx can be the folded forming HTF
+        // bar (formingIdx, always the stash's last entry), so step back one.
         alertLine: () =>
           alertLineOf(
             line,
             starts ?? (timestamps ??= dataList.map((d) => d.timestamp)),
-            mtf ? lastIdx : lastIdx - 1,
+            mtf
+              ? mtf.formingIdx != null && lastIdx >= mtf.formingIdx
+                ? lastIdx - 1
+                : lastIdx
+              : lastIdx - 1,
           ),
       });
     }

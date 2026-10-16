@@ -147,7 +147,7 @@ function draw(ext: Record<string, unknown>, epic = "US100") {
     xAxis: { convertToPixel: (i: number) => i, convertFromPixel: (x: number) => x },
     yAxis: { convertToPixel: toY, convertFromPixel: fromY },
   } as never);
-  return { chart, strokes, arcs, texts, bars };
+  return { chart, strokes, arcs, texts, bars, result };
 }
 
 /** The one line's hit target and key, from an unmarked draw. */
@@ -274,5 +274,28 @@ describe("alertLineOf", () => {
     const times = [0, 1, 2, 3, 4, 5, 6];
     expect(alertLineOf(line, times, 5)).toBeNull();
     expect(alertLineOf(line, times, 9)).toBeNull();
+  });
+  it("null for a degenerate line whose second anchor is not after the first", () => {
+    const times = [0, 1, 2, 3, 4, 5, 6, 7];
+    expect(alertLineOf({ i1: 4, p1: 10, i2: 4, p2: 12 }, times, 7)).toBeNull();
+    expect(alertLineOf({ i1: 5, p1: 10, i2: 3, p2: 12 }, times, 7)).toBeNull();
+  });
+});
+
+describe("drawTrendlines records the line as an alert sees it", () => {
+  it("unpinned, measures at the bar before the forming newest one", () => {
+    const { hit, bars, result } = theLine();
+    const rows = result as Array<{ lines?: Array<{ i1: number; p1: number; i2: number; p2: number }> }>;
+    const lines = rows[rows.length - 1].lines ?? [];
+    const line = lines.find((l) => `${bars[l.i1].timestamp}:${bars[l.i2].timestamp}` === hit.seg.key);
+    expect(line, "the hit segment's line").toBeDefined();
+    if (!line) return;
+    const ref = bars.length - 2;
+    const slope = (line.p2 - line.p1) / (line.i2 - line.i1);
+    const pRef = line.p1 + ((line.p2 - line.p1) * (ref - line.i1)) / (line.i2 - line.i1);
+    expect(hit.seg.alertLine?.()).toEqual({
+      slope, tRef: bars[ref].timestamp, pRef,
+      t1: bars[line.i1].timestamp, p1: line.p1, t2: bars[line.i2].timestamp, p2: line.p2,
+    });
   });
 });

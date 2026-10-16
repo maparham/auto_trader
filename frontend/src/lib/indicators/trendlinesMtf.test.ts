@@ -19,6 +19,7 @@ import {
   type TrendlinesMtf,
   type TrendPivots,
 } from "./trendlines";
+import { findTrendlineSegment } from "./trendlineMarks";
 
 const T0 = 1_700_000_000_000;
 const CHART_MS = 900_000; // 15m chart bars
@@ -235,15 +236,16 @@ function draw(
   };
   const ext = { mtf, dedupe: false, nearPrice: false, ...over };
   const result = TRENDLINES_TEMPLATE.calc!(bars, { calcParams: PARAMS, extendData: ext } as never);
+  const chart = { getDataList: () => bars, getSize: () => ({ width: 0 }) };
   TRENDLINES_TEMPLATE.draw!({
     ctx,
-    chart: { getDataList: () => bars, getSize: () => ({ width: 0 }) },
+    chart,
     indicator: { result, calcParams: PARAMS, extendData: ext, paneId: "candle_pane", name: "TRENDLINES" },
     bounding: { width: 400, height: 400 },
     xAxis: { convertToPixel: (i: number) => i },
     yAxis: { convertToPixel: (p: number) => 400 - p },
   } as never);
-  return { segments, rings };
+  return { segments, rings, chart };
 }
 
 describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
@@ -642,5 +644,29 @@ describe("alignMtfTrendlines short last intraday bucket", () => {
     const out = alignMtfTrendlines(bars, pin);
     expect(out.map((p) => p.tl_1)).toEqual([20, 30, 30, 30, 40]);
     expect(out[out.length - 1].lineIdx).toBe(3);
+  });
+});
+
+describe("TRENDLINES_TEMPLATE.draw records the line as an alert sees it", () => {
+  const alertLine = (mtf: TrendlinesMtf) => {
+    const { chart } = draw(chartBars(), mtf);
+    return findTrendlineSegment(chart, "candle_pane", "TRENDLINES", lineKey(htfLine, chartBars(), htfStarts()))?.alertLine?.();
+  };
+
+  it("measures a closed-bar pin at its newest closed HTF bar, per HTF bar", () => {
+    // lineIdx is 8 (HTF bar 9 closes in the newest chart bar's future).
+    expect(alertLine(stash())).toEqual({
+      slope: -2, tRef: T0 + 8 * HTF_MS, pRef: 96,
+      t1: T0 + HTF_MS, p1: 110, t2: T0 + 3 * HTF_MS, p2: 106,
+    });
+  });
+
+  it("skips a folded forming HTF bar, so tRef is the newest CLOSED pin bar", () => {
+    // With "Wait for timeframe closes" off, lineIdx reaches the forming
+    // entry 9; the alert must still reference closed bar 8.
+    expect(alertLine(stash({ formingIdx: 9 }))).toEqual({
+      slope: -2, tRef: T0 + 8 * HTF_MS, pRef: 96,
+      t1: T0 + HTF_MS, p1: 110, t2: T0 + 3 * HTF_MS, p2: 106,
+    });
   });
 });
