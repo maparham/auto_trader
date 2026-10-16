@@ -47,6 +47,7 @@ import { afterNextPaint, clearIndicatorBusy, markIndicatorBusy } from "../indica
 import {
   cloneToolFor,
   dropTrendlineSegments,
+  alertLineOf,
   marksFor,
   markedLineStyle,
   setTrendlineSegments,
@@ -3732,6 +3733,15 @@ function drawTrendlines(
           if (!a || !b || a.timestamp === b.timestamp) return null;
           return { tool, points: [a, b] };
         },
+        // Unpinned, the chart's newest bar is forming, so the reference is
+        // the one before it; under a pin lastIdx is already the newest
+        // CLOSED HTF bar (calc applied the closed-bar rule).
+        alertLine: () =>
+          alertLineOf(
+            line,
+            starts ?? (timestamps ??= dataList.map((d) => d.timestamp)),
+            mtf ? lastIdx : lastIdx - 1,
+          ),
       });
     }
     // A hidden line is the stroke and nothing else: no rings, crossing dots,

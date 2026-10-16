@@ -12,6 +12,7 @@ import type { GhostPattern } from "./patternGhost";
 import { claimSidePanel, registerSidePanel } from "./sidePanels";
 import type { SidePanelId } from "./sidePanels";
 import type { IndicatorIdentity } from "./alertableIndicators";
+import type { TrendlineAlertLine } from "./indicators/trendlineMarks";
 
 type Listener<T> = (value: T) => void;
 
@@ -76,6 +77,19 @@ export type IndicatorAlertRequest =
   | { mode: "create"; draft: IndicatorAlertDraft }
   | { mode: "edit"; id: string };
 export const indicatorAlertRequest = new Signal<IndicatorAlertRequest | null>(null);
+
+// Request to open the line alert modal: create (from a trendline's menu) or
+// edit (from the alerts panel). App renders it.
+export interface LineAlertDraft {
+  epic: string;
+  broker: string;
+  precision: number;
+  timeframe: string;
+  line: TrendlineAlertLine;
+  link: { scope: string; instanceId: string; lineKey: string };
+}
+export type LineAlertRequest = { mode: "create"; draft: LineAlertDraft } | { mode: "edit"; id: string };
+export const lineAlertRequest = new Signal<LineAlertRequest | null>(null);
 
 // A confirmation dialog request. Any destructive action that wants a "are you sure?"
 // gate sets this with a message + an onConfirm callback; App renders one ConfirmDialog

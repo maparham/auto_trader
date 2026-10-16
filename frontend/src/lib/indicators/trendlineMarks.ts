@@ -129,6 +129,40 @@ export interface TrendlineSegment {
   y1: number;
   /** Resolved lazily at menu time: only the line the user picked needs it. */
   clone: () => TrendlineClone | null;
+  /** The line as an alert sees it, in the indicator's OWN bars (the pin's
+   * under a timeframe pin). Absent on debug-layer lines. */
+  alertLine?: () => TrendlineAlertLine | null;
+}
+
+export interface TrendlineAlertLine {
+  /** Price per bar of the line's own series. */
+  slope: number;
+  /** Open time of the reference bar (newest closed) and the line there. */
+  tRef: number;
+  pRef: number;
+  /** Anchors as bar open times, for drawing. */
+  t1: number;
+  p1: number;
+  t2: number;
+  p2: number;
+}
+
+/** A drawn line frozen for an alert. `times` are the bar open times its
+ * indices live in (chart bars, or HTF starts under a pin); `refIdx` the
+ * newest closed bar there. Null before the second anchor or off the series.
+ * Same arithmetic as trendlines.ts projectAt (not imported: that module
+ * imports this one). */
+export function alertLineOf(
+  line: { i1: number; p1: number; i2: number; p2: number },
+  times: readonly number[],
+  refIdx: number,
+): TrendlineAlertLine | null {
+  const t1 = times[line.i1];
+  const t2 = times[line.i2];
+  const tRef = times[refIdx];
+  if (t1 == null || t2 == null || tRef == null || line.i2 <= line.i1 || refIdx < line.i2) return null;
+  const pRef = line.p1 + ((line.p2 - line.p1) * (refIdx - line.i1)) / (line.i2 - line.i1);
+  return { slope: (line.p2 - line.p1) / (line.i2 - line.i1), tRef, pRef, t1, p1: line.p1, t2, p2: line.p2 };
 }
 
 /** Recorded by the draw, per chart then "paneId:name", like the end-handle

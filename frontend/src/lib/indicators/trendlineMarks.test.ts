@@ -2,6 +2,7 @@ import type { KLineData } from "klinecharts";
 import { describe, expect, it } from "vitest";
 import { TRENDLINES_TEMPLATE } from "./trendlines";
 import {
+  alertLineOf,
   cloneToolFor,
   distToSegment,
   hitTrendline,
@@ -251,5 +252,27 @@ describe("drawTrendlines with marks", () => {
     const s = d.strokes[0];
     const hit = hitTrendline(d.chart, s.x0 + 5, s.y0 + ((s.y1 - s.y0) * 5) / (s.x1 - s.x0), 6);
     expect(hit?.seg.clone()?.tool).toBe("rayLine");
+  });
+});
+
+describe("alertLineOf", () => {
+  const line = { i1: 2, p1: 10, i2: 6, p2: 12 };
+  it("projects to the reference bar in the line's own series", () => {
+    const times = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => 1_000 + i * 3_600_000);
+    expect(alertLineOf(line, times, 8)).toEqual({
+      slope: 0.5, tRef: times[8], pRef: 13, t1: times[2], p1: 10, t2: times[6], p2: 12,
+    });
+  });
+  it("a pinned line uses its HTF bar times, so the slope is per HTF bar", () => {
+    const day = 86_400_000;
+    const starts = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => i * day);
+    const r = alertLineOf(line, starts, 7);
+    expect(r?.slope).toBe(0.5);
+    expect(r?.tRef).toBe(7 * day);
+  });
+  it("null before the second anchor or off the series", () => {
+    const times = [0, 1, 2, 3, 4, 5, 6];
+    expect(alertLineOf(line, times, 5)).toBeNull();
+    expect(alertLineOf(line, times, 9)).toBeNull();
   });
 });
