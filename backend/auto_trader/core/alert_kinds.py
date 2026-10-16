@@ -12,8 +12,9 @@ from typing import Any, Protocol
 from auto_trader.core import timeframe as _tf
 from auto_trader.core.alert_bars import alert_resolution
 from auto_trader.core.alert_eval import Pair
+from auto_trader.core.models import Candle
 from auto_trader.indicators.alertable import (
-    IndicatorKey, indicator_label, validate_indicator, volume_weighted,
+    TRENDLINES_REFUSED_TF, IndicatorKey, indicator_label, line_key, validate_indicator, volume_weighted,
 )
 
 CONDITIONS = frozenset({"crossing", "crossing_up", "crossing_down", "greater", "less"})
@@ -32,12 +33,40 @@ def _validate_common(params: dict) -> None:
         raise ValueError(f"unknown trigger: {params.get('trigger')!r}")
 
 
+def _resolve_close_default(kind, params, last, before, vals, pvals):
+    """Close mode's two pairs: this close vs this bar's level, and the
+    previous close vs the previous bar's level."""
+    cur = kind.resolve(params, last.close, vals) if last is not None and vals else None
+    prev = kind.resolve(params, before.close, pvals) if before is not None and pvals else None
+    return cur, prev
+
+
+def _validate_series_params(params: dict) -> None:
+    """Native timeframe (canonicalised) and evalOn: shared by the kinds that
+    read closed bars."""
+    tf = params.get("timeframe")
+    try:
+        canon = _tf.canonicalize(tf) if isinstance(tf, str) else None
+    except _tf.TimeframeError:
+        canon = None
+    if canon is None or not _tf.is_native(canon):
+        raise ValueError("params.timeframe must be a native timeframe (1m to 1W)")
+    params["timeframe"] = canon
+    if params.get("evalOn") not in _EVAL_ON:
+        raise ValueError("params.evalOn must be 'close' or 'intrabar'")
+
+
 class AlertKind(Protocol):
     def validate(self, params: dict, streams: Callable[[], bool]) -> None: ...
     def bar_resolution(self, params: dict) -> str: ...
     def eval_on(self, params: dict) -> str: ...
     def indicator_key(self, params: dict) -> IndicatorKey | None: ...
     def resolve(self, params: dict, price: float, values: dict[str, float | None] | None) -> Pair | None: ...
+    def resolve_close(
+        self, params: dict, last: Candle | None, before: Candle | None,
+        vals: dict[str, float | None] | None, pvals: dict[str, float | None] | None,
+    ) -> tuple[Pair | None, Pair | None]: ...
+    def level_sig(self, params: dict, values: dict[str, float | None] | None) -> tuple | None: ...
     def label(self, params: dict) -> str | None: ...
     def sig(self, params: dict) -> str: ...
     def payload_extras(self, params: dict, pair: Pair) -> dict: ...
@@ -73,6 +102,12 @@ class PriceLevelKind:
     def resolve(self, params, price, values):
         return (price, params["level"])
 
+    def resolve_close(self, params, last, before, vals, pvals):
+        return _resolve_close_default(self, params, last, before, vals, pvals)
+
+    def level_sig(self, params, values):
+        return None
+
     def label(self, params: dict) -> str | None:
         return None
 
@@ -90,16 +125,9 @@ class IndicatorKind:
             params.get("line"), params.get("target"),
         )
         _validate_common(params)
-        tf = params.get("timeframe")
-        try:
-            canon = _tf.canonicalize(tf) if isinstance(tf, str) else None
-        except _tf.TimeframeError:
-            canon = None
-        if canon is None or not _tf.is_native(canon):
-            raise ValueError("params.timeframe must be a native timeframe (1m to 1W)")
-        params["timeframe"] = canon
-        if params.get("evalOn") not in _EVAL_ON:
-            raise ValueError("params.evalOn must be 'close' or 'intrabar'")
+        _validate_series_params(params)
+        if params["indicator"] == "TRENDLINES" and params["timeframe"] in TRENDLINES_REFUSED_TF:
+            raise ValueError("params.timeframe: nearest-line alerts need 5m or longer")
         if params["target"] == "value":
             if not _finite_number(params.get("value")):
                 raise ValueError("params.value must be a finite number")
@@ -135,6 +163,23 @@ class IndicatorKind:
             return (price, line)
         return (line, params["value"])
 
+    def resolve_close(self, params, last, before, vals, pvals):
+        if params.get("indicator") != "TRENDLINES":
+            return _resolve_close_default(self, params, last, before, vals, pvals)
+        # The line nearest at the previous close, at both bars: `held` is it
+        # projected to this bar, the previous `value` is it at its own bar.
+        # A switch to another line is therefore never read as a cross.
+        held = (vals or {}).get("held")
+        was = (pvals or {}).get("value")
+        cur = (last.close, held) if last is not None and held is not None and math.isfinite(held) else None
+        prev = (before.close, was) if before is not None and was is not None and math.isfinite(was) else None
+        return cur, prev
+
+    def level_sig(self, params, values):
+        if params.get("indicator") != "TRENDLINES" or not values:
+            return None
+        return (values.get("a1"), values.get("a2"))
+
     def label(self, params: dict) -> str:
         return f"{indicator_label(IndicatorKey.of(params))} ({_tf.label(params['timeframe'])})"
 
@@ -152,9 +197,69 @@ class IndicatorKind:
         }
 
 
+class LineKind:
+    """A frozen straight line in bars of `timeframe` (a right-clicked
+    trendline): level = pRef + slope * (bars since tRef). tRef/pRef roll
+    forward (engine rebase), so they are not part of `sig`."""
+
+    def validate(self, params: dict, streams: Callable[[], bool]) -> None:
+        t_ref = params.get("tRef")
+        if not _finite_number(t_ref) or t_ref <= 0 or t_ref != int(t_ref):
+            raise ValueError("params.tRef must be a bar open time in ms")
+        params["tRef"] = int(t_ref)
+        for f in ("pRef", "slope"):
+            if not _finite_number(params.get(f)):
+                raise ValueError(f"params.{f} must be a finite number")
+        a = params.get("anchors")
+        if not isinstance(a, dict) or not all(_finite_number(a.get(k)) for k in ("t1", "p1", "t2", "p2")):
+            raise ValueError("params.anchors must be {t1, p1, t2, p2} numbers")
+        _validate_common(params)
+        _validate_series_params(params)
+        link = params.get("link")
+        if link is not None and not (
+            isinstance(link, dict)
+            and isinstance(link.get("scope"), str) and 0 < len(link["scope"]) <= 200
+            and isinstance(link.get("instanceId"), str) and 0 < len(link["instanceId"]) <= 64
+            and isinstance(link.get("lineKey"), str) and 0 < len(link["lineKey"]) <= 64
+        ):
+            raise ValueError("params.link must be {scope, instanceId, lineKey} strings or null")
+
+    def bar_resolution(self, params: dict) -> str:
+        return params["timeframe"]
+
+    def eval_on(self, params: dict) -> str:
+        return params["evalOn"]
+
+    def indicator_key(self, params: dict) -> IndicatorKey:
+        return line_key(params["tRef"], params["pRef"], params["slope"])
+
+    def resolve(self, params, price, values):
+        level = (values or {}).get("value")
+        if level is None or not math.isfinite(level):
+            return None
+        return (price, level)
+
+    def resolve_close(self, params, last, before, vals, pvals):
+        return _resolve_close_default(self, params, last, before, vals, pvals)
+
+    def level_sig(self, params, values):
+        return None
+
+    def label(self, params: dict) -> str:
+        return f"Trendline ({_tf.label(params['timeframe'])})"
+
+    def sig(self, params: dict) -> str:
+        keys = ("slope", "anchors", "timeframe", "evalOn", "condition", "trigger")
+        return json.dumps({k: params.get(k) for k in keys}, sort_keys=True)
+
+    def payload_extras(self, params: dict, pair: Pair) -> dict:
+        return {"label": self.label(params), "target": "price", "subject": pair[0], "evalOn": params["evalOn"]}
+
+
 PRICE_LEVEL = PriceLevelKind()
 INDICATOR = IndicatorKind()
-KINDS: dict[str, AlertKind] = {"price_level": PRICE_LEVEL, "indicator": INDICATOR}
+LINE = LineKind()
+KINDS: dict[str, AlertKind] = {"price_level": PRICE_LEVEL, "indicator": INDICATOR, "line": LINE}
 
 
 def kind_of(row: dict) -> AlertKind | None:
