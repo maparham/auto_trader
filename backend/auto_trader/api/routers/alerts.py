@@ -10,6 +10,7 @@ mirroring the `origin`-echo convention `/api/state` uses.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -18,18 +19,35 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from auto_trader.core import timeframe as _tf
 from auto_trader.core.alert_bars import candle_ms
 from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_kinds import INDICATOR, KINDS, upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
+from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.push_notify import PUSH
 from auto_trader.core.telegram_notify import TELEGRAM
+from auto_trader.indicators.alert_series import IndicatorKey, config_json, config_of
+from auto_trader.indicators.alert_specs import ALERT_SPECS
+from auto_trader.indicators.registry import SERIES_INDICATORS
 
 from .. import deps
 from ..deps import current_user
 from .state import broadcast_to_user
 
+log = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _decorate(row: dict) -> dict:
+    if row.get("kind") == "indicator":
+        try:
+            row["label"] = INDICATOR.label(row["params"])
+        except (KeyError, TypeError, ValueError):
+            pass
+    return row
+
 
 _ID_RE = re.compile(r"^al-[A-Za-z0-9-]{1,64}$")
 _NOTIFY_CHANNELS = ("toast", "browser", "sound", "push", "telegram")
@@ -148,6 +166,14 @@ class PushUnsubscribeBody(BaseModel):
     endpoint: str
 
 
+class DescribeBody(BaseModel):
+    broker: str
+    epic: str
+    timeframe: str
+    instance: dict[str, Any] | None = None
+    alertId: str | None = None
+
+
 async def _notify(request: Request, row: dict | None, alert_id: str, broker: str, epic: str, origin: str) -> None:
     user = current_user(request)
     ALERT_ENGINE.on_alert_changed(user, row, alert_id)
@@ -167,7 +193,7 @@ async def list_alerts(request: Request) -> dict[str, Any]:
             st = "waiting_for_data"  # not registered with the engine yet
         if st is not None:
             r["status"] = st
-    return {"alerts": rows}
+    return {"alerts": [_decorate(r) for r in rows]}
 
 
 @router.post("/api/alerts")
@@ -207,7 +233,7 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
         raise HTTPException(409, f"alert id already exists: {body.id}") from None
 
     await _notify(request, saved, saved["id"], saved["broker"], saved["epic"], origin)
-    return saved
+    return _decorate(saved)
 
 
 @router.get("/api/alerts/triggered")
@@ -294,10 +320,62 @@ async def push_unsubscribe(request: Request, body: PushUnsubscribeBody) -> None:
     await ALERT_STORE.delete_push_sub(user, body.endpoint)
 
 
-# The fixed-path /api/alerts/triggered*, /api/alerts/telegram* and
-# /api/alerts/push* routes above must be registered BEFORE these {alert_id}
-# routes — FastAPI matches path operations in registration order, and a
-# {alert_id} route would otherwise swallow "triggered"/"telegram"/"push" as
+@router.get("/api/alerts/indicators")
+async def alertable_indicators() -> dict[str, Any]:
+    return {"types": sorted(ALERT_SPECS)}
+
+
+@router.post("/api/alerts/describe")
+async def describe_alert(request: Request, body: DescribeBody) -> dict[str, Any]:
+    user = current_user(request)
+    if body.alertId is not None:
+        rows = await ALERT_STORE.list_user(user)
+        row = next((r for r in rows if r["id"] == body.alertId and r.get("kind") == "indicator"), None)
+        if row is None:
+            raise HTTPException(404, f"alert not found: {body.alertId}")
+        p = upgrade_params(row["params"])
+        type_ = p["type"]
+        cfg = config_of(type_, json.dumps(p["config"], sort_keys=True, allow_nan=False))
+        timeframe = p["timeframe"]
+    elif body.instance is not None:
+        type_ = body.instance.get("type")
+        if type_ not in ALERT_SPECS:
+            raise HTTPException(422, f"{type_!r} is not alertable")
+        cfg = SERIES_INDICATORS[type_].parse_config(body.instance.get("calcParams"), body.instance.get("extendData"))
+        timeframe = SERIES_INDICATORS[type_].timeframe(cfg) or body.timeframe
+    else:
+        raise HTTPException(422, "instance or alertId is required")
+    alert = ALERT_SPECS[type_]
+    refusal = INDICATOR.refusal_for(type_, cfg, timeframe)
+    outs = alert.outputs(cfg)
+    last: dict[str, float | None] = {}
+    if refusal is None:
+        try:
+            canon = _tf.canonicalize(timeframe)
+            keys = {name: IndicatorKey(type_, config_json(cfg), name, resolution_seconds(canon) / 3600.0) for name in outs}
+            got = await ALERT_ENGINE.peek_values(user, body.broker, body.epic, canon, list(keys.values()))
+            last = {name: got.get(k) for name, k in keys.items()}
+            timeframe = canon
+        except Exception:  # a prefill is best effort; the dialog still opens
+            log.warning("describe: values failed for %s %s", body.broker, body.epic, exc_info=True)
+    return {
+        "type": type_,
+        "timeframe": timeframe,
+        "outputs": [
+            {"name": n, "label": alert.label(cfg, n), "kind": o.kind, "priceScale": o.price_scale, "priceOnly": o.price_only}
+            for n, o in outs.items()
+        ],
+        "lastValues": last,
+        "needsVolume": alert.needs_volume(cfg),
+        "refusal": refusal,
+    }
+
+
+# The fixed-path /api/alerts/triggered*, /api/alerts/telegram*,
+# /api/alerts/push*, /api/alerts/indicators and /api/alerts/describe routes
+# above must be registered BEFORE these {alert_id} routes — FastAPI matches
+# path operations in registration order, and a {alert_id} route would
+# otherwise swallow "triggered"/"telegram"/"push"/"indicators"/"describe" as
 # an id.
 
 
@@ -331,21 +409,6 @@ async def patch_alert(
             # directly, never this route).
             raise HTTPException(422, "A line alert's geometry can't be changed")
         merged = {**current["params"], **patch["params"]}
-        # `config` is itself a nested dict (e.g. {maType, source}); a shallow
-        # merge of `params` would let a patch naming only `config.maType`
-        # drop `config.source` entirely, and validate_indicator default-fills
-        # it back silently instead of 422ing — merge config one level deeper.
-        # Only when BOTH sides are dicts: a patch sending a non-dict config
-        # (string/list/null) must fall through to validate_indicator's own
-        # "params.config must be an object" 422, not blow up `**` on a
-        # non-mapping.
-        patch_config = patch["params"].get("config")
-        current_config = current["params"].get("config")
-        if (
-            "config" in patch["params"]
-            and isinstance(patch_config, dict) and isinstance(current_config, dict)
-        ):
-            merged["config"] = {**current_config, **patch_config}
         _validate_params(current["kind"], merged, current["broker"])
         await _check_duplicate(user, current["broker"], current["epic"], current["kind"], merged, skip_id=alert_id)
         patch["params"] = merged
@@ -359,7 +422,7 @@ async def patch_alert(
         raise HTTPException(404, f"alert not found: {alert_id}")
 
     await _notify(request, saved, saved["id"], saved["broker"], saved["epic"], origin)
-    return saved
+    return _decorate(saved)
 
 
 @router.delete("/api/alerts/{alert_id}", status_code=204)

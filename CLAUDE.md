@@ -202,29 +202,34 @@ check lives in `api/routers/alerts.py`'s `_check_duplicate`, reusing each
 kind's own `sig()`.
 
 Alert kinds live in `core/alert_kinds.py` (`price_level`, `indicator`,
-`line`): each
-validates its params and resolves a `(subject, level)` pair; `core/alert_eval.py`
-is the one evaluator. Indicator alerts (MA, RSI, ATR, Trendlines nearest
-line on native timeframes)
-read closed bars through `CANDLE_CACHE` via `core/alert_indicators.py` and the
-alertable registry `indicators/alertable.py` (mirrored by
-`frontend/src/lib/alertableIndicators.ts`, pinned by committed fixtures under
-`backend/tests/fixtures/indicator_parity/`; regenerate with
-`UPDATE_PARITY=1 npx vitest run src/lib/alertableParity.test.ts`). "Every"
-alerts fire at most once per bar of their timeframe. Probe an indicator alert
-with `python3 -m scripts.alert_probe --indicator`.
+`line`): each validates its params and resolves a `(subject, level)` pair;
+`core/alert_eval.py` is the one evaluator. Indicator alerts run on the
+backtest series registry: params are `{type, config, output}` where `config`
+is the registry's parsed config as JSON (`indicators/alert_series.py`), and
+`indicators/alert_specs.py` says which outputs of each type are alertable
+(level or 0/1 event, price axis or not), the label and the refusals. Create
+and patch take the raw pane as `params.instance` and the server parses it;
+old `{indicator, calcParams, config}` params are upgraded by
+`alert_kinds.upgrade_params` (store migration 2, re-arm, triggered history).
+The frontend mirrors none of this: `GET /api/alerts/indicators` lists the
+alertable types and `POST /api/alerts/describe` returns a pane's outputs,
+labels, refusal and current values from the alert hub. Event outputs are
+stored as a close-mode cross up through 0.5. "Every" alerts fire at most once
+per bar of their timeframe. Probe an indicator alert with
+`python3 -m scripts.alert_probe --indicator`.
 
 Trendline alerts come in two forms. The `line` kind is a frozen straight line
 in bars of its timeframe (`tRef`, `pRef`, `slope`), made from a right-clicked
 Trendlines line; the engine rolls `tRef` forward every 1000 bars
 (`LINE_REBASE_BARS`) so it stays inside the 2000-bar seed, and create 422s
 when the chart's reference bar is not one the server holds. Nearest-line
-alerts are `indicator` alerts on `TRENDLINES` with the canonical 33-slot
-calcParams; the hub runs the full Trendlines compute once per close, in a
-worker thread (the series is not ready for it until the result lands, and
-close mode evaluates on the first sample after), and keeps the held line,
-so close mode judges a cross against one line (`resolve_close`) and
-intrabar only projects it. Nearest-line alerts refuse the 1m timeframe.
+alerts are `indicator` alerts on `TRENDLINES`, output `tl_nearest` (the only
+alertable Trendlines output); the hub runs the full Trendlines compute once
+per close, in a worker thread (the series is not ready for it until the
+result lands, and close mode evaluates on the first sample after), and keeps
+the held line, so close mode judges a cross against one line
+(`resolve_close`) and intrabar only projects it. Nearest-line alerts refuse
+the 1m timeframe.
 
 Telegram alert photos are live chart screenshots: `core/chart_snapshot.py`
 drives a headless Chromium over the frontend's `/?snapshot=1` boot mode,

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import auto_trader.api.deps as deps_mod
 from auto_trader.api.app import app
+from auto_trader.core.alert_kinds import INDICATOR
 from auto_trader.core.models import Candle
 from tests import clerk_fake
 
@@ -37,6 +38,99 @@ def _body(**overrides) -> dict:
     }
     body.update(overrides)
     return body
+
+
+def _rsi_body(ext=None) -> dict:
+    return _body(id="al-rsi", kind="indicator", params={
+        "instance": {"type": "RSI", "calcParams": [14], "extendData": ext or {}},
+        "output": "value", "timeframe": "HOUR", "target": "value", "value": 70,
+        "evalOn": "close", "condition": "crossing", "trigger": "once", "link": None,
+    })
+
+
+def _ma_body(ext=None, output="ma") -> dict:
+    return _body(id="al-ma", kind="indicator", params={
+        "instance": {"type": "MA", "calcParams": [20], "extendData": ext or {}},
+        "output": output, "timeframe": "HOUR", "target": "price", "value": None,
+        "evalOn": "close", "condition": "crossing", "trigger": "once", "link": None,
+    })
+
+
+def test_alertable_types(clerk):
+    r = client.get("/api/alerts/indicators", headers=_auth("alice"))
+    assert r.status_code == 200
+    assert {"MA", "EMA", "RSI", "ATR", "TRENDLINES", "SR_LEVELS"} <= set(r.json()["types"])
+
+
+def test_describe_lists_outputs_and_refusal(clerk):
+    r = client.post("/api/alerts/describe", json={
+        "broker": "b", "epic": "E", "timeframe": "HOUR",
+        "instance": {"type": "RSI", "calcParams": [14], "extendData": {}},
+    }, headers=_auth("alice"))
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["type"] == "RSI" and d["timeframe"] == "HOUR" and d["refusal"] is None
+    by = {o["name"]: o for o in d["outputs"]}
+    assert by["value"] == {"name": "value", "label": "RSI 14", "kind": "level", "priceScale": False, "priceOnly": False}
+    assert by["bullDiv"]["kind"] == "event"
+    assert isinstance(d["lastValues"], dict)
+
+
+def test_describe_follows_the_pin_and_refuses_seconds(clerk):
+    pinned = client.post("/api/alerts/describe", json={
+        "broker": "b", "epic": "E", "timeframe": "HOUR",
+        "instance": {"type": "MA", "calcParams": [20], "extendData": {"mtf": {"timeframe": "DAY"}}},
+    }, headers=_auth("alice")).json()
+    assert pinned["timeframe"] == "DAY"
+    secs = client.post("/api/alerts/describe", json={
+        "broker": "b", "epic": "E", "timeframe": "SECOND_30",
+        "instance": {"type": "RSI", "calcParams": [14], "extendData": {}},
+    }, headers=_auth("alice")).json()
+    assert secs["refusal"] == "Alerts on this timeframe are coming later"
+
+
+def test_describe_unknown_type_422(clerk):
+    r = client.post("/api/alerts/describe", json={
+        "broker": "b", "epic": "E", "timeframe": "HOUR",
+        "instance": {"type": "BOLL", "calcParams": [20], "extendData": {}},
+    }, headers=_auth("alice"))
+    assert r.status_code == 422
+
+
+def test_list_and_create_carry_label(clerk):
+    saved = client.post("/api/alerts", json=_rsi_body(), headers=_auth("alice")).json()
+    assert saved["label"] == "RSI 14 (1H)"
+    rows = client.get("/api/alerts", headers=_auth("alice")).json()["alerts"]
+    assert next(r for r in rows if r["id"] == saved["id"])["label"] == "RSI 14 (1H)"
+
+
+def test_patch_instance_replaces_the_pane(clerk):
+    saved = client.post("/api/alerts", json=_rsi_body(ext={"source": "hl2"}), headers=_auth("alice")).json()
+    r = client.patch(f"/api/alerts/{saved['id']}", json={"params": {"instance": {
+        "type": "RSI", "calcParams": [21], "extendData": {}}}}, headers=_auth("alice"))
+    assert r.status_code == 200, r.text
+    assert r.json()["params"]["config"]["length"] == 21
+    assert r.json()["params"]["config"]["source"] == "close"
+
+
+def test_patch_same_instance_keeps_sig(clerk):
+    body = _rsi_body()
+    saved = client.post("/api/alerts", json=body, headers=_auth("alice")).json()
+    r = client.patch(f"/api/alerts/{saved['id']}", json={"params": {"instance": body["params"]["instance"]}},
+                      headers=_auth("alice"))
+    assert r.status_code == 200, r.text
+    assert INDICATOR.sig(r.json()["params"]) == INDICATOR.sig(saved["params"])
+
+
+def test_patch_onto_a_missing_output_422(clerk):
+    saved = client.post(
+        "/api/alerts",
+        json=_ma_body(ext={"smoothing": {"type": "ema", "length": 5}}, output="smoothingMa"),
+        headers=_auth("alice"),
+    ).json()
+    r = client.patch(f"/api/alerts/{saved['id']}", json={"params": {"instance": {
+        "type": "MA", "calcParams": [20], "extendData": {}}}}, headers=_auth("alice"))
+    assert r.status_code == 422
 
 
 def test_create_get_round_trip_with_notify_defaults(clerk):
@@ -362,10 +456,10 @@ def test_indicator_patch_validates_merged_params(clerk):
     assert r.status_code == 422
 
 
-def test_indicator_patch_partial_config_keeps_untouched_keys(clerk):
-    # A PATCH naming only config.maType must not silently drop config.source
-    # back to its default: the merge has to be one level deeper than the
-    # top-level params merge.
+def test_indicator_patch_config_no_longer_deep_merges(clerk):
+    # PATCH no longer deep-merges params.config against the stored config:
+    # a raw partial config (missing required dataclass fields) 422s instead
+    # of being filled in from the stored pane.
     r = client.post(
         "/api/alerts", json=_ind_body(config={"maType": "ema", "source": "hl2"}),
         headers=_auth("alice"),
@@ -378,9 +472,18 @@ def test_indicator_patch_partial_config_keeps_untouched_keys(clerk):
         "/api/alerts/al-ind", json={"params": {"config": {"ma_type": "sma"}}},
         headers=_auth("alice"),
     )
+    assert r.status_code == 422
+
+    # params.instance replaces the stored pane whole: a previous extendData
+    # field (source: hl2) does not survive an instance patch that omits it.
+    r = client.patch(
+        "/api/alerts/al-ind",
+        json={"params": {"instance": {"type": "MA", "calcParams": [50], "extendData": {"maType": "sma"}}}},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200, r.text
     cfg = r.json()["params"]["config"]
-    assert (cfg["ma_type"], cfg["source"]) == ("sma", "hl2")
+    assert (cfg["ma_type"], cfg["source"]) == ("sma", "close")
 
 
 def test_indicator_patch_non_dict_config_422(clerk):

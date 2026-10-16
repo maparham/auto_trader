@@ -78,8 +78,8 @@ def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = Fal
             body = {
                 "id": alert_id, "broker": broker, "epic": epic, "kind": "indicator",
                 "params": {
-                    "indicator": "MA", "calcParams": [2], "config": {"maType": "sma"},
-                    "line": "value", "timeframe": "MINUTE", "target": "value", "value": -1e12,
+                    "instance": {"type": "MA", "calcParams": [2], "extendData": {"maType": "sma"}},
+                    "output": "ma", "timeframe": "MINUTE", "target": "value", "value": -1e12,
                     "condition": "greater", "trigger": "once", "evalOn": "intrabar", "link": None,
                 },
                 "message": "alert_probe e2e check",
