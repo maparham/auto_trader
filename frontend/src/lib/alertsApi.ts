@@ -521,6 +521,9 @@ export function linkedAlerts(scope: string, instanceId: string): IndicatorAlert[
   );
 }
 
+// Every alert linked to any instance in `scope` on `broker`. Scope strings
+// repeat across brokers (each broker has its own workspace), so the bulk
+// reconcile that reads this must not touch another broker's links.
 export function scopeLinkedAlerts(scope: string, broker: string = getPersistBroker()): IndicatorAlert[] {
   return [...indicatorCache.values()].filter(isIndicator)
     .filter((a) => a.broker === broker && a.params.link?.scope === scope);
@@ -549,6 +552,8 @@ export function linkedLineAlerts(scope: string, instanceId: string): LineAlert[]
   );
 }
 
+// The line-alert twin of scopeLinkedAlerts, broker-filtered for the same
+// reason: scope strings repeat across brokers.
 export function scopeLinkedLineAlerts(scope: string, broker: string = getPersistBroker()): LineAlert[] {
   return [...indicatorCache.values()].filter(isLine)
     .filter((a) => a.broker === broker && a.params.link?.scope === scope);
