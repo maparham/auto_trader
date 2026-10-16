@@ -18,12 +18,14 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from auto_trader.core.alert_bars import candle_ms
 from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_kinds import KINDS
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.push_notify import PUSH
 from auto_trader.core.telegram_notify import TELEGRAM
 
+from .. import deps
 from ..deps import current_user
 from .state import broadcast_to_user
 
@@ -80,6 +82,20 @@ def _validate_params(kind: str, params: dict[str, Any], broker: str) -> None:
         raise HTTPException(422, str(e)) from None
 
 
+async def _check_line_ref(broker: str, epic: str, params: dict[str, Any]) -> None:
+    """A `line` alert's reference bar must be one the server holds (closed or
+    forming): chart and server bars can disagree (offset grids, lag), and a
+    guessed bar would put the alert on the wrong level."""
+    try:
+        bars, degraded = await deps.load_alert_bars(broker, epic, params["timeframe"], "mid", 10)
+    except Exception:
+        bars, degraded = [], True
+    if degraded or not bars:
+        raise HTTPException(503, "Couldn't load bars to check this line; try again")
+    if params["tRef"] not in {candle_ms(b) for b in bars}:
+        raise HTTPException(422, "Chart and server bars disagree; reload the chart")
+
+
 class CreateAlertBody(BaseModel):
     id: str
     broker: str
@@ -128,7 +144,7 @@ async def list_alerts(request: Request) -> dict[str, Any]:
     statuses = ALERT_ENGINE.statuses(user)
     for r in rows:
         st = statuses.get(r["id"])
-        if st is None and r.get("kind") == "indicator":
+        if st is None and r.get("kind") in ("indicator", "line"):
             st = "waiting_for_data"  # not registered with the engine yet
         if st is not None:
             r["status"] = st
@@ -142,6 +158,8 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
     _validate_params(body.kind, body.params, body.broker)
     _validate_precision(body.precision)
     _validate_expires_at(body.expires_at)
+    if body.kind == "line":
+        await _check_line_ref(body.broker, body.epic, body.params)
 
     notify = {ch: True for ch in _NOTIFY_CHANNELS}
     if body.notify:

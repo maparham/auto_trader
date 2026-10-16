@@ -1,10 +1,14 @@
 """`/api/alerts` CRUD + triggered-history endpoints."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
+import auto_trader.api.deps as deps_mod
 from auto_trader.api.app import app
+from auto_trader.core.models import Candle
 from tests import clerk_fake
 
 client = TestClient(app)
@@ -363,3 +367,57 @@ def test_list_includes_status_for_indicator_alerts(clerk, monkeypatch):
     rows = {r["id"]: r for r in client.get("/api/alerts", headers=_auth("alice")).json()["alerts"]}
     assert rows["al-ind"]["status"] == "waiting_for_data"
     assert "status" not in rows["al-p"]
+
+
+H = 3_600_000
+
+
+def _line_body(**kw):
+    p = {"timeframe": "HOUR", "evalOn": "close", "condition": "crossing", "trigger": "every",
+         "tRef": 9 * H, "pRef": 100.0, "slope": 0.5,
+         "anchors": {"t1": 2 * H, "p1": 96.0, "t2": 6 * H, "p2": 98.0},
+         "link": {"scope": "s", "instanceId": "TRENDLINES", "lineKey": "7200000:21600000"}}
+    p.update(kw)
+    return _body(id="al-line", kind="line", params=p)
+
+
+@pytest.fixture
+def bars(monkeypatch):
+    state = {"bars": [Candle(datetime.fromtimestamp(h * 3600, tz=timezone.utc), 1, 1, 1, 1, 1.0)
+                      for h in range(5, 11)], "degraded": False}
+
+    async def fake(broker, epic, res, side, count):
+        return state["bars"], state["degraded"]
+
+    monkeypatch.setattr(deps_mod, "load_alert_bars", fake)
+    return state
+
+
+def test_line_create_round_trip(clerk, bars):
+    r = client.post("/api/alerts", json=_line_body(), headers=_auth("alice"))
+    assert r.status_code == 200, r.text
+    assert r.json()["params"]["tRef"] == 9 * H
+
+
+def test_line_create_with_unknown_reference_422(clerk, bars):
+    r = client.post("/api/alerts", json=_line_body(tRef=3 * H), headers=_auth("alice"))
+    assert r.status_code == 422 and "reload the chart" in r.json()["detail"]
+
+
+def test_line_create_when_bars_fail_503(clerk, bars):
+    bars["degraded"] = True
+    r = client.post("/api/alerts", json=_line_body(), headers=_auth("alice"))
+    assert r.status_code == 503
+
+
+def test_line_patch_keeps_the_server_reference(clerk, bars):
+    client.post("/api/alerts", json=_line_body(), headers=_auth("alice"))
+    r = client.patch("/api/alerts/al-line", json={"params": {"condition": "greater"}}, headers=_auth("alice"))
+    assert r.status_code == 200
+    assert r.json()["params"]["tRef"] == 9 * H and r.json()["params"]["condition"] == "greater"
+
+
+def test_line_rows_report_a_status(clerk, bars):
+    client.post("/api/alerts", json=_line_body(), headers=_auth("alice"))
+    rows = client.get("/api/alerts", headers=_auth("alice")).json()["alerts"]
+    assert rows[0]["status"] in ("ok", "waiting_for_data")
