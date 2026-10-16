@@ -19,6 +19,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from auto_trader.core.alert_bars import BarSeries, Roll, Sample, candle_ms
@@ -33,8 +34,10 @@ Loader = Callable[[str, str, str, str, int], Awaitable[tuple[list[Candle], bool]
 _TAIL = 5
 _RETRY_SECONDS = 5.0
 _INTRABAR_SECONDS = 1.0
-# Indicators whose closed values are computed off the event loop.
+# Indicators whose closed values are computed off the event loop, on their
+# own small pool so aligned closes cannot starve the default executor's I/O.
 _OFF_LOOP = frozenset({"TRENDLINES"})
+_OFF_LOOP_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tl-compute")
 
 
 def _off_loop(ind: IndicatorKey) -> bool:
@@ -78,10 +81,10 @@ class _State:
     intrabar: dict[IndicatorKey, tuple[float, dict[str, float | None]]] = field(default_factory=dict)
     # Off-loop computes: which closed history each one is for, the in-flight
     # tasks, results landed since the last sample, and the ones this sample
-    # delivers as a close (read by `closed_now`). Only a result for the
-    # history `on_sample` last reported as a close (`close_stamp`) is
-    # delivered; a seed's result just makes the series ready.
-    close_stamp: tuple | None = None
+    # delivers as a close (read by `closed_now`). Only a compute spawned by
+    # a close `on_sample` reported (`close_due`, cleared on landing) is
+    # delivered; a seed's or set_needs' result just makes the series ready.
+    close_due: dict[IndicatorKey, tuple] = field(default_factory=dict)
     off_stamp: dict[IndicatorKey, tuple] = field(default_factory=dict)
     off_tasks: dict[IndicatorKey, asyncio.Task] = field(default_factory=dict)
     landed: set[IndicatorKey] = field(default_factory=set)
@@ -120,6 +123,7 @@ class IndicatorHub:
             for k in [k for k in st.off_tasks if k not in inds]:
                 st.off_tasks.pop(k).cancel()
             st.off_stamp = {k: v for k, v in st.off_stamp.items() if k in inds}
+            st.close_due = {k: v for k, v in st.close_due.items() if k in inds}
             if st.ok and any(k not in st.closed_vals and k not in st.off_tasks for k in st.needs):
                 # A newly needed indicator on an already-warm series: its
                 # closed values come from the bars we already hold (cheap),
@@ -306,15 +310,32 @@ class IndicatorHub:
                 task.cancel()
             st.landed.discard(ind)
             st.delivering.discard(ind)
+            st.close_due.pop(ind, None)
             st.off_stamp[ind] = stamp
-            st.off_tasks[ind] = asyncio.ensure_future(self._compute_off_loop(key, st, ind, list(bars), stamp))
+            task = asyncio.ensure_future(self._compute_off_loop(key, st, ind, list(bars), stamp))
+            st.off_tasks[ind] = task
+
+            def _done(t: asyncio.Task, key: SeriesKey = key) -> None:
+                if not t.cancelled() and t.exception() is not None:
+                    log.warning("alert indicator off-loop compute failed for %s", key, exc_info=t.exception())
+
+            task.add_done_callback(_done)
+
+    @staticmethod
+    def _mark_close(st: _State) -> None:
+        """`on_sample` just reported a close: the off-loop computes that
+        close spawned are the ones whose results count as it."""
+        cur = _stamp(st.series.closed)
+        for ind in st.off_tasks:
+            if st.off_stamp.get(ind) == cur:
+                st.close_due[ind] = cur
 
     async def _compute_off_loop(
         self, key: SeriesKey, st: _State, ind: IndicatorKey, bars: list[Candle], stamp: tuple,
     ) -> None:
         current = lambda: self._states.get(key) is st and st.off_stamp.get(ind) == stamp  # noqa: E731
         try:
-            out = await asyncio.to_thread(compute, ind, bars)
+            out = await asyncio.get_running_loop().run_in_executor(_OFF_LOOP_POOL, compute, ind, bars)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -324,6 +345,7 @@ class IndicatorHub:
             if current():
                 log.warning("alert indicator compute failed for series %s", key, exc_info=True)
                 st.off_stamp.pop(ind, None)
+                st.close_due.pop(ind, None)
                 st.ok = False
             return
         finally:
@@ -332,7 +354,8 @@ class IndicatorHub:
         if not current() or ind not in st.needs:
             return
         st.closed_vals[ind], st.prev_vals[ind] = _at(out, 0), _at(out, 1)
-        if st.close_stamp == stamp:
+        if st.close_due.get(ind) == stamp:
+            del st.close_due[ind]
             st.landed.add(ind)
 
     @staticmethod
@@ -357,12 +380,13 @@ class IndicatorHub:
 
     async def on_sample(self, broker: str, epic: str, s: Sample) -> set[SeriesKey]:
         closed: set[SeriesKey] = set()
-        for key, st in list(self._states.items()):
-            if key[0] != broker or key[1] != epic:
-                continue
+        mine = [(key, st) for key, st in self._states.items() if key[0] == broker and key[1] == epic]
+        for _, st in mine:
             # Off-loop results that landed since the last sample are this
-            # sample's close for their indicator (see `closed_now`).
+            # sample's close for their indicator (see `closed_now`). A
+            # pre-pass, so an exception further down cannot deliver twice.
             st.delivering, st.landed = st.landed, set()
+        for key, st in mine:
             roll = st.series.on_sample(s)
             retry_due = self._clock() - st.last_try >= _RETRY_SECONDS
 
@@ -411,11 +435,11 @@ class IndicatorHub:
                     # off our UTC grid (FX dailies opening 22:00) still
                     # report; `_refresh` uses the same rule.
                     closed.add(key)
-                    st.close_stamp = _stamp(st.series.closed)
+                    self._mark_close(st)
             elif roll is Roll.CLOSED or (st.pending_close and retry_due):
                 if await self._refresh(key, st):
                     closed.add(key)
-                    st.close_stamp = _stamp(st.series.closed)
+                    self._mark_close(st)
         return closed
 
     # ---- reads ----

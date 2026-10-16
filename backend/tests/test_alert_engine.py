@@ -932,3 +932,40 @@ def test_slow_trendlines_compute_does_not_block_a_price_alert(tmp_path, monkeypa
         tl = [f for f in fired() if f["epic"] == "US100"]
         assert len(tl) == 1 and tl[0]["level"] == pytest.approx(100.2)  # the new bar's held line
     asyncio.run(main())
+
+
+def test_readded_trendlines_need_on_a_warm_series_does_not_evaluate_the_previous_close(tmp_path, monkeypatch):
+    # The series stays warm through u2's MA alert. u1's nearest-line alert
+    # fires at the 60h close and is deleted; u3 creates one later in the same
+    # bar. Its Trendlines values come from set_needs, not a close, so u3 must
+    # not evaluate (and fire on) the 60h close that happened before it existed.
+    _patch_tl(monkeypatch, last_value=99.0, held=100.2)
+
+    async def main():
+        bars = [_sixty(None)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        ma = await store.create("u2", ind_row(id="al-ma", condition="crossing_down"))
+        eng.on_alert_changed("u2", ma, "al-ma")
+        t1 = await store.create("u1", tl_row(id="al-t1"))
+        eng.on_alert_changed("u1", t1, "al-t1")
+        fired = lambda: [m["value"]["id"] for _, m in sent if m["key"] == "__alerts__:fired"]  # noqa: E731
+        await eng.on_tick("capital", "US100", 99.0, None, None, t_ms=59 * H + 5)
+        await eng._hub.settle()
+        bars[0] = _sixty(100.5)
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 5)
+        await eng._hub.settle()
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 10)
+        assert fired() == ["al-t1"]
+        await store.delete("u1", "al-t1")
+        eng.on_alert_changed("u1", None, "al-t1")
+        t3 = await store.create("u3", tl_row(id="al-t3"))
+        eng.on_alert_changed("u3", t3, "al-t3")
+        await eng._hub.settle()
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 30 * 60_000)
+        await eng.on_tick("capital", "US100", 100.5, None, None, t_ms=60 * H + 31 * 60_000)
+        assert fired() == ["al-t1"]
+        # Its values are ready for the next close.
+        skey = ("capital", "US100", "HOUR", "mid")
+        from auto_trader.core.alert_kinds import kind_of
+        assert eng._hub.ready(skey, kind_of(t3).indicator_key(t3["params"]))
+    asyncio.run(main())

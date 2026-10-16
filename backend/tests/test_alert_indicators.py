@@ -666,11 +666,13 @@ def test_trendlines_compute_runs_off_the_event_loop(monkeypatch):
     import threading
     import time as _time
     release = threading.Event()
+    threads: list[str] = []
     real = alert_indicators_mod.compute
 
     def fake(ind, bars):
         if ind.indicator != "TRENDLINES":
             return real(ind, bars)
+        threads.append(threading.current_thread().name)
         release.wait(1)
         _time.sleep(0.05)
         return _fake_tl(len(bars))
@@ -693,6 +695,7 @@ def test_trendlines_compute_runs_off_the_event_loop(monkeypatch):
         release.set()
         await hub.settle()
         assert hub.values(KEY, TL, intrabar=False)["value"] == 50.0
+        assert threads and all(n.startswith("tl-compute") for n in threads)  # its own pool
         # A seed's result only makes the series ready: it is not a close.
         await hub.on_sample("capital", "US100", Sample(now[0] + 1, 1.0, None, None))
         assert not hub.closed_now(KEY, TL, set())
