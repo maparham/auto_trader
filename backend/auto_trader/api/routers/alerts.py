@@ -274,6 +274,9 @@ async def push_unsubscribe(request: Request, body: PushUnsubscribeBody) -> None:
 # an id.
 
 
+_LINE_GEOMETRY = frozenset({"tRef", "pRef", "slope", "anchors"})
+
+
 @router.patch("/api/alerts/{alert_id}")
 async def patch_alert(
     request: Request, alert_id: str, body: PatchAlertBody, origin: str = Query("")
@@ -295,6 +298,11 @@ async def patch_alert(
         current = next((r for r in existing if r["id"] == alert_id), None)
         if current is None:
             raise HTTPException(404, f"alert not found: {alert_id}")
+        if current.get("kind") == "line" and _LINE_GEOMETRY.intersection(patch["params"]):
+            # The line is frozen at creation and tRef/pRef belong to the
+            # server (the engine's rebase writes through AlertStore.update
+            # directly, never this route).
+            raise HTTPException(422, "A line alert's geometry can't be changed")
         merged = {**current["params"], **patch["params"]}
         # `config` is itself a nested dict (e.g. {maType, source}); a shallow
         # merge of `params` would let a patch naming only `config.maType`

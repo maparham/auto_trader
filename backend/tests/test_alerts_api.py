@@ -417,7 +417,22 @@ def test_line_patch_keeps_the_server_reference(clerk, bars):
     assert r.json()["params"]["tRef"] == 9 * H and r.json()["params"]["condition"] == "greater"
 
 
-def test_line_rows_report_a_status(clerk, bars):
+def test_line_patch_refuses_geometry(clerk, bars):
     client.post("/api/alerts", json=_line_body(), headers=_auth("alice"))
+    for key, value in (("tRef", 8 * H), ("pRef", 1.0), ("slope", 0.0),
+                       ("anchors", {"t1": 1 * H, "p1": 1.0, "t2": 2 * H, "p2": 2.0})):
+        r = client.patch("/api/alerts/al-line", json={"params": {key: value}}, headers=_auth("alice"))
+        assert r.status_code == 422, key
+        assert r.json()["detail"] == "A line alert's geometry can't be changed"
+    row = client.get("/api/alerts", headers=_auth("alice")).json()["alerts"][0]
+    assert row["params"]["tRef"] == 9 * H and row["params"]["pRef"] == 100.0
+
+
+def test_line_rows_report_a_status(clerk, bars, monkeypatch):
+    # Pins the router's line branch: with no engine status for the row, a
+    # line alert still reports waiting_for_data (a price alert would not).
+    from auto_trader.api.routers import alerts as alerts_router
+    client.post("/api/alerts", json=_line_body(), headers=_auth("alice"))
+    monkeypatch.setattr(alerts_router.ALERT_ENGINE, "statuses", lambda u: {})
     rows = client.get("/api/alerts", headers=_auth("alice")).json()["alerts"]
-    assert rows[0]["status"] in ("ok", "waiting_for_data")
+    assert rows[0]["status"] == "waiting_for_data"
