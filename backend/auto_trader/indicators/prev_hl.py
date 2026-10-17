@@ -12,6 +12,7 @@ anchored high and low.
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -107,6 +108,32 @@ def estimate_bar_ms(ts: Sequence[int]) -> int:
     return deltas[len(deltas) >> 1] if deltas else 0
 
 
+# series() runs once per PREV_HL output (8 per instance), rebuilding the same
+# `ts` and re-sorting it just to find the same median gap each time. A plain
+# list can't be weakly referenced (no WeakMap-by-identity, unlike prevHl.ts's
+# barMsCache), so this keys on a cheap fingerprint instead: (length, first ts,
+# last ts) is enough to recognize "the same candle history" call to call
+# within one request; a bounded size keeps it from growing across unrelated
+# requests.
+_BAR_MS_CACHE: "OrderedDict[tuple[int, int, int], int]" = OrderedDict()
+_BAR_MS_CACHE_MAX = 32
+
+
+def _cached_bar_ms(ts: Sequence[int]) -> int:
+    if len(ts) < 2:
+        return 0
+    key = (len(ts), ts[0], ts[-1])
+    hit = _BAR_MS_CACHE.get(key)
+    if hit is not None:
+        _BAR_MS_CACHE.move_to_end(key)
+        return hit
+    bar_ms = estimate_bar_ms(ts)
+    _BAR_MS_CACHE[key] = bar_ms
+    if len(_BAR_MS_CACHE) > _BAR_MS_CACHE_MAX:
+        _BAR_MS_CACHE.popitem(last=False)
+    return bar_ms
+
+
 def _aggregate(values: list[float], fn: str, want_max: bool) -> float:
     if fn == "avg":
         s = 0.0
@@ -198,7 +225,7 @@ def prev_hl_series(cfg: PrevHlConfig, output: str, candles: Sequence[Candle], ba
     ts = [int(c.time.timestamp() * 1000) for c in candles]
     if kind == "anchor":
         return _anchor(candles, ts, cfg.anchor_ms, want_hi)
-    bar_ms = estimate_bar_ms(ts)
+    bar_ms = _cached_bar_ms(ts)
     blank: list[float | None] = [None] * len(candles)
     if kind == "rolling":
         if cfg.rolling_len == 0:  # a non-finite stored length: no valid window

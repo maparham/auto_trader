@@ -252,7 +252,11 @@ def _phl_outputs(cfg: Any) -> dict[str, AlertOutput]:
 def _phl_label(cfg: Any, output: str) -> str:
     side = "high" if output.endswith("High") else "low"
     if output.startswith("rolling"):
-        return f"Prev HL rolling {cfg.rolling_len} {cfg.rolling_unit} {side}"
+        n = cfg.rolling_len
+        # "bars" is already plural and never singularizes; the other units
+        # pluralize on the same n == 1 rule the day/week count uses below.
+        unit = cfg.rolling_unit if cfg.rolling_unit == "bars" or n == 1 else f"{cfg.rolling_unit}s"
+        return f"Prev HL rolling {n} {unit} {side}"
     if output.startswith("anchor"):
         return f"Prev HL anchor {side}"
     unit = "day" if output.startswith("day") else "week"

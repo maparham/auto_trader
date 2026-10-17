@@ -59,6 +59,23 @@ def test_bar_spacing_is_the_median_gap():
     assert estimate_bar_ms([5]) == 0
 
 
+def test_bar_spacing_is_memoized_across_outputs(monkeypatch):
+    # series() runs once per output (8 per PREV_HL instance); the same
+    # candles shouldn't re-walk and re-sort the whole history every time.
+    from auto_trader.indicators import prev_hl
+
+    prev_hl._BAR_MS_CACHE.clear()
+    calls = []
+    real = prev_hl.estimate_bar_ms
+    monkeypatch.setattr(prev_hl, "estimate_bar_ms", lambda ts: calls.append(1) or real(ts))
+
+    spec = SERIES_INDICATORS["PREV_HL"]
+    cfg = spec.parse_config(None, {})
+    for output in ("rollingHigh", "dayHigh", "weekHigh"):
+        spec.series(cfg, output, CANDLES, 1.0)
+    assert len(calls) == 1
+
+
 def test_non_finite_length_yields_no_values():
     # A corrupted stored length (not what computePrevHl would ever write, but
     # what it does if the pane's extendData is ever hand-edited): Math.floor(NaN)
@@ -102,4 +119,8 @@ def test_alert_spec():
     assert alert.label(unplaced, "dayHigh") == "Prev HL 3 days high"
     assert alert.label(unplaced, "weekLow") == "Prev HL week low"
     assert alert.label(unplaced, "rollingHigh") == "Prev HL rolling 1 hour high"
+    plural = p(None, {"lengths": {"rolling": 3}})
+    assert alert.label(plural, "rollingHigh") == "Prev HL rolling 3 hours high"
+    bars = p(None, {"rollingUnit": "bars", "lengths": {"rolling": 3}})
+    assert alert.label(bars, "rollingLow") == "Prev HL rolling 3 bars low"
     assert alert.heavy and alert.sparse
