@@ -10,7 +10,7 @@
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
 //      rule: SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS,
-//      AUTO_FIB, LR, VWAP and PREV_HL (the
+//      AUTO_FIB, LR, VWAP, PREV_HL and CANDLE_PATTERNS (the
 //      EXPR_INSTANCE_TYPES set; keep a case here for every member), as
 //      "<instanceId>.<output>" (e.g. "SLOPE.50",
 //      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
@@ -265,6 +265,12 @@ export function chartIndicatorToExprToken(
         return `${id}.${PREV_HL_OUTPUTS[lineIndex]}`;
       }
       return `${id}.dayHigh`;
+    }
+    // CANDLE_PATTERNS paints its own markers (no figures), so a click carries
+    // no figure key: it names the bullish aggregate.
+    case "CANDLE_PATTERNS": {
+      const id = opts?.instanceId;
+      return id ? `${id}.bullPattern` : null;
     }
     default:
       return null;

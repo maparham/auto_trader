@@ -15,6 +15,7 @@ from typing import Any
 from auto_trader.core.models import Candle
 from auto_trader.indicators import auto_fib as _af
 from auto_trader.indicators import atr as _atr
+from auto_trader.indicators import candle_patterns_pane as _cp
 from auto_trader.indicators import fvg as _fvg
 from auto_trader.indicators import lr as _lr
 from auto_trader.indicators import ma as _ma
@@ -63,6 +64,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         outputs=_atr.atr_outputs,
         series=_atr.atr_pane_series,
         warmup=_atr.atr_warmup,
+        timeframe=lambda cfg: None,
+    ),
+    "CANDLE_PATTERNS": IndicatorSeriesSpec(
+        parse_config=_cp.parse_candle_patterns_config,
+        outputs=_cp.candle_patterns_outputs,
+        series=_cp.candle_patterns_series,
+        warmup=_cp.candle_patterns_warmup,
         timeframe=lambda cfg: None,
     ),
     "FVG": IndicatorSeriesSpec(

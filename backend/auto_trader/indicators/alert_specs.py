@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from auto_trader.core.alert_bars import candle_ms
 from auto_trader.core.models import Candle
+from auto_trader.indicators.candle_patterns_pane import PATTERN_LABELS
 from auto_trader.indicators.registry import SERIES_INDICATORS
 from auto_trader.indicators.trendlines import TL_NEAREST, TrendLine, compute_trendlines, project_at
 
@@ -266,8 +267,19 @@ def _phl_label(cfg: Any, output: str) -> str:
 
 _PHL = AlertSpec(outputs=_phl_outputs, label=_phl_label, heavy=True, sparse=True)
 
+# ---- CANDLE_PATTERNS (0/1 events, close only) ----
+
+_CP_AGG_LABELS = {"bullPattern": "Any bullish pattern", "bearPattern": "Any bearish pattern"}
+
+_CP = AlertSpec(
+    outputs=lambda cfg: {name: EVENT for name in SERIES_INDICATORS["CANDLE_PATTERNS"].outputs(cfg)},
+    label=lambda cfg, output: _CP_AGG_LABELS.get(output) or PATTERN_LABELS[output],
+    heavy=True,  # a full detector sweep per close; events never fire intrabar
+)
+
 ALERT_SPECS: dict[str, AlertSpec] = {
     "MA": _MA, "EMA": _MA, "RSI": _RSI, "ATR": _ATR, "TRENDLINES": _TL, "SLOPE": _SLOPE,
     "FVG": _FVG, "PIVOT_BANDS": _PB, "PIVOT_ANALYSIS": _PA, "SR_LEVELS": _SR, "SPIKE": _SPIKE,
     "AUTO_FIB": _FIB, "LR": _LR, "VWAP": _VWAP, "AVWAP": _AVWAP, "PREV_HL": _PHL,
+    "CANDLE_PATTERNS": _CP,
 }
