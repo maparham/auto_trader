@@ -37,6 +37,7 @@ import {
   type TradeLineField,
 } from "../lib/signals";
 import { saveAvwapAnchor, patchIndicatorExtend } from "../lib/persist";
+import { syncAvwapAlertsAfterReanchor } from "../lib/indicatorAlertSync";
 import { indTypeOf } from "../lib/indicators/shared";
 import { getIndicator, getIndicatorsByPane } from "../lib/indicators";
 import { slopeThresholdLevel, type SlopeExtend, type SlopeThreshold } from "../lib/indicators/slope";
@@ -172,7 +173,12 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
       const id = c ? selectedAvwapId(c, selectedIndicator.value) : null;
       const ind = id && c ? getIndicator(c, "candle_pane", id) : null;
       const ts = Number(ind?.calcParams?.[0]) || 0;
-      if (id && ts > 0) saveAvwapAnchor(scope, epicRef.current, id, ts);
+      if (id && ts > 0) {
+        saveAvwapAnchor(scope, epicRef.current, id, ts);
+        // Same re-point as the click-to-place path in ChartCore.tsx (S1): a
+        // drag commits its anchor here, once, on release, not on every move.
+        void syncAvwapAlertsAfterReanchor(scope, id, ts, ind?.extendData);
+      }
       // A real drag must not also fire the click→deselect that follows mouseup.
       // The synthesized click (if any) consumes this synchronously; the timeout
       // self-clears it when the release was OFF the chart (toolbar/legend), where

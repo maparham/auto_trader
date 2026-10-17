@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   reconcileLinksForScope, relinkAlerts, syncAlertsAfterEdit, syncAlertsAfterRemove,
+  syncAvwapAlertsAfterReanchor,
 } from "./indicatorAlertSync";
 import { getPersistBroker } from "./persist/core";
 import * as alertsApi from "./alertsApi";
@@ -99,6 +100,25 @@ describe("syncAlertsAfterEdit", () => {
   it("does nothing without linked alerts", async () => {
     const repoint = vi.spyOn(alertsApi, "repointIndicatorAlert");
     await syncAlertsAfterEdit("no-such-scope", "RSI", INSTANCE);
+    expect(repoint).not.toHaveBeenCalled();
+  });
+});
+
+describe("syncAvwapAlertsAfterReanchor", () => {
+  it("re-points a linked alert at the new anchor, the same way a settings edit does", async () => {
+    await addIndicatorAlert(mkAlert({ id: "al-avwap", scope: "avwap-scope", instanceId: "AVWAP" }));
+    const repoint = vi.spyOn(alertsApi, "repointIndicatorAlert").mockResolvedValue("ok");
+
+    await syncAvwapAlertsAfterReanchor("avwap-scope", "AVWAP", 1_700_000_000_000, { source: "close" });
+
+    expect(repoint).toHaveBeenCalledWith("al-avwap", {
+      type: "AVWAP", calcParams: [1_700_000_000_000], extendData: { source: "close" },
+    });
+  });
+
+  it("does nothing without a linked alert", async () => {
+    const repoint = vi.spyOn(alertsApi, "repointIndicatorAlert");
+    await syncAvwapAlertsAfterReanchor("no-such-scope", "AVWAP", 1, {});
     expect(repoint).not.toHaveBeenCalled();
   });
 });

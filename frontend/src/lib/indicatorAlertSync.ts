@@ -3,6 +3,7 @@
 // {scope, instanceId} because instance ids repeat across chart cells.
 import { requestConfirm } from "./signals";
 import { repointIndicatorAlert } from "./alertsApi";
+import { alertInstanceOf } from "./indicatorAlertInstance";
 import type { AlertInstance } from "./indicatorAlertInstance";
 import {
   deleteIndicatorAlert, linkedAlerts, linkedLineAlerts, patchIndicatorAlert, patchLineAlert,
@@ -50,6 +51,21 @@ export async function syncAlertsAfterEdit(scope: string, instanceId: string, ins
     onConfirm: () => conflicted.forEach((a) => deleteIndicatorAlert(a.id)),
     onCancel: () => unlink(conflicted),
   });
+}
+
+// AVWAP's anchor lives in calcParams[0], set directly via chart.overrideIndicator
+// by the click/drag handlers (ChartCore.tsx, chart/useLineDrag.ts) once the user
+// picks a new anchor bar. Both bypass IndicatorSettings.tsx's save path, the only
+// other caller of syncAlertsAfterEdit above, so without this a linked alert keeps
+// watching the OLD anchor forever: AVWAP's output set never changes on a
+// re-anchor, so the pane never trips the "settings changed" prompt on its own.
+export async function syncAvwapAlertsAfterReanchor(
+  scope: string,
+  instanceId: string,
+  anchorMs: number,
+  extendData: unknown,
+): Promise<void> {
+  await syncAlertsAfterEdit(scope, instanceId, alertInstanceOf("AVWAP", [anchorMs], extendData));
 }
 
 export function syncAlertsAfterRemove(scope: string, instanceId: string): void {

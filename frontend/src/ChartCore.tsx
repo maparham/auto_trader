@@ -131,9 +131,12 @@ import {
   collapseSubPanes,
   expandSubPanes,
   hydrateIndicators,
+  getIndicator,
   getIndicatorsByPane,
   syncIndicatorsFromStorage,
 } from "./lib/indicators";
+import { syncAlertsAfterEdit, syncAvwapAlertsAfterReanchor } from "./lib/indicatorAlertSync";
+import { alertInstanceOf } from "./lib/indicatorAlertInstance";
 import {
   registerHistory,
   unregisterHistory,
@@ -2104,6 +2107,10 @@ export default function ChartCore({
         if (typeof pt.timestamp !== "number") return;
         c.overrideIndicator({ name: anchoringId, calcParams: [pt.timestamp] });
         saveAvwapAnchor(scope, epicRef.current, anchoringId, pt.timestamp);
+        // A linked alert stores the anchor at create time (alertInstanceOf); a
+        // re-anchor must re-point it the same way a settings-modal edit does,
+        // since AVWAP's own output set never changes on its own (S1).
+        void syncAvwapAlertsAfterReanchor(scope, anchoringId, pt.timestamp, getIndicator(c, "candle_pane", anchoringId)?.extendData);
         avwapAnchorMode.set(null);
         return;
       }
@@ -4160,6 +4167,10 @@ export default function ChartCore({
       const t = indTypeOf(ind);
       if (t !== "PREV_HL" && t !== "TIME_HIGHLIGHT") continue;
       c.overrideIndicator({ name: id, extendData: { ...(ind.extendData as object) } });
+      // PREV_HL buckets days and weeks in this zone; a linked alert's stored
+      // config (alertInstanceOf's withChartTimezone stamp) goes stale the
+      // moment the zone changes, the same staleness class as AVWAP's anchor (S1).
+      if (t === "PREV_HL") void syncAlertsAfterEdit(scope, id, alertInstanceOf("PREV_HL", ind.calcParams, ind.extendData));
     }
   }, [timezone]);
 
