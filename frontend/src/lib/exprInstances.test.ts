@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   collectExprInstances,
+  collectLiveExprInstances,
   exprInstancesFor,
   exprWarmupByRef,
   missingExprInstances,
@@ -8,6 +9,7 @@ import {
   rewriteInstanceRefs,
   synthesizeExprInstances,
 } from "./exprInstances";
+import { setIndicatorTimezone, getIndicatorTimezone } from "./indicatorTimezone";
 
 const LIVE = [
   { id: "SLOPE", type: "SLOPE", calcParams: [9, 21], extendData: { units: "pctBar" } },
@@ -326,5 +328,23 @@ describe("AUTO_FIB instances", () => {
     expect(synthesizeExprInstances(["candle.close > AUTO_FIB.f0_618"], new Set())).toEqual({
       AUTO_FIB: { type: "AUTO_FIB", calcParams: [], extendData: {} },
     });
+  });
+});
+
+describe("chart timezone on the way to the backend", () => {
+  const PREV = [{ id: "PREV_HL", type: "PREV_HL", calcParams: [], extendData: { lengths: { day: 3 } } }];
+  it("collectExprInstances stamps the chart zone into PREV_HL", () => {
+    const before = getIndicatorTimezone();
+    setIndicatorTimezone("America/New_York");
+    try {
+      expect(collectExprInstances(PREV, ["PREV_HL.dayHigh > 0"]).PREV_HL.extendData)
+        .toEqual({ lengths: { day: 3 }, tz: "America/New_York" });
+    } finally {
+      setIndicatorTimezone(before);
+    }
+  });
+  it("collectLiveExprInstances ships the pane verbatim", () => {
+    expect(collectLiveExprInstances(PREV, ["PREV_HL.dayHigh > 0"]).PREV_HL.extendData)
+      .toEqual({ lengths: { day: 3 } });
   });
 });

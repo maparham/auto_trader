@@ -6,6 +6,7 @@ import { apiFetch, API_BASE } from "./http";
 // signals only type-imports this module, so this is no runtime cycle.
 import { bumpAlerts } from "./signals";
 import { tryCanonicalTf } from "./timeframe";
+import { withChartTimezone } from "./indicatorTimezone";
 
 export interface AlertInstance {
   type: string;
@@ -26,7 +27,9 @@ export function alertInstanceOf(
     if (typeof mtf.timeframe === "string" && mtf.timeframe) ext.mtf = { timeframe: mtf.timeframe };
     else delete ext.mtf;
   }
-  return { type, calcParams: (calcParams ?? []).map(Number), extendData: ext };
+  // PREV_HL buckets days in the chart's zone, which the server cannot know.
+  const stamped = withChartTimezone(type, ext) as Record<string, unknown>;
+  return { type, calcParams: (calcParams ?? []).map(Number), extendData: stamped };
 }
 
 /** The timeframe an alert on this pane watches: its pin when it has one

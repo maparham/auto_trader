@@ -15,6 +15,8 @@ import {
 import { fullLine } from "./shared";
 import { maskedSessionNow } from "../maskedReplay";
 import { maskedTimeLabel } from "../timeFormat";
+import { getIndicatorTimezone } from "../indicatorTimezone";
+export { setIndicatorTimezone, getIndicatorTimezone } from "../indicatorTimezone";
 
 interface PrevHlPoint {
   rollingHigh?: number;
@@ -55,7 +57,7 @@ export interface PrevHlExtend {
   lineHidden?: Record<string, boolean>;
   // Per-instance timezone OVERRIDE (Inputs tab). An IANA zone name buckets this
   // instance's day/week boundaries in that zone regardless of the chart axis;
-  // absent (or "chart") follows the global chart timezone (indicatorTz). The
+  // absent (or "chart") follows the global chart timezone (lib/indicatorTimezone.ts). The
   // rolling boundary doesn't use the calendar zone.
   tz?: string;
   // Lookback length per boundary (Inputs tab), keyed by kind. For day/week it's a
@@ -97,16 +99,6 @@ export const PREV_HL_PERIODS: PrevHlBoundary[] = [
 // bars — weekends/holidays are skipped rather than leaving an empty calendar gap.
 export type PeriodKind = "rolling" | "day" | "week" | "anchor";
 
-// The resolved IANA zone (never "") used to bucket bars. Defaults to the browser
-// zone so the indicator is correct even before ChartCore pushes the chart's zone.
-let indicatorTz: string = (() => {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
-  }
-})();
-
 // Cache one formatter per zone (constructing Intl.DateTimeFormat per bar is slow).
 // Keyed by zone so a per-instance override and the global chart zone can coexist.
 // Each yields wall-clock Y/M/D + weekday in its zone for any timestamp.
@@ -130,13 +122,13 @@ function zoneFormatter(zone: string): Intl.DateTimeFormat {
 // Resolve an override zone ("" / "chart" / undefined → the global chart zone) to a
 // concrete IANA name. An invalid name falls back to the chart zone.
 function resolvePrevHlZone(tz: string | undefined): string {
-  if (!tz || tz === "chart") return indicatorTz;
+  if (!tz || tz === "chart") return getIndicatorTimezone();
   try {
     // Validate: an unknown timeZone throws here.
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
     return tz;
   } catch {
-    return indicatorTz;
+    return getIndicatorTimezone();
   }
 }
 
@@ -219,29 +211,6 @@ export function prevHlInputToAnchor(input: string, tz: string | undefined): numb
   let ts = Date.UTC(y, mo - 1, da, h || 0, mi || 0);
   for (let i = 0; i < 2; i++) ts = Date.UTC(y, mo - 1, da, h || 0, mi || 0) - tzOffsetMs(zone, ts);
   return ts;
-}
-
-// Set the zone PREV_HL buckets in (resolved IANA name; "" → browser zone). Called
-// by ChartCore on timezone change. Returns true if the zone actually changed, so
-// the caller only forces a recompute when needed.
-export function setIndicatorTimezone(tz: string): boolean {
-  let resolved = tz;
-  if (!resolved) {
-    try {
-      resolved = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    } catch {
-      resolved = "UTC";
-    }
-  }
-  if (resolved === indicatorTz) return false;
-  indicatorTz = resolved;
-  return true;
-}
-
-// The current chart-axis zone, for other indicators that bucket in it
-// (TIME_HIGHLIGHT's recurring windows resolve against this same zone).
-export function getIndicatorTimezone(): string {
-  return indicatorTz;
 }
 
 const WEEKDAY_INDEX: Record<string, number> = {

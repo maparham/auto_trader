@@ -3,6 +3,7 @@ import {
   alertInstanceOf, alertTimeframeOf, chartValueOf, isAlertableType, loadAlertableTypes,
 } from "./indicatorAlertInstance";
 import { alertsChanged } from "./signals";
+import { setIndicatorTimezone, getIndicatorTimezone } from "./indicatorTimezone";
 
 describe("alertInstanceOf", () => {
   it("keeps only the pin of an mtf block", () => {
@@ -46,5 +47,19 @@ describe("loadAlertableTypes", () => {
     await loadAlertableTypes();
     expect(isAlertableType("RSI")).toBe(true);
     expect(alertsChanged.value).toBe(before + 1);
+  });
+});
+
+describe("alertInstanceOf on a calendar-bucketed pane", () => {
+  it("stamps the chart zone into a PREV_HL instance with no tz", () => {
+    const before = getIndicatorTimezone();
+    setIndicatorTimezone("Asia/Tokyo");
+    try {
+      expect(alertInstanceOf("PREV_HL", [], { lengths: { day: 2 } })).toEqual({
+        type: "PREV_HL", calcParams: [], extendData: { lengths: { day: 2 }, tz: "Asia/Tokyo" },
+      });
+    } finally {
+      setIndicatorTimezone(before);
+    }
   });
 });

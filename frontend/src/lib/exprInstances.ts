@@ -49,6 +49,7 @@ import type { ExprInstance } from "./expr/catalog";
 // imports nothing at all.
 import { MA_KIND_LABEL, normalizeMaKind } from "./mtf";
 import { SLOPE_UNIT_LABEL } from "./indicatorMeta";
+import { withChartTimezone } from "./indicatorTimezone";
 
 /** The pane types a rule can reference by instance (`<id>.<output>`). The ONE
  * list — mintInstanceId (indicators.ts) consults it to avoid minting ids that
@@ -195,7 +196,7 @@ export function synthesizeExprInstances(
     out[id] = {
       type,
       calcParams,
-      extendData: type === "SLOPE" && accel ? { showAccel: true } : {},
+      extendData: withChartTimezone(type, type === "SLOPE" && accel ? { showAccel: true } : {}),
     };
   }
   return out;
@@ -224,12 +225,9 @@ export function missingExprInstances(
 }
 
 /**
- * The `indicators` map for a request whose rule rows are `rows`: every live pane
- * a row references, and nothing else. A referenced id that is NOT on the chart is
- * skipped — the editor already flags that as `unknown_indicator_ref`, and the
- * request must not invent an entry for it.
+ * The pane payloads `rows` reference, VERBATIM (what the rule clipboard and the preset snapshot store).
  */
-export function collectExprInstances(
+export function collectLiveExprInstances(
   live: readonly LiveInstance[],
   rows: string[],
 ): Record<string, ExprInstancePayload> {
@@ -242,6 +240,24 @@ export function collectExprInstances(
       calcParams: inst.calcParams ?? [],
       extendData: inst.extendData ?? {},
     };
+  }
+  return out;
+}
+
+/**
+ * The `indicators` map for a backend request whose rule rows are `rows`: every
+ * live pane a row references, and nothing else. A referenced id that is NOT on
+ * the chart is skipped (the editor already flags it as `unknown_indicator_ref`).
+ * Calendar-bucketed panes get the chart zone written in (withChartTimezone),
+ * because the server buckets in UTC otherwise.
+ */
+export function collectExprInstances(
+  live: readonly LiveInstance[],
+  rows: string[],
+): Record<string, ExprInstancePayload> {
+  const out = collectLiveExprInstances(live, rows);
+  for (const [id, p] of Object.entries(out)) {
+    out[id] = { ...p, extendData: withChartTimezone(p.type, p.extendData) };
   }
   return out;
 }

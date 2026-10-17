@@ -308,3 +308,11 @@ describe("sameInstanceConfig", () => {
     ).toBe(true);
   });
 });
+
+describe("collectPortableInstances never freezes the chart zone", () => {
+  it("copies a PREV_HL pane without a tz", () => {
+    const live = [{ id: "PREV_HL", type: "PREV_HL", calcParams: [], extendData: { lengths: { day: 2 } } }];
+    const out = collectPortableInstances(["PREV_HL.dayHigh > 0"], live);
+    expect(out.PREV_HL.extendData).toEqual({ lengths: { day: 2 } });
+  });
+});

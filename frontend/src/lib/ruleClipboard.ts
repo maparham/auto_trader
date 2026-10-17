@@ -9,7 +9,7 @@
 // backtest request ships for the same reason, collected the same way.
 import { cloneRule, RULE_GROUP_KEYS, type BacktestConfig, type Rule } from "./backtestConfig";
 import {
-  collectExprInstances,
+  collectLiveExprInstances,
   rewriteInstanceRefs,
   type ExprInstancePayload,
   type LiveInstance,
@@ -58,7 +58,7 @@ export function collectPortableInstances(
   live: readonly LiveInstance[],
   appearance?: Readonly<Record<string, InstanceAppearance>>,
 ): Record<string, PortableInstancePayload> {
-  const collected = collectExprInstances(live, [...exprs]);
+  const collected = collectLiveExprInstances(live, [...exprs]);
   const indicators: Record<string, PortableInstancePayload> = {};
   for (const [id, p] of Object.entries(collected)) {
     indicators[id] = { ...p, extendData: portableExtend(p.extendData), ...appearance?.[id] };
