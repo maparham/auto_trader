@@ -20,6 +20,7 @@ from auto_trader.indicators import lr as _lr
 from auto_trader.indicators import ma as _ma
 from auto_trader.indicators import pivot_analysis as _pa
 from auto_trader.indicators import pivot_bands as _pb
+from auto_trader.indicators import prev_hl as _phl
 from auto_trader.indicators import rsi as _rsi
 from auto_trader.indicators import slope as _slope
 from auto_trader.indicators import spike as _spike
@@ -104,6 +105,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         outputs=_pa.pivot_analysis_outputs,
         series=_pa.pivot_analysis_series,
         warmup=_pa.pivot_analysis_warmup,
+        timeframe=lambda cfg: None,
+    ),
+    "PREV_HL": IndicatorSeriesSpec(
+        parse_config=_phl.parse_prev_hl_config,
+        outputs=_phl.prev_hl_outputs,
+        series=_phl.prev_hl_series,
+        warmup=_phl.prev_hl_warmup,
         timeframe=lambda cfg: None,
     ),
     "RSI": IndicatorSeriesSpec(

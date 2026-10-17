@@ -240,8 +240,30 @@ _AVWAP = AlertSpec(
     refusal=lambda cfg, tf: "Place the AVWAP anchor on the chart first" if cfg.anchor_ms <= 0 else None,
 )
 
+# ---- PREV_HL (previous rolling / day / week / anchored high and low) ----
+
+
+def _phl_outputs(cfg: Any) -> dict[str, AlertOutput]:
+    names = SERIES_INDICATORS["PREV_HL"].outputs(cfg)
+    # An unplaced anchor has no line to watch.
+    return {n: PRICE for n in names if cfg.anchor_ms > 0 or not n.startswith("anchor")}
+
+
+def _phl_label(cfg: Any, output: str) -> str:
+    side = "high" if output.endswith("High") else "low"
+    if output.startswith("rolling"):
+        return f"Prev HL rolling {cfg.rolling_len} {cfg.rolling_unit} {side}"
+    if output.startswith("anchor"):
+        return f"Prev HL anchor {side}"
+    unit = "day" if output.startswith("day") else "week"
+    n = cfg.day_len if unit == "day" else cfg.week_len
+    return f"Prev HL {unit} {side}" if n == 1 else f"Prev HL {n} {unit}s {side}"
+
+
+_PHL = AlertSpec(outputs=_phl_outputs, label=_phl_label, heavy=True, sparse=True)
+
 ALERT_SPECS: dict[str, AlertSpec] = {
     "MA": _MA, "EMA": _MA, "RSI": _RSI, "ATR": _ATR, "TRENDLINES": _TL, "SLOPE": _SLOPE,
     "FVG": _FVG, "PIVOT_BANDS": _PB, "PIVOT_ANALYSIS": _PA, "SR_LEVELS": _SR, "SPIKE": _SPIKE,
-    "AUTO_FIB": _FIB, "LR": _LR, "VWAP": _VWAP, "AVWAP": _AVWAP,
+    "AUTO_FIB": _FIB, "LR": _LR, "VWAP": _VWAP, "AVWAP": _AVWAP, "PREV_HL": _PHL,
 }
