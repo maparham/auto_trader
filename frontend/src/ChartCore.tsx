@@ -245,6 +245,7 @@ import {
 } from "./chart/priceAxisGesture";
 import { attachSmoothWheelZoom } from "./chart/smoothWheelZoom";
 import { attachPanMomentum } from "./chart/panMomentum";
+import "./chart/timeAxisTicks";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
 import { shouldDetach, type DetachedTarget } from "./chart/detachedView";
 import { useReplay } from "./chart/useReplay";
