@@ -39,6 +39,18 @@ def test_display_toggles_do_not_change_the_config():
     assert p([20, 2], {"lineHidden": {"up": True}, "hideLegendValue": True}) == p([20.0, 2], {})
 
 
+def test_exotic_calc_params_fall_back_to_defaults():
+    p = SERIES_INDICATORS["LR"].parse_config
+    assert p(["Infinity"], {}) == p([], {})
+    assert p([True], {}) == p([], {})
+
+
+def test_series_rejects_an_unknown_output():
+    cfg = SERIES_INDICATORS["LR"].parse_config([3, 1], {})
+    with pytest.raises(ValueError):
+        SERIES_INDICATORS["LR"].series(cfg, "bogus", CANDLES, 1.0)
+
+
 def test_alert_spec():
     cfg = SERIES_INDICATORS["LR"].parse_config([50, 2], {"source": "hl2"})
     assert ALERT_SPECS["LR"].outputs(cfg) == {"lr": PRICE, "up": PRICE, "dn": PRICE}

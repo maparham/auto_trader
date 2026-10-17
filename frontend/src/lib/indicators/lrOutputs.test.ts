@@ -12,6 +12,10 @@ describe("LR config", () => {
     expect(parseLrConfig([20, 1.5], { source: "hl2", lineHidden: { up: true } })).toEqual({ length: 20, mult: 1.5, source: "hl2" });
     expect(parseLrConfig([1, 0], { source: "bogus" })).toEqual({ length: 2, mult: 2, source: "close" });
   });
+  it("falls back to defaults on a non-finite or boolean entry, like Python's _num", () => {
+    expect(parseLrConfig(["Infinity"], {})).toEqual({ length: 100, mult: 2, source: "close" });
+    expect(parseLrConfig([true], {})).toEqual({ length: 100, mult: 2, source: "close" });
+  });
 });
 
 describe("LR rolling series", () => {
@@ -25,6 +29,11 @@ describe("LR rolling series", () => {
     // window 3,4,10: slope 3.5, intercept 13/6, endpoint 13/6 + 7 = 55/6
     expect(lr[4]).toBeCloseTo(55 / 6, 12);
     expect(lrSeries(bars, cfg, "up")[3]).toBeCloseTo(4, 12); // a straight line has no residual
+  });
+  it("is blank for an output the pane does not expose, or a window longer than the bar count", () => {
+    const bars = [1, 2, 3, 4, 10].map((c, i) => bar(i, c));
+    expect(lrSeries(bars, parseLrConfig([3, 1], {}), "bogus")).toEqual(new Array(bars.length).fill(null));
+    expect(lrSeries(bars, parseLrConfig([bars.length + 1, 1], {}), "lr")).toEqual(new Array(bars.length).fill(null));
   });
   it("warms up for `length` bars", () => {
     expect(lrWarmup(parseLrConfig([50], {}), "lr")).toBe(50);
