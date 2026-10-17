@@ -407,11 +407,13 @@ function indWriteSettled(): void {
 // trigger a re-sync without importing ./signals itself — that import edge is a
 // module-init hazard (see the note on signals.ts's sweepTarget seed).
 export function resyncAlerts(): Promise<void> {
-  void loadAlertableTypes();
   return hydrateAlerts().then(() => bumpAlerts());
 }
 
 export function hydrateAlerts(): Promise<void> {
+  // Boot calls hydrateAlerts directly, so the alertable types load here, not
+  // only on a resync; without them no indicator offers "Add alert".
+  void loadAlertableTypes();
   if (inFlightHydrate) return inFlightHydrate;
   inFlightHydrate = (async () => {
     const gen = indWriteGen;

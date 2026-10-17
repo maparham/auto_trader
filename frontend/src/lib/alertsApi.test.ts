@@ -35,7 +35,7 @@ import {
   type FiredPayload,
   type IndicatorAlert,
 } from "./alertsApi";
-import type { AlertInstance } from "./indicatorAlertInstance";
+import { isAlertableType, loadAlertableTypes, type AlertInstance } from "./indicatorAlertInstance";
 
 let n = 0;
 const freshBroker = () => `test-broker-${n++}`;
@@ -84,6 +84,20 @@ afterEach(() => {
 });
 
 describe("hydrateAlerts", () => {
+  // First in the file: the types load once per module, so a later hydrate's
+  // mock would have filled them already.
+  it("loads the alertable indicator types, so boot offers Add alert", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(String(input).includes("/api/alerts/indicators")
+        ? jsonResponse({ types: ["RSI"] })
+        : jsonResponse({ alerts: [], entries: [] })),
+    ));
+    expect(isAlertableType("RSI")).toBe(false);
+    await hydrateAlerts();
+    await loadAlertableTypes();
+    expect(isAlertableType("RSI")).toBe(true);
+  });
+
   it("populates the synchronous reads from GET /api/alerts + /api/alerts/triggered", async () => {
     const broker = freshBroker();
     const fetchMock = vi.fn((input: RequestInfo | URL) => {

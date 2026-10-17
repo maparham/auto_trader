@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// "Add alert" on an indicator, at the hook level: the menu item, the legend
-// check, and the gates that hide both (snapshot view, demo, synthetic chart).
+// "Add alert" on an indicator, at the hook level: the menu item and the gates
+// that hide it (not an alertable type, snapshot view, demo, synthetic chart).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { installMemStorage } from "../lib/testMemStorage";
@@ -10,7 +10,11 @@ vi.mock("klinecharts", () => ({
   registerIndicator: () => {}, registerOverlay: () => {}, registerYAxis: () => {},
   getSupportedIndicators: () => [],
 }));
-const gates = vi.hoisted(() => ({ demo: false, synthetic: false }));
+const gates = vi.hoisted(() => ({ demo: false, synthetic: false, alertable: true }));
+vi.mock("../lib/indicatorAlertInstance", async (orig) => ({
+  ...(await orig<typeof import("../lib/indicatorAlertInstance")>()),
+  isAlertableType: () => gates.alertable,
+}));
 vi.mock("../lib/demoMode", () => ({ isDemoMode: () => gates.demo, setDemoMode: () => {} }));
 vi.mock("../lib/syntheticRegistry", async (orig) => ({
   ...(await orig<typeof import("../lib/syntheticRegistry")>()),
@@ -61,6 +65,7 @@ const alertItem = (c: ReturnType<typeof commands>) =>
 afterEach(() => {
   gates.demo = false;
   gates.synthetic = false;
+  gates.alertable = true;
   indicatorAlertRequest.set(null);
 });
 
@@ -71,41 +76,29 @@ describe("indicator Add alert", () => {
     item!.onClick();
     expect(indicatorAlertRequest.value).toMatchObject({
       mode: "create",
-      draft: { epic: "US100", lastValue: 101.5, link: { scope: "tab.t1.cell.c1", instanceId: "EMA" } },
+      draft: {
+        epic: "US100", instance: { type: "EMA", calcParams: [20] },
+        link: { scope: "tab.t1.cell.c1", instanceId: "EMA" },
+      },
     });
   });
 
-  it("menu item is disabled with the reason for a non-alertable config", () => {
-    const item = alertItem(commands(ema({ offset: 2 })));
-    expect(item).toMatchObject({ disabled: true, disabledReason: "Alerts need the line offset at 0" });
-  });
-
-  it("legend check mirrors the menu item", () => {
-    expect(commands(ema()).legendAlertCheck("EMA")).toEqual({ reason: null });
-    expect(commands(ema({ offset: 2 })).legendAlertCheck("EMA")).toEqual({
-      reason: "Alerts need the line offset at 0",
-    });
+  it("is hidden for a type the server does not list", () => {
+    gates.alertable = false;
+    expect(alertItem(commands(ema()))).toBeUndefined();
   });
 
   it("is hidden in the read-only snapshot view", () => {
-    const c = commands(ema(), true);
-    expect(alertItem(c)).toBeUndefined();
-    expect(c.legendAlertCheck("EMA")).toBeNull();
+    expect(alertItem(commands(ema(), true))).toBeUndefined();
   });
 
   it("is hidden in demo mode", () => {
     gates.demo = true;
-    const c = commands(ema());
-    expect(alertItem(c)).toBeUndefined();
-    expect(c.legendAlertCheck("EMA")).toBeNull();
-    c.onLegendAddAlert("EMA");
-    expect(indicatorAlertRequest.value).toBeNull();
+    expect(alertItem(commands(ema()))).toBeUndefined();
   });
 
   it("is hidden on a synthetic chart", () => {
     gates.synthetic = true;
-    const c = commands(ema());
-    expect(alertItem(c)).toBeUndefined();
-    expect(c.legendAlertCheck("EMA")).toBeNull();
+    expect(alertItem(commands(ema()))).toBeUndefined();
   });
 });

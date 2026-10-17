@@ -1796,7 +1796,7 @@ export default function ChartCore({
   // right-click entry is read through a ref by the once-mounted contextmenu
   // handler below.
   const trendlineDebug = useTrendlineDebug({ chartRef, containerRef, overlays, scope, epicRef, brokerIdRef });
-  // Read by the indicator "Add alert" entries (legend bell, menu) and the
+  // Read by the indicator menu's "Add alert" entry and the
   // trendline menu's "Add alert" when they build a draft. quoteOnly: no live
   // stream, so a volume-weighted line has no intrabar volume and the dialog
   // disables "As it happens". effPrecision: `precision` aliases it further down.
@@ -5206,8 +5206,6 @@ export default function ChartCore({
     startPaneReorderDrag,
     indicatorMenuItems,
     onLegendOpenMenu,
-    onLegendAddAlert,
-    legendAlertCheck,
   } = useIndicatorCommands(handle, {
     cellId,
     scope,
@@ -5813,8 +5811,6 @@ export default function ChartCore({
         onCopyGroup={copyIndicatorGroup}
         onSelectRow={onLegendSelectRow}
         onOpenMenu={onLegendOpenMenu}
-        onAddAlert={onLegendAddAlert}
-        alertCheck={legendAlertCheck}
         onMove={reorderPaneByName}
         onStartReorder={startPaneReorderDrag}
         // Both entry points are withdrawn for a masked session (see sessionMasked);

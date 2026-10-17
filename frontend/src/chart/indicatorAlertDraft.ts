@@ -1,5 +1,5 @@
 // Turns a live chart indicator into an alert draft, or null to hide the
-// entry. Shared by the legend bell and the indicator menu. Whether the pane's
+// indicator menu's "Add alert" entry. Whether the pane's
 // settings can be alerted on is the server's call (POST /api/alerts/describe,
 // shown in the dialog), not this file's.
 import type { Chart } from "klinecharts";

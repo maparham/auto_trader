@@ -643,8 +643,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     [reorderPaneByName],
   );
 
-  // "Add alert" on an indicator: a draft, the reason it cannot have one, or
-  // null to hide the entry. Shared by the legend bell and the menu item.
+  // "Add alert" on an indicator: a draft, or null to hide the menu entry.
   const alertDraftFor = useCallback((paneId: string, name: string) => {
     const c = chartRef.current;
     if (!c || snapViewRef.current) return null; // read-only snapshot view
@@ -657,16 +656,6 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, stable for the mount
   }, [scope, period.resolution]);
-
-  const onLegendAddAlert = useCallback((name: string) => {
-    const r = alertDraftFor(paneIdOf(name), name);
-    if (r && "draft" in r) indicatorAlertRequest.set({ mode: "create", draft: r.draft });
-  }, [alertDraftFor, paneIdOf]);
-
-  const legendAlertCheck = useCallback((name: string): { reason: string | null } | null => {
-    const r = alertDraftFor(paneIdOf(name), name);
-    return r === null ? null : { reason: null };
-  }, [alertDraftFor, paneIdOf]);
 
   // The shared TradingView-style menu, used by both triggers (legend row + curve).
   const indicatorMenuItems = useCallback(
@@ -754,7 +743,5 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     startPaneReorderDrag,
     indicatorMenuItems,
     onLegendOpenMenu,
-    onLegendAddAlert,
-    legendAlertCheck,
   };
 }
