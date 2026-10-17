@@ -221,8 +221,27 @@ _VWAP = AlertSpec(
     needs_volume=lambda cfg: True,
 )
 
+# ---- AVWAP (anchored; registered for alerts, not a rule instance type) ----
+
+
+def _avwap_label(cfg: Any, output: str) -> str:
+    base = "AVWAP" if cfg.source == "hlc3" else f"AVWAP {cfg.source}"
+    if output == "vwap":
+        return base
+    side = "upper" if output.startswith("up") else "lower"
+    return f"{base} {side} band {output[2:]}"
+
+
+_AVWAP = AlertSpec(
+    outputs=lambda cfg: {name: PRICE for name in SERIES_INDICATORS["AVWAP"].outputs(cfg)},
+    label=_avwap_label,
+    sparse=True,  # blank before the anchor and while cumulative volume is 0
+    needs_volume=lambda cfg: True,
+    refusal=lambda cfg, tf: "Place the AVWAP anchor on the chart first" if cfg.anchor_ms <= 0 else None,
+)
+
 ALERT_SPECS: dict[str, AlertSpec] = {
     "MA": _MA, "EMA": _MA, "RSI": _RSI, "ATR": _ATR, "TRENDLINES": _TL, "SLOPE": _SLOPE,
     "FVG": _FVG, "PIVOT_BANDS": _PB, "PIVOT_ANALYSIS": _PA, "SR_LEVELS": _SR, "SPIKE": _SPIKE,
-    "AUTO_FIB": _FIB, "LR": _LR, "VWAP": _VWAP,
+    "AUTO_FIB": _FIB, "LR": _LR, "VWAP": _VWAP, "AVWAP": _AVWAP,
 }

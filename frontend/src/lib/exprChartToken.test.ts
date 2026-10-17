@@ -40,7 +40,7 @@ describe("chartIndicatorToExprToken", () => {
   });
 
   it("returns null for unsupported indicator types", () => {
-    for (const t of ["MACD", "BOLL", "KDJ", "CCI", "AVWAP", "VWAP", "PIVOT_BANDS"]) {
+    for (const t of ["MACD", "BOLL", "KDJ", "CCI", "AVWAP", "PIVOT_BANDS"]) {
       expect(chartIndicatorToExprToken(t, [12], undefined)).toBeNull();
     }
   });

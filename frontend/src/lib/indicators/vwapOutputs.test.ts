@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { VWAP_OUTPUTS, parseVwapRefConfig, vwapWarmup } from "./vwapOutputs";
+import { VWAP_OUTPUTS, avwapOutputs, parseAvwapRefConfig, parseVwapRefConfig, vwapWarmup } from "./vwapOutputs";
 import { EXPR_INSTANCE_TYPES, exprInstancesFor, exprWarmupByRef, synthesizeExprInstances } from "../exprInstances";
 import { chartIndicatorToExprToken } from "../exprChartToken";
 import { INDICATOR_SPECS } from "../expr/catalog";
@@ -34,5 +34,38 @@ describe("VWAP as a rule instance", () => {
   });
   it("turns a click into an instance ref", () => {
     expect(chartIndicatorToExprToken("VWAP", [], {}, { instanceId: "VWAP" })).toBe("VWAP.vwap");
+  });
+});
+
+describe("AVWAP", () => {
+  it("stays out of the rule instance list so new panes keep the bare AVWAP id", () => {
+    expect(EXPR_INSTANCE_TYPES.has("AVWAP")).toBe(false);
+    expect(exprInstancesFor([{ id: "AVWAP", type: "AVWAP", calcParams: [1_700_000_000_000], extendData: {} }])).toEqual([]);
+  });
+  it("reads the anchor from calcParams[0] and the bands from extendData", () => {
+    const cfg = parseAvwapRefConfig([1_700_000_000_000], {
+      source: "close", bandMode: "percentage",
+      bands: [{ on: true, mult: 1 }, { on: true, mult: 2.5 }, { on: false, mult: 3 }],
+      lineHidden: { up1: true },
+    });
+    expect(cfg).toEqual({
+      source: "close", bandMode: "percentage",
+      bands: [{ on: true, mult: 1 }, { on: true, mult: 2.5 }, { on: false, mult: 3 }], anchorMs: 1_700_000_000_000,
+    });
+    expect(avwapOutputs(cfg)).toEqual(["vwap", "up1", "dn1", "up2", "dn2"]);
+  });
+  it("reads bands the way vwapFrom does", () => {
+    // Any length; a missing index is off; `on` is truthy.
+    expect(avwapOutputs(parseAvwapRefConfig([1], { bands: [] }))).toEqual(["vwap"]);
+    expect(avwapOutputs(parseAvwapRefConfig([1], { bands: [{ on: 1, mult: 2 }] }))).toEqual(["vwap", "up1", "dn1"]);
+    expect(parseAvwapRefConfig([1], { bands: [{ on: false, mult: 9 }] }).bands[0]).toEqual({ on: false, mult: 1 });
+    // Not an array: the defaults (band 1 on).
+    expect(avwapOutputs(parseAvwapRefConfig([1], { bands: "x" }))).toEqual(["vwap", "up1", "dn1"]);
+  });
+  it("falls back to the template defaults", () => {
+    expect(parseAvwapRefConfig(undefined, undefined)).toEqual({
+      source: "hlc3", bandMode: "stdev",
+      bands: [{ on: true, mult: 1 }, { on: false, mult: 2 }, { on: false, mult: 3 }], anchorMs: 0,
+    });
   });
 });

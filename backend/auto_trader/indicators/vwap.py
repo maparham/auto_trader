@@ -74,3 +74,75 @@ def vwap_warmup(cfg: VwapConfig, output: str) -> int:
     """Blank until cumulative volume is positive: a volume condition, not a
     bar count, so the floor is 0."""
     return 0
+
+
+def _num(v: object) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        return None
+    try:
+        n = float(v)
+    except ValueError:
+        return None
+    return n if math.isfinite(n) else None
+
+
+_SOURCES = ("close", "open", "high", "low", "hl2", "hlc3", "ohlc4", "hlcc4")
+
+
+def _js_truthy(v: object) -> bool:
+    """JavaScript truthiness for a JSON value: [] and {} are truthy there."""
+    if isinstance(v, (list, dict)):
+        return True
+    return bool(v)
+
+
+def parse_avwap_config(calc_params: object, extend_data: object) -> VwapConfig:
+    """AVWAP_TEMPLATE.calc's reading: anchor (epoch ms) in calcParams[0]
+    (`Number || 0`, <= 0 unplaced); source, bandMode, bands on extendData.
+    lineHidden and slopeColor are display only."""
+    p = list(calc_params) if isinstance(calc_params, (list, tuple)) else []
+    a = _num(p[0]) if p else None
+    ext = extend_data if isinstance(extend_data, dict) else {}
+    source = ext.get("source") if ext.get("source") in _SOURCES else "hlc3"
+    band_mode = "percentage" if ext.get("bandMode") == "percentage" else "stdev"
+    # vwapFrom's reading: any length, a missing index is off, `on` is truthy;
+    # defaults only when bands is absent or not a list. An off band (or one
+    # whose mult is not a finite number) is stored as off with its default
+    # mult, so equal panes share one canonical config.
+    raw = ext.get("bands")
+    bands = DEFAULT_BANDS
+    if isinstance(raw, list):
+        parsed = []
+        for i, (_, d_mult) in enumerate(DEFAULT_BANDS):
+            b = raw[i] if i < len(raw) and isinstance(raw[i], dict) else {}
+            m = _num(b.get("mult"))
+            # Ruling F3: a truthy `on` with a non-finite mult parses as off here, where the chart instead computes a NaN band.
+            on = _js_truthy(b.get("on")) and m is not None
+            parsed.append((True, float(m)) if on else (False, d_mult))
+        bands = tuple(parsed)
+    return VwapConfig(source=source, band_mode=band_mode, bands=bands, anchor_ms=int(a) if a else 0)
+
+
+def avwap_outputs(cfg: VwapConfig) -> tuple[str, ...]:
+    out = ["vwap"]
+    for b, (on, _) in enumerate(cfg.bands):
+        if on:
+            out += [f"up{b + 1}", f"dn{b + 1}"]
+    return tuple(out)
+
+
+def avwap_start(candles: Sequence[Candle], anchor_ms: int) -> int:
+    """First bar whose open time is at or after the anchor; len() if none
+    (core.avwap_series' rule)."""
+    for i, c in enumerate(candles):
+        if int(c.time.timestamp() * 1000) >= anchor_ms:
+            return i
+    return len(candles)
+
+
+def avwap_pane_series(cfg: VwapConfig, output: str, candles: Sequence[Candle], bar_hours: float) -> list[float | None]:
+    if output not in avwap_outputs(cfg):
+        raise ValueError(f"unknown AVWAP output {output!r}")
+    if cfg.anchor_ms <= 0:
+        return [None] * len(candles)
+    return vwap_from(candles, avwap_start(candles, cfg.anchor_ms), cfg)[output]

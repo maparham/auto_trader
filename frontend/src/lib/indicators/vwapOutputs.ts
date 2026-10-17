@@ -37,3 +37,40 @@ export function vwapWarmup(output: string): number {
   void output;
   return 0;
 }
+
+const SOURCES: readonly string[] = ["close", "open", "high", "low", "hl2", "hlc3", "ohlc4", "hlcc4"];
+
+/** An AVWAP pane as AVWAP_TEMPLATE.calc reads it: anchor (epoch ms) in
+ * calcParams[0] (`Number || 0`; <= 0 means unplaced), source / bandMode /
+ * bands on extendData. lineHidden and slopeColor are display only.
+ * Mirrors parse_avwap_config. */
+export function parseAvwapRefConfig(calcParams: unknown, extendData: unknown): VwapRefConfig {
+  const p = Array.isArray(calcParams) ? calcParams : [];
+  const ext = (extendData && typeof extendData === "object" ? extendData : {}) as {
+    source?: unknown; bandMode?: unknown; bands?: unknown;
+  };
+  const source = (typeof ext.source === "string" && SOURCES.includes(ext.source) ? ext.source : "hlc3") as PriceSource;
+  const bandMode = ext.bandMode === "percentage" ? "percentage" : "stdev";
+  // vwapFrom loops b = 0..2 over `ext.bands ?? defaults` and skips
+  // `!bands[b]?.on`: any length is accepted, a missing index is off, `on` is
+  // truthy. Defaults only when bands is absent or not an array. An off band
+  // (or one whose mult is not a finite number, which draws nothing) is stored
+  // canonically as off with its default mult.
+  const raw = Array.isArray(ext.bands) ? (ext.bands as unknown[]) : null;
+  const bands = VWAP_DEFAULT_BANDS.map((d, i) => {
+    if (!raw) return { ...d };
+    const b = raw[i] as { on?: unknown; mult?: unknown } | null | undefined;
+    const mult = Number(b?.mult);
+    return b?.on && Number.isFinite(mult) ? { on: true, mult } : { on: false, mult: d.mult };
+  });
+  return { source, bandMode, bands, anchorMs: Math.trunc(Number(p[0]) || 0) };
+}
+
+/** `vwap` plus up<k>/dn<k> for every enabled band. Mirrors avwap_outputs. */
+export function avwapOutputs(cfg: VwapRefConfig): string[] {
+  const out = ["vwap"];
+  cfg.bands.forEach((b, i) => {
+    if (b.on) out.push(`up${i + 1}`, `dn${i + 1}`);
+  });
+  return out;
+}

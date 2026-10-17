@@ -50,6 +50,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         warmup=_af.auto_fib_warmup,
         timeframe=lambda cfg: cfg.timeframe,
     ),
+    "AVWAP": IndicatorSeriesSpec(
+        parse_config=_vwap.parse_avwap_config,
+        outputs=_vwap.avwap_outputs,
+        series=_vwap.avwap_pane_series,
+        warmup=_vwap.vwap_warmup,
+        timeframe=lambda cfg: None,
+    ),
     "ATR": IndicatorSeriesSpec(
         parse_config=_atr.parse_atr_config,
         outputs=_atr.atr_outputs,

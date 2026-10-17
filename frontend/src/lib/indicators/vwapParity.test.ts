@@ -56,5 +56,8 @@ describe("VWAP parity fixture", () => {
     const fresh = build();
     if (process.env.UPDATE_PARITY === "1") writeFileSync(FILE, JSON.stringify(fresh) + "\n");
     expect(JSON.parse(readFileSync(FILE, "utf8"))).toEqual(JSON.parse(JSON.stringify(fresh)));
+    // The hostile extendData payload (case 1) is ignored by the plain template:
+    // the value must not move from the plain case (case 0).
+    expect(fresh.cases[1].values).toEqual(fresh.cases[0].values);
   });
 });
