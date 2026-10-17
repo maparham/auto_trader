@@ -6,7 +6,9 @@
 // `ATR1.to14`) and carry NONE of that pane's settings — the pane is the source
 // of truth (see exprInstances.ts). So a self-contained copy must ship those
 // panes' full configs alongside the rules; `indicators` is exactly the map a
-// backtest request ships for the same reason, collected the same way.
+// backtest request ships for the same reason, minus the chart zone a request
+// stamps on calendar panes (collectLiveExprInstances, not collectExprInstances),
+// so a pasted rule follows the destination chart's zone.
 import { cloneRule, RULE_GROUP_KEYS, type BacktestConfig, type Rule } from "./backtestConfig";
 import {
   collectLiveExprInstances,
