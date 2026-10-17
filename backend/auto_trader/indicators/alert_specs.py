@@ -203,8 +203,17 @@ _FIB = AlertSpec(
     heavy=True, sparse=True,
 )
 
+# ---- LR (rolling regression endpoint and its channel) ----
+
+_LR_SUFFIX = {"lr": "", "up": " upper", "dn": " lower"}
+
+_LR = AlertSpec(
+    outputs=lambda cfg: {"lr": PRICE, "up": PRICE, "dn": PRICE},
+    label=lambda cfg, output: f"LR {cfg.length}{_src(cfg.source)}{_LR_SUFFIX[output]}",
+)
+
 ALERT_SPECS: dict[str, AlertSpec] = {
     "MA": _MA, "EMA": _MA, "RSI": _RSI, "ATR": _ATR, "TRENDLINES": _TL, "SLOPE": _SLOPE,
     "FVG": _FVG, "PIVOT_BANDS": _PB, "PIVOT_ANALYSIS": _PA, "SR_LEVELS": _SR, "SPIKE": _SPIKE,
-    "AUTO_FIB": _FIB,
+    "AUTO_FIB": _FIB, "LR": _LR,
 }

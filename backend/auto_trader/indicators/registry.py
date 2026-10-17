@@ -16,6 +16,7 @@ from auto_trader.core.models import Candle
 from auto_trader.indicators import auto_fib as _af
 from auto_trader.indicators import atr as _atr
 from auto_trader.indicators import fvg as _fvg
+from auto_trader.indicators import lr as _lr
 from auto_trader.indicators import ma as _ma
 from auto_trader.indicators import pivot_analysis as _pa
 from auto_trader.indicators import pivot_bands as _pb
@@ -68,6 +69,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         series=_ma.ma_pane_series,
         warmup=_ma.ma_warmup,
         timeframe=lambda cfg: cfg.timeframe,
+    ),
+    "LR": IndicatorSeriesSpec(
+        parse_config=_lr.parse_lr_config,
+        outputs=_lr.lr_outputs,
+        series=_lr.lr_series,
+        warmup=_lr.lr_warmup,
+        timeframe=lambda cfg: None,
     ),
     "MA": IndicatorSeriesSpec(
         parse_config=partial(_ma.parse_ma_config, template="sma"),

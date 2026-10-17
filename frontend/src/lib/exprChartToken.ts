@@ -9,8 +9,8 @@
 //      INDICATORS): EMA / SMA / RSI / VOLMA / VOL. The token restates the
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
-//      rule: SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS and
-//      AUTO_FIB (the
+//      rule: SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS,
+//      AUTO_FIB and LR (the
 //      EXPR_INSTANCE_TYPES set; keep a case here for every member), as
 //      "<instanceId>.<output>" (e.g. "SLOPE.50",
 //      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
@@ -41,6 +41,7 @@ import { PIVOT_ANALYSIS_OUTPUTS } from "./indicators/pivotAnalysisOutputs";
 import { SR_LEVELS_OUTPUTS } from "./indicators/srLevelsOutputs";
 import { SPIKE_OUTPUTS } from "./indicators/spikeOutputs";
 import { autoFibOutputs } from "./indicators/autoFibOutputs";
+import { LR_OUTPUTS } from "./indicators/lrOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -235,6 +236,14 @@ export function chartIndicatorToExprToken(
       const outs = autoFibOutputs(extendData);
       const key = opts?.figureKey;
       return `${id}.${key && outs.includes(key) ? key : outs[0]}`;
+    }
+    // LR: three fixed outputs, each drawn as a figure, so a legend click on a
+    // figure names it; a plain row click takes the regression line.
+    case "LR": {
+      const id = opts?.instanceId;
+      if (!id) return null;
+      const key = opts?.figureKey;
+      return `${id}.${(LR_OUTPUTS as readonly string[]).includes(key ?? "") ? key : LR_OUTPUTS[0]}`;
     }
     default:
       return null;
