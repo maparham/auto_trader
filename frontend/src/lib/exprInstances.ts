@@ -43,6 +43,7 @@ import { RSI_OUTPUTS, parseRsiRefConfig, rsiWarmup } from "./indicators/rsiOutpu
 import { autoFibOutputs, autoFibWarmup, parseAutoFibConfig } from "./indicators/autoFibOutputs";
 import { LR_OUTPUTS, lrWarmup, parseLrConfig } from "./indicators/lrOutputs";
 import { VWAP_OUTPUTS, vwapWarmup } from "./indicators/vwapOutputs";
+import { PREV_HL_OUTPUTS, parsePrevHlRefConfig, prevHlWarmup } from "./indicators/prevHlOutputs";
 import type { AutoFibExtend } from "./indicators/autoFib"; // erased at build; no runtime edge
 import type { SrLevelsExtend } from "./indicators/srLevels"; // erased at build; no runtime edge
 import type { ExprInstance } from "./expr/catalog";
@@ -70,6 +71,7 @@ export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set([
   "AUTO_FIB",
   "LR",
   "VWAP",
+  "PREV_HL",
 ]);
 
 /** A live chart pane, flattened to just what the expression layer reads. */
@@ -179,7 +181,7 @@ export function synthesizeExprInstances(
     }
     // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
     // kept, as there), atrLength's 14 (single-length pane).
-    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE, RSI, AUTO_FIB, LR and VWAP
+    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE, RSI, AUTO_FIB, LR, VWAP and PREV_HL
     // outputs are fixed names or level names, not lengths, so nothing about the pane's params
     // is recoverable from a ref — an empty list takes every default.
     const calcParams =
@@ -192,7 +194,8 @@ export function synthesizeExprInstances(
       type === "RSI" ||
       type === "AUTO_FIB" ||
       type === "LR" ||
-      type === "VWAP"
+      type === "VWAP" ||
+      type === "PREV_HL"
         ? []
         : type === "ATR"
           ? [lengths[0] ?? 14]
@@ -341,6 +344,7 @@ export function exprWarmupByRef(
         ? autoFibWarmup(parseAutoFibConfig(inst.calcParams))
         : 0;
     if (inst.type === "VWAP") return (VWAP_OUTPUTS as readonly string[]).includes(output) ? vwapWarmup(output) : 0;
+    if (inst.type === "PREV_HL") return prevHlWarmup(parsePrevHlRefConfig(inst.extendData), output);
     if (inst.type === "RSI") return rsiWarmup(parseRsiRefConfig(inst.calcParams, inst.extendData), output);
     if (inst.type === "LR") return lrWarmup(parseLrConfig(inst.calcParams, inst.extendData), output);
     if (inst.type !== "SLOPE") return 0;
@@ -478,6 +482,20 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         // No session reset: it accumulates from the first bar of whatever
         // history the run or alert loads, which a reader must know.
         detail: "hlc3 · from the first loaded bar",
+      });
+      continue;
+    }
+    if (inst.type === "PREV_HL") {
+      const cfg = parsePrevHlRefConfig(inst.extendData);
+      const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+      const rolling = cfg.rollingUnit === "bars" ? plural(cfg.lengths.rolling, "bar") : plural(cfg.lengths.rolling, cfg.rollingUnit);
+      out.push({
+        id: inst.id,
+        // Every boundary stays an operand even when its line is hidden: a
+        // display toggle must never invalidate a saved rule.
+        outputs: [...PREV_HL_OUTPUTS],
+        timeframe: null, // chart-timeframe only (no MTF pin)
+        detail: `rolling ${rolling} · ${plural(cfg.lengths.day, "day")} · ${plural(cfg.lengths.week, "week")}`,
       });
       continue;
     }
