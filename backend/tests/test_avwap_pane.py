@@ -74,3 +74,12 @@ def test_alert_spec():
     assert alert.label(cfg, "vwap") == "AVWAP close"
     assert alert.label(cfg, "dn3") == "AVWAP close lower band 3"
     assert alert.needs_volume(cfg) and alert.sparse
+
+
+def test_anchor_before_the_first_bar_is_blank():
+    # The alert hub's seed is bounded: once the anchor falls off its front, a
+    # VWAP accumulated from the window start would not be the chart's line.
+    spec = SERIES_INDICATORS["AVWAP"]
+    before = FIXTURE["candles"][0][0] - 1
+    cfg = spec.parse_config([before], {})
+    assert spec.series(cfg, "vwap", CANDLES, 1.0) == [None] * len(CANDLES)

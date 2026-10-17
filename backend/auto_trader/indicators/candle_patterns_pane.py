@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from auto_trader.core.models import Candle
 from auto_trader.indicators.candle_patterns import CANDLE_PATTERN_DEFS, detect_all_patterns
+from auto_trader.indicators.vwap import _js_truthy
 
 PATTERN_TOGGLES: dict[str, str] = {
     "bull_engulfing": "engulfing", "bear_engulfing": "engulfing", "pin_top": "pin_top",
@@ -51,7 +52,7 @@ def parse_candle_patterns_config(calc_params: object, extend_data: object) -> Ca
     """Only the toggles change values; colors and showLabels are display."""
     ext = extend_data if isinstance(extend_data, dict) else {}
     raw = ext.get("disabled") if isinstance(ext.get("disabled"), dict) else {}
-    return CandlePatternsConfig(disabled=tuple(sorted(t for t, v in raw.items() if t in _TOGGLE_IDS and bool(v))))
+    return CandlePatternsConfig(disabled=tuple(sorted(t for t, v in raw.items() if t in _TOGGLE_IDS and _js_truthy(v))))
 
 
 def _enabled(cfg: CandlePatternsConfig) -> list[str]:

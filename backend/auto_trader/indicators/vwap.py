@@ -147,6 +147,9 @@ def avwap_start(candles: Sequence[Candle], anchor_ms: int) -> int:
 def avwap_pane_series(cfg: VwapConfig, output: str, candles: Sequence[Candle], bar_hours: float) -> list[float | None]:
     if output not in avwap_outputs(cfg):
         raise ValueError(f"unknown AVWAP output {output!r}")
-    if cfg.anchor_ms <= 0:
+    if cfg.anchor_ms <= 0 or not candles or candle_ms(candles[0]) > cfg.anchor_ms:
+        # Unplaced, or anchored before the first bar held: accumulating from the
+        # window start would be a different VWAP than the chart's, so wait blank
+        # (the alert hub keeps a bounded seed; old anchors fall off its front).
         return [None] * len(candles)
     return vwap_from(candles, avwap_start(candles, cfg.anchor_ms), cfg)[output]

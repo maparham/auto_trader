@@ -17,7 +17,7 @@ describe("PREV_HL config", () => {
       aggs: { rolling: "extreme", day: "extreme", week: "extreme" },
       rollingUnit: "hour", gapMode: "trading", anchorTs: 0,
     });
-    expect(prevHlWarmup(parsePrevHlRefConfig({ rollingUnit: "bars", lengths: { rolling: 7 } }), "rollingLow")).toBe(7);
+    expect(prevHlWarmup(parsePrevHlRefConfig({ rollingUnit: "bars", lengths: { rolling: 7 } }), "rollingLow")).toBe(8);
     expect(prevHlWarmup(parsePrevHlRefConfig({ lengths: { day: 3 } }), "dayHigh")).toBe(0);
   });
   it("a non-finite stored length is 0, not a silent fallback to 1 (S8)", () => {
@@ -36,17 +36,17 @@ describe("PREV_HL as a rule instance", () => {
     expect(exprInstancesFor(hidden)).toEqual([
       { id: "PREV_HL", outputs: [...PREV_HL_OUTPUTS], timeframe: null, detail: "rolling 20 bars · 2 days · 1 week · anchor unset" },
     ]);
-    expect(exprWarmupByRef(live)("PREV_HL", "rollingHigh")).toBe(20);
+    expect(exprWarmupByRef(live)("PREV_HL", "rollingHigh")).toBe(21);
   });
   it("ships the chart zone with a rule request", () => {
     setIndicatorTimezone("Asia/Tokyo");
     expect(collectExprInstances(live, ["PREV_HL.dayHigh < candle.close"]).PREV_HL.extendData)
       .toEqual({ rollingUnit: "bars", lengths: { rolling: 20, day: 2 }, tz: "Asia/Tokyo" });
   });
-  it("re-creates a missing pane with the chart zone stamped in (S3: the backend buckets PREV_HL in UTC otherwise)", () => {
+  it("re-creates a missing pane WITHOUT a zone (it becomes a chart pane; a written tz would freeze it)", () => {
     setIndicatorTimezone("Asia/Tokyo");
     expect(synthesizeExprInstances(["PREV_HL.dayHigh > 0"], new Set()))
-      .toEqual({ PREV_HL: { type: "PREV_HL", calcParams: [], extendData: { tz: "Asia/Tokyo" } } });
+      .toEqual({ PREV_HL: { type: "PREV_HL", calcParams: [], extendData: {} } });
   });
   it("turns a legend click into an instance ref", () => {
     expect(chartIndicatorToExprToken("PREV_HL", [], {}, { instanceId: "PREV_HL", figureKey: "weekLow" })).toBe("PREV_HL.weekLow");

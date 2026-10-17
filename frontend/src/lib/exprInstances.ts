@@ -209,7 +209,10 @@ export function synthesizeExprInstances(
     out[id] = {
       type,
       calcParams,
-      extendData: withChartTimezone(type, type === "SLOPE" && accel ? { showAccel: true } : {}),
+      // No chart-zone stamp: these become real chart panes (importExprInstances),
+      // where a written `tz` would read as a per-pane override and freeze the
+      // zone. Requests stamp the live panes in collectExprInstances instead.
+      extendData: type === "SLOPE" && accel ? { showAccel: true } : {},
     };
   }
   return out;

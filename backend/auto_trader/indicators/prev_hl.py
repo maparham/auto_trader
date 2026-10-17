@@ -211,7 +211,9 @@ def _rolling(candles, ts, n, unit, gap_mode, fn, bar_ms, want_hi) -> list[float 
 
 def _anchor(candles, ts, anchor_ms, want_hi) -> list[float | None]:
     out: list[float | None] = [None] * len(candles)
-    if anchor_ms <= 0:
+    if anchor_ms <= 0 or not candles or ts[0] > anchor_ms:
+        # Anchored before the first bar held: the extreme since the anchor is
+        # unknowable from this window (the alert hub's seed is bounded), so blank.
         return out
     hi, lo = -math.inf, math.inf
     for i, c in enumerate(candles):
@@ -253,4 +255,6 @@ def prev_hl_warmup(cfg: PrevHlConfig, output: str) -> int:
     depends on spacing or calendar gaps (prevHlOutputs.ts prevHlWarmup)."""
     if output not in _KIND:
         return 0
-    return cfg.rolling_len if _KIND[output] == "rolling" and cfg.rolling_unit == "bars" else 0
+    # A bars-unit window excludes bar i, so its first value is at index n.
+    n = cfg.rolling_len
+    return n + 1 if _KIND[output] == "rolling" and cfg.rolling_unit == "bars" and n > 0 else 0

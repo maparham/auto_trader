@@ -48,10 +48,13 @@ export function parsePrevHlRefConfig(extendData: unknown): PrevHlRefConfig {
   };
 }
 
-/** A FLOOR, as for pivot bands: a bars-unit rolling window needs exactly its
- * length; time-unit rolling, day, week and anchor depend on bar spacing and
- * calendar gaps, so 0. Mirrors prev_hl_warmup. */
+/** A FLOOR, as for pivot bands: a bars-unit rolling window of n excludes the
+ * current bar, so its first value is at index n and it needs n + 1 bars
+ * (none when the length is 0, which never draws); time-unit rolling, day, week
+ * and anchor depend on bar spacing and calendar gaps, so 0. Mirrors
+ * prev_hl_warmup. */
 export function prevHlWarmup(cfg: PrevHlRefConfig, output: string): number {
   if (!(PREV_HL_OUTPUTS as readonly string[]).includes(output)) return 0;
-  return output.startsWith("rolling") && cfg.rollingUnit === "bars" ? cfg.lengths.rolling : 0;
+  const n = cfg.lengths.rolling;
+  return output.startsWith("rolling") && cfg.rollingUnit === "bars" && n > 0 ? n + 1 : 0;
 }

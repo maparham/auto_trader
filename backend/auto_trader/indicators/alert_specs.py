@@ -265,7 +265,10 @@ def _phl_label(cfg: Any, output: str) -> str:
     return f"Prev HL {unit} {side}" if n == 1 else f"Prev HL {n} {unit}s {side}"
 
 
-_PHL = AlertSpec(outputs=_phl_outputs, label=_phl_label, heavy=True, sparse=True)
+# Light: a PREV_HL level steps when a bar OPENS (rolling excludes bar i; day and
+# week read completed periods), so the heavy path's last-closed value would be
+# one bar stale intrabar. The compute is cheap enough to rerun per tick.
+_PHL = AlertSpec(outputs=_phl_outputs, label=_phl_label, heavy=False, sparse=True)
 
 # ---- CANDLE_PATTERNS (0/1 events, close only) ----
 

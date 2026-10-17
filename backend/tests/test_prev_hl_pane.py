@@ -123,4 +123,42 @@ def test_alert_spec():
     assert alert.label(plural, "rollingHigh") == "Prev HL rolling 3 hours high"
     bars = p(None, {"rollingUnit": "bars", "lengths": {"rolling": 3}})
     assert alert.label(bars, "rollingLow") == "Prev HL rolling 3 bars low"
-    assert alert.heavy and alert.sparse
+    assert not alert.heavy and alert.sparse
+
+
+def _bar(ms: int, h: float, l: float) -> Candle:
+    return Candle(datetime.fromtimestamp(ms / 1000, tz=timezone.utc), (h + l) / 2, h, l, (h + l) / 2, 1.0)
+
+
+def test_day_high_steps_when_the_new_day_opens():
+    # Why PREV_HL is a light alert spec: the forming bar's level is already the
+    # just-completed day's high, not the previous closed bar's (two days ago).
+    hour = 3_600_000
+    day0 = int(datetime(2024, 3, 11, tzinfo=timezone.utc).timestamp() * 1000)
+    bars = [_bar(day0 + i * hour, 100 + i, 90) for i in range(24)]          # day 0: high 123
+    bars += [_bar(day0 + (24 + i) * hour, 200 + i, 190) for i in range(24)]  # day 1: high 223
+    bars.append(_bar(day0 + 48 * hour, 150, 140))                            # day 2's forming bar
+    spec = SERIES_INDICATORS["PREV_HL"]
+    got = spec.series(spec.parse_config([], {}), "dayHigh", bars, 1.0)
+    assert got[47] == 123 and got[-1] == 223
+
+
+def test_anchor_before_the_first_bar_is_blank():
+    hour = 3_600_000
+    day0 = int(datetime(2024, 3, 11, tzinfo=timezone.utc).timestamp() * 1000)
+    bars = [_bar(day0 + i * hour, 100 + i, 90) for i in range(10)]
+    spec = SERIES_INDICATORS["PREV_HL"]
+    old = spec.parse_config([], {"anchorTs": day0 - hour})
+    assert spec.series(old, "anchorHigh", bars, 1.0) == [None] * 10
+    inside = spec.parse_config([], {"anchorTs": day0 + 3 * hour})
+    assert spec.series(inside, "anchorHigh", bars, 1.0)[3] == 103
+
+
+def test_bars_rolling_warmup_counts_the_excluded_bar():
+    spec = SERIES_INDICATORS["PREV_HL"]
+    cfg = spec.parse_config([], {"rollingUnit": "bars", "lengths": {"rolling": 5}})
+    assert spec.warmup(cfg, "rollingHigh") == 6
+    hour = 3_600_000
+    bars = [_bar(i * hour, 100 + i, 90) for i in range(8)]
+    got = spec.series(cfg, "rollingHigh", bars, 1.0)
+    assert got[4] is None and got[5] is not None
