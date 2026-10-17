@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { alertInstanceOf, alertTimeframeOf, chartValueOf } from "./indicatorAlertInstance";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import {
+  alertInstanceOf, alertTimeframeOf, chartValueOf, isAlertableType, loadAlertableTypes,
+} from "./indicatorAlertInstance";
+import { alertsChanged } from "./signals";
 
 describe("alertInstanceOf", () => {
   it("keeps only the pin of an mtf block", () => {
@@ -28,5 +31,20 @@ describe("chartValueOf", () => {
     expect(chartValueOf({ bullTop: 7 }, "bull_top")).toBe(7);
     expect(chartValueOf({ ma: NaN }, "ma")).toBeUndefined();
     expect(chartValueOf(undefined, "ma")).toBeUndefined();
+  });
+});
+
+describe("loadAlertableTypes", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("re-renders alert menus once the types land", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true, status: 200, json: () => Promise.resolve({ types: ["RSI"] }),
+    } as Response));
+    const before = alertsChanged.value;
+    expect(isAlertableType("RSI")).toBe(false);
+    await loadAlertableTypes();
+    expect(isAlertableType("RSI")).toBe(true);
+    expect(alertsChanged.value).toBe(before + 1);
   });
 });

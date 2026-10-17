@@ -518,6 +518,29 @@ describe("indicator alerts", () => {
     expect(body.message).toBe("m2");
   });
 
+  it("patchIndicatorAlert takes the server row, so the label follows an output change", async () => {
+    const broker = freshBroker();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const a: IndicatorAlert = {
+      kind: "indicator", id: "al-relabel", epic: "US100", broker, condition: "greater", trigger: "once",
+      message: "m1", expiresAt: null, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+      precision: 2, label: "RSI 14 (1H)", params: {
+        type: "RSI", config: { source: "close" }, output: "value",
+        timeframe: "HOUR", target: "value", value: 70, evalOn: "close", link: null },
+    };
+    await addIndicatorAlert(a);
+    fetchMock.mockResolvedValue(jsonResponse(alertRow({
+      id: a.id, broker, kind: "indicator", label: "RSI 14 bearish divergence (1H)",
+      params: { ...a.params, output: "bearDiv", condition: "crossing_up", trigger: "once" },
+    })));
+
+    expect(await patchIndicatorAlert(a.id, { params: { output: "bearDiv" } })).toBe(true);
+    const row = loadIndicatorAlerts("US100", broker)[0];
+    expect(row.label).toBe("RSI 14 bearish divergence (1H)");
+    expect(row.condition).toBe("crossing_up");
+  });
+
   it("patchIndicatorAlert rolls back on failure", async () => {
     const broker = freshBroker();
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));

@@ -818,7 +818,17 @@ export async function patchIndicatorAlert(
     notify: next.notify,
   });
   indWriteSettled();
-  if (res?.ok) return true;
+  if (res?.ok) {
+    // The server row carries the fresh label (an output change renames it).
+    try {
+      const saved = rowToIndicatorAlert((await res.json()) as AlertRow);
+      if (indicatorCache.has(id)) {
+        indicatorCache.set(id, saved);
+        bumpAlerts();
+      }
+    } catch { /* keep the optimistic row */ }
+    return true;
+  }
   // Only restore if still in cache (might be deleted concurrently)
   if (indicatorCache.has(id)) {
     indicatorCache.set(id, prev);

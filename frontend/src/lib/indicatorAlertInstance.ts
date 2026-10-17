@@ -3,6 +3,8 @@
 // backend's registry parser decides everything else (outputs, labels,
 // refusals); this module mirrors none of it.
 import { apiFetch, API_BASE } from "./http";
+// signals only type-imports this module, so this is no runtime cycle.
+import { bumpAlerts } from "./signals";
 import { tryCanonicalTf } from "./timeframe";
 
 export interface AlertInstance {
@@ -51,7 +53,11 @@ export function loadAlertableTypes(): Promise<void> {
   inflight = (async () => {
     try {
       const res = await apiFetch(`${API_BASE}/api/alerts/indicators`);
-      if (res.ok) alertable = new Set(((await res.json()) as { types: string[] }).types);
+      if (res.ok) {
+        alertable = new Set(((await res.json()) as { types: string[] }).types);
+        // Legends and menus drew before the types were known; redraw them.
+        bumpAlerts();
+      }
     } catch {
       /* retried by the next call */
     } finally {

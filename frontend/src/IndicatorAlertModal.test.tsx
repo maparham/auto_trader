@@ -115,6 +115,35 @@ describe("IndicatorAlertModal", () => {
     expect(a.condition).toBe("crossing_up");
   });
 
+  it("an event output explains the closed bar, not the broker", async () => {
+    describeFn.mockResolvedValue(RSI_DESC);
+    render(<IndicatorAlertModal request={{ mode: "create", draft: draft() }} defaults={DEFAULT_ALERT_DEFAULTS} now={0} onClose={() => {}} />);
+    fireEvent.change(await screen.findByLabelText("Line"), { target: { value: "bullDiv" } });
+    fireEvent.mouseEnter(screen.getByLabelText("About Evaluate"));
+    expect(await screen.findByText("Events fire on a closed bar")).toBeTruthy();
+    expect(screen.queryByText("This broker sends quotes only")).toBeNull();
+  });
+
+  it("a quote-only broker on a volume line explains the broker", async () => {
+    describeFn.mockResolvedValue({ ...MA_DESC, needsVolume: true });
+    const d = draft({ instance: { type: "MA", calcParams: [20], extendData: { maType: "vwma" } }, quoteOnly: true });
+    render(<IndicatorAlertModal request={{ mode: "create", draft: d }} defaults={DEFAULT_ALERT_DEFAULTS} now={0} onClose={() => {}} />);
+    await screen.findByLabelText("Compare");
+    fireEvent.mouseEnter(screen.getByLabelText("About Evaluate"));
+    expect(await screen.findByText("This broker sends quotes only")).toBeTruthy();
+  });
+
+  it("a stored intrabar alert falls back to bar close once describe blocks intrabar", async () => {
+    loadAll.mockReturnValue([existingAlert({
+      params: { ...existingAlert().params, output: "bullDiv", evalOn: "intrabar" },
+    })]);
+    describeFn.mockResolvedValue(RSI_DESC);
+    render(<IndicatorAlertModal request={{ mode: "edit", id: "al-1" }} defaults={DEFAULT_ALERT_DEFAULTS} now={0} onClose={() => {}} />);
+    await screen.findByText("happens");
+    expect((screen.getByLabelText("On bar close") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("As it happens") as HTMLInputElement).checked).toBe(false);
+  });
+
   it("price-scale outputs show Compare defaulting to Price", async () => {
     describeFn.mockResolvedValue(MA_DESC);
     const d = draft({ instance: { type: "MA", calcParams: [20], extendData: {} } });

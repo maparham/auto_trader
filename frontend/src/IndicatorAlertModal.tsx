@@ -86,6 +86,10 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
   }, [desc, out, typed, tgt, event]);
 
   const intrabarBlocked = event || (desc?.needsVolume === true && base.quoteOnly);
+  useEffect(() => {
+    // A stored intrabar choice the described pane can't honor falls back.
+    if (intrabarBlocked && evalOn === "intrabar") setEvalOn("close");
+  }, [intrabarBlocked, evalOn]);
   const label = out ? `${out.label} (${tfLabel(desc!.timeframe)})` : "";
   const num = Number(value);
   const valid = desc != null && desc.refusal == null && out != null
@@ -209,7 +213,9 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
           <label><input type="radio" aria-label="As it happens" disabled={intrabarBlocked}
             checked={evalOn === "intrabar"} onChange={() => setEvalOn("intrabar")} /> As it happens</label>
           <InfoTip title="Evaluate" text={
-            intrabarBlocked
+            event
+              ? ["Events fire on a closed bar"]
+              : intrabarBlocked
               ? ["This broker sends quotes only", "Volume-weighted lines need a closed bar"]
               : ["On bar close: no repaint", "As it happens: fires on the live candle"]
           } />
