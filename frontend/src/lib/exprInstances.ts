@@ -45,7 +45,7 @@ import { LR_OUTPUTS, lrWarmup, parseLrConfig } from "./indicators/lrOutputs";
 import { VWAP_OUTPUTS, vwapWarmup } from "./indicators/vwapOutputs";
 import { PREV_HL_OUTPUTS, parsePrevHlRefConfig, prevHlWarmup } from "./indicators/prevHlOutputs";
 import { CANDLE_PATTERN_DEFS } from "./indicators/candlePatterns";
-import { candlePatternsOutputs, candlePatternsWarmup } from "./indicators/candlePatternsOutputs";
+import { CANDLE_PATTERN_AGGREGATES, candlePatternsOutputs, candlePatternsWarmup } from "./indicators/candlePatternsOutputs";
 import type { AutoFibExtend } from "./indicators/autoFib"; // erased at build; no runtime edge
 import type { SrLevelsExtend } from "./indicators/srLevels"; // erased at build; no runtime edge
 import type { ExprInstance } from "./expr/catalog";
@@ -186,7 +186,7 @@ export function synthesizeExprInstances(
     // kept, as there), atrLength's 14 (single-length pane).
     // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE, RSI, AUTO_FIB, LR, VWAP, PREV_HL
     // and CANDLE_PATTERNS outputs are fixed names or level names, not lengths, so nothing about
-    // the pane's params is recoverable from a ref — an empty list takes every default.
+    // the pane's params is recoverable from a ref; an empty list takes every default.
     const calcParams =
       type === "FVG" ||
       type === "TRENDLINES" ||
@@ -514,7 +514,7 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         id: inst.id,
         outputs,
         timeframe: null, // chart-timeframe only (no MTF pin)
-        detail: `${outputs.length - 2} of ${CANDLE_PATTERN_DEFS.length} patterns · 1 when the pattern completes on that bar`,
+        detail: `${outputs.length - CANDLE_PATTERN_AGGREGATES.length} of ${CANDLE_PATTERN_DEFS.length} patterns · 1 when the pattern completes on that bar`,
       });
       continue;
     }
