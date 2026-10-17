@@ -101,10 +101,15 @@ export function buildTimeTicks(input: TimeTickInput): TimeTick[] {
   const cands: { i: number; ts: number; rank: number }[] = [];
   const start = Math.floor(from);
   const end = Math.ceil(to);
-  const prev = tsAt(start - 1);
+  // Past the data klinecharts extrapolates, and can hand back NaN.
+  const at = (i: number) => {
+    const ts = tsAt(i);
+    return ts != null && Number.isFinite(ts) ? ts : null;
+  };
+  const prev = at(start - 1);
   let prevLocal = prev == null ? null : prev + offsetAt(prev);
   for (let i = start; i <= end; i++) {
-    const ts = tsAt(i);
+    const ts = at(i);
     if (ts == null) continue;
     const local = ts + offsetAt(ts);
     if (prevLocal != null) {
@@ -199,29 +204,43 @@ interface ChartStoreLike {
 registerXAxis({
   name: "normal",
   // A plain function: klinecharts calls it as a method of the axis.
-  createTicks: function (this: AxisThis, { range }: { range: { realFrom: number; realTo: number } }) {
-    const store = this.getParent().getChart().getChartStore();
-    const period = store.getPeriod();
-    const zone = store.getTimezone();
-    const dtf = partsFormat(zone);
-    const { size, weight, family } = store.getStyles().xAxis.tickText;
-    const { formatDate } = store.getInnerFormatter();
-    const widths = new Map<string, number>();
-    return buildTimeTicks({
-      from: range.realFrom,
-      to: range.realTo,
-      barSpace: store.getBarSpace().bar,
-      barMs: periodMs(period),
-      tsAt: (i) => store.dataIndexToTimestamp(i),
-      offsetAt: (ts) => zoneOffset(dtf, zone, ts),
-      pxAt: (i) => this.convertToPixel(i),
-      format: (ts, template) => formatDate(ts, template, "xAxis"),
-      textWidth: (s) => {
-        let w = widths.get(s);
-        if (w == null) widths.set(s, (w = utils.calcTextWidth(s, size, weight as never, family)));
-        return w;
-      },
-      seconds: period?.type === "second",
-    });
+  createTicks: function (
+    this: AxisThis,
+    { range, defaultTicks }: { range: { realFrom: number; realTo: number }; defaultTicks: TimeTick[] },
+  ) {
+    // klinecharts runs layout in a promise with an empty catch and never clears
+    // its pending flag on a throw, so one exception here would freeze the chart.
+    try {
+      return chartTicks(this, range);
+    } catch (e) {
+      console.error("timeAxisTicks", e);
+      return defaultTicks;
+    }
   } as never,
 });
+
+function chartTicks(axis: AxisThis, range: { realFrom: number; realTo: number }): TimeTick[] {
+  const store = axis.getParent().getChart().getChartStore();
+  const period = store.getPeriod();
+  const zone = store.getTimezone();
+  const dtf = partsFormat(zone);
+  const { size, weight, family } = store.getStyles().xAxis.tickText;
+  const { formatDate } = store.getInnerFormatter();
+  const widths = new Map<string, number>();
+  return buildTimeTicks({
+    from: range.realFrom,
+    to: range.realTo,
+    barSpace: store.getBarSpace().bar,
+    barMs: periodMs(period),
+    tsAt: (i) => store.dataIndexToTimestamp(i),
+    offsetAt: (ts) => zoneOffset(dtf, zone, ts),
+    pxAt: (i) => axis.convertToPixel(i),
+    format: (ts, template) => formatDate(ts, template, "xAxis"),
+    textWidth: (s) => {
+      let w = widths.get(s);
+      if (w == null) widths.set(s, (w = utils.calcTextWidth(s, size, weight as never, family)));
+      return w;
+    },
+    seconds: period?.type === "second",
+  });
+}

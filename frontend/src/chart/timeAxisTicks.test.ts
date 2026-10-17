@@ -79,4 +79,22 @@ describe("buildTimeTicks", () => {
     const day = out.find((t) => t.text.startsWith("MM-DD@"))!;
     expect(new Date(day.value).getUTCHours()).toBe(22);
   });
+
+  it("skips NaN timestamps past the data instead of throwing", () => {
+    const out = buildTimeTicks({
+      from: 0,
+      to: 80,
+      barSpace: 20,
+      barMs: HOUR,
+      tsAt: (i) => (i < 40 ? T0 + i * HOUR : NaN),
+      offsetAt: (ts) => {
+        if (!Number.isFinite(ts)) throw new RangeError("Invalid time value");
+        return 0;
+      },
+      pxAt: (i) => i * 20,
+      format: (ts, tpl) => `${tpl}@${ts}`,
+      textWidth: () => 40,
+    });
+    expect(out.length).toBeGreaterThan(0);
+  });
 });
