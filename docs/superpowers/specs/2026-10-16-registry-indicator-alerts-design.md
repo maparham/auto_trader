@@ -131,7 +131,7 @@ the two sets are free to differ.
 ### 4. Frontend asks the backend, mirrors nothing
 
 - `GET /api/alerts/indicators` returns the registry's alertable types once;
-  the legend bell and indicator menu show "Add alert" for those types.
+  the indicator menu shows "Add alert" for those types.
 - `POST /api/alerts/describe {broker, epic, instance, chartTimeframe}`
   returns `{timeframe, outputs: [{name, label, kind: "level"|"event",
   priceScale}], lastValues, refusal?, needsVolume}`. `lastValues` comes from
