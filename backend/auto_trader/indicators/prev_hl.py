@@ -12,6 +12,7 @@ anchored high and low.
 from __future__ import annotations
 
 import math
+import threading
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -117,20 +118,25 @@ def estimate_bar_ms(ts: Sequence[int]) -> int:
 # requests.
 _BAR_MS_CACHE: "OrderedDict[tuple[int, int, int], int]" = OrderedDict()
 _BAR_MS_CACHE_MAX = 32
+# The alert hub computes series on worker threads; the get/move/pop sequence
+# below is not atomic without it.
+_BAR_MS_LOCK = threading.Lock()
 
 
 def _cached_bar_ms(ts: Sequence[int]) -> int:
     if len(ts) < 2:
         return 0
     key = (len(ts), ts[0], ts[-1])
-    hit = _BAR_MS_CACHE.get(key)
-    if hit is not None:
-        _BAR_MS_CACHE.move_to_end(key)
-        return hit
+    with _BAR_MS_LOCK:
+        hit = _BAR_MS_CACHE.get(key)
+        if hit is not None:
+            _BAR_MS_CACHE.move_to_end(key)
+            return hit
     bar_ms = estimate_bar_ms(ts)
-    _BAR_MS_CACHE[key] = bar_ms
-    if len(_BAR_MS_CACHE) > _BAR_MS_CACHE_MAX:
-        _BAR_MS_CACHE.popitem(last=False)
+    with _BAR_MS_LOCK:
+        _BAR_MS_CACHE[key] = bar_ms
+        if len(_BAR_MS_CACHE) > _BAR_MS_CACHE_MAX:
+            _BAR_MS_CACHE.popitem(last=False)
     return bar_ms
 
 
