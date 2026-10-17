@@ -14,6 +14,24 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Deferred / forward-looking
 
+- **LR alerts on the event loop**: `lr_series` (`indicators/lr.py`) refits every
+  window from scratch, O(n x L) per output, and LR is a light alert spec, so it
+  reruns on the event loop up to once a second (about 0.3 s per call at
+  L=1000 over a 2000-bar seed). Rewrite with rolling sums (O(n)) on both
+  `lr.py` and `lrOutputs.ts`, then re-check the `lr.json` parity fixture for
+  float drift.
+  [spec](superpowers/specs/2026-10-16-registry-indicator-alerts-design.md)
+
+- **Indicator alert re-point gaps**: a linked alert follows its pane through
+  `indicatorAlertSync.ts`, but these paths still leave it on stale settings:
+  a chart cell not mounted when the timezone changes (PREV_HL), undo/redo of
+  an AVWAP re-anchor, a template apply or snapshot restore that changes a
+  persisted AVWAP anchor, and a `repointIndicatorAlert` that returned
+  "failed" (never retried). Likely fix: on mount, compare each linked
+  alert's stored `params.instance` with the live pane's (tz stamped) and
+  re-point on a mismatch; hook the history applier for AVWAP `calcParams[0]`.
+  [spec](superpowers/specs/2026-10-16-registry-indicator-alerts-design.md)
+
 - **Replay "Reveal strategy" enabled over a pruned backtest** (minor):
   `useReplay` decides the button's enabled state before the startup
   `pruneStaleBacktests` runs, so resuming a replay whose saved backtest is over
