@@ -212,8 +212,17 @@ _LR = AlertSpec(
     label=lambda cfg, output: f"LR {cfg.length}{_src(cfg.source)}{_LR_SUFFIX[output]}",
 )
 
+# ---- VWAP (cumulative from the first loaded bar) ----
+
+_VWAP = AlertSpec(
+    outputs=lambda cfg: {"vwap": PRICE},
+    label=lambda cfg, output: "VWAP",
+    sparse=True,  # blank while cumulative volume is 0
+    needs_volume=lambda cfg: True,
+)
+
 ALERT_SPECS: dict[str, AlertSpec] = {
     "MA": _MA, "EMA": _MA, "RSI": _RSI, "ATR": _ATR, "TRENDLINES": _TL, "SLOPE": _SLOPE,
     "FVG": _FVG, "PIVOT_BANDS": _PB, "PIVOT_ANALYSIS": _PA, "SR_LEVELS": _SR, "SPIKE": _SPIKE,
-    "AUTO_FIB": _FIB, "LR": _LR,
+    "AUTO_FIB": _FIB, "LR": _LR, "VWAP": _VWAP,
 }

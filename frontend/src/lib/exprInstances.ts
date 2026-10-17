@@ -42,6 +42,7 @@ import { SPIKE_OUTPUTS, parseSpikeConfig, spikeWarmup } from "./indicators/spike
 import { RSI_OUTPUTS, parseRsiRefConfig, rsiWarmup } from "./indicators/rsiOutputs";
 import { autoFibOutputs, autoFibWarmup, parseAutoFibConfig } from "./indicators/autoFibOutputs";
 import { LR_OUTPUTS, lrWarmup, parseLrConfig } from "./indicators/lrOutputs";
+import { VWAP_OUTPUTS, vwapWarmup } from "./indicators/vwapOutputs";
 import type { AutoFibExtend } from "./indicators/autoFib"; // erased at build; no runtime edge
 import type { SrLevelsExtend } from "./indicators/srLevels"; // erased at build; no runtime edge
 import type { ExprInstance } from "./expr/catalog";
@@ -68,6 +69,7 @@ export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set([
   "RSI",
   "AUTO_FIB",
   "LR",
+  "VWAP",
 ]);
 
 /** A live chart pane, flattened to just what the expression layer reads. */
@@ -177,7 +179,7 @@ export function synthesizeExprInstances(
     }
     // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
     // kept, as there), atrLength's 14 (single-length pane).
-    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE, RSI, AUTO_FIB and LR
+    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE, RSI, AUTO_FIB, LR and VWAP
     // outputs are fixed names or level names, not lengths, so nothing about the pane's params
     // is recoverable from a ref — an empty list takes every default.
     const calcParams =
@@ -189,7 +191,8 @@ export function synthesizeExprInstances(
       type === "SPIKE" ||
       type === "RSI" ||
       type === "AUTO_FIB" ||
-      type === "LR"
+      type === "LR" ||
+      type === "VWAP"
         ? []
         : type === "ATR"
           ? [lengths[0] ?? 14]
@@ -337,6 +340,7 @@ export function exprWarmupByRef(
       return autoFibOutputs(inst.extendData).includes(output)
         ? autoFibWarmup(parseAutoFibConfig(inst.calcParams))
         : 0;
+    if (inst.type === "VWAP") return (VWAP_OUTPUTS as readonly string[]).includes(output) ? vwapWarmup(output) : 0;
     if (inst.type === "RSI") return rsiWarmup(parseRsiRefConfig(inst.calcParams, inst.extendData), output);
     if (inst.type === "LR") return lrWarmup(parseLrConfig(inst.calcParams, inst.extendData), output);
     if (inst.type !== "SLOPE") return 0;
@@ -463,6 +467,17 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         // arms a spike and latches consolidation — the SLOPE/ATR detail
         // convention.
         detail: `${cfg.minSpikePct}%/${cfg.spikeBars} bars · flat ${cfg.flatBars} in ${cfg.maxFlatRangePct}% · ${cfg.maxPatternBars} bar life`,
+      });
+      continue;
+    }
+    if (inst.type === "VWAP") {
+      out.push({
+        id: inst.id,
+        outputs: [...VWAP_OUTPUTS],
+        timeframe: null, // chart-timeframe only (no MTF pin)
+        // No session reset: it accumulates from the first bar of whatever
+        // history the run or alert loads, which a reader must know.
+        detail: "hlc3 · from the first loaded bar",
       });
       continue;
     }

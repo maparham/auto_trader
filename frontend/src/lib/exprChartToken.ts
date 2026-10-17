@@ -10,7 +10,7 @@
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
 //      rule: SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS,
-//      AUTO_FIB and LR (the
+//      AUTO_FIB, LR and VWAP (the
 //      EXPR_INSTANCE_TYPES set; keep a case here for every member), as
 //      "<instanceId>.<output>" (e.g. "SLOPE.50",
 //      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
@@ -42,6 +42,7 @@ import { SR_LEVELS_OUTPUTS } from "./indicators/srLevelsOutputs";
 import { SPIKE_OUTPUTS } from "./indicators/spikeOutputs";
 import { autoFibOutputs } from "./indicators/autoFibOutputs";
 import { LR_OUTPUTS } from "./indicators/lrOutputs";
+import { VWAP_OUTPUTS } from "./indicators/vwapOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
 import { normalizeMaKind } from "./mtf";
 
@@ -244,6 +245,11 @@ export function chartIndicatorToExprToken(
       if (!id) return null;
       const key = opts?.figureKey;
       return `${id}.${(LR_OUTPUTS as readonly string[]).includes(key ?? "") ? key : LR_OUTPUTS[0]}`;
+    }
+    // VWAP draws one line, its only output.
+    case "VWAP": {
+      const id = opts?.instanceId;
+      return id ? `${id}.${VWAP_OUTPUTS[0]}` : null;
     }
     default:
       return null;

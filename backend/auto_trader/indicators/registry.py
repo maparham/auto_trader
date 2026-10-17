@@ -25,6 +25,7 @@ from auto_trader.indicators import slope as _slope
 from auto_trader.indicators import spike as _spike
 from auto_trader.indicators import sr_levels as _sr
 from auto_trader.indicators import trendlines as _tl
+from auto_trader.indicators import vwap as _vwap
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +133,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         series=_tl.trendlines_series,
         warmup=_tl.trendlines_warmup,
         timeframe=lambda cfg: cfg.timeframe,
+    ),
+    "VWAP": IndicatorSeriesSpec(
+        parse_config=_vwap.parse_vwap_config,
+        outputs=_vwap.vwap_outputs,
+        series=_vwap.vwap_series,
+        warmup=_vwap.vwap_warmup,
+        timeframe=lambda cfg: None,
     ),
 }
 
