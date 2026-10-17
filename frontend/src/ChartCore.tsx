@@ -1661,6 +1661,13 @@ export default function ChartCore({
   epicRef.current = symbol.epic;
   const resRef = useRef(period.resolution);
   resRef.current = period.resolution;
+  // Same pattern, for the timezone effect below: it must not list scope as a
+  // dep (that would re-run the whole zone/pane recompute on a cell merge).
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  // The timezone effect's own "was this a real change" marker, starting unset
+  // so the effect's first run (mount) never counts as one.
+  const prevZoneRef = useRef<string | null>(null);
 
   // --- undo/redo wiring (controller.history) ----------------------------------
   // Placed here rather than beside the controller memo so the applier's reads of
@@ -4162,6 +4169,13 @@ export default function ChartCore({
     const resolved = timezone || browserTimezone();
     c.setTimezone(resolved);
     if (!setIndicatorTimezone(resolved)) return; // zone unchanged → nothing to redo
+    // Re-point only on a genuine change AFTER mount: prevZoneRef starts unset,
+    // so the first run (establishing the cell's configured zone, which can
+    // differ from the shared module's browser-default starting value) never
+    // re-points, only a later, real zone change does.
+    const prevZone = prevZoneRef.current;
+    prevZoneRef.current = resolved;
+    const isRealChange = prevZone !== null && prevZone !== resolved;
     const candlePane = getIndicatorsByPane(c).get("candle_pane");
     for (const [id, ind] of candlePane ?? []) {
       const t = indTypeOf(ind);
@@ -4170,7 +4184,9 @@ export default function ChartCore({
       // PREV_HL buckets days and weeks in this zone; a linked alert's stored
       // config (alertInstanceOf's withChartTimezone stamp) goes stale the
       // moment the zone changes, the same staleness class as AVWAP's anchor (S1).
-      if (t === "PREV_HL") void syncAlertsAfterEdit(scope, id, alertInstanceOf("PREV_HL", ind.calcParams, ind.extendData));
+      if (t === "PREV_HL" && isRealChange) {
+        void syncAlertsAfterEdit(scopeRef.current, id, alertInstanceOf("PREV_HL", ind.calcParams, ind.extendData));
+      }
     }
   }, [timezone]);
 
