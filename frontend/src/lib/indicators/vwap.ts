@@ -192,6 +192,9 @@ export const AVWAP_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   calc: (dataList: KLineData[], indicator: Indicator) => {
     const anchorTs = Number(indicator.calcParams?.[0]) || 0;
     if (anchorTs <= 0) return dataList.map(() => ({})); // unplaced: no line yet
+    // An anchor older than the loaded history starts at the first loaded bar
+    // here; the backend (vwap.py avwap_pane_series) blanks instead, on purpose:
+    // its alert seed is bounded and would drift silently.
     const idx = dataList.findIndex((k) => k.timestamp >= anchorTs);
     const start = idx < 0 ? dataList.length : idx;
     return vwapFrom(dataList, start, (indicator.extendData ?? {}) as AvwapExtend);

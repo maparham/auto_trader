@@ -83,6 +83,9 @@ export interface PrevHlExtend {
 //               week, flat across the current period and stepping at its boundary.
 //  - "anchor": the cumulative high/low since a user-picked date-time (extendData
 //               .anchorTs). Like an Anchored VWAP but for high/low; no line before it.
+//               An anchor older than the loaded history accumulates from the first
+//               loaded bar here; the backend (prev_hl.py _anchor) blanks instead, on
+//               purpose: its alert seed is bounded and would drift silently.
 export const PREV_HL_PERIODS: PrevHlBoundary[] = [
   { kind: "rolling", hi: "rollingHigh", lo: "rollingLow" },
   { kind: "day", hi: "dayHigh", lo: "dayLow" },
