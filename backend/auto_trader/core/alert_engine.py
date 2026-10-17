@@ -114,6 +114,7 @@ class AlertEngine:
         # status debounce: key -> (status, since_monotonic); last broadcast status
         self._status_seen: dict[tuple[str, str], tuple[str, float]] = {}
         self._status_sent: dict[tuple[str, str], str] = {}
+        self._status_failed: set[tuple[str, str]] = set()  # rows already logged as failing
         self._status_task: asyncio.Task | None = None
         self._sig: dict[tuple[str, str], str] = {}
         # Held-line signature per alert (nearest-trendline alerts): a change
@@ -717,8 +718,15 @@ class AlertEngine:
         changed: dict[str, tuple[str, str]] = {}
         for entries in self._registry.values():
             for user_id, row in entries:
-                key = (user_id, row["id"])
-                st = self._row_status(user_id, row)
+                key = (user_id, row.get("id", ""))
+                # One bad row must not stop status broadcasts for every user.
+                try:
+                    st = self._row_status(user_id, row)
+                except Exception:
+                    if key not in self._status_failed:
+                        self._status_failed.add(key)
+                        log.warning("alert status failed for %s %s", user_id, key[1], exc_info=True)
+                    continue
                 if st is None:
                     continue
                 seen = self._status_seen.get(key)

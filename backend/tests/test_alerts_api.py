@@ -133,6 +133,48 @@ def test_patch_onto_a_missing_output_422(clerk):
     assert r.status_code == 422
 
 
+def _value_body(id_, type_, calc, output, value=1.0) -> dict:
+    return _body(id=id_, kind="indicator", params={
+        "instance": {"type": type_, "calcParams": calc, "extendData": {}},
+        "output": output, "timeframe": "HOUR", "target": "value", "value": value,
+        "evalOn": "close", "condition": "crossing", "trigger": "once", "link": None,
+    })
+
+
+@pytest.mark.parametrize("old,new", [("14", "21"), ("14.to%", "21.to%")])
+def test_patch_atr_length_carries_the_output(clerk, old, new):
+    saved = client.post("/api/alerts", json=_value_body("al-atr", "ATR", [14], old), headers=_auth("alice")).json()
+    r = client.patch(f"/api/alerts/{saved['id']}", json={"params": {"instance": {
+        "type": "ATR", "calcParams": [21], "extendData": {}}}}, headers=_auth("alice"))
+    assert r.status_code == 200, r.text
+    assert r.json()["params"]["output"] == new
+    assert r.json()["params"]["config"]["length"] == 21
+
+
+def test_patch_slope_length_keeps_its_alert(clerk):
+    saved = client.post("/api/alerts", json=_value_body("al-slope", "SLOPE", [9], "9"), headers=_auth("alice"))
+    assert saved.status_code == 200, saved.text
+    r = client.patch(f"/api/alerts/{saved.json()['id']}", json={"params": {"instance": {
+        "type": "SLOPE", "calcParams": [30], "extendData": {}}}}, headers=_auth("alice"))
+    assert r.status_code == 200, r.text
+    assert r.json()["params"]["output"] == "30"
+
+
+def test_patch_onto_another_type_does_not_carry_the_output(clerk):
+    saved = client.post("/api/alerts", json=_value_body("al-atr", "ATR", [14], "14"), headers=_auth("alice")).json()
+    r = client.patch(f"/api/alerts/{saved['id']}", json={"params": {"instance": {
+        "type": "SLOPE", "calcParams": [21], "extendData": {}}}}, headers=_auth("alice"))
+    assert r.status_code == 422
+
+
+def test_describe_refuses_an_overlong_length(clerk):
+    d = client.post("/api/alerts/describe", json={
+        "broker": "b", "epic": "E", "timeframe": "HOUR",
+        "instance": {"type": "MA", "calcParams": [3000], "extendData": {}},
+    }, headers=_auth("alice")).json()
+    assert d["refusal"] == "Alerts need a shorter length"
+
+
 def test_create_get_round_trip_with_notify_defaults(clerk):
     r = client.post("/api/alerts", json=_body(), headers=_auth("alice"))
     assert r.status_code == 200

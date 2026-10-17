@@ -68,7 +68,13 @@ def _ma_outputs(cfg: Any) -> dict[str, AlertOutput]:
 
 
 def _ma_refusal(cfg: Any, timeframe: str) -> str | None:
-    return "Alerts need a length of at least 1" if cfg.length < 1 else None
+    if cfg.length < 1:
+        return "Alerts need a length of at least 1"
+    # A negative offset shifts the line earlier and leaves its newest bars
+    # empty, so the alert would never become ready.
+    if cfg.offset < 0:
+        return "Alerts need an offset of 0 or more"
+    return None
 
 
 _MA = AlertSpec(

@@ -298,3 +298,25 @@ def test_upgrade_non_dict_config_is_a_value_error():
 def test_upgrade_atr_output_follows_the_parsed_length():
     new = upgrade_params({"indicator": "ATR", "calcParams": [14.7], "config": {}, "timeframe": "HOUR"})
     assert new["output"] == str(new["config"]["length"])
+
+
+def test_refusal_for_flags_an_overlong_warmup():
+    cfg = SERIES_INDICATORS["MA"].parse_config([3000], {})
+    assert INDICATOR.refusal_for("MA", cfg, "HOUR") == "Alerts need a shorter length"
+    short = SERIES_INDICATORS["MA"].parse_config([50], {})
+    assert INDICATOR.refusal_for("MA", short, "HOUR") is None
+    with pytest.raises(ValueError, match="shorter length"):
+        INDICATOR.validate(ind_params(calcParams=[3000]), STREAMS)
+
+
+def test_negative_ma_offset_is_refused():
+    cfg = SERIES_INDICATORS["MA"].parse_config([20], {"offset": -3})
+    assert INDICATOR.refusal_for("MA", cfg, "HOUR") == "Alerts need an offset of 0 or more"
+    def with_offset(off):
+        p = ind_params()
+        p.pop("type"), p.pop("config")
+        p["instance"] = {"type": "MA", "calcParams": [20], "extendData": {"offset": off}}
+        return p
+    with pytest.raises(ValueError, match="offset"):
+        INDICATOR.validate(with_offset(-3), STREAMS)
+    INDICATOR.validate(with_offset(3), STREAMS)

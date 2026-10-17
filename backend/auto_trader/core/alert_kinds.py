@@ -179,6 +179,31 @@ def _parsed(params: dict) -> tuple[str, Any]:
         raise ValueError(f"params.config is not a valid {type_} config") from None
 
 
+def carry_output(old: dict, merged: dict) -> None:
+    """A PATCH that re-points an alert onto a new pane keeps the stored
+    output by position when the old name is gone (ATR "14" becomes "21",
+    "14.to%" becomes "21.to%"). Only for the same type with the same number
+    of alertable outputs; anything else is left for validate to refuse."""
+    inst = merged.get("instance")
+    if not isinstance(inst, dict):
+        return
+    try:
+        prev = upgrade_params(dict(old))
+        type_ = prev.get("type")
+        if type_ not in ALERT_SPECS or inst.get("type") != type_ or not isinstance(prev.get("config"), dict):
+            return
+        alert = ALERT_SPECS[type_]
+        old_cfg = config_of(type_, json.dumps(prev["config"], sort_keys=True, allow_nan=False))
+        new_cfg = SERIES_INDICATORS[type_].parse_config(inst.get("calcParams"), inst.get("extendData"))
+        old_outs, new_outs = list(alert.outputs(old_cfg)), list(alert.outputs(new_cfg))
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+        return
+    out = merged.get("output")
+    if out in new_outs or out not in old_outs or len(old_outs) != len(new_outs):
+        return
+    merged["output"] = new_outs[old_outs.index(out)]
+
+
 class IndicatorKind:
     @staticmethod
     def refusal_for(type_: str, cfg: Any, timeframe: str) -> str | None:
@@ -190,7 +215,14 @@ class IndicatorKind:
             canon = None
         if canon is None or not _tf.is_native(canon):
             return "Alerts on this timeframe are coming later"
-        return ALERT_SPECS[type_].refusal(cfg, canon)
+        alert = ALERT_SPECS[type_]
+        reason = alert.refusal(cfg, canon)
+        if reason:
+            return reason
+        spec = SERIES_INDICATORS[type_]
+        if max((spec.warmup(cfg, out) for out in alert.outputs(cfg)), default=0) > MAX_WARMUP:
+            return "Alerts need a shorter length"
+        return None
 
     def validate(self, params: dict, streams: Callable[[], bool]) -> None:
         params.update(upgrade_params(params))
@@ -216,7 +248,7 @@ class IndicatorKind:
         if reason:
             raise ValueError(reason)
         if spec.warmup(cfg, out) > MAX_WARMUP:
-            raise ValueError("params: length too long for alerts")
+            raise ValueError("Alerts need a shorter length")
         target = params.get("target")
         if target not in ("price", "value"):
             raise ValueError("params.target must be 'price' or 'value'")

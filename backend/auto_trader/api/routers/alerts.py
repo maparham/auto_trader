@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from auto_trader.core import timeframe as _tf
 from auto_trader.core.alert_bars import candle_ms
 from auto_trader.core.alert_engine import ALERT_ENGINE
-from auto_trader.core.alert_kinds import INDICATOR, KINDS, upgrade_params
+from auto_trader.core.alert_kinds import INDICATOR, KINDS, carry_output, upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.push_notify import PUSH
@@ -409,6 +409,8 @@ async def patch_alert(
             # directly, never this route).
             raise HTTPException(422, "A line alert's geometry can't be changed")
         merged = {**current["params"], **patch["params"]}
+        if current.get("kind") == "indicator" and "output" not in patch["params"]:
+            carry_output(current["params"], merged)
         _validate_params(current["kind"], merged, current["broker"])
         await _check_duplicate(user, current["broker"], current["epic"], current["kind"], merged, skip_id=alert_id)
         patch["params"] = merged

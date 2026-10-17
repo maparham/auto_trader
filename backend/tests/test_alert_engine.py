@@ -698,6 +698,36 @@ def test_status_broadcast_debounces_and_uses_row_status(tmp_path, monkeypatch):
     asyncio.run(main())
 
 
+def test_status_broadcast_skips_a_row_that_fails(tmp_path, monkeypatch, caplog):
+    async def main():
+        import auto_trader.core.alert_engine as alert_engine_mod
+
+        bars = [hourly([10], 9)]
+        eng, store, sent = make_ind_engine(tmp_path, bars)
+        created = await store.create("u1", ind_row())
+        eng.on_alert_changed("u1", created, "al-i")
+        bad = {**created, "id": "al-bad"}
+        next(iter(eng._registry.values())).insert(0, ("u2", bad))
+        real = eng._row_status
+
+        def flaky(user_id, row):
+            if row["id"] == "al-bad":
+                raise RuntimeError("corrupt row")
+            return real(user_id, row)
+
+        monkeypatch.setattr(eng, "_row_status", flaky)
+        clock = [1000.0]
+        monkeypatch.setattr(alert_engine_mod.time, "monotonic", lambda: clock[0])
+        for _ in range(3):
+            await eng._broadcast_status_changes()
+            clock[0] += 11
+        changed = [(u, m) for u, m in sent if m["key"] == "__alerts__:changed"]
+        assert [u for u, _ in changed] == ["u1"]
+        failures = [r for r in caplog.records if "status failed" in r.getMessage()]
+        assert len(failures) == 1 and failures[0].exc_info
+    asyncio.run(main())
+
+
 def test_paused_indicator_alert_reports_no_status(tmp_path):
     # A paused (inactive) indicator alert has no series registered, so it
     # would read "waiting_for_data" forever. Like a price alert it reports no
