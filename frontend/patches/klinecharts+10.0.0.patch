@@ -1,0 +1,62 @@
+diff --git a/node_modules/klinecharts/dist/index.esm.js b/node_modules/klinecharts/dist/index.esm.js
+index 7b7d9f2..6935e3a 100644
+--- a/node_modules/klinecharts/dist/index.esm.js
++++ b/node_modules/klinecharts/dist/index.esm.js
+@@ -5538,11 +5538,23 @@ var StoreImp = /** @class */ (function () {
+     StoreImp.prototype._calcOptimalBarSpace = function () {
+         var specialBarSpace = 4;
+         var ratio = 1 - BAR_GAP_RATIO * Math.atan(Math.max(specialBarSpace, this._barSpace) - specialBarSpace) / (Math.PI * 0.5);
+-        var gapBarSpace = Math.min(Math.floor(this._barSpace * ratio), Math.floor(this._barSpace));
+-        if (gapBarSpace % 2 === 0 && gapBarSpace + 2 >= this._barSpace) {
+-            --gapBarSpace;
+-        }
+-        this._gapBarSpace = Math.max(1, gapBarSpace);
++        // chartkar patch: body width in DEVICE pixels, so on a 2x screen it steps
++        // 1 CSS px at a time (was 2: always odd CSS px). The original rule runs
++        // unchanged in device units: the body's parity must match the 1 CSS px
++        // wick's so it centres exactly, rounding down when the bar is nearly
++        // full and up otherwise; the old `correction` (+1 on an even body) is
++        // folded into the width. At dpr 1 this reproduces the original widths.
++        var dpr = Math.max(1, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
++        var wick = Math.max(1, Math.round(dpr));
++        var full = this._barSpace * dpr;
++        var dw = Math.min(Math.floor(full * ratio), Math.floor(full));
++        if ((dw - wick) % 2 !== 0) {
++            dw += dw + 2 * wick >= full ? -1 : 1;
++        }
++        dw = Math.max(wick, dw);
++        this._gapBarSpace = dw / dpr;
++        // Offset of the body's left edge from the wick's left edge x.
++        this._halfGapBarSpace = (dw - wick) / 2 / dpr;
+     };
+     StoreImp.prototype._adjustVisibleRange = function () {
+         var _a, _b;
+@@ -5678,7 +5690,7 @@ var StoreImp = /** @class */ (function () {
+             bar: this._barSpace,
+             halfBar: this._barSpace / 2,
+             gapBar: this._gapBarSpace,
+-            halfGapBar: Math.floor(this._gapBarSpace / 2)
++            halfGapBar: this._halfGapBarSpace
+         };
+     };
+     StoreImp.prototype.setBarSpace = function (barSpace, adjustBeforeFunc) {
+@@ -5905,7 +5917,9 @@ var StoreImp = /** @class */ (function () {
+     StoreImp.prototype.dataIndexToCoordinate = function (dataIndex) {
+         var dataCount = this._dataList.length;
+         var deltaFromRight = dataCount + this._lastBarRightSideDiffBarCount - dataIndex;
+-        return Math.floor(this._totalBarSpace - (deltaFromRight - 0.5) * this._barSpace + 0.5);
++        // chartkar patch: snap to device pixels (was whole CSS pixels).
++        var dpr = Math.max(1, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
++        return Math.round((this._totalBarSpace - (deltaFromRight - 0.5) * this._barSpace) * dpr) / dpr;
+     };
+     StoreImp.prototype.coordinateToDataIndex = function (x) {
+         return Math.ceil(this.coordinateToFloatIndex(x)) - 1;
+@@ -7896,7 +7910,7 @@ var CandleBarView = /** @class */ (function (_super) {
+                         yAxis_1.convertToPixel(low)
+                     ];
+                     priceY.sort(function (a, b) { return a - b; });
+-                    var correction = barSpace.gapBar % 2 === 0 ? 1 : 0;
++                    var correction = 0;
+                     var rects = [];
+                     switch (type_1) {
+                         case 'candle_solid': {

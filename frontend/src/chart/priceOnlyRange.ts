@@ -4,6 +4,7 @@ import type {
   AxisCreateRangeCallback,
   AxisRange,
 } from "klinecharts";
+import { easePriceRange } from "./priceScaleEase";
 
 // "Scale price chart only": fit the candle pane's y-axis to the visible candle
 // highs/lows alone, ignoring indicator curves that would otherwise inflate the
@@ -73,6 +74,14 @@ function candleCreateRange(
   // back to identity, which is correct for a normal axis.
   const axis = chart.getYAxes?.({ paneId: paneId ?? CANDLE_PANE_ID })?.[0];
   const toReal = axis?.valueToRealValue;
+
+  // Glide to the new fit rather than snapping (chart/priceScaleEase.ts). The
+  // key snaps on anything that is a new context rather than a moved view.
+  const sym = chart.getSymbol?.();
+  const per = chart.getPeriod?.();
+  const isLog = toReal ? toReal(10, { range: defaultRange }) !== 10 : false;
+  const key = `${sym?.ticker}|${per?.span}${per?.type}|${priceOnly}|${isLog}`;
+  [lo, hi] = easePriceRange(chart, key, lo, hi);
   const realFrom = toReal ? toReal(lo, { range: defaultRange }) : lo;
   const realTo = toReal ? toReal(hi, { range: defaultRange }) : hi;
 

@@ -243,6 +243,8 @@ import {
   isPriceAxisScaleWheel,
   type PriceAxisGeometry,
 } from "./chart/priceAxisGesture";
+import { attachSmoothWheelZoom } from "./chart/smoothWheelZoom";
+import { attachPanMomentum } from "./chart/panMomentum";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
 import { shouldDetach, type DetachedTarget } from "./chart/detachedView";
 import { useReplay } from "./chart/useReplay";
@@ -3411,6 +3413,8 @@ export default function ChartCore({
     // placed (a hold there must not open the in-progress drawing's menu).
     let pressTimer: ReturnType<typeof setTimeout> | null = null;
     let uninstallPressLock: (() => void) | null = null;
+    let detachSmoothZoom: (() => void) | null = null;
+    let detachPanMomentum: (() => void) | null = null;
     const clearPress = () => {
       if (pressTimer != null) clearTimeout(pressTimer);
       pressTimer = null;
@@ -3519,6 +3523,11 @@ export default function ChartCore({
       el.addEventListener("mousedown", onClonePress, true);
       el.addEventListener("mousedown", onAxisDown, true);
       el.addEventListener("wheel", onAxisWheel, { capture: true, passive: true });
+      // Plot-area wheel zoom glides instead of jumping (chart/smoothWheelZoom.ts).
+      const kDom = chart.getDom();
+      if (kDom) detachSmoothZoom = attachSmoothWheelZoom(kDom, () => chartRef.current);
+      // A released drag-pan keeps gliding (chart/panMomentum.ts).
+      if (kDom) detachPanMomentum = attachPanMomentum(kDom, chart);
       el.addEventListener("dblclick", onAxisDblClick, true);
       el.addEventListener("dblclick", onTimeAxisDblClick, true);
       // The crosshair onMove/onLeave listeners (wrapRef mousemove+mouseleave and
@@ -3913,6 +3922,8 @@ export default function ChartCore({
       el.removeEventListener("pointerup", onTouchUp, true);
       el.removeEventListener("pointercancel", onTouchCancel, true);
       uninstallPressLock?.();
+      detachSmoothZoom?.();
+      detachPanMomentum?.();
       clearPress();
       el.removeEventListener("dblclick", onDblClick);
       el.removeEventListener("contextmenu", onContextMenu);

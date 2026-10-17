@@ -65,6 +65,7 @@ import { isSynthetic, setSyntheticPrecision } from "../lib/syntheticRegistry";
 import type { LiveStatus } from "../lib/feed";
 import type { ChartHandle, RangeReq } from "./chartHandle";
 import { stampChartSeries } from "./seriesStamp";
+import { CHART_GLIDE_EVENT } from "./glideEvent";
 
 export interface LiveMarketDataDeps {
   symbol: Instrument;
@@ -1403,12 +1404,16 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       dragging = false;
     };
     dom.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    // A zoom/pan glide keeps moving the view after the input ends; re-arm on
+    // each frame so the last save reads where it came to rest.
+    dom.addEventListener(CHART_GLIDE_EVENT, onWheel);
     dom.addEventListener("pointerdown", onPointerDown, { capture: true });
     dom.addEventListener("pointermove", onPointerMove, { capture: true });
     dom.addEventListener("pointerup", onPointerUp, { capture: true });
     return () => {
       if (timer != null) window.clearTimeout(timer);
       dom.removeEventListener("wheel", onWheel, { capture: true });
+      dom.removeEventListener(CHART_GLIDE_EVENT, onWheel);
       dom.removeEventListener("pointerdown", onPointerDown, { capture: true });
       dom.removeEventListener("pointermove", onPointerMove, { capture: true });
       dom.removeEventListener("pointerup", onPointerUp, { capture: true });
