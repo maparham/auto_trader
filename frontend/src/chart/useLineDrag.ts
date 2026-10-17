@@ -177,7 +177,8 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
         saveAvwapAnchor(scope, epicRef.current, id, ts);
         // Same re-point as the click-to-place path in ChartCore.tsx (S1): a
         // drag commits its anchor here, once, on release, not on every move.
-        void syncAvwapAlertsAfterReanchor(scope, id, ts, ind?.extendData);
+        // A press and release with no move left the anchor where it was.
+        if (dragMovedRef.current) void syncAvwapAlertsAfterReanchor(scope, id, ts, ind?.extendData);
       }
       // A real drag must not also fire the click→deselect that follows mouseup.
       // The synthesized click (if any) consumes this synchronously; the timeout

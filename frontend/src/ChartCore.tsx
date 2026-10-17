@@ -137,6 +137,7 @@ import {
 } from "./lib/indicators";
 import { syncAlertsAfterEdit, syncAvwapAlertsAfterReanchor } from "./lib/indicatorAlertSync";
 import { alertInstanceOf } from "./lib/indicatorAlertInstance";
+import { hasPaneTimezone } from "./lib/indicatorTimezone";
 import {
   registerHistory,
   unregisterHistory,
@@ -4181,11 +4182,13 @@ export default function ChartCore({
     for (const [id, ind] of candlePane ?? []) {
       const t = indTypeOf(ind);
       if (t !== "PREV_HL" && t !== "TIME_HIGHLIGHT") continue;
-      if (moduleChanged) c.overrideIndicator({ name: id, extendData: { ...(ind.extendData as object) } });
+      // Every cell redraws on its own real change; the shared module only says
+      // "changed" to the first cell that sees the new zone.
+      c.overrideIndicator({ name: id, extendData: { ...(ind.extendData as object) } });
       // PREV_HL buckets days and weeks in this zone; a linked alert's stored
       // config (alertInstanceOf's withChartTimezone stamp) goes stale the
       // moment the zone changes, the same staleness class as AVWAP's anchor (S1).
-      if (t === "PREV_HL" && isRealChange) {
+      if (t === "PREV_HL" && isRealChange && !hasPaneTimezone(ind.extendData)) {
         void syncAlertsAfterEdit(scopeRef.current, id, alertInstanceOf("PREV_HL", ind.calcParams, ind.extendData));
       }
     }

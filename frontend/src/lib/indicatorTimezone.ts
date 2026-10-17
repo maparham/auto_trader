@@ -43,6 +43,12 @@ function isValidZone(tz: unknown): tz is string {
   }
 }
 
+/** True when a pane carries its own valid zone (a per-pane override), so the
+ * chart zone never reaches it: a chart-zone change leaves its config as is. */
+export function hasPaneTimezone(extendData: unknown): boolean {
+  return isValidZone((extendData as { tz?: unknown } | null | undefined)?.tz);
+}
+
 /** extendData as the backend must see it. The server has no chart zone of its
  * own (it would bucket in UTC), so a calendar-bucketed pane with no valid
  * per-pane `tz` gets the chart's current zone written in. A valid override is
