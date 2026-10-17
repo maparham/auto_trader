@@ -252,13 +252,19 @@ export function chartIndicatorToExprToken(
       const id = opts?.instanceId;
       return id ? `${id}.${VWAP_OUTPUTS[0]}` : null;
     }
-    // PREV_HL: eight fixed outputs, one per drawn line. A row click with no
-    // figure key takes the previous day's high, the line most panes show.
+    // PREV_HL: eight fixed outputs, one per drawn line. A curve click passes
+    // lineIndex to pick the clicked line; a row click with no figureKey takes
+    // the previous day's high (the line most panes show).
     case "PREV_HL": {
       const id = opts?.instanceId;
       if (!id) return null;
       const key = opts?.figureKey;
-      return `${id}.${(PREV_HL_OUTPUTS as readonly string[]).includes(key ?? "") ? key : "dayHigh"}`;
+      if (key && (PREV_HL_OUTPUTS as readonly string[]).includes(key)) return `${id}.${key}`;
+      const lineIndex = opts?.lineIndex;
+      if (typeof lineIndex === "number" && lineIndex >= 0 && lineIndex < PREV_HL_OUTPUTS.length) {
+        return `${id}.${PREV_HL_OUTPUTS[lineIndex]}`;
+      }
+      return `${id}.dayHigh`;
     }
     default:
       return null;

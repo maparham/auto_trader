@@ -34,7 +34,7 @@ describe("PREV_HL as a rule instance", () => {
   it("lists all eight outputs whatever is hidden", () => {
     const hidden = [{ ...live[0], extendData: { ...live[0].extendData, lineHidden: { weekHigh: true } } }];
     expect(exprInstancesFor(hidden)).toEqual([
-      { id: "PREV_HL", outputs: [...PREV_HL_OUTPUTS], timeframe: null, detail: "rolling 20 bars · 2 days · 1 week" },
+      { id: "PREV_HL", outputs: [...PREV_HL_OUTPUTS], timeframe: null, detail: "rolling 20 bars · 2 days · 1 week · anchor unset" },
     ]);
     expect(exprWarmupByRef(live)("PREV_HL", "rollingHigh")).toBe(20);
   });
@@ -51,5 +51,12 @@ describe("PREV_HL as a rule instance", () => {
   it("turns a legend click into an instance ref", () => {
     expect(chartIndicatorToExprToken("PREV_HL", [], {}, { instanceId: "PREV_HL", figureKey: "weekLow" })).toBe("PREV_HL.weekLow");
     expect(chartIndicatorToExprToken("PREV_HL", [], {}, { instanceId: "PREV_HL" })).toBe("PREV_HL.dayHigh");
+  });
+  it("requires an instanceId", () => {
+    expect(chartIndicatorToExprToken("PREV_HL", [], {})).toBeNull();
+  });
+  it("turns a curve click on a non-default line into its output", () => {
+    expect(chartIndicatorToExprToken("PREV_HL", [], {}, { instanceId: "PREV_HL", lineIndex: 1 })).toBe("PREV_HL.rollingLow");
+    expect(chartIndicatorToExprToken("PREV_HL", [], {}, { instanceId: "PREV_HL", lineIndex: 4 })).toBe("PREV_HL.weekHigh");
   });
 });

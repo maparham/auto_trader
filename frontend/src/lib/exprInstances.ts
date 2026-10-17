@@ -489,13 +489,17 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
       const cfg = parsePrevHlRefConfig(inst.extendData);
       const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
       const rolling = cfg.rollingUnit === "bars" ? plural(cfg.lengths.rolling, "bar") : plural(cfg.lengths.rolling, cfg.rollingUnit);
+      const rollingAgg = cfg.aggs.rolling !== "extreme" ? ` (${cfg.aggs.rolling})` : "";
+      const dayAgg = cfg.aggs.day !== "extreme" ? ` (${cfg.aggs.day})` : "";
+      const weekAgg = cfg.aggs.week !== "extreme" ? ` (${cfg.aggs.week})` : "";
+      const anchorState = cfg.anchorTs === 0 ? " · anchor unset" : " · anchor set";
       out.push({
         id: inst.id,
         // Every boundary stays an operand even when its line is hidden: a
         // display toggle must never invalidate a saved rule.
         outputs: [...PREV_HL_OUTPUTS],
         timeframe: null, // chart-timeframe only (no MTF pin)
-        detail: `rolling ${rolling} · ${plural(cfg.lengths.day, "day")} · ${plural(cfg.lengths.week, "week")}`,
+        detail: `rolling ${rolling}${rollingAgg} · ${plural(cfg.lengths.day, "day")}${dayAgg} · ${plural(cfg.lengths.week, "week")}${weekAgg}${anchorState}`,
       });
       continue;
     }
