@@ -4168,19 +4168,20 @@ export default function ChartCore({
     if (!c) return;
     const resolved = timezone || browserTimezone();
     c.setTimezone(resolved);
-    if (!setIndicatorTimezone(resolved)) return; // zone unchanged → nothing to redo
-    // Re-point only on a genuine change AFTER mount: prevZoneRef starts unset,
-    // so the first run (establishing the cell's configured zone, which can
-    // differ from the shared module's browser-default starting value) never
-    // re-points, only a later, real zone change does.
+    // Re-point only on a genuine change of THIS cell's zone after mount:
+    // prevZoneRef starts unset, so the first run never re-points. Tracked per
+    // cell and before the shared-module check, because the module answers
+    // "unchanged" to every cell after the first one to see a new zone.
     const prevZone = prevZoneRef.current;
     prevZoneRef.current = resolved;
     const isRealChange = prevZone !== null && prevZone !== resolved;
+    const moduleChanged = setIndicatorTimezone(resolved);
+    if (!moduleChanged && !isRealChange) return; // zone unchanged → nothing to redo
     const candlePane = getIndicatorsByPane(c).get("candle_pane");
     for (const [id, ind] of candlePane ?? []) {
       const t = indTypeOf(ind);
       if (t !== "PREV_HL" && t !== "TIME_HIGHLIGHT") continue;
-      c.overrideIndicator({ name: id, extendData: { ...(ind.extendData as object) } });
+      if (moduleChanged) c.overrideIndicator({ name: id, extendData: { ...(ind.extendData as object) } });
       // PREV_HL buckets days and weeks in this zone; a linked alert's stored
       // config (alertInstanceOf's withChartTimezone stamp) goes stale the
       // moment the zone changes, the same staleness class as AVWAP's anchor (S1).
