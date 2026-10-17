@@ -34,24 +34,13 @@ def test_avwap_matches_the_chart(case):
 
 
 def test_bands_pin_up1_dn1_in_stdev_and_percentage_mode():
-    """vwap_from's bands are otherwise exercised only generically (every output
-    of every fixture case, above); pin them explicitly here. Case 1 is stdev
-    mode (the default); case 2 sets bandMode to percentage."""
+    """test_avwap_matches_the_chart above already pins up1/dn1 (every output of
+    every fixture case); this just names which cases cover the two band modes,
+    since the fixture's own extendData is the only thing distinguishing them."""
     stdev_case = FIXTURE["cases"][1]
     pct_case = FIXTURE["cases"][2]
     assert "bandMode" not in stdev_case["extendData"]
     assert pct_case["extendData"]["bandMode"] == "percentage"
-    for case in (stdev_case, pct_case):
-        cfg = SERIES_INDICATORS["AVWAP"].parse_config(case["calcParams"], case["extendData"])
-        for output in ("up1", "dn1"):
-            got = SERIES_INDICATORS["AVWAP"].series(cfg, output, CANDLES, 1.0)
-            want = case["values"][output]
-            assert len(got) == len(want)
-            for i, (g, w) in enumerate(zip(got, want)):
-                if w is None:
-                    assert g is None, (output, i)
-                else:
-                    assert g == pytest.approx(w, rel=1e-9, abs=1e-12), (output, i)
 
 
 def test_hlc3_line_equals_the_expr_function():
@@ -68,6 +57,13 @@ def test_display_keys_do_not_change_the_config():
 def test_unplaced_anchor_refuses():
     cfg = SERIES_INDICATORS["AVWAP"].parse_config([0], {})
     assert IndicatorKind.refusal_for("AVWAP", cfg, "HOUR") == "Place the AVWAP anchor on the chart first"
+
+
+def test_a_null_mult_parses_as_off():
+    # Ruling F3: a truthy `on` with mult: None (JSON null) is off, same as a
+    # boolean or any other non-finite mult.
+    cfg = SERIES_INDICATORS["AVWAP"].parse_config([1], {"bands": [{"on": True, "mult": None}]})
+    assert SERIES_INDICATORS["AVWAP"].outputs(cfg) == ("vwap",)
 
 
 def test_alert_spec():

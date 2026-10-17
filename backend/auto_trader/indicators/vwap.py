@@ -13,6 +13,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from auto_trader.core.alert_bars import candle_ms
 from auto_trader.core.models import Candle
 from auto_trader.indicators.core import price_of
 
@@ -116,7 +117,10 @@ def parse_avwap_config(calc_params: object, extend_data: object) -> VwapConfig:
         for i, (_, d_mult) in enumerate(DEFAULT_BANDS):
             b = raw[i] if i < len(raw) and isinstance(raw[i], dict) else {}
             m = _num(b.get("mult"))
-            # Ruling F3: a truthy `on` with a non-finite mult parses as off here, where the chart instead computes a NaN band.
+            # Ruling F3: a truthy `on` with a null, boolean or non-finite mult parses
+            # as off here, where vwapFrom's `bands[b].mult * stdev` (or `/ 100`) still
+            # coerces that mult to a number and draws a band from it; only reachable
+            # with a hand-written extendData payload, never from the settings modal.
             on = _js_truthy(b.get("on")) and m is not None
             parsed.append((True, float(m)) if on else (False, d_mult))
         bands = tuple(parsed)
@@ -135,7 +139,7 @@ def avwap_start(candles: Sequence[Candle], anchor_ms: int) -> int:
     """First bar whose open time is at or after the anchor; len() if none
     (core.avwap_series' rule)."""
     for i, c in enumerate(candles):
-        if int(c.time.timestamp() * 1000) >= anchor_ms:
+        if candle_ms(c) >= anchor_ms:
             return i
     return len(candles)
 

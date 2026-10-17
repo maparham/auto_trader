@@ -62,6 +62,11 @@ describe("AVWAP", () => {
     // Not an array: the defaults (band 1 on).
     expect(avwapOutputs(parseAvwapRefConfig([1], { bands: "x" }))).toEqual(["vwap", "up1", "dn1"]);
   });
+  it("treats a null mult as off, same as Python's _num (Ruling F3)", () => {
+    const cfg = parseAvwapRefConfig([1], { bands: [{ on: true, mult: null }] });
+    expect(cfg.bands[0]).toEqual({ on: false, mult: 1 });
+    expect(avwapOutputs(cfg)).toEqual(["vwap"]);
+  });
   it("falls back to the template defaults", () => {
     expect(parseAvwapRefConfig(undefined, undefined)).toEqual({
       source: "hlc3", bandMode: "stdev",
