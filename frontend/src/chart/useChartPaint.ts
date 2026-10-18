@@ -64,6 +64,7 @@ import { type ExitCluster } from "../lib/tradeMarkers";
 import type { CurveLabelsHandle } from "../CurveLabels";
 import type { ChartHandle } from "./chartHandle";
 import { priceRowY, tradeSpineX } from "./chartGeometry";
+import type { BaTag, PriceTag } from "./AxisPriceTags";
 
 // Module-const from ChartCore (.ba-tag height; stacks bid/ask clear of the price pill).
 const BA_TAG_H = 18;
@@ -101,15 +102,6 @@ type TradePill = {
   expiresAt: number | null; // resting order good-till-date epoch ms; null = GTC/position
   breakevenField?: "stop" | "takeProfit";
 };
-
-type PriceTag = {
-  y: number;
-  price: number;
-  countdown: string | null;
-  w: number;
-  dir: "up" | "down";
-} | null;
-type BaTag = { y: number; price: number; w: number } | null;
 
 export interface ChartPaintDeps {
   // State setters the redraw loop writes.

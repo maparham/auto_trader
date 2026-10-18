@@ -74,6 +74,7 @@ import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAgg
 import BacktestTradeDashes, { type BacktestTradeDashesHandle } from "./BacktestTradeDashes";
 import { requestAlertEdit } from "./lib/alertEdit";
 import {
+  Signal,
   alertEditRequest,
   requestConfirm,
   indicatorSettingsRequest,
@@ -220,7 +221,6 @@ import { hitSlopeHandle, type SlopeGrab } from "./lib/slopeHandles";
 import { snapSlopeEndpoint } from "./lib/slopeMagnet";
 import { effectiveMagnetMode } from "./lib/magnet";
 import { loadSettings, type BidAsk, type BidAskStyle, type Clock, type CrosshairStyle, type DateFormat, type PriceSide, type Theme } from "./theme";
-import { hexToRgba } from "./lib/lineStyle";
 import { makeFormatDate, makeMaskedFormatDate } from "./lib/timeFormat";
 import { makeReplayFormatters } from "./lib/replayFormat";
 import { cellTradeBook } from "./lib/replayLedger";
@@ -256,6 +256,8 @@ import { useIndicatorCommands } from "./chart/useIndicatorCommands";
 import { useLineDrag, type TradeLinePx } from "./chart/useLineDrag";
 import { usePointerCrosshair } from "./chart/usePointerCrosshair";
 import AlertTags, { type IndicatorBellTag } from "./chart/AlertTags";
+import AxisPriceTags, { WithPriceTag, type BaTag, type PriceTag } from "./chart/AxisPriceTags";
+import { signalSetter } from "./lib/signalHooks";
 import TradePills from "./chart/TradePills";
 
 // klinecharts' own initial bar spacing (its DEFAULT_BAR_SPACE, not exported) — used to
@@ -1172,19 +1174,13 @@ export default function ChartCore({
   // Width of the price-axis column, measured by the redraw loop — the trade
   // pills dock right-edge flush against the axis border.
   const [axisW, setAxisW] = useState(0);
-  const [priceTag, setPriceTag] = useState<{
-    y: number;
-    price: number;
-    countdown: string | null;
-    w: number; // price-axis column width, so the pill fits inside it
-    // Last candle's body direction, so the pill matches the dotted last-price
-    // line's up/down color (TradingView keeps the line and its label one color).
-    dir: "up" | "down";
-  } | null>(null);
-  // Live bid & ask axis pills (TradingView's bid/ask price labels). Each is null
-  // when the bid/ask display is off, the feed is down, or the side is unknown.
-  const [bidTag, setBidTag] = useState<{ y: number; price: number; w: number } | null>(null);
-  const [askTag, setAskTag] = useState<{ y: number; price: number; w: number } | null>(null);
+  // Per-frame axis pills live in Signals, not state: see chart/AxisPriceTags.
+  const [priceTagSig] = useState(() => new Signal<PriceTag>(null));
+  const [bidTagSig] = useState(() => new Signal<BaTag>(null));
+  const [askTagSig] = useState(() => new Signal<BaTag>(null));
+  const [setPriceTag] = useState(() => signalSetter(priceTagSig));
+  const [setBidTag] = useState(() => signalSetter(bidTagSig));
+  const [setAskTag] = useState(() => signalSetter(askTagSig));
   const [indicatorBells, setIndicatorBells] = useState<IndicatorBellTag[]>([]);
   const [alertTags, setAlertTags] = useState<
     Array<{
@@ -5665,14 +5661,18 @@ export default function ChartCore({
           live edge to return to, `goLive` early-returns on it, and the DetachedPill
           already owns the one honest way back. Two pills, one of them dead, is
           worse than one. */}
-      <GoLivePill
-        getChart={getChart}
-        detached={detached != null}
-        pos={goLivePillPos}
-        priceY={priceTag?.y ?? null}
-        containerRef={containerRef}
-        onGoLive={goLive}
-      />
+      <WithPriceTag sig={priceTagSig}>
+        {(priceTag) => (
+          <GoLivePill
+            getChart={getChart}
+            detached={detached != null}
+            pos={goLivePillPos}
+            priceY={priceTag?.y ?? null}
+            containerRef={containerRef}
+            onGoLive={goLive}
+          />
+        )}
+      </WithPriceTag>
       <HistoryJumpPill cellId={cellId} />
       {/* Data-unavailable banner: no candles after a grace period (broker maintenance,
           auth failure, offline, or an unknown epic). The headline names the cause
@@ -6045,44 +6045,15 @@ export default function ChartCore({
         />
       )}
 
-      {priceTag && (
-        <div
-          className={`price-tag ${status === "live" && !streamStale ? `live ${priceTag.dir}` : "stale"}`}
-          style={{ top: priceTag.y, width: priceTag.w }}
-        >
-          <span className="pt-price">
-            {fmtPrice(lastPrice ?? priceTag.price, precision)}
-          </span>
-          {priceTag.countdown && <span className="pt-cd">{priceTag.countdown}</span>}
-        </div>
-      )}
-
-      {/* Live ask (buy) and bid (sell) axis labels, TradingView two-tone: a solid
-          colored side tag + the price on a light tint of the same color. Colors
-          come from the global bid/ask style (labels stay opaque; opacity is for
-          the lines only). */}
-      {askTag && (
-        <div className="ba-tag" style={{ top: askTag.y }}>
-          <span className="ba-side" style={{ background: bidAskStyle.askColor }}>Ask</span>
-          <span
-            className="ba-price"
-            style={{ width: askTag.w, background: hexToRgba(bidAskStyle.askColor, 0.16), color: bidAskStyle.askColor }}
-          >
-            {fmtPrice(askTag.price, precision)}
-          </span>
-        </div>
-      )}
-      {bidTag && (
-        <div className="ba-tag" style={{ top: bidTag.y }}>
-          <span className="ba-side" style={{ background: bidAskStyle.bidColor }}>Bid</span>
-          <span
-            className="ba-price"
-            style={{ width: bidTag.w, background: hexToRgba(bidAskStyle.bidColor, 0.16), color: bidAskStyle.bidColor }}
-          >
-            {fmtPrice(bidTag.price, precision)}
-          </span>
-        </div>
-      )}
+      <AxisPriceTags
+        priceTag={priceTagSig}
+        bidTag={bidTagSig}
+        askTag={askTagSig}
+        live={status === "live" && !streamStale}
+        lastPrice={lastPrice}
+        precision={precision}
+        bidAskStyle={bidAskStyle}
+      />
 
       {/* Candle-pane overlay clip: alert tags/pills + trade pills anchor to a price
           via the candle pane's absolute y, which extrapolates past the pane bottom
@@ -6099,13 +6070,17 @@ export default function ChartCore({
         // explicit 100% avoids a pre-first-paint window where it collapses to 0.
         style={{ position: "absolute", top: 0, left: 0, right: 0, height: "100%", overflow: "hidden", pointerEvents: "none" }}
       >
-      <AlertTags
-        tags={alertTags}
-        bells={indicatorBells}
-        onBellClick={(id) => requestAlertEdit(id)}
-        priceTag={priceTag}
-        precision={precision}
-      />
+      <WithPriceTag sig={priceTagSig}>
+        {(priceTag) => (
+          <AlertTags
+            tags={alertTags}
+            bells={indicatorBells}
+            onBellClick={(id) => requestAlertEdit(id)}
+            priceTag={priceTag}
+            precision={precision}
+          />
+        )}
+      </WithPriceTag>
 
       {/* TV-style descriptive pill on the line itself — shown while the line is
           hovered/selected (or the pill itself is hovered). Follows the cursor's x
