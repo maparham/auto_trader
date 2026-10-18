@@ -10,6 +10,7 @@ import { type KLineData } from "klinecharts";
 import {
   fetchRecentWithStatus,
   fetchRange,
+  fetchRangeStrict,
   openLive,
   RESOLUTION_SECONDS,
   type Instrument,
@@ -698,8 +699,13 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           concurrency: 6,
           isStale: () => cancelled || !handle.chartRef.current,
           getData: () => merged,
+          // fetchRangeStrict, not fetchRange: a failed window must THROW so the
+          // cover stops at it. fetchRange flattens a 5xx/429 to an empty page,
+          // which reads as a closed market, and the bars beyond it got glued on
+          // (a 1D view centred in March, switched to 3m, showed March bars
+          // spliced straight onto October).
           fetchOlder: (fromSec, toSec) =>
-            fetchRange(symbol.epic, period.resolution, fromSec, toSec, priceSide, brokerId),
+            fetchRangeStrict(symbol.epic, period.resolution, fromSec, toSec, priceSide, brokerId),
           applyData: (m) => {
             merged = m;
           },
