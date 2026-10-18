@@ -24,3 +24,13 @@ export function stampChartSeries(chart: Chart, stamp: SeriesStamp | null): void 
 export function chartSeriesStamp(chart: Chart): SeriesStamp | undefined {
   return stamps.get(chart);
 }
+
+/** True when the chart's painted bars are this epic+timeframe. False between a
+ * switch's setSymbol/setPeriod and its first paint, when getDataList() still
+ * holds the previous series: a scroll-back page asked for in that window would
+ * prepend the new timeframe's bars onto the old one, or (landing after the
+ * paint) splice them onto the new bars from a cursor that was never theirs. */
+export function chartPaints(chart: Chart, epic: string, resolution: string): boolean {
+  const s = stamps.get(chart);
+  return !!s && s.epic === epic && s.resolution === resolution;
+}

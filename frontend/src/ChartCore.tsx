@@ -54,6 +54,7 @@ import { capturePattern, MIN_GHOST_BARS } from "./lib/patternGhost";
 import { useTrendlinePins } from "./chart/useTrendlinePins";
 import { emphasizeTrendlines, useTrendlineMenu } from "./chart/useTrendlineMenu";
 import { useTrendlineDebug } from "./chart/useTrendlineDebug";
+import { chartPaints } from "./chart/seriesStamp";
 import { hitTrendline, TL_LINE_HIT, TL_LINE_HIT_TOUCH } from "./lib/indicators/trendlineMarks";
 import { hitPaintedLine } from "./lib/indicators/paintedLines";
 import { registerTrendlinesChart } from "./lib/indicators/trendlines";
@@ -3551,6 +3552,16 @@ export default function ChartCore({
         const resolution = resRef.current;
         const broker = brokerIdRef.current;
         const side = priceSideRef.current;
+        // Mid-switch the refs already name the new series while the old one is
+        // still painted, and cursorSecRef is still the old series' cursor. A
+        // page asked for now prepended (e.g.) 4H bars from the 1D cursor, and
+        // one landing after the 4H paint spliced 2023 onto 2026. Ask again once
+        // the new series paints.
+        const chartNow = chartRef.current;
+        if (!chartNow || !chartPaints(chartNow, epic, resolution)) {
+          done([], true);
+          return;
+        }
         const resSec = RESOLUTION_SECONDS[resolution] ?? 60;
         // Cap the per-page span. For high/derived timeframes PAGE_BARS*resSec is
         // enormous (a 1Y page = 500 years), and the backend folds that from DAY
@@ -3583,7 +3594,11 @@ export default function ChartCore({
             epic !== epicRef.current ||
             resolution !== resRef.current ||
             broker !== brokerIdRef.current ||
-            side !== priceSideRef.current,
+            side !== priceSideRef.current ||
+            // The bars were replaced while the page was out (a reload or a
+            // switch away and back): `timestamp` is no longer their left edge,
+            // so this page would land as a hole-spanning prepend.
+            chartRef.current.getDataList()[0]?.timestamp !== timestamp,
           // fetchRangeStrict (not fetchRange): a non-2xx (503/504 from an open
           // broker breaker or a slow source) THROWS and is treated as a transient
           // "retry on next scroll", instead of being flattened to an empty page
