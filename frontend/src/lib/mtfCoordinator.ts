@@ -48,7 +48,6 @@ import {
   type AutoFibConfig,
 } from "./indicators/autoFibOutputs";
 import {
-  computeTrendlines,
   setTrendlinesHtfBars,
   type TrendlinesExtend,
 } from "./indicators/trendlines";
@@ -86,6 +85,7 @@ import {
 } from "./indicators";
 import { overrideExtend } from "./overrideExtend";
 import { clearIndicatorBusy, markIndicatorBusy } from "./indicatorBusy";
+import { computeTrendlinesAsync } from "./indicators/trendlinesOffload";
 
 // Bars per HTF page. The backend caps a single /api/candles fetch (bars le=1000),
 // so a wide asked span needs several windows — kept under the cap.
@@ -673,6 +673,34 @@ async function fetchHtfBars(
   };
 }
 
+// Per (chart, pane, instance): bumped when applyHtfPin starts a build, so an
+// async build (Trendlines on its worker) that a newer one overtook is dropped,
+// and a forming-bar recompute can tell an apply began while it was out.
+const buildGens = new WeakMap<Chart, Map<string, number>>();
+function buildGenOf(chart: Chart, paneId: string, name: string): number {
+  return buildGens.get(chart)?.get(`${paneId}|${name}`) ?? 0;
+}
+function bumpBuildGen(chart: Chart, paneId: string, name: string): number {
+  let m = buildGens.get(chart);
+  if (!m) buildGens.set(chart, (m = new Map()));
+  const g = (m.get(`${paneId}|${name}`) ?? 0) + 1;
+  m.set(`${paneId}|${name}`, g);
+  return g;
+}
+// klinecharts deep-copies extendData on override, so "the same closed bars"
+// is judged by span, not identity.
+function sameBarSpan(a: KLineData[] | undefined, b: KLineData[]): boolean {
+  return (
+    !!a &&
+    a.length === b.length &&
+    a[0]?.timestamp === b[0]?.timestamp &&
+    a[a.length - 1]?.timestamp === b[b.length - 1]?.timestamp
+  );
+}
+// Forming-bar Trendlines recomputes out on the worker, so a slow one is not
+// stacked under the next tick.
+const formingTlInFlight = new WeakMap<Chart, Set<string>>();
+
 /** What one indicator type plugs into applyHtfPin. */
 interface HtfPinSpec<E> {
   /** The extendData to write: the live one plus this type's own config fields. */
@@ -680,8 +708,14 @@ interface HtfPinSpec<E> {
   calcParams: unknown[];
   /** HTF bars of history needed before the view's left edge. */
   warmup: (ext: E) => number;
-  /** The stash on the bars the pin computes on (forming bar folded or not). */
-  build: (bars: KLineData[], timeframe: string, htfMs: number, ext: E) => object | undefined;
+  /** The stash on the bars the pin computes on (forming bar folded or not).
+   * May resolve later (Trendlines computes on a worker). */
+  build: (
+    bars: KLineData[],
+    timeframe: string,
+    htfMs: number,
+    ext: E,
+  ) => object | undefined | Promise<object | undefined>;
   /** The bars to compute on when no forming bar is folded (default: all fetched). */
   closedBars?: (htf: KLineData[], htfMs: number, timeframe: string) => KLineData[];
   /** Runs after every write of the stash or of the cleared pin (companion panes). */
@@ -757,10 +791,15 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
       ? null
       : prepFormingBars(chart, htf, htfMs, timeframe);
   const bars = fp ? fp.bars : (spec.closedBars?.(htf, htfMs, timeframe) ?? htf);
+  // A build that resolves later must not land over a newer one: last STARTED
+  // wins, the same order an inline build gave.
+  const gen = bumpBuildGen(chart, paneId, name);
+  const built = await spec.build(bars, timeframe, htfMs, ext);
+  if (buildGenOf(chart, paneId, name) !== gen) return;
   ext.mtf = {
     chartMs: chartIntervalOf(chart),
     epic,
-    ...spec.build(bars, timeframe, htfMs, ext),
+    ...built,
     ...(fp?.extra ?? (waitClose ? {} : { waitClose: false })),
     // A completed walk is final for its ask: stamp how far back it ASKED so
     // the refresh pass can call this covered even when the bars stop short
@@ -1117,22 +1156,26 @@ function applyTrendlinesPin(
         ? htf.filter((b) => htfBarEndMs(b.timestamp, htfMs, tf) <= newestMs)
         : htf;
     },
-    build: (bars, tf, htfMs) => {
-      setTrendlinesHtfBars(chart, name, bars);
-      return buildTrendlinesMtf(bars, config, tf, htfMs);
+    build: async (bars, tf, htfMs) => {
+      const gen = buildGenOf(chart, paneId, name);
+      const mtf = await buildTrendlinesMtf(bars, config, tf, htfMs);
+      // Only for the build that will be written, so the bars and the stash
+      // they index always match.
+      if (buildGenOf(chart, paneId, name) === gen) setTrendlinesHtfBars(chart, name, bars);
+      return mtf;
     },
   });
 }
 
-function buildTrendlinesMtf(
+async function buildTrendlinesMtf(
   bars: KLineData[],
   config: TrendlinesConfig,
   timeframe: string,
   htfMs: number,
-): TrendlinesExtend["mtf"] {
+): Promise<TrendlinesExtend["mtf"]> {
   // The exact chart-TF detector on the HTF bars: pivots, touches, breaks and
   // the confirmation lag are all baked into the stashed series and lines.
-  const { points, lines, atr, pivots } = computeTrendlines(bars, config);
+  const { points, lines, atr, pivots } = await computeTrendlinesAsync(bars, config);
   return {
     timeframe,
     htfStarts: bars.map((b) => b.timestamp),
@@ -1360,6 +1403,9 @@ export function setMtfWaitClose(
     extendData?: { mtf?: MtfSeriesBase };
   } | null;
   if (!ind) return;
+  // An async build still out (Trendlines on its worker) carries the old mode
+  // and would land over this; the caller's reapply rebuilds in the new one.
+  bumpBuildGen(chart, paneId, name);
   const ext = { ...(ind.extendData ?? {}) } as { mtf?: MtfSeriesBase };
   const mtf = { ...(ext.mtf ?? { timeframe: null }) };
   if (waitClose) delete mtf.waitClose;
@@ -1460,6 +1506,39 @@ export function refreshFormingBar(chart: Chart): void {
       const ext = { ...(ind.extendData ?? {}) } as MaExtend &
         PivotBandsExtend &
         SlopeExtend;
+      const commit = (built: object | null | undefined) => {
+        if (!built) return;
+        ext.mtf = {
+          chartMs: chartIntervalOf(chart),
+          epic: mtf.epic, // a fold never changes whose bars these are
+          ...built,
+          ...extra,
+        } as typeof ext.mtf;
+        overrideExtend(chart, paneId, id, ext as unknown as Record<string, unknown>, ind.calcParams ?? []);
+        // The companions mirror the parent's extendData, forming bar included.
+        if (type === "PIVOT_BANDS") syncPivotBarsSinceCompanion(chart, id);
+        if (type === "SLOPE") syncAccelCompanion(chart, id);
+      };
+      if (type === "TRENDLINES") {
+        // Out on the worker: dropped when an apply started meanwhile or the
+        // stash moved on (both carry newer bars than this fold).
+        let busy = formingTlInFlight.get(chart);
+        if (!busy) formingTlInFlight.set(chart, (busy = new Set()));
+        const key = `${paneId}|${id}`;
+        if (busy.has(key)) return;
+        busy.add(key);
+        const gen = buildGenOf(chart, paneId, id);
+        void buildTrendlinesMtf(bars, parseTrendlinesConfig(ind.calcParams, ind.extendData), timeframe, htfMs)
+          .then((built) => {
+            const live = getIndicator(chart, paneId, id) as { extendData?: { mtf?: MtfSeriesBase } } | null;
+            if (buildGenOf(chart, paneId, id) !== gen || !sameBarSpan(live?.extendData?.mtf?.htfClosed, closed)) return;
+            setTrendlinesHtfBars(chart, id, bars);
+            commit(built);
+          })
+          .catch((e) => console.error("Trendlines forming refresh failed", e))
+          .finally(() => busy.delete(key));
+        return;
+      }
       let built: object | null | undefined = null;
       if (type === "EMA" || type === "MA") {
         built = buildMaMtf(
@@ -1494,14 +1573,6 @@ export function refreshFormingBar(chart: Chart): void {
         built = buildSrMtf(bars, parseSrConfig(ind.calcParams), timeframe, htfMs);
       } else if (type === "AUTO_FIB") {
         built = buildAutoFibMtf(bars, parseAutoFibConfig(ind.calcParams), timeframe, htfMs);
-      } else if (type === "TRENDLINES") {
-        setTrendlinesHtfBars(chart, id, bars);
-        built = buildTrendlinesMtf(
-          bars,
-          parseTrendlinesConfig(ind.calcParams, ind.extendData),
-          timeframe,
-          htfMs,
-        );
       } else if (type === "FVG") {
         built = buildFvgMtf(bars, parseFvgConfig(ind.calcParams), timeframe, htfMs);
       } else if (type === "SLOPE") {
@@ -1520,17 +1591,7 @@ export function refreshFormingBar(chart: Chart): void {
           htfMs,
         );
       }
-      if (!built) return;
-      ext.mtf = {
-        chartMs: chartIntervalOf(chart),
-        epic: mtf.epic, // a fold never changes whose bars these are
-        ...built,
-        ...extra,
-      } as typeof ext.mtf;
-      overrideExtend(chart, paneId, id, ext as unknown as Record<string, unknown>, ind.calcParams ?? []);
-      // The companions mirror the parent's extendData, forming bar included.
-      if (type === "PIVOT_BANDS") syncPivotBarsSinceCompanion(chart, id);
-      if (type === "SLOPE") syncAccelCompanion(chart, id);
+      commit(built);
     });
   });
 }

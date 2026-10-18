@@ -50,16 +50,22 @@ if (emptyImg != null)
 // (e.g. "Mon, Jun 29 22:00") since the next open can be up to a week out and the
 // weekday alone can't tell this week from next. Falls back to the raw string if
 // it doesn't parse.
+// toLocaleString with options builds a new Intl formatter per call (~1 ms), and
+// this runs for every closed chip on every TabBar render (all of them on a
+// weekend), which showed up as frozen frames mid-zoom.
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+const dateFmt = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" });
+
 function fmtNextOpen(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const time = d.toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const time = timeFmt.format(d);
   const startOfDay = (x: Date) =>
     new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((startOfDay(d) - startOfDay(new Date())) / 86_400_000);
   if (days <= 0) return `today ${time}`;
   if (days === 1) return `tomorrow ${time}`;
-  const date = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const date = dateFmt.format(d);
   return `${date} ${time}`;
 }
 

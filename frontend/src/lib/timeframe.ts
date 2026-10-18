@@ -104,6 +104,27 @@ export function tfSecondsOf(res: string): number | null {
 
 const DAY_MS = 86_400_000;
 
+// barEndMs runs once per bar in the MTF alignment loops (8k+ bars on a 1H pin
+// under a 4H chart), and re-parsing the timeframe string each time was most of
+// a 150-300 ms freeze per history page. The key space is tiny.
+const BAR_SHAPE_MEMO = new Map<string, { secs: number; t: Tf; dayReset: boolean } | null>();
+function barShapeOf(res: string): { secs: number; t: Tf; dayReset: boolean } | null {
+  const hit = BAR_SHAPE_MEMO.get(res);
+  if (hit !== undefined) return hit;
+  let out: { secs: number; t: Tf; dayReset: boolean } | null = null;
+  const secs = tfSecondsOf(res);
+  if (secs != null) {
+    try {
+      const t = parseTf(res);
+      out = { secs, t, dayReset: (t.unit === "MINUTE" || t.unit === "HOUR") && !isNativeTf(res) };
+    } catch {
+      out = null;
+    }
+  }
+  if (BAR_SHAPE_MEMO.size < 1024) BAR_SHAPE_MEMO.set(res, out);
+  return out;
+}
+
 /** When a bar opening at `openMs` closes, for the bars whose width is NOT the
  *  nominal one: non-native minute/hour timeframes reset at 00:00 UTC, so the
  *  day's last bar ends at midnight (5H: the 20:00 bar is 4h). Month groups are
@@ -112,16 +133,11 @@ const DAY_MS = 86_400_000;
  *  backend's candle_aggregate.bucket_end. Everything else returns
  *  `openMs + nominal`. null for an invalid timeframe. */
 export function barEndMs(res: string, openMs: number): number | null {
-  const secs = tfSecondsOf(res);
-  if (secs == null) return null;
+  const shape = barShapeOf(res);
+  if (!shape) return null;
+  const { secs, t, dayReset } = shape;
   const end = openMs + secs * 1000;
-  let t: Tf;
-  try {
-    t = parseTf(res);
-  } catch {
-    return null;
-  }
-  if ((t.unit === "MINUTE" || t.unit === "HOUR") && !isNativeTf(res)) {
+  if (dayReset) {
     const nextMidnight = openMs - (((openMs % DAY_MS) + DAY_MS) % DAY_MS) + DAY_MS;
     return Math.min(end, nextMidnight);
   }
