@@ -3735,9 +3735,9 @@ function drawTrendlines(
         },
         // The reference is the newest CLOSED bar of the line's own series.
         // Unpinned, the chart's newest bar is forming, so it is the one before
-        // it. Under a pin with "Wait for timeframe closes" on, lastIdx is
-        // already closed; with it off, lastIdx can be the folded forming HTF
-        // bar (formingIdx, always the stash's last entry), so step back one.
+        // it. Under a pin lastIdx is already closed: the coordinator computes
+        // Trendlines on closed HTF bars only, Wait on or off. The formingIdx
+        // step-back only guards a stash that carries a folded forming bar.
         alertLine: () =>
           alertLineOf(
             line,

@@ -687,19 +687,6 @@ function bumpBuildGen(chart: Chart, paneId: string, name: string): number {
   m.set(`${paneId}|${name}`, g);
   return g;
 }
-// klinecharts deep-copies extendData on override, so "the same closed bars"
-// is judged by span, not identity.
-function sameBarSpan(a: KLineData[] | undefined, b: KLineData[]): boolean {
-  return (
-    !!a &&
-    a.length === b.length &&
-    a[0]?.timestamp === b[0]?.timestamp &&
-    a[a.length - 1]?.timestamp === b[b.length - 1]?.timestamp
-  );
-}
-// Forming-bar Trendlines recomputes out on the worker, so a slow one is not
-// stacked under the next tick.
-const formingTlInFlight = new WeakMap<Chart, Set<string>>();
 
 /** What one indicator type plugs into applyHtfPin. */
 interface HtfPinSpec<E> {
@@ -718,6 +705,10 @@ interface HtfPinSpec<E> {
   ) => object | undefined | Promise<object | undefined>;
   /** The bars to compute on when no forming bar is folded (default: all fetched). */
   closedBars?: (htf: KLineData[], htfMs: number, timeframe: string) => KLineData[];
+  /** Never fold the forming bar, even with "Wait for timeframe closes" off:
+   * compute on closedBars and only keep the waitClose flag, which the draw
+   * path reads to extend the lines to the newest chart candle. */
+  noFold?: boolean;
   /** Runs after every write of the stash or of the cleared pin (companion panes). */
   after?: () => void;
 }
@@ -787,7 +778,7 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
   // (deep-history jump) has no bucket adjoining the chart's newest candles to
   // fold. The pin's waitClose choice must survive the detached shape anyway.
   const fp =
-    waitClose || !dockedAt(chart, askToMs, htfMs)
+    waitClose || spec.noFold || !dockedAt(chart, askToMs, htfMs)
       ? null
       : prepFormingBars(chart, htf, htfMs, timeframe);
   const bars = fp ? fp.bars : (spec.closedBars?.(htf, htfMs, timeframe) ?? htf);
@@ -1145,10 +1136,13 @@ function applyTrendlinesPin(
     // added to the interface reaches the pane with no line to update here.
     calcParams: Object.values(config),
     warmup: () => tlWarmup(config),
-    // CLOSED HTF BARS ONLY unless the forming bucket is folded in. The forming
-    // bar is never usable to a waitClose operand, so letting it seed or break a
-    // line would put geometry on the chart that no rule can read, and repaint
-    // it when the bar finishes.
+    // CLOSED HTF BARS ONLY, whatever "Wait for timeframe closes" says. The
+    // forming bar would confirm pivots and shift the ATR, swapping lines in and
+    // out until the bar closes, and no rule can read that geometry (backtests
+    // and the backend always wait). With Wait off, the pin keeps
+    // waitClose: false only so the draw runs the closed-bar lines to the
+    // newest chart candle (trendlineDrawEdge's forceToLastBar).
+    noFold: true,
     closedBars: (htf, htfMs, tf) => {
       const data = chart.getDataList();
       const newestMs = data.length ? data[data.length - 1].timestamp : 0;
@@ -1459,6 +1453,8 @@ export function refreshFormingBar(chart: Chart): void {
       if (ind.visible === false) return;
       const mtf = ind.extendData?.mtf as MtfSeriesBase | undefined;
       if (!mtf?.timeframe || mtf.waitClose !== false) return;
+      // No htfClosed = nothing to re-fold. Trendlines never stashes one (it
+      // computes on closed bars only, see applyTrendlinesPin's noFold).
       const { htfClosed: closed, htfSeed: seed, htfMs, timeframe } = mtf;
       if (!closed || !timeframe || !(htfMs && htfMs > 0)) return;
       // A DETACHED stash (deep-history view, interval not reaching the live
@@ -1519,26 +1515,6 @@ export function refreshFormingBar(chart: Chart): void {
         if (type === "PIVOT_BANDS") syncPivotBarsSinceCompanion(chart, id);
         if (type === "SLOPE") syncAccelCompanion(chart, id);
       };
-      if (type === "TRENDLINES") {
-        // Out on the worker: dropped when an apply started meanwhile or the
-        // stash moved on (both carry newer bars than this fold).
-        let busy = formingTlInFlight.get(chart);
-        if (!busy) formingTlInFlight.set(chart, (busy = new Set()));
-        const key = `${paneId}|${id}`;
-        if (busy.has(key)) return;
-        busy.add(key);
-        const gen = buildGenOf(chart, paneId, id);
-        void buildTrendlinesMtf(bars, parseTrendlinesConfig(ind.calcParams, ind.extendData), timeframe, htfMs)
-          .then((built) => {
-            const live = getIndicator(chart, paneId, id) as { extendData?: { mtf?: MtfSeriesBase } } | null;
-            if (buildGenOf(chart, paneId, id) !== gen || !sameBarSpan(live?.extendData?.mtf?.htfClosed, closed)) return;
-            setTrendlinesHtfBars(chart, id, bars);
-            commit(built);
-          })
-          .catch((e) => console.error("Trendlines forming refresh failed", e))
-          .finally(() => busy.delete(key));
-        return;
-      }
       let built: object | null | undefined = null;
       if (type === "EMA" || type === "MA") {
         built = buildMaMtf(

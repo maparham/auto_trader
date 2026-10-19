@@ -184,6 +184,7 @@ import {
   type PrevHlKind,
   type LineDraft,
   TimeframePinRows,
+  TRENDLINES_WAIT_CLOSE_TIP,
 } from "./indicatorSettings/shared";
 
 // The Timeframe row's tip per pinnable type (Pivot Bands shows none).
@@ -2854,6 +2855,7 @@ function IndicatorSettingsForm({
                   timeframe={timeframe}
                   options={timeframeOptions}
                   tip={TIMEFRAME_TIPS[type]}
+                  waitTip={type === "TRENDLINES" ? TRENDLINES_WAIT_CLOSE_TIP : undefined}
                   onTimeframe={(tf) => {
                     setTimeframe(tf);
                     applyPin({ timeframe: tf });

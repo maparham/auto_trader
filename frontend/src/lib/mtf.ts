@@ -36,7 +36,10 @@ export interface MtfSeriesBase {
   /** TV's "Wait for timeframe closes". Absent/true = today's closed-bar-only
    * behavior. False = the coordinator appends ONE folded still-forming HTF bar
    * to the computed series and flags it via formingIdx; alignment admits that
-   * entry from its open (see alignHtfToChart). Persisted alongside timeframe —
+   * entry from its open (see alignHtfToChart). Trendlines is the exception:
+   * it never folds (the forming bar would swap lines until it closes), so for
+   * it false only runs the closed-bar lines to the newest chart candle.
+   * Persisted alongside timeframe —
    * the only mtf fields persistence keeps. */
   waitClose?: boolean;
   /** Index (into htfStarts/the series) of the appended forming bar, when one

@@ -187,6 +187,15 @@ const WAIT_CLOSE_TIP = [
   "Live rules read these values too. Backtests always wait for closes.",
 ];
 
+// Trendlines never folds the forming bar into its lines (it would confirm
+// pivots and swap lines until the bar closes); the box only moves the end.
+export const TRENDLINES_WAIT_CLOSE_TIP = [
+  "Lines always come from closed higher-timeframe bars.",
+  "Checked: lines end at the last closed higher-timeframe bar.",
+  "Unchecked: the same lines run on to the newest chart bar.",
+  "No effect when lines already extend right.",
+];
+
 // The higher-timeframe pin: a Timeframe select plus its "Wait for timeframe
 // closes" box, shared by every type that can be pinned. `rowClass` keeps each
 // caller's own row layout (MA's is a plain row).
@@ -197,6 +206,7 @@ export function TimeframePinRows({
   waitClose,
   onWaitClose,
   tip,
+  waitTip = WAIT_CLOSE_TIP,
   rowClass = "ind-row ind-row-cols",
 }: {
   timeframe: string;
@@ -205,6 +215,7 @@ export function TimeframePinRows({
   waitClose: boolean;
   onWaitClose: (next: boolean) => void;
   tip?: string | string[];
+  waitTip?: string | string[];
   rowClass?: string;
 }) {
   return (
@@ -236,7 +247,7 @@ export function TimeframePinRows({
           />
           <span>Wait for timeframe closes</span>
         </label>
-        <InfoTip title="Wait for timeframe closes" text={WAIT_CLOSE_TIP} />
+        <InfoTip title="Wait for timeframe closes" text={waitTip} />
       </span>
     </>
   );

@@ -659,26 +659,38 @@ describe("forming-bar mode (waitClose: false)", () => {
     expect(mtf.waitClose).toBeUndefined();
   });
 
-  it("applyTrendlinesTimeframe appends the forming bar past the closed cut", async () => {
+  it("applyTrendlinesTimeframe computes on closed bars only, keeping waitClose for the draw edge", async () => {
     fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
       Promise.resolve(alignedPage(fromSec as number, toSec as number)),
     );
-    const { chart, overrides } = livelyChart(pinned(false));
+    const { chart, overrides } = livelyChart({ ...pinned(false), indType: "TRENDLINES" });
     await applyTrendlinesTimeframe(
       chart, "EPIC", "tl1", "candle_pane",
       { ...TRENDLINES_DEFAULTS }, "MINUTE_15",
     );
     const mtf = overrides.at(-1)!.patch.extendData?.mtf as {
+      waitClose?: boolean;
       formingIdx?: number;
+      htfClosed?: KLineData[];
       htfStarts: number[];
       htfPoints: unknown[];
     };
     const newest = chart.getDataList().at(-1)!.timestamp;
-    // Last entry IS the forming bucket (still open at the newest chart bar)…
-    expect(mtf.formingIdx).toBe(mtf.htfStarts.length - 1);
-    expect(mtf.htfStarts.at(-1)! + HTF_MS).toBeGreaterThan(newest);
-    // …and the operand rows cover it.
+    // The forming bar would confirm pivots and move the ATR, so the lines must
+    // not depend on it: every entry is a CLOSED bucket…
+    for (const t of mtf.htfStarts) expect(t + HTF_MS).toBeLessThanOrEqual(newest);
+    expect(mtf.formingIdx).toBeUndefined();
+    expect(mtf.htfClosed).toBeUndefined();
     expect(mtf.htfPoints).toHaveLength(mtf.htfStarts.length);
+    // …while the flag survives, so the lines still draw to the newest candle.
+    expect(mtf.waitClose).toBe(false);
+
+    // A live tick has nothing to re-fold.
+    const n = overrides.length;
+    fetchRangeStrict.mockClear();
+    refreshFormingBar(chart);
+    expect(overrides).toHaveLength(n);
+    expect(fetchRangeStrict).not.toHaveBeenCalled();
   });
 
   it("refreshFormingBar re-folds from the chart's candles without a refetch", async () => {
