@@ -849,6 +849,9 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // are the alert's bars there; on any other timeframe the dashed line
     // shows without a bell).
     if (!overlays.getAlertsHidden()) {
+      // The rays first: under a pin they follow the trendline's stroke, which
+      // moves with new bars and history.
+      controller.indicatorAlerts.refreshRays();
       // Built only once a bell is due: the data list can be long.
       let times: number[] | null = null;
       for (const a of loadLineAlerts(epicRef.current, brokerIdRef.current)) {

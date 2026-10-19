@@ -151,4 +151,46 @@ describe("IndicatorAlertLines: line alerts", () => {
     lines.reconcile();
     expect(chart.removeOverlay).toHaveBeenCalledWith({ id: "lnalert:al-l" });
   });
+
+  it("follows the pinned stroke on a finer chart and moves with new bars", () => {
+    // 15m chart under a 1h pin: HTF bar 2 (chart bars 8..11) bottoms at 90 on
+    // chart bar 10, where the trendline's stroke starts.
+    const T0 = 1_700_000_000_000;
+    const M15 = 900_000;
+    const H1 = 3_600_000;
+    const bars = Array.from({ length: 40 }, (_, i) => {
+      const t = T0 + i * M15;
+      return { timestamp: t, open: 100, high: 100, low: i === 10 ? 90 : 100, close: 100, volume: 1 };
+    });
+    const ext = {
+      mtf: { timeframe: "HOUR", htfStarts: Array.from({ length: 10 }, (_, i) => T0 + i * H1), htfMs: H1, waitClose: false },
+    };
+    const result = [{ lineIdx: 8 }];
+    const a = lineAlert("s1");
+    a.params = { ...a.params, slope: 1, anchors: { t1: T0 + 2 * H1, p1: 90, t2: T0 + 6 * H1, p2: 94 } };
+    alerts.splice(0, alerts.length);
+    lineAlerts.splice(0, lineAlerts.length, a);
+    const created: Array<Record<string, unknown>> = [];
+    const chart = {
+      createOverlay: (o: Record<string, unknown>) => { created.push(o); return o.id as string; },
+      removeOverlay: vi.fn(),
+      overrideOverlay: vi.fn(),
+      getDataList: () => bars,
+      getIndicators: () => [{ name: "TRENDLINES", paneId: "candle_pane", extendData: ext, result }],
+    };
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "MINUTE_15");
+    lines.reconcile();
+    expect(created[0]).toMatchObject({
+      points: [{ timestamp: bars[10].timestamp, value: 90 }, { timestamp: bars[39].timestamp, value: 97.75 }],
+    });
+    lines.refreshRays();
+    expect(chart.overrideOverlay).not.toHaveBeenCalled();
+    bars.push({ timestamp: T0 + 40 * M15, open: 100, high: 100, low: 100, close: 100, volume: 1 });
+    lines.refreshRays();
+    expect(chart.overrideOverlay).toHaveBeenCalledWith({
+      id: "lnalert:al-l",
+      points: [{ timestamp: bars[10].timestamp, value: 90 }, { timestamp: bars[40].timestamp, value: 98 }],
+    });
+  });
 });

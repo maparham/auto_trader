@@ -7,18 +7,22 @@
 // indicator add/remove (the pane the line lives in can come and go).
 // Also the frozen-trendline (`line`) alerts, drawn as a dashed ray through
 // their anchors on the candle pane of the linked cell, while its Trendlines
-// pane alerts on the alert's timeframe.
-import type { Chart } from "klinecharts";
+// pane alerts on the alert's timeframe. Under a coarser pin the ray follows
+// the trendline's own stroke instead (pinnedAlertStroke).
+import type { Chart, KLineData } from "klinecharts";
 import { alertTimeframeOf } from "../indicatorAlertInstance";
-import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlert } from "../alertsApi";
+import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert } from "../alertsApi";
 import { getIndicatorsByPane } from "../indicators";
 import { isInsetInstance } from "../indicators/inset";
+import { pinnedAlertStroke, type TrendlinesMtf } from "../indicators/trendlines";
 import { alertLineStyles, createAlertLine } from "./alertLine";
 
 const ovId = (alertId: string) => `indalert:${alertId}`;
 const rayId = (alertId: string) => `lnalert:${alertId}`;
 
 type Drawn = { paneId: string; value: number };
+type RayPoints = [{ timestamp: number; value: number }, { timestamp: number; value: number }];
+type Ray = { points: RayPoints; key: string };
 
 export class IndicatorAlertLines {
   private chart: Chart | null = null;
@@ -110,21 +114,37 @@ export class IndicatorAlertLines {
   }
 
   // Line alerts to draw: linked to this cell, whose Trendlines instance is
-  // here and alerts on the alert's timeframe (a pinned pane, its pin).
-  private wantedRays(): Map<string, LineAlert> {
-    const out = new Map<string, LineAlert>();
+  // here and alerts on the alert's timeframe (a pinned pane, its pin), with
+  // the two points the ray runs through.
+  private wantedRays(): Map<string, Ray> {
+    const out = new Map<string, Ray>();
     if (!this.chart) return out;
     const alerts = loadLineAlerts(this.epic, this.broker);
     if (alerts.length === 0) return out;
     const panes = getIndicatorsByPane(this.chart);
+    let dataList: KLineData[] | null = null;
     for (const a of alerts) {
       const link = a.params.link;
       if (!link || link.scope !== this.scope) continue;
       for (const [, inds] of panes) {
         const ind = inds.get(link.instanceId);
         if (!ind) continue;
-        const ext = ind.extendData as Record<string, unknown> | undefined;
-        if (alertTimeframeOf(ext, this.resolution) === a.params.timeframe) out.set(a.id, a);
+        const ext = ind.extendData as { mtf?: TrendlinesMtf } | undefined;
+        if (alertTimeframeOf(ext as Record<string, unknown> | undefined, this.resolution) !== a.params.timeframe) break;
+        const { t1, p1, t2, p2 } = a.params.anchors;
+        // Under a coarser pin, the points the trendline's own stroke runs
+        // through, so the ray lies on it; otherwise the anchors themselves.
+        let points: RayPoints = [
+          { timestamp: t1, value: p1 },
+          { timestamp: t2, value: p2 },
+        ];
+        if (ext?.mtf?.timeframe && a.params.timeframe !== this.resolution) {
+          dataList ??= this.chart.getDataList();
+          const res = ind.result as Array<{ lineIdx?: number }> | undefined;
+          const lastIdx = res?.[res.length - 1]?.lineIdx ?? -1;
+          points = pinnedAlertStroke(dataList, ext.mtf, lastIdx, { t1, p1, slope: a.params.slope }) ?? points;
+        }
+        out.set(a.id, { points, key: points.map((q) => `${q.timestamp}:${q.value}`).join("|") });
         break;
       }
     }
@@ -134,24 +154,24 @@ export class IndicatorAlertLines {
   private reconcileRays(c: Chart, hidden: boolean, hiddenChanged: boolean): void {
     const want = this.wantedRays();
     for (const [id, geo] of this.rays) {
-      const a = want.get(id)?.params.anchors;
-      if (!a || `${a.t1}:${a.p1}:${a.t2}:${a.p2}` !== geo) {
+      const w = want.get(id);
+      if (!w) {
         c.removeOverlay({ id: rayId(id) });
         this.rays.delete(id);
-      } else if (hiddenChanged) {
-        c.overrideOverlay({ id: rayId(id), visible: !hidden });
+        continue;
       }
+      if (w.key !== geo) {
+        c.overrideOverlay({ id: rayId(id), points: w.points });
+        this.rays.set(id, w.key);
+      }
+      if (hiddenChanged) c.overrideOverlay({ id: rayId(id), visible: !hidden });
     }
-    for (const [id, a] of want) {
+    for (const [id, w] of want) {
       if (this.rays.has(id)) continue;
-      const { t1, p1, t2, p2 } = a.params.anchors;
       const made = c.createOverlay({
         id: rayId(id),
         name: "rayLine",
-        points: [
-          { timestamp: t1, value: p1 },
-          { timestamp: t2, value: p2 },
-        ],
+        points: w.points,
         styles: alertLineStyles(false),
         visible: !hidden,
         mode: "normal",
@@ -165,8 +185,17 @@ export class IndicatorAlertLines {
           return true;
         },
       } as never);
-      if (typeof made === "string") this.rays.set(id, `${t1}:${p1}:${t2}:${p2}`);
+      if (typeof made === "string") this.rays.set(id, w.key);
     }
+  }
+
+  /** Re-place the rays only. The pinned stroke they follow moves with new
+   * bars, loaded history and the pin's stash, none of which reconcile hears,
+   * so the paint loop calls this; an unchanged ray costs a string compare. */
+  refreshRays(): void {
+    const c = this.chart;
+    if (!c || this.rays.size === 0) return;
+    this.reconcileRays(c, this.hidden(), false);
   }
 
   lines(): Array<{ alertId: string; paneId: string; value: number }> {

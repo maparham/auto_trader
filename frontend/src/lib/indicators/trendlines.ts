@@ -3053,6 +3053,48 @@ export function pinnedEndY(
   return { y0: yA + slope * (x0 - xA), y1: yA + slope * (x1 - xA) };
 }
 
+/** Two chart bars on the stroke drawTrendlines paints for a frozen line (a
+ * line alert) under a pin coarser than the chart, so the alert's dashed ray
+ * lies exactly on its trendline. The stroke starts at the candle that traded
+ * the first anchor's extreme (htfExtremeSnap) and runs straight in CHART bars
+ * to the draw edge; a ray through the anchors' HTF open candles instead
+ * leans off it, since the snap moves the start a few candles and the map is
+ * only piecewise linear. `lastIdx` is the calc's last-row lineIdx. Null when
+ * there is no coarser pin, the first anchor is not a loaded HTF bar, or the
+ * stroke is too short to carry two bars: the caller keeps the plain anchors. */
+export function pinnedAlertStroke(
+  dataList: KLineData[],
+  mtf: TrendlinesMtf | undefined,
+  lastIdx: number,
+  line: { t1: number; p1: number; slope: number },
+): [{ timestamp: number; value: number }, { timestamp: number; value: number }] | null {
+  const starts = mtf?.htfStarts;
+  const n = dataList.length;
+  if (!mtf || !starts?.length || !mtf.htfMs || n < 2 || lastIdx < 0) return null;
+  if (!(mtf.htfMs > chartBarMs(dataList))) return null;
+  const j1 = starts.indexOf(line.t1);
+  if (j1 < 0) return null;
+  const map = trendlineIdxMap(dataList, mtf);
+  const snap = htfExtremeSnap(dataList, mtf, map.toChart);
+  // The alert keeps no pivot kind: the anchor price IS the HTF bar's low or
+  // high, so take whichever snapped candle traded nearer to it.
+  const lo = snap(j1, "low");
+  const hi = snap(j1, "high");
+  if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < 0 || hi < 0 || lo >= n || hi >= n) return null;
+  const cA =
+    Math.abs(dataList[lo].low - line.p1) <= Math.abs(dataList[hi].high - line.p1) ? lo : hi;
+  const jR = trendlineDrawEdge(mtf.formingIdx, lastIdx, map.toLine, n, mtf.waitClose === false);
+  const cR = map.toChart(jR);
+  if (!(jR > j1) || !(cR > cA)) return null;
+  const vR = line.p1 + line.slope * (jR - j1);
+  const cB = Math.min(n - 1, Math.floor(cR));
+  if (cB <= cA) return null;
+  return [
+    { timestamp: dataList[cA].timestamp, value: line.p1 },
+    { timestamp: dataList[cB].timestamp, value: line.p1 + ((vR - line.p1) * (cB - cA)) / (cR - cA) },
+  ];
+}
+
 /** Chart index of the candle that traded an HTF bar's extreme — where a pivot
  * caret (and a line anchor) belongs when the pin is COARSER than the chart. An
  * HTF bar's high or low usually trades hours after the bar OPENS, and mapping

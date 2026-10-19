@@ -11,6 +11,7 @@ import {
   trendlineIdxMap,
   crossingChartIdx,
   pinnedEndY,
+  pinnedAlertStroke,
   lineKey,
   TL_PIVOT_ARM,
   TRENDLINES_TEMPLATE,
@@ -668,5 +669,41 @@ describe("TRENDLINES_TEMPLATE.draw records the line as an alert sees it", () => 
       slope: -2, tRef: T0 + 8 * HTF_MS, pRef: 96,
       t1: T0 + HTF_MS, p1: 110, t2: T0 + 3 * HTF_MS, p2: 106,
     });
+  });
+});
+
+describe("pinnedAlertStroke", () => {
+  // HTF bar 2 (chart bars 8..11) bottoms at 90 on chart bar 10, so the
+  // stroke starts there rather than at the HTF bar's opening candle (bar 8).
+  const data = (): KLineData[] => {
+    const d = chartBars();
+    d[10] = { ...d[10], low: 90 };
+    return d;
+  };
+  const mtf = (waitClose?: boolean): TrendlinesMtf =>
+    ({ timeframe: "HOUR", htfStarts: htfStarts(), htfMs: HTF_MS, waitClose }) as TrendlinesMtf;
+  const line = { t1: T0 + 2 * HTF_MS, p1: 90, slope: 1 };
+
+  it("starts on the extreme's candle and ends on the stroke at the live edge (Wait off)", () => {
+    const d = data();
+    // Draw edge: toLine(39) = 9.75 HTF bars, the line there 90 + 7.75.
+    expect(pinnedAlertStroke(d, mtf(false), 8, line)).toEqual([
+      { timestamp: d[10].timestamp, value: 90 },
+      { timestamp: d[39].timestamp, value: 97.75 },
+    ]);
+  });
+
+  it("ends at the last closed HTF bar with Wait on", () => {
+    const d = data();
+    expect(pinnedAlertStroke(d, mtf(), 8, line)).toEqual([
+      { timestamp: d[10].timestamp, value: 90 },
+      { timestamp: d[32].timestamp, value: 96 },
+    ]);
+  });
+
+  it("is null without a pin or when the anchor is not a loaded HTF bar", () => {
+    const d = data();
+    expect(pinnedAlertStroke(d, undefined, 8, line)).toBeNull();
+    expect(pinnedAlertStroke(d, mtf(false), 8, { ...line, t1: T0 - HTF_MS })).toBeNull();
   });
 });
