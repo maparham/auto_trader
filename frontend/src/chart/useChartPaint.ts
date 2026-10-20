@@ -45,6 +45,7 @@ import { loadIndicatorAlerts, loadLineAlerts } from "../lib/alertsApi";
 import { alertTimeframeOf, chartValueOf } from "../lib/indicatorAlertInstance";
 import type { IndicatorBellTag } from "./AlertTags";
 import type { LineAlertBellTag } from "./TrendlineAlertBells";
+import { stepPastTags } from "./lineAlertBellPlace";
 import { indTypeOf } from "../lib/customIndicators";
 import { dashSliceBounds, getBacktestAggregate, tradeDashes } from "../lib/backtest";
 import { type AggPill } from "../BacktestAggMarkers";
@@ -76,9 +77,6 @@ const TRADE_HANDLE_R = 4.5;
 const LINE_BELL_GAP = 24;
 // .tl-alert-bell is 14px; 2px of air between stacked bells.
 const LINE_BELL_SIZE = 16;
-// Half the height of a Trendlines end tag (10px text), for stepping the bell
-// past one.
-const TL_TAG_HALF_H = 6;
 
 // The alert-tag element type (mirrors ChartCore's setAlertTags state element).
 type AlertTag = {
@@ -899,23 +897,12 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         const paneTop = chart.getSize(paneId)?.top ?? 0;
         // Right edge of the plot, left of the price axis strip.
         const plotRight = chart.getSize(paneId, "main")?.width ?? Infinity;
-        const tags = getTrendlineTags(chart, paneId);
-        let x = last.x + LINE_BELL_GAP;
-        let y = yAt(x);
-        const half = LINE_BELL_SIZE / 2;
-        for (let pass = 0; pass < tags.length; pass++) {
-          const hit = tags.find(
-            (t) =>
-              x + half > t.x && x - half < t.x + t.w &&
-              Math.abs(t.y + paneTop - y) < half + TL_TAG_HALF_H,
-          );
-          if (!hit) break;
-          x = hit.x + hit.w + half + 2;
-          y = yAt(x);
-        }
+        const { x, y } = stepPastTags(
+          last.x + LINE_BELL_GAP, yAt, getTrendlineTags(chart, paneId), paneTop, LINE_BELL_SIZE,
+        );
         // Culled rather than clamped once it would sit on the price axis (the
         // last bar flush against it): a bell pulled left would leave the line.
-        if (x + half > plotRight) continue;
+        if (x + LINE_BELL_SIZE / 2 > plotRight) continue;
         if (Number.isFinite(y)) lineBells.push({ id: a.id, x: Math.round(x), y: Math.round(y) });
       }
     }
