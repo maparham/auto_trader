@@ -307,6 +307,7 @@ export default function TradePills({
           // spine has to visibly tie to SOMETHING while the group is merged. Other
           // trades' aggregates dim like resting pills do.
           const holdsSelected = selectedTradeId != null && v.members.some((m) => m.tradeId === selectedTradeId);
+          const allPending = v.members.every((m) => m.kind === "order");
           return (
             <div
               key={`cluster:${v.key}`}
@@ -317,7 +318,7 @@ export default function TradePills({
                 if (node) tradePillNodesRef.current.set(v.key, node);
                 else tradePillNodesRef.current.delete(v.key);
               }}
-              className={`trade-pill tp-cluster${holdsSelected ? " selected raised" : selectedTradeId != null ? " dimmed" : ""}`}
+              className={`trade-pill tp-cluster${allPending ? " tp-pending" : ""}${holdsSelected ? " selected raised" : selectedTradeId != null ? " dimmed" : ""}`}
               style={{
                 top: v.y,
                 right: axisWidth,
@@ -363,6 +364,14 @@ export default function TradePills({
         // short time; an open-ended one gets a plain "GTC" status word (no deadline to
         // point a clock at). Positions and the SL/TP pills keep their level readout.
         const isOrderEntry = isEntry && p.kind === "order";
+        // A resting order's SL/TP get a small clock before the tag, so they never read
+        // as a live position's exits when the two sit side by side.
+        const pendingIco = p.kind === "order" && !isEntry ? (
+          <svg className="tp-pend-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <polyline points="12 7 12 12 15 14" />
+          </svg>
+        ) : null;
         const priceText = p.level.toFixed(prec);
         const expiryText = p.expiresAt != null ? fmtExpiry(p.expiresAt, false) : "";
         const bodyPnl = isEntry && p.pl != null ? sign(p.pl) : null;
@@ -401,7 +410,7 @@ export default function TradePills({
               if (node) tradePillNodesRef.current.set(key, node);
               else tradePillNodesRef.current.delete(key);
             }}
-            className={`trade-pill tp-line-${p.field}${expanded ? "" : " compact"}${p.tradeId === selectedTradeId ? " selected" : ""}${selectedTradeId != null && p.tradeId !== selectedTradeId ? " dimmed" : ""}${p.tradeId === focusedTradeId || p.tradeId === hoveredTradeId ? " raised" : ""}${`${p.tradeId}:${p.field}` === hoveredPillKey ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
+            className={`trade-pill tp-line-${p.field}${p.kind === "order" ? " tp-pending" : ""}${expanded ? "" : " compact"}${p.tradeId === selectedTradeId ? " selected" : ""}${selectedTradeId != null && p.tradeId !== selectedTradeId ? " dimmed" : ""}${p.tradeId === focusedTradeId || p.tradeId === hoveredTradeId ? " raised" : ""}${`${p.tradeId}:${p.field}` === hoveredPillKey ? " hovering" : ""}${`${p.tradeId}:${p.field}` === focusedPillKey ? " focused" : ""}`}
             style={{
               top: p.y,
               right: axisWidth,
@@ -415,6 +424,7 @@ export default function TradePills({
                  pill, so only the role and the money show — "L5 +39.30" on an entry,
                  "SL −12.40" on an exit, the expiry/GTC on a resting order. */
               <>
+                {pendingIco}
                 <span className="tp-label">{isEntry ? `${p.side === "buy" ? "L" : "S"}${p.qty}` : labelText}</span>
                 {isOrderEntry ? (
                   p.expiresAt != null ? (
@@ -434,6 +444,7 @@ export default function TradePills({
               </>
             ) : (
               <>
+            {pendingIco}
             <span className="tp-label">{labelText}</span>
             {isEntry && <span className="tp-qty">{p.qty}</span>}
             {isOrderEntry ? (

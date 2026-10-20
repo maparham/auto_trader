@@ -3480,15 +3480,12 @@
 /* The pill of the focused LINE (selected field, or the hovered one) wins overlaps
    within its own raised group so a stack of close levels stays readable. */
 .trade-pill.focused { z-index: 49; }
-/* Resting order (entry + its SL/TP): a ghost of a position pill. Dashed frame,
-   see-through fill and muted readout, so a not-yet-filled bracket never reads as a
-   live position's. Comes after .selected/.hovering so the dash survives them; the
-   readout regains full ink while the trade is engaged. */
-.trade-pill.tp-pending {
-  border-style: dashed;
-  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
-}
-.trade-pill.tp-pending.selected { background: color-mix(in srgb, var(--pill) 6%, color-mix(in srgb, var(--surface-2) 70%, transparent)); }
+/* Resting order (entry + its SL/TP): a ghost of a position pill. Dashed frame and
+   muted readout, so a not-yet-filled bracket never reads as a live position's. The
+   fill stays opaque: a see-through one lets the chart line behind show through.
+   Comes after .selected/.hovering so the dash survives them; the readout regains
+   full ink while the trade is engaged. */
+.trade-pill.tp-pending { border-style: dashed; }
 .trade-pill.tp-pending > :not(.tp-btn) { opacity: .7; }
 .trade-pill.tp-pending.selected > :not(.tp-btn),
 .trade-pill.tp-pending.hovering > :not(.tp-btn) { opacity: 1; }
