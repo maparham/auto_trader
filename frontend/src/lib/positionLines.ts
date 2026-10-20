@@ -164,7 +164,12 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
     const stopBE = t.kind === "position" && isBreakeven(price, stop, o.precision);
     const tpBE = t.kind === "position" && isBreakevenTarget(price, tp, o.precision);
     const breakeven = stopBE || tpBE;
-    if (price != null) {
+    // A resting order at price <= 0 means the broker sync couldn't parse a real
+    // level (see WorkingOrder.limit_level fallback in capital.py/ig.py) — drawing
+    // it would place an invisible line/pill off the bottom of the chart, so skip it
+    // rather than render a phantom entry at zero.
+    const priceValid = price != null && !(t.kind === "order" && price <= 0);
+    if (priceValid) {
       // Show unrealized P/L on the entry label for open positions (not orders).
       const pnlStr =
         t.kind === "position" && t.upnl != null

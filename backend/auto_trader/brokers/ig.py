@@ -678,12 +678,15 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
             wod = row.get("workingOrderData") or {}
             if epic is not None and wod.get("epic") != epic:
                 continue
+            order_level = wod.get("orderLevel")
+            if order_level is None:
+                log.warning("IG working order %s has no orderLevel; defaulting to 0.0", wod.get("dealId"))
             out.append(
                 WorkingOrder(
                     epic=wod.get("epic"),
                     side=Side.BUY if wod.get("direction") == "BUY" else Side.SELL,
                     quantity=float(wod.get("orderSize") or 0.0),
-                    limit_level=float(wod.get("orderLevel") or 0.0),
+                    limit_level=float(order_level or 0.0),
                     order_id=wod.get("dealId"),
                     stop_level=_f(wod.get("stopLevel")),
                     take_profit_level=_f(wod.get("limitLevel")),

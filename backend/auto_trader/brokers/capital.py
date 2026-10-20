@@ -11,6 +11,7 @@ Docs: https://open-api.capital.com/
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -71,6 +72,8 @@ _TS_FMT = "%Y-%m-%dT%H:%M:%S"
 _MAX_REQUESTS_PER_SEC = 8
 # Retries for a 429 that slips through (shared limit across our own traffic).
 _RATE_LIMIT_RETRIES = 3
+
+log = logging.getLogger(__name__)
 
 
 class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
@@ -821,12 +824,15 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
             wod = row.get("workingOrderData") or {}
             if epic is not None and wod.get("epic") != epic:
                 continue
+            order_level = _f(wod.get("orderLevel"))
+            if order_level is None:
+                log.warning("Capital.com working order %s has no orderLevel; defaulting to 0.0", wod.get("dealId"))
             out.append(
                 WorkingOrder(
                     epic=wod.get("epic"),
                     side=Side.BUY if wod.get("direction") == "BUY" else Side.SELL,
                     quantity=_f(wod.get("orderSize")) or 0.0,
-                    limit_level=_f(wod.get("orderLevel")) or 0.0,
+                    limit_level=order_level or 0.0,
                     order_id=wod.get("dealId"),
                     stop_level=_f(wod.get("stopLevel")),
                     take_profit_level=_f(wod.get("profitLevel")),
