@@ -1042,17 +1042,23 @@ class MT5MCPExecutionBroker(ExecutionBroker):
         return fail or self._result(cid, OrderStatus.FILLED, str(_first(res, "comment") or ""), deal_id=deal_id)
 
     def _order_row(self, o: dict) -> dict:
-        """Pending-order rows, read defensively: their shape is not yet seen
-        on a live account."""
+        """Pending-order rows. Confirmed against a live account (buy-limit
+        CrudeOIL order, 2026-10-20): `price_order` is the trigger price and
+        `open_time` is the setup time. The terminal does not use MT5's native
+        OrderInfo field names (`price_open`/`time_setup`) for these two."""
+        price = _f(_first(o, "price_order", "price_open", "price"))
+        if price is None:
+            log.warning("%s: pending order %s has no parseable price; raw row: %r",
+                        BROKER_ID, _first(o, "order_id", "ticket", "order", "order_ticket"), o)
         return {
             "id": _first(o, "order_id", "ticket", "order", "order_ticket"),
             "symbol": o.get("symbol"),
             "side": _side(_first(o, "action", "type")),
             "volume": _f(_first(o, "volume_current", "volume", "volume_initial")) or 0.0,
-            "price": _f(_first(o, "price_open", "price")),
+            "price": price,
             "sl": _lvl(_first(o, "stop_loss", "sl")),
             "tp": _lvl(_first(o, "take_profit", "tp")),
-            "created": _first(o, "create_time", "setup_time", "time_setup"),
+            "created": _first(o, "open_time", "create_time", "setup_time", "time_setup"),
             "expires": _first(o, "expiration_time", "time_expiration"),
             "contract_size": _f(o.get("contract_size")),
         }
