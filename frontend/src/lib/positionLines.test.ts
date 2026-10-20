@@ -216,6 +216,16 @@ describe("tradeLineSpecs", () => {
     expect(order[0].draggable).toBe(true);
   });
 
+  it("marks every line of a resting order pending, none of a position's", () => {
+    const pos = tradeLineSpecs({ ...base, trades: [trade({ stop: 95, takeProfit: 110 })] });
+    expect(pos.map((s) => s.pending)).toEqual([false, false, false]);
+    const order = tradeLineSpecs({
+      ...base,
+      trades: [trade({ kind: "order", id: "O1", stop: 95, takeProfit: 110 })],
+    });
+    expect(order.map((s) => s.pending)).toEqual([true, true, true]);
+  });
+
   it("SL/TP draggability follows levelsDraggable", () => {
     const off = tradeLineSpecs({
       ...base,

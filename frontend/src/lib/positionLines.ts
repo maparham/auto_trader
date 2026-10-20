@@ -52,6 +52,9 @@ export interface LineSpec {
   // the line starts at, alert-style (see PositionLines.anchorPoints). Absent/null →
   // the line spans from the left edge (drafts; legacy rows without a creation time).
   openedAt?: number | null;
+  // A resting (unfilled) order's line: drawn dotted and thinner than a position's
+  // dashed line, matching the ghost style of its axis pill (.tp-pending).
+  pending?: boolean;
   onDragEnd?: (newLevel: number) => void;
 }
 
@@ -193,6 +196,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         selected,
         emphasized,
         openedAt: t.openedAt,
+        pending: t.kind === "order",
         onDragEnd: (lvl) => o.onDrag(t.id, "price", lvl),
       });
     }
@@ -207,6 +211,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         selected,
         emphasized,
         openedAt: t.openedAt,
+        pending: t.kind === "order",
         onDragEnd: (lvl) => o.onDrag(t.id, "stop", lvl),
       });
     }
@@ -221,6 +226,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
         selected,
         emphasized,
         openedAt: t.openedAt,
+        pending: t.kind === "order",
         onDragEnd: (lvl) => o.onDrag(t.id, "takeProfit", lvl),
       });
     }
@@ -313,6 +319,7 @@ interface LineExtra {
   emphasized?: boolean;
   fullWidth?: boolean;
   labelX?: number;
+  pending?: boolean;
 }
 
 function asLineExtra(v: unknown): LineExtra {
@@ -402,7 +409,8 @@ const tradeLine: OverlayTemplate = {
     });
     if (!span) return [];
     const { startX, endX } = span;
-    const size = extra.selected || extra.highlight ? 2 : 1;
+    const engaged = extra.selected || extra.highlight;
+    const size = extra.pending ? (engaged ? 1.5 : 1) : engaged ? 2 : 1;
     const figures: OverlayFigure[] = [
       {
         type: "line",
@@ -411,9 +419,10 @@ const tradeLine: OverlayTemplate = {
         // so the row↔line link reads at a glance; the rest are thin (1px). Selection
         // looks identical to hover on the chart — it just persists after the cursor
         // leaves (the dock row carries the distinct sticky-selected styling).
+        // A resting order's lines are dotted and a notch thinner (see LineSpec.pending).
         styles: {
           style: "dashed",
-          dashedValue: [4, 4],
+          dashedValue: extra.pending ? [2, 3] : [4, 4],
           color: extra.color,
           size,
         },
@@ -526,7 +535,7 @@ export class PositionLines {
   }
 
   private sig(s: LineSpec, anchorTs: number | null): string {
-    return `${s.level}|${anchorTs ?? ""}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.emphasized ?? false}|${s.fullWidth ?? false}|${s.labelX ?? ""}`;
+    return `${s.level}|${anchorTs ?? ""}|${s.label}|${s.color}|${s.side ?? ""}|${s.draggable}|${s.highlight ?? false}|${s.selected ?? false}|${s.emphasized ?? false}|${s.fullWidth ?? false}|${s.labelX ?? ""}|${s.pending ?? false}`;
   }
 
   // The point a trade line is drawn from. Like an alert line (overlays/alerts.ts
@@ -579,6 +588,7 @@ export class PositionLines {
         emphasized: spec.emphasized ?? false,
         fullWidth: spec.fullWidth ?? false,
         labelX: spec.labelX,
+        pending: spec.pending ?? false,
       };
       const existing = this.lines.get(spec.key);
       if (existing) {
