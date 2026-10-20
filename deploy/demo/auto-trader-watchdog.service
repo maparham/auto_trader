@@ -1,0 +1,9 @@
+# deploy/demo/auto-trader-watchdog.service
+# Liveness check for auto-trader-demo.service; see auto-trader-watchdog.timer
+# for cadence and backend/scripts/api_watchdog.sh for the check itself.
+[Unit]
+Description=auto-trader API liveness watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/opt/auto-trader/backend/scripts/api_watchdog.sh

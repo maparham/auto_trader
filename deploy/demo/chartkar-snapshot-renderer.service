@@ -1,0 +1,38 @@
+# Standalone Playwright + Chromium renderer for Telegram alert chart
+# snapshots, in its OWN cgroup, fully isolated from auto-trader-demo.
+#
+# Replaces chartkar-snapshot-browser.service (removed 2026-10-20). That unit
+# only isolated the Chromium PROCESS; the Playwright DRIVER subprocess still
+# lived inside the main API, and on 2026-10-20, under box memory pressure, a
+# dying driver + a crashing reconnect fork froze the WHOLE API for everyone
+# (CPython holds the GIL across os.fork(), so one bad fork blocks the whole
+# process, not just chart-snapshot traffic). This unit now owns Playwright
+# end-to-end — it launches its own Chromium directly, no CDP indirection
+# needed — so a crash here can never again take the main API down with it.
+# See backend/auto_trader/snapshot_renderer/app.py for the service itself.
+#
+# MALLOC_ARENA_MAX=2 caps glibc malloc arenas (otherwise each thread grows
+# its own heap), reducing fork-time memory-copy cost; this was previously an
+# undocumented drop-in on the box only, carried here for auto-trader-demo too
+# but worth stating explicitly since this unit is where the actual
+# Playwright/Chromium forking happens.
+#
+# Installed by scripts/deploy-demo.sh.
+[Unit]
+Description=Chartkar snapshot renderer (Playwright + Chromium, HTTP on 127.0.0.1:9223)
+After=network.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/opt/auto-trader/backend
+EnvironmentFile=/etc/auto-trader/demo.env
+Environment=MALLOC_ARENA_MAX=2
+ExecStart=/opt/auto-trader/venv/bin/python3 -m auto_trader.snapshot_renderer
+Restart=always
+RestartSec=3
+MemoryHigh=450M
+MemoryMax=600M
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

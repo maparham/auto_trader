@@ -1,0 +1,10 @@
+# deploy/demo/auto-trader-watchdog.timer
+[Unit]
+Description=auto-trader API liveness watchdog timer (1 min cadence)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

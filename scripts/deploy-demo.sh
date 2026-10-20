@@ -183,27 +183,57 @@ if [ "$DO_BACKEND" = 1 ]; then
   else
     log_tail="echo 'backend failed to come up; last log lines:' >&2; sudo journalctl -u auto-trader-demo -n 20 --no-pager >&2"
   fi
-  # Chromium for alert snapshots runs in its own unit (own memory cgroup), and
-  # the API attaches over CDP; see the unit file for why. Install or update the
-  # unit, and point the API at it, before the API restart below.
-  echo "==> backend: snapshot browser unit"
-  "${SSH[@]}" "$HOST" 'cat > /tmp/chartkar-snapshot-browser.service' \
-    < "$WT/deploy/demo/chartkar-snapshot-browser.service"
+  # Playwright + Chromium for alert snapshots run in their own unit (own
+  # memory cgroup), fully isolated from auto-trader-demo; see the unit file
+  # for why (2026-10-20 incident: a dying in-API Playwright driver froze the
+  # whole API). Install or update the unit before the API restart below, and
+  # migrate off the old CDP-split sidecar unit it replaces.
+  echo "==> backend: snapshot renderer unit"
+  "${SSH[@]}" "$HOST" 'cat > /tmp/chartkar-snapshot-renderer.service' \
+    < "$WT/deploy/demo/chartkar-snapshot-renderer.service"
   "${SSH[@]}" "$HOST" '
     set -e
-    unit=/etc/systemd/system/chartkar-snapshot-browser.service
-    if ! sudo cmp -s /tmp/chartkar-snapshot-browser.service "$unit"; then
-      sudo cp /tmp/chartkar-snapshot-browser.service "$unit"
+    if systemctl list-unit-files chartkar-snapshot-browser.service >/dev/null 2>&1; then
+      sudo systemctl disable --now chartkar-snapshot-browser.service >/dev/null 2>&1 || true
+      sudo rm -f /etc/systemd/system/chartkar-snapshot-browser.service
+    fi
+    unit=/etc/systemd/system/chartkar-snapshot-renderer.service
+    if ! sudo cmp -s /tmp/chartkar-snapshot-renderer.service "$unit"; then
+      sudo cp /tmp/chartkar-snapshot-renderer.service "$unit"
       sudo systemctl daemon-reload
-      sudo systemctl enable chartkar-snapshot-browser >/dev/null 2>&1
-      sudo systemctl restart chartkar-snapshot-browser
+      sudo systemctl enable chartkar-snapshot-renderer >/dev/null 2>&1
+      sudo systemctl restart chartkar-snapshot-renderer
     else
-      sudo systemctl enable --now chartkar-snapshot-browser >/dev/null 2>&1
+      sudo systemctl enable --now chartkar-snapshot-renderer >/dev/null 2>&1
     fi
-    rm -f /tmp/chartkar-snapshot-browser.service
-    if ! sudo grep -q "^SNAPSHOT_CDP_URL=" /etc/auto-trader/demo.env; then
-      echo "SNAPSHOT_CDP_URL=http://127.0.0.1:9223" | sudo tee -a /etc/auto-trader/demo.env >/dev/null
-    fi
+    rm -f /tmp/chartkar-snapshot-renderer.service
+  '
+  echo "==> backend: waiting for snapshot renderer /healthz"
+  "${SSH[@]}" "$HOST" '
+    for i in $(seq 1 30); do
+      sleep 1
+      if curl -sf -m 5 http://127.0.0.1:9223/healthz >/dev/null; then exit 0; fi
+    done
+    echo "snapshot renderer failed to come up; see journalctl -u chartkar-snapshot-renderer" >&2
+    exit 1
+  '
+
+  # Liveness watchdog for auto-trader-demo itself: Restart=always only
+  # catches the process exiting, not an internal hang (2026-10-20 — the
+  # process stayed alive but stopped accepting connections). See the script
+  # for why two consecutive failures, not one.
+  echo "==> backend: watchdog timer"
+  "${SSH[@]}" "$HOST" 'cat > /tmp/auto-trader-watchdog.service' \
+    < "$WT/deploy/demo/auto-trader-watchdog.service"
+  "${SSH[@]}" "$HOST" 'cat > /tmp/auto-trader-watchdog.timer' \
+    < "$WT/deploy/demo/auto-trader-watchdog.timer"
+  "${SSH[@]}" "$HOST" '
+    set -e
+    sudo cp /tmp/auto-trader-watchdog.service /etc/systemd/system/auto-trader-watchdog.service
+    sudo cp /tmp/auto-trader-watchdog.timer /etc/systemd/system/auto-trader-watchdog.timer
+    rm -f /tmp/auto-trader-watchdog.service /tmp/auto-trader-watchdog.timer
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now auto-trader-watchdog.timer >/dev/null 2>&1
   '
 
   echo "==> backend: pip install (agent-ui-bridge@${bridge_rev:0:7}) + restart auto-trader-demo"

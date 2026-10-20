@@ -69,36 +69,46 @@ async def test_drive_failure_returns_none(monkeypatch):
     assert await cs.render_live_chart("u1", PAYLOAD) is None
 
 
-class _FakeChromium:
-    def __init__(self):
-        self.calls = []
+async def test_drive_browser_posts_to_renderer_and_returns_png(monkeypatch):
+    import httpx
 
-    async def connect_over_cdp(self, url, timeout=None):
-        self.calls.append(("cdp", url))
-        return "attached"
+    seen = {}
 
-    async def launch(self, headless=True, args=None):
-        self.calls.append(("launch", args))
-        return "launched"
+    async def fake_post(self, url, json=None):
+        seen.update(url=url, json=json)
+        return httpx.Response(200, content=b"PNG-BYTES", request=httpx.Request("POST", url))
 
-
-class _FakePw:
-    def __init__(self):
-        self.chromium = _FakeChromium()
-
-
-async def test_cdp_url_attaches_instead_of_launching(monkeypatch):
-    monkeypatch.setenv("SNAPSHOT_CDP_URL", "http://127.0.0.1:9223")
-    pw = _FakePw()
-    assert await cs._open_browser(pw) == "attached"
-    assert pw.chromium.calls == [("cdp", "http://127.0.0.1:9223")]
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    png = await cs._drive_browser("http://x/?snapshot=1", 1280, 640, 30.0)
+    assert png == b"PNG-BYTES"
+    assert seen["url"] == f"{cs._RENDERER_URL}/render"
+    assert seen["json"] == {
+        "url": "http://x/?snapshot=1", "width": 1280, "height": 640, "timeout_s": 30.0,
+    }
 
 
-async def test_no_cdp_url_launches_a_child(monkeypatch):
-    monkeypatch.delenv("SNAPSHOT_CDP_URL", raising=False)
-    pw = _FakePw()
-    assert await cs._open_browser(pw) == "launched"
-    assert pw.chromium.calls == [("launch", ["--no-sandbox"])]
+async def test_drive_browser_raises_when_renderer_unreachable(monkeypatch):
+    import httpx
+
+    async def fake_post(self, url, json=None):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    with pytest.raises(httpx.ConnectError):
+        await cs._drive_browser("http://x/?snapshot=1", 1280, 640, 30.0)
+
+
+async def test_drive_browser_raises_on_renderer_error_status(monkeypatch):
+    import httpx
+
+    async def fake_post(self, url, json=None):
+        return httpx.Response(
+            502, json={"error": "no chart element"}, request=httpx.Request("POST", url)
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    with pytest.raises(httpx.HTTPStatusError):
+        await cs._drive_browser("http://x/?snapshot=1", 1280, 640, 30.0)
 
 
 async def test_value_target_alert_skips_the_level_param(monkeypatch):

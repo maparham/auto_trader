@@ -1,23 +1,26 @@
-"""Alert-time live chart screenshot via a persistent headless Chromium.
+"""Alert-time live chart screenshot, rendered by the standalone
+snapshot-renderer service (auto_trader.snapshot_renderer, its own systemd
+unit: deploy/demo/chartkar-snapshot-renderer.service).
 
 At fire time this opens the frontend's snapshot boot mode
 (/?snapshot=1&broker=..&epic=..&level=..&price=..&token=..) — which rebuilds
 the user's last-seen view for the epic from mirrored state with LIVE data —
-waits for window.__snapshotReady, and screenshots it. Every failure returns
-None so the Telegram layer falls back to the matplotlib image (alert_chart.py)
-and then text; nothing here may raise out of render_live_chart.
+and asks the renderer to screenshot it. Every failure returns None so the
+Telegram layer falls back to the matplotlib image (alert_chart.py) and then
+text; nothing here may raise out of render_live_chart.
 
-Playwright is OPTIONAL exactly like matplotlib: imported lazily, feature off
-when missing. One browser per process, lazily launched, relaunched on death;
-renders are capped at _MAX_CONCURRENT with queueing inside the caller's budget.
-
-SNAPSHOT_CDP_URL (e.g. http://127.0.0.1:9223) attaches to a Chromium that some
-other supervisor runs (deploy/demo/chartkar-snapshot-browser.service) instead
-of launching one as a child. On the hosted box that keeps Chromium out of the
-API's memory cgroup: a child counted toward the API's MemoryHigh, and one heavy
-render froze the whole API in reclaim for five minutes. There is no fallback to
-an in-process launch when the attach fails, since that would bring the freeze
-back; the render just returns None.
+This module used to run Playwright in-process (launch or attach-over-CDP to
+a Chromium sidecar). On 2026-10-20, under box memory pressure, the in-process
+Playwright driver subprocess died and a reconnect attempt forked again; the
+forked child segfaulted before exec, and the WHOLE API stopped accepting
+connections — not just chart-snapshot traffic — because CPython holds the
+GIL across os.fork(), so one bad fork blocks every unrelated request
+regardless of which thread/task triggered it. Moving Playwright into its own
+always-on, independently systemd-restarted process (see
+auto_trader/snapshot_renderer/app.py) is the only way a renderer crash can
+never take the main API down with it again; this module is now just an HTTP
+client with a hard timeout, so an unreachable/hung renderer degrades to
+"return None" exactly like any other failure here.
 """
 
 from __future__ import annotations
@@ -30,21 +33,13 @@ import urllib.parse
 
 log = logging.getLogger(__name__)
 
-# Whole-render budget: browser launch + page load + candle fetches + settle.
-# Cold capital-live fetches on the hosted box routinely exceed 10s, which made
-# every live snapshot time out and fall back to matplotlib; the page's own
-# data wait (SnapshotApp) gives up at 25s, inside this cap.
+# Whole-render budget: renderer call (browser/page work) + its own network
+# round-trip. Cold capital-live fetches on the hosted box routinely exceed
+# 10s, which made every live snapshot time out and fall back to matplotlib;
+# the page's own data wait (SnapshotApp) gives up at 25s, inside this cap.
 _TIMEOUT_S = 30.0
-_MAX_CONCURRENT = 2
-# Scale 1, not 2: the hosted box is memory-tight and a 2x raster of a
-# ~1668x866 viewport is a large chunk of Chromium's footprint; Telegram
-# compresses photos anyway.
-_DEVICE_SCALE = 1
 
-_semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
-_browser = None  # playwright Browser, lazily launched
-_pw = None       # playwright driver handle
-_launch_lock = asyncio.Lock()
+_RENDERER_URL = os.environ.get("SNAPSHOT_RENDERER_URL", "http://127.0.0.1:9223").rstrip("/")
 
 
 def _frontend_url() -> str:
@@ -99,51 +94,19 @@ async def render_live_chart(user_id: str, payload: dict) -> bytes | None:
 
 
 async def _render_guarded(url: str, width: int, height: int) -> bytes | None:
-    async with _semaphore:
-        return await _drive_browser(url, width, height, _TIMEOUT_S)
+    return await _drive_browser(url, width, height, _TIMEOUT_S)
 
 
 async def _drive_browser(url: str, width: int, height: int, timeout_s: float) -> bytes | None:
-    """Open `url` in the persistent headless browser, await __snapshotReady,
-    screenshot the chart element. Raises on failure (caller catches)."""
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        log.info("playwright not installed; live snapshot off")
-        return None
-    global _browser, _pw
-    async with _launch_lock:
-        if _browser is None or not _browser.is_connected():
-            if _pw is None:
-                _pw = await async_playwright().start()
-            _browser = await _open_browser(_pw)
-    context = await _browser.new_context(
-        viewport={"width": width, "height": height},
-        device_scale_factor=_DEVICE_SCALE,
-    )
-    try:
-        page = await context.new_page()
-        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
-        await page.wait_for_function(
-            "window.__snapshotReady === true || typeof window.__snapshotError === 'string'",
-            timeout=timeout_s * 1000,
+    """Ask the standalone snapshot-renderer service to screenshot `url`.
+    Raises on failure (caller catches) exactly like the old in-process
+    implementation did, so render_live_chart's contract is unchanged."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=timeout_s + 5) as client:
+        resp = await client.post(
+            f"{_RENDERER_URL}/render",
+            json={"url": url, "width": width, "height": height, "timeout_s": timeout_s},
         )
-        err = await page.evaluate("window.__snapshotError ?? null")
-        if err is not None:
-            raise RuntimeError(f"snapshot page reported: {err}")
-        el = await page.query_selector("[data-snapshot-chart]")
-        if el is None:
-            raise RuntimeError("snapshot chart element missing")
-        return await el.screenshot(type="png")
-    finally:
-        await context.close()
-
-
-async def _open_browser(pw):
-    cdp = os.environ.get("SNAPSHOT_CDP_URL", "").strip()
-    if cdp:
-        return await pw.chromium.connect_over_cdp(cdp, timeout=5_000)
-    # --no-sandbox: the renderer only ever loads our own frontend
-    # (never third-party/untrusted content), and containers run as
-    # root, where Chrome's sandbox refuses to start at all.
-    return await pw.chromium.launch(headless=True, args=["--no-sandbox"])
+    resp.raise_for_status()
+    return resp.content

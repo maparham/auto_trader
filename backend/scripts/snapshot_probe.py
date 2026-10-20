@@ -3,8 +3,11 @@ for --epic against the running dev stack and writes snapshot.png.
 
 Usage: cd backend && python3 -m scripts.snapshot_probe --epic US100 \
            [--broker capital] [--user dev] [--level 20000] [--out snapshot.png]
-Requires: backend running, frontend dev server running, and the app opened at
-least once on that chart (so a heartbeat exists)."""
+Requires: backend running, frontend dev server running, the snapshot renderer
+running (`playwright install chromium && python3 -m
+auto_trader.snapshot_renderer`, or already deployed as
+chartkar-snapshot-renderer.service on the box), and the app opened at least
+once on that chart (so a heartbeat exists)."""
 
 from __future__ import annotations
 
@@ -29,8 +32,8 @@ async def main() -> int:
     png = await render_live_chart(args.user, payload)
     if png is None:
         print("render returned None — check: heartbeat exists (open the app on "
-              "that chart, wait 3s), frontend dev server up, playwright installed "
-              "(python -m playwright install chromium)")
+              "that chart, wait 3s), frontend dev server up, snapshot renderer "
+              "running on 127.0.0.1:9223 (python -m auto_trader.snapshot_renderer)")
         return 1
     with open(args.out, "wb") as f:
         f.write(png)
