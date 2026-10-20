@@ -859,9 +859,9 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // Line alerts (a frozen trendline): a bell on the alert's own line just
     // past the last bar, where its dashed segment ends. Not the axis, and not
     // the live-detected TrendLine list, which can re-extend past the alert's
-    // own anchors as new bars arrive or drop the line entirely. Only while
-    // the chart shows the alert's own timeframe (its bars are the alert's
-    // bars there) and the eye shows alert lines.
+    // own anchors as new bars arrive or drop the line entirely. Wherever the
+    // dashed line draws (the chart's own timeframe, or a finer chart under
+    // a pin to the alert's), and while the eye shows alert lines.
     const lineBells: LineAlertBellTag[] = [];
     if (!overlays.getAlertsHidden()) {
       // The lines first: their end follows the last bar, and this also
@@ -871,11 +871,11 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       for (const a of loadLineAlerts(epicRef.current, brokerIdRef.current)) {
         const p = a.params;
         const link = p.link;
-        if (!link || link.scope !== scope || p.timeframe !== resRef.current) continue;
+        if (!link || link.scope !== scope) continue;
         const ind = getIndicatorById(chart, link.instanceId);
         if (!ind || ind.visible === false) continue;
-        // Same check the ray uses: a pane re-pinned to another timeframe
-        // hides both the ray and its bell.
+        // Same check the line uses: the instance must alert on the alert's
+        // timeframe here (the chart's, or its pin's); otherwise neither draws.
         const ext = ind.extendData as Record<string, unknown> | undefined;
         if (alertTimeframeOf(ext, resRef.current) !== p.timeframe) continue;
         const pts = controller.indicatorAlerts.rayPoints(a.id);
