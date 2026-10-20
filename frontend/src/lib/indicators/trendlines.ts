@@ -2694,6 +2694,28 @@ export interface TrendlineHandle {
 // hit-tests for another.
 const HANDLES = new WeakMap<object, Map<string, TrendlineHandle[]>>();
 
+/** An end tag (×N / #rank) as painted: left x, middle y (textBaseline is
+ * "middle"), width, in pane pixels. */
+export interface TrendlineTagBox {
+  x: number;
+  y: number;
+  w: number;
+}
+
+// The end tags each instance painted, recorded beside its handles and cleared
+// with them, so DOM furniture placed at a line's end (the trendline alert
+// bell) can step around them. Same keying as HANDLES.
+const TAGS = new WeakMap<object, Map<string, TrendlineTagBox[]>>();
+
+/** Every end tag painted on one pane of this chart, across instances. */
+export function getTrendlineTags(chart: object, paneId: string): TrendlineTagBox[] {
+  const byPane = TAGS.get(chart);
+  if (!byPane) return [];
+  const out: TrendlineTagBox[] = [];
+  for (const [key, tags] of byPane) if (key.startsWith(`${paneId}:`)) out.push(...tags);
+  return out;
+}
+
 export function getTrendlineHandles(
   chart: object,
   paneId: string,
@@ -2728,10 +2750,11 @@ export function hitAnyTrendlineHandle(
 export function dropTrendlineHandles(chart: object, name: string): void {
   // The line-body targets die with the handles, for the same reason.
   dropTrendlineSegments(chart, name);
-  const byPane = HANDLES.get(chart);
-  if (!byPane) return;
-  for (const key of [...byPane.keys()])
-    if (key.slice(key.indexOf(":") + 1) === name) byPane.delete(key);
+  for (const byPane of [HANDLES.get(chart), TAGS.get(chart)]) {
+    if (!byPane) continue;
+    for (const key of [...byPane.keys()])
+      if (key.slice(key.indexOf(":") + 1) === name) byPane.delete(key);
+  }
 }
 
 function setTrendlineHandles(
@@ -2739,7 +2762,12 @@ function setTrendlineHandles(
   paneId: string,
   name: string,
   handles: TrendlineHandle[] | null,
+  tags: TrendlineTagBox[] = [],
 ): void {
+  const tagsByPane = TAGS.get(chart) ?? new Map<string, TrendlineTagBox[]>();
+  if (handles === null || tags.length === 0) tagsByPane.delete(`${paneId}:${name}`);
+  else tagsByPane.set(`${paneId}:${name}`, tags);
+  if (tagsByPane.size && !TAGS.has(chart)) TAGS.set(chart, tagsByPane);
   let byPane = HANDLES.get(chart);
   if (!byPane) {
     if (handles === null) return;
@@ -3650,6 +3678,8 @@ function drawTrendlines(
   // Shared across instances (Trendlines(1D) and Trendlines(4H) draw in
   // separate passes on the same context), see paneTags.
   const placedTags = paneTags(ctx);
+  // This instance's own tags, for getTrendlineTags.
+  const myTags: TrendlineTagBox[] = [];
   // One style lookup per draw, not one per tag.
   const halo = tagHalo();
   // The shared canvas context arrives with whatever dash pattern the previous
@@ -3953,6 +3983,7 @@ function drawTrendlines(
         : y0 + ((yHandle - y0) * (xTag - x0)) / (xHandle - x0);
     yTag = clearTagRow(placedTags, xTag, yTag, wTag, bounding.height);
     placedTags.push({ x: xTag, y: yTag, w: wTag });
+    myTags.push({ x: xTag, y: yTag, w: wTag });
     ctx.fillStyle = ctx.strokeStyle;
     ctx.save();
     ctx.strokeStyle = halo;
@@ -3971,7 +4002,7 @@ function drawTrendlines(
     drawnPivotIdxs(marks.hidden.size ? drawn.filter((l) => !marks.hidden.has(lineKey(l, dataList, starts))) : drawn),
     depths,
   );
-  setTrendlineHandles(chart, indicator.paneId, indicator.name, handles);
+  setTrendlineHandles(chart, indicator.paneId, indicator.name, handles, myTags);
   // Drawn segments first: hitTrendline keeps the first at equal distance, so
   // a tie resolves to the drawn line, not the debug candidate under it.
   setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs.length ? [...segments, ...debugSegs] : segments);

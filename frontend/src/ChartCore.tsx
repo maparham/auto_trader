@@ -257,6 +257,7 @@ import { useIndicatorCommands } from "./chart/useIndicatorCommands";
 import { useLineDrag, type TradeLinePx } from "./chart/useLineDrag";
 import { usePointerCrosshair } from "./chart/usePointerCrosshair";
 import AlertTags, { type IndicatorBellTag } from "./chart/AlertTags";
+import TrendlineAlertBells, { type LineAlertBellTag } from "./chart/TrendlineAlertBells";
 import AxisPriceTags, { WithPriceTag, type BaTag, type PriceTag } from "./chart/AxisPriceTags";
 import { signalSetter } from "./lib/signalHooks";
 import TradePills from "./chart/TradePills";
@@ -1183,6 +1184,7 @@ export default function ChartCore({
   const [setBidTag] = useState(() => signalSetter(bidTagSig));
   const [setAskTag] = useState(() => signalSetter(askTagSig));
   const [indicatorBells, setIndicatorBells] = useState<IndicatorBellTag[]>([]);
+  const [lineAlertBells, setLineAlertBells] = useState<LineAlertBellTag[]>([]);
   const [alertTags, setAlertTags] = useState<
     Array<{
       id: string;
@@ -4847,6 +4849,7 @@ export default function ChartCore({
     setAskTag,
     setAlertTags,
     setIndicatorBells,
+    setLineAlertBells,
     setTradePills,
     setAxisW,
     setLegendRows,
@@ -6096,6 +6099,11 @@ export default function ChartCore({
           />
         )}
       </WithPriceTag>
+
+      <TrendlineAlertBells
+        bells={lineAlertBells}
+        onDoubleClick={(id) => requestAlertEdit(id)}
+      />
 
       {/* TV-style descriptive pill on the line itself — shown while the line is
           hovered/selected (or the pill itself is hovered). Follows the cursor's x

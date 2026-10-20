@@ -12,11 +12,20 @@ import { IndicatorAlertLines } from "./indicatorAlerts";
 import { patchIndicatorAlert } from "../alertsApi";
 import { ChartController } from "../chartController";
 
+// Pixel space is (timestamp, -value): linear, so a line cut at the last bar
+// lands where straight-line arithmetic says it should.
+const pixelSpace = {
+  convertToPixel: (pts: Array<{ timestamp: number; value: number }>) => pts.map((q) => ({ x: q.timestamp, y: -q.value })),
+  convertFromPixel: (pts: Array<{ x: number; y: number }>) => pts.map((q) => ({ timestamp: q.x, value: -q.y })),
+};
+
 function fakeChart() {
   const created: Array<Record<string, unknown>> = [];
   return {
     created,
     chart: {
+      ...pixelSpace,
+      getDataList: () => [{ timestamp: 8 }, { timestamp: 10 }],
       createOverlay: (o: Record<string, unknown>) => { created.push(o); return o.id as string; },
       removeOverlay: vi.fn(),
       overrideOverlay: vi.fn(),
@@ -135,7 +144,7 @@ const lineAlert = (scope: string, tf = "HOUR") => ({
 });
 
 describe("IndicatorAlertLines: line alerts", () => {
-  it("draws a dashed ray through the anchors on the linked cell's timeframe only", () => {
+  it("draws a dashed line from the first anchor to the last bar, on the linked cell's timeframe only", () => {
     alerts.splice(0, alerts.length);
     lineAlerts.splice(0, lineAlerts.length, lineAlert("s1"), { ...lineAlert("s1", "DAY"), id: "al-l2" }, { ...lineAlert("s2"), id: "al-l3" });
     const { chart, created } = fakeChart();
@@ -144,8 +153,8 @@ describe("IndicatorAlertLines: line alerts", () => {
     lines.reconcile();
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({
-      id: "lnalert:al-l", name: "rayLine", lock: true,
-      points: [{ timestamp: 2, value: 10 }, { timestamp: 6, value: 12 }],
+      id: "lnalert:al-l", name: "segment", lock: true, visible: true,
+      points: [{ timestamp: 2, value: 10 }, { timestamp: 10, value: 14 }],
     });
     lineAlerts.splice(0, lineAlerts.length);
     lines.reconcile();
@@ -172,6 +181,7 @@ describe("IndicatorAlertLines: line alerts", () => {
     lineAlerts.splice(0, lineAlerts.length, a);
     const created: Array<Record<string, unknown>> = [];
     const chart = {
+      ...pixelSpace,
       createOverlay: (o: Record<string, unknown>) => { created.push(o); return o.id as string; },
       removeOverlay: vi.fn(),
       overrideOverlay: vi.fn(),
@@ -192,5 +202,22 @@ describe("IndicatorAlertLines: line alerts", () => {
       id: "lnalert:al-l",
       points: [{ timestamp: bars[10].timestamp, value: 90 }, { timestamp: bars[40].timestamp, value: 98 }],
     });
+  });
+
+  it("rayPoints reports the ray's own anchors, surviving the live TrendLine list moving on", () => {
+    // The live-detected line can re-extend its second touch as new bars
+    // arrive (e.g. i2 moves from 6 to 20) without the alert's own frozen
+    // anchors moving; rayPoints must still answer from the alert's anchors,
+    // not from whatever TRENDLINES currently reports as "the" line.
+    alerts.splice(0, alerts.length);
+    lineAlerts.splice(0, lineAlerts.length, lineAlert("s1"));
+    const { chart } = fakeChart();
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    expect(lines.rayPoints("al-l")).toBeNull();
+    lines.reconcile();
+    expect(lines.rayPoints("al-l")).toEqual([{ timestamp: 2, value: 10 }, { timestamp: 6, value: 12 }]);
+    lines.refreshRays();
+    expect(lines.rayPoints("al-l")).toEqual([{ timestamp: 2, value: 10 }, { timestamp: 6, value: 12 }]);
   });
 });

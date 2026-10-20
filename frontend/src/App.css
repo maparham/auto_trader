@@ -3378,6 +3378,20 @@
    clickable (opens the alert's edit dialog). */
 .alert-tag.ind-bell { pointer-events: auto; cursor: pointer; padding: 0 4px; font: inherit; }
 
+/* A frozen-trendline alert's bell, past the end of its dashed line (left/top,
+   not axis-docked, so it needs its own centered transform rather than
+   .alert-tag's translateY(-50%)). Double click edits. */
+.tl-alert-bell {
+  position: absolute; z-index: 45; transform: translate(-50%, -50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; padding: 0; border: 0; background: none;
+  color: #f5a623; pointer-events: auto; cursor: pointer; font: inherit;
+  /* No disc behind it, so a halo keeps it legible over candles. */
+  filter: drop-shadow(0 0 1px var(--bg)) drop-shadow(0 0 1px var(--bg));
+}
+.tl-alert-bell svg { display: block; }
+.tl-alert-bell:hover { z-index: 51; color: #d4880f; }
+
 /* TV-style descriptive pill on the alert line (hover/selected). Unlike the
    axis tag this is interactive (delete button), so it opts back into pointer
    events. Its `left` is set imperatively to track the cursor's x. */
@@ -3466,6 +3480,19 @@
 /* The pill of the focused LINE (selected field, or the hovered one) wins overlaps
    within its own raised group so a stack of close levels stays readable. */
 .trade-pill.focused { z-index: 49; }
+/* Resting order (entry + its SL/TP): a ghost of a position pill. Dashed frame,
+   see-through fill and muted readout, so a not-yet-filled bracket never reads as a
+   live position's. Comes after .selected/.hovering so the dash survives them; the
+   readout regains full ink while the trade is engaged. */
+.trade-pill.tp-pending {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+.trade-pill.tp-pending.selected { background: color-mix(in srgb, var(--pill) 6%, color-mix(in srgb, var(--surface-2) 70%, transparent)); }
+.trade-pill.tp-pending > :not(.tp-btn) { opacity: .7; }
+.trade-pill.tp-pending.selected > :not(.tp-btn),
+.trade-pill.tp-pending.hovering > :not(.tp-btn) { opacity: 1; }
+.trade-pill .tp-pend-ico { width: 10px; height: 10px; flex: none; margin-right: -3px; color: var(--pill); }
 /* Collapsed cluster: several colliding pills as one summary — "3×" and the net
    P/L — held at the cluster's true price mean. Neutral frame (mixed roles).
    Only hovering a member (or a staged drag) spreads it; a selected trade inside

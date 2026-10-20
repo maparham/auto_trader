@@ -5,10 +5,14 @@
 // One instance per ChartController; ChartCore re-attaches it on every
 // epic/resolution/broker bind and reconciles it on the alerts signal and on
 // indicator add/remove (the pane the line lives in can come and go).
-// Also the frozen-trendline (`line`) alerts, drawn as a dashed ray through
-// their anchors on the candle pane of the linked cell, while its Trendlines
-// pane alerts on the alert's timeframe. Under a coarser pin the ray follows
-// the trendline's own stroke instead (pinnedAlertStroke).
+// Also the frozen-trendline (`line`) alerts: a dashed line through their
+// anchors on the candle pane of the linked cell, while its Trendlines pane
+// alerts on the alert's timeframe. Under a coarser pin it follows the
+// trendline's own stroke instead (pinnedAlertStroke). The line runs from its
+// first anchor to the chart's last bar and stops there, so it lies on the
+// trendline while that is drawn and still shows what the alert watches once
+// the trendline is gone; the bell past its end (useChartPaint/
+// TrendlineAlertBells) marks it.
 import type { Chart, KLineData } from "klinecharts";
 import { alertTimeframeOf } from "../indicatorAlertInstance";
 import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert } from "../alertsApi";
@@ -22,7 +26,9 @@ const rayId = (alertId: string) => `lnalert:${alertId}`;
 
 type Drawn = { paneId: string; value: number };
 type RayPoints = [{ timestamp: number; value: number }, { timestamp: number; value: number }];
-type Ray = { points: RayPoints; key: string };
+// `points` defines the line (the bell extrapolates through them); `drawn` is
+// the segment actually drawn, from the first point to the last bar.
+type Ray = { points: RayPoints; drawn: RayPoints; key: string };
 
 export class IndicatorAlertLines {
   private chart: Chart | null = null;
@@ -32,6 +38,11 @@ export class IndicatorAlertLines {
   private resolution = "";
   private drawn = new Map<string, Drawn>();
   private rays = new Map<string, string>(); // alertId -> geometry key
+  // The most recently computed ray geometry per alert id, for rayPoints(): the
+  // bell past the line's end reads this rather than the live-detected
+  // TrendLine list, which can re-extend its second touch as new bars arrive
+  // and would otherwise lose a match the alert itself never moved off.
+  private lastPoints = new Map<string, RayPoints>();
   // The visibility the drawn lines currently carry (the sidebar eye).
   private shownHidden = false;
 
@@ -47,6 +58,7 @@ export class IndicatorAlertLines {
     if (chart !== this.chart) {
       this.drawn.clear();
       this.rays.clear();
+      this.lastPoints.clear();
     }
     this.chart = chart;
     this.scope = scope;
@@ -144,15 +156,41 @@ export class IndicatorAlertLines {
           const lastIdx = res?.[res.length - 1]?.lineIdx ?? -1;
           points = pinnedAlertStroke(dataList, ext.mtf, lastIdx, { t1, p1, slope: a.params.slope }) ?? points;
         }
-        out.set(a.id, { points, key: points.map((q) => `${q.timestamp}:${q.value}`).join("|") });
+        dataList ??= this.chart.getDataList();
+        const drawn = this.toLastBar(points, dataList);
+        if (drawn) out.set(a.id, { points, drawn, key: drawn.map((q) => `${q.timestamp}:${q.value}`).join("|") });
         break;
       }
     }
     return out;
   }
 
+  // The line through `points`, cut at the last bar: interpolated in pixel
+  // space, the same way the bell extrapolates, so both sit on one line under
+  // either axis scale. The end value is rounded so a pan or zoom re-deriving
+  // it does not churn the overlay.
+  private toLastBar(points: RayPoints, dataList: KLineData[]): RayPoints | null {
+    const c = this.chart;
+    const last = dataList[dataList.length - 1];
+    if (!c || !last) return null;
+    if (last.timestamp <= points[0].timestamp) return null;
+    const filter = { paneId: "candle_pane", absolute: true };
+    const px = c.convertToPixel(
+      [points[0], points[1], { timestamp: last.timestamp, value: points[1].value }],
+      filter,
+    ) as Array<{ x?: number; y?: number }>;
+    const [q0, q1, end] = px;
+    if (q0?.x == null || q0.y == null || q1?.x == null || q1.y == null || end?.x == null || q1.x === q0.x) return null;
+    const y = q0.y + ((q1.y - q0.y) * (end.x - q0.x)) / (q1.x - q0.x);
+    const pt = c.convertFromPixel([{ x: end.x, y }], filter) as Array<{ value?: number }>;
+    const value = pt[0]?.value;
+    if (value == null || !Number.isFinite(value)) return null;
+    return [points[0], { timestamp: last.timestamp, value: Number(value.toPrecision(8)) }];
+  }
+
   private reconcileRays(c: Chart, hidden: boolean, hiddenChanged: boolean): void {
     const want = this.wantedRays();
+    this.lastPoints = new Map([...want].map(([id, w]) => [id, w.points]));
     for (const [id, geo] of this.rays) {
       const w = want.get(id);
       if (!w) {
@@ -161,7 +199,7 @@ export class IndicatorAlertLines {
         continue;
       }
       if (w.key !== geo) {
-        c.overrideOverlay({ id: rayId(id), points: w.points });
+        c.overrideOverlay({ id: rayId(id), points: w.drawn });
         this.rays.set(id, w.key);
       }
       if (hiddenChanged) c.overrideOverlay({ id: rayId(id), visible: !hidden });
@@ -170,8 +208,8 @@ export class IndicatorAlertLines {
       if (this.rays.has(id)) continue;
       const made = c.createOverlay({
         id: rayId(id),
-        name: "rayLine",
-        points: w.points,
+        name: "segment",
+        points: w.drawn,
         styles: alertLineStyles(false),
         visible: !hidden,
         mode: "normal",
@@ -189,13 +227,22 @@ export class IndicatorAlertLines {
     }
   }
 
-  /** Re-place the rays only. The pinned stroke they follow moves with new
-   * bars, loaded history and the pin's stash, none of which reconcile hears,
-   * so the paint loop calls this; an unchanged ray costs a string compare. */
+  /** Re-place the rays only. Their end follows the last bar, and the pinned
+   * stroke they follow moves with new bars, loaded history and the pin's
+   * stash, none of which reconcile hears, so the paint loop calls this; an
+   * unchanged ray costs a string compare. Also creates a ray reconcile could
+   * not place before the chart had bars. */
   refreshRays(): void {
     const c = this.chart;
-    if (!c || this.rays.size === 0) return;
+    if (!c) return;
     this.reconcileRays(c, this.hidden(), false);
+  }
+
+  /** The two points the alert's ray runs through (frozen anchors, or the
+   * pinned stroke under a coarser pin), for extrapolating its bell past the
+   * last bar; independent of the live TRENDLINES detection moving on. */
+  rayPoints(alertId: string): RayPoints | null {
+    return this.lastPoints.get(alertId) ?? null;
   }
 
   lines(): Array<{ alertId: string; paneId: string; value: number }> {
