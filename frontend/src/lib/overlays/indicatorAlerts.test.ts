@@ -8,7 +8,7 @@ vi.mock("../alertsApi", async (orig) => ({
   loadLineAlerts: () => lineAlerts,
   patchIndicatorAlert: vi.fn(() => Promise.resolve(true)),
 }));
-import { IndicatorAlertLines } from "./indicatorAlerts";
+import { IndicatorAlertLines, loadedLinePoints } from "./indicatorAlerts";
 import { patchIndicatorAlert } from "../alertsApi";
 import { ChartController } from "../chartController";
 
@@ -219,5 +219,32 @@ describe("IndicatorAlertLines: line alerts", () => {
     expect(lines.rayPoints("al-l")).toEqual([{ timestamp: 2, value: 10 }, { timestamp: 6, value: 12 }]);
     lines.refreshRays();
     expect(lines.rayPoints("al-l")).toEqual([{ timestamp: 2, value: 10 }, { timestamp: 6, value: 12 }]);
+  });
+});
+
+describe("loadedLinePoints", () => {
+  // Alert-timeframe bars at 0, 1000, ... 9000; the chart has loaded 5000..9000.
+  const times = Array.from({ length: 10 }, (_, j) => j * 1000);
+  const loaded = times.slice(5).map((timestamp) => ({ timestamp }) as never);
+  const params = (t1: number, tRef = 3000) => ({
+    tRef, pRef: 10, slope: 0.5, anchors: { t1, p1: 10 - 0.5 * ((tRef - t1) / 1000), t2: tRef, p2: 10 },
+  });
+
+  it("counts bars from the reference when anchor1 is older than the loaded bars", () => {
+    expect(loadedLinePoints(params(0), times, loaded)).toEqual([
+      { timestamp: 5000, value: 11 },
+      { timestamp: 9000, value: 13 },
+    ]);
+  });
+
+  it("starts at anchor1 when it is loaded", () => {
+    expect(loadedLinePoints(params(6000, 7000), times, loaded)).toEqual([
+      { timestamp: 6000, value: 9.5 },
+      { timestamp: 9000, value: 11 },
+    ]);
+  });
+
+  it("is null when no reference bar is in the alert's bars", () => {
+    expect(loadedLinePoints(params(500, 1500), times, loaded)).toBeNull();
   });
 });

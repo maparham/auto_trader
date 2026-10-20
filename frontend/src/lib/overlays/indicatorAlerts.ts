@@ -15,7 +15,7 @@
 // TrendlineAlertBells) marks it.
 import type { Chart, KLineData } from "klinecharts";
 import { alertTimeframeOf } from "../indicatorAlertInstance";
-import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert } from "../alertsApi";
+import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlertParams } from "../alertsApi";
 import { getIndicatorsByPane } from "../indicators";
 import { isInsetInstance } from "../indicators/inset";
 import { pinnedAlertStroke, type TrendlinesMtf } from "../indicators/trendlines";
@@ -29,6 +29,52 @@ type RayPoints = [{ timestamp: number; value: number }, { timestamp: number; val
 // `points` defines the line (the bell extrapolates through them); `drawn` is
 // the segment actually drawn, from the first point to the last bar.
 type Ray = { points: RayPoints; drawn: RayPoints; key: string };
+
+/**
+ * Two points on a line alert's line, both at bars the chart has loaded.
+ * `times` are bar open times of the alert's timeframe (the chart's own bars,
+ * or a coarser pin's HTF starts); the slope is per bar of them. Anchored on
+ * whichever of the reference bar, anchor2, anchor1 is in `times`, counted in
+ * those bars, so a first anchor older than the loaded history is not
+ * extrapolated by the chart (which spaces unloaded bars in calendar time,
+ * weekends included, and tilts the line). Null when no reference is in
+ * `times` or fewer than two of its bars are loaded.
+ * Exported for the unit test.
+ */
+export function loadedLinePoints(
+  p: Pick<LineAlertParams, "tRef" | "pRef" | "slope" | "anchors">,
+  times: readonly number[],
+  dataList: readonly KLineData[],
+): RayPoints | null {
+  const first = dataList[0]?.timestamp;
+  const lastT = dataList[dataList.length - 1]?.timestamp;
+  if (first == null || lastT == null) return null;
+  let jRef = -1;
+  let pAt = 0;
+  for (const [t, price] of [
+    [p.tRef, p.pRef],
+    [p.anchors.t2, p.anchors.p2],
+    [p.anchors.t1, p.anchors.p1],
+  ]) {
+    jRef = times.lastIndexOf(t);
+    if (jRef >= 0) {
+      pAt = price;
+      break;
+    }
+  }
+  if (jRef < 0) return null;
+  // From anchor1 when it is loaded (the line starts there), else the first
+  // loaded bar; to the last loaded bar of `times`.
+  let a = 0;
+  while (a < times.length && times[a] < first) a++;
+  const j1 = times.lastIndexOf(p.anchors.t1);
+  if (j1 > a) a = j1;
+  let b = times.length - 1;
+  while (b >= 0 && times[b] > lastT) b--;
+  if (b <= a) return null;
+  const at = (j: number) => ({ timestamp: times[j], value: pAt + p.slope * (j - jRef) });
+  return [at(a), at(b)];
+}
 
 export class IndicatorAlertLines {
   private chart: Chart | null = null;
@@ -144,19 +190,23 @@ export class IndicatorAlertLines {
         const ext = ind.extendData as { mtf?: TrendlinesMtf } | undefined;
         if (alertTimeframeOf(ext as Record<string, unknown> | undefined, this.resolution) !== a.params.timeframe) break;
         const { t1, p1, t2, p2 } = a.params.anchors;
+        dataList ??= this.chart.getDataList();
+        const pinned = !!ext?.mtf?.timeframe && a.params.timeframe !== this.resolution;
         // Under a coarser pin, the points the trendline's own stroke runs
-        // through, so the ray lies on it; otherwise the anchors themselves.
-        let points: RayPoints = [
+        // through, so the ray lies on it. Otherwise (or when that stroke is
+        // not on the chart) two points on the alert's own line that are
+        // inside the loaded bars; the anchors themselves only as a last resort.
+        let points: RayPoints | null = null;
+        if (pinned && ext?.mtf) {
+          const res = ind.result as Array<{ lineIdx?: number }> | undefined;
+          const lastIdx = res?.[res.length - 1]?.lineIdx ?? -1;
+          points = pinnedAlertStroke(dataList, ext.mtf, lastIdx, { t1, p1, slope: a.params.slope });
+        }
+        points ??= loadedLinePoints(a.params, pinned ? ext?.mtf?.htfStarts ?? [] : this.barTimes(dataList), dataList);
+        points ??= [
           { timestamp: t1, value: p1 },
           { timestamp: t2, value: p2 },
         ];
-        if (ext?.mtf?.timeframe && a.params.timeframe !== this.resolution) {
-          dataList ??= this.chart.getDataList();
-          const res = ind.result as Array<{ lineIdx?: number }> | undefined;
-          const lastIdx = res?.[res.length - 1]?.lineIdx ?? -1;
-          points = pinnedAlertStroke(dataList, ext.mtf, lastIdx, { t1, p1, slope: a.params.slope }) ?? points;
-        }
-        dataList ??= this.chart.getDataList();
         const drawn = this.toLastBar(points, dataList);
         if (drawn) out.set(a.id, { points, drawn, key: drawn.map((q) => `${q.timestamp}:${q.value}`).join("|") });
         break;
@@ -186,6 +236,19 @@ export class IndicatorAlertLines {
     const value = pt[0]?.value;
     if (value == null || !Number.isFinite(value)) return null;
     return [points[0], { timestamp: last.timestamp, value: Number(value.toPrecision(8)) }];
+  }
+
+  // The chart's bar open times, rebuilt only when the data list changes:
+  // refreshRays runs every paint, and the list can be thousands of bars.
+  private timesCache: { list: KLineData[]; n: number; last: number; times: number[] } | null = null;
+  private barTimes(list: KLineData[]): number[] {
+    const n = list.length;
+    const last = list[n - 1]?.timestamp ?? NaN;
+    const c = this.timesCache;
+    if (c && c.list === list && c.n === n && c.last === last) return c.times;
+    const times = list.map((d) => d.timestamp);
+    this.timesCache = { list, n, last, times };
+    return times;
   }
 
   private reconcileRays(c: Chart, hidden: boolean, hiddenChanged: boolean): void {
