@@ -39,6 +39,12 @@ _DEVICE_SCALE = 1
 # --no-sandbox: this renderer only ever loads our own frontend. --disable-gpu:
 # the chart is canvas 2D, and the swiftshader GPU process alone held ~150MB.
 _LAUNCH_ARGS = ["--no-sandbox", "--disable-gpu"]
+# A hung Chromium/driver (the memory-pressure scenario this renderer was split
+# out to survive) can make browser.close() itself never return. Bound it so
+# the outer wait_for in render() actually completes within req.timeout_s plus
+# this budget, instead of blocking forever on cleanup while holding the
+# single-slot semaphore.
+_CLOSE_BUDGET_S = 5.0
 
 _semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
 
@@ -68,7 +74,10 @@ async def _drive_browser(url: str, width: int, height: int, timeout_s: float) ->
                 raise RuntimeError("snapshot chart element missing")
             return await el.screenshot(type="png")
         finally:
-            await browser.close()
+            try:
+                await asyncio.wait_for(browser.close(), timeout=_CLOSE_BUDGET_S)
+            except Exception:
+                log.warning("snapshot renderer: browser.close() did not finish within %.0fs", _CLOSE_BUDGET_S)
 
 
 app = FastAPI(title="Chartkar snapshot renderer")

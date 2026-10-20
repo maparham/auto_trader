@@ -219,9 +219,10 @@ if [ "$DO_BACKEND" = 1 ]; then
   '
 
   # Liveness watchdog for auto-trader-demo itself: Restart=always only
-  # catches the process exiting, not an internal hang (2026-10-20 — the
-  # process stayed alive but stopped accepting connections). See the script
-  # for why two consecutive failures, not one.
+  # catches the process exiting, not an internal hang (2026-10-20, the
+  # process stayed alive but stopped accepting connections). See
+  # backend/scripts/api_watchdog.sh for why it waits for three consecutive
+  # misses, not one.
   echo "==> backend: watchdog timer"
   "${SSH[@]}" "$HOST" 'cat > /tmp/auto-trader-watchdog.service' \
     < "$WT/deploy/demo/auto-trader-watchdog.service"
