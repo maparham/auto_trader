@@ -9,18 +9,11 @@ and asks the renderer to screenshot it. Every failure returns None so the
 Telegram layer falls back to the matplotlib image (alert_chart.py) and then
 text; nothing here may raise out of render_live_chart.
 
-This module used to run Playwright in-process (launch or attach-over-CDP to
-a Chromium sidecar). On 2026-10-20, under box memory pressure, the in-process
-Playwright driver subprocess died and a reconnect attempt forked again; the
-forked child segfaulted before exec, and the WHOLE API stopped accepting
-connections — not just chart-snapshot traffic — because CPython holds the
-GIL across os.fork(), so one bad fork blocks every unrelated request
-regardless of which thread/task triggered it. Moving Playwright into its own
-always-on, independently systemd-restarted process (see
-auto_trader/snapshot_renderer/app.py) is the only way a renderer crash can
-never take the main API down with it again; this module is now just an HTTP
-client with a hard timeout, so an unreachable/hung renderer degrades to
-"return None" exactly like any other failure here.
+This module used to run Playwright in-process. On 2026-10-20 the in-process
+driver died under memory pressure, a forked child of the API segfaulted, and
+the whole API stopped answering; see auto_trader/snapshot_renderer/app.py.
+This module is now an HTTP client with a hard timeout, so an unreachable or
+hung renderer degrades to "return None" like any other failure here.
 """
 
 from __future__ import annotations

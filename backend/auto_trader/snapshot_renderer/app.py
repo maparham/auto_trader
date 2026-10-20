@@ -4,12 +4,12 @@ snapshots, run as its own systemd unit
 auto-trader-demo.service on purpose.
 
 The Playwright driver subprocess used to live inside the main API process.
-On 2026-10-20, under box memory pressure, that driver died and a reconnect
-attempt forked again; the forked child segfaulted before exec, and the WHOLE
-API stopped accepting connections, because CPython holds the GIL across
-os.fork(), so one bad fork blocks every unrelated request in the process.
-Keeping Playwright in its own process means a renderer crash can never take
-the main API down with it. `chart_snapshot.py` is a thin HTTP client to this.
+On 2026-10-20, under box memory pressure, that driver died, a forked child of
+the API segfaulted, and the whole API stopped answering until restarted. The
+exact mechanism was not proven (swap thrashing alone produces the same
+timeouts), but nothing that spawns Chromium belongs in the process serving
+every chart, so Playwright lives here now. `chart_snapshot.py` is a thin HTTP
+client to this.
 
 Driver and browser are started per render and torn down after it, never
 kept resident. Renders only happen when an alert fires, and a resident
@@ -90,7 +90,12 @@ async def healthz():
 async def render(req: RenderRequest):
     async with _semaphore:
         try:
-            png = await _drive_browser(req.url, req.width, req.height, req.timeout_s)
+            # One deadline for launch + load + screenshot. The API client gives
+            # up after the same budget, so work past it only holds memory.
+            png = await asyncio.wait_for(
+                _drive_browser(req.url, req.width, req.height, req.timeout_s),
+                timeout=req.timeout_s,
+            )
         except Exception as exc:
             log.warning("snapshot render failed: %r", exc)
             return JSONResponse({"error": repr(exc)}, status_code=502)

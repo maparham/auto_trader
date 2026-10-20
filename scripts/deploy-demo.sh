@@ -201,11 +201,11 @@ if [ "$DO_BACKEND" = 1 ]; then
     if ! sudo cmp -s /tmp/chartkar-snapshot-renderer.service "$unit"; then
       sudo cp /tmp/chartkar-snapshot-renderer.service "$unit"
       sudo systemctl daemon-reload
-      sudo systemctl enable chartkar-snapshot-renderer >/dev/null 2>&1
-      sudo systemctl restart chartkar-snapshot-renderer
-    else
-      sudo systemctl enable --now chartkar-snapshot-renderer >/dev/null 2>&1
     fi
+    sudo systemctl enable chartkar-snapshot-renderer >/dev/null 2>&1
+    # Always restart: the renderer runs the rsynced source, so its code can
+    # change while the unit file does not.
+    sudo systemctl restart chartkar-snapshot-renderer
     rm -f /tmp/chartkar-snapshot-renderer.service
   '
   echo "==> backend: waiting for snapshot renderer /healthz"

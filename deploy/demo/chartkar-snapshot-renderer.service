@@ -1,21 +1,17 @@
 # Standalone Playwright + Chromium renderer for Telegram alert chart
 # snapshots, in its OWN cgroup, fully isolated from auto-trader-demo.
 #
-# Replaces chartkar-snapshot-browser.service (removed 2026-10-20). That unit
-# only isolated the Chromium PROCESS; the Playwright DRIVER subprocess still
-# lived inside the main API, and on 2026-10-20, under box memory pressure, a
-# dying driver + a crashing reconnect fork froze the WHOLE API for everyone
-# (CPython holds the GIL across os.fork(), so one bad fork blocks the whole
-# process, not just chart-snapshot traffic). This unit now owns Playwright
-# end-to-end — it launches its own Chromium directly, no CDP indirection
-# needed — so a crash here can never again take the main API down with it.
-# See backend/auto_trader/snapshot_renderer/app.py for the service itself.
+# Replaces chartkar-snapshot-browser.service (removed 2026-10-20), which
+# isolated only Chromium while the Playwright driver stayed inside the API.
+# On 2026-10-20 that driver died under memory pressure and the whole API
+# stopped answering. This unit owns Playwright end to end and starts Chromium
+# per render (see backend/auto_trader/snapshot_renderer/app.py), so it idles
+# at the bare Python process. No swap: a heavy render is OOM-killed here
+# rather than pushing the API into swap; systemd restarts it.
 #
 # MALLOC_ARENA_MAX=2 caps glibc malloc arenas (otherwise each thread grows
-# its own heap), reducing fork-time memory-copy cost; this was previously an
-# undocumented drop-in on the box only, carried here for auto-trader-demo too
-# but worth stating explicitly since this unit is where the actual
-# Playwright/Chromium forking happens.
+# its own heap). auto-trader-demo has the same setting in a drop-in that
+# exists only on the box (auto-trader-demo.service.d/malloc.conf).
 #
 # Installed by scripts/deploy-demo.sh.
 [Unit]
