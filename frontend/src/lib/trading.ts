@@ -11,7 +11,7 @@
 import { BROKERS_CACHE_KEY, defaultAccount } from "./brokerDefaults";
 import { isCapitalBroker, onTradesDirty } from "./persist";
 import { isStrategyDeal } from "./liveTags";
-import { tradesSignal } from "./signals";
+import { Signal, tradesSignal } from "./signals";
 import { API_BASE as BASE, apiFetch, errorDetail, throwIfBrokerBlocked, BrokerBlockedError } from "./http";
 import { reportBrokerBlocked, reportBrokerReachable } from "./brokerBlocked";
 import { expiryToApi } from "./expiry";
@@ -138,6 +138,18 @@ export function noteDataOnlyBrokers(exec: BrokerAccount[] | undefined): void {
 export function isDataOnlyBroker(brokerId: string): boolean {
   return dataOnlyBrokers.has(brokerId);
 }
+
+// Accounts with broker-reported history (closed trades, ledger). Fed by
+// fetchBrokers / cachedBrokers like dataOnlyBrokers; a Signal because the
+// history store re-evaluates the marker source when the list first lands.
+export const historyAccountsSignal = new Signal<string[]>([]);
+export function noteHistoryAccounts(exec: BrokerAccount[] | undefined): void {
+  if (!exec) return;
+  historyAccountsSignal.set(exec.filter((a) => a.history).map((a) => a.key));
+}
+export function accountSupportsHistory(account: TradeAccount): boolean {
+  return historyAccountsSignal.value.includes(account);
+}
 // Symbol-search category chips per broker, declared backend-side over each
 // broker's own market-row `type` vocabulary (Capital's "SHARES", Yahoo's
 // "stock"/"etf"). The modal renders exactly these, so the chips can never again
@@ -220,6 +232,9 @@ export interface BrokerAccount {
   // True for a data-only source's synthetic account (Dukascopy history): selectable
   // for charts/backtests, but not tradeable. Absent on real trading accounts.
   dataOnly?: boolean;
+  // True when the broker reports closed trades + a cash ledger (GET /api/history).
+  // Absent on accounts without broker history (paper sims, other brokers).
+  history?: boolean;
 }
 /** One symbol-search chip: which market-row `type` values it covers, plus the
  * muted phrase shown on a row of that type ("stock cfd", "etf"). */
@@ -262,6 +277,7 @@ export function cachedBrokers(): BrokerInfo | null {
       noteBrokerCategories(info.categories);
       noteStreamingBrokers(info.streaming);
       noteDataOnlyBrokers(info.exec);
+      noteHistoryAccounts(info.exec);
       noteIsAdmin(info.isAdmin);
     }
     return info;
@@ -290,6 +306,7 @@ export async function fetchBrokers(): Promise<BrokerInfo> {
     noteBrokerCategories(info.categories);
     noteStreamingBrokers(info.streaming);
     noteDataOnlyBrokers(info.exec);
+    noteHistoryAccounts(info.exec);
     noteIsAdmin(info.isAdmin);
     try {
       localStorage.setItem(BROKERS_CACHE_KEY, JSON.stringify(info));
@@ -529,6 +546,10 @@ let _unsubDirty: (() => void) | null = null;
 // changes, so positions/orders follow the selection.
 let _account: TradeAccount = DEFAULT_ACCOUNT;
 
+// The trades feed's account as a signal, for consumers that must follow it
+// (the chart's broker-history markers, lib/accountHistory).
+export const tradesAccountSignal = new Signal<TradeAccount>(DEFAULT_ACCOUNT);
+
 // Real-money accounts get NO server-side push (the onTradesDirty event only fires
 // for paper triggers), so a fill / SL-TP hit / close-on-another-device would leave
 // the dock stale. For those accounts only, fall back to a light poll (paused when
@@ -563,6 +584,7 @@ export function getTradesAccount(): TradeAccount {
 export function setTradesAccount(account: TradeAccount): void {
   if (account === _account) return;
   _account = account;
+  tradesAccountSignal.set(account);
   // Clear stale trades from the previous account so lines/rows don't linger.
   tradesSignal.set([]);
   void _refresh();
