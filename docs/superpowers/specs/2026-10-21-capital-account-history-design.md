@@ -142,7 +142,9 @@ async def get_history(self, since: datetime, until: datetime) -> AccountHistory:
   always refetched. Bounded to 120 days. Single-flight per date: a second
   request for a day already in flight awaits the same task (desktop,
   phone and the refresh timer can otherwise start duplicate cold walks).
-  Transactions are not cached (a few calls per request).
+  The in-flight entry and the cache write settle on the task itself, so a
+  cancelled first requester neither orphans the fetch nor lets a later one
+  start a duplicate. Transactions are not cached (a few calls per request).
 
 **`brokers/capital.py`**: `CapitalExecutionBroker` sets
 `supports_history = True` and implements `get_history` with the module
@@ -186,11 +188,15 @@ the tab switch; its `SortKey`/`POSITION_COLUMNS` stay tied to open trades.
 - Trades columns: Symbol, Side, Qty, Entry, Exit, Opened, Closed, Closed
   by (TP / SL / Manual / System / Stop-out), P&L. Sortable, default Closed
   desc. Clicking a row focuses that epic's chart (no scroll to the bar);
-  desktop only. The phone view has no jump-to-chart path, so its rows
-  carry no click handler and show no pointer/hover affordance; descoped;
+  on the phone a tap opens it on the chart tab through `showMobileEpic`,
+  the positions sheet's "Show on chart" path, with the entry price's
+  decimals as the precision guess;
 - Ledger columns: Time, Type (Funding / Trade / Deposit / Withdrawal /
   raw type for the rest), Symbol, Note, Amount;
-- a totals line over the table: Realized, Funding, Net cash in/out;
+- a totals line over the table: Realized, Funding, Net cash in/out, plus
+  "Totals partial" when the response's `ledger_truncated` is true (the
+  transactions walk stopped on a full page: the 20-page cap, or 100+ rows
+  in one second);
 - loading state on a cold walk; an error with Retry if any day fails (one
   failing day fails the request rather than leaving a silent gap; days
   already cached stay cached).

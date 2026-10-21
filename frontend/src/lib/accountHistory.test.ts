@@ -59,6 +59,16 @@ describe("subscribeHistory", () => {
     expect(last.loading).toBe(false);
     expect(last.data!.trades[0]).toMatchObject({ dealId: "D1", entry: 400, exit: 430, closedAt: 5_000, openedAt: null });
     expect(String(historyCalls()[0][0])).toContain("/api/history?account=capital%3Ademo&days=30");
+    expect(last.data!.ledgerTruncated).toBe(false);
+    off();
+  });
+
+  it("maps the ledger truncation flag", async () => {
+    fetchMock.mockReturnValue(ok({ ...payload(), ledger_truncated: true }));
+    let last: HistoryState | null = null;
+    const off = subscribeHistory("capital:demo", 30, (s) => (last = s));
+    await flush();
+    expect(last!.data!.ledgerTruncated).toBe(true);
     off();
   });
 

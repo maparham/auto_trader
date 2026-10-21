@@ -69,8 +69,22 @@ describe("HistoryPane", () => {
     };
     const { rerender } = render(<HistoryPane account="capital:demo" />);
     expect(screen.getByText("TSLA").closest("tr")!.className).not.toContain("pp-clickable");
-    rerender(<HistoryPane account="capital:demo" onJumpToEpic={() => {}} />);
+    const jump = vi.fn();
+    rerender(<HistoryPane account="capital:demo" onJumpToEpic={jump} />);
     expect(screen.getByText("TSLA").closest("tr")!.className).toContain("pp-clickable");
+    fireEvent.click(screen.getByText("TSLA"));
+    expect(jump).toHaveBeenCalledWith("TSLA", 400);
+  });
+
+  it("labels net cash and flags a truncated ledger only when the server says so", () => {
+    state = { loading: false, error: null, data: { trades: [], ledger: [], totals } };
+    render(<HistoryPane account="capital:demo" />);
+    expect(screen.getByText("Net cash in/out")).toBeTruthy();
+    expect(screen.queryByText(/Totals partial/)).toBeNull();
+    cleanup();
+    state = { loading: false, error: null, data: { trades: [], ledger: [], totals, ledgerTruncated: true } };
+    render(<HistoryPane account="capital:demo" />);
+    expect(screen.getByText(/Totals partial/)).toBeTruthy();
   });
 
   it("switches range and subscribes with the new days", () => {

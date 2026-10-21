@@ -176,13 +176,17 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def fetch_transactions(request: RequestFn, since: datetime, until: datetime) -> list[LedgerEntry]:
+async def fetch_transactions(
+    request: RequestFn, since: datetime, until: datetime,
+) -> tuple[list[LedgerEntry], bool]:
     """Page the 100-row-capped ledger newest to oldest. The next page ends at the
     oldest row seen, rounded UP to a whole second (Capital takes whole seconds and
     rows carry milliseconds), so rows sharing that second come back and are deduped
     on `reference`. Stops on a short page, a page with nothing new (100+ rows in
-    one second), or the page cap."""
+    one second), or the page cap. The flag is True when it stopped on a full page
+    (the cap, or a stuck second), so older rows in the range may be missing."""
     seen: dict[str, dict] = {}
+    truncated = False
     to = until
     for _ in range(TX_MAX_PAGES):
         resp = await request(
@@ -193,7 +197,10 @@ async def fetch_transactions(request: RequestFn, since: datetime, until: datetim
         fresh = [r for r in rows if str(r.get("reference")) not in seen]
         for r in fresh:
             seen[str(r.get("reference"))] = r
-        if len(rows) < TX_PAGE or not fresh:
+        if len(rows) < TX_PAGE:
+            break
+        if not fresh:
+            truncated = True
             break
         times = [t for r in rows if (t := utc(r.get("dateUtc"))) is not None]
         if not times:
@@ -201,11 +208,12 @@ async def fetch_transactions(request: RequestFn, since: datetime, until: datetim
         oldest = min(times)
         to = oldest.replace(microsecond=0) + (timedelta(seconds=1) if oldest.microsecond else timedelta(0))
     else:
+        truncated = True
         logger.warning(
             "fetch_transactions hit the %d-page cap for range %s..%s; older rows may be missing",
             TX_MAX_PAGES, since, until,
         )
-    return parse_transactions(list(seen.values()))
+    return parse_transactions(list(seen.values())), truncated
 
 
 class DayCache:
@@ -234,16 +242,22 @@ class DayCache:
         started = now()
         task = asyncio.ensure_future(fetch(d))
         self._inflight[d] = task
-        try:
-            rows = await asyncio.shield(task)
-        finally:
+
+        # Settled on the task itself, not in this awaiter: if the request that
+        # started the fetch is cancelled, the shielded task still finishes, stays
+        # in-flight for later askers until then, and still lands in the cache.
+        def settle(t: asyncio.Future) -> None:
             self._inflight.pop(d, None)
-        day_end = datetime.combine(d + timedelta(days=1), time(0), tzinfo=timezone.utc)
-        if day_end <= started:
-            self._days[d] = rows
-            while len(self._days) > self._max:
-                self._days.popitem(last=False)
-        return rows
+            if t.cancelled() or t.exception() is not None:
+                return
+            day_end = datetime.combine(d + timedelta(days=1), time(0), tzinfo=timezone.utc)
+            if day_end <= started:
+                self._days[d] = t.result()
+                while len(self._days) > self._max:
+                    self._days.popitem(last=False)
+
+        task.add_done_callback(settle)
+        return await asyncio.shield(task)
 
 
 async def fetch_activity(

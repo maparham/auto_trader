@@ -106,8 +106,15 @@ def test_payload_uses_epoch_ms_and_totals(monkeypatch):
     assert out.trades[0].opened_at is None and out.trades[0].side == "buy"
     assert out.ledger[0].at == 1792570721723
     assert out.totals.realized == 12.5 and out.totals.currency == "EUR"
+    assert out.ledger_truncated is False
     since, until = broker.asked
     assert (until - since).days == 30 and until.tzinfo is not None
+
+
+def test_payload_carries_the_ledger_truncation_flag(monkeypatch):
+    _install(monkeypatch, _Broker(history=AccountHistory([], [], ledger_truncated=True)))
+    out = asyncio.run(trading.account_history(account="capital:demo", days=90))
+    assert out.ledger_truncated is True
 
 
 def test_describe_flags_history_accounts():

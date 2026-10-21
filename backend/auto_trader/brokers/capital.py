@@ -956,9 +956,11 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
         """Closed trades (with realized P&L) and the cash ledger in [since, until].
         Sequential on purpose: these calls share the dealing session's limiter."""
         request = self._broker._request
-        ledger = await fetch_transactions(request, since, until)
+        ledger, truncated = await fetch_transactions(request, since, until)
         trades = await fetch_activity(request, self._history_days, since, until)
-        return AccountHistory(trades=attach_pnl(trades, ledger), ledger=ledger)
+        return AccountHistory(
+            trades=attach_pnl(trades, ledger), ledger=ledger, ledger_truncated=truncated,
+        )
 
 
 def _deal_id(confirm: dict) -> str | None:

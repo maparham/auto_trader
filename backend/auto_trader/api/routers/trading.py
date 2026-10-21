@@ -285,6 +285,7 @@ async def account_history(
             for e in hist.ledger
         ],
         totals=HistoryTotalsDTO(**history_totals(hist.ledger)),
+        ledger_truncated=hist.ledger_truncated,
     )
 
 

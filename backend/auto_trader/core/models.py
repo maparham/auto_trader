@@ -449,3 +449,4 @@ class LedgerEntry:
 class AccountHistory:
     trades: list[ClosedTrade]
     ledger: list[LedgerEntry]
+    ledger_truncated: bool = False  # the ledger paging stopped early; older rows may be missing

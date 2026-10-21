@@ -640,6 +640,7 @@ class AccountHistoryDTO(BaseModel):
     trades: list[ClosedTradeDTO] = []
     ledger: list[LedgerEntryDTO] = []
     totals: HistoryTotalsDTO | None = None
+    ledger_truncated: bool = False
 
 
 class OrderResultDTO(BaseModel):

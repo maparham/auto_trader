@@ -56,6 +56,9 @@ export interface AccountHistoryData {
   trades: ClosedTradeView[];
   ledger: LedgerRow[];
   totals: HistoryTotals;
+  /** The server stopped paging the ledger early (Capital's row cap), so older
+   * rows, and the totals built from them, may be missing. */
+  ledgerTruncated?: boolean;
 }
 export interface HistoryState {
   loading: boolean;
@@ -100,6 +103,7 @@ export async function fetchAccountHistory(
       currency: e.currency, reference: e.reference, dealId: e.deal_id,
     })),
     totals: body.totals,
+    ledgerTruncated: body.ledger_truncated === true,
   };
 }
 

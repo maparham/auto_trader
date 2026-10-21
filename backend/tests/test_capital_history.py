@@ -197,8 +197,9 @@ def test_transactions_paging_stops_under_a_full_page():
         [tx("2026-10-19T09:00:00", "SWAP", "-1", ref="c0")],
     ]
     cap = FakeCapital(lambda p, q: {"transactions": pages[len(cap.calls) - 1]})
-    ledger = asyncio.run(fetch_transactions(cap.request, T("2026-10-01T00:00:00"), T("2026-10-21T00:00:00")))
+    ledger, truncated = asyncio.run(fetch_transactions(cap.request, T("2026-10-01T00:00:00"), T("2026-10-21T00:00:00")))
     assert len(ledger) == 101
+    assert truncated is False
     assert len(cap.calls) == 2
     # The second page's `to` is the oldest row of page one (whole second, rounded up).
     assert cap.calls[1][1]["to"] == "2026-10-20T09:20:00"
@@ -207,9 +208,11 @@ def test_transactions_paging_stops_under_a_full_page():
 def test_transactions_paging_stops_when_a_page_adds_nothing():
     same_second = [tx("2026-10-20T21:00:00.500", "SWAP", "-1", ref=f"s{i}") for i in range(100)]
     cap = FakeCapital(lambda p, q: {"transactions": same_second})
-    ledger = asyncio.run(fetch_transactions(cap.request, T("2026-10-01T00:00:00"), T("2026-10-21T00:00:00")))
+    ledger, truncated = asyncio.run(fetch_transactions(cap.request, T("2026-10-01T00:00:00"), T("2026-10-21T00:00:00")))
     assert len(ledger) == 100
     assert len(cap.calls) == 2
+    # Stuck on one full second: anything older is out of reach.
+    assert truncated is True
 
 
 def test_transactions_paging_is_capped():
@@ -221,8 +224,9 @@ def test_transactions_paging_is_capped():
             for i in range(100)
         ]}
     cap = FakeCapital(handler)
-    asyncio.run(fetch_transactions(cap.request, T("2026-01-01T00:00:00"), T("2026-10-21T00:00:00")))
+    _, truncated = asyncio.run(fetch_transactions(cap.request, T("2026-01-01T00:00:00"), T("2026-10-21T00:00:00")))
     assert len(cap.calls) == TX_MAX_PAGES
+    assert truncated is True
 
 
 def test_transactions_paging_cap_logs_a_warning(caplog):
@@ -336,6 +340,36 @@ def test_day_cache_failed_fetch_propagates_and_is_not_cached():
         retried = await cache.day(date(2026, 10, 15), fetch, now)
         assert retried == [{"x": 1}]
         assert len(attempts) == 2
+
+    asyncio.run(run())
+
+
+def test_day_cache_survives_the_starting_request_being_cancelled():
+    calls = []
+    release = None
+
+    async def fetch(d):
+        calls.append(d)
+        await release.wait()
+        return [{"x": 1}]
+
+    async def run():
+        nonlocal release
+        release = asyncio.Event()
+        cache = DayCache()
+        now = lambda: T("2026-10-21T12:00:00")  # noqa: E731
+        owner = asyncio.ensure_future(cache.day(date(2026, 10, 15), fetch, now))
+        await asyncio.sleep(0)
+        owner.cancel()
+        await asyncio.sleep(0)
+        # A later ask joins the still-running fetch instead of starting another.
+        late = asyncio.ensure_future(cache.day(date(2026, 10, 15), fetch, now))
+        await asyncio.sleep(0)
+        release.set()
+        assert await late == [{"x": 1}]
+        assert owner.cancelled()
+        assert calls == [date(2026, 10, 15)]
+        assert date(2026, 10, 15) in cache._days
 
     asyncio.run(run())
 

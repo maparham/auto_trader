@@ -25,7 +25,9 @@ const RANGES: HistoryDays[] = [7, 30, 90];
 interface Props {
   account: string;
   precisionFor?: (epic: string) => number;
-  onJumpToEpic?: (epic: string) => void;
+  // `price` (the trade's entry) lets a caller without a precision source guess
+  // the symbol's decimals.
+  onJumpToEpic?: (epic: string, price: number) => void;
   tips?: boolean;
 }
 
@@ -121,9 +123,12 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, tips 
               </span>
             </span>
             <span>
-              <span className="pp-stat-label">Net cash</span>{" "}
+              <span className="pp-stat-label">Net cash in/out</span>{" "}
               {cash(totals.deposits + totals.withdrawals)} {ccy}
             </span>
+            {data?.ledgerTruncated && (
+              <span className="pp-stat-label">Totals partial: older ledger rows not loaded</span>
+            )}
           </div>
         )}
       </div>
@@ -166,7 +171,7 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, tips 
                   <tr
                     key={`${t.dealId}:${t.closedAt}`}
                     className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}${onJumpToEpic ? " pp-clickable" : ""}`}
-                    onClick={() => onJumpToEpic?.(t.epic)}
+                    onClick={() => onJumpToEpic?.(t.epic, t.entry)}
                   >
                     <td className="pp-c-sym">{t.epic}</td>
                     <td>{t.side === "buy" ? "Long" : "Short"}</td>
