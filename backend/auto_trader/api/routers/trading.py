@@ -240,7 +240,7 @@ _HISTORY_DAYS = (7, 30, 90)
 
 
 def _ms(dt: datetime | None) -> int | None:
-    return None if dt is None else int(dt.timestamp() * 1000)
+    return None if dt is None else round(dt.timestamp() * 1000)
 
 
 @router.get("/api/history", response_model=AccountHistoryDTO)

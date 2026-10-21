@@ -75,6 +75,26 @@ def test_partial_closes_are_separate_trades():
     assert all(t.opened_at == datetime(2026, 10, 15, 10, 0, tzinfo=UTC) for t in trades)
 
 
+def test_rejected_close_row_yields_no_closed_trade():
+    rows = [
+        act("D10", "2026-10-16T15:53:00", "USER", "BUY", 400.0),
+        {**act("D10", "2026-10-21T08:18:41.723", "TP", "SELL", 430.0, open_price=400.0), "status": "REJECTED"},
+    ]
+    assert parse_activity(rows) == []
+
+
+def test_rejected_open_row_is_never_picked_as_the_open():
+    rows = [
+        # Same level as the real open, earlier, but REJECTED: must be skipped
+        # entirely rather than winning as "earliest matching open".
+        {**act("D11", "2026-10-15T08:00:00", "USER", "BUY", 100.0), "status": "REJECTED"},
+        act("D11", "2026-10-15T10:00:00", "USER", "BUY", 100.0),
+        act("D11", "2026-10-16T12:00:00", "USER", "SELL", 105.0, open_price=100.0),
+    ]
+    [t] = parse_activity(rows)
+    assert t.opened_at == datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+
+
 def test_malformed_rows_are_skipped_not_raised():
     rows = [
         {"dateUTC": "2026-10-15T12:00:00", "epic": "X", "dealId": "D5", "type": "POSITION"},  # no details
@@ -135,6 +155,7 @@ def test_totals_sum_by_kind():
 
 
 import asyncio
+import logging
 from datetime import date, timedelta
 
 import httpx
@@ -204,6 +225,20 @@ def test_transactions_paging_is_capped():
     assert len(cap.calls) == TX_MAX_PAGES
 
 
+def test_transactions_paging_cap_logs_a_warning(caplog):
+    def handler(p, q):
+        n = len(cap.calls)
+        base = T("2026-10-20T00:00:00") - timedelta(hours=n)
+        return {"transactions": [
+            tx((base - timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%S"), "SWAP", "-1", ref=f"{n}-{i}")
+            for i in range(100)
+        ]}
+    cap = FakeCapital(handler)
+    with caplog.at_level(logging.WARNING, logger="auto_trader.brokers._capital_history"):
+        asyncio.run(fetch_transactions(cap.request, T("2026-01-01T00:00:00"), T("2026-10-21T00:00:00")))
+    assert any("page" in r.message.lower() or "cap" in r.message.lower() for r in caplog.records)
+
+
 def _activity_handler(rows_by_day):
     def handler(path, params):
         day = params["from"][:10]
@@ -218,7 +253,7 @@ def test_activity_walks_whole_utc_days_sequentially_and_dedupes_edges():
         "2026-10-16": [edge],  # midnight row returned by both days
     }
     cap = FakeCapital(_activity_handler(rows))
-    now = lambda: T("2026-10-21T12:00:00")
+    now = lambda: T("2026-10-21T12:00:00")  # noqa: E731
     trades = asyncio.run(fetch_activity(cap.request, DayCache(), T("2026-10-15T00:00:00"), T("2026-10-17T00:00:00"), now))
     assert len(trades) == 1 and trades[0].opened_at == T("2026-10-15T09:00:00")
     assert [c[1]["from"] for c in cap.calls] == ["2026-10-15T00:00:00", "2026-10-16T00:00:00", "2026-10-17T00:00:00"]
@@ -239,7 +274,7 @@ def test_activity_filters_to_the_requested_range():
 def test_day_cache_keeps_past_days_and_refetches_today():
     cap = FakeCapital(_activity_handler({}))
     cache = DayCache()
-    now = lambda: T("2026-10-21T12:00:00")
+    now = lambda: T("2026-10-21T12:00:00")  # noqa: E731
     for _ in range(2):
         asyncio.run(fetch_activity(cap.request, cache, T("2026-10-20T00:00:00"), T("2026-10-21T12:00:00"), now))
     days = [c[1]["from"][:10] for c in cap.calls]
@@ -269,12 +304,40 @@ def test_day_cache_single_flight():
 
     async def run():
         cache = DayCache()
-        now = lambda: T("2026-10-21T12:00:00")
+        now = lambda: T("2026-10-21T12:00:00")  # noqa: E731
         return await asyncio.gather(*(cache.day(date(2026, 10, 15), fetch, now) for _ in range(3)))
 
     results = asyncio.run(run())
     assert calls == [date(2026, 10, 15)]
     assert results == [[{"x": 1}]] * 3
+
+
+def test_day_cache_failed_fetch_propagates_and_is_not_cached():
+    attempts = []
+
+    async def fetch(d):
+        attempts.append(d)
+        await asyncio.sleep(0.01)
+        if len(attempts) == 1:
+            raise RuntimeError("boom")
+        return [{"x": 1}]
+
+    async def run():
+        cache = DayCache()
+        now = lambda: T("2026-10-21T12:00:00")  # noqa: E731
+        results = await asyncio.gather(
+            *(cache.day(date(2026, 10, 15), fetch, now) for _ in range(3)),
+            return_exceptions=True,
+        )
+        # Every concurrent waiter sees the same failure, not just the fetcher.
+        assert all(isinstance(r, RuntimeError) for r in results)
+        assert date(2026, 10, 15) not in cache._days
+        # A retry re-fetches rather than reusing the failed attempt.
+        retried = await cache.day(date(2026, 10, 15), fetch, now)
+        assert retried == [{"x": 1}]
+        assert len(attempts) == 2
+
+    asyncio.run(run())
 
 
 def test_day_cache_is_bounded():
@@ -283,7 +346,7 @@ def test_day_cache_is_bounded():
     async def fetch(d):
         return []
 
-    now = lambda: T("2026-10-21T12:00:00")
+    now = lambda: T("2026-10-21T12:00:00")  # noqa: E731
     for day in (1, 2, 3):
         asyncio.run(cache.day(date(2026, 10, day), fetch, now))
     assert list(cache._days) == [date(2026, 10, 2), date(2026, 10, 3)]

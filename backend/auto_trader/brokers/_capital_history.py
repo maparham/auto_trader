@@ -13,6 +13,7 @@ Parsing is pure; the fetch walkers below take the broker's `_request`.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import OrderedDict, defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -21,6 +22,8 @@ from datetime import date, datetime, time, timedelta, timezone
 import httpx
 
 from auto_trader.core.models import ClosedTrade, LedgerEntry, Side
+
+logger = logging.getLogger(__name__)
 
 # Both server-side numbers for one deal; equality with float slack.
 _PRICE_EPS = 1e-9
@@ -56,6 +59,9 @@ def parse_activity(rows: list[dict]) -> list[ClosedTrade]:
     by_deal: dict[str, list[tuple[datetime, dict]]] = defaultdict(list)
     for r in rows:
         if r.get("type") != "POSITION" or not isinstance(r.get("details"), dict):
+            continue
+        status = r.get("status")
+        if status is not None and status != "ACCEPTED":
             continue
         at = utc(r.get("dateUTC"))
         deal = r.get("dealId")
@@ -194,6 +200,11 @@ async def fetch_transactions(request: RequestFn, since: datetime, until: datetim
             break
         oldest = min(times)
         to = oldest.replace(microsecond=0) + (timedelta(seconds=1) if oldest.microsecond else timedelta(0))
+    else:
+        logger.warning(
+            "fetch_transactions hit the %d-page cap for range %s..%s; older rows may be missing",
+            TX_MAX_PAGES, since, until,
+        )
     return parse_transactions(list(seen.values()))
 
 
