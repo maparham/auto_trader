@@ -106,7 +106,9 @@ function addTemplateIndicator(
   t: SymbolTemplate,
   inst: IndicatorInstance,
 ): IndicatorInstance | null {
-  const id = mintInstanceId(chart, inst.type);
+  // Ids of saved instances the chart does not hold (pinned below its
+  // timeframe) are taken too, as in addIndicatorInstance.
+  const id = mintInstanceId(chart, inst.type, loadIndicators(scope).map((i) => i.id));
   const anchor = t.avwapAnchors[inst.id];
   if (anchor) saveAvwapAnchor(scope, epic, id, anchor);
   const cfg = t.indicatorConfigs[inst.id];

@@ -1,3 +1,4 @@
+import { TRENDLINES_SEED } from "./indicators/trendlinesOutputs";
 import { describe, it, expect, vi } from "vitest";
 import { defaultVisibility, isVisibleOnResolution } from "./visibility";
 import type { Chart } from "klinecharts";
@@ -405,6 +406,25 @@ describe("a type's default preset survives a recreate", () => {
     // carry these params through.
     applyIndicator(chart, scope, "US100", { id: "SLOPE", type: "SLOPE" }, { rehydrate: true });
     expect(created[1].calcParams).toEqual(calcParams);
+  });
+
+  // A fresh TRENDLINES pane starts on Balanced and stores it, so a reload
+  // keeps it; the template (what an unconfigured old pane rehydrates from)
+  // stays on the parse defaults. A saved type default still wins.
+  it("seeds a fresh TRENDLINES with the Balanced preset and stores it", () => {
+    localStorage.clear();
+    const scope = "tab.tlseed";
+    const created: Array<{ name?: string; calcParams?: number[] }> = [];
+    const chart = recordingChart(created);
+    applyIndicator(chart, scope, "US100", { id: "TRENDLINES", type: "TRENDLINES" });
+    expect(created[0].calcParams).toEqual(Object.values(TRENDLINES_SEED));
+    expect(persist.loadIndicatorConfigs(scope).TRENDLINES?.calcParams).toEqual(Object.values(TRENDLINES_SEED));
+    // An old pane with no saved config rehydrates without the seed.
+    applyIndicator(chart, "tab.tlold", "US100", { id: "TRENDLINES", type: "TRENDLINES" }, { rehydrate: true });
+    expect(created[1].calcParams).not.toEqual(Object.values(TRENDLINES_SEED));
+    persist.saveIndicatorDefault("TRENDLINES", { calcParams: [7] });
+    applyIndicator(chart, "tab.tldef", "US100", { id: "TRENDLINES", type: "TRENDLINES" });
+    expect(created[2].calcParams?.[0]).toBe(7);
   });
 
   it("leaves an add with no default preset writing nothing, as before", () => {

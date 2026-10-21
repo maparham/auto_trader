@@ -69,7 +69,7 @@ import {
   TL_NEAREST,
   tlOutputName,
   TRENDLINES_EXTEND_DEFAULTS,
-  TRENDLINES_SEED,
+  TRENDLINES_DEFAULTS,
   type TrendlinesConfig,
 } from "./trendlinesOutputs";
 // Runtime cycle (both import this module back): safe, since every import from
@@ -4210,7 +4210,7 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
   shortName: "Trendlines",
   series: "price",
   precision: 2,
-  calcParams: Object.values(TRENDLINES_SEED),
+  calcParams: Object.values(TRENDLINES_DEFAULTS),
   // Empty figures + a draw that returns true (isCover) is the established way
   // to run calc but paint nothing of klinecharts' own — the mechanism
   // sessions.ts and proximityHeatmap.ts already use.

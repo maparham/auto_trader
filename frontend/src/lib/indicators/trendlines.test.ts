@@ -1703,10 +1703,11 @@ describe("selectDrawnLines dedup", () => {
 });
 
 describe("TRENDLINES_TEMPLATE", () => {
-  // A fresh pane starts on the first preset; the parse defaults stay the
-  // fallback for slots a saved pane predates.
-  it("seeds a fresh pane with the first preset, in slot order", () => {
-    expect(TRENDLINES_TEMPLATE.calcParams).toEqual(Object.values(TRENDLINES_SEED));
+  // The template keeps the parse defaults: a pane never configured
+  // rehydrates from it. A fresh pane gets the Balanced seed as its saved
+  // config instead (addIndicatorInstance), in the same slot order.
+  it("declares the calcParams in TRENDLINES_DEFAULTS key order", () => {
+    expect(TRENDLINES_TEMPLATE.calcParams).toEqual(Object.values(TRENDLINES_DEFAULTS));
     expect(Object.keys(TRENDLINES_SEED)).toEqual(Object.keys(TRENDLINES_DEFAULTS));
   });
 

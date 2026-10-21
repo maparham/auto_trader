@@ -40,6 +40,7 @@ import { INSET_CAPABLE, insetTemplate } from "./indicators/inset";
 import { hiddenAware } from "./indicators/hiddenCalc";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
 import { dropTrendlineHandles } from "./indicators/trendlines";
+import { TRENDLINES_SEED } from "./indicators/trendlinesOutputs";
 import { dropPaintedLines } from "./indicators/paintedLines";
 import { noteDebugOn } from "./indicators/trendlinesDebugStore";
 import { planPaneReorder, reorderInstanceList } from "./paneOrder";
@@ -587,7 +588,17 @@ export function applyIndicator(
   // the FIRST teardown+recreate — Move up, the inset toggle, a plain reload — drops
   // back to the bare template. That is how a Slope(2,9,50,100,200) came back as
   // Slope(9). Same save-after-apply addIndicatorInstance does for a pasted config.
-  const seeded = saved ? undefined : opts?.rehydrate ? undefined : loadIndicatorDefault(type) ?? undefined;
+  //
+  // With no type default, a fresh TRENDLINES pane seeds the Balanced preset the
+  // same way (and is stored the same way). The template keeps
+  // TRENDLINES_DEFAULTS, because a pane that was never configured rehydrates
+  // from the template and must keep computing what it always did.
+  const seeded = saved
+    ? undefined
+    : opts?.rehydrate
+      ? undefined
+      : (loadIndicatorDefault(type) ??
+        (type === "TRENDLINES" ? { calcParams: Object.values(TRENDLINES_SEED) } : undefined));
   const cfg = saved ?? seeded;
   // Migrate stale saved calcParams to a new shorter default (e.g. an RSI saved
   // under the old three-length design → single length 14), so existing instances
@@ -1184,7 +1195,9 @@ export function importExprInstances(
       idMap[id] = match.id;
       continue;
     }
-    if (!getIndicatorById(chart, id)) {
+    // Free means free of a SAVED instance too: one not live on this chart (say,
+    // pinned below its timeframe) still owns its id and config.
+    if (!getIndicatorById(chart, id) && !loadIndicators(scope).some((i) => i.id === id)) {
       // The id is free: recreate the pane under the COPIED id so the pasted
       // expressions keep working verbatim (same contract as hydrateIndicators
       // re-applying saved ids).

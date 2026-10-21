@@ -1389,6 +1389,9 @@ function IndicatorSettingsForm({
       // Draw-only; each key persists only when it differs from the default so
       // a plain instance carries none of them.
       Object.assign(extendData, trendlineExtendOf(trendlineStyle), trendlineHighlight);
+      // The ATR/% switch's memory (dualControl), only once the switch is used.
+      if (Object.keys(dualCuts.units).length || Object.keys(dualCuts.memo).length)
+        extendData.dualCuts = dualCuts;
     }
     if (isAvwap) {
       avwapConfig(extendData, avwapSource, bandMode, bands);
@@ -1798,7 +1801,14 @@ function IndicatorSettingsForm({
     [directionPresets, calcParams],
   );
   function applyStep(presets: IndicatorPresets, i: number) {
-    const nextCp = withPresetStep(presets, calcParams, i);
+    // A saved pane that predates newer slots gets them filled with what it
+    // RUNS with (legacy extendData migrations included), as setParams does;
+    // withPresetStep alone would fill plain defaults, and a Direction pick
+    // (which writes only the slope band) would silently drop those cuts.
+    const base = isTrendlines
+      ? padTrendlinesParams(calcParams, presets.base.length, seed.extendData)
+      : calcParams;
+    const nextCp = withPresetStep(presets, base, i);
     setCalcParams(nextCp);
     apply({ calcParams: nextCp });
     // Same contract as setParam's per-slot write: every trendline param feeds

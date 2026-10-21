@@ -2,7 +2,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import IndicatorSettings from "./IndicatorSettings";
-import { TRENDLINES_DEFAULTS, TRENDLINES_PRESET_CONFIGS, TRENDLINES_SEED } from "./lib/indicators/trendlinesOutputs";
+import {
+  TL_NEAR_PRICE_ATR,
+  TRENDLINES_DEFAULTS,
+  TRENDLINES_PRESET_CONFIGS,
+  TRENDLINES_SEED,
+} from "./lib/indicators/trendlinesOutputs";
+import { loadIndicatorConfigs } from "./lib/persist";
+import { installMemStorage } from "./lib/testMemStorage";
+
+installMemStorage();
 
 afterEach(cleanup);
 
@@ -313,6 +322,18 @@ describe("min/max range rows", () => {
     expect(second.cpWrites.at(-1)!.slice(19, 21)).toEqual([TRENDLINES_SEED.maxDistAtr, 0]);
   });
 
+  // Ok rebuilds extendData from form state, so the memory must be part of it
+  // or a reload loses it.
+  it("saves the switch's memory with the pane on Ok", () => {
+    openRecording({}, [...Object.values(TRENDLINES_SEED)]);
+    fireEvent.change(screen.getByLabelText("Max Distance unit"), { target: { value: "p20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ok" }));
+    expect(loadIndicatorConfigs("tab.test").TRENDLINES?.extendData?.dualCuts).toEqual({
+      units: { p19: "p20" },
+      memo: { p19: TRENDLINES_SEED.maxDistAtr },
+    });
+  });
+
   // Both cuts set (an older pane): both boxes stay, so neither filters unseen.
   it("shows both boxes when both units hold a cut", () => {
     const cp = [...Object.values(TRENDLINES_SEED)];
@@ -432,6 +453,17 @@ describe("direction picker", () => {
   });
 
   // The direction owns the slope band and nothing else, so the preset holds.
+  // A pane saved before the distance slot ran a legacy near-price cut from
+  // extendData; a Direction pick must write it down, not reset it to off.
+  it("keeps an old pane's migrated cuts when picking a direction", () => {
+    const { cpWrites } = openRecording(
+      { declutter: "near" },
+      Object.values(TRENDLINES_DEFAULTS).slice(0, 18),
+    );
+    fireEvent.change(picker(), { target: { value: "1" } });
+    expect(cpWrites.at(-1)![19]).toBe(TL_NEAR_PRICE_ATR);
+  });
+
   it("writes the slope band and keeps the preset", () => {
     const { cpWrites } = openRecording({}, [...Object.values(TRENDLINES_SEED)]);
     fireEvent.change(picker(), { target: { value: "1" } });
