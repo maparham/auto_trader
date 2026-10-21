@@ -412,3 +412,40 @@ class WorkingOrder:
     # Good-till-date expiry (UTC). None = Good-Till-Cancelled. The paper executor
     # cancels the order once now >= expires_at; real brokers enforce server-side.
     expires_at: datetime | None = None
+
+
+@dataclass
+class ClosedTrade:
+    """One broker-reported close (a partial close is its own row, sharing deal_id)."""
+
+    deal_id: str
+    epic: str
+    side: Side  # the OPENING side (opposite of the close row's direction)
+    size: float
+    entry_price: float
+    exit_price: float
+    opened_at: datetime | None  # None when the open row was not found in range
+    closed_at: datetime
+    close_source: str  # USER / TP / SL / SYSTEM / CLOSE_OUT / DEALER
+    pnl: float | None = None  # realized, account currency
+    currency: str | None = None
+
+
+@dataclass
+class LedgerEntry:
+    """One cash-ledger row: trade P&L, overnight funding, deposit, withdrawal, ..."""
+
+    at: datetime
+    kind: str  # broker transaction type verbatim (TRADE, SWAP, DEPOSIT, ...)
+    epic: str | None
+    note: str
+    amount: float  # signed, account currency
+    currency: str
+    reference: str
+    deal_id: str | None = None
+
+
+@dataclass
+class AccountHistory:
+    trades: list[ClosedTrade]
+    ledger: list[LedgerEntry]
