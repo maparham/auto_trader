@@ -10,6 +10,7 @@
 
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
+import Tooltip from "./components/Tooltip";
 import { computePlacement } from "./components/tooltipPosition";
 import { EARNINGS_CHIP, earningsView, type EarningsMarker, type EarningsView } from "./lib/earnings";
 import type { Clock } from "./lib/timeFormat";
@@ -165,6 +166,27 @@ export default function EarningsMarkers({
   );
 }
 
+// Plain-language glosses for someone new to earnings reports.
+const TIPS: Record<string, string[]> = {
+  EPS: ["Earnings per share.", "The quarter's profit divided by the number of shares."],
+  Revenue: ["Total sales in the quarter, before any costs.", "Shows whether the business is growing."],
+  Estimate: ["What analysts expected, on average."],
+  Actual: ["What the company reported."],
+  "EPS surprise": [
+    "How far actual EPS landed from the estimate.",
+    "Positive is a beat, negative a miss.",
+    "The price often moves on this.",
+  ],
+};
+
+function Term({ label }: { label: string }) {
+  return (
+    <Tooltip title={label} content={TIPS[label]}>
+      <span className="earn-pop-term">{label}</span>
+    </Tooltip>
+  );
+}
+
 function EarningsDetail({ view, onClose }: { view: EarningsView; onClose: () => void }) {
   return (
     <>
@@ -186,14 +208,20 @@ function EarningsDetail({ view, onClose }: { view: EarningsView; onClose: () => 
           <thead>
             <tr>
               <th />
-              <th>Estimate</th>
-              {view.hasActual && <th>Actual</th>}
+              <th>
+                <Term label="Estimate" />
+              </th>
+              {view.hasActual && (
+                <th>
+                  <Term label="Actual" />
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
             {view.rows.map((r) => (
               <tr key={r.label}>
-                <th scope="row">{r.label}</th>
+                <th scope="row">{TIPS[r.label] ? <Term label={r.label} /> : r.label}</th>
                 <td>{r.estimate ?? "n/a"}</td>
                 {view.hasActual && <td className="earn-pop-actual">{r.actual ?? "n/a"}</td>}
               </tr>
@@ -203,7 +231,7 @@ function EarningsDetail({ view, onClose }: { view: EarningsView; onClose: () => 
       )}
       {view.surprise && (
         <div className="earn-pop-surprise">
-          <span>EPS surprise</span>
+          <Term label="EPS surprise" />
           <span className={`is-${view.surprise.tone}`}>{view.surprise.text}</span>
         </div>
       )}

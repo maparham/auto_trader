@@ -89,6 +89,13 @@ describe("EarningsMarkers", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("marks EPS, Revenue and the surprise as explained terms", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Earnings 30 Jul 2026" }));
+    const terms = [...screen.getByRole("dialog").querySelectorAll(".earn-pop-term")].map((n) => n.textContent);
+    expect(terms).toEqual(["Estimate", "Actual", "EPS", "Revenue", "EPS surprise"]);
+  });
+
   it("stays open on a press inside the popup", () => {
     setup();
     fireEvent.click(screen.getByRole("button", { name: "Earnings 30 Jul 2026" }));
