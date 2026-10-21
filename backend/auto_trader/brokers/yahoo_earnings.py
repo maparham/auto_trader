@@ -180,7 +180,9 @@ def _revenue(t: object) -> list[tuple[int, float]]:
     for end, v in q.loc["Total Revenue"].items():
         f = _num(v)
         if f is not None:
-            out.append((int(end.timestamp()), f))
+            # The columns are naive quarter-end dates: read them as UTC, not
+            # the host's local time, so the match does not depend on the box.
+            out.append((int(end.replace(tzinfo=dt.timezone.utc).timestamp()), f))
     return out
 
 

@@ -83,6 +83,18 @@ export default function EarningsMarkers({
     }
   });
 
+  // Keyboard reach: once placed, the popup takes focus (it is portaled to the
+  // end of the page, so Tab alone would not get there). The x and Escape hand
+  // it back to the chip; a click elsewhere leaves focus where it landed.
+  const placed = pos != null;
+  useEffect(() => {
+    if (openKey && placed) popRef.current?.focus({ preventScroll: true });
+  }, [openKey, placed]);
+  const closeToChip = () => {
+    if (openKey) chipRefs.current.get(openKey)?.focus({ preventScroll: true });
+    setOpenKey(null);
+  };
+
   // Dismiss on a press outside the popup and its chip, or on Escape.
   useEffect(() => {
     if (!openKey) return;
@@ -92,7 +104,9 @@ export default function EarningsMarkers({
       setOpenKey(null);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpenKey(null);
+      if (e.key !== "Escape") return;
+      chipRefs.current.get(openKey)?.focus({ preventScroll: true });
+      setOpenKey(null);
     };
     document.addEventListener("pointerdown", onDown, true);
     document.addEventListener("keydown", onKey);
@@ -150,6 +164,7 @@ export default function EarningsMarkers({
             className="earn-pop"
             role="dialog"
             aria-label={open.label}
+            tabIndex={-1}
             // Measured hidden on the first frame, then placed by the layout effect.
             style={pos ? { left: pos.left, top: pos.top } : { left: 0, top: 0, visibility: "hidden" }}
             // A portal still bubbles React events to ChartCore: keep chart
@@ -158,7 +173,7 @@ export default function EarningsMarkers({
             onMouseDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
           >
-            <EarningsDetail view={earningsView(open.earnings, { timeZone, clock })} onClose={() => setOpenKey(null)} />
+            <EarningsDetail view={earningsView(open.earnings, { timeZone, clock })} onClose={closeToChip} />
           </div>,
           document.body,
         )}

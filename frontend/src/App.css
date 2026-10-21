@@ -7373,6 +7373,7 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
   background: var(--surface-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px; font-size: 12px;
 }
+.earn-pop:focus { outline: none; }
 .earn-pop-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .earn-pop-title { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; }
 .earn-pop-date { font-size: 14px; font-weight: 600; margin-top: 1px; }

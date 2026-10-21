@@ -97,6 +97,19 @@ describe("EarningsMarkers", () => {
     expect(screen.getByRole("button", { name: "About EPS" })).toBeTruthy();
   });
 
+  it("takes focus on open and hands it back to the chip on the x or Escape", () => {
+    setup();
+    const chip = screen.getByRole("button", { name: "Earnings 30 Jul 2026" });
+    fireEvent.click(chip);
+    expect(document.activeElement).toBe(screen.getByRole("dialog"));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(document.activeElement).toBe(chip);
+
+    fireEvent.click(chip);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.activeElement).toBe(chip);
+  });
+
   it("stays open on a press inside the popup", () => {
     setup();
     fireEvent.click(screen.getByRole("button", { name: "Earnings 30 Jul 2026" }));
