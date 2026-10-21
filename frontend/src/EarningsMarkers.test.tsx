@@ -21,6 +21,7 @@ const marker = (over: Partial<EarningsMarker> = {}): EarningsMarker => ({
     revenueEstimate: null,
     revenueActual: 109.417e9,
     session: "post",
+    sessionTime: "16:00 EDT",
   },
   ...over,
 });
@@ -55,7 +56,7 @@ describe("EarningsMarkers", () => {
     fireEvent.click(screen.getByRole("button", { name: "Earnings 30 Jul 2026" }));
     const pop = screen.getByRole("dialog", { name: "Earnings 30 Jul 2026" });
     expect(pop.textContent).toContain("Reported");
-    expect(pop.textContent).toContain("After close");
+    expect(pop.textContent).toContain("After close (16:00 EDT)");
     expect(pop.textContent).toContain("2.02");
     expect(pop.textContent).toContain("109.4B");
     expect(pop.textContent).toContain("+6.7%");

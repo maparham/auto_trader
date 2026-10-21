@@ -23,6 +23,9 @@ export interface Earnings {
   /** Before the open, during the session or after the close; null when Yahoo
    * gave only the date. Its times are hour-rounded, so this is all they say. */
   session: EarningsSession | null;
+  /** The exchange time the session hinges on, on the report's date: "16:00 EST"
+   * (the close) after it, "09:30 EDT" (the open) before it. */
+  sessionTime: string | null;
 }
 
 export type EarningsSession = "pre" | "intraday" | "post";
@@ -63,6 +66,7 @@ export function fetchEarnings(epic: string, brokerId: string): Promise<Earnings[
         revenueEstimate: num(e.revenueEstimate),
         revenueActual: num(e.revenueActual),
         session: typeof e.session === "string" && e.session in SESSIONS ? (e.session as EarningsSession) : null,
+        sessionTime: typeof e.sessionTime === "string" && e.sessionTime ? e.sessionTime : null,
       }))
       .sort((a, b) => a.timeMs - b.timeMs);
   })().catch(() => {
@@ -124,7 +128,11 @@ export function earningsView(e: Earnings, nowMs = Date.now()): EarningsView {
     date: splitDateText(e.timeMs),
     // UTC day, matching the date shown above it (splitDateText).
     status: e.epsActual != null ? "Reported" : utcDay(e.timeMs) === utcDay(nowMs) ? "Today" : "Upcoming",
-    session: e.session ? SESSIONS[e.session] : null,
+    session: e.session
+      ? e.sessionTime
+        ? `${SESSIONS[e.session]} (${e.sessionTime})`
+        : SESSIONS[e.session]
+      : null,
     rows,
     hasActual: rows.some((r) => r.actual != null),
     surprise:

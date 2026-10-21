@@ -10,11 +10,17 @@ from auto_trader.brokers.yahoo_earnings import Earnings, EarningsRegistry, merge
 
 
 class FakeTicker:
-    def __init__(self, df=None, cal=None, scrape_error=None, income=None):
+    def __init__(self, df=None, cal=None, scrape_error=None, income=None, meta=None):
         self._df = df
         self.calendar = cal
         self._scrape_error = scrape_error
         self.quarterly_income_stmt = income
+        self._meta = meta
+
+    def get_history_metadata(self):
+        if self._meta is None:
+            raise RuntimeError("no metadata")
+        return self._meta
 
     def get_earnings_dates(self, limit):
         if self._scrape_error:
@@ -99,6 +105,47 @@ def test_report_session_by_exchange_local_hour():
     assert ye.report_session(ny(12)) == "intraday"
     assert ye.report_session(ny(16)) == "post"
     assert ye.report_session(ny(20)) == "post"
+
+
+# Yahoo's chart metadata for a US listing: regular session 09:30 to 16:00 EDT.
+_US_META = {
+    "exchangeTimezoneName": "America/New_York",
+    "currentTradingPeriod": {"regular": {"start": 1792589400, "end": 1792612800}},
+}
+
+
+def test_exchange_hours_name_the_time_the_session_hinges_on(monkeypatch):
+    cal = {"Earnings Date": [dt.date(2026, 11, 2)], "Earnings Average": 1.98}
+    _patch(monkeypatch, FakeTicker(_df(), cal, meta=_US_META))
+    up, past = ye.fetch_yahoo_earnings("AAPL")
+    # 2 Nov is past the DST switch: the close reads in EST.
+    assert (up.session, up.session_time) == ("post", "16:00 EST")
+    assert (past.session, past.session_time) == ("post", "16:00 EDT")
+
+
+def test_hours_follow_the_exchange():
+    london = ye.ExchangeHours("Europe/London", 8 * 60, 16 * 60 + 30)
+    rows = [
+        Earnings(ts=int(pd.Timestamp("2026-07-21 07:00", tz="Europe/London").timestamp()),
+                 eps_estimate=None, eps_actual=None, surprise_pct=None, session="pre"),
+        # 09:00 is before the US open but inside London's session.
+        Earnings(ts=int(pd.Timestamp("2026-07-21 09:00", tz="Europe/London").timestamp()),
+                 eps_estimate=None, eps_actual=None, surprise_pct=None, session="pre"),
+    ]
+    pre, during = ye.apply_hours(rows, london)
+    assert (pre.session, pre.session_time) == ("pre", "08:00 BST")
+    assert (during.session, during.session_time) == ("intraday", "08:00 to 16:30 BST")
+
+
+def test_no_hours_keeps_the_us_guess_without_a_time(monkeypatch):
+    _patch(monkeypatch, FakeTicker(_df(), {}))
+    up, past = ye.fetch_yahoo_earnings("AAPL")
+    assert past.session == "post" and past.session_time is None
+
+
+def test_date_only_rows_stay_untimed():
+    row = Earnings(ts=1_793_620_800, eps_estimate=1.0, eps_actual=None, surprise_pct=None)
+    assert ye.apply_hours([row], ye._US_HOURS) == [row]
 
 
 def test_calendar_only_date_has_no_session(monkeypatch):

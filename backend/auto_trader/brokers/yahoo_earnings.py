@@ -22,6 +22,7 @@ import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from zoneinfo import ZoneInfo
 
 from auto_trader.brokers.yahoo_splits import YahooTickerCache
 
@@ -36,11 +37,22 @@ _DATE_ONLY_HOUR = 12
 # A report lands within this of its fiscal quarter's end (AAPL: ~30 days;
 # late filers up to ~90).
 _REPORT_LAG_S = 100 * 86_400
-# Report session by the exchange-local hour Yahoo stamps. Its times are
+# Report session by the exchange-local hour Yahoo stamps, against the
+# exchange's regular hours (US hours when Yahoo gives none). Its times are
 # hour-rounded and an upcoming report past a DST switch can read an hour early
-# (AAPL's 16:00 shows as 15:00), so 15:00 still counts as after the close.
-_OPEN_H = 9.5
-_AFTER_CLOSE_H = 15.0
+# (AAPL's 16:00 shows as 15:00), so the hour before the close still counts as
+# after it.
+_CLOSE_SLACK_MIN = 60
+
+
+@dataclass(frozen=True)
+class ExchangeHours:
+    tz: str  # IANA zone, e.g. America/New_York
+    open_min: int  # regular session, minutes after local midnight
+    close_min: int
+
+
+_US_HOURS = ExchangeHours("America/New_York", 9 * 60 + 30, 16 * 60)
 
 
 @dataclass(frozen=True)
@@ -52,6 +64,10 @@ class Earnings:
     revenue_estimate: float | None = None  # upcoming report only
     revenue_actual: float | None = None  # the last ~5 reported quarters only
     session: str | None = None  # "pre" | "intraday" | "post"; None when only the date is known
+    # The exchange's own time the session hinges on, on the report's date:
+    # "09:30 EDT" (open) before it, "16:00 EST" (close) after, "09:30 to
+    # 16:00 EDT" during. None when Yahoo gave no hours or no report time.
+    session_time: str | None = None
 
 
 def _num(v: object) -> float | None:
@@ -62,13 +78,60 @@ def _num(v: object) -> float | None:
     return None if math.isnan(f) or math.isinf(f) else f
 
 
-def report_session(local: dt.datetime) -> str:
+def report_session(local: dt.datetime, hours: ExchangeHours = _US_HOURS) -> str:
     """Before the open, during the session or after the close, from the
     report's exchange-local wall time."""
-    h = local.hour + local.minute / 60
-    if h < _OPEN_H:
+    m = local.hour * 60 + local.minute
+    if m < hours.open_min:
         return "pre"
-    return "post" if h >= _AFTER_CLOSE_H else "intraday"
+    return "post" if m >= hours.close_min - _CLOSE_SLACK_MIN else "intraday"
+
+
+def _hours(t: object) -> ExchangeHours | None:
+    """The exchange's regular session, from Yahoo's chart metadata."""
+    meta = t.get_history_metadata() or {}  # type: ignore[attr-defined]
+    reg = (meta.get("currentTradingPeriod") or {}).get("regular") or {}
+    tz = meta.get("exchangeTimezoneName")
+    if not tz or "start" not in reg or "end" not in reg:
+        return None
+    zone = ZoneInfo(tz)
+    a = dt.datetime.fromtimestamp(reg["start"], zone)
+    b = dt.datetime.fromtimestamp(reg["end"], zone)
+    return ExchangeHours(tz, a.hour * 60 + a.minute, b.hour * 60 + b.minute)
+
+
+def _hhmm(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def apply_hours(rows: list[Earnings], hours: ExchangeHours | None) -> list[Earnings]:
+    """Re-judge each timed report's session against the exchange's own hours
+    and name the time it hinges on. Date-only rows (session None) stay as is."""
+    if hours is None:
+        return rows
+    zone = ZoneInfo(hours.tz)
+    out = []
+    for e in rows:
+        if e.session is None:
+            out.append(e)
+            continue
+        local = dt.datetime.fromtimestamp(e.ts, zone)
+        session = report_session(local, hours)
+
+        def at(minutes: int) -> dt.datetime:
+            return dt.datetime.combine(
+                local.date(), dt.time(minutes // 60, minutes % 60), tzinfo=zone
+            )
+
+        abbr = at(hours.close_min if session == "post" else hours.open_min).tzname() or ""
+        if session == "pre":
+            label = f"{_hhmm(hours.open_min)} {abbr}"
+        elif session == "post":
+            label = f"{_hhmm(hours.close_min)} {abbr}"
+        else:
+            label = f"{_hhmm(hours.open_min)} to {_hhmm(hours.close_min)} {abbr}"
+        out.append(replace(e, session=session, session_time=label.strip()))
+    return out
 
 
 def _scraped(t: object) -> list[Earnings]:
@@ -157,14 +220,16 @@ def fetch_yahoo_earnings(ticker: str) -> list[Earnings]:
     import yfinance as yf
 
     t = yf.Ticker(ticker)
-    parts: list[list] = []
-    for name, read in (("scrape", _scraped), ("calendar", _calendar), ("revenue", _revenue)):
+    parts: list = []
+    for name, read in (
+        ("scrape", _scraped), ("calendar", _calendar), ("revenue", _revenue), ("hours", _hours),
+    ):
         try:
             parts.append(read(t))
-        except Exception as e:  # noqa: BLE001 - one source failing leaves the other
+        except Exception as e:  # noqa: BLE001 - one source failing leaves the others
             log.info("earnings %s for %s failed: %s", name, ticker, e)
-            parts.append([])
-    return merge_earnings(parts[0], parts[1], parts[2])
+            parts.append(None if name == "hours" else [])
+    return apply_hours(merge_earnings(parts[0], parts[1], parts[2]), parts[3])
 
 
 class EarningsRegistry(YahooTickerCache[Earnings]):

@@ -20,6 +20,7 @@ const reported: Earnings = {
   revenueEstimate: null,
   revenueActual: 109.417e9,
   session: "post",
+  sessionTime: "16:00 EDT",
 };
 const upcoming = (offsetDays: number): Earnings => ({
   timeMs: T0 + offsetDays * DAY,
@@ -29,6 +30,7 @@ const upcoming = (offsetDays: number): Earnings => ({
   revenueEstimate: 113.357e9,
   revenueActual: null,
   session: null,
+  sessionTime: null,
 });
 // One bar per 10px, bar i at x = 10 * i.
 const toX = (ts: number) => ((ts - T0) / DAY) * 10;
@@ -38,7 +40,7 @@ describe("earningsView", () => {
     expect(earningsView(reported)).toEqual({
       date: "30 Jul 2026",
       status: "Reported",
-      session: "After close",
+      session: "After close (16:00 EDT)",
       rows: [
         { label: "EPS", estimate: "1.89", actual: "2.02" },
         { label: "Revenue", estimate: null, actual: "109.4B" },
@@ -84,6 +86,9 @@ describe("earningsView", () => {
   it("names each session", () => {
     expect(earningsView({ ...upcoming(5), session: "pre" }).session).toBe("Before open");
     expect(earningsView({ ...upcoming(5), session: "intraday" }).session).toBe("During market hours");
+    expect(earningsView({ ...upcoming(5), session: "pre", sessionTime: "09:30 EST" }).session).toBe(
+      "Before open (09:30 EST)",
+    );
   });
 
   it("scales revenue to T, B or M", () => {
@@ -150,15 +155,15 @@ describe("fetchEarnings", () => {
           epic: "AAPL",
           earnings: [
             { time: 1793649600, epsEstimate: 1.98, epsActual: null, surprisePct: null, revenueEstimate: 113.4e9, session: "bogus" },
-            { time: 1785441600, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueActual: 109.4e9, session: "post" },
+            { time: 1785441600, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueActual: 109.4e9, session: "post", sessionTime: "16:00 EDT" },
           ],
         }),
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
     expect(await fetchEarnings("AAPL", "yfinance")).toEqual([
-      { timeMs: 1785441600_000, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueEstimate: null, revenueActual: 109.4e9, session: "post" },
-      { timeMs: 1793649600_000, epsEstimate: 1.98, epsActual: null, surprisePct: null, revenueEstimate: 113.4e9, revenueActual: null, session: null },
+      { timeMs: 1785441600_000, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueEstimate: null, revenueActual: 109.4e9, session: "post", sessionTime: "16:00 EDT" },
+      { timeMs: 1793649600_000, epsEstimate: 1.98, epsActual: null, surprisePct: null, revenueEstimate: 113.4e9, revenueActual: null, session: null, sessionTime: null },
     ]);
     await fetchEarnings("AAPL", "yfinance");
     expect(fetchMock).toHaveBeenCalledTimes(1);
