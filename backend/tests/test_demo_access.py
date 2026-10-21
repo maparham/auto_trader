@@ -10,6 +10,7 @@ def test_allowed_get_paths():
         "/api/market/US100",
         "/api/market/US100/details",
         "/api/market/US100/splits",
+        "/api/market/AAPL/earnings",
         "/api/brokers",
         "/api/demo/snapshot",
     ]:

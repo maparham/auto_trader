@@ -18,6 +18,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
+from typing import Generic, Protocol, TypeVar
 
 from auto_trader.brokers.yfinance import _INSTRUMENTS
 from auto_trader.core.candle_clean import Split
@@ -55,18 +56,31 @@ def fetch_yahoo_splits(ticker: str) -> list[Split]:
     ]
 
 
-class SplitRegistry:
+class _Dated(Protocol):
+    @property
+    def ts(self) -> int: ...
+
+
+T = TypeVar("T", bound=_Dated)
+
+
+class YahooTickerCache(Generic[T]):
+    """Per-ticker Yahoo lookup with a TTL cache, in-flight dedupe and a
+    timeout. Shared by splits and earnings (brokers/yahoo_earnings.py)."""
+
     def __init__(
         self,
-        fetch: Callable[[str], list[Split]] = fetch_yahoo_splits,
+        fetch: Callable[[str], list[T]],
         *,
-        ttl_s: float = 86_400.0,
+        ttl_s: float,
         timeout_s: float = 5.0,
+        what: str = "lookup",
     ) -> None:
         self._fetch = fetch
         self._ttl_s = ttl_s
         self._timeout_s = timeout_s
-        self._cache: dict[str, tuple[float, list[Split]]] = {}
+        self._what = what
+        self._cache: dict[str, tuple[float, list[T]]] = {}
         self._inflight: dict[str, asyncio.Task] = {}
         # Epic -> ticker a broker named (IG/MT5 epics are not tickers), so a
         # later peek or get by epic alone finds the same entry.
@@ -75,8 +89,8 @@ class SplitRegistry:
     def _ticker(self, epic: str) -> str | None:
         return self._alias.get(epic) or yahoo_ticker(epic)
 
-    def peek(self, epic: str) -> list[Split] | None:
-        """Cached splits without fetching; None when unknown or expired."""
+    def peek(self, epic: str) -> list[T] | None:
+        """Cached rows without fetching; None when unknown or expired."""
         ticker = self._ticker(epic)
         if ticker is None:
             return []
@@ -85,8 +99,8 @@ class SplitRegistry:
             return None
         return hit[1]
 
-    async def get(self, epic: str, ticker: str | None = None) -> list[Split]:
-        """Splits for `epic`, oldest first; [] for non-equities and on any
+    async def get(self, epic: str, ticker: str | None = None) -> list[T]:
+        """Rows for `epic`, oldest first; [] for non-equities and on any
         failure. `ticker` is the Yahoo ticker when the broker names one (see
         brokers/yahoo_listing.py); it is remembered for `epic`. A lookup that
         outlives `timeout_s` answers [] now and still lands in the cache for
@@ -106,19 +120,30 @@ class SplitRegistry:
         try:
             return await asyncio.wait_for(asyncio.shield(task), self._timeout_s)
         except asyncio.TimeoutError:
-            log.info("split lookup for %s timed out after %.1fs", ticker, self._timeout_s)
+            log.info("%s lookup for %s timed out after %.1fs", self._what, ticker, self._timeout_s)
             return []
 
-    async def _load(self, ticker: str) -> list[Split]:
+    async def _load(self, ticker: str) -> list[T]:
         try:
-            splits = sorted(await asyncio.to_thread(self._fetch, ticker), key=lambda s: s.ts)
-        except Exception as e:  # noqa: BLE001 - every failure means "no splits"
-            log.info("split lookup for %s failed: %s", ticker, e)
-            splits = []
+            rows = sorted(await asyncio.to_thread(self._fetch, ticker), key=lambda r: r.ts)
+        except Exception as e:  # noqa: BLE001 - every failure means "none"
+            log.info("%s lookup for %s failed: %s", self._what, ticker, e)
+            rows = []
         finally:
             self._inflight.pop(ticker, None)
-        self._cache[ticker] = (time.monotonic(), splits)
-        return splits
+        self._cache[ticker] = (time.monotonic(), rows)
+        return rows
+
+
+class SplitRegistry(YahooTickerCache[Split]):
+    def __init__(
+        self,
+        fetch: Callable[[str], list[Split]] = fetch_yahoo_splits,
+        *,
+        ttl_s: float = 86_400.0,
+        timeout_s: float = 5.0,
+    ) -> None:
+        super().__init__(fetch, ttl_s=ttl_s, timeout_s=timeout_s, what="split")
 
 
 SPLITS = SplitRegistry()

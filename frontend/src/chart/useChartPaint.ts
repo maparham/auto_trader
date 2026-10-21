@@ -59,7 +59,8 @@ import { UP, DOWN } from "../lib/chartTheme";
 import { isSynthetic } from "../lib/syntheticRegistry";
 import { chartColors, type BidAskStyle, type Theme } from "../theme";
 import { RESOLUTION_SECONDS, type LiveStatus } from "../lib/feed";
-import { maxBarMs, projectSplitMarkers } from "../lib/splits";
+import { maxBarMs, projectSplitMarkers, type SplitMarker } from "../lib/splits";
+import { EARNINGS_CHIP, projectEarningsMarkers } from "../lib/earnings";
 import { barEndMs } from "../lib/timeframe";
 import { type AlertCondition, type AlertTrigger } from "../lib/persist";
 import { type ExitCluster } from "../lib/tradeMarkers";
@@ -264,6 +265,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     exitAggMarkersRef,
     splitMarkersRef,
     splitsRef,
+    earningsMarkersRef,
+    earningsRef,
     tradeDashesRef,
   } = handle;
 
@@ -1427,28 +1430,43 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     } else {
       exitAggMarkersRef.current?.setPills([]);
     }
-    // Stock split chips: one per split on a visible bar, on the candle pane's
-    // bottom edge. splitsRef is [] for non-equities, so this is a no-op there.
+    // Stock split and earnings chips on the candle pane's bottom edge. Both refs
+    // are [] for non-equities, so this is a no-op there.
     const splits = splitsRef.current;
-    if (splits.length > 0) {
+    const earnings = earningsRef.current;
+    if (splits.length > 0 || earnings.length > 0) {
       const size = chart.getSize("candle_pane", "main");
       const toX = (timestamp: number): number | null =>
         first(
           chart.convertToPixel([{ timestamp, value: 0 }], { paneId: "candle_pane", absolute: true }),
         ).x ?? null;
-      splitMarkersRef.current?.setMarkers(
-        projectSplitMarkers(
-          splits,
-          chart.getDataList(),
-          maxBarMs(resRef.current),
-          chart.getVisibleRange(),
-          toX,
-          size?.width ?? Infinity,
-        ),
-        (size?.top ?? 0) + (size?.height ?? 0),
+      const bars = chart.getDataList();
+      const barMs = maxBarMs(resRef.current);
+      const visible = chart.getVisibleRange();
+      const paneW = size?.width ?? Infinity;
+      const bottom = (size?.top ?? 0) + (size?.height ?? 0);
+      const splitMarkers: SplitMarker[] =
+        splits.length > 0 ? projectSplitMarkers(splits, bars, barMs, visible, toX, paneW) : [];
+      splitMarkersRef.current?.setMarkers(splitMarkers, bottom);
+      earningsMarkersRef.current?.setMarkers(
+        earnings.length > 0
+          ? projectEarningsMarkers(
+              earnings,
+              bars,
+              barMs,
+              visible,
+              toX,
+              chart.getBarSpace().bar,
+              paneW,
+              EARNINGS_CHIP,
+              splitMarkers.map((m) => m.x),
+            )
+          : [],
+        bottom,
       );
     } else {
       splitMarkersRef.current?.setMarkers([], 0);
+      earningsMarkersRef.current?.setMarkers([], 0);
     }
     // Keep the position bracket glued to its lines as geometry shifts (scroll/zoom/
     // tick/drag) — the cursor needn't move for the lines to.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from auto_trader.brokers.yahoo_earnings import EARNINGS
 from auto_trader.brokers.yahoo_splits import SPLITS
 from auto_trader.core.catalog_cache import cached_catalog
 
@@ -84,23 +85,55 @@ async def market_meta(
 _EQUITY_TYPES = frozenset({"SHARES", "stock", "etf"})
 
 
+async def _equity_meta(epic: str, broker_id: str) -> dict | None:
+    """The broker's meta for `epic` when it is an equity, else None. Splits and
+    earnings markers are decoration, so a failed type lookup reads as "not an
+    equity", not an error."""
+    broker = get_data(broker_id)
+    try:
+        meta = await broker.get_market_meta(epic)
+    except Exception:  # noqa: BLE001
+        return None
+    return meta if (meta or {}).get("type") in _EQUITY_TYPES else None
+
+
 @router.get("/api/market/{epic}/splits")
 async def market_splits(
     epic: str, broker_id: str = Depends(broker_query)
 ) -> dict[str, object]:
     # Split history for the chart's split markers, from Yahoo. The epic is the
     # ticker for Capital and yfinance; IG and MT5 name it in meta.yahooTicker. Equities only, by the broker's
-    # own instrument type: Yahoo's GOLD is Barrick, not the gold CFD. Markers
-    # are decoration, so a failed type lookup answers "no splits", not an error.
-    broker = get_data(broker_id)
-    try:
-        meta = await broker.get_market_meta(epic)
-    except Exception:  # noqa: BLE001
-        meta = None
-    if (meta or {}).get("type") not in _EQUITY_TYPES:
+    # own instrument type: Yahoo's GOLD is Barrick, not the gold CFD.
+    meta = await _equity_meta(epic, broker_id)
+    if meta is None:
         return {"epic": epic, "splits": []}
-    splits = await SPLITS.get(epic, ticker=meta.get("yahooTicker"))  # type: ignore[union-attr]
+    splits = await SPLITS.get(epic, ticker=meta.get("yahooTicker"))
     return {"epic": epic, "splits": [{"time": s.ts, "ratio": s.ratio} for s in splits]}
+
+
+@router.get("/api/market/{epic}/earnings")
+async def market_earnings(
+    epic: str, broker_id: str = Depends(broker_query)
+) -> dict[str, object]:
+    # Past and upcoming earnings dates for the chart's earnings markers, from
+    # Yahoo, gated exactly like the splits above. epsActual is null until the
+    # quarter is reported.
+    meta = await _equity_meta(epic, broker_id)
+    if meta is None:
+        return {"epic": epic, "earnings": []}
+    rows = await EARNINGS.get(epic, ticker=meta.get("yahooTicker"))
+    return {
+        "epic": epic,
+        "earnings": [
+            {
+                "time": e.ts,
+                "epsEstimate": e.eps_estimate,
+                "epsActual": e.eps_actual,
+                "surprisePct": e.surprise_pct,
+            }
+            for e in rows
+        ],
+    }
 
 
 @router.get("/api/market/{epic}/details")

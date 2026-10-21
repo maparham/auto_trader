@@ -42,6 +42,7 @@ _PATTERNS = (
     re.compile(r"^/api/market/[^/]+$"),
     re.compile(r"^/api/market/[^/]+/details$"),
     re.compile(r"^/api/market/[^/]+/splits$"),
+    re.compile(r"^/api/market/[^/]+/earnings$"),
 )
 
 

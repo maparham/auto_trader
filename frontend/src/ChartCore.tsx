@@ -199,7 +199,9 @@ import {
 import { journalSignal } from "./lib/liveJournal";
 import TradeExitAggMarkers, { type TradeExitAggMarkersHandle } from "./TradeExitAggMarkers";
 import SplitMarkers, { type SplitMarkersHandle } from "./SplitMarkers";
+import EarningsMarkers, { type EarningsMarkersHandle } from "./EarningsMarkers";
 import { fetchSplits, type Split } from "./lib/splits";
+import { fetchEarnings, type Earnings } from "./lib/earnings";
 import {
   brokerLabel,
   subscribeTrades,
@@ -907,6 +909,9 @@ export default function ChartCore({
   // below) and the DOM chip layer the redraw loop projects them onto.
   const splitsRef = useRef<Split[]>([]);
   const splitMarkersRef = useRef<SplitMarkersHandle>(null);
+  // Earnings dates of this cell's symbol and their chip layer, the same way.
+  const earningsRef = useRef<Earnings[]>([]);
+  const earningsMarkersRef = useRef<EarningsMarkersHandle>(null);
   const exitClustersRef = useRef<ExitCluster[]>([]);
   // While the cursor is parked over the "+" affordance, klinecharts has lost the
   // canvas hover and dropped its crosshair. We redraw just the HORIZONTAL crosshair
@@ -1888,6 +1893,8 @@ export default function ChartCore({
       exitAggMarkersRef,
       splitMarkersRef,
       splitsRef,
+      earningsMarkersRef,
+      earningsRef,
       tradeDashesRef,
       paintBracketRef,
       paintSeparatorRef,
@@ -4165,6 +4172,22 @@ export default function ChartCore({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
   }, [symbol.epic, brokerId]);
 
+  // Earnings markers: same shape as the split effect above.
+  useEffect(() => {
+    let cancelled = false;
+    earningsRef.current = [];
+    handle.redrawRef.current();
+    void fetchEarnings(symbol.epic, brokerId).then((earnings) => {
+      if (cancelled) return;
+      earningsRef.current = earnings;
+      handle.redrawRef.current();
+    });
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
+  }, [symbol.epic, brokerId]);
+
   // A market open/closed change must repaint the price pill (the redraw reads the
   // ref, so a re-render alone won't). The tab badge is sourced separately by an
   // App-level epic poll, so this cell only needs to refresh its own price label.
@@ -5804,6 +5827,8 @@ export default function ChartCore({
       <TradeExitAggMarkers handleRef={exitAggMarkersRef} />
       {/* Stock split chips on the candle pane's bottom edge. Fed by the redraw loop. */}
       <SplitMarkers handleRef={splitMarkersRef} />
+      {/* Earnings chips beside them, plus the next report in the future space. */}
+      <EarningsMarkers handleRef={earningsMarkersRef} />
       {/* Read-only snapshot view banner: top-center pill naming the snapshot, a
           READ-ONLY tag, and Unlock (graduates the tab into a normal chart). The
           one always-visible cue that editing is deliberately off on this cell. */}
