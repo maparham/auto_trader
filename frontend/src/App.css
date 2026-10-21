@@ -2707,10 +2707,10 @@
    Sized to the measured natural width of the widest row (Style pair + Inputs
    lookback both need ~351px content + 32px padding) — no slack. */
 .ind-settings-wide { width: 386px; }
-/* TRENDLINES: "Merge lines within" plus its ⓘ needs a 152px head column beside
-   the 190px range column (measured at the 16px label font); 360px gives 120.
-   +32px, no slack. */
-.ind-settings-tl { width: 392px; }
+/* TRENDLINES: "Merge slopes within" plus its ⓘ needs a ~178px head column
+   beside the 190px range column (measured at the 16px label font: 162 still
+   wrapped it), or the label wraps. 178 + 16 gap + 190 + 32 padding. */
+.ind-settings-tl { width: 416px; }
 .ind-tabs { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
 .ind-tab {
   background: transparent; color: var(--text-dim); border: none; border-bottom: 2px solid transparent;
@@ -2793,13 +2793,27 @@
 .ind-lines-row select { width: 100%; }
 /* Trendlines' Advanced fold: every Inputs row outside the core few. Same
    column rhythm as .ind-body inside, heading styled like .ind-group. */
-.ind-advanced { display: flex; flex-direction: column; gap: 12px; }
-.ind-advanced:not([open]) { gap: 0; }
+.ind-advanced-body { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
 .ind-advanced > summary {
   cursor: pointer; color: var(--text-faint); font-size: 11px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; margin-top: 4px;
 }
 .ind-advanced > summary:hover { color: var(--text-dim); }
+/* Trendlines renders every row flat (renderChunks' `flat`): label left, control
+   right, and ONE control column for numbers, ranges, selects and checkboxes
+   alike, so the boxes start at one x all the way down. A long label wraps to
+   a second line instead of ellipsising ("Keep the strongest at a pivot"), and
+   a live readout ("334 pairs") sits after its box rather than under it, so no
+   row grows taller than its neighbours. */
+.ind-settings-tl .ind-row.ind-row-cols { grid-template-columns: minmax(0, 1fr) 190px; }
+.ind-settings-tl .ind-row.ind-row-cols > .ind-row-head { overflow: visible; }
+.ind-settings-tl .ind-row.ind-row-cols > label,
+.ind-settings-tl .ind-row.ind-row-cols > .ind-row-head > label {
+  white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.25;
+}
+.ind-settings-tl .ind-control-col { flex-direction: row; align-items: center; gap: 8px; }
+.ind-settings-tl .ind-row.ind-row-cols select { width: 100%; }
+.ind-settings-tl .ind-group { margin-top: 10px; }
 
 /* A related PAIR of inputs on one row, each label stacked above its own
    control (indicatorMeta's `group`). The column is half a row wide, so a
@@ -7498,3 +7512,10 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
 .ind-debug-legend .ind-bool-check.is-off { opacity: 0.5; }
 .ind-debug-swatch { flex: none; color: var(--text); }
 .ind-debug-note { color: var(--text-dim); font-size: 12px; line-height: 1.5; }
+/* Trendlines' two-box rows ("0.75 ATR  ∞ %"): the 56px boxes cut a
+   two-decimal value at the default 8px side padding, so trim it. */
+.ind-settings-tl .ind-range input[type="number"] { padding-left: 6px; padding-right: 2px; }
+/* The ATR/% unit switch beside a single cut box (IndicatorSettings'
+   dualControl): sized to its longest unit, not the row's full-width selects. */
+.ind-settings-tl .ind-row.ind-row-cols select.ind-unit,
+.ind-row select.ind-unit { width: auto; padding: 4px 4px; font-size: 0.85em; }

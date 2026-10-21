@@ -24,7 +24,9 @@ import {
   padTrendlinesParams,
   coreInputsFor,
   presetsFor,
+  directionFor,
   presetStepOf,
+  type IndicatorPresets,
   withPresetStep,
   SMOOTHING_TYPES,
   type IndicatorInputDef,
@@ -353,6 +355,14 @@ function extendRestorePatch(
  * the instance from the chosen config, so the ~60 form fields, all seeded from
  * the live instance at mount, are refreshed by remounting the form (`gen`)
  * while the snapshot, the stored config and the open tab stay put here. */
+// extendData.dualCuts: per ATR/% row, the unit picked while both slots are
+// off (keyed by the ATR slot's input key) and the value each slot held when
+// the switch left it (keyed by that slot's input key).
+interface DualCuts {
+  units: Record<string, string>;
+  memo: Record<string, number>;
+}
+
 export default function IndicatorSettings(props: Props) {
   const { chart, paneId: paneId0, name } = props;
   const ind0 = useMemo(
@@ -1732,6 +1742,13 @@ function IndicatorSettingsForm({
   }
 
   function setParam(index: number, value: number) {
+    setParams([[index, value]]);
+  }
+
+  // Several slots in ONE write (the ATR/% unit switch moves a cut from one
+  // slot to its twin), so the chart never computes the half-written state.
+  function setParams(entries: Array<[number, number]>) {
+    const index = Math.max(...entries.map(([k]) => k));
     // TRENDLINES only: a saved pane that predates a newer slot (e.g. Extend
     // Left at 28) has nothing at the slots between its old length and this
     // one, so a plain `nextCp[index] = value` would leave undefined holes
@@ -1740,11 +1757,11 @@ function IndicatorSettingsForm({
     const nextCp = isTrendlines
       ? padTrendlinesParams(calcParams, index, seed.extendData)
       : calcParams.slice();
-    nextCp[index] = value;
+    for (const [k, v] of entries) nextCp[k] = v;
     setCalcParams(nextCp);
-    if (isMa && index === 0) {
-      setMaLength(value);
-      applyMa({ length: value });
+    if (isMa && entries.some(([k]) => k === 0)) {
+      setMaLength(nextCp[0]);
+      applyMa({ length: nextCp[0] });
     } else if (isPivotBands) {
       // Strength (0) / Window K (1). Under an active timeframe the HTF series must
       // be recomputed with the new param, not just re-aligned — route through the
@@ -1773,9 +1790,15 @@ function IndicatorSettingsForm({
     () => (inputPresets ? presetStepOf(inputPresets, calcParams) : null),
     [inputPresets, calcParams],
   );
-  function applyStep(i: number) {
-    if (!inputPresets) return;
-    const nextCp = withPresetStep(inputPresets, calcParams, i);
+  // The Direction picker works the same way over the slope band's slots,
+  // which the presets leave alone.
+  const directionPresets = directionFor(type);
+  const activeDirection = useMemo(
+    () => (directionPresets ? presetStepOf(directionPresets, calcParams) : null),
+    [directionPresets, calcParams],
+  );
+  function applyStep(presets: IndicatorPresets, i: number) {
+    const nextCp = withPresetStep(presets, calcParams, i);
     setCalcParams(nextCp);
     apply({ calcParams: nextCp });
     // Same contract as setParam's per-slot write: every trendline param feeds
@@ -1783,10 +1806,107 @@ function IndicatorSettingsForm({
     // again, not re-aligned.
     if (isTrendlines && timeframe !== "chart") applyPin({}, nextCp);
   }
+  // A picker row: the active step by value, or Custom when none matches.
+  const pickerRow = (
+    id: string,
+    label: string,
+    tip: string[],
+    presets: IndicatorPresets,
+    active: number | null,
+  ) => (
+    <div className="ind-row ind-row-cols ind-lines-row">
+      <span className="ind-row-head">
+        <label htmlFor={id}>{label}</label>
+        <InfoTip title={label} text={tip} />
+      </span>
+      <select
+        id={id}
+        data-testid={id}
+        value={active === null ? "" : String(active)}
+        onChange={(e) => e.target.value !== "" && applyStep(presets, Number(e.target.value))}
+      >
+        {active === null && <option value="">Custom</option>}
+        {presets.steps.map((st, i) => (
+          <option key={st.name} value={String(i)}>
+            {st.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
 
   // One Inputs-tab chunk list as rows (see groupInputs for the chunking).
-  const renderChunks = (list: IndicatorInputDef[]) =>
-    groupInputs(list).map((chunk) => (
+  // One cut measured two ways (ATR or %): one box and a unit switch. The two
+  // slots stay the calc's contract (0 = off); the switch zeroes the slot it
+  // leaves and restores what that unit held before, so flipping back and
+  // forth loses nothing. The value left behind and the unit picked while both
+  // are off live in extendData.dualCuts, which no calc reads, so they survive
+  // a reopen and a reload. A pane with BOTH cuts set keeps both boxes, or one
+  // of them would filter while out of sight.
+  const [dualCuts, setDualCuts] = useState<DualCuts>(() => {
+    const d = genExt0.dualCuts as Partial<DualCuts> | undefined;
+    return { units: { ...(d?.units ?? {}) }, memo: { ...(d?.memo ?? {}) } };
+  });
+  function dualControl(a: IndicatorInputDef, b: IndicatorInputDef) {
+    const val = (inp: IndicatorInputDef) =>
+      Number.isFinite(calcParams[inp.index!])
+        ? (calcParams[inp.index!] as number)
+        : ((inp.default as number | undefined) ?? 0);
+    const av = val(a);
+    const bv = val(b);
+    if (av > 0 && bv > 0)
+      return (
+        <>
+          {controlFor(a)}
+          {controlFor(b)}
+        </>
+      );
+    const on = bv > 0 ? b : av > 0 ? a : dualCuts.units[a.key] === b.key ? b : a;
+    return (
+      <>
+        {controlFor({ ...on, suffix: undefined })}
+        <select
+          className="ind-unit"
+          aria-label={`${a.range?.label ?? a.label} unit`}
+          value={on.key}
+          onChange={(e) => {
+            const to = e.target.value === b.key ? b : a;
+            if (to === on) return;
+            const next: DualCuts = {
+              units: { ...dualCuts.units, [a.key]: to.key },
+              memo: { ...dualCuts.memo, [on.key]: val(on) },
+            };
+            setDualCuts(next);
+            setParams([
+              [on.index!, 0],
+              [to.index!, dualCuts.memo[to.key] ?? 0],
+            ]);
+            const live = getIndicator(chart, paneId, name) as Indicator | null;
+            chart.overrideIndicator({
+              paneId,
+              name,
+              extendData: { ...((live?.extendData as object) ?? {}), dualCuts: next },
+            });
+          }}
+        >
+          {[a, b].map((x) => (
+            <option key={x.key} value={x.key}>
+              {x.suffix}
+            </option>
+          ))}
+        </select>
+      </>
+    );
+  }
+
+  // `flat` (the Trendlines core + Advanced lists) gives every row the one
+  // label-left / control-right shape: pairs split into their own rows, and
+  // only a min/max range keeps its two boxes together. A fold of sixteen
+  // fields read as three layouts at once when pairs stacked their labels.
+  const renderChunks = (list: IndicatorInputDef[], flat = false) =>
+    groupInputs(list)
+      .flatMap((chunk) => (flat && !(chunk.length === 2 && chunk[0].range) ? chunk.map((x) => [x]) : [chunk]))
+      .map((chunk) => (
       <Fragment key={chunk[0].key}>
         {/* A heading before the input that opens a section, so a tab
             mixing what the indicator COMPUTES with how it is DRAWN
@@ -1811,12 +1931,7 @@ function IndicatorSettingsForm({
             </span>
             <span className="ind-control-row ind-range">
               {chunk[0].range.dual ? (
-                // One cut measured two ways: each box keeps its own
-                // unit, and there is no dash between them.
-                <>
-                  {controlFor(chunk[0])}
-                  {controlFor(chunk[1])}
-                </>
+                dualControl(chunk[0], chunk[1])
               ) : (
                 <>
                   {controlFor({ ...chunk[0], suffix: undefined })}
@@ -2468,42 +2583,36 @@ function IndicatorSettingsForm({
                   </Tooltip>
                 </div>
               )}
-              {inputPresets && (
+              {inputPresets &&
                 // A preset writes its whole recipe; editing any slot it set
                 // reads as Custom until another preset is picked.
-                <div className="ind-row ind-row-cols ind-lines-row">
-                  <span className="ind-row-head">
-                    <label htmlFor="ind-preset">Preset</label>
-                    <InfoTip
-                      title="Preset"
-                      text={[
-                        "Sets every detection field at once.",
-                        "Style and drawing options keep your values.",
-                        "Editing a field shows Custom.",
-                      ]}
-                    />
-                  </span>
-                  <select
-                    id="ind-preset"
-                    data-testid="lines-step"
-                    value={activeStep === null ? "" : String(activeStep)}
-                    onChange={(e) => e.target.value !== "" && applyStep(Number(e.target.value))}
-                  >
-                    {activeStep === null && <option value="">Custom</option>}
-                    {inputPresets.steps.map((st, i) => (
-                      <option key={st.name} value={String(i)}>
-                        {st.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+                pickerRow(
+                  "ind-preset",
+                  "Preset",
+                  [
+                    "How many lines to draw.",
+                    "Sets every detection field but the slope band.",
+                    "Editing a field shows Custom.",
+                  ],
+                  inputPresets,
+                  activeStep,
+                )}
+              {directionPresets &&
+                pickerRow(
+                  "ind-direction",
+                  "Direction",
+                  ["Rising: only lines that slope up.", "Falling: only lines that slope down.", "Sets the slope band."],
+                  directionPresets,
+                  activeDirection,
+                )}
               {coreSplit ? (
                 <>
-                  {renderChunks(coreSplit.core)}
+                  {renderChunks(coreSplit.core, true)}
                   <details className="ind-advanced">
                     <summary>Advanced</summary>
-                    {renderChunks(coreSplit.rest)}
+                    {/* A <details> lays its content out as a block, so the
+                        rows' column gap lives on this wrapper. */}
+                    <div className="ind-advanced-body">{renderChunks(coreSplit.rest, true)}</div>
                   </details>
                 </>
               ) : (

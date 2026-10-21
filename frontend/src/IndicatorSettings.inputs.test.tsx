@@ -27,13 +27,13 @@ function chartWith(extendData: object, calcParams = [...Object.values(TRENDLINES
 }
 
 // Same, but recording what the modal writes back onto the live instance.
-function chartRecording(extendData: object) {
+function chartRecording(extendData: object, calcParams?: number[]) {
   const writes: Array<Record<string, unknown>> = [];
   const cpWrites: number[][] = [];
   const ind = {
     paneId: "candle_pane",
     name: "TRENDLINES",
-    calcParams: [...Object.values(TRENDLINES_DEFAULTS)],
+    calcParams: calcParams ?? [...Object.values(TRENDLINES_DEFAULTS)],
     extendData: { indType: "TRENDLINES", ...extendData },
     figures: [],
     styles: {},
@@ -54,8 +54,8 @@ function chartRecording(extendData: object) {
   return { chart: chart as never, writes, cpWrites };
 }
 
-function openRecording(extendData: object = {}) {
-  const rec = chartRecording(extendData);
+function openRecording(extendData: object = {}, calcParams?: number[]) {
+  const rec = chartRecording(extendData, calcParams);
   render(
     <IndicatorSettings
       chart={rec.chart}
@@ -143,17 +143,16 @@ describe("Inputs tab renders a control for every declared input", () => {
     ).not.toContain("ind-row-cols");
   });
 
-  // The two merge tolerances (ATR and percent) share one dual range row,
-  // ATR box then % box, and the per-pivot cap above them is a solo number
-  // row with its control in the shared second column.
-  it("pairs the two merge tolerances, with the per-pivot cap on its own row above", () => {
+  // A cut measured two ways shows ONE box and an ATR/% unit switch in its
+  // range row; the per-pivot cap is a solo number row in the shared column.
+  it("gives the merge tolerance one box and a unit switch, the per-pivot cap its own row", () => {
     open();
     const atr = screen.getByLabelText("Merge lines within");
-    const pct = screen.getByLabelText("Merge lines within (%)");
-    const pair = atr.closest(".ind-range");
-    expect(pair).toBeTruthy();
-    expect(pct.closest(".ind-range")).toBe(pair);
-    const cap = screen.getByLabelText("Max lines per pivot").closest(".ind-row");
+    expect(screen.queryByLabelText("Merge lines within (%)")).toBeNull();
+    const unit = screen.getByLabelText("Merge lines within unit") as HTMLSelectElement;
+    expect(unit.closest(".ind-range")).toBe(atr.closest(".ind-range"));
+    expect(unit.selectedOptions[0].textContent).toBe("ATR");
+    const cap = screen.getByLabelText("Lines per Pivot").closest(".ind-row");
     expect(cap?.className).toContain("ind-row-cols");
     expect(cap!.querySelector(".ind-info")).toBeTruthy();
   });
@@ -166,7 +165,7 @@ describe("Inputs tab renders a control for every declared input", () => {
       "Max Touch Gap",
       "Max Touch Spacing",
       "Merge lines within",
-      "Max lines per pivot",
+      "Lines per Pivot",
       "Extend",
     ])
       expect(screen.getByLabelText(label), `${label} has no control`).toBeTruthy();
@@ -196,10 +195,10 @@ describe("Calculation group", () => {
   });
 });
 
-describe("Max lines per pivot", () => {
+describe("Lines per Pivot", () => {
   it("opens empty (off) by default, as an integer box", () => {
     open();
-    const box = screen.getByLabelText("Max lines per pivot") as HTMLInputElement;
+    const box = screen.getByLabelText("Lines per Pivot") as HTMLInputElement;
     expect(box.type).toBe("number");
     expect(box.value).toBe("");
     expect(box.step).toBe("1");
@@ -211,13 +210,13 @@ describe("Max lines per pivot", () => {
   // select's "pivot" (and no slot 22) opens on a cap of 1, the old tick.
   it("migrates a saved pivot declutter onto the slot as a cap of one", () => {
     open({ declutter: "pivot" }, Object.values(TRENDLINES_DEFAULTS).slice(0, 21));
-    expect((screen.getByLabelText("Max lines per pivot") as HTMLInputElement).value).toBe("1");
+    expect((screen.getByLabelText("Lines per Pivot") as HTMLInputElement).value).toBe("1");
   });
 
   it("migrates a saved near-price rule onto Max Distance", () => {
     open({ declutter: "near" }, Object.values(TRENDLINES_DEFAULTS).slice(0, 19));
     expect((screen.getByLabelText("Max Distance (×ATR)") as HTMLInputElement).value).toBe("5");
-    expect((screen.getByLabelText("Max lines per pivot") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Lines per Pivot") as HTMLInputElement).value).toBe("");
   });
 
   it("leaves Max Distance off (an empty box) for a pane that never chose near-price", () => {
@@ -230,7 +229,7 @@ describe("the merge tolerance", () => {
   it("stays shown under a per-pivot cap, since the two cuts compose", () => {
     open({}, [...Object.values(TRENDLINES_DEFAULTS).slice(0, 22), 1]);
     expect((screen.getByLabelText("Merge lines within") as HTMLInputElement).value).toBe("0.25");
-    expect((screen.getByLabelText("Max lines per pivot") as HTMLInputElement).value).toBe("1");
+    expect((screen.getByLabelText("Lines per Pivot") as HTMLInputElement).value).toBe("1");
   });
 
   it("shows otherwise, carrying its default", () => {
@@ -272,20 +271,56 @@ describe("min/max range rows", () => {
 
   // Max Distance and Merge Lines are ONE cut measured two ways (ATR and
   // percent), so each is a single row too: no dash, each box keeps its unit.
-  it("puts the ATR and percent boxes of one cut on one row, each with its unit", () => {
+  it("puts one box and its unit switch on one row per cut", () => {
     open();
-    for (const [label, atrLabel, pctLabel] of [
-      ["Max Distance", "Max Distance (×ATR)", "Max Distance (%)"],
-      ["Merge lines within", "Merge lines within", "Merge lines within (%)"],
-    ]) {
+    for (const label of ["Max Distance", "Merge lines within", "Merge slopes within"]) {
       const row = screen.getByText(label).closest(".ind-range-row");
       expect(row, `${label} has no range row`).toBeTruthy();
-      expect(row!.contains(screen.getByLabelText(atrLabel))).toBe(true);
-      expect(row!.contains(screen.getByLabelText(pctLabel))).toBe(true);
+      expect(row!.querySelectorAll('input[type="number"]')).toHaveLength(1);
+      expect(row!.querySelector("select.ind-unit")).toBeTruthy();
       expect(row!.querySelector(".ind-range-dash")).toBeNull();
-      const units = [...row!.querySelectorAll(".ind-suffix")].map((s) => s.textContent);
-      expect(units).toEqual(["ATR", "%"]);
     }
+  });
+
+  // The switch moves the cut between the twin slots in one write, and
+  // switching back restores the value that unit held.
+  it("moves the cut to the other unit's slot and back", () => {
+    const { cpWrites } = openRecording({}, [...Object.values(TRENDLINES_SEED)]);
+    const unit = screen.getByLabelText("Max Distance unit") as HTMLSelectElement;
+    fireEvent.change(unit, { target: { value: "p20" } });
+    expect(cpWrites.at(-1)!.slice(19, 21)).toEqual([0, 0]);
+    expect(unit.selectedOptions[0].textContent).toBe("%");
+    fireEvent.change(screen.getByLabelText("Max Distance (%)"), { target: { value: "12" } });
+    expect(cpWrites.at(-1)!.slice(19, 21)).toEqual([0, 12]);
+    fireEvent.change(unit, { target: { value: "p19" } });
+    expect(cpWrites.at(-1)!.slice(19, 21)).toEqual([TRENDLINES_SEED.maxDistAtr, 0]);
+  });
+
+  // The value a unit held and the unit picked while both are off live in
+  // extendData.dualCuts, so they survive a reopen.
+  it("persists the left-behind value and restores it after a reopen", () => {
+    const first = openRecording({}, [...Object.values(TRENDLINES_SEED)]);
+    fireEvent.change(screen.getByLabelText("Max Distance unit"), { target: { value: "p20" } });
+    const saved = first.writes.at(-1)!.dualCuts;
+    expect(saved).toEqual({ units: { p19: "p20" }, memo: { p19: TRENDLINES_SEED.maxDistAtr } });
+    cleanup();
+    const cp = [...Object.values(TRENDLINES_SEED)];
+    cp[19] = 0;
+    const second = openRecording({ dualCuts: saved }, cp);
+    const unit = screen.getByLabelText("Max Distance unit") as HTMLSelectElement;
+    expect(unit.selectedOptions[0].textContent).toBe("%");
+    fireEvent.change(unit, { target: { value: "p19" } });
+    expect(second.cpWrites.at(-1)!.slice(19, 21)).toEqual([TRENDLINES_SEED.maxDistAtr, 0]);
+  });
+
+  // Both cuts set (an older pane): both boxes stay, so neither filters unseen.
+  it("shows both boxes when both units hold a cut", () => {
+    const cp = [...Object.values(TRENDLINES_SEED)];
+    cp[20] = 15;
+    open({}, cp);
+    expect(screen.getByLabelText("Max Distance (×ATR)")).toBeTruthy();
+    expect(screen.getByLabelText("Max Distance (%)")).toBeTruthy();
+    expect(screen.queryByLabelText("Max Distance unit")).toBeNull();
   });
 
   // The stored 0 means "no limit", which a literal 0 in the box hid ("zero
@@ -364,17 +399,20 @@ describe("preset picker", () => {
     expect(shown()).toBe("Custom");
   });
 
-  it("opens on Major levels for a fresh pane", () => {
+  it("opens on Balanced for a fresh pane", () => {
     open({}, [...Object.values(TRENDLINES_SEED)]);
-    expect(shown()).toBe("Major levels");
+    expect(shown()).toBe("Balanced");
     expect([...picker().options].map((o) => o.textContent)).toEqual(names);
   });
 
-  it("writes the whole recipe", () => {
+  it("writes the whole recipe but the slope band", () => {
     const { cpWrites } = openRecording();
-    fireEvent.change(picker(), { target: { value: "1" } });
-    expect(cpWrites.at(-1)).toEqual(Object.values(TRENDLINES_PRESET_CONFIGS[1].config));
-    expect(shown()).toBe("Long channels");
+    fireEvent.change(picker(), { target: { value: "2" } });
+    const want = Object.values(TRENDLINES_PRESET_CONFIGS[2].config);
+    want[11] = TRENDLINES_DEFAULTS.maxSlopeAtr;
+    want[12] = TRENDLINES_DEFAULTS.minSlopeAtr;
+    expect(cpWrites.at(-1)).toEqual(want);
+    expect(shown()).toBe("More lines");
   });
 
   it("reads Custom after a manual edit", () => {
@@ -384,12 +422,34 @@ describe("preset picker", () => {
   });
 });
 
+describe("direction picker", () => {
+  const picker = () => screen.getByLabelText("Direction") as HTMLSelectElement;
+  const shown = () => picker().selectedOptions[0].textContent;
+
+  it("opens on All for a fresh pane", () => {
+    open({}, [...Object.values(TRENDLINES_SEED)]);
+    expect(shown()).toBe("All");
+  });
+
+  // The direction owns the slope band and nothing else, so the preset holds.
+  it("writes the slope band and keeps the preset", () => {
+    const { cpWrites } = openRecording({}, [...Object.values(TRENDLINES_SEED)]);
+    fireEvent.change(picker(), { target: { value: "1" } });
+    const cp = cpWrites.at(-1)!;
+    expect([cp[11], cp[12]]).toEqual([0.3, 0.001]);
+    expect(shown()).toBe("Rising");
+    expect((screen.getByLabelText("Preset") as HTMLSelectElement).selectedOptions[0].textContent).toBe("Balanced");
+    fireEvent.change(picker(), { target: { value: "2" } });
+    expect(cpWrites.at(-1)!.slice(11, 13)).toEqual([-0.001, -0.3]);
+  });
+});
+
 describe("core inputs and the Advanced fold", () => {
   it("shows the core few up front and folds the rest", () => {
     open();
     const fold = document.querySelector("details.ind-advanced")!;
     expect(fold).toBeTruthy();
-    for (const l of ["Pivot Length", "Max Major Swings", "Max Pierce", "Back Clearance", "Max Projection"])
+    for (const l of ["Pivot Length", "Max Swings", "Max Pierce", "Back Clearance", "Merge fanned lines within", "Max Projection"])
       expect(fold.contains(screen.getByLabelText(l)), l).toBe(false);
     for (const l of ["Max Trendlines", "Max Pairs", "Min Touches", "Max Crossings"])
       expect(fold.contains(screen.getByLabelText(l)), l).toBe(true);

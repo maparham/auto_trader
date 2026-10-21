@@ -74,11 +74,11 @@ describe("TRENDLINES registration", () => {
       ["Lookback"],
       ["Extend Left"],
       ["Extend"],
-      ["Max lines per pivot"],
-      ["Keep the strongest at a pivot"],
+      ["Lines per Pivot"],
+      ["Strongest First"],
       ["Merge lines within", "Merge lines within (%)"],
       ["Merge fanned lines within", "Merge fanned lines within (%)"],
-      ["Keep the nearest in a fan"],
+      ["Nearest in Fan"],
     ]);
   });
 
@@ -118,7 +118,7 @@ describe("TRENDLINES registration", () => {
     const d = resolveInputs("TRENDLINES", undefined).find((i) => i.key === "p22");
     expect(d?.type).toBe("number");
     expect(d?.source).toBe("calcParam");
-    expect(d?.label).toBe("Max lines per pivot");
+    expect(d?.label).toBe("Lines per Pivot");
     expect(d?.default).toBe(0);
     expect(d?.min).toBe(0);
     expect(d?.step).toBe(1);

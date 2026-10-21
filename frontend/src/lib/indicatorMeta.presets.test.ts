@@ -1,20 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { padTrendlinesParams, presetsFor, presetStepOf, withPresetStep, resolveInputs } from "./indicatorMeta";
-import { TRENDLINES_PRESET_CONFIGS, TRENDLINES_SEED } from "./indicators/trendlinesOutputs";
+import { directionFor, padTrendlinesParams, presetsFor, presetStepOf, withPresetStep, resolveInputs } from "./indicatorMeta";
+import { TRENDLINES_DIRECTIONS, TRENDLINES_PRESET_CONFIGS, TRENDLINES_SEED } from "./indicators/trendlinesOutputs";
 
 const tl = presetsFor("TRENDLINES")!;
 
 describe("trendlines presets", () => {
-  it("lists every recipe, the seed first", () => {
-    expect(tl.steps.map((s) => s.name)).toEqual(TRENDLINES_PRESET_CONFIGS.map((p) => p.name));
-    expect(presetStepOf(tl, Object.values(TRENDLINES_SEED))).toBe(0);
+  it("lists every recipe, the seed on Balanced", () => {
+    expect(tl.steps.map((s) => s.name)).toEqual(["Fewer lines", "Balanced", "More lines"]);
+    expect(presetStepOf(tl, Object.values(TRENDLINES_SEED))).toBe(1);
   });
 
-  it("round-trips every preset over every slot", () => {
+  it("round-trips every preset with every direction", () => {
+    const dir = directionFor("TRENDLINES")!;
     tl.steps.forEach((_, i) => {
-      const cp = withPresetStep(tl, tl.base, i);
-      expect(cp).toEqual(Object.values(TRENDLINES_PRESET_CONFIGS[i].config));
-      expect(presetStepOf(tl, cp)).toBe(i);
+      dir.steps.forEach((_, d) => {
+        const cp = withPresetStep(dir, withPresetStep(tl, tl.base, i), d);
+        expect(cp).toEqual(
+          Object.values({
+            ...TRENDLINES_PRESET_CONFIGS[i].config,
+            maxSlopeAtr: TRENDLINES_DIRECTIONS[d].maxSlopeAtr,
+            minSlopeAtr: TRENDLINES_DIRECTIONS[d].minSlopeAtr,
+          }),
+        );
+        expect(presetStepOf(tl, cp)).toBe(i);
+        expect(presetStepOf(dir, cp)).toBe(d);
+      });
     });
   });
 

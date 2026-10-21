@@ -12,6 +12,7 @@ import {
   MAX_MAX_LINES,
   TRENDLINES_DEFAULTS,
   TRENDLINES_EXTEND_DEFAULTS,
+  TRENDLINES_DIRECTIONS,
   TRENDLINES_PRESET_CONFIGS,
   parseTrendlinesConfig,
   type TrendlinesConfig,
@@ -139,6 +140,8 @@ interface IndicatorMetaDef {
   desc?: string;
   // Optional preset picker rendered above the inputs (only TRENDLINES today).
   presets?: IndicatorPresets;
+  // Optional Direction picker beside it, over the slope band's slots.
+  direction?: IndicatorPresets;
   // The few inputs shown up front, in this order, each with an optional
   // label that reads without its section heading and an optional row group.
   // Every other Inputs-tab row moves into a collapsed Advanced fold.
@@ -266,15 +269,27 @@ export function padTrendlinesParams(cp: number[], upTo: number, extendData?: unk
   return next;
 }
 
-// The Preset picker: each preset is a FULL recipe (every slot), so picking
-// one is deterministic, and a manual edit to any slot reads as Custom.
+// The slope band's two slots, owned by the Direction picker.
+const TL_SLOPE_SLOTS = [TL_SLOT_KEYS.indexOf("maxSlopeAtr"), TL_SLOT_KEYS.indexOf("minSlopeAtr")];
+
+// The Preset picker: each preset is a FULL recipe (every slot but the slope
+// band), so picking one is deterministic, and a manual edit to any of those
+// slots reads as Custom. The Direction picker sets the band on its own, so a
+// direction change keeps the preset.
+const TL_PRESET_SLOTS = TL_DEFAULT_PARAMS.map((_, k) => k).filter((k) => !TL_SLOPE_SLOTS.includes(k));
 const TRENDLINES_PRESETS: IndicatorPresets = {
   base: TL_DEFAULT_PARAMS,
-  slots: TL_DEFAULT_PARAMS.map((_, k) => k),
-  steps: TRENDLINES_PRESET_CONFIGS.map((p) => ({
-    name: p.name,
-    values: Object.values(p.config) as number[],
-  })),
+  slots: TL_PRESET_SLOTS,
+  steps: TRENDLINES_PRESET_CONFIGS.map((p) => {
+    const values = Object.values(p.config) as number[];
+    return { name: p.name, values: TL_PRESET_SLOTS.map((k) => values[k]) };
+  }),
+};
+
+const TRENDLINES_DIRECTION: IndicatorPresets = {
+  base: TL_DEFAULT_PARAMS,
+  slots: TL_SLOPE_SLOTS,
+  steps: TRENDLINES_DIRECTIONS.map((d) => ({ name: d.name, values: [d.maxSlopeAtr, d.minSlopeAtr] })),
 };
 
 const INDICATOR_META: Record<string, IndicatorMetaDef> = {
@@ -972,7 +987,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ...num(15, "Min Crossings", { min: 0 }),
         group: "cross",
         default: 0,
-        suffix: "bars",
+        suffix: "times",
         range: {
           label: "Crossings",
           tip: [
@@ -988,7 +1003,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         group: "cross",
         default: 0,
         unbounded: true,
-        suffix: "bars",
+        suffix: "times",
         tip: ["Max times the close may have crossed the line. Empty: no limit."],
       },
       {
@@ -1119,7 +1134,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         group: "pivotMarks",
         default: TRENDLINES_EXTEND_DEFAULTS.showPivotDepth,
         tip: [
-          "Writes the number of competing levels at each pivot: what Max lines per pivot counts.",
+          "Writes the number of competing levels at each pivot: what Lines per Pivot counts.",
           "Debug helper: a pivot showing fewer lines than its number is blocked by a level hidden at another pivot.",
         ],
       },
@@ -1307,7 +1322,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        ...num(22, "Max lines per pivot", { min: 0, step: 1 }),
+        ...num(22, "Lines per Pivot", { min: 0, step: 1 }),
         default: TL.maxPerPivot,
         unbounded: true,
         tip: [
@@ -1318,13 +1333,13 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
       {
         key: "p32",
-        label: "Keep the strongest at a pivot",
+        label: "Strongest First",
         type: "boolean",
         source: "calcParam",
         index: 32,
         default: false,
         tip: [
-          "Off: at each swing, Max lines per pivot keeps the lines nearest to price.",
+          "Off: at each swing, Lines per Pivot keeps the lines nearest to price.",
           "On: it keeps the strongest (most pivots, then span, then fewest crossings).",
         ],
       },
@@ -1369,7 +1384,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         unbounded: true,
         suffix: "ATR/bar",
         range: {
-          label: "Merge fanned lines within",
+          label: "Merge slopes within",
           dual: true,
           tip: [
             "Lines through the same swing at nearly the same angle are one line, so only one is kept.",
@@ -1388,7 +1403,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         group: "fan",
         default: TL.fanPct,
         unbounded: true,
-        suffix: "%",
+        suffix: "% of slope",
         tip: [
           "Same rule, as a percent of the kept line's slope. The tighter of the two boxes is the band.",
           "Empty: off.",
@@ -1396,7 +1411,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
       {
         key: "p31",
-        label: "Keep the nearest in a fan",
+        label: "Nearest in Fan",
         type: "boolean",
         source: "calcParam",
         index: 31,
@@ -1408,17 +1423,20 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     presets: TRENDLINES_PRESETS,
+    direction: TRENDLINES_DIRECTION,
     // The knobs the hand-tuned 1D/1W panes actually moved; the presets set
     // the rest. The two cuts measured two ways keep their pair.
     core: [
-      { key: "p0", label: "Pivot Length", group: "core1" },
-      { key: "p24", label: "Max Major Swings", group: "core1" },
-      { key: "p17", group: "core2" },
-      { key: "p18", group: "core2" },
+      { key: "p0", label: "Pivot Length" },
+      { key: "p24", label: "Max Swings" },
+      { key: "p17" },
+      { key: "p18" },
       { key: "p19" },
       { key: "p20" },
       { key: "p21" },
       { key: "p23" },
+      { key: "p29" },
+      { key: "p30" },
       { key: "p4" },
     ],
     title: "Trendlines",
@@ -1578,6 +1596,10 @@ export function resolveInputs(
 /** The preset chips (if any) for an indicator's Inputs tab. */
 export function presetsFor(name: string): IndicatorPresets | undefined {
   return INDICATOR_META[name]?.presets;
+}
+
+export function directionFor(name: string): IndicatorPresets | undefined {
+  return INDICATOR_META[name]?.direction;
 }
 
 export function coreInputsFor(name: string): CoreInput[] | undefined {

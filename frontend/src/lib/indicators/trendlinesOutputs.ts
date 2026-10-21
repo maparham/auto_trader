@@ -209,82 +209,66 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   pivotStrong: 0,
 };
 
-/** The Preset picker's recipes, each a FULL config. Read off the hand-tuned
- * 1D/1W panes on chartkar.app (Oct 2026): 33 panes, and most sat on one of
- * these three. Every one sets Max Trendlines to the cap and lets the filters
- * (min swing, slope band, crossings, distance, per-pivot cap) decide. */
+/** Balanced: the recipe 12 of the 33 hand-tuned 1D/1W panes on chartkar.app
+ * sat on (Oct 2026), but with the distance cut in ATR rather than %: ATR
+ * widens with the timeframe and the instrument's volatility, a % does not
+ * (22% left weekly charts near empty and was no cut at all intraday). Max
+ * Trendlines is the cap; the filters decide. */
+const TRENDLINES_BALANCED: TrendlinesConfig = {
+  ...TRENDLINES_DEFAULTS,
+  maxProjBars: 60,
+  maxLines: MAX_MAX_LINES,
+  minSwingAtr: 2,
+  maxSlopeAtr: 0.3,
+  minSlopeAtr: -0.3,
+  maxCrossings: 2,
+  pierceMult: 0.3,
+  minBackBars: 90,
+  maxDistAtr: 6,
+  mergeAtr: 0.75,
+  maxPerPivot: 5,
+  majorLen: 10,
+  fanAtr: 0.02,
+};
+
+/** The Preset picker: one scale of line count, each a FULL config off the
+ * Balanced base. Fewer asks for bigger swings and stays nearer price; More
+ * takes smaller swings and reaches further. All three merge fans (0.02 ATR
+ * per bar, the band the hand-tuned panes used), which is what keeps More from
+ * drawing four lines out of one peak. Measured on OIL_CRUDE, US100, GOLD,
+ * EURUSD and BTCUSD at 1H/4H/1D/1W: about 3, 7 and 13 lines drawn on
+ * average, in that order on every one of the 20 charts.
+ * The slope band is the Direction picker's (TRENDLINES_DIRECTIONS). */
 export const TRENDLINES_PRESET_CONFIGS: Array<{ name: string; config: TrendlinesConfig }> = [
   {
-    // 12 of the 33 panes, identical: long clearance behind, short reach ahead.
-    name: "Major levels",
-    config: {
-      ...TRENDLINES_DEFAULTS,
-      maxProjBars: 60,
-      maxLines: MAX_MAX_LINES,
-      minSwingAtr: 2,
-      maxSlopeAtr: 0.3,
-      minSlopeAtr: -0.3,
-      maxCrossings: 2,
-      pierceMult: 0.3,
-      minBackBars: 90,
-      maxDistPct: 22,
-      mergeAtr: 0.75,
-      maxPerPivot: 5,
-      majorLen: 10,
-    },
+    name: "Fewer lines",
+    config: { ...TRENDLINES_BALANCED, minSwingAtr: 3, maxPerPivot: 3, maxDistAtr: 4, mergeAtr: 1 },
   },
+  { name: "Balanced", config: TRENDLINES_BALANCED },
   {
-    // Mostly weekly: long projection, more crossings allowed, tight pierce.
-    name: "Long channels",
+    name: "More lines",
     config: {
-      ...TRENDLINES_DEFAULTS,
-      maxProjBars: 150,
-      maxLines: MAX_MAX_LINES,
-      minSwingAtr: 2,
-      pairPivots: 20,
-      maxSlopeAtr: 0.3,
-      minSlopeAtr: -0.3,
-      maxTouchSpacing: 100,
-      maxCrossings: 4,
-      pierceMult: 0.1,
-      minBackBars: 20,
-      maxDistPct: 15,
-      mergeAtr: 1,
-      maxPerPivot: 3,
-      majorPivots: 22,
-      majorLen: 10,
-    },
-  },
-  {
-    // Daily: shorter, flatter lines off every major swing, near price.
-    name: "Short-term",
-    config: {
-      ...TRENDLINES_DEFAULTS,
-      minSpanBars: 10,
-      maxProjBars: 50,
-      maxLines: MAX_MAX_LINES,
-      minSwingAtr: 2,
-      maxSlopeAtr: 0.15,
-      minSlopeAtr: -0.15,
-      minTouchSpacing: 7,
-      maxCrossings: 2,
-      pierceMult: 0.2,
-      minBackBars: 20,
-      maxDistPct: 20,
-      mergeAtr: 0,
-      maxPerPivot: 5,
-      mergePct: 3,
-      majorPivots: 440,
-      majorLen: 9,
-      fanAtr: 0.02,
+      ...TRENDLINES_BALANCED,
+      maxProjBars: 90,
+      minSwingAtr: 1,
+      maxDistAtr: 10,
+      maxCrossings: 3,
     },
   },
 ];
 
-/** What a FRESH pane starts on: the first preset. TRENDLINES_DEFAULTS stays
- * the parse fallback for slots a saved pane predates (and the backend's), so
- * old panes compute exactly as before. */
-export const TRENDLINES_SEED: TrendlinesConfig = TRENDLINES_PRESET_CONFIGS[0].config;
+/** The Direction picker, as [maxSlopeAtr, minSlopeAtr]. The slope band is
+ * signed and 0 means off, so "rising only" floors at a hair above flat. */
+export const TRENDLINES_DIRECTIONS: Array<{ name: string; maxSlopeAtr: number; minSlopeAtr: number }> = [
+  { name: "All", maxSlopeAtr: 0.3, minSlopeAtr: -0.3 },
+  { name: "Rising", maxSlopeAtr: 0.3, minSlopeAtr: 0.001 },
+  { name: "Falling", maxSlopeAtr: -0.001, minSlopeAtr: -0.3 },
+];
+
+/** What a FRESH pane starts on: Balanced, all directions. TRENDLINES_DEFAULTS
+ * stays the parse fallback for slots a saved pane predates (and the
+ * backend's), so old panes compute exactly as before. */
+export const TRENDLINES_SEED: TrendlinesConfig = TRENDLINES_BALANCED;
 
 /** DEFAULT merge tolerance, in ATR(14): the value the mergeAtr slot starts
  * on. A quarter ATR only joins near-duplicates; 1 ATR (the earlier default)
