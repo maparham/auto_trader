@@ -228,6 +228,9 @@ source is keyed on `getTradesAccount()`:
   across its partials, drawn only when `opened_at` is known AND the dealId
   is no longer in `tradesSignal` (while any part is still open, the
   position book's existing `entry:<deal_id>` marker covers it).
+- Clicking a History marker toggles the selection like a row click
+  (`toggleHistoryTrade`): an exit selects its own close, an entry selects
+  the deal's first close. Aggregate exit pills are not clickable.
 - Placement by direction exactly like journal markers. Color from `pnl`;
   when `pnl` is None, from `(exit - entry) * direction`.
 - When the trades account has history, **journal exit markers are skipped

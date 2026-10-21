@@ -12,6 +12,8 @@ import {
   subscribeHistory,
   subscribeMarkerHistory,
   selectHistoryTrade,
+  toggleHistoryTrade,
+  historySelectionSignal,
   setHistoryShowAll,
   HISTORY_POLL_MS,
   _resetHistoryForTests,
@@ -200,6 +202,20 @@ describe("subscribeMarkerHistory", () => {
     expect(seen.at(-1)!.trades).toEqual([]);
     expect(historyCalls().length).toBe(before);
     off();
+  });
+
+  it("a marker click toggles the trades account's selection", () => {
+    setTradesAccount("capital:demo");
+    const t = { dealId: "M1", epic: "TSLA", side: "buy" as const, size: 1, entry: 1, exit: 2,
+      openedAt: 1, closedAt: 2, closeSource: "TP", pnl: 1, currency: "EUR" };
+    toggleHistoryTrade(t);
+    expect(historySelectionSignal.value.get("capital:demo")).toBe(t);
+    // A fresh object for the same close (a poll refresh) still counts as the same trade.
+    toggleHistoryTrade({ ...t });
+    expect(historySelectionSignal.value.has("capital:demo")).toBe(false);
+    toggleHistoryTrade(t);
+    toggleHistoryTrade({ ...t, closedAt: 3 }); // another partial of the deal: switch, not clear
+    expect(historySelectionSignal.value.get("capital:demo")?.closedAt).toBe(3);
   });
 
   it("with Show all on keeps a selected trade older than the 30d window", async () => {

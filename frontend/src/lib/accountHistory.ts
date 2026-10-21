@@ -254,6 +254,15 @@ export function selectHistoryTrade(account: string, trade: ClosedTradeView | nul
   historySelectionSignal.set(next);
 }
 
+/** A chart marker click: select `trade` on the trades account, or deselect it
+ * when it is already the selection (same toggle as a History row click). */
+export function toggleHistoryTrade(trade: ClosedTradeView): void {
+  const account = tradesAccountSignal.value;
+  const cur = historySelectionSignal.value.get(account);
+  const same = cur != null && closedTradeKey(cur) === closedTradeKey(trade);
+  selectHistoryTrade(account, same ? null : trade);
+}
+
 /** The chart's marker source: follows the trades account; active only while
  * that account has broker history (an active source replaces journal exits
  * even when it holds no trades). Holds the selected trade, plus the 30d trades

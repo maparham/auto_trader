@@ -3,6 +3,7 @@
  *  performance is directly comparable to the backtested result. Persisted
  *  device-locally, keyed globally (v1 runs one strategy at a time in the panel). */
 import { Signal } from "./signals";
+import type { ClosedTradeView } from "./accountHistory";
 
 export interface JournalTrade {
   ts: number; // close time, unix seconds
@@ -18,6 +19,9 @@ export interface JournalTrade {
   // itself must not be printed as an amount. Omitted (undefined) means true,
   // the real journal's own trades always carry confirmed pnl.
   pnlIsMoney?: boolean;
+  // The broker-history close this row was mapped from (historyAsJournal), so a
+  // click on its exit marker can select it. Unset on the real journal's rows.
+  closed?: ClosedTradeView;
 }
 
 const KEY = "auto-trader.live.journal";

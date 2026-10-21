@@ -306,10 +306,24 @@ function closed(over: Partial<ClosedTradeView> = {}): ClosedTradeView {
 
 describe("broker history markers", () => {
   it("maps closes onto the journal shape so exits reuse the journal path", () => {
-    const [j] = historyAsJournal([closed({ side: "sell", pnl: -3 })]);
+    const t = closed({ side: "sell", pnl: -3 });
+    const [j] = historyAsJournal([t]);
     expect(j).toEqual({
-      ts: 4, epic: "OIL", leg: "short", entry: 70, exit: 71, quantity: 1, pnl: -3, pnlIsMoney: true,
+      ts: 4, epic: "OIL", leg: "short", entry: 70, exit: 71, quantity: 1, pnl: -3, pnlIsMoney: true, closed: t,
     });
+  });
+
+  it("History entry and exit specs carry their close for click-to-select", () => {
+    const a = closed({ closedAt: 4_000 });
+    const b = closed({ closedAt: 5_000, exit: 72 });
+    const exits = exitMarkerSpecs({ ...base, trades: [], journal: historyAsJournal([a, b]) });
+    expect(exits.map((s) => s.closed)).toEqual([a, b]);
+    expect(historyEntrySpecs([a, b], { ...base, trades: [], journal: [] })[0].closed).toBe(a);
+  });
+
+  it("journal exits carry no close and stay non-clickable", () => {
+    const [spec] = exitMarkerSpecs({ ...base, trades: [], journal: [journal()] });
+    expect(spec.closed).toBeUndefined();
   });
 
   it("derives a missing pnl from the move and direction, flagged as not real money", () => {

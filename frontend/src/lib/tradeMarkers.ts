@@ -23,7 +23,7 @@
 import type { Chart } from "klinecharts";
 import { tradeLabel, type TradeView } from "./trading";
 import type { JournalTrade } from "./liveJournal";
-import type { ClosedTradeView } from "./accountHistory";
+import { toggleHistoryTrade, type ClosedTradeView } from "./accountHistory";
 import { isReplayTradeId } from "./replayLedger";
 import {
   MARKER_OVERLAY,
@@ -48,6 +48,9 @@ export interface TradeMarkerSpec {
   // dock row (same id as tradeLineUiSignal.selected). Exit markers leave it unset:
   // a closed trade has no row in the positions list to select.
   tradeId?: string;
+  // Broker-history close behind a History marker (entry or exit): a click
+  // selects it like its History row does, and a second click deselects.
+  closed?: ClosedTradeView;
 }
 
 export interface TradeMarkerSpecOpts {
@@ -136,6 +139,7 @@ export function exitMarkerSpecs(o: TradeMarkerSpecOpts): TradeMarkerSpec[] {
       label,
       win,
       placement: j.leg === "long" ? "below" : "above",
+      ...(j.closed ? { closed: j.closed } : {}),
     });
   }
   return specs;
@@ -233,6 +237,7 @@ export function historyAsJournal(trades: ClosedTradeView[]): JournalTrade[] {
       quantity: t.size,
       pnl: t.pnl ?? (t.exit - t.entry) * dir * t.size,
       pnlIsMoney: t.pnl != null,
+      closed: t,
     };
   });
 }
@@ -263,6 +268,7 @@ export function historyEntrySpecs(history: ClosedTradeView[], o: TradeMarkerSpec
       label: `${tradeLabel("position", first.side)} ${size} @ ${first.entry.toFixed(o.precision)}`,
       win: null,
       placement: first.side === "buy" ? "below" : "above",
+      closed: first,
     });
   }
   return specs;
@@ -275,6 +281,8 @@ interface DrawnMarker {
   // update is reflected in the DOM label without re-attaching the handler.
   label: string;
   win: boolean | null;
+  // Latest closed trade, read by the (create-time) click handler.
+  closed?: ClosedTradeView;
 }
 
 /** Per-cell drawer for live trade markers. Reconciles a flat TradeMarkerSpec[] by
@@ -336,6 +344,9 @@ export class TradeMarkers {
           existing.label = spec.label;
           existing.win = spec.win;
         }
+        // Outside the sig check: the same key can carry a refreshed trade
+        // object (a 60s poll) without moving, and the click must select it.
+        existing.closed = spec.closed;
         continue;
       }
       // The glyph is a compact arrow; its full label is a DOM pill shown only
@@ -345,8 +356,9 @@ export class TradeMarkers {
       // line hit-test and the empty-space deselect — same idiom as the drawings'
       // getHoveredDrawingId guard) and to open the editor on double-click.
       // tradeId is stable per key, so capturing it at create time is safe across
-      // reconciles; exit markers have none, so they stay non-interactive.
-      const drawn: DrawnMarker = { overlayId: "", sig, label: spec.label, win: spec.win };
+      // reconciles. Journal exits have none and stay non-interactive; History
+      // markers carry `closed` instead and click to select that close.
+      const drawn: DrawnMarker = { overlayId: "", sig, label: spec.label, win: spec.win, closed: spec.closed };
       const id = this.chart.createOverlay({
         name: MARKER_OVERLAY,
         points: [{ timestamp: anchorTs, value: anchorValue }],
@@ -374,7 +386,9 @@ export class TradeMarkers {
         // click-means-something-else mode (ignoreClicks).
         onClick: () => {
           const tid = spec.tradeId;
-          if (tid && !this.ignoreClicks()) selectTradeLine(tid, "price", false);
+          if (this.ignoreClicks()) return false;
+          if (tid) selectTradeLine(tid, "price", false);
+          else if (drawn.closed) toggleHistoryTrade(drawn.closed);
           return false;
         },
         // v10 deletes an overlay on right-click unless the handler calls

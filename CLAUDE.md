@@ -253,7 +253,8 @@ The History tab (`HistoryPane.tsx`) and the chart's closed-trade markers both
 read `lib/accountHistory.ts`; on a history account the markers replace the
 live journal's exits. The chart draws only the History row selected for that
 account, or every trade of the last 30 days while "Show all on chart" is on
-(`historyShowAllSignal`, per browser, default off). The selected row's trade box is a
+(`historyShowAllSignal`, per browser, default off). Clicking a History
+marker (entry or exit) toggles that selection like its row. The selected row's trade box is a
 locked overlay that is never saved (`lib/historyTradeBox.ts`); it leaves with
 the selection. Spec: docs/superpowers/specs/2026-10-21-capital-account-history-design.md.
 
