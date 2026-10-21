@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import IndicatorSettings from "./IndicatorSettings";
-import { TRENDLINES_DEFAULTS } from "./lib/indicators/trendlinesOutputs";
+import { TRENDLINES_DEFAULTS, TRENDLINES_PRESET_CONFIGS, TRENDLINES_SEED } from "./lib/indicators/trendlinesOutputs";
 
 afterEach(cleanup);
 
@@ -352,52 +352,47 @@ describe("min/max range rows", () => {
   });
 });
 
-describe("lines slider", () => {
-  const step = () => screen.getByTestId("lines-step").textContent;
-  const slide = (to: number) =>
-    fireEvent.change(screen.getByLabelText("Density"), { target: { value: String(to) } });
+describe("preset picker", () => {
+  const picker = () => screen.getByLabelText("Preset") as HTMLSelectElement;
+  const shown = () => picker().selectedOptions[0].textContent;
+  const names = TRENDLINES_PRESET_CONFIGS.map((p) => p.name);
 
-  // The step in force is resolved by VALUE on the swept slots, so it survives
-  // reopen; a pane at the defaults sits on the middle step.
-  it("opens on Default for a pane at the defaults", () => {
+  // The preset in force is resolved by VALUE on every slot, so it survives
+  // reopen; the parse defaults are none of the recipes.
+  it("opens on Custom for a pane at the parse defaults", () => {
     open();
-    expect(step()).toBe("Default");
-    expect((screen.getByLabelText("Density") as HTMLInputElement).value).toBe("2");
+    expect(shown()).toBe("Custom");
   });
 
-  // A step writes ONLY its six slots; a slot outside the sweep keeps what the
-  // user had, and one the saved list predates fills from the defaults.
-  it("writes the six swept slots and nothing else", () => {
+  it("opens on Major levels for a fresh pane", () => {
+    open({}, [...Object.values(TRENDLINES_SEED)]);
+    expect(shown()).toBe("Major levels");
+    expect([...picker().options].map((o) => o.textContent)).toEqual(names);
+  });
+
+  it("writes the whole recipe", () => {
     const { cpWrites } = openRecording();
+    fireEvent.change(picker(), { target: { value: "1" } });
+    expect(cpWrites.at(-1)).toEqual(Object.values(TRENDLINES_PRESET_CONFIGS[1].config));
+    expect(shown()).toBe("Long channels");
+  });
+
+  it("reads Custom after a manual edit", () => {
+    open({}, [...Object.values(TRENDLINES_SEED)]);
     fireEvent.change(screen.getByLabelText("Max Pierce"), { target: { value: "0.5" } });
-    slide(0);
-    const cp = cpWrites.at(-1)!;
-    expect(cp[5]).toBe(1); // maxLines
-    expect(cp[22]).toBe(1); // maxPerPivot
-    expect(cp[2]).toBe(3); // minTouches
-    expect(cp[3]).toBe(60); // minSpanBars
-    expect(cp[0]).toBe(8); // pivotLen
-    expect(cp[21]).toBe(1); // mergeAtr
-    expect(cp[17]).toBe(0.5); // pierceMult: the user's edit survives
-    expect(step()).toBe("Minimal");
+    expect(shown()).toBe("Custom");
   });
+});
 
-  it("walks up to Dense", () => {
-    const { cpWrites } = openRecording();
-    slide(4);
-    expect(cpWrites.at(-1)![5]).toBe(12);
-    expect(step()).toBe("Dense");
-  });
-
-  // Editing a swept param leaves the step behind: the name reads Custom and
-  // the thumb stays put. Editing an unswept one changes nothing.
-  it("reads Custom after a manual edit to a swept param", () => {
+describe("core inputs and the Advanced fold", () => {
+  it("shows the core few up front and folds the rest", () => {
     open();
-    fireEvent.change(screen.getByLabelText("Max Pierce"), { target: { value: "0.5" } });
-    expect(step()).toBe("Default");
-    fireEvent.change(screen.getByLabelText("Max Trendlines"), { target: { value: "9" } });
-    expect(step()).toBe("Custom");
-    expect((screen.getByLabelText("Density") as HTMLInputElement).value).toBe("2");
+    const fold = document.querySelector("details.ind-advanced")!;
+    expect(fold).toBeTruthy();
+    for (const l of ["Pivot Length", "Max Major Swings", "Max Pierce", "Back Clearance", "Max Projection"])
+      expect(fold.contains(screen.getByLabelText(l)), l).toBe(false);
+    for (const l of ["Max Trendlines", "Max Pairs", "Min Touches", "Max Crossings"])
+      expect(fold.contains(screen.getByLabelText(l)), l).toBe(true);
   });
 });
 

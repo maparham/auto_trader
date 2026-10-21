@@ -71,6 +71,7 @@ import {
   MAX_LIVE,
   parseTrendlinesConfig,
   TRENDLINES_DEFAULTS,
+  TRENDLINES_SEED,
   type TrendlinesConfig,
 } from "./trendlinesOutputs";
 
@@ -1702,8 +1703,11 @@ describe("selectDrawnLines dedup", () => {
 });
 
 describe("TRENDLINES_TEMPLATE", () => {
-  it("declares the seventeen calcParams in TRENDLINES_DEFAULTS key order", () => {
-    expect(TRENDLINES_TEMPLATE.calcParams).toEqual(Object.values(TRENDLINES_DEFAULTS));
+  // A fresh pane starts on the first preset; the parse defaults stay the
+  // fallback for slots a saved pane predates.
+  it("seeds a fresh pane with the first preset, in slot order", () => {
+    expect(TRENDLINES_TEMPLATE.calcParams).toEqual(Object.values(TRENDLINES_SEED));
+    expect(Object.keys(TRENDLINES_SEED)).toEqual(Object.keys(TRENDLINES_DEFAULTS));
   });
 
   it("is a price-series overlay on the candle pane", () => {

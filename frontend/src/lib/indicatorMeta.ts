@@ -12,6 +12,7 @@ import {
   MAX_MAX_LINES,
   TRENDLINES_DEFAULTS,
   TRENDLINES_EXTEND_DEFAULTS,
+  TRENDLINES_PRESET_CONFIGS,
   parseTrendlinesConfig,
   type TrendlinesConfig,
 } from "./indicators/trendlinesOutputs";
@@ -91,19 +92,15 @@ export interface IndicatorInputDef {
   placeholder?: string;
 }
 
-// A named one-click starting point for an indicator's calcParams. `calcParams`
-// is the FULL array (every slot), so applying a preset is deterministic:
-// params a preset doesn't care about land on their defaults.
-/** A one-axis sweep over a FEW calcParam slots: each step names a value for
- * every slot in `slots`, and the slider only ever writes those slots, so a
- * user's other edits (pierce, slopes, distance, style) survive a drag. */
+/** Named starting points over some calcParam slots: each step names a value
+ * for every slot in `slots`, and picking one writes only those slots, so the
+ * rest (and the style) keep the user's values. */
 export interface IndicatorPresets {
   // Full default calcParams, used to fill slots a saved chart predates when
   // matching the live values against a step.
   base: number[];
   // The slots the sweep writes, in the order each step's `values` lists them.
   slots: number[];
-  // Least lines first.
   steps: Array<{ name: string; values: number[] }>;
 }
 
@@ -128,14 +125,24 @@ export function withPresetStep(presets: IndicatorPresets, calcParams: number[], 
   return next;
 }
 
+export interface CoreInput {
+  key: string;
+  label?: string;
+  group?: string;
+}
+
 interface IndicatorMetaDef {
   inputs: IndicatorInputDef[];
   // Human-friendly name + one-line description shown in the indicator menu's
   // info tooltip. Optional: indicators without these fall back to the raw code.
   title?: string;
   desc?: string;
-  // Optional preset chips rendered above the inputs (only TRENDLINES today).
+  // Optional preset picker rendered above the inputs (only TRENDLINES today).
   presets?: IndicatorPresets;
+  // The few inputs shown up front, in this order, each with an optional
+  // label that reads without its section heading and an optional row group.
+  // Every other Inputs-tab row moves into a collapsed Advanced fold.
+  core?: CoreInput[];
 }
 
 /** Chunk inputs for the settings modal: CONSECUTIVE inputs sharing a non-empty
@@ -150,7 +157,7 @@ interface IndicatorMetaDef {
  * therefore a layout choice, which is why it stays opt-in per indicator
  * instead of pairing every adjacent boolean automatically.
  *
- * A boolean opening a SECTION never pairs backwards: the heading belongs to
+ * An input opening a SECTION never pairs backwards: the heading belongs to
  * the row it introduces, and a chunk renders its heading from chunk[0], so
  * absorbing it into the row above would move the heading up with it. */
 export function groupInputs(
@@ -161,7 +168,7 @@ export function groupInputs(
     const last = out[out.length - 1];
     // A group runs two to a row, three when the labels are short enough
     // (the Major Swings trio). Longer runs wrap to a fresh row.
-    if (inp.group && last && last.length < 3 && last[0].group === inp.group)
+    if (inp.group && !inp.section && last && last.length < 3 && last[0].group === inp.group)
       last.push(inp);
     else out.push([inp]);
   }
@@ -259,24 +266,15 @@ export function padTrendlinesParams(cp: number[], upTo: number, extendData?: unk
   return next;
 }
 
-// The Lines slider, least to most: each step sets how many lines are kept
-// (Max Trendlines, Max per pivot), how much a line must earn its place (Min
-// Touches, Min Span), how coarse the swings are (Pivot Length) and how close
-// two lines may run before the weaker goes (Merge, ATR). Step 3 IS the
-// defaults, so a pane that never touched the slider sits there. The right
-// two steps keep a merge band and a per-pivot cap: measured on US100 4h,
-// merge 0 or a loose cap drew each extra line twice, a hair apart.
-//                                    maxLines perPivot touches span pivot merge
+// The Preset picker: each preset is a FULL recipe (every slot), so picking
+// one is deterministic, and a manual edit to any slot reads as Custom.
 const TRENDLINES_PRESETS: IndicatorPresets = {
   base: TL_DEFAULT_PARAMS,
-  slots: [5, 22, 2, 3, 0, 21],
-  steps: [
-    { name: "Minimal", values: [1, 1, 3, 60, 8, 1] },
-    { name: "Few", values: [2, 1, 3, 40, 6, 0.5] },
-    { name: "Default", values: [3, 0, 2, 20, 5, 0.25] },
-    { name: "More", values: [6, 1, 2, 12, 4, 0.5] },
-    { name: "Dense", values: [12, 2, 2, 8, 3, 0.25] },
-  ],
+  slots: TL_DEFAULT_PARAMS.map((_, k) => k),
+  steps: TRENDLINES_PRESET_CONFIGS.map((p) => ({
+    name: p.name,
+    values: Object.values(p.config) as number[],
+  })),
 };
 
 const INDICATOR_META: Record<string, IndicatorMetaDef> = {
@@ -1410,6 +1408,19 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     presets: TRENDLINES_PRESETS,
+    // The knobs the hand-tuned 1D/1W panes actually moved; the presets set
+    // the rest. The two cuts measured two ways keep their pair.
+    core: [
+      { key: "p0", label: "Pivot Length", group: "core1" },
+      { key: "p24", label: "Max Major Swings", group: "core1" },
+      { key: "p17", group: "core2" },
+      { key: "p18", group: "core2" },
+      { key: "p19" },
+      { key: "p20" },
+      { key: "p21" },
+      { key: "p23" },
+      { key: "p4" },
+    ],
     title: "Trendlines",
     desc: "Sloping lines through confirmed swing highs and lows, in any mix: a line is two significant swings that later swings land on. Price may cross a line; the count of crossings is shown beside the touch count and can be filtered. The lines nearest to price are drawn and tagged. Pivots confirm a few bars late, so nothing repaints.",
   },
@@ -1567,4 +1578,8 @@ export function resolveInputs(
 /** The preset chips (if any) for an indicator's Inputs tab. */
 export function presetsFor(name: string): IndicatorPresets | undefined {
   return INDICATOR_META[name]?.presets;
+}
+
+export function coreInputsFor(name: string): CoreInput[] | undefined {
+  return INDICATOR_META[name]?.core;
 }

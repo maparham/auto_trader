@@ -22,6 +22,7 @@ import {
   groupInputs,
   isMovingAverage,
   padTrendlinesParams,
+  coreInputsFor,
   presetsFor,
   presetStepOf,
   withPresetStep,
@@ -1764,22 +1765,16 @@ function IndicatorSettingsForm({
     }
   }
 
-  // --- Lines slider (only TRENDLINES declares one today) ---
-  // One axis over a few slots, least lines first. Which step is in force is
-  // read by VALUE on the swept slots (so it survives reopen); a manual edit
-  // to any of them reads as Custom, and the thumb then stays where it was.
+  // --- Preset picker (only TRENDLINES declares one today) ---
+  // Which preset is in force is read by VALUE on its slots (so it survives
+  // reopen); a manual edit to any of them reads as Custom.
   const inputPresets = presetsFor(type);
   const activeStep = useMemo(
     () => (inputPresets ? presetStepOf(inputPresets, calcParams) : null),
     [inputPresets, calcParams],
   );
-  const [customThumb, setCustomThumb] = useState<number>(() =>
-    inputPresets ? Math.floor((inputPresets.steps.length - 1) / 2) : 0,
-  );
-  const thumb = activeStep ?? customThumb;
   function applyStep(i: number) {
     if (!inputPresets) return;
-    setCustomThumb(i);
     const nextCp = withPresetStep(inputPresets, calcParams, i);
     setCalcParams(nextCp);
     apply({ calcParams: nextCp });
@@ -1788,6 +1783,147 @@ function IndicatorSettingsForm({
     // again, not re-aligned.
     if (isTrendlines && timeframe !== "chart") applyPin({}, nextCp);
   }
+
+  // One Inputs-tab chunk list as rows (see groupInputs for the chunking).
+  const renderChunks = (list: IndicatorInputDef[]) =>
+    groupInputs(list).map((chunk) => (
+      <Fragment key={chunk[0].key}>
+        {/* A heading before the input that opens a section, so a tab
+            mixing what the indicator COMPUTES with how it is DRAWN
+            says which is which. Same .ind-group the MA panel uses for
+            Smoothing and Calculation. */}
+        {chunk[0].section && (
+          <div className="ind-group">{chunk[0].section}</div>
+        )}
+        {chunk.length === 2 && chunk[0].range ? (
+          // Min/max of ONE concept (Touches, Span, Slope): a single
+          // "label [min] – [max] unit" row under one label and one
+          // merged tip, instead of two labeled fields saying almost
+          // the same thing. The two inputs keep their own aria
+          // labels; the shared unit renders once, after the max.
+          <div className="ind-row ind-row-cols ind-range-row">
+            <span className="ind-row-head">
+              <label>{chunk[0].range.label}</label>
+              <InfoTip
+                title={chunk[0].range.label}
+                text={chunk[0].range.tip}
+              />
+            </span>
+            <span className="ind-control-row ind-range">
+              {chunk[0].range.dual ? (
+                // One cut measured two ways: each box keeps its own
+                // unit, and there is no dash between them.
+                <>
+                  {controlFor(chunk[0])}
+                  {controlFor(chunk[1])}
+                </>
+              ) : (
+                <>
+                  {controlFor({ ...chunk[0], suffix: undefined })}
+                  <span className="ind-range-dash">–</span>
+                  {controlFor({ ...chunk[1], suffix: undefined })}
+                  {chunk[0].suffix && (
+                    <span className="ind-suffix">{chunk[0].suffix}</span>
+                  )}
+                </>
+              )}
+            </span>
+          </div>
+        ) : chunk.length === 2 && chunk[0].type === "boolean" ? (
+          // A pair of CHECKBOXES: two to a row, each label beside its
+          // own box rather than above it.
+          <div className="ind-pair2-bool">
+            {chunk.map((inp) => (
+              <div className="ind-field" key={inp.key}>
+                {controlFor(inp, true)}
+                {tipFor(inp)}
+              </div>
+            ))}
+          </div>
+        ) : chunk.length > 1 ? (
+          // Related pair: two to a row, each label stacked above its
+          // own control. Halves the width a label gets, which is why
+          // only inputs with short labels carry a `group`.
+          <div className={chunk.length === 3 ? "ind-pair2 ind-pair3" : "ind-pair2"}>
+            {chunk.map((inp) => (
+              <div className="ind-field" key={inp.key}>
+                {labelFor(inp)}
+                {controlFor(inp)}
+                {statFor(inp)}
+              </div>
+            ))}
+          </div>
+        ) : chunk[0].type === "number" ? (
+          // A solo NUMBER lines its control up with the right column
+          // of the paired rows rather than pushing it to the modal's
+          // edge, so a column of numbers reads as a column. Selects
+          // and checkboxes keep the label-left/control-right row
+          // below: a sentence-long select needs the width, and a
+          // checkbox at the half-way mark reads as unattached to
+          // either side.
+          //
+          // The ⓘ rides beside the label here like on every other
+          // row (a tip out past the control left the icons scattered
+          // mid-row while "Reference name" kept its beside the
+          // label). A long label ellipsises rather than clipping the
+          // icon; the tooltip carries the full wording.
+          <div className={chunk[0].halfCol ? "ind-row ind-row-cols ind-row-half" : "ind-row ind-row-cols"}>
+            {labelFor(chunk[0])}
+            {chunk[0].liveStat ? (
+              // A readout sits under its box, as in the paired rows.
+              <span className="ind-control-col">
+                {controlFor(chunk[0])}
+                {statFor(chunk[0])}
+              </span>
+            ) : (
+              controlFor(chunk[0])
+            )}
+          </div>
+        ) : (
+          // Checkboxes and selects share the numbers' two columns, so
+          // the tab reads as ONE column of controls instead of numbers
+          // at the middle and checkboxes out at the modal's edge. A
+          // `wide` select is the exception: a sentence-long option
+          // needs more than half a row, so it keeps the label-left /
+          // control-right row.
+          <div className={chunk[0].wide ? "ind-row" : "ind-row ind-row-cols"}>
+            {labelFor(chunk[0])}
+            {controlFor(chunk[0])}
+          </div>
+        )}
+      </Fragment>
+    ));
+
+  // A meta `core` list (Trendlines) shows those few inputs up front, each
+  // under a label that reads without its section, and folds every other
+  // Inputs-tab row into Advanced. Sections belong to the full list, so the
+  // core copies drop theirs; a core entry may regroup its row.
+  const coreSpec = coreInputsFor(type);
+  const coreSplit = coreSpec
+    ? (() => {
+        const shown = inputs.filter(visibleInput);
+        const keys = new Set(coreSpec.map((c) => c.key));
+        const core = coreSpec.flatMap((c) => {
+          const d = shown.find((x) => x.key === c.key);
+          return d
+            ? [{ ...d, label: c.label ?? d.label, group: c.group ?? d.group, section: undefined }]
+            : [];
+        });
+        // A heading whose opener moved up front passes to the next row left
+        // in its section, so the fold keeps every section it still has rows of.
+        const rest: IndicatorInputDef[] = [];
+        let heading: string | undefined;
+        for (const x of shown) {
+          if (x.section) heading = undefined;
+          if (keys.has(x.key)) heading = x.section ?? heading;
+          else if (heading) {
+            rest.push({ ...x, section: heading });
+            heading = undefined;
+          } else rest.push(x);
+        }
+        return { core, rest };
+      })()
+    : null;
 
   // Edit a line's STYLE (color/opacity/width), keyed by figure key so the TV
   // display reorder can't corrupt which line is edited. Goes through the styles
@@ -2333,139 +2469,46 @@ function IndicatorSettingsForm({
                 </div>
               )}
               {inputPresets && (
-                // One drag from a couple of strong lines to a busy chart. The
-                // slider sets a few params at once; the rest keep whatever
-                // the user set, and editing one of the swept params reads as
-                // Custom until the thumb moves again.
+                // A preset writes its whole recipe; editing any slot it set
+                // reads as Custom until another preset is picked.
                 <div className="ind-row ind-row-cols ind-lines-row">
                   <span className="ind-row-head">
-                    <label>Density</label>
+                    <label htmlFor="ind-preset">Preset</label>
                     <InfoTip
-                      title="Density"
+                      title="Preset"
                       text={[
-                        "Fewer, stricter lines on the left. More on the right.",
-                        "Each step sets six fields at once. Other fields keep your values.",
+                        "Sets every detection field at once.",
+                        "Style and drawing options keep your values.",
+                        "Editing a field shows Custom.",
                       ]}
                     />
                   </span>
-                  <span className="ind-control-row ind-lines-slider">
-                    <input
-                      type="range"
-                      aria-label="Density"
-                      min={0}
-                      max={inputPresets.steps.length - 1}
-                      step={1}
-                      value={thumb}
-                      onChange={(e) => applyStep(Number(e.target.value))}
-                    />
-                    <span
-                      className={"ind-lines-step" + (activeStep === null ? " is-custom" : "")}
-                      data-testid="lines-step"
-                    >
-                      {activeStep === null ? "Custom" : inputPresets.steps[activeStep].name}
-                    </span>
-                  </span>
+                  <select
+                    id="ind-preset"
+                    data-testid="lines-step"
+                    value={activeStep === null ? "" : String(activeStep)}
+                    onChange={(e) => e.target.value !== "" && applyStep(Number(e.target.value))}
+                  >
+                    {activeStep === null && <option value="">Custom</option>}
+                    {inputPresets.steps.map((st, i) => (
+                      <option key={st.name} value={String(i)}>
+                        {st.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
-              {groupInputs(inputs.filter(visibleInput)).map((chunk) => (
-                <Fragment key={chunk[0].key}>
-                  {/* A heading before the input that opens a section, so a tab
-                      mixing what the indicator COMPUTES with how it is DRAWN
-                      says which is which. Same .ind-group the MA panel uses for
-                      Smoothing and Calculation. */}
-                  {chunk[0].section && (
-                    <div className="ind-group">{chunk[0].section}</div>
-                  )}
-                  {chunk.length === 2 && chunk[0].range ? (
-                    // Min/max of ONE concept (Touches, Span, Slope): a single
-                    // "label [min] – [max] unit" row under one label and one
-                    // merged tip, instead of two labeled fields saying almost
-                    // the same thing. The two inputs keep their own aria
-                    // labels; the shared unit renders once, after the max.
-                    <div className="ind-row ind-row-cols ind-range-row">
-                      <span className="ind-row-head">
-                        <label>{chunk[0].range.label}</label>
-                        <InfoTip
-                          title={chunk[0].range.label}
-                          text={chunk[0].range.tip}
-                        />
-                      </span>
-                      <span className="ind-control-row ind-range">
-                        {chunk[0].range.dual ? (
-                          // One cut measured two ways: each box keeps its own
-                          // unit, and there is no dash between them.
-                          <>
-                            {controlFor(chunk[0])}
-                            {controlFor(chunk[1])}
-                          </>
-                        ) : (
-                          <>
-                            {controlFor({ ...chunk[0], suffix: undefined })}
-                            <span className="ind-range-dash">–</span>
-                            {controlFor({ ...chunk[1], suffix: undefined })}
-                            {chunk[0].suffix && (
-                              <span className="ind-suffix">{chunk[0].suffix}</span>
-                            )}
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  ) : chunk.length === 2 && chunk[0].type === "boolean" ? (
-                    // A pair of CHECKBOXES: two to a row, each label beside its
-                    // own box rather than above it.
-                    <div className="ind-pair2-bool">
-                      {chunk.map((inp) => (
-                        <div className="ind-field" key={inp.key}>
-                          {controlFor(inp, true)}
-                          {tipFor(inp)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : chunk.length > 1 ? (
-                    // Related pair: two to a row, each label stacked above its
-                    // own control. Halves the width a label gets, which is why
-                    // only inputs with short labels carry a `group`.
-                    <div className={chunk.length === 3 ? "ind-pair2 ind-pair3" : "ind-pair2"}>
-                      {chunk.map((inp) => (
-                        <div className="ind-field" key={inp.key}>
-                          {labelFor(inp)}
-                          {controlFor(inp)}
-                          {statFor(inp)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : chunk[0].type === "number" ? (
-                    // A solo NUMBER lines its control up with the right column
-                    // of the paired rows rather than pushing it to the modal's
-                    // edge, so a column of numbers reads as a column. Selects
-                    // and checkboxes keep the label-left/control-right row
-                    // below: a sentence-long select needs the width, and a
-                    // checkbox at the half-way mark reads as unattached to
-                    // either side.
-                    //
-                    // The ⓘ rides beside the label here like on every other
-                    // row (a tip out past the control left the icons scattered
-                    // mid-row while "Reference name" kept its beside the
-                    // label). A long label ellipsises rather than clipping the
-                    // icon; the tooltip carries the full wording.
-                    <div className={chunk[0].halfCol ? "ind-row ind-row-cols ind-row-half" : "ind-row ind-row-cols"}>
-                      {labelFor(chunk[0])}
-                      {controlFor(chunk[0])}
-                    </div>
-                  ) : (
-                    // Checkboxes and selects share the numbers' two columns, so
-                    // the tab reads as ONE column of controls instead of numbers
-                    // at the middle and checkboxes out at the modal's edge. A
-                    // `wide` select is the exception: a sentence-long option
-                    // needs more than half a row, so it keeps the label-left /
-                    // control-right row.
-                    <div className={chunk[0].wide ? "ind-row" : "ind-row ind-row-cols"}>
-                      {labelFor(chunk[0])}
-                      {controlFor(chunk[0])}
-                    </div>
-                  )}
-                </Fragment>
-              ))}
+              {coreSplit ? (
+                <>
+                  {renderChunks(coreSplit.core)}
+                  <details className="ind-advanced">
+                    <summary>Advanced</summary>
+                    {renderChunks(coreSplit.rest)}
+                  </details>
+                </>
+              ) : (
+                renderChunks(inputs.filter(visibleInput))
+              )}
               {isSlope && (
                 <>
                   <div className="ind-row">

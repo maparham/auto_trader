@@ -2790,10 +2790,16 @@
 /* The Lines slider: thumb plus the step it sits on. Custom dims the name so
    the thumb reads as "somewhere near", not a chosen step. */
 .ind-row.ind-row-cols.ind-lines-row { grid-template-columns: minmax(0, 1fr) 190px; }
-.ind-lines-slider { gap: 8px; }
-.ind-lines-slider input[type="range"] { flex: 1 1 auto; min-width: 0; margin: 0; }
-.ind-lines-step { font-size: 11px; min-width: 3.6em; text-align: right; font-variant-numeric: tabular-nums; }
-.ind-lines-step.is-custom { color: var(--text-dim); font-style: italic; }
+.ind-lines-row select { width: 100%; }
+/* Trendlines' Advanced fold: every Inputs row outside the core few. Same
+   column rhythm as .ind-body inside, heading styled like .ind-group. */
+.ind-advanced { display: flex; flex-direction: column; gap: 12px; }
+.ind-advanced:not([open]) { gap: 0; }
+.ind-advanced > summary {
+  cursor: pointer; color: var(--text-faint); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; margin-top: 4px;
+}
+.ind-advanced > summary:hover { color: var(--text-dim); }
 
 /* A related PAIR of inputs on one row, each label stacked above its own
    control (indicatorMeta's `group`). The column is half a row wide, so a
@@ -2810,6 +2816,7 @@
 .ind-pair2.ind-pair3 { grid-template-columns: 1fr 1fr 1fr; gap: 12px; align-items: start; }
 /* Live readout under a control (Trendlines pivot counts). */
 .ind-stat { color: var(--text-faint); font-size: 11px; line-height: 1; white-space: nowrap; }
+.ind-control-col { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 /* A pair of BOOLEANS on one row. Not .ind-pair2: that stacks the label above
    its control, which is right for a number or a select and wrong for a switch,
    where the label has to stay beside the thing it labels. Each cell is
