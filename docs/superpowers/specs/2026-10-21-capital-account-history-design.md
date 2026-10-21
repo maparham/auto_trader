@@ -121,11 +121,16 @@ async def get_history(self, since: datetime, until: datetime) -> AccountHistory:
 - Pure parsers: `parse_activity(rows) -> list[ClosedTrade]` (close rows,
   entry matching), `parse_transactions(rows) -> list[LedgerEntry]`,
   `attach_pnl(trades, ledger)` (dealId + nearest time, above).
-- `fetch_transactions(request, since, until)`: page newest to oldest. Each
-  next call uses `to` = oldest `dateUtc` seen (treated as inclusive), rows
-  are deduped on `reference`, and the loop stops when a call returns fewer
-  than 100 rows, when a page adds no new reference (100+ rows sharing one
-  timestamp, e.g. SWAP rows at rollover), or after 20 pages.
+- `fetch_transactions(request, since, until)`: page newest to oldest. The
+  first call ends at `until` as is (it is "now", and Capital 400s a `to` in
+  the future). Each next call ends at the oldest `dateUtc` seen rounded UP
+  to a whole second (Capital takes whole seconds, rows carry ms), so rows
+  sharing that second come back. Rows are deduped on `reference`, or on
+  their own fields (dateUtc, type, instrument, size, dealId) when the
+  reference is blank. The loop stops when a call returns fewer than 100
+  rows, when a page adds no new row (100+ rows sharing one second, e.g.
+  SWAP rows at rollover), or after 20 pages; the last two set
+  `ledger_truncated`.
 - `fetch_activity(request, since, until)`: one call per **whole UTC day**
   (`from` = day 00:00:00, `to` = next day 00:00:00, confirmed accepted by a
   live probe on 2026-10-21), `filter=type==POSITION`,
@@ -197,9 +202,9 @@ the tab switch; its `SortKey`/`POSITION_COLUMNS` stay tied to open trades.
   on the phone a tap opens it on the chart tab through `showMobileEpic`,
   the positions sheet's "Show on chart" path, with the entry price's
   decimals as the precision guess;
-- Ledger columns: Time, Type (Funding / Trade / Deposit / Withdrawal /
+- Ledger columns: Time, Type (Overnight fee / Trade / Deposit / Withdrawal /
   raw type for the rest), Symbol, Note, Amount;
-- a totals line over the table: Realized, Funding, Net cash in/out, plus
+- a totals line over the table: Realized, Overnight fees, Net cash in/out, plus
   "Totals partial" when the response's `ledger_truncated` is true (the
   transactions walk stopped on a full page: the 20-page cap, or 100+ rows
   in one second);

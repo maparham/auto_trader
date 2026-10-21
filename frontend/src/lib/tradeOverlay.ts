@@ -213,11 +213,17 @@ function barsBetween(
 }
 
 /** Read-only twin for the History tab's selected trade (lib/historyTradeBox):
- * same picture, no drag grips. It is also created locked, so this only drops
- * the handles that would suggest it can be edited. */
+ * same picture, no drag grips, and every figure ignores events. Locking alone
+ * is not enough: klinecharts removes an overlay on right-click (a touch
+ * long-press too) unless a handler prevents it, lock or not. Ignoring events
+ * also lets clicks reach the History markers under the box. */
 export const TRADE_BOX_VIEW = "tradeBoxView";
 export const tradeBoxView: OverlayTemplate = {
   ...tradeBox,
   name: TRADE_BOX_VIEW,
   needDefaultPointFigure: false,
+  createPointFigures: (params) => {
+    const figs = tradeBox.createPointFigures?.(params) ?? [];
+    return (Array.isArray(figs) ? figs : [figs]).map((f) => ({ ...f, ignoreEvent: true }));
+  },
 };

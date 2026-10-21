@@ -42,6 +42,12 @@ export function createHistoryTradeBox(chart: BoxChart): HistoryTradeBox {
         lock: true,
         points: spec.points,
         extendData: { text: spec.text, priceLabels: true },
+        // Its figures ignore events (tradeBoxView); this guards any that still
+        // hit, since v10 deletes an overlay on an unprevented right-click.
+        onRightClick: (e) => {
+          e.preventDefault?.();
+          return false;
+        },
       });
       id = typeof created === "string" ? created : null;
     },

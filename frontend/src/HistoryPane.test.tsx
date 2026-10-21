@@ -134,6 +134,37 @@ describe("HistoryPane", () => {
     expect(select).toHaveBeenCalledTimes(1);
   });
 
+  it("on the phone a second tap opens the chart again and keeps the selection", () => {
+    const row = { dealId: "DP", epic: "TSLA", side: "buy" as const, size: 1, entry: 400, exit: 430,
+      openedAt: 1_000, closedAt: 2_000, closeSource: "TP", pnl: 12.5, currency: "EUR" };
+    state = { loading: false, error: null, data: { trades: [row], ledger: [], totals } };
+    const jump = vi.fn();
+    render(<HistoryPane account="capital:phone" onJumpToEpic={jump} />);
+    fireEvent.click(screen.getByText("TSLA"));
+    fireEvent.click(screen.getByText("TSLA"));
+    expect(jump).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("TSLA").closest("tr")!.className).toContain("pp-selected");
+  });
+
+  it("tells apart partials that close in the same ms", () => {
+    const row = { dealId: "DM", epic: "TSLA", side: "buy" as const, size: 1, entry: 400, exit: 430,
+      openedAt: 1_000, closedAt: 2_000, closeSource: "TP", pnl: 12.5, currency: "EUR" };
+    state = { loading: false, error: null, data: { trades: [row, { ...row, size: 2, exit: 431 }], ledger: [], totals } };
+    render(<HistoryPane account="capital:ms" onSelectTrade={() => {}} />);
+    fireEvent.click(screen.getByText("431").closest("tr")!);
+    const rows = screen.getAllByText("TSLA").map((td) => td.closest("tr")!.className.includes("pp-selected"));
+    expect(rows.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("refreshes the selected trade when a poll brings its pnl", () => {
+    const row = { dealId: "DR", epic: "TSLA", side: "buy" as const, size: 1, entry: 400, exit: 430,
+      openedAt: 1_000, closedAt: 2_000, closeSource: "TP", pnl: null, currency: "EUR" };
+    historySelectionSignal.set(new Map([["capital:poll", row]]));
+    state = { loading: false, error: null, data: { trades: [{ ...row, pnl: 7 }], ledger: [], totals } };
+    render(<HistoryPane account="capital:poll" onSelectTrade={() => {}} />);
+    expect(historySelectionSignal.value.get("capital:poll")?.pnl).toBe(7);
+  });
+
   it("toggles Show all on chart", async () => {
     const { historyShowAllSignal } = await import("./lib/accountHistory");
     state = { loading: false, error: null, data: { trades: [], ledger: [], totals } };

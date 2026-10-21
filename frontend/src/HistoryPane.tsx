@@ -92,6 +92,14 @@ export default function HistoryPane({
 
   useEffect(() => subscribeHistory(account, days, setState), [account, days]);
 
+  // The selection is a snapshot; swap in the polled row for the same close so
+  // a pnl that arrived later reaches the chart's marker.
+  useEffect(() => {
+    if (!picked) return;
+    const fresh = state.data?.trades.find((t) => tradeKey(t) === tradeKey(picked));
+    if (fresh && JSON.stringify(fresh) !== JSON.stringify(picked)) selectHistoryTrade(account, fresh);
+  }, [state.data, picked, account]);
+
   // With a precision source, format at the symbol's own decimals (toFixed);
   // without one (the phone view has none), print the raw value unrounded
   // rather than clamp every symbol to 2dp.
@@ -225,8 +233,10 @@ export default function HistoryPane({
                     aria-selected={selected === tradeKey(t)}
                     onClick={() => {
                       if (!onJumpToEpic && !onSelectTrade) return;
-                      // A second click deselects: its markers and box leave the chart.
-                      if (selected === tradeKey(t)) {
+                      // A second click deselects on desktop: its markers and box
+                      // leave the chart. The phone's tap always opens the chart, so
+                      // there it keeps the selection and navigates again.
+                      if (selected === tradeKey(t) && onSelectTrade) {
                         selectHistoryTrade(account, null);
                         return;
                       }

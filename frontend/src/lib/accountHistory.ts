@@ -240,8 +240,10 @@ export function setHistoryShowAll(on: boolean): void {
   historyShowAllSignal.set(on);
 }
 
-/** Row identity: a partial close has its own close time. */
-export const closedTradeKey = (t: { dealId: string; closedAt: number }) => `${t.dealId}:${t.closedAt}`;
+/** Row identity: a partial close has its own close time; size and exit split
+ * partials of one deal that close in the same ms. */
+export const closedTradeKey = (t: { dealId: string; closedAt: number; size: number; exit: number }) =>
+  `${t.dealId}:${t.closedAt}:${t.size}:${t.exit}`;
 
 /** account -> the selected closed trade. A new Map per change so subscribers
  * can compare by identity. */
