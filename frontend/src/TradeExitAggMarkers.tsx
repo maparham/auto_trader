@@ -36,23 +36,27 @@ export interface TradeExitAggMarkersHandle {
   setPills(pills: ExitPill[]): void;
 }
 
-// Cheap signature so setPills can skip the state update when nothing visible
-// changed — the redraw loop calls it every tick/scroll (matches BacktestAggMarkers).
-function pillsSig(pills: ExitPill[]): string {
-  return pills
-    .map(
-      (p) =>
-        `${p.key}@${Math.round(p.x)},${Math.round(p.y)}:${p.count}:${Math.round(p.net)}:${p.moneyCount}`,
-    )
-    .join("|");
-}
-
 /** Sign to color a pill by: the money net when the bucket has one, otherwise
  * the estimates' own sign (an all-estimate bucket has no money net, but the
  * closes still won/lost in price terms, so the pill keeps its win/loss tone). */
 function toneValue(p: ExitPill): number {
   if (p.moneyCount > 0) return p.net;
   return p.exits.reduce((s, e) => s + e.pnl, 0);
+}
+
+// Cheap signature so setPills can skip the state update when nothing visible
+// changed — the redraw loop calls it every tick/scroll (matches BacktestAggMarkers).
+// Folds in the TONE sign (not just net): for an all-estimate bucket (moneyCount
+// 0) net is always 0, so two updates to the same bar with differently-signed
+// estimates (e.g. a sign flip) would otherwise hash identically, skip the
+// setState, and leave a stale win/loss color on screen.
+function pillsSig(pills: ExitPill[]): string {
+  return pills
+    .map(
+      (p) =>
+        `${p.key}@${Math.round(p.x)},${Math.round(p.y)}:${p.count}:${Math.round(p.net)}:${p.moneyCount}:${Math.sign(toneValue(p))}`,
+    )
+    .join("|");
 }
 
 const fmtNet = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(0)}`;
