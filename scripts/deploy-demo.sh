@@ -31,6 +31,12 @@
 # bot's token lives in backend/.env as PROD_TELEGRAM_BOT_TOKEN and lands on the
 # box renamed to TELEGRAM_BOT_TOKEN; leave it out and the box keeps its value.
 #
+# Snapshots: PROD_SNAPSHOT_DISABLED in backend/.env lands on the box as
+# SNAPSHOT_DISABLED (prod only, so local dev keeps live-chart alert photos).
+# The box has 916 MB RAM and launching Chromium for an alert photo pushed it
+# into swap hard enough to freeze the API for ~50s. Any non-empty value
+# disables, so re-enabling means deleting the line on the box as well as here.
+#
 # Optional box env: CLERK_SECRET_KEY — backend only, powers the admin console
 # Users panel (/admin). Without it the panel reports "Clerk not configured".
 # It must never reach the browser; the frontend build below fails closed if a
@@ -91,7 +97,7 @@ CRED_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|OANOR_[A-
 # gate), so folding a non-broker key into it would let a Telegram-only .env
 # waive that gate.
 # PROD_TELEGRAM_BOT_TOKEN, never the plain key: see the Telegram note above.
-SYNC_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|OANOR_[A-Z_]*|PROD_TELEGRAM_BOT_TOKEN)='
+SYNC_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|OANOR_[A-Z_]*|PROD_TELEGRAM_BOT_TOKEN|PROD_SNAPSHOT_DISABLED)='
 LOCAL_ENV="$ROOT/backend/.env"
 SYNC_CREDS=0
 if [ "$DO_BACKEND" = 1 ] && [ -f "$LOCAL_ENV" ] \
@@ -150,7 +156,8 @@ if [ "$DO_BACKEND" = 1 ]; then
     # Only keys PRESENT in the local file are touched, so commenting one out
     # locally leaves the box's existing value alone rather than clearing it.
     grep -E "$SYNC_KEYS.+" "$LOCAL_ENV" \
-      | sed 's/^PROD_TELEGRAM_BOT_TOKEN=/TELEGRAM_BOT_TOKEN=/' \
+      | sed -e 's/^PROD_TELEGRAM_BOT_TOKEN=/TELEGRAM_BOT_TOKEN=/' \
+            -e 's/^PROD_SNAPSHOT_DISABLED=/SNAPSHOT_DISABLED=/' \
       | "${SSH[@]}" "$HOST" '
       set -e
       incoming="$(mktemp)"; merged="$(mktemp)"
