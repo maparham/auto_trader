@@ -134,6 +134,18 @@ def test_pnl_matches_partials_by_nearest_time():
     assert trades[0].currency == "EUR"
 
 
+def test_pnl_left_unmatched_when_a_partials_row_is_outside_the_ledger():
+    # The earlier partial's TRADE row fell off a truncated ledger: it must not
+    # take the later partial's row just because it is processed first.
+    rows = [
+        act("D5", "2026-10-15T12:00:00", "USER", "SELL", 105.0, size=1.0, open_price=100.0),
+        act("D5", "2026-10-15T14:00:00", "TP", "SELL", 110.0, size=1.0, open_price=100.0),
+    ]
+    ledger = parse_transactions([tx("2026-10-15T14:00:00.050", "TRADE", "10", deal="D5", ref="r2")])
+    trades = attach_pnl(parse_activity(rows), ledger)
+    assert [(t.exit_price, t.pnl) for t in trades] == [(105.0, None), (110.0, 10.0)]
+
+
 def test_close_without_trade_row_keeps_pnl_none():
     trades = parse_activity([act("D9", "2026-10-15T12:00:00", "SL", "SELL", 9.0, open_price=10.0)])
     [t] = attach_pnl(trades, [])
@@ -203,6 +215,19 @@ def test_transactions_paging_stops_under_a_full_page():
     assert len(cap.calls) == 2
     # The second page's `to` is the oldest row of page one (whole second, rounded up).
     assert cap.calls[1][1]["to"] == "2026-10-20T09:20:00"
+
+
+def test_transactions_first_page_rounds_until_up_and_keeps_blank_references():
+    rows = [tx("2026-10-20T10:00:00", "DEPOSIT", "100", ref="x"),
+            tx("2026-10-20T10:00:00", "DEPOSIT", "100", ref="x")]
+    for r in rows:
+        r["reference"] = ""
+    rows[1]["dateUtc"] = "2026-10-20T10:00:01"
+    cap = FakeCapital(lambda p, q: {"transactions": rows})
+    ledger, _ = asyncio.run(fetch_transactions(
+        cap.request, T("2026-10-01T00:00:00"), T("2026-10-21T00:00:00.400")))
+    assert cap.calls[0][1]["to"] == "2026-10-21T00:00:01"
+    assert len(ledger) == 2
 
 
 def test_transactions_paging_stops_when_a_page_adds_nothing():

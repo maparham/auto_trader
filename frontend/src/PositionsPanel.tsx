@@ -84,7 +84,7 @@ interface Props {
   trading: TradingSettings;
   // Editing a row re-scopes the chart to its symbol; selecting then opens the order
   // ticket in edit mode (setTradeSelected reveals the panel — no separate callback).
-  onJumpToEpic?: (epic: string) => void;
+  onJumpToEpic?: (epic: string, precisionGuess?: number) => void;
   // When false, a dragged level applies immediately (no Apply/Discard bar).
   confirmLineEdits?: boolean;
   // Dock maximized to fill the chart view (owned by App, which hides the workspace).

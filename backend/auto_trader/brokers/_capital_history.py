@@ -128,22 +128,32 @@ def parse_transactions(rows: list[dict]) -> list[LedgerEntry]:
 
 
 def attach_pnl(trades: list[ClosedTrade], ledger: list[LedgerEntry]) -> list[ClosedTrade]:
-    """Give each close the TRADE ledger row of the same deal nearest in time, each
-    row used once. Partial closes share a dealId, so dealId alone is not enough."""
+    """Give each close a TRADE ledger row of the same deal, each row used once.
+    Partial closes share a dealId, so pairs are taken closest-in-time first across
+    the whole deal: a close whose own row fell outside a truncated ledger then
+    stays unmatched instead of taking a later partial's row."""
     pool: dict[str, list[LedgerEntry]] = defaultdict(list)
     for e in ledger:
         if e.kind == "TRADE" and e.deal_id:
             pool[e.deal_id].append(e)
-    out: list[ClosedTrade] = []
-    for t in sorted(trades, key=lambda t: t.closed_at):
-        cands = pool.get(t.deal_id)
-        if not cands:
-            out.append(t)
+    ordered = sorted(trades, key=lambda t: t.closed_at)
+    edges = sorted(
+        (abs((e.at - t.closed_at).total_seconds()), i, j)
+        for i, t in enumerate(ordered)
+        for j, e in enumerate(pool.get(t.deal_id, ()))
+    )
+    matched: dict[int, LedgerEntry] = {}
+    used: set[tuple[str, int]] = set()
+    for _, i, j in edges:
+        deal = ordered[i].deal_id
+        if i in matched or (deal, j) in used:
             continue
-        best = min(cands, key=lambda e: abs((e.at - t.closed_at).total_seconds()))
-        cands.remove(best)
-        out.append(replace(t, pnl=best.amount, currency=best.currency))
-    return out
+        matched[i] = pool[deal][j]
+        used.add((deal, j))
+    return [
+        replace(t, pnl=matched[i].amount, currency=matched[i].currency) if i in matched else t
+        for i, t in enumerate(ordered)
+    ]
 
 
 def history_totals(ledger: list[LedgerEntry]) -> dict:
@@ -172,6 +182,21 @@ def _fmt(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime(_TS_FMT)
 
 
+def _ceil_second(dt: datetime) -> datetime:
+    """Capital takes whole seconds; round UP so rows in the trailing partial
+    second stay inside the window."""
+    return dt.replace(microsecond=0) + (timedelta(seconds=1) if dt.microsecond else timedelta(0))
+
+
+def _row_key(r: dict) -> str:
+    """Dedupe key: `reference`, or the row's own fields when it has none, so
+    blank references cannot collapse distinct rows into one."""
+    ref = r.get("reference")
+    if ref:
+        return str(ref)
+    return "|".join(str(r.get(k)) for k in ("dateUtc", "transactionType", "instrumentName", "size", "dealId"))
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -187,16 +212,16 @@ async def fetch_transactions(
     (the cap, or a stuck second), so older rows in the range may be missing."""
     seen: dict[str, dict] = {}
     truncated = False
-    to = until
+    to = _ceil_second(until)
     for _ in range(TX_MAX_PAGES):
         resp = await request(
             "GET", "/api/v1/history/transactions",
             params={"from": _fmt(since), "to": _fmt(to)},
         )
         rows = resp.json().get("transactions") or []
-        fresh = [r for r in rows if str(r.get("reference")) not in seen]
+        fresh = [r for r in rows if _row_key(r) not in seen]
         for r in fresh:
-            seen[str(r.get("reference"))] = r
+            seen[_row_key(r)] = r
         if len(rows) < TX_PAGE:
             break
         if not fresh:
@@ -205,8 +230,7 @@ async def fetch_transactions(
         times = [t for r in rows if (t := utc(r.get("dateUtc"))) is not None]
         if not times:
             break
-        oldest = min(times)
-        to = oldest.replace(microsecond=0) + (timedelta(seconds=1) if oldest.microsecond else timedelta(0))
+        to = _ceil_second(min(times))
     else:
         truncated = True
         logger.warning(

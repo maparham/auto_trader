@@ -73,7 +73,12 @@ describe("HistoryPane", () => {
     rerender(<HistoryPane account="capital:demo" onJumpToEpic={jump} />);
     expect(screen.getByText("TSLA").closest("tr")!.className).toContain("pp-clickable");
     fireEvent.click(screen.getByText("TSLA"));
-    expect(jump).toHaveBeenCalledWith("TSLA", 400);
+    // A price, never: the second arg is jumpToEpic's precision guess.
+    expect(jump).toHaveBeenCalledWith("TSLA", 0);
+    cleanup();
+    render(<HistoryPane account="capital:demo" precisionFor={() => 2} onJumpToEpic={jump} />);
+    fireEvent.click(screen.getByText("TSLA"));
+    expect(jump).toHaveBeenLastCalledWith("TSLA", 2);
   });
 
   it("labels net cash and flags a truncated ledger only when the server says so", () => {

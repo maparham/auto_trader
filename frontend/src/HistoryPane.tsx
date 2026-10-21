@@ -12,6 +12,7 @@ import {
   closedByLabel,
   DEFAULT_HISTORY_SORT,
   ledgerKindLabel,
+  priceDecimals,
   sortClosedTrades,
   type HistorySort,
   type HistorySortKey,
@@ -25,9 +26,9 @@ const RANGES: HistoryDays[] = [7, 30, 90];
 interface Props {
   account: string;
   precisionFor?: (epic: string) => number;
-  // `price` (the trade's entry) lets a caller without a precision source guess
-  // the symbol's decimals.
-  onJumpToEpic?: (epic: string, price: number) => void;
+  // Called as jumpToEpic(epic, precisionGuess): the symbol's precision when
+  // precisionFor has one, else the entry price's decimals.
+  onJumpToEpic?: (epic: string, precisionGuess: number) => void;
   tips?: boolean;
 }
 
@@ -167,11 +168,12 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, tips 
                 </tr>
               </thead>
               <tbody>
-                {sortClosedTrades(data.trades, sort).map((t) => (
+                {sortClosedTrades(data.trades, sort).map((t, i) => (
                   <tr
-                    key={`${t.dealId}:${t.closedAt}`}
+                    // Index tiebreak: two partials can close in the same ms.
+                    key={`${t.dealId}:${t.closedAt}:${i}`}
                     className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}${onJumpToEpic ? " pp-clickable" : ""}`}
-                    onClick={() => onJumpToEpic?.(t.epic, t.entry)}
+                    onClick={() => onJumpToEpic?.(t.epic, precisionFor ? precisionFor(t.epic) : priceDecimals(t.entry))}
                   >
                     <td className="pp-c-sym">{t.epic}</td>
                     <td>{t.side === "buy" ? "Long" : "Short"}</td>

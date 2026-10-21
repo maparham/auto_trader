@@ -284,7 +284,7 @@ export default function MobilePositionsView() {
         <HistoryPane
           account={account}
           tips={false}
-          onJumpToEpic={(epic, price) => void showMobileEpic(epic, decimalsOf(price))}
+          onJumpToEpic={(epic, precision) => void showMobileEpic(epic, precision)}
         />
       ) : rows.length === 0 ? (
         <div className="pp-empty">{shownTab === "positions" ? "No open positions." : "No working orders."}</div>

@@ -22,6 +22,14 @@ const LEDGER_KIND: Record<string, string> = {
 };
 export const ledgerKindLabel = (kind: string) => LEDGER_KIND[kind] ?? kind;
 
+/** Decimals a stored price carries, capped at 6: a precision guess for a
+ * symbol with no catalogue precision. */
+export function priceDecimals(n: number): number {
+  const str = String(n);
+  const i = str.indexOf(".");
+  return i < 0 ? 0 : Math.min(str.length - i - 1, 6);
+}
+
 export type HistorySortKey =
   | "epic" | "side" | "size" | "entry" | "exit" | "openedAt" | "closedAt" | "closeSource" | "pnl";
 export type HistorySort = { key: HistorySortKey; dir: SortDir };
@@ -31,8 +39,9 @@ export const DEFAULT_HISTORY_SORT: HistorySort = { key: "closedAt", dir: "desc" 
 export function sortClosedTrades(rows: ClosedTradeView[], sort: HistorySort): ClosedTradeView[] {
   const sign = sort.dir === "asc" ? 1 : -1;
   return [...rows].sort((a, b) => {
-    const x = a[sort.key];
-    const y = b[sort.key];
+    // "Closed by" sorts on the label shown, not the raw source code.
+    const x = sort.key === "closeSource" ? closedByLabel(a.closeSource) : a[sort.key];
+    const y = sort.key === "closeSource" ? closedByLabel(b.closeSource) : b[sort.key];
     if (x == null && y == null) return 0;
     if (x == null) return 1;
     if (y == null) return -1;

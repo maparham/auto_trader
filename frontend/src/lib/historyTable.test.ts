@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { closedByLabel, ledgerKindLabel, sortClosedTrades, DEFAULT_HISTORY_SORT } from "./historyTable";
+import { closedByLabel, ledgerKindLabel, priceDecimals, sortClosedTrades, DEFAULT_HISTORY_SORT } from "./historyTable";
 import type { ClosedTradeView } from "./accountHistory";
 
 const t = (over: Partial<ClosedTradeView>): ClosedTradeView => ({
@@ -20,5 +20,15 @@ describe("historyTable", () => {
     expect(sortClosedTrades(rows, DEFAULT_HISTORY_SORT).map((r) => r.dealId)).toEqual(["b", "c", "a"]);
     expect(sortClosedTrades(rows, { key: "pnl", dir: "asc" }).map((r) => r.dealId)).toEqual(["c", "a", "b"]);
     expect(sortClosedTrades(rows, { key: "pnl", dir: "desc" }).map((r) => r.dealId)).toEqual(["a", "c", "b"]);
+  });
+
+  it("sorts Closed by on the label shown, not the raw code", () => {
+    const rows = [t({ dealId: "sl", closeSource: "SL" }), t({ dealId: "user", closeSource: "USER" })];
+    // Raw codes would put SL before USER; the labels read Manual before SL.
+    expect(sortClosedTrades(rows, { key: "closeSource", dir: "asc" }).map((r) => r.dealId)).toEqual(["user", "sl"]);
+  });
+
+  it("guesses precision from a price's decimals, capped at 6", () => {
+    expect([400, 1.08345, 0.123456789].map(priceDecimals)).toEqual([0, 5, 6]);
   });
 });

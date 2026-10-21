@@ -14,8 +14,8 @@ vi.mock("../lib/trading", async (orig) => ({
   fetchBrokers: () => Promise.resolve({ data: [], exec: [] }),
 }));
 vi.mock("../HistoryPane", () => ({
-  default: ({ onJumpToEpic }: { onJumpToEpic?: (epic: string, price: number) => void }) => (
-    <button onClick={() => onJumpToEpic?.("EURUSD", 1.08345)}>history row</button>
+  default: ({ onJumpToEpic }: { onJumpToEpic?: (epic: string, precisionGuess: number) => void }) => (
+    <button onClick={() => onJumpToEpic?.("EURUSD", 5)}>history row</button>
   ),
 }));
 

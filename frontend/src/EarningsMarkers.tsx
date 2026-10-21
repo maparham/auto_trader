@@ -46,7 +46,7 @@ export default function EarningsMarkers({
     () => ({
       setMarkers(markers, paneBottom) {
         // Called every redraw frame: skip the render when nothing moved.
-        const sig = `${Math.round(paneBottom)}|${markers.map((m) => `${m.key}@${Math.round(m.x)}${m.lift ? "^" : ""}`).join(",")}`;
+        const sig = `${Math.round(paneBottom)}|${markers.map((m) => `${m.key}@${Math.round(m.x)}${m.lift ? "^" : ""}:${m.earnings.epsActual}:${m.earnings.surprisePct}`).join(",")}`;
         if (sig === sigRef.current) return;
         sigRef.current = sig;
         setState({ markers, bottom: paneBottom });
