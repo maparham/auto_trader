@@ -372,8 +372,10 @@ export function reorderSubPanes(
 // The one exception is a type that is both instance-referenceable and an expr
 // function name (see refCollision below) — it never gets the bare name, so its
 // numbering starts at 1 ("ATR1", "ATR2").
-export function mintInstanceId(chart: Chart, type: string): string {
-  const taken = new Set<string>();
+// `reserved` adds ids the chart may not hold: a saved instance that is not
+// live (say, pinned below the chart's timeframe) still owns its id and config.
+export function mintInstanceId(chart: Chart, type: string, reserved: Iterable<string> = []): string {
+  const taken = new Set<string>(reserved);
   const panes = getIndicatorsByPane(chart);
   for (const inds of panes?.values() ?? []) for (const n of inds.keys()) taken.add(n);
   // A type that is BOTH instance-referenceable in rules AND a registered expr
@@ -1130,7 +1132,8 @@ export function addIndicatorInstance(
   type: string,
   opts?: { config?: SavedIndicatorConfig; forceHidden?: boolean; resolution?: string; inset?: boolean },
 ): IndicatorInstance | null {
-  const inst: IndicatorInstance = { id: mintInstanceId(chart, type), type };
+  const saved = loadIndicators(scope).map((i) => i.id);
+  const inst: IndicatorInstance = { id: mintInstanceId(chart, type, saved), type };
   // Gated on capability here too (applyIndicator re-checks), so a caller asking
   // for inset on a type we do not own is inert rather than a lie on the instance.
   if (opts?.inset && INSET_CAPABLE.has(type)) inst.inset = true;

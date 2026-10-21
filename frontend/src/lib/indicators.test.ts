@@ -482,6 +482,14 @@ describe("mintInstanceId (bare name for the first instance, except ref/function 
     ).toBe("SLOPE3");
   });
 
+  // A saved instance can be absent from the chart (e.g. pinned below the
+  // chart's timeframe); minting its bare name again gave two instances one id,
+  // and the new one's config overwrote the old one's.
+  it("skips ids reserved by saved instances that are not on the chart", () => {
+    expect(mintInstanceId(fakeChart([]), "TRENDLINES", ["TRENDLINES"])).toBe("TRENDLINES2");
+    expect(mintInstanceId(fakeChart([{ name: "SLOPE", paneId: "p" }]), "SLOPE", ["SLOPE2"])).toBe("SLOPE3");
+  });
+
   it("legacy #-suffixed panes coexist with the numbered scheme", () => {
     expect(
       mintInstanceId(fakeChart([{ name: "ATR#oek8ei", paneId: "pane_1" }]), "ATR"),
