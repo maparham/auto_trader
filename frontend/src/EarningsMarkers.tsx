@@ -120,8 +120,9 @@ export default function EarningsMarkers({
   return (
     <div style={{ position: "absolute", inset: 0, zIndex: 11, pointerEvents: "none" }}>
       {state.markers.map((m) => {
-        // A missed EPS estimate turns the chip red, so misses stand out.
-        const miss = surpriseTone(m.earnings) === "neg";
+        // A beaten EPS estimate turns the chip green, a missed one red.
+        const tone = surpriseTone(m.earnings);
+        const hue = tone === "pos" ? "var(--pos)" : tone === "neg" ? "var(--neg)" : null;
         return (
           <button
             key={m.key}
@@ -149,9 +150,9 @@ export default function EarningsMarkers({
               fontFamily: "inherit",
               borderRadius: 3,
               // A notch stronger than the split chip: earnings move prices.
-              border: `1px ${m.upcoming ? "dashed" : "solid"} ${miss ? "var(--neg)" : "var(--text-faint)"}`,
+              border: `1px ${m.upcoming ? "dashed" : "solid"} ${hue ?? "var(--text-faint)"}`,
               background: openKey === m.key ? "var(--hover)" : "var(--surface-2)",
-              color: miss ? "var(--neg)" : "var(--text)",
+              color: hue ?? "var(--text)",
               pointerEvents: "auto",
               cursor: "pointer",
               userSelect: "none",

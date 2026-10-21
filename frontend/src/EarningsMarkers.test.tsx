@@ -60,9 +60,21 @@ describe("EarningsMarkers", () => {
     expect(chip.style.border).toContain("var(--neg)");
   });
 
-  it("keeps a beat's chip neutral", () => {
+  it("turns a beat's chip green", () => {
     setup();
+    const chip = screen.getByRole("button", { name: "Earnings 30 Jul 2026" });
+    expect(chip.style.color).toBe("var(--pos)");
+    expect(chip.style.border).toContain("var(--pos)");
+  });
+
+  it("keeps an in-line or upcoming chip neutral", () => {
+    const flat = marker();
+    flat.earnings = { ...flat.earnings, surprisePct: 0 };
+    const up = marker({ key: "earn:2", label: "Earnings 2 Nov 2026", upcoming: true });
+    up.earnings = { ...up.earnings, epsActual: null, surprisePct: null };
+    setup([flat, up]);
     expect(screen.getByRole("button", { name: "Earnings 30 Jul 2026" }).style.color).toBe("var(--text)");
+    expect(screen.getByRole("button", { name: "Earnings 2 Nov 2026" }).style.color).toBe("var(--text)");
   });
 
   it("opens the detail on a click, with estimate vs actual", () => {
