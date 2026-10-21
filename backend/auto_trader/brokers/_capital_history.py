@@ -183,8 +183,8 @@ def _fmt(dt: datetime) -> str:
 
 
 def _ceil_second(dt: datetime) -> datetime:
-    """Capital takes whole seconds; round UP so rows in the trailing partial
-    second stay inside the window."""
+    """Capital takes whole seconds; round UP so rows sharing the oldest row's
+    second come back on the next page."""
     return dt.replace(microsecond=0) + (timedelta(seconds=1) if dt.microsecond else timedelta(0))
 
 
@@ -212,7 +212,9 @@ async def fetch_transactions(
     (the cap, or a stuck second), so older rows in the range may be missing."""
     seen: dict[str, dict] = {}
     truncated = False
-    to = _ceil_second(until)
+    # Not rounded up: `until` is "now", and Capital 400s a `to` in the future.
+    # Rows in the trailing partial second land on the next refresh.
+    to = until
     for _ in range(TX_MAX_PAGES):
         resp = await request(
             "GET", "/api/v1/history/transactions",

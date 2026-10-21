@@ -217,7 +217,7 @@ def test_transactions_paging_stops_under_a_full_page():
     assert cap.calls[1][1]["to"] == "2026-10-20T09:20:00"
 
 
-def test_transactions_first_page_rounds_until_up_and_keeps_blank_references():
+def test_transactions_first_page_never_asks_past_until_and_keeps_blank_references():
     rows = [tx("2026-10-20T10:00:00", "DEPOSIT", "100", ref="x"),
             tx("2026-10-20T10:00:00", "DEPOSIT", "100", ref="x")]
     for r in rows:
@@ -226,7 +226,8 @@ def test_transactions_first_page_rounds_until_up_and_keeps_blank_references():
     cap = FakeCapital(lambda p, q: {"transactions": rows})
     ledger, _ = asyncio.run(fetch_transactions(
         cap.request, T("2026-10-01T00:00:00"), T("2026-10-21T00:00:00.400")))
-    assert cap.calls[0][1]["to"] == "2026-10-21T00:00:01"
+    # `until` is "now": rounding up would ask for the future, which Capital 400s.
+    assert cap.calls[0][1]["to"] == "2026-10-21T00:00:00"
     assert len(ledger) == 2
 
 
