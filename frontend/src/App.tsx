@@ -522,7 +522,10 @@ export default function App() {
   // --- trade-list panel → chart navigation -----------------------------------
   const brokerIdRef = useRef(brokerId);
   brokerIdRef.current = brokerId;
-  const jumpToTrade = useTradeBoxJump({ readyRef, readyTick, tabsRef, brokerIdRef, setTabs, jumpToEpic });
+  const { jumpToTrade, clearTradeBox } = useTradeBoxJump({ readyRef, readyTick, tabsRef, brokerIdRef, setTabs, jumpToEpic });
+  // The one trade box is shared by the Trade list panel and the History tab;
+  // deselecting a History row clears it only if History drew the current one.
+  const historyOwnsBoxRef = useRef(false);
 
   // Open (or reuse) the chart for an alert and select its line. The select is
   // deferred via pendingSelectRef (see resolvePendingSelect) — resolvePendingSelect
@@ -1105,7 +1108,10 @@ export default function App() {
               masked session exists to conceal. */}
           {tradeListOpen && (
             <TradeListPanel
-              onSelect={jumpToTrade}
+              onSelect={(t) => {
+                historyOwnsBoxRef.current = false;
+                void jumpToTrade(t);
+              }}
               onClose={() => tradeListPanelOpen.set(false)}
               brokerId={brokerId}
               hidden={patternPanelHidden}
@@ -1197,7 +1203,15 @@ export default function App() {
             trading={settings.trading}
             confirmLineEdits={settings.trading.confirmLineEdits}
             onJumpToEpic={jumpToEpic}
-            onSelectTrade={jumpToTrade}
+            onSelectTrade={(t) => {
+              historyOwnsBoxRef.current = true;
+              void jumpToTrade(t);
+            }}
+            onDeselectTrade={() => {
+              if (!historyOwnsBoxRef.current) return;
+              historyOwnsBoxRef.current = false;
+              clearTradeBox();
+            }}
             maximized={dockMaximized}
             onToggleMaximize={() => setDockMaximized((m) => !m)}
           />

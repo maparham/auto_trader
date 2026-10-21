@@ -245,5 +245,12 @@ export function useTradeBoxJump({
     pendingTradeBoxRef.current = { cellId, epic: t.symbol, trade: t };
     resolvePendingTradeBox();
   };
-  return jumpToTrade;
+  // Drop the sketched box (and any jump still in flight), e.g. when the History
+  // row that drew it is deselected.
+  const clearTradeBox = () => {
+    ++tradeBoxEpochRef.current;
+    pendingTradeBoxRef.current = null;
+    removePreviousTradeListBox();
+  };
+  return { jumpToTrade, clearTradeBox };
 }

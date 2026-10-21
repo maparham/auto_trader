@@ -47,6 +47,8 @@ interface Props {
   // Desktop: show the trade itself (App's trade-list jump: box + scroll). Rows
   // with no known open time fall back to onJumpToEpic.
   onSelectTrade?: (row: TradeRow) => void;
+  // A second click on the selected row deselects it (nothing of it stays drawn).
+  onDeselectTrade?: () => void;
   tips?: boolean;
 }
 
@@ -65,7 +67,14 @@ const TRADE_COLS: { key: HistorySortKey; label: string; cls: string; tip: string
   { key: "pnl", label: "P&L", cls: "pp-c-num", tip: "Realized profit or loss, account currency" },
 ];
 
-export default function HistoryPane({ account, precisionFor, onJumpToEpic, onSelectTrade, tips = true }: Props) {
+export default function HistoryPane({
+  account,
+  precisionFor,
+  onJumpToEpic,
+  onSelectTrade,
+  onDeselectTrade,
+  tips = true,
+}: Props) {
   const [days, setDays] = useState<HistoryDays>(30);
   const [view, setView] = useState<"trades" | "ledger">("trades");
   const [sort, setSort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
@@ -219,6 +228,11 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, onSel
                     aria-selected={selected === tradeKey(t)}
                     onClick={() => {
                       if (!onJumpToEpic && !onSelectTrade) return;
+                      if (selected === tradeKey(t)) {
+                        selectHistoryTrade(account, null);
+                        onDeselectTrade?.();
+                        return;
+                      }
                       selectHistoryTrade(account, t);
                       const row = onSelectTrade ? historyTradeRow(t) : null;
                       if (row) onSelectTrade!(row);

@@ -16,11 +16,13 @@ vi.mock("./lib/accountHistory", async (orig) => ({
 }));
 
 import HistoryPane from "./HistoryPane";
+import { historySelectionSignal } from "./lib/accountHistory";
 
 const totals = { realized: 0, funding: 0, deposits: 0, withdrawals: 0, currency: "EUR" };
 afterEach(() => {
   cleanup();
   subscribe.mockClear();
+  historySelectionSignal.set(new Map()); // selection is module state: no carry-over
 });
 
 describe("HistoryPane", () => {
@@ -76,6 +78,7 @@ describe("HistoryPane", () => {
     // A price, never: the second arg is jumpToEpic's precision guess.
     expect(jump).toHaveBeenCalledWith("TSLA", 0);
     cleanup();
+    historySelectionSignal.set(new Map());
     render(<HistoryPane account="capital:demo" precisionFor={() => 2} onJumpToEpic={jump} />);
     fireEvent.click(screen.getByText("TSLA"));
     expect(jump).toHaveBeenLastCalledWith("TSLA", 2);
@@ -116,6 +119,21 @@ describe("HistoryPane", () => {
     cleanup();
     render(<HistoryPane account="capital:other" onSelectTrade={() => {}} />);
     expect(screen.getByText("MSFT").closest("tr")!.className).not.toContain("pp-selected");
+  });
+
+  it("a second click on the selected row deselects it without jumping", () => {
+    const row = { dealId: "DS", epic: "TSLA", side: "buy" as const, size: 1, entry: 400, exit: 430,
+      openedAt: 1_000, closedAt: 2_000, closeSource: "TP", pnl: 12.5, currency: "EUR" };
+    state = { loading: false, error: null, data: { trades: [row], ledger: [], totals } };
+    const select = vi.fn();
+    const deselect = vi.fn();
+    render(<HistoryPane account="capital:desel" onSelectTrade={select} onDeselectTrade={deselect} />);
+    fireEvent.click(screen.getByText("TSLA"));
+    expect(screen.getByText("TSLA").closest("tr")!.className).toContain("pp-selected");
+    fireEvent.click(screen.getByText("TSLA"));
+    expect(screen.getByText("TSLA").closest("tr")!.className).not.toContain("pp-selected");
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(deselect).toHaveBeenCalledTimes(1);
   });
 
   it("toggles Show all on chart", async () => {

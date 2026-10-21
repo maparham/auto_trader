@@ -88,6 +88,8 @@ interface Props {
   onJumpToEpic?: (epic: string, precisionGuess?: number) => void;
   /** History tab row click: show that closed trade on its chart. */
   onSelectTrade?: (row: TradeRow) => void;
+  /** History tab: the selected row was clicked again. */
+  onDeselectTrade?: () => void;
   // When false, a dragged level applies immediately (no Apply/Discard bar).
   confirmLineEdits?: boolean;
   // Dock maximized to fill the chart view (owned by App, which hides the workspace).
@@ -122,6 +124,7 @@ export default function PositionsPanel({
   trading,
   onJumpToEpic,
   onSelectTrade,
+  onDeselectTrade,
   confirmLineEdits = true,
   maximized = false,
   onToggleMaximize,
@@ -507,6 +510,7 @@ export default function PositionsPanel({
               precisionFor={precisionFor}
               onJumpToEpic={onJumpToEpic}
               onSelectTrade={onSelectTrade}
+              onDeselectTrade={onDeselectTrade}
             />
           ) : rows.length === 0 ? (
             <div className="pp-empty">
