@@ -1208,6 +1208,15 @@
 .mi-range-low { color: var(--neg); }
 .mi-range-high { color: var(--pos); }
 
+/* Client sentiment: sellers (left) vs buyers (right), split by a 2px gap. */
+.mi-sentiment-track {
+  display: flex; gap: 2px; height: 6px; margin-bottom: 8px;
+}
+.mi-sentiment-sell,
+.mi-sentiment-buy { min-width: 2px; border-radius: 3px; }
+.mi-sentiment-sell { background: var(--neg); }
+.mi-sentiment-buy { background: var(--pos); }
+
 /* Curated rows: label (dim sans) left, value (tabular mono) right, aligned. */
 .mi-hours-row,
 .mi-row {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   accountLeverageText,
   accountMarginText,
+  clientSentimentSplit,
   fundingText,
   leverageText,
   localOpeningHours,
@@ -116,6 +117,21 @@ describe("accountLeverageText / accountMarginText", () => {
     expect(accountLeverageText(0)).toBeNull();
     expect(accountMarginText(0)).toBeNull();
     expect(accountLeverageText("10")).toBeNull();
+  });
+});
+
+describe("clientSentimentSplit", () => {
+  it("rounds to whole percents that sum to 100, sellers first", () => {
+    expect(clientSentimentSplit({ long: 92.75, short: 7.25 })).toEqual({ sell: 7, buy: 93 });
+    expect(clientSentimentSplit({ long: 50.5, short: 49.5 })).toEqual({ sell: 49, buy: 51 });
+  });
+  it("normalizes a split that does not sum to 100", () => {
+    expect(clientSentimentSplit({ long: 30, short: 10 })).toEqual({ sell: 25, buy: 75 });
+  });
+  it("rejects missing or empty sentiment", () => {
+    expect(clientSentimentSplit(undefined)).toBeNull();
+    expect(clientSentimentSplit({ long: 0, short: 0 })).toBeNull();
+    expect(clientSentimentSplit({ long: -1, short: 101 })).toBeNull();
   });
 });
 

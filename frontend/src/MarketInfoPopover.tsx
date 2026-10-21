@@ -12,6 +12,7 @@ import { fetchMarketDetail, type MarketDetail } from "./lib/feed";
 import { useCloseOnEscape } from "./lib/useCloseOnEscape";
 import {
   accountLeverageText,
+  clientSentimentSplit,
   accountMarginText,
   fundingText,
   leverageText,
@@ -270,6 +271,7 @@ export default function MarketInfoPopover({ epic, brokerId, title, anchor, onClo
     accountLeverageText(acctLev) ??
     leverageText(num(inst, "marginFactor"), inst.marginFactorUnit);
   const spread = spreadText(bid, offer, decimals);
+  const sentiment = clientSentimentSplit(detail?.clientSentiment);
 
   // Row order mirrors Capital's sheet: Currency, Min size, [funding block],
   // Margin, Leverage, Spread, Type — the funding block is spliced in after the
@@ -331,6 +333,22 @@ export default function MarketInfoPopover({ epic, brokerId, title, anchor, onClo
                   <span className="mi-range-low">Low {priceText(low, decimals)}</span>
                   <span className="mi-range-high">High {priceText(high, decimals)}</span>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {sentiment && (
+            <div className="mi-section">
+              <div className="mi-section-title">
+                Client sentiment <span className="mi-caption">open positions</span>
+              </div>
+              <div className="mi-sentiment-track">
+                <div className="mi-sentiment-sell" style={{ width: `${sentiment.sell}%` }} />
+                <div className="mi-sentiment-buy" style={{ width: `${sentiment.buy}%` }} />
+              </div>
+              <div className="mi-range-ends">
+                <span className="mi-range-low">{sentiment.sell}% sellers</span>
+                <span className="mi-range-high">{sentiment.buy}% buyers</span>
               </div>
             </div>
           )}

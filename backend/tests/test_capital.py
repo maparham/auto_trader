@@ -380,6 +380,52 @@ def test_market_detail_omits_account_leverage_for_unlisted_type():
     assert "accountLeverage" not in detail
 
 
+_OIL_SENTIMENT = {
+    "marketId": "OIL_CRUDE",
+    "longPositionPercentage": 92.75,
+    "shortPositionPercentage": 7.25,
+}
+
+
+def test_market_detail_carries_client_sentiment():
+    broker, _ = _broker_with_routes(
+        {
+            "/api/v1/markets/OIL_CRUDE": _OIL_DETAIL,
+            "/api/v1/accounts/preferences": _PREFS,
+            "/api/v1/clientsentiment/OIL_CRUDE": _OIL_SENTIMENT,
+        }
+    )
+    detail = asyncio.run(broker.get_market_detail("OIL_CRUDE"))
+    assert detail["clientSentiment"] == {"long": 92.75, "short": 7.25}
+
+
+def test_market_detail_omits_client_sentiment_when_unavailable():
+    # Capital 404s sentiment for markets it has none for; the detail still serves.
+    broker, _ = _broker_with_routes(
+        {
+            "/api/v1/markets/OIL_CRUDE": _OIL_DETAIL,
+            "/api/v1/accounts/preferences": _PREFS,
+            "/api/v1/clientsentiment/OIL_CRUDE": RuntimeError("404"),
+        }
+    )
+    detail = asyncio.run(broker.get_market_detail("OIL_CRUDE"))
+    assert detail is not None
+    assert "clientSentiment" not in detail
+    assert detail["accountLeverage"] == 20
+
+
+def test_market_detail_omits_malformed_client_sentiment():
+    broker, _ = _broker_with_routes(
+        {
+            "/api/v1/markets/OIL_CRUDE": _OIL_DETAIL,
+            "/api/v1/accounts/preferences": _PREFS,
+            "/api/v1/clientsentiment/OIL_CRUDE": {"marketId": "OIL_CRUDE"},
+        }
+    )
+    detail = asyncio.run(broker.get_market_detail("OIL_CRUDE"))
+    assert "clientSentiment" not in detail
+
+
 def test_account_preferences_are_cached_across_detail_calls():
     broker, calls = _broker_with_routes(
         {"/api/v1/markets/OIL_CRUDE": _OIL_DETAIL, "/api/v1/accounts/preferences": _PREFS}

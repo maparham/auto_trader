@@ -129,6 +129,18 @@ export function accountMarginText(leverage: unknown): string | null {
   return `${(100 / leverage).toFixed(2)}%`;
 }
 
+/** Client sentiment {long, short} → whole-percent {sell, buy} summing to 100,
+ * normalized in case the broker's pair drifts off 100. Null when absent. */
+export function clientSentimentSplit(
+  s: { long: number; short: number } | undefined,
+): { sell: number; buy: number } | null {
+  if (!s || !(s.long >= 0) || !(s.short >= 0)) return null;
+  const total = s.long + s.short;
+  if (!(total > 0)) return null;
+  const buy = Math.round((s.long / total) * 100);
+  return { sell: 100 - buy, buy };
+}
+
 /** marginFactor + unit → "10.00%" for PERCENTAGE, verbatim otherwise. */
 export function marginText(factor: unknown, unit: unknown): string | null {
   if (typeof factor !== "number" || !Number.isFinite(factor)) return null;

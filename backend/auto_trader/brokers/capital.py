@@ -381,7 +381,10 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
         `instrument.marginFactor` is a static base (100%) that ignores the account
         leverage setting, so it is NOT what Capital's own app shows as
         margin/leverage; `leverages[instrument.type].current` is. Omitted when
-        preferences are unavailable or the type isn't listed."""
+        preferences are unavailable or the type isn't listed.
+
+        Second addition: `clientSentiment` ({long, short} percent of Capital
+        clients), from /clientsentiment/{epic}; omitted when unavailable."""
         d = await self._fetch_market_raw(epic)
         if d is None:
             return None
@@ -390,11 +393,31 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
             "dealingRules": d.get("dealingRules") or {},
             "snapshot": d.get("snapshot") or {},
         }
-        lev = (await self._fetch_leverages()).get(out["instrument"].get("type"))
+        leverages, sentiment = await asyncio.gather(
+            self._fetch_leverages(), self._fetch_client_sentiment(epic)
+        )
+        lev = leverages.get(out["instrument"].get("type"))
         current = lev.get("current") if isinstance(lev, dict) else None
         if isinstance(current, (int, float)) and current > 0:
             out["accountLeverage"] = current
+        if sentiment is not None:
+            out["clientSentiment"] = sentiment
         return out
+
+    async def _fetch_client_sentiment(self, epic: str) -> dict | None:
+        """Share of Capital clients long vs short this market, as
+        `{"long": 92.75, "short": 7.25}` (percent). Not cached: the details
+        popover fetches once per open. None on any failure (Capital 404s markets
+        it has no sentiment for); like leverage, it's an enrichment only."""
+        try:
+            resp = await self._get(f"/api/v1/clientsentiment/{epic}", {})
+            d = resp.json()
+        except Exception:
+            return None
+        long_, short = d.get("longPositionPercentage"), d.get("shortPositionPercentage")
+        if not isinstance(long_, (int, float)) or not isinstance(short, (int, float)):
+            return None
+        return {"long": long_, "short": short}
 
     async def all_markets(self) -> list[dict]:
         """The complete instrument catalogue (~4000 markets), one request.

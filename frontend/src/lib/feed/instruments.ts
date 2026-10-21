@@ -218,6 +218,9 @@ export interface MarketDetail {
   // ignores the account setting — this is what the broker's own app shows.
   // Absent for brokers without the concept (IG) or when preferences fail.
   accountLeverage?: number;
+  // Percent of the broker's clients long vs short this market (Capital's
+  // /clientsentiment). Absent for brokers without it or when it fails.
+  clientSentiment?: { long: number; short: number };
 }
 
 /** Full instrument detail for the details modal. Fetched once on open (not
@@ -236,6 +239,10 @@ export async function fetchMarketDetail(
       dealingRules: d.dealingRules ?? {},
       snapshot: d.snapshot ?? {},
       ...(typeof d.accountLeverage === "number" ? { accountLeverage: d.accountLeverage } : {}),
+      ...(typeof d.clientSentiment?.long === "number" &&
+      typeof d.clientSentiment?.short === "number"
+        ? { clientSentiment: { long: d.clientSentiment.long, short: d.clientSentiment.short } }
+        : {}),
     };
   } catch {
     return null;
