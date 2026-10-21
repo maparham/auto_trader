@@ -20,7 +20,8 @@ const reported: Earnings = {
   revenueEstimate: null,
   revenueActual: 109.417e9,
   session: "post",
-  sessionTime: "16:00 EDT",
+  openTimeMs: Date.UTC(2026, 6, 30, 13, 30),
+  closeTimeMs: Date.UTC(2026, 6, 30, 20),
 };
 const upcoming = (offsetDays: number): Earnings => ({
   timeMs: T0 + offsetDays * DAY,
@@ -30,17 +31,18 @@ const upcoming = (offsetDays: number): Earnings => ({
   revenueEstimate: 113.357e9,
   revenueActual: null,
   session: null,
-  sessionTime: null,
+  openTimeMs: null,
+  closeTimeMs: null,
 });
 // One bar per 10px, bar i at x = 10 * i.
 const toX = (ts: number) => ((ts - T0) / DAY) * 10;
 
 describe("earningsView", () => {
   it("lays a reported quarter out as estimate vs actual with the surprise", () => {
-    expect(earningsView(reported)).toEqual({
+    expect(earningsView(reported, { clock: "24h", timeZone: "Europe/Berlin" })).toEqual({
       date: "30 Jul 2026",
       status: "Reported",
-      session: "After close (16:00 EDT)",
+      session: "After close (22:00)",
       rows: [
         { label: "EPS", estimate: "1.89", actual: "2.02" },
         { label: "Revenue", estimate: null, actual: "109.4B" },
@@ -51,7 +53,7 @@ describe("earningsView", () => {
   });
 
   it("lays an upcoming report out as estimates only", () => {
-    expect(earningsView(upcoming(5), T0)).toEqual({
+    expect(earningsView(upcoming(5), { clock: "24h", nowMs: T0 })).toEqual({
       date: "1 Aug 2026",
       status: "Upcoming",
       session: null,
@@ -65,9 +67,10 @@ describe("earningsView", () => {
   });
 
   it("says Today for an unreported report due on today's date", () => {
-    expect(earningsView(upcoming(5), T0 + 5 * DAY + 3_600_000).status).toBe("Today");
-    expect(earningsView(upcoming(5), T0 + 4 * DAY).status).toBe("Upcoming");
-    expect(earningsView(reported, reported.timeMs).status).toBe("Reported");
+    const at = (nowMs: number) => ({ clock: "24h" as const, nowMs });
+    expect(earningsView(upcoming(5), at(T0 + 5 * DAY + 3_600_000)).status).toBe("Today");
+    expect(earningsView(upcoming(5), at(T0 + 4 * DAY)).status).toBe("Upcoming");
+    expect(earningsView(reported, at(reported.timeMs)).status).toBe("Reported");
   });
 
   it("drops a row Yahoo has nothing for", () => {
@@ -86,9 +89,18 @@ describe("earningsView", () => {
   it("names each session", () => {
     expect(earningsView({ ...upcoming(5), session: "pre" }).session).toBe("Before open");
     expect(earningsView({ ...upcoming(5), session: "intraday" }).session).toBe("During market hours");
-    expect(earningsView({ ...upcoming(5), session: "pre", sessionTime: "09:30 EST" }).session).toBe(
-      "Before open (09:30 EST)",
+  });
+
+  it("names the open or close in the chart's zone and clock", () => {
+    const times = { openTimeMs: Date.UTC(2026, 10, 2, 14, 30), closeTimeMs: Date.UTC(2026, 10, 2, 21) };
+    const pre = { ...upcoming(5), ...times, session: "pre" as const };
+    expect(earningsView(pre, { clock: "24h", timeZone: "Europe/Berlin" }).session).toBe("Before open (15:30)");
+    expect(earningsView(pre, { clock: "12h", timeZone: "America/New_York" }).session).toBe(
+      "Before open (9:30 AM)",
     );
+    expect(
+      earningsView({ ...pre, session: "intraday" }, { clock: "24h", timeZone: "UTC" }).session,
+    ).toBe("During market hours (14:30 to 21:00)");
   });
 
   it("scales revenue to T, B or M", () => {
@@ -155,15 +167,15 @@ describe("fetchEarnings", () => {
           epic: "AAPL",
           earnings: [
             { time: 1793649600, epsEstimate: 1.98, epsActual: null, surprisePct: null, revenueEstimate: 113.4e9, session: "bogus" },
-            { time: 1785441600, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueActual: 109.4e9, session: "post", sessionTime: "16:00 EDT" },
+            { time: 1785441600, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueActual: 109.4e9, session: "post", openTime: 1785418200, closeTime: 1785441600 },
           ],
         }),
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
     expect(await fetchEarnings("AAPL", "yfinance")).toEqual([
-      { timeMs: 1785441600_000, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueEstimate: null, revenueActual: 109.4e9, session: "post", sessionTime: "16:00 EDT" },
-      { timeMs: 1793649600_000, epsEstimate: 1.98, epsActual: null, surprisePct: null, revenueEstimate: 113.4e9, revenueActual: null, session: null, sessionTime: null },
+      { timeMs: 1785441600_000, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueEstimate: null, revenueActual: 109.4e9, session: "post", openTimeMs: 1785418200_000, closeTimeMs: 1785441600_000 },
+      { timeMs: 1793649600_000, epsEstimate: 1.98, epsActual: null, surprisePct: null, revenueEstimate: 113.4e9, revenueActual: null, session: null, openTimeMs: null, closeTimeMs: null },
     ]);
     await fetchEarnings("AAPL", "yfinance");
     expect(fetchMock).toHaveBeenCalledTimes(1);

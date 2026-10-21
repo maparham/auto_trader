@@ -12,6 +12,7 @@ import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type
 import { createPortal } from "react-dom";
 import { computePlacement } from "./components/tooltipPosition";
 import { EARNINGS_CHIP, earningsView, type EarningsMarker, type EarningsView } from "./lib/earnings";
+import type { Clock } from "./lib/timeFormat";
 
 export interface EarningsMarkersHandle {
   setMarkers(markers: EarningsMarker[], paneBottom: number): void;
@@ -20,7 +21,16 @@ export interface EarningsMarkersHandle {
 const GAP = 4; // lift off the time axis
 const ROW = EARNINGS_CHIP + 2; // a lifted chip clears a split chip below it
 
-export default function EarningsMarkers({ handleRef }: { handleRef?: Ref<EarningsMarkersHandle> }) {
+export default function EarningsMarkers({
+  handleRef,
+  timeZone,
+  clock,
+}: {
+  handleRef?: Ref<EarningsMarkersHandle>;
+  /** The chart's time zone (the popup names open/close times in it). */
+  timeZone?: string;
+  clock: Clock;
+}) {
   const [state, setState] = useState<{ markers: EarningsMarker[]; bottom: number }>({
     markers: [],
     bottom: 0,
@@ -147,7 +157,7 @@ export default function EarningsMarkers({ handleRef }: { handleRef?: Ref<Earning
             onMouseDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
           >
-            <EarningsDetail view={earningsView(open.earnings)} onClose={() => setOpenKey(null)} />
+            <EarningsDetail view={earningsView(open.earnings, { timeZone, clock })} onClose={() => setOpenKey(null)} />
           </div>,
           document.body,
         )}

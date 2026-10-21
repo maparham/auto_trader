@@ -114,13 +114,14 @@ _US_META = {
 }
 
 
-def test_exchange_hours_name_the_time_the_session_hinges_on(monkeypatch):
+def test_exchange_hours_stamp_the_report_days_open_and_close(monkeypatch):
     cal = {"Earnings Date": [dt.date(2026, 11, 2)], "Earnings Average": 1.98}
     _patch(monkeypatch, FakeTicker(_df(), cal, meta=_US_META))
     up, past = ye.fetch_yahoo_earnings("AAPL")
-    # 2 Nov is past the DST switch: the close reads in EST.
-    assert (up.session, up.session_time) == ("post", "16:00 EST")
-    assert (past.session, past.session_time) == ("post", "16:00 EDT")
+    ny = lambda s: int(pd.Timestamp(s, tz="America/New_York").timestamp())  # noqa: E731
+    # 2 Nov is past the DST switch: 16:00 there is 21:00 UTC, not 20:00.
+    assert (up.session, up.open_ts, up.close_ts) == ("post", ny("2026-11-02 09:30"), ny("2026-11-02 16:00"))
+    assert (past.session, past.close_ts) == ("post", ny("2026-07-30 16:00"))
 
 
 def test_hours_follow_the_exchange():
@@ -133,14 +134,15 @@ def test_hours_follow_the_exchange():
                  eps_estimate=None, eps_actual=None, surprise_pct=None, session="pre"),
     ]
     pre, during = ye.apply_hours(rows, london)
-    assert (pre.session, pre.session_time) == ("pre", "08:00 BST")
-    assert (during.session, during.session_time) == ("intraday", "08:00 to 16:30 BST")
+    ldn = lambda s: int(pd.Timestamp(s, tz="Europe/London").timestamp())  # noqa: E731
+    assert (pre.session, pre.open_ts) == ("pre", ldn("2026-07-21 08:00"))
+    assert (during.session, during.close_ts) == ("intraday", ldn("2026-07-21 16:30"))
 
 
 def test_no_hours_keeps_the_us_guess_without_a_time(monkeypatch):
     _patch(monkeypatch, FakeTicker(_df(), {}))
     up, past = ye.fetch_yahoo_earnings("AAPL")
-    assert past.session == "post" and past.session_time is None
+    assert past.session == "post" and past.close_ts is None
 
 
 def test_date_only_rows_stay_untimed():

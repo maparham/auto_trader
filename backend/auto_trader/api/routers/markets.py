@@ -133,7 +133,8 @@ async def market_earnings(
                 "revenueEstimate": e.revenue_estimate,
                 "revenueActual": e.revenue_actual,
                 "session": e.session,
-                "sessionTime": e.session_time,
+                "openTime": e.open_ts,
+                "closeTime": e.close_ts,
             }
             for e in rows
         ],

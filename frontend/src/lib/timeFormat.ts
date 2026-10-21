@@ -134,6 +134,20 @@ export function makeFormatDate(clock: Clock, format: DateFormat, showWeekday = f
   };
 }
 
+// "22:00" or "10:00 PM": a moment's wall-clock time in `timeZone` (the chart's
+// zone; undefined = browser local), for chrome outside the axis that names a
+// time of day. An invalid saved zone falls back to the browser's.
+export function formatClockTime(timestamp: number, clock: Clock, timeZone?: string): string {
+  const opts: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hour12: false };
+  let dtf: Intl.DateTimeFormat;
+  try {
+    dtf = new Intl.DateTimeFormat("en-US", { ...opts, timeZone: timeZone || undefined });
+  } catch {
+    dtf = new Intl.DateTimeFormat("en-US", opts);
+  }
+  return renderTime(extract(dtf, timestamp), "HH:mm", clock);
+}
+
 // --- masked clock (chart replay, blind sessions) ------------------------------
 //
 // A replay session started by a random jump hides WHEN it is: the axis, the

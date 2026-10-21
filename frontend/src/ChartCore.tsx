@@ -5828,7 +5828,7 @@ export default function ChartCore({
       {/* Stock split chips on the candle pane's bottom edge. Fed by the redraw loop. */}
       <SplitMarkers handleRef={splitMarkersRef} />
       {/* Earnings chips beside them, plus the next report in the future space. */}
-      <EarningsMarkers handleRef={earningsMarkersRef} />
+      <EarningsMarkers handleRef={earningsMarkersRef} timeZone={timezone || browserTimezone()} clock={clock} />
       {/* Read-only snapshot view banner: top-center pill naming the snapshot, a
           READ-ONLY tag, and Unlock (graduates the tab into a normal chart). The
           one always-visible cue that editing is deliberately off on this cell. */}

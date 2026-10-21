@@ -64,10 +64,11 @@ class Earnings:
     revenue_estimate: float | None = None  # upcoming report only
     revenue_actual: float | None = None  # the last ~5 reported quarters only
     session: str | None = None  # "pre" | "intraday" | "post"; None when only the date is known
-    # The exchange's own time the session hinges on, on the report's date:
-    # "09:30 EDT" (open) before it, "16:00 EST" (close) after, "09:30 to
-    # 16:00 EDT" during. None when Yahoo gave no hours or no report time.
-    session_time: str | None = None
+    # The exchange's regular open and close on the report's date (unix
+    # seconds), for the popup to show in the viewer's own time. None when Yahoo
+    # gave no hours or no report time.
+    open_ts: int | None = None
+    close_ts: int | None = None
 
 
 def _num(v: object) -> float | None:
@@ -100,13 +101,9 @@ def _hours(t: object) -> ExchangeHours | None:
     return ExchangeHours(tz, a.hour * 60 + a.minute, b.hour * 60 + b.minute)
 
 
-def _hhmm(minutes: int) -> str:
-    return f"{minutes // 60:02d}:{minutes % 60:02d}"
-
-
 def apply_hours(rows: list[Earnings], hours: ExchangeHours | None) -> list[Earnings]:
     """Re-judge each timed report's session against the exchange's own hours
-    and name the time it hinges on. Date-only rows (session None) stay as is."""
+    and stamp that day's open and close. Date-only rows (session None) stay."""
     if hours is None:
         return rows
     zone = ZoneInfo(hours.tz)
@@ -116,21 +113,22 @@ def apply_hours(rows: list[Earnings], hours: ExchangeHours | None) -> list[Earni
             out.append(e)
             continue
         local = dt.datetime.fromtimestamp(e.ts, zone)
-        session = report_session(local, hours)
 
-        def at(minutes: int) -> dt.datetime:
-            return dt.datetime.combine(
-                local.date(), dt.time(minutes // 60, minutes % 60), tzinfo=zone
+        def at(minutes: int) -> int:
+            return int(
+                dt.datetime.combine(
+                    local.date(), dt.time(minutes // 60, minutes % 60), tzinfo=zone
+                ).timestamp()
             )
 
-        abbr = at(hours.close_min if session == "post" else hours.open_min).tzname() or ""
-        if session == "pre":
-            label = f"{_hhmm(hours.open_min)} {abbr}"
-        elif session == "post":
-            label = f"{_hhmm(hours.close_min)} {abbr}"
-        else:
-            label = f"{_hhmm(hours.open_min)} to {_hhmm(hours.close_min)} {abbr}"
-        out.append(replace(e, session=session, session_time=label.strip()))
+        out.append(
+            replace(
+                e,
+                session=report_session(local, hours),
+                open_ts=at(hours.open_min),
+                close_ts=at(hours.close_min),
+            )
+        )
     return out
 
 

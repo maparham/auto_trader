@@ -7,6 +7,7 @@
 import { API_BASE as BASE, apiFetch } from "./http";
 import { isSynthetic } from "./syntheticRegistry";
 import { splitBarIndex, splitDateText } from "./splits";
+import { formatClockTime, type Clock } from "./timeFormat";
 
 type Bar = { timestamp: number };
 
@@ -23,9 +24,10 @@ export interface Earnings {
   /** Before the open, during the session or after the close; null when Yahoo
    * gave only the date. Its times are hour-rounded, so this is all they say. */
   session: EarningsSession | null;
-  /** The exchange time the session hinges on, on the report's date: "16:00 EST"
-   * (the close) after it, "09:30 EDT" (the open) before it. */
-  sessionTime: string | null;
+  /** The exchange's regular open and close on the report's date, so the
+   * popup can name them in the viewer's own time. null without exchange hours. */
+  openTimeMs: number | null;
+  closeTimeMs: number | null;
 }
 
 export type EarningsSession = "pre" | "intraday" | "post";
@@ -66,7 +68,8 @@ export function fetchEarnings(epic: string, brokerId: string): Promise<Earnings[
         revenueEstimate: num(e.revenueEstimate),
         revenueActual: num(e.revenueActual),
         session: typeof e.session === "string" && e.session in SESSIONS ? (e.session as EarningsSession) : null,
-        sessionTime: typeof e.sessionTime === "string" && e.sessionTime ? e.sessionTime : null,
+        openTimeMs: num(e.openTime) != null ? (e.openTime as number) * 1000 : null,
+        closeTimeMs: num(e.closeTime) != null ? (e.closeTime as number) * 1000 : null,
       }))
       .sort((a, b) => a.timeMs - b.timeMs);
   })().catch(() => {
@@ -110,7 +113,27 @@ export interface EarningsView {
 
 const utcDay = (ms: number) => Math.floor(ms / 86_400_000);
 
-export function earningsView(e: Earnings, nowMs = Date.now()): EarningsView {
+/** How the popup shows times of day: the chart's zone and clock preference. */
+export interface EarningsClock {
+  timeZone?: string;
+  clock: Clock;
+  nowMs?: number;
+}
+
+/** "After close (22:00)": the session, with the exchange's open or close in the
+ * viewer's own time when Yahoo gave the exchange's hours. */
+function sessionText(e: Earnings, c: EarningsClock): string | null {
+  if (!e.session) return null;
+  const t = (ms: number | null) => (ms == null ? null : formatClockTime(ms, c.clock, c.timeZone));
+  const open = t(e.openTimeMs);
+  const close = t(e.closeTimeMs);
+  const when =
+    e.session === "pre" ? open : e.session === "post" ? close : open && close ? `${open} to ${close}` : null;
+  return when ? `${SESSIONS[e.session]} (${when})` : SESSIONS[e.session];
+}
+
+export function earningsView(e: Earnings, c: EarningsClock = { clock: "24h" }): EarningsView {
+  const nowMs = c.nowMs ?? Date.now();
   const rows: EarningsRow[] = [
     {
       label: "EPS",
@@ -128,11 +151,7 @@ export function earningsView(e: Earnings, nowMs = Date.now()): EarningsView {
     date: splitDateText(e.timeMs),
     // UTC day, matching the date shown above it (splitDateText).
     status: e.epsActual != null ? "Reported" : utcDay(e.timeMs) === utcDay(nowMs) ? "Today" : "Upcoming",
-    session: e.session
-      ? e.sessionTime
-        ? `${SESSIONS[e.session]} (${e.sessionTime})`
-        : SESSIONS[e.session]
-      : null,
+    session: sessionText(e, c),
     rows,
     hasActual: rows.some((r) => r.actual != null),
     surprise:

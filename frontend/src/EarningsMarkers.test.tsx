@@ -21,14 +21,15 @@ const marker = (over: Partial<EarningsMarker> = {}): EarningsMarker => ({
     revenueEstimate: null,
     revenueActual: 109.417e9,
     session: "post",
-    sessionTime: "16:00 EDT",
+    openTimeMs: Date.UTC(2026, 6, 30, 13, 30),
+    closeTimeMs: Date.UTC(2026, 6, 30, 20),
   },
   ...over,
 });
 
 function setup(markers: EarningsMarker[] = [marker()]) {
   const ref = createRef<EarningsMarkersHandle>();
-  const r = render(<EarningsMarkers handleRef={ref} />);
+  const r = render(<EarningsMarkers handleRef={ref} timeZone="Europe/Berlin" clock="24h" />);
   act(() => ref.current!.setMarkers(markers, 200));
   return { ref, ...r };
 }
@@ -56,7 +57,7 @@ describe("EarningsMarkers", () => {
     fireEvent.click(screen.getByRole("button", { name: "Earnings 30 Jul 2026" }));
     const pop = screen.getByRole("dialog", { name: "Earnings 30 Jul 2026" });
     expect(pop.textContent).toContain("Reported");
-    expect(pop.textContent).toContain("After close (16:00 EDT)");
+    expect(pop.textContent).toContain("After close (22:00)");
     expect(pop.textContent).toContain("2.02");
     expect(pop.textContent).toContain("109.4B");
     expect(pop.textContent).toContain("+6.7%");
