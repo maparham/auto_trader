@@ -95,7 +95,8 @@ export interface EarningsRow {
  * not have is null; a row with neither is dropped. */
 export interface EarningsView {
   date: string;
-  status: "Reported" | "Estimated";
+  /** Today: the report is due today and not out yet. */
+  status: "Reported" | "Upcoming" | "Today";
   session: string | null;
   rows: EarningsRow[];
   /** Whether the grid has an Actual column (any figure reported). */
@@ -103,7 +104,9 @@ export interface EarningsView {
   surprise: { text: string; tone: "pos" | "neg" | "flat" } | null;
 }
 
-export function earningsView(e: Earnings): EarningsView {
+const utcDay = (ms: number) => Math.floor(ms / 86_400_000);
+
+export function earningsView(e: Earnings, nowMs = Date.now()): EarningsView {
   const rows: EarningsRow[] = [
     {
       label: "EPS",
@@ -119,7 +122,8 @@ export function earningsView(e: Earnings): EarningsView {
   const sp = e.epsActual != null ? e.surprisePct : null;
   return {
     date: splitDateText(e.timeMs),
-    status: e.epsActual == null ? "Estimated" : "Reported",
+    // UTC day, matching the date shown above it (splitDateText).
+    status: e.epsActual != null ? "Reported" : utcDay(e.timeMs) === utcDay(nowMs) ? "Today" : "Upcoming",
     session: e.session ? SESSIONS[e.session] : null,
     rows,
     hasActual: rows.some((r) => r.actual != null),

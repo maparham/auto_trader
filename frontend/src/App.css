@@ -7386,7 +7386,7 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
   padding: 0 6px; border: 1px solid var(--border); border-radius: 3px;
   font-size: 11px; line-height: 16px; color: var(--text);
 }
-.earn-pop-status.is-est { border-style: dashed; color: var(--text-dim); }
+.earn-pop-status.is-upcoming { border-style: dashed; color: var(--text-dim); }
 .earn-pop-grid { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .earn-pop-grid th, .earn-pop-grid td { padding: 3px 0; text-align: right; font-weight: 400; }
 .earn-pop-grid thead th { font-size: 11px; color: var(--text-dim); padding-bottom: 4px; border-bottom: 1px solid var(--border); }

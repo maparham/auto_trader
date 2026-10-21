@@ -49,9 +49,9 @@ describe("earningsView", () => {
   });
 
   it("lays an upcoming report out as estimates only", () => {
-    expect(earningsView(upcoming(5))).toEqual({
+    expect(earningsView(upcoming(5), T0)).toEqual({
       date: "1 Aug 2026",
-      status: "Estimated",
+      status: "Upcoming",
       session: null,
       rows: [
         { label: "EPS", estimate: "1.98", actual: null },
@@ -60,6 +60,12 @@ describe("earningsView", () => {
       hasActual: false,
       surprise: null,
     });
+  });
+
+  it("says Today for an unreported report due on today's date", () => {
+    expect(earningsView(upcoming(5), T0 + 5 * DAY + 3_600_000).status).toBe("Today");
+    expect(earningsView(upcoming(5), T0 + 4 * DAY).status).toBe("Upcoming");
+    expect(earningsView(reported, reported.timeMs).status).toBe("Reported");
   });
 
   it("drops a row Yahoo has nothing for", () => {

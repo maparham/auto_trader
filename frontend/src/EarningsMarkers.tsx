@@ -168,7 +168,7 @@ function EarningsDetail({ view, onClose }: { view: EarningsView; onClose: () => 
         </button>
       </div>
       <div className="earn-pop-meta">
-        <span className={`earn-pop-status${view.status === "Estimated" ? " is-est" : ""}`}>{view.status}</span>
+        <span className={`earn-pop-status${view.status === "Reported" ? "" : " is-upcoming"}`}>{view.status}</span>
         {view.session && <span>{view.session}</span>}
       </div>
       {view.rows.length > 0 && (
