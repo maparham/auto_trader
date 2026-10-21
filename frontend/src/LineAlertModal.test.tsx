@@ -37,7 +37,7 @@ describe("LineAlertModal", () => {
     const a = add.mock.calls[0][0];
     expect(a.kind).toBe("line");
     expect(a.params).toMatchObject({
-      timeframe: "HOUR", evalOn: "close", tRef: 9, pRef: 13, slope: 0.5,
+      timeframe: "HOUR", evalOn: "intrabar", tRef: 9, pRef: 13, slope: 0.5,
       anchors: { t1: 2, p1: 10, t2: 6, p2: 12 }, link: draft.link,
     });
     await Promise.resolve();

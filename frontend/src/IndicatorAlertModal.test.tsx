@@ -168,7 +168,7 @@ describe("IndicatorAlertModal", () => {
     fireEvent.click(screen.getByText("Create"));
     const a = add.mock.calls[0][0];
     expect(a.params).toMatchObject({
-      instance: draft().instance, output: "value", timeframe: "HOUR", target: "value", value: 55.5, evalOn: "close",
+      instance: draft().instance, output: "value", timeframe: "HOUR", target: "value", value: 55.5, evalOn: "intrabar",
     });
   });
 

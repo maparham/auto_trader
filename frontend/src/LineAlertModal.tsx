@@ -37,7 +37,7 @@ function Body({ request, existing, defaults, now, onClose }: Props & { existing?
   const timeframe = existing?.params.timeframe ?? (request.mode === "create" ? request.draft.timeframe : "");
   const common = useAlertCommonState(existing, defaults, now, isEdit);
   const [condition, setCondition] = useState<AlertCondition>(existing?.condition ?? defaults.condition);
-  const [evalOn, setEvalOn] = useState<EvalOn>(existing?.params.evalOn ?? "close");
+  const [evalOn, setEvalOn] = useState<EvalOn>(existing?.params.evalOn ?? "intrabar");
   const label = lineAlertLabel(timeframe);
   const autoMsg = `${epic} ${conditionPhrase(label, condition, "price", "")}`;
 
