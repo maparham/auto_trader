@@ -84,25 +84,53 @@ export function revenueText(v: number): string {
   return v.toFixed(0);
 }
 
-/** Tooltip lines: date, session, estimated vs reported, then the figures known. */
-export function earningsLines(e: Earnings): string[] {
-  const lines = [`Earnings ${splitDateText(e.timeMs)}`];
-  if (e.session) lines.push(SESSIONS[e.session]);
-  if (e.epsActual == null) {
-    lines.push("Estimated");
-    if (e.epsEstimate != null) lines.push(`EPS est ${eps(e.epsEstimate)}`);
-    if (e.revenueEstimate != null) lines.push(`Revenue est ${revenueText(e.revenueEstimate)}`);
-    return lines;
-  }
-  lines.push("Reported");
-  if (e.epsEstimate != null) lines.push(`EPS est ${eps(e.epsEstimate)}`);
-  lines.push(`EPS actual ${eps(e.epsActual)}`);
-  if (e.surprisePct != null) {
-    lines.push(`Surprise ${e.surprisePct > 0 ? "+" : ""}${e.surprisePct.toFixed(1)}%`);
-  }
-  if (e.revenueEstimate != null) lines.push(`Revenue est ${revenueText(e.revenueEstimate)}`);
-  if (e.revenueActual != null) lines.push(`Revenue ${revenueText(e.revenueActual)}`);
-  return lines;
+export interface EarningsRow {
+  label: string;
+  estimate: string | null;
+  actual: string | null;
+}
+
+/** The popup's content: a heading, the status line, and a grid of figures
+ * (estimate vs actual), with the EPS surprise beneath it. A figure Yahoo does
+ * not have is null; a row with neither is dropped. */
+export interface EarningsView {
+  date: string;
+  status: "Reported" | "Estimated";
+  session: string | null;
+  rows: EarningsRow[];
+  /** Whether the grid has an Actual column (any figure reported). */
+  hasActual: boolean;
+  surprise: { text: string; tone: "pos" | "neg" | "flat" } | null;
+}
+
+export function earningsView(e: Earnings): EarningsView {
+  const rows: EarningsRow[] = [
+    {
+      label: "EPS",
+      estimate: e.epsEstimate != null ? eps(e.epsEstimate) : null,
+      actual: e.epsActual != null ? eps(e.epsActual) : null,
+    },
+    {
+      label: "Revenue",
+      estimate: e.revenueEstimate != null ? revenueText(e.revenueEstimate) : null,
+      actual: e.revenueActual != null ? revenueText(e.revenueActual) : null,
+    },
+  ].filter((r) => r.estimate != null || r.actual != null);
+  const sp = e.epsActual != null ? e.surprisePct : null;
+  return {
+    date: splitDateText(e.timeMs),
+    status: e.epsActual == null ? "Estimated" : "Reported",
+    session: e.session ? SESSIONS[e.session] : null,
+    rows,
+    hasActual: rows.some((r) => r.actual != null),
+    surprise:
+      sp == null
+        ? null
+        : {
+            text: `${sp > 0 ? "+" : ""}${sp.toFixed(1)}%`,
+            tone: sp > 0.05 ? "pos" : sp < -0.05 ? "neg" : "flat",
+          },
+  };
 }
 
 /** Chip size in px (EarningsMarkers.tsx); the projection keeps it on the pane. */
@@ -111,7 +139,9 @@ export const EARNINGS_CHIP = 14;
 export interface EarningsMarker {
   key: string;
   x: number;
-  lines: string[];
+  earnings: Earnings;
+  /** "Earnings 30 Jul 2026": the chip's accessible name. */
+  label: string;
   upcoming: boolean;
   /** Sits one chip higher: a split chip already holds this spot. */
   lift: boolean;
@@ -168,7 +198,8 @@ export function projectEarningsMarkers(
     out.push({
       key: `earn:${e.timeMs}`,
       x,
-      lines: earningsLines(e),
+      earnings: e,
+      label: `Earnings ${splitDateText(e.timeMs)}`,
       upcoming: e.epsActual == null,
       lift: avoidXs.some((sx) => Math.abs(sx - at) < chipW),
     });

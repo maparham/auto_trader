@@ -7366,6 +7366,40 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
    glyph; a hidden group is struck through; emphasis is weight. The strip
    sits above .chart-range-bar (left 8, bottom 8, z 11) and below the popup
    (z 60) and modals. */
+/* Earnings chip detail (EarningsMarkers.tsx): opened by a click, closed by its
+   x, Escape or a click elsewhere. Flat, like the tooltips. */
+.earn-pop {
+  position: fixed; z-index: 60; min-width: 200px; max-width: 280px; padding: 10px 12px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; font-size: 12px;
+}
+.earn-pop-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.earn-pop-title { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; }
+.earn-pop-date { font-size: 14px; font-weight: 600; margin-top: 1px; }
+.earn-pop-x {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font: inherit; font-size: 16px; line-height: 1; padding: 0 3px; border-radius: 3px;
+}
+.earn-pop-x:hover { color: var(--text); background: var(--hover); }
+.earn-pop-meta { display: flex; align-items: center; gap: 8px; margin: 6px 0 8px; color: var(--text-dim); }
+.earn-pop-status {
+  padding: 0 6px; border: 1px solid var(--border); border-radius: 3px;
+  font-size: 11px; line-height: 16px; color: var(--text);
+}
+.earn-pop-status.is-est { border-style: dashed; color: var(--text-dim); }
+.earn-pop-grid { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.earn-pop-grid th, .earn-pop-grid td { padding: 3px 0; text-align: right; font-weight: 400; }
+.earn-pop-grid thead th { font-size: 11px; color: var(--text-dim); padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.earn-pop-grid th[scope="row"] { text-align: left; color: var(--text-dim); }
+.earn-pop-grid td + td, .earn-pop-grid th + th { padding-left: 14px; }
+.earn-pop-actual { font-weight: 600; }
+.earn-pop-surprise {
+  display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px;
+  border-top: 1px solid var(--border); color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.earn-pop-surprise .is-pos { color: var(--pos); font-weight: 600; }
+.earn-pop-surprise .is-neg { color: var(--neg); font-weight: 600; }
+.earn-pop-surprise .is-flat { color: var(--text); font-weight: 600; }
 .tl-dbg-pop {
   position: fixed; z-index: 60; max-width: 340px; padding: 8px 10px;
   background: var(--bg); color: var(--text); border: 1px solid var(--border);

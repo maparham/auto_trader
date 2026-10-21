@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   _resetEarningsCache,
   barsPerMs,
-  earningsLines,
+  earningsView,
   fetchEarnings,
   projectEarningsMarkers,
   revenueText,
@@ -33,41 +33,51 @@ const upcoming = (offsetDays: number): Earnings => ({
 // One bar per 10px, bar i at x = 10 * i.
 const toX = (ts: number) => ((ts - T0) / DAY) * 10;
 
-describe("earningsLines", () => {
-  it("reads a reported quarter as date, Reported, est, actual, surprise", () => {
-    expect(earningsLines(reported)).toEqual([
-      "Earnings 30 Jul 2026",
-      "After close",
-      "Reported",
-      "EPS est 1.89",
-      "EPS actual 2.02",
-      "Surprise +6.7%",
-      "Revenue 109.4B",
-    ]);
+describe("earningsView", () => {
+  it("lays a reported quarter out as estimate vs actual with the surprise", () => {
+    expect(earningsView(reported)).toEqual({
+      date: "30 Jul 2026",
+      status: "Reported",
+      session: "After close",
+      rows: [
+        { label: "EPS", estimate: "1.89", actual: "2.02" },
+        { label: "Revenue", estimate: null, actual: "109.4B" },
+      ],
+      hasActual: true,
+      surprise: { text: "+6.7%", tone: "pos" },
+    });
   });
 
-  it("reads an upcoming report as Estimated with only the estimates", () => {
-    expect(earningsLines(upcoming(5))).toEqual([
-      "Earnings 1 Aug 2026",
-      "Estimated",
-      "EPS est 1.98",
-      "Revenue est 113.4B",
-    ]);
-    expect(earningsLines({ ...upcoming(5), epsEstimate: null, revenueEstimate: null })).toEqual([
-      "Earnings 1 Aug 2026",
-      "Estimated",
-    ]);
+  it("lays an upcoming report out as estimates only", () => {
+    expect(earningsView(upcoming(5))).toEqual({
+      date: "1 Aug 2026",
+      status: "Estimated",
+      session: null,
+      rows: [
+        { label: "EPS", estimate: "1.98", actual: null },
+        { label: "Revenue", estimate: "113.4B", actual: null },
+      ],
+      hasActual: false,
+      surprise: null,
+    });
   });
 
-  it("signs a miss without a plus and omits revenue Yahoo lacks", () => {
-    expect(earningsLines({ ...reported, epsActual: 1.8, surprisePct: -4.76, revenueActual: null }).at(-1)).toBe(
-      "Surprise -4.8%",
-    );
+  it("drops a row Yahoo has nothing for", () => {
+    const v = earningsView({ ...upcoming(5), revenueEstimate: null });
+    expect(v.rows.map((r) => r.label)).toEqual(["EPS"]);
+    expect(earningsView({ ...upcoming(5), epsEstimate: null, revenueEstimate: null }).rows).toEqual([]);
   });
 
-  it("names the session when Yahoo gave a time", () => {
-    expect(earningsLines({ ...upcoming(5), session: "pre" })[1]).toBe("Before open");
-    expect(earningsLines({ ...upcoming(5), session: "intraday" })[1]).toBe("During market hours");
+  it("tones a miss negative without a plus", () => {
+    expect(earningsView({ ...reported, epsActual: 1.8, surprisePct: -4.76 }).surprise).toEqual({
+      text: "-4.8%",
+      tone: "neg",
+    });
+  });
+
+  it("names each session", () => {
+    expect(earningsView({ ...upcoming(5), session: "pre" }).session).toBe("Before open");
+    expect(earningsView({ ...upcoming(5), session: "intraday" }).session).toBe("During market hours");
   });
 
   it("scales revenue to T, B or M", () => {
