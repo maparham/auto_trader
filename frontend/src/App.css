@@ -1023,6 +1023,9 @@
 /* A disabled item with a reason is wrapped in Tooltip's inline-flex trigger span;
    stretch it to the full menu width so the greyed row aligns with sibling items. */
 .ctxmenu > .tooltip-trigger { display: block; width: 100%; }
+/* A short menu (two one-word items) sized to its labels. */
+.ctxmenu.compact { min-width: 0; padding: 4px; }
+.ctxmenu.compact .ctx-item { padding: 6px 12px 6px 8px; }
 .ctxmenu .ctx-item:hover:not(:disabled):not(.disabled) { background: var(--accent); color: var(--accent-text); }
 .ctxmenu .ctx-item:disabled,
 .ctxmenu .ctx-item.disabled { color: var(--text-faint); cursor: default; }

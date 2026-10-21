@@ -10,7 +10,7 @@ describe("TrendlineAlertBells", () => {
   it("renders a bell at its pixel and edits on double click", () => {
     const onDoubleClick = vi.fn();
     const { container, getByLabelText } = render(
-      <TrendlineAlertBells bells={[{ id: "al-l", x: 120, y: 55 }]} onDoubleClick={onDoubleClick} />,
+      <TrendlineAlertBells bells={[{ id: "al-l", x: 120, y: 55 }]} onEdit={onDoubleClick} onDelete={vi.fn()} />,
     );
     const bell = container.querySelector(".tl-alert-bell") as HTMLElement;
     expect(bell).not.toBeNull();
@@ -27,10 +27,31 @@ describe("TrendlineAlertBells", () => {
   it("edits on keyboard activation (a click with no pointer detail)", () => {
     const onDoubleClick = vi.fn();
     const { getByLabelText } = render(
-      <TrendlineAlertBells bells={[{ id: "al-l", x: 0, y: 0 }]} onDoubleClick={onDoubleClick} />,
+      <TrendlineAlertBells bells={[{ id: "al-l", x: 0, y: 0 }]} onEdit={onDoubleClick} onDelete={vi.fn()} />,
     );
     fireEvent.click(getByLabelText("Trendline alert"), { detail: 0 });
     expect(onDoubleClick).toHaveBeenCalledWith("al-l");
+  });
+});
+
+describe("TrendlineAlertBells context menu", () => {
+  afterEach(cleanup);
+
+  it("right click opens Edit / Delete, each calling back with the bell's id", () => {
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+    const { getByLabelText, getByText, queryByText } = render(
+      <TrendlineAlertBells bells={[{ id: "al-l", x: 0, y: 0 }]} onEdit={onEdit} onDelete={onDelete} />,
+    );
+    expect(queryByText("Edit")).toBeNull();
+    fireEvent.contextMenu(getByLabelText("Trendline alert"));
+    fireEvent.click(getByText("Edit"));
+    expect(onEdit).toHaveBeenCalledWith("al-l");
+    expect(queryByText("Edit")).toBeNull();
+
+    fireEvent.contextMenu(getByLabelText("Trendline alert"));
+    fireEvent.click(getByText("Delete"));
+    expect(onDelete).toHaveBeenCalledWith("al-l");
   });
 });
 

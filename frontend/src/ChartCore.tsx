@@ -74,6 +74,7 @@ import {
 import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
 import BacktestTradeDashes, { type BacktestTradeDashesHandle } from "./BacktestTradeDashes";
 import { requestAlertEdit } from "./lib/alertEdit";
+import { deleteIndicatorAlert } from "./lib/alertsApi";
 import {
   Signal,
   alertEditRequest,
@@ -6102,7 +6103,13 @@ export default function ChartCore({
 
       <TrendlineAlertBells
         bells={lineAlertBells}
-        onDoubleClick={(id) => requestAlertEdit(id)}
+        onEdit={(id) => requestAlertEdit(id)}
+        onDelete={(id) =>
+          requestConfirm({
+            message: `Delete this trendline alert on ${symbol.epic}?`,
+            onConfirm: () => deleteIndicatorAlert(id),
+          })
+        }
       />
 
       {/* TV-style descriptive pill on the line itself — shown while the line is

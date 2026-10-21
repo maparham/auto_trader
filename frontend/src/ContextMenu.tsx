@@ -23,9 +23,11 @@ interface Props {
   y: number;
   items: MenuItem[];
   onClose: () => void;
+  // Extra class on the menu, e.g. "compact" to drop the 140px minimum width.
+  className?: string;
 }
 
-export default function ContextMenu({ x, y, items, onClose }: Props) {
+export default function ContextMenu({ x, y, items, onClose, className }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -64,7 +66,7 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
   };
 
   return (
-    <div ref={ref} className="ctxmenu" style={style}>
+    <div ref={ref} className={className ? `ctxmenu ${className}` : "ctxmenu"} style={style}>
       {items.map((it, i) => {
         const btn = (
           <button
