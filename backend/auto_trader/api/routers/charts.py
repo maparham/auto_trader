@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -30,6 +31,7 @@ from ..schemas import (
 from ..sweep_apply import candle_to_dto as _candle_dto
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 
 # How long an interactive chart read may spend FILLING history before it serves
@@ -64,6 +66,15 @@ def _mark_partial(response: Response, partial: dict) -> None:
     done = int(partial.get("done_chunks") or 0)
     total = int(partial.get("total_chunks") or 0)
     response.headers["X-Candles-Partial"] = f"{done}/{total}"
+
+
+def _log_degraded(broker_id: str, epic: str, resolution: str, degraded: dict) -> None:
+    """One line per degraded serve, so a "Broker unreachable" pill can be traced
+    to the upstream error that caused it (the header alone never reaches logs)."""
+    log.warning(
+        "candles degraded %s/%s %s: %s", broker_id, epic, resolution,
+        str(degraded.get("reason") or "broker fetch failed")[:200],
+    )
 
 
 def _mark_degraded(response: Response, degraded: dict) -> None:
@@ -103,6 +114,8 @@ async def candles(
         degraded=degraded, budget_s=CHART_FILL_BUDGET_S, partial=partial,
         max_fill_chunks=CHART_PASSTHROUGH_MAX_FILL_CHUNKS,
     )
+    if degraded:
+        _log_degraded(broker_id, epic, resolution, degraded)
     if degraded and response is not None:
         _mark_degraded(response, degraded)
     if partial and response is not None:
@@ -179,6 +192,8 @@ async def candles_synthetic(
             broker_id, name, resolution, bars, from_ts, to_ts, price_side,
             degraded=degraded, budget_s=CHART_FILL_BUDGET_S, partial=partial,
         )
+    if degraded:
+        _log_degraded(broker_id, expr, resolution, degraded)
     if degraded and response is not None:
         _mark_degraded(response, degraded)
     # Per SYMBOL, one shared budget's worth each: a combination of three symbols

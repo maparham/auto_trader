@@ -23,11 +23,16 @@ is healthy, the epic just has no data), so only real errors trip the breaker.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 T = TypeVar("T")
+
+log = logging.getLogger(__name__)
+# Logged exception text is capped: upstream error bodies can be whole HTML pages.
+_MAX_LOGGED_ERR_LEN = 200
 
 
 class BrokerUnavailable(Exception):
@@ -141,10 +146,10 @@ class BrokerHealth:
                 self._record_success(key)
             raise
         except asyncio.TimeoutError as e:
-            self._record_failure(key)
+            self._record_failure(key, f"timed out after {timeout:g}s")
             raise BrokerTimeout(key) from e
-        except Exception:
-            self._record_failure(key)
+        except Exception as e:
+            self._record_failure(key, f"{type(e).__name__}: {e}")
             raise
         else:
             self._record_success(key)
@@ -152,12 +157,21 @@ class BrokerHealth:
         finally:
             self._half_open.discard(key)  # release the trial slot (success or fail)
 
-    def _record_failure(self, key: str) -> None:
+    def _record_failure(self, key: str, why: str = "") -> None:
         n = self._fails.get(key, 0) + 1
         self._fails[key] = n
+        log.warning(
+            "broker %s call failed (%d in a row): %s",
+            key, n, why[:_MAX_LOGGED_ERR_LEN],
+        )
         if n >= self._fail_threshold:
             self._open_until[key] = self._clock() + self._cooldown
+            log.warning(
+                "broker %s breaker OPEN for %gs after %d failures",
+                key, self._cooldown, n,
+            )
 
     def _record_success(self, key: str) -> None:
         self._fails.pop(key, None)
-        self._open_until.pop(key, None)
+        if self._open_until.pop(key, None) is not None:
+            log.warning("broker %s breaker closed: call succeeded", key)
