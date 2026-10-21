@@ -23,6 +23,7 @@
 import type { Chart } from "klinecharts";
 import { tradeLabel, type TradeView } from "./trading";
 import type { JournalTrade } from "./liveJournal";
+import type { ClosedTradeView } from "./accountHistory";
 import { isReplayTradeId } from "./replayLedger";
 import {
   MARKER_OVERLAY,
@@ -200,6 +201,57 @@ export function aggregateExitsByBar(
  * Reload-stable (the loaded, culled bucket set doesn't shift on scroll in v1). */
 export function exitsCollide(clusters: ExitCluster[]): boolean {
   return clusters.some((c) => c.exits.length >= 2);
+}
+
+/** Broker-reported closes (lib/accountHistory) as journal rows, so exits flow
+ * through the SAME path as journal exits: per-fill arrows via exitMarkerSpecs and
+ * coarse-view pills via aggregateExitsByBar. Each partial close has its own close
+ * time, so journalKey stays unique across partials. A close with no broker P&L
+ * gets (exit - entry) x direction x size, the journal's own pnl unit. */
+export function historyAsJournal(trades: ClosedTradeView[]): JournalTrade[] {
+  return trades.map((t) => {
+    const dir = t.side === "buy" ? 1 : -1;
+    return {
+      ts: t.closedAt / 1000,
+      epic: t.epic,
+      leg: t.side === "buy" ? "long" : "short",
+      entry: t.entry,
+      exit: t.exit,
+      quantity: t.size,
+      pnl: t.pnl ?? (t.exit - t.entry) * dir * t.size,
+    };
+  });
+}
+
+/** ENTRY markers for broker-closed trades: one per deal (partials share it, size
+ * summed), at the matched open. Skipped while any part of the deal is still open
+ * (the position book's own `entry:<id>` marker covers it), when the open fell
+ * before the fetched range, off the loaded window, or while replaying. Keyed
+ * `hentry:` so it never collides with an open position's `entry:`. */
+export function historyEntrySpecs(history: ClosedTradeView[], o: TradeMarkerSpecOpts): TradeMarkerSpec[] {
+  if (o.replaying) return [];
+  const open = new Set(o.trades.filter((t) => t.kind === "position").map((t) => t.id));
+  const byDeal = new Map<string, { first: ClosedTradeView; size: number }>();
+  for (const t of history) {
+    if (t.epic !== o.epic || t.openedAt == null || open.has(t.dealId)) continue;
+    const seen = byDeal.get(t.dealId);
+    if (seen) seen.size += t.size;
+    else byDeal.set(t.dealId, { first: t, size: t.size });
+  }
+  const specs: TradeMarkerSpec[] = [];
+  for (const [dealId, { first, size }] of byDeal) {
+    const at = first.openedAt as number;
+    if (!drawableAt(at, o.oldestLoadedMs)) continue;
+    specs.push({
+      key: `hentry:${dealId}`,
+      timestamp: at,
+      price: first.entry,
+      label: `${tradeLabel("position", first.side)} ${size} @ ${first.entry.toFixed(o.precision)}`,
+      win: null,
+      placement: first.side === "buy" ? "below" : "above",
+    });
+  }
+  return specs;
 }
 
 interface DrawnMarker {

@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { tradeMarkerSpecs, journalKey, aggregateExitsByBar, exitsCollide } from "./tradeMarkers";
+import { historyAsJournal, historyEntrySpecs, exitMarkerSpecs } from "./tradeMarkers";
 import type { TradeView } from "./trading";
 import type { JournalTrade } from "./liveJournal";
+import type { ClosedTradeView } from "./accountHistory";
 
 // A minimal open position on epic "OIL", overridable per test.
 function position(over: Partial<TradeView> = {}): TradeView {
@@ -262,5 +264,51 @@ describe("aggregateExitsByBar — replay", () => {
   it("buckets nothing while replaying (the DOM pill layer is the other exit route)", () => {
     expect(aggregateExitsByBar([journal({ ts: 1_500 })], "OIL", bars, false)).toHaveLength(1);
     expect(aggregateExitsByBar([journal({ ts: 1_500 })], "OIL", bars, true)).toEqual([]);
+  });
+});
+
+function closed(over: Partial<ClosedTradeView> = {}): ClosedTradeView {
+  return {
+    dealId: "H1", epic: "OIL", side: "buy", size: 1, entry: 70, exit: 71,
+    openedAt: 1_000, closedAt: 4_000, closeSource: "TP", pnl: 9.5, currency: "EUR", ...over,
+  };
+}
+
+describe("broker history markers", () => {
+  it("maps closes onto the journal shape so exits reuse the journal path", () => {
+    const [j] = historyAsJournal([closed({ side: "sell", pnl: -3 })]);
+    expect(j).toEqual({ ts: 4, epic: "OIL", leg: "short", entry: 70, exit: 71, quantity: 1, pnl: -3 });
+  });
+
+  it("derives a missing pnl from the move and direction", () => {
+    expect(historyAsJournal([closed({ pnl: null, side: "sell", entry: 70, exit: 69, size: 2 })])[0].pnl).toBe(2);
+  });
+
+  it("gives each partial its own exit marker", () => {
+    const journal = historyAsJournal([closed({ closedAt: 4_000 }), closed({ closedAt: 5_000, exit: 72 })]);
+    const keys = exitMarkerSpecs({ ...base, trades: [], journal }).map((s) => s.key);
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it("draws one hentry per deal, at the open, with the summed size", () => {
+    const specs = historyEntrySpecs(
+      [closed({ size: 1, closedAt: 4_000 }), closed({ size: 2, closedAt: 5_000 })],
+      { ...base, trades: [], journal: [] },
+    );
+    expect(specs).toHaveLength(1);
+    expect(specs[0]).toMatchObject({ key: "hentry:H1", timestamp: 1_000, price: 70, placement: "below", win: null });
+    expect(specs[0].label).toContain("3");
+  });
+
+  it("skips the entry while the deal is still open, when the open time is unknown, or off-window", () => {
+    const opts = { ...base, journal: [] };
+    expect(historyEntrySpecs([closed()], { ...opts, trades: [position({ id: "H1" })] })).toEqual([]);
+    expect(historyEntrySpecs([closed({ openedAt: null })], { ...opts, trades: [] })).toEqual([]);
+    expect(historyEntrySpecs([closed()], { ...opts, trades: [], oldestLoadedMs: 2_000 })).toEqual([]);
+  });
+
+  it("draws nothing for another epic or while replaying", () => {
+    expect(historyEntrySpecs([closed({ epic: "GOLD" })], { ...base, trades: [], journal: [] })).toEqual([]);
+    expect(historyEntrySpecs([closed()], { ...base, trades: [], journal: [], replaying: true })).toEqual([]);
   });
 });

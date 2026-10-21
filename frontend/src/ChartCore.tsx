@@ -194,9 +194,12 @@ import {
   exitMarkerSpecs,
   aggregateExitsByBar,
   exitsCollide,
+  historyAsJournal,
+  historyEntrySpecs,
   type ExitCluster,
 } from "./lib/tradeMarkers";
 import { journalSignal } from "./lib/liveJournal";
+import { subscribeMarkerHistory, type MarkerHistory } from "./lib/accountHistory";
 import TradeExitAggMarkers, { type TradeExitAggMarkersHandle } from "./TradeExitAggMarkers";
 import SplitMarkers, { type SplitMarkersHandle } from "./SplitMarkers";
 import EarningsMarkers, { type EarningsMarkersHandle } from "./EarningsMarkers";
@@ -831,6 +834,10 @@ export default function ChartCore({
   // Latest journal (closed live trades) from journalSignal — the exit-marker
   // source, mirrored so an epic change / redraw can re-filter without a poll.
   const journalRef = useRef(journalSignal.value);
+  // Broker-reported closes for the trades account (lib/accountHistory). When
+  // active they REPLACE the journal as the exit source and add closed-trade
+  // entries; inactive (paper, other brokers) leaves the journal path as it was.
+  const markerHistRef = useRef<MarkerHistory>({ active: false, trades: [] });
   // Redraw the live trade markers filtered to the current epic; set in chart init,
   // called again after a symbol-change rehydrate (paired with posDrawRef).
   const tradeMarkersDrawRef = useRef<() => void>(() => {});
@@ -3740,9 +3747,11 @@ export default function ChartCore({
         // but runs on every trades/journal update AND after every data load
         // (useLiveMarketData calls tradeMarkersDrawRef), sessions included.
         const replaying = handle.replayRef.current?.isActive() ?? false;
+        const hist = markerHistRef.current;
+        const exitSource = hist.active ? historyAsJournal(hist.trades) : journalRef.current;
         const opts = {
           trades: tradesRef.current,
-          journal: journalRef.current,
+          journal: exitSource,
           epic: epicRef.current,
           precision: precisionRef.current,
           oldestLoadedMs,
@@ -3753,9 +3762,12 @@ export default function ChartCore({
         // any bar packs ≥2 closes, draw one aggregate pill per bar instead of
         // per-fill arrows (mirrors the backtest's native/aggregate render gate,
         // but data-driven since live markers have no fixed native timeframe).
-        const entry = entryMarkerSpecs(opts);
+        const entry = [
+          ...entryMarkerSpecs(opts),
+          ...(hist.active ? historyEntrySpecs(hist.trades, opts) : []),
+        ];
         const clusters = aggregateExitsByBar(
-          journalRef.current,
+          exitSource,
           epicRef.current,
           bars.map((k) => ({ timestamp: k.timestamp, high: k.high })),
           replaying,
@@ -3790,6 +3802,11 @@ export default function ChartCore({
       });
       const unsubJournal = journalSignal.subscribe((j) => {
         journalRef.current = j;
+        drawTradeMarkers();
+        handle.redrawRef.current(); // re-project the coarse-TF exit pills
+      });
+      const unsubHistory = subscribeMarkerHistory((h) => {
+        markerHistRef.current = h;
         drawTradeMarkers();
         handle.redrawRef.current(); // re-project the coarse-TF exit pills
       });
@@ -3856,6 +3873,7 @@ export default function ChartCore({
       posUnsubRef.current = () => {
         unsubTrades();
         unsubJournal();
+        unsubHistory();
         unsubPending();
         unsubDraft();
         unsubConfirm();
