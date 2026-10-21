@@ -48,12 +48,14 @@ def test_build_registry_ships_capital_and_paper() -> None:
         "broker": "capital",
         "env": "paper",
         "isRealMoney": False,
+        "history": False,
     }
     assert keys["capital:demo"] == {
         "key": "capital:demo",
         "broker": "capital",
         "env": "demo",
         "isRealMoney": False,
+        "history": True,
     }
     # A data-only broker (dukascopy: no executor) gets a synthetic pseudo-account
     # so the account-keyed frontend can select it, flagged dataOnly so the dock
