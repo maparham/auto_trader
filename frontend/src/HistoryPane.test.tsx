@@ -102,6 +102,31 @@ describe("HistoryPane", () => {
     expect(select).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the clicked row selected across a remount, per account", () => {
+    const row = { dealId: "D1", epic: "TSLA", side: "buy" as const, size: 1, entry: 400, exit: 430,
+      openedAt: 1_000, closedAt: 2_000, closeSource: "TP", pnl: 12.5, currency: "EUR" };
+    state = { loading: false, error: null, data: { trades: [row, { ...row, dealId: "D2", epic: "MSFT" }], ledger: [], totals } };
+    render(<HistoryPane account="capital:sel" onSelectTrade={() => {}} />);
+    fireEvent.click(screen.getByText("MSFT"));
+    expect(screen.getByText("MSFT").closest("tr")!.className).toContain("pp-selected");
+    expect(screen.getByText("TSLA").closest("tr")!.className).not.toContain("pp-selected");
+    cleanup();
+    render(<HistoryPane account="capital:sel" onSelectTrade={() => {}} />);
+    expect(screen.getByText("MSFT").closest("tr")!.className).toContain("pp-selected");
+    cleanup();
+    render(<HistoryPane account="capital:other" onSelectTrade={() => {}} />);
+    expect(screen.getByText("MSFT").closest("tr")!.className).not.toContain("pp-selected");
+  });
+
+  it("does not select rows that have no click handler", () => {
+    const row = { dealId: "D9", epic: "TSLA", side: "buy" as const, size: 1, entry: 400, exit: 430,
+      openedAt: 1_000, closedAt: 2_000, closeSource: "TP", pnl: 12.5, currency: "EUR" };
+    state = { loading: false, error: null, data: { trades: [row], ledger: [], totals } };
+    render(<HistoryPane account="capital:plain" />);
+    fireEvent.click(screen.getByText("TSLA"));
+    expect(screen.getByText("TSLA").closest("tr")!.className).not.toContain("pp-selected");
+  });
+
   it("labels net cash and flags a truncated ledger only when the server says so", () => {
     state = { loading: false, error: null, data: { trades: [], ledger: [], totals } };
     render(<HistoryPane account="capital:demo" />);

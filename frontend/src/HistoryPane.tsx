@@ -25,6 +25,12 @@ import type { TradeRow } from "./lib/tradeList";
 
 const RANGES: HistoryDays[] = [7, 30, 90];
 
+// The clicked trade row, per account, at module level: it stays selected across
+// re-sorts, range switches, the 60 s refresh and the pane unmounting when
+// another dock tab opens. Keyed like the row (dealId + close time).
+const selectedByAccount = new Map<string, string>();
+const tradeKey = (t: { dealId: string; closedAt: number }) => `${t.dealId}:${t.closedAt}`;
+
 interface Props {
   account: string;
   precisionFor?: (epic: string) => number;
@@ -57,6 +63,12 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, onSel
   const [view, setView] = useState<"trades" | "ledger">("trades");
   const [sort, setSort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
   const [state, setState] = useState<HistoryState>({ loading: false, error: null, data: null });
+  const [selected, setSelected] = useState<string | null>(() => selectedByAccount.get(account) ?? null);
+  useEffect(() => setSelected(selectedByAccount.get(account) ?? null), [account]);
+  const select = (key: string) => {
+    selectedByAccount.set(account, key);
+    setSelected(key);
+  };
 
   useEffect(() => subscribeHistory(account, days, setState), [account, days]);
 
@@ -176,9 +188,14 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, onSel
                 {sortClosedTrades(data.trades, sort).map((t, i) => (
                   <tr
                     // Index tiebreak: two partials can close in the same ms.
-                    key={`${t.dealId}:${t.closedAt}:${i}`}
-                    className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}${onJumpToEpic || onSelectTrade ? " pp-clickable" : ""}`}
+                    key={`${tradeKey(t)}:${i}`}
+                    className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}${
+                      onJumpToEpic || onSelectTrade ? " pp-clickable" : ""
+                    }${selected === tradeKey(t) ? " pp-selected" : ""}`}
+                    aria-selected={selected === tradeKey(t)}
                     onClick={() => {
+                      if (!onJumpToEpic && !onSelectTrade) return;
+                      select(tradeKey(t));
                       const row = onSelectTrade ? historyTradeRow(t) : null;
                       if (row) onSelectTrade!(row);
                       else onJumpToEpic?.(t.epic, precisionFor ? precisionFor(t.epic) : priceDecimals(t.entry));

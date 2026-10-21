@@ -5477,6 +5477,9 @@
 .pp-history .pp-row:hover { background: none; }
 .pp-history .pp-row.pp-clickable { cursor: pointer; }
 .pp-history .pp-row.pp-clickable:hover { background: var(--hover); }
+/* The sticky selected row keeps its plate under the pointer. */
+.pp-history .pp-row.pp-dir-long.pp-selected:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.pp-history .pp-row.pp-dir-short.pp-selected:hover { background: color-mix(in srgb, var(--neg) 16%, transparent); }
 .pp-dir-long { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
 .pp-dir-short { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--neg) 50%, transparent); }
 /* Focused (chart on screen) — the rule brightens to full hue. */
