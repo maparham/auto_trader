@@ -10,7 +10,7 @@
 
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
-import Tooltip from "./components/Tooltip";
+import InfoTip from "./components/InfoTip";
 import { computePlacement } from "./components/tooltipPosition";
 import { EARNINGS_CHIP, earningsView, type EarningsMarker, type EarningsView } from "./lib/earnings";
 import type { Clock } from "./lib/timeFormat";
@@ -181,9 +181,10 @@ const TIPS: Record<string, string[]> = {
 
 function Term({ label }: { label: string }) {
   return (
-    <Tooltip title={label} content={TIPS[label]}>
-      <span className="earn-pop-term">{label}</span>
-    </Tooltip>
+    <span className="earn-pop-term">
+      {label}
+      <InfoTip title={label} text={TIPS[label]} />
+    </span>
   );
 }
 

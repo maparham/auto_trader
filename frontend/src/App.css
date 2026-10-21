@@ -7393,8 +7393,8 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
 .earn-pop-grid th[scope="row"] { text-align: left; color: var(--text-dim); }
 .earn-pop-grid td + td, .earn-pop-grid th + th { padding-left: 14px; }
 .earn-pop-actual { font-weight: 600; }
-/* A term with a plain-language tooltip: dotted underline says "hover me". */
-.earn-pop-term { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+/* A term with a plain-language tooltip behind its trailing info icon. */
+.earn-pop-term { display: inline-flex; align-items: center; gap: 4px; }
 .earn-pop-surprise {
   display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px;
   border-top: 1px solid var(--border); color: var(--text-dim); font-variant-numeric: tabular-nums;

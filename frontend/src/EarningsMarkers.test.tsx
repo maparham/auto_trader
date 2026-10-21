@@ -94,6 +94,7 @@ describe("EarningsMarkers", () => {
     fireEvent.click(screen.getByRole("button", { name: "Earnings 30 Jul 2026" }));
     const terms = [...screen.getByRole("dialog").querySelectorAll(".earn-pop-term")].map((n) => n.textContent);
     expect(terms).toEqual(["Estimate", "Actual", "EPS", "Revenue", "EPS surprise"]);
+    expect(screen.getByRole("button", { name: "About EPS" })).toBeTruthy();
   });
 
   it("stays open on a press inside the popup", () => {
