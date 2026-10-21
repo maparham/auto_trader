@@ -1,0 +1,75 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import type { HistoryState } from "./lib/accountHistory";
+
+let state: HistoryState = { loading: false, error: null, data: null };
+const subscribe = vi.fn((_a: string, _d: number, fn: (s: HistoryState) => void) => {
+  fn(state);
+  return () => {};
+});
+const refresh = vi.fn();
+vi.mock("./lib/accountHistory", async (orig) => ({
+  ...(await orig<typeof import("./lib/accountHistory")>()),
+  subscribeHistory: (a: string, d: number, fn: (s: HistoryState) => void) => subscribe(a, d, fn),
+  refreshHistory: (a: string) => refresh(a),
+}));
+
+import HistoryPane from "./HistoryPane";
+
+const totals = { realized: 0, funding: 0, deposits: 0, withdrawals: 0, currency: "EUR" };
+afterEach(() => {
+  cleanup();
+  subscribe.mockClear();
+});
+
+describe("HistoryPane", () => {
+  it("shows an empty state and zero totals for an account with no history", () => {
+    state = { loading: false, error: null, data: { trades: [], ledger: [], totals } };
+    render(<HistoryPane account="capital:demo" />);
+    expect(screen.getByText("No closed trades in this range.")).toBeTruthy();
+    expect(screen.getByText("Realized").parentElement!.textContent).toContain("0");
+  });
+
+  it("marks a trade opened before the range and colours P&L", () => {
+    state = {
+      loading: false, error: null,
+      data: {
+        trades: [{ dealId: "D1", epic: "TSLA", side: "buy", size: 1, entry: 400, exit: 430, openedAt: null,
+          closedAt: 1_792_570_721_723, closeSource: "TP", pnl: 12.5, currency: "EUR" }],
+        ledger: [], totals: { ...totals, realized: 12.5 },
+      },
+    };
+    render(<HistoryPane account="capital:demo" />);
+    expect(screen.getByText("before range")).toBeTruthy();
+    expect(screen.getByText("+12.50").className).toContain("pp-pos");
+  });
+
+  it("switches range and subscribes with the new days", () => {
+    state = { loading: false, error: null, data: { trades: [], ledger: [], totals } };
+    render(<HistoryPane account="capital:demo" />);
+    expect(subscribe).toHaveBeenLastCalledWith("capital:demo", 30, expect.any(Function));
+    fireEvent.click(screen.getByRole("button", { name: "90d" }));
+    expect(subscribe).toHaveBeenLastCalledWith("capital:demo", 90, expect.any(Function));
+  });
+
+  it("shows the error with a Retry that refetches", () => {
+    state = { loading: false, error: "history failed: boom", data: null };
+    render(<HistoryPane account="capital:demo" />);
+    expect(screen.getByText(/boom/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refresh).toHaveBeenCalledWith("capital:demo");
+  });
+
+  it("lists ledger rows under the Ledger toggle", () => {
+    state = {
+      loading: false, error: null,
+      data: { trades: [], totals, ledger: [{ at: 1, kind: "SWAP", epic: null, note: "Overnight fee",
+        amount: -0.42, currency: "EUR", reference: "r", dealId: null }] },
+    };
+    render(<HistoryPane account="capital:demo" />);
+    fireEvent.click(screen.getByRole("button", { name: "Ledger" }));
+    expect(screen.getAllByText("Funding")).toHaveLength(2); // totals label + the row's type
+    expect(screen.getByText("Overnight fee")).toBeTruthy();
+  });
+});

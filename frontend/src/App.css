@@ -5519,6 +5519,30 @@
   outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px;
 }
 
+/* History tab (HistoryPane): range + view chips and the totals line. Active
+   chip is a quiet gray fill, not the solid accent, matching .notif-toggle-btn's
+   muted-toggle convention for persistent on/off state rather than a momentary
+   selection. */
+.pp-history-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 6px 12px;
+}
+.pp-history-chips { display: flex; gap: 4px; }
+.pp-chip {
+  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-dim); font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer;
+}
+.pp-chip:hover { color: var(--text); }
+.pp-chip.on {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text); font-weight: 600;
+}
+.pp-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pp-history-totals {
+  display: flex; gap: 16px; margin-left: auto; font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pp-margin-fill, .pp-chevron, .pp-row, .pp-iconbtn, .pp-group-chevron { transition: none; }
 }
