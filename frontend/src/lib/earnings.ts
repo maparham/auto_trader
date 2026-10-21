@@ -20,7 +20,18 @@ export interface Earnings {
   revenueEstimate: number | null;
   /** The last ~5 reported quarters only. */
   revenueActual: number | null;
+  /** Before the open, during the session or after the close; null when Yahoo
+   * gave only the date. Its times are hour-rounded, so this is all they say. */
+  session: EarningsSession | null;
 }
+
+export type EarningsSession = "pre" | "intraday" | "post";
+
+const SESSIONS: Record<EarningsSession, string> = {
+  pre: "Before open",
+  intraday: "During market hours",
+  post: "After close",
+};
 
 const TTL_MS = 6 * 3600_000;
 const cache = new Map<string, { at: number; p: Promise<Earnings[]> }>();
@@ -51,6 +62,7 @@ export function fetchEarnings(epic: string, brokerId: string): Promise<Earnings[
         surprisePct: num(e.surprisePct),
         revenueEstimate: num(e.revenueEstimate),
         revenueActual: num(e.revenueActual),
+        session: typeof e.session === "string" && e.session in SESSIONS ? (e.session as EarningsSession) : null,
       }))
       .sort((a, b) => a.timeMs - b.timeMs);
   })().catch(() => {
@@ -72,9 +84,10 @@ export function revenueText(v: number): string {
   return v.toFixed(0);
 }
 
-/** Tooltip lines: date, estimated vs reported, then the EPS figures known. */
+/** Tooltip lines: date, session, estimated vs reported, then the figures known. */
 export function earningsLines(e: Earnings): string[] {
   const lines = [`Earnings ${splitDateText(e.timeMs)}`];
+  if (e.session) lines.push(SESSIONS[e.session]);
   if (e.epsActual == null) {
     lines.push("Estimated");
     if (e.epsEstimate != null) lines.push(`EPS est ${eps(e.epsEstimate)}`);

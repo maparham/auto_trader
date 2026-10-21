@@ -132,6 +132,7 @@ async def market_earnings(
                 "surprisePct": e.surprise_pct,
                 "revenueEstimate": e.revenue_estimate,
                 "revenueActual": e.revenue_actual,
+                "session": e.session,
             }
             for e in rows
         ],

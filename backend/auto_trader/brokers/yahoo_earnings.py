@@ -36,6 +36,11 @@ _DATE_ONLY_HOUR = 12
 # A report lands within this of its fiscal quarter's end (AAPL: ~30 days;
 # late filers up to ~90).
 _REPORT_LAG_S = 100 * 86_400
+# Report session by the exchange-local hour Yahoo stamps. Its times are
+# hour-rounded and an upcoming report past a DST switch can read an hour early
+# (AAPL's 16:00 shows as 15:00), so 15:00 still counts as after the close.
+_OPEN_H = 9.5
+_AFTER_CLOSE_H = 15.0
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,7 @@ class Earnings:
     surprise_pct: float | None
     revenue_estimate: float | None = None  # upcoming report only
     revenue_actual: float | None = None  # the last ~5 reported quarters only
+    session: str | None = None  # "pre" | "intraday" | "post"; None when only the date is known
 
 
 def _num(v: object) -> float | None:
@@ -54,6 +60,15 @@ def _num(v: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return None if math.isnan(f) or math.isinf(f) else f
+
+
+def report_session(local: dt.datetime) -> str:
+    """Before the open, during the session or after the close, from the
+    report's exchange-local wall time."""
+    h = local.hour + local.minute / 60
+    if h < _OPEN_H:
+        return "pre"
+    return "post" if h >= _AFTER_CLOSE_H else "intraday"
 
 
 def _scraped(t: object) -> list[Earnings]:
@@ -66,6 +81,8 @@ def _scraped(t: object) -> list[Earnings]:
             eps_estimate=_num(row.get("EPS Estimate")),
             eps_actual=_num(row.get("Reported EPS")),
             surprise_pct=_num(row.get("Surprise(%)")),
+            # The index is in the exchange's own timezone.
+            session=report_session(idx),
         )
         for idx, row in df.iterrows()
     ]

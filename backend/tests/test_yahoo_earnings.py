@@ -51,8 +51,10 @@ def test_scraped_rows_carry_estimate_actual_and_surprise(monkeypatch):
     assert up.eps_actual is None and up.surprise_pct is None and up.eps_estimate == 1.98
     assert past == Earnings(
         ts=int(pd.Timestamp("2026-07-30 16:00", tz="America/New_York").timestamp()),
-        eps_estimate=1.89, eps_actual=2.02, surprise_pct=6.74,
+        eps_estimate=1.89, eps_actual=2.02, surprise_pct=6.74, session="post",
     )
+    # 15:00 is Yahoo's DST-skewed 16:00: still after the close.
+    assert up.session == "post"
 
 
 def test_revenue_estimate_and_actuals_attach_to_their_reports(monkeypatch):
@@ -88,6 +90,21 @@ def test_calendar_fills_in_when_the_scrape_fails(monkeypatch):
         ts=int(dt.datetime(2026, 11, 2, 12, tzinfo=dt.timezone.utc).timestamp()),
         eps_estimate=1.98, eps_actual=None, surprise_pct=None, revenue_estimate=113.4e9,
     )]
+
+
+def test_report_session_by_exchange_local_hour():
+    ny = lambda h, m=0: pd.Timestamp(f"2026-10-13 {h:02d}:{m:02d}", tz="America/New_York")  # noqa: E731
+    assert ye.report_session(ny(6)) == "pre"
+    assert ye.report_session(ny(9, 15)) == "pre"
+    assert ye.report_session(ny(12)) == "intraday"
+    assert ye.report_session(ny(16)) == "post"
+    assert ye.report_session(ny(20)) == "post"
+
+
+def test_calendar_only_date_has_no_session(monkeypatch):
+    cal = {"Earnings Date": [dt.date(2026, 11, 2)]}
+    _patch(monkeypatch, FakeTicker(cal=cal, scrape_error=ImportError("lxml")))
+    assert ye.fetch_yahoo_earnings("AAPL")[0].session is None
 
 
 def test_no_earnings_anywhere_is_empty(monkeypatch):
