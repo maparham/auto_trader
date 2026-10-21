@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 
 // vi.mock factories are hoisted ABOVE const declarations: a plain
 // `const add = vi.fn(...)` referenced inside the factory would throw (TDZ).
@@ -140,7 +140,9 @@ describe("IndicatorAlertModal", () => {
     describeFn.mockResolvedValue(RSI_DESC);
     render(<IndicatorAlertModal request={{ mode: "edit", id: "al-1" }} defaults={DEFAULT_ALERT_DEFAULTS} now={0} onClose={() => {}} />);
     await screen.findByText("happens");
-    expect((screen.getByLabelText("On bar close") as HTMLInputElement).checked).toBe(true);
+    // The fallback is an effect that runs after the described pane renders:
+    // wait for it rather than racing it (it lost on loaded CI runners).
+    await waitFor(() => expect((screen.getByLabelText("On bar close") as HTMLInputElement).checked).toBe(true));
     expect((screen.getByLabelText("As it happens") as HTMLInputElement).checked).toBe(false);
   });
 
