@@ -68,6 +68,8 @@ export interface HistoryState {
 export interface MarkerHistory {
   active: boolean;
   trades: ClosedTradeView[];
+  /** The History row selected for this account, drawn as its transient box. */
+  selected?: ClosedTradeView | null;
 }
 
 interface ApiTrade {
@@ -268,7 +270,7 @@ export function subscribeMarkerHistory(fn: (h: MarkerHistory) => void): () => vo
     const picked = historySelectionSignal.value.get(current);
     const trades = currentAll ? [...all] : [];
     if (picked && !trades.some((t) => closedTradeKey(t) === closedTradeKey(picked))) trades.push(picked);
-    fn({ active: true, trades });
+    fn({ active: true, trades, selected: picked ?? null });
   };
   const sync = () => {
     const account = tradesAccountSignal.value;

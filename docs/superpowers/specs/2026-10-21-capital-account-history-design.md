@@ -188,9 +188,12 @@ the tab switch; its `SortKey`/`POSITION_COLUMNS` stay tied to open trades.
 - Trades columns: Symbol, Side, Qty, Entry, Exit, Opened, Closed, Closed
   by (TP / SL / Manual / System / Stop-out), P&L. Sortable, default Closed
   desc. Clicking a row on desktop shows the trade through App's trade-list
-  jump (`jumpToTrade`: open the chart, page in history, draw the one
-  trade box, scroll to it); a row with no known open time only focuses
-  the chart;
+  jump (`jumpToTrade` with `sketch: false`: open the chart, page in
+  history, scroll to it) and the chart draws the trade box itself
+  (`lib/historyTradeBox.ts`): a locked overlay outside the drawing
+  controller, so it can't be moved and is never persisted; it goes with
+  the selection (a second click deselects, an account switch, a reload).
+  A row with no known open time only focuses the chart;
   on the phone a tap opens it on the chart tab through `showMobileEpic`,
   the positions sheet's "Show on chart" path, with the entry price's
   decimals as the precision guess;

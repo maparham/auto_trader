@@ -522,10 +522,7 @@ export default function App() {
   // --- trade-list panel → chart navigation -----------------------------------
   const brokerIdRef = useRef(brokerId);
   brokerIdRef.current = brokerId;
-  const { jumpToTrade, clearTradeBox } = useTradeBoxJump({ readyRef, readyTick, tabsRef, brokerIdRef, setTabs, jumpToEpic });
-  // The one trade box is shared by the Trade list panel and the History tab;
-  // deselecting a History row clears it only if History drew the current one.
-  const historyOwnsBoxRef = useRef(false);
+  const jumpToTrade = useTradeBoxJump({ readyRef, readyTick, tabsRef, brokerIdRef, setTabs, jumpToEpic });
 
   // Open (or reuse) the chart for an alert and select its line. The select is
   // deferred via pendingSelectRef (see resolvePendingSelect) — resolvePendingSelect
@@ -1108,10 +1105,7 @@ export default function App() {
               masked session exists to conceal. */}
           {tradeListOpen && (
             <TradeListPanel
-              onSelect={(t) => {
-                historyOwnsBoxRef.current = false;
-                void jumpToTrade(t);
-              }}
+              onSelect={jumpToTrade}
               onClose={() => tradeListPanelOpen.set(false)}
               brokerId={brokerId}
               hidden={patternPanelHidden}
@@ -1203,15 +1197,9 @@ export default function App() {
             trading={settings.trading}
             confirmLineEdits={settings.trading.confirmLineEdits}
             onJumpToEpic={jumpToEpic}
-            onSelectTrade={(t) => {
-              historyOwnsBoxRef.current = true;
-              void jumpToTrade(t);
-            }}
-            onDeselectTrade={() => {
-              if (!historyOwnsBoxRef.current) return;
-              historyOwnsBoxRef.current = false;
-              clearTradeBox();
-            }}
+            // History's box is the chart's own transient overlay (lib/historyTradeBox),
+            // so the jump only opens, pages and scrolls.
+            onSelectTrade={(t) => void jumpToTrade(t, { sketch: false })}
             maximized={dockMaximized}
             onToggleMaximize={() => setDockMaximized((m) => !m)}
           />

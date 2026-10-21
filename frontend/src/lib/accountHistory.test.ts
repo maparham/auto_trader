@@ -188,11 +188,12 @@ describe("subscribeMarkerHistory", () => {
     const off = subscribeMarkerHistory((h) => seen.push(h));
     await flush();
     // Active (journal exits stay suppressed) but empty.
-    expect(seen.at(-1)).toEqual({ active: true, trades: [] });
+    expect(seen.at(-1)).toEqual({ active: true, trades: [], selected: null });
     const picked = { dealId: "OLD", epic: "TSLA", side: "buy" as const, size: 1, entry: 1, exit: 2,
       openedAt: 1, closedAt: 2, closeSource: "TP", pnl: 1, currency: "EUR" };
     selectHistoryTrade("capital:demo", picked);
     expect(seen.at(-1)!.trades.map((t) => t.dealId)).toEqual(["OLD"]);
+    expect(seen.at(-1)!.selected?.dealId).toBe("OLD");
     // Another account's pick does not leak onto this chart.
     selectHistoryTrade("capital:demo", null);
     selectHistoryTrade("capital-live:live", picked);

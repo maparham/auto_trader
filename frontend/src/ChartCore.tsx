@@ -200,6 +200,7 @@ import {
 } from "./lib/tradeMarkers";
 import { journalSignal } from "./lib/liveJournal";
 import { subscribeMarkerHistory, type MarkerHistory } from "./lib/accountHistory";
+import { createHistoryTradeBox, type HistoryTradeBox } from "./lib/historyTradeBox";
 import TradeExitAggMarkers, { type TradeExitAggMarkersHandle } from "./TradeExitAggMarkers";
 import SplitMarkers, { type SplitMarkersHandle } from "./SplitMarkers";
 import EarningsMarkers, { type EarningsMarkersHandle } from "./EarningsMarkers";
@@ -838,6 +839,7 @@ export default function ChartCore({
   // active they REPLACE the journal as the exit source and add closed-trade
   // entries; inactive (paper, other brokers) leaves the journal path as it was.
   const markerHistRef = useRef<MarkerHistory>({ active: false, trades: [] });
+  const historyBoxRef = useRef<HistoryTradeBox | null>(null);
   // Redraw the live trade markers filtered to the current epic; set in chart init,
   // called again after a symbol-change rehydrate (paired with posDrawRef).
   const tradeMarkersDrawRef = useRef<() => void>(() => {});
@@ -3735,10 +3737,15 @@ export default function ChartCore({
       // click is placing the anchor, not selecting the position under it.
       const tradeMarkers = new TradeMarkers(chart, () => avwapAnchorMode.value != null);
       tradeMarkersRef.current = tradeMarkers;
+      // The selected History row's box: locked and never persisted, it follows
+      // the selection through the same paint as the closed-trade markers.
+      const historyBox = createHistoryTradeBox(chart);
+      historyBoxRef.current = historyBox;
       const drawTradeMarkers = () => {
         if (isSynthetic(epicRef.current)) {
           tradeMarkers.render([]); // analysis-only: no trade markers
           exitClustersRef.current = [];
+          historyBox.sync(null, epicRef.current, []);
           return;
         }
         const bars = chart.getDataList() ?? [];
@@ -3748,6 +3755,7 @@ export default function ChartCore({
         // (useLiveMarketData calls tradeMarkersDrawRef), sessions included.
         const replaying = handle.replayRef.current?.isActive() ?? false;
         const hist = markerHistRef.current;
+        historyBox.sync(hist.active && !replaying ? hist.selected : null, epicRef.current, bars);
         const exitSource = hist.active ? historyAsJournal(hist.trades) : journalRef.current;
         const opts = {
           trades: tradesRef.current,
@@ -3874,6 +3882,8 @@ export default function ChartCore({
         unsubTrades();
         unsubJournal();
         unsubHistory();
+        historyBoxRef.current?.dispose();
+        historyBoxRef.current = null;
         unsubPending();
         unsubDraft();
         unsubConfirm();

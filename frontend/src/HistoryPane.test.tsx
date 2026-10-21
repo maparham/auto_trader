@@ -126,14 +126,12 @@ describe("HistoryPane", () => {
       openedAt: 1_000, closedAt: 2_000, closeSource: "TP", pnl: 12.5, currency: "EUR" };
     state = { loading: false, error: null, data: { trades: [row], ledger: [], totals } };
     const select = vi.fn();
-    const deselect = vi.fn();
-    render(<HistoryPane account="capital:desel" onSelectTrade={select} onDeselectTrade={deselect} />);
+    render(<HistoryPane account="capital:desel" onSelectTrade={select} />);
     fireEvent.click(screen.getByText("TSLA"));
     expect(screen.getByText("TSLA").closest("tr")!.className).toContain("pp-selected");
     fireEvent.click(screen.getByText("TSLA"));
     expect(screen.getByText("TSLA").closest("tr")!.className).not.toContain("pp-selected");
     expect(select).toHaveBeenCalledTimes(1);
-    expect(deselect).toHaveBeenCalledTimes(1);
   });
 
   it("toggles Show all on chart", async () => {

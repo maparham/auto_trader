@@ -47,8 +47,6 @@ interface Props {
   // Desktop: show the trade itself (App's trade-list jump: box + scroll). Rows
   // with no known open time fall back to onJumpToEpic.
   onSelectTrade?: (row: TradeRow) => void;
-  // A second click on the selected row deselects it (nothing of it stays drawn).
-  onDeselectTrade?: () => void;
   tips?: boolean;
 }
 
@@ -72,7 +70,6 @@ export default function HistoryPane({
   precisionFor,
   onJumpToEpic,
   onSelectTrade,
-  onDeselectTrade,
   tips = true,
 }: Props) {
   const [days, setDays] = useState<HistoryDays>(30);
@@ -228,9 +225,9 @@ export default function HistoryPane({
                     aria-selected={selected === tradeKey(t)}
                     onClick={() => {
                       if (!onJumpToEpic && !onSelectTrade) return;
+                      // A second click deselects: its markers and box leave the chart.
                       if (selected === tradeKey(t)) {
                         selectHistoryTrade(account, null);
-                        onDeselectTrade?.();
                         return;
                       }
                       selectHistoryTrade(account, t);

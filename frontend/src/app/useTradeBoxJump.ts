@@ -49,7 +49,7 @@ export function useTradeBoxJump({
   // deferred idiom as pendingSelectRef: a brand-new tab's chart hasn't mounted
   // or rehydrated yet, so the request parks here and resolves once the target
   // cell reports the right hydrated epic.
-  const pendingTradeBoxRef = useRef<{ cellId: string; epic: string; trade: TradeRow } | null>(null);
+  const pendingTradeBoxRef = useRef<{ cellId: string; epic: string; trade: TradeRow; sketch: boolean } | null>(null);
   // Guards the async placement against rapid row clicks: each click bumps the
   // epoch, and a placement that comes back from its candle fetch to find a
   // newer epoch drops out instead of deleting the newer click's box.
@@ -159,12 +159,17 @@ export function useTradeBoxJump({
           );
         }
       }
-      removePreviousTradeListBox();
-      const id = liveEntry.controller.overlays.placeDrawing({
-        name: "tradeBox",
-        points: spec.points,
-        extendData: { text: spec.text, priceLabels: true },
-      });
+      // sketch=false (History): the chart draws its own transient box off the
+      // selection, so no drawing is placed and the trade list's box is left be.
+      let id: string | null = null;
+      if (p.sketch) {
+        removePreviousTradeListBox();
+        id = liveEntry.controller.overlays.placeDrawing({
+          name: "tradeBox",
+          points: spec.points,
+          extendData: { text: spec.text, priceLabels: true },
+        });
+      }
       const cell = tabsRef.current.flatMap((tt) => tt.cells).find((c) => c.id === p.cellId);
       if (id && cell) {
         try {
@@ -231,7 +236,7 @@ export function useTradeBoxJump({
   // Same-tab mode reuses ONE tab for symbols not open anywhere; the ref tracks
   // which (session-only — a fresh session starts with the first click's tab).
   const tradeListTabRef = useRef<string | null>(null);
-  const jumpToTrade = async (t: TradeRow) => {
+  const jumpToTrade = async (t: TradeRow, { sketch = true }: { sketch?: boolean } = {}) => {
     const epoch = ++tradeBoxEpochRef.current;
     // Remember only a tab WE opened (created or symbol-replaced) as the reuse
     // target — adopting a tab that merely already showed the symbol would let
@@ -242,15 +247,8 @@ export function useTradeBoxJump({
       opened: (tabId) => { tradeListTabRef.current = tabId; },
     });
     if (epoch !== tradeBoxEpochRef.current) return; // a newer click superseded this one
-    pendingTradeBoxRef.current = { cellId, epic: t.symbol, trade: t };
+    pendingTradeBoxRef.current = { cellId, epic: t.symbol, trade: t, sketch };
     resolvePendingTradeBox();
   };
-  // Drop the sketched box (and any jump still in flight), e.g. when the History
-  // row that drew it is deselected.
-  const clearTradeBox = () => {
-    ++tradeBoxEpochRef.current;
-    pendingTradeBoxRef.current = null;
-    removePreviousTradeListBox();
-  };
-  return { jumpToTrade, clearTradeBox };
+  return jumpToTrade;
 }
