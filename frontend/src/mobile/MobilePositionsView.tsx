@@ -25,8 +25,10 @@ import {
   closePosition,
   cancelWorkingOrder,
   tradeLabel,
+  accountSupportsHistory,
   brokerLabel,
   brokerOf,
+  historyAccountsSignal,
   isRealMoneyAccount,
   cachedBrokers,
   fetchBrokers,
@@ -41,6 +43,7 @@ import { mobileAccount, mobileSettingsVersion, setMobileAccount, showMobileEpic 
 import { requestConfirm } from "../lib/signals";
 import { toast } from "../lib/notify";
 import Sheet from "./Sheet";
+import HistoryPane from "../HistoryPane";
 import { PositionsHead } from "../PositionsTable";
 import {
   DEFAULT_SORT,
@@ -133,6 +136,13 @@ export default function MobilePositionsView() {
     () => mobileAccount.value,
   );
   const account = getTradesAccount();
+  const hasHistory = accountSupportsHistory(account);
+  // Switching to an account without history while its tab is open falls back.
+  const shownTab: TableTab = tab === "history" && !hasHistory ? "positions" : tab;
+  // Re-render when the broker-reported history account list lands (GET /api/brokers),
+  // so the History tab appears without a manual account switch.
+  const [, setHistoryAccountsTick] = useState(0);
+  useEffect(() => historyAccountsSignal.subscribe(() => setHistoryAccountsTick((n) => n + 1)), []);
   const [accounts, setAccounts] = useState<BrokerAccount[]>(() => cachedBrokers()?.exec ?? []);
   useEffect(() => {
     let alive = true;
@@ -195,14 +205,14 @@ export default function MobilePositionsView() {
   // of rows changes, never on a price tick: with P&L as the key a re-sort
   // under the finger would open the wrong row's detail sheet.
   const toggleSort = (key: SortKey) => setSort((s) => nextSort(s, key));
-  const unsorted = (tab === "positions" ? positions : orders).map(enrich);
-  const orderKey = [tab, sort.key, sort.dir, ...unsorted.map((r) => r.id).sort()].join("|");
-  const [order, setOrder] = useState(() => rankRows(unsorted, sort, tab, orderKey));
-  if (order.key !== orderKey) setOrder(rankRows(unsorted, sort, tab, orderKey));
+  const unsorted = (shownTab === "positions" ? positions : orders).map(enrich);
+  const orderKey = [shownTab, sort.key, sort.dir, ...unsorted.map((r) => r.id).sort()].join("|");
+  const [order, setOrder] = useState(() => rankRows(unsorted, sort, shownTab, orderKey));
+  if (order.key !== orderKey) setOrder(rankRows(unsorted, sort, shownTab, orderKey));
   const byRank = (k: string) => order.rank.get(k) ?? Number.MAX_SAFE_INTEGER;
   const rows = unsorted.sort((a, b) => byRank(a.id) - byRank(b.id));
   const groups: PositionGroup<EnrichedTrade>[] | null =
-    tab === "positions"
+    shownTab === "positions"
       ? groupPositions(rows).sort((a, b) => byRank(`group:${a.epic}`) - byRank(`group:${b.epic}`))
       : null;
   const toggleGroup = (epic: string) =>
@@ -255,23 +265,30 @@ export default function MobilePositionsView() {
   return (
     <div className="m-pos-view pp">
       <nav className="pp-tabs">
-        <button className={`pp-tab${tab === "positions" ? " on" : ""}`} onClick={() => setTab("positions")}>
+        <button className={`pp-tab${shownTab === "positions" ? " on" : ""}`} onClick={() => setTab("positions")}>
           Positions
           {positions.length > 0 && <span className="pp-count">{positions.length}</span>}
         </button>
-        <button className={`pp-tab${tab === "orders" ? " on" : ""}`} onClick={() => setTab("orders")}>
+        <button className={`pp-tab${shownTab === "orders" ? " on" : ""}`} onClick={() => setTab("orders")}>
           Orders
           {orders.length > 0 && <span className="pp-count">{orders.length}</span>}
         </button>
+        {hasHistory && (
+          <button className={`pp-tab${shownTab === "history" ? " on" : ""}`} onClick={() => setTab("history")}>
+            History
+          </button>
+        )}
       </nav>
 
-      {rows.length === 0 ? (
-        <div className="pp-empty">{tab === "positions" ? "No open positions." : "No working orders."}</div>
+      {shownTab === "history" ? (
+        <HistoryPane account={account} tips={false} />
+      ) : rows.length === 0 ? (
+        <div className="pp-empty">{shownTab === "positions" ? "No open positions." : "No working orders."}</div>
       ) : (
         <div className="pp-table-wrap">
           <table className="pp-table">
             <thead>
-              <PositionsHead tab={tab} sort={sort} onSort={toggleSort} tips={false} />
+              <PositionsHead tab={shownTab} sort={sort} onSort={toggleSort} tips={false} />
             </thead>
             <tbody>
               {groups == null

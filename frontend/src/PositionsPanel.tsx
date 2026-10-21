@@ -21,8 +21,10 @@ import {
   refreshTrades,
   subscribeLivePrices,
   subscribeTrades,
+  accountSupportsHistory,
   brokerLabel,
   brokerOf,
+  historyAccountsSignal,
   isDataOnlyBroker,
   isRealMoneyAccount,
   isCapital,
@@ -60,6 +62,7 @@ import {
   type TableTab,
 } from "./lib/positionsTable";
 import Mt5DeployButton from "./Mt5DeployButton";
+import HistoryPane from "./HistoryPane";
 
 interface Props {
   account?: TradeAccount;
@@ -135,6 +138,10 @@ export default function PositionsPanel({
   const [lineDragging, setLineDragging] = useState<boolean>(draggingLineSignal.value);
   const [tab, setTab] = useState<TableTab>("positions");
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
+  // Re-render when the broker-reported history account list lands (GET /api/brokers),
+  // so the History tab appears without a manual account switch.
+  const [, setHistoryAccountsTick] = useState(0);
+  useEffect(() => historyAccountsSignal.subscribe(() => setHistoryAccountsTick((n) => n + 1)), []);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(COLLAPSE_KEY) === "1";
@@ -194,7 +201,10 @@ export default function PositionsPanel({
   const trades = all; // whole book — every symbol, not just the focused chart
   const positions = trades.filter((t) => t.kind === "position");
   const orders = trades.filter((t) => t.kind === "order");
-  const rows = tab === "positions" ? positions : orders;
+  const hasHistory = accountSupportsHistory(account);
+  // Switching to an account without history while its tab is open falls back.
+  const shownTab: TableTab = tab === "history" && !hasHistory ? "positions" : tab;
+  const rows = shownTab === "positions" ? positions : orders;
 
   const toggleSort = (key: SortKey) => setSort((s) => nextSort(s, key));
   const precOf = (e: string) => precisionFor?.(e) ?? precision;
@@ -237,7 +247,7 @@ export default function PositionsPanel({
   // roll-up (net size, average entry, total P&L, ...). Groups sort by their
   // aggregate, positions by their own value; a lone position renders as a plain row.
   const groups: PositionGroup<RowExt>[] | null =
-    tab === "positions" ? groupPositions(sorted).sort(compare) : null;
+    shownTab === "positions" ? groupPositions(sorted).sort(compare) : null;
   const toggleGroup = (epic: string) =>
     setCollapsedGroups((s) => {
       const next = new Set(s);
@@ -455,8 +465,11 @@ export default function PositionsPanel({
           {/* Positions / Orders tabs with live counts. Window controls (maximize fills
               the chart view with the dock; close collapses it) ride at the far right. */}
           <nav className="pp-tabs">
-            <TabButton label="Positions" count={positions.length} on={tab === "positions"} onClick={() => setTab("positions")} />
-            <TabButton label="Orders" count={orders.length} on={tab === "orders"} onClick={() => setTab("orders")} />
+            <TabButton label="Positions" count={positions.length} on={shownTab === "positions"} onClick={() => setTab("positions")} />
+            <TabButton label="Orders" count={orders.length} on={shownTab === "orders"} onClick={() => setTab("orders")} />
+            {hasHistory && (
+              <TabButton label="History" count={0} on={shownTab === "history"} onClick={() => setTab("history")} />
+            )}
             <div className="pp-winctl">
               <Tooltip content={maximized ? "Restore dock" : "Maximize dock"}>
                 <button
@@ -484,15 +497,17 @@ export default function PositionsPanel({
 
           {error && <div className="pp-error">{error}</div>}
 
-          {rows.length === 0 ? (
+          {shownTab === "history" ? (
+            <HistoryPane account={account} precisionFor={precisionFor} onJumpToEpic={onJumpToEpic} />
+          ) : rows.length === 0 ? (
             <div className="pp-empty">
-              {tab === "positions" ? "No open positions." : "No working orders."}
+              {shownTab === "positions" ? "No open positions." : "No working orders."}
             </div>
           ) : (
             <div className="pp-table-wrap">
               <table className="pp-table">
                 <thead>
-                  <PositionsHead tab={tab} sort={sort} onSort={toggleSort} trailing={<th className="pp-c-act" />} />
+                  <PositionsHead tab={shownTab} sort={sort} onSort={toggleSort} trailing={<th className="pp-c-act" />} />
                 </thead>
                 <tbody>
                   {groups == null ? sorted.map((t) => renderPosition(t, false)) : groups.flatMap((g) => {

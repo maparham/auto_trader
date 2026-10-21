@@ -11,7 +11,7 @@ import { tradeLabel } from "./trading";
 import type { EnrichedTrade } from "./accountStats";
 import type { PositionGroup } from "./positionGroups";
 
-export type TableTab = "positions" | "orders";
+export type TableTab = "positions" | "orders" | "history";
 // Sortable columns map 1:1 to EnrichedTrade fields, so the comparator reads row[key].
 export type SortKey =
   | "epic"
