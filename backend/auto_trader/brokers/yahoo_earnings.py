@@ -5,7 +5,9 @@ Past quarters come from Ticker.get_earnings_dates, which scrapes Yahoo's
 earnings calendar page (needs lxml) and also lists the next scheduled report
 with its estimate. Ticker.calendar is an API call that names the next date
 (date only) with the EPS consensus; it fills in when the scrape has no
-upcoming row. A reported quarter never changes and the next date moves rarely,
+upcoming row, and carries the revenue consensus. Revenue actuals come from the
+quarterly income statement, which only reaches back about five quarters; Yahoo
+keeps no history of past revenue estimates. A reported quarter never changes and the next date moves rarely,
 so one lookup per symbol per half day is plenty.
 
 Same failure semantics as yahoo_splits.py: any failure (no lxml, unknown
@@ -18,7 +20,8 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import math
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 
 from auto_trader.brokers.yahoo_splits import YahooTickerCache
 
@@ -30,6 +33,9 @@ _SAME_REPORT_S = 3 * 86_400
 # Calendar dates carry no time: pin them to midday UTC so they land inside the
 # report day's bar wherever the exchange sits relative to UTC.
 _DATE_ONLY_HOUR = 12
+# A report lands within this of its fiscal quarter's end (AAPL: ~30 days;
+# late filers up to ~90).
+_REPORT_LAG_S = 100 * 86_400
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,8 @@ class Earnings:
     eps_estimate: float | None
     eps_actual: float | None  # None until reported
     surprise_pct: float | None
+    revenue_estimate: float | None = None  # upcoming report only
+    revenue_actual: float | None = None  # the last ~5 reported quarters only
 
 
 def _num(v: object) -> float | None:
@@ -74,15 +82,56 @@ def _calendar(t: object) -> list[Earnings]:
     ts = int(
         dt.datetime(d.year, d.month, d.day, _DATE_ONLY_HOUR, tzinfo=dt.timezone.utc).timestamp()
     )
-    return [Earnings(ts=ts, eps_estimate=_num(cal.get("Earnings Average")), eps_actual=None, surprise_pct=None)]
+    return [
+        Earnings(
+            ts=ts,
+            eps_estimate=_num(cal.get("Earnings Average")),
+            eps_actual=None,
+            surprise_pct=None,
+            revenue_estimate=_num(cal.get("Revenue Average")),
+        )
+    ]
 
 
-def merge_earnings(scraped: list[Earnings], calendar: list[Earnings]) -> list[Earnings]:
-    """Scraped rows, plus each calendar date no scraped row already covers."""
+def _revenue(t: object) -> list[tuple[int, float]]:
+    """(fiscal quarter end, total revenue), from the quarterly income statement."""
+    q = t.quarterly_income_stmt  # type: ignore[attr-defined]
+    if q is None or "Total Revenue" not in q.index:
+        return []
+    out = []
+    for end, v in q.loc["Total Revenue"].items():
+        f = _num(v)
+        if f is not None:
+            out.append((int(end.timestamp()), f))
+    return out
+
+
+def merge_earnings(
+    scraped: list[Earnings],
+    calendar: list[Earnings],
+    revenue: Sequence[tuple[int, float]] = (),
+) -> list[Earnings]:
+    """Scraped rows, plus each calendar date no scraped row already covers (a
+    covered one lends the scraped row its revenue estimate), with each reported
+    row's revenue from the latest quarter that ended shortly before it."""
     out = list(scraped)
     for c in calendar:
-        if all(abs(c.ts - s.ts) > _SAME_REPORT_S for s in scraped):
+        same = [i for i, s in enumerate(out) if abs(c.ts - s.ts) <= _SAME_REPORT_S]
+        if not same:
             out.append(c)
+            continue
+        s = out[same[0]]
+        out[same[0]] = replace(
+            s,
+            eps_estimate=s.eps_estimate if s.eps_estimate is not None else c.eps_estimate,
+            revenue_estimate=c.revenue_estimate,
+        )
+    for i, e in enumerate(out):
+        if e.eps_actual is None:
+            continue
+        ends = [(end, v) for end, v in revenue if 0 < e.ts - end <= _REPORT_LAG_S]
+        if ends:
+            out[i] = replace(e, revenue_actual=max(ends)[1])
     return out
 
 
@@ -91,14 +140,14 @@ def fetch_yahoo_earnings(ticker: str) -> list[Earnings]:
     import yfinance as yf
 
     t = yf.Ticker(ticker)
-    parts: list[list[Earnings]] = []
-    for name, read in (("scrape", _scraped), ("calendar", _calendar)):
+    parts: list[list] = []
+    for name, read in (("scrape", _scraped), ("calendar", _calendar), ("revenue", _revenue)):
         try:
             parts.append(read(t))
         except Exception as e:  # noqa: BLE001 - one source failing leaves the other
             log.info("earnings %s for %s failed: %s", name, ticker, e)
             parts.append([])
-    return merge_earnings(parts[0], parts[1])
+    return merge_earnings(parts[0], parts[1], parts[2])
 
 
 class EarningsRegistry(YahooTickerCache[Earnings]):

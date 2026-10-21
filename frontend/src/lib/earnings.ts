@@ -16,6 +16,10 @@ export interface Earnings {
   /** null until the quarter is reported. */
   epsActual: number | null;
   surprisePct: number | null;
+  /** Consensus for the upcoming report only (Yahoo keeps no past estimates). */
+  revenueEstimate: number | null;
+  /** The last ~5 reported quarters only. */
+  revenueActual: number | null;
 }
 
 const TTL_MS = 6 * 3600_000;
@@ -45,6 +49,8 @@ export function fetchEarnings(epic: string, brokerId: string): Promise<Earnings[
         epsEstimate: num(e.epsEstimate),
         epsActual: num(e.epsActual),
         surprisePct: num(e.surprisePct),
+        revenueEstimate: num(e.revenueEstimate),
+        revenueActual: num(e.revenueActual),
       }))
       .sort((a, b) => a.timeMs - b.timeMs);
   })().catch(() => {
@@ -57,12 +63,22 @@ export function fetchEarnings(epic: string, brokerId: string): Promise<Earnings[
 
 const eps = (v: number) => v.toFixed(2);
 
+/** "113.4B", "950.0M", "1.2T". */
+export function revenueText(v: number): string {
+  const a = Math.abs(v);
+  if (a >= 1e12) return `${(v / 1e12).toFixed(1)}T`;
+  if (a >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  return v.toFixed(0);
+}
+
 /** Tooltip lines: date, estimated vs reported, then the EPS figures known. */
 export function earningsLines(e: Earnings): string[] {
   const lines = [`Earnings ${splitDateText(e.timeMs)}`];
   if (e.epsActual == null) {
     lines.push("Estimated");
     if (e.epsEstimate != null) lines.push(`EPS est ${eps(e.epsEstimate)}`);
+    if (e.revenueEstimate != null) lines.push(`Revenue est ${revenueText(e.revenueEstimate)}`);
     return lines;
   }
   lines.push("Reported");
@@ -71,6 +87,8 @@ export function earningsLines(e: Earnings): string[] {
   if (e.surprisePct != null) {
     lines.push(`Surprise ${e.surprisePct > 0 ? "+" : ""}${e.surprisePct.toFixed(1)}%`);
   }
+  if (e.revenueEstimate != null) lines.push(`Revenue est ${revenueText(e.revenueEstimate)}`);
+  if (e.revenueActual != null) lines.push(`Revenue ${revenueText(e.revenueActual)}`);
   return lines;
 }
 

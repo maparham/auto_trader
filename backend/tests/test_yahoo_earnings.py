@@ -10,10 +10,11 @@ from auto_trader.brokers.yahoo_earnings import Earnings, EarningsRegistry, merge
 
 
 class FakeTicker:
-    def __init__(self, df=None, cal=None, scrape_error=None):
+    def __init__(self, df=None, cal=None, scrape_error=None, income=None):
         self._df = df
         self.calendar = cal
         self._scrape_error = scrape_error
+        self.quarterly_income_stmt = income
 
     def get_earnings_dates(self, limit):
         if self._scrape_error:
@@ -54,13 +55,38 @@ def test_scraped_rows_carry_estimate_actual_and_surprise(monkeypatch):
     )
 
 
+def test_revenue_estimate_and_actuals_attach_to_their_reports(monkeypatch):
+    cal = {"Earnings Date": [dt.date(2026, 11, 2)], "Earnings Average": 1.98,
+           "Revenue Average": 113.4e9}
+    income = pd.DataFrame(
+        [[109.4e9, 111.2e9]],
+        index=["Total Revenue"],
+        columns=[pd.Timestamp("2026-06-30"), pd.Timestamp("2026-03-31")],
+    )
+    _patch(monkeypatch, FakeTicker(_df(), cal, income=income))
+    up, past = ye.fetch_yahoo_earnings("AAPL")
+    # The scraped upcoming row borrows the calendar's revenue consensus.
+    assert up.revenue_estimate == 113.4e9 and up.revenue_actual is None
+    # 30 Jul reports the quarter that ended 30 Jun, not 31 Mar.
+    assert past.revenue_actual == 109.4e9 and past.revenue_estimate is None
+
+
+def test_revenue_only_matches_a_quarter_that_just_ended():
+    report = Earnings(ts=1_000 * 86_400, eps_estimate=1.0, eps_actual=1.1, surprise_pct=10.0)
+    too_old = [(report.ts - 200 * 86_400, 5.0)]
+    after = [(report.ts + 86_400, 5.0)]
+    assert merge_earnings([report], [], too_old)[0].revenue_actual is None
+    assert merge_earnings([report], [], after)[0].revenue_actual is None
+
+
 def test_calendar_fills_in_when_the_scrape_fails(monkeypatch):
-    cal = {"Earnings Date": [dt.date(2026, 11, 2), dt.date(2026, 11, 6)], "Earnings Average": 1.98}
+    cal = {"Earnings Date": [dt.date(2026, 11, 2), dt.date(2026, 11, 6)], "Earnings Average": 1.98,
+           "Revenue Average": 113.4e9}
     _patch(monkeypatch, FakeTicker(cal=cal, scrape_error=ImportError("lxml")))
     rows = ye.fetch_yahoo_earnings("AAPL")
     assert rows == [Earnings(
         ts=int(dt.datetime(2026, 11, 2, 12, tzinfo=dt.timezone.utc).timestamp()),
-        eps_estimate=1.98, eps_actual=None, surprise_pct=None,
+        eps_estimate=1.98, eps_actual=None, surprise_pct=None, revenue_estimate=113.4e9,
     )]
 
 

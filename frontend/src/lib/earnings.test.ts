@@ -5,18 +5,28 @@ import {
   earningsLines,
   fetchEarnings,
   projectEarningsMarkers,
+  revenueText,
   type Earnings,
 } from "./earnings";
 
 const DAY = 86_400_000;
 const T0 = Date.UTC(2026, 6, 27); // Mon 27 Jul 2026
 const days = (n: number) => Array.from({ length: n }, (_, i) => ({ timestamp: T0 + i * DAY }));
-const reported: Earnings = { timeMs: T0 + 3 * DAY + 20 * 3_600_000, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74 };
+const reported: Earnings = {
+  timeMs: T0 + 3 * DAY + 20 * 3_600_000,
+  epsEstimate: 1.89,
+  epsActual: 2.02,
+  surprisePct: 6.74,
+  revenueEstimate: null,
+  revenueActual: 109.417e9,
+};
 const upcoming = (offsetDays: number): Earnings => ({
   timeMs: T0 + offsetDays * DAY,
   epsEstimate: 1.98,
   epsActual: null,
   surprisePct: null,
+  revenueEstimate: 113.357e9,
+  revenueActual: null,
 });
 // One bar per 10px, bar i at x = 10 * i.
 const toX = (ts: number) => ((ts - T0) / DAY) * 10;
@@ -29,19 +39,32 @@ describe("earningsLines", () => {
       "EPS est 1.89",
       "EPS actual 2.02",
       "Surprise +6.7%",
+      "Revenue 109.4B",
     ]);
   });
 
-  it("reads an upcoming report as Estimated with only the estimate", () => {
-    expect(earningsLines(upcoming(5))).toEqual(["Earnings 1 Aug 2026", "Estimated", "EPS est 1.98"]);
-    expect(earningsLines({ ...upcoming(5), epsEstimate: null })).toEqual([
+  it("reads an upcoming report as Estimated with only the estimates", () => {
+    expect(earningsLines(upcoming(5))).toEqual([
+      "Earnings 1 Aug 2026",
+      "Estimated",
+      "EPS est 1.98",
+      "Revenue est 113.4B",
+    ]);
+    expect(earningsLines({ ...upcoming(5), epsEstimate: null, revenueEstimate: null })).toEqual([
       "Earnings 1 Aug 2026",
       "Estimated",
     ]);
   });
 
-  it("signs a miss without a plus", () => {
-    expect(earningsLines({ ...reported, epsActual: 1.8, surprisePct: -4.76 }).at(-1)).toBe("Surprise -4.8%");
+  it("signs a miss without a plus and omits revenue Yahoo lacks", () => {
+    expect(earningsLines({ ...reported, epsActual: 1.8, surprisePct: -4.76, revenueActual: null }).at(-1)).toBe(
+      "Surprise -4.8%",
+    );
+  });
+
+  it("scales revenue to T, B or M", () => {
+    expect(revenueText(1.234e12)).toBe("1.2T");
+    expect(revenueText(950e6)).toBe("950.0M");
   });
 });
 
@@ -102,16 +125,16 @@ describe("fetchEarnings", () => {
         JSON.stringify({
           epic: "AAPL",
           earnings: [
-            { time: 1793649600, epsEstimate: 1.98, epsActual: null, surprisePct: null },
-            { time: 1785441600, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74 },
+            { time: 1793649600, epsEstimate: 1.98, epsActual: null, surprisePct: null, revenueEstimate: 113.4e9 },
+            { time: 1785441600, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueActual: 109.4e9 },
           ],
         }),
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
     expect(await fetchEarnings("AAPL", "yfinance")).toEqual([
-      { timeMs: 1785441600_000, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74 },
-      { timeMs: 1793649600_000, epsEstimate: 1.98, epsActual: null, surprisePct: null },
+      { timeMs: 1785441600_000, epsEstimate: 1.89, epsActual: 2.02, surprisePct: 6.74, revenueEstimate: null, revenueActual: 109.4e9 },
+      { timeMs: 1793649600_000, epsEstimate: 1.98, epsActual: null, surprisePct: null, revenueEstimate: 113.4e9, revenueActual: null },
     ]);
     await fetchEarnings("AAPL", "yfinance");
     expect(fetchMock).toHaveBeenCalledTimes(1);

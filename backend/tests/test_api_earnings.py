@@ -28,8 +28,10 @@ class FakeEarnings:
     async def get(self, epic, ticker=None):
         self.calls.append(epic if ticker is None else (epic, ticker))
         return [
-            Earnings(ts=1785441600, eps_estimate=1.89, eps_actual=2.02, surprise_pct=6.74),
-            Earnings(ts=1793649600, eps_estimate=1.98, eps_actual=None, surprise_pct=None),
+            Earnings(ts=1785441600, eps_estimate=1.89, eps_actual=2.02, surprise_pct=6.74,
+                     revenue_actual=109.4e9),
+            Earnings(ts=1793649600, eps_estimate=1.98, eps_actual=None, surprise_pct=None,
+                     revenue_estimate=113.4e9),
         ]
 
 
@@ -46,8 +48,10 @@ def test_equity_gets_its_earnings(monkeypatch):
     assert out == {
         "epic": "AAPL",
         "earnings": [
-            {"time": 1785441600, "epsEstimate": 1.89, "epsActual": 2.02, "surprisePct": 6.74},
-            {"time": 1793649600, "epsEstimate": 1.98, "epsActual": None, "surprisePct": None},
+            {"time": 1785441600, "epsEstimate": 1.89, "epsActual": 2.02, "surprisePct": 6.74,
+             "revenueEstimate": None, "revenueActual": 109.4e9},
+            {"time": 1793649600, "epsEstimate": 1.98, "epsActual": None, "surprisePct": None,
+             "revenueEstimate": 113.4e9, "revenueActual": None},
         ],
     }
     assert fe.calls == ["AAPL"]

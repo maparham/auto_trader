@@ -117,7 +117,7 @@ async def market_earnings(
 ) -> dict[str, object]:
     # Past and upcoming earnings dates for the chart's earnings markers, from
     # Yahoo, gated exactly like the splits above. epsActual is null until the
-    # quarter is reported.
+    # quarter is reported; revenue figures are null where Yahoo has none.
     meta = await _equity_meta(epic, broker_id)
     if meta is None:
         return {"epic": epic, "earnings": []}
@@ -130,6 +130,8 @@ async def market_earnings(
                 "epsEstimate": e.eps_estimate,
                 "epsActual": e.eps_actual,
                 "surprisePct": e.surprise_pct,
+                "revenueEstimate": e.revenue_estimate,
+                "revenueActual": e.revenue_actual,
             }
             for e in rows
         ],
