@@ -240,6 +240,19 @@ Chromium; `SNAPSHOT_DISABLED=1` turns it off. Probe:
 `cd backend && python3 -m scripts.snapshot_probe --epic EPIC`.
 `SNAPSHOT_DISABLED` with any non-empty value disables the feature.
 
+## Account history
+
+Capital.com dealing accounts (`capital:demo`, `capital-live:live`) report
+closed trades and the cash ledger through `ExecutionBroker.get_history`
+(`supports_history`), served by `GET /api/history?account=&days=7|30|90`
+with epoch-ms times; other accounts answer `{supported: false}`. Upstream
+limits shape `brokers/_capital_history.py`: transactions cap at 100 rows per
+call (paged, deduped on `reference`), activity at one day per call (walked
+sequentially through the shared rate limiter, past days kept in `DayCache`).
+The History tab (`HistoryPane.tsx`) and the chart's closed-trade markers both
+read `lib/accountHistory.ts`; on a history account the markers replace the
+live journal's exits. Spec: docs/superpowers/specs/2026-10-21-capital-account-history-design.md.
+
 ## Admin console
 
 `/admin` is a read-only operator page (Clerk users, system health, per-user
