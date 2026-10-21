@@ -8,7 +8,7 @@
 // is what keeps capital:demo fresh: it has no server push and no trades poll.
 
 import { API_BASE as BASE, apiFetch, errorDetail, throwIfBrokerBlocked } from "./http";
-import { tradesSignal } from "./signals";
+import { Signal, tradesSignal } from "./signals";
 import {
   accountSupportsHistory,
   getTradesAccount,
@@ -210,33 +210,97 @@ tradesSignal.subscribe((trades) => {
   if (gone) refreshHistory(getTradesAccount());
 });
 
-/** The chart's marker source: follows the trades account; active (30d closed
- * trades) only while that account has broker history. */
+// --- What the chart draws -------------------------------------------------
+// Closed trades reach the chart only when the History tab picks them: the one
+// selected row (per account), or every trade in MARKER_DAYS while "Show all on
+// chart" is on. The selection is module state so it outlives the pane (dock
+// tab switches) and is shared by the desktop dock and the phone view.
+
+const SHOW_ALL_KEY = "auto-trader.history.showAllOnChart";
+
+function loadShowAll(): boolean {
+  try {
+    return localStorage.getItem(SHOW_ALL_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** "Show all on chart": a per-browser convenience, off by default. */
+export const historyShowAllSignal = new Signal<boolean>(loadShowAll());
+
+export function setHistoryShowAll(on: boolean): void {
+  try {
+    localStorage.setItem(SHOW_ALL_KEY, on ? "1" : "0");
+  } catch {
+    /* storage unavailable: the toggle still works for this session */
+  }
+  historyShowAllSignal.set(on);
+}
+
+/** Row identity: a partial close has its own close time. */
+export const closedTradeKey = (t: { dealId: string; closedAt: number }) => `${t.dealId}:${t.closedAt}`;
+
+/** account -> the selected closed trade. A new Map per change so subscribers
+ * can compare by identity. */
+export const historySelectionSignal = new Signal<ReadonlyMap<string, ClosedTradeView>>(new Map());
+
+export function selectHistoryTrade(account: string, trade: ClosedTradeView | null): void {
+  const next = new Map(historySelectionSignal.value);
+  if (trade) next.set(account, trade);
+  else next.delete(account);
+  historySelectionSignal.set(next);
+}
+
+/** The chart's marker source: follows the trades account; active only while
+ * that account has broker history (an active source replaces journal exits
+ * even when it holds no trades). Holds the selected trade, plus the 30d trades
+ * while "Show all" is on; the 30d store is only subscribed while it is on. */
 export function subscribeMarkerHistory(fn: (h: MarkerHistory) => void): () => void {
   let inner: (() => void) | null = null;
   // undefined = "not synced yet", distinct from the "no active account" null
   // the computed `want` can also take, so the very first sync always emits.
   let current: string | null | undefined;
+  let currentAll: boolean | undefined;
+  let all: ClosedTradeView[] = [];
+  const emit = () => {
+    if (current == null) return;
+    const picked = historySelectionSignal.value.get(current);
+    const trades = currentAll ? [...all] : [];
+    if (picked && !trades.some((t) => closedTradeKey(t) === closedTradeKey(picked))) trades.push(picked);
+    fn({ active: true, trades });
+  };
   const sync = () => {
     const account = tradesAccountSignal.value;
-    const active = accountSupportsHistory(account);
-    const want = active ? account : null;
-    if (want === current) return;
+    const want = accountSupportsHistory(account) ? account : null;
+    const wantAll = historyShowAllSignal.value;
+    if (want === current && wantAll === currentAll) return;
     inner?.();
     inner = null;
+    all = [];
     current = want;
+    currentAll = wantAll;
     if (want === null) {
       fn({ active: false, trades: [] });
       return;
     }
-    inner = subscribeHistory(want, MARKER_DAYS, (s) => fn({ active: true, trades: s.data?.trades ?? [] }));
+    if (wantAll) {
+      inner = subscribeHistory(want, MARKER_DAYS, (s) => {
+        all = s.data?.trades ?? [];
+        emit();
+      });
+    } else emit();
   };
   sync();
   const offAccount = tradesAccountSignal.subscribe(sync);
   const offList = historyAccountsSignal.subscribe(sync);
+  const offAll = historyShowAllSignal.subscribe(sync);
+  const offSel = historySelectionSignal.subscribe(emit);
   return () => {
     offAccount();
     offList();
+    offAll();
+    offSel();
     inner?.();
   };
 }
@@ -246,6 +310,8 @@ export function _resetHistoryForTests(): void {
   for (const e of entries.values()) if (e.timer !== null) clearInterval(e.timer);
   entries.clear();
   lastPositionIds = new Set();
+  historySelectionSignal.set(new Map());
+  historyShowAllSignal.set(false);
   if (visibilityListenerOn && typeof document !== "undefined") {
     document.removeEventListener("visibilitychange", onVisible);
   }

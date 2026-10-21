@@ -251,7 +251,9 @@ call (paged, deduped on `reference`), activity at one day per call (walked
 sequentially through the shared rate limiter, past days kept in `DayCache`).
 The History tab (`HistoryPane.tsx`) and the chart's closed-trade markers both
 read `lib/accountHistory.ts`; on a history account the markers replace the
-live journal's exits. Spec: docs/superpowers/specs/2026-10-21-capital-account-history-design.md.
+live journal's exits. The chart draws only the History row selected for that
+account, or every trade of the last 30 days while "Show all on chart" is on
+(`historyShowAllSignal`, per browser, default off). Spec: docs/superpowers/specs/2026-10-21-capital-account-history-design.md.
 
 ## Admin console
 

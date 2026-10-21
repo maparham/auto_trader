@@ -1,9 +1,14 @@
 // History tab body (spec 2026-10-21-capital-account-history): range chips, a
 // Trades | Ledger toggle, a totals line, and the table. Shared by the desktop
 // dock (PositionsPanel) and the phone view (MobilePositionsView).
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
+  closedTradeKey,
+  historySelectionSignal,
+  historyShowAllSignal,
   refreshHistory,
+  selectHistoryTrade,
+  setHistoryShowAll,
   subscribeHistory,
   type HistoryDays,
   type HistoryState,
@@ -21,15 +26,17 @@ import {
 import { cash, fmtPnl, fmtTime, pnlClass } from "./lib/positionsTable";
 import { SortHeader } from "./PositionsTable";
 import InfoTip from "./components/InfoTip";
+import Tooltip from "./components/Tooltip";
 import type { TradeRow } from "./lib/tradeList";
 
 const RANGES: HistoryDays[] = [7, 30, 90];
 
-// The clicked trade row, per account, at module level: it stays selected across
-// re-sorts, range switches, the 60 s refresh and the pane unmounting when
-// another dock tab opens. Keyed like the row (dealId + close time).
-const selectedByAccount = new Map<string, string>();
-const tradeKey = (t: { dealId: string; closedAt: number }) => `${t.dealId}:${t.closedAt}`;
+// The clicked row lives in lib/accountHistory (per account), so it outlives
+// this pane and drives the chart: an unselected closed trade draws nothing
+// unless "Show all on chart" is on.
+const tradeKey = closedTradeKey;
+const subscribeSelection = (fn: () => void) => historySelectionSignal.subscribe(fn);
+const subscribeShowAll = (fn: () => void) => historyShowAllSignal.subscribe(fn);
 
 interface Props {
   account: string;
@@ -63,12 +70,19 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, onSel
   const [view, setView] = useState<"trades" | "ledger">("trades");
   const [sort, setSort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
   const [state, setState] = useState<HistoryState>({ loading: false, error: null, data: null });
-  const [selected, setSelected] = useState<string | null>(() => selectedByAccount.get(account) ?? null);
-  useEffect(() => setSelected(selectedByAccount.get(account) ?? null), [account]);
-  const select = (key: string) => {
-    selectedByAccount.set(account, key);
-    setSelected(key);
-  };
+  const selection = useSyncExternalStore(subscribeSelection, () => historySelectionSignal.value);
+  const picked = selection.get(account);
+  const selected = picked ? tradeKey(picked) : null;
+  const showAll = useSyncExternalStore(subscribeShowAll, () => historyShowAllSignal.value);
+  const showAllChip = (
+    <button
+      className={`pp-chip${showAll ? " on" : ""}`}
+      aria-pressed={showAll}
+      onClick={() => setHistoryShowAll(!showAll)}
+    >
+      Show all on chart
+    </button>
+  );
 
   useEffect(() => subscribeHistory(account, days, setState), [account, days]);
 
@@ -117,6 +131,16 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, onSel
             Ledger
           </button>
         </div>
+        {tips ? (
+          <Tooltip
+            content={["On: every closed trade from the last 30 days.", "Off: only the selected trade."]}
+            asChild
+          >
+            {showAllChip}
+          </Tooltip>
+        ) : (
+          showAllChip
+        )}
         {totals && (
           <div className="pp-history-totals">
             <span>
@@ -195,7 +219,7 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, onSel
                     aria-selected={selected === tradeKey(t)}
                     onClick={() => {
                       if (!onJumpToEpic && !onSelectTrade) return;
-                      select(tradeKey(t));
+                      selectHistoryTrade(account, t);
                       const row = onSelectTrade ? historyTradeRow(t) : null;
                       if (row) onSelectTrade!(row);
                       else onJumpToEpic?.(t.epic, precisionFor ? precisionFor(t.epic) : priceDecimals(t.entry));

@@ -118,6 +118,19 @@ describe("HistoryPane", () => {
     expect(screen.getByText("MSFT").closest("tr")!.className).not.toContain("pp-selected");
   });
 
+  it("toggles Show all on chart", async () => {
+    const { historyShowAllSignal } = await import("./lib/accountHistory");
+    state = { loading: false, error: null, data: { trades: [], ledger: [], totals } };
+    render(<HistoryPane account="capital:demo" />);
+    const chip = screen.getByRole("button", { name: "Show all on chart" });
+    expect(chip.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(chip);
+    expect(historyShowAllSignal.value).toBe(true);
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(chip);
+    expect(historyShowAllSignal.value).toBe(false);
+  });
+
   it("does not select rows that have no click handler", () => {
     const row = { dealId: "D9", epic: "TSLA", side: "buy" as const, size: 1, entry: 400, exit: 430,
       openedAt: 1_000, closedAt: 2_000, closeSource: "TP", pnl: 12.5, currency: "EUR" };

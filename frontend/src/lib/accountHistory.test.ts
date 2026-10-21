@@ -11,6 +11,8 @@ import {
   fetchAccountHistory,
   subscribeHistory,
   subscribeMarkerHistory,
+  selectHistoryTrade,
+  setHistoryShowAll,
   HISTORY_POLL_MS,
   _resetHistoryForTests,
   type HistoryState,
@@ -163,8 +165,9 @@ describe("subscribeHistory", () => {
 });
 
 describe("subscribeMarkerHistory", () => {
-  it("follows the trades account: inactive without history, 30d trades with it", async () => {
+  it("follows the trades account: inactive without history, 30d trades with Show all on", async () => {
     fetchMock.mockImplementation(() => ok(payload()));
+    setHistoryShowAll(true);
     setTradesAccount("capital:paper");
     const seen: MarkerHistory[] = [];
     const off = subscribeMarkerHistory((h) => seen.push(h));
@@ -174,6 +177,43 @@ describe("subscribeMarkerHistory", () => {
     expect(seen.at(-1)!.active).toBe(true);
     expect(seen.at(-1)!.trades.map((t) => t.dealId)).toEqual(["D1"]);
     expect(String(historyCalls().at(-1)![0])).toContain("days=30");
+    off();
+  });
+
+  it("with Show all off draws only the selected trade, and fetches nothing", async () => {
+    fetchMock.mockImplementation(() => ok(payload()));
+    setTradesAccount("capital:demo");
+    const before = historyCalls().length;
+    const seen: MarkerHistory[] = [];
+    const off = subscribeMarkerHistory((h) => seen.push(h));
+    await flush();
+    // Active (journal exits stay suppressed) but empty.
+    expect(seen.at(-1)).toEqual({ active: true, trades: [] });
+    const picked = { dealId: "OLD", epic: "TSLA", side: "buy" as const, size: 1, entry: 1, exit: 2,
+      openedAt: 1, closedAt: 2, closeSource: "TP", pnl: 1, currency: "EUR" };
+    selectHistoryTrade("capital:demo", picked);
+    expect(seen.at(-1)!.trades.map((t) => t.dealId)).toEqual(["OLD"]);
+    // Another account's pick does not leak onto this chart.
+    selectHistoryTrade("capital:demo", null);
+    selectHistoryTrade("capital-live:live", picked);
+    expect(seen.at(-1)!.trades).toEqual([]);
+    expect(historyCalls().length).toBe(before);
+    off();
+  });
+
+  it("with Show all on keeps a selected trade older than the 30d window", async () => {
+    fetchMock.mockImplementation(() => ok(payload()));
+    setTradesAccount("capital:demo");
+    const picked = { dealId: "OLD", epic: "TSLA", side: "buy" as const, size: 1, entry: 1, exit: 2,
+      openedAt: 1, closedAt: 2, closeSource: "TP", pnl: 1, currency: "EUR" };
+    selectHistoryTrade("capital:demo", picked);
+    const seen: MarkerHistory[] = [];
+    const off = subscribeMarkerHistory((h) => seen.push(h));
+    setHistoryShowAll(true);
+    await flush();
+    expect(seen.at(-1)!.trades.map((t) => t.dealId).sort()).toEqual(["D1", "OLD"]);
+    setHistoryShowAll(false);
+    expect(seen.at(-1)!.trades.map((t) => t.dealId)).toEqual(["OLD"]);
     off();
   });
 });

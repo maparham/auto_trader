@@ -213,9 +213,12 @@ own: they get the app-wide broker, and the trades feed tracks one module
 level account (`getTradesAccount()` / `setTradesAccount`). So the marker
 source is keyed on `getTradesAccount()`:
 
-- When that account has `history: true`, ChartCore subscribes to the
-  history store at a fixed **30d** range, independent of whether the
-  History tab was ever opened or which range chip it shows.
+- When that account has `history: true`, the chart draws only the
+  History row selected for that account (selection is per account, in
+  `lib/accountHistory.ts`), or, while the tab's "Show all on chart" chip
+  is on, every trade of a fixed **30d** range plus the selection. The
+  30d store is subscribed only while the chip is on; the chip is saved
+  per browser and starts off.
 - Each closed trade gives an **exit** marker keyed
   `hexit:<deal_id>:<closed_at>` (unique across partials).
 - Each dealId gives **one** entry marker keyed `hentry:<deal_id>`, deduped
