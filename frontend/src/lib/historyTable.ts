@@ -1,8 +1,9 @@
-// Pure helpers for the History tab (HistoryPane): plain-word labels and the
-// closed-trades sort. Kept apart from lib/positionsTable, whose columns and sort
+// Pure helpers for the History tab (HistoryPane): plain-word labels, the
+// closed-trades sort and the row-to-chart mapping. Kept apart from lib/positionsTable, whose columns and sort
 // keys are tied to OPEN trades.
 import type { ClosedTradeView } from "./accountHistory";
 import type { SortDir } from "./positionsTable";
+import type { TradeRow } from "./tradeList";
 
 const CLOSED_BY: Record<string, string> = {
   TP: "TP",
@@ -28,6 +29,26 @@ export function priceDecimals(n: number): number {
   const str = String(n);
   const i = str.indexOf(".");
   return i < 0 ? 0 : Math.min(str.length - i - 1, 6);
+}
+
+/** A closed trade as the Trade list panel's row, so a History click can reuse
+ * its jump (open the chart, page in history, draw the trade box, scroll).
+ * null when the open time is unknown ("before range"): no entry to anchor. */
+export function historyTradeRow(t: ClosedTradeView): TradeRow | null {
+  if (t.openedAt == null) return null;
+  const dir = t.side === "buy" ? 1 : -1;
+  return {
+    symbol: t.epic,
+    side: t.side === "buy" ? "LONG" : "SHORT",
+    entryTs: t.openedAt,
+    entryPrice: t.entry,
+    exitTs: t.closedAt,
+    exitPrice: t.exit,
+    pctPL: t.entry ? ((t.exit - t.entry) / t.entry) * 100 * dir : undefined,
+    dollarPL: t.pnl ?? undefined,
+    qty: t.size,
+    hasTime: true,
+  };
 }
 
 export type HistorySortKey =

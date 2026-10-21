@@ -11,6 +11,7 @@ import {
 import {
   closedByLabel,
   DEFAULT_HISTORY_SORT,
+  historyTradeRow,
   ledgerKindLabel,
   priceDecimals,
   sortClosedTrades,
@@ -20,6 +21,7 @@ import {
 import { cash, fmtPnl, fmtTime, pnlClass } from "./lib/positionsTable";
 import { SortHeader } from "./PositionsTable";
 import InfoTip from "./components/InfoTip";
+import type { TradeRow } from "./lib/tradeList";
 
 const RANGES: HistoryDays[] = [7, 30, 90];
 
@@ -29,6 +31,9 @@ interface Props {
   // Called as jumpToEpic(epic, precisionGuess): the symbol's precision when
   // precisionFor has one, else the entry price's decimals.
   onJumpToEpic?: (epic: string, precisionGuess: number) => void;
+  // Desktop: show the trade itself (App's trade-list jump: box + scroll). Rows
+  // with no known open time fall back to onJumpToEpic.
+  onSelectTrade?: (row: TradeRow) => void;
   tips?: boolean;
 }
 
@@ -47,7 +52,7 @@ const TRADE_COLS: { key: HistorySortKey; label: string; cls: string; tip: string
   { key: "pnl", label: "P&L", cls: "pp-c-num", tip: "Realized profit or loss, account currency" },
 ];
 
-export default function HistoryPane({ account, precisionFor, onJumpToEpic, tips = true }: Props) {
+export default function HistoryPane({ account, precisionFor, onJumpToEpic, onSelectTrade, tips = true }: Props) {
   const [days, setDays] = useState<HistoryDays>(30);
   const [view, setView] = useState<"trades" | "ledger">("trades");
   const [sort, setSort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
@@ -172,8 +177,12 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, tips 
                   <tr
                     // Index tiebreak: two partials can close in the same ms.
                     key={`${t.dealId}:${t.closedAt}:${i}`}
-                    className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}${onJumpToEpic ? " pp-clickable" : ""}`}
-                    onClick={() => onJumpToEpic?.(t.epic, precisionFor ? precisionFor(t.epic) : priceDecimals(t.entry))}
+                    className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}${onJumpToEpic || onSelectTrade ? " pp-clickable" : ""}`}
+                    onClick={() => {
+                      const row = onSelectTrade ? historyTradeRow(t) : null;
+                      if (row) onSelectTrade!(row);
+                      else onJumpToEpic?.(t.epic, precisionFor ? precisionFor(t.epic) : priceDecimals(t.entry));
+                    }}
                   >
                     <td className="pp-c-sym">{t.epic}</td>
                     <td>{t.side === "buy" ? "Long" : "Short"}</td>

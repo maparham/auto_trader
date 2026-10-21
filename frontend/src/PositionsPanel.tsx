@@ -48,6 +48,7 @@ import {
 } from "./lib/signals";
 import { accountStats, enrichTrade, type EnrichedTrade } from "./lib/accountStats";
 import type { TradingSettings } from "./theme";
+import type { TradeRow } from "./lib/tradeList";
 import Tooltip from "./components/Tooltip";
 import { PositionsHead } from "./PositionsTable";
 import {
@@ -85,6 +86,8 @@ interface Props {
   // Editing a row re-scopes the chart to its symbol; selecting then opens the order
   // ticket in edit mode (setTradeSelected reveals the panel — no separate callback).
   onJumpToEpic?: (epic: string, precisionGuess?: number) => void;
+  /** History tab row click: show that closed trade on its chart. */
+  onSelectTrade?: (row: TradeRow) => void;
   // When false, a dragged level applies immediately (no Apply/Discard bar).
   confirmLineEdits?: boolean;
   // Dock maximized to fill the chart view (owned by App, which hides the workspace).
@@ -118,6 +121,7 @@ export default function PositionsPanel({
   precision = 2,
   trading,
   onJumpToEpic,
+  onSelectTrade,
   confirmLineEdits = true,
   maximized = false,
   onToggleMaximize,
@@ -498,7 +502,12 @@ export default function PositionsPanel({
           {error && <div className="pp-error">{error}</div>}
 
           {shownTab === "history" ? (
-            <HistoryPane account={account} precisionFor={precisionFor} onJumpToEpic={onJumpToEpic} />
+            <HistoryPane
+              account={account}
+              precisionFor={precisionFor}
+              onJumpToEpic={onJumpToEpic}
+              onSelectTrade={onSelectTrade}
+            />
           ) : rows.length === 0 ? (
             <div className="pp-empty">
               {shownTab === "positions" ? "No open positions." : "No working orders."}

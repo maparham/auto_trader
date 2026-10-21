@@ -81,6 +81,27 @@ describe("HistoryPane", () => {
     expect(jump).toHaveBeenLastCalledWith("TSLA", 2);
   });
 
+  it("routes a click to onSelectTrade, or to onJumpToEpic when the open time is unknown", () => {
+    const row = { dealId: "D1", epic: "TSLA", side: "buy" as const, size: 1, entry: 400, exit: 430,
+      closedAt: 2_000, closeSource: "TP", pnl: 12.5, currency: "EUR" };
+    state = {
+      loading: false, error: null,
+      data: {
+        trades: [{ ...row, openedAt: 1_000 }, { ...row, dealId: "D2", epic: "MSFT", openedAt: null }],
+        ledger: [], totals,
+      },
+    };
+    const select = vi.fn();
+    const jump = vi.fn();
+    render(<HistoryPane account="capital:demo" onSelectTrade={select} onJumpToEpic={jump} />);
+    fireEvent.click(screen.getByText("TSLA"));
+    expect(select).toHaveBeenCalledWith(expect.objectContaining({ symbol: "TSLA", entryTs: 1_000, exitTs: 2_000 }));
+    expect(jump).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("MSFT"));
+    expect(jump).toHaveBeenCalledWith("MSFT", 0);
+    expect(select).toHaveBeenCalledTimes(1);
+  });
+
   it("labels net cash and flags a truncated ledger only when the server says so", () => {
     state = { loading: false, error: null, data: { trades: [], ledger: [], totals } };
     render(<HistoryPane account="capital:demo" />);

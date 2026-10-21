@@ -1197,6 +1197,7 @@ export default function App() {
             trading={settings.trading}
             confirmLineEdits={settings.trading.confirmLineEdits}
             onJumpToEpic={jumpToEpic}
+            onSelectTrade={jumpToTrade}
             maximized={dockMaximized}
             onToggleMaximize={() => setDockMaximized((m) => !m)}
           />

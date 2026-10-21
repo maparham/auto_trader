@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { closedByLabel, ledgerKindLabel, priceDecimals, sortClosedTrades, DEFAULT_HISTORY_SORT } from "./historyTable";
+import { closedByLabel, historyTradeRow, ledgerKindLabel, priceDecimals, sortClosedTrades, DEFAULT_HISTORY_SORT } from "./historyTable";
 import type { ClosedTradeView } from "./accountHistory";
 
 const t = (over: Partial<ClosedTradeView>): ClosedTradeView => ({
@@ -30,5 +30,14 @@ describe("historyTable", () => {
 
   it("guesses precision from a price's decimals, capped at 6", () => {
     expect([400, 1.08345, 0.123456789].map(priceDecimals)).toEqual([0, 5, 6]);
+  });
+
+  it("maps a closed trade onto the trade-list jump's row, and skips one with no open time", () => {
+    expect(historyTradeRow(t({ side: "sell", entry: 100, exit: 90, openedAt: 1_000, closedAt: 5_000, pnl: 12.5, size: 2 })))
+      .toEqual({
+        symbol: "TSLA", side: "SHORT", entryTs: 1_000, entryPrice: 100, exitTs: 5_000, exitPrice: 90,
+        pctPL: 10, dollarPL: 12.5, qty: 2, hasTime: true,
+      });
+    expect(historyTradeRow(t({ openedAt: null }))).toBeNull();
   });
 });
