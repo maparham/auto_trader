@@ -64,7 +64,7 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
   const [condition, setCondition] = useState<AlertCondition>(existing?.condition ?? defaults.condition);
   const [value, setValue] = useState(existing?.params.value != null ? String(existing.params.value) : "");
   const [typed, setTyped] = useState(existing != null);
-  const [evalOn, setEvalOn] = useState<EvalOn>(existing?.params.evalOn ?? "close");
+  const [evalOn, setEvalOn] = useState<EvalOn>(existing?.params.evalOn ?? "intrabar");
 
   useEffect(() => {
     let live = true;
