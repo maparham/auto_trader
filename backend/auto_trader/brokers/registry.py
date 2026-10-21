@@ -89,6 +89,7 @@ class BrokerRegistry:
                 "broker": key.split(":", 1)[0],
                 "env": broker.env,
                 "isRealMoney": broker.is_real_money,
+                "history": bool(getattr(broker, "supports_history", False)),
             }
             for key, broker in self.exec.items()
         ] if include_restricted else []

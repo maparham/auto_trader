@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 from auto_trader.core.models import (
+    AccountHistory,
     Candle,
     Order,
     OrderResult,
@@ -211,4 +212,12 @@ class ExecutionBroker(ABC):
     @abstractmethod
     async def cancel_working_order(self, order_id: str) -> OrderResult:
         """Cancel a resting order."""
+        raise NotImplementedError
+
+    # Closed trades + cash ledger. Optional: a broker that reports its own history
+    # sets supports_history and overrides get_history; everything else (the paper
+    # sim included) inherits the defaults and the route answers supported:false.
+    supports_history: bool = False
+
+    async def get_history(self, since: datetime, until: datetime) -> AccountHistory:
         raise NotImplementedError

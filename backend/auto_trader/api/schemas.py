@@ -600,6 +600,48 @@ class WorkingOrderDTO(BaseModel):
     expires_at: datetime | None = None
 
 
+class ClosedTradeDTO(BaseModel):
+    deal_id: str
+    epic: str
+    side: str
+    size: float
+    entry_price: float
+    exit_price: float
+    opened_at: int | None = None  # epoch ms
+    closed_at: int  # epoch ms
+    close_source: str
+    pnl: float | None = None
+    currency: str | None = None
+
+
+class LedgerEntryDTO(BaseModel):
+    at: int  # epoch ms
+    kind: str
+    epic: str | None = None
+    note: str
+    amount: float
+    currency: str
+    reference: str
+    deal_id: str | None = None
+
+
+class HistoryTotalsDTO(BaseModel):
+    realized: float
+    funding: float
+    deposits: float
+    withdrawals: float
+    currency: str | None = None
+
+
+class AccountHistoryDTO(BaseModel):
+    supported: bool
+    since: int | None = None
+    until: int | None = None
+    trades: list[ClosedTradeDTO] = []
+    ledger: list[LedgerEntryDTO] = []
+    totals: HistoryTotalsDTO | None = None
+
+
 class OrderResultDTO(BaseModel):
     client_order_id: str
     status: str

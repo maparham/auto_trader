@@ -18,6 +18,12 @@ from typing import TYPE_CHECKING
 import httpx
 
 from auto_trader.brokers.base import MarketDataBroker
+from auto_trader.brokers._capital_history import (
+    DayCache,
+    attach_pnl,
+    fetch_activity,
+    fetch_transactions,
+)
 from auto_trader.brokers._dealing import (
     AsyncConfirmExecutionBroker,
     account_summary_from_accounts,
@@ -38,6 +44,7 @@ from auto_trader.brokers._prices import (
 from auto_trader.brokers._session import SessionAuthBroker, raise_if_waf_blocked
 from auto_trader.config import settings
 from auto_trader.core.models import (
+    AccountHistory,
     Candle,
     Order,
     OrderResult,
@@ -581,6 +588,8 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
     submits. A lost response resolves to UNKNOWN, which the caller must reconcile —
     never blindly resubmit (a resubmit risks a double fill)."""
 
+    supports_history = True
+
     def __init__(self, broker: "CapitalComBroker") -> None:
         super().__init__()
         self._broker = broker
@@ -588,6 +597,8 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
         # It effectively never changes, so a long TTL keeps get_positions cheap.
         self._account_ccy: str | None = None
         self._account_ccy_at: "datetime | None" = None
+        # Past UTC days of activity never change; see _capital_history.DayCache.
+        self._history_days = DayCache()
 
     async def _account_currency(self) -> str | None:
         now = datetime.now(timezone.utc)
@@ -940,6 +951,14 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
         one); `profitLoss` is Capital's own open-P&L snapshot."""
         resp = await self._broker._request("GET", "/api/v1/accounts")
         return account_summary_from_accounts(resp.json())
+
+    async def get_history(self, since: datetime, until: datetime) -> AccountHistory:
+        """Closed trades (with realized P&L) and the cash ledger in [since, until].
+        Sequential on purpose: these calls share the dealing session's limiter."""
+        request = self._broker._request
+        ledger = await fetch_transactions(request, since, until)
+        trades = await fetch_activity(request, self._history_days, since, until)
+        return AccountHistory(trades=attach_pnl(trades, ledger), ledger=ledger)
 
 
 def _deal_id(confirm: dict) -> str | None:

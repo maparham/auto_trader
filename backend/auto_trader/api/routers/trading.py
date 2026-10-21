@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from auto_trader.brokers._capital_history import history_totals
 from auto_trader.core.broker_health import BrokerBlocked, BrokerReconnecting
 from auto_trader.core.models import (
     Order,
@@ -16,7 +19,11 @@ from auto_trader.core.models import (
 
 from ..deps import broker_blocked_http, get_exec, require_admin
 from ..schemas import (
+    AccountHistoryDTO,
     AccountSummaryDTO,
+    ClosedTradeDTO,
+    HistoryTotalsDTO,
+    LedgerEntryDTO,
     LevelsRequest,
     OrderRequest,
     OrderResultDTO,
@@ -227,6 +234,58 @@ async def working_orders(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"working orders failed: {e}") from e
     return [_working_order_dto(w) for w in found]
+
+
+_HISTORY_DAYS = (7, 30, 90)
+
+
+def _ms(dt: datetime | None) -> int | None:
+    return None if dt is None else int(dt.timestamp() * 1000)
+
+
+@router.get("/api/history", response_model=AccountHistoryDTO)
+async def account_history(
+    account: str = Query("capital:paper"), days: int = Query(30)
+) -> AccountHistoryDTO:
+    """Closed trades + cash ledger for the last `days`. An account without broker
+    history (paper sim, other brokers) answers supported:false, not an error."""
+    if days not in _HISTORY_DAYS:
+        raise HTTPException(status_code=422, detail=f"days must be one of {_HISTORY_DAYS}")
+    broker = get_exec(account)
+    if not getattr(broker, "supports_history", False):
+        return AccountHistoryDTO(supported=False)
+    until = datetime.now(timezone.utc)
+    since = until - timedelta(days=days)
+    try:
+        hist = await broker.get_history(since, until)
+    except BrokerReconnecting as e:
+        raise HTTPException(503, f"{account}: broker reconnecting, retry shortly") from e
+    except BrokerBlocked as e:
+        raise broker_blocked_http("history failed", e) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"history failed: {e}") from e
+    return AccountHistoryDTO(
+        supported=True,
+        since=_ms(since),
+        until=_ms(until),
+        trades=[
+            ClosedTradeDTO(
+                deal_id=t.deal_id, epic=t.epic, side=t.side.value, size=t.size,
+                entry_price=t.entry_price, exit_price=t.exit_price,
+                opened_at=_ms(t.opened_at), closed_at=_ms(t.closed_at),
+                close_source=t.close_source, pnl=t.pnl, currency=t.currency,
+            )
+            for t in hist.trades
+        ],
+        ledger=[
+            LedgerEntryDTO(
+                at=_ms(e.at), kind=e.kind, epic=e.epic, note=e.note, amount=e.amount,
+                currency=e.currency, reference=e.reference, deal_id=e.deal_id,
+            )
+            for e in hist.ledger
+        ],
+        totals=HistoryTotalsDTO(**history_totals(hist.ledger)),
+    )
 
 
 @router.put("/api/orders/working/{order_id}", response_model=OrderResultDTO)
