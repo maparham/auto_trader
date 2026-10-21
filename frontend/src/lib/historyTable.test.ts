@@ -12,7 +12,7 @@ describe("historyTable", () => {
     expect(["TP", "SL", "USER", "SYSTEM", "CLOSE_OUT", "DEALER", "ODD"].map(closedByLabel))
       .toEqual(["TP", "SL", "Manual", "System", "Stop-out", "Dealer", "ODD"]);
     expect(["SWAP", "TRADE", "DEPOSIT", "WITHDRAWAL", "BONUS"].map(ledgerKindLabel))
-      .toEqual(["Funding", "Trade", "Deposit", "Withdrawal", "BONUS"]);
+      .toEqual(["Overnight fee", "Trade", "Deposit", "Withdrawal", "BONUS"]);
   });
 
   it("sorts newest close first by default, nulls last on any key", () => {

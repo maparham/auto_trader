@@ -89,15 +89,23 @@ describe("HistoryPane", () => {
     expect(refresh).toHaveBeenCalledWith("capital:demo");
   });
 
+  it("shows an info tip on the Overnight fees label by default, and hides it when tips=false", () => {
+    state = { loading: false, error: null, data: { trades: [], ledger: [], totals } };
+    const { rerender } = render(<HistoryPane account="capital:demo" />);
+    expect(screen.getByRole("button", { name: "About Overnight fees" })).toBeTruthy();
+    rerender(<HistoryPane account="capital:demo" tips={false} />);
+    expect(screen.queryByRole("button", { name: "About Overnight fees" })).toBeNull();
+  });
+
   it("lists ledger rows under the Ledger toggle", () => {
     state = {
       loading: false, error: null,
-      data: { trades: [], totals, ledger: [{ at: 1, kind: "SWAP", epic: null, note: "Overnight fee",
+      data: { trades: [], totals, ledger: [{ at: 1, kind: "SWAP", epic: null, note: "swap r",
         amount: -0.42, currency: "EUR", reference: "r", dealId: null }] },
     };
     render(<HistoryPane account="capital:demo" />);
     fireEvent.click(screen.getByRole("button", { name: "Ledger" }));
-    expect(screen.getAllByText("Funding")).toHaveLength(2); // totals label + the row's type
-    expect(screen.getByText("Overnight fee")).toBeTruthy();
+    expect(screen.getByText("Overnight fees")).toBeTruthy(); // totals label
+    expect(screen.getByText("Overnight fee")).toBeTruthy(); // the row's type
   });
 });

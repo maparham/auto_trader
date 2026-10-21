@@ -18,6 +18,7 @@ import {
 } from "./lib/historyTable";
 import { cash, fmtPnl, fmtTime, pnlClass } from "./lib/positionsTable";
 import { SortHeader } from "./PositionsTable";
+import InfoTip from "./components/InfoTip";
 
 const RANGES: HistoryDays[] = [7, 30, 90];
 
@@ -105,7 +106,16 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, tips 
               </span>
             </span>
             <span>
-              <span className="pp-stat-label">Funding</span>{" "}
+              <span className="pp-stat-label">Overnight fees</span>{" "}
+              {tips && (
+                <InfoTip
+                  title="Overnight fees"
+                  text={[
+                    "Capital's overnight funding charges in this range.",
+                    "Daily premium adjustments are not included: Capital's API does not report them.",
+                  ]}
+                />
+              )}{" "}
               <span className={pnlClass(totals.funding)}>
                 {cash(totals.funding)} {ccy}
               </span>

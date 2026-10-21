@@ -15,7 +15,7 @@ const CLOSED_BY: Record<string, string> = {
 export const closedByLabel = (source: string) => CLOSED_BY[source] ?? source;
 
 const LEDGER_KIND: Record<string, string> = {
-  SWAP: "Funding",
+  SWAP: "Overnight fee",
   TRADE: "Trade",
   DEPOSIT: "Deposit",
   WITHDRAWAL: "Withdrawal",
