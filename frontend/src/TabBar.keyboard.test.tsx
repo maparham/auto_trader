@@ -40,9 +40,7 @@ function renderBar(activeId = "t2") {
       onAdd={vi.fn()}
       onClose={vi.fn()}
       onReorder={vi.fn()}
-      canMerge={() => false}
       onMerge={vi.fn()}
-      onDragActive={vi.fn()}
       searchQuery=""
       onSearchQuery={vi.fn()}
       brokerId="capital"
@@ -141,9 +139,7 @@ function Harness({ activeId, onSelect }: { activeId: string; onSelect: (id: stri
       onAdd={vi.fn()}
       onClose={vi.fn()}
       onReorder={vi.fn()}
-      canMerge={() => false}
       onMerge={vi.fn()}
-      onDragActive={vi.fn()}
       searchQuery=""
       onSearchQuery={vi.fn()}
       brokerId="capital"

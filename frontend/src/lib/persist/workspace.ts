@@ -130,13 +130,12 @@ export function canMergeTabs(tabs: ChartTab[], sourceId: string, targetId: strin
 // under the target tab id (content copied via copyScopeContent, source prefix
 // purged) — keeping the foreign scope would break the invariant closeTab /
 // deleteLayout rely on (purging a tab's content by its own prefix reaches all
-// of its cells). `position` places the incoming cells relative to the target's
-// existing ones. Returns null when the merge is invalid or would exceed 4 cells.
+// of its cells). Incoming cells land after the target's existing ones.
+// Returns null when the merge is invalid or would exceed 4 cells.
 export function mergeTabInto(
   tabs: ChartTab[],
   sourceId: string,
   targetId: string,
-  position: "before" | "after" = "after",
 ): { tabs: ChartTab[]; moved: Array<{ from: string; to: string }> } | null {
   if (!canMergeTabs(tabs, sourceId, targetId)) return null;
   const src = tabs.find((t) => t.id === sourceId)!;
@@ -160,7 +159,7 @@ export function mergeTabInto(
   // loss into a mere orphaned-scope leak, and undo can still restore the
   // untouched originals.
   if (copiesOk) purgeTabScope(sourceId);
-  const cells = position === "before" ? [...moved, ...dst.cells] : [...dst.cells, ...moved];
+  const cells = [...dst.cells, ...moved];
   const { sizes: _sizes, ...dstRest } = dst;
   const merged: ChartTab = {
     ...dstRest,

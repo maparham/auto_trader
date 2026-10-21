@@ -3,6 +3,8 @@
 **Date:** 2026-07-03
 **Status:** approved
 
+> **Superseded 2026-10-21:** drag-to-merge (chip onto chip, chip onto chart) was removed. Dragging a chip only reorders; merging is the context menu's "Merge into this tab" checklist only.
+
 ## Problem
 
 Reordering chart tabs today is drag-and-drop with a 2px vertical accent line as the only drop indicator. Three pains, confirmed with the user:

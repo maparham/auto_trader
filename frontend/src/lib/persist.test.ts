@@ -671,11 +671,6 @@ describe("mergeTabInto (merge whole tabs — inverse of detach)", () => {
     expect((out2[0].cells[1].period as { label: string }).label).toBe("5m");
   });
 
-  it("position 'before' puts the incoming cells first", () => {
-    const out = P.mergeTabInto([tab("s", 1), tab("d", 1)], "s", "d", "before")!.tabs;
-    expect(out[0].cells.map((c) => c.id)).toEqual(["s-c0", "d-c0"]);
-  });
-
   it("refuses over-cap and self merges", () => {
     expect(P.canMergeTabs([tab("s", 3), tab("d", 2)], "s", "d")).toBe(false);
     expect(P.mergeTabInto([tab("s", 3), tab("d", 2)], "s", "d")).toBeNull();

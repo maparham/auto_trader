@@ -84,11 +84,6 @@ interface Props {
   sizes?: { cols: number[]; rows: number[] };
   // Commit new fractions after a border drag.
   onSizes: (sizes: { cols: number[]; rows: number[] }) => void;
-  // A tab chip is being dragged over the app (merge gesture): show a two-half
-  // drop overlay. canMerge=false renders a "would exceed" notice instead of
-  // droppable halves. Absent/null = no drag in flight.
-  tabDrag?: { canMerge: boolean } | null;
-  onMergeDrop?: (position: "before" | "after") => void;
 }
 
 export default function ChartGrid({
@@ -121,20 +116,9 @@ export default function ChartGrid({
   onSwapCells,
   sizes,
   onSizes,
-  tabDrag,
-  onMergeDrop,
 }: Props) {
   // Right-click menu on a detach handle: which cell + where to anchor it.
   const [detachMenu, setDetachMenu] = useState<{ x: number; y: number; cellId: string } | null>(null);
-  // Which overlay half the chip drag is over (highlight), or null.
-  const [mergeHover, setMergeHover] = useState<"before" | "after" | null>(null);
-  // A new drag session (or none at all) must never inherit the previous
-  // session's highlighted half — e.g. TabBar strands its own drag state when
-  // a chip merges away mid-gesture (see TabBar.tsx), so App can drop tabDrag
-  // to null without this component ever seeing a drop/dragleave to clear it.
-  useEffect(() => {
-    if (!tabDrag) setMergeHover(null);
-  }, [tabDrag]);
   // The corner controls (detach/maximize) sit INSIDE the chart area, just left
   // of the price axis (TV-style) — anchored to the cell edge they'd cover the
   // axis labels. The axis width is dynamic (price magnitude / decimals), so
@@ -454,41 +438,6 @@ export default function ChartGrid({
             );
           }),
         )}
-      {tabDrag && (
-        <div
-          className="merge-drop"
-          // Halves follow the grid's main axis: side-by-side layouts split
-          // left/right, stacked ones top/bottom.
-          style={{ flexDirection: shape.rows === 1 ? "row" : "column" }}
-        >
-          {tabDrag.canMerge ? (
-            (["before", "after"] as const).map((pos) => (
-              // Only the centered TARGET box accepts the drop; the dead border
-              // around it restores the pre-overlay escape hatch — releasing a
-              // chip there cancels the drag instead of merging, so an
-              // abandoned reorder can't destroy a tab.
-              <div key={pos} className="merge-drop-half">
-                <div
-                  className={`merge-drop-target${mergeHover === pos ? " over" : ""}`}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                    if (mergeHover !== pos) setMergeHover(pos);
-                  }}
-                  onDragLeave={() => setMergeHover((h) => (h === pos ? null : h))}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setMergeHover(null);
-                    onMergeDrop?.(pos);
-                  }}
-                />
-              </div>
-            ))
-          ) : (
-            <div className="merge-drop-blocked">Would exceed 4 charts</div>
-          )}
-        </div>
-      )}
       {detachMenu && (
         <ContextMenu
           x={detachMenu.x}

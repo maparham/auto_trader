@@ -254,9 +254,8 @@ export function useTabActions({
 
   // Merge whole tabs into `targetId` — the inverse of detachCell. Each source
   // tab's cells move across (content re-scoped by mergeTabInto), the source
-  // tabs close, and the merged tab gains crosshair sync. `position` places the
-  // incoming cells (drag-onto-chart's left/top half passes "before"). The
-  // target becomes the active tab in every gesture.
+  // tabs close, and the merged tab gains crosshair sync. The target becomes
+  // the active tab.
   // Structural fingerprint: tab ids + layout kinds + cell ids. Symbol/TF
   // changes don't alter it (an undo offer must survive them); close/add/
   // detach/layout changes and workspace/broker switches do.
@@ -273,11 +272,7 @@ export function useTabActions({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs]);
 
-  const mergeTabs = (
-    targetId: string,
-    sourceIds: string[],
-    position: "before" | "after" = "after",
-  ) => {
+  const mergeTabs = (targetId: string, sourceIds: string[]) => {
     const prevTabs = tabs;
     const prevActiveId = activeId;
     // Label = the TARGET's pre-merge lead chart (after the merge its
@@ -288,7 +283,7 @@ export function useTabActions({
     let next = tabs;
     flushPendingAutoSaves(); // mergeTabInto purges the source scopes — land ≤800ms-pending template autosaves first
     for (const srcId of sourceIds) {
-      const res = mergeTabInto(next, srcId, targetId, position);
+      const res = mergeTabInto(next, srcId, targetId);
       if (!res) continue; // over-cap sources are UI-disabled; skip defensively
       next = res.tabs;
       pairs.push(...res.moved);

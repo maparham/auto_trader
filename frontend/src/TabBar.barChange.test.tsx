@@ -67,9 +67,7 @@ function renderBar(props: Partial<React.ComponentProps<typeof TabBar>> = {}) {
       onAdd={vi.fn()}
       onClose={vi.fn()}
       onReorder={vi.fn()}
-      canMerge={() => false}
       onMerge={vi.fn()}
-      onDragActive={vi.fn()}
       searchQuery=""
       onSearchQuery={vi.fn()}
       brokerId="capital"
@@ -218,9 +216,7 @@ it("toggling one tab opens or closes only that lead's feed", () => {
       onAdd={vi.fn()}
       onClose={vi.fn()}
       onReorder={vi.fn()}
-      canMerge={() => false}
       onMerge={vi.fn()}
-      onDragActive={vi.fn()}
       searchQuery=""
       onSearchQuery={vi.fn()}
       brokerId="capital"
@@ -248,9 +244,7 @@ it("turning it off closes the feeds", () => {
       onAdd={vi.fn()}
       onClose={vi.fn()}
       onReorder={vi.fn()}
-      canMerge={() => false}
       onMerge={vi.fn()}
-      onDragActive={vi.fn()}
       searchQuery=""
       onSearchQuery={vi.fn()}
       brokerId="capital"

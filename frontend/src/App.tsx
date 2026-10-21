@@ -107,7 +107,6 @@ import {
   saveScratch,
   clearScratch,
   loadAutosave,
-  canMergeTabs,
   loadSnapshotMeta,
   type ChartTab,
   type Workspace,
@@ -172,8 +171,6 @@ export default function App() {
   // Transient view state (like `maximized` above) — never persisted. Siblings stay
   // mounted (hidden via CSS) so their live sockets/drawings/scroll survive restore.
   const [maximizedCellId, setMaximizedCellId] = useState<string | null>(null);
-  // Tab chip currently being dragged (chart-drop merge gesture), or null.
-  const [dragTabId, setDragTabId] = useState<string | null>(null);
   // Agent UI Bridge: register the agent-callable actions and (when enabled)
   // connect to the relay. Idempotent, so StrictMode's double invoke is a no-op.
   useEffect(() => { initAgentBridge(); }, []);
@@ -725,27 +722,6 @@ export default function App() {
     openTab,
   });
 
-  // Drag merges (chip onto chip, chip onto chart) ask first: a drag that ends
-  // a few pixels off lands as a merge by accident. The context menu doesn't.
-  const confirmMergeTabs = (
-    targetId: string,
-    sourceIds: string[],
-    position?: "before" | "after",
-  ) => {
-    const label = (id: string) => {
-      const t = tabs.find((x) => x.id === id);
-      const lead = t ? (t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0]) : null;
-      return lead ? `${lead.symbol.name} · ${lead.period.label}` : "tab";
-    };
-    const names = sourceIds.map(label).join(", ");
-    requestConfirm({
-      title: "Merge tabs?",
-      message: `Merge ${names} into ${label(targetId)}?`,
-      confirmLabel: "Merge",
-      onConfirm: () => mergeTabs(targetId, sourceIds, position),
-    });
-  };
-
   const {
     switchLayout,
     saveActiveLayout,
@@ -897,10 +873,7 @@ export default function App() {
         onAdd={addTab}
         onClose={closeTab}
         onReorder={reorderTab}
-        canMerge={(s, d) => canMergeTabs(tabs, s, d)}
-        onMerge={confirmMergeTabs}
-        onMergePicked={mergeTabs}
-        onDragActive={setDragTabId}
+        onMerge={mergeTabs}
         searchQuery={tabSearchQuery}
         onSearchQuery={setTabSearchQuery}
         brokerId={brokerId}
@@ -1064,15 +1037,6 @@ export default function App() {
               onSwapCells={swapCells}
               sizes={active.sizes}
               onSizes={setCellSizes}
-              tabDrag={
-                dragTabId && active && dragTabId !== active.id
-                  ? { canMerge: canMergeTabs(tabs, dragTabId, active.id) }
-                  : null
-              }
-              onMergeDrop={(pos) => {
-                if (dragTabId && active) confirmMergeTabs(active.id, [dragTabId], pos);
-                setDragTabId(null);
-              }}
             />
           ) : (
             /* Blank workspace: no default layout and nothing open. Offer the two

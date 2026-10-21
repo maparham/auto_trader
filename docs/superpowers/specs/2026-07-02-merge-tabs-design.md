@@ -2,6 +2,8 @@
 
 2026-07-02
 
+> **Superseded 2026-10-21:** drag-to-merge (chip onto chip, chip onto chart) was removed. Dragging a chip only reorders; merging is the context menu's "Merge into this tab" checklist only.
+
 ## Problem
 
 Building a multi-chart layout today means picking a tab and adding blank cells one by one, then re-configuring each. Users often already have the charts they want open as separate tabs and just want to see them together in one synced view.

@@ -1,6 +1,6 @@
 // Pure geometry for the tab bar's drag-to-reorder: simulate the flex-wrap
 // layout so chips can slide apart to preview an insertion, and hit-test the
-// cursor to a drop target (insertion slot or merge chip). DOM-free so vitest
+// cursor to an insertion slot. DOM-free so vitest
 // covers it without a browser. All chip rects come in cached from dragstart —
 // the preview transforms change getBoundingClientRect, so live measurement
 // would feed back into itself.
@@ -13,13 +13,6 @@ export interface Rect {
   width: number;
   height: number;
 }
-
-export type DragTarget =
-  // Insertion slot in ORIGINAL-array indexing, 0..n (n = past the last tab),
-  // matching App.reorderTab's remove-then-insert contract.
-  | { kind: "insert"; index: number }
-  // Chip index to merge the dragged tab into.
-  | { kind: "merge"; index: number };
 
 // Where inline wrapping puts items of the given widths: x offset within the
 // row and the row number. Mirrors .tab-bar-tabs (row wrap, fixed gap); an item
@@ -90,49 +83,13 @@ export function previewDeltas(
   return deltas;
 }
 
-// A merge needs the dragged chip to sit almost exactly on top of the target:
-// centers within this fraction of the target's width (enter), held until they
-// drift past the looser one (exit, so a merge can't flicker off on one jittery
-// dragover). Reordering sweeps the chip ACROSS its neighbours, so anything
-// looser turns an ordinary pass over a chip into an accidental merge — which
-// is worst right where the drag slows down near its destination.
-const MERGE_ENTER = 0.14;
-const MERGE_EXIT = 0.26;
-
-// A cursor anywhere but dead center on a chip reads as "drop it beside this
-// one", so a merge also needs the cursor in the chip's narrow central band:
-// the middle tenth to enter, widening slightly to hold. Same enter/hold split
-// as the alignment tolerance.
-const CURSOR_ENTER = 0.45;
-const CURSOR_HOLD = 0.39;
-
-// Hit-test the drag against the cached chip rects. Row first (the row whose
-// vertical center is nearest the cursor), then within that row: a merge when
-// the dragged chip is aligned on a chip per the tolerance above, otherwise the
-// nearest insertion gap by chip midpoint. "Past the last chip of a row" inserts
-// before the next row's first chip.
-//
-// The merge test uses `drag` — the floating clone's rect, i.e. what the user
-// sees themselves carrying — plus the cursor's own distance from the chip's
-// borders, so alignment means what it looks like. Chips the slide-apart
-// preview has translated are compared at their drawn position (`deltas`), for
-// the same reason. Without a `drag` rect (no clone yet) nothing merges.
-export function dropTarget(
-  rects: Rect[],
-  x: number,
-  y: number,
-  fromIdx: number,
-  mergeOk: (chipIdx: number) => boolean,
-  opts?: {
-    // Rect of the floating dragged chip, in the same space as `rects`.
-    drag?: Rect | null;
-    // Per-chip transform currently applied on screen (previewDeltas output).
-    deltas?: { dx: number; dy: number }[] | null;
-    // The target this is refining, for the merge hold tolerance.
-    current?: DragTarget | null;
-  },
-): DragTarget {
-  if (rects.length === 0) return { kind: "insert", index: 0 };
+// Hit-test the cursor against the cached chip rects: the row whose vertical
+// center is nearest the cursor, then the nearest insertion gap in that row by
+// chip midpoint. "Past the last chip of a row" inserts before the next row's
+// first chip. The slot is in ORIGINAL-array indexing, 0..n (n = past the last
+// tab), matching App.reorderTab's remove-then-insert contract.
+export function dropSlot(rects: Rect[], x: number, y: number): number {
+  if (rects.length === 0) return 0;
   // Chips arrive in DOM order, so tops are non-decreasing: cut a new row
   // whenever the top steps down (1px tolerance for subpixel layout).
   const rows: number[][] = [];
@@ -154,33 +111,9 @@ export function dropTarget(
       row = candidate;
     }
   }
-  const drag = opts?.drag ?? null;
-  if (drag != null) {
-    // Nearest aligned chip, so a drag between two chips can't pick the further
-    // one just because it is scanned first.
-    let pick = -1;
-    let pickDist = Infinity;
-    for (const i of row) {
-      if (i === fromIdx || !mergeOk(i)) continue;
-      const r = rects[i];
-      const dx = opts?.deltas?.[i]?.dx ?? 0;
-      const dy = opts?.deltas?.[i]?.dy ?? 0;
-      const held = opts?.current?.kind === "merge" && opts.current.index === i;
-      const tol = (held ? MERGE_EXIT : MERGE_ENTER) * r.width;
-      const cdx = Math.abs(drag.left + drag.width / 2 - (r.left + dx + r.width / 2));
-      const cdy = Math.abs(drag.top + drag.height / 2 - (r.top + dy + r.height / 2));
-      const edge = held ? CURSOR_HOLD : CURSOR_ENTER;
-      const frac = (x - (r.left + dx)) / r.width;
-      if (cdx <= tol && cdy <= r.height / 2 && frac >= edge && frac <= 1 - edge && cdx < pickDist) {
-        pick = i;
-        pickDist = cdx;
-      }
-    }
-    if (pick !== -1) return { kind: "merge", index: pick };
-  }
   for (const i of row) {
     const r = rects[i];
-    if (x < r.left + r.width / 2) return { kind: "insert", index: i };
+    if (x < r.left + r.width / 2) return i;
   }
-  return { kind: "insert", index: row[row.length - 1] + 1 };
+  return row[row.length - 1] + 1;
 }

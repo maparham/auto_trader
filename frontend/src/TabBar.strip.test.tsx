@@ -36,9 +36,7 @@ function renderBar(props: Partial<React.ComponentProps<typeof TabBar>> = {}) {
       onAdd={vi.fn()}
       onClose={vi.fn()}
       onReorder={vi.fn()}
-      canMerge={() => false}
       onMerge={vi.fn()}
-      onDragActive={vi.fn()}
       searchQuery=""
       onSearchQuery={vi.fn()}
       brokerId="capital"
@@ -86,9 +84,7 @@ it("a search query scrolls the first matching tab into view", () => {
         onAdd={vi.fn()}
         onClose={vi.fn()}
         onReorder={vi.fn()}
-        canMerge={() => false}
         onMerge={vi.fn()}
-        onDragActive={vi.fn()}
         searchQuery="gold"
         onSearchQuery={vi.fn()}
         brokerId="capital"
