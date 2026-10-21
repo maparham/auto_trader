@@ -132,6 +132,13 @@ function sessionText(e: Earnings, c: EarningsClock): string | null {
   return when ? `${SESSIONS[e.session]} (${when})` : SESSIONS[e.session];
 }
 
+/** Beat, miss or in line, from the EPS surprise; null until reported. */
+export function surpriseTone(e: Earnings): "pos" | "neg" | "flat" | null {
+  const sp = e.epsActual != null ? e.surprisePct : null;
+  if (sp == null) return null;
+  return sp > 0.05 ? "pos" : sp < -0.05 ? "neg" : "flat";
+}
+
 export function earningsView(e: Earnings, c: EarningsClock = { clock: "24h" }): EarningsView {
   const nowMs = c.nowMs ?? Date.now();
   const rows: EarningsRow[] = [
@@ -147,6 +154,7 @@ export function earningsView(e: Earnings, c: EarningsClock = { clock: "24h" }): 
     },
   ].filter((r) => r.estimate != null || r.actual != null);
   const sp = e.epsActual != null ? e.surprisePct : null;
+  const tone = surpriseTone(e);
   return {
     date: splitDateText(e.timeMs),
     // UTC day, matching the date shown above it (splitDateText).
@@ -155,12 +163,7 @@ export function earningsView(e: Earnings, c: EarningsClock = { clock: "24h" }): 
     rows,
     hasActual: rows.some((r) => r.actual != null),
     surprise:
-      sp == null
-        ? null
-        : {
-            text: `${sp > 0 ? "+" : ""}${sp.toFixed(1)}%`,
-            tone: sp > 0.05 ? "pos" : sp < -0.05 ? "neg" : "flat",
-          },
+      sp == null || tone == null ? null : { text: `${sp > 0 ? "+" : ""}${sp.toFixed(1)}%`, tone },
   };
 }
 

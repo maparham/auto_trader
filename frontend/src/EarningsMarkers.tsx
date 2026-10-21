@@ -12,7 +12,7 @@ import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type
 import { createPortal } from "react-dom";
 import InfoTip from "./components/InfoTip";
 import { computePlacement } from "./components/tooltipPosition";
-import { EARNINGS_CHIP, earningsView, type EarningsMarker, type EarningsView } from "./lib/earnings";
+import { EARNINGS_CHIP, earningsView, surpriseTone, type EarningsMarker, type EarningsView } from "./lib/earnings";
 import type { Clock } from "./lib/timeFormat";
 
 export interface EarningsMarkersHandle {
@@ -119,45 +119,49 @@ export default function EarningsMarkers({
   if (state.markers.length === 0) return null;
   return (
     <div style={{ position: "absolute", inset: 0, zIndex: 11, pointerEvents: "none" }}>
-      {state.markers.map((m) => (
-        <button
-          key={m.key}
-          type="button"
-          ref={(el) => {
-            if (el) chipRefs.current.set(m.key, el);
-            else chipRefs.current.delete(m.key);
-          }}
-          aria-label={m.label}
-          aria-expanded={openKey === m.key}
-          aria-haspopup="dialog"
-          onClick={() => setOpenKey((k) => (k === m.key ? null : m.key))}
-          style={{
-            position: "absolute",
-            left: `${m.x}px`,
-            top: `${state.bottom - EARNINGS_CHIP - GAP - (m.lift ? ROW : 0)}px`,
-            transform: "translateX(-50%)",
-            width: EARNINGS_CHIP,
-            height: EARNINGS_CHIP,
-            padding: 0,
-            lineHeight: `${EARNINGS_CHIP - 2}px`,
-            textAlign: "center",
-            fontSize: 10,
-            fontWeight: 700,
-            fontFamily: "inherit",
-            borderRadius: 3,
-            // A notch stronger than the split chip: earnings move prices.
-            border: `1px ${m.upcoming ? "dashed" : "solid"} var(--text-faint)`,
-            background: openKey === m.key ? "var(--hover)" : "var(--surface-2)",
-            color: "var(--text)",
-            pointerEvents: "auto",
-            cursor: "pointer",
-            userSelect: "none",
-            boxSizing: "border-box",
-          }}
-        >
-          E
-        </button>
-      ))}
+      {state.markers.map((m) => {
+        // A missed EPS estimate turns the chip red, so misses stand out.
+        const miss = surpriseTone(m.earnings) === "neg";
+        return (
+          <button
+            key={m.key}
+            type="button"
+            ref={(el) => {
+              if (el) chipRefs.current.set(m.key, el);
+              else chipRefs.current.delete(m.key);
+            }}
+            aria-label={m.label}
+            aria-expanded={openKey === m.key}
+            aria-haspopup="dialog"
+            onClick={() => setOpenKey((k) => (k === m.key ? null : m.key))}
+            style={{
+              position: "absolute",
+              left: `${m.x}px`,
+              top: `${state.bottom - EARNINGS_CHIP - GAP - (m.lift ? ROW : 0)}px`,
+              transform: "translateX(-50%)",
+              width: EARNINGS_CHIP,
+              height: EARNINGS_CHIP,
+              padding: 0,
+              lineHeight: `${EARNINGS_CHIP - 2}px`,
+              textAlign: "center",
+              fontSize: 10,
+              fontWeight: 700,
+              fontFamily: "inherit",
+              borderRadius: 3,
+              // A notch stronger than the split chip: earnings move prices.
+              border: `1px ${m.upcoming ? "dashed" : "solid"} ${miss ? "var(--neg)" : "var(--text-faint)"}`,
+              background: openKey === m.key ? "var(--hover)" : "var(--surface-2)",
+              color: miss ? "var(--neg)" : "var(--text)",
+              pointerEvents: "auto",
+              cursor: "pointer",
+              userSelect: "none",
+              boxSizing: "border-box",
+            }}
+          >
+            E
+          </button>
+        );
+      })}
       {open &&
         createPortal(
           <div

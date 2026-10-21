@@ -51,6 +51,20 @@ describe("EarningsMarkers", () => {
     expect(chip.style.top).toBe(`${200 - 18 - 16}px`);
   });
 
+  it("turns a missed estimate's chip red", () => {
+    const miss = marker();
+    miss.earnings = { ...miss.earnings, epsActual: 0.33, epsEstimate: 0.54, surprisePct: -39.1 };
+    setup([miss]);
+    const chip = screen.getByRole("button", { name: "Earnings 30 Jul 2026" });
+    expect(chip.style.color).toBe("var(--neg)");
+    expect(chip.style.border).toContain("var(--neg)");
+  });
+
+  it("keeps a beat's chip neutral", () => {
+    setup();
+    expect(screen.getByRole("button", { name: "Earnings 30 Jul 2026" }).style.color).toBe("var(--text)");
+  });
+
   it("opens the detail on a click, with estimate vs actual", () => {
     setup();
     expect(screen.queryByRole("dialog")).toBeNull();
