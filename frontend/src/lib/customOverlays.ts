@@ -44,7 +44,7 @@ import {
   type GhostStyle,
 } from "./patternGhost";
 import { periodFromTf } from "../chart/chartDataFacade";
-import { tradeBox } from "./tradeOverlay";
+import { tradeBox, tradeBoxView } from "./tradeOverlay";
 
 // --- line geometry, replicated from klinecharts' (non-exported) built-ins so the
 // overridden variants paint byte-identically to the originals. ---------------
@@ -1129,6 +1129,7 @@ export function registerCustomOverlays(): void {
   registerOverlay(timeRange);
   registerOverlay(patternGhost);
   registerOverlay(tradeBox);
+  registerOverlay(tradeBoxView);
   // Fingertip-sized hit area for every line figure (see touchHitSlop.ts).
   installTouchHitSlop();
 }

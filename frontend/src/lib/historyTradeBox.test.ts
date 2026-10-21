@@ -23,7 +23,7 @@ describe("historyTradeBox", () => {
     expect(chart.createOverlay).not.toHaveBeenCalled();
     box.sync(trade(), "TSLA", []);
     expect(chart.createOverlay).toHaveBeenCalledTimes(1);
-    expect(chart.createOverlay).toHaveBeenCalledWith(expect.objectContaining({ name: "tradeBox", lock: true }));
+    expect(chart.createOverlay).toHaveBeenCalledWith(expect.objectContaining({ name: "tradeBoxView", lock: true }));
   });
 
   it("does not rebuild on an unchanged paint, and removes the box on deselect", () => {

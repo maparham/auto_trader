@@ -212,4 +212,12 @@ function barsBetween(
   return chart.getDataList().filter((k) => k.timestamp >= lo && k.timestamp < hi).length;
 }
 
-
+/** Read-only twin for the History tab's selected trade (lib/historyTradeBox):
+ * same picture, no drag grips. It is also created locked, so this only drops
+ * the handles that would suggest it can be edited. */
+export const TRADE_BOX_VIEW = "tradeBoxView";
+export const tradeBoxView: OverlayTemplate = {
+  ...tradeBox,
+  name: TRADE_BOX_VIEW,
+  needDefaultPointFigure: false,
+};
