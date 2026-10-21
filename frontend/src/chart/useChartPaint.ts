@@ -864,7 +864,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // the live-detected TrendLine list, which can re-extend past the alert's
     // own anchors as new bars arrive or drop the line entirely. Wherever the
     // dashed line draws (the chart's own timeframe, or a finer chart under
-    // a pin to the alert's), and while the eye shows alert lines.
+    // a pin to the alert's), and while the eye shows alert lines, whether or
+    // not the indicator itself is shown.
     const lineBells: LineAlertBellTag[] = [];
     if (!overlays.getAlertsHidden()) {
       // The lines first: their end follows the last bar, and this also
@@ -875,8 +876,10 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         const p = a.params;
         const link = p.link;
         if (!link || link.scope !== scope) continue;
+        // Shown even while the indicator is hidden, like the dashed line:
+        // the alert still fires, so its bell stays reachable.
         const ind = getIndicatorById(chart, link.instanceId);
-        if (!ind || ind.visible === false) continue;
+        if (!ind) continue;
         // Same check the line uses: the instance must alert on the alert's
         // timeframe here (the chart's, or its pin's); otherwise neither draws.
         const ext = ind.extendData as Record<string, unknown> | undefined;
