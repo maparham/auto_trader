@@ -1423,6 +1423,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
           y: Math.max(px.y, 14),
           count: cl.exits.length,
           net: cl.net,
+          moneyCount: cl.moneyCount,
           exits: cl.exits,
         });
       }

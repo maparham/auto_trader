@@ -82,3 +82,19 @@ describe("the live exit-cluster popover during a masked replay", () => {
     expect(screen.queryByText(/Long/)).toBeNull();
   });
 });
+
+describe("the live exit-cluster popover and pnlIsMoney", () => {
+  it("prints the signed amount for a confirmed-money exit", () => {
+    liveExitClusterHoverSignal.set({ exits: [exit], x: 20, y: 20 });
+    render(<TradeExitClusterPopover />);
+    expect(screen.getByText("+10.00")).toBeTruthy();
+  });
+
+  it("shows n/a instead of the estimate for a non-money exit", () => {
+    const estimate: JournalTrade = { ...exit, pnl: 7, pnlIsMoney: false };
+    liveExitClusterHoverSignal.set({ exits: [estimate], x: 20, y: 20 });
+    render(<TradeExitClusterPopover />);
+    expect(screen.getByText("n/a")).toBeTruthy();
+    expect(screen.queryByText(/7\.00/)).toBeNull();
+  });
+});

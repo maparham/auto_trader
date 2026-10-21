@@ -24,7 +24,11 @@ export interface ExitPill {
   x: number;
   y: number;
   count: number;
-  net: number;
+  net: number; // money exits only (ExitCluster.net)
+  // How many of `exits` are confirmed money (ExitCluster.moneyCount). 0 means
+  // every exit in this bar is a price-units estimate (pnlIsMoney === false),
+  // so there is no money net worth printing.
+  moneyCount: number;
   exits: JournalTrade[];
 }
 
@@ -36,8 +40,19 @@ export interface TradeExitAggMarkersHandle {
 // changed — the redraw loop calls it every tick/scroll (matches BacktestAggMarkers).
 function pillsSig(pills: ExitPill[]): string {
   return pills
-    .map((p) => `${p.key}@${Math.round(p.x)},${Math.round(p.y)}:${p.count}:${Math.round(p.net)}`)
+    .map(
+      (p) =>
+        `${p.key}@${Math.round(p.x)},${Math.round(p.y)}:${p.count}:${Math.round(p.net)}:${p.moneyCount}`,
+    )
     .join("|");
+}
+
+/** Sign to color a pill by: the money net when the bucket has one, otherwise
+ * the estimates' own sign (an all-estimate bucket has no money net, but the
+ * closes still won/lost in price terms, so the pill keeps its win/loss tone). */
+function toneValue(p: ExitPill): number {
+  if (p.moneyCount > 0) return p.net;
+  return p.exits.reduce((s, e) => s + e.pnl, 0);
 }
 
 const fmtNet = (n: number): string => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(0)}`;
@@ -81,8 +96,16 @@ export default function TradeExitAggMarkers({
   return (
     <div style={{ position: "absolute", inset: 0, zIndex: 11, pointerEvents: "none" }}>
       {pills.map((p) => {
-        const bg = p.net > 0 ? WIN_COLOR : p.net < 0 ? LOSS_COLOR : FLAT_COLOR;
-        const text = p.count >= 2 ? `${p.count} · ${fmtNet(p.net)}` : fmtNet(p.net);
+        const tone = toneValue(p);
+        const bg = tone > 0 ? WIN_COLOR : tone < 0 ? LOSS_COLOR : FLAT_COLOR;
+        // No money exit in the bucket: there's no net worth printing (just an
+        // estimate sum), so the pill shows the exit count only.
+        const text =
+          p.moneyCount === 0
+            ? `${p.count}`
+            : p.count >= 2
+              ? `${p.count} · ${fmtNet(p.net)}`
+              : fmtNet(p.net);
         return (
           <span
             key={p.key}

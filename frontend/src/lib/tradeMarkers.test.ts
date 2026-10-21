@@ -192,6 +192,36 @@ describe("aggregateExitsByBar — coarse-timeframe bucketing", () => {
   it("returns nothing with no loaded bars", () => {
     expect(aggregateExitsByBar([journal()], "OIL", [], false)).toEqual([]);
   });
+
+  it("sums only money exits into net, tracking how many of the bucket are money", () => {
+    const clusters = aggregateExitsByBar(
+      [
+        journal({ ts: 1_500, pnl: 5 }), // money (pnlIsMoney undefined -> true)
+        journal({ ts: 1_800, pnl: 3, pnlIsMoney: false, exit: 70.5 }), // estimate, excluded from net
+      ],
+      "OIL",
+      bars,
+      false,
+    );
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].net).toBe(5); // the estimate's 3 is not added in
+    expect(clusters[0].moneyCount).toBe(1);
+    expect(clusters[0].exits).toHaveLength(2);
+  });
+
+  it("an all-estimate bucket nets to 0 money but still reports zero money exits", () => {
+    const clusters = aggregateExitsByBar(
+      [
+        journal({ ts: 1_500, pnl: 5, pnlIsMoney: false }),
+        journal({ ts: 1_800, pnl: -2, pnlIsMoney: false, exit: 70.5 }),
+      ],
+      "OIL",
+      bars,
+      false,
+    );
+    expect(clusters[0].net).toBe(0);
+    expect(clusters[0].moneyCount).toBe(0);
+  });
 });
 
 describe("exitsCollide — native vs aggregate gate", () => {

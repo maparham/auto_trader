@@ -156,7 +156,11 @@ export interface ExitCluster {
   barTs: number;
   high: number;
   exits: JournalTrade[];
-  net: number;
+  net: number; // sum of MONEY exits only (JournalTrade.pnlIsMoney !== false)
+  // How many of `exits` are confirmed money, so a renderer can tell a cluster of
+  // all-estimate closes (pnl is a price-units guess, see pnlIsMoney) from one
+  // with a real net to print. 0 means every exit in the bucket is an estimate.
+  moneyCount: number;
 }
 
 /** Bucket `epic`'s journaled exits into the loaded chart bar that CONTAINS each
@@ -188,11 +192,16 @@ export function aggregateExitsByBar(
     if (idx < 0) continue;
     let cl = byBar.get(idx);
     if (!cl) {
-      cl = { barTs: bars[idx].timestamp, high: bars[idx].high, exits: [], net: 0 };
+      cl = { barTs: bars[idx].timestamp, high: bars[idx].high, exits: [], net: 0, moneyCount: 0 };
       byBar.set(idx, cl);
     }
     cl.exits.push(j);
-    cl.net += j.pnl;
+    // Only a confirmed-money exit contributes to the printed net — an estimate
+    // (pnlIsMoney === false, lib/liveJournal) is price-units, not an amount.
+    if (j.pnlIsMoney !== false) {
+      cl.net += j.pnl;
+      cl.moneyCount += 1;
+    }
   }
   return [...byBar.values()].sort((a, b) => a.barTs - b.barTs);
 }

@@ -55,7 +55,9 @@ export default function TradeExitClusterPopover() {
               <td className="bt-cluster-pop-num">
                 {fmtPrice(t.entry)} → {fmtPrice(t.exit)}
               </td>
-              <td className={`bt-cluster-pop-num ${toneOf(t.pnl)}`}>{fmtPnl(t.pnl)}</td>
+              <td className={`bt-cluster-pop-num ${t.pnlIsMoney === false ? "" : toneOf(t.pnl)}`}>
+                {t.pnlIsMoney === false ? "n/a" : fmtPnl(t.pnl)}
+              </td>
             </tr>
           ))}
         </tbody>
