@@ -5456,6 +5456,13 @@
    Single-click opens the chart, double-click edits. */
 .pp-row { cursor: pointer; transition: background 0.12s ease, box-shadow 0.15s ease; }
 .pp-row:hover { background: var(--hover); }
+/* History rows are clickable only when a jump-to-chart handler is actually
+   wired (desktop dock); the phone view and the ledger table pass none, so
+   the default inside .pp-history is a plain row with no pointer/hover tell. */
+.pp-history .pp-row { cursor: default; }
+.pp-history .pp-row:hover { background: none; }
+.pp-history .pp-row.pp-clickable { cursor: pointer; }
+.pp-history .pp-row.pp-clickable:hover { background: var(--hover); }
 .pp-dir-long { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
 .pp-dir-short { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--neg) 50%, transparent); }
 /* Focused (chart on screen) — the rule brightens to full hue. */

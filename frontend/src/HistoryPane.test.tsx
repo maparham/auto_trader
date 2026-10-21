@@ -45,6 +45,34 @@ describe("HistoryPane", () => {
     expect(screen.getByText("+12.50").className).toContain("pp-pos");
   });
 
+  it("formats a 5-decimal price unrounded when no precisionFor is given", () => {
+    state = {
+      loading: false, error: null,
+      data: {
+        trades: [{ dealId: "D1", epic: "EURUSD", side: "buy", size: 1, entry: 1.08345, exit: 1.0845,
+          openedAt: 1, closedAt: 2, closeSource: "TP", pnl: 1.2, currency: "EUR" }],
+        ledger: [], totals: { ...totals, realized: 1.2 },
+      },
+    };
+    render(<HistoryPane account="capital:demo" />);
+    expect(screen.getByText("1.08345")).toBeTruthy();
+  });
+
+  it("marks the trade row clickable only when onJumpToEpic is given", () => {
+    state = {
+      loading: false, error: null,
+      data: {
+        trades: [{ dealId: "D1", epic: "TSLA", side: "buy", size: 1, entry: 400, exit: 430, openedAt: 1,
+          closedAt: 2, closeSource: "TP", pnl: 12.5, currency: "EUR" }],
+        ledger: [], totals: { ...totals, realized: 12.5 },
+      },
+    };
+    const { rerender } = render(<HistoryPane account="capital:demo" />);
+    expect(screen.getByText("TSLA").closest("tr")!.className).not.toContain("pp-clickable");
+    rerender(<HistoryPane account="capital:demo" onJumpToEpic={() => {}} />);
+    expect(screen.getByText("TSLA").closest("tr")!.className).toContain("pp-clickable");
+  });
+
   it("switches range and subscribes with the new days", () => {
     state = { loading: false, error: null, data: { trades: [], ledger: [], totals } };
     render(<HistoryPane account="capital:demo" />);

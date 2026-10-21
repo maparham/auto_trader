@@ -8,6 +8,7 @@ vi.mock("./http", async (orig) => ({
 }));
 
 import {
+  fetchAccountHistory,
   subscribeHistory,
   subscribeMarkerHistory,
   HISTORY_POLL_MS,
@@ -15,6 +16,7 @@ import {
   type HistoryState,
   type MarkerHistory,
 } from "./accountHistory";
+import { BrokerBlockedError } from "./http";
 import { noteHistoryAccounts, setTradesAccount } from "./trading";
 import { tradesSignal } from "./signals";
 
@@ -93,6 +95,44 @@ describe("subscribeHistory", () => {
     await flush();
     expect(historyCalls()).toHaveLength(2);
     off();
+  });
+
+  it("refetches when the tab regains visibility while subscribed, not once the last subscriber leaves", async () => {
+    fetchMock.mockImplementation(() => ok(payload()));
+    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+    const off = subscribeHistory("capital:demo", 30, () => {});
+    await flush();
+    expect(historyCalls()).toHaveLength(1);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flush();
+    expect(historyCalls()).toHaveLength(2);
+    off();
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flush();
+    expect(historyCalls()).toHaveLength(2); // listener torn down: no subscribers left
+  });
+
+  it("does not refetch on visibilitychange while the tab is hidden", async () => {
+    fetchMock.mockImplementation(() => ok(payload()));
+    const off = subscribeHistory("capital:demo", 30, () => {});
+    await flush();
+    expect(historyCalls()).toHaveLength(1);
+    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flush();
+    expect(historyCalls()).toHaveLength(1);
+    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+    off();
+  });
+
+  it("throws BrokerBlockedError (not a plain Error) when the response is marked broker-blocked", async () => {
+    fetchMock.mockReturnValue(
+      Promise.resolve(new Response(JSON.stringify({ detail: "broker blocked" }), {
+        status: 503,
+        headers: { "X-Broker-Blocked": "1" },
+      })),
+    );
+    await expect(fetchAccountHistory("capital:demo", 30)).rejects.toBeInstanceOf(BrokerBlockedError);
   });
 
   it("keys state by account, so a late response never lands on another account", async () => {

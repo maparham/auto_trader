@@ -277,11 +277,28 @@ function closed(over: Partial<ClosedTradeView> = {}): ClosedTradeView {
 describe("broker history markers", () => {
   it("maps closes onto the journal shape so exits reuse the journal path", () => {
     const [j] = historyAsJournal([closed({ side: "sell", pnl: -3 })]);
-    expect(j).toEqual({ ts: 4, epic: "OIL", leg: "short", entry: 70, exit: 71, quantity: 1, pnl: -3 });
+    expect(j).toEqual({
+      ts: 4, epic: "OIL", leg: "short", entry: 70, exit: 71, quantity: 1, pnl: -3, pnlIsMoney: true,
+    });
   });
 
-  it("derives a missing pnl from the move and direction", () => {
-    expect(historyAsJournal([closed({ pnl: null, side: "sell", entry: 70, exit: 69, size: 2 })])[0].pnl).toBe(2);
+  it("derives a missing pnl from the move and direction, flagged as not real money", () => {
+    const [j] = historyAsJournal([closed({ pnl: null, side: "sell", entry: 70, exit: 69, size: 2 })]);
+    expect(j.pnl).toBe(2);
+    expect(j.pnlIsMoney).toBe(false);
+  });
+
+  it("a null-pnl history exit colors by the estimate's sign but prints no number", () => {
+    const [j] = historyAsJournal([closed({ pnl: null, side: "buy", entry: 70, exit: 71, size: 1 })]);
+    const [spec] = exitMarkerSpecs({ ...base, trades: [], journal: [j] });
+    expect(spec.win).toBe(true); // estimate is positive: color still reflects it
+    expect(spec.label).toBe("");
+  });
+
+  it("a confirmed broker pnl still prints its amount", () => {
+    const [j] = historyAsJournal([closed({ pnl: 9.5 })]);
+    const [spec] = exitMarkerSpecs({ ...base, trades: [], journal: [j] });
+    expect(spec.label).toBe("+9.50");
   });
 
   it("gives each partial its own exit marker", () => {

@@ -51,7 +51,14 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, tips 
 
   useEffect(() => subscribeHistory(account, days, setState), [account, days]);
 
-  const prec = (epic: string) => precisionFor?.(epic) ?? 2;
+  // With a precision source, format at the symbol's own decimals (toFixed);
+  // without one (the phone view has none), print the raw value unrounded
+  // rather than clamp every symbol to 2dp.
+  const fmtPrice = (epic: string, v: number) =>
+    precisionFor ? v.toFixed(precisionFor(epic)) : v.toLocaleString(undefined, {
+      maximumFractionDigits: 6,
+      useGrouping: false,
+    });
   const toggleSort = (key: HistorySortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
   const data = state.data;
@@ -148,14 +155,14 @@ export default function HistoryPane({ account, precisionFor, onJumpToEpic, tips 
                 {sortClosedTrades(data.trades, sort).map((t) => (
                   <tr
                     key={`${t.dealId}:${t.closedAt}`}
-                    className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}`}
+                    className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}${onJumpToEpic ? " pp-clickable" : ""}`}
                     onClick={() => onJumpToEpic?.(t.epic)}
                   >
                     <td className="pp-c-sym">{t.epic}</td>
                     <td>{t.side === "buy" ? "Long" : "Short"}</td>
                     <td className="pp-c-num">{t.size}</td>
-                    <td className="pp-c-num">{t.entry.toFixed(prec(t.epic))}</td>
-                    <td className="pp-c-num">{t.exit.toFixed(prec(t.epic))}</td>
+                    <td className="pp-c-num">{fmtPrice(t.epic, t.entry)}</td>
+                    <td className="pp-c-num">{fmtPrice(t.epic, t.exit)}</td>
                     <td className="pp-c-time">
                       {t.openedAt == null ? <span className="pp-dash">before range</span> : fmtTime(t.openedAt)}
                     </td>

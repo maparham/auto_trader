@@ -7,7 +7,7 @@
 // position disappears from the trades book (a close just happened). The timer
 // is what keeps capital:demo fresh: it has no server push and no trades poll.
 
-import { API_BASE as BASE, apiFetch, errorDetail } from "./http";
+import { API_BASE as BASE, apiFetch, errorDetail, throwIfBrokerBlocked } from "./http";
 import { tradesSignal } from "./signals";
 import {
   accountSupportsHistory,
@@ -83,7 +83,10 @@ export async function fetchAccountHistory(
   days: HistoryDays,
 ): Promise<AccountHistoryData | null> {
   const res = await apiFetch(`${BASE}/api/history?account=${encodeURIComponent(account)}&days=${days}`);
-  if (!res.ok) throw new Error(await errorDetail(res, `history failed (${res.status})`));
+  if (!res.ok) {
+    await throwIfBrokerBlocked(res);
+    throw new Error(await errorDetail(res, `history failed (${res.status})`));
+  }
   const body = await res.json();
   if (!body.supported) return null;
   return {
@@ -129,6 +132,33 @@ async function load(e: Entry): Promise<void> {
   }
 }
 
+// Refetch every currently-subscribed entry when the tab regains visibility:
+// the 60 s timer already skips ticks while hidden, so a long-backgrounded tab
+// comes back showing a stale history until the next tick lands. One listener
+// for every entry, installed only while something is subscribed and torn
+// down again once the last subscriber (of any entry) leaves.
+let visibilityListenerOn = false;
+function onVisible(): void {
+  if (typeof document === "undefined" || document.hidden) return;
+  for (const e of entries.values()) if (e.listeners.size > 0) void load(e);
+}
+function totalSubscribers(): number {
+  let n = 0;
+  for (const e of entries.values()) n += e.listeners.size;
+  return n;
+}
+function syncVisibilityListener(): void {
+  if (typeof document === "undefined") return;
+  const want = totalSubscribers() > 0;
+  if (want && !visibilityListenerOn) {
+    document.addEventListener("visibilitychange", onVisible);
+    visibilityListenerOn = true;
+  } else if (!want && visibilityListenerOn) {
+    document.removeEventListener("visibilitychange", onVisible);
+    visibilityListenerOn = false;
+  }
+}
+
 export function subscribeHistory(
   account: string,
   days: HistoryDays,
@@ -150,12 +180,14 @@ export function subscribeHistory(
       void load(entry);
     }, HISTORY_POLL_MS);
   }
+  syncVisibilityListener();
   return () => {
     entry.listeners.delete(fn);
     if (entry.listeners.size === 0) {
       if (entry.timer !== null) clearInterval(entry.timer);
       entries.delete(key); // drops any in-flight response (load checks identity)
     }
+    syncVisibilityListener();
   };
 }
 
@@ -210,4 +242,8 @@ export function _resetHistoryForTests(): void {
   for (const e of entries.values()) if (e.timer !== null) clearInterval(e.timer);
   entries.clear();
   lastPositionIds = new Set();
+  if (visibilityListenerOn && typeof document !== "undefined") {
+    document.removeEventListener("visibilitychange", onVisible);
+  }
+  visibilityListenerOn = false;
 }

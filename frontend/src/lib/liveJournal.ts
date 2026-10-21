@@ -12,6 +12,12 @@ export interface JournalTrade {
   exit: number;
   quantity: number;
   pnl: number; // realized, instrument currency (price units × qty)
+  // False only for a broker-history close with no matched TRADE row
+  // (lib/tradeMarkers historyAsJournal): pnl is then a price-units estimate,
+  // not confirmed money, so the sign is good for marker color but the figure
+  // itself must not be printed as an amount. Omitted (undefined) means true,
+  // the real journal's own trades always carry confirmed pnl.
+  pnlIsMoney?: boolean;
 }
 
 const KEY = "auto-trader.live.journal";

@@ -125,11 +125,15 @@ export function exitMarkerSpecs(o: TradeMarkerSpecOpts): TradeMarkerSpec[] {
     const ms = j.ts * 1000;
     if (!drawableAt(ms, o.oldestLoadedMs)) continue;
     const win = j.pnl >= 0;
+    // pnlIsMoney === false: the figure is a price-units estimate (no matched
+    // broker TRADE row), good for the win/loss color above but not for a
+    // printed amount, so the label carries no number.
+    const label = j.pnlIsMoney === false ? "" : `${win ? "+" : ""}${j.pnl.toFixed(2)}`;
     specs.push({
       key: `exit:${journalKey(j)}`,
       timestamp: ms,
       price: j.exit,
-      label: `${win ? "+" : ""}${j.pnl.toFixed(2)}`,
+      label,
       win,
       placement: j.leg === "long" ? "below" : "above",
     });
@@ -219,6 +223,7 @@ export function historyAsJournal(trades: ClosedTradeView[]): JournalTrade[] {
       exit: t.exit,
       quantity: t.size,
       pnl: t.pnl ?? (t.exit - t.entry) * dir * t.size,
+      pnlIsMoney: t.pnl != null,
     };
   });
 }
