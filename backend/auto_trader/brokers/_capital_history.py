@@ -12,9 +12,13 @@ Parsing is pure; the fetch walkers below take the broker's `_request`.
 
 from __future__ import annotations
 
-from collections import defaultdict
+import asyncio
+from collections import OrderedDict, defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+
+import httpx
 
 from auto_trader.core.models import ClosedTrade, LedgerEntry, Side
 
@@ -147,3 +151,123 @@ def history_totals(ledger: list[LedgerEntry]) -> dict:
         "withdrawals": total("WITHDRAWAL"),
         "currency": next((e.currency for e in ledger if e.currency), None),
     }
+
+
+RequestFn = Callable[..., Awaitable[httpx.Response]]
+
+# Capital expects naive UTC, whole seconds.
+_TS_FMT = "%Y-%m-%dT%H:%M:%S"
+TX_PAGE = 100  # transactions rows per call (server cap)
+TX_MAX_PAGES = 20
+DAY_CACHE_MAX = 120
+
+
+def _fmt(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime(_TS_FMT)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def fetch_transactions(request: RequestFn, since: datetime, until: datetime) -> list[LedgerEntry]:
+    """Page the 100-row-capped ledger newest to oldest. The next page ends at the
+    oldest row seen, rounded UP to a whole second (Capital takes whole seconds and
+    rows carry milliseconds), so rows sharing that second come back and are deduped
+    on `reference`. Stops on a short page, a page with nothing new (100+ rows in
+    one second), or the page cap."""
+    seen: dict[str, dict] = {}
+    to = until
+    for _ in range(TX_MAX_PAGES):
+        resp = await request(
+            "GET", "/api/v1/history/transactions",
+            params={"from": _fmt(since), "to": _fmt(to)},
+        )
+        rows = resp.json().get("transactions") or []
+        fresh = [r for r in rows if str(r.get("reference")) not in seen]
+        for r in fresh:
+            seen[str(r.get("reference"))] = r
+        if len(rows) < TX_PAGE or not fresh:
+            break
+        times = [t for r in rows if (t := utc(r.get("dateUtc"))) is not None]
+        if not times:
+            break
+        oldest = min(times)
+        to = oldest.replace(microsecond=0) + (timedelta(seconds=1) if oldest.microsecond else timedelta(0))
+    return parse_transactions(list(seen.values()))
+
+
+class DayCache:
+    """Raw activity rows per UTC day for one broker instance. A day is kept only
+    if it had ended before its fetch STARTED (so a fetch crossing midnight never
+    freezes a partial day); today is therefore always refetched. Concurrent asks
+    for one day share one upstream call."""
+
+    def __init__(self, max_days: int = DAY_CACHE_MAX) -> None:
+        self._max = max_days
+        self._days: OrderedDict[date, list[dict]] = OrderedDict()
+        self._inflight: dict[date, asyncio.Future] = {}
+
+    async def day(
+        self,
+        d: date,
+        fetch: Callable[[date], Awaitable[list[dict]]],
+        now: Callable[[], datetime],
+    ) -> list[dict]:
+        if d in self._days:
+            self._days.move_to_end(d)
+            return self._days[d]
+        pending = self._inflight.get(d)
+        if pending is not None:
+            return await asyncio.shield(pending)
+        started = now()
+        task = asyncio.ensure_future(fetch(d))
+        self._inflight[d] = task
+        try:
+            rows = await asyncio.shield(task)
+        finally:
+            self._inflight.pop(d, None)
+        day_end = datetime.combine(d + timedelta(days=1), time(0), tzinfo=timezone.utc)
+        if day_end <= started:
+            self._days[d] = rows
+            while len(self._days) > self._max:
+                self._days.popitem(last=False)
+        return rows
+
+
+async def fetch_activity(
+    request: RequestFn,
+    cache: DayCache,
+    since: datetime,
+    until: datetime,
+    now: Callable[[], datetime] = _now,
+) -> list[ClosedTrade]:
+    """Closed trades in [since, until], walking whole UTC days ONE AT A TIME: the
+    rate limiter is shared with dealing, so a gathered burst would queue ahead of
+    an order. Rows a midnight edge returns twice are deduped."""
+
+    async def one_day(d: date) -> list[dict]:
+        start = datetime.combine(d, time(0), tzinfo=timezone.utc)
+        resp = await request(
+            "GET", "/api/v1/history/activity",
+            params={
+                "from": _fmt(start),
+                "to": _fmt(start + timedelta(days=1)),
+                "detailed": "true",
+                "filter": "type==POSITION",
+            },
+        )
+        return resp.json().get("activities") or []
+
+    rows: list[dict] = []
+    seen: set[tuple] = set()
+    d = since.astimezone(timezone.utc).date()
+    last = until.astimezone(timezone.utc).date()
+    while d <= last:
+        for r in await cache.day(d, one_day, now):
+            key = (r.get("dealId"), r.get("dateUTC"), r.get("source"))
+            if key not in seen:
+                seen.add(key)
+                rows.append(r)
+        d += timedelta(days=1)
+    return [t for t in parse_activity(rows) if since <= t.closed_at <= until]

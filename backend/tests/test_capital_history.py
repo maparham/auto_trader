@@ -132,3 +132,158 @@ def test_totals_sum_by_kind():
         "realized": 3.0, "funding": -0.5, "deposits": 1000.0, "withdrawals": -200.0, "currency": "EUR",
     }
     assert history_totals([])["currency"] is None
+
+
+import asyncio
+from datetime import date, timedelta
+
+import httpx
+
+from auto_trader.brokers._capital_history import (
+    TX_MAX_PAGES,
+    DayCache,
+    fetch_activity,
+    fetch_transactions,
+)
+
+
+class FakeCapital:
+    """Records calls; answers from handler(path, params) -> dict."""
+
+    def __init__(self, handler):
+        self.handler = handler
+        self.calls: list[tuple[str, dict]] = []
+        self.in_flight = 0
+        self.max_in_flight = 0
+
+    async def request(self, method, path, *, params=None, json=None):
+        self.calls.append((path, dict(params or {})))
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        await asyncio.sleep(0)
+        self.in_flight -= 1
+        return httpx.Response(200, json=self.handler(path, params or {}))
+
+
+def T(s):
+    return datetime.fromisoformat(s).replace(tzinfo=UTC)
+
+
+def test_transactions_paging_stops_under_a_full_page():
+    pages = [
+        [tx(f"2026-10-20T10:00:{i:02d}", "SWAP", "-1", ref=f"a{i}") for i in range(59, -1, -1)]
+        + [tx(f"2026-10-20T09:{i:02d}:00", "SWAP", "-1", ref=f"b{i}") for i in range(59, 19, -1)],
+        [tx("2026-10-19T09:00:00", "SWAP", "-1", ref="c0")],
+    ]
+    cap = FakeCapital(lambda p, q: {"transactions": pages[len(cap.calls) - 1]})
+    ledger = asyncio.run(fetch_transactions(cap.request, T("2026-10-01T00:00:00"), T("2026-10-21T00:00:00")))
+    assert len(ledger) == 101
+    assert len(cap.calls) == 2
+    # The second page's `to` is the oldest row of page one (whole second, rounded up).
+    assert cap.calls[1][1]["to"] == "2026-10-20T09:20:00"
+
+
+def test_transactions_paging_stops_when_a_page_adds_nothing():
+    same_second = [tx("2026-10-20T21:00:00.500", "SWAP", "-1", ref=f"s{i}") for i in range(100)]
+    cap = FakeCapital(lambda p, q: {"transactions": same_second})
+    ledger = asyncio.run(fetch_transactions(cap.request, T("2026-10-01T00:00:00"), T("2026-10-21T00:00:00")))
+    assert len(ledger) == 100
+    assert len(cap.calls) == 2
+
+
+def test_transactions_paging_is_capped():
+    def handler(p, q):
+        n = len(cap.calls)
+        base = T("2026-10-20T00:00:00") - timedelta(hours=n)
+        return {"transactions": [
+            tx((base - timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%S"), "SWAP", "-1", ref=f"{n}-{i}")
+            for i in range(100)
+        ]}
+    cap = FakeCapital(handler)
+    asyncio.run(fetch_transactions(cap.request, T("2026-01-01T00:00:00"), T("2026-10-21T00:00:00")))
+    assert len(cap.calls) == TX_MAX_PAGES
+
+
+def _activity_handler(rows_by_day):
+    def handler(path, params):
+        day = params["from"][:10]
+        return {"activities": rows_by_day.get(day, [])}
+    return handler
+
+
+def test_activity_walks_whole_utc_days_sequentially_and_dedupes_edges():
+    edge = act("D1", "2026-10-16T00:00:00", "TP", "SELL", 11.0, open_price=10.0)
+    rows = {
+        "2026-10-15": [act("D1", "2026-10-15T09:00:00", "USER", "BUY", 10.0), edge],
+        "2026-10-16": [edge],  # midnight row returned by both days
+    }
+    cap = FakeCapital(_activity_handler(rows))
+    now = lambda: T("2026-10-21T12:00:00")
+    trades = asyncio.run(fetch_activity(cap.request, DayCache(), T("2026-10-15T00:00:00"), T("2026-10-17T00:00:00"), now))
+    assert len(trades) == 1 and trades[0].opened_at == T("2026-10-15T09:00:00")
+    assert [c[1]["from"] for c in cap.calls] == ["2026-10-15T00:00:00", "2026-10-16T00:00:00", "2026-10-17T00:00:00"]
+    assert cap.calls[0][1]["to"] == "2026-10-16T00:00:00"
+    assert cap.calls[0][1]["filter"] == "type==POSITION" and cap.calls[0][1]["detailed"] == "true"
+    assert cap.max_in_flight == 1
+
+
+def test_activity_filters_to_the_requested_range():
+    rows = {"2026-10-15": [act("D1", "2026-10-15T08:00:00", "SL", "SELL", 9.0, open_price=10.0),
+                           act("D2", "2026-10-15T20:00:00", "SL", "SELL", 9.0, open_price=10.0)]}
+    cap = FakeCapital(_activity_handler(rows))
+    trades = asyncio.run(fetch_activity(cap.request, DayCache(), T("2026-10-15T12:00:00"), T("2026-10-15T23:00:00"),
+                                        lambda: T("2026-10-21T00:00:00")))
+    assert [t.deal_id for t in trades] == ["D2"]
+
+
+def test_day_cache_keeps_past_days_and_refetches_today():
+    cap = FakeCapital(_activity_handler({}))
+    cache = DayCache()
+    now = lambda: T("2026-10-21T12:00:00")
+    for _ in range(2):
+        asyncio.run(fetch_activity(cap.request, cache, T("2026-10-20T00:00:00"), T("2026-10-21T12:00:00"), now))
+    days = [c[1]["from"][:10] for c in cap.calls]
+    assert days == ["2026-10-20", "2026-10-21", "2026-10-21"]
+
+
+def test_day_cache_does_not_freeze_a_day_whose_fetch_started_before_it_ended():
+    cache = DayCache()
+    clock = iter([T("2026-10-20T23:59:59"), T("2026-10-21T00:00:05")])
+
+    async def fetch(d):
+        return []
+
+    asyncio.run(cache.day(date(2026, 10, 20), fetch, lambda: next(clock)))
+    assert date(2026, 10, 20) not in cache._days
+    asyncio.run(cache.day(date(2026, 10, 20), fetch, lambda: next(clock)))
+    assert date(2026, 10, 20) in cache._days
+
+
+def test_day_cache_single_flight():
+    calls = []
+
+    async def fetch(d):
+        calls.append(d)
+        await asyncio.sleep(0.01)
+        return [{"x": 1}]
+
+    async def run():
+        cache = DayCache()
+        now = lambda: T("2026-10-21T12:00:00")
+        return await asyncio.gather(*(cache.day(date(2026, 10, 15), fetch, now) for _ in range(3)))
+
+    results = asyncio.run(run())
+    assert calls == [date(2026, 10, 15)]
+    assert results == [[{"x": 1}]] * 3
+
+
+def test_day_cache_is_bounded():
+    cache = DayCache(max_days=2)
+
+    async def fetch(d):
+        return []
+
+    now = lambda: T("2026-10-21T12:00:00")
+    for day in (1, 2, 3):
+        asyncio.run(cache.day(date(2026, 10, day), fetch, now))
+    assert list(cache._days) == [date(2026, 10, 2), date(2026, 10, 3)]
