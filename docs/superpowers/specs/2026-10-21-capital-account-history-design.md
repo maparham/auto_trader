@@ -93,7 +93,10 @@ is exact equality with float slack). No match gives `opened_at = None`:
 the table shows "before range", the chart draws the exit marker only.
 Known gap, accepted: a position opened by a limit/stop fill may log its
 open only under `WORKING_ORDER` activity, which the `type==POSITION`
-filter skips, so it also gets `opened_at = None`.
+filter skips, so it also gets `opened_at = None`. Activity rows with
+`status` other than `ACCEPTED` are skipped entirely (candidate opens and
+closes alike), so a rejected fill neither yields a `ClosedTrade` nor gets
+picked as another deal's open.
 
 **P&L matching.** TRADE rows are matched to close rows by dealId, then by
 nearest timestamp (each TRADE row used once). Partial closes share a
@@ -124,7 +127,8 @@ async def get_history(self, since: datetime, until: datetime) -> AccountHistory:
   than 100 rows, when a page adds no new reference (100+ rows sharing one
   timestamp, e.g. SWAP rows at rollover), or after 20 pages.
 - `fetch_activity(request, since, until)`: one call per **whole UTC day**
-  (`from` = day 00:00:00, `to` = day 23:59:59), `filter=type==POSITION`,
+  (`from` = day 00:00:00, `to` = next day 00:00:00, confirmed accepted by a
+  live probe on 2026-10-21), `filter=type==POSITION`,
   `detailed=true`. Rows from all days are deduped on (dealId, dateUTC,
   source), parsed, then filtered to `[since, until]`. Days are fetched
   **sequentially, never gathered**: the rate limiter (8/s, `capital.py`
@@ -182,6 +186,8 @@ the tab switch; its `SortKey`/`POSITION_COLUMNS` stay tied to open trades.
 - Trades columns: Symbol, Side, Qty, Entry, Exit, Opened, Closed, Closed
   by (TP / SL / Manual / System / Stop-out), P&L. Sortable, default Closed
   desc. Clicking a row focuses that epic's chart (no scroll to the bar);
+  desktop only. The phone view has no jump-to-chart path, so its rows
+  carry no click handler and show no pointer/hover affordance; descoped;
 - Ledger columns: Time, Type (Funding / Trade / Deposit / Withdrawal /
   raw type for the rest), Symbol, Note, Amount;
 - a totals line over the table: Realized, Funding, Net cash in/out;
