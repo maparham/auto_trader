@@ -192,7 +192,7 @@ class _Parser:
             if name.value == "count" and self.peek().type == "LPAREN":
                 self.next()
                 cond = self.parse_or()
-                if not isinstance(cond, (N.CONDITION_KINDS, N.IndicatorRef)):
+                if not isinstance(cond, N.CONDITION_KINDS):
                     raise ExprError(
                         "count_needs_condition",
                         "count's first argument must be a condition, like candle.open > candle.close.",

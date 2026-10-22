@@ -33,12 +33,6 @@ def validate(node: N.Row, *, is_exit: bool,
     if isinstance(node, N.Predicate):
         _check_predicate(node)
         return
-    if isinstance(node, N.IndicatorRef):
-        # IndicatorRef can appear as a condition only in count()'s first argument,
-        # not as a top-level row, but validate_value() may call validate() with an IndicatorRef
-        # as part of handling count's condition.
-        _walk(node, is_exit=is_exit, instances=instances)
-        return
     _walk(node.left, is_exit=is_exit, instances=instances)
     _walk(node.right, is_exit=is_exit, instances=instances)
 
@@ -98,8 +92,6 @@ def _contains_entry_kind(node: N.Node) -> bool:
         return _contains_entry_kind(node.operand)
     if isinstance(node, N.Call):
         return any(_contains_entry_kind(a) for a in node.args)
-    if isinstance(node, N.IndicatorRef):
-        return False
     return False
 
 

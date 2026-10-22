@@ -116,7 +116,7 @@ def test_instance_ref_in_column():
 
 
 def test_divergence_warmup_sizes_the_fetch():
-    cs = compile_screen("count(RSI.bullDiv, 5) >= 1", [], RSI_PANE)
+    cs = compile_screen("count(RSI.bullDiv > 0, 5) >= 1", [], RSI_PANE)
     assert cs.warmup >= 14 + 60 + 5 + 5
     assert bars_needed(cs) == min(2000, cs.warmup * 5)
 
