@@ -17,7 +17,7 @@ from auto_trader.core.models import (
     Side,
 )
 
-from ..deps import broker_blocked_http, broker_down_http, get_exec, require_admin
+from ..deps import broker_blocked_http, broker_down_http, broker_error_http, get_exec, require_admin
 from ..schemas import (
     AccountHistoryDTO,
     AccountSummaryDTO,
@@ -127,7 +127,7 @@ async def place_order(req: OrderRequest) -> OrderResultDTO:
     except BrokerDown as e:
         raise broker_down_http("order failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"order failed: {e}") from e
+        raise broker_error_http("order failed", e) from e
     if result.status is OrderStatus.REJECTED:
         raise HTTPException(status_code=422, detail=result.reason or "order rejected")
     return _order_result_dto(result)
@@ -146,7 +146,7 @@ async def quote(epic: str, account: str = Query("capital:paper")) -> QuoteDTO:
     except BrokerDown as e:
         raise broker_down_http("quote failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"quote failed: {e}") from e
+        raise broker_error_http("quote failed", e) from e
 
 
 @router.get("/api/account", response_model=AccountSummaryDTO)
@@ -166,7 +166,7 @@ async def account_summary(account: str = Query("capital:paper")) -> AccountSumma
     except BrokerDown as e:
         raise broker_down_http("account summary failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"account summary failed: {e}") from e
+        raise broker_error_http("account summary failed", e) from e
 
 
 @router.get("/api/positions", response_model=list[PositionDTO])
@@ -183,7 +183,7 @@ async def positions(
     except BrokerDown as e:
         raise broker_down_http("positions failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"positions failed: {e}") from e
+        raise broker_error_http("positions failed", e) from e
     return [_position_dto(p) for p in found]
 
 
@@ -201,7 +201,7 @@ async def close_position(
     except BrokerDown as e:
         raise broker_down_http("close failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"close failed: {e}") from e
+        raise broker_error_http("close failed", e) from e
     if result.status is OrderStatus.REJECTED:
         raise HTTPException(status_code=404, detail=result.reason or "close rejected")
     return _order_result_dto(result)
@@ -226,7 +226,7 @@ async def modify_position(
     except BrokerDown as e:
         raise broker_down_http("modify failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"modify failed: {e}") from e
+        raise broker_error_http("modify failed", e) from e
     if result.status is OrderStatus.REJECTED:
         raise HTTPException(status_code=422, detail=result.reason or "modify rejected")
     return _order_result_dto(result)
@@ -246,7 +246,7 @@ async def working_orders(
     except BrokerDown as e:
         raise broker_down_http("working orders failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"working orders failed: {e}") from e
+        raise broker_error_http("working orders failed", e) from e
     return [_working_order_dto(w) for w in found]
 
 
@@ -279,7 +279,7 @@ async def account_history(
     except BrokerDown as e:
         raise broker_down_http("history failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"history failed: {e}") from e
+        raise broker_error_http("history failed", e) from e
     return AccountHistoryDTO(
         supported=True,
         since=_ms(since),
@@ -326,7 +326,7 @@ async def modify_working_order(
     except BrokerDown as e:
         raise broker_down_http("modify failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"modify failed: {e}") from e
+        raise broker_error_http("modify failed", e) from e
     if result.status is OrderStatus.REJECTED:
         raise HTTPException(status_code=422, detail=result.reason or "modify rejected")
     return _order_result_dto(result)
@@ -344,7 +344,7 @@ async def cancel_working_order(
     except BrokerDown as e:
         raise broker_down_http("cancel failed", e) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"cancel failed: {e}") from e
+        raise broker_error_http("cancel failed", e) from e
     if result.status is OrderStatus.REJECTED:  # unknown order
         raise HTTPException(status_code=404, detail=result.reason or "no such order")
     return _order_result_dto(result)

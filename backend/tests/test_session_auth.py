@@ -245,3 +245,25 @@ def test_html_503_is_broker_down_not_blocked() -> None:
             await broker.aclose()
 
     asyncio.run(run())
+
+
+def test_html_429_is_neither_blocked_nor_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 429 page from the edge is rate limiting, not a blocked network: it
+    stays an ordinary HTTPStatusError after the session retries run out."""
+    monkeypatch.setattr(capital_mod.asyncio, "sleep", _no_sleep)
+    from auto_trader.core.broker_health import BrokerBlocked, BrokerDown
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"content-type": "text/html"}, content=_WAF_HTML)
+
+    broker = _make_broker(httpx.MockTransport(handler))
+
+    async def run() -> None:
+        try:
+            with pytest.raises(httpx.HTTPStatusError) as info:
+                await broker._ensure_session()
+            assert not isinstance(info.value, (BrokerBlocked, BrokerDown))
+        finally:
+            await broker.aclose()
+
+    asyncio.run(run())

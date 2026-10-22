@@ -47,13 +47,17 @@ def raise_if_waf_blocked(resp: httpx.Response) -> None:
     The broker APIs only ever answer JSON; an error status carrying `text/html`
     came from the edge in front of them (Capital.com fronts with Incapsula) or a
     captive portal, never the API. A 4xx page is a WAF block or portal: the
-    user's network path is refused (BrokerBlocked). A 5xx page is the edge
+    user's network path is refused (BrokerBlocked). A 429 page is the edge
+    rate limiting us, not a block, so it falls through to the caller's usual
+    status handling. A 5xx page is the edge
     reporting that the API behind it is down (Incapsula answers 503 with
     retry-after during a Capital outage): the broker's fault (BrokerDown), so
     the app must not tell the user to check their network."""
     if resp.status_code < 400:
         return
     if "text/html" not in resp.headers.get("content-type", "").lower():
+        return
+    if resp.status_code == 429:
         return
     if resp.status_code >= 500:
         raise BrokerDown(

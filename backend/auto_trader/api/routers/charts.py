@@ -68,9 +68,22 @@ def _mark_partial(response: Response, partial: dict) -> None:
     response.headers["X-Candles-Partial"] = f"{done}/{total}"
 
 
+# Last time a degraded serve was logged, per (broker, epic, resolution, cause):
+# every chart retry during an outage is another degraded serve, and one line a
+# minute per series says as much as one per request.
+_DEGRADED_LOG_EVERY_S = 60.0
+_degraded_logged: dict[tuple, float] = {}
+
+
 def _log_degraded(broker_id: str, epic: str, resolution: str, degraded: dict) -> None:
-    """One line per degraded serve, so a "Broker unreachable" pill can be traced
-    to the upstream error that caused it (the header alone never reaches logs)."""
+    """A line per degraded serve (throttled per series), so a "Broker
+    unreachable" pill can be traced to the upstream error that caused it (the
+    header alone never reaches logs)."""
+    key = (broker_id, epic, resolution, degraded.get("cause"))
+    now = time.monotonic()
+    if now - _degraded_logged.get(key, float("-inf")) < _DEGRADED_LOG_EVERY_S:
+        return
+    _degraded_logged[key] = now
     log.warning(
         "candles degraded %s/%s %s (on %s): %s", broker_id, epic, resolution,
         degraded.get("cause") or "unknown",

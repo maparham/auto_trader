@@ -192,6 +192,22 @@ def _cause_headers(cause: str) -> dict[str, str]:
     return {"X-Failure-Cause": cause}
 
 
+def broker_error_http(prefix: str, e: Exception) -> HTTPException:
+    """The 502 for an unclassified broker-call failure, detail "<prefix>: <e>".
+
+    Names the broker as the cause only when it plainly is: the connection
+    failed or hung (httpx.TransportError, which includes timeouts) or the
+    broker answered 5xx. A 4xx is the broker answering, and anything else may
+    be our own bug, so neither gets a cause (the frontend keeps its generic
+    wording rather than claiming the broker is down)."""
+    on_broker = isinstance(e, httpx.TransportError) or (
+        isinstance(e, httpx.HTTPStatusError) and e.response.status_code >= 500
+    )
+    return HTTPException(
+        502, f"{prefix}: {e}", headers=_cause_headers(CAUSE_BROKER) if on_broker else None
+    )
+
+
 async def guarded(
     broker_id: str, factory: Callable[[], Awaitable[T]], label: str
 ) -> T:
@@ -246,10 +262,7 @@ async def guarded(
     except HTTPException:
         raise
     except Exception as e:
-        # An HTTP-level failure talking to the broker (connect error, 5xx JSON)
-        # is the broker's; anything else may be our own bug, so name no cause.
-        headers = _cause_headers(CAUSE_BROKER) if isinstance(e, httpx.HTTPError) else None
-        raise HTTPException(502, f"{label} failed: {e}", headers=headers) from e
+        raise broker_error_http(f"{label} failed", e) from e
 
 
 async def load_alert_bars(
