@@ -21,6 +21,7 @@
     "allow-target-url",
     "allow-notify-native",
     "allow-set-status",
-    "allow-browser-sign-in"
+    "allow-browser-sign-in",
+    "allow-read-clipboard"
   ]
 }

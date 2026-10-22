@@ -25,6 +25,7 @@
     "allow-notify-native",
     "allow-set-status",
     "allow-browser-sign-in",
+    "allow-read-clipboard",
     "window-state:default",
     "global-shortcut:default",
     "store:default",

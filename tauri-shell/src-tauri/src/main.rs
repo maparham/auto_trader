@@ -151,6 +151,23 @@ fn notify_native(app: tauri::AppHandle, title: String, body: String) -> Result<(
     Ok(())
 }
 
+/// Read plain text off the system pasteboard. WKWebView refuses
+/// navigator.clipboard.readText() outside a native paste gesture, so the app's
+/// right-click Paste reads through here when it runs in the shell.
+#[tauri::command]
+fn read_clipboard() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+        let pb = NSPasteboard::generalPasteboard();
+        unsafe { pb.stringForType(NSPasteboardTypeString) }.map(|s| s.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 /// The address the splash waits on, and the app the shell finally shows.
 #[tauri::command]
 fn target_url(app: tauri::AppHandle) -> String {
@@ -255,7 +272,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![ping, get_settings, set_settings, target_url, notify_native, set_status, browser_auth::browser_sign_in])
+        .invoke_handler(tauri::generate_handler![ping, get_settings, set_settings, target_url, notify_native, set_status, read_clipboard, browser_auth::browser_sign_in])
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             #[cfg(target_os = "macos")]

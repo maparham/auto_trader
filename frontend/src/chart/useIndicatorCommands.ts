@@ -42,6 +42,7 @@ import { isSynthetic } from "../lib/syntheticRegistry";
 import { syncAlertsAfterRemove } from "../lib/indicatorAlertSync";
 import { pickTrendline } from "./useTrendlineMenu";
 import { toast } from "../lib/notify";
+import { inShell, shellInvoke } from "../lib/shellBridge";
 import { MenuIcons } from "../lib/menuIcons";
 import { type MenuItem } from "../ContextMenu";
 import type { ChartHandle } from "./chartHandle";
@@ -307,7 +308,9 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
     if (!c || snapViewRef.current) return; // read-only snapshot view: no paste
     let text: string;
     try {
-      text = (await navigator.clipboard?.readText()) ?? "";
+      // The desktop shell's WKWebView refuses readText(); read natively there.
+      const native = inShell() ? await shellInvoke("read_clipboard") : null;
+      text = typeof native === "string" ? native : ((await navigator.clipboard?.readText()) ?? "");
     } catch {
       toast("Paste failed (clipboard blocked)");
       return;
