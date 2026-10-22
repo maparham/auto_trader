@@ -141,7 +141,6 @@ def test_indicator_caps_422():
         assert r.status_code == 422, ind.keys()
 
 
-@pytest.mark.xfail(reason="store column lands in Task 3", strict=True)
 def test_save_roundtrips_indicators():
     r = client.post("/api/screens", json={
         "name": "Div", "broker": "yfinance", "resolution": "DAY", "symbols": ["AAPL"],

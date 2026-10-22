@@ -20,9 +20,10 @@ CREATE TABLE IF NOT EXISTS screens (
   name TEXT NOT NULL, broker TEXT NOT NULL, resolution TEXT NOT NULL,
   symbols TEXT NOT NULL, expression TEXT NOT NULL, columns TEXT NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  indicators TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY (user_id, id));
 """
-_COLS = "id,name,broker,resolution,symbols,expression,columns,created_at,updated_at"
+_COLS = "id,name,broker,resolution,symbols,expression,columns,created_at,updated_at,indicators"
 
 
 class ScreenStore:
@@ -32,13 +33,19 @@ class ScreenStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path)
         conn.executescript(_SCHEMA)
+        # Tables from before indicators existed: add the column once.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(screens)")}
+        if "indicators" not in cols:
+            conn.execute("ALTER TABLE screens ADD COLUMN indicators TEXT NOT NULL DEFAULT '{}'")
+            conn.commit()
         return conn
 
     @staticmethod
     def _row(r: tuple) -> dict:
         return {"id": r[0], "name": r[1], "broker": r[2], "resolution": r[3],
                 "symbols": json.loads(r[4]), "expression": r[5],
-                "columns": json.loads(r[6]), "created_at": r[7], "updated_at": r[8]}
+                "columns": json.loads(r[6]), "created_at": r[7], "updated_at": r[8],
+                "indicators": json.loads(r[9] or "{}")}
 
     def _get_sync(self, conn, user_id: str, screen_id: str) -> dict | None:
         r = conn.execute(f"SELECT {_COLS} FROM screens WHERE user_id=? AND id=?",
@@ -66,10 +73,12 @@ class ScreenStore:
             now = int(time.time())
             with self._connect() as conn:
                 conn.execute(
-                    "INSERT INTO screens VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO screens (user_id,id,name,broker,resolution,symbols,expression,"
+                    "columns,created_at,updated_at,indicators) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (user_id, sid, data["name"], data["broker"], data["resolution"],
                      json.dumps(data["symbols"]), data["expression"],
-                     json.dumps(data["columns"]), now, now))
+                     json.dumps(data["columns"]), now, now,
+                     json.dumps(data.get("indicators") or {})))
                 return self._get_sync(conn, user_id, sid)
         return await asyncio.to_thread(op)
 
@@ -78,10 +87,11 @@ class ScreenStore:
             with self._connect() as conn:
                 cur = conn.execute(
                     "UPDATE screens SET name=?, broker=?, resolution=?, symbols=?, "
-                    "expression=?, columns=?, updated_at=? WHERE user_id=? AND id=?",
+                    "expression=?, columns=?, updated_at=?, indicators=? WHERE user_id=? AND id=?",
                     (data["name"], data["broker"], data["resolution"],
                      json.dumps(data["symbols"]), data["expression"],
-                     json.dumps(data["columns"]), int(time.time()), user_id, screen_id))
+                     json.dumps(data["columns"]), int(time.time()),
+                     json.dumps(data.get("indicators") or {}), user_id, screen_id))
                 if cur.rowcount == 0:
                     return None
                 return self._get_sync(conn, user_id, screen_id)
