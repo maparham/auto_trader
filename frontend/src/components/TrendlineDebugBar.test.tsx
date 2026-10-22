@@ -23,6 +23,12 @@ describe("TrendlineDebugBar", () => {
     fireEvent.click(screen.getByRole("button", { name: "112 touches (10 shown)" }));
     expect(base.onToggle).toHaveBeenCalledWith("touches", 112);
   });
+  it("the close button turns Debug off", () => {
+    const onClose = vi.fn();
+    render(<TrendlineDebugBar {...base} onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "Turn Debug off" }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
   it("lists near matches as buttons and edits the similarity limits", () => {
     const onPickMatch = vi.fn();
     const onSim = vi.fn();

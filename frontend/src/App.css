@@ -7598,6 +7598,7 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
 .tl-dbg-bar button.is-armed { font-weight: 700; border-width: 2px; }
 .tl-dbg-msg { color: var(--text-dim); }
 .tl-dbg-label { padding: 1px 2px; }
+.tl-dbg-bar button.tl-dbg-close { margin-left: auto; border-color: transparent; padding: 0 5px; line-height: 1.2; }
 .tl-dbg-sim { display: inline-flex; align-items: center; gap: 3px; }
 .tl-dbg-sim input {
   width: 44px; padding: 0 3px; font: inherit; color: inherit; background: none;

@@ -3,6 +3,7 @@
 // line" arm and, with a target set, its near matches and similarity limits.
 // Text only.
 import InfoTip from "./InfoTip";
+import Tooltip from "./Tooltip";
 
 export interface StripMatch {
   key: string;
@@ -33,6 +34,8 @@ interface Props {
   onPickMatch?: (key: string, rect: DOMRect) => void;
   /** Similarity limits, shown while a target is set. */
   sim?: { priceAtr: number; spanPct: number } | null;
+  /** Turn Debug mode off, without opening Settings. */
+  onClose?: () => void;
   onSim?: (sim: { priceAtr: number; spanPct: number }) => void;
 }
 
@@ -130,6 +133,11 @@ export default function TrendlineDebugBar(p: Props) {
         <InfoTip text={["Select a trend line drawing, then Check a line.", "Or click two points on the chart.", "Esc cancels."]} />
         {p.onUndo ? <button onClick={p.onUndo}>Undo</button> : null}
         {hasTarget ? null : message}
+        {p.onClose ? (
+          <Tooltip content="Turn Debug off" asChild>
+            <button className="tl-dbg-close" aria-label="Turn Debug off" onClick={p.onClose}>×</button>
+          </Tooltip>
+        ) : null}
       </div>
     </div>
   );

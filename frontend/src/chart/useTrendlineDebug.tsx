@@ -383,6 +383,12 @@ export function useTrendlineDebug({ chartRef, containerRef, overlays, scope, epi
         onPickMatch={pickMatch}
         sim={entry.target ? entry.sim : null}
         onSim={(next) => setDebugSim(chart, inst.paneId, inst.name, next)}
+        onClose={() => {
+          const live = chart.getIndicators({ paneId: inst.paneId, name: inst.name })[0];
+          chart.overrideIndicator({
+            paneId: inst.paneId, name: inst.name, extendData: { ...((live?.extendData as object) ?? {}), debug: false },
+          });
+        }}
       />
     );
   }
