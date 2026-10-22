@@ -77,7 +77,17 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
   // run can't relabel already-returned data or send a click to a timeframe
   // that was never screened.
   const [ranSpec, setRanSpec] = useState<{ columns: ScreenColumn[]; resolution: string } | null>(null);
-  const disposedRef = useRef(false);
+  // Run-generation counter. run() captures the value at its own start; load(),
+  // cancel() and the unmount cleanup each bump it. After every await inside
+  // run() (startScreen, each pollScreen), a mismatch means this call has been
+  // superseded — by a newer run, a loaded screen, an explicit cancel, or an
+  // unmount — so it cancels whatever job it holds and returns without
+  // touching state that may now belong to something else. A plain counter
+  // (rather than a "disposed" boolean) also survives React StrictMode's
+  // mount→cleanup→remount cycle for free: a boolean set true in the cleanup
+  // and never reset on remount would wedge every future run, but a counter
+  // that only ever increases has nothing to get stuck in.
+  const genRef = useRef(0);
   const readOnly = isImpersonating();
 
   const symbols = useMemo(() => parseSymbols(symbolsText), [symbolsText]);
@@ -91,7 +101,7 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
 
   // Stop polling if the panel unmounts mid-run; the server job is cancelled too.
   useEffect(() => () => {
-    disposedRef.current = true;
+    genRef.current++;
     if (jobRef.current) void cancelScreen(jobRef.current);
     jobRef.current = null;
   }, []);
@@ -99,6 +109,7 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
   const load = (s: Screen | null) => {
     // A newly loaded screen must not have an old run's result land under it
     // once this cancel's response (or a still-running poll) arrives late.
+    genRef.current++;
     if (jobRef.current) void cancelScreen(jobRef.current);
     jobRef.current = null;
     setStarting(false);
@@ -125,18 +136,17 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
 
   const run = async () => {
     if (starting || jobRef.current) return; // already starting or running
+    const gen = ++genRef.current;
     setStarting(true);
     setError(null);
     setResult(null);
     const spec = { columns, resolution };
-    let localJobId: string | null = null;
     try {
       const { jobId, total } = await startScreen(draft, priceSide);
-      localJobId = jobId;
-      if (disposedRef.current) {
-        // The panel unmounted while the POST was in flight: jobRef was never
-        // set (the unmount cleanup ran against a null ref), so nothing would
-        // otherwise cancel this job server-side.
+      if (genRef.current !== gen) {
+        // Superseded (load/cancel/unmount) while the POST was in flight:
+        // jobRef was never set, so nothing else could have cancelled this
+        // job server-side yet. Leave all other state untouched.
         void cancelScreen(jobId);
         return;
       }
@@ -146,7 +156,13 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
       setProgress({ done: 0, total });
       for (;;) {
         const st = await pollScreen(jobId);
-        if (jobRef.current !== jobId) return; // cancelled or unmounted
+        if (genRef.current !== gen) {
+          // Whoever superseded this call already cancelled jobRef's job
+          // directly (cancel()/load()/unmount all do); this is belt-and-
+          // braces in case this call's own jobId somehow wasn't it.
+          void cancelScreen(jobId);
+          return;
+        }
         setProgress({ done: st.done, total: st.total });
         if (st.status !== "running") {
           jobRef.current = null;
@@ -158,20 +174,16 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
         await new Promise((r) => setTimeout(r, POLL_MS));
       }
     } catch (e) {
+      if (genRef.current !== gen) return; // superseded; nothing left to update
       setStarting(false);
-      // Only clear state that still belongs to THIS call: a concurrent
-      // cancel/load/unmount may already have reassigned or nulled jobRef
-      // (or this call's own job was never the active one to begin with, e.g.
-      // it lost a race it should have been blocked from entering).
-      if (localJobId == null || jobRef.current === localJobId) {
-        jobRef.current = null;
-        setProgress(null);
-      }
-      if (!disposedRef.current) explain(e);
+      jobRef.current = null;
+      setProgress(null);
+      explain(e);
     }
   };
 
   const cancel = () => {
+    genRef.current++;
     const id = jobRef.current;
     jobRef.current = null;
     setProgress(null);

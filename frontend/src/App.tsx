@@ -126,8 +126,10 @@ import {
   DEFAULT_PERIOD,
   ACTIVE_TAB_SESSION_KEY,
   effectiveSyncCrosshair,
+  effectiveSyncInterval,
   effectiveSyncTime,
   makeTab,
+  applyCellPeriod,
   resolveStartup,
 } from "./app/workspace";
 import { useDockPanels, useModalRequests, usePanelOpenStates } from "./app/usePanelSignals";
@@ -1096,13 +1098,16 @@ export default function App() {
                 void jumpToEpic(epic, 2)
                   .then(({ cellId, tabId }) => {
                     if (!p) return;
+                    // Mirror setCellPeriod's two behaviors (app/useCellActions.ts):
+                    // broadcast to every cell when the tab's interval sync (or
+                    // lock) is on, via the same shared helper, and fire the view
+                    // heartbeat. Can't call setCellPeriod itself here — it closes
+                    // over App's own "active" tab, which is not necessarily the
+                    // tab jumpToEpic just landed on.
                     applyTabs((ts) =>
-                      ts.map((t) =>
-                        t.id !== tabId
-                          ? t
-                          : { ...t, cells: t.cells.map((c) => (c.id === cellId ? { ...c, period: p } : c)) },
-                      ),
+                      ts.map((t) => (t.id !== tabId ? t : applyCellPeriod(t, cellId, p, effectiveSyncInterval(t)))),
                     );
+                    queueMicrotask(() => reportCellView(cellId));
                   })
                   .catch((e) => toast(e instanceof Error ? e.message : "Couldn't open that symbol"));
               }}

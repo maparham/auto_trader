@@ -23,7 +23,7 @@ import {
   type ChartCell,
 } from "../lib/persist";
 import { mirrorIndicatorState } from "../lib/indicatorSync";
-import { newCellId, effectiveSyncSymbol, effectiveSyncInterval } from "./workspace";
+import { newCellId, effectiveSyncSymbol, effectiveSyncInterval, applyCellPeriod } from "./workspace";
 import type { Dispatch, SetStateAction } from "react";
 import type { ReadyCells, Ref } from "./types";
 
@@ -120,18 +120,7 @@ export function useCellActions({
   const setCellPeriod = (cellId: string, p: Period) => {
     if (!active) return;
     const broadcast = effectiveSyncInterval(active);
-    setTabs((ts) =>
-      ts.map((t) =>
-        t.id !== active.id
-          ? t
-          : {
-              ...t,
-              cells: t.cells.map((c) =>
-                broadcast || c.id === cellId ? { ...c, period: p } : c,
-              ),
-            },
-      ),
-    );
+    setTabs((ts) => ts.map((t) => (t.id !== active.id ? t : applyCellPeriod(t, cellId, p, broadcast))));
     // tabsRef only settles next microtask (setTabs above is async), so defer
     // the read-back rather than reporting stale (pre-update) period fields.
     queueMicrotask(() => reportCellView(cellId));

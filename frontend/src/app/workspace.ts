@@ -63,6 +63,19 @@ export const effectiveSyncInterval = (t: ChartTab) => !!t.locked || !!t.syncInte
 export const effectiveSyncCrosshair = (t: ChartTab) => !!t.locked || !!t.syncCrosshair;
 export const effectiveSyncTime = (t: ChartTab) => !!t.locked || !!t.syncTime;
 
+// Apply `p` to `cellId` within `tab`, broadcasting to every cell when
+// `broadcast` (the caller's effectiveSyncInterval(tab) read) is set — the one
+// rule every period-setter must honor so same-timestamp candles stay aligned
+// across a synced tab. Shared by setCellPeriod (app/useCellActions.ts) and the
+// screener panel's row-click retime (App.tsx), which can't call setCellPeriod
+// itself since that closes over App's own (possibly stale) active tab.
+export function applyCellPeriod(tab: ChartTab, cellId: string, p: Period, broadcast: boolean): ChartTab {
+  return {
+    ...tab,
+    cells: tab.cells.map((c) => (broadcast || c.id === cellId ? { ...c, period: p } : c)),
+  };
+}
+
 // Build a one-cell tab. The first cell reuses the tab's primary scope (`tab.<id>`)
 // so it lines up with the pre-cells / migrated key namespace.
 export function makeTab(symbol: Instrument, period: Period): ChartTab {

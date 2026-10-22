@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,7 +25,7 @@ vi.mock("./components/RuleExpressionInput", () => ({
 vi.mock("./lib/impersonation", () => ({ isImpersonating: vi.fn(() => false) }));
 
 import ScreenerPanel from "./ScreenerPanel";
-import { cancelScreen, pollScreen, startScreen } from "./lib/screens";
+import { cancelScreen, listScreens, pollScreen, startScreen, type Screen } from "./lib/screens";
 import { isImpersonating } from "./lib/impersonation";
 
 const DEFAULT_POLL_RESULT = {
@@ -42,6 +43,7 @@ const DEFAULT_POLL_RESULT = {
 // Reassign every mock's default behavior here so each test starts the same.
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(listScreens).mockResolvedValue([]);
   vi.mocked(startScreen).mockResolvedValue({ jobId: "j1", total: 2 });
   vi.mocked(pollScreen).mockResolvedValue(DEFAULT_POLL_RESULT);
   vi.mocked(cancelScreen).mockResolvedValue(undefined);
@@ -134,5 +136,52 @@ describe("ScreenerPanel", () => {
     fireEvent.change(screen.getByLabelText("Timeframe"), { target: { value: "HOUR_4" } });
     fireEvent.click(screen.getByText("AAPL"));
     expect(onOpen).toHaveBeenCalledWith("AAPL", "DAY");
+  });
+
+  // Fix round 2, finding 1: React.StrictMode mounts, runs effect cleanup, then
+  // remounts. The unmount cleanup used to set a `disposedRef` boolean true and
+  // never reset it on remount, so every Run after that synthetic cycle hit the
+  // "disposed" branch and never re-enabled itself. A real app always renders
+  // under StrictMode in dev (main.tsx), so this must work there too.
+  it("runs successfully inside React.StrictMode", async () => {
+    render(
+      <StrictMode>
+        <ScreenerPanel brokerId="yfinance" priceSide="mid" onOpen={() => {}} onClose={() => {}} />
+      </StrictMode>,
+    );
+    fillAndRun("AAPL");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("AAPL")).toBeTruthy());
+    expect(cancelScreen).not.toHaveBeenCalled();
+  });
+
+  // Fix round 2, finding 2: while startScreen's POST is still pending, jobRef is
+  // null, so load() couldn't cancel anything and just re-enabled Run under the
+  // newly loaded screen. When the stale POST then resolved, it used to write its
+  // jobId/ranSpec/progress under that new screen, and a second Run could race it.
+  it("load() during the startScreen POST window cancels the superseded job and renders nothing from it", async () => {
+    const savedScreen: Screen = {
+      id: "s1",
+      name: "Saved one",
+      broker: "yfinance",
+      resolution: "DAY",
+      symbols: ["MSFT"],
+      expression: "RSI(14) < 20",
+      columns: [],
+      created_at: 0,
+      updated_at: 0,
+    };
+    vi.mocked(listScreens).mockResolvedValue([savedScreen]);
+    let resolveStart!: (v: { jobId: string; total: number }) => void;
+    vi.mocked(startScreen).mockReturnValue(new Promise((res) => { resolveStart = res; }));
+    setup();
+    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
+    fillAndRun("AAPL");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    // Load a saved screen while the Run above is still waiting on its POST.
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
+    resolveStart({ jobId: "j1", total: 2 });
+    await waitFor(() => expect(cancelScreen).toHaveBeenCalledWith("j1"));
+    expect(screen.queryByText("AAPL")).toBeNull();
   });
 });
