@@ -45,6 +45,7 @@ import { LR_OUTPUTS } from "./indicators/lrOutputs";
 import { VWAP_OUTPUTS } from "./indicators/vwapOutputs";
 import { PREV_HL_OUTPUTS } from "./indicators/prevHlOutputs";
 import type { SlopeExtend } from "./indicators/slope"; // erased at build; no runtime edge
+import { RSI_DIVERGENCE_DEFAULTS, type RsiDivergenceConfig } from "./indicators/rsiOutputs";
 import { normalizeMaKind } from "./mtf";
 
 export interface ExprChartTokenOptions {
@@ -65,6 +66,11 @@ export interface ExprChartTokenOptions {
    * readout, which picks the pane's `.to%` output. Absent for curve hits and
    * plain row clicks; unknown keys behave like absence. */
   figureKey?: string;
+}
+
+function rsiDivergence(extendData: unknown): RsiDivergenceConfig {
+  const ext = (extendData ?? {}) as { divergence?: Partial<RsiDivergenceConfig> };
+  return { ...RSI_DIVERGENCE_DEFAULTS, ...(ext.divergence ?? {}) };
 }
 
 export function chartIndicatorToExprToken(
@@ -92,10 +98,25 @@ export function chartIndicatorToExprToken(
       if (kind === "sma") return `SMA(${len})`;
       return null; // vwma / evwma have no expression equivalent
     }
-    case "RSI":
-      // Only the value line maps; divergence outputs are a separate concern the
-      // caller never reaches here (it passes the instance, not an output line).
+    // A plain RSI pane maps to the RSI(length) CALL. Once the pane has
+    // divergence ON, what the user wants from a click is almost always a
+    // divergence event, which only the instance ref can name: the token is
+    // "<id>.<first enabled divergence output>" (bullDiv before bearDiv before
+    // the hidden pair), and the pane stays the source of its pivot tuning.
+    // The backend accepts every divergence output whatever the display toggles
+    // say, so the ref cannot 422 on a toggle flip; it just names the one the
+    // pane is showing. The call shape stays for divergence-off panes and for
+    // callers with no instance context.
+    case "RSI": {
+      const id = opts?.instanceId;
+      const div = rsiDivergence(extendData);
+      if (id && div.on) {
+        const output = div.bullish ? "bullDiv" : div.bearish ? "bearDiv"
+          : div.hiddenBullish ? "hBullDiv" : div.hiddenBearish ? "hBearDiv" : "value";
+        return `${id}.${output}`;
+      }
       return hasLen ? `RSI(${len})` : null;
+    }
     // ATR panes carry a Smoothing setting the ATR(length) FUNCTION cannot
     // restate (the function is RMA-only), so a clicked pane emits an instance
     // ref and the pane stays the source of truth — same contract as SLOPE.

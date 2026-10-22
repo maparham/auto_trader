@@ -45,10 +45,10 @@ describe("screenerIndicators", () => {
     expect(paneLabels({ RSI: rsi(14) })[0]).toMatch(/^RSI/);
   });
 
-  it("label includes the pane's detail when it has one, after the id and params", () => {
-    const label = paneLabels({ RSI: rsi(14) })[0];
-    expect(label.startsWith("RSI (14), ")).toBe(true);
-    expect(label).toContain("pivots");
+  it("label is the id plus the pane's detail, with no restated params", () => {
+    expect(paneLabels({ RSI: rsi(14) })[0]).toBe("RSI · length 14 · pivots 5/5 · divergence off");
+    const on = { ...rsi(14), extendData: { divergence: { on: true, lookbackLeft: 3, lookbackRight: 2 } } };
+    expect(paneLabels({ RSI2: on })[0]).toBe("RSI2 · length 14 · pivots 3/2 · divergence on");
   });
 
   it("label falls back to just id and params for a type exprInstancesFor does not recognize", () => {

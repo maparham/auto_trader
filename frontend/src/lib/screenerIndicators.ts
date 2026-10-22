@@ -53,16 +53,16 @@ export function refreshFromChart(copy: PaneCopy, chartLive: readonly LiveInstanc
   return out;
 }
 
-/** One short label per copied pane, e.g. "RSI (14)", or "RSI (14), RSI 14 ·
- * pivots 5/5 · divergence fires 5 bars after pivot" when the pane's own
- * `ExprInstance.detail` (exprInstances.ts) says more than the id and params
- * can, e.g. whether divergence is configured. Panes with no detail (or
- * whose type isn't one `exprInstancesFor` recognizes) keep the plain form. */
+/** One short label per copied pane: the id and the pane's own
+ * `ExprInstance.detail` (exprInstances.ts), e.g. "RSI · length 14 · pivots
+ * 5/5 · divergence on". The detail already says what the settings mean, so
+ * the raw params are not restated beside it. A pane with no detail (a type
+ * `exprInstancesFor` does not recognize) falls back to "<id> (<params>)". */
 export function paneLabels(copy: PaneCopy): string[] {
   const details = new Map(exprInstancesFor(copyAsLive(copy)).map((i) => [i.id, i.detail] as const));
   return Object.entries(copy).map(([id, p]) => {
-    const base = p.calcParams.length ? `${id} (${p.calcParams.join(", ")})` : id;
     const detail = details.get(id);
-    return detail ? `${base}, ${detail}` : base;
+    if (detail) return `${id} · ${detail}`;
+    return p.calcParams.length ? `${id} (${p.calcParams.join(", ")})` : id;
   });
 }

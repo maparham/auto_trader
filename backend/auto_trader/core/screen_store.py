@@ -21,9 +21,11 @@ CREATE TABLE IF NOT EXISTS screens (
   symbols TEXT NOT NULL, expression TEXT NOT NULL, columns TEXT NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
   indicators TEXT NOT NULL DEFAULT '{}',
+  source TEXT NOT NULL DEFAULT 'list',
   PRIMARY KEY (user_id, id));
 """
-_COLS = "id,name,broker,resolution,symbols,expression,columns,created_at,updated_at,indicators"
+_COLS = ("id,name,broker,resolution,symbols,expression,columns,created_at,updated_at,"
+         "indicators,source")
 
 
 class ScreenStore:
@@ -33,11 +35,14 @@ class ScreenStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path)
         conn.executescript(_SCHEMA)
-        # Tables from before indicators existed: add the column once.
+        # Tables from before a column existed: add it once. `source` is where
+        # the symbols come from ("list" or "allTabs"); an old row is a list.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(screens)")}
-        if "indicators" not in cols:
-            conn.execute("ALTER TABLE screens ADD COLUMN indicators TEXT NOT NULL DEFAULT '{}'")
-            conn.commit()
+        for col, ddl in (("indicators", "TEXT NOT NULL DEFAULT '{}'"),
+                         ("source", "TEXT NOT NULL DEFAULT 'list'")):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE screens ADD COLUMN {col} {ddl}")
+                conn.commit()
         return conn
 
     @staticmethod
@@ -45,7 +50,7 @@ class ScreenStore:
         return {"id": r[0], "name": r[1], "broker": r[2], "resolution": r[3],
                 "symbols": json.loads(r[4]), "expression": r[5],
                 "columns": json.loads(r[6]), "created_at": r[7], "updated_at": r[8],
-                "indicators": json.loads(r[9] or "{}")}
+                "indicators": json.loads(r[9] or "{}"), "source": r[10] or "list"}
 
     def _get_sync(self, conn, user_id: str, screen_id: str) -> dict | None:
         r = conn.execute(f"SELECT {_COLS} FROM screens WHERE user_id=? AND id=?",
@@ -74,11 +79,13 @@ class ScreenStore:
             with self._connect() as conn:
                 conn.execute(
                     "INSERT INTO screens (user_id,id,name,broker,resolution,symbols,expression,"
-                    "columns,created_at,updated_at,indicators) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "columns,created_at,updated_at,indicators,source) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (user_id, sid, data["name"], data["broker"], data["resolution"],
                      json.dumps(data["symbols"]), data["expression"],
                      json.dumps(data["columns"]), now, now,
-                     json.dumps(data.get("indicators") or {})))
+                     json.dumps(data.get("indicators") or {}),
+                     data.get("source") or "list"))
                 return self._get_sync(conn, user_id, sid)
         return await asyncio.to_thread(op)
 
@@ -87,11 +94,13 @@ class ScreenStore:
             with self._connect() as conn:
                 cur = conn.execute(
                     "UPDATE screens SET name=?, broker=?, resolution=?, symbols=?, "
-                    "expression=?, columns=?, updated_at=?, indicators=? WHERE user_id=? AND id=?",
+                    "expression=?, columns=?, updated_at=?, indicators=?, source=? "
+                    "WHERE user_id=? AND id=?",
                     (data["name"], data["broker"], data["resolution"],
                      json.dumps(data["symbols"]), data["expression"],
                      json.dumps(data["columns"]), int(time.time()),
-                     json.dumps(data.get("indicators") or {}), user_id, screen_id))
+                     json.dumps(data.get("indicators") or {}),
+                     data.get("source") or "list", user_id, screen_id))
                 if cur.rowcount == 0:
                     return None
                 return self._get_sync(conn, user_id, screen_id)

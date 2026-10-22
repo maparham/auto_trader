@@ -70,6 +70,10 @@ class ScreenRunBody(BaseModel):
 
 class ScreenBody(ScreenRunBody):
     name: str = Field(min_length=1, max_length=80)
+    # Where the panel takes the symbols from when the screen is loaded again:
+    # the stored list, or every chart tab open at that moment. `symbols` is
+    # stored either way, so the screen still runs as a list elsewhere.
+    source: Literal["list", "allTabs"] = "list"
 
 
 def _indicators(body: ScreenRunBody) -> dict[str, dict]:
@@ -92,7 +96,7 @@ def _data(body: ScreenBody, broker: str) -> dict:
     return {"name": body.name, "broker": broker, "resolution": body.resolution.value,
             "symbols": body.symbols, "expression": body.expression,
             "columns": [c.model_dump() for c in body.columns],
-            "indicators": _indicators(body)}
+            "indicators": _indicators(body), "source": body.source}
 
 
 @router.get("/api/screens")

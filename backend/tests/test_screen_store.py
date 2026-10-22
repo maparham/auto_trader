@@ -53,6 +53,13 @@ def test_missing_indicators_key_stores_empty(store):
     assert row["indicators"] == {}
 
 
+def test_source_roundtrip_and_default(store):
+    row = asyncio.run(store.create("u1", {**DATA, "source": "allTabs"}))
+    assert row["source"] == "allTabs"
+    upd = asyncio.run(store.update("u1", row["id"], DATA))
+    assert upd["source"] == "list"
+
+
 def test_old_table_is_migrated(tmp_path):
     path = str(tmp_path / "old.db")
     conn = sqlite3.connect(path)
@@ -70,6 +77,7 @@ def test_old_table_is_migrated(tmp_path):
     s = ScreenStore(path)
     rows = asyncio.run(s.list("u1"))
     assert rows[0]["id"] == "s1" and rows[0]["indicators"] == {}
-    upd = asyncio.run(s.update("u1", "s1", {**DATA, "indicators": IND}))
-    assert upd["indicators"] == IND
+    assert rows[0]["source"] == "list"
+    upd = asyncio.run(s.update("u1", "s1", {**DATA, "indicators": IND, "source": "allTabs"}))
+    assert upd["indicators"] == IND and upd["source"] == "allTabs"
     assert asyncio.run(s.create("u1", DATA))["indicators"] == {}

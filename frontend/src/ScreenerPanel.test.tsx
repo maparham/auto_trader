@@ -230,6 +230,28 @@ describe("ScreenerPanel", () => {
     expect(screen.queryByText("AAPL")).toBeNull();
   });
 
+  it("Save records the symbol source, and loading an All-tabs screen restores it", async () => {
+    vi.mocked(listScreens).mockResolvedValue([{ ...SAVED, id: "s2", name: "Tabs one", source: "allTabs" }]);
+    const tabs = [{ id: "t1", epics: ["AAPL"] }];
+    render(<ScreenerPanel brokerId="yfinance" tabs={tabs} controller={null} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
+    fireEvent.click(screen.getByRole("radio", { name: "All tabs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saveScreen).toHaveBeenCalled());
+    expect(vi.mocked(saveScreen).mock.calls[0][1]).toMatchObject({ source: "allTabs", symbols: ["AAPL"] });
+    // "Some tabs" is saved as a list: tab ids do not travel.
+    fireEvent.click(screen.getByRole("radio", { name: "Some tabs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saveScreen).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(saveScreen).mock.calls[1][1].source).toBe("list");
+    // Loading restores All tabs; a row without a source is a list.
+    await waitFor(() => expect(screen.getByRole("option", { name: "Tabs one" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s2" } });
+    expect(screen.getByRole("radio", { name: "All tabs" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "" } });
+    expect(screen.getByRole("radio", { name: "List" }).getAttribute("aria-checked")).toBe("true");
+  });
+
   it("switching broker resets a loaded screen, so Save creates rather than rewrites it", async () => {
     vi.mocked(listScreens).mockResolvedValue([SAVED]);
     const props = { tabs: [], controller: null, priceSide: "mid", onOpen: () => {}, onClose: () => {} };
@@ -353,7 +375,7 @@ describe("ScreenerPanel", () => {
     expect(vi.mocked(startScreen).mock.calls[0][0].indicators).toEqual({
       RSI: { type: "RSI", calcParams: [14], extendData: {} },
     });
-    expect(await screen.findByText("RSI (14)", { exact: false })).toBeTruthy();
+    expect(await screen.findByText("RSI · length 14", { exact: false })).toBeTruthy();
   });
 
   // Fix round 3, finding 1: Run used to adopt the captured copy into state
@@ -402,7 +424,7 @@ describe("ScreenerPanel", () => {
     await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
     fireEvent.click(screen.getByRole("button", { name: "Refresh from chart" }));
-    expect(await screen.findByText("RSI (7)", { exact: false })).toBeTruthy();
+    expect(await screen.findByText("RSI · length 7", { exact: false })).toBeTruthy();
   });
 
   it("a screen with no pane refs sends an empty map", async () => {

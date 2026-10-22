@@ -5,6 +5,10 @@ import { API_BASE as BASE, apiFetch, errorDetail } from "./http";
 import type { ExprInstancePayload } from "./exprInstances";
 
 export interface ScreenColumn { name: string; expression: string }
+/** Where a saved screen takes its symbols from when loaded again: the stored
+ * list, or every chart tab open at that moment. "Some tabs" is not saved
+ * (tab ids are per browser), so it is stored as the list it resolved to. */
+export type ScreenSource = "list" | "allTabs";
 export interface ScreenDraft {
   broker: string;
   resolution: string;
@@ -12,6 +16,9 @@ export interface ScreenDraft {
   expression: string;
   columns: ScreenColumn[];
   indicators: Record<string, ExprInstancePayload>;
+  /** Only Save reads it; the run endpoint ignores it. Absent on rows saved
+   * before it existed, which load as a list. */
+  source?: ScreenSource;
 }
 export interface Screen extends ScreenDraft {
   id: string;

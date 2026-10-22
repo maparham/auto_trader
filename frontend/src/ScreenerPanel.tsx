@@ -159,7 +159,12 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   }, [source, symbolsText, tabs, tabIds]);
   // Names go out trimmed: the server keys each match's values by them.
   const sentColumns = useMemo(() => columns.map((c) => ({ ...c, name: c.name.trim() })), [columns]);
-  const draft = { broker: brokerId, resolution, symbols, expression, columns: sentColumns };
+  // "Some tabs" is saved as the list it resolved to: tab ids mean nothing in
+  // another browser, and symbols are stored either way.
+  const draft = {
+    broker: brokerId, resolution, symbols, expression, columns: sentColumns,
+    source: source === "allTabs" ? "allTabs" as const : "list" as const,
+  };
 
   // The editor's completion/lint list: the copy's own panes first, then
   // whatever the focused chart offers that the copy doesn't already hold.
@@ -204,7 +209,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     setName(s?.name ?? "");
     setResolution(s?.resolution ?? "DAY");
     setSymbolsText(s ? s.symbols.join(", ") : "");
-    setSource("list");
+    setSource(s?.source === "allTabs" ? "allTabs" : "list");
     setExpression(s?.expression ?? "");
     setColumns(s?.columns ?? []);
     setIndicators(s?.indicators ?? {});

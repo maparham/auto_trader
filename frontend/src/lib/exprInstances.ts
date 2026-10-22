@@ -523,13 +523,15 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
     }
     if (inst.type === "RSI") {
       const cfg = parseRsiRefConfig(inst.calcParams, inst.extendData);
+      const divOn = !!((inst.extendData ?? {}) as { divergence?: { on?: boolean } }).divergence?.on;
       out.push({
         id: inst.id,
         outputs: [...RSI_OUTPUTS],
         timeframe: null, // chart-timeframe only (no MTF pin)
-        // Divergences fire once the right pivot is confirmed, so the lag is
-        // what a reader most needs to know.
-        detail: `RSI ${cfg.length} · pivots ${cfg.lookbackLeft}/${cfg.lookbackRight} · divergence fires ${cfg.lookbackRight} bars after pivot`,
+        // The pivot windows are what a divergence reader cannot see from the
+        // output name (the right one is also the lag before an event fires);
+        // on/off says whether the pane is drawing them at all.
+        detail: `length ${cfg.length} · pivots ${cfg.lookbackLeft}/${cfg.lookbackRight} · divergence ${divOn ? "on" : "off"}`,
       });
       continue;
     }

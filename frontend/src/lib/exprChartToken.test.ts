@@ -28,6 +28,19 @@ describe("chartIndicatorToExprToken", () => {
     expect(chartIndicatorToExprToken("VOLMA", [20], undefined)).toBe("VOLMA(20)");
   });
 
+  it("RSI with divergence on refs the pane's first enabled divergence output", () => {
+    const on = (d: object) => ({ divergence: { on: true, ...d } });
+    expect(chartIndicatorToExprToken("RSI", [14], on({}), { instanceId: "RSI" })).toBe("RSI.bullDiv");
+    expect(chartIndicatorToExprToken("RSI", [14], on({ bullish: false }), { instanceId: "RSI2" })).toBe("RSI2.bearDiv");
+    expect(chartIndicatorToExprToken("RSI", [14], on({ bullish: false, bearish: false, hiddenBearish: true }), { instanceId: "RSI" }))
+      .toBe("RSI.hBearDiv");
+    // Every kind off: the ref still names the pane, on its value line.
+    expect(chartIndicatorToExprToken("RSI", [14], on({ bullish: false, bearish: false }), { instanceId: "RSI" })).toBe("RSI.value");
+    // Divergence off, or no instance context: the call shape as before.
+    expect(chartIndicatorToExprToken("RSI", [14], { divergence: { on: false } }, { instanceId: "RSI" })).toBe("RSI(14)");
+    expect(chartIndicatorToExprToken("RSI", [14], on({}))).toBe("RSI(14)");
+  });
+
   it("maps VOL with no length (arity 0)", () => {
     expect(chartIndicatorToExprToken("VOL", [], undefined)).toBe("VOL");
     expect(chartIndicatorToExprToken("VOL", undefined, undefined)).toBe("VOL");

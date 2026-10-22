@@ -147,3 +147,10 @@ def test_save_roundtrips_indicators():
         "expression": "count(RSI.bullDiv > 0, 5) >= 1", "indicators": RSI_PANE})
     assert r.status_code == 200, r.text
     assert r.json()["indicators"]["RSI"]["type"] == "RSI"
+
+
+def test_save_roundtrips_source_and_refuses_junk():
+    created = client.post("/api/screens", json={**BODY, "source": "allTabs"}).json()
+    assert created["source"] == "allTabs"
+    assert client.post("/api/screens", json=BODY).json()["source"] == "list"
+    assert client.post("/api/screens", json={**BODY, "source": "tabs"}).status_code == 422
