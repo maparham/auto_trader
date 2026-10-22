@@ -23,78 +23,137 @@ divergence tuning the user set on one chart.
 
 ## Frontend
 
-`ScreenerPanel` gets an `instances` source like the backtest side panel:
+`ScreenerPanel` gets an instance source like the backtest side panel:
 
 - `App` passes the focused cell's `ChartController` (`focusedController`), as
   it already does for the backtest panel.
-- Active-chart panes come from `useExprInstances(controller)`
-  (`backtestSettings/useExprPick.ts`), the same 1 s poll the backtest editors
-  use, plus `liveExprInstances(controller.chart)` for the payloads.
-- Pick from chart: the arm/consume logic in `useExprPick` is split into a
-  generic `useIndicatorPick(controller, onToken)` hook; the backtest keeps
-  its current wrapper (row targeting into `BacktestConfig`), the screener
-  calls the generic hook with "append to the armed field". The condition and
-  each column get the backtest's `◎` toggle (same class, tooltip text and
-  aria-label), one armed field at a time, disarmed on panel close. A clicked
-  pane with no expression equivalent gives the backtest's toast.
+- Active-chart panes: `useExprInstances(controller)`
+  (`backtestSettings/useExprPick.ts`) for the editor's `ExprInstance[]`, the
+  same 1 s poll the backtest editors use, and `liveExprInstances(controller.chart)`
+  for the `LiveInstance` payloads at Run/Save time.
 - The panel keeps `indicators: Record<string, ExprInstancePayload>`, the
-  screen's own copy (in the draft store and in saved screens).
-- Editor instances (lint + completion) = `exprInstancesFor` over the copy
-  merged with the chart panes. For an id present in both, the chart pane wins,
-  so the editor shows what Run will capture.
-- Run and Save compute the payload with `collectExprInstances` over the
-  condition and every column expression, taking each referenced id from the
-  focused chart if it is there, else from the copy. The result replaces the
-  copy, so the copy only ever holds panes the screen references.
-- A referenced id found in neither is left to the server, which 422s with the
-  usual unknown-reference message on the right field.
-- Column expressions get the same instances for lint (they are plain inputs
-  today; they stay plain inputs, the server reports errors as now).
-- An "Indicators" line under Condition lists the copied panes ("RSI 14,
-  divergence on") so the user can see what the screen will apply; empty when
-  the screen references none. InfoTip: "Settings copied from the chart when
-  you run or save. Change them on the chart, then run again."
+  screen's copy. It lives on `ScreenerDraftState`, `ScreenDraft` and `Screen`
+  (`lib/screens.ts`); `load()` sets it from the saved screen, or `{}` for a
+  new one.
+
+### Copy semantics
+
+The copy wins for every id it already holds. The chart only supplies ids the
+copy lacks. So loading a saved screen and running it with a different chart
+focused, one that has its own differently tuned `RSI`, still applies the
+screen's `RSI`.
+
+- "Refresh from chart" (a quiet link on the Indicators line) replaces every
+  copied id the active chart also has with the chart's current settings. It
+  is the only way a copied pane changes.
+- Editor instances: `exprInstancesFor` over the copy (as `LiveInstance`s),
+  plus the chart's `ExprInstance`s for ids the copy lacks. The merge is at the
+  `ExprInstance` level; copy entries come first.
+- Run and Save build one `LiveInstance[]` (copy entries, then chart panes for
+  missing ids) and call `collectExprInstances(list, [condition, ...columns])`.
+  That map is the request's `indicators` and the new copy, so the copy only
+  holds panes the screen references. Run sends the map it just built, not a
+  render-time draft object.
+- `collectExprInstances` stamps the chart zone on calendar panes (PREV_HL,
+  VWAP) only when they have no valid `tz`, so a copied pane keeps the zone it
+  was copied with. That is intended: the copy is frozen.
+- Panes whose settings pin a timeframe are left out of the editor list, so the
+  editor flags them as unknown refs instead of accepting them and failing on
+  Run.
+- A referenced id found in neither is left to the server, which 422s on the
+  right field.
+
+### Pick from chart
+
+- `useExprPick`'s arm/consume logic is split into a generic
+  `useIndicatorPick(controller, onToken)`. The backtest keeps its current
+  wrapper (row targeting into `BacktestConfig`); its existing tests pass
+  unchanged.
+- Both hooks can be mounted at once and both subscribe to the one
+  `indicatorPickResult`. Each ignores a result while its own target is
+  unarmed, and arming one disarms the other through `indicatorPickArmed`,
+  so a single chart click inserts once.
+- The condition and each column get the backtest's `◎` toggle (same class,
+  tooltip text and aria-label). One field is armed at a time; closing the
+  panel disarms. A pane with no expression equivalent gives the backtest's
+  toast. Columns stay plain inputs: the token is appended to the input's
+  value. They get no client-side lint; the server reports column errors as
+  today.
+
+### Indicators line
+
+Under Condition, a line lists the copied panes ("RSI 14, divergence on") and
+the "Refresh from chart" link. It is hidden when the screen references none.
+InfoTip lines: "Settings copied from the chart on run or save." / "The copy is
+kept with the screen." / "Refresh from chart to pick up changes."
 
 ## Backend
 
-- `ScreenRunBody` gains `indicators: dict[str, IndicatorInstanceDTO] = {}`,
-  capped at 16 entries. `ScreenBody` inherits it.
+- `ScreenRunBody` gains `indicators: dict[str, IndicatorInstanceDTO] = {}`:
+  at most 16 entries and at most 32 KB of JSON in total, and every entry's
+  type must have a series spec. An unregistered type would be silently
+  skipped by `resolve_instances` and stored dead, so it 422s instead.
+  `ScreenBody` inherits all of it.
 - `compile_screen(expression, columns, indicators)` resolves them with
-  `resolve_instances`, validates the row and columns against them, and stores
-  the resolved map on `CompiledScreen`. Warm-up uses
-  `warmup_bars(node, None, instances)`, so a Trendlines or divergence lookback
-  sizes the fetch.
-- An instance whose settings pin a timeframe (`spec.timeframe(config)`) is
-  refused at compile time, the same as `@tf` pins, with code
-  `screen_tf_unsupported`.
+  `resolve_instances`, passes `instances=` to `validate` and
+  `validate_value`, and stores the map on `CompiledScreen`. Warm-up uses
+  `warmup_bars(node, None, instances)`.
+- `_refuse_unsupported` passes the instances to `referenced_tfs`, which already
+  catches panes pinned in their settings. The message depends on the cause:
+  "Timeframe pins like @D are not available in screens yet." for an `@tf`, and
+  "<id> is pinned to <tf> in its settings. Screens run on one timeframe, so
+  unpin it on the chart." for a pinned pane. Unknown refs get a screen-specific
+  message rather than validate's "on this chart": "<id> is not one of this
+  screen's indicators. Add it to a chart and pick it from there." The module
+  docstring drops "pane references are refused".
 - `judge` passes the instances to `compile_row` and `series_of`.
-- Heavy types (Trendlines runs its full compute) are judged in the existing
-  `asyncio.to_thread` call, so they do not block the loop. The per-broker
-  semaphore of 4 already bounds concurrency.
-- `screen_store` adds an `indicators TEXT NOT NULL DEFAULT '{}'` column through
-  a migration (`ALTER TABLE` when the column is missing); rows read back with
-  `{}` when empty.
+- Compute bounds: the broker semaphore covers only the fetch, so judging gets
+  its own per-runner semaphore of 2. The job's cancel flag is checked before
+  each judge, so a cancelled screen stops after the symbols already running
+  in threads.
+- Store: `indicators TEXT NOT NULL DEFAULT '{}'`. The `ALTER TABLE ... ADD
+  COLUMN` runs once, guarded by `PRAGMA table_info`, in the same schema step
+  `_connect` already runs. `INSERT` names its columns rather than relying on
+  position; `UPDATE`, `_COLS`, `_row` and the router's `_data()` all carry
+  `indicators`.
+
+## Results versus the chart
+
+Results can differ from the chart. The spec accepts this, and the panel
+InfoTip on Condition says it in one line ("Pivot-based outputs see up to 2000
+bars, so they can differ from the chart.").
+
+- Pivot- and history-dependent outputs (Trendlines, S/R, divergences) see only
+  the bars a screen fetches, 300 to 2000. A chart with more history can show a
+  different line or pivot.
+- A warm-up above 1999 bars skips every symbol with "not enough history".
+- A pane's settings are applied at the screen's timeframe, even if they were
+  tuned on another.
 
 ## Errors
 
-- Unknown reference, wrong output name, pinned timeframe: 422 with the existing
-  `{code, message, start, end, field, index}` detail, shown on the expression
-  or the named column.
+- Unknown reference, wrong output name, pinned timeframe, unregistered type,
+  size cap: 422 with the existing `{code, message, start, end, field, index}`
+  detail, shown on the expression or the named column.
 - Too few bars for the instance's warm-up: the existing "not enough history"
   skip reason.
 
 ## Testing
 
 - Backend: `compile_screen` with an RSI instance and `RSI.bullDiv`; warm-up
-  grows with the divergence lookback; pinned-timeframe instance refused;
-  unknown id 422s on the right field; store round-trips `indicators` and
-  migrates an old table; router passes indicators through to the job.
+  grows with the divergence lookback; pinned pane refused with its own
+  message; unknown id 422s on the right field with the screen wording;
+  unregistered type and size cap 422; store round-trips `indicators` and
+  migrates an old table; router passes indicators through to the job;
+  cancel stops further judging.
 - Frontend: picking from the chart appends the token to the armed field and
   disarms; arming a second field replaces the first; the backtest's pick
-  behaves as before (its existing tests pass unchanged). Run sends only
-  referenced panes; chart pane wins over the copy;
-  copy is used when the chart lacks the id; loading a saved screen restores
-  its copy; draft keeps it across unmount.
+  behaves as before (its existing tests pass unchanged). With both
+  hooks mounted, one click inserts once. Run sends only referenced panes; the
+  copy wins over a chart pane with the same id; the chart supplies ids the
+  copy lacks; Refresh from chart updates shared ids; pinned panes are absent
+  from the editor list; loading a saved screen restores its copy; the draft
+  keeps it across unmount.
 
 ## Out of scope
 
