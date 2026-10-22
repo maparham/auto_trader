@@ -1,65 +1,29 @@
 // Chart-side inputs to the rule expression editors: the one armed "pick from
 // chart" row, and the live chart's referenceable panes.
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { BacktestConfig } from "../lib/backtestConfig";
 import type { ChartController } from "../lib/chartController";
 import type { ExprInstance } from "../lib/expr/catalog";
-import { pickedIndicatorToken } from "../lib/exprPick";
 import { exprInstancesFromChart } from "../lib/indicators";
-import { toast } from "../lib/notify";
+import { useIndicatorPick } from "../lib/useIndicatorPick";
+
+type Group = "longEntry" | "longExit" | "shortEntry" | "shortExit";
 
 export function useExprPick(controller: ChartController | null, setCfg: Dispatch<SetStateAction<BacktestConfig>>) {
   // "Pick from chart" (expression editor): a rule row arms the chart, the user
   // clicks an on-chart indicator, and its expression token (e.g. "EMA(9)") is
-  // appended to that row. Single source of truth for WHICH row is armed lives
-  // here (not per-section), so arming a second row replaces the first and the
-  // one chart click can only ever insert once. Mirrors the rangePick wiring.
-  const [exprPickArmed, setExprPickArmed] = useState<
-    { group: "longEntry" | "longExit" | "shortEntry" | "shortExit"; row: number } | null
-  >(null);
-  const exprPickArmedRef = useRef(exprPickArmed);
-  exprPickArmedRef.current = exprPickArmed;
-  useEffect(() => {
-    if (!controller) return;
-    const unsub = controller.indicatorPickResult.subscribe((sel) => {
-      const target = exprPickArmedRef.current;
-      if (!sel || !target) return;
-      controller.indicatorPickResult.set(null); // consume one-shot
-      setExprPickArmed(null);
-      controller.indicatorPickArmed.set(false);
-      // pickedIndicatorToken owns the chart-side normalisation — notably a click
-      // on a Slope's acceleration companion, a separate instance the expression
-      // language spells as an OUTPUT of its parent ("SLOPE.accel9").
-      const token = controller.chart ? pickedIndicatorToken(controller.chart, sel) : null;
-      if (!token) {
-        toast("That indicator has no expression equivalent.");
-        return;
-      }
-      setCfg((c) => {
-        const g = c[target.group] as { rules: Array<{ expr?: string }> };
-        const rules = g.rules.map((r, i) => (i === target.row ? { ...r, expr: (r.expr ?? "") + token } : r));
-        return { ...c, [target.group]: { ...g, rules } };
-      });
+  // appended to that row. One armed row at a time; the generic hook owns the
+  // arm/consume cycle (lib/useIndicatorPick.ts).
+  const pick = useIndicatorPick<{ group: Group; row: number }>(controller, (target, token) => {
+    setCfg((c) => {
+      const g = c[target.group] as { rules: Array<{ expr?: string }> };
+      const rules = g.rules.map((r, i) => (i === target.row ? { ...r, expr: (r.expr ?? "") + token } : r));
+      return { ...c, [target.group]: { ...g, rules } };
     });
-    return () => {
-      unsub();
-      controller.indicatorPickArmed.set(false); // never leave the chart armed if the panel closes
-    };
-  }, [controller, setCfg]);
-  const exprPick = controller
-    ? {
-        armed: exprPickArmed,
-        arm: (group: "longEntry" | "longExit" | "shortEntry" | "shortExit", row: number) => {
-          setExprPickArmed({ group, row });
-          controller.indicatorPickArmed.set(true);
-        },
-        disarm: () => {
-          setExprPickArmed(null);
-          controller.indicatorPickArmed.set(false);
-        },
-      }
+  });
+  return pick
+    ? { armed: pick.armed, arm: (group: Group, row: number) => pick.arm({ group, row }), disarm: pick.disarm }
     : undefined;
-  return exprPick;
 }
 
 export function useExprInstances(controller: ChartController | null): readonly ExprInstance[] {
