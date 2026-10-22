@@ -303,3 +303,12 @@ def _respan(node: N.Node, start: int, end: int):
 
 def parse(src: str) -> N.Row:
     return _Parser(tokenize(src)).parse_row()
+
+
+def parse_value(src: str) -> N.Node:
+    """A bare arithmetic expression (a screen column like RSI(14)), not a
+    condition. Same grammar as an operand of a comparison."""
+    p = _Parser(tokenize(src))
+    node = p.parse_arith()
+    p.expect("EOF")
+    return node

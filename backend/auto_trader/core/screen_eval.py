@@ -1,0 +1,109 @@
+"""One symbol's verdict for a screen: compile the screen's condition and
+columns once, then judge each symbol's candles on its last CLOSED bar.
+
+Pure: no I/O. The runner (api/screen_jobs.py) fetches candles and hands them
+here, which keeps this module testable with plain Candle lists.
+
+Screens have no chart panes and fetch no higher timeframes, so `@tf` pins and
+pane references are refused at compile time rather than misjudged."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from auto_trader.api.sweep_apply import referenced_tfs
+from auto_trader.core.models import Candle
+from auto_trader.strategy.expr import nodes as N
+from auto_trader.strategy.expr.errors import ExprError
+from auto_trader.strategy.expr.evaluate import compile_row, series_of
+from auto_trader.strategy.expr.parser import parse, parse_value
+from auto_trader.strategy.expr.validate import validate, validate_value
+from auto_trader.strategy.expr.warmup import warmup_bars
+
+# Extra closed bars beyond the warm-up, so an EMA is not judged on the very
+# first bar it becomes defined.
+_SLACK = 20
+_MAX_BARS = 2000
+
+
+class ScreenSpecError(Exception):
+    """A screen's expression or one of its columns failed to parse/validate.
+    `field` is "expression" or "columns"; `index` the column's position (0
+    for the expression)."""
+
+    def __init__(self, field: str, index: int, err: ExprError):
+        super().__init__(err.message)
+        self.field = field
+        self.index = index
+        self.err = err
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledScreen:
+    row: N.Row
+    source: str
+    columns: list[tuple[str, N.Node]]
+    warmup: int
+
+
+@dataclass(frozen=True, slots=True)
+class Judgement:
+    matched: bool
+    bar_time_ms: int | None
+    columns: dict[str, float | None]
+    skip_reason: str | None
+
+
+def _refuse_unsupported(node: N.Node, src: str) -> None:
+    if referenced_tfs(node, None):
+        raise ExprError("screen_tf_unsupported",
+                        "Timeframe pins like @D are not available in screens yet.",
+                        0, len(src))
+
+
+def compile_screen(expression: str, columns: list[dict]) -> CompiledScreen:
+    try:
+        row = parse(expression)
+        validate(row, is_exit=False)
+        _refuse_unsupported(row, expression)
+    except ExprError as e:
+        raise ScreenSpecError("expression", 0, e) from e
+    cols: list[tuple[str, N.Node]] = []
+    for idx, col in enumerate(columns):
+        src = col["expression"]
+        try:
+            node = parse_value(src)
+            validate_value(node)
+            _refuse_unsupported(node, src)
+        except ExprError as e:
+            raise ScreenSpecError("columns", idx, e) from e
+        cols.append((col["name"], node))
+    warm = max([warmup_bars(row, None)] + [warmup_bars(n, None) for _, n in cols])
+    return CompiledScreen(row, expression, cols, warm)
+
+
+def bars_needed(cs: CompiledScreen) -> int:
+    return min(_MAX_BARS, cs.warmup + 1 + _SLACK)
+
+
+def closed_bars(bars: list[Candle], res_seconds: int, now: float) -> list[Candle]:
+    """Drop the forming bar: a bar is closed once its open plus one interval
+    has passed."""
+    if bars and bars[-1].time.timestamp() + res_seconds > now:
+        return bars[:-1]
+    return bars
+
+
+def judge(cs: CompiledScreen, bars: list[Candle], resolution: str) -> Judgement:
+    if len(bars) < cs.warmup + 1:
+        return Judgement(False, None, {}, "not enough history")
+    compiled = compile_row(cs.row, bars, resolution, {}, None, source=cs.source)
+    last = len(bars) - 1
+    matched = compiled.evaluate(last, None)
+    bar_ms = int(bars[last].time.timestamp() * 1000)
+    cols: dict[str, float | None] = {}
+    if matched:
+        for name, node in cs.columns:
+            v = series_of(node, bars, resolution, {}, None)[last]
+            cols[name] = None if v is None or v != v or v in (float("inf"), float("-inf")) else float(v)
+    return Judgement(bool(matched), bar_ms, cols, None)

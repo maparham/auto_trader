@@ -37,6 +37,14 @@ def validate(node: N.Row, *, is_exit: bool,
     _walk(node.right, is_exit=is_exit, instances=instances)
 
 
+def validate_value(node: N.Node,
+                   instances: "dict[str, ResolvedInstance] | None" = None) -> None:
+    """Validate a bare value node (a screen column like RSI(14)), not a row.
+    Thin public wrapper around the value walker so callers outside this
+    module (core/screen_eval.py) don't reach into the private `_walk`."""
+    _walk(node, is_exit=False, instances=instances)
+
+
 def _check_predicate(node: N.Predicate) -> None:
     """A predicate's argument must bottom out in a bare `candle` (no field),
     wrapped only by offsets and at most one timeframe pin."""
