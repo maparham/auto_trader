@@ -7223,49 +7223,104 @@ span.bt-leg-short { color: var(--neg); }
 }
 .sc-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
   border-bottom: 1px solid var(--border); }
+/* The radar mark is the panel's one colored element; everything else is quiet. */
+.sc-mark { display: inline-flex; color: var(--accent); }
 .sc-title { font-weight: 600; }
 .sc-head > .tooltip-trigger:has(> .modal-close) { margin-left: auto; }
-.sc-note { margin: 6px 8px; color: var(--text-dim); }
-.sc-form { display: flex; flex-direction: column; gap: 6px; padding: 8px;
+.sc-note { margin: 6px 10px; color: var(--text-dim); }
+.sc-form { display: flex; flex-direction: column; gap: 12px; padding: 10px;
   border-bottom: 1px solid var(--border); }
+.sc-section { display: flex; flex-direction: column; gap: 5px; }
+/* Section label row: name (and count) on the left, its quiet actions right. */
+.sc-label { display: flex; align-items: center; gap: 8px; min-height: 22px;
+  color: var(--text-dim); font-weight: 500; }
+.sc-label-name { display: inline-flex; align-items: center; gap: 4px; }
+.sc-count { margin-left: 2px; padding: 0 5px; border-radius: 8px; font-size: 11px;
+  font-variant-numeric: tabular-nums; color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent); }
+/* Source picker: the trade list's muted pills (gray on-state, not accent). */
+.sc-source { margin-left: auto; }
+.sc-source button { padding: 2px 9px; font-size: 11px; }
+.sc-source button:not(.seg-on) { color: var(--text-dim); }
+.sc-source button:not(.seg-on):hover { color: var(--text); }
+.sc-source button.seg-on { background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text); font-weight: 600; }
+.sc-source .tooltip-trigger { display: inline-flex; }
+.sc-source .tooltip-trigger + .tooltip-trigger button { border-left: 1px solid var(--border); }
+.sc-sub-actions { display: flex; gap: 2px; margin-left: -6px; }
+.sc-tab-summary { margin: 0; padding: 5px 6px; border: 1px dashed var(--border);
+  border-radius: 4px; line-height: 1.5; word-break: break-word; }
+.sc-tab-list { margin: 0; padding: 2px 0; list-style: none; max-height: 160px; overflow: auto;
+  border: 1px solid var(--border); border-radius: 4px; }
+.sc-tab-list label { display: flex; align-items: center; gap: 8px; padding: 4px 6px;
+  cursor: pointer; }
+.sc-tab-list label:hover { background: var(--hover); }
+.sc-tab-n { flex: 0 0 auto; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.sc-tab-epics { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-label-actions { margin-left: auto; display: flex; gap: 2px; }
+.sc-link { background: none; border: none; padding: 2px 6px; border-radius: 4px;
+  font: inherit; color: var(--accent); cursor: pointer; white-space: nowrap; }
+.sc-link:hover { background: var(--hover); }
+/* "on [1D] bars": the timeframe reads as part of the condition it scopes. */
+.sc-tf { margin-left: auto; display: flex; align-items: center; gap: 5px;
+  font-weight: 400; }
+.sc-hint { margin: 0; color: var(--text-faint); }
 .sc-row { display: flex; align-items: center; gap: 6px; }
-.sc-row > input, .sc-row > select { flex: 1 1 auto; min-width: 0; }
-.sc-col-expr { flex: 2 1 auto; }
-.sc-symbols { min-height: 44px; resize: vertical; }
+.sc-row > input, .sc-row > select { flex: 1 1 0; min-width: 0; }
+.sc-screen-row > select { flex: 0 1 45%; }
+.sc-col-name { flex: 0 1 34% !important; }
+.sc-col-expr { flex: 1 1 0; font-family: var(--mono, ui-monospace, monospace); }
+.sc-symbols { min-height: 48px; resize: vertical; }
 /* Form controls: the same chrome as the trade list's inputs and the toolbar's
    (input-bg on the border token), so both themes match the sibling panels. */
-.sc-row > input, .sc-row > select, .sc-symbols {
-  padding: 4px 6px; font: inherit; font-size: 12px;
+.sc-row > input, .sc-row > select, .sc-symbols, .sc-tf select {
+  height: 26px; box-sizing: border-box; padding: 3px 6px; font: inherit; font-size: 12px;
   background: var(--input-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; }
-.sc-row > input:focus-visible, .sc-row > select:focus-visible, .sc-symbols:focus-visible {
-  outline: none; border-color: var(--accent); }
+.sc-symbols { height: auto; padding: 5px 6px; }
+.sc-tf select { height: 22px; padding: 1px 4px; }
+.sc-row > input:focus-visible, .sc-row > select:focus-visible, .sc-symbols:focus-visible,
+.sc-tf select:focus-visible { outline: none; border-color: var(--accent); }
 .sc-row > input::placeholder, .sc-symbols::placeholder { color: var(--text-faint); }
+.sc-link:focus-visible, .sc-btn:focus-visible, .sc-icon-btn:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Buttons follow .bt-review-btn: surface fill, border, accent border on hover. */
-.sc-btn { padding: 3px 10px; font: inherit; font-size: 12px; white-space: nowrap;
+.sc-btn { height: 26px; padding: 0 12px; font: inherit; font-size: 12px; white-space: nowrap;
   background: var(--surface); color: var(--text); cursor: pointer;
   border: 1px solid var(--border); border-radius: 4px; }
 .sc-btn:hover:not(:disabled) { border-color: var(--accent); }
 .sc-btn:disabled { opacity: 0.5; cursor: default; }
-.sc-run { font-weight: 600; }
-.sc-add-col { align-self: flex-start; }
+/* Run is the panel's one primary action. */
+.sc-run { min-width: 72px; font-weight: 600; background: var(--accent);
+  border-color: var(--accent); color: var(--accent-text); }
+.sc-run:hover:not(:disabled) { filter: brightness(1.08); }
+.sc-delete { margin-right: auto; color: var(--danger); }
+.sc-delete:hover:not(:disabled) { border-color: var(--danger); }
 /* Remove-column x: the trade list's quiet icon button. */
 .sc-icon-btn { background: none; border: none; color: var(--text-dim);
   cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
 .sc-icon-btn:hover { background: var(--hover); color: var(--text); }
-.sc-actions { justify-content: flex-end; }
-.sc-progress { margin-right: auto; color: var(--text-dim); }
+.sc-actions { justify-content: flex-end; padding-top: 2px; }
+.sc-progress { display: flex; align-items: center; gap: 8px; color: var(--text-dim);
+  font-variant-numeric: tabular-nums; }
+.sc-progress-bar { flex: 1; height: 3px; border-radius: 2px; overflow: hidden;
+  background: color-mix(in srgb, var(--text) 10%, transparent); }
+.sc-progress-bar > span { display: block; height: 100%; background: var(--accent);
+  transition: width 0.2s ease-out; }
+@media (prefers-reduced-motion: reduce) { .sc-progress-bar > span { transition: none; } }
 .sc-error { margin: 0; color: var(--danger); }
+.sc-empty { margin: 16px 10px; color: var(--text-faint); text-align: center; }
 .sc-results { flex: 1 1 auto; overflow: auto; }
-.sc-summary { display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+.sc-summary { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
   color: var(--text-dim); }
 .sc-skipped-toggle { background: none; border: none; color: var(--text-dim);
-  text-decoration: underline; cursor: pointer; padding: 0; }
-.sc-skipped { margin: 0 8px 6px; padding-left: 16px; color: var(--text-dim); }
+  text-decoration: underline; cursor: pointer; padding: 0; font: inherit; }
+.sc-skipped { margin: 0 10px 6px; padding-left: 16px; color: var(--text-dim); }
 .sc-table { width: 100%; border-collapse: collapse; }
-.sc-table th { text-align: left; padding: 4px 8px; cursor: pointer;
+.sc-table th { position: sticky; top: 0; background: var(--surface);
+  text-align: left; padding: 4px 10px; cursor: pointer;
   color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); }
-.sc-table td { padding: 4px 8px; }
+.sc-table td { padding: 4px 10px; font-variant-numeric: tabular-nums; }
 .sc-table tbody tr { cursor: pointer; }
 .sc-table tbody tr:hover { background: var(--hover); }
 

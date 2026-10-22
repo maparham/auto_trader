@@ -6,12 +6,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import RuleExpressionInput from "./components/RuleExpressionInput";
+import { RadarIcon } from "./lib/menuIcons";
 import SymbolSearchModal from "./SymbolSearchModal";
 import { fetchFavorites } from "./lib/feed/instruments";
 import { isImpersonating } from "./lib/impersonation";
 import { toast } from "./lib/notify";
 import { requestConfirm } from "./lib/signals";
-import { getScreenerDraft, setScreenerDraft, type ScreenerRanSpec } from "./lib/screenerDraft";
+import { getScreenerDraft, setScreenerDraft, type ScreenerRanSpec, type ScreenerSource } from "./lib/screenerDraft";
 import {
   ScreenSpecError,
   cancelScreen,
@@ -65,8 +66,18 @@ function fmt(v: number | null | undefined): string {
   return Math.abs(v) >= 100 ? v.toFixed(0) : Number(v.toFixed(2)).toString();
 }
 
+/** One open chart tab as a symbol source: its cells' epics, in cell order. */
+export interface ScreenerTab { id: string; epics: string[] }
+
+const SOURCES: { value: ScreenerSource; label: string; tip: string[] }[] = [
+  { value: "list", label: "List", tip: ["Type or pick the symbols"] },
+  { value: "allTabs", label: "All tabs", tip: ["Every open chart tab", "Tabs opened later are included"] },
+  { value: "tabs", label: "Some tabs", tip: ["Only the tabs you tick"] },
+];
+
 interface Props {
   brokerId: string;
+  tabs: ScreenerTab[];
   priceSide: string;
   onOpen: (epic: string, resolution: string) => void;
   onClose: () => void;
@@ -81,7 +92,7 @@ export default function ScreenerPanel(props: Props) {
   return <ScreenerForm key={props.brokerId} {...props} />;
 }
 
-function ScreenerForm({ brokerId, priceSide, onOpen, onClose }: Props) {
+function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
   // Read once on mount: the in-memory draft for this broker (lib/screenerDraft).
   const [initial] = useState(() => getScreenerDraft(brokerId));
   const [saved, setSaved] = useState<Screen[]>([]);
@@ -89,6 +100,8 @@ function ScreenerForm({ brokerId, priceSide, onOpen, onClose }: Props) {
   const [name, setName] = useState(initial.name);
   const [resolution, setResolution] = useState(initial.resolution);
   const [symbolsText, setSymbolsText] = useState(initial.symbolsText);
+  const [source, setSource] = useState<ScreenerSource>(initial.source);
+  const [tabIds, setTabIds] = useState<string[]>(initial.tabIds);
   const [expression, setExpression] = useState(initial.expression);
   const [columns, setColumns] = useState<ScreenColumn[]>(initial.columns);
   const [error, setError] = useState<string | null>(null);
@@ -122,7 +135,13 @@ function ScreenerForm({ brokerId, priceSide, onOpen, onClose }: Props) {
   const genRef = useRef(0);
   const readOnly = isImpersonating();
 
-  const symbols = useMemo(() => parseSymbols(symbolsText), [symbolsText]);
+  // Tab sources resolve against the tabs open right now, so "All tabs" picks
+  // up a tab opened after it was chosen, and a closed picked tab just drops.
+  const symbols = useMemo(() => {
+    if (source === "list") return parseSymbols(symbolsText);
+    const from = source === "allTabs" ? tabs : tabs.filter((t) => tabIds.includes(t.id));
+    return [...new Set(from.flatMap((t) => t.epics))];
+  }, [source, symbolsText, tabs, tabIds]);
   // Names go out trimmed: the server keys each match's values by them.
   const sentColumns = useMemo(() => columns.map((c) => ({ ...c, name: c.name.trim() })), [columns]);
   const draft = { broker: brokerId, resolution, symbols, expression, columns: sentColumns };
@@ -130,8 +149,8 @@ function ScreenerForm({ brokerId, priceSide, onOpen, onClose }: Props) {
   // Mirror the draft and the last completed result into the per-broker store.
   // A run in flight is not kept: the unmount cleanup cancels it.
   useEffect(() => {
-    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, expression, columns, result, ranSpec });
-  }, [brokerId, currentId, name, resolution, symbolsText, expression, columns, result, ranSpec]);
+    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, source, tabIds, expression, columns, result, ranSpec });
+  }, [brokerId, currentId, name, resolution, symbolsText, source, tabIds, expression, columns, result, ranSpec]);
 
   useEffect(() => {
     listScreens()
@@ -158,6 +177,7 @@ function ScreenerForm({ brokerId, priceSide, onOpen, onClose }: Props) {
     setName(s?.name ?? "");
     setResolution(s?.resolution ?? "DAY");
     setSymbolsText(s ? s.symbols.join(", ") : "");
+    setSource("list");
     setExpression(s?.expression ?? "");
     setColumns(s?.columns ?? []);
     setResult(null);
@@ -316,6 +336,7 @@ function ScreenerForm({ brokerId, priceSide, onOpen, onClose }: Props) {
   return (
     <aside className="screener-panel" aria-label="Screener">
       <div className="sc-head">
+        <span className="sc-mark"><RadarIcon size={15} /></span>
         <span className="sc-title">Screener</span>
         <InfoTip title="Screener" text={[
           "Checks a condition on each symbol's last closed bar.",
@@ -330,7 +351,14 @@ function ScreenerForm({ brokerId, priceSide, onOpen, onClose }: Props) {
       {readOnly && <p className="sc-note">Read-only while viewing as another user.</p>}
 
       <div className="sc-form">
-        <div className="sc-row">
+        <section className="sc-section">
+          <div className="sc-label">
+            <span className="sc-label-name">Screen<InfoTip title="Screen" text={[
+              "Load a saved screen or start a new one.",
+              "The name is used when you save.",
+            ]} /></span>
+          </div>
+        <div className="sc-row sc-screen-row">
           <select
             aria-label="Saved screens"
             value={currentId ?? ""}
@@ -339,65 +367,164 @@ function ScreenerForm({ brokerId, priceSide, onOpen, onClose }: Props) {
             <option value="">New screen</option>
             {saved.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <input aria-label="Screen name" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input aria-label="Screen name" placeholder="Name this screen" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
-        <div className="sc-row">
-          <select aria-label="Timeframe" value={resolution} onChange={(e) => setResolution(e.target.value)}>
-            {RESOLUTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
-          <button className="sc-btn" onClick={() => setPicking(true)}>Add symbol</button>
-          <button className="sc-btn" onClick={addFavorites}>Add favorites</button>
-        </div>
-        <textarea
-          aria-label="Symbols"
-          className="sc-symbols"
-          placeholder="Symbols, separated by commas"
-          value={symbolsText}
-          onChange={(e) => setSymbolsText(e.target.value)}
-        />
-        <RuleExpressionInput
-          value={expression}
-          onChange={setExpression}
-          isExit={false}
-          placeholder="RSI(14) < 30 and candle.close > EMA(200)"
-        />
-        {columns.map((c, i) => (
-          <div className="sc-row" key={i}>
-            <input
-              aria-label={`Column ${i + 1} name`}
-              value={c.name}
-              onChange={(e) => setColumns((cs) => cs.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-            />
-            <input
-              aria-label={`Column ${i + 1} expression`}
-              className="sc-col-expr"
-              value={c.expression}
-              onChange={(e) => setColumns((cs) => cs.map((x, j) => (j === i ? { ...x, expression: e.target.value } : x)))}
-            />
-            <Tooltip content="Remove column">
-              <button className="sc-icon-btn" aria-label={`Remove column ${i + 1}`} onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}>×</button>
-            </Tooltip>
+        </section>
+
+        <section className="sc-section">
+          <div className="sc-label">
+            <span className="sc-label-name">Symbols<InfoTip title="Symbols" text={[
+              "List: symbols you type or pick.",
+              "All tabs: every open chart, new tabs too.",
+              "Some tabs: only the tabs you tick.",
+              "Up to 500 symbols.",
+            ]} />{symbols.length > 0 && <span className="sc-count">{symbols.length}</span>}</span>
+            <div className="seg sc-source" role="radiogroup" aria-label="Symbol source">
+              {SOURCES.map((o) => (
+                <Tooltip key={o.value} content={o.tip}>
+                  <button
+                    role="radio"
+                    aria-checked={source === o.value}
+                    className={source === o.value ? "seg-on" : undefined}
+                    onClick={() => setSource(o.value)}
+                  >
+                    {o.label}
+                  </button>
+                </Tooltip>
+              ))}
+            </div>
           </div>
-        ))}
-        {columns.length < 8 && (
-          <button className="sc-btn sc-add-col" onClick={() => setColumns((cs) => [...cs, { name: `Col ${cs.length + 1}`, expression: "RSI(14)" }])}>
-            Add column
-          </button>
-        )}
+          {source === "list" && (
+            <>
+              <textarea
+                aria-label="Symbols"
+                className="sc-symbols"
+                placeholder="AAPL, MSFT, EURUSD"
+                value={symbolsText}
+                onChange={(e) => setSymbolsText(e.target.value)}
+              />
+              <div className="sc-sub-actions">
+                <button className="sc-link" onClick={() => setPicking(true)}>Add symbol</button>
+                <button className="sc-link" onClick={addFavorites}>Add favorites</button>
+              </div>
+            </>
+          )}
+          {source === "allTabs" && (
+            tabs.length === 0
+              ? <p className="sc-hint">No chart tabs are open.</p>
+              : (
+                <p className="sc-tab-summary">
+                  {symbols.join(", ")}
+                  <span className="sc-hint"> Tabs you open later are included.</span>
+                </p>
+              )
+          )}
+          {source === "tabs" && (
+            tabs.length === 0
+              ? <p className="sc-hint">No chart tabs are open.</p>
+              : (
+                <ul className="sc-tab-list">
+                  {tabs.map((t, i) => (
+                    <li key={t.id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={tabIds.includes(t.id)}
+                          onChange={(e) => setTabIds((ids) =>
+                            e.target.checked ? [...ids, t.id] : ids.filter((x) => x !== t.id))}
+                        />
+                        <span className="sc-tab-n">Tab {i + 1}</span>
+                        <span className="sc-tab-epics">{t.epics.join(", ") || "no symbols"}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )
+          )}
+        </section>
+
+        <section className="sc-section">
+          <div className="sc-label">
+            <span className="sc-label-name">Condition<InfoTip title="Condition" text={[
+              "Rule checked on each symbol's last closed bar.",
+              "Matches are symbols where it is true.",
+              "The timeframe sets which bars are used.",
+            ]} /></span>
+            <label className="sc-tf">
+              <span>on</span>
+              <select aria-label="Timeframe" value={resolution} onChange={(e) => setResolution(e.target.value)}>
+                {RESOLUTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+              <span>bars</span>
+            </label>
+          </div>
+          <RuleExpressionInput
+            value={expression}
+            onChange={setExpression}
+            isExit={false}
+            placeholder="RSI(14) < 30 and candle.close > EMA(200)"
+          />
+        </section>
+
+        <section className="sc-section">
+          <div className="sc-label">
+            <span className="sc-label-name">Columns<InfoTip title="Columns" text={[
+              "Extra values shown for each match.",
+              "Any value expression, like RSI(14).",
+              "Click a header to sort. Up to 8.",
+            ]} /></span>
+            {columns.length < 8 && (
+              <span className="sc-label-actions">
+                <button className="sc-link" onClick={() => setColumns((cs) => [...cs, { name: `Col ${cs.length + 1}`, expression: "RSI(14)" }])}>
+                  Add column
+                </button>
+              </span>
+            )}
+          </div>
+          {columns.map((c, i) => (
+            <div className="sc-row" key={i}>
+              <input
+                aria-label={`Column ${i + 1} name`}
+                className="sc-col-name"
+                value={c.name}
+                onChange={(e) => setColumns((cs) => cs.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+              />
+              <input
+                aria-label={`Column ${i + 1} expression`}
+                className="sc-col-expr"
+                value={c.expression}
+                onChange={(e) => setColumns((cs) => cs.map((x, j) => (j === i ? { ...x, expression: e.target.value } : x)))}
+              />
+              <Tooltip content="Remove column">
+                <button className="sc-icon-btn" aria-label={`Remove column ${i + 1}`} onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}>×</button>
+              </Tooltip>
+            </div>
+          ))}
+        </section>
+
         {error && <p className="sc-error" role="alert">{error}</p>}
         <div className="sc-row sc-actions">
+          {currentId && <button className="sc-btn sc-delete" disabled={readOnly} onClick={remove}>Delete</button>}
+          <button className="sc-btn" disabled={readOnly || !expression.trim()} onClick={save}>Save</button>
           {running ? (
-            <>
-              <span className="sc-progress">{progress.done} / {progress.total}</span>
-              <button className="sc-btn" onClick={cancel}>Cancel</button>
-            </>
+            <button className="sc-btn" onClick={cancel}>Cancel</button>
           ) : (
             <button className="sc-btn sc-run" disabled={!canRun} onClick={run}>Run</button>
           )}
-          <button className="sc-btn" disabled={readOnly || !expression.trim()} onClick={save}>Save</button>
-          {currentId && <button className="sc-btn" disabled={readOnly} onClick={remove}>Delete</button>}
         </div>
+        {progress && (
+          <div className="sc-progress" aria-live="polite">
+            <div className="sc-progress-bar">
+              <span style={{ width: `${progress.total ? (100 * progress.done) / progress.total : 0}%` }} />
+            </div>
+            <span>{progress.done} / {progress.total}</span>
+          </div>
+        )}
       </div>
+
+      {!result && !running && (
+        <p className="sc-empty">Matching symbols show here after a run. Click one to open its chart.</p>
+      )}
 
       {result && (
         <div className="sc-results">

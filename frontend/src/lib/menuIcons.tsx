@@ -27,6 +27,19 @@ export function BellIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// Radar sweep: the screener's mark, on its toolbar toggle and panel header.
+export function RadarIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="4.5" />
+      <path d="M12 12l6.4-6.4" />
+      <circle cx="15.6" cy="15" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 // The four study-mode glyphs, shared by the toolbar's inline buttons and the
 // tight-bar "Study" menu (and its trigger face), so the same mode reads the
 // same everywhere. 2px stroke like the toolbar's other 15px glyphs.

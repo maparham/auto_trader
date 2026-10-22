@@ -6,6 +6,10 @@
 // localStorage on purpose; a reload starts clean.
 import type { ScreenColumn, ScreenResult } from "./screens";
 
+/** Where a screen's symbols come from: the typed list, every open chart tab
+ *  (live, so tabs opened later join the next run), or a picked set of tabs. */
+export type ScreenerSource = "list" | "allTabs" | "tabs";
+
 export interface ScreenerRanSpec { columns: ScreenColumn[]; resolution: string }
 
 export interface ScreenerDraftState {
@@ -13,6 +17,8 @@ export interface ScreenerDraftState {
   name: string;
   resolution: string;
   symbolsText: string;
+  source: ScreenerSource;
+  tabIds: string[];
   expression: string;
   columns: ScreenColumn[];
   result: ScreenResult | null;
@@ -24,6 +30,8 @@ export const EMPTY_SCREENER_DRAFT: ScreenerDraftState = {
   name: "",
   resolution: "DAY",
   symbolsText: "",
+  source: "list",
+  tabIds: [],
   expression: "",
   columns: [],
   result: null,

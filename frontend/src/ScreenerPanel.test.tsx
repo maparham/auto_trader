@@ -73,7 +73,7 @@ const SAVED: Screen = {
 
 function setup() {
   const onOpen = vi.fn();
-  render(<ScreenerPanel brokerId="yfinance" priceSide="mid" onOpen={onOpen} onClose={() => {}} />);
+  render(<ScreenerPanel brokerId="yfinance" tabs={[]} priceSide="mid" onOpen={onOpen} onClose={() => {}} />);
   return { onOpen };
 }
 
@@ -166,7 +166,7 @@ describe("ScreenerPanel", () => {
   it("runs successfully inside React.StrictMode", async () => {
     render(
       <StrictMode>
-        <ScreenerPanel brokerId="yfinance" priceSide="mid" onOpen={() => {}} onClose={() => {}} />
+        <ScreenerPanel brokerId="yfinance" tabs={[]} priceSide="mid" onOpen={() => {}} onClose={() => {}} />
       </StrictMode>,
     );
     fillAndRun("AAPL");
@@ -207,7 +207,7 @@ describe("ScreenerPanel", () => {
 
   it("switching broker resets a loaded screen, so Save creates rather than rewrites it", async () => {
     vi.mocked(listScreens).mockResolvedValue([SAVED]);
-    const props = { priceSide: "mid", onOpen: () => {}, onClose: () => {} };
+    const props = { tabs: [], priceSide: "mid", onOpen: () => {}, onClose: () => {} };
     const { rerender } = render(<ScreenerPanel brokerId="yfinance" {...props} />);
     await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
@@ -224,12 +224,12 @@ describe("ScreenerPanel", () => {
   });
 
   it("keeps the draft and the last result across an unmount", async () => {
-    const first = render(<ScreenerPanel brokerId="yfinance" priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    const first = render(<ScreenerPanel brokerId="yfinance" tabs={[]} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
     fillAndRun("AAPL, ZZZ", "RSI(14) < 30");
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(screen.getByText("AAPL")).toBeTruthy());
     first.unmount();
-    render(<ScreenerPanel brokerId="yfinance" priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    render(<ScreenerPanel brokerId="yfinance" tabs={[]} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
     expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("RSI(14) < 30");
     expect((screen.getByLabelText("Symbols") as HTMLTextAreaElement).value).toBe("AAPL, ZZZ");
     expect(screen.getByText("AAPL")).toBeTruthy();
@@ -291,5 +291,31 @@ describe("ScreenerPanel", () => {
     await waitFor(() => expect(screen.getByText("network down")).toBeTruthy());
     expect(cancelScreen).toHaveBeenCalledWith("j9");
     expect((screen.getByRole("button", { name: "Run" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("All tabs follows the open tabs, including ones opened later", async () => {
+    const props = { brokerId: "yfinance", priceSide: "mid", onOpen: () => {}, onClose: () => {} };
+    const { rerender } = render(<ScreenerPanel {...props} tabs={[{ id: "t1", epics: ["AAPL"] }]} />);
+    fireEvent.click(screen.getByRole("radio", { name: "All tabs" }));
+    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
+    rerender(<ScreenerPanel {...props} tabs={[{ id: "t1", epics: ["AAPL"] }, { id: "t2", epics: ["MSFT", "AAPL"] }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(startScreen).toHaveBeenCalled());
+    expect(vi.mocked(startScreen).mock.calls[0][0].symbols).toEqual(["AAPL", "MSFT"]);
+  });
+
+  it("Some tabs screens only the ticked tabs and drops closed ones", async () => {
+    const props = { brokerId: "yfinance", priceSide: "mid", onOpen: () => {}, onClose: () => {} };
+    const two = [{ id: "t1", epics: ["AAPL"] }, { id: "t2", epics: ["MSFT"] }];
+    const { rerender } = render(<ScreenerPanel {...props} tabs={two} />);
+    fireEvent.click(screen.getByRole("radio", { name: "Some tabs" }));
+    const boxes = screen.getAllByRole("checkbox");
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[1]);
+    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
+    rerender(<ScreenerPanel {...props} tabs={[two[1]]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(startScreen).toHaveBeenCalled());
+    expect(vi.mocked(startScreen).mock.calls[0][0].symbols).toEqual(["MSFT"]);
   });
 });

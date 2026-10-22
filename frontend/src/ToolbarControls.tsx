@@ -34,7 +34,7 @@ import {
 } from "./lib/persist";
 import type { ChartController } from "./lib/chartController";
 import { applyCandleFit } from "./chart/candleFit";
-import { BellIcon } from "./lib/menuIcons";
+import { BellIcon, RadarIcon } from "./lib/menuIcons";
 import SymbolIcon from "./SymbolIcon";
 import Tooltip from "./components/Tooltip";
 import CustomTimeframeForm from "./components/CustomTimeframeForm";
@@ -506,15 +506,6 @@ function TradeListIcon() {
     </svg>
   );
 }
-function ScreenerIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-      aria-hidden="true">
-      <path d="M3 4.5h18l-6.75 7.8V19l-4.5-2.25v-4.45z" strokeLinejoin="round" />
-    </svg>
-  );
-}
 function TicketIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
@@ -590,7 +581,7 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
     // them), so the toggle that would open nothing is hidden too.
     ...(isDemoMode() ? [] : [{
       id: "screener" as const, label: "Screener", tip: "Show screener panel",
-      icon: <ScreenerIcon />, on: screenerOpen, cls: "screener-toggle",
+      icon: <RadarIcon />, on: screenerOpen, cls: "screener-toggle",
     }]),
     {
       id: "alerts" as const, label: "Alerts", tip: "Show alerts panel",

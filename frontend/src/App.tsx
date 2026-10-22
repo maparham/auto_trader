@@ -343,6 +343,15 @@ export default function App() {
   // epics have no stored history, sub-minute resolutions aren't served, and a
   // snapshot cell is a frozen picture. Called at search time, so it reflects
   // the tabs as they are then.
+  // Open tabs as Screener sources: each tab's distinct real epics (synthetic
+  // ones have no server-side history to screen).
+  const screenerTabs = useMemo(
+    () => tabs.map((t) => ({
+      id: t.id,
+      epics: [...new Set(t.cells.map((c) => c.symbol.epic).filter((e) => !isSynthetic(e)))],
+    })),
+    [tabs],
+  );
   const getPatternSeries = useCallback(
     () =>
       tabs.flatMap((t) =>
@@ -1083,6 +1092,7 @@ export default function App() {
           {screenerOpen && !isDemoMode() && (
             <ScreenerPanel
               brokerId={brokerId}
+              tabs={screenerTabs}
               priceSide={settings.priceSide}
               onOpen={(epic, resolution) => {
                 const p = periodByResolution(resolution);
