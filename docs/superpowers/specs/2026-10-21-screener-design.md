@@ -53,8 +53,8 @@ offers "Add favorites". No separate watchlist feature.
 
 ### Storage
 
-`core/screen_store.py`, its own SQLite file (`SCREEN_DB`), per user, same
-pattern as `pattern_preset_store.py`. A screen is
+`core/screen_store.py`, its own SQLite file (`settings.screens_db_path`, env
+`CAPITAL_SCREENS_DB_PATH`), per user, same pattern as `pattern_preset_store.py`. A screen is
 `{id, name, broker, resolution, symbols, expression, columns, created_at,
 updated_at}`; `columns` is a list of `{name, expression}`. CRUD at
 `/api/screens`. Results are not stored; the panel keeps the last run in
