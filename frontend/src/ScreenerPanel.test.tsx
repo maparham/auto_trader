@@ -8,6 +8,8 @@ vi.mock("./lib/screens", async (orig) => ({
   listScreens: vi.fn(async () => []),
   startScreen: vi.fn(async () => ({ jobId: "j1", total: 2 })),
   cancelScreen: vi.fn(async () => {}),
+  saveScreen: vi.fn(async () => ({ id: "new1", name: "x" })),
+  deleteScreen: vi.fn(async () => {}),
   pollScreen: vi.fn(async () => ({
     status: "done", done: 2, total: 2,
     result: {
@@ -23,10 +25,18 @@ vi.mock("./components/RuleExpressionInput", () => ({
   ),
 }));
 vi.mock("./lib/impersonation", () => ({ isImpersonating: vi.fn(() => false) }));
+vi.mock("./lib/signals", async (orig) => ({
+  ...(await orig<typeof import("./lib/signals")>()),
+  requestConfirm: vi.fn(),
+}));
 
 import ScreenerPanel from "./ScreenerPanel";
-import { cancelScreen, listScreens, pollScreen, startScreen, type Screen } from "./lib/screens";
+import {
+  cancelScreen, deleteScreen, listScreens, pollScreen, saveScreen, startScreen, type Screen,
+} from "./lib/screens";
 import { isImpersonating } from "./lib/impersonation";
+import { requestConfirm, type ConfirmRequest } from "./lib/signals";
+import { resetScreenerDrafts } from "./lib/screenerDraft";
 
 const DEFAULT_POLL_RESULT = {
   status: "done" as const, done: 2, total: 2,
@@ -48,8 +58,18 @@ beforeEach(() => {
   vi.mocked(pollScreen).mockResolvedValue(DEFAULT_POLL_RESULT);
   vi.mocked(cancelScreen).mockResolvedValue(undefined);
   vi.mocked(isImpersonating).mockReturnValue(false);
+  vi.mocked(saveScreen).mockResolvedValue({ ...SAVED, id: "new1" });
+  vi.mocked(deleteScreen).mockResolvedValue(undefined);
+  // The draft store is module-level: without this, one test's draft would
+  // be restored into the next test's fresh mount.
+  resetScreenerDrafts();
 });
 afterEach(cleanup);
+
+const SAVED: Screen = {
+  id: "s1", name: "Saved one", broker: "yfinance", resolution: "DAY",
+  symbols: ["MSFT"], expression: "RSI(14) < 20", columns: [], created_at: 0, updated_at: 0,
+};
 
 function setup() {
   const onOpen = vi.fn();
@@ -183,5 +203,93 @@ describe("ScreenerPanel", () => {
     resolveStart({ jobId: "j1", total: 2 });
     await waitFor(() => expect(cancelScreen).toHaveBeenCalledWith("j1"));
     expect(screen.queryByText("AAPL")).toBeNull();
+  });
+
+  it("switching broker resets a loaded screen, so Save creates rather than rewrites it", async () => {
+    vi.mocked(listScreens).mockResolvedValue([SAVED]);
+    const props = { priceSide: "mid", onOpen: () => {}, onClose: () => {} };
+    const { rerender } = render(<ScreenerPanel brokerId="yfinance" {...props} />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
+    expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("RSI(14) < 20");
+    rerender(<ScreenerPanel brokerId="dukascopy" {...props} />);
+    expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByLabelText("Saved screens") as HTMLSelectElement).value).toBe("");
+    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saveScreen).toHaveBeenCalled());
+    const [, draft, id] = vi.mocked(saveScreen).mock.calls[0];
+    expect(id).toBeUndefined();
+    expect(draft.broker).toBe("dukascopy");
+  });
+
+  it("keeps the draft and the last result across an unmount", async () => {
+    const first = render(<ScreenerPanel brokerId="yfinance" priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    fillAndRun("AAPL, ZZZ", "RSI(14) < 30");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("AAPL")).toBeTruthy());
+    first.unmount();
+    render(<ScreenerPanel brokerId="yfinance" priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("RSI(14) < 30");
+    expect((screen.getByLabelText("Symbols") as HTMLTextAreaElement).value).toBe("AAPL, ZZZ");
+    expect(screen.getByText("AAPL")).toBeTruthy();
+    expect(screen.getByText("1 of 2 match")).toBeTruthy();
+  });
+
+  it("blocks Run on a duplicate column name and says why", () => {
+    setup();
+    fillAndRun("AAPL");
+    fireEvent.click(screen.getByRole("button", { name: "Add column" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add column" }));
+    fireEvent.change(screen.getByLabelText("Column 1 name"), { target: { value: "RSI" } });
+    fireEvent.change(screen.getByLabelText("Column 2 name"), { target: { value: " RSI " } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(screen.getByRole("alert").textContent).toMatch(/already named "RSI"/);
+    expect(startScreen).not.toHaveBeenCalled();
+  });
+
+  it("blocks Save on an empty column name", () => {
+    setup();
+    fillAndRun("AAPL");
+    fireEvent.click(screen.getByRole("button", { name: "Add column" }));
+    fireEvent.change(screen.getByLabelText("Column 1 name"), { target: { value: "  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert").textContent).toMatch(/Column 1/);
+    expect(saveScreen).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a pydantic list 422 as readable text", async () => {
+    vi.mocked(startScreen).mockRejectedValue(new Error("name: String should have at most 40 characters"));
+    setup();
+    fillAndRun("AAPL");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(
+      "name: String should have at most 40 characters"));
+  });
+
+  it("asks before deleting, and declining keeps the screen", async () => {
+    vi.mocked(listScreens).mockResolvedValue([SAVED]);
+    setup();
+    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(requestConfirm).toHaveBeenCalledTimes(1);
+    const req = vi.mocked(requestConfirm).mock.calls[0][0] as ConfirmRequest;
+    expect(req.message).not.toMatch(/\u2014|--/);
+    req.onCancel?.();
+    expect(deleteScreen).not.toHaveBeenCalled();
+    req.onConfirm();
+    await waitFor(() => expect(deleteScreen).toHaveBeenCalledWith("s1"));
+  });
+
+  it("cancels the server job when a poll throws mid-run", async () => {
+    vi.mocked(startScreen).mockResolvedValue({ jobId: "j9", total: 1 });
+    vi.mocked(pollScreen).mockRejectedValue(new Error("network down"));
+    setup();
+    fillAndRun("AAPL");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("network down")).toBeTruthy());
+    expect(cancelScreen).toHaveBeenCalledWith("j9");
+    expect((screen.getByRole("button", { name: "Run" }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

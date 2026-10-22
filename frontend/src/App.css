@@ -7232,6 +7232,27 @@ span.bt-leg-short { color: var(--neg); }
 .sc-row > input, .sc-row > select { flex: 1 1 auto; min-width: 0; }
 .sc-col-expr { flex: 2 1 auto; }
 .sc-symbols { min-height: 44px; resize: vertical; }
+/* Form controls: the same chrome as the trade list's inputs and the toolbar's
+   (input-bg on the border token), so both themes match the sibling panels. */
+.sc-row > input, .sc-row > select, .sc-symbols {
+  padding: 4px 6px; font: inherit; font-size: 12px;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; }
+.sc-row > input:focus-visible, .sc-row > select:focus-visible, .sc-symbols:focus-visible {
+  outline: none; border-color: var(--accent); }
+.sc-row > input::placeholder, .sc-symbols::placeholder { color: var(--text-faint); }
+/* Buttons follow .bt-review-btn: surface fill, border, accent border on hover. */
+.sc-btn { padding: 3px 10px; font: inherit; font-size: 12px; white-space: nowrap;
+  background: var(--surface); color: var(--text); cursor: pointer;
+  border: 1px solid var(--border); border-radius: 4px; }
+.sc-btn:hover:not(:disabled) { border-color: var(--accent); }
+.sc-btn:disabled { opacity: 0.5; cursor: default; }
+.sc-run { font-weight: 600; }
+.sc-add-col { align-self: flex-start; }
+/* Remove-column x: the trade list's quiet icon button. */
+.sc-icon-btn { background: none; border: none; color: var(--text-dim);
+  cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+.sc-icon-btn:hover { background: var(--hover); color: var(--text); }
 .sc-actions { justify-content: flex-end; }
 .sc-progress { margin-right: auto; color: var(--text-dim); }
 .sc-error { margin: 0; color: var(--danger); }

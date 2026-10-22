@@ -1,6 +1,7 @@
 // Screener: judge one rule expression on the last closed bar of every symbol
 // in a list, docked like the trade list. Saved screens live server-side
-// (lib/screens.ts); the last run's result lives here only.
+// (lib/screens.ts); the draft and last completed result live in memory per
+// broker (lib/screenerDraft.ts), so they survive the panel unmounting.
 import { useEffect, useMemo, useRef, useState } from "react";
 import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
@@ -9,6 +10,8 @@ import SymbolSearchModal from "./SymbolSearchModal";
 import { fetchFavorites } from "./lib/feed/instruments";
 import { isImpersonating } from "./lib/impersonation";
 import { toast } from "./lib/notify";
+import { requestConfirm } from "./lib/signals";
+import { getScreenerDraft, setScreenerDraft, type ScreenerRanSpec } from "./lib/screenerDraft";
 import {
   ScreenSpecError,
   cancelScreen,
@@ -32,6 +35,26 @@ const RESOLUTIONS: { value: string; label: string }[] = [
 ];
 
 const POLL_MS = 500;
+const MAX_COL_NAME = 40;
+
+// Fire-and-forget cancel: a failed cancel has nothing to report to the user.
+const cancelQuietly = (jobId: string) => {
+  cancelScreen(jobId).catch(() => {});
+};
+
+/** Column names must be 1 to 40 chars after trim and unique, or the server's
+ *  result dict would collide (or 422 with an unreadable list). */
+function columnNameError(columns: ScreenColumn[]): string | null {
+  const seen = new Set<string>();
+  for (let i = 0; i < columns.length; i++) {
+    const n = columns[i].name.trim();
+    if (!n) return `Column ${i + 1}: give it a name.`;
+    if (n.length > MAX_COL_NAME) return `Column ${i + 1}: names are at most ${MAX_COL_NAME} characters.`;
+    if (seen.has(n)) return `Column ${i + 1}: another column is already named "${n}".`;
+    seen.add(n);
+  }
+  return null;
+}
 
 function parseSymbols(text: string): string[] {
   return [...new Set(text.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))];
@@ -51,17 +74,26 @@ interface Props {
 
 type SortKey = { col: string; desc: boolean };
 
-export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: Props) {
+// Keyed by broker: switching broker remounts the form onto that broker's own
+// draft (empty if none), so a screen loaded under one broker can never be
+// saved back under another.
+export default function ScreenerPanel(props: Props) {
+  return <ScreenerForm key={props.brokerId} {...props} />;
+}
+
+function ScreenerForm({ brokerId, priceSide, onOpen, onClose }: Props) {
+  // Read once on mount: the in-memory draft for this broker (lib/screenerDraft).
+  const [initial] = useState(() => getScreenerDraft(brokerId));
   const [saved, setSaved] = useState<Screen[]>([]);
-  const [currentId, setCurrentId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [resolution, setResolution] = useState("DAY");
-  const [symbolsText, setSymbolsText] = useState("");
-  const [expression, setExpression] = useState("");
-  const [columns, setColumns] = useState<ScreenColumn[]>([]);
+  const [currentId, setCurrentId] = useState<string | null>(initial.currentId);
+  const [name, setName] = useState(initial.name);
+  const [resolution, setResolution] = useState(initial.resolution);
+  const [symbolsText, setSymbolsText] = useState(initial.symbolsText);
+  const [expression, setExpression] = useState(initial.expression);
+  const [columns, setColumns] = useState<ScreenColumn[]>(initial.columns);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [result, setResult] = useState<ScreenResult | null>(null);
+  const [result, setResult] = useState<ScreenResult | null>(initial.result);
   const [showSkipped, setShowSkipped] = useState(false);
   const [picking, setPicking] = useState(false);
   const [sort, setSort] = useState<SortKey>({ col: "epic", desc: false });
@@ -76,7 +108,7 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
   // state, so renaming/reordering a column or changing the timeframe after a
   // run can't relabel already-returned data or send a click to a timeframe
   // that was never screened.
-  const [ranSpec, setRanSpec] = useState<{ columns: ScreenColumn[]; resolution: string } | null>(null);
+  const [ranSpec, setRanSpec] = useState<ScreenerRanSpec | null>(initial.ranSpec);
   // Run-generation counter. run() captures the value at its own start; load(),
   // cancel() and the unmount cleanup each bump it. After every await inside
   // run() (startScreen, each pollScreen), a mismatch means this call has been
@@ -91,7 +123,15 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
   const readOnly = isImpersonating();
 
   const symbols = useMemo(() => parseSymbols(symbolsText), [symbolsText]);
-  const draft = { broker: brokerId, resolution, symbols, expression, columns };
+  // Names go out trimmed: the server keys each match's values by them.
+  const sentColumns = useMemo(() => columns.map((c) => ({ ...c, name: c.name.trim() })), [columns]);
+  const draft = { broker: brokerId, resolution, symbols, expression, columns: sentColumns };
+
+  // Mirror the draft and the last completed result into the per-broker store.
+  // A run in flight is not kept: the unmount cleanup cancels it.
+  useEffect(() => {
+    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, expression, columns, result, ranSpec });
+  }, [brokerId, currentId, name, resolution, symbolsText, expression, columns, result, ranSpec]);
 
   useEffect(() => {
     listScreens()
@@ -102,7 +142,7 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
   // Stop polling if the panel unmounts mid-run; the server job is cancelled too.
   useEffect(() => () => {
     genRef.current++;
-    if (jobRef.current) void cancelScreen(jobRef.current);
+    if (jobRef.current) cancelQuietly(jobRef.current);
     jobRef.current = null;
   }, []);
 
@@ -110,7 +150,7 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
     // A newly loaded screen must not have an old run's result land under it
     // once this cancel's response (or a still-running poll) arrives late.
     genRef.current++;
-    if (jobRef.current) void cancelScreen(jobRef.current);
+    if (jobRef.current) cancelQuietly(jobRef.current);
     jobRef.current = null;
     setStarting(false);
     setProgress(null);
@@ -136,20 +176,29 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
 
   const run = async () => {
     if (starting || jobRef.current) return; // already starting or running
+    const colErr = columnNameError(columns);
+    if (colErr) {
+      setError(colErr);
+      return;
+    }
     const gen = ++genRef.current;
     setStarting(true);
     setError(null);
     setResult(null);
-    const spec = { columns, resolution };
+    const spec = { columns: sentColumns, resolution };
+    // The server job this call started, once known. If a poll throws, the
+    // catch cancels it, or the server would 409 every Run until it ended.
+    let heldJob: string | null = null;
     try {
       const { jobId, total } = await startScreen(draft, priceSide);
       if (genRef.current !== gen) {
         // Superseded (load/cancel/unmount) while the POST was in flight:
         // jobRef was never set, so nothing else could have cancelled this
         // job server-side yet. Leave all other state untouched.
-        void cancelScreen(jobId);
+        cancelQuietly(jobId);
         return;
       }
+      heldJob = jobId;
       jobRef.current = jobId;
       setRanSpec(spec);
       setStarting(false);
@@ -160,11 +209,12 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
           // Whoever superseded this call already cancelled jobRef's job
           // directly (cancel()/load()/unmount all do); this is belt-and-
           // braces in case this call's own jobId somehow wasn't it.
-          void cancelScreen(jobId);
+          cancelQuietly(jobId);
           return;
         }
         setProgress({ done: st.done, total: st.total });
         if (st.status !== "running") {
+          heldJob = null;
           jobRef.current = null;
           setProgress(null);
           if (st.status === "done") setResult(st.result);
@@ -175,6 +225,7 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
       }
     } catch (e) {
       if (genRef.current !== gen) return; // superseded; nothing left to update
+      if (heldJob) cancelQuietly(heldJob);
       setStarting(false);
       jobRef.current = null;
       setProgress(null);
@@ -187,10 +238,15 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
     const id = jobRef.current;
     jobRef.current = null;
     setProgress(null);
-    if (id) void cancelScreen(id);
+    if (id) cancelQuietly(id);
   };
 
   const save = async () => {
+    const colErr = columnNameError(columns);
+    if (colErr) {
+      setError(colErr);
+      return;
+    }
     try {
       const row = await saveScreen(name.trim() || "Untitled screen", draft, currentId ?? undefined);
       setSaved((all) => [...all.filter((s) => s.id !== row.id), row]);
@@ -202,15 +258,25 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
     }
   };
 
-  const remove = async () => {
-    if (!currentId) return;
-    try {
-      await deleteScreen(currentId);
-      setSaved((all) => all.filter((s) => s.id !== currentId));
-      load(null);
-    } catch (e) {
-      explain(e);
-    }
+  const remove = () => {
+    const id = currentId;
+    if (!id) return;
+    const label = saved.find((s) => s.id === id)?.name || name.trim() || "this screen";
+    requestConfirm({
+      title: "Delete screen",
+      message: `Delete "${label}"? This cannot be undone.`,
+      onConfirm: () => {
+        void (async () => {
+          try {
+            await deleteScreen(id);
+            setSaved((all) => all.filter((s) => s.id !== id));
+            load(null);
+          } catch (e) {
+            explain(e);
+          }
+        })();
+      },
+    });
   };
 
   const addFavorites = async () => {
@@ -279,8 +345,8 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
           <select aria-label="Timeframe" value={resolution} onChange={(e) => setResolution(e.target.value)}>
             {RESOLUTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
-          <button onClick={() => setPicking(true)}>Add symbol</button>
-          <button onClick={addFavorites}>Add favorites</button>
+          <button className="sc-btn" onClick={() => setPicking(true)}>Add symbol</button>
+          <button className="sc-btn" onClick={addFavorites}>Add favorites</button>
         </div>
         <textarea
           aria-label="Symbols"
@@ -309,12 +375,12 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
               onChange={(e) => setColumns((cs) => cs.map((x, j) => (j === i ? { ...x, expression: e.target.value } : x)))}
             />
             <Tooltip content="Remove column">
-              <button aria-label={`Remove column ${i + 1}`} onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}>×</button>
+              <button className="sc-icon-btn" aria-label={`Remove column ${i + 1}`} onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}>×</button>
             </Tooltip>
           </div>
         ))}
         {columns.length < 8 && (
-          <button className="sc-add-col" onClick={() => setColumns((cs) => [...cs, { name: `Col ${cs.length + 1}`, expression: "RSI(14)" }])}>
+          <button className="sc-btn sc-add-col" onClick={() => setColumns((cs) => [...cs, { name: `Col ${cs.length + 1}`, expression: "RSI(14)" }])}>
             Add column
           </button>
         )}
@@ -323,13 +389,13 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
           {running ? (
             <>
               <span className="sc-progress">{progress.done} / {progress.total}</span>
-              <button onClick={cancel}>Cancel</button>
+              <button className="sc-btn" onClick={cancel}>Cancel</button>
             </>
           ) : (
-            <button className="sc-run" disabled={!canRun} onClick={run}>Run</button>
+            <button className="sc-btn sc-run" disabled={!canRun} onClick={run}>Run</button>
           )}
-          <button disabled={readOnly || !expression.trim()} onClick={save}>Save</button>
-          {currentId && <button disabled={readOnly} onClick={remove}>Delete</button>}
+          <button className="sc-btn" disabled={readOnly || !expression.trim()} onClick={save}>Save</button>
+          {currentId && <button className="sc-btn" disabled={readOnly} onClick={remove}>Delete</button>}
         </div>
       </div>
 
