@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import TypeVar
 
+import httpx
 from fastapi import HTTPException, Query, Request
 
 from auto_trader.api.auth import auth_enabled
@@ -28,7 +29,10 @@ from auto_trader.brokers.ig import IGAllowanceExceeded, IGBroker
 from auto_trader.brokers.paper_exec import PaperExecutionBroker
 from auto_trader.brokers.registry import BrokerRegistry
 from auto_trader.core.broker_health import (
+    CAUSE_BLOCKED,
+    CAUSE_BROKER,
     BrokerBlocked,
+    BrokerDown,
     BrokerHealth,
     BrokerReconnecting,
     BrokerTimeout,
@@ -169,8 +173,23 @@ def broker_blocked_http(label: str, e: BrokerBlocked) -> HTTPException:
     return HTTPException(
         503,
         f"{label}: blocked by your network (restricted internet connection) — {e}",
-        headers={"X-Broker-Blocked": "1"},
+        headers={"X-Broker-Blocked": "1", "X-Failure-Cause": CAUSE_BLOCKED},
     )
+
+
+def broker_down_http(label: str, e: BrokerDown) -> HTTPException:
+    """The 503 for a broker whose own edge reports an outage (BrokerDown).
+
+    Shared by guarded() and the execution routes. X-Failure-Cause tells the
+    frontend the broker is at fault, so it says so instead of blaming the
+    user's network or our server."""
+    return HTTPException(
+        503, f"{label}: {e}", headers={"X-Failure-Cause": CAUSE_BROKER}
+    )
+
+
+def _cause_headers(cause: str) -> dict[str, str]:
+    return {"X-Failure-Cause": cause}
 
 
 async def guarded(
@@ -201,6 +220,8 @@ async def guarded(
         )
     except BrokerBlocked as e:
         raise broker_blocked_http(label, e) from e
+    except BrokerDown as e:
+        raise broker_down_http(label, e) from e
     except IGAllowanceExceeded as e:
         raise HTTPException(
             429,
@@ -213,14 +234,22 @@ async def guarded(
         ) from e
     except BrokerUnavailable as e:
         raise HTTPException(
-            503, f"{label}: broker '{broker_id}' temporarily unavailable"
+            503,
+            f"{label}: broker '{broker_id}' temporarily unavailable",
+            headers=_cause_headers(e.cause),
         ) from e
     except BrokerTimeout as e:
-        raise HTTPException(504, f"{label}: broker '{broker_id}' timed out") from e
+        raise HTTPException(
+            504, f"{label}: broker '{broker_id}' timed out",
+            headers=_cause_headers(e.cause),
+        ) from e
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"{label} failed: {e}") from e
+        # An HTTP-level failure talking to the broker (connect error, 5xx JSON)
+        # is the broker's; anything else may be our own bug, so name no cause.
+        headers = _cause_headers(CAUSE_BROKER) if isinstance(e, httpx.HTTPError) else None
+        raise HTTPException(502, f"{label} failed: {e}", headers=headers) from e
 
 
 async def load_alert_bars(

@@ -7,6 +7,27 @@
 // reload. useLiveMarketData now schedules real history re-fetches on this
 // backoff, and ChartCore picks the banner variant from what's actually painted.
 
+import type { FailureCause } from "../lib/http";
+
+/** A load the backend served from its candle cache because the broker call
+ * failed: the failure text and, when the backend knew, who it was on. */
+export type DegradedServe = { reason: string; cause: FailureCause | null };
+
+/** The degraded pill's text: names the broker when it is the broker's
+ * outage, our server when it stalled, and the network when it is blocked. */
+export function degradedPillText(serve: DegradedServe, brokerName: string): string {
+  switch (serve.cause) {
+    case "broker":
+      return `${brokerName} isn't responding: showing cached data. Retrying automatically…`;
+    case "server":
+      return "Chartkar's server is overloaded: showing cached data. Retrying automatically…";
+    case "blocked":
+      return "Your network is blocking the broker: showing cached data. Retrying automatically…";
+    default:
+      return "Broker unreachable: showing cached data. Retrying automatically…";
+  }
+}
+
 /** Delay before history-load retry number `attempt` (0-based): 5s doubling to a 60s cap. */
 export function nextHistoryRetryDelayMs(attempt: number): number {
   return Math.min(5_000 * 2 ** Math.max(0, attempt), 60_000);

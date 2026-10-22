@@ -257,7 +257,13 @@ import "./chart/timeAxisTicks";
 import { useLiveMarketData } from "./chart/useLiveMarketData";
 import { shouldDetach, type DetachedTarget } from "./chart/detachedView";
 import { useReplay } from "./chart/useReplay";
-import { classifyNoData, type LoadFailure, type NoDataKind } from "./chart/noDataPolicy";
+import {
+  classifyNoData,
+  degradedPillText,
+  type DegradedServe,
+  type LoadFailure,
+  type NoDataKind,
+} from "./chart/noDataPolicy";
 import { buildRangeToken, useRangeNavigation } from "./chart/useRangeNavigation";
 import { useChartPaint } from "./chart/useChartPaint";
 import { useIndicatorCommands } from "./chart/useIndicatorCommands";
@@ -1164,7 +1170,7 @@ export default function ChartCore({
   // The last history load was served from the backend's candle cache because the
   // broker was unreachable (may be missing the newest bars). Shown as a compact
   // pill while bars are painted; cleared by a healthy load or a live tick.
-  const [degraded, setDegraded] = useState<string | null>(null);
+  const [degraded, setDegraded] = useState<DegradedServe | null>(null);
   const [anchoring, setAnchoring] = useState(false);
   // True while the Measure ruler is armed — drives the crosshair cursor on the
   // chart container (mirrors `anchoring`), reset when a press consumes the arm.
@@ -5831,7 +5837,7 @@ export default function ChartCore({
       {degraded && noData === null && hasData && (
         <div className="chart-stale-pill" role="status">
           <span className="chart-nodata-spinner" aria-hidden="true" />
-          Broker unreachable: showing cached data. Retrying automatically…
+          {degradedPillText(degraded, brokerLabel(brokerId))}
           <button type="button" className="chart-stale-retry" onClick={retryNow}>
             Retry now
           </button>

@@ -12,6 +12,7 @@ import {
   setTradesAccount,
   DEFAULT_ACCOUNT,
   brokerOf,
+  brokerLabel,
   isRealMoneyAccount,
   fetchAccountSummary,
   loadLastAccountByBroker,
@@ -20,8 +21,8 @@ import {
   type TradeAccount,
   type AccountSummary,
 } from "../lib/trading";
-import { BrokerBlockedError } from "../lib/http";
-import { reportBrokerBlocked, reportBrokerReachable } from "../lib/brokerBlocked";
+import { BrokerBlockedError, BrokerOutageError } from "../lib/http";
+import { reportBrokerBlocked, reportBrokerOutage, reportBrokerReachable } from "../lib/brokerBlocked";
 import { sessionGet, sessionSet } from "../lib/persist";
 import type { Settings } from "../theme";
 
@@ -183,6 +184,9 @@ export function useAccounts(isDirty: boolean, tradingSettings: Settings["trading
           // Keep last-known figures on a transient error, but surface a blocked
           // network path (WAF / restricted connection) instead of hiding it.
           if (e instanceof BrokerBlockedError) reportBrokerBlocked(e.message);
+          else if (e instanceof BrokerOutageError) {
+            reportBrokerOutage(e.who, brokerLabel(brokerOf(activeAccount)));
+          }
         });
     };
     load(true);

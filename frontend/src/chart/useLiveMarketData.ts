@@ -29,8 +29,9 @@ import {
   shouldKeepPaintedBars,
   shouldRetryHistory,
   type LoadFailure,
+  type DegradedServe,
 } from "./noDataPolicy";
-import { ApiError } from "../lib/http";
+import { ApiError, type FailureCause } from "../lib/http";
 import { periodFromTf } from "./chartDataFacade";
 import {
   teardownArtifacts,
@@ -97,7 +98,7 @@ export interface LiveMarketDataDeps {
   setLoadFailure: (v: LoadFailure) => void;
   // The last load's degraded-serve marker (broker unreachable, cached bars
   // served — see feed.CandlesResult); null = healthy/complete.
-  setDegraded: (v: string | null) => void;
+  setDegraded: (v: DegradedServe | null) => void;
   setErrorOpen: (v: boolean) => void;
   setFetchedPrecision: (p: number | null) => void;
   setSnapView: (m: SnapshotMeta | null) => void;
@@ -591,6 +592,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       }
       let bars: KLineData[];
       let degraded: string | null = null;
+      let degradedCause: FailureCause | null = null;
       if (replaying) {
         bars = await replay!.barsFor(period.resolution);
       } else if (detachedMode) {
@@ -632,6 +634,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           const loaded = await fetchRecentWithStatus(symbol.epic, period.resolution, 500, priceSide, brokerId);
           bars = loaded.bars;
           degraded = loaded.degraded;
+          degradedCause = loaded.cause;
           // Merge over the pre-paint rather than replacing it: the cache may
           // hold deeper history than the ~500-bar recent window (scroll-back
           // pages it stashed on the last unmount), and applying the window
@@ -659,7 +662,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         // window and must not be.
         paintedLiveBars = true;
       }
-      if (!cancelled) setDegraded(degraded);
+      if (!cancelled) setDegraded(degraded ? { reason: degraded, cause: degradedCause } : null);
       if (cancelled || !handle.chartRef.current) return;
       // This run owns the load — the saved-view restore is spent (see above).
       // A REPLAYING run does not consume it: it never uses restoreView (the

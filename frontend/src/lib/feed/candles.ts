@@ -2,7 +2,7 @@
 // fetches, and the degraded/partial-fill headers they report.
 import type { KLineData } from "klinecharts";
 import type { PriceSide } from "../../theme";
-import { API_BASE as BASE, apiError, apiFetch, errorDetail } from "../http";
+import { API_BASE as BASE, apiError, apiFetch, errorDetail, failureCause, type FailureCause } from "../http";
 import { PERF_DIAG_ON, recordBars, recordFetch } from "../perfDiag";
 import { getSynthetic } from "../syntheticRegistry";
 import { type RawCandle, toKLine, DEFAULT_BROKER, fetchWithTimeout } from "./common";
@@ -29,6 +29,8 @@ export interface FillProgress {
 export type CandlesResult = {
   bars: KLineData[];
   degraded: string | null;
+  /** Who a degraded serve is on (X-Failure-Cause), when the backend said. */
+  cause: FailureCause | null;
   partial: FillProgress | null;
 };
 
@@ -105,9 +107,10 @@ async function fetchRecentUncoalesced(
       return {
         bars: ((await res.json()) as RawCandle[]).map(toKLine),
         degraded: degradedHeader(res),
+        cause: failureCause(res),
         partial: partialHeader(res),
       };
-    if (res.status === 404) return { bars: [], degraded: null, partial: null };
+    if (res.status === 404) return { bars: [], degraded: null, cause: null, partial: null };
     // apiError, not a bare Error: the status is what lets the chart's no-data
     // banner say "sign in again" for a 401/403 instead of blaming the broker.
     throw await apiError(res);
@@ -126,11 +129,12 @@ async function fetchRecentUncoalesced(
     return {
       bars: rows.map(toKLine),
       degraded: degradedHeader(res),
+      cause: failureCause(res),
       partial: partialHeader(res),
     };
   }
   // 404 = no data for this epic (unknown / no history) — empty, not an error.
-  if (res.status === 404) return { bars: [], degraded: null, partial: null };
+  if (res.status === 404) return { bars: [], degraded: null, cause: null, partial: null };
   // Anything else (e.g. 502 from a broker auth / maintenance failure, or the
   // 401/403 a dead session gets) carries a detail worth surfacing AND a status
   // worth classifying — throw it so the chart can show why it's blank.
@@ -247,13 +251,14 @@ export async function fetchRangeWithStatus(
 ): Promise<CandlesResult> {
   const res = await rangeResponse(epic, resolution, fromSec, toSec, priceSide, brokerId, signal);
   if (!res.ok) {
-    if (!isOutageStatus(res.status)) return { bars: [], degraded: null, partial: null };
+    if (!isOutageStatus(res.status)) return { bars: [], degraded: null, cause: null, partial: null };
     // Surface the backend's own detail (e.g. the WAF "blocked by your network"
     // message from X-Broker-Blocked 503s) — it's the actionable part; the bare
     // status code is only the fallback for detail-less responses.
     return {
       bars: [],
       degraded: await errorDetail(res, `broker unreachable (${res.status})`),
+      cause: failureCause(res),
       partial: null,
     };
   }
@@ -262,6 +267,7 @@ export async function fetchRangeWithStatus(
   return {
     bars: rows.map(toKLine),
     degraded: degradedHeader(res),
+    cause: failureCause(res),
     partial: partialHeader(res),
   };
 }

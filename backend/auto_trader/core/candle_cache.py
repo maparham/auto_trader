@@ -22,6 +22,7 @@ import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
+from auto_trader.core.broker_health import failure_cause
 from auto_trader.core.models import Candle
 
 log = logging.getLogger(__name__)
@@ -677,6 +678,7 @@ class CandleCache:
                     key, from_ts, to_ts, cutoff, res_seconds
                 ):
                     degraded["reason"] = str(first_err)
+                    degraded["cause"] = failure_cause(first_err)
                 return cached
             raise first_err
         return cached
@@ -748,6 +750,7 @@ class CandleCache:
                     raise
                 if degraded is not None:
                     degraded["reason"] = str(e)
+                    degraded["cause"] = failure_cause(e)
                 break
             out.extend(chunk)
             done_chunks += 1
@@ -884,6 +887,7 @@ class CandleCache:
             if cached:
                 if degraded is not None:
                     degraded["reason"] = str(e)
+                    degraded["cause"] = failure_cause(e)
                 return cached
             raise
         self._record_last_fetch(key, now if now is not None else time.time())

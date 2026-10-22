@@ -72,7 +72,8 @@ def _log_degraded(broker_id: str, epic: str, resolution: str, degraded: dict) ->
     """One line per degraded serve, so a "Broker unreachable" pill can be traced
     to the upstream error that caused it (the header alone never reaches logs)."""
     log.warning(
-        "candles degraded %s/%s %s: %s", broker_id, epic, resolution,
+        "candles degraded %s/%s %s (on %s): %s", broker_id, epic, resolution,
+        degraded.get("cause") or "unknown",
         str(degraded.get("reason") or "broker fetch failed")[:200],
     )
 
@@ -87,6 +88,9 @@ def _mark_degraded(response: Response, degraded: dict) -> None:
     response.headers["X-Candles-Degraded"] = (
         "".join(ch if " " <= ch <= "~" else "?" for ch in reason)[:200] or "1"
     )
+    # Who is at fault (broker / server / blocked), when the failure said so.
+    if cause := degraded.get("cause"):
+        response.headers["X-Failure-Cause"] = cause
 
 
 @router.get("/api/candles", response_model=list[CandleDTO])

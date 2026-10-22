@@ -161,6 +161,17 @@ describe("degraded-aware candle fetches", () => {
     expect(r.degraded).toBe("broker offline");
   });
 
+  it("fetchRangeWithStatus carries X-Failure-Cause with a degraded serve", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "X-Candles-Degraded": "timed out", "X-Failure-Cause": "server" }),
+      json: () => Promise.resolve(RAW),
+    }));
+    const r = await fetchRangeWithStatus("US100", "MINUTE", 0, 600, "mid", "capital");
+    expect(r.cause).toBe("server");
+  });
+
   // The still-filling marker. A separate header from the degraded one because
   // the two mean different things to a user: unreachable versus unfinished.
   it("fetchRangeWithStatus reads the fill progress off X-Candles-Partial", async () => {

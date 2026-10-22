@@ -571,7 +571,7 @@ describe("a frame that outlives what scheduled it", () => {
     const feed = await import("../lib/feed");
     vi.mocked(feed.fetchRangeWithStatus).mockImplementationOnce(async () => {
       await gate;
-      return { bars: BARS, degraded: null, partial: null };
+      return { bars: BARS, degraded: null, cause: null, partial: null };
     });
 
     autoRunFrames = false;

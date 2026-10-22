@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyLoadFailure,
   classifyNoData,
+  degradedPillText,
   nextHistoryRetryDelayMs,
   shouldKeepPaintedBars,
   shouldRetryHistory,
@@ -90,5 +91,16 @@ describe("classifyLoadFailure", () => {
   it("stays generic when there is no status at all (offline / DNS / timeout)", () => {
     expect(classifyLoadFailure(null)).toBe("unknown");
     expect(classifyLoadFailure(undefined)).toBe("unknown");
+  });
+});
+
+describe("degradedPillText", () => {
+  it("names who is at fault, falling back to the generic text", () => {
+    const pill = (cause: "broker" | "server" | "blocked" | null) =>
+      degradedPillText({ reason: "x", cause }, "Capital.com (live)");
+    expect(pill("broker")).toMatch(/^Capital\.com \(live\) isn't responding/);
+    expect(pill("server")).toMatch(/^Chartkar's server is overloaded/);
+    expect(pill("blocked")).toMatch(/^Your network is blocking the broker/);
+    expect(pill(null)).toMatch(/^Broker unreachable/);
   });
 });

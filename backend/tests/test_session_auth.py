@@ -218,3 +218,30 @@ def test_plain_403_is_not_broker_blocked() -> None:
             await broker.aclose()
 
     asyncio.run(run())
+
+
+def test_html_503_is_broker_down_not_blocked() -> None:
+    """Incapsula answers 503 + text/html (retry-after) while Capital's API is
+    down. That is the broker's outage, not the user's network: BrokerDown,
+    never BrokerBlocked, so the app doesn't tell the user to check their
+    connection."""
+    from auto_trader.core.broker_health import BrokerBlocked, BrokerDown
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503,
+            headers={"content-type": "text/html", "retry-after": "5"},
+            content=_WAF_HTML,
+        )
+
+    broker = _make_broker(httpx.MockTransport(handler))
+
+    async def run() -> None:
+        try:
+            with pytest.raises(BrokerDown) as info:
+                await broker._ensure_session()
+            assert not isinstance(info.value, BrokerBlocked)
+        finally:
+            await broker.aclose()
+
+    asyncio.run(run())

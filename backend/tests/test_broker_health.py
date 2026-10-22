@@ -231,3 +231,68 @@ def test_ignored_exception_on_half_open_trial_closes_breaker() -> None:
         assert await asyncio.gather(*tasks) == ["ok", "ok", "ok"]
 
     asyncio.run(scenario())
+
+
+def _stepping_clock(values):
+    """A clock that returns `values` in order, then repeats the last one."""
+    it = iter(values)
+    last = {"v": values[-1]}
+
+    def clock():
+        try:
+            last["v"] = next(it)
+        except StopIteration:
+            pass
+        return last["v"]
+
+    return clock
+
+
+async def _hang():
+    await asyncio.sleep(1)
+
+
+def test_timeout_within_budget_is_the_brokers_fault() -> None:
+    from auto_trader.core.broker_health import CAUSE_BROKER
+
+    hb = BrokerHealth(fail_threshold=1, call_timeout=0.01, clock=_stepping_clock([0.0, 0.01]))
+
+    async def scenario():
+        with pytest.raises(BrokerTimeout) as info:
+            await hb.run("capital", _hang)
+        assert info.value.cause == CAUSE_BROKER
+        # The open breaker reports the same cause on its fast-fails.
+        with pytest.raises(BrokerUnavailable) as info2:
+            await hb.run("capital", _ok)
+        assert info2.value.cause == CAUSE_BROKER
+
+    asyncio.run(scenario())
+
+
+def test_timeout_firing_far_past_budget_is_a_server_stall() -> None:
+    """A timer that fires long after its budget means our event loop could not
+    run (e.g. the box swapping), not that the broker was slow."""
+    from auto_trader.core.broker_health import CAUSE_SERVER
+
+    hb = BrokerHealth(fail_threshold=1, call_timeout=0.01, clock=_stepping_clock([0.0, 40.0]))
+
+    async def scenario():
+        with pytest.raises(BrokerTimeout) as info:
+            await hb.run("capital", _hang)
+        assert info.value.cause == CAUSE_SERVER
+        with pytest.raises(BrokerUnavailable) as info2:
+            await hb.run("capital", _ok)
+        assert info2.value.cause == CAUSE_SERVER
+
+    asyncio.run(scenario())
+
+
+def test_failure_cause_reads_exceptions_and_http_headers() -> None:
+    from fastapi import HTTPException
+
+    from auto_trader.core.broker_health import BrokerDown, failure_cause
+
+    assert failure_cause(BrokerDown("x")) == "broker"
+    assert failure_cause(BrokerTimeout("k", "server")) == "server"
+    assert failure_cause(HTTPException(503, "d", headers={"X-Failure-Cause": "blocked"})) == "blocked"
+    assert failure_cause(RuntimeError("boom")) is None

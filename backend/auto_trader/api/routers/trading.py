@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auto_trader.brokers._capital_history import history_totals
-from auto_trader.core.broker_health import BrokerBlocked, BrokerReconnecting
+from auto_trader.core.broker_health import BrokerBlocked, BrokerDown, BrokerReconnecting
 from auto_trader.core.models import (
     Order,
     OrderResult,
@@ -17,7 +17,7 @@ from auto_trader.core.models import (
     Side,
 )
 
-from ..deps import broker_blocked_http, get_exec, require_admin
+from ..deps import broker_blocked_http, broker_down_http, get_exec, require_admin
 from ..schemas import (
     AccountHistoryDTO,
     AccountSummaryDTO,
@@ -124,6 +124,8 @@ async def place_order(req: OrderRequest) -> OrderResultDTO:
         result = await broker.place_order(order)
     except BrokerBlocked as e:
         raise broker_blocked_http("order failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("order failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"order failed: {e}") from e
     if result.status is OrderStatus.REJECTED:
@@ -141,6 +143,8 @@ async def quote(epic: str, account: str = Query("capital:paper")) -> QuoteDTO:
         return QuoteDTO(**await q(epic))
     except BrokerBlocked as e:
         raise broker_blocked_http("quote failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("quote failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"quote failed: {e}") from e
 
@@ -159,6 +163,8 @@ async def account_summary(account: str = Query("capital:paper")) -> AccountSumma
         raise HTTPException(503, f"{account}: broker reconnecting — retry shortly") from e
     except BrokerBlocked as e:
         raise broker_blocked_http("account summary failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("account summary failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"account summary failed: {e}") from e
 
@@ -174,6 +180,8 @@ async def positions(
         raise HTTPException(503, f"{account}: broker reconnecting — retry shortly") from e
     except BrokerBlocked as e:
         raise broker_blocked_http("positions failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("positions failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"positions failed: {e}") from e
     return [_position_dto(p) for p in found]
@@ -190,6 +198,8 @@ async def close_position(
         result = await broker.close_position(deal_id, quantity)
     except BrokerBlocked as e:
         raise broker_blocked_http("close failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("close failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"close failed: {e}") from e
     if result.status is OrderStatus.REJECTED:
@@ -213,6 +223,8 @@ async def modify_position(
         )
     except BrokerBlocked as e:
         raise broker_blocked_http("modify failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("modify failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"modify failed: {e}") from e
     if result.status is OrderStatus.REJECTED:
@@ -231,6 +243,8 @@ async def working_orders(
         raise HTTPException(503, f"{account}: broker reconnecting — retry shortly") from e
     except BrokerBlocked as e:
         raise broker_blocked_http("working orders failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("working orders failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"working orders failed: {e}") from e
     return [_working_order_dto(w) for w in found]
@@ -262,6 +276,8 @@ async def account_history(
         raise HTTPException(503, f"{account}: broker reconnecting, retry shortly") from e
     except BrokerBlocked as e:
         raise broker_blocked_http("history failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("history failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"history failed: {e}") from e
     return AccountHistoryDTO(
@@ -307,6 +323,8 @@ async def modify_working_order(
         )
     except BrokerBlocked as e:
         raise broker_blocked_http("modify failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("modify failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"modify failed: {e}") from e
     if result.status is OrderStatus.REJECTED:
@@ -323,6 +341,8 @@ async def cancel_working_order(
         result = await broker.cancel_working_order(order_id)
     except BrokerBlocked as e:
         raise broker_blocked_http("cancel failed", e) from e
+    except BrokerDown as e:
+        raise broker_down_http("cancel failed", e) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"cancel failed: {e}") from e
     if result.status is OrderStatus.REJECTED:  # unknown order

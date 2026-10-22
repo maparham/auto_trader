@@ -35,12 +35,43 @@ log = logging.getLogger(__name__)
 _MAX_LOGGED_ERR_LEN = 200
 
 
+# Who a failure is on, as the X-Failure-Cause header names it to the frontend:
+# the broker itself ("broker"), our own server ("server": the event loop stalled,
+# e.g. the box swapping, so a timer fired long after its budget), or the user's
+# network path to the broker ("blocked": a WAF interstitial, see BrokerBlocked).
+CAUSE_BROKER = "broker"
+CAUSE_SERVER = "server"
+CAUSE_BLOCKED = "blocked"
+# A timeout that fires this many budgets late was not the broker being slow: the
+# process could not run its own timer, so the call sat unserved on OUR side.
+_STALL_FACTOR = 1.5
+
+
 class BrokerUnavailable(Exception):
-    """The broker's breaker is open: it is fast-failing during its cooldown."""
+    """The broker's breaker is open: it is fast-failing during its cooldown.
+    `cause` is what opened it (CAUSE_BROKER or CAUSE_SERVER)."""
+
+    def __init__(self, key: str, cause: str = CAUSE_BROKER) -> None:
+        super().__init__(key)
+        self.cause = cause
 
 
 class BrokerTimeout(Exception):
-    """A single broker call exceeded its per-call wall-clock budget."""
+    """A single broker call exceeded its per-call wall-clock budget. `cause` is
+    CAUSE_SERVER when the timer fired far past the budget (our stall)."""
+
+    def __init__(self, key: str, cause: str = CAUSE_BROKER) -> None:
+        super().__init__(key)
+        self.cause = cause
+
+
+class BrokerDown(Exception):
+    """The broker's edge answered with an HTML outage page (5xx): the request
+    reached the broker's infrastructure, which says the API behind it is down.
+    Unlike BrokerBlocked this is the broker's outage, not the user's network,
+    so it counts toward the breaker like any other failure."""
+
+    cause = CAUSE_BROKER
 
 
 class BrokerBlocked(Exception):
@@ -51,6 +82,17 @@ class BrokerBlocked(Exception):
     reached the broker, which typically means a restricted internet connection.
     Distinct from BrokerUnavailable so the UI can say "your network is blocking
     the broker" instead of a generic outage."""
+
+
+def failure_cause(e: BaseException) -> str | None:
+    """The X-Failure-Cause value an exception carries, or None when unknown:
+    a broker exception's own `cause`, or the header an HTTPException from
+    deps.guarded already stamped."""
+    cause = getattr(e, "cause", None)
+    if isinstance(cause, str):
+        return cause
+    headers = getattr(e, "headers", None) or {}
+    return headers.get("X-Failure-Cause")
 
 
 class BrokerReconnecting(Exception):
@@ -86,6 +128,8 @@ class BrokerHealth:
         self._open_until: dict[str, float] = {}
         # Keys with a half-open trial call currently in flight (see run()).
         self._half_open: set[str] = set()
+        # What the latest failure was on (CAUSE_*), reported by BrokerUnavailable.
+        self._cause: dict[str, str] = {}
 
     def is_open(self, key: str) -> bool:
         """True while `key`'s breaker is open (within its cooldown window)."""
@@ -116,7 +160,8 @@ class BrokerHealth:
         until = self._open_until.get(key)
         if until is not None:
             if self._clock() < until:
-                raise BrokerUnavailable(key)  # still cooling down — fail instantly
+                # Still cooling down: fail instantly.
+                raise BrokerUnavailable(key, self._cause.get(key, CAUSE_BROKER))
             # Cooldown elapsed -> HALF-OPEN: let exactly ONE trial call through and
             # fast-fail the rest until it resolves. Without this gate the instant the
             # cooldown expires every concurrent caller (e.g. the per-tab /api/market
@@ -127,10 +172,11 @@ class BrokerHealth:
             # await between them and the wait_for), so they're race-free under
             # asyncio's single thread; no lock needed.
             if key in self._half_open:
-                raise BrokerUnavailable(key)
+                raise BrokerUnavailable(key, self._cause.get(key, CAUSE_BROKER))
             self._half_open.add(key)
         try:
             timeout = self._per_key_timeout.get(key, self._call_timeout)
+            started = self._clock()
             result = await asyncio.wait_for(factory(), timeout)
         except ignore:
             # Expected business error — the broker RESPONDED, so it's reachable.
@@ -146,10 +192,14 @@ class BrokerHealth:
                 self._record_success(key)
             raise
         except asyncio.TimeoutError as e:
-            self._record_failure(key, f"timed out after {timeout:g}s")
-            raise BrokerTimeout(key) from e
+            elapsed = self._clock() - started
+            cause = CAUSE_SERVER if elapsed > timeout * _STALL_FACTOR else CAUSE_BROKER
+            self._record_failure(
+                key, f"timed out after {elapsed:.1f}s (budget {timeout:g}s)", cause
+            )
+            raise BrokerTimeout(key, cause) from e
         except Exception as e:
-            self._record_failure(key, f"{type(e).__name__}: {e}")
+            self._record_failure(key, f"{type(e).__name__}: {e}", CAUSE_BROKER)
             raise
         else:
             self._record_success(key)
@@ -157,12 +207,13 @@ class BrokerHealth:
         finally:
             self._half_open.discard(key)  # release the trial slot (success or fail)
 
-    def _record_failure(self, key: str, why: str = "") -> None:
+    def _record_failure(self, key: str, why: str = "", cause: str = CAUSE_BROKER) -> None:
         n = self._fails.get(key, 0) + 1
         self._fails[key] = n
+        self._cause[key] = cause
         log.warning(
-            "broker %s call failed (%d in a row): %s",
-            key, n, why[:_MAX_LOGGED_ERR_LEN],
+            "broker %s call failed (%d in a row, on %s): %s",
+            key, n, cause, why[:_MAX_LOGGED_ERR_LEN],
         )
         if n >= self._fail_threshold:
             self._open_until[key] = self._clock() + self._cooldown
@@ -173,5 +224,6 @@ class BrokerHealth:
 
     def _record_success(self, key: str) -> None:
         self._fails.pop(key, None)
+        self._cause.pop(key, None)
         if self._open_until.pop(key, None) is not None:
             log.warning("broker %s breaker closed: call succeeded", key)

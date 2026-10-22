@@ -18,6 +18,31 @@ export const API_BASE =
  */
 export class BrokerBlockedError extends Error {}
 
+/** Who a failure is on, from the backend's X-Failure-Cause header: the broker
+ * itself, our own server (it stalled), or the user's network path. */
+export type FailureCause = "broker" | "server" | "blocked";
+
+/** The X-Failure-Cause a response carries, or null when it names none. */
+export function failureCause(res: Response): FailureCause | null {
+  // Optional chaining: test stubs may carry no headers at all.
+  const v = res.headers?.get("X-Failure-Cause");
+  return v === "broker" || v === "server" || v === "blocked" ? v : null;
+}
+
+/**
+ * The broker (or our own server) failed, as opposed to the user's network
+ * blocking it. `who` names which, so poll loops can say "Capital.com isn't
+ * responding" or "our server is overloaded" instead of a generic failure.
+ */
+export class BrokerOutageError extends Error {
+  readonly who: "broker" | "server";
+  constructor(who: "broker" | "server", message: string) {
+    super(message);
+    this.name = "BrokerOutageError";
+    this.who = who;
+  }
+}
+
 /**
  * A non-2xx API response, carrying the HTTP status. The status is the part a
  * caller cannot reconstruct from the message: "Not Found" reads the same for a
@@ -41,10 +66,15 @@ export async function apiError(res: Response, fallback?: string): Promise<ApiErr
 }
 
 /** Throw BrokerBlockedError if a failed response carries the broker-blocked
- *  marker header; otherwise return so the caller raises its usual error. */
+ *  marker header, or BrokerOutageError if it names the broker or our server as
+ *  the cause; otherwise return so the caller raises its usual error. */
 export async function throwIfBrokerBlocked(res: Response): Promise<void> {
   if (res.headers.get("X-Broker-Blocked") === "1") {
     throw new BrokerBlockedError(await errorDetail(res));
+  }
+  const cause = failureCause(res);
+  if (cause === "broker" || cause === "server") {
+    throw new BrokerOutageError(cause, await errorDetail(res));
   }
 }
 

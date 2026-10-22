@@ -92,6 +92,40 @@ def test_degraded_cache_serve_sets_response_header(monkeypatch):
     out, resp = asyncio.run(scenario())
     assert len(out) == 1
     assert resp.headers.get("X-Candles-Degraded") == "broker offline"
+    # No cause known: no cause header (the frontend keeps its generic text).
+    assert "X-Failure-Cause" not in resp.headers
+
+
+def test_degraded_cache_serve_names_the_failure_cause(monkeypatch):
+    import auto_trader.api.deps as deps_module
+    from fastapi import Response
+
+    cache = _FakeCache([_bar(600)], "broker 'capital' timed out")
+
+    async def recent(key, res_seconds, count, fetch_recent, *, degraded=None, **kw):
+        degraded.update(reason="timed out", cause="server")
+        return cache._bars
+
+    async def window(key, res_seconds, start, end, fetch_range, *, degraded=None, **kw):
+        degraded.update(reason="timed out", cause="server")
+        return cache._bars
+
+    cache.recent = recent
+    cache.window = window
+    monkeypatch.setattr(deps_module, "CANDLE_CACHE", cache)
+    monkeypatch.setattr(deps_module, "get_data", lambda broker_id: object())
+
+    async def scenario():
+        resp = Response()
+        await app_module.candles(
+            epic="EURUSD", resolution="MINUTE", bars=500,
+            from_ts=0, to_ts=1200, price_side="mid",
+            broker_id="capital", response=resp,
+        )
+        return resp
+
+    resp = asyncio.run(scenario())
+    assert resp.headers.get("X-Failure-Cause") == "server"
 
 
 def test_healthy_serve_has_no_degraded_header(monkeypatch):

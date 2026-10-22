@@ -12,8 +12,15 @@ import { BROKERS_CACHE_KEY, defaultAccount } from "./brokerDefaults";
 import { isCapitalBroker, onTradesDirty } from "./persist";
 import { isStrategyDeal } from "./liveTags";
 import { Signal, tradesSignal } from "./signals";
-import { API_BASE as BASE, apiFetch, errorDetail, throwIfBrokerBlocked, BrokerBlockedError } from "./http";
-import { reportBrokerBlocked, reportBrokerReachable } from "./brokerBlocked";
+import {
+  API_BASE as BASE,
+  apiFetch,
+  errorDetail,
+  throwIfBrokerBlocked,
+  BrokerBlockedError,
+  BrokerOutageError,
+} from "./http";
+import { reportBrokerBlocked, reportBrokerOutage, reportBrokerReachable } from "./brokerBlocked";
 import { expiryToApi } from "./expiry";
 
 // A registry account key "{broker}:{env}", e.g. "capital:paper". Opaque to the
@@ -614,6 +621,7 @@ async function _refresh(): Promise<void> {
     // but a blocked network path (WAF / restricted connection) is surfaced,
     // since silently painting last-known figures hides a dead broker.
     if (e instanceof BrokerBlockedError) reportBrokerBlocked(e.message);
+    else if (e instanceof BrokerOutageError) reportBrokerOutage(e.who, brokerLabel(brokerOf(account)));
   }
 }
 

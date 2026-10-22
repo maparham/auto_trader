@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from auto_trader.core.broker_health import BrokerBlocked
+from auto_trader.core.broker_health import BrokerBlocked, BrokerDown
 
 # Retries for a 429 that slips through the caller's own rate limiter (shared
 # limit across our own traffic).
@@ -42,21 +42,29 @@ _SESSION_RETRY_BACKOFF = 1.0  # seconds; multiplied by the attempt number
 
 
 def raise_if_waf_blocked(resp: httpx.Response) -> None:
-    """Classify an HTML error response as a blocked network path.
+    """Classify an HTML error response: a blocked network path or a broker outage.
 
     The broker APIs only ever answer JSON; an error status carrying `text/html`
-    is an edge/WAF interstitial (Capital.com fronts with Incapsula) or a captive
-    portal — the request never reached the API. Surfacing it as BrokerBlocked
-    lets the app tell the user their network is blocking the broker instead of
-    reporting a generic broker failure."""
+    came from the edge in front of them (Capital.com fronts with Incapsula) or a
+    captive portal, never the API. A 4xx page is a WAF block or portal: the
+    user's network path is refused (BrokerBlocked). A 5xx page is the edge
+    reporting that the API behind it is down (Incapsula answers 503 with
+    retry-after during a Capital outage): the broker's fault (BrokerDown), so
+    the app must not tell the user to check their network."""
     if resp.status_code < 400:
         return
-    if "text/html" in resp.headers.get("content-type", "").lower():
-        raise BrokerBlocked(
-            f"{resp.request.url.host}: request blocked before reaching the broker "
-            "API (WAF/HTML interstitial) — this network appears to restrict "
-            "access to the broker"
+    if "text/html" not in resp.headers.get("content-type", "").lower():
+        return
+    if resp.status_code >= 500:
+        raise BrokerDown(
+            f"{resp.request.url.host}: the broker's API is down "
+            f"(HTTP {resp.status_code} outage page from its edge)"
         )
+    raise BrokerBlocked(
+        f"{resp.request.url.host}: request blocked before reaching the broker "
+        "API (WAF/HTML interstitial) — this network appears to restrict "
+        "access to the broker"
+    )
 
 
 class SessionAuthBroker:
