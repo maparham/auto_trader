@@ -140,3 +140,14 @@ def test_asks_for_enough_bars():
         await _finish(jobs, "u1", jid)
         assert calls[0][2] >= 202  # warm-up + the forming bar it may drop
     asyncio.run(run())
+
+
+def test_http_exception_reason_drops_status_prefix():
+    from fastapi import HTTPException
+
+    async def run():
+        jobs = ScreenJobs(loader=_loader({"A": HTTPException(502, "alert bars failed: x")}),
+                          clock=lambda: NOW)
+        st = await _finish(jobs, "u1", _start(jobs, ["A"]))
+        assert st["result"]["skipped"] == [{"epic": "A", "reason": "alert bars failed: x"}]
+    asyncio.run(run())

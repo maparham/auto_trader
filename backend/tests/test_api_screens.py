@@ -73,3 +73,32 @@ def test_run_needs_symbols():
 def test_unknown_job_404():
     assert client.get("/api/screens/jobs/nope").status_code == 404
     assert client.post("/api/screens/jobs/nope/cancel").status_code == 404
+
+
+def test_run_rejects_junk_price_side():
+    body = {k: v for k, v in BODY.items() if k != "name"}
+    assert client.post("/api/screens/run", json={**body, "priceSide": "junk"}).status_code == 422
+
+
+def test_save_caps_symbols():
+    r = client.post("/api/screens", json={**BODY, "symbols": [f"S{i}" for i in range(501)]})
+    assert r.status_code == 422
+
+
+def test_save_strips_and_dedupes_symbols():
+    row = client.post("/api/screens", json={**BODY, "symbols": [" AAPL", "AAPL", " ", "MSFT "]}).json()
+    assert row["symbols"] == ["AAPL", "MSFT"]
+    upd = client.put(f"/api/screens/{row['id']}", json={**BODY, "symbols": ["X ", " X"]}).json()
+    assert upd["symbols"] == ["X"]
+
+
+def test_run_strips_symbols():
+    body = {k: v for k, v in BODY.items() if k != "name"}
+    r = client.post("/api/screens/run", json={**body, "symbols": [" A", "A ", "B"]})
+    assert r.status_code == 200 and r.json()["total"] == 2
+
+
+def test_length_caps():
+    assert client.post("/api/screens", json={**BODY, "symbols": ["X" * 65]}).status_code == 422
+    long_expr = "candle.close > " + "1" * 2000
+    assert client.post("/api/screens", json={**BODY, "expression": long_expr}).status_code == 422

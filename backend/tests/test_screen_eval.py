@@ -79,3 +79,18 @@ def test_bad_column_names_its_index():
 def test_bars_needed_covers_warmup():
     cs = compile_screen("candle.close > EMA(200)", [{"name": "R", "expression": "RSI(14)"}])
     assert bars_needed(cs) >= 201
+
+
+def test_bars_needed_gives_recursive_indicators_room_to_converge():
+    # EMA(200) on only 221 bars sat visibly off the chart's value.
+    assert bars_needed(compile_screen("candle.close > EMA(200)", [])) >= 1000
+    assert bars_needed(compile_screen("RSI(14) < 30", [])) == 300
+    assert bars_needed(compile_screen("candle.close > 0", [])) == 300
+
+
+def test_history_between_warmup_and_bars_needed_is_still_judged():
+    cs = compile_screen("candle.close > EMA(20)", [])
+    n = cs.warmup + 1
+    assert n < bars_needed(cs)
+    j = judge(cs, _bars([1.0] * (n - 1) + [5.0]), "HOUR")
+    assert j.skip_reason is None and j.matched

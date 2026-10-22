@@ -24,6 +24,11 @@ from auto_trader.strategy.expr.warmup import warmup_bars
 # first bar it becomes defined.
 _SLACK = 20
 _MAX_BARS = 2000
+# Recursive indicators (EMA, RSI's Wilder smoothing) keep converging long
+# after their warm-up: EMA(200) on 221 bars is visibly off the chart's value.
+# Ask for several warm-ups' worth, and never fewer than _MIN_BARS.
+_WARMUP_MULT = 5
+_MIN_BARS = 300
 
 
 class ScreenSpecError(Exception):
@@ -83,7 +88,9 @@ def compile_screen(expression: str, columns: list[dict]) -> CompiledScreen:
 
 
 def bars_needed(cs: CompiledScreen) -> int:
-    return min(_MAX_BARS, cs.warmup + 1 + _SLACK)
+    """How many closed bars to fetch. judge() still accepts anything from
+    warmup + 1 bars up, so a young symbol with less history is judged."""
+    return min(_MAX_BARS, max(cs.warmup * _WARMUP_MULT, cs.warmup + 1 + _SLACK, _MIN_BARS))
 
 
 def closed_bars(bars: list[Candle], res_seconds: int, now: float) -> list[Candle]:

@@ -25,6 +25,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.core.screen_eval import CompiledScreen, bars_needed, closed_bars, judge
@@ -34,6 +36,13 @@ from . import deps
 Loader = Callable[[str, str, str, str, int], Awaitable[tuple[list[Candle], bool]]]
 
 _KEEP_FINISHED_S = 3600
+
+
+def _reason(e: Exception) -> str:
+    """A skip reason without the "502: " prefix str() gives an HTTPException."""
+    if isinstance(e, StarletteHTTPException) and isinstance(e.detail, str) and e.detail:
+        return e.detail
+    return str(e) or type(e).__name__
 
 
 class JobBusy(Exception):
@@ -120,7 +129,7 @@ class ScreenJobs:
         except asyncio.CancelledError:
             raise
         except Exception as e:  # one bad symbol must not kill the run
-            return None, {"epic": epic, "reason": str(e) or type(e).__name__}
+            return None, {"epic": epic, "reason": _reason(e)}
         finally:
             job.done += 1
 

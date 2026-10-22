@@ -5,8 +5,10 @@ runs are in-memory jobs (api/screen_jobs.py). Every route is per user."""
 
 from __future__ import annotations
 
+from typing import Annotated, Literal
+
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from auto_trader.api import deps
 from auto_trader.api.screen_jobs import SCREEN_JOBS, JobBusy
@@ -17,20 +19,33 @@ from auto_trader.core.screen_store import SCREEN_STORE
 router = APIRouter()
 
 _MAX_SYMBOLS = 500
+_MAX_EXPR = 2000
+
+Symbol = Annotated[str, StringConstraints(max_length=64)]
 
 
 class ColumnBody(BaseModel):
     name: str = Field(min_length=1, max_length=40)
-    expression: str
+    expression: str = Field(max_length=_MAX_EXPR)
 
 
 class ScreenRunBody(BaseModel):
     broker: str
     resolution: Resolution
-    symbols: list[str]
-    expression: str
+    symbols: list[Symbol]
+    expression: str = Field(max_length=_MAX_EXPR)
     columns: list[ColumnBody] = Field(default_factory=list, max_length=8)
-    priceSide: str = "mid"
+    priceSide: Literal["bid", "mid", "ask"] = "mid"
+
+    @field_validator("symbols")
+    @classmethod
+    def _clean_symbols(cls, v: list[str]) -> list[str]:
+        # Strip, drop blanks, dedupe (first spelling wins), then cap. Run and
+        # save share this, so a saved screen always runs as it was stored.
+        out = list(dict.fromkeys(s.strip() for s in v if s.strip()))
+        if len(out) > _MAX_SYMBOLS:
+            raise ValueError(f"at most {_MAX_SYMBOLS} symbols per screen")
+        return out
 
 
 class ScreenBody(ScreenRunBody):
@@ -84,11 +99,9 @@ async def delete_screen(request: Request, screen_id: str) -> None:
 
 @router.post("/api/screens/run")
 async def run_screen(request: Request, body: ScreenRunBody) -> dict:
-    symbols = list(dict.fromkeys(s for s in body.symbols if s.strip()))
+    symbols = body.symbols  # already stripped, deduped and capped
     if not symbols:
         raise HTTPException(422, "add at least one symbol")
-    if len(symbols) > _MAX_SYMBOLS:
-        raise HTTPException(422, f"at most {_MAX_SYMBOLS} symbols per screen")
     cs = _compile(body)
     broker = deps.resolve_broker(request, body.broker)
     try:

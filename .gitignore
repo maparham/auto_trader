@@ -265,6 +265,11 @@ patterns.db
 patterns.db-wal
 patterns.db-shm
 
+# Saved screener screens
+screens.db
+screens.db-wal
+screens.db-shm
+
 # MetaApi SDK local terminal-state cache (created at runtime by the streaming/RPC
 # connection; per-machine, never source)
 .metaapi/
