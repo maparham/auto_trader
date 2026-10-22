@@ -52,6 +52,18 @@ describe("screens client", () => {
     }
   });
 
+  it("turns a pydantic list 422 into readable text", async () => {
+    stubFetch(422, {
+      detail: [
+        { type: "string_too_long", loc: ["body", "columns", 0, "name"], msg: "String should have at most 40 characters" },
+        { type: "value_error", loc: ["body", "symbols"], msg: "Value error, at most 500 symbols per screen" },
+      ],
+    });
+    await expect(saveScreen("x", draft)).rejects.toThrow(
+      "name: String should have at most 40 characters; symbols: Value error, at most 500 symbols per screen",
+    );
+  });
+
   it("delete throws on 404", async () => {
     stubFetch(404, { detail: "no such screen" });
     await expect(deleteScreen("nope")).rejects.toThrow("no such screen");

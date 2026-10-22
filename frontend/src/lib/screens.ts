@@ -47,11 +47,27 @@ export class ScreenSpecError extends Error {
   }
 }
 
+// FastAPI's request-validation 422 carries a list of {loc, msg}. Each item
+// reads as "<last loc part>: <msg>", so a too-long column name says so
+// instead of the generic fallback.
+function validationMessage(d: unknown): string | null {
+  if (!Array.isArray(d) || d.length === 0) return null;
+  const parts = d
+    .filter((it): it is { loc?: unknown[]; msg: string } => !!it && typeof it.msg === "string")
+    .map((it) => {
+      const tail = Array.isArray(it.loc) && it.loc.length ? it.loc[it.loc.length - 1] : null;
+      return tail == null || tail === "body" ? it.msg : `${String(tail)}: ${it.msg}`;
+    });
+  return parts.length ? parts.join("; ") : null;
+}
+
 async function failed(res: Response, fallback: string): Promise<never> {
   if (res.status === 422) {
     const body = await res.clone().json().catch(() => null);
     const d = body?.detail;
     if (d && typeof d === "object" && typeof d.code === "string") throw new ScreenSpecError(d as ScreenExprError);
+    const msg = validationMessage(d);
+    if (msg) throw new Error(msg);
   }
   throw new Error(await errorDetail(res, fallback));
 }
