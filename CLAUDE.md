@@ -34,10 +34,10 @@ tooltip shows. The app has no native `title=` tooltips left; don't add new ones.
 ### Side panels
 
 Only one right-docked side panel is open at a time (patterns, trade list,
-alerts, order ticket, backtest config, live trading). Each one registers a
-closer with `frontend/src/lib/sidePanels.ts` and calls `claimSidePanel(id)` on
-the way open, so a new panel closes whichever was open. Use
-`toggleSidePanel(id)` from `lib/signals.ts` for the four signal-backed panels
+alerts, order ticket, backtest config, live trading, screener). Each one
+registers a closer with `frontend/src/lib/sidePanels.ts` and calls
+`claimSidePanel(id)` on the way open, so a new panel closes whichever was open.
+Use `toggleSidePanel(id)` from `lib/signals.ts` for the five signal-backed panels
 rather than flipping their signals directly. Claims are inert until App calls
 `endSidePanelRestore()`, because the backtest and live panels persist their
 open-state and a boot-time cross-close would overwrite the saved flag; when
