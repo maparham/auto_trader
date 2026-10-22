@@ -28,8 +28,28 @@ describe("screens client", () => {
   });
 
   it("turns an expression 422 into ScreenSpecError", async () => {
-    stubFetch(422, { detail: { code: "unexpected_token", message: "Expected a value here.", start: 14, end: 14, field: "expression", index: 0 } });
+    const detail = { code: "unexpected_token", message: "Expected a value here.", start: 14, end: 14, field: "expression", index: 0 };
+    stubFetch(422, { detail });
     await expect(startScreen(draft, "mid")).rejects.toBeInstanceOf(ScreenSpecError);
+    try {
+      await startScreen(draft, "mid");
+      throw new Error("expected startScreen to reject");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ScreenSpecError);
+      expect((e as ScreenSpecError).detail).toEqual(detail);
+    }
+  });
+
+  it("turns a plain-string 422 into a plain Error, not ScreenSpecError", async () => {
+    stubFetch(422, { detail: "add at least one symbol" });
+    await expect(startScreen(draft, "mid")).rejects.toThrow("add at least one symbol");
+    try {
+      await startScreen(draft, "mid");
+      throw new Error("expected startScreen to reject");
+    } catch (e) {
+      expect(e).not.toBeInstanceOf(ScreenSpecError);
+      expect(e).toBeInstanceOf(Error);
+    }
   });
 
   it("delete throws on 404", async () => {
