@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
-from auto_trader.strategy.expr.registry import CROSSES, INDICATORS, WRAPPERS
+from auto_trader.strategy.expr.registry import CROSSES, FUNCS, INDICATORS, WRAPPERS
 from auto_trader.strategy.expr.tfs import tf_resolution
 
 if TYPE_CHECKING:
@@ -169,7 +169,7 @@ def _walk(node: N.Node, *, is_exit: bool,
             if node.name not in N.CANDLE_FIELDS:
                 raise ExprError("bad_candle_field", "candle needs a field, like candle.close.", node.start, node.end)
             return
-        if isinstance(root, N.Call) and root.name in {*INDICATORS, *WRAPPERS}:
+        if isinstance(root, N.Call) and root.name in {*INDICATORS, *WRAPPERS, *FUNCS}:
             # A field access on a call (e.g. EMA(9).signal): no registered
             # indicator exposes named outputs in v1, so this is always an error.
             raise ExprError("field_on_call", f"{root.name} has no named outputs.", node.start, node.end)
@@ -253,6 +253,12 @@ def _walk(node: N.Node, *, is_exit: bool,
     if isinstance(node, N.Call):
         if node.name in CROSSES:
             raise ExprError("cross_not_toplevel", f"{node.name} can't be used as a value.", node.start, node.end)
+        if node.name in FUNCS:
+            if len(node.args) != FUNCS[node.name]:
+                raise ExprError("bad_arity", f"{node.name} takes {FUNCS[node.name]} argument(s).", node.start, node.end)
+            for a in node.args:
+                _walk(a, is_exit=is_exit, instances=instances)
+            return
         if node.name in INDICATORS:
             spec = INDICATORS[node.name]
             if len(node.args) != spec.arity:

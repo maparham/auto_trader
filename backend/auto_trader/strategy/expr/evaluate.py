@@ -13,6 +13,7 @@ from auto_trader.indicators.core import (
 )
 from auto_trader.indicators.mtf import align_htf_to_base, base_interval_ms_of, slope_of
 from auto_trader.strategy.expr import nodes as N
+from auto_trader.strategy.expr.registry import FUNCS
 from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.warmup import warmup_bars
 
@@ -355,6 +356,9 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
             )
         return inst.spec.series(inst.config, node.output, candles, _tf_hours(resolution))
     if isinstance(node, N.Call):
+        if node.name in FUNCS:  # abs: pointwise
+            inner = series_of(node.args[0], candles, resolution, htf, instances)
+            return [None if v is None else abs(v) for v in inner]
         if node.name in WRAPPER_KINDS:
             inner = series_of(node.args[0], candles, resolution, htf, instances)
             length = int(series_of(node.args[1], candles, resolution, htf, instances)[0] or 0)
@@ -455,6 +459,9 @@ class CompiledRow:
                 1 for j in range(i - k + 1, i + 1)
                 if self._match3(sub.cond, j, entry, entry_i) is True
             ))
+        if isinstance(sub, N.Call) and sub.name in FUNCS:
+            v = self._val(sub.args[0], i, entry, entry_i)
+            return None if v is None else abs(v)
         # Any remaining node is entry-free -> it was precomputed; guard defensively.
         arr = series_of(sub, self.candles, self.resolution, self.htf, self.instances)
         self._cache[key] = arr

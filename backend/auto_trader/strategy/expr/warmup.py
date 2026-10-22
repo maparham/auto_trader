@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from auto_trader.indicators.candle_patterns import PATTERN_FNS
 from auto_trader.strategy.expr import nodes as N
-from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
+from auto_trader.strategy.expr.registry import FUNCS, INDICATORS, WRAPPERS
 
 if TYPE_CHECKING:
     from auto_trader.indicators.registry import ResolvedInstance
@@ -86,6 +86,8 @@ def warmup_bars(node: N.Node, resolution: str | None = None,
             return 0
         return inst.spec.warmup(inst.config, node.output)
     if isinstance(node, N.Call):
+        if node.name in FUNCS:
+            return max((warmup_bars(a, resolution, instances) for a in node.args), default=0)
         if node.name in WRAPPERS:
             # wrapper window (2nd arg literal) + the inner term's warm-up
             n = int(node.args[1].value) if isinstance(node.args[1], N.Num) else 0

@@ -3,7 +3,7 @@ from __future__ import annotations
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import BAD_CROSS_MSG, ExprError
 from auto_trader.strategy.expr.lexer import Token, tokenize
-from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
+from auto_trader.strategy.expr.registry import FUNCS, INDICATORS, WRAPPERS
 
 _CMP_SYM = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<=", "EQ": "=="}
 _CROSS_SYM = {"XGT": "crossAbove", "XLT": "crossBelow"}
@@ -243,6 +243,7 @@ class _Parser:
                             and node.end - node.start == len(node.name))
                     )
                     and node.name not in WRAPPERS
+                    and node.name not in FUNCS
                     and node.name not in N.CROSS_FNS
                     and node.name not in N.PREDICATE_FNS
                 )

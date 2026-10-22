@@ -4,7 +4,7 @@ import dataclasses
 from dataclasses import dataclass
 
 from auto_trader.strategy.expr import nodes as N
-from auto_trader.strategy.expr.registry import INDICATORS, WRAPPERS
+from auto_trader.strategy.expr.registry import FUNCS, INDICATORS, WRAPPERS
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +111,10 @@ def _collect(node: N.Node, label: str, out: list[tuple[N.Num, str]]) -> None:
         _collect(node.right, label, out)
         return
     if isinstance(node, N.Call):
+        if node.name in FUNCS:
+            for a in node.args:
+                _collect(a, label, out)
+            return
         if node.name in WRAPPERS:
             # Arity is NOT guaranteed here: /api/expr/literals computes literals
             # from a parsed but UNVALIDATED node, so a half-typed `slope.x` or

@@ -24,6 +24,11 @@ INDICATORS: dict[str, IndicatorSpec] = {
 
 WRAPPERS: dict[str, int] = {"slope": 2, "highest": 2, "lowest": 2, "avg": 2}
 
+# Plain math functions: pointwise over their argument, no window, and (unlike
+# WRAPPERS) legal around entry-based values, so `abs(candle.close - entry)`
+# works in an exit rule.
+FUNCS: dict[str, int] = {"abs": 1}
+
 CROSSES = ("crossAbove", "crossBelow")
 COUNT = "count"
 
