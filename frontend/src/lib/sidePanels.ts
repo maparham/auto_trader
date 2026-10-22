@@ -1,12 +1,12 @@
 // One-at-a-time rule for the right-docked side panels.
 //
-// The six surfaces that dock beside the chart (pattern results, imported trade
-// list, alerts, order ticket, backtest config, live trading) are mutually
-// exclusive: opening one closes whichever other one was open. Their open-state
-// lives in three different places — plain signals (alerts/trade/trade-list/
-// live), App-local state (backtest) and the pattern store — so instead of
-// teaching each of them about the other five, every panel registers a closer
-// here and calls claimSidePanel() on the way open.
+// The seven surfaces that dock beside the chart (pattern results, imported trade
+// list, alerts, order ticket, backtest config, live trading, screener) are
+// mutually exclusive: opening one closes whichever other one was open. Their
+// open-state lives in three different places — plain signals (alerts/trade/
+// trade-list/live/screener), App-local state (backtest) and the pattern
+// store — so instead of teaching each of them about the other six, every
+// panel registers a closer here and calls claimSidePanel() on the way open.
 //
 // Leaf module on purpose: no imports, so signals.ts, patternPanelStore.ts and
 // App.tsx can all reach it without opening an import cycle.
@@ -17,7 +17,8 @@ export type SidePanelId =
   | "alerts"
   | "trade"
   | "backtest"
-  | "live";
+  | "live"
+  | "screener";
 
 const closers = new Map<SidePanelId, () => void>();
 

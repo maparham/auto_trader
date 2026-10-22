@@ -25,6 +25,7 @@ import {
   tradePanelOpen,
   tradeListPanelOpen,
   livePanelOpen,
+  screenerPanelOpen,
   backtestSettingsRequest,
   backtestPanelOpenSignal,
   backtestPanelHiddenSignal,
@@ -121,6 +122,8 @@ export function usePanelOpenStates(tabs: ChartTab[]) {
   useEffect(() => tradeListPanelOpen.subscribe(setTradeListOpen), []);
   const [tradeOpen, setTradeOpen] = useState(tradePanelOpen.value);
   useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
+  const [screenerOpen, setScreenerOpen] = useState(screenerPanelOpen.value);
+  useEffect(() => screenerPanelOpen.subscribe(setScreenerOpen), []);
   const [snapGalleryOpen, setSnapGalleryOpen] = useState(snapshotsGalleryOpen.value);
   useEffect(() => snapshotsGalleryOpen.subscribe(setSnapGalleryOpen), []);
   // Unlocking a snapshot view clears the cell controller's readOnly flag;
@@ -143,5 +146,5 @@ export function usePanelOpenStates(tabs: ChartTab[]) {
   useEffect(() => {
     if (!tradeOpen) setTradeSelected(null);
   }, [tradeOpen]);
-  return { panelOpen, tradeListOpen, tradeOpen, snapGalleryOpen, snapshotTabIds };
+  return { panelOpen, tradeListOpen, tradeOpen, screenerOpen, snapGalleryOpen, snapshotTabIds };
 }

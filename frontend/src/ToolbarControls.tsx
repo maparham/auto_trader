@@ -21,6 +21,7 @@ import {
   tradeListPanelOpen,
   tradePanelOpen,
   livePanelOpen,
+  screenerPanelOpen,
   toggleSidePanel,
 } from "./lib/signals";
 import { loadTriggered, loadTriggeredSeen } from "./lib/alertsApi";
@@ -483,7 +484,7 @@ export function HistoryControls({ controller }: { controller: ChartController | 
 // Tight bars swap the group for a single "Panels" trigger whose face is the
 // open panel's icon (or a generic sidebar glyph); CSS picks which of the two
 // renderings shows, off the toolbar's container width.
-type PanelId = "live" | "tradeList" | "alerts" | "trade";
+type PanelId = "live" | "tradeList" | "alerts" | "trade" | "screener";
 
 function LiveIcon() {
   return (
@@ -501,6 +502,15 @@ function TradeListIcon() {
       aria-hidden="true">
       <path d="M4 5h16M4 12h16M4 19h16M4 5v0M8 5v0" />
       <path d="M4 5h2M4 12h2M4 19h2" strokeWidth="3" />
+    </svg>
+  );
+}
+function ScreenerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M3 4.5h18l-6.75 7.8V19l-4.5-2.25v-4.45z" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -547,6 +557,8 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
   useEffect(() => livePanelOpen.subscribe(setLiveOpen), []);
   const [tradeListOpen, setTradeListOpen] = useState(tradeListPanelOpen.value);
   useEffect(() => tradeListPanelOpen.subscribe(setTradeListOpen), []);
+  const [screenerOpen, setScreenerOpen] = useState(screenerPanelOpen.value);
+  useEffect(() => screenerPanelOpen.subscribe(setScreenerOpen), []);
   const unseen = useUnseenAlerts();
 
   // Tight-bar menu.
@@ -572,6 +584,10 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
     {
       id: "tradeList" as const, label: "Trade list", tip: "Toggle trade list panel",
       icon: <TradeListIcon />, on: tradeListOpen, cls: "trade-list-toggle",
+    },
+    {
+      id: "screener" as const, label: "Screener", tip: "Show screener panel",
+      icon: <ScreenerIcon />, on: screenerOpen, cls: "screener-toggle",
     },
     {
       id: "alerts" as const, label: "Alerts", tip: "Show alerts panel",

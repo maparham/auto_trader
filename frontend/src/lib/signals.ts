@@ -140,6 +140,9 @@ export const tradePanelOpen = new Signal<boolean>(false);
 // list button; read by App to dock the panel beside the chart area.
 export const tradeListPanelOpen = new Signal<boolean>(false);
 
+// True while the Screener panel is open (toolbar toggle; read by App).
+export const screenerPanelOpen = new Signal<boolean>(false);
+
 /** Snapshots gallery modal (global, rendered by App). */
 export const snapshotsGalleryOpen = new Signal<boolean>(false);
 
@@ -795,7 +798,7 @@ export function openLivePanel(): void {
 }
 
 // Only one right-docked side panel may be open at a time (see lib/sidePanels.ts):
-// opening one closes the rest. These four panels are plain signals, so they share
+// opening one closes the rest. These five panels are plain signals, so they share
 // one open helper; the backtest panel (App state) and the pattern panel (its own
 // store) register themselves the same way.
 function openSidePanelSignal(sig: Signal<boolean>, id: SidePanelId): void {
@@ -806,13 +809,15 @@ registerSidePanel("alerts", () => alertsPanelOpen.set(false));
 registerSidePanel("trade", () => tradePanelOpen.set(false));
 registerSidePanel("tradeList", () => tradeListPanelOpen.set(false));
 registerSidePanel("live", () => livePanelOpen.set(false));
+registerSidePanel("screener", () => screenerPanelOpen.set(false));
 
 /** Toolbar toggles: flipping a closed panel open claims the dock from the others. */
-export function toggleSidePanel(id: "alerts" | "trade" | "tradeList" | "live"): void {
+export function toggleSidePanel(id: "alerts" | "trade" | "tradeList" | "live" | "screener"): void {
   const sig =
     id === "alerts" ? alertsPanelOpen
     : id === "trade" ? tradePanelOpen
     : id === "tradeList" ? tradeListPanelOpen
+    : id === "screener" ? screenerPanelOpen
     : livePanelOpen;
   if (sig.value) sig.set(false);
   else openSidePanelSignal(sig, id);
