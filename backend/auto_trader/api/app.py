@@ -35,7 +35,7 @@ from . import deps
 from .candle_repair import install as install_candle_repair
 from .auth import auth_enabled, install_auth
 from .guard import cors_origins, install_guards
-from .routers import admin, alerts, backtest, charts, compute, costs, demo, expr, markets, mt5, patterns, pattern_presets, shell_auth, state, strategy, stream, trading, strategies
+from .routers import admin, alerts, backtest, charts, compute, costs, demo, expr, markets, mt5, patterns, pattern_presets, screens, shell_auth, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
 
@@ -244,7 +244,7 @@ async def _track_activity(request, call_next):
 # unless the corresponding env flags are set, which happens only on the remote host.
 install_guards(app)
 
-for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, patterns, pattern_presets, alerts, admin, shell_auth, demo):
+for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, patterns, pattern_presets, screens, alerts, admin, shell_auth, demo):
     app.include_router(_module.router)
 app.include_router(demo.admin_router)
 
