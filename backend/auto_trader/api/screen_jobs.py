@@ -7,6 +7,13 @@ behind sweeps. Fetches stay in the event loop (the candle cache is async)
 under a per-broker cap shared by every user, so one large screen cannot
 swamp a broker that also serves everyone's charts.
 
+A job's status is one of "running", "done", "cancelled" or "error". Every
+one of those is set from a single place, the task's done callback, so a job
+can never get stuck "running" forever: a cancelled task lands as
+"cancelled" and anything else that escaped the run (a bad resolution
+string, a bug while assembling the result) lands as "error" with a short
+reason, rather than locking that user out of ever starting another screen.
+
 Jobs live only in this process and are dropped an hour after they finish."""
 
 from __future__ import annotations
@@ -40,6 +47,7 @@ class _Job:
     status: str = "running"
     done: int = 0
     result: dict | None = None
+    error: str | None = None
     finished_at: float | None = None
     task: asyncio.Task | None = field(default=None, repr=False)
 
@@ -69,17 +77,29 @@ class ScreenJobs:
         self._jobs[jid] = job
         job.task = asyncio.get_running_loop().create_task(
             self._run(job, broker, resolution, side, symbols, cs))
-        job.task.add_done_callback(lambda t: self._mark_cancelled_if_needed(job, t))
+        job.task.add_done_callback(lambda t: self._finalize(job, t))
         return jid
 
-    def _mark_cancelled_if_needed(self, job: _Job, task: asyncio.Task) -> None:
-        # A task cancelled before its coroutine ever runs its first step never
-        # reaches _run's own except CancelledError (the throw happens before
-        # the body executes at all), so this done callback is the only place
-        # that observes that case and finalizes the job.
-        if job.status == "running" and task.cancelled():
+    def _finalize(self, job: _Job, task: asyncio.Task) -> None:
+        """The single place that resolves a job still "running" once its
+        task ends, whatever the outcome. Normal completion already set
+        job.status/result/finished_at inside _run, so this is a no-op then.
+        A cancelled task (even one cancelled before its coroutine ever took
+        a step, which never reaches a try/except inside _run at all) lands
+        as "cancelled"; any other exception that escaped _run (a bad
+        resolution string, a bug while assembling the result) lands as
+        "error" with a short reason. Either way finished_at is set, so the
+        job is never stuck "running" and the user is never locked out of
+        starting another screen."""
+        if job.status != "running":
+            return
+        if task.cancelled():
             job.status = "cancelled"
-            job.finished_at = self._clock()
+        else:
+            exc = task.exception()
+            job.status = "error"
+            job.error = str(exc) or type(exc).__name__
+        job.finished_at = self._clock()
 
     async def _one(self, job: _Job, broker: str, resolution: str, side: str,
                    epic: str, cs: CompiledScreen, res_s: int) -> tuple[dict | None, dict | None]:
@@ -106,15 +126,14 @@ class ScreenJobs:
 
     async def _run(self, job: _Job, broker: str, resolution: str, side: str,
                    symbols: list[str], cs: CompiledScreen) -> None:
+        # No try/except here: whatever this raises (CancelledError, or any
+        # other exception, such as resolution_seconds on a bad resolution
+        # string) is left to propagate and resolved once, in _finalize, the
+        # task's done callback.
         t0 = time.perf_counter()
         res_s = resolution_seconds(resolution)
-        try:
-            pairs = await asyncio.gather(*(
-                self._one(job, broker, resolution, side, epic, cs, res_s) for epic in symbols))
-        except asyncio.CancelledError:
-            job.status = "cancelled"
-            job.finished_at = self._clock()
-            return
+        pairs = await asyncio.gather(*(
+            self._one(job, broker, resolution, side, epic, cs, res_s) for epic in symbols))
         matches = [m for m, _ in pairs if m]
         skipped = [s for _, s in pairs if s]
         job.result = {"matches": matches, "skipped": skipped,
@@ -128,7 +147,10 @@ class ScreenJobs:
         job = self._jobs.get(job_id)
         if job is None or job.user_id != user_id:
             return None
-        return {"status": job.status, "done": job.done, "total": job.total, "result": job.result}
+        out = {"status": job.status, "done": job.done, "total": job.total, "result": job.result}
+        if job.error is not None:
+            out["error"] = job.error
+        return out
 
     def cancel(self, user_id: str, job_id: str) -> bool:
         job = self._jobs.get(job_id)

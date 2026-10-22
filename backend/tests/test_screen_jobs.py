@@ -118,6 +118,19 @@ def test_cancel_and_foreign_user():
     asyncio.run(run())
 
 
+def test_run_error_does_not_lock_out_the_user():
+    async def run():
+        jobs = ScreenJobs(loader=_loader({"A": _bars([11])}), clock=lambda: NOW)
+        jid = jobs.start("u1", broker="yfinance", resolution="BOGUS", side="mid",
+                         symbols=["A"], cs=compile_screen("candle.close > 10", []))
+        st = await _finish(jobs, "u1", jid)
+        assert st["status"] == "error"
+        assert st["error"]
+        # the failed run must not leave the user permanently "busy"
+        _start(jobs, ["A"])
+    asyncio.run(run())
+
+
 def test_asks_for_enough_bars():
     async def run():
         calls = []
