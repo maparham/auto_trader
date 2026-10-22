@@ -1093,6 +1093,7 @@ export default function App() {
             <ScreenerPanel
               brokerId={brokerId}
               tabs={screenerTabs}
+              controller={focusedController}
               priceSide={settings.priceSide}
               onOpen={(epic, resolution) => {
                 const p = periodByResolution(resolution);

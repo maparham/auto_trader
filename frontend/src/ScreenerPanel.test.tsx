@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { StrictMode } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./lib/screens", async (orig) => ({
@@ -29,13 +29,29 @@ vi.mock("./lib/signals", async (orig) => ({
   ...(await orig<typeof import("./lib/signals")>()),
   requestConfirm: vi.fn(),
 }));
+const chartPanes = {
+  live: [] as Array<{ id: string; type: string; calcParams: number[]; extendData: unknown }>,
+  editor: [] as Array<{ id: string; outputs: string[]; timeframe: string | null }>,
+};
+vi.mock("./lib/indicators", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/indicators")>()),
+  liveExprInstances: vi.fn(() => chartPanes.live),
+}));
+vi.mock("./backtestSettings/useExprPick", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./backtestSettings/useExprPick")>()),
+  useExprInstances: vi.fn(() => chartPanes.editor),
+}));
+vi.mock("./lib/exprPick", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/exprPick")>()),
+  pickedIndicatorToken: vi.fn(() => "RSI.bullDiv"),
+}));
 
 import ScreenerPanel from "./ScreenerPanel";
 import {
   cancelScreen, deleteScreen, listScreens, pollScreen, saveScreen, startScreen, type Screen,
 } from "./lib/screens";
 import { isImpersonating } from "./lib/impersonation";
-import { requestConfirm, type ConfirmRequest } from "./lib/signals";
+import { requestConfirm, Signal, type ConfirmRequest } from "./lib/signals";
 import { resetScreenerDrafts } from "./lib/screenerDraft";
 
 const DEFAULT_POLL_RESULT = {
@@ -63,6 +79,8 @@ beforeEach(() => {
   // The draft store is module-level: without this, one test's draft would
   // be restored into the next test's fresh mount.
   resetScreenerDrafts();
+  chartPanes.live = [];
+  chartPanes.editor = [];
 });
 afterEach(cleanup);
 
@@ -73,9 +91,15 @@ const SAVED: Screen = {
 
 function setup() {
   const onOpen = vi.fn();
-  render(<ScreenerPanel brokerId="yfinance" tabs={[]} priceSide="mid" onOpen={onOpen} onClose={() => {}} />);
+  render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={null} priceSide="mid" onOpen={onOpen} onClose={() => {}} />);
   return { onOpen };
 }
+
+const fakeController = () => ({
+  chart: {},
+  indicatorPickArmed: new Signal<boolean>(false),
+  indicatorPickResult: new Signal<unknown>(null),
+}) as never;
 
 function fillAndRun(symbols = "AAPL, ZZZ", expression = "RSI(14) < 30") {
   fireEvent.change(screen.getByLabelText("Symbols"), { target: { value: symbols } });
@@ -166,7 +190,7 @@ describe("ScreenerPanel", () => {
   it("runs successfully inside React.StrictMode", async () => {
     render(
       <StrictMode>
-        <ScreenerPanel brokerId="yfinance" tabs={[]} priceSide="mid" onOpen={() => {}} onClose={() => {}} />
+        <ScreenerPanel brokerId="yfinance" tabs={[]} controller={null} priceSide="mid" onOpen={() => {}} onClose={() => {}} />
       </StrictMode>,
     );
     fillAndRun("AAPL");
@@ -208,7 +232,7 @@ describe("ScreenerPanel", () => {
 
   it("switching broker resets a loaded screen, so Save creates rather than rewrites it", async () => {
     vi.mocked(listScreens).mockResolvedValue([SAVED]);
-    const props = { tabs: [], priceSide: "mid", onOpen: () => {}, onClose: () => {} };
+    const props = { tabs: [], controller: null, priceSide: "mid", onOpen: () => {}, onClose: () => {} };
     const { rerender } = render(<ScreenerPanel brokerId="yfinance" {...props} />);
     await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
@@ -225,12 +249,12 @@ describe("ScreenerPanel", () => {
   });
 
   it("keeps the draft and the last result across an unmount", async () => {
-    const first = render(<ScreenerPanel brokerId="yfinance" tabs={[]} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    const first = render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={null} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
     fillAndRun("AAPL, ZZZ", "RSI(14) < 30");
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(screen.getByText("AAPL")).toBeTruthy());
     first.unmount();
-    render(<ScreenerPanel brokerId="yfinance" tabs={[]} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={null} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
     expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("RSI(14) < 30");
     expect((screen.getByLabelText("Symbols") as HTMLTextAreaElement).value).toBe("AAPL, ZZZ");
     expect(screen.getByText("AAPL")).toBeTruthy();
@@ -295,7 +319,7 @@ describe("ScreenerPanel", () => {
   });
 
   it("All tabs follows the open tabs, including ones opened later", async () => {
-    const props = { brokerId: "yfinance", priceSide: "mid", onOpen: () => {}, onClose: () => {} };
+    const props = { brokerId: "yfinance", controller: null, priceSide: "mid", onOpen: () => {}, onClose: () => {} };
     const { rerender } = render(<ScreenerPanel {...props} tabs={[{ id: "t1", epics: ["AAPL"] }]} />);
     fireEvent.click(screen.getByRole("radio", { name: "All tabs" }));
     fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
@@ -306,7 +330,7 @@ describe("ScreenerPanel", () => {
   });
 
   it("Some tabs screens only the ticked tabs and drops closed ones", async () => {
-    const props = { brokerId: "yfinance", priceSide: "mid", onOpen: () => {}, onClose: () => {} };
+    const props = { brokerId: "yfinance", controller: null, priceSide: "mid", onOpen: () => {}, onClose: () => {} };
     const two = [{ id: "t1", epics: ["AAPL"] }, { id: "t2", epics: ["MSFT"] }];
     const { rerender } = render(<ScreenerPanel {...props} tabs={two} />);
     fireEvent.click(screen.getByRole("radio", { name: "Some tabs" }));
@@ -318,5 +342,61 @@ describe("ScreenerPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(startScreen).toHaveBeenCalled());
     expect(vi.mocked(startScreen).mock.calls[0][0].symbols).toEqual(["MSFT"]);
+  });
+
+  it("Run sends the referenced chart pane and shows it on the Indicators line", async () => {
+    chartPanes.live = [{ id: "RSI", type: "RSI", calcParams: [14], extendData: {} }];
+    render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={fakeController()} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    fillAndRun("AAPL", "count(RSI.bullDiv > 0, 5) >= 1");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(startScreen).toHaveBeenCalled());
+    expect(vi.mocked(startScreen).mock.calls[0][0].indicators).toEqual({
+      RSI: { type: "RSI", calcParams: [14], extendData: {} },
+    });
+    expect(await screen.findByText("RSI (14)")).toBeTruthy();
+  });
+
+  it("a loaded screen's copy wins over the focused chart", async () => {
+    vi.mocked(listScreens).mockResolvedValue([{
+      ...SAVED, expression: "RSI.value < 30",
+      indicators: { RSI: { type: "RSI", calcParams: [14], extendData: {} } },
+    }]);
+    chartPanes.live = [{ id: "RSI", type: "RSI", calcParams: [7], extendData: {} }];
+    render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={fakeController()} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(startScreen).toHaveBeenCalled());
+    expect(vi.mocked(startScreen).mock.calls[0][0].indicators.RSI.calcParams).toEqual([14]);
+  });
+
+  it("Refresh from chart takes the chart's settings for shared ids", async () => {
+    vi.mocked(listScreens).mockResolvedValue([{
+      ...SAVED, expression: "RSI.value < 30",
+      indicators: { RSI: { type: "RSI", calcParams: [14], extendData: {} } },
+    }]);
+    chartPanes.live = [{ id: "RSI", type: "RSI", calcParams: [7], extendData: {} }];
+    render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={fakeController()} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh from chart" }));
+    expect(await screen.findByText("RSI (7)")).toBeTruthy();
+  });
+
+  it("a screen with no pane refs sends an empty map", async () => {
+    setup();
+    fillAndRun();
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(startScreen).toHaveBeenCalled());
+    expect(vi.mocked(startScreen).mock.calls[0][0].indicators).toEqual({});
+  });
+
+  it("pick from chart appends to the condition", async () => {
+    const c = fakeController() as unknown as { indicatorPickResult: Signal<unknown> };
+    render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={c as never} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "count(" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Pick an indicator from the chart" })[0]);
+    act(() => c.indicatorPickResult.set({ id: "RSI" }));
+    expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("count(RSI.bullDiv");
   });
 });

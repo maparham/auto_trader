@@ -7324,6 +7324,12 @@ span.bt-leg-short { color: var(--neg); }
 .sc-table tbody tr { cursor: pointer; }
 .sc-table tbody tr:hover { background: var(--hover); }
 
+.sc-inds { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; color: var(--text-dim); }
+.sc-inds-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.sc-inds-list > span { padding: 0 6px; border-radius: 8px; color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent); }
+.sc-inds .sc-link { margin-left: auto; }
+
 .tl-resize { position: absolute; top: 0; left: 0; width: 6px; height: 100%;
   cursor: col-resize; z-index: 1; }
 .tl-resize:hover { background: var(--hover); }

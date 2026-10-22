@@ -25,6 +25,17 @@ import {
   type ScreenColumn,
   type ScreenResult,
 } from "./lib/screens";
+import type { ChartController } from "./lib/chartController";
+import { useExprInstances } from "./backtestSettings/useExprPick";
+import { liveExprInstances } from "./lib/indicators";
+import { useIndicatorPick } from "./lib/useIndicatorPick";
+import {
+  editorInstances,
+  paneLabels,
+  refreshFromChart,
+  screenPayload,
+  type PaneCopy,
+} from "./lib/screenerIndicators";
 
 const RESOLUTIONS: { value: string; label: string }[] = [
   { value: "MINUTE_15", label: "15m" },
@@ -78,6 +89,7 @@ const SOURCES: { value: ScreenerSource; label: string; tip: string[] }[] = [
 interface Props {
   brokerId: string;
   tabs: ScreenerTab[];
+  controller: ChartController | null;
   priceSide: string;
   onOpen: (epic: string, resolution: string) => void;
   onClose: () => void;
@@ -92,7 +104,7 @@ export default function ScreenerPanel(props: Props) {
   return <ScreenerForm key={props.brokerId} {...props} />;
 }
 
-function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
+function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }: Props) {
   // Read once on mount: the in-memory draft for this broker (lib/screenerDraft).
   const [initial] = useState(() => getScreenerDraft(brokerId));
   const [saved, setSaved] = useState<Screen[]>([]);
@@ -104,6 +116,9 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
   const [tabIds, setTabIds] = useState<string[]>(initial.tabIds);
   const [expression, setExpression] = useState(initial.expression);
   const [columns, setColumns] = useState<ScreenColumn[]>(initial.columns);
+  // ?? {} covers drafts held in memory from before this change, e.g. across a
+  // hot reload during development.
+  const [indicators, setIndicators] = useState<PaneCopy>(initial.indicators ?? {});
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [result, setResult] = useState<ScreenResult | null>(initial.result);
@@ -144,13 +159,25 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
   }, [source, symbolsText, tabs, tabIds]);
   // Names go out trimmed: the server keys each match's values by them.
   const sentColumns = useMemo(() => columns.map((c) => ({ ...c, name: c.name.trim() })), [columns]);
-  const draft = { broker: brokerId, resolution, symbols, expression, columns: sentColumns, indicators: {} };
+  const draft = { broker: brokerId, resolution, symbols, expression, columns: sentColumns };
+
+  // The editor's completion/lint list: the copy's own panes first, then
+  // whatever the focused chart offers that the copy doesn't already hold.
+  const chartEditor = useExprInstances(controller);
+  const instances = useMemo(() => editorInstances(indicators, chartEditor), [indicators, chartEditor]);
+  // The focused chart's live panes, read fresh (not memoized) so Run/Save/
+  // Refresh always see the chart as it is right now rather than a stale copy.
+  const chartLive = () => (controller?.chart ? liveExprInstances(controller.chart) : []);
+  // The panes this screen's expressions actually reference, as the request's
+  // `indicators` map: the copy's settings for ids it already holds, the
+  // chart's settings for ids it newly picks up.
+  const capture = () => screenPayload(indicators, chartLive(), [expression, ...columns.map((c) => c.expression)]);
 
   // Mirror the draft and the last completed result into the per-broker store.
   // A run in flight is not kept: the unmount cleanup cancels it.
   useEffect(() => {
-    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, source, tabIds, expression, columns, indicators: {}, result, ranSpec });
-  }, [brokerId, currentId, name, resolution, symbolsText, source, tabIds, expression, columns, result, ranSpec]);
+    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, source, tabIds, expression, columns, indicators, result, ranSpec });
+  }, [brokerId, currentId, name, resolution, symbolsText, source, tabIds, expression, columns, indicators, result, ranSpec]);
 
   useEffect(() => {
     listScreens()
@@ -180,6 +207,7 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
     setSource("list");
     setExpression(s?.expression ?? "");
     setColumns(s?.columns ?? []);
+    setIndicators(s?.indicators ?? {});
     setResult(null);
     setError(null);
     setRanSpec(null);
@@ -206,11 +234,13 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
     setError(null);
     setResult(null);
     const spec = { columns: sentColumns, resolution };
+    const inds = capture();
+    setIndicators(inds);
     // The server job this call started, once known. If a poll throws, the
     // catch cancels it, or the server would 409 every Run until it ended.
     let heldJob: string | null = null;
     try {
-      const { jobId, total } = await startScreen(draft, priceSide);
+      const { jobId, total } = await startScreen({ ...draft, indicators: inds }, priceSide);
       if (genRef.current !== gen) {
         // Superseded (load/cancel/unmount) while the POST was in flight:
         // jobRef was never set, so nothing else could have cancelled this
@@ -268,7 +298,9 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
       return;
     }
     try {
-      const row = await saveScreen(name.trim() || "Untitled screen", draft, currentId ?? undefined);
+      const inds = capture();
+      setIndicators(inds);
+      const row = await saveScreen(name.trim() || "Untitled screen", { ...draft, indicators: inds }, currentId ?? undefined);
       setSaved((all) => [...all.filter((s) => s.id !== row.id), row]);
       setCurrentId(row.id);
       setName(row.name);
@@ -311,6 +343,28 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
       explain(e);
     }
   };
+
+  // "Pick from chart" (◎): arm either the Condition or one column, click an
+  // on-chart indicator, and its expression token lands in that field.
+  type PickTarget = { kind: "condition" } | { kind: "column"; index: number };
+  const pick = useIndicatorPick<PickTarget>(controller, (t, token) => {
+    if (t.kind === "condition") setExpression((e) => e + token);
+    else setColumns((cs) => cs.map((x, j) => (j === t.index ? { ...x, expression: x.expression + token } : x)));
+  });
+  const pickToggle = (target: PickTarget, isArmed: boolean) =>
+    pick && (
+      <Tooltip content={isArmed ? "Click an indicator on the chart, or click here to cancel" : "Pick an indicator from the chart"}>
+        <button
+          type="button"
+          className={`bt-rule-toggle bt-pick-toggle${isArmed ? " on" : ""}`}
+          onClick={() => (isArmed ? pick.disarm() : pick.arm(target))}
+          aria-label="Pick an indicator from the chart"
+          aria-pressed={isArmed}
+        >
+          ◎
+        </button>
+      </Tooltip>
+    );
 
   // The columns shown in the result table come from the snapshot taken at
   // Run time (ranSpec), NOT the live `columns` state: renaming, adding or
@@ -449,7 +503,10 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
               "Rule checked on each symbol's last closed bar.",
               "Matches are symbols where it is true.",
               "The timeframe sets which bars are used.",
+              "Pivot-based outputs see up to 2000 bars, so they can differ from the chart.",
+              "Pick a chart indicator with ◎ to use its settings.",
             ]} /></span>
+            {pickToggle({ kind: "condition" }, pick?.armed?.kind === "condition")}
             <label className="sc-tf">
               <span>on</span>
               <select aria-label="Timeframe" value={resolution} onChange={(e) => setResolution(e.target.value)}>
@@ -463,7 +520,23 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
             onChange={setExpression}
             isExit={false}
             placeholder="RSI(14) < 30 and candle.close > EMA(200)"
+            instances={instances}
           />
+          {Object.keys(indicators).length > 0 && (
+            <div className="sc-inds">
+              <span className="sc-label-name">Indicators<InfoTip title="Indicators" text={[
+                "Settings copied from the chart on run or save.",
+                "The copy is kept with the screen.",
+                "Refresh from chart to pick up changes.",
+              ]} /></span>
+              <span className="sc-inds-list">{paneLabels(indicators).map((l) => <span key={l}>{l}</span>)}</span>
+              {controller && (
+                <button className="sc-link" onClick={() => setIndicators((c) => refreshFromChart(c, chartLive()))}>
+                  Refresh from chart
+                </button>
+              )}
+            </div>
+          )}
         </section>
 
         <section className="sc-section">
@@ -495,8 +568,16 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
                 value={c.expression}
                 onChange={(e) => setColumns((cs) => cs.map((x, j) => (j === i ? { ...x, expression: e.target.value } : x)))}
               />
+              {pickToggle({ kind: "column", index: i }, pick?.armed?.kind === "column" && pick.armed.index === i)}
               <Tooltip content="Remove column">
-                <button className="sc-icon-btn" aria-label={`Remove column ${i + 1}`} onClick={() => setColumns((cs) => cs.filter((_, j) => j !== i))}>×</button>
+                <button
+                  className="sc-icon-btn"
+                  aria-label={`Remove column ${i + 1}`}
+                  onClick={() => {
+                    pick?.disarm();
+                    setColumns((cs) => cs.filter((_, j) => j !== i));
+                  }}
+                >×</button>
               </Tooltip>
             </div>
           ))}
