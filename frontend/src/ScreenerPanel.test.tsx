@@ -6,6 +6,7 @@ vi.mock("./lib/screens", async (orig) => ({
   ...(await orig<typeof import("./lib/screens")>()),
   listScreens: vi.fn(async () => []),
   startScreen: vi.fn(async () => ({ jobId: "j1", total: 2 })),
+  cancelScreen: vi.fn(async () => {}),
   pollScreen: vi.fn(async () => ({
     status: "done", done: 2, total: 2,
     result: {
@@ -20,11 +21,32 @@ vi.mock("./components/RuleExpressionInput", () => ({
     <textarea aria-label="Condition" value={p.value} onChange={(e) => p.onChange(e.target.value)} />
   ),
 }));
+vi.mock("./lib/impersonation", () => ({ isImpersonating: vi.fn(() => false) }));
 
 import ScreenerPanel from "./ScreenerPanel";
-import { pollScreen, startScreen } from "./lib/screens";
+import { cancelScreen, pollScreen, startScreen } from "./lib/screens";
+import { isImpersonating } from "./lib/impersonation";
 
-beforeEach(() => vi.clearAllMocks());
+const DEFAULT_POLL_RESULT = {
+  status: "done" as const, done: 2, total: 2,
+  result: {
+    matches: [{ epic: "AAPL", bar_time: 1_760_000_000_000, columns: { RSI: 28.4 } }],
+    skipped: [{ epic: "ZZZ", reason: "no candles" }],
+    stats: { symbols: 2, matched: 1, skipped: 1, ms: 40 },
+  },
+};
+
+// vi.clearAllMocks() only clears call history, not an implementation set via
+// mockResolvedValue/mockReturnValue — a test that overrides pollScreen's or
+// isImpersonating's behavior would otherwise leak it into every later test.
+// Reassign every mock's default behavior here so each test starts the same.
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(startScreen).mockResolvedValue({ jobId: "j1", total: 2 });
+  vi.mocked(pollScreen).mockResolvedValue(DEFAULT_POLL_RESULT);
+  vi.mocked(cancelScreen).mockResolvedValue(undefined);
+  vi.mocked(isImpersonating).mockReturnValue(false);
+});
 afterEach(cleanup);
 
 function setup() {
@@ -33,11 +55,19 @@ function setup() {
   return { onOpen };
 }
 
+function fillAndRun(symbols = "AAPL, ZZZ", expression = "RSI(14) < 30") {
+  fireEvent.change(screen.getByLabelText("Symbols"), { target: { value: symbols } });
+  fireEvent.change(screen.getByLabelText("Condition"), { target: { value: expression } });
+}
+
 describe("ScreenerPanel", () => {
   it("runs a screen and lists matches and skipped", async () => {
     const { onOpen } = setup();
-    fireEvent.change(screen.getByLabelText("Symbols"), { target: { value: "AAPL, ZZZ" } });
-    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
+    fillAndRun();
+    // The result table's columns come from what was actually configured and
+    // submitted at Run time, not from whatever the server happens to return.
+    fireEvent.click(screen.getByRole("button", { name: "Add column" }));
+    fireEvent.change(screen.getByLabelText("Column 1 name"), { target: { value: "RSI" } });
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(screen.getByText("AAPL")).toBeTruthy());
     expect(vi.mocked(startScreen).mock.calls[0][0]).toMatchObject({
@@ -59,9 +89,50 @@ describe("ScreenerPanel", () => {
       status: "error", done: 0, total: 2, result: null, error: "boom",
     });
     setup();
-    fireEvent.change(screen.getByLabelText("Symbols"), { target: { value: "AAPL" } });
-    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
+    fillAndRun("AAPL");
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(screen.getByText("boom")).toBeTruthy());
+  });
+
+  it("is read-only while impersonating: shows the note and disables Run/Save", () => {
+    vi.mocked(isImpersonating).mockReturnValue(true);
+    setup();
+    fillAndRun("AAPL");
+    expect(screen.getByText("Read-only while viewing as another user.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Run" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Cancel stops the running job and clears progress", async () => {
+    vi.mocked(pollScreen).mockResolvedValue({ status: "running", done: 1, total: 2, result: null });
+    setup();
+    fillAndRun("AAPL");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(cancelScreen).toHaveBeenCalledWith("j1");
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Run" })).toBeTruthy();
+  });
+
+  it("sends only one startScreen call on a double-click", async () => {
+    setup();
+    fillAndRun("AAPL");
+    const runBtn = screen.getByRole("button", { name: "Run" });
+    fireEvent.click(runBtn);
+    fireEvent.click(runBtn);
+    await waitFor(() => expect(screen.getByText("AAPL")).toBeTruthy());
+    expect(startScreen).toHaveBeenCalledTimes(1);
+  });
+
+  it("row click navigates at the resolution the run actually used, not a later edit", async () => {
+    const { onOpen } = setup();
+    fillAndRun();
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("AAPL")).toBeTruthy());
+    // Changing the timeframe AFTER the run must not retarget the result rows.
+    fireEvent.change(screen.getByLabelText("Timeframe"), { target: { value: "HOUR_4" } });
+    fireEvent.click(screen.getByText("AAPL"));
+    expect(onOpen).toHaveBeenCalledWith("AAPL", "DAY");
   });
 });

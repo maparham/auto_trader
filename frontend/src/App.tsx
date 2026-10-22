@@ -24,7 +24,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import AgentConfirmHost from "./agent/AgentConfirmHost";
 import { initAgentBridge } from "./agent";
 import { setFocusedDrawingsProvider } from "./agent/actions/drawings";
-import { setFocusedChartProvider, focusedChart } from "./agent/actions/chart";
+import { setFocusedChartProvider } from "./agent/actions/chart";
 import SaveDefaultTemplateModal from "./SaveDefaultTemplateModal";
 import BacktestClusterPopover from "./BacktestClusterPopover";
 import TradeReviewCard from "./TradeReviewCard";
@@ -1083,14 +1083,28 @@ export default function App() {
               brokerId={brokerId}
               priceSide={settings.priceSide}
               onOpen={(epic, resolution) => {
-                void jumpToEpic(epic, 2).then(() => {
-                  // The jumped-to chart becomes the focused one; switch it to
-                  // the screen's timeframe. Best effort: a chart that is not
-                  // focused yet just keeps its own timeframe.
-                  const p = periodByResolution(resolution);
-                  if (!p) return;
-                  try { focusedChart().setPeriod(p); } catch { /* no focused chart */ }
-                });
+                const p = periodByResolution(resolution);
+                // jumpToEpic awaits the catalogue resolve outside any React
+                // event, so this .then can run before the render that opened
+                // (or focused) the tab commits. Reading "the focused chart"
+                // at that point (focusedChart()) would still return whatever
+                // chart was focused BEFORE this jump, retiming the wrong one.
+                // jumpToEpic's own result names the exact cell/tab it landed
+                // on, and applyTabs writes tabsRef synchronously (see its
+                // comment above), so targeting that cell by id is safe
+                // regardless of commit timing.
+                void jumpToEpic(epic, 2)
+                  .then(({ cellId, tabId }) => {
+                    if (!p) return;
+                    applyTabs((ts) =>
+                      ts.map((t) =>
+                        t.id !== tabId
+                          ? t
+                          : { ...t, cells: t.cells.map((c) => (c.id === cellId ? { ...c, period: p } : c)) },
+                      ),
+                    );
+                  })
+                  .catch((e) => toast(e instanceof Error ? e.message : "Couldn't open that symbol"));
               }}
               onClose={() => screenerPanelOpen.set(false)}
             />

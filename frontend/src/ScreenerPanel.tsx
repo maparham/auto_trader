@@ -65,7 +65,19 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
   const [showSkipped, setShowSkipped] = useState(false);
   const [picking, setPicking] = useState(false);
   const [sort, setSort] = useState<SortKey>({ col: "epic", desc: false });
+  // True from the Run click until startScreen's POST resolves (or fails):
+  // disables Run so a second click during the POST can't fire a second job
+  // (the server 409s it, and that catch used to null out the FIRST job's
+  // jobRef/progress, orphaning it uncancelled).
+  const [starting, setStarting] = useState(false);
   const jobRef = useRef<string | null>(null);
+  // The run spec actually submitted to the server, snapshotted at Run time.
+  // Headers/cells/row-click navigation read from THIS, not the live form
+  // state, so renaming/reordering a column or changing the timeframe after a
+  // run can't relabel already-returned data or send a click to a timeframe
+  // that was never screened.
+  const [ranSpec, setRanSpec] = useState<{ columns: ScreenColumn[]; resolution: string } | null>(null);
+  const disposedRef = useRef(false);
   const readOnly = isImpersonating();
 
   const symbols = useMemo(() => parseSymbols(symbolsText), [symbolsText]);
@@ -79,11 +91,18 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
 
   // Stop polling if the panel unmounts mid-run; the server job is cancelled too.
   useEffect(() => () => {
+    disposedRef.current = true;
     if (jobRef.current) void cancelScreen(jobRef.current);
     jobRef.current = null;
   }, []);
 
   const load = (s: Screen | null) => {
+    // A newly loaded screen must not have an old run's result land under it
+    // once this cancel's response (or a still-running poll) arrives late.
+    if (jobRef.current) void cancelScreen(jobRef.current);
+    jobRef.current = null;
+    setStarting(false);
+    setProgress(null);
     setCurrentId(s?.id ?? null);
     setName(s?.name ?? "");
     setResolution(s?.resolution ?? "DAY");
@@ -92,6 +111,7 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
     setColumns(s?.columns ?? []);
     setResult(null);
     setError(null);
+    setRanSpec(null);
   };
 
   const explain = (e: unknown) => {
@@ -104,11 +124,25 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
   };
 
   const run = async () => {
+    if (starting || jobRef.current) return; // already starting or running
+    setStarting(true);
     setError(null);
     setResult(null);
+    const spec = { columns, resolution };
+    let localJobId: string | null = null;
     try {
       const { jobId, total } = await startScreen(draft, priceSide);
+      localJobId = jobId;
+      if (disposedRef.current) {
+        // The panel unmounted while the POST was in flight: jobRef was never
+        // set (the unmount cleanup ran against a null ref), so nothing would
+        // otherwise cancel this job server-side.
+        void cancelScreen(jobId);
+        return;
+      }
       jobRef.current = jobId;
+      setRanSpec(spec);
+      setStarting(false);
       setProgress({ done: 0, total });
       for (;;) {
         const st = await pollScreen(jobId);
@@ -124,9 +158,16 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
         await new Promise((r) => setTimeout(r, POLL_MS));
       }
     } catch (e) {
-      jobRef.current = null;
-      setProgress(null);
-      explain(e);
+      setStarting(false);
+      // Only clear state that still belongs to THIS call: a concurrent
+      // cancel/load/unmount may already have reassigned or nulled jobRef
+      // (or this call's own job was never the active one to begin with, e.g.
+      // it lost a race it should have been blocked from entering).
+      if (localJobId == null || jobRef.current === localJobId) {
+        jobRef.current = null;
+        setProgress(null);
+      }
+      if (!disposedRef.current) explain(e);
     }
   };
 
@@ -173,18 +214,11 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
     }
   };
 
-  // The columns shown in the result table: the configured names (in their
-  // configured order) plus any key the server actually returned that isn't
-  // one of them (defensive: a stale/edited column list shouldn't hide data
-  // the run already paid for).
-  const colNames = useMemo(() => {
-    const seen = new Set<string>();
-    const names: string[] = [];
-    for (const c of columns) if (!seen.has(c.name)) { seen.add(c.name); names.push(c.name); }
-    for (const m of result?.matches ?? [])
-      for (const k of Object.keys(m.columns)) if (!seen.has(k)) { seen.add(k); names.push(k); }
-    return names;
-  }, [columns, result]);
+  // The columns shown in the result table come from the snapshot taken at
+  // Run time (ranSpec), NOT the live `columns` state: renaming, adding or
+  // removing a column after a run must not relabel or hide data that run
+  // already returned under its original names.
+  const colNames = useMemo(() => (ranSpec ?? { columns: [] }).columns.map((c) => c.name), [ranSpec]);
   const rows = useMemo(() => {
     const ms = [...(result?.matches ?? [])];
     ms.sort((a, b) => {
@@ -199,7 +233,7 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
     setSort((s) => (s.col === col ? { col, desc: !s.desc } : { col, desc: col !== "epic" }));
 
   const running = progress !== null;
-  const canRun = !running && !readOnly && symbols.length > 0 && expression.trim() !== "";
+  const canRun = !running && !starting && !readOnly && symbols.length > 0 && expression.trim() !== "";
 
   return (
     <aside className="screener-panel" aria-label="Screener">
@@ -311,7 +345,7 @@ export default function ScreenerPanel({ brokerId, priceSide, onOpen, onClose }: 
             </thead>
             <tbody>
               {rows.map((m) => (
-                <tr key={m.epic} onClick={() => onOpen(m.epic, resolution)}>
+                <tr key={m.epic} onClick={() => onOpen(m.epic, ranSpec?.resolution ?? resolution)}>
                   <td>{m.epic}</td>
                   {colNames.map((n) => <td key={n}>{fmt(m.columns[n])}</td>)}
                 </tr>
