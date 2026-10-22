@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import yfinance as yf
+from yfinance._http import HTTPError as _YFHTTPError
 from yfinance.exceptions import YFPricesMissingError, YFTzMissingError
 
 from auto_trader.brokers.base import MarketDataBroker
@@ -205,6 +206,29 @@ def _resample_4h(df):
     return out.dropna(subset=["Open"])
 
 
+def _http_error_types() -> tuple[type[BaseException], ...]:
+    """yfinance raises its HTTP backend's HTTPError: curl_cffi's when that is
+    installed, requests' otherwise. Catch both so the 404 triage below holds
+    whichever backend is active."""
+    types: list[type[BaseException]] = [_YFHTTPError]
+    try:
+        import requests
+
+        types.append(requests.exceptions.HTTPError)
+    except ImportError:  # pragma: no cover
+        pass
+    return tuple(dict.fromkeys(types))
+
+
+_HTTP_ERRORS = _http_error_types()
+
+
+def _http_status(exc: BaseException) -> int | None:
+    resp = getattr(exc, "response", None)
+    code = getattr(resp, "status_code", None)
+    return code if isinstance(code, int) else None
+
+
 def _fetch_history(ticker: str, interval: str, start: datetime, end: datetime):
     """Synchronous Yahoo fetch, module-level so tests can monkeypatch it.
     auto_adjust=True: split/dividend-adjusted prices, per spec.
@@ -217,13 +241,20 @@ def _fetch_history(ticker: str, interval: str, start: datetime, end: datetime):
       dressed as no-data — re-raise, or the cache would mark the range as
       covered-empty forever.
     - other YFPricesMissingError: genuine no-data (closed session, delisted
-      range) — empty frame."""
+      range) — empty frame.
+    - HTTPError with status 404: Yahoo's answer for an unknown ticker on
+      some paths. No data, not an outage, so an empty frame; any other HTTP
+      status re-raises."""
     try:
         return yf.Ticker(ticker).history(
             start=start, end=end, interval=interval, auto_adjust=True
         )
     except YFTzMissingError:
         return yf.utils.empty_df()
+    except _HTTP_ERRORS as exc:
+        if _http_status(exc) == 404:
+            return yf.utils.empty_df()
+        raise
     except YFPricesMissingError as exc:
         if "status_code" in str(exc):
             raise

@@ -444,3 +444,73 @@ def test_live_daily_eurusd_smoke():
     )
     assert len(candles) >= 5
     assert all(0.8 < c.close < 1.5 for c in candles)
+
+
+def _http_404():
+    from yfinance._http import HTTPError
+
+    class _Resp:
+        status_code = 404
+        text = "Not Found"
+
+    return HTTPError("HTTP Error 404: Not Found", response=_Resp())
+
+
+def test_fetch_history_http_404_returns_empty(monkeypatch):
+    """Yahoo answers some unknown tickers with a plain HTTP 404: no data, not
+    an outage, so an empty frame."""
+    import auto_trader.brokers.yfinance as yfb
+
+    def raise_404(*args, **kwargs):
+        raise _http_404()
+
+    monkeypatch.setattr(yfb.yf.Ticker, "history", raise_404)
+    assert len(yfb._fetch_history("NOPE123", "1d", start=None, end=None)) == 0
+
+
+def test_fetch_history_other_http_error_propagates(monkeypatch):
+    import auto_trader.brokers.yfinance as yfb
+    from yfinance._http import HTTPError
+
+    class _Resp:
+        status_code = 503
+        text = ""
+
+    def raise_503(*args, **kwargs):
+        raise HTTPError("HTTP Error 503", response=_Resp())
+
+    monkeypatch.setattr(yfb.yf.Ticker, "history", raise_503)
+    with pytest.raises(HTTPError):
+        yfb._fetch_history("AAPL", "1d", start=None, end=None)
+
+
+def test_two_unknown_tickers_leave_yfinance_breaker_closed(monkeypatch):
+    """Two unknown-ticker fetches through the shared breaker must not open it:
+    the breaker opens after two failures, for every user and demo visitor."""
+    import auto_trader.brokers.yfinance as yfb
+    from auto_trader.api import deps
+    from auto_trader.core.broker_health import BrokerHealth
+
+    def raise_404(*args, **kwargs):
+        raise _http_404()
+
+    monkeypatch.setattr(yfb.yf.Ticker, "history", raise_404)
+    health = BrokerHealth()
+    monkeypatch.setattr(deps, "BROKER_HEALTH", health)
+    broker = yfb.YFinanceBroker()
+
+    async def go():
+        for epic in ("NOPE1", "NOPE2"):
+            out = await deps.guarded(
+                "yfinance",
+                lambda epic=epic: broker.get_candles(
+                    epic, Resolution.DAY,
+                    datetime(2020, 1, 1, tzinfo=timezone.utc),
+                    datetime(2020, 1, 3, tzinfo=timezone.utc),
+                ),
+                "yfinance",
+            )
+            assert out == []
+
+    asyncio.run(go())
+    assert not health.is_open("yfinance")
