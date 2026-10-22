@@ -240,6 +240,52 @@ Chromium; `SNAPSHOT_DISABLED=1` turns it off. Probe:
 `cd backend && python3 -m scripts.snapshot_probe --epic EPIC`.
 `SNAPSHOT_DISABLED` with any non-empty value disables the feature.
 
+## Screener
+
+The screener (`ScreenerPanel.tsx`, right-docked side panel) runs one
+expression over a list of symbols on one timeframe and lists the symbols
+where it holds, with optional value columns. Backend: `api/routers/screens.py`
+(`POST /api/screens/run` starts a job, `/api/screens/jobs/{id}` polls it,
+`/api/screens` is saved-screen CRUD), `api/screen_jobs.py` (fetch under a
+per-broker semaphore, judging under its own `per_compute=2` semaphore, cancel
+checked before each judge), `core/screen_eval.py` (`compile_screen`,
+`judge`), `core/screen_store.py` (SQLite, path from `screens_db_path`). Caps:
+500 symbols, 2000-character expressions, 8 columns. Symbol sources are a
+typed list, "All tabs" (every open chart tab, resolved at run time) or "Some
+tabs"; a saved screen stores `source` as `list` or `allTabs` only, since tab
+ids are per browser, and always stores the resolved `symbols`. Clicking a
+result row jumps to that epic at the screen's timeframe (App's `onOpen`).
+
+### Chart indicators in screens
+
+A screen's expressions can reference chart panes by instance
+(`RSI.bullDiv`, `TRENDLINES.tl_nearest`), as backtest rules do, and the
+backend computes them on every screened symbol. No chart is changed. The
+screen holds a COPY of each referenced pane's settings (`indicators`, a
+`{id: {type, calcParams, extendData}}` map on the run body and the saved
+row; at most 16 entries and 32 KB, every type in `SERIES_INDICATORS`, else
+422). Copy semantics live in `lib/screenerIndicators.ts`: the copy wins for
+every id it holds, the focused chart only supplies ids the copy lacks, Run
+and Save send only the panes the text references and adopt that map as the
+new copy ONLY after the server accepts it (a 422 must not freeze bad
+settings), and "Refresh from chart" is the one way a copied pane changes.
+Timeframe-pinned panes and `@tf` pins are refused with their own 422
+wording; a ref found in neither copy nor chart 422s as "not one of this
+screen's indicators". Pivot-based outputs see only the fetched bars (300 to
+2000), so results can differ from the chart.
+
+"Pick from chart" is `lib/useIndicatorPick.ts`: a field arms the chart
+(`controller.indicatorPickArmed`), the clicked pane arrives on
+`controller.indicatorPickResult`, and a module-level owner Signal makes sure
+only the last-armed hook (backtest panel or screener) consumes it. The
+token comes from `lib/exprChartToken.ts`: parameterised types emit a call
+(`RSI(14)`), instance types emit `<id>.<output>`; an RSI pane with
+divergence on emits the ref to its first enabled divergence output
+(`RSI.bullDiv`) so the event is usable without typing. The Indicators line
+under Condition shows `paneLabels`: the id plus the pane's
+`ExprInstance.detail`. Spec:
+docs/superpowers/specs/2026-10-22-screener-chart-indicators-design.md.
+
 ## Account history
 
 Capital.com dealing accounts (`capital:demo`, `capital-live:live`) report
