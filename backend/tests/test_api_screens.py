@@ -102,3 +102,49 @@ def test_length_caps():
     assert client.post("/api/screens", json={**BODY, "symbols": ["X" * 65]}).status_code == 422
     long_expr = "candle.close > " + "1" * 2000
     assert client.post("/api/screens", json={**BODY, "expression": long_expr}).status_code == 422
+
+
+RSI_PANE = {"RSI": {"type": "RSI", "calcParams": [14], "extendData": {}}}
+
+
+def test_run_with_indicator_ref():
+    r = client.post("/api/screens/run", json={
+        "broker": "yfinance", "resolution": "DAY", "symbols": ["AAPL"],
+        "expression": "RSI.value < 101", "indicators": RSI_PANE})
+    assert r.status_code == 200, r.text
+
+
+def test_unknown_ref_422_names_field():
+    r = client.post("/api/screens/run", json={
+        "broker": "yfinance", "resolution": "DAY", "symbols": ["AAPL"],
+        "expression": "RSI.value < 30"})
+    assert r.status_code == 422
+    assert r.json()["detail"]["field"] == "expression"
+
+
+def test_unregistered_type_422():
+    r = client.post("/api/screens/run", json={
+        "broker": "yfinance", "resolution": "DAY", "symbols": ["AAPL"],
+        "expression": "candle.close > 0",
+        "indicators": {"MACD": {"type": "MACD", "calcParams": [12, 26, 9]}}})
+    assert r.status_code == 422
+    assert "MACD" in r.text
+
+
+def test_indicator_caps_422():
+    many = {f"RSI{i}": {"type": "RSI", "calcParams": [14]} for i in range(17)}
+    big = {"RSI": {"type": "RSI", "calcParams": [14], "extendData": {"pad": "x" * 40000}}}
+    for ind in (many, big):
+        r = client.post("/api/screens/run", json={
+            "broker": "yfinance", "resolution": "DAY", "symbols": ["AAPL"],
+            "expression": "candle.close > 0", "indicators": ind})
+        assert r.status_code == 422, ind.keys()
+
+
+@pytest.mark.xfail(reason="store column lands in Task 3", strict=True)
+def test_save_roundtrips_indicators():
+    r = client.post("/api/screens", json={
+        "name": "Div", "broker": "yfinance", "resolution": "DAY", "symbols": ["AAPL"],
+        "expression": "count(RSI.bullDiv > 0, 5) >= 1", "indicators": RSI_PANE})
+    assert r.status_code == 200, r.text
+    assert r.json()["indicators"]["RSI"]["type"] == "RSI"

@@ -14,6 +14,11 @@ can never get stuck "running" forever: a cancelled task lands as
 string, a bug while assembling the result) lands as "error" with a short
 reason, rather than locking that user out of ever starting another screen.
 
+Judging runs in threads under a per-runner cap of 2, separate from the
+per-broker fetch cap, because heavy panes (Trendlines) cost far more than a
+fetch; a cancelled run starts no further judges, though up to two in flight
+finish in their threads.
+
 Jobs live only in this process and are dropped an hour after they finish."""
 
 from __future__ import annotations
@@ -63,11 +68,12 @@ class _Job:
 
 class ScreenJobs:
     def __init__(self, loader: Loader | None = None, per_broker: int = 4,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time, per_compute: int = 2) -> None:
         self._loader = loader or deps.load_alert_bars
         self._per_broker = per_broker
         self._clock = clock
         self._sems: dict[str, asyncio.Semaphore] = defaultdict(lambda: asyncio.Semaphore(self._per_broker))
+        self._compute = asyncio.Semaphore(per_compute)
         self._jobs: dict[str, _Job] = {}
 
     def _prune(self) -> None:
@@ -120,7 +126,8 @@ class ScreenJobs:
             if not bars:
                 return None, {"epic": epic, "reason": "no candles"}
             bars = closed_bars(list(bars), res_s, self._clock())
-            j = await asyncio.to_thread(judge, cs, bars, resolution)
+            async with self._compute:
+                j = await asyncio.to_thread(judge, cs, bars, resolution)
             if j.skip_reason:
                 return None, {"epic": epic, "reason": j.skip_reason}
             if j.matched:

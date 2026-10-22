@@ -5,21 +5,26 @@ runs are in-memory jobs (api/screen_jobs.py). Every route is per user."""
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from auto_trader.api import deps
+from auto_trader.api.schemas import IndicatorInstanceDTO
 from auto_trader.api.screen_jobs import SCREEN_JOBS, JobBusy
 from auto_trader.core.models import Resolution
 from auto_trader.core.screen_eval import ScreenSpecError, compile_screen
 from auto_trader.core.screen_store import SCREEN_STORE
+from auto_trader.indicators.registry import SERIES_INDICATORS, instance_type_of
 
 router = APIRouter()
 
 _MAX_SYMBOLS = 500
 _MAX_EXPR = 2000
+_MAX_INDICATORS = 16
+_MAX_INDICATOR_BYTES = 32768
 
 Symbol = Annotated[str, StringConstraints(max_length=64)]
 
@@ -36,6 +41,7 @@ class ScreenRunBody(BaseModel):
     expression: str = Field(max_length=_MAX_EXPR)
     columns: list[ColumnBody] = Field(default_factory=list, max_length=8)
     priceSide: Literal["bid", "mid", "ask"] = "mid"
+    indicators: dict[str, IndicatorInstanceDTO] = Field(default_factory=dict)
 
     @field_validator("symbols")
     @classmethod
@@ -47,14 +53,33 @@ class ScreenRunBody(BaseModel):
             raise ValueError(f"at most {_MAX_SYMBOLS} symbols per screen")
         return out
 
+    @field_validator("indicators")
+    @classmethod
+    def _check_indicators(cls, v: dict[str, IndicatorInstanceDTO]) -> dict[str, IndicatorInstanceDTO]:
+        if len(v) > _MAX_INDICATORS:
+            raise ValueError(f"at most {_MAX_INDICATORS} indicators per screen")
+        size = len(json.dumps({k: d.model_dump(exclude_none=True) for k, d in v.items()}))
+        if size > _MAX_INDICATOR_BYTES:
+            raise ValueError("indicator settings are too large")
+        for iid, d in v.items():
+            t = d.type or instance_type_of(iid)
+            if t not in SERIES_INDICATORS:
+                raise ValueError(f"{iid}: {t} can't be used in a screen")
+        return v
+
 
 class ScreenBody(ScreenRunBody):
     name: str = Field(min_length=1, max_length=80)
 
 
+def _indicators(body: ScreenRunBody) -> dict[str, dict]:
+    return {k: d.model_dump(exclude_none=True) for k, d in body.indicators.items()}
+
+
 def _compile(body: ScreenRunBody):
     try:
-        return compile_screen(body.expression, [c.model_dump() for c in body.columns])
+        return compile_screen(body.expression, [c.model_dump() for c in body.columns],
+                              _indicators(body))
     except ScreenSpecError as e:
         raise HTTPException(422, {
             "code": e.err.code, "message": e.err.message,
@@ -66,7 +91,8 @@ def _compile(body: ScreenRunBody):
 def _data(body: ScreenBody, broker: str) -> dict:
     return {"name": body.name, "broker": broker, "resolution": body.resolution.value,
             "symbols": body.symbols, "expression": body.expression,
-            "columns": [c.model_dump() for c in body.columns]}
+            "columns": [c.model_dump() for c in body.columns],
+            "indicators": _indicators(body)}
 
 
 @router.get("/api/screens")

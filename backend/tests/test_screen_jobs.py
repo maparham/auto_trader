@@ -151,3 +151,68 @@ def test_http_exception_reason_drops_status_prefix():
         st = await _finish(jobs, "u1", _start(jobs, ["A"]))
         assert st["result"]["skipped"] == [{"epic": "A", "reason": "alert bars failed: x"}]
     asyncio.run(run())
+
+
+def test_compute_cap_bounds_concurrent_judges(monkeypatch):
+    import threading
+    import auto_trader.api.screen_jobs as sj
+    live, peak, lock = [0], [0], threading.Lock()
+    real = sj.judge
+
+    def slow_judge(cs, bars, res):
+        with lock:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+        try:
+            import time as _t
+            _t.sleep(0.02)
+            return real(cs, bars, res)
+        finally:
+            with lock:
+                live[0] -= 1
+
+    monkeypatch.setattr(sj, "judge", slow_judge)
+
+    async def run():
+        table = {f"S{i}": _bars([11.0] * 5) for i in range(8)}
+        jobs = ScreenJobs(loader=_loader(table), clock=lambda: NOW, per_compute=2)
+        jid = _start(jobs, list(table))
+        st = await _finish(jobs, "u1", jid)
+        assert st["status"] == "done"
+    asyncio.run(run())
+    assert peak[0] <= 2
+
+
+def test_cancel_stops_starting_judges(monkeypatch):
+    # Event-gated rather than sleep-timed: the two judges that can start
+    # (per_compute=2) block on `release` until this test says go, so there
+    # is no wall-clock race between "how many judges started" and "when we
+    # cancel" - exactly 2 can ever be in flight before the cancel lands,
+    # and nothing else can slip in while cancellation propagates.
+    import threading
+    import auto_trader.api.screen_jobs as sj
+    started: list[int] = []
+    release = threading.Event()
+    real = sj.judge
+
+    def slow_judge(cs, bars, res):
+        started.append(1)
+        release.wait(2)
+        return real(cs, bars, res)
+
+    monkeypatch.setattr(sj, "judge", slow_judge)
+
+    async def run():
+        table = {f"S{i}": _bars([11.0] * 5) for i in range(20)}
+        jobs = ScreenJobs(loader=_loader(table), clock=lambda: NOW, per_compute=2)
+        jid = _start(jobs, list(table))
+        for _ in range(200):
+            if len(started) >= 2:
+                break
+            await asyncio.sleep(0.005)
+        assert len(started) == 2  # per_compute caps concurrent judges
+        assert jobs.cancel("u1", jid)
+        release.set()
+        await _finish(jobs, "u1", jid)
+    asyncio.run(run())
+    assert len(started) == 2
