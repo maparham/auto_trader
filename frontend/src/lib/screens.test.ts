@@ -4,7 +4,7 @@ import { ScreenSpecError, deleteScreen, listScreens, saveScreen, startScreen } f
 const draft = { broker: "yfinance", resolution: "DAY", symbols: ["AAPL"], expression: "RSI(14) < 30", columns: [] };
 
 function stubFetch(status: number, body: unknown) {
-  const fn = vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+  const fn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
   vi.stubGlobal("fetch", fn);
   return fn;
 }

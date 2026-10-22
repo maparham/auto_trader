@@ -40,8 +40,10 @@ export interface ScreenExprError {
 }
 
 export class ScreenSpecError extends Error {
-  constructor(public detail: ScreenExprError) {
+  readonly detail: ScreenExprError;
+  constructor(detail: ScreenExprError) {
     super(detail.message);
+    this.detail = detail;
   }
 }
 
