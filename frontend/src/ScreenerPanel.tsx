@@ -144,12 +144,12 @@ function ScreenerForm({ brokerId, tabs, priceSide, onOpen, onClose }: Props) {
   }, [source, symbolsText, tabs, tabIds]);
   // Names go out trimmed: the server keys each match's values by them.
   const sentColumns = useMemo(() => columns.map((c) => ({ ...c, name: c.name.trim() })), [columns]);
-  const draft = { broker: brokerId, resolution, symbols, expression, columns: sentColumns };
+  const draft = { broker: brokerId, resolution, symbols, expression, columns: sentColumns, indicators: {} };
 
   // Mirror the draft and the last completed result into the per-broker store.
   // A run in flight is not kept: the unmount cleanup cancels it.
   useEffect(() => {
-    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, source, tabIds, expression, columns, result, ranSpec });
+    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, source, tabIds, expression, columns, indicators: {}, result, ranSpec });
   }, [brokerId, currentId, name, resolution, symbolsText, source, tabIds, expression, columns, result, ranSpec]);
 
   useEffect(() => {

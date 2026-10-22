@@ -2,6 +2,7 @@
 // api/routers/screens.py). A 422 whose detail carries an expression span
 // becomes a ScreenSpecError so the panel can underline the right field.
 import { API_BASE as BASE, apiFetch, errorDetail } from "./http";
+import type { ExprInstancePayload } from "./exprInstances";
 
 export interface ScreenColumn { name: string; expression: string }
 export interface ScreenDraft {
@@ -10,6 +11,7 @@ export interface ScreenDraft {
   symbols: string[];
   expression: string;
   columns: ScreenColumn[];
+  indicators: Record<string, ExprInstancePayload>;
 }
 export interface Screen extends ScreenDraft {
   id: string;

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ScreenSpecError, deleteScreen, listScreens, saveScreen, startScreen } from "./screens";
 
-const draft = { broker: "yfinance", resolution: "DAY", symbols: ["AAPL"], expression: "RSI(14) < 30", columns: [] };
+const draft = { broker: "yfinance", resolution: "DAY", symbols: ["AAPL"], expression: "RSI(14) < 30", columns: [], indicators: {} };
 
 function stubFetch(status: number, body: unknown) {
   const fn = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));

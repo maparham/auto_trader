@@ -68,7 +68,7 @@ afterEach(cleanup);
 
 const SAVED: Screen = {
   id: "s1", name: "Saved one", broker: "yfinance", resolution: "DAY",
-  symbols: ["MSFT"], expression: "RSI(14) < 20", columns: [], created_at: 0, updated_at: 0,
+  symbols: ["MSFT"], expression: "RSI(14) < 20", columns: [], indicators: {}, created_at: 0, updated_at: 0,
 };
 
 function setup() {
@@ -188,6 +188,7 @@ describe("ScreenerPanel", () => {
       symbols: ["MSFT"],
       expression: "RSI(14) < 20",
       columns: [],
+      indicators: {},
       created_at: 0,
       updated_at: 0,
     };

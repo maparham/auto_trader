@@ -5,6 +5,7 @@
 // or Save would rewrite that screen under the wrong broker. Not persisted to
 // localStorage on purpose; a reload starts clean.
 import type { ScreenColumn, ScreenResult } from "./screens";
+import type { PaneCopy } from "./screenerIndicators";
 
 /** Where a screen's symbols come from: the typed list, every open chart tab
  *  (live, so tabs opened later join the next run), or a picked set of tabs. */
@@ -21,6 +22,7 @@ export interface ScreenerDraftState {
   tabIds: string[];
   expression: string;
   columns: ScreenColumn[];
+  indicators: PaneCopy;
   result: ScreenResult | null;
   ranSpec: ScreenerRanSpec | null;
 }
@@ -34,6 +36,7 @@ export const EMPTY_SCREENER_DRAFT: ScreenerDraftState = {
   tabIds: [],
   expression: "",
   columns: [],
+  indicators: {},
   result: null,
   ranSpec: null,
 };
