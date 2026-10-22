@@ -353,5 +353,17 @@
     "literals": [] },
   { "expr": "AUTO_FIB.fm0_236 > 0", "isExit": false, "error": {"code":"unknown_indicator_output","from":0,"to":16},
     "instances": {"AUTO_FIB": {"type":"AUTO_FIB","calcParams":[5,0],"extendData":{}}},
-    "literals": [] }
+    "literals": [] },
+  { "expr": "abs(candle.close - EMA(200)) < 2 * ATR(14)", "isExit": false, "error": null,
+    "literals": [
+      {"ordinal":0,"value":200,"from":23,"to":26,"label":"EMA length"},
+      {"ordinal":1,"value":2,"from":31,"to":32,"label":"multiplier of ATR(14)"},
+      {"ordinal":2,"value":14,"from":39,"to":41,"label":"ATR length"}
+    ] },
+  { "expr": "abs(candle.close, 2) > 1", "isExit": false,
+    "error": {"code":"bad_arity","from":0,"to":20}, "literals": [] },
+  { "expr": "abs(candle.close - entry) > 1", "isExit": true, "error": null,
+    "literals": [
+      {"ordinal":0,"value":1,"from":28,"to":29,"label":"threshold"}
+    ] }
 ]

@@ -35,6 +35,12 @@ export const WRAPPERS: CatalogEntry[] = [
   { name: "avg", insert: "avg(candle.close, 20)", signature: "avg(x, n)", detail: "Average over the last n bars" },
 ];
 
+// Plain math functions (backend registry.FUNCS): pointwise, no window, legal
+// around entry-based values.
+export const FUNCS: CatalogEntry[] = [
+  { name: "abs", insert: "abs(candle.close - EMA(200))", signature: "abs(x)", detail: "Absolute value" },
+];
+
 export const CROSSES: CatalogEntry[] = [
   { name: "crossAbove", insert: "crossAbove(candle.close, EMA(9))", signature: "crossAbove(a, b)", detail: "a crosses above b" },
   { name: "crossBelow", insert: "crossBelow(candle.close, EMA(9))", signature: "crossBelow(a, b)", detail: "a crosses below b" },
@@ -124,6 +130,10 @@ export const WRAPPER_ARITY: Record<string, number> = {
   highest: 2,
   lowest: 2,
   avg: 2,
+};
+
+export const FUNC_ARITY: Record<string, number> = {
+  abs: 1,
 };
 
 export const CROSS_FNS = ["crossAbove", "crossBelow"] as const;

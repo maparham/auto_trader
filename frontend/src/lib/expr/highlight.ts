@@ -16,7 +16,7 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { analyze, type Token } from "./parser";
-import { CROSS_FNS, INDICATOR_SPECS, WRAPPER_ARITY, PREDICATE_FNS, COUNT_FN, tfSeconds } from "./catalog";
+import { CROSS_FNS, INDICATOR_SPECS, WRAPPER_ARITY, FUNC_ARITY, PREDICATE_FNS, COUNT_FN, tfSeconds } from "./catalog";
 
 const CROSS_SET = new Set<string>(CROSS_FNS);
 const PREDICATE_SET = new Set<string>(PREDICATE_FNS);
@@ -68,6 +68,7 @@ function isInstanceRef(value: string, next: Token | undefined): boolean {
     // A bare arg-taking indicator name before "." is a pane (`RSI.bullDiv`).
     && (!Object.hasOwn(INDICATOR_SPECS, value) || INDICATOR_SPECS[value].arity > 0)
     && !Object.hasOwn(WRAPPER_ARITY, value)
+    && !Object.hasOwn(FUNC_ARITY, value)
     && !CROSS_SET.has(value)
     && !PREDICATE_SET.has(value)
     && value !== COUNT_FN
@@ -98,6 +99,7 @@ function classify(
   if (isInstanceRef(value, next)) return "instanceRef";
   if (Object.hasOwn(INDICATOR_SPECS, value)) return "indicator";
   if (Object.hasOwn(WRAPPER_ARITY, value)) return "wrapper";
+  if (Object.hasOwn(FUNC_ARITY, value)) return "wrapper";
   if (CROSS_SET.has(value)) return "cross";
   if (value === COUNT_FN) return "wrapper";
   if (PREDICATE_SET.has(value)) return "cross";

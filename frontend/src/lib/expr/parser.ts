@@ -17,6 +17,7 @@ import {
   PATTERN_WARMUP,
   COUNT_FN,
   WRAPPER_ARITY,
+  FUNC_ARITY,
   tfSeconds,
 } from "./catalog";
 import type { ExprInstance } from "./catalog";
@@ -556,6 +557,7 @@ class Parser {
           && (!Object.hasOwn(INDICATOR_SPECS, node.name)
             || (INDICATOR_SPECS[node.name].arity > 0 && node.end - node.start === node.name.length))
           && !Object.hasOwn(WRAPPER_ARITY, node.name)
+          && !Object.hasOwn(FUNC_ARITY, node.name)
           && !CROSS_SET.has(node.name)
           && !PREDICATE_SET.has(node.name);
         // Decided BEFORE the token is consumed: only an instance reference may
@@ -755,7 +757,7 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
         }
         return;
       }
-      if (root.kind === "Call" && (Object.hasOwn(INDICATOR_SPECS, root.name) || Object.hasOwn(WRAPPER_ARITY, root.name))) {
+      if (root.kind === "Call" && (Object.hasOwn(INDICATOR_SPECS, root.name) || Object.hasOwn(WRAPPER_ARITY, root.name) || Object.hasOwn(FUNC_ARITY, root.name))) {
         throw new ExprErr("field_on_call", `${root.name} has no named outputs.`, node.start, node.end);
       }
       if (root.kind === "IndicatorRef") {
@@ -845,6 +847,14 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
     case "Call": {
       if (CROSS_SET.has(node.name)) {
         throw new ExprErr("cross_not_toplevel", `${node.name} can't be used as a value.`, node.start, node.end);
+      }
+      if (Object.hasOwn(FUNC_ARITY, node.name)) {
+        const arity = FUNC_ARITY[node.name];
+        if (node.args.length !== arity) {
+          throw new ExprErr("bad_arity", `${node.name} takes ${arity} argument(s).`, node.start, node.end);
+        }
+        for (const a of node.args) walk(a, isExit, instances);
+        return;
       }
       if (Object.hasOwn(INDICATOR_SPECS, node.name)) {
         const spec = INDICATOR_SPECS[node.name];
@@ -1009,6 +1019,10 @@ function collect(node: Node, label: string, out: Collected[]): void {
     return;
   }
   if (node.kind === "Call") {
+    if (Object.hasOwn(FUNC_ARITY, node.name)) {
+      for (const a of node.args) collect(a, label, out);
+      return;
+    }
     if (Object.hasOwn(WRAPPER_ARITY, node.name)) {
       // Arity is NOT guaranteed here: `analyze` extracts literals on the error
       // path too, so a half-typed `slope.x` / `avg(x)` reaches this branch with
@@ -1270,6 +1284,9 @@ function warmupNode(node: Node, baseSeconds: number | undefined, refs: WarmupRef
       return refs.warmupByRef ? refs.warmupByRef(node.instance, node.output) : 0;
     }
     case "Call": {
+      if (Object.hasOwn(FUNC_ARITY, node.name)) {
+        return Math.max(0, ...node.args.map((a) => warmupNode(a, baseSeconds, refs)));
+      }
       if (Object.hasOwn(WRAPPER_ARITY, node.name)) {
         const w = node.args[1];
         const n = w && w.kind === "Num" ? Math.trunc(w.value) : 0;

@@ -23,6 +23,7 @@ import {
   CONDITIONS,
   CROSS_OPS,
   CROSSES,
+  FUNCS,
   INDICATORS,
   LOGIC,
   PATTERNS,
@@ -120,6 +121,7 @@ function fnCandidate(entry: CatalogEntry, type: string): WordCandidate {
 const WORD_CANDIDATES: WordCandidate[] = [
   ...INDICATORS.map((e) => fnCandidate(e, "indicator")),
   ...WRAPPERS.map((e) => fnCandidate(e, "wrapper")),
+  ...FUNCS.map((e) => fnCandidate(e, "wrapper")),
   ...CROSS_OPS.map((e): WordCandidate => ({
     label: e.name,
     type: "cross",
