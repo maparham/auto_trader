@@ -7212,6 +7212,42 @@ span.bt-leg-short { color: var(--neg); }
   background: var(--surface); color: var(--text);
   border-left: 1px solid var(--border); font-size: 12px;
 }
+
+/* --- Screener panel ---------------------------------------------------- */
+.screener-panel {
+  /* Docked like .trade-list-panel: a flex sibling of .chart-cells. */
+  position: relative; flex: 0 0 auto; width: 380px; height: 100%;
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  background: var(--surface); color: var(--text);
+  border-left: 1px solid var(--border); font-size: 12px;
+}
+.sc-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border); }
+.sc-title { font-weight: 600; }
+.sc-head > .tooltip-trigger:has(> .modal-close) { margin-left: auto; }
+.sc-note { margin: 6px 8px; color: var(--text-dim); }
+.sc-form { display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  border-bottom: 1px solid var(--border); }
+.sc-row { display: flex; align-items: center; gap: 6px; }
+.sc-row > input, .sc-row > select { flex: 1 1 auto; min-width: 0; }
+.sc-col-expr { flex: 2 1 auto; }
+.sc-symbols { min-height: 44px; resize: vertical; }
+.sc-actions { justify-content: flex-end; }
+.sc-progress { margin-right: auto; color: var(--text-dim); }
+.sc-error { margin: 0; color: var(--danger); }
+.sc-results { flex: 1 1 auto; overflow: auto; }
+.sc-summary { display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+  color: var(--text-dim); }
+.sc-skipped-toggle { background: none; border: none; color: var(--text-dim);
+  text-decoration: underline; cursor: pointer; padding: 0; }
+.sc-skipped { margin: 0 8px 6px; padding-left: 16px; color: var(--text-dim); }
+.sc-table { width: 100%; border-collapse: collapse; }
+.sc-table th { text-align: left; padding: 4px 8px; cursor: pointer;
+  color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); }
+.sc-table td { padding: 4px 8px; }
+.sc-table tbody tr { cursor: pointer; }
+.sc-table tbody tr:hover { background: var(--hover); }
+
 .tl-resize { position: absolute; top: 0; left: 0; width: 6px; height: 100%;
   cursor: col-resize; z-index: 1; }
 .tl-resize:hover { background: var(--hover); }

@@ -25,6 +25,7 @@ import {
   toggleSidePanel,
 } from "./lib/signals";
 import { loadTriggered, loadTriggeredSeen } from "./lib/alertsApi";
+import { isDemoMode } from "./lib/demoMode";
 import {
   loadFavoriteResolutions,
   saveFavoriteResolutions,
@@ -585,10 +586,12 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
       id: "tradeList" as const, label: "Trade list", tip: "Toggle trade list panel",
       icon: <TradeListIcon />, on: tradeListOpen, cls: "trade-list-toggle",
     },
-    {
+    // Demo visitors get no screener panel (the backend 401s /api/screens for
+    // them), so the toggle that would open nothing is hidden too.
+    ...(isDemoMode() ? [] : [{
       id: "screener" as const, label: "Screener", tip: "Show screener panel",
       icon: <ScreenerIcon />, on: screenerOpen, cls: "screener-toggle",
-    },
+    }]),
     {
       id: "alerts" as const, label: "Alerts", tip: "Show alerts panel",
       icon: <BellIcon size={16} />, on: panelOpen, cls: "alerts-toggle",

@@ -24,7 +24,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import AgentConfirmHost from "./agent/AgentConfirmHost";
 import { initAgentBridge } from "./agent";
 import { setFocusedDrawingsProvider } from "./agent/actions/drawings";
-import { setFocusedChartProvider } from "./agent/actions/chart";
+import { setFocusedChartProvider, focusedChart } from "./agent/actions/chart";
 import SaveDefaultTemplateModal from "./SaveDefaultTemplateModal";
 import BacktestClusterPopover from "./BacktestClusterPopover";
 import TradeReviewCard from "./TradeReviewCard";
@@ -49,6 +49,7 @@ import { lazyChunk } from "./components/lazyChunk";
 // (and the backtest/indicator settings trees behind them) out of the initial
 // bundle. Each is already conditionally rendered below.
 const TradeListPanel = lazyChunk(() => import("./TradeListPanel"));
+const ScreenerPanel = lazyChunk(() => import("./ScreenerPanel"));
 const SettingsModal = lazyChunk(() => import("./Settings"));
 const BacktestSettingsModal = lazyChunk(() => import("./BacktestSettingsModal"));
 const LiveTradingPanel = lazyChunk(() => import("./LiveTradingPanel"));
@@ -71,6 +72,7 @@ import {
   drawingSettingsRequest,
   tradeListPanelOpen,
   livePanelOpen,
+  screenerPanelOpen,
   alertsChanged,
   alertNavHandler,
   bumpAlerts,
@@ -89,6 +91,7 @@ import { reportView } from "./lib/viewHeartbeat";
 import { jumpToEpic as runEpicJump, type EpicJumpDeps, type ReuseSlot } from "./lib/epicJump";
 import {
   resolveInstrument,
+  periodByResolution,
   type Instrument,
 } from "./lib/feed";
 import {
@@ -619,7 +622,7 @@ export default function App() {
     reportCellView(cellId);
   };
 
-  const { panelOpen, tradeListOpen, tradeOpen, snapGalleryOpen, snapshotTabIds } =
+  const { panelOpen, tradeListOpen, tradeOpen, screenerOpen, snapGalleryOpen, snapshotTabIds } =
     usePanelOpenStates(tabs);
 
   useEffect(() => {
@@ -1073,6 +1076,23 @@ export default function App() {
               onClose={() => tradeListPanelOpen.set(false)}
               brokerId={brokerId}
               hidden={patternPanelHidden}
+            />
+          )}
+          {screenerOpen && !isDemoMode() && (
+            <ScreenerPanel
+              brokerId={brokerId}
+              priceSide={settings.priceSide}
+              onOpen={(epic, resolution) => {
+                void jumpToEpic(epic, 2).then(() => {
+                  // The jumped-to chart becomes the focused one; switch it to
+                  // the screen's timeframe. Best effort: a chart that is not
+                  // focused yet just keeps its own timeframe.
+                  const p = periodByResolution(resolution);
+                  if (!p) return;
+                  try { focusedChart().setPeriod(p); } catch { /* no focused chart */ }
+                });
+              }}
+              onClose={() => screenerPanelOpen.set(false)}
             />
           )}
         </main>

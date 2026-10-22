@@ -50,11 +50,19 @@ describe("Toolbar demo mode", () => {
     expect(document.querySelector(".toolbar .alert-btn")).toBeNull();
   });
 
+  it("hides the screener toggle in demo mode (the panel never renders)", async () => {
+    vi.doMock("./lib/demoMode", () => ({ isDemoMode: () => true, setDemoMode: () => {} }));
+    const { default: Toolbar } = await import("./Toolbar");
+    render(<Toolbar {...BASE_PROPS} />);
+    expect(document.querySelector(".toolbar .screener-toggle")).toBeNull();
+  });
+
   it("shows both outside demo mode", async () => {
     vi.doMock("./lib/demoMode", () => ({ isDemoMode: () => false, setDemoMode: () => {} }));
     const { default: Toolbar } = await import("./Toolbar");
     render(<Toolbar {...BASE_PROPS} />);
     expect(screen.queryByText("Backtest")).not.toBeNull();
     expect(document.querySelector(".toolbar .alert-btn")).not.toBeNull();
+    expect(document.querySelector(".toolbar .screener-toggle")).not.toBeNull();
   });
 });
