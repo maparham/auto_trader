@@ -211,6 +211,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     setResult(null);
     setError(null);
     setRanSpec(null);
+    pick?.disarm(); // a stale armed column index must not survive loading a screen
   };
 
   const explain = (e: unknown) => {
@@ -235,7 +236,10 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     setResult(null);
     const spec = { columns: sentColumns, resolution };
     const inds = capture();
-    setIndicators(inds);
+    // Sent on every attempt, but only ADOPTED into the copy once the server
+    // has accepted it: a 422 (a divergence output turned off, a pinned-pane
+    // refusal) must not freeze the bad settings into the copy, or fixing the
+    // chart and re-running would keep sending the same stale settings.
     // The server job this call started, once known. If a poll throws, the
     // catch cancels it, or the server would 409 every Run until it ended.
     let heldJob: string | null = null;
@@ -248,6 +252,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
         cancelQuietly(jobId);
         return;
       }
+      setIndicators(inds);
       heldJob = jobId;
       jobRef.current = jobId;
       setRanSpec(spec);
@@ -299,8 +304,10 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     }
     try {
       const inds = capture();
-      setIndicators(inds);
+      // Adopt the copy only once the server has accepted it, same reasoning
+      // as run(): a rejected save must not freeze bad settings into the copy.
       const row = await saveScreen(name.trim() || "Untitled screen", { ...draft, indicators: inds }, currentId ?? undefined);
+      setIndicators(inds);
       setSaved((all) => [...all.filter((s) => s.id !== row.id), row]);
       setCurrentId(row.id);
       setName(row.name);

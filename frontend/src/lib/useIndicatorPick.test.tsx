@@ -55,6 +55,22 @@ describe("useIndicatorPick", () => {
     expect(b).toHaveBeenCalledWith("y", "RSI.bullDiv");
   });
 
+  it("disarm from a non-owner hook leaves the owner armed and the chart flag set", () => {
+    const c = fakeController() as { indicatorPickArmed: Signal<boolean>; indicatorPickResult: Signal<unknown> };
+    const a = vi.fn();
+    const b = vi.fn();
+    const ha = renderHook(() => useIndicatorPick<string>(c as never, a));
+    const hb = renderHook(() => useIndicatorPick<string>(c as never, b));
+    act(() => ha.result.current!.arm("x"));
+    // hb never armed, so it does not own the pick; its disarm must not clear
+    // the shared chart flag or affect ha's armed state.
+    act(() => hb.result.current!.disarm());
+    expect(c.indicatorPickArmed.value).toBe(true);
+    act(() => c.indicatorPickResult.set({ id: "RSI" }));
+    expect(a).toHaveBeenCalledWith("x", "RSI.bullDiv");
+    expect(b).not.toHaveBeenCalled();
+  });
+
   it("toasts when the pane has no expression form", () => {
     vi.mocked(pickedIndicatorToken).mockReturnValueOnce(null);
     const c = fakeController() as { indicatorPickResult: Signal<unknown> };

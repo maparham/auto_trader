@@ -44,4 +44,15 @@ describe("screenerIndicators", () => {
     expect(copyAsLive({ RSI: rsi(14) })).toEqual([live("RSI", 14)]);
     expect(paneLabels({ RSI: rsi(14) })[0]).toMatch(/^RSI/);
   });
+
+  it("label includes the pane's detail when it has one, after the id and params", () => {
+    const label = paneLabels({ RSI: rsi(14) })[0];
+    expect(label.startsWith("RSI (14), ")).toBe(true);
+    expect(label).toContain("pivots");
+  });
+
+  it("label falls back to just id and params for a type exprInstancesFor does not recognize", () => {
+    const out = paneLabels({ MYSTERY: { type: "MYSTERY", calcParams: [3], extendData: {} } });
+    expect(out).toEqual(["MYSTERY (3)"]);
+  });
 });

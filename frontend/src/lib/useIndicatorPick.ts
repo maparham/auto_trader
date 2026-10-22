@@ -68,9 +68,14 @@ export function useIndicatorPick<T>(
       controller.indicatorPickArmed.set(true);
     },
     disarm: () => {
-      if (owner.value === me) owner.set(null);
+      // Same ownership gate as the effect cleanup: a hook that never armed
+      // (or whose ownership was already taken by a later arm) must not clear
+      // the shared chart flag out from under whichever hook actually owns it.
+      if (owner.value === me) {
+        owner.set(null);
+        controller.indicatorPickArmed.set(false);
+      }
       setArmed(null);
-      controller.indicatorPickArmed.set(false);
     },
   };
 }

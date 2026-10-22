@@ -353,7 +353,29 @@ describe("ScreenerPanel", () => {
     expect(vi.mocked(startScreen).mock.calls[0][0].indicators).toEqual({
       RSI: { type: "RSI", calcParams: [14], extendData: {} },
     });
-    expect(await screen.findByText("RSI (14)")).toBeTruthy();
+    expect(await screen.findByText("RSI (14)", { exact: false })).toBeTruthy();
+  });
+
+  // Fix round 3, finding 1: Run used to adopt the captured copy into state
+  // BEFORE the server accepted it, so a 422 (e.g. an output the chart's
+  // current settings don't expose) froze the bad settings into the copy.
+  // Fixing the chart and running again kept sending the stale copy instead
+  // of the chart's fixed settings.
+  it("a rejected Run does not freeze its copy: the next Run sends the chart's current settings", async () => {
+    chartPanes.live = [{ id: "RSI", type: "RSI", calcParams: [14], extendData: {} }];
+    vi.mocked(startScreen).mockRejectedValueOnce(new Error("RSI has no output bullDiv"));
+    render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={fakeController()} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    fillAndRun("AAPL", "count(RSI.bullDiv > 0, 5) >= 1");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("RSI has no output bullDiv")).toBeTruthy());
+    expect(vi.mocked(startScreen).mock.calls[0][0].indicators).toEqual({
+      RSI: { type: "RSI", calcParams: [14], extendData: {} },
+    });
+    // Fix the chart's pane, then run again.
+    chartPanes.live = [{ id: "RSI", type: "RSI", calcParams: [7], extendData: {} }];
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(startScreen).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(startScreen).mock.calls[1][0].indicators.RSI.calcParams).toEqual([7]);
   });
 
   it("a loaded screen's copy wins over the focused chart", async () => {
@@ -380,7 +402,7 @@ describe("ScreenerPanel", () => {
     await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
     fireEvent.click(screen.getByRole("button", { name: "Refresh from chart" }));
-    expect(await screen.findByText("RSI (7)")).toBeTruthy();
+    expect(await screen.findByText("RSI (7)", { exact: false })).toBeTruthy();
   });
 
   it("a screen with no pane refs sends an empty map", async () => {
