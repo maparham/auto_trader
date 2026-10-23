@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
+from auto_trader.strategy.expr.lines import line_key
 from auto_trader.strategy.expr.registry import CROSSES, FUNCS, INDICATORS, WRAPPERS
 from auto_trader.strategy.expr.tfs import tf_resolution
 
@@ -155,6 +156,11 @@ def _first(results) -> str | None:
 def _walk(node: N.Node, *, is_exit: bool,
           instances: "dict[str, ResolvedInstance] | None" = None) -> None:
     if isinstance(node, N.Num):
+        return
+    if isinstance(node, N.LineRef):
+        if instances is not None and line_key(node.id) not in instances:
+            raise ExprError("unknown_line_ref", f"{node.id} is not one of this rule's lines.",
+                            node.start, node.end)
         return
     if isinstance(node, N.Entry):
         if not is_exit:

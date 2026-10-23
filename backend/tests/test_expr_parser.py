@@ -125,3 +125,25 @@ def test_expected_operator_copy_lists_equality():
 
 def test_atr_percent_parses_as_indicator_call():
     parse("ATR%(14) < 0.8")  # must not raise
+
+
+def test_bare_line_id_parses_to_lineref():
+    row = parse("candle.close > L1")
+    cond = row.conditions[0] if hasattr(row, "conditions") else row
+    assert any(isinstance(x, N.LineRef) and x.id == "L1" for x in _walk_nodes(cond))
+
+
+def test_dotted_l1_still_an_indicator_ref():
+    row = parse("L1.tl_1 > 0")
+    assert any(isinstance(x, N.IndicatorRef) and x.instance == "L1" for x in _walk_nodes(row))
+
+
+def _walk_nodes(node):
+    import dataclasses
+    yield node
+    if dataclasses.is_dataclass(node):
+        for f in dataclasses.fields(node):
+            v = getattr(node, f.name)
+            for c in (v if isinstance(v, (list, tuple)) else [v]):
+                if dataclasses.is_dataclass(c):
+                    yield from _walk_nodes(c)

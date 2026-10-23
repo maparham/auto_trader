@@ -14,6 +14,11 @@ from auto_trader.core.candle_aggregate import resolution_seconds
 
 LINE_ID_RE = re.compile(r"L\d+")
 MAX_LINES = 16
+LINE_KEY_PREFIX = "line:"
+
+
+def line_key(lid: str) -> str:
+    return LINE_KEY_PREFIX + lid
 
 
 class LineSpecError(Exception):

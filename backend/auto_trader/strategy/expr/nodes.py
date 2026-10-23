@@ -132,6 +132,15 @@ class IndicatorRef:
 
 
 @dataclass(frozen=True, slots=True)
+class LineRef:
+    """A picked trendline, written as a bare L<n>. Its geometry travels on the
+    request's `lines` map and is resolved into `instances` under line:L<n>."""
+    id: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True, slots=True)
 class BoolOp:
     op: str  # "and" | "or"
     parts: list["Node"]  # each a condition (CONDITION_KINDS)
@@ -148,7 +157,7 @@ class Not:
 
 Node = (
     Num | Candle | Entry | Call | Field | Offset | Tf | Unary | Binary | Compare | Cross | Chain
-    | Predicate | Count | BarsSinceEntry | IndicatorRef | BoolOp | Not
+    | Predicate | Count | BarsSinceEntry | IndicatorRef | LineRef | BoolOp | Not
 )
 
 # A parsed row: what parse() returns and validate()/compile_row() accept.
@@ -233,7 +242,7 @@ def contains_series(node: Node) -> bool:
     slope(...), count(...), or a chart-pane IndicatorRef) — the operand kinds
     that run ON a timeframe. Price/const/entry operands stay timeframe-less
     (mirrors the structured engine's _operand_timeframe)."""
-    if isinstance(node, (Call, IndicatorRef, Count)):
+    if isinstance(node, (Call, IndicatorRef, LineRef, Count)):
         return True
     if isinstance(node, (Field, Offset, Tf)):
         return contains_series(node.base)

@@ -15,14 +15,18 @@ import type { ExprInstance } from "./catalog";
  * `instances` is the LIVE chart pane list, injected by the caller (never
  * imported — the panes are the source of truth). Omit it and every valid
  * `SLOPE.9` reads as `unknown_indicator_ref`.
+ *
+ * `lines` is the rule holder's set of picked-line ids (L1, L2, ...). Omit it
+ * and every bare `L<n>` is accepted unconditionally (lint/corpus mode).
  */
 export function diagnosticsFor(
   doc: string,
   isExit: boolean,
   instances?: readonly ExprInstance[],
+  lines?: ReadonlySet<string>,
 ): Diagnostic[] {
   if (doc.trim() === "") return [];
-  const { error } = analyze(doc, { isExit, instances });
+  const { error } = analyze(doc, { isExit, instances, lines });
   if (!error) return [];
   // Clamp to the doc length; a zero-width span at EOF still needs from<to to
   // render, so widen it by one when the error points past the last char.
@@ -41,8 +45,9 @@ export function diagnosticsFor(
 export function exprLinter(
   getIsExit: () => boolean,
   getInstances?: () => readonly ExprInstance[] | undefined,
+  getLines?: () => ReadonlySet<string> | undefined,
 ) {
   const source: LintSource = (view) =>
-    diagnosticsFor(view.state.doc.toString(), getIsExit(), getInstances?.());
+    diagnosticsFor(view.state.doc.toString(), getIsExit(), getInstances?.(), getLines?.());
   return linter(source, { delay: 150 });
 }

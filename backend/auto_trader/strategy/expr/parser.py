@@ -3,6 +3,7 @@ from __future__ import annotations
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import BAD_CROSS_MSG, ExprError
 from auto_trader.strategy.expr.lexer import Token, tokenize
+from auto_trader.strategy.expr.lines import LINE_ID_RE
 from auto_trader.strategy.expr.registry import FUNCS, INDICATORS, WRAPPERS
 
 _CMP_SYM = {"GT": ">", "LT": "<", "GE": ">=", "LE": "<=", "EQ": "=="}
@@ -212,6 +213,8 @@ class _Parser:
                         args.append(self.parse_arith())
                 close = self.expect("RPAREN")
                 return N.Call(name.value, args, name.start, close.end)
+            if LINE_ID_RE.fullmatch(name.value) and self.peek().type != "DOT":
+                return N.LineRef(name.value, name.start, name.end)
             # A bare name that is not candle/entry/call is an unknown variable; the
             # validator reports it. Model it as a zero-arg Call so spans survive.
             # ... unless it is the "X> b" spelling of the cross operator: only a

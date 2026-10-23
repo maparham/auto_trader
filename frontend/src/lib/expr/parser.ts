@@ -30,6 +30,11 @@ type InstanceMap = ReadonlyMap<string, ExprInstance>;
 
 const NO_INSTANCES: InstanceMap = new Map();
 
+/** A bare picked-line id, e.g. "L1" (mirrors the backend's LINE_ID_RE). Parsed
+ * as a zero-arg Call like any other unknown name; `walk` below gives it its
+ * own lines-set check instead of falling through to unknown_name. */
+const LINE_ID_RE = /^L\d+$/;
+
 function instanceMap(instances?: readonly ExprInstance[]): InstanceMap {
   if (!instances || instances.length === 0) return NO_INSTANCES;
   return new Map(instances.map((i) => [i.id, i]));
@@ -624,34 +629,34 @@ function candleRoot(node: Node): Node {
   return node;
 }
 
-function validate(node: Row, isExit: boolean, instances: InstanceMap): void {
+function validate(node: Row, isExit: boolean, instances: InstanceMap, lines?: ReadonlySet<string>): void {
   if (node.kind === "BoolOp") {
-    for (const p of node.parts) validate(p as Row, isExit, instances);
+    for (const p of node.parts) validate(p as Row, isExit, instances, lines);
     return;
   }
   if (node.kind === "Not") {
-    validate(node.operand as Row, isExit, instances);
+    validate(node.operand as Row, isExit, instances, lines);
     return;
   }
   if (node.kind === "Chain") {
     for (const p of node.parts) {
       const [left, right] = partOperands(p);
-      walk(left, isExit, instances);
-      walk(right, isExit, instances);
+      walk(left, isExit, instances, lines);
+      walk(right, isExit, instances, lines);
     }
     return;
   }
   if (node.kind === "Cross") {
-    walk(node.a, isExit, instances);
-    walk(node.b, isExit, instances);
+    walk(node.a, isExit, instances, lines);
+    walk(node.b, isExit, instances, lines);
     return;
   }
   if (node.kind === "Predicate") {
     checkPredicate(node);
     return;
   }
-  walk(node.left, isExit, instances);
-  walk(node.right, isExit, instances);
+  walk(node.left, isExit, instances, lines);
+  walk(node.right, isExit, instances, lines);
 }
 
 /** The instance id of a ref inside `node` whose own config carries a timeframe
@@ -737,7 +742,7 @@ function containsEntryKind(node: Node): boolean {
   return false;
 }
 
-function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
+function walk(node: Node, isExit: boolean, instances: InstanceMap, lines?: ReadonlySet<string>): void {
   switch (node.kind) {
     case "Num":
       return;
@@ -769,7 +774,7 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
           node.start, node.end,
         );
       }
-      walk(node.base, isExit, instances);
+      walk(node.base, isExit, instances, lines);
       return;
     }
     case "Tf":
@@ -789,17 +794,17 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
           node.start, node.end,
         );
       }
-      walk(node.base, isExit, instances);
+      walk(node.base, isExit, instances, lines);
       return;
     case "Offset":
-      walk(node.base, isExit, instances);
+      walk(node.base, isExit, instances, lines);
       return;
     case "Unary":
-      walk(node.operand, isExit, instances);
+      walk(node.operand, isExit, instances, lines);
       return;
     case "Binary":
-      walk(node.left, isExit, instances);
-      walk(node.right, isExit, instances);
+      walk(node.left, isExit, instances, lines);
+      walk(node.right, isExit, instances, lines);
       return;
     case "BarsSinceEntry":
       if (!isExit) throw new ExprErr("entry_in_entry_rule", "barsSinceEntry is only available in exit rules.", node.start, node.end);
@@ -813,8 +818,8 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
     case "Count":
       // count's condition is any condition node (CONDITION_KINDS), so hand it
       // back to validate() rather than open-coding the per-kind cases here.
-      validate(node.cond as Row, isExit, instances);
-      walk(node.window, isExit, instances);
+      validate(node.cond as Row, isExit, instances, lines);
+      walk(node.window, isExit, instances, lines);
       return;
     case "Compare":
     case "Cross":
@@ -845,6 +850,12 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
       return;
     }
     case "Call": {
+      if (node.args.length === 0 && LINE_ID_RE.test(node.name)) {
+        if (lines && !lines.has(node.name)) {
+          throw new ExprErr("unknown_line_ref", `${node.name} is not one of this rule's lines.`, node.start, node.end);
+        }
+        return;
+      }
       if (CROSS_SET.has(node.name)) {
         throw new ExprErr("cross_not_toplevel", `${node.name} can't be used as a value.`, node.start, node.end);
       }
@@ -853,7 +864,7 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
         if (node.args.length !== arity) {
           throw new ExprErr("bad_arity", `${node.name} takes ${arity} argument(s).`, node.start, node.end);
         }
-        for (const a of node.args) walk(a, isExit, instances);
+        for (const a of node.args) walk(a, isExit, instances, lines);
         return;
       }
       if (Object.hasOwn(INDICATOR_SPECS, node.name)) {
@@ -868,7 +879,7 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
             node.start, node.end,
           );
         }
-        for (const a of node.args) walk(a, isExit, instances);
+        for (const a of node.args) walk(a, isExit, instances, lines);
         return;
       }
       if (Object.hasOwn(WRAPPER_ARITY, node.name)) {
@@ -883,7 +894,7 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap): void {
             node.start, node.end,
           );
         }
-        for (const a of node.args) walk(a, isExit, instances);
+        for (const a of node.args) walk(a, isExit, instances, lines);
         return;
       }
       const inst = instances.get(node.name);
@@ -1154,12 +1165,13 @@ function literalsOf(node: Row): LiteralSpan[] {
 
 export function analyze(
   src: string,
-  opts?: { isExit?: boolean; instances?: readonly ExprInstance[] },
+  opts?: { isExit?: boolean; instances?: readonly ExprInstance[]; lines?: ReadonlySet<string> },
 ): AnalyzeResult {
   const isExit = opts?.isExit ?? false;
   // The live chart's panes are injected here, never imported: the pane settings
   // are the source of truth and the editor gets the list from the chart.
   const instances = instanceMap(opts?.instances);
+  const lines = opts?.lines;
   const { tokens: lexTokens, error: lexError } = tokenize(src);
   const tokens: Token[] = lexTokens
     .filter((t) => t.type !== "EOF")
@@ -1178,7 +1190,7 @@ export function analyze(
   }
 
   try {
-    validate(ast, isExit, instances);
+    validate(ast, isExit, instances, lines);
   } catch (e) {
     if (e instanceof ExprErr) return result(tokens, literalsOf(ast), e);
     throw e;

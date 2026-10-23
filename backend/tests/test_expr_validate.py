@@ -158,3 +158,14 @@ def test_body_pct_is_a_valid_candle_field():
 
 def test_range_pct_is_a_valid_candle_field():
     validate(parse("candle.range% > 0"), is_exit=False)
+
+
+def test_line_ref_without_instances_is_accepted():
+    validate(parse("candle.close > L1"), is_exit=False)            # no instances: lint/corpus mode
+
+
+def test_unknown_line_ref_with_instances():
+    with pytest.raises(ExprError) as e:
+        validate(parse("candle.close > L3"), is_exit=False, instances={})
+    assert e.value.code == "unknown_line_ref"
+    assert e.value.message == "L3 is not one of this rule's lines."

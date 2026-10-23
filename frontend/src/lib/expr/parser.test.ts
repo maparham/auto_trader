@@ -834,3 +834,13 @@ describe("custom timeframe pins", () => {
     expect(analyze("candle.close@SECOND_5 > candle.close").error?.code).toBe("unknown_tf");
   });
 });
+
+describe("picked line references", () => {
+  it("accepts a bare picked line id without a lines set", () => {
+    expect(analyze("candle.close > L1", { isExit: false }).error).toBeNull();
+  });
+  it("flags a line id missing from the holder's lines", () => {
+    const { error } = analyze("candle.close > L3", { isExit: false, lines: new Set(["L1"]) });
+    expect(error?.code).toBe("unknown_line_ref");
+  });
+});

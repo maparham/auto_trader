@@ -365,5 +365,6 @@
   { "expr": "abs(candle.close - entry) > 1", "isExit": true, "error": null,
     "literals": [
       {"ordinal":0,"value":1,"from":28,"to":29,"label":"threshold"}
-    ] }
+    ] },
+  { "expr": "candle.close > L1", "isExit": false, "error": null, "literals": [] }
 ]

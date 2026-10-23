@@ -45,7 +45,7 @@ def warmup_bars(node: N.Node, resolution: str | None = None,
         return max(warmup_bars(node.left, resolution, instances), warmup_bars(node.right, resolution, instances))
     if isinstance(node, N.Cross):
         return max(warmup_bars(node.a, resolution, instances), warmup_bars(node.b, resolution, instances))
-    if isinstance(node, (N.Num, N.Candle, N.Entry)):
+    if isinstance(node, (N.Num, N.Candle, N.Entry, N.LineRef)):
         return 0
     if isinstance(node, N.Field):
         return warmup_bars(node.base, resolution, instances)
