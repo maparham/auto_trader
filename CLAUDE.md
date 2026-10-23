@@ -290,7 +290,12 @@ only the last-armed hook (backtest panel or screener) consumes it. The
 token comes from `lib/exprChartToken.ts`: parameterised types emit a call
 (`RSI(14)`), instance types emit `<id>.<output>`; an RSI pane with
 divergence on emits the ref to its first enabled divergence output
-(`RSI.bullDiv`) so the event is usable without typing. The Indicators line
+(`RSI.bullDiv`) so the event is usable without typing. Confirmed divergence
+outputs fire once, on the confirming bar (pivot + lookbackRight); the
+`...Forming` twins (`RSI.bullDivForming`) are states that hold while the chart
+drawn up to that bar shows a dotted forming divergence, so they repaint but
+never read ahead. A match carries `divergences` (`{ref, pivot, barsAgo}`) per
+divergence ref in the condition, shown as the panel's Divergence column. The Indicators line
 under Condition shows `paneLabels`: the id plus the pane's
 `ExprInstance.detail`. Spec:
 docs/superpowers/specs/2026-10-22-screener-chart-indicators-design.md.

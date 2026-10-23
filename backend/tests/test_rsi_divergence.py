@@ -12,6 +12,8 @@ from auto_trader.indicators.rsi import (
     RSI_OUTPUTS,
     RsiConfig,
     divergence_pivots,
+    forming_pivot_at,
+    forming_pivots,
     parse_rsi_config,
     rsi_pane_series,
     rsi_series_for,
@@ -101,3 +103,73 @@ def test_registry_and_warmup():
     assert rsi_warmup(RsiConfig(), "value") == 14
     assert rsi_warmup(RsiConfig(), "bullDiv") == 14 + 60 + 5 + 5
     assert rsi_warmup(RsiConfig(), "nope") == 0
+
+
+def _forming_closes():
+    # A sharp drop to a first low, a rebound, then a slow drop to a lower low
+    # with a higher RSI, then 2 rising bars: the second low is a forming pivot
+    # (2 right bars) that the 5-bar confirmation has not reached yet.
+    closes = [100 + (i % 7) * 0.3 for i in range(80)]
+    p = closes[-1]
+    for step, k in ((-3, 5), (2, 8), (-1, 20), (1.5, 2)):
+        for _ in range(k):
+            p += step
+            closes.append(p)
+    return closes
+
+
+def _close_bars(closes):
+    return [Candle(time=datetime.fromtimestamp(1700000000 + i * 3600, tz=timezone.utc),
+                   open=c, high=c + 0.5, low=c - 0.5, close=c, volume=0) for i, c in enumerate(closes)]
+
+
+def test_forming_bull_divergence_holds_on_the_tail_before_confirmation():
+    candles = _close_bars(_forming_closes())
+    cfg = parse_rsi_config([14], {"divergence": {"on": True}})
+    forming = rsi_pane_series(cfg, "bullDivForming", candles, 1.0)
+    confirmed = rsi_pane_series(cfg, "bullDiv", candles, 1.0)
+    last = len(candles) - 1
+    assert forming[last] == 1.0 and forming_pivot_at(candles, cfg, "bullDivForming", last) == last - 2
+    assert confirmed[-10:] == [0.0] * 10
+
+
+def test_forming_series_never_reads_ahead():
+    # Every bar's value is what the chart would draw with only bars up to it.
+    random.seed(7)
+    p, closes = 100.0, []
+    for _ in range(400):
+        p += random.uniform(-1, 1)
+        closes.append(p)
+    candles = _close_bars(closes)
+    cfg = parse_rsi_config([14], {"divergence": {"lookbackLeft": 3, "lookbackRight": 4, "formingLookbackRight": 1}})
+    for out in ("bullDivForming", "bearDivForming", "hBullDivForming", "hBearDivForming"):
+        full = rsi_pane_series(cfg, out, candles, 1.0)
+        assert any(v == 1.0 for v in full)
+        for t in range(100, 400, 7):
+            assert rsi_pane_series(cfg, out, candles[:t + 1], 1.0)[t] == full[t]
+
+
+def test_forming_lookback_right_is_clamped_below_the_confirmed_one():
+    assert parse_rsi_config([14], {"divergence": {"lookbackRight": 3, "formingLookbackRight": 9}}).forming_lookback_right == 2
+    assert parse_rsi_config([14], {"divergence": {"formingLookbackRight": 0}}).forming_lookback_right == 0
+    assert parse_rsi_config(None, None).forming_lookback_right == 2
+
+
+def test_scan_back_stops_where_the_chart_does_for_every_enabled_kind():
+    # The chart's forming scan stops at the first tail swing that diverges for
+    # ANY enabled kind of the side, so bull and hidden bull can never hold on
+    # two different swings at once.
+    random.seed(0)  # holds a bull and a hidden bull tail swing at bars 282-284
+    p, closes = 100.0, []
+    for _ in range(600):
+        p += random.uniform(-1, 1)
+        closes.append(p)
+    candles = _close_bars(closes)
+    cfg = parse_rsi_config([14], {"divergence": {
+        "hiddenBullish": True, "hiddenBearish": True, "formingLookbackRight": 0, "formingScanBack": True}})
+    rsi = rsi_series_for(cfg, candles)
+    for a, b in (("bullish", "hiddenBullish"), ("bearish", "hiddenBearish")):
+        pa, pb = forming_pivots(candles, rsi, cfg, a), forming_pivots(candles, rsi, cfg, b)
+        both = [t for t in range(len(candles)) if pa[t] is not None and pb[t] is not None]
+        assert all(pa[t] == pb[t] for t in both)
+        assert any(x is not None for x in pa) and any(x is not None for x in pb)

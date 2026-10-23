@@ -130,10 +130,11 @@ describe("RSI instances", () => {
   const live = [
     { id: "RSI", type: "RSI", calcParams: [14], extendData: { divergence: { on: true, lookbackRight: 3 } } },
   ];
-  it("exprInstancesFor lists the value and four divergence outputs", () => {
+  it("exprInstancesFor lists the value, four divergence outputs and their forming twins", () => {
     const [inst] = exprInstancesFor(live);
     expect(inst.id).toBe("RSI");
-    expect(inst.outputs).toEqual(["value", "bullDiv", "bearDiv", "hBullDiv", "hBearDiv"]);
+    expect(inst.outputs).toEqual(["value", "bullDiv", "bearDiv", "hBullDiv", "hBearDiv",
+      "bullDivForming", "bearDivForming", "hBullDivForming", "hBearDivForming"]);
     expect(inst.timeframe).toBeNull();
   });
   it("exprWarmupByRef matches backend rsi_warmup", () => {

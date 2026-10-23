@@ -50,6 +50,10 @@ describe("chartIndicatorToExprToken", () => {
     expect(chartIndicatorPickChoices("RSI", { divergence: { on: false } }, "RSI")).toBeNull();
     expect(chartIndicatorPickChoices("RSI", ext, undefined)).toBeNull();
     expect(chartIndicatorPickChoices("EMA", ext, "EMA")).toBeNull();
+    // A pane that draws forming divergences offers each enabled kind's forming
+    // twin after the confirmed ones.
+    expect(chartIndicatorPickChoices("RSI", { divergence: { on: true, showForming: true } }, "RSI")?.map((c) => c.token))
+      .toEqual(["RSI.bullDiv", "RSI.bearDiv", "RSI.bullDivForming", "RSI.bearDivForming", "RSI.value"]);
     expect(chartIndicatorPickChoices("RSI", { divergence: { on: true, bullish: false, bearish: false } }, "RSI")).toBeNull();
   });
 

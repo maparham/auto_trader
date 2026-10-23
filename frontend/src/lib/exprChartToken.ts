@@ -82,7 +82,8 @@ const RSI_DIV_CHOICES: { key: keyof RsiDivergenceConfig; output: string; label: 
 
 /** The outputs a click on this pane could reasonably mean, when there is
  * more than one: today an RSI pane with divergence on, which offers each
- * divergence kind the pane draws plus its value line. null means "insert
+ * divergence kind the pane draws (and its forming twin when the pane shows
+ * forming divergences) plus its value line. null means "insert
  * chartIndicatorToExprToken's single token", which is also the first entry
  * here whenever a list is returned. */
 export function chartIndicatorPickChoices(
@@ -98,7 +99,15 @@ export function chartIndicatorPickChoices(
     label: c.label,
   }));
   if (kinds.length === 0) return null; // the single token is already RSI.value
-  return [...kinds, { token: `${instanceId}.value`, label: "RSI value" }];
+  // Forming twins only when the pane draws them: they repaint, so they are
+  // offered where the user already sees the dotted lines.
+  const forming = div.showForming
+    ? RSI_DIV_CHOICES.filter((c) => div[c.key]).map((c) => ({
+        token: `${instanceId}.${c.output}Forming`,
+        label: `Forming ${c.label.toLowerCase()}`,
+      }))
+    : [];
+  return [...kinds, ...forming, { token: `${instanceId}.value`, label: "RSI value" }];
 }
 
 function rsiDivergence(extendData: unknown): RsiDivergenceConfig {

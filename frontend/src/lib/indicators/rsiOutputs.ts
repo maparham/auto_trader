@@ -43,8 +43,13 @@ export const RSI_DIVERGENCE_DEFAULTS: RsiDivergenceConfig = {
 
 /** Rule operands, value line first. The divergence outputs are 0/1 events that
  * fire on the bar a divergence is CONFIRMED (right pivot + lookbackRight), each
- * kind detected whatever the pane's display toggles say. */
-export const RSI_OUTPUTS = ["value", "bullDiv", "bearDiv", "hBullDiv", "hBearDiv"] as const;
+ * kind detected whatever the pane's display toggles say. The `...Forming`
+ * twins are 0/1 states: 1 while the chart, drawn up to that bar, shows a
+ * still-forming divergence of that kind (it can vanish on the next bar). */
+export const RSI_OUTPUTS = [
+  "value", "bullDiv", "bearDiv", "hBullDiv", "hBearDiv",
+  "bullDivForming", "bearDivForming", "hBullDivForming", "hBearDivForming",
+] as const;
 
 export interface RsiRefConfig {
   length: number;

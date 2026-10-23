@@ -21,7 +21,7 @@ from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.indicators.registry import ResolvedInstance, resolve_instances
 from auto_trader.indicators.rsi import _KIND_OF as _DIV_KINDS
-from auto_trader.indicators.rsi import divergence_pivots, rsi_series_for
+from auto_trader.indicators.rsi import FORMING_KIND_OF, divergence_pivots, forming_pivots, rsi_series_for
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.evaluate import compile_row, series_of
@@ -133,7 +133,7 @@ def _div_refs(node, instances: dict[str, ResolvedInstance], tf: str | None = Non
         tf = node.tf
     if isinstance(node, N.IndicatorRef):
         inst = instances.get(node.instance)
-        if inst is not None and inst.type == "RSI" and node.output in _DIV_KINDS:
+        if inst is not None and inst.type == "RSI" and (node.output in _DIV_KINDS or node.output in FORMING_KIND_OF):
             yield (f"{node.instance}.{node.output}{f'@{tf}' if tf else ''}", node.instance, node.output, tf)
         return
     for f in _dc_fields(node):
@@ -145,7 +145,8 @@ def _div_refs(node, instances: dict[str, ResolvedInstance], tf: str | None = Non
 
 def _latest_pivot(cs: CompiledScreen, ref: tuple[str, str, str, str | None],
                   bars: list[Candle], htf: dict[str, list[Candle]]) -> dict | None:
-    """The newest divergence of this ref already confirmed on the judged bar:
+    """The newest divergence of this ref already confirmed on the judged bar
+    (a forming ref: the one it holds on that bar):
     its right pivot's open time and how many of the ref's own bars ago it is
     (the chart labels the pivot, `lookbackRight` bars before the event)."""
     label, iid, output, tf = ref
@@ -159,6 +160,12 @@ def _latest_pivot(cs: CompiledScreen, ref: tuple[str, str, str, str | None],
         return None
     cfg = cs.instances[iid].config
     last = len(bars) - 1
+    if output in FORMING_KIND_OF:
+        # A forming divergence only exists while it holds on the judged bar.
+        held = forming_pivots(bars, rsi_series_for(cfg, bars), cfg, FORMING_KIND_OF[output])[last]
+        if held is None:
+            return None
+        return {"ref": label, "pivot": int(bars[held].time.timestamp() * 1000), "barsAgo": last - held}
     pivots = [to for _, to in divergence_pivots(bars, rsi_series_for(cfg, bars), cfg, _DIV_KINDS[output])
               if to + cfg.lookback_right <= last]
     if not pivots:

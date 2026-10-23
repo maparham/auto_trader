@@ -253,3 +253,14 @@ def test_divergence_pivot_of_a_pinned_ref_counts_pinned_bars():
 def test_no_divergence_ref_means_no_pivots():
     cs = compile_screen("candle.close > 0", [], resolution="DAY")
     assert judge(cs, _bars([1, 2, 3], step_s=86400), "DAY").divergences == []
+
+
+def test_a_forming_ref_reports_the_tentative_pivot():
+    from tests.test_rsi_divergence import _close_bars, _forming_closes
+    bars = _close_bars(_forming_closes())
+    cs = compile_screen("RSI.bullDivForming > 0", [], _RSI_PANE, resolution="HOUR")
+    j = judge(cs, bars, "HOUR")
+    last = len(bars) - 1
+    assert j.matched
+    assert j.divergences == [{"ref": "RSI.bullDivForming", "pivot": int(bars[last - 2].time.timestamp() * 1000),
+                              "barsAgo": 2}]

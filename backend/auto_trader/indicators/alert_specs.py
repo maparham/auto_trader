@@ -89,6 +89,8 @@ _RSI_EVENTS = {
     "bullDiv": "bullish divergence", "bearDiv": "bearish divergence",
     "hBullDiv": "hidden bullish divergence", "hBearDiv": "hidden bearish divergence",
 }
+# A forming divergence is a 0/1 state; as an event it fires when one appears.
+_RSI_EVENTS.update({f"{k}Forming": f"forming {v}" for k, v in list(_RSI_EVENTS.items())})
 
 
 def _rsi_label(cfg: Any, output: str) -> str:
