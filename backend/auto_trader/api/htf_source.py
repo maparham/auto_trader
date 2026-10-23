@@ -133,18 +133,24 @@ def _tf_inner_warmup(node: N.Node, tf: str, instances=None) -> int:
 
 
 def htf_needs(nodes: list[N.Node], instances=None) -> list[HtfNeed]:
-    """Every timeframe the nodes reference, sorted by name, each with the
+    """One need per canonical resolution the nodes reference, each with the
     deepest warm-up any node needs in that timeframe's own bars, plus one:
-    the closed bar whose value the first judged or traded bar reads."""
+    the closed bar whose value the first judged or traded bar reads.
+
+    Spellings of one resolution merge (`@1H` and `@HOUR`, or a pane pinned
+    "1H" beside an `@HOUR` token): they are one fetch, and two needs would let
+    a caller's second, shallower fetch overwrite the deeper one under the same
+    canonical key. `tf` keeps the first spelling in sorted order."""
     tfs: set[str] = set()
     for node in nodes:
         tfs |= _referenced_tfs(node, instances)
-    out: list[HtfNeed] = []
+    by_res: dict[str, HtfNeed] = {}
     for tf in sorted(tfs):
         tf_s, res = _tf_span(tf, instances)
         need = max((_tf_inner_warmup(n, tf, instances) for n in nodes), default=0) + 1
-        out.append(HtfNeed(tf, res, tf_s, need))
-    return out
+        prev = by_res.get(res)
+        by_res[res] = HtfNeed(prev.tf if prev else tf, res, tf_s, max(need, prev.need if prev else 0))
+    return list(by_res.values())
 
 
 def warm_window(need: HtfNeed, from_ts: int, to_ts: int) -> tuple[int, int, int]:

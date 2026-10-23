@@ -113,3 +113,12 @@ def test_source_htf_empty_fetch_is_a_shortfall_with_no_bars(monkeypatch):
         asyncio.run(source_htf([parse("EMA(3)@W > 0")], None, broker="b", epic="E", side="mid",
                                from_ts=0, to_ts=WEEK, cutoff_ts=WEEK, shipped={}))
     assert ei.value.bars == 0
+
+
+def test_needs_merge_spellings_of_one_resolution():
+    # @1H and @HOUR are one fetch: one need, keyed canonically, sized by the
+    # deepest warm-up across both spellings. Two needs would fetch twice and
+    # the shallower one would overwrite the deeper in a caller's dict.
+    nodes = [parse("EMA(200)@1H > 0 and EMA(5)@HOUR > 0")]
+    needs = htf_needs(nodes)
+    assert [(n.res, n.need) for n in needs] == [("HOUR", warmup_bars(parse("EMA(200) > 0")) + 1)]
