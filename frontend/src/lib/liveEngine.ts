@@ -14,6 +14,30 @@ import { sendableRisk } from "./codedConfig";
 import { markStrategyDeal, forgetStrategyDeal } from "./liveTags";
 import { recordClose } from "./liveJournal";
 import type { EvaluateRequest, EvaluateResult } from "./liveTypes";
+import { trimLines, type Lines } from "./pickedLines";
+
+export const REBASE_AGE_BARS = 500;
+
+/** Keep each picked line's reference bar inside the rolling window: once tRef
+ * is more than REBASE_AGE_BARS old, move it to the newest bar. Only lines on
+ * the engine's own timeframe; a higher-timeframe line is placed by the server
+ * rebase. Null when nothing moved, so the caller skips the write. */
+export function rebaseLines(
+  lines: Lines | undefined, bars: readonly { timestamp: number }[], resolution: string,
+): Lines | null {
+  if (!lines || !bars.length) return null;
+  const times = bars.map((b) => b.timestamp);
+  const last = times.length - 1;
+  let out: Lines | null = null;
+  for (const [id, l] of Object.entries(lines)) {
+    if (l.timeframe !== resolution) continue;
+    const j = times.indexOf(l.tRef);
+    if (j < 0 || last - j <= REBASE_AGE_BARS) continue;
+    out ??= { ...lines };
+    out[id] = { ...l, tRef: times[last], pRef: l.pRef + l.slope * (last - j) };
+  }
+  return out;
+}
 
 type KBar = { timestamp: number; open: number; high: number; low: number; close: number; volume: number };
 
@@ -64,6 +88,24 @@ export async function runOneCycle(
     reconciled = appendLog(
       setPositionVintage(state, null), barTsSec, "position closed externally (broker bracket)",
     );
+  }
+  // Picked lines: move an aging reference bar to the newest bar BEFORE the
+  // request is built, in both the armed snapshot and the open position's
+  // vintage (each rebased off its own lines, so a re-armed snapshot never
+  // inherits the vintage's). Persist the snapshot so a reload resumes from it.
+  const rebaseSnap = (s: ArmedSnapshot | null): ArmedSnapshot | null => {
+    const moved = s ? rebaseLines(s.cfg.lines, bars, resolution) : null;
+    return s && moved ? { ...s, cfg: { ...s.cfg, lines: moved } } : s;
+  };
+  const rebasedSnapshot = rebaseSnap(reconciled.snapshot);
+  const rebasedVintage = reconciled.positionVintage === reconciled.snapshot
+    ? rebasedSnapshot
+    : rebaseSnap(reconciled.positionVintage);
+  if (rebasedSnapshot !== reconciled.snapshot || rebasedVintage !== reconciled.positionVintage) {
+    reconciled = { ...reconciled, snapshot: rebasedSnapshot, positionVintage: rebasedVintage };
+    if (rebasedSnapshot && rebasedSnapshot !== state.snapshot) {
+      saveArmed(epic, rebasedSnapshot.account, rebasedSnapshot);
+    }
   }
   const snap = activeRules(reconciled);
   if (!snap) return { state: reconciled };
@@ -128,6 +170,11 @@ export async function runOneCycle(
 
   const exprRows = (g: RuleGroup): Array<{ expr: string; enabled: boolean }> =>
     g.rules.map((r) => ({ expr: r.expr ?? "", enabled: r.enabled !== false }));
+  // The exact row groups the request sends (coded: the coded exit rows only).
+  const sentGroups: RuleGroup[] = coded
+    ? [codedCfg?.longExit ?? emptyGroup, codedCfg?.shortExit ?? emptyGroup]
+    : [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit];
+  const sentExprs = sentGroups.flatMap(exprRows).filter((r) => r.enabled).map((r) => r.expr);
 
   const req: EvaluateRequest = {
     epic, resolution,
@@ -170,16 +217,20 @@ export async function runOneCycle(
     // mode's do. Read off the frozen snapshot, not the live chart — see
     // ArmedSnapshot.indicators.
     indicators: snap.indicators,
+    // Picked lines the sent (enabled) rows reference, off the frozen snapshot.
+    lines: trimLines(cfg.lines, sentExprs),
   };
 
   let actions: EvaluateResult["actions"];
+  let warnings: string[] = [];
   try {
-    ({ actions } = await deps.evaluateStrategy(req));
+    ({ actions, warnings = [] } = await deps.evaluateStrategy(req));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { state: appendLog(reconciled, barTsSec, `evaluate failed: ${msg}`) };
   }
   let next: LiveState = { ...reconciled, lastEvalSec: barTsSec };
+  for (const w of warnings) next = appendLog(next, barTsSec, w);
   if (actions.length === 0) {
     return { state: appendLog(next, barTsSec, "no signal") };
   }

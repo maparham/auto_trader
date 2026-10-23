@@ -2,6 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 import { initialLiveState, armSnapshot, setPositionVintage } from "./liveState";
 import { defaultBacktestConfig, type Rule } from "./backtestConfig";
 import type { CodedStrategyConfig } from "./codedConfig";
+import { installMemStorage } from "./testMemStorage";
+
+installMemStorage();
 
 // liveEngine → backtestSeries → customIndicators reads LineType at module load;
 // stub klinecharts' runtime surface (same as backtestSeries.test.ts).
@@ -358,5 +361,91 @@ describe("runOneCycle ships the armed indicators map", () => {
     const d = deps();
     await runOneCycle(s, bars, 1_700_000_060, "MINUTE", "EURUSD", d as never);
     expect(d.evaluateStrategy.mock.calls[0][0].indicators).toBeUndefined();
+  });
+});
+
+describe("picked lines", async () => {
+  const { rebaseLines } = await import("./liveEngine");
+  const H = 3_600_000;
+  const bars = Array.from({ length: 1500 }, (_, k) => ({ timestamp: k * H }));
+  const line = { epic: "US100", broker: "capital", timeframe: "HOUR", t1: 0, p1: 0, t2: H, p2: 1, slope: 1, tRef: 2 * H, pRef: 2 };
+  const kbars = bars.map((b) => ({ ...b, open: 10, high: 10, low: 10, close: 10, volume: 0 }));
+  const flatDeps = (actions: unknown[] = [], warnings?: string[]) => ({
+    buildSeries: vi.fn().mockResolvedValue({}),
+    fetchOpenPositions: vi.fn().mockResolvedValue([]),
+    evaluateStrategy: vi.fn().mockResolvedValue({ actions, warnings }),
+    placeActions: vi.fn(),
+  });
+  const rulesCfg = (lines: Record<string, typeof line>, entry: Array<{ expr: string; enabled: boolean }>) => ({
+    ...defaultBacktestConfig(), mode: "rules" as const,
+    longEntry: { combine: "AND" as const, rules: entry as unknown as Rule[] },
+    longExit: { combine: "AND" as const, rules: [] },
+    shortEntry: { combine: "AND" as const, rules: [] },
+    shortExit: { combine: "AND" as const, rules: [] },
+    lines,
+  });
+
+  it("moves an old tRef to the newest bar", () => {
+    const out = rebaseLines({ L1: line }, bars, "HOUR")!;
+    expect(out.L1.tRef).toBe(1499 * H);
+    expect(out.L1.pRef).toBe(2 + 1497);
+  });
+
+  it("leaves a recent tRef and other-timeframe lines alone", () => {
+    expect(rebaseLines({ L1: { ...line, tRef: 1400 * H } }, bars, "HOUR")).toBeNull();
+    expect(rebaseLines({ L1: { ...line, timeframe: "HOUR_4" } }, bars, "HOUR")).toBeNull();
+    expect(rebaseLines({ L1: { ...line, tRef: 99 } }, bars, "HOUR")).toBeNull(); // tRef not a bar
+    expect(rebaseLines(undefined, bars, "HOUR")).toBeNull();
+  });
+
+  it("sends trimmed lines with the evaluate request", async () => {
+    const recent = { ...line, tRef: 1400 * H, pRef: 1400 };
+    const cfg = rulesCfg({ L1: recent, L2: { ...recent, p1: 5 }, L3: recent }, [
+      { expr: "candle.close > L1", enabled: true },
+      { expr: "candle.close > L3", enabled: false }, // disabled rows send no lines
+    ]);
+    const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    const deps = flatDeps();
+    await runOneCycle(s, kbars, 1499 * 3600, "HOUR", "US100", deps as never);
+    const req = deps.evaluateStrategy.mock.calls[0][0];
+    expect(req.lines).toEqual({ L1: recent });
+  });
+
+  it("sends no lines when the rows reference none", async () => {
+    const cfg = rulesCfg({ L1: line }, [{ expr: "candle.close > candle.open", enabled: true }]);
+    const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    const deps = flatDeps();
+    await runOneCycle(s, kbars, 1499 * 3600, "HOUR", "US100", deps as never);
+    expect(deps.evaluateStrategy.mock.calls[0][0].lines).toBeUndefined();
+  });
+
+  it("rebases an old line into snapshot and vintage before sending it", async () => {
+    const cfg = rulesCfg({ L1: line }, [{ expr: "candle.close > L1", enabled: true }]);
+    const armed = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    const withVintage = setPositionVintage(armed, armed.snapshot);
+    const deps = flatDeps();
+    deps.fetchOpenPositions.mockResolvedValue([
+      { id: "d1", side: "buy", quantity: 1, priceLevel: 10, openedAt: null },
+    ]);
+    const { state } = await runOneCycle(withVintage, kbars, 1499 * 3600, "HOUR", "US100", deps as never);
+    const want = { ...line, tRef: 1499 * H, pRef: 2 + 1497 };
+    expect(deps.evaluateStrategy.mock.calls[0][0].lines).toEqual({ L1: want });
+    expect(state.snapshot?.cfg.lines).toEqual({ L1: want });
+    expect(state.positionVintage?.cfg.lines).toEqual({ L1: want });
+    // the input state is not mutated
+    expect(withVintage.snapshot?.cfg.lines).toEqual({ L1: line });
+    // persisted, so a reload resumes from the rebased reference
+    const { loadArmed } = await import("./liveEngine");
+    expect(loadArmed("US100", "capital:demo")?.cfg.lines).toEqual({ L1: want });
+  });
+
+  it("logs each evaluate warning", async () => {
+    const cfg = rulesCfg({}, [{ expr: "candle.close > candle.open", enabled: true }]);
+    const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    const deps = flatDeps([], ["L1 is on another epic", "L2 placed"]);
+    const { state } = await runOneCycle(s, kbars, 1499 * 3600, "HOUR", "US100", deps as never);
+    const texts = state.log.map((l) => l.text);
+    expect(texts).toContain("L1 is on another epic");
+    expect(texts).toContain("L2 placed");
   });
 });

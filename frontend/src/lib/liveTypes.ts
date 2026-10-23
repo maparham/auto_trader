@@ -1,5 +1,6 @@
 import type { RiskConfig } from "./backtestConfig";
 import type { ExprInstancePayload } from "./exprInstances";
+import type { Lines } from "./pickedLines";
 import type { Candle, ParamValues } from "../api";
 
 export interface LiveAction {
@@ -65,8 +66,13 @@ export interface EvaluateRequest {
   // re-read per cycle: the chart can be unmounted or retuned while armed, and a
   // running strategy must not silently change under it.
   indicators?: Record<string, ExprInstancePayload>;
+  // Picked trendlines (bare L<n>) the sent enabled rows reference, from the
+  // frozen snapshot; the backend places/rebases coarser-timeframe ones.
+  lines?: Lines;
 }
 
 export interface EvaluateResult {
   actions: LiveAction[];
+  // Non-fatal notes (e.g. a picked line on another epic); logged per cycle.
+  warnings?: string[];
 }
