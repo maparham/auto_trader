@@ -209,3 +209,21 @@ def test_warmup():
     assert set(SWEEP_OUTPUTS) == {
         "bearSweep", "bullSweep", "bearConfirmed", "bullConfirmed", "score", "sweptLevel", "barsSince",
     }
+
+
+def test_registry_and_alert_spec():
+    from auto_trader.indicators.alert_specs import ALERT_SPECS, EVENT, LEVEL, PRICE
+    from auto_trader.indicators.registry import SERIES_INDICATORS
+
+    spec = SERIES_INDICATORS["SWEEP"]
+    cfg = spec.parse_config([], {"tz": "UTC"})
+    assert spec.outputs(cfg) == SWEEP_OUTPUTS
+    assert spec.timeframe(cfg) is None
+    alert = ALERT_SPECS["SWEEP"]
+    outs = alert.outputs(cfg)
+    assert outs["bearSweep"] == EVENT and outs["bullConfirmed"] == EVENT
+    assert outs["sweptLevel"] == PRICE and outs["score"] == LEVEL and outs["barsSince"] == LEVEL
+    assert alert.label(cfg, "bearSweep") == "Stop hunt bear sweep"
+    assert alert.heavy and alert.sparse
+    assert alert.needs_volume(cfg) is False
+    assert alert.needs_volume(spec.parse_config([], {"useVolume": True})) is True

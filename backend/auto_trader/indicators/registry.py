@@ -26,6 +26,7 @@ from auto_trader.indicators import rsi as _rsi
 from auto_trader.indicators import slope as _slope
 from auto_trader.indicators import spike as _spike
 from auto_trader.indicators import sr_levels as _sr
+from auto_trader.indicators import sweep as _sweep
 from auto_trader.indicators import trendlines as _tl
 from auto_trader.indicators import vwap as _vwap
 
@@ -134,6 +135,13 @@ SERIES_INDICATORS: dict[str, IndicatorSeriesSpec] = {
         outputs=_spike.spike_outputs,
         series=_spike.spike_series,
         warmup=_spike.spike_warmup,
+        timeframe=lambda cfg: None,
+    ),
+    "SWEEP": IndicatorSeriesSpec(
+        parse_config=_sweep.parse_sweep_config,
+        outputs=_sweep.sweep_outputs,
+        series=_sweep.sweep_series,
+        warmup=_sweep.sweep_warmup,
         timeframe=lambda cfg: None,
     ),
     "SR_LEVELS": IndicatorSeriesSpec(

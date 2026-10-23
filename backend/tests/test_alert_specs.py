@@ -23,7 +23,7 @@ def test_every_alert_spec_is_a_registry_type():
     assert set(ALERT_SPECS) <= set(SERIES_INDICATORS)
     assert set(ALERT_SPECS) == {
         "MA", "EMA", "RSI", "ATR", "TRENDLINES", "SLOPE", "FVG", "PIVOT_BANDS",
-        "PIVOT_ANALYSIS", "SR_LEVELS", "SPIKE", "AUTO_FIB", "LR", "VWAP", "AVWAP", "PREV_HL", "CANDLE_PATTERNS",
+        "PIVOT_ANALYSIS", "SR_LEVELS", "SPIKE", "SWEEP", "AUTO_FIB", "LR", "VWAP", "AVWAP", "PREV_HL", "CANDLE_PATTERNS",
     }
 
 

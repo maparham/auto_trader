@@ -179,6 +179,20 @@ _SPIKE = _fixed("Spike", {
     "maxRetracePct": ("max retrace %", LEVEL),
 }, "SPIKE")
 
+# SWEEP needs its own AlertSpec (not _fixed): its volume component makes
+# needs_volume config-dependent.
+_SWEEP_NAMES: dict[str, tuple[str, AlertOutput]] = {
+    "bearSweep": ("bear sweep", EVENT), "bullSweep": ("bull sweep", EVENT),
+    "bearConfirmed": ("bear confirmed", EVENT), "bullConfirmed": ("bull confirmed", EVENT),
+    "score": ("score", LEVEL), "sweptLevel": ("swept level", PRICE), "barsSince": ("bars since", LEVEL),
+}
+_SWEEP = AlertSpec(
+    outputs=lambda cfg: {k: v[1] for k, v in _SWEEP_NAMES.items()},
+    label=lambda cfg, output: f"Stop hunt {_SWEEP_NAMES[output][0]}",
+    heavy=True, sparse=True,
+    needs_volume=lambda cfg: cfg.use_volume,
+)
+
 
 def _slope_label(cfg: Any, output: str) -> str:
     return f"Slope accel {output[len('accel'):]}" if output.startswith("accel") else f"Slope {output}"
@@ -284,7 +298,7 @@ _CP = AlertSpec(
 
 ALERT_SPECS: dict[str, AlertSpec] = {
     "MA": _MA, "EMA": _MA, "RSI": _RSI, "ATR": _ATR, "TRENDLINES": _TL, "SLOPE": _SLOPE,
-    "FVG": _FVG, "PIVOT_BANDS": _PB, "PIVOT_ANALYSIS": _PA, "SR_LEVELS": _SR, "SPIKE": _SPIKE,
+    "FVG": _FVG, "PIVOT_BANDS": _PB, "PIVOT_ANALYSIS": _PA, "SR_LEVELS": _SR, "SPIKE": _SPIKE, "SWEEP": _SWEEP,
     "AUTO_FIB": _FIB, "LR": _LR, "VWAP": _VWAP, "AVWAP": _AVWAP, "PREV_HL": _PHL,
     "CANDLE_PATTERNS": _CP,
 }
