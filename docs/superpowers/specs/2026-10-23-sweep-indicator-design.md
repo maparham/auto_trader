@@ -8,7 +8,7 @@ indicator serves three uses:
 
 1. Visual: highlight the candle and the swept level on the chart.
 2. Backtests: fade the sweep (`SWEEP.bearSweep == 1` as a short entry).
-3. Alerts and screens: `bearSweep`, `bullSweep` and `confirmed` are events.
+3. Alerts and screens: the sweep and confirm outputs are events.
 
 OHLC cannot prove manipulation. The indicator names what it measures (a
 liquidity sweep with rejection), and the UI copy says "stop hunt", not
@@ -22,8 +22,9 @@ liquidity sweep with rejection), and the UI copy says "stop hunt", not
 
 ## Shape
 
-New instance type `SWEEP`, referenced as `SWEEP#id.<output>`, built like
-SPIKE: a causal per-bar state machine in TS (`frontend/src/lib/indicators/sweep.ts`,
+New instance type `SWEEP`, referenced as `SWEEP.<output>` (later instances
+`SWEEP2.<output>`, ids minted by `mintInstanceId`), built like SPIKE: a
+causal per-bar state machine in TS (`frontend/src/lib/indicators/sweep.ts`,
 outputs and config parsing in `sweepOutputs.ts`) mirrored
 operation-for-operation in Python (`backend/auto_trader/indicators/sweep.py`)
 under the parity contract in `indicators/core.py`.
@@ -32,49 +33,72 @@ under the parity contract in `indicators/core.py`.
 
 | Param | Default | Meaning |
 |---|---|---|
-| `pivotLeft` / `pivotRight` | 3 / 3 | fractal pivot size for levels |
-| `levelMaxAge` | 150 | bars a level stays live after its pivot bar |
+| `pivotLeft` / `pivotRight` | 5 / 5 | fractal pivot size for levels |
+| `levelMaxAge` | 150 | bars a level stays live after its birth bar |
 | `usePrevDay` | true | also treat the previous day's high/low as levels |
 | `minWickPct` | 50 | swept-side wick as % of bar range for full wick credit |
 | `atrLen` | 14 | ATR length for the range test |
 | `minRangeAtr` | 1.5 | bar range in ATRs for full range credit |
 | `useVolume` | false | add a volume z-score component |
 | `volLen` / `volZ` | 20 / 2.0 | volume window and z for full credit |
-| `minScore` | 60 | score at or above which the bar is flagged |
+| `minScore` | 70 | score at or above which the bar is flagged |
 | `confirmBars` | 3 | bars without a close back through the level to confirm |
+
+`tz` is read from `extendData.tz` with PREV_HL's `_zone` rules (both
+parsers); SWEEP joins `TZ_STAMPED_TYPES` in
+`frontend/src/lib/indicatorTimezone.ts` so the frontend stamps it.
 
 ## Levels (causal)
 
-- A fractal pivot high at bar p becomes a live level only at bar
-  p + `pivotRight`, when it is confirmed. Never earlier.
-- Previous-day high/low come from the same day-boundary logic PREV_HL uses
-  (pane tz), live from the first bar of the new day.
-- A level dies when it is swept (whether or not the bar scores high enough
-  to flag) or when it is older than `levelMaxAge` bars.
+- A fractal pivot high at bar p (`pivotLeft` bars left, `pivotRight` right)
+  is born at bar p + `pivotRight`, when it is confirmed. Never earlier. Its
+  dashed segment starts at p.
+- Previous-day high/low use PREV_HL's day-boundary logic in the pane tz. Each
+  is born on the first bar of the new day, and its age and dashed segment
+  start there. The source is blank when bar spacing exceeds one day, as in
+  PREV_HL.
+- A high level L dies on the first bar with `high > L`, whatever the close
+  (a breakout kills it too). Every level crossed on that bar dies, and only
+  the highest crossed level is a sweep candidate. Low levels mirror this
+  with `low < L`.
+- A level also dies when it is older than `levelMaxAge` bars since birth.
 
 ## Per-bar detection
 
-Bear sweep at bar i: some live high level L with `high[i] > L` and
-`close[i] < L`. When several qualify, the highest L wins (the most
-significant run). Bull is the mirror image on live low levels. A bar that
-qualifies both ways takes the side with the higher score; ties take neither.
+Order within bar i: births first, then crossings, then expiry, then confirm
+bookkeeping.
 
-Score (0 to 100) is a weighted mean of components clamped to [0, 1]:
+Bear candidate: the highest live high level L with `high[i] > L`. It is a
+sweep when `close[i] < L`. If the close is not below L it is a breakout: the
+crossed levels die and nothing scores. Bull mirrors this on low levels with
+`low[i] < L` and `close[i] > L`.
 
-- wick: swept-side wick / range, divided by `minWickPct`/100 (weight 0.4)
-- close: how deep the close sits inside the bar away from the sweep,
-  `(L - close) / range` for bears, scaled so a close in the far third gives 1
-  (weight 0.2)
-- range: `range / (minRangeAtr * ATR)` (weight 0.4)
-- volume, only when `useVolume`: `z / volZ` (weight 0.25, the other weights
-  rescale to keep the sum at 1)
+Score (0 to 100) is a weighted mean of components clamped to [0, 1]. When
+`range = high - low` is 0 the score is 0.
 
-The bar is flagged when score >= `minScore`. ATR or volume still in warmup
-gives that component 0.
+- wick (bear): `(high - max(open, close)) / range / (minWickPct / 100)`.
+  Bull: `(min(open, close) - low) / range / (minWickPct / 100)`.
+- close (bear): `(high - close) / range / (2/3)`, so a close in the bottom
+  third gives 1. Bull: `(close - low) / range / (2/3)`.
+- range: `range / (minRangeAtr * ATR[i-1])`. It uses the previous bar's ATR
+  so the sweep bar cannot inflate its own denominator; 0 while ATR is in
+  warmup.
+- volume, only when `useVolume`: `z / volZ`, where z is
+  `(vol[i] - mean) / stdev` over the `volLen` bars before i (population
+  stdev, bar i excluded). Stdev 0 or warmup gives 0; negative z clamps to 0.
 
-Confirmation: a flagged bear sweep confirms at bar i + `confirmBars` if no
-close in (i, i + `confirmBars`] is above L. A later flag before confirmation
-replaces the pending one.
+Weights: volume off gives wick 0.4, close 0.2, range 0.4. Volume on gives
+wick 0.3, close 0.15, range 0.3, volume 0.25.
+
+The bar is flagged when the unrounded score >= `minScore`. If a bar is a
+sweep both ways (an outside bar), the side with the higher unrounded score
+wins and an exact tie flags neither. Both sides' crossed levels die either
+way.
+
+Confirmation: a flagged sweep becomes pending. A bear pending sweep confirms
+at bar i + `confirmBars` if no close in (i, i + `confirmBars`] is above L;
+a close above L drops it and nothing fires. Bull mirrors this. Any new flag,
+on either side, replaces the pending sweep.
 
 ## Outputs (pane order)
 
@@ -82,35 +106,50 @@ replaces the pending one.
 |---|---|---|
 | `bearSweep` | event | 1 on a flagged bear bar, else 0 |
 | `bullSweep` | event | 1 on a flagged bull bar, else 0 |
-| `confirmed` | event | 1 on the bar the pending sweep confirms, else 0 |
-| `score` | value | score of the last flagged sweep, forward-filled |
+| `bearConfirmed` | event | 1 on the bar a bear sweep confirms, else 0 |
+| `bullConfirmed` | event | 1 on the bar a bull sweep confirms, else 0 |
+| `score` | value | unrounded score of the last flagged sweep, forward-filled |
 | `sweptLevel` | price | L of the last flagged sweep, forward-filled |
-| `barsSince` | value | bars since the last flagged sweep |
+| `barsSince` | value | bars since the last flagged sweep (0 on the flag bar) |
 
-The forward-filled outputs are None before the first flag. The click token
-emits `bearSweep` (outputs[0]) so a picked pane is usable at once.
+Events are 0 from bar 0, including warmup. `score`, `sweptLevel` and
+`barsSince` are None before the first flag. The click token emits the
+clicked figure's output when `figureKey` names one (a bull box emits
+`bullSweep`), else `bearSweep` (outputs[0]), as SPIKE does.
 
 ## Rendering
 
 - Flagged candle: translucent box over its high/low range, red for bear,
   green for bull, alpha scaled by score.
-- Swept level: dashed segment from the pivot bar to the sweep bar.
+- Swept level: dashed segment from the level's start bar to the sweep bar.
 - Confirmed: small tick marker above or below the sweep candle.
-- Tooltip on the flagged bar: lines listing the level source (pivot or
+- Tooltip on the flagged bar: short lines naming the level source (pivot or
   previous day), wick %, range in ATRs, volume z when on, score.
 - Draw culls to the visible range and clips strokes (chart draw perf rules).
 
 ## Registration
 
-Same touch points as SPIKE:
+Backend:
 
-- backend: `indicators/registry.py` (series spec), `indicators/alert_specs.py`
-  (events `bearSweep`, `bullSweep`, `confirmed` alertable; others not)
-- frontend: `customIndicators.ts` (template), `indicatorMeta.ts` (params,
-  InfoTip text), `exprInstances.ts` (instance type, warmup floor),
-  `exprChartToken.ts` (token)
+- `indicators/registry.py`: series spec.
+- `indicators/alert_specs.py`: a custom `AlertSpec`, not `_fixed`, since it
+  needs `needs_volume=lambda cfg: cfg.use_volume`. It sets `heavy=True` and
+  `sparse=True`. The four sweep and confirm outputs are EVENT, `sweptLevel`
+  is PRICE, and `score` and `barsSince` are LEVEL. All seven are alertable.
 
-Warmup floor: `max(atrLen, volLen if useVolume, pivotLeft + pivotRight + 1)`.
+Frontend:
+
+- `customIndicators.ts`: type union, template map and type list.
+- `indicatorMeta.ts`: params and InfoTip text.
+- `exprInstances.ts`: the instance type list, the fixed-name `calcParams`
+  types, the warmup floor and the `detail` string.
+- `exprChartToken.ts`: the token, honouring `figureKey`.
+- `indicatorTimezone.ts`: `TZ_STAMPED_TYPES`.
+
+Warmup floor:
+`max(atrLen + 1, useVolume ? volLen + 1 : 0, levelMaxAge + pivotLeft + pivotRight)`.
+Previous-day levels add a calendar dependency that no bar count bounds; the
+warmup note says so, as `prev_hl_warmup` does.
 
 ## Volume caveat
 
@@ -120,10 +159,20 @@ default; its InfoTip says it is only meaningful on brokers with real volume
 
 ## Testing
 
-- Python unit tests on hand-built candles: no level before pivot
-  confirmation, highest level wins, level consumed after a sweep, both-sides
-  tie, age expiry, confirmation and replacement, volume weights rescale.
-- Parity test TS vs Python on a fixture series, joining
-  `test_indicator_parity.py`.
+- Python unit tests on hand-built candles (spike tests style):
+  - no level before pivot confirmation;
+  - the highest crossed level wins, and every crossed level dies;
+  - a breakout kills the level, and a later close back below it is not a
+    sweep;
+  - the outside-bar tie;
+  - age expiry;
+  - confirm, drop on a close back through, and replacement by a new flag;
+  - volume weights rescale;
+  - range 0 scores 0;
+  - one case per default showing that a wick and close without range credit
+    stays under `minScore`.
+- Parity: SWEEP gets its own golden fixture, written by a TS test in the
+  style of `indicatorParityGolden.test.ts` and asserted by `test_sweep.py`.
+  `test_indicator_parity.py` is left alone.
 - TS unit test for compute and config parsing.
 - Only the affected test files run, never the full frontend suite.
