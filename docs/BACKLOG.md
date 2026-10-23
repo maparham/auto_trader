@@ -14,6 +14,13 @@ remove it from here (git history and the memory index track shipped features).
 
 ## Deferred / forward-looking
 
+- **Screen alerts**: a saved screener preset re-runs on each bar close of its
+  timeframe and notifies (web push, Telegram, through the alert fan-out) when
+  a symbol newly matches. Open questions: where it runs (the alert engine's
+  feeds vs a scheduled `screen_jobs` run), the "newly" rule (diff against
+  the previous run's matches), the open-bar setting (likely closed bars
+  only, or it repaints), and a per-user cap on armed presets. No spec yet.
+
 - **LR alerts on the event loop**: `lr_series` (`indicators/lr.py`) refits every
   window from scratch, O(n x L) per output, and LR is a light alert spec, so it
   reruns on the event loop up to once a second (about 0.3 s per call at
