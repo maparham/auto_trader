@@ -62,6 +62,7 @@ import {
 import type { ChartController } from "./chartController";
 import { overrideExtend } from "./overrideExtend";
 import { reconcileLinksForScope } from "./indicatorAlertSync";
+import { LINE_ID_RE } from "./pickedLines";
 export { overrideExtend };
 
 /** extendData keys a live gesture writes (a picked, hovered or glowing line)
@@ -393,7 +394,7 @@ export function mintInstanceId(chart: Chart, type: string, reserved: Iterable<st
   if (!refCollision && !taken.has(type)) return type; // first instance keeps the clean name
   for (let n = refCollision ? 1 : 2; ; n++) {
     const id = `${type}${n}`;
-    if (!taken.has(id)) return id;
+    if (!taken.has(id) && !LINE_ID_RE.test(id)) return id;
   }
 }
 
@@ -432,7 +433,7 @@ export function validateInstanceName(
 ): RenameInstanceError | null {
   if (candidate === currentId) return "unchanged";
   if (!INSTANCE_NAME_RE.test(candidate)) return "invalid";
-  if (RESERVED_REF_NAMES.has(candidate) || Object.hasOwn(BASE_TEMPLATES, candidate)) return "reserved";
+  if (RESERVED_REF_NAMES.has(candidate) || LINE_ID_RE.test(candidate) || Object.hasOwn(BASE_TEMPLATES, candidate)) return "reserved";
   const panes = getIndicatorsByPane(chart);
   for (const inds of panes?.values() ?? []) if (inds.has(candidate)) return "taken";
   return null;

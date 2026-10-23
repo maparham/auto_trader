@@ -41,6 +41,7 @@ const {
   renameIndicatorInstance,
   diffIndicatorSync,
 } = await import("./indicators");
+const { LINE_ID_RE } = await import("./pickedLines");
 
 // In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
 // tests below can read what addIndicatorInstance wrote. Mirrors templates.test.ts.
@@ -1028,6 +1029,13 @@ describe("validateInstanceName", () => {
     expect(validateInstanceName(chart, "count", "PIVOT_ANALYSIS")).toBe("reserved");
     expect(validateInstanceName(chart, "candle", "PIVOT_ANALYSIS")).toBe("reserved");
     expect(validateInstanceName(chart, "AND", "PIVOT_ANALYSIS")).toBe("reserved");
+  });
+
+  it("reserves picked line ids", () => {
+    const chart = fakeChart([]);
+    expect(validateInstanceName(chart, "L1", "RSI")).toBe("reserved");
+    expect(validateInstanceName(chart, "L12", "RSI")).toBe("reserved");
+    expect(validateInstanceName(chart, "L", "RSI")).toBeNull();
   });
 
   it("rejects a real base-type name", () => {
