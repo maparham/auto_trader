@@ -3,7 +3,7 @@
 // map beside its text; requests send only the ids the text references. The
 // geometry is the line alert's (alertLineOf), so the backend counts it in bars
 // of the line's own timeframe.
-import type { TrendlineSegment } from "./indicators/trendlineMarks";
+import type { TrendlineSegment, TrendlineAlertLine } from "./indicators/trendlineMarks";
 import { alertTimeframeOf } from "./indicatorAlertInstance";
 import { isNativeTf, parseTf } from "./timeframe";
 
@@ -18,15 +18,7 @@ export interface PickedLine {
 }
 export type Lines = Record<string, PickedLine>;
 
-export interface TrendlineAlertLine {
-  slope: number;
-  tRef: number;
-  pRef: number;
-  t1: number;
-  p1: number;
-  t2: number;
-  p2: number;
-}
+export type { TrendlineAlertLine } from "./indicators/trendlineMarks";
 
 export type LineGateResult =
   | { ok: true; timeframe: string; geometry: TrendlineAlertLine }
