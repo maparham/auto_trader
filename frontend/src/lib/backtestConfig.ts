@@ -212,6 +212,11 @@ export function longestIndicatorLength(cfg: BacktestConfig): number {
   return Math.max(1, ...riskAtrLengths(cfg), ...scalingAtrLengths(cfg));
 }
 
+/** An empty, frozen lines map for editors whose config has picked none yet:
+ * passing it (rather than undefined) makes the lint flag every L<n>, since no
+ * id is held. Undefined at an editor means "lines unchecked". */
+export const NO_LINES: Lines = Object.freeze({}) as Lines;
+
 export function defaultBacktestConfig(): BacktestConfig {
   // The main backtest groups edit as expressions, so each default rule seeds an
   // `{ expr, enabled }` row the CodeMirror editor shows.

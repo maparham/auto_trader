@@ -5,7 +5,7 @@ import type { CSSProperties, Dispatch, SetStateAction } from "react";
 import type { ParamSpec, StrategyInfo } from "../api";
 import { StrategyParams } from "../components/StrategyParams";
 import StrategyPicker from "../StrategyPicker";
-import type { BacktestConfig, Rule, RuleGroup } from "../lib/backtestConfig";
+import { NO_LINES, type BacktestConfig, type Rule, type RuleGroup } from "../lib/backtestConfig";
 import { resolveParamValues, type CodedStrategyConfig } from "../lib/codedConfig";
 import type { ExprInstance } from "../lib/expr/catalog";
 import { applyRiskSync, riskPatch, riskSyncOn } from "../lib/riskSync";
@@ -140,7 +140,7 @@ export function StrategySection({
                   onCopy={copyRules}
                   onPaste={pasteRules}
                   instances={exprInstances}
-                  lines={cfg.lines}
+                  lines={cfg.lines ?? NO_LINES}
                   isExit
                 />
                 <RiskSection

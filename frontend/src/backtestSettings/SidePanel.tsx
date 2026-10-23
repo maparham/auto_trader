@@ -1,4 +1,4 @@
-import type { BacktestConfig, Rule, RuleGroup } from "../lib/backtestConfig";
+import { NO_LINES, type BacktestConfig, type Rule, type RuleGroup } from "../lib/backtestConfig";
 import type { ExprInstance } from "../lib/expr/catalog";
 import { applyRiskSync, riskPatch, riskSyncOn } from "../lib/riskSync";
 import type { RangeAxis, SweepAxis } from "../lib/sweep";
@@ -92,7 +92,7 @@ export function SidePanel({
           onPaste={onPaste}
           pickIndicator={sidePick(isLong ? "longEntry" : "shortEntry")}
           instances={instances}
-          lines={cfg.lines}
+          lines={cfg.lines ?? NO_LINES}
           sweep={sweep && { ...sweep, group: "entry" }}
         />
         <RuleGroupSection
@@ -107,7 +107,7 @@ export function SidePanel({
           onPaste={onPaste}
           pickIndicator={sidePick(isLong ? "longExit" : "shortExit")}
           instances={instances}
-          lines={cfg.lines}
+          lines={cfg.lines ?? NO_LINES}
           isExit
           sweep={sweep && { ...sweep, group: "exit" }}
         />

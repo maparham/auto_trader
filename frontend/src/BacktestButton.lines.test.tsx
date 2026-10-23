@@ -8,9 +8,8 @@ import { installMemStorage } from "./lib/testMemStorage";
 
 installMemStorage();
 
-// The pane list the component reads off the chart. Starts empty (the user
-// deleted the pane), and the repair spy below pushes into it — standing in for
-// importExprInstances actually creating the pane.
+// The chart's live panes (none here) and a no-op pane repair: this test needs
+// neither, only that run() reaches the engine with its request.
 // vi.hoisted: vi.mock factories are hoisted above the module body, so anything
 // they close over has to be hoisted with them.
 const { live, applyPortableInstances } = vi.hoisted(() => {
@@ -29,14 +28,9 @@ vi.mock("./lib/notify", async (orig) => ({ ...(await orig<Record<string, unknown
 vi.mock("./lib/useRuleClipboard", () => ({ applyPortableInstances }));
 vi.mock("./lib/indicators", () => ({ liveExprInstances: () => [...live] }));
 
-// The run's data + engine edges: enough candles to clear warm-up, and a result
-// shaped like the panel expects. runAndRender returns the request it was given
-// so the assertion can read the `indicators` map off it.
-// Bars must land inside the resolved window (the last N bars up to now), or the
-// run bails with "no candles in the selected range" before it ever posts.
-// klinecharts KLineData: `timestamp` in MILLISECONDS. They must also land inside
-// the resolved window (the last N bars up to now), or the run bails with
-// "no candles in the selected range" before it ever posts.
+// Enough candles to clear warm-up, timestamped (ms) inside the resolved
+// window so the run reaches the post. runAndRender echoes the request it was
+// given so the test can read `lines` off it.
 const nowMs = Date.now();
 const bars = Array.from({ length: 2000 }, (_, i) => ({
   timestamp: nowMs - (2000 - i) * 300_000,
