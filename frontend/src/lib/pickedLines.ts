@@ -18,6 +18,39 @@ export interface PickedLine {
 }
 export type Lines = Record<string, PickedLine>;
 
+export interface TrendlineAlertLine {
+  slope: number;
+  tRef: number;
+  pRef: number;
+  t1: number;
+  p1: number;
+  t2: number;
+  p2: number;
+}
+
+export type LineGateResult =
+  | { ok: true; timeframe: string; geometry: TrendlineAlertLine }
+  | { ok: false; kind: "seconds" | "unparseable" | "nonNative" | "noGeometry" };
+
+/** Shared gate logic for trendline to alert conversion. Checks timeframe validity
+ * and extracts geometry. Returns ok with timeframe+geometry or an error kind. */
+export function lineGate(
+  seg: TrendlineSegment,
+  ext: Record<string, unknown> | undefined,
+  resolution: string,
+): LineGateResult {
+  const timeframe = alertTimeframeOf(ext, resolution);
+  try {
+    if (parseTf(timeframe).unit === "SECOND") return { ok: false, kind: "seconds" };
+  } catch {
+    return { ok: false, kind: "unparseable" };
+  }
+  if (!isNativeTf(timeframe)) return { ok: false, kind: "nonNative" };
+  const geometry = seg.alertLine?.() ?? null;
+  if (!geometry) return { ok: false, kind: "noGeometry" };
+  return { ok: true, timeframe, geometry };
+}
+
 export const LINE_ID_RE = /^L\d+$/;
 // A bare id: not preceded by a word char or ".", not followed by "." or "(".
 const BARE_RE = /(?<![\w.#])L\d+\b(?!\s*[.(])/g;
@@ -51,14 +84,15 @@ export function pickedLineFromSeg(args: {
   epic: string;
   broker: string;
 }): { line: PickedLine } | { reason: string } {
-  const timeframe = alertTimeframeOf(args.ext, args.resolution);
-  try {
-    if (parseTf(timeframe).unit === "SECOND") return { reason: "Lines can't be picked on seconds charts" };
-  } catch {
-    return { reason: "Lines can't be picked on this timeframe" };
+  const gate = lineGate(args.seg, args.ext, args.resolution);
+  if (!gate.ok) {
+    const messages: Record<LineGateResult["kind"], string> = {
+      seconds: "Lines can't be picked on seconds charts",
+      unparseable: "Lines can't be picked on this timeframe",
+      nonNative: "Lines can't be picked on this timeframe yet",
+      noGeometry: "This line can't be picked yet",
+    };
+    return { reason: messages[gate.kind] };
   }
-  if (!isNativeTf(timeframe)) return { reason: "Lines can't be picked on this timeframe yet" };
-  const g = args.seg.alertLine?.() ?? null;
-  if (!g) return { reason: "This line can't be picked yet" };
-  return { line: { epic: args.epic, broker: args.broker, timeframe, ...g } };
+  return { line: { epic: args.epic, broker: args.broker, timeframe: gate.timeframe, ...gate.geometry } };
 }
