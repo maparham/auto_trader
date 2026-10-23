@@ -119,6 +119,17 @@ def _check_pins(node: N.Node, src: str, instances: dict[str, ResolvedInstance],
                             0, len(src))
 
 
+def _cap_tfs(seen: set[str], node: N.Node, src: str,
+             instances: dict[str, ResolvedInstance]) -> set[str]:
+    """Add this field's canonical pinned resolutions; the field that takes
+    the screen past the cap is the one blamed."""
+    out = seen | {n.res for n in htf_needs([node], instances)}
+    if len(out) > _MAX_TFS:
+        raise ExprError("screen_tf_too_many",
+                        f"A screen can pin at most {_MAX_TFS} timeframes.", 0, len(src))
+    return out
+
+
 def _screen_wording(e: ExprError, src: str) -> ExprError:
     """validate() says 'on this chart'; a screen has no chart."""
     if e.code != "unknown_indicator_ref":
@@ -136,6 +147,7 @@ def compile_screen(expression: str, columns: list[dict],
         row = parse(expression)
         validate(row, is_exit=False, instances=instances)
         _check_pins(row, expression, instances, resolution)
+        seen = _cap_tfs(set(), row, expression, instances)
     except ExprError as e:
         raise ScreenSpecError("expression", 0, _screen_wording(e, expression)) from e
     cols: list[tuple[str, N.Node]] = []
@@ -145,15 +157,13 @@ def compile_screen(expression: str, columns: list[dict],
             node = parse_value(src)
             validate_value(node, instances)
             _check_pins(node, src, instances, resolution)
+            seen = _cap_tfs(seen, node, src, instances)
         except ExprError as e:
             raise ScreenSpecError("columns", idx, _screen_wording(e, src)) from e
         cols.append((col["name"], node))
     nodes = [row] + [n for _, n in cols]
     # _check_pins already refused every timeframe htf_needs would 422 on.
     htf = htf_needs(nodes, instances)
-    if len({n.res for n in htf}) > _MAX_TFS:
-        raise ScreenSpecError("expression", 0, ExprError(
-            "screen_tf_too_many", f"A screen can pin at most {_MAX_TFS} timeframes.", 0, len(expression)))
     # With the base resolution a pinned term costs 0 base bars: it is computed
     # from its own candles, which the runner fetches separately.
     warm = max(warmup_bars(n, resolution, instances) for n in nodes)

@@ -189,6 +189,16 @@ def test_tf_cap_counts_canonical():
         compile_screen("EMA(5)@1H > 0 and EMA(5)@4H > 0 and EMA(5)@D > 0", [{"name": "w", "expression": "EMA(5)@W"}],
                        resolution="MINUTE_15")
     assert ei.value.err.code == "screen_tf_too_many"
+    # The column that adds the fourth timeframe is the one blamed.
+    assert (ei.value.field, ei.value.index) == ("columns", 0)
+    assert (ei.value.err.start, ei.value.err.end) == (0, len("EMA(5)@W"))
+
+
+def test_tf_cap_blames_the_condition_when_it_alone_overflows():
+    with pytest.raises(ScreenSpecError) as ei:
+        compile_screen("EMA(5)@1H > 0 and EMA(5)@4H > 0 and EMA(5)@D > 0 and EMA(5)@W > 0",
+                       [{"name": "w", "expression": "EMA(5)@W"}], resolution="MINUTE_15")
+    assert (ei.value.field, ei.value.index, ei.value.err.code) == ("expression", 0, "screen_tf_too_many")
 
 
 def test_judge_reads_the_pinned_series():
