@@ -28,6 +28,8 @@ from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
 from auto_trader.strategy.expr.validate import validate
 
+from . import deps
+from .line_rebase import rebase_lines
 from .risk_series import (
     AtrWarmupError,
     build_atr_risk_series,
@@ -105,6 +107,7 @@ async def compiled_run(
     *,
     on_progress: Callable[[int, int], None] | None = None,
     candles: list[Candle] | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[BacktestResult, dict]:
     """Parse r's rule groups, compile, and run the engine over r's candles.
 
@@ -117,9 +120,26 @@ async def compiled_run(
     `candles` short-circuits the DTO conversion when the caller already holds
     the converted list for r.candles (baseline passes reuse the main run's) —
     ~0.15s per pass on a 90k-bar request, nothing else changes.
+
+    Before compiling, any picked line (r.lines) whose both anchors fall before
+    this run's first candle is rebased onto the loaded bars (line_rebase.rebase_lines),
+    mutating r's PickedLineDTOs in place — the DTOs are what request_instances
+    (right below) and a worker's req_dict rebuild both read. Only lines on this
+    request's own epic are touched. `warnings` collects rebase notices for the
+    caller that owns the HTTP response (the main /api/expr/backtest pass);
+    baseline/companion passes reuse the same (already-rebased, now a no-op)
+    DTOs and don't bother collecting them.
     """
     if candles is None:
         candles = [candle_from_dto(c) for c in r.candles]
+    rebase_warnings = await rebase_lines(
+        {k: v for k, v in r.lines.items() if v.epic == r.epic},
+        first_ms=int(candles[0].time.timestamp() * 1000),
+        side=r.priceSide or "mid",
+        loader=deps.load_alert_bars,
+    )
+    if warnings is not None:
+        warnings.extend(rebase_warnings)
     # I4 (expr): panel risk of kind atr/trailAtr and atr scaling spacing execute
     # against series["ATR_{length}"]. The expr wire format has no series field, so
     # we compute them here — without this the engine reads None and the position

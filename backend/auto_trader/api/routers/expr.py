@@ -46,6 +46,7 @@ from ..expr_exec import (
 )
 # _tf_inner_warmup is re-exported: tests import it from this module.
 from ..htf_source import _tf_inner_warmup, fetch_htf, htf_needs  # noqa: F401
+from ..line_rebase import rebase_lines
 from ..schemas import (
     ExprBacktestRequest,
     ExprClosenessRequest,
@@ -126,7 +127,8 @@ async def expr_backtest(req: ExprBacktestRequest, request: Request):
             i, n = pass_span
             pr.update_progress(pid, i * total + done, n * total, owner=user)
     try:
-        result, _metrics = await compiled_run(req, on_progress=on_progress)
+        warnings: list[str] = []
+        result, _metrics = await compiled_run(req, on_progress=on_progress, warnings=warnings)
         # Imported lazily to avoid a router import cycle (backtest.py imports many
         # things at module load; expr.py is registered alongside it).
         from ..routers.backtest import _result_to_response, _trades_to_dto
@@ -243,6 +245,7 @@ async def expr_backtest(req: ExprBacktestRequest, request: Request):
                     log.warning("baseline run %r failed", slot, exc_info=True)
                     baselines_out[slot] = None
         response.baselines = baselines_out
+        response.warnings = warnings
         return response
     except pr.BacktestCancelled:
         # Client asked to stop; 499 is distinct from any engine/validation error.
@@ -281,6 +284,16 @@ async def submit_expr_sweep_job(req: ExprBacktestRequest, request: Request):
     except SweepValidationError as e:
         raise HTTPException(e.status_code, e.detail)
     htf_candles = htf_from_dto(req.htfCandles) if req.htfCandles is not None else {}
+    # Rebase any picked line whose anchors fall before this run's first candle,
+    # BEFORE request_instances / the req_dict snapshot workers rebuild from —
+    # a pool worker has no loader of its own, so it must see the already-rebased
+    # DTOs. Warnings have nowhere to surface on an async job submit response.
+    await rebase_lines(
+        {k: v for k, v in req.lines.items() if v.epic == req.epic},
+        first_ms=int(candles[0].time.timestamp() * 1000),
+        side=req.priceSide or "mid",
+        loader=deps.load_alert_bars,
+    )
     # Pool workers do zero network: fetch the rows' @tf set here so they inherit
     # a complete dict (HTF is combo-invariant — timeframes are name tokens,
     # never sweepable literals). Shipped htfCandles ride along untouched.
@@ -339,6 +352,14 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest, request: Request):
     except SweepValidationError as e:
         raise HTTPException(e.status_code, e.detail)
     htf_candles = htf_from_dto(req.htfCandles) if req.htfCandles is not None else {}
+    # Same as the expr sweep submit: rebase before request_instances / the
+    # req_dict snapshot workers rebuild from.
+    await rebase_lines(
+        {k: v for k, v in req.lines.items() if v.epic == req.epic},
+        first_ms=int(candles[0].time.timestamp() * 1000),
+        side=req.priceSide or "mid",
+        loader=deps.load_alert_bars,
+    )
     # Same as the sweep submit: workers never fetch, so the @tf set must be
     # complete before dispatch.
     try:
@@ -380,12 +401,7 @@ async def expr_series(req: ExprSeriesRequest, request: Request):
     req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     req.broker = deps.resolve_broker(request, req.broker)
     try:
-        instances = request_instances(req)
-    except LineSpecError as e:
-        raise HTTPException(422, {"code": e.code, "message": e.message, "start": 0, "end": 0})
-    try:
         node = parse(req.expr)
-        validate(node, is_exit=False, instances=instances)
     except ExprError as e:
         raise HTTPException(422, {
             "code": e.code, "message": e.message, "start": e.start, "end": e.end,
@@ -411,6 +427,26 @@ async def expr_series(req: ExprSeriesRequest, request: Request):
     candles = await deps._fetch_symbol_candles(
         req.broker, req.epic, req.resolution, bars, req.fromTime, req.toTime, req.priceSide,
     )
+    # Rebase any picked line whose anchors fall before the FETCHED window,
+    # before request_instances resolves req.lines into the instances map (a
+    # line resolved before this would freeze its stale tRef/pRef into the
+    # instance, since parse_lines snapshots the DTOs).
+    warnings = await rebase_lines(
+        {k: v for k, v in req.lines.items() if v.epic == req.epic},
+        first_ms=int(candles[0].time.timestamp() * 1000) if candles else req.fromTime * 1000,
+        side=req.priceSide or "mid",
+        loader=deps.load_alert_bars,
+    )
+    try:
+        instances = request_instances(req)
+    except LineSpecError as e:
+        raise HTTPException(422, {"code": e.code, "message": e.message, "start": 0, "end": 0})
+    try:
+        validate(node, is_exit=False, instances=instances)
+    except ExprError as e:
+        raise HTTPException(422, {
+            "code": e.code, "message": e.message, "start": e.start, "end": e.end,
+        })
     # Plot the left operand of the comparison (Compare.left / Cross.a): the RHS is
     # usually a constant threshold; the LHS is the indicator/candle series. For a
     # chain, plot the first link's left operand (the primary series).
@@ -434,6 +470,7 @@ async def expr_series(req: ExprSeriesRequest, request: Request):
         "times": [int(c.time.timestamp()) for c in candles],
         "values": values,
         "warmup": warmup_bars(node, req.resolution, instances),
+        "warnings": warnings,
     }
 
 
@@ -445,13 +482,7 @@ async def expr_closeness(req: ExprClosenessRequest, request: Request):
     req.displayResolution = canonicalize(req.displayResolution)
     req.broker = deps.resolve_broker(request, req.broker)
     try:
-        instances = request_instances(req)
-    except LineSpecError as e:
-        raise HTTPException(422, {"code": e.code, "message": e.message, "start": 0, "end": 0})
-    try:
         nodes = [parse(expr) for expr in req.rows]
-        for node in nodes:
-            validate(node, is_exit=False, instances=instances)
     except ExprError as e:
         raise HTTPException(422, {
             "code": e.code, "message": e.message, "start": e.start, "end": e.end,
@@ -467,6 +498,28 @@ async def expr_closeness(req: ExprClosenessRequest, request: Request):
     candles = await deps._fetch_symbol_candles(
         req.broker, req.epic, req.baseResolution, bars, req.fromTime, req.toTime, req.priceSide,
     )
+    # Rebase any picked line whose anchors fall before the FETCHED window,
+    # before request_instances resolves req.lines into the instances map (a
+    # line resolved before this would freeze its stale tRef/pRef into the
+    # instance, since parse_lines snapshots the DTOs). Dropped from the
+    # response: a heatmap has nowhere to show a notice.
+    await rebase_lines(
+        {k: v for k, v in req.lines.items() if v.epic == req.epic},
+        first_ms=int(candles[0].time.timestamp() * 1000) if candles else req.fromTime * 1000,
+        side=req.priceSide or "mid",
+        loader=deps.load_alert_bars,
+    )
+    try:
+        instances = request_instances(req)
+    except LineSpecError as e:
+        raise HTTPException(422, {"code": e.code, "message": e.message, "start": 0, "end": 0})
+    try:
+        for node in nodes:
+            validate(node, is_exit=False, instances=instances)
+    except ExprError as e:
+        raise HTTPException(422, {
+            "code": e.code, "message": e.message, "start": e.start, "end": e.end,
+        })
 
     htf: dict[str, list[Candle]] = {}
     for need in htf_needs(nodes, instances, resolution=req.baseResolution):

@@ -209,6 +209,10 @@ class BacktestResponse(BaseModel):
     # e.g. BB Regime's squeeze windows, resolved or not), run-scoped rather
     # than per-trade. Empty for strategies without the hook.
     regions: list[TradeZoneDTO] = []
+    # Non-fatal notices from a server pre-pass (e.g. a picked line whose anchors
+    # fell before the loaded bars and could not be rebased). Empty when nothing
+    # to report.
+    warnings: list[str] = []
 
 
 class SlippageDTO(BaseModel):
@@ -775,6 +779,10 @@ class EvaluateRequest(BaseModel):
 
 class EvaluateResponse(BaseModel):
     actions: list[ActionDTO]
+    # Non-fatal notices from a server pre-pass (e.g. a picked line whose anchors
+    # fell before the loaded bars and could not be rebased). Empty when nothing
+    # to report.
+    warnings: list[str] = []
 
 
 # --- coded strategies: /api/strategies discovery ------------------------------
