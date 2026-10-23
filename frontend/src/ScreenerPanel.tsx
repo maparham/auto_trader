@@ -403,13 +403,16 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   };
 
   /** Rename only: the stored row keeps its own settings, so edits made in the
-   * form since it was loaded are not saved along with the new name. */
+   * form since it was loaded are not saved along with the new name. The row is
+   * re-read first, so a save from another tab since this list loaded is kept. */
   const rename = async (screenName: string) => {
-    const row = saved.find((s) => s.id === currentId);
-    if (!row || savingRef.current) return;
+    const id = currentId;
+    if (!id || !saved.some((s) => s.id === id) || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     try {
+      const row = (await listScreens()).find((s) => s.id === id);
+      if (!row) throw new Error("This preset was deleted elsewhere.");
       const out = await saveScreen(screenName, row, row.id);
       setSaved((all) => all.map((s) => (s.id === out.id ? out : s)));
       setName(out.name);

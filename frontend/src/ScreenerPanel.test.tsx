@@ -422,6 +422,21 @@ describe("ScreenerPanel", () => {
     expect(vi.mocked(saveScreen).mock.calls[2][2]).toBeUndefined();
   });
 
+  it("Rename keeps a save made from another tab since the list loaded", async () => {
+    vi.mocked(listScreens).mockResolvedValue([SAVED]);
+    setup();
+    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Presets"), { target: { value: "s1" } });
+    // Another tab saved new settings over the same preset.
+    vi.mocked(listScreens).mockResolvedValue([{ ...SAVED, expression: "RSI(14) < 10", updated_at: 5 }]);
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const field = screen.getByLabelText("Preset name");
+    fireEvent.change(field, { target: { value: "Renamed" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(saveScreen).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(saveScreen).mock.calls[0]).toMatchObject(["Renamed", { expression: "RSI(14) < 10" }, "s1"]);
+  });
+
   it("asks before deleting, and declining keeps the screen", async () => {
     vi.mocked(listScreens).mockResolvedValue([SAVED]);
     setup();
