@@ -129,7 +129,9 @@ function screenKey(d: ScreenDraft): string {
   return stableJson({
     resolution: d.resolution, source, symbols: source === "allTabs" ? null : d.symbols,
     expression: d.expression, columns: d.columns.map((c) => ({ name: c.name, expression: c.expression })),
-    indicators: d.indicators, includeOpenBar: d.includeOpenBar ?? false, lines: d.lines ?? null,
+    indicators: d.indicators, includeOpenBar: d.includeOpenBar ?? false,
+    // The server returns {} for a screen with no lines; treat it as none.
+    lines: d.lines && Object.keys(d.lines).length ? d.lines : null,
   });
 }
 

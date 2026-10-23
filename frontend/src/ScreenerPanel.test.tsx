@@ -636,6 +636,16 @@ describe("ScreenerPanel picked lines", () => {
     expect(screen.getByLabelText("Condition").getAttribute("data-lines")).toBe("");
   });
 
+  it("a saved screen with an empty lines map is not dirty after loading", async () => {
+    vi.mocked(listScreens).mockResolvedValue([{ ...SAVED, lines: {} }]);
+    setup();
+    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Presets"), { target: { value: "s1" } });
+    const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(true);
+    expect(saveBtn.classList.contains("sc-dirty")).toBe(false);
+  });
+
   it("a picked line appends its id; re-picking the same geometry reuses it", async () => {
     const c = fakeController() as unknown as { indicatorPickResult: Signal<unknown> };
     render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={c as never} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
