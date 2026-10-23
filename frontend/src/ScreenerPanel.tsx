@@ -494,11 +494,10 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
             >
               <option value="" disabled hidden>Open</option>
               <option value={NEW_SCREEN}>New screen</option>
-              {saved.length > 0 && (
-                <optgroup label="Saved screens">
-                  {saved.map((x) => <option key={x.id} value={x.id}>{x.id === currentId ? `${x.name} (open)` : x.name}</option>)}
-                </optgroup>
-              )}
+              {/* A disabled heading row, not an optgroup: the platform menu
+                  indents optgroup items, and every row should line up. */}
+              {saved.length > 0 && <option value="" disabled>Saved screens</option>}
+              {saved.map((x) => <option key={x.id} value={x.id}>{x.id === currentId ? `${x.name} (open)` : x.name}</option>)}
             </select>
           </div>
         </section>
