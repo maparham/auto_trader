@@ -23,10 +23,11 @@ CREATE TABLE IF NOT EXISTS screens (
   indicators TEXT NOT NULL DEFAULT '{}',
   source TEXT NOT NULL DEFAULT 'list',
   open_bar INTEGER NOT NULL DEFAULT 0,
+  lines TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY (user_id, id));
 """
 _COLS = ("id,name,broker,resolution,symbols,expression,columns,created_at,updated_at,"
-         "indicators,source,open_bar")
+         "indicators,source,open_bar,lines")
 
 
 class ScreenStore:
@@ -41,7 +42,8 @@ class ScreenStore:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(screens)")}
         for col, ddl in (("indicators", "TEXT NOT NULL DEFAULT '{}'"),
                          ("source", "TEXT NOT NULL DEFAULT 'list'"),
-                         ("open_bar", "INTEGER NOT NULL DEFAULT 0")):
+                         ("open_bar", "INTEGER NOT NULL DEFAULT 0"),
+                         ("lines", "TEXT NOT NULL DEFAULT '{}'")):
             if col not in cols:
                 conn.execute(f"ALTER TABLE screens ADD COLUMN {col} {ddl}")
                 conn.commit()
@@ -53,7 +55,7 @@ class ScreenStore:
                 "symbols": json.loads(r[4]), "expression": r[5],
                 "columns": json.loads(r[6]), "created_at": r[7], "updated_at": r[8],
                 "indicators": json.loads(r[9] or "{}"), "source": r[10] or "list",
-                "includeOpenBar": bool(r[11])}
+                "includeOpenBar": bool(r[11]), "lines": json.loads(r[12] or "{}")}
 
     def _get_sync(self, conn, user_id: str, screen_id: str) -> dict | None:
         r = conn.execute(f"SELECT {_COLS} FROM screens WHERE user_id=? AND id=?",
@@ -82,13 +84,14 @@ class ScreenStore:
             with self._connect() as conn:
                 conn.execute(
                     "INSERT INTO screens (user_id,id,name,broker,resolution,symbols,expression,"
-                    "columns,created_at,updated_at,indicators,source,open_bar) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "columns,created_at,updated_at,indicators,source,open_bar,lines) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (user_id, sid, data["name"], data["broker"], data["resolution"],
                      json.dumps(data["symbols"]), data["expression"],
                      json.dumps(data["columns"]), now, now,
                      json.dumps(data.get("indicators") or {}),
-                     data.get("source") or "list", int(bool(data.get("includeOpenBar")))))
+                     data.get("source") or "list", int(bool(data.get("includeOpenBar"))),
+                     json.dumps(data.get("lines") or {})))
                 return self._get_sync(conn, user_id, sid)
         return await asyncio.to_thread(op)
 
@@ -97,13 +100,14 @@ class ScreenStore:
             with self._connect() as conn:
                 cur = conn.execute(
                     "UPDATE screens SET name=?, broker=?, resolution=?, symbols=?, "
-                    "expression=?, columns=?, updated_at=?, indicators=?, source=?, open_bar=? "
+                    "expression=?, columns=?, updated_at=?, indicators=?, source=?, open_bar=?, lines=? "
                     "WHERE user_id=? AND id=?",
                     (data["name"], data["broker"], data["resolution"],
                      json.dumps(data["symbols"]), data["expression"],
                      json.dumps(data["columns"]), int(time.time()),
                      json.dumps(data.get("indicators") or {}),
                      data.get("source") or "list", int(bool(data.get("includeOpenBar"))),
+                     json.dumps(data.get("lines") or {}),
                      user_id, screen_id))
                 if cur.rowcount == 0:
                     return None

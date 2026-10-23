@@ -159,14 +159,14 @@ def test_compute_cap_bounds_concurrent_judges(monkeypatch):
     live, peak, lock = [0], [0], threading.Lock()
     real = sj.judge
 
-    def slow_judge(cs, bars, res, htf=None, also_prev=False):
+    def slow_judge(cs, bars, res, htf=None, also_prev=False, **kwargs):
         with lock:
             live[0] += 1
             peak[0] = max(peak[0], live[0])
         try:
             import time as _t
             _t.sleep(0.02)
-            return real(cs, bars, res, htf, also_prev)
+            return real(cs, bars, res, htf, also_prev, **kwargs)
         finally:
             with lock:
                 live[0] -= 1
@@ -195,10 +195,10 @@ def test_cancel_stops_starting_judges(monkeypatch):
     release = threading.Event()
     real = sj.judge
 
-    def slow_judge(cs, bars, res, htf=None, also_prev=False):
+    def slow_judge(cs, bars, res, htf=None, also_prev=False, **kwargs):
         started.append(1)
         release.wait(2)
-        return real(cs, bars, res, htf, also_prev)
+        return real(cs, bars, res, htf, also_prev, **kwargs)
 
     monkeypatch.setattr(sj, "judge", slow_judge)
 

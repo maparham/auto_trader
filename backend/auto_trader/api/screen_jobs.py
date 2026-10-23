@@ -25,6 +25,7 @@ Jobs live only in this process and are dropped an hour after they finish."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
 import uuid
 from collections import defaultdict
@@ -34,9 +35,12 @@ from typing import Awaitable, Callable
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from auto_trader.api.htf_source import HtfNeed, closed_before, fetch_htf, warm_window
+from auto_trader.api.line_rebase import rebase_lines
+from auto_trader.api.schemas import PickedLineDTO
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.core.screen_eval import CompiledScreen, bars_needed, closed_bars, judge
+from auto_trader.strategy.expr.lines import PickedLine
 
 from . import deps
 
@@ -171,8 +175,22 @@ class ScreenJobs:
                 if also_prev and closed_before(pinned, need.tf_s, int(bars[-2].time.timestamp())) < need.need:
                     also_prev = False
                 htf[need.res] = pinned
+            # Picked lines this symbol itself owns may have both anchors
+            # before the loaded range (a screen run long after the pick):
+            # rebase them onto the first bar actually judged. Other symbols'
+            # lines ride along inactive and need no rebase.
+            own_lines = {lid: ln for lid, ln in cs.lines.items()
+                        if ln.epic == epic and (not broker or not ln.broker or ln.broker == broker)}
+            if own_lines:
+                dtos = {lid: PickedLineDTO(**dataclasses.asdict(ln)) for lid, ln in own_lines.items()}
+                warns = await rebase_lines(dtos, first_ms=int(bars[0].time.timestamp() * 1000),
+                                          side=side, loader=self._loader)
+                if warns:
+                    return None, {"epic": epic, "reason": warns[0]}
+                rebased = {lid: PickedLine(**d.model_dump()) for lid, d in dtos.items()}
+                cs = dataclasses.replace(cs, lines={**cs.lines, **rebased})
             async with self._compute:
-                j = await asyncio.to_thread(judge, cs, bars, resolution, htf, also_prev)
+                j = await asyncio.to_thread(judge, cs, bars, resolution, htf, also_prev, epic=epic, broker=broker)
             if j.skip_reason:
                 return None, {"epic": epic, "reason": j.skip_reason}
             if j.matched:

@@ -26,6 +26,7 @@ from auto_trader.indicators.rsi import FORMING_KIND_OF, divergence_pivots, formi
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.evaluate import compile_row, series_of
+from auto_trader.strategy.expr.lines import LineInstance, LineSpecError, PickedLine, line_instances, line_key, parse_lines
 from auto_trader.strategy.expr.parser import parse, parse_value
 from auto_trader.strategy.expr.tfs import TF_RESOLUTIONS, tf_resolution
 from auto_trader.strategy.expr.validate import validate, validate_value
@@ -68,6 +69,9 @@ class CompiledScreen:
     # (label, instance id, output, pin or None) per RSI divergence ref in the
     # condition, so a match can say where its divergence's pivot is.
     divs: list[tuple[str, str, str, str | None]] = field(default_factory=list)
+    # Picked trendlines (L<n>), geometry only; judge() rebuilds per-symbol
+    # LineInstances from these for every symbol it runs against.
+    lines: dict[str, PickedLine] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,9 +115,21 @@ def _check_pins(node: N.Node, src: str, instances: dict[str, ResolvedInstance],
                             f"@{n.tf} is a lower timeframe than this screen's {_label(resolution)}. "
                             f"Run the screen on {n.tf} and pin the higher timeframe instead.",
                             n.start, n.end)
+    # A picked line behaves like a pin at ITS OWN timeframe; check and word
+    # it separately so the generic loop below never blames "An indicator"
+    # for a line, and exclude its timeframe from that loop.
+    line_tfs: set[str] = set()
+    for n in _walk(node):
+        if isinstance(n, N.LineRef) and (inst := instances.get(line_key(n.id))) is not None:
+            tf = inst.line.timeframe
+            if resolution_seconds(tf) < base_s:
+                raise ExprError("screen_tf_lower",
+                                f"{n.id} was picked on {tf}, lower than this screen's {_label(resolution)}. "
+                                f"Run the screen on {tf}.", n.start, n.end)
+            line_tfs.add(tf)
     # Panes pinned in their own settings carry no token, so they get the
     # whole field's span.
-    for tf in sorted(referenced_tfs(node, instances) - {n.tf for n in tokens}):
+    for tf in sorted(referenced_tfs(node, instances) - {n.tf for n in tokens} - line_tfs):
         owner = _pin_owner(tf, instances) or "An indicator"
         res = tf_resolution(tf)
         if res is None:
@@ -200,8 +216,14 @@ def _screen_wording(e: ExprError, src: str) -> ExprError:
 
 def compile_screen(expression: str, columns: list[dict],
                    indicators: dict[str, dict] | None = None,
-                   resolution: str = "DAY") -> CompiledScreen:
-    instances = resolve_instances(indicators or {})
+                   resolution: str = "DAY",
+                   lines: dict[str, dict] | None = None) -> CompiledScreen:
+    try:
+        parsed_lines = parse_lines(lines)
+    except LineSpecError as e:
+        raise ScreenSpecError("expression", 0, ExprError(e.code, e.message, 0, len(expression))) from e
+    instances = {**resolve_instances(indicators or {}),
+                 **{line_key(k): LineInstance(v) for k, v in parsed_lines.items()}}
     try:
         row = parse(expression)
         validate(row, is_exit=False, instances=instances)
@@ -222,12 +244,12 @@ def compile_screen(expression: str, columns: list[dict],
         cols.append((col["name"], node))
     nodes = [row] + [n for _, n in cols]
     # _check_pins already refused every timeframe htf_needs would 422 on.
-    htf = htf_needs(nodes, instances)
+    htf = htf_needs(nodes, instances, resolution=resolution)
     # With the base resolution a pinned term costs 0 base bars: it is computed
     # from its own candles, which the runner fetches separately.
     warm = max(warmup_bars(n, resolution, instances) for n in nodes)
     divs = list(dict.fromkeys(_div_refs(row, instances)))
-    return CompiledScreen(row, expression, cols, warm, instances, htf, divs)
+    return CompiledScreen(row, expression, cols, warm, instances, htf, divs, parsed_lines)
 
 
 def bars_needed(cs: CompiledScreen) -> int:
@@ -245,15 +267,22 @@ def closed_bars(bars: list[Candle], res_seconds: int, now: float) -> list[Candle
 
 
 def judge(cs: CompiledScreen, bars: list[Candle], resolution: str,
-          htf: dict[str, list[Candle]] | None = None, also_prev: bool = False) -> Judgement:
+          htf: dict[str, list[Candle]] | None = None, also_prev: bool = False,
+          *, epic: str = "", broker: str = "") -> Judgement:
     """Judge the last bar. `also_prev`: the last bar is the open one and the
     screen includes it, so the bar before (the last CLOSED one) is judged too
     and either matching is a match; the open bar wins when both hold. Every
-    series is causal, so index last-1 reads what a closed-only run would."""
+    series is causal, so index last-1 reads what a closed-only run would.
+
+    `epic`/`broker` rebuild this symbol's line instances (ACTIVE only for a
+    line picked on this very symbol): `line_instances` cannot raise
+    `line_tf_finer` here, since `_check_pins` already refused any line finer
+    than the screen's own timeframe at compile time."""
     htf = htf or {}
     if len(bars) < cs.warmup + 1:
         return Judgement(False, None, {}, "not enough history")
-    compiled = compile_row(cs.row, bars, resolution, htf, cs.instances, source=cs.source)
+    instances = {**cs.instances, **line_instances(cs.lines, epic=epic, broker=broker, resolution=resolution)}
+    compiled = compile_row(cs.row, bars, resolution, htf, instances, source=cs.source)
     last = len(bars) - 1
     tries = [last] + ([last - 1] if also_prev and last - 1 >= cs.warmup else [])
     at = next((i for i in tries if compiled.evaluate(i, None)), None)
@@ -261,7 +290,7 @@ def judge(cs: CompiledScreen, bars: list[Candle], resolution: str,
         return Judgement(False, int(bars[last].time.timestamp() * 1000), {}, None)
     cols: dict[str, float | None] = {}
     for name, node in cs.columns:
-        v = series_of(node, bars, resolution, htf, cs.instances)[at]
+        v = series_of(node, bars, resolution, htf, instances)[at]
         cols[name] = None if v is None or v != v or v in (float("inf"), float("-inf")) else float(v)
     seen = bars[:at + 1]
     divs = [p for ref in cs.divs if (p := _latest_pivot(cs, ref, seen, htf, resolution))]
