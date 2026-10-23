@@ -35,7 +35,7 @@ describe("SWEEP config", () => {
       });
   });
   it("warms up over a level's whole life", () => {
-    expect(sweepWarmup(SWEEP_DEFAULTS)).toBe(160);
+    expect(sweepWarmup(SWEEP_DEFAULTS)).toBe(163);
     expect(sweepWarmup({ ...SWEEP_DEFAULTS, useVolume: true, volLen: 200 })).toBe(201);
   });
 });
@@ -81,7 +81,7 @@ describe("SWEEP as a rule instance", () => {
     expect(exprInstancesFor(live)).toEqual([
       { id: "SWEEP", outputs: [...SWEEP_OUTPUTS], timeframe: null, detail: "pivot 5/5 · min score 70 · prev day" },
     ]);
-    expect(exprWarmupByRef(live)("SWEEP", "bullSweep")).toBe(160);
+    expect(exprWarmupByRef(live)("SWEEP", "bullSweep")).toBe(163);
     expect(exprWarmupByRef(live)("SWEEP", "bogus")).toBe(0);
   });
   it("re-creates a missing pane with the template defaults", () => {

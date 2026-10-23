@@ -203,7 +203,7 @@ def test_parse_defaults_and_extend():
 
 
 def test_warmup():
-    assert sweep_warmup(SweepConfig(), "bearSweep") == 160
+    assert sweep_warmup(SweepConfig(), "bearSweep") == 163
     assert sweep_warmup(replace(SweepConfig(), use_volume=True, vol_len=200), "score") == 201
     assert sweep_warmup(SweepConfig(), "bogus") == 0
     assert set(SWEEP_OUTPUTS) == {

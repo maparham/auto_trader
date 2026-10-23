@@ -86,11 +86,12 @@ export function parseSweepConfig(calcParams: unknown, extendData?: unknown): Swe
 }
 
 /** ATR (read at i-1), the volume window (read before i), and a level's whole
- * life plus its pivot. Every output shares it. Mirrors backend sweep_warmup. */
+ * life plus its pivot and confirm delay. Confirm outputs lag their flag by
+ * confirmBars. Every output shares it. Mirrors backend sweep_warmup. */
 export function sweepWarmup(cfg: SweepConfig): number {
   return Math.max(
     cfg.atrLen + 1,
     cfg.useVolume ? cfg.volLen + 1 : 0,
-    cfg.levelMaxAge + cfg.pivotLeft + cfg.pivotRight,
+    cfg.levelMaxAge + cfg.pivotLeft + cfg.pivotRight + cfg.confirmBars,
   );
 }

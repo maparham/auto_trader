@@ -114,9 +114,9 @@ on either side, replaces the pending sweep.
 | `barsSince` | value | bars since the last flagged sweep (0 on the flag bar) |
 
 Events are 0 from bar 0, including warmup. `score`, `sweptLevel` and
-`barsSince` are None before the first flag. The click token emits the
-clicked figure's output when `figureKey` names one (a bull box emits
-`bullSweep`), else `bearSweep` (outputs[0]), as SPIKE does.
+`barsSince` are None before the first flag. Only `sweptLevel` is a figure,
+so a legend click gives `sweptLevel` or `bearSweep`, and other outputs are
+typed by hand.
 
 ## Rendering
 
@@ -154,9 +154,10 @@ Frontend:
 - `indicatorTimezone.ts`: `TZ_STAMPED_TYPES`.
 
 Warmup floor:
-`max(atrLen + 1, useVolume ? volLen + 1 : 0, levelMaxAge + pivotLeft + pivotRight)`.
-Previous-day levels add a calendar dependency that no bar count bounds; the
-warmup note says so, as `prev_hl_warmup` does.
+`max(atrLen + 1, useVolume ? volLen + 1 : 0, levelMaxAge + pivotLeft + pivotRight + confirmBars)`.
+Confirm outputs lag their flag by confirmBars. Previous-day levels add a
+calendar dependency that no bar count bounds; the warmup note says so, as
+`prev_hl_warmup` does.
 
 ## Volume caveat
 

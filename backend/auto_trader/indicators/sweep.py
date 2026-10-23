@@ -317,13 +317,14 @@ def sweep_series(
 
 def sweep_warmup(cfg: SweepConfig, output: str) -> int:
     """ATR (read at i-1), the volume window (read before i), and a level's
-    whole life plus its pivot. Previous-day levels add a calendar dependency
-    no bar count bounds, as prev_hl_warmup notes. 0 for an output this config
-    does not expose."""
+    whole life plus its pivot and confirm delay. Confirm outputs lag their
+    flag by confirmBars. Previous-day levels add a calendar dependency no bar
+    count bounds, as prev_hl_warmup notes. 0 for an output this config does
+    not expose."""
     if output not in _OUTPUT_INDEX:
         return 0
     return max(
         cfg.atr_len + 1,
         cfg.vol_len + 1 if cfg.use_volume else 0,
-        cfg.level_max_age + cfg.pivot_left + cfg.pivot_right,
+        cfg.level_max_age + cfg.pivot_left + cfg.pivot_right + cfg.confirm_bars,
     )
