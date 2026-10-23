@@ -19,6 +19,9 @@ export interface ScreenDraft {
   /** Only Save reads it; the run endpoint ignores it. Absent on rows saved
    * before it existed, which load as a list. */
   source?: ScreenSource;
+  /** Judge the still-forming bar too, as the chart draws it. Absent on rows
+   * saved before it existed, which judge closed bars only. */
+  includeOpenBar?: boolean;
 }
 export interface Screen extends ScreenDraft {
   id: string;

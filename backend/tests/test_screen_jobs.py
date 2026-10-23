@@ -322,3 +322,19 @@ def test_a_match_ships_its_divergence_pivots():
         assert m["divergences"] == [{"ref": "RSI.bullDiv", "pivot": int(bars[112].time.timestamp() * 1000),
                                      "barsAgo": 7}]
     asyncio.run(run())
+
+
+def test_include_open_bar_judges_the_forming_bar():
+    # The last daily bar opened an hour ago, so it is still forming.
+    bars = _bars([5, 5, 11])
+    now = bars[-1].time.timestamp() + 3600
+
+    async def run(include_open):
+        jobs = ScreenJobs(loader=_loader({"A": bars}), clock=lambda: now)
+        jid = jobs.start("u1", broker="yfinance", resolution="DAY", side="mid", symbols=["A"],
+                         cs=compile_screen("candle.close > 10", []), include_open=include_open)
+        return (await _finish(jobs, "u1", jid))["result"]["matches"]
+
+    assert asyncio.run(run(False)) == []
+    [m] = asyncio.run(run(True))
+    assert m["bar_time"] == int(bars[-1].time.timestamp() * 1000)

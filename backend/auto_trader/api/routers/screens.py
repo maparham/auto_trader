@@ -42,6 +42,9 @@ class ScreenRunBody(BaseModel):
     columns: list[ColumnBody] = Field(default_factory=list, max_length=8)
     priceSide: Literal["bid", "mid", "ask"] = "mid"
     indicators: dict[str, IndicatorInstanceDTO] = Field(default_factory=dict)
+    # Judge the still-forming bar too, as the chart draws it: results can
+    # change until that bar closes.
+    includeOpenBar: bool = False
 
     @field_validator("symbols")
     @classmethod
@@ -96,7 +99,8 @@ def _data(body: ScreenBody, broker: str) -> dict:
     return {"name": body.name, "broker": broker, "resolution": body.resolution.value,
             "symbols": body.symbols, "expression": body.expression,
             "columns": [c.model_dump() for c in body.columns],
-            "indicators": _indicators(body), "source": body.source}
+            "indicators": _indicators(body), "source": body.source,
+            "includeOpenBar": body.includeOpenBar}
 
 
 @router.get("/api/screens")
@@ -137,7 +141,7 @@ async def run_screen(request: Request, body: ScreenRunBody) -> dict:
     try:
         jid = SCREEN_JOBS.start(deps.current_user(request), broker=broker,
                                 resolution=body.resolution.value, side=body.priceSide,
-                                symbols=symbols, cs=cs)
+                                symbols=symbols, cs=cs, include_open=body.includeOpenBar)
     except JobBusy:
         raise HTTPException(409, "a screen is already running")
     return {"jobId": jid, "total": len(symbols)}

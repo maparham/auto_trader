@@ -108,6 +108,19 @@ function fillAndRun(symbols = "AAPL, ZZZ", expression = "RSI(14) < 30") {
 }
 
 describe("ScreenerPanel", () => {
+  it("sends Include the open bar on Run and restores it from a saved screen", async () => {
+    vi.mocked(listScreens).mockResolvedValue([{ ...SAVED, includeOpenBar: true }]);
+    setup();
+    fillAndRun();
+    fireEvent.click(screen.getByLabelText("Include the open bar"));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(startScreen).toHaveBeenCalled());
+    expect(vi.mocked(startScreen).mock.calls[0][0]).toMatchObject({ includeOpenBar: true });
+    const pickScreen = await screen.findByRole("option", { name: "Saved one" });
+    fireEvent.change(pickScreen.closest("select")!, { target: { value: "s1" } });
+    await waitFor(() => expect((screen.getByLabelText("Include the open bar") as HTMLInputElement).checked).toBe(true));
+  });
+
   it("shows where a matched divergence's pivot is", async () => {
     const pivot = new Date(2026, 9, 22, 16, 0).getTime();
     vi.mocked(pollScreen).mockResolvedValue({

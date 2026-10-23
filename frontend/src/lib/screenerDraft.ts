@@ -19,6 +19,7 @@ export interface ScreenerDraftState {
   resolution: string;
   symbolsText: string;
   source: ScreenerSource;
+  includeOpenBar: boolean;
   tabIds: string[];
   expression: string;
   columns: ScreenColumn[];
@@ -33,6 +34,7 @@ export const EMPTY_SCREENER_DRAFT: ScreenerDraftState = {
   resolution: "DAY",
   symbolsText: "",
   source: "list",
+  includeOpenBar: false,
   tabIds: [],
   expression: "",
   columns: [],

@@ -126,6 +126,8 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   const [symbolsText, setSymbolsText] = useState(initial.symbolsText);
   const [source, setSource] = useState<ScreenerSource>(initial.source);
   const [tabIds, setTabIds] = useState<string[]>(initial.tabIds);
+  // ?? false: drafts held in memory from before this option existed.
+  const [includeOpenBar, setIncludeOpenBar] = useState(initial.includeOpenBar ?? false);
   const [expression, setExpression] = useState(initial.expression);
   const [columns, setColumns] = useState<ScreenColumn[]>(initial.columns);
   // ?? {} covers drafts held in memory from before this change, e.g. across a
@@ -176,6 +178,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   const draft = {
     broker: brokerId, resolution, symbols, expression, columns: sentColumns,
     source: source === "allTabs" ? "allTabs" as const : "list" as const,
+    includeOpenBar,
   };
 
   // The editor's completion/lint list: the copy's own panes first, then
@@ -193,8 +196,8 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   // Mirror the draft and the last completed result into the per-broker store.
   // A run in flight is not kept: the unmount cleanup cancels it.
   useEffect(() => {
-    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, source, tabIds, expression, columns, indicators, result, ranSpec });
-  }, [brokerId, currentId, name, resolution, symbolsText, source, tabIds, expression, columns, indicators, result, ranSpec]);
+    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, source, includeOpenBar, tabIds, expression, columns, indicators, result, ranSpec });
+  }, [brokerId, currentId, name, resolution, symbolsText, source, includeOpenBar, tabIds, expression, columns, indicators, result, ranSpec]);
 
   useEffect(() => {
     listScreens()
@@ -222,6 +225,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     setResolution(s?.resolution ?? "DAY");
     setSymbolsText(s ? s.symbols.join(", ") : "");
     setSource(s?.source === "allTabs" ? "allTabs" : "list");
+    setIncludeOpenBar(s?.includeOpenBar ?? false);
     setExpression(s?.expression ?? "");
     setColumns(s?.columns ?? []);
     setIndicators(s?.indicators ?? {});
@@ -525,7 +529,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
         <section className="sc-section">
           <div className="sc-label">
             <span className="sc-label-name">Condition<InfoTip title="Condition" text={[
-              "Rule checked on each symbol's last closed bar.",
+              "Rule checked on each symbol's last closed bar, or its open bar when included.",
               "Matches are symbols where it is true.",
               "The timeframe sets which bars are used. @W pins a higher one: the value is its last closed bar.",
               "Pins must be the screen's timeframe or higher.",
@@ -563,6 +567,14 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
               )}
             </div>
           )}
+          <label className="sc-open">
+            <input type="checkbox" checked={includeOpenBar} onChange={(e) => setIncludeOpenBar(e.target.checked)} />
+            Include the open bar
+            <InfoTip title="Include the open bar" text={[
+              "Also judge the bar that is still forming, as the chart draws it.",
+              "Matches can change until that bar closes.",
+            ]} />
+          </label>
         </section>
 
         <section className="sc-section">

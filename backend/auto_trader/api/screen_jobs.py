@@ -99,7 +99,7 @@ class ScreenJobs:
             del self._jobs[jid]
 
     def start(self, user_id: str, *, broker: str, resolution: str, side: str,
-              symbols: list[str], cs: CompiledScreen) -> str:
+              symbols: list[str], cs: CompiledScreen, include_open: bool = False) -> str:
         self._prune()
         if any(j.user_id == user_id and j.status == "running" for j in self._jobs.values()):
             raise JobBusy()
@@ -107,7 +107,7 @@ class ScreenJobs:
         job = _Job(user_id=user_id, total=len(symbols))
         self._jobs[jid] = job
         job.task = asyncio.get_running_loop().create_task(
-            self._run(job, broker, resolution, side, symbols, cs))
+            self._run(job, broker, resolution, side, symbols, cs, include_open))
         job.task.add_done_callback(lambda t: self._finalize(job, t))
         return jid
 
@@ -133,7 +133,8 @@ class ScreenJobs:
         job.finished_at = self._clock()
 
     async def _one(self, job: _Job, broker: str, resolution: str, side: str,
-                   epic: str, cs: CompiledScreen, res_s: int) -> tuple[dict | None, dict | None]:
+                   epic: str, cs: CompiledScreen, res_s: int,
+                   include_open: bool = False) -> tuple[dict | None, dict | None]:
         try:
             async with self._sems[broker]:
                 bars, degraded = await self._loader(broker, epic, resolution, side, bars_needed(cs) + 1)
@@ -141,7 +142,9 @@ class ScreenJobs:
                 return None, {"epic": epic, "reason": "broker unavailable, cached bars only"}
             if not bars:
                 return None, {"epic": epic, "reason": "no candles"}
-            bars = closed_bars(list(bars), res_s, self._clock())
+            # The forming bar stays only when the screen asked for it; pinned
+            # alignment still reads only pinned bars closed by its open.
+            bars = list(bars) if include_open else closed_bars(list(bars), res_s, self._clock())
             if not bars:  # a one-bar history whose only bar is still forming
                 return None, {"epic": epic, "reason": "no candles"}
             # Pinned timeframes: one fetch each, each taking the broker slot on
@@ -176,7 +179,7 @@ class ScreenJobs:
             job.done += 1
 
     async def _run(self, job: _Job, broker: str, resolution: str, side: str,
-                   symbols: list[str], cs: CompiledScreen) -> None:
+                   symbols: list[str], cs: CompiledScreen, include_open: bool = False) -> None:
         # No try/except here: whatever this raises (CancelledError, or any
         # other exception, such as resolution_seconds on a bad resolution
         # string) is left to propagate and resolved once, in _finalize, the
@@ -184,7 +187,7 @@ class ScreenJobs:
         t0 = time.perf_counter()
         res_s = resolution_seconds(resolution)
         pairs = await asyncio.gather(*(
-            self._one(job, broker, resolution, side, epic, cs, res_s) for epic in symbols))
+            self._one(job, broker, resolution, side, epic, cs, res_s, include_open) for epic in symbols))
         matches = [m for m, _ in pairs if m]
         skipped = [s for _, s in pairs if s]
         job.result = {"matches": matches, "skipped": skipped,

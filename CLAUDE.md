@@ -255,6 +255,10 @@ typed list, "All tabs" (every open chart tab, resolved at run time) or "Some
 tabs"; a saved screen stores `source` as `list` or `allTabs` only, since tab
 ids are per browser, and always stores the resolved `symbols`. Clicking a
 result row jumps to that epic at the screen's timeframe (App's `onOpen`).
+Screens judge each symbol's last CLOSED bar; "Include the open bar"
+(`includeOpenBar` on the run body and saved row, store column `open_bar`)
+judges the forming bar instead, as the chart draws it, so matches can change
+until it closes.
 
 ### Chart indicators in screens
 

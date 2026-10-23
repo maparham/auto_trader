@@ -77,7 +77,13 @@ def test_old_table_is_migrated(tmp_path):
     s = ScreenStore(path)
     rows = asyncio.run(s.list("u1"))
     assert rows[0]["id"] == "s1" and rows[0]["indicators"] == {}
-    assert rows[0]["source"] == "list"
+    assert rows[0]["source"] == "list" and rows[0]["includeOpenBar"] is False
     upd = asyncio.run(s.update("u1", "s1", {**DATA, "indicators": IND, "source": "allTabs"}))
     assert upd["indicators"] == IND and upd["source"] == "allTabs"
     assert asyncio.run(s.create("u1", DATA))["indicators"] == {}
+
+
+def test_include_open_bar_roundtrip_and_default(store):
+    row = asyncio.run(store.create("u1", {**DATA, "includeOpenBar": True}))
+    assert row["includeOpenBar"] is True
+    assert asyncio.run(store.update("u1", row["id"], DATA))["includeOpenBar"] is False

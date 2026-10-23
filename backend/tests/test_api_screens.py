@@ -154,3 +154,9 @@ def test_save_roundtrips_source_and_refuses_junk():
     assert created["source"] == "allTabs"
     assert client.post("/api/screens", json=BODY).json()["source"] == "list"
     assert client.post("/api/screens", json={**BODY, "source": "tabs"}).status_code == 422
+
+
+def test_save_roundtrips_include_open_bar():
+    created = client.post("/api/screens", json={**BODY, "includeOpenBar": True}).json()
+    assert created["includeOpenBar"] is True
+    assert client.post("/api/screens", json=BODY).json()["includeOpenBar"] is False
