@@ -273,7 +273,8 @@ Pins at the screen's timeframe or coarser (`EMA(50)@W`, a pane pinned in
 its settings) are fetched per symbol through `api/htf_source.py`, the one
 service that also feeds the backtest, sweep, WFO, evaluate and closeness
 paths (`htf_needs` + `fetch_htf` + `closed_before`; `source_htf` for
-shipped-or-fetched with a sufficiency cutoff). Finer pins 422 with
+shipped-or-fetched with a sufficiency cutoff) and the timeframes a coded
+strategy discovers mid-run (`fetch_discovered`, fixed 300-bar warm-up). Finer pins 422 with
 `screen_tf_lower` (run the screen on that timeframe and pin the coarser one
 instead); more than 3 canonical timeframes 422 with `screen_tf_too_many`; a
 symbol with too few closed pinned bars before the judged bar is skipped with
