@@ -23,6 +23,7 @@ import {
   startScreen,
   type Screen,
   type ScreenColumn,
+  type ScreenDivergence,
   type ScreenResult,
 } from "./lib/screens";
 import type { ChartController } from "./lib/chartController";
@@ -75,6 +76,17 @@ function parseSymbols(text: string): string[] {
 function fmt(v: number | null | undefined): string {
   if (v == null) return "n/a";
   return Math.abs(v) >= 100 ? v.toFixed(0) : Number(v.toFixed(2)).toString();
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "22 Oct 16:00 · 5 bars ago", local time like the chart's axis. With more
+ * than one divergence ref the ref leads, so the lines can be told apart. */
+function fmtDivergence(d: ScreenDivergence, withRef: boolean): string {
+  const t = new Date(d.pivot);
+  const hm = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+  const text = `${t.getDate()} ${MONTHS[t.getMonth()]} ${hm} · ${d.barsAgo} bar${d.barsAgo === 1 ? "" : "s"} ago`;
+  return withRef ? `${d.ref}: ${text}` : text;
 }
 
 /** One open chart tab as a symbol source: its cells' epics, in cell order. */
@@ -393,6 +405,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     });
     return ms;
   }, [result, sort]);
+  const showDivs = rows.some((m) => m.divergences?.length);
   const toggleSort = (col: string) =>
     setSort((s) => (s.col === col ? { col, desc: !s.desc } : { col, desc: col !== "epic" }));
 
@@ -640,6 +653,13 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
               <tr>
                 <th onClick={() => toggleSort("epic")}>Symbol</th>
                 {colNames.map((n) => <th key={n} onClick={() => toggleSort(n)}>{n}</th>)}
+                {showDivs && (
+                  <th>
+                    <Tooltip content={["Where the chart labels the divergence.", "The screen fires once the pivot is confirmed, bars later."]}>
+                      <span>Divergence</span>
+                    </Tooltip>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -647,6 +667,13 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
                 <tr key={m.epic} onClick={() => onOpen(m.epic, ranSpec?.resolution ?? resolution)}>
                   <td>{m.epic}</td>
                   {colNames.map((n) => <td key={n}>{fmt(m.columns[n])}</td>)}
+                  {showDivs && (
+                    <td>
+                      {(m.divergences ?? []).map((d) => (
+                        <div key={d.ref}>{fmtDivergence(d, (m.divergences?.length ?? 0) > 1)}</div>
+                      ))}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

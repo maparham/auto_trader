@@ -307,3 +307,18 @@ def test_pinned_fetch_takes_the_broker_cap():
         st = await _finish(jobs, "u1", jid)
         assert st["result"]["stats"]["matched"] == 2
     asyncio.run(run())
+
+
+def test_a_match_ships_its_divergence_pivots():
+    from tests.test_screen_eval import _RSI_PANE, _div_closes
+    bars = _bars(_div_closes())
+
+    async def run():
+        jobs = ScreenJobs(loader=_loader({"A": bars}), clock=lambda: NOW)
+        jid = jobs.start("u1", broker="yfinance", resolution="DAY", side="mid", symbols=["A"],
+                         cs=compile_screen("count(RSI.bullDiv > 0, 5) >= 1", [], _RSI_PANE))
+        st = await _finish(jobs, "u1", jid)
+        [m] = st["result"]["matches"]
+        assert m["divergences"] == [{"ref": "RSI.bullDiv", "pivot": int(bars[112].time.timestamp() * 1000),
+                                     "barsAgo": 7}]
+    asyncio.run(run())

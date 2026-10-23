@@ -6,7 +6,6 @@ from auto_trader.core.models import Candle
 from auto_trader.core.screen_eval import (
     ScreenSpecError, bars_needed, closed_bars, compile_screen, judge,
 )
-from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.warmup import warmup_bars
 
 T0 = datetime(2026, 1, 5, tzinfo=timezone.utc)  # a Monday
@@ -215,3 +214,42 @@ def test_judge_reads_the_pinned_series():
     # Day 15 (the third Monday): week 2 has closed.
     j = judge(cs, _bars(list(range(1, 16)), step_s=86400), "DAY", {"WEEK": weeks})
     assert j.matched and j.columns == {"w": 200.0}
+
+
+def _div_closes():
+    # A sharp drop to a first low, a rebound, then a slow drop to a lower low
+    # with a higher RSI: one bullish divergence, pivots at bars 84 and 112,
+    # confirmed at 117 (pivot + lookbackRight 5). 120 bars in all.
+    closes = [100 + (i % 7) * 0.3 for i in range(80)]
+    p = closes[-1]
+    for step, n in ((-3, 5), (2, 8), (-1, 20), (1.5, 7)):
+        for _ in range(n):
+            p += step
+            closes.append(p)
+    return closes
+
+
+_RSI_PANE = {"RSI": {"type": "RSI", "calcParams": [14], "extendData": {"divergence": {"on": True}}}}
+
+
+def test_a_match_carries_its_latest_divergence_pivot():
+    bars = _bars(_div_closes(), step_s=86400)
+    cs = compile_screen("count(RSI.bullDiv > 0, 5) >= 1", [], _RSI_PANE, resolution="DAY")
+    j = judge(cs, bars, "DAY")
+    assert j.matched
+    assert j.divergences == [{"ref": "RSI.bullDiv", "pivot": int(bars[112].time.timestamp() * 1000), "barsAgo": 7}]
+
+
+def test_divergence_pivot_of_a_pinned_ref_counts_pinned_bars():
+    days = _bars(_div_closes(), step_s=86400)
+    hours = [Candle(time=days[-1].time + timedelta(days=1, hours=k), open=1, high=2, low=0, close=1, volume=1)
+             for k in range(3)]
+    cs = compile_screen("RSI.bullDiv@D >= 0", [], _RSI_PANE, resolution="HOUR")
+    j = judge(cs, hours, "HOUR", {"DAY": days})
+    assert j.matched
+    assert j.divergences == [{"ref": "RSI.bullDiv@D", "pivot": int(days[112].time.timestamp() * 1000), "barsAgo": 7}]
+
+
+def test_no_divergence_ref_means_no_pivots():
+    cs = compile_screen("candle.close > 0", [], resolution="DAY")
+    assert judge(cs, _bars([1, 2, 3], step_s=86400), "DAY").divergences == []

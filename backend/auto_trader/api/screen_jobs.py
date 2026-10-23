@@ -165,7 +165,8 @@ class ScreenJobs:
             if j.skip_reason:
                 return None, {"epic": epic, "reason": j.skip_reason}
             if j.matched:
-                return {"epic": epic, "bar_time": j.bar_time_ms, "columns": j.columns}, None
+                return {"epic": epic, "bar_time": j.bar_time_ms, "columns": j.columns,
+                        "divergences": j.divergences}, None
             return None, None
         except asyncio.CancelledError:
             raise

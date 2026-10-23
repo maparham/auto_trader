@@ -12,7 +12,7 @@ the screen's own `indicators` map."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dataclasses import fields as _dc_fields
 
 from auto_trader.api.htf_source import HtfNeed, _pin_owner, htf_needs
@@ -20,6 +20,8 @@ from auto_trader.api.sweep_apply import referenced_tfs
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.indicators.registry import ResolvedInstance, resolve_instances
+from auto_trader.indicators.rsi import _KIND_OF as _DIV_KINDS
+from auto_trader.indicators.rsi import divergence_pivots, rsi_series_for
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.evaluate import compile_row, series_of
@@ -62,6 +64,9 @@ class CompiledScreen:
     warmup: int
     instances: dict[str, ResolvedInstance]
     htf: list[HtfNeed]
+    # (label, instance id, output, pin or None) per RSI divergence ref in the
+    # condition, so a match can say where its divergence's pivot is.
+    divs: list[tuple[str, str, str, str | None]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +75,8 @@ class Judgement:
     bar_time_ms: int | None
     columns: dict[str, float | None]
     skip_reason: str | None
+    # {"ref", "pivot" (epoch ms), "barsAgo"} per divergence ref, matches only.
+    divergences: list[dict] = field(default_factory=list)
 
 
 def _label(res: str) -> str:
@@ -117,6 +124,46 @@ def _check_pins(node: N.Node, src: str, instances: dict[str, ResolvedInstance],
                             f"{owner} is pinned to {tf} in its settings, lower than this screen's "
                             f"{_label(resolution)}. Run the screen on {tf}, or unpin it on the chart.",
                             0, len(src))
+
+
+def _div_refs(node, instances: dict[str, ResolvedInstance], tf: str | None = None):
+    """(label, id, output, pin) for every RSI divergence ref, with the @tf
+    that encloses it. RSI panes carry no pin of their own."""
+    if isinstance(node, N.Tf):
+        tf = node.tf
+    if isinstance(node, N.IndicatorRef):
+        inst = instances.get(node.instance)
+        if inst is not None and inst.type == "RSI" and node.output in _DIV_KINDS:
+            yield (f"{node.instance}.{node.output}{f'@{tf}' if tf else ''}", node.instance, node.output, tf)
+        return
+    for f in _dc_fields(node):
+        v = getattr(node, f.name)
+        for child in (v if isinstance(v, (list, tuple)) else (v,)):
+            if hasattr(child, "__dataclass_fields__"):
+                yield from _div_refs(child, instances, tf)
+
+
+def _latest_pivot(cs: CompiledScreen, ref: tuple[str, str, str, str | None],
+                  bars: list[Candle], htf: dict[str, list[Candle]]) -> dict | None:
+    """The newest divergence of this ref already confirmed on the judged bar:
+    its right pivot's open time and how many of the ref's own bars ago it is
+    (the chart labels the pivot, `lookbackRight` bars before the event)."""
+    label, iid, output, tf = ref
+    if tf is not None:
+        res = tf_resolution(tf)
+        tf_s = resolution_seconds(res)
+        cutoff = bars[-1].time.timestamp()
+        # Only pinned bars closed by the judged bar's open, as the alignment reads.
+        bars = [c for c in htf.get(res, []) if c.time.timestamp() + tf_s <= cutoff]
+    if not bars:
+        return None
+    cfg = cs.instances[iid].config
+    last = len(bars) - 1
+    pivots = [to for _, to in divergence_pivots(bars, rsi_series_for(cfg, bars), cfg, _DIV_KINDS[output])
+              if to + cfg.lookback_right <= last]
+    if not pivots:
+        return None
+    return {"ref": label, "pivot": int(bars[pivots[-1]].time.timestamp() * 1000), "barsAgo": last - pivots[-1]}
 
 
 def _cap_tfs(seen: set[str], node: N.Node, src: str,
@@ -167,7 +214,8 @@ def compile_screen(expression: str, columns: list[dict],
     # With the base resolution a pinned term costs 0 base bars: it is computed
     # from its own candles, which the runner fetches separately.
     warm = max(warmup_bars(n, resolution, instances) for n in nodes)
-    return CompiledScreen(row, expression, cols, warm, instances, htf)
+    divs = list(dict.fromkeys(_div_refs(row, instances)))
+    return CompiledScreen(row, expression, cols, warm, instances, htf, divs)
 
 
 def bars_needed(cs: CompiledScreen) -> int:
@@ -198,4 +246,5 @@ def judge(cs: CompiledScreen, bars: list[Candle], resolution: str,
         for name, node in cs.columns:
             v = series_of(node, bars, resolution, htf, cs.instances)[last]
             cols[name] = None if v is None or v != v or v in (float("inf"), float("-inf")) else float(v)
-    return Judgement(bool(matched), bar_ms, cols, None)
+    divs = [p for ref in cs.divs if (p := _latest_pivot(cs, ref, bars, htf))] if matched else []
+    return Judgement(bool(matched), bar_ms, cols, None, divs)

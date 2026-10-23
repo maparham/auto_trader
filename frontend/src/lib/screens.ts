@@ -26,7 +26,16 @@ export interface Screen extends ScreenDraft {
   created_at: number;
   updated_at: number;
 }
-export interface ScreenMatch { epic: string; bar_time: number; columns: Record<string, number | null> }
+/** The newest divergence a matched RSI divergence ref has confirmed: its
+ * right pivot (where the chart labels it) and how many of the ref's own bars
+ * before the judged bar that pivot sits. */
+export interface ScreenDivergence { ref: string; pivot: number; barsAgo: number }
+export interface ScreenMatch {
+  epic: string;
+  bar_time: number;
+  columns: Record<string, number | null>;
+  divergences?: ScreenDivergence[];
+}
 export interface ScreenResult {
   matches: ScreenMatch[];
   skipped: { epic: string; reason: string }[];

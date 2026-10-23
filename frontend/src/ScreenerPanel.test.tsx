@@ -108,6 +108,23 @@ function fillAndRun(symbols = "AAPL, ZZZ", expression = "RSI(14) < 30") {
 }
 
 describe("ScreenerPanel", () => {
+  it("shows where a matched divergence's pivot is", async () => {
+    const pivot = new Date(2026, 9, 22, 16, 0).getTime();
+    vi.mocked(pollScreen).mockResolvedValue({
+      ...DEFAULT_POLL_RESULT,
+      result: {
+        ...DEFAULT_POLL_RESULT.result,
+        matches: [{ epic: "NVDA", bar_time: 1, columns: {}, divergences: [{ ref: "RSI.bullDiv", pivot, barsAgo: 5 }] }],
+      },
+    });
+    setup();
+    fillAndRun("NVDA", "RSI.bullDiv > 0");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("NVDA")).toBeTruthy());
+    expect(screen.getByText("Divergence")).toBeTruthy();
+    expect(screen.getByText("22 Oct 16:00 · 5 bars ago")).toBeTruthy();
+  });
+
   it("runs a screen and lists matches and skipped", async () => {
     const { onOpen } = setup();
     fillAndRun();
