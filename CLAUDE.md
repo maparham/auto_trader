@@ -256,8 +256,9 @@ a new screen), "Selected tabs", or a typed list; a saved screen stores `source` 
 ids are per browser, and always stores the resolved `symbols`. Clicking a
 result row jumps to that epic at the screen's timeframe (App's `onOpen`).
 "Include the open bar" (`includeOpenBar` on the run body and saved row,
-store column `open_bar`) judges the forming bar, as the chart draws it, so
-matches can change until it closes. A new screen has it on; off, and on every
+store column `open_bar`) judges the forming bar as well as the last closed
+one (either matching is a match; `judge(also_prev=True)`), as the chart draws
+it, so matches can change until it closes. A new screen has it on; off, and on every
 row saved before it existed, a screen judges the last CLOSED bar.
 
 ### Chart indicators in screens

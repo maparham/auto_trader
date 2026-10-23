@@ -142,9 +142,12 @@ class ScreenJobs:
                 return None, {"epic": epic, "reason": "broker unavailable, cached bars only"}
             if not bars:
                 return None, {"epic": epic, "reason": "no candles"}
-            # The forming bar stays only when the screen asked for it; pinned
+            # The forming bar stays only when the screen asked for it, and then
+            # the last closed bar is judged too (judge's also_prev); pinned
             # alignment still reads only pinned bars closed by its open.
-            bars = list(bars) if include_open else closed_bars(list(bars), res_s, self._clock())
+            closed = closed_bars(list(bars), res_s, self._clock())
+            also_prev = include_open and len(closed) < len(bars)
+            bars = list(bars) if include_open else closed
             if not bars:  # a one-bar history whose only bar is still forming
                 return None, {"epic": epic, "reason": "no candles"}
             # Pinned timeframes: one fetch each, each taking the broker slot on
@@ -164,7 +167,7 @@ class ScreenJobs:
                     return None, {"epic": epic, "reason": f"not enough @{need.tf} history"}
                 htf[need.res] = pinned
             async with self._compute:
-                j = await asyncio.to_thread(judge, cs, bars, resolution, htf)
+                j = await asyncio.to_thread(judge, cs, bars, resolution, htf, also_prev)
             if j.skip_reason:
                 return None, {"epic": epic, "reason": j.skip_reason}
             if j.matched:

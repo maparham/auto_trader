@@ -159,14 +159,14 @@ def test_compute_cap_bounds_concurrent_judges(monkeypatch):
     live, peak, lock = [0], [0], threading.Lock()
     real = sj.judge
 
-    def slow_judge(cs, bars, res, htf=None):
+    def slow_judge(cs, bars, res, htf=None, also_prev=False):
         with lock:
             live[0] += 1
             peak[0] = max(peak[0], live[0])
         try:
             import time as _t
             _t.sleep(0.02)
-            return real(cs, bars, res, htf)
+            return real(cs, bars, res, htf, also_prev)
         finally:
             with lock:
                 live[0] -= 1
@@ -195,10 +195,10 @@ def test_cancel_stops_starting_judges(monkeypatch):
     release = threading.Event()
     real = sj.judge
 
-    def slow_judge(cs, bars, res, htf=None):
+    def slow_judge(cs, bars, res, htf=None, also_prev=False):
         started.append(1)
         release.wait(2)
-        return real(cs, bars, res, htf)
+        return real(cs, bars, res, htf, also_prev)
 
     monkeypatch.setattr(sj, "judge", slow_judge)
 
@@ -338,3 +338,20 @@ def test_include_open_bar_judges_the_forming_bar():
     assert asyncio.run(run(False)) == []
     [m] = asyncio.run(run(True))
     assert m["bar_time"] == int(bars[-1].time.timestamp() * 1000)
+
+
+def test_include_open_bar_still_matches_on_the_last_closed_bar():
+    # Including the open bar adds a bar to judge; it never drops the last
+    # closed one. Here only the closed bar holds.
+    bars = _bars([5, 11, 5])
+    now = bars[-1].time.timestamp() + 3600
+
+    async def run():
+        jobs = ScreenJobs(loader=_loader({"A": bars}), clock=lambda: now)
+        jid = jobs.start("u1", broker="yfinance", resolution="DAY", side="mid", symbols=["A"],
+                         cs=compile_screen("candle.close > 10", [{"name": "c", "expression": "candle.close"}]),
+                         include_open=True)
+        return (await _finish(jobs, "u1", jid))["result"]["matches"]
+
+    [m] = asyncio.run(run())
+    assert m["bar_time"] == int(bars[1].time.timestamp() * 1000) and m["columns"] == {"c": 11.0}

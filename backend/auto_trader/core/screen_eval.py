@@ -240,18 +240,24 @@ def closed_bars(bars: list[Candle], res_seconds: int, now: float) -> list[Candle
 
 
 def judge(cs: CompiledScreen, bars: list[Candle], resolution: str,
-          htf: dict[str, list[Candle]] | None = None) -> Judgement:
+          htf: dict[str, list[Candle]] | None = None, also_prev: bool = False) -> Judgement:
+    """Judge the last bar. `also_prev`: the last bar is the open one and the
+    screen includes it, so the bar before (the last CLOSED one) is judged too
+    and either matching is a match; the open bar wins when both hold. Every
+    series is causal, so index last-1 reads what a closed-only run would."""
     htf = htf or {}
     if len(bars) < cs.warmup + 1:
         return Judgement(False, None, {}, "not enough history")
     compiled = compile_row(cs.row, bars, resolution, htf, cs.instances, source=cs.source)
     last = len(bars) - 1
-    matched = compiled.evaluate(last, None)
-    bar_ms = int(bars[last].time.timestamp() * 1000)
+    tries = [last] + ([last - 1] if also_prev and last - 1 >= cs.warmup else [])
+    at = next((i for i in tries if compiled.evaluate(i, None)), None)
+    if at is None:
+        return Judgement(False, int(bars[last].time.timestamp() * 1000), {}, None)
     cols: dict[str, float | None] = {}
-    if matched:
-        for name, node in cs.columns:
-            v = series_of(node, bars, resolution, htf, cs.instances)[last]
-            cols[name] = None if v is None or v != v or v in (float("inf"), float("-inf")) else float(v)
-    divs = [p for ref in cs.divs if (p := _latest_pivot(cs, ref, bars, htf))] if matched else []
-    return Judgement(bool(matched), bar_ms, cols, None, divs)
+    for name, node in cs.columns:
+        v = series_of(node, bars, resolution, htf, cs.instances)[at]
+        cols[name] = None if v is None or v != v or v in (float("inf"), float("-inf")) else float(v)
+    seen = bars[:at + 1]
+    divs = [p for ref in cs.divs if (p := _latest_pivot(cs, ref, seen, htf))]
+    return Judgement(True, int(bars[at].time.timestamp() * 1000), cols, None, divs)
