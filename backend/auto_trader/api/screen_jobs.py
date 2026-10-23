@@ -146,7 +146,7 @@ class ScreenJobs:
             # the last closed bar is judged too (judge's also_prev); pinned
             # alignment still reads only pinned bars closed by its open.
             closed = closed_bars(list(bars), res_s, self._clock())
-            also_prev = include_open and len(closed) < len(bars)
+            also_prev = include_open and 0 < len(closed) < len(bars)
             bars = list(bars) if include_open else closed
             if not bars:  # a one-bar history whose only bar is still forming
                 return None, {"epic": epic, "reason": "no candles"}
@@ -165,6 +165,11 @@ class ScreenJobs:
                     return None, {"epic": epic, "reason": "broker unavailable, cached bars only"}
                 if closed_before(pinned, need.tf_s, cutoff) < need.need:
                     return None, {"epic": epic, "reason": f"not enough @{need.tf} history"}
+                # The closed bar judged beside the open one reads one pinned
+                # bar fewer when the open bar starts on a pinned close; short
+                # of history, it is left out rather than judged under-warmed.
+                if also_prev and closed_before(pinned, need.tf_s, int(bars[-2].time.timestamp())) < need.need:
+                    also_prev = False
                 htf[need.res] = pinned
             async with self._compute:
                 j = await asyncio.to_thread(judge, cs, bars, resolution, htf, also_prev)

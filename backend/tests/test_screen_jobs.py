@@ -355,3 +355,21 @@ def test_include_open_bar_still_matches_on_the_last_closed_bar():
 
     [m] = asyncio.run(run())
     assert m["bar_time"] == int(bars[1].time.timestamp() * 1000) and m["columns"] == {"c": 11.0}
+
+
+def test_include_open_bar_skips_the_closed_bar_short_of_pinned_history():
+    # The open daily bar is a Monday, the 4th weekly close: it has the 4 weekly
+    # bars EMA(3)@W needs, the closed Sunday before it only 3, so that bar is
+    # not judged (it would read an under-warmed EMA). Only it holds the close.
+    days = [Candle(time=MONDAY + timedelta(days=k), open=c, high=c, low=c, close=c, volume=1.0)
+            for k, c in enumerate([1] * 27 + [11, 5])]
+    now = days[-1].time.timestamp() + 3600
+
+    async def run():
+        jobs = ScreenJobs(loader=_loader({"A": days}), htf_loader=_htf_loader({"A": _weeks([100] * 4)}),
+                          clock=lambda: now)
+        jid = jobs.start("u1", **_pinned(["A"], "EMA(3)@W > 0 and candle.close > 10"), include_open=True)
+        return (await _finish(jobs, "u1", jid))["result"]
+
+    r = asyncio.run(run())
+    assert r["matches"] == [] and r["skipped"] == []
