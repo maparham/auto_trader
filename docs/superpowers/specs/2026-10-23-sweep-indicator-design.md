@@ -61,12 +61,13 @@ parsers); SWEEP joins `TZ_STAMPED_TYPES` in
   (a breakout kills it too). Every level crossed on that bar dies, and only
   the highest crossed level is a sweep candidate. Low levels mirror this
   with `low < L`.
-- A level also dies when it is older than `levelMaxAge` bars since birth.
+- A level also dies once `i - born > levelMaxAge`.
 
 ## Per-bar detection
 
-Order within bar i: births first, then crossings, then expiry, then confirm
-bookkeeping.
+Order within bar i: births, then expiry (a level is live while
+`i - born <= levelMaxAge`), then crossings and scoring, then the confirm check
+of the already-pending sweep, then recording this bar's flag.
 
 Bear candidate: the highest live high level L with `high[i] > L`. It is a
 sweep when `close[i] < L`. If the close is not below L it is a breakout: the
@@ -122,9 +123,15 @@ clicked figure's output when `figureKey` names one (a bull box emits
 - Flagged candle: translucent box over its high/low range, red for bear,
   green for bull, alpha scaled by score.
 - Swept level: dashed segment from the level's start bar to the sweep bar.
+- The chart redraws SWEEP on a chart-timezone change, as it does PREV_HL
+  (ChartCore's zone effect), and resyncs linked alerts.
 - Confirmed: small tick marker above or below the sweep candle.
-- Tooltip on the flagged bar: short lines naming the level source (pivot or
-  previous day), wick %, range in ATRs, volume z when on, score.
+- Readout: chart instances share the app legend (`legendTooltipSource`).
+  Only `sweptLevel` is a figure (0/1 events or counts as overlay figures
+  would crush the price axis autoscale, SPIKE's rule), so the legend shows
+  the swept level and the "why" is a small chip over each flagged candle when bars are at least 5 px
+  wide, reading the rounded score and the level source ("72 pivot",
+  "81 prev day"). A `showLabels` extend toggle (default on) hides the chips.
 - Draw culls to the visible range and clips strokes (chart draw perf rules).
 
 ## Registration
