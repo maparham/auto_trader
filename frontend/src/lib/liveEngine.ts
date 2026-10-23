@@ -60,7 +60,15 @@ const realDeps: CycleDeps = {
 };
 
 /** One closed-bar cycle: reconcile -> evaluate -> place. Returns the next state.
- *  All I/O is injected so this is unit-testable without network or WS. */
+ *  All I/O is injected so this is unit-testable without network or WS.
+ *  `persist` is the armed snapshot to write back (picked lines rebased). The
+ *  cycle never writes storage itself: a disarm can land during any await, so
+ *  the caller persists only under its own not-cancelled guard (commitCycle). */
+export interface CycleResult {
+  state: LiveState;
+  persist?: ArmedSnapshot;
+}
+
 export async function runOneCycle(
   state: LiveState,
   bars: KBar[],
@@ -69,7 +77,7 @@ export async function runOneCycle(
   epic: string,
   deps: CycleDeps = realDeps,
   brokerId?: string,
-): Promise<{ state: LiveState }> {
+): Promise<CycleResult> {
   if (state.status !== "armed") return { state };
   const base = activeRules(state);
   if (!base) return { state };
@@ -92,7 +100,8 @@ export async function runOneCycle(
   // Picked lines: move an aging reference bar to the newest bar BEFORE the
   // request is built, in both the armed snapshot and the open position's
   // vintage (each rebased off its own lines, so a re-armed snapshot never
-  // inherits the vintage's). Persist the snapshot so a reload resumes from it.
+  // inherits the vintage's). The rebased snapshot is handed back as `persist`
+  // so a reload resumes from it; never saved here (see CycleResult).
   const rebaseSnap = (s: ArmedSnapshot | null): ArmedSnapshot | null => {
     const moved = s ? rebaseLines(s.cfg.lines, bars, resolution) : null;
     return s && moved ? { ...s, cfg: { ...s.cfg, lines: moved } } : s;
@@ -103,12 +112,10 @@ export async function runOneCycle(
     : rebaseSnap(reconciled.positionVintage);
   if (rebasedSnapshot !== reconciled.snapshot || rebasedVintage !== reconciled.positionVintage) {
     reconciled = { ...reconciled, snapshot: rebasedSnapshot, positionVintage: rebasedVintage };
-    if (rebasedSnapshot && rebasedSnapshot !== state.snapshot) {
-      saveArmed(epic, rebasedSnapshot.account, rebasedSnapshot);
-    }
   }
+  const persist = rebasedSnapshot && rebasedSnapshot !== state.snapshot ? rebasedSnapshot : undefined;
   const snap = activeRules(reconciled);
-  if (!snap) return { state: reconciled };
+  if (!snap) return { persist, state: reconciled };
 
   const position = open
     ? {
@@ -134,6 +141,7 @@ export async function runOneCycle(
   // believes nothing is armed. Refuse the cycle outright instead.
   if (cfg.mode === "coded" && !cfg.codedStrategy) {
     return {
+      persist,
       state: appendLog(reconciled, barTsSec, "coded mode but no strategy selected — not trading"),
     };
   }
@@ -227,12 +235,12 @@ export async function runOneCycle(
     ({ actions, warnings = [] } = await deps.evaluateStrategy(req));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return { state: appendLog(reconciled, barTsSec, `evaluate failed: ${msg}`) };
+    return { persist, state: appendLog(reconciled, barTsSec, `evaluate failed: ${msg}`) };
   }
   let next: LiveState = { ...reconciled, lastEvalSec: barTsSec };
   for (const w of warnings) next = appendLog(next, barTsSec, w);
   if (actions.length === 0) {
-    return { state: appendLog(next, barTsSec, "no signal") };
+    return { persist, state: appendLog(next, barTsSec, "no signal") };
   }
 
   const outcomes = await deps.placeActions(actions, {
@@ -271,7 +279,7 @@ export async function runOneCycle(
     }
     next = appendLog(next, barTsSec, `${a.kind} ${a.leg} ${a.side}`);
   }
-  return { state: next };
+  return { persist, state: next };
 }
 
 export function armedKey(epic: string, account: string): string {
@@ -279,6 +287,13 @@ export function armedKey(epic: string, account: string): string {
 }
 export function saveArmed(epic: string, account: string, snap: ArmedSnapshot | null): void {
   save(armedKey(epic, account), snap);
+}
+/** Apply a finished cycle: state first, then the rebased snapshot, if any. Only
+ *  call it while the engine is still running (armLiveEngine's !cancelled guard),
+ *  or a disarm that landed mid-cycle would be undone on the next reload. */
+export function commitCycle(epic: string, result: CycleResult, setState: (s: LiveState) => void): void {
+  setState(result.state);
+  if (result.persist) saveArmed(epic, result.persist.account, result.persist);
 }
 export function loadArmed(epic: string, account: string): ArmedSnapshot | null {
   return load<ArmedSnapshot | null>(armedKey(epic, account), null);
@@ -356,7 +371,7 @@ export function armLiveEngine(params: {
     running = true;
     const barTsSec = Math.floor(closedBars[closedBars.length - 1].timestamp / 1000);
     void runOneCycle(getState(), closedBars, barTsSec, resolution, epic, deps, brokerId)
-      .then(({ state }) => { if (!cancelled) setState(state); })
+      .then((result) => { if (!cancelled) commitCycle(epic, result, setState); })
       .catch((e) => {
         // Backstop for anything the inner try/catch doesn't cover (e.g.
         // fetchOpenPositions/buildSeries/placeActions rejecting) — the primary

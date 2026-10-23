@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { initialLiveState, armSnapshot, setPositionVintage } from "./liveState";
 import { defaultBacktestConfig, type Rule } from "./backtestConfig";
 import type { CodedStrategyConfig } from "./codedConfig";
@@ -365,7 +365,8 @@ describe("runOneCycle ships the armed indicators map", () => {
 });
 
 describe("picked lines", async () => {
-  const { rebaseLines } = await import("./liveEngine");
+  const { rebaseLines, commitCycle, loadArmed, saveArmed } = await import("./liveEngine");
+  beforeEach(() => localStorage.clear());
   const H = 3_600_000;
   const bars = Array.from({ length: 1500 }, (_, k) => ({ timestamp: k * H }));
   const line = { epic: "US100", broker: "capital", timeframe: "HOUR", t1: 0, p1: 0, t2: H, p2: 1, slope: 1, tRef: 2 * H, pRef: 2 };
@@ -427,16 +428,67 @@ describe("picked lines", async () => {
     deps.fetchOpenPositions.mockResolvedValue([
       { id: "d1", side: "buy", quantity: 1, priceLevel: 10, openedAt: null },
     ]);
-    const { state } = await runOneCycle(withVintage, kbars, 1499 * 3600, "HOUR", "US100", deps as never);
+    const result = await runOneCycle(withVintage, kbars, 1499 * 3600, "HOUR", "US100", deps as never);
+    const { state } = result;
     const want = { ...line, tRef: 1499 * H, pRef: 2 + 1497 };
     expect(deps.evaluateStrategy.mock.calls[0][0].lines).toEqual({ L1: want });
     expect(state.snapshot?.cfg.lines).toEqual({ L1: want });
     expect(state.positionVintage?.cfg.lines).toEqual({ L1: want });
     // the input state is not mutated
     expect(withVintage.snapshot?.cfg.lines).toEqual({ L1: line });
-    // persisted, so a reload resumes from the rebased reference
-    const { loadArmed } = await import("./liveEngine");
+    // handed back for persisting, but never written by the cycle itself
+    expect(result.persist?.cfg.lines).toEqual({ L1: want });
+    expect(loadArmed("US100", "capital:demo")).toBeNull();
+    // a normal (not cancelled) cycle persists through commitCycle
+    const setState = vi.fn();
+    commitCycle("US100", result, setState);
+    expect(setState).toHaveBeenCalledWith(state);
     expect(loadArmed("US100", "capital:demo")?.cfg.lines).toEqual({ L1: want });
+  });
+
+  it("asks for no write when nothing moved", async () => {
+    const recent = { ...line, tRef: 1400 * H, pRef: 1400 };
+    const cfg = rulesCfg({ L1: recent }, [{ expr: "candle.close > L1", enabled: true }]);
+    const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    const result = await runOneCycle(s, kbars, 1499 * 3600, "HOUR", "US100", flatDeps() as never);
+    expect(result.persist).toBeUndefined();
+    expect(result.state.snapshot).toBe(s.snapshot);
+  });
+
+  it("a disarm during the cycle's await is not undone by the rebase", async () => {
+    const cfg = rulesCfg({ L1: line }, [{ expr: "candle.close > L1", enabled: true }]);
+    const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    saveArmed("US100", "capital:demo", s.snapshot);
+    const deps = flatDeps();
+    // The user disarms while fetchOpenPositions is in flight.
+    deps.fetchOpenPositions.mockImplementation(async () => {
+      saveArmed("US100", "capital:demo", null);
+      return [];
+    });
+    const result = await runOneCycle(s, kbars, 1499 * 3600, "HOUR", "US100", deps as never);
+    expect(result.persist).toBeDefined(); // the rebase did happen
+    // the cycle wrote nothing; the cancelled engine never calls commitCycle
+    expect(loadArmed("US100", "capital:demo")).toBeNull();
+  });
+
+  it("rebases snapshot and vintage each from its own lines", async () => {
+    const vLine = { ...line, tRef: 10 * H, pRef: 100, slope: 2 };
+    const vCfg = rulesCfg({ L1: vLine }, [{ expr: "candle.close > L1", enabled: true }]);
+    const sCfg = rulesCfg({ L1: line }, [{ expr: "candle.close > L1", enabled: true }]);
+    const v1 = armSnapshot(initialLiveState(vCfg, "capital:demo", 1), "s1", 1000);
+    const v2 = armSnapshot({ ...v1, draft: sCfg }, "s1", 2000);
+    expect(v2.snapshot?.cfg.lines).toEqual({ L1: line }); // re-armed with the new line
+    const state = setPositionVintage(v2, v1.snapshot);
+    const deps = flatDeps();
+    deps.fetchOpenPositions.mockResolvedValue([
+      { id: "d1", side: "buy", quantity: 1, priceLevel: 10, openedAt: null },
+    ]);
+    const { state: out } = await runOneCycle(state, kbars, 1499 * 3600, "HOUR", "US100", deps as never);
+    expect(out.snapshot?.cfg.lines).toEqual({ L1: { ...line, tRef: 1499 * H, pRef: 2 + 1497 } });
+    const vWant = { ...vLine, tRef: 1499 * H, pRef: 100 + 2 * 1489 };
+    expect(out.positionVintage?.cfg.lines).toEqual({ L1: vWant });
+    // the open position finishes on its vintage, so the request carries ITS line
+    expect(deps.evaluateStrategy.mock.calls[0][0].lines).toEqual({ L1: vWant });
   });
 
   it("logs each evaluate warning", async () => {
