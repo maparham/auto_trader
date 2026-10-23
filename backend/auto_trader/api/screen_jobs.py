@@ -1,5 +1,6 @@
-"""In-memory screen runs: fetch each symbol's candles through the shared
-candle cache, judge them in a thread, report progress per symbol.
+"""In-memory screen runs: fetch each symbol's candles, and the candles of
+every timeframe the screen pins, through the shared candle cache, judge
+them in a thread, report progress per symbol.
 
 Not the sweep runner on purpose: that ships one candle set per job to
 process workers and sits behind the sweep FairGate, so a screen would queue
@@ -32,6 +33,7 @@ from typing import Awaitable, Callable
 
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from auto_trader.api.htf_source import HtfNeed, closed_before, fetch_htf, warm_window
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.core.screen_eval import CompiledScreen, bars_needed, closed_bars, judge
@@ -39,6 +41,18 @@ from auto_trader.core.screen_eval import CompiledScreen, bars_needed, closed_bar
 from . import deps
 
 Loader = Callable[[str, str, str, str, int], Awaitable[tuple[list[Candle], bool]]]
+HtfLoader = Callable[[str, str, HtfNeed, str, int, int], Awaitable[tuple[list[Candle], bool]]]
+
+
+async def _load_htf(broker: str, epic: str, need: HtfNeed, side: str,
+                    from_ts: int, to_ts: int) -> tuple[list[Candle], bool]:
+    """Default pinned-candle loader: a warm window through the candle cache,
+    reporting the cache's degraded flag like load_alert_bars does."""
+    degraded: dict = {}
+    start, end, n = warm_window(need, from_ts, to_ts)
+    bars = await fetch_htf(need, broker=broker, epic=epic, side=side,
+                           from_ts=start, to_ts=end, bars=n, degraded=degraded)
+    return bars, bool(degraded)
 
 _KEEP_FINISHED_S = 3600
 
@@ -67,9 +81,11 @@ class _Job:
 
 
 class ScreenJobs:
-    def __init__(self, loader: Loader | None = None, per_broker: int = 4,
-                 clock: Callable[[], float] = time.time, per_compute: int = 2) -> None:
+    def __init__(self, loader: Loader | None = None, htf_loader: HtfLoader | None = None,
+                 per_broker: int = 4, clock: Callable[[], float] = time.time,
+                 per_compute: int = 2) -> None:
         self._loader = loader or deps.load_alert_bars
+        self._htf_loader = htf_loader or _load_htf
         self._per_broker = per_broker
         self._clock = clock
         self._sems: dict[str, asyncio.Semaphore] = defaultdict(lambda: asyncio.Semaphore(self._per_broker))
@@ -126,8 +142,26 @@ class ScreenJobs:
             if not bars:
                 return None, {"epic": epic, "reason": "no candles"}
             bars = closed_bars(list(bars), res_s, self._clock())
+            if not bars:  # a one-bar history whose only bar is still forming
+                return None, {"epic": epic, "reason": "no candles"}
+            # Pinned timeframes: one fetch each, each taking the broker slot on
+            # its own (never one hold across several awaits). Sufficiency is
+            # judged at the judged bar's open, the same rule as a backtest's
+            # tradeFromTime; the forming pinned bar closes after now, so the
+            # alignment gate never reads it and it needs no trimming.
+            htf: dict[str, list[Candle]] = {}
+            cutoff = int(bars[-1].time.timestamp())
+            for need in cs.htf:
+                async with self._sems[broker]:
+                    pinned, pinned_degraded = await self._htf_loader(
+                        broker, epic, need, side, int(bars[0].time.timestamp()), int(self._clock()))
+                if pinned_degraded:
+                    return None, {"epic": epic, "reason": "broker unavailable, cached bars only"}
+                if closed_before(pinned, need.tf_s, cutoff) < need.need:
+                    return None, {"epic": epic, "reason": f"not enough @{need.tf} history"}
+                htf[need.res] = pinned
             async with self._compute:
-                j = await asyncio.to_thread(judge, cs, bars, resolution)
+                j = await asyncio.to_thread(judge, cs, bars, resolution, htf)
             if j.skip_reason:
                 return None, {"epic": epic, "reason": j.skip_reason}
             if j.matched:

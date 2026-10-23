@@ -159,14 +159,14 @@ def test_compute_cap_bounds_concurrent_judges(monkeypatch):
     live, peak, lock = [0], [0], threading.Lock()
     real = sj.judge
 
-    def slow_judge(cs, bars, res):
+    def slow_judge(cs, bars, res, htf=None):
         with lock:
             live[0] += 1
             peak[0] = max(peak[0], live[0])
         try:
             import time as _t
             _t.sleep(0.02)
-            return real(cs, bars, res)
+            return real(cs, bars, res, htf)
         finally:
             with lock:
                 live[0] -= 1
@@ -195,10 +195,10 @@ def test_cancel_stops_starting_judges(monkeypatch):
     release = threading.Event()
     real = sj.judge
 
-    def slow_judge(cs, bars, res):
+    def slow_judge(cs, bars, res, htf=None):
         started.append(1)
         release.wait(2)
-        return real(cs, bars, res)
+        return real(cs, bars, res, htf)
 
     monkeypatch.setattr(sj, "judge", slow_judge)
 
@@ -216,3 +216,94 @@ def test_cancel_stops_starting_judges(monkeypatch):
         await _finish(jobs, "u1", jid)
     asyncio.run(run())
     assert len(started) == 2
+
+
+# --- pinned timeframes ---------------------------------------------------------
+
+from auto_trader.api.htf_source import HtfNeed  # noqa: E402,F401  (the loader's third argument)
+
+MONDAY = datetime(2026, 1, 5, tzinfo=timezone.utc)
+
+
+def _days(n, start=MONDAY):
+    return [Candle(time=start + timedelta(days=k), open=1, high=1, low=1, close=1, volume=1.0)
+            for k in range(n)]
+
+
+def _weeks(vals, start=MONDAY):
+    return [Candle(time=start + timedelta(weeks=k), open=v, high=v, low=v, close=v, volume=1.0)
+            for k, v in enumerate(vals)]
+
+
+def _htf_loader(table, calls=None, degraded=False):
+    async def load(broker, epic, need, side, from_ts, to_ts):
+        if calls is not None:
+            calls.append((epic, need.res, from_ts, to_ts))
+        v = table[epic]
+        if isinstance(v, Exception):
+            raise v
+        return v, degraded
+    return load
+
+
+def _pinned(symbols, expr="candle.close@W > 150"):
+    return dict(broker="yfinance", resolution="DAY", side="mid", symbols=symbols,
+                cs=compile_screen(expr, [], resolution="DAY"))
+
+
+def test_pinned_series_reaches_the_judge():
+    async def run():
+        calls = []
+        # Day 15 is the third Monday, so week 2 (close 200) has closed before it.
+        base = {"A": _days(15), "B": _days(15)}
+        wk = {"A": _weeks([100, 200]), "B": _weeks([100, 100])}
+        jobs = ScreenJobs(loader=_loader(base), htf_loader=_htf_loader(wk, calls), clock=lambda: NOW)
+        st = await _finish(jobs, "u1", jobs.start("u1", **_pinned(["A", "B"])))
+        assert [m["epic"] for m in st["result"]["matches"]] == ["A"]
+        a = next(c for c in calls if c[0] == "A")
+        assert a[1] == "WEEK" and a[2] == int(MONDAY.timestamp()) and a[3] == int(NOW)
+    asyncio.run(run())
+
+
+def test_pinned_shortfall_skips():
+    async def run():
+        # Weekly bars that open on the judged day and later: none closed before it.
+        late = _weeks([100, 200], start=MONDAY + timedelta(days=14))
+        jobs = ScreenJobs(loader=_loader({"A": _days(15)}), htf_loader=_htf_loader({"A": late}), clock=lambda: NOW)
+        st = await _finish(jobs, "u1", jobs.start("u1", **_pinned(["A"])))
+        assert st["result"]["skipped"] == [{"epic": "A", "reason": "not enough @W history"}]
+    asyncio.run(run())
+
+
+def test_pinned_degraded_and_error_skip():
+    async def run():
+        jobs = ScreenJobs(loader=_loader({"A": _days(15), "B": _days(15)}),
+                          htf_loader=_htf_loader({"A": _weeks([100, 200]), "B": RuntimeError("boom")}, degraded=True),
+                          clock=lambda: NOW)
+        st = await _finish(jobs, "u1", jobs.start("u1", **_pinned(["A", "B"])))
+        reasons = {s["epic"]: s["reason"] for s in st["result"]["skipped"]}
+        assert reasons == {"A": "broker unavailable, cached bars only", "B": "boom"}
+    asyncio.run(run())
+
+
+def test_pinned_fetch_takes_the_broker_cap():
+    async def run():
+        gate = asyncio.Event()
+        held = []
+
+        async def base(broker, epic, resolution, side, count):
+            return _days(15), False
+
+        async def htf(broker, epic, need, side, from_ts, to_ts):
+            held.append(epic)
+            await gate.wait()
+            return _weeks([100, 200]), False
+
+        jobs = ScreenJobs(loader=base, htf_loader=htf, per_broker=1, clock=lambda: NOW)
+        jid = jobs.start("u1", **_pinned(["A", "B"]))
+        await asyncio.sleep(0.05)
+        assert held == ["A"]  # B's pinned fetch waits for the one slot
+        gate.set()
+        st = await _finish(jobs, "u1", jid)
+        assert st["result"]["stats"]["matched"] == 2
+    asyncio.run(run())
