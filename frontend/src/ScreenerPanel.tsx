@@ -498,7 +498,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
       <div className="sc-form">
         <section className="sc-section">
           <div className="sc-label">
-            <span className="sc-label-name">Screen<InfoTip title="Screen" text={[
+            <span className="sc-label-name">Name<InfoTip title="Name" text={[
               "Save keeps the setup: symbols, timeframe, condition, columns.",
               "Results are not saved. Pick a screen and Run it.",
             ]} /></span>
