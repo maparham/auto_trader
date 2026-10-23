@@ -1,6 +1,7 @@
 // The chart-axis timezone that calendar-bucketed indicators follow (PREV_HL
-// day/week, TIME_HIGHLIGHT windows; only PREV_HL has a registry series, so
-// only PREV_HL is stamped below). A leaf with no imports, so pure modules
+// day/week, SWEEP's prev-day level, TIME_HIGHLIGHT windows; only PREV_HL and
+// SWEEP have a registry series, so only those are stamped below). A leaf with
+// no imports, so pure modules
 // (exprInstances.ts, indicatorAlertInstance.ts) can read it without pulling
 // klinecharts in. ChartCore pushes the user's zone through
 // setIndicatorTimezone; prevHl.ts re-exports both functions for its callers.
@@ -31,7 +32,7 @@ export function getIndicatorTimezone(): string {
 }
 
 // Pane types whose VALUES bucket by calendar day or week in a timezone.
-const TZ_STAMPED_TYPES: ReadonlySet<string> = new Set(["PREV_HL"]);
+const TZ_STAMPED_TYPES: ReadonlySet<string> = new Set(["PREV_HL", "SWEEP"]);
 
 function isValidZone(tz: unknown): tz is string {
   if (typeof tz !== "string" || !tz || tz === "chart") return false;

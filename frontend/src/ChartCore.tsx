@@ -4264,15 +4264,16 @@ export default function ChartCore({
     const candlePane = getIndicatorsByPane(c).get("candle_pane");
     for (const [id, ind] of candlePane ?? []) {
       const t = indTypeOf(ind);
-      if (t !== "PREV_HL" && t !== "TIME_HIGHLIGHT") continue;
+      if (t !== "PREV_HL" && t !== "SWEEP" && t !== "TIME_HIGHLIGHT") continue;
       // Every cell redraws on its own real change; the shared module only says
       // "changed" to the first cell that sees the new zone.
       c.overrideIndicator({ name: id, extendData: { ...(ind.extendData as object) } });
-      // PREV_HL buckets days and weeks in this zone; a linked alert's stored
-      // config (alertInstanceOf's withChartTimezone stamp) goes stale the
-      // moment the zone changes, the same staleness class as AVWAP's anchor (S1).
-      if (t === "PREV_HL" && isRealChange && !hasPaneTimezone(ind.extendData)) {
-        void syncAlertsAfterEdit(scopeRef.current, id, alertInstanceOf("PREV_HL", ind.calcParams, ind.extendData));
+      // PREV_HL buckets days and weeks in this zone, and SWEEP's prev-day
+      // level does too; a linked alert's stored config (alertInstanceOf's
+      // withChartTimezone stamp) goes stale the moment the zone changes, the
+      // same staleness class as AVWAP's anchor (S1).
+      if ((t === "PREV_HL" || t === "SWEEP") && isRealChange && !hasPaneTimezone(ind.extendData)) {
+        void syncAlertsAfterEdit(scopeRef.current, id, alertInstanceOf(t, ind.calcParams, ind.extendData));
       }
     }
   }, [timezone]);

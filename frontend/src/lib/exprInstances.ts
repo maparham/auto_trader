@@ -39,6 +39,7 @@ import {
   srLevelsWarmup,
 } from "./indicators/srLevelsOutputs";
 import { SPIKE_OUTPUTS, parseSpikeConfig, spikeWarmup } from "./indicators/spikeOutputs";
+import { SWEEP_OUTPUTS, parseSweepConfig, sweepWarmup } from "./indicators/sweepOutputs";
 import { RSI_OUTPUTS, parseRsiRefConfig, rsiWarmup } from "./indicators/rsiOutputs";
 import { autoFibOutputs, autoFibWarmup, parseAutoFibConfig } from "./indicators/autoFibOutputs";
 import { LR_OUTPUTS, lrWarmup, parseLrConfig } from "./indicators/lrOutputs";
@@ -69,6 +70,7 @@ export const EXPR_INSTANCE_TYPES: ReadonlySet<string> = new Set([
   "PIVOT_ANALYSIS",
   "SR_LEVELS",
   "SPIKE",
+  "SWEEP",
   "RSI",
   "AUTO_FIB",
   "LR",
@@ -184,7 +186,7 @@ export function synthesizeExprInstances(
     }
     // Defaults mirror the panes' own fallbacks: slopeLengths' [9] (first 5
     // kept, as there), atrLength's 14 (single-length pane).
-    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE, RSI, AUTO_FIB, LR, VWAP, PREV_HL
+    // FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS, SPIKE, SWEEP, RSI, AUTO_FIB, LR, VWAP, PREV_HL
     // and CANDLE_PATTERNS outputs are fixed names or level names, not lengths, so nothing about
     // the pane's params is recoverable from a ref; an empty list takes every default.
     const calcParams =
@@ -194,6 +196,7 @@ export function synthesizeExprInstances(
       type === "PIVOT_ANALYSIS" ||
       type === "SR_LEVELS" ||
       type === "SPIKE" ||
+      type === "SWEEP" ||
       type === "RSI" ||
       type === "AUTO_FIB" ||
       type === "LR" ||
@@ -344,6 +347,12 @@ export function exprWarmupByRef(
       return (SPIKE_OUTPUTS as readonly string[]).includes(output)
         ? spikeWarmup(parseSpikeConfig(inst.calcParams))
         : 0;
+    // Every SWEEP output shares one floor (ATR, volume window, a level's
+    // whole life); an output this pane does not expose costs 0.
+    if (inst.type === "SWEEP")
+      return (SWEEP_OUTPUTS as readonly string[]).includes(output)
+        ? sweepWarmup(parseSweepConfig(inst.calcParams, inst.extendData))
+        : 0;
     // Every AUTO_FIB output shares one floor (ATR(14) warm-up plus a full
     // pivot window); an output the pane's current levels do not expose costs 0.
     if (inst.type === "AUTO_FIB")
@@ -479,6 +488,16 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         // arms a spike and latches consolidation — the SLOPE/ATR detail
         // convention.
         detail: `${cfg.minSpikePct}%/${cfg.spikeBars} bars · flat ${cfg.flatBars} in ${cfg.maxFlatRangePct}% · ${cfg.maxPatternBars} bar life`,
+      });
+      continue;
+    }
+    if (inst.type === "SWEEP") {
+      const cfg = parseSweepConfig(inst.calcParams, inst.extendData);
+      out.push({
+        id: inst.id,
+        outputs: [...SWEEP_OUTPUTS],
+        timeframe: null, // chart-timeframe only (no MTF pin)
+        detail: `pivot ${cfg.pivotLeft}/${cfg.pivotRight} · min score ${cfg.minScore}${cfg.usePrevDay ? " · prev day" : ""}${cfg.useVolume ? " · volume" : ""}`,
       });
       continue;
     }

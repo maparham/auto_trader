@@ -69,3 +69,32 @@ describe("sweepConfirmedAt", () => {
     expect(sweepConfirmedAt(result, 0, 3)).toBe(false);
   });
 });
+
+const { EXPR_INSTANCE_TYPES, exprInstancesFor, exprWarmupByRef, synthesizeExprInstances } = await import("../exprInstances");
+const { chartIndicatorToExprToken } = await import("../exprChartToken");
+const { withChartTimezone, getIndicatorTimezone } = await import("../indicatorTimezone");
+
+describe("SWEEP as a rule instance", () => {
+  const live = [{ id: "SWEEP", type: "SWEEP", calcParams: [5, 5, 150, 50, 14, 1.5, 20, 2, 70, 3], extendData: {} }];
+  it("is an instance type with fixed outputs and one warmup", () => {
+    expect(EXPR_INSTANCE_TYPES.has("SWEEP")).toBe(true);
+    expect(exprInstancesFor(live)).toEqual([
+      { id: "SWEEP", outputs: [...SWEEP_OUTPUTS], timeframe: null, detail: "pivot 5/5 · min score 70 · prev day" },
+    ]);
+    expect(exprWarmupByRef(live)("SWEEP", "bullSweep")).toBe(160);
+    expect(exprWarmupByRef(live)("SWEEP", "bogus")).toBe(0);
+  });
+  it("re-creates a missing pane with the template defaults", () => {
+    expect(synthesizeExprInstances(["SWEEP.bearSweep == 1"], new Set())).toEqual({
+      SWEEP: { type: "SWEEP", calcParams: [], extendData: {} },
+    });
+  });
+  it("turns a click into a ref, honouring the figure key", () => {
+    expect(chartIndicatorToExprToken("SWEEP", [], {}, { instanceId: "SWEEP" })).toBe("SWEEP.bearSweep");
+    expect(chartIndicatorToExprToken("SWEEP", [], {}, { instanceId: "SWEEP", figureKey: "bullSweep" })).toBe("SWEEP.bullSweep");
+  });
+  it("gets the chart zone stamped for the backend", () => {
+    expect(withChartTimezone("SWEEP", {})).toEqual({ tz: getIndicatorTimezone() });
+    expect(withChartTimezone("SWEEP", { tz: "Asia/Tokyo" })).toEqual({ tz: "Asia/Tokyo" });
+  });
+});

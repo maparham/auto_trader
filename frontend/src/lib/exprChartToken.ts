@@ -10,7 +10,7 @@
 //      chart's parameters, e.g. "EMA(9)".
 //   2. INSTANCE REFERENCES for panes whose settings are too rich to restate in a
 //      rule: SLOPE, ATR, FVG, TRENDLINES, PIVOT_BANDS, PIVOT_ANALYSIS, SR_LEVELS,
-//      AUTO_FIB, LR, VWAP, PREV_HL and CANDLE_PATTERNS (the
+//      SWEEP, AUTO_FIB, LR, VWAP, PREV_HL and CANDLE_PATTERNS (the
 //      EXPR_INSTANCE_TYPES set; keep a case here for every member), as
 //      "<instanceId>.<output>" (e.g. "SLOPE.50",
 //      "SLOPE#a1b.accel9"). The rule names the clicked LINE only; the pane stays
@@ -42,6 +42,7 @@ import { PIVOT_BANDS_OUTPUTS } from "./indicators/pivotBandsOutputs";
 import { PIVOT_ANALYSIS_OUTPUTS } from "./indicators/pivotAnalysisOutputs";
 import { SR_LEVELS_OUTPUTS } from "./indicators/srLevelsOutputs";
 import { SPIKE_OUTPUTS } from "./indicators/spikeOutputs";
+import { SWEEP_OUTPUTS } from "./indicators/sweepOutputs";
 import { autoFibOutputs } from "./indicators/autoFibOutputs";
 import { LR_OUTPUTS } from "./indicators/lrOutputs";
 import { VWAP_OUTPUTS } from "./indicators/vwapOutputs";
@@ -290,6 +291,17 @@ export function chartIndicatorToExprToken(
       const output = (SPIKE_OUTPUTS as readonly string[]).includes(key ?? "")
         ? (key as string)
         : SPIKE_OUTPUTS[0];
+      return `${id}.${output}`;
+    }
+    // SWEEP: seven FIXED outputs. A click on a legend figure names it; a
+    // plain click takes bearSweep, an event usable as a rule at once.
+    case "SWEEP": {
+      const id = opts?.instanceId;
+      if (!id) return null;
+      const key = opts?.figureKey;
+      const output = (SWEEP_OUTPUTS as readonly string[]).includes(key ?? "")
+        ? (key as string)
+        : SWEEP_OUTPUTS[0];
       return `${id}.${output}`;
     }
     // AUTO_FIB is figure-less like TRENDLINES, so a click arrives without a
