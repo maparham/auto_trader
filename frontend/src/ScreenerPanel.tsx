@@ -169,7 +169,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   // The editor's completion/lint list: the copy's own panes first, then
   // whatever the focused chart offers that the copy doesn't already hold.
   const chartEditor = useExprInstances(controller);
-  const instances = useMemo(() => editorInstances(indicators, chartEditor), [indicators, chartEditor]);
+  const instances = useMemo(() => editorInstances(indicators, chartEditor, resolution), [indicators, chartEditor, resolution]);
   // The focused chart's live panes, read fresh (not memoized) so Run/Save/
   // Refresh always see the chart as it is right now rather than a stale copy.
   const chartLive = () => (controller?.chart ? liveExprInstances(controller.chart) : []);
@@ -514,7 +514,8 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
             <span className="sc-label-name">Condition<InfoTip title="Condition" text={[
               "Rule checked on each symbol's last closed bar.",
               "Matches are symbols where it is true.",
-              "The timeframe sets which bars are used.",
+              "The timeframe sets which bars are used. @W pins a higher one: the value is its last closed bar.",
+              "Pins must be the screen's timeframe or higher.",
               "Pivot-based outputs see up to 2000 bars, so they can differ from the chart.",
               "Pick a chart indicator with ◎ to use its settings.",
             ]} /></span>

@@ -2,7 +2,8 @@
 // wins for every id it holds; the active chart only supplies ids the copy
 // lacks, so a saved screen applies the settings it was saved with whatever
 // chart is focused. "Refresh from chart" is the one way a copied pane changes.
-import type { ExprInstance } from "./expr/catalog";
+import { tfSeconds, type ExprInstance } from "./expr/catalog";
+import { tfSecondsOf } from "./timeframe";
 import {
   collectExprInstances,
   exprInstancesFor,
@@ -22,12 +23,20 @@ export function copyAsLive(copy: PaneCopy): LiveInstance[] {
 }
 
 /** The editor's list: the copy's panes, then chart panes the copy lacks.
- * Timeframe-pinned panes are dropped: screens refuse them, so the editor
- * should flag them as unknown instead of accepting them. */
-export function editorInstances(copy: PaneCopy, chart: readonly ExprInstance[]): ExprInstance[] {
+ * A pane pinned in its settings stays only when its pin is the screen's
+ * timeframe or coarser: screens refuse finer pins, so the editor should
+ * flag such a ref as unknown instead of accepting it and failing on Run.
+ * A pin tfSeconds cannot read is dropped for the same reason. */
+export function editorInstances(copy: PaneCopy, chart: readonly ExprInstance[], resolution: string): ExprInstance[] {
   const own = exprInstancesFor(copyAsLive(copy));
   const ids = new Set(own.map((i) => i.id));
-  return [...own, ...chart.filter((i) => !ids.has(i.id))].filter((i) => i.timeframe == null);
+  const baseS = tfSecondsOf(resolution) ?? 0;
+  const ok = (i: ExprInstance) => {
+    if (i.timeframe == null) return true;
+    const s = tfSeconds(i.timeframe);
+    return s != null && s >= baseS;
+  };
+  return [...own, ...chart.filter((i) => !ids.has(i.id))].filter(ok);
 }
 
 /** The request's `indicators` map, which also becomes the new copy. */
@@ -59,10 +68,11 @@ export function refreshFromChart(copy: PaneCopy, chartLive: readonly LiveInstanc
  * the raw params are not restated beside it. A pane with no detail (a type
  * `exprInstancesFor` does not recognize) falls back to "<id> (<params>)". */
 export function paneLabels(copy: PaneCopy): string[] {
-  const details = new Map(exprInstancesFor(copyAsLive(copy)).map((i) => [i.id, i.detail] as const));
+  const known = new Map(exprInstancesFor(copyAsLive(copy)).map((i) => [i.id, i] as const));
   return Object.entries(copy).map(([id, p]) => {
-    const detail = details.get(id);
-    if (detail) return `${id} · ${detail}`;
+    const inst = known.get(id);
+    // The pin rides on the id ("FVG @W"): the detail line does not carry it.
+    if (inst?.detail) return `${id}${inst.timeframe ? ` @${inst.timeframe}` : ""} · ${inst.detail}`;
     return p.calcParams.length ? `${id} (${p.calcParams.join(", ")})` : id;
   });
 }

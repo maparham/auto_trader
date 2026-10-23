@@ -367,6 +367,17 @@ describe("ScreenerPanel", () => {
     expect(vi.mocked(startScreen).mock.calls[0][0].symbols).toEqual(["MSFT"]);
   });
 
+  it("offers a coarser pinned pane and sends its settings on Run", async () => {
+    chartPanes.editor = [{ id: "FVG", outputs: ["bull_top"], timeframe: "W" }];
+    chartPanes.live = [{ id: "FVG", type: "FVG", calcParams: [0.25, 500, 10], extendData: { mtf: { timeframe: "W" } } }];
+    render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={fakeController()} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    fillAndRun("AAPL", "FVG.bull_top > 0");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(startScreen).toHaveBeenCalled());
+    expect(vi.mocked(startScreen).mock.calls[0][0].indicators.FVG.extendData).toEqual({ mtf: { timeframe: "W" } });
+    expect(await screen.findByText("FVG @W", { exact: false })).toBeTruthy();
+  });
+
   it("Run sends the referenced chart pane and shows it on the Indicators line", async () => {
     chartPanes.live = [{ id: "RSI", type: "RSI", calcParams: [14], extendData: {} }];
     render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={fakeController()} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);

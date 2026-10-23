@@ -30,14 +30,22 @@ describe("screenerIndicators", () => {
     expect(out.RSI1.calcParams).toEqual([9]);
   });
 
-  it("editor list: copy first, chart adds missing ids, pinned panes dropped", () => {
+  it("editor list: copy first, chart adds missing ids, finer pins dropped, coarser kept", () => {
     const chart = [
       { id: "RSI", outputs: ["value"], timeframe: null },
       { id: "ATR", outputs: ["14"], timeframe: null },
       { id: "SLOPE", outputs: ["5"], timeframe: "1H" },
+      { id: "FVG", outputs: ["bull_top"], timeframe: "W" },
+      { id: "LR", outputs: ["line"], timeframe: "nonsense" },
     ];
-    const ids = editorInstances({ RSI: rsi(14) }, chart).map((i) => i.id);
-    expect(ids).toEqual(["RSI", "ATR"]);
+    const ids = editorInstances({ RSI: rsi(14) }, chart, "DAY").map((i) => i.id);
+    expect(ids).toEqual(["RSI", "ATR", "FVG"]);
+    expect(editorInstances({}, chart, "HOUR").map((i) => i.id)).toEqual(["RSI", "ATR", "SLOPE", "FVG"]);
+  });
+
+  it("label shows a pane's pin", () => {
+    const fvg = { type: "FVG", calcParams: [0.25, 500, 10], extendData: { mtf: { timeframe: "W" } } };
+    expect(paneLabels({ FVG: fvg })[0]).toMatch(/^FVG @W · /);
   });
 
   it("copyAsLive and labels", () => {
