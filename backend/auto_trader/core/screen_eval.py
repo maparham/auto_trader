@@ -19,6 +19,7 @@ from auto_trader.api.htf_source import HtfNeed, _pin_owner, htf_needs
 from auto_trader.api.sweep_apply import referenced_tfs
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
+from auto_trader.indicators.mtf import _close_fn
 from auto_trader.indicators.registry import ResolvedInstance, resolve_instances
 from auto_trader.indicators.rsi import _KIND_OF as _DIV_KINDS
 from auto_trader.indicators.rsi import FORMING_KIND_OF, divergence_pivots, forming_pivots, rsi_series_for
@@ -144,7 +145,7 @@ def _div_refs(node, instances: dict[str, ResolvedInstance], tf: str | None = Non
 
 
 def _latest_pivot(cs: CompiledScreen, ref: tuple[str, str, str, str | None],
-                  bars: list[Candle], htf: dict[str, list[Candle]]) -> dict | None:
+                  bars: list[Candle], htf: dict[str, list[Candle]], resolution: str) -> dict | None:
     """The newest divergence of this ref already confirmed on the judged bar
     (a forming ref: the one it holds on that bar):
     its right pivot's open time and how many of the ref's own bars ago it is
@@ -152,10 +153,14 @@ def _latest_pivot(cs: CompiledScreen, ref: tuple[str, str, str, str | None],
     label, iid, output, tf = ref
     if tf is not None:
         res = tf_resolution(tf)
-        tf_s = resolution_seconds(res)
-        cutoff = bars[-1].time.timestamp()
-        # Only pinned bars closed by the judged bar's open, as the alignment reads.
-        bars = [c for c in htf.get(res, []) if c.time.timestamp() + tf_s <= cutoff]
+        tf_ms = resolution_seconds(res) * 1000
+        cutoff = int(bars[-1].time.timestamp() * 1000)
+        # Only the pinned bars the alignment lets the judged bar read: a
+        # same-timeframe pin at its open, any other at its true close.
+        same_tf = resolution_seconds(resolution) * 1000 == tf_ms
+        close_of = _close_fn(res, tf_ms)
+        bars = [c for c in htf.get(res, [])
+                if (o := int(c.time.timestamp() * 1000)) <= cutoff and (same_tf or close_of(o) <= cutoff)]
     if not bars:
         return None
     cfg = cs.instances[iid].config
@@ -259,5 +264,5 @@ def judge(cs: CompiledScreen, bars: list[Candle], resolution: str,
         v = series_of(node, bars, resolution, htf, cs.instances)[at]
         cols[name] = None if v is None or v != v or v in (float("inf"), float("-inf")) else float(v)
     seen = bars[:at + 1]
-    divs = [p for ref in cs.divs if (p := _latest_pivot(cs, ref, seen, htf))]
+    divs = [p for ref in cs.divs if (p := _latest_pivot(cs, ref, seen, htf, resolution))]
     return Judgement(True, int(bars[at].time.timestamp() * 1000), cols, None, divs)

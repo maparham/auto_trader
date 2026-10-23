@@ -250,6 +250,16 @@ def test_divergence_pivot_of_a_pinned_ref_counts_pinned_bars():
     assert j.divergences == [{"ref": "RSI.bullDiv@D", "pivot": int(days[112].time.timestamp() * 1000), "barsAgo": 7}]
 
 
+def test_divergence_pivot_of_a_same_timeframe_pin_includes_the_judged_bar():
+    # A same-timeframe pin is usable at its open, as the alignment reads it,
+    # so the divergence that confirms on the judged bar is the one reported.
+    days = _bars(_div_closes()[:118], step_s=86400)
+    cs = compile_screen("RSI.bullDiv@D > 0", [], _RSI_PANE, resolution="DAY")
+    j = judge(cs, days, "DAY", {"DAY": days})
+    assert j.matched
+    assert j.divergences == [{"ref": "RSI.bullDiv@D", "pivot": int(days[112].time.timestamp() * 1000), "barsAgo": 5}]
+
+
 def test_no_divergence_ref_means_no_pivots():
     cs = compile_screen("candle.close > 0", [], resolution="DAY")
     assert judge(cs, _bars([1, 2, 3], step_s=86400), "DAY").divergences == []
