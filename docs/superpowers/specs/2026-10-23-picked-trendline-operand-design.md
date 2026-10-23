@@ -19,9 +19,11 @@ alert's dashed line outlives its trendline.
 - Its value starts at its 2nd anchor (t2) and extends right forever. Bars
   before t2 have no value.
 - Usable in backtest rules, live trading rules and the screener.
-- A line belongs to one symbol (epic + broker) and one timeframe. On another
-  symbol its value is absent everywhere. A rule set evaluated on a different
-  timeframe than the line's is refused (422) naming the line's timeframe.
+- A line belongs to one symbol (epic + broker). On another symbol its value is
+  absent everywhere.
+- A line is implicitly pinned to its own timeframe: it is evaluated on that
+  timeframe's bars and aligned onto the rule's bars, like an HTF-pinned pane.
+  A rule on a COARSER timeframe than the line is refused (422).
 - Lines live as rule data (a `lines` map next to the rule text), not as chart
   drawings: a drawing could be dragged or deleted and silently change or break
   the rule.
@@ -37,7 +39,7 @@ interface PickedLine {
   t1: number; p1: number; // anchor 1, bar-open ms + price
   t2: number; p2: number; // anchor 2
   slope: number;          // price per bar of `timeframe`
-  tRef: number; pRef: number; // newest closed bar at pick time, value there
+  tRef: number; pRef: number; // a bar-open ms on `timeframe` and the line's value there
 }
 type Lines = Record<string, PickedLine>; // keys "L1", "L2", ...
 ```
@@ -47,9 +49,15 @@ Geometry comes from the hit segment's `alertLine()`
 alerts use. Picks are refused (toast) where `buildLineAlertDraft` refuses a
 line: seconds and non-native timeframes, or no `alertLine`.
 
+`tRef`/`pRef` is a moving reference (see Rebasing); the anchors and slope never
+change.
+
 Ids are minted per rule holder: the lowest `L<n>` not already in its map.
-Ids are refused by the parser's collision check if they clash with a catalog
-name (none do today).
+`L<digits>` is RESERVED for picked lines: `mintInstanceId` never produces it,
+and pane rename validation (`indicators.ts`, the typed-candidate check)
+refuses it with "L1 is reserved for picked lines". A pane already saved under
+such a name is not migrated; the parser resolves the bare `L<n>` to the line
+and a dotted `L<n>.out` to the pane, so it keeps working.
 
 Caps on every request: at most 16 lines, finite numbers, `t2 > t1`, known
 timeframe; else 422.
@@ -89,14 +97,29 @@ referenced panes. Deleting `L1` from the text therefore drops it.
 New overlay manager `lib/overlays/pickedLines.ts`, modelled on
 `overlays/indicatorAlerts.ts`:
 
-- Wanted set: every line in every holder above whose `epic`/`broker` match
-  the cell. Drawn on any timeframe of that symbol (time-anchored points).
+- Sources: the backtest config, every armed live snapshot, and the screen
+  currently open in the screener panel (working state). Saved screens that
+  are not open do NOT draw, so old screens never clutter charts.
+- Wanted set: every line from those sources whose `epic`/`broker` match the
+  cell, on any timeframe of that symbol (time-anchored points).
+- Dedupe by geometry (`timeframe`, anchors, slope): the same line held as `L1`
+  in the backtest and `L2` in a screen draws once, labelled `L1 · L2`.
 - Points via the same `loadedLinePoints` logic the alert line uses
   (extract it to a shared helper), cut at the chart's last bar.
-- Locked `segment` overlay, id `pickline:<holder>:<id>`, dashed style
-  distinct from the alert line, label `L1` at the right end.
-- Reconciled from the paint loop like `refreshRays`, and when a holder's
-  map changes.
+- Locked `segment` overlay, id `pickline:<geometry hash>`, dashed style
+  distinct from the alert line, label at the right end.
+- Reconciled from the paint loop like `refreshRays`, and when a source
+  changes.
+
+### Rebasing in the live engine
+
+The live engine holds a rolling 1500-bar window (`liveEngine.ts`). On each
+cycle, while `tRef` is still inside the window and more than 500 bars old,
+move it to the newest closed bar (`pRef += slope * n`, `n` = bars between) and
+write the line back into the armed snapshot. The line then never leaves the
+window however long the rule stays armed. Only lines whose timeframe equals
+the engine's resolution are rebased this way; a pinned (finer-timeframe) line
+relies on the server rebase below.
 
 ## Backend
 
@@ -104,31 +127,46 @@ New overlay manager `lib/overlays/pickedLines.ts`, modelled on
   `N.LineRef(id)`. An id missing from the request's `lines` is a compile
   error ("L3 is not one of this rule's lines").
 - Requests: `lines` (optional) on `/api/expr/backtest`, sweep and
-  walk-forward jobs, `/api/expr/series`, `/api/expr/closeness`,
-  `/api/strategy/evaluate`, `/api/screens/run` and saved screens. Validated
-  by one shared pydantic model.
-- Evaluation (`strategy/expr/evaluate.py` `series_of`): if the evaluated
-  symbol differs from the line's, every value is None. Otherwise find the
-  index of `t2` in the candles; failing that, `tRef`. With anchor index `j`
-  and anchor price `q`, value at bar k is `q + slope*(k-j)` for bars at or
-  after t2, None before. If neither anchor is in the candles, all None and the
-  result carries a warning (`line L1 is outside the loaded bars`).
-- Timeframe mismatch between the rule set and a line: 422 at compile time.
+  walk-forward jobs, `/api/expr/series`, `/api/expr/closeness` (including the
+  proximity heatmap, `useProximityHeatmap.ts`), `/api/strategy/evaluate`,
+  `/api/screens/run` and saved screens. Validated by one shared pydantic
+  model.
+- Evaluation (`strategy/expr/evaluate.py` `series_of`), on the line's own
+  timeframe bars (fetched and aligned like an HTF-pinned pane when the rule's
+  timeframe is finer):
+  - Other symbol: every value is None.
+  - Anchor: the first candle at or after `t2` (bisect, not exact match, so a
+    candle gap or a broker's shifted bar times still find it), anchor price
+    `p2`. Failing that, the first candle at or after `tRef`, price `pRef`.
+  - Value at bar k: `q + slope*(k-j)` for bars at or after t2, None before.
+- Server rebase: when neither anchor is inside the candles but `tRef` is older
+  than the first candle, count the bars between them with `bars_since` (the
+  helper line alerts use for their rescue, `alert_indicators.py`) and anchor at
+  the first candle with `pRef + slope*n`. Only when that fetch fails does the
+  line become all None, with a warning in the result (`line L1 could not be
+  placed on the loaded bars`). This covers screens and backtests run long
+  after the pick.
+- Timeframe: a rule whose timeframe is coarser than a line's is a 422 at
+  compile time naming the line's timeframe. The screener, which refuses pins,
+  also refuses a line on a different timeframe than the screen's.
 - Screener: each symbol is judged with the same rule; only the line's own
   symbol can produce values.
+- Walk-forward needs nothing extra: it runs the full range once and slices
+  the results, so anchors stay inside the candles.
 
 ## Testing
 
-- pytest: value math (t2 anchor, tRef fallback, before-t2 None, other symbol
-  None, outside-range warning), parser/compile errors, request validation and
-  caps, timeframe 422.
+- pytest: value math (t2 bisect anchor, tRef fallback, before-t2 None, other
+  symbol None), server rebase via a stubbed `bars_since` (and its failure
+  warning), finer-timeframe alignment, coarser-timeframe 422, screener
+  timeframe 422, parser/compile errors, request validation and caps.
 - vitest (affected files only): pick result to `L<n>` token and map insert,
-  id minting, `collectLineRefs` trimming, autocomplete entries, overlay
-  wanted-set per cell.
+  id minting, reserved-name rename refusal, `collectLineRefs` trimming,
+  autocomplete entries, overlay wanted-set and geometry dedupe, live-engine
+  rebase.
 
 ## Out of scope
 
 - Editing or dragging a picked line.
 - Picking lines from drawings or other indicators.
-- Rebasing `tRef` for long-armed live rules (the t2 anchor covers the normal
-  window; revisit if the warning shows up in practice).
+- Drawing clones for saved screens that are not open.
