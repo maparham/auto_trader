@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import type { SweepPoint } from "./sweepCompute";
 
 vi.mock("klinecharts", () => ({
   registerIndicator: () => {},
@@ -8,8 +9,20 @@ vi.mock("klinecharts", () => ({
 }));
 
 const { SWEEP_OUTPUTS, SWEEP_DEFAULTS, parseSweepConfig, sweepWarmup } = await import("./sweepOutputs");
-const { SWEEP_TEMPLATE } = await import("./sweep");
+const { SWEEP_TEMPLATE, sweepConfirmedAt } = await import("./sweep");
 const { BASE_TEMPLATES, OVERLAY_INDICATORS } = await import("../customIndicators");
+
+// Minimal SweepPoint[] builder for sweepConfirmedAt tests: zeroed flags at
+// every index except the ones a case overrides.
+function points(len: number, overrides: Record<number, Partial<SweepPoint>>): SweepPoint[] {
+  return Array.from({ length: len }, (_, i) => ({
+    bearSweep: 0,
+    bullSweep: 0,
+    bearConfirmed: 0,
+    bullConfirmed: 0,
+    ...overrides[i],
+  }));
+}
 
 describe("SWEEP config", () => {
   it("defaults and falls back like the backend parser", () => {
@@ -33,5 +46,26 @@ describe("SWEEP template", () => {
     expect(OVERLAY_INDICATORS.has("SWEEP")).toBe(true);
     expect(SWEEP_TEMPLATE.calcParams).toEqual([5, 5, 150, 50, 14, 1.5, 20, 2, 70, 3]);
     expect(SWEEP_TEMPLATE.figures?.map((f) => f.key)).toEqual(["sweptLevel"]);
+  });
+});
+
+describe("sweepConfirmedAt", () => {
+  it("still confirms the first sweep when a same-side flag coincides with its confirm bar", () => {
+    // Bar 0 flags a bear sweep. Bar 3 (0 + confirmBars) is ALSO a fresh bear
+    // flag, so barsSince resets to 0 there even though bearConfirmed is
+    // correctly 1 for the original sweep's confirmation.
+    const result = points(5, {
+      0: { bearSweep: 1 },
+      3: { bearSweep: 1, bearConfirmed: 1, barsSince: 0 },
+    });
+    expect(sweepConfirmedAt(result, 0, 3)).toBe(true);
+  });
+
+  it("does not confirm when the confirm bar belongs to the opposite side", () => {
+    const result = points(5, {
+      0: { bearSweep: 1 },
+      3: { bullConfirmed: 1 },
+    });
+    expect(sweepConfirmedAt(result, 0, 3)).toBe(false);
   });
 });

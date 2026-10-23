@@ -36,6 +36,22 @@ function hexWithAlpha(hex: string, alpha: number): string {
   return `${hex}${Math.round(alpha * 255).toString(16).padStart(2, "0")}`;
 }
 
+/** Whether the sweep flagged at bar `i` confirmed on bar `i + confirmBars`.
+ * The side check alone is exact and does NOT need `barsSince === confirmBars`:
+ * confirm fires on the first bar that reaches confirmBars after a flag, and
+ * any later same-direction OR opposite flag cancels the pending sweep before
+ * it can confirm, so a same-side confirm at i + confirmBars can only belong
+ * to the sweep flagged at i. Requiring barsSince === confirmBars too drops
+ * real confirms when a second sweep happens to flag exactly confirmBars bars
+ * later, which resets barsSince to 0 on that very bar. */
+export function sweepConfirmedAt(result: SweepPoint[], i: number, confirmBars: number): boolean {
+  const bear = result[i]?.bearSweep === 1;
+  const bull = result[i]?.bullSweep === 1;
+  if (!bear && !bull) return false;
+  const c = result[i + confirmBars];
+  return !!c && (bear ? c.bearConfirmed === 1 : c.bullConfirmed === 1);
+}
+
 function drawSweep(params: IndicatorDrawParams<SweepPoint, unknown, unknown>): boolean {
   const { ctx, chart, indicator, xAxis, yAxis, bounding } = params;
   const result = (indicator.result ?? []) as SweepPoint[];
@@ -87,9 +103,7 @@ function drawSweep(params: IndicatorDrawParams<SweepPoint, unknown, unknown>): b
     ctx.fillStyle = hexWithAlpha(color, 0.12 + 0.18 * ((p.score ?? 0) / 100));
     ctx.fillRect(x - w / 2, yHigh - 2, w, Math.max(1, yLow - yHigh) + 4);
     // Confirm tick, on the sweep candle, when THIS sweep confirmed.
-    const c = result[i + cfg.confirmBars];
-    const confirmed = c && c.barsSince === cfg.confirmBars && (bear ? c.bearConfirmed === 1 : c.bullConfirmed === 1);
-    if (confirmed) {
+    if (sweepConfirmedAt(result, i, cfg.confirmBars)) {
       const yTick = bear ? yHigh - 8 : yLow + 8;
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
