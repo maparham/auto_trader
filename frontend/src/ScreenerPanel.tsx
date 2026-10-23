@@ -367,7 +367,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
       setCurrentId(row.id);
       setName(row.name);
       setNaming(null);
-      toast(id ? "Screen saved" : `Saved "${row.name}"`);
+      toast(id ? "Preset saved" : `Saved "${row.name}"`);
     } catch (e) {
       explain(e);
     }
@@ -383,7 +383,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
       setSaved((all) => all.map((s) => (s.id === out.id ? out : s)));
       setName(out.name);
       setNaming(null);
-      toast("Screen renamed");
+      toast("Preset renamed");
     } catch (e) {
       explain(e);
     }
@@ -403,9 +403,9 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   const remove = () => {
     const id = currentId;
     if (!id) return;
-    const label = saved.find((s) => s.id === id)?.name || name.trim() || "this screen";
+    const label = saved.find((s) => s.id === id)?.name || name.trim() || "this preset";
     requestConfirm({
-      title: "Delete screen",
+      title: "Delete preset",
       message: `Delete "${label}"? This cannot be undone.`,
       onConfirm: () => {
         void (async () => {
@@ -498,15 +498,15 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
       <div className="sc-form">
         <section className="sc-section">
           <div className="sc-label">
-            <span className="sc-label-name">Name<InfoTip title="Name" text={[
-              "Save keeps the setup: symbols, timeframe, condition, columns.",
-              "Results are not saved. Pick a screen and Run it.",
+            <span className="sc-label-name">Preset<InfoTip title="Preset" text={[
+              "A preset keeps the setup: symbols, timeframe, condition, columns.",
+              "Results are not saved. Pick a preset and Run it.",
             ]} /></span>
             {naming === null && (
               <span className="sc-label-actions">
                 {loaded ? (
                   <>
-                    <Tooltip content={dirty ? "Save changes to this screen" : "No unsaved changes"}>
+                    <Tooltip content={dirty ? "Save changes to this preset" : "No unsaved changes"}>
                       <span>
                         <button className="sc-link" disabled={readOnly || !dirty || !expression.trim()}
                           onClick={() => void save(name, loaded.id)}>Save</button>
@@ -525,11 +525,11 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
         {naming === null ? (
           <div className="sc-row sc-screen-row">
             <select
-              aria-label="Saved screens"
+              aria-label="Presets"
               value={currentId ?? ""}
               onChange={(e) => load(saved.find((s) => s.id === e.target.value) ?? null)}
             >
-              <option value="">New screen</option>
+              <option value="">New preset</option>
               {saved.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             {dirty && <span className="sc-edited">Edited</span>}
@@ -537,9 +537,9 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
         ) : (
           <div className="sc-row sc-screen-row">
             <input
-              aria-label="Screen name"
+              aria-label="Preset name"
               autoFocus
-              placeholder={naming === "rename" ? "New name" : "Name this screen"}
+              placeholder={naming === "rename" ? "New name" : "Name this preset"}
               value={nameDraft}
               maxLength={80}
               onChange={(e) => setNameDraft(e.target.value)}
