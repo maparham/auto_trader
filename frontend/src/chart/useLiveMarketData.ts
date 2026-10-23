@@ -443,6 +443,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // for this broker, epic and timeframe draw (and a switch drops the rest).
     controller.indicatorAlerts.attach(chart, scope, brokerId, symbol.epic, period.resolution);
     controller.indicatorAlerts.reconcile();
+    // Picked-line clones follow the same bind (only this epic's, broker's and
+    // timeframe's lines draw).
+    controller.pickedLineClones.attach(chart, brokerId, symbol.epic, period.resolution);
+    controller.pickedLineClones.reconcile();
     // Backtest markers/equity belong to the previous series — drop the live
     // artifacts immediately (keep the persisted result; rehydrateBacktest below
     // redraws it for the new series once its bars are loaded). Capture the

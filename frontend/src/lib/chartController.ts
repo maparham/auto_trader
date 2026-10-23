@@ -11,6 +11,7 @@
 import type { Chart } from "klinecharts";
 import { OverlayManager } from "./overlays";
 import { IndicatorAlertLines } from "./overlays/indicatorAlerts";
+import { PickedLineClones } from "./overlays/pickedLineClones";
 import { Signal } from "./signals";
 import type { IndicatorInstance } from "./persist";
 import { loadScalePriceOnly, loadPriceStretched, savePriceStretched, loadSnapshotMeta } from "./persist";
@@ -73,6 +74,8 @@ export class ChartController {
   // This cell's indicator value-alert lines (drawn in the indicator's own pane).
   // The sidebar eye ("Hide alert lines") hides them along with the price lines.
   readonly indicatorAlerts = new IndicatorAlertLines(() => this.overlays.getAlertsHidden());
+  // Dashed clones of the picked trendlines a live rule holder still uses.
+  readonly pickedLineClones = new PickedLineClones();
 
   // Read-only snapshot view: true while this cell's scope carries snapshotMeta
   // (a tab restored from a snapshot is a frozen study copy). THE single sentinel

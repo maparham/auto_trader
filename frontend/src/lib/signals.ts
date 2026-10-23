@@ -150,6 +150,11 @@ export const snapshotsGalleryOpen = new Signal<boolean>(false);
  *  snapshotMeta). App/Toolbar subscribe to re-render their gating. */
 export const snapshotViewChanged = new Signal<string>("");
 
+// Bumped by every write of a picked-lines holder (the backtest config, an armed
+// live snapshot, the screener draft) so each chart re-reads the dashed clones
+// it draws for them (PickedLineClones). Unconditional: a bump is cheap.
+export const pickedLinesChanged = new Signal<number>(0);
+
 // Open positions + resting orders (paper env) as a unified TradeView[], kept
 // fresh by a single shared poller (see trading.ts subscribeTrades). The trading
 // panel AND every chart cell subscribe to this one signal so there's exactly one

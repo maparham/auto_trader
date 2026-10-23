@@ -83,6 +83,7 @@ import {
   indicatorSettingsRequest,
   drawingSettingsRequest,
   alertsChanged,
+  pickedLinesChanged,
   openSettings,
   requestSymbolSearch,
   pendingEditsSignal,
@@ -5048,11 +5049,17 @@ export default function ChartCore({
     // goes with the indicator: re-home (or drop) the lines on any add/remove.
     const unsubIndAlertPanes = controller.indicators.subscribe(() => controller.indicatorAlerts.reconcile());
     const unsubIndAlertRemoved = indicatorRemoved.subscribe(() => controller.indicatorAlerts.reconcile());
+    // A rule holder gained or dropped a picked line: re-read the clones.
+    const unsubPickedLines = pickedLinesChanged.subscribe(() => {
+      controller.pickedLineClones.reconcile();
+      handle.redrawRef.current();
+    });
     return () => {
       overlays.setAlertsListener(null);
       unsubAlerts();
       unsubIndAlertPanes();
       unsubIndAlertRemoved();
+      unsubPickedLines();
       ro.disconnect();
       window.removeEventListener("pointerup", onPointerUp);
       if (redrawRaf != null) cancelAnimationFrame(redrawRaf);

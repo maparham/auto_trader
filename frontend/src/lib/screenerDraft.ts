@@ -7,6 +7,7 @@
 import type { ScreenColumn, ScreenResult } from "./screens";
 import type { PaneCopy } from "./screenerIndicators";
 import type { Lines } from "./pickedLines";
+import { pickedLinesChanged } from "./signals";
 
 /** Where a screen's symbols come from: the typed list, every open chart tab
  *  (live, so tabs opened later join the next run), or a picked set of tabs. */
@@ -54,6 +55,7 @@ export function getScreenerDraft(brokerId: string): ScreenerDraftState {
 
 export function setScreenerDraft(brokerId: string, state: ScreenerDraftState): void {
   drafts.set(brokerId, state);
+  pickedLinesChanged.set(pickedLinesChanged.value + 1);
 }
 
 /** Tests only: forget every broker's draft. */

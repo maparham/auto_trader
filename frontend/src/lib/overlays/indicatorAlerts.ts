@@ -25,7 +25,7 @@ const ovId = (alertId: string) => `indalert:${alertId}`;
 const rayId = (alertId: string) => `lnalert:${alertId}`;
 
 type Drawn = { paneId: string; value: number };
-type RayPoints = [{ timestamp: number; value: number }, { timestamp: number; value: number }];
+export type RayPoints = [{ timestamp: number; value: number }, { timestamp: number; value: number }];
 // `points` defines the line (the bell extrapolates through them); `drawn` is
 // the segment actually drawn, from the first point to the last bar.
 type Ray = { points: RayPoints; drawn: RayPoints; key: string };
@@ -74,6 +74,30 @@ export function loadedLinePoints(
   if (b <= a) return null;
   const at = (j: number) => ({ timestamp: times[j], value: pAt + p.slope * (j - jRef) });
   return [at(a), at(b)];
+}
+
+/**
+ * The line through `points`, cut at the last bar: interpolated in pixel
+ * space, the same way the bell extrapolates, so both sit on one line under
+ * either axis scale. The end value is rounded so a pan or zoom re-deriving
+ * it does not churn the overlay. Exported for the picked-line clones.
+ */
+export function toLastBar(c: Chart, points: RayPoints, dataList: readonly KLineData[]): RayPoints | null {
+  const last = dataList[dataList.length - 1];
+  if (!last) return null;
+  if (last.timestamp <= points[0].timestamp) return null;
+  const filter = { paneId: "candle_pane", absolute: true };
+  const px = c.convertToPixel(
+    [points[0], points[1], { timestamp: last.timestamp, value: points[1].value }],
+    filter,
+  ) as Array<{ x?: number; y?: number }>;
+  const [q0, q1, end] = px;
+  if (q0?.x == null || q0.y == null || q1?.x == null || q1.y == null || end?.x == null || q1.x === q0.x) return null;
+  const y = q0.y + ((q1.y - q0.y) * (end.x - q0.x)) / (q1.x - q0.x);
+  const pt = c.convertFromPixel([{ x: end.x, y }], filter) as Array<{ value?: number }>;
+  const value = pt[0]?.value;
+  if (value == null || !Number.isFinite(value)) return null;
+  return [points[0], { timestamp: last.timestamp, value: Number(value.toPrecision(8)) }];
 }
 
 export class IndicatorAlertLines {
@@ -215,27 +239,8 @@ export class IndicatorAlertLines {
     return out;
   }
 
-  // The line through `points`, cut at the last bar: interpolated in pixel
-  // space, the same way the bell extrapolates, so both sit on one line under
-  // either axis scale. The end value is rounded so a pan or zoom re-deriving
-  // it does not churn the overlay.
   private toLastBar(points: RayPoints, dataList: KLineData[]): RayPoints | null {
-    const c = this.chart;
-    const last = dataList[dataList.length - 1];
-    if (!c || !last) return null;
-    if (last.timestamp <= points[0].timestamp) return null;
-    const filter = { paneId: "candle_pane", absolute: true };
-    const px = c.convertToPixel(
-      [points[0], points[1], { timestamp: last.timestamp, value: points[1].value }],
-      filter,
-    ) as Array<{ x?: number; y?: number }>;
-    const [q0, q1, end] = px;
-    if (q0?.x == null || q0.y == null || q1?.x == null || q1.y == null || end?.x == null || q1.x === q0.x) return null;
-    const y = q0.y + ((q1.y - q0.y) * (end.x - q0.x)) / (q1.x - q0.x);
-    const pt = c.convertFromPixel([{ x: end.x, y }], filter) as Array<{ value?: number }>;
-    const value = pt[0]?.value;
-    if (value == null || !Number.isFinite(value)) return null;
-    return [points[0], { timestamp: last.timestamp, value: Number(value.toPrecision(8)) }];
+    return this.chart ? toLastBar(this.chart, points, dataList) : null;
   }
 
   // The chart's bar open times, rebuilt only when the data list changes:

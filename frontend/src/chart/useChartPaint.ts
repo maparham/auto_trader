@@ -867,6 +867,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // a pin to the alert's), and while the eye shows alert lines, whether or
     // not the indicator itself is shown.
     const lineBells: LineAlertBellTag[] = [];
+    // Picked-line clones end at the last bar too; not gated by the alert eye.
+    controller.pickedLineClones.refresh();
     if (!overlays.getAlertsHidden()) {
       // The lines first: their end follows the last bar, and this also
       // refreshes rayPoints() for a pinned stroke moving with new bars and

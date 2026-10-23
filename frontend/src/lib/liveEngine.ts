@@ -15,6 +15,7 @@ import { markStrategyDeal, forgetStrategyDeal } from "./liveTags";
 import { recordClose } from "./liveJournal";
 import type { EvaluateRequest, EvaluateResult } from "./liveTypes";
 import { trimLines, type Lines } from "./pickedLines";
+import { pickedLinesChanged } from "./signals";
 
 export const REBASE_AGE_BARS = 500;
 
@@ -287,6 +288,7 @@ export function armedKey(epic: string, account: string): string {
 }
 export function saveArmed(epic: string, account: string, snap: ArmedSnapshot | null): void {
   save(armedKey(epic, account), snap);
+  pickedLinesChanged.set(pickedLinesChanged.value + 1);
 }
 /** Apply a finished cycle: state first, then the rebased snapshot, if any. Only
  *  call it while the engine is still running (armLiveEngine's !cancelled guard),
