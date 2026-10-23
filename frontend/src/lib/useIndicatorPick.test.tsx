@@ -2,12 +2,16 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("./exprPick", () => ({ pickedIndicatorToken: vi.fn(() => "RSI.bullDiv") }));
+vi.mock("./exprPick", () => ({
+  pickedIndicatorToken: vi.fn(() => "RSI.bullDiv"),
+  pickedIndicatorChoices: vi.fn(() => null),
+}));
 vi.mock("./notify", () => ({ toast: vi.fn() }));
 
 import { Signal } from "./signals";
 import { useIndicatorPick } from "./useIndicatorPick";
-import { pickedIndicatorToken } from "./exprPick";
+import { pickedIndicatorChoices, pickedIndicatorToken } from "./exprPick";
+import { pickChoiceRequest } from "./pickChoice";
 import { toast } from "./notify";
 
 function fakeController() {
@@ -31,6 +35,23 @@ describe("useIndicatorPick", () => {
     expect(c.indicatorPickArmed.value).toBe(false);
     act(() => c.indicatorPickResult.set({ id: "RSI" }));
     expect(onToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("a pane with several outputs opens the chooser, and the choice reaches the armed target", () => {
+    vi.mocked(pickedIndicatorChoices).mockReturnValueOnce([
+      { token: "RSI.bullDiv", label: "Bullish divergence" },
+      { token: "RSI.bearDiv", label: "Bearish divergence" },
+    ]);
+    const c = fakeController() as { indicatorPickArmed: Signal<boolean>; indicatorPickResult: Signal<unknown> };
+    const onToken = vi.fn();
+    const { result } = renderHook(() => useIndicatorPick<string>(c as never, onToken));
+    act(() => result.current!.arm("col"));
+    act(() => c.indicatorPickResult.set({ id: "RSI" }));
+    expect(onToken).not.toHaveBeenCalled();
+    expect(c.indicatorPickArmed.value).toBe(false);
+    act(() => pickChoiceRequest.value!.onChoose("RSI.bearDiv"));
+    expect(onToken).toHaveBeenCalledWith("col", "RSI.bearDiv");
+    pickChoiceRequest.set(null);
   });
 
   it("ignores clicks while unarmed", () => {

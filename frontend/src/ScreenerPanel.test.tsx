@@ -44,6 +44,7 @@ vi.mock("./backtestSettings/useExprPick", async (importOriginal) => ({
 vi.mock("./lib/exprPick", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/exprPick")>()),
   pickedIndicatorToken: vi.fn(() => "RSI.bullDiv"),
+  pickedIndicatorChoices: vi.fn(() => null),
 }));
 
 import ScreenerPanel from "./ScreenerPanel";

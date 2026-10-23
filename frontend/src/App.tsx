@@ -22,6 +22,7 @@ import LineAlertModal from "./LineAlertModal";
 import type { AlertNavTarget, VisibleCell } from "./AlertsSidebar";
 import ConfirmDialog from "./ConfirmDialog";
 import AgentConfirmHost from "./agent/AgentConfirmHost";
+import PickChoiceHost from "./components/PickChoiceHost";
 import { initAgentBridge } from "./agent";
 import { setFocusedDrawingsProvider } from "./agent/actions/drawings";
 import { setFocusedChartProvider } from "./agent/actions/chart";
@@ -1413,6 +1414,7 @@ export default function App() {
       )}
 
       <AgentConfirmHost />
+      <PickChoiceHost />
 
       {saveDefaultReq && (
         <SaveDefaultTemplateModal

@@ -6,7 +6,8 @@
 // ownership was taken drops its own armed target.
 import { useEffect, useRef, useState } from "react";
 import type { ChartController } from "./chartController";
-import { pickedIndicatorToken } from "./exprPick";
+import { pickedIndicatorChoices, pickedIndicatorToken } from "./exprPick";
+import { pickChoiceRequest } from "./pickChoice";
 import { toast } from "./notify";
 import { Signal } from "./signals";
 
@@ -46,6 +47,14 @@ export function useIndicatorPick<T>(
       const token = controller.chart ? pickedIndicatorToken(controller.chart, sel) : null;
       if (!token) {
         toast("That indicator has no expression equivalent.");
+        return;
+      }
+      // A pane with several sensible outputs asks which one; the field gets
+      // whatever the user picks, or nothing if they dismiss the menu.
+      const choices = controller.chart ? pickedIndicatorChoices(controller.chart, sel) : null;
+      if (choices && choices.length > 1) {
+        const deliver = onTokenRef.current;
+        pickChoiceRequest.set({ options: choices, onChoose: (t) => deliver(target, t) });
         return;
       }
       onTokenRef.current(target, token);

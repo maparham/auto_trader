@@ -24,8 +24,10 @@
 //
 // AVWAP is intentionally excluded — its chart anchor is a bar timestamp, which
 // has no clean AVWAP(anchor) expression mapping. Everything unsupported
-// (VWMA/EVWMA moving averages, MACD, BOLL, KDJ, CCI, divergence outputs,
-// drawings, …) returns null so the caller can refuse.
+// (VWMA/EVWMA moving averages, MACD, BOLL, KDJ, CCI, drawings, …) returns null
+// so the caller can refuse. RSI is the one call type with a ref form: a pane
+// with divergence on emits "<id>.<divergence output>", and
+// chartIndicatorPickChoices lists every output such a click could mean.
 //
 // Kept free of klinecharts imports so it stays a pure, node-testable function —
 // which is why slopeOutputs comes from the leaf indicators/slopeOutputs rather
@@ -66,6 +68,37 @@ export interface ExprChartTokenOptions {
    * readout, which picks the pane's `.to%` output. Absent for curve hits and
    * plain row clicks; unknown keys behave like absence. */
   figureKey?: string;
+}
+
+/** One entry of a pick chooser: the token to insert and its menu label. */
+export interface PickChoice { token: string; label: string }
+
+const RSI_DIV_CHOICES: { key: keyof RsiDivergenceConfig; output: string; label: string }[] = [
+  { key: "bullish", output: "bullDiv", label: "Bullish divergence" },
+  { key: "bearish", output: "bearDiv", label: "Bearish divergence" },
+  { key: "hiddenBullish", output: "hBullDiv", label: "Hidden bullish divergence" },
+  { key: "hiddenBearish", output: "hBearDiv", label: "Hidden bearish divergence" },
+];
+
+/** The outputs a click on this pane could reasonably mean, when there is
+ * more than one: today an RSI pane with divergence on, which offers each
+ * divergence kind the pane draws plus its value line. null means "insert
+ * chartIndicatorToExprToken's single token", which is also the first entry
+ * here whenever a list is returned. */
+export function chartIndicatorPickChoices(
+  indType: string,
+  extendData: unknown,
+  instanceId: string | undefined,
+): PickChoice[] | null {
+  if (indType !== "RSI" || !instanceId) return null;
+  const div = rsiDivergence(extendData);
+  if (!div.on) return null;
+  const kinds = RSI_DIV_CHOICES.filter((c) => div[c.key]).map((c) => ({
+    token: `${instanceId}.${c.output}`,
+    label: c.label,
+  }));
+  if (kinds.length === 0) return null; // the single token is already RSI.value
+  return [...kinds, { token: `${instanceId}.value`, label: "RSI value" }];
 }
 
 function rsiDivergence(extendData: unknown): RsiDivergenceConfig {

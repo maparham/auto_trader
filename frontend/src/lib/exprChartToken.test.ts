@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { chartIndicatorToExprToken } from "./exprChartToken";
+import { chartIndicatorPickChoices, chartIndicatorToExprToken } from "./exprChartToken";
 
 describe("chartIndicatorToExprToken", () => {
   it("maps a plain EMA template to EMA(length)", () => {
@@ -39,6 +39,18 @@ describe("chartIndicatorToExprToken", () => {
     // Divergence off, or no instance context: the call shape as before.
     expect(chartIndicatorToExprToken("RSI", [14], { divergence: { on: false } }, { instanceId: "RSI" })).toBe("RSI(14)");
     expect(chartIndicatorToExprToken("RSI", [14], on({}))).toBe("RSI(14)");
+  });
+
+  it("offers a chooser for an RSI pane with divergence on: enabled kinds, then the value", () => {
+    const ext = { divergence: { on: true, bullish: true, bearish: true, hiddenBullish: true } };
+    expect(chartIndicatorPickChoices("RSI", ext, "RSI2")?.map((c) => c.token))
+      .toEqual(["RSI2.bullDiv", "RSI2.bearDiv", "RSI2.hBullDiv", "RSI2.value"]);
+    // The first choice is the single token a plain click would insert.
+    expect(chartIndicatorToExprToken("RSI", [14], ext, { instanceId: "RSI2" })).toBe("RSI2.bullDiv");
+    expect(chartIndicatorPickChoices("RSI", { divergence: { on: false } }, "RSI")).toBeNull();
+    expect(chartIndicatorPickChoices("RSI", ext, undefined)).toBeNull();
+    expect(chartIndicatorPickChoices("EMA", ext, "EMA")).toBeNull();
+    expect(chartIndicatorPickChoices("RSI", { divergence: { on: true, bullish: false, bearish: false } }, "RSI")).toBeNull();
   });
 
   it("maps VOL with no length (arity 0)", () => {

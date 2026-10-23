@@ -82,7 +82,8 @@ screen's `RSI`.
 
 ### Indicators line
 
-Under Condition, a line lists the copied panes ("RSI 14, divergence on") and
+Under Condition, a line lists the copied panes ("RSI · length 14 · pivots 5/5 ·
+divergence on", the id plus the pane's editor detail) and
 the "Refresh from chart" link. It is hidden when the screen references none.
 InfoTip lines: "Settings copied from the chart on run or save." / "The copy is
 kept with the screen." / "Refresh from chart to pick up changes."
@@ -159,4 +160,11 @@ bars, so they can differ from the chart.").
 
 - Timeframe-pinned instances and `@tf` pins in screens.
 - Editing a copied pane's settings inside the screener.
-- Remembering "All tabs" on saved screens.
+
+## Follow-ups shipped 2026-10-22/23
+
+- Saved screens store `source` (`list` or `allTabs`); loading an All-tabs
+  screen restores it. "Some tabs" is saved as the list it resolved to.
+- Picking an RSI pane with divergence on opens a small menu at the click
+  point (`components/PickChoiceHost.tsx`) offering each enabled divergence
+  kind and the value line. It serves the backtest editor and the screener.

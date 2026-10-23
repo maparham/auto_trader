@@ -11,7 +11,7 @@
 // this the whole acceleration path is unreachable from the UI even though every
 // layer beneath it supports it.
 import type { Chart, Indicator } from "klinecharts";
-import { chartIndicatorToExprToken } from "./exprChartToken";
+import { chartIndicatorPickChoices, chartIndicatorToExprToken, type PickChoice } from "./exprChartToken";
 import { ACCEL_SUFFIX, BARS_SINCE_SUFFIX, getIndicatorById } from "./indicators";
 import { indTypeOf } from "./customIndicators";
 
@@ -61,4 +61,15 @@ export function pickedIndicatorToken(chart: Chart, sel: PickedIndicator): string
     src.extendData,
     { instanceId, lineIndex: sel.lineIndex, output: isAccel ? "accel" : "slope", figureKey: sel.figureKey },
   );
+}
+
+/** The chooser for a click that could mean several outputs (an RSI pane with
+ * divergence on), or null when the single token is the whole answer. Only
+ * plain panes qualify: the Slope accel and Pivot Bands companions already
+ * name their output by the line that was hit. */
+export function pickedIndicatorChoices(chart: Chart, sel: PickedIndicator): PickChoice[] | null {
+  if (sel.name.endsWith(ACCEL_SUFFIX) || sel.name.endsWith(BARS_SINCE_SUFFIX)) return null;
+  const src = getIndicatorById(chart, sel.name);
+  if (!src) return null;
+  return chartIndicatorPickChoices(indTypeOf(src), src.extendData, sel.name);
 }
