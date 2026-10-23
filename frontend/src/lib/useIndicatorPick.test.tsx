@@ -107,4 +107,26 @@ describe("useIndicatorPick", () => {
     const { result } = renderHook(() => useIndicatorPick<string>(null, vi.fn()));
     expect(result.current).toBeUndefined();
   });
+
+  it("hands a picked line to onLine instead of inserting a token", () => {
+    const c = fakeController() as { indicatorPickArmed: Signal<boolean>; indicatorPickResult: Signal<unknown> };
+    const onToken = vi.fn();
+    const onLine = vi.fn();
+    const { result } = renderHook(() => useIndicatorPick<string>(c as never, onToken, onLine));
+    act(() => result.current!.arm("t"));
+    const line = { epic: "US100", broker: "capital", timeframe: "HOUR", t1: 1, p1: 1, t2: 2, p2: 2, slope: 1, tRef: 3, pRef: 3 };
+    act(() => c.indicatorPickResult.set({ paneId: "candle_pane", name: "TRENDLINES", line }));
+    expect(onLine).toHaveBeenCalledWith("t", line);
+    expect(onToken).not.toHaveBeenCalled();
+  });
+  it("toasts a line refusal and inserts nothing", () => {
+    const c = fakeController() as { indicatorPickArmed: Signal<boolean>; indicatorPickResult: Signal<unknown> };
+    const onToken = vi.fn();
+    const onLine = vi.fn();
+    const { result } = renderHook(() => useIndicatorPick<string>(c as never, onToken, onLine));
+    act(() => result.current!.arm("t"));
+    act(() => c.indicatorPickResult.set({ paneId: "candle_pane", name: "TRENDLINES", lineRefusal: "nope" }));
+    expect(onLine).not.toHaveBeenCalled();
+    expect(onToken).not.toHaveBeenCalled();
+  });
 });

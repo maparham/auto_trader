@@ -56,6 +56,7 @@ import { emphasizeTrendlines, useTrendlineMenu } from "./chart/useTrendlineMenu"
 import { useTrendlineDebug } from "./chart/useTrendlineDebug";
 import { chartPaints } from "./chart/seriesStamp";
 import { hitTrendline, TL_LINE_HIT, TL_LINE_HIT_TOUCH } from "./lib/indicators/trendlineMarks";
+import { pickedLineFromSeg, type PickedLine } from "./lib/pickedLines";
 import { hitPaintedLine } from "./lib/indicators/paintedLines";
 import { registerTrendlinesChart } from "./lib/indicators/trendlines";
 import { emphasizeAutoFibs } from "./chart/autoFibEmphasis";
@@ -2184,10 +2185,27 @@ export default function ChartCore({
         // not a numbered line (a Slope pane's threshold guides) carries none and
         // falls back to the first line.
         const lineMatch = /^slope(\d+)$/.exec(hit.figKey);
+        // A Trendlines hit carries its frozen geometry too, so the consumer can
+        // pick THAT line instead of inserting a `TRENDLINES.tl_1` token (same
+        // seg/ext/resolution/epic/broker access as useTrendlineMenu's "Add alert").
+        let lineFields: { line?: PickedLine; lineRefusal?: string } = {};
+        if (tlHit) {
+          const inst = getIndicator(c, tlHit.paneId, tlHit.name);
+          const ext = inst?.extendData as Record<string, unknown> | undefined;
+          const r = pickedLineFromSeg({
+            seg: tlHit.seg,
+            ext,
+            resolution: resRef.current,
+            epic: epicRef.current,
+            broker: brokerIdRef.current,
+          });
+          lineFields = "line" in r ? { line: r.line } : { lineRefusal: r.reason };
+        }
         controller.indicatorPickResult.set({
           paneId: hit.paneId,
           name: hit.name,
           ...(lineMatch ? { lineIndex: Number(lineMatch[1]) } : {}),
+          ...lineFields,
         });
         return;
       }

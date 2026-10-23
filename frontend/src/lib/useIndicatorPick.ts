@@ -10,6 +10,7 @@ import { pickedIndicatorChoices, pickedIndicatorToken } from "./exprPick";
 import { pickChoiceRequest } from "./pickChoice";
 import { toast } from "./notify";
 import { Signal } from "./signals";
+import type { PickedLine } from "./pickedLines";
 
 const owner = new Signal<symbol | null>(null);
 
@@ -22,6 +23,7 @@ export interface IndicatorPick<T> {
 export function useIndicatorPick<T>(
   controller: ChartController | null,
   onToken: (target: T, token: string) => void,
+  onLine?: (target: T, line: PickedLine) => void,
 ): IndicatorPick<T> | undefined {
   const [me] = useState(() => Symbol("indicatorPick"));
   const [armed, setArmed] = useState<T | null>(null);
@@ -29,6 +31,8 @@ export function useIndicatorPick<T>(
   armedRef.current = armed;
   const onTokenRef = useRef(onToken);
   onTokenRef.current = onToken;
+  const onLineRef = useRef(onLine);
+  onLineRef.current = onLine;
 
   useEffect(() => owner.subscribe((o) => { if (o !== me) setArmed(null); }), [me]);
 
@@ -41,6 +45,14 @@ export function useIndicatorPick<T>(
       setArmed(null);
       owner.set(null);
       controller.indicatorPickArmed.set(false);
+      if (sel.lineRefusal && onLineRef.current) {
+        toast(sel.lineRefusal);
+        return;
+      }
+      if (sel.line && onLineRef.current) {
+        onLineRef.current(target, sel.line);
+        return;
+      }
       // pickedIndicatorToken owns the chart-side normalisation, notably a click
       // on a Slope's acceleration companion, which the expression language
       // spells as an OUTPUT of its parent ("SLOPE.accel9").

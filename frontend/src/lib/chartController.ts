@@ -17,6 +17,7 @@ import { loadScalePriceOnly, loadPriceStretched, savePriceStretched, loadSnapsho
 import { HistoryManager, registerHistory } from "./history";
 import { applyCandleFit, type PriceFitMode } from "../chart/candleFit";
 import type { HeatmapView } from "./heatmapController";
+import type { PickedLine } from "./pickedLines";
 
 // The selected indicator (TradingView-style): clicking an indicator's curve or its
 // legend row selects it (hollow handles appear); clicking empty chart space
@@ -34,6 +35,13 @@ export interface SelectedIndicator {
   // legend shows more than the plotted line — ATR's "atrPct" readout picks the
   // pane's .to% output. Only "pick from chart" sets and reads it.
   figureKey?: string;
+  // A click on a Trendlines line while "pick from chart" is armed carries its
+  // frozen geometry, so the consumer can pick THAT line instead of inserting
+  // a `TRENDLINES.tl_1` token. Only "pick from chart" sets and reads it.
+  line?: PickedLine;
+  // The line was hit but can't be picked (seconds chart, no geometry yet);
+  // the consumer toasts this and inserts nothing.
+  lineRefusal?: string;
 }
 
 /** The focused cell's proximity-heatmap control, as the toolbar needs it. */
