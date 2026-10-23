@@ -83,7 +83,7 @@ def _indicators(body: ScreenRunBody) -> dict[str, dict]:
 def _compile(body: ScreenRunBody):
     try:
         return compile_screen(body.expression, [c.model_dump() for c in body.columns],
-                              _indicators(body))
+                              _indicators(body), body.resolution.value)
     except ScreenSpecError as e:
         raise HTTPException(422, {
             "code": e.err.code, "message": e.err.message,

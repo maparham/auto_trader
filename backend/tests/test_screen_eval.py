@@ -7,8 +7,9 @@ from auto_trader.core.screen_eval import (
     ScreenSpecError, bars_needed, closed_bars, compile_screen, judge,
 )
 from auto_trader.strategy.expr.errors import ExprError
+from auto_trader.strategy.expr.warmup import warmup_bars
 
-T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+T0 = datetime(2026, 1, 5, tzinfo=timezone.utc)  # a Monday
 
 
 def _bars(closes, step_s=3600):
@@ -63,12 +64,6 @@ def test_value_expression_rejected():
     with pytest.raises(ScreenSpecError) as e:
         compile_screen("RSI(14)", [])
     assert e.value.field == "expression"
-
-
-def test_tf_pin_rejected():
-    with pytest.raises(ScreenSpecError) as e:
-        compile_screen("candle.close > EMA(9)@D", [])
-    assert e.value.err.code == "screen_tf_unsupported"
 
 
 def test_bad_column_names_its_index():
@@ -135,15 +130,78 @@ def test_unknown_instance_in_column_names_the_column():
     assert "ATR is not one of this screen's indicators" in e.value.err.message
 
 
-def test_pinned_pane_refused_with_its_own_message():
-    with pytest.raises(ScreenSpecError) as e:
-        compile_screen("SLOPE.5 > 0", [], PINNED_SLOPE)
-    assert e.value.err.code == "screen_tf_unsupported"
-    assert e.value.err.message == (
-        "SLOPE is pinned to 1H in its settings. Screens run on one timeframe, so unpin it on the chart.")
+SLOPE_W = {"SLOPE": {"type": "SLOPE", "calcParams": [5],
+                     "extendData": {"slopePeriod": 3, "mtf": {"timeframe": "W"}}}}
 
 
-def test_text_tf_pin_keeps_its_message():
-    with pytest.raises(ScreenSpecError) as e:
-        compile_screen("candle.close > EMA(9)@D", [], RSI_PANE)
-    assert e.value.err.message == "Timeframe pins like @D are not available in screens yet."
+def test_coarser_pin_compiles_with_one_need():
+    cs = compile_screen("EMA(5)@W > 0", [], resolution="DAY")
+    assert [(n.tf, n.res) for n in cs.htf] == [("W", "WEEK")]
+    assert cs.htf[0].need == warmup_bars(compile_screen("EMA(5) > 0", []).row) + 1
+
+
+def test_pinned_term_costs_no_base_bars():
+    assert bars_needed(compile_screen("EMA(50)@W > 0", [], resolution="DAY")) == 300
+
+
+def test_same_timeframe_pin_accepted():
+    cs = compile_screen("EMA(5)@D > 0", [], resolution="DAY")
+    assert cs.htf[0].res == "DAY"
+
+
+def test_finer_pin_refused_with_the_token_span():
+    with pytest.raises(ScreenSpecError) as ei:
+        compile_screen("candle.close > EMA(9)@4H", [], resolution="DAY")
+    e = ei.value.err
+    assert e.code == "screen_tf_lower"
+    assert "@4H is a lower timeframe than this screen's 1D" in e.message
+    assert "Run the screen on 4H" in e.message
+    assert (e.start, e.end) == (15, 24)  # the pinned operand EMA(9)@4H
+
+
+def test_finer_pin_in_column_names_its_index():
+    with pytest.raises(ScreenSpecError) as ei:
+        compile_screen("candle.close > 0", [{"name": "x", "expression": "EMA(9)@1H"}], resolution="DAY")
+    assert ei.value.field == "columns" and ei.value.index == 0
+
+
+def test_pane_pin_above_base_accepted_below_refused():
+    cs = compile_screen("SLOPE.5 > 0", [], SLOPE_W, resolution="DAY")
+    assert cs.htf[0].res == "WEEK"
+    with pytest.raises(ScreenSpecError) as ei:
+        compile_screen("SLOPE.5 > 0", [], PINNED_SLOPE, resolution="DAY")
+    assert ei.value.err.code == "screen_tf_lower"
+    assert "SLOPE is pinned to 1H in its settings, lower than this screen's 1D" in ei.value.err.message
+
+
+def test_unresolvable_pane_pin_is_422_not_500():
+    bad = {"SLOPE": {"type": "SLOPE", "calcParams": [5],
+                     "extendData": {"slopePeriod": 3, "mtf": {"timeframe": "SECOND_5"}}}}
+    with pytest.raises(ScreenSpecError) as ei:
+        compile_screen("SLOPE.5 > 0", [], bad, resolution="DAY")
+    assert ei.value.err.code == "unsupported_timeframe"
+
+
+def test_tf_cap_counts_canonical():
+    compile_screen("EMA(5)@1H > 0 and EMA(5)@HOUR > 0 and EMA(5)@4H > 0 and EMA(5)@W > 0", [],
+                   resolution="MINUTE_15")
+    with pytest.raises(ScreenSpecError) as ei:
+        compile_screen("EMA(5)@1H > 0 and EMA(5)@4H > 0 and EMA(5)@D > 0", [{"name": "w", "expression": "EMA(5)@W"}],
+                       resolution="MINUTE_15")
+    assert ei.value.err.code == "screen_tf_too_many"
+
+
+def test_judge_reads_the_pinned_series():
+    # Daily bars from a Monday; weekly bars closing 100 and 200.
+    bars = _bars(list(range(1, 11)), step_s=86400)
+    monday = bars[0].time
+    weeks = [Candle(time=monday + timedelta(weeks=k), open=v, high=v, low=v, close=v, volume=1)
+             for k, v in enumerate([100, 200])]
+    cs = compile_screen("candle.close@W > 150", [{"name": "w", "expression": "candle.close@W"}], resolution="DAY")
+    # Day 10 (the second Wednesday) reads the week that closed before it: 100.
+    assert not judge(cs, bars, "DAY", {"WEEK": weeks}).matched
+    # Day 8 (the second Monday) opens as week 1 closes and still reads it.
+    assert not judge(cs, bars[:8], "DAY", {"WEEK": weeks}).matched
+    # Day 15 (the third Monday): week 2 has closed.
+    j = judge(cs, _bars(list(range(1, 16)), step_s=86400), "DAY", {"WEEK": weeks})
+    assert j.matched and j.columns == {"w": 200.0}

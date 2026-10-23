@@ -59,10 +59,10 @@ def test_run_and_poll():
 
 def test_run_bad_expression_422():
     body = {k: v for k, v in BODY.items() if k != "name"}
-    r = client.post("/api/screens/run", json={**body, "expression": "EMA(9)@D > 1"})
+    r = client.post("/api/screens/run", json={**body, "expression": "EMA(9)@4H > 1"})
     assert r.status_code == 422
     d = r.json()["detail"]
-    assert d["code"] == "screen_tf_unsupported" and d["field"] == "expression"
+    assert d["code"] == "screen_tf_lower" and d["field"] == "expression"
 
 
 def test_run_needs_symbols():
