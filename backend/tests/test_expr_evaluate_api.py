@@ -8,6 +8,7 @@ structured and coded branches are untouched.
 
 from fastapi.testclient import TestClient
 
+from auto_trader.api import deps
 from auto_trader.api.app import app
 
 client = TestClient(app)
@@ -49,6 +50,26 @@ def test_expr_evaluate_opens_on_entry():
     assert len(actions) == 1
     assert actions[0]["kind"] == "open"
     assert actions[0]["leg"] == "long" and actions[0]["side"] == "buy"
+    assert r.json()["warnings"] == []
+
+
+# --- Task 4: rebase_lines pre-pass surfaces a warning on the response -------
+
+def test_expr_evaluate_reports_an_unplaceable_line_warning(monkeypatch):
+    # Both anchors (t2, tRef) sit before the request's first candle (time 0),
+    # and the loader reports degraded -> rebase_lines can't place it and the
+    # warning must reach EvaluateResponse.warnings.
+    async def fake_loader(broker, epic, resolution, side, count):
+        return [], True
+
+    monkeypatch.setattr(deps, "load_alert_bars", fake_loader)
+    r = client.post("/api/strategy/evaluate", json=_base(lines={"L1": {
+        "epic": "TEST", "broker": "", "timeframe": "HOUR",
+        "t1": -20000, "p1": 1.0, "t2": -10000, "p2": 2.0,
+        "slope": 1.0, "tRef": -5000, "pRef": 3.0,
+    }}))
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == ["L1 could not be placed on the loaded bars."]
 
 
 def test_expr_evaluate_no_scale_in_when_held():

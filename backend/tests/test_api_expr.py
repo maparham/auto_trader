@@ -51,6 +51,29 @@ def test_expr_backtest_runs():
     body = r.json()
     assert "trades" in body
     assert "equity" in body and "summary" in body and "by_leg" in body
+    assert body["warnings"] == []
+
+
+# --- Task 4: rebase_lines pre-pass surfaces a warning on the response -------
+
+_UNPLACEABLE_LINE = {
+    "epic": "TEST", "broker": "", "timeframe": "HOUR",
+    "t1": -20000, "p1": 1.0, "t2": -10000, "p2": 2.0,
+    "slope": 1.0, "tRef": -5000, "pRef": 3.0,
+}
+
+
+def test_expr_backtest_reports_an_unplaceable_line_warning(monkeypatch):
+    # Both anchors (t2, tRef) sit before the request's first candle (time 0),
+    # and the loader reports degraded -> rebase_lines can't place it and the
+    # warning must reach BacktestResponse.warnings.
+    async def fake_loader(broker, epic, resolution, side, count):
+        return [], True
+
+    monkeypatch.setattr(deps, "load_alert_bars", fake_loader)
+    r = client.post("/api/expr/backtest", json=_base_req(lines={"L1": _UNPLACEABLE_LINE}))
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == ["L1 could not be placed on the loaded bars."]
 
 
 def test_expr_backtest_parse_error_carries_span_and_location():
@@ -371,6 +394,34 @@ def test_expr_series_overlay(monkeypatch):
     assert body["times"] == [0, 3600, 7200, 10800]
     assert body["values"] == closes  # left side of the comparison is candle.close
     assert isinstance(body["warmup"], int)
+    assert body["warnings"] == []
+
+
+def test_expr_series_reports_an_unplaceable_line_warning(monkeypatch):
+    # Same rebase pre-pass as /api/expr/backtest, wired in before the series
+    # route builds instances: both anchors sit before the fetched window's
+    # first candle (time 0), and the loader reports degraded.
+    closes = [1.0, 2.0, 3.0, 4.0]
+
+    async def _fake_fetch(broker_id, epic, resolution, bars, from_ts, to_ts, price_side):
+        return [
+            Candle(time=datetime.fromtimestamp(3600 * k, tz=timezone.utc),
+                   open=c, high=c, low=c, close=c, volume=100.0)
+            for k, c in enumerate(closes)
+        ]
+
+    async def fake_loader(broker, epic, resolution, side, count):
+        return [], True
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", _fake_fetch)
+    monkeypatch.setattr(deps, "load_alert_bars", fake_loader)
+    r = client.post("/api/expr/series", json={
+        "epic": "TEST", "resolution": "HOUR", "expr": "candle.close > 2",
+        "fromTime": 0, "toTime": 3600 * 3,
+        "lines": {"L1": _UNPLACEABLE_LINE},
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == ["L1 could not be placed on the loaded bars."]
 
 
 def test_expr_series_parse_error():
