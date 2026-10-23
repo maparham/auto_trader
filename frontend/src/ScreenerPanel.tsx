@@ -24,6 +24,7 @@ import {
   type Screen,
   type ScreenColumn,
   type ScreenDivergence,
+  type ScreenDraft,
   type ScreenResult,
 } from "./lib/screens";
 import type { ChartController } from "./lib/chartController";
@@ -89,6 +90,28 @@ function fmtDivergence(d: ScreenDivergence, withRef: boolean): string {
   return withRef ? `${d.ref}: ${text}` : text;
 }
 
+/** JSON with sorted object keys, so two equal settings maps compare equal
+ * whatever order their keys were written in. */
+function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+
+/** What Save would change on a stored screen. An All-tabs screen's symbols
+ * follow the open tabs, so they never count as an edit. */
+function screenKey(d: ScreenDraft): string {
+  const source = d.source ?? "list";
+  return stableJson({
+    resolution: d.resolution, source, symbols: source === "allTabs" ? null : d.symbols,
+    expression: d.expression, columns: d.columns.map((c) => ({ name: c.name, expression: c.expression })),
+    indicators: d.indicators, includeOpenBar: d.includeOpenBar ?? false,
+  });
+}
+
 /** One open chart tab as a symbol source: its cells' epics, in cell order. */
 export interface ScreenerTab { id: string; epics: string[] }
 
@@ -122,6 +145,10 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   const [saved, setSaved] = useState<Screen[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(initial.currentId);
   const [name, setName] = useState(initial.name);
+  // The inline name field: open while naming a new screen, a copy (Save as)
+  // or a rename. Only Save/Enter commits it; Cancel/Escape closes it.
+  const [naming, setNaming] = useState<null | "new" | "copy" | "rename">(null);
+  const [nameDraft, setNameDraft] = useState("");
   const [resolution, setResolution] = useState(initial.resolution);
   const [symbolsText, setSymbolsText] = useState(initial.symbolsText);
   const [source, setSource] = useState<ScreenerSource>(initial.source);
@@ -180,6 +207,8 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     source: source === "allTabs" ? "allTabs" as const : "list" as const,
     includeOpenBar,
   };
+  const loaded = currentId ? saved.find((s) => s.id === currentId) ?? null : null;
+  const dirty = loaded != null && screenKey({ ...draft, indicators }) !== screenKey(loaded);
 
   // The editor's completion/lint list: the copy's own panes first, then
   // whatever the focused chart offers that the copy doesn't already hold.
@@ -222,6 +251,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     setProgress(null);
     setCurrentId(s?.id ?? null);
     setName(s?.name ?? "");
+    setNaming(null);
     setResolution(s?.resolution ?? "DAY");
     setSymbolsText(s ? s.symbols.join(", ") : "");
     // A new screen starts on All tabs; a saved row without a source is a list.
@@ -319,7 +349,9 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     if (id) cancelQuietly(id);
   };
 
-  const save = async () => {
+  /** Write the form as a screen: over the loaded one (`id`), or as a new
+   * row when `id` is undefined. */
+  const save = async (screenName: string, id: string | undefined) => {
     const colErr = columnNameError(columns);
     if (colErr) {
       setError(colErr);
@@ -329,15 +361,43 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
       const inds = capture();
       // Adopt the copy only once the server has accepted it, same reasoning
       // as run(): a rejected save must not freeze bad settings into the copy.
-      const row = await saveScreen(name.trim() || "Untitled screen", { ...draft, indicators: inds }, currentId ?? undefined);
+      const row = await saveScreen(screenName, { ...draft, indicators: inds }, id);
       setIndicators(inds);
       setSaved((all) => [...all.filter((s) => s.id !== row.id), row]);
       setCurrentId(row.id);
       setName(row.name);
-      toast("Screen saved");
+      setNaming(null);
+      toast(id ? "Screen saved" : `Saved "${row.name}"`);
     } catch (e) {
       explain(e);
     }
+  };
+
+  /** Rename only: the stored row keeps its own settings, so edits made in the
+   * form since it was loaded are not saved along with the new name. */
+  const rename = async (screenName: string) => {
+    const row = saved.find((s) => s.id === currentId);
+    if (!row) return;
+    try {
+      const out = await saveScreen(screenName, row, row.id);
+      setSaved((all) => all.map((s) => (s.id === out.id ? out : s)));
+      setName(out.name);
+      setNaming(null);
+      toast("Screen renamed");
+    } catch (e) {
+      explain(e);
+    }
+  };
+
+  const openNaming = (mode: "new" | "copy" | "rename") => {
+    setNaming(mode);
+    setNameDraft(mode === "rename" ? name : mode === "copy" ? `${name} copy` : "");
+  };
+  const commitName = () => {
+    const n = nameDraft.trim();
+    if (!n) return;
+    if (naming === "rename") void rename(n);
+    else void save(n, undefined);
   };
 
   const remove = () => {
@@ -439,21 +499,61 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
         <section className="sc-section">
           <div className="sc-label">
             <span className="sc-label-name">Screen<InfoTip title="Screen" text={[
-              "Load a saved screen or start a new one.",
-              "The name is used when you save.",
+              "Save keeps the setup: symbols, timeframe, condition, columns.",
+              "Results are not saved. Pick a screen and Run it.",
             ]} /></span>
+            {naming === null && (
+              <span className="sc-label-actions">
+                {loaded ? (
+                  <>
+                    <Tooltip content={dirty ? "Save changes to this screen" : "No unsaved changes"}>
+                      <span>
+                        <button className="sc-link" disabled={readOnly || !dirty || !expression.trim()}
+                          onClick={() => void save(name, loaded.id)}>Save</button>
+                      </span>
+                    </Tooltip>
+                    <button className="sc-link" disabled={readOnly || !expression.trim()} onClick={() => openNaming("copy")}>Save as</button>
+                    <button className="sc-link" disabled={readOnly} onClick={() => openNaming("rename")}>Rename</button>
+                    <button className="sc-link sc-link-danger" disabled={readOnly} onClick={remove}>Delete</button>
+                  </>
+                ) : (
+                  <button className="sc-link" disabled={readOnly || !expression.trim()} onClick={() => openNaming("new")}>Save</button>
+                )}
+              </span>
+            )}
           </div>
-        <div className="sc-row sc-screen-row">
-          <select
-            aria-label="Saved screens"
-            value={currentId ?? ""}
-            onChange={(e) => load(saved.find((s) => s.id === e.target.value) ?? null)}
-          >
-            <option value="">New screen</option>
-            {saved.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <input aria-label="Screen name" placeholder="Name this screen" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
+        {naming === null ? (
+          <div className="sc-row sc-screen-row">
+            <select
+              aria-label="Saved screens"
+              value={currentId ?? ""}
+              onChange={(e) => load(saved.find((s) => s.id === e.target.value) ?? null)}
+            >
+              <option value="">New screen</option>
+              {saved.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            {dirty && <span className="sc-edited">Edited</span>}
+          </div>
+        ) : (
+          <div className="sc-row sc-screen-row">
+            <input
+              aria-label="Screen name"
+              autoFocus
+              placeholder={naming === "rename" ? "New name" : "Name this screen"}
+              value={nameDraft}
+              maxLength={80}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitName();
+                if (e.key === "Escape") setNaming(null);
+              }}
+            />
+            <button className="sc-btn" disabled={!nameDraft.trim()} onClick={commitName}>
+              {naming === "rename" ? "Rename" : "Save"}
+            </button>
+            <button className="sc-btn" onClick={() => setNaming(null)}>Cancel</button>
+          </div>
+        )}
         </section>
 
         <section className="sc-section">
@@ -625,8 +725,6 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
 
         {error && <p className="sc-error" role="alert">{error}</p>}
         <div className="sc-row sc-actions">
-          {currentId && <button className="sc-btn sc-delete" disabled={readOnly} onClick={remove}>Delete</button>}
-          <button className="sc-btn" disabled={readOnly || !expression.trim()} onClick={save}>Save</button>
           {running ? (
             <button className="sc-btn" onClick={cancel}>Cancel</button>
           ) : (

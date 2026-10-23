@@ -102,6 +102,14 @@ const fakeController = () => ({
   indicatorPickResult: new Signal<unknown>(null),
 }) as never;
 
+/** Save a NEW screen: Save opens the name field, Enter commits it. */
+function saveNew(screenName = "Mine") {
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  const field = screen.getByLabelText("Screen name");
+  fireEvent.change(field, { target: { value: screenName } });
+  fireEvent.keyDown(field, { key: "Enter" });
+}
+
 function fillAndRun(symbols = "AAPL, ZZZ", expression = "RSI(14) < 30") {
   // A new screen starts on All tabs; these tests type their own list.
   fireEvent.click(screen.getByRole("radio", { name: "List" }));
@@ -273,7 +281,7 @@ describe("ScreenerPanel", () => {
     render(<ScreenerPanel brokerId="yfinance" tabs={tabs} controller={null} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
     fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
     fireEvent.click(screen.getByRole("radio", { name: "All tabs" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    saveNew();
     await waitFor(() => expect(saveScreen).toHaveBeenCalled());
     expect(vi.mocked(saveScreen).mock.calls[0][1]).toMatchObject({ source: "allTabs", symbols: ["AAPL"] });
     // "Selected tabs" is saved as a list: tab ids do not travel.
@@ -303,7 +311,7 @@ describe("ScreenerPanel", () => {
     expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("");
     expect((screen.getByLabelText("Saved screens") as HTMLSelectElement).value).toBe("");
     fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    saveNew();
     await waitFor(() => expect(saveScreen).toHaveBeenCalled());
     const [, draft, id] = vi.mocked(saveScreen).mock.calls[0];
     expect(id).toBeUndefined();
@@ -340,7 +348,7 @@ describe("ScreenerPanel", () => {
     fillAndRun("AAPL");
     fireEvent.click(screen.getByRole("button", { name: "Add column" }));
     fireEvent.change(screen.getByLabelText("Column 1 name"), { target: { value: "  " } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    saveNew();
     expect(screen.getByRole("alert").textContent).toMatch(/Column 1/);
     expect(saveScreen).not.toHaveBeenCalled();
   });
@@ -352,6 +360,53 @@ describe("ScreenerPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(
       "name: String should have at most 40 characters"));
+  });
+
+  it("a new screen asks for its name on Save, and Escape or an empty name saves nothing", async () => {
+    setup();
+    fillAndRun();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const field = screen.getByLabelText("Screen name");
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.queryByLabelText("Screen name")).toBeNull();
+    saveNew("Oversold");
+    await waitFor(() => expect(saveScreen).toHaveBeenCalledTimes(1));
+    const [nm, , id] = vi.mocked(saveScreen).mock.calls[0];
+    expect([nm, id]).toEqual(["Oversold", undefined]);
+  });
+
+  it("a loaded screen shows Edited and saves over itself, Save as makes a copy, Rename keeps its settings", async () => {
+    vi.mocked(listScreens).mockResolvedValue([SAVED]);
+    vi.mocked(saveScreen).mockImplementation(async (nm, d, id) => ({ ...SAVED, ...d, name: nm, id: id ?? "new1" }));
+    setup();
+    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
+    const saveBtn = () => screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(saveBtn().disabled).toBe(true);
+    expect(screen.queryByText("Edited")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 25" } });
+    expect(screen.getByText("Edited")).toBeTruthy();
+    // Rename sends the stored settings, not the unsaved edit.
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const field = screen.getByLabelText("Screen name") as HTMLInputElement;
+    expect(field.value).toBe("Saved one");
+    fireEvent.change(field, { target: { value: "Deep oversold" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(saveScreen).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(saveScreen).mock.calls[0]).toMatchObject(["Deep oversold", { expression: "RSI(14) < 20" }, "s1"]);
+    // Save writes the edit over the same row.
+    await waitFor(() => expect(saveBtn().disabled).toBe(false));
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(saveScreen).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(saveScreen).mock.calls[1]).toMatchObject(["Deep oversold", { expression: "RSI(14) < 25" }, "s1"]);
+    await waitFor(() => expect(screen.queryByText("Edited")).toBeNull());
+    // Save as proposes "<name> copy" and creates a new row.
+    fireEvent.click(screen.getByRole("button", { name: "Save as" }));
+    expect((screen.getByLabelText("Screen name") as HTMLInputElement).value).toBe("Deep oversold copy");
+    fireEvent.keyDown(screen.getByLabelText("Screen name"), { key: "Enter" });
+    await waitFor(() => expect(saveScreen).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(saveScreen).mock.calls[2][2]).toBeUndefined();
   });
 
   it("asks before deleting, and declining keeps the screen", async () => {
