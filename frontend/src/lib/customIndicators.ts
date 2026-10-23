@@ -47,6 +47,7 @@ import { FVG_TEMPLATE } from "./indicators/fvg";
 import { TRENDLINES_TEMPLATE } from "./indicators/trendlines";
 import { SLOPE_TEMPLATE, SLOPE_ACCEL_TEMPLATE } from "./indicators/slope";
 import { SPIKE_TEMPLATE } from "./indicators/spike";
+import { SWEEP_TEMPLATE } from "./indicators/sweep";
 import { ATR_TEMPLATE } from "./indicators/atr";
 import { CANDLE_PATTERNS_TEMPLATE } from "./indicators/candlePatterns";
 import { PROXIMITY_HEATMAP_TEMPLATE } from "./indicators/proximityHeatmap";
@@ -75,6 +76,7 @@ export type CustomIndicatorType =
   | "SLOPE"
   | "SLOPE_ACCEL"
   | "SPIKE"
+  | "SWEEP"
   | "ATR"
   | "CANDLE_PATTERNS";
 
@@ -98,6 +100,7 @@ export const BASE_TEMPLATES: Record<CustomIndicatorType, Omit<IndicatorTemplate,
   SLOPE: SLOPE_TEMPLATE,
   SLOPE_ACCEL: SLOPE_ACCEL_TEMPLATE,
   SPIKE: SPIKE_TEMPLATE,
+  SWEEP: SWEEP_TEMPLATE,
   ATR: ATR_TEMPLATE,
   CANDLE_PATTERNS: CANDLE_PATTERNS_TEMPLATE,
 };
@@ -132,6 +135,7 @@ export const OVERLAY_INDICATORS = new Set([
   "SR_LEVELS",
   "AUTO_FIB",
   "SPIKE",
+  "SWEEP",
   "FVG",
   // TRENDLINES draws through the candle pane's y-axis (projectAt prices), so it
   // must overlay it. Off this list, isSubPaneIndicator() calls it a sub-pane

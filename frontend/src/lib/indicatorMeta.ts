@@ -673,6 +673,68 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
     title: "Spike + Consolidation",
     desc: "Tracks a vertical spike followed by a flat, low-volatility consolidation, then measures the retrace: the setup behind a buy-the-dip entry. Draws a phase-shaded box while a pattern is live. Rule operands: spikeHigh, spikeLow, barsSinceSpike, consolOk (1 once the consolidation confirms), retracePct (current dip as % of spike height) and maxRetracePct (deepest dip since confirmation). The Flat Band is the pattern's hard floor: any dip below it, before or after confirmation, invalidates — as does a break below the spike low.",
   },
+  SWEEP: {
+    inputs: [
+      { ...num(0, "Pivot Left"), suffix: "bars", tip: "Bars left of a swing that must sit below it (above, for lows)." },
+      {
+        ...num(1, "Pivot Right"),
+        suffix: "bars",
+        tip: ["Bars right of a swing that must sit below it.", "A swing becomes a level only after these bars close."],
+      },
+      { ...num(2, "Level Life"), suffix: "bars", tip: "Bars a level stays live after it forms." },
+      {
+        ...num(3, "Min Wick", { min: 1, step: 5 }),
+        suffix: "%",
+        tip: "Swept-side wick, as % of the bar's range, that earns full wick credit.",
+      },
+      { ...num(4, "ATR Length"), tip: "ATR length for the range test. Read on the bar before the sweep." },
+      {
+        ...num(5, "Min Range", { min: 0.1, step: 0.1 }),
+        suffix: "x ATR",
+        tip: "Bar range, in ATRs, that earns full range credit.",
+      },
+      { ...num(6, "Volume Window"), suffix: "bars", tip: "Bars the volume z-score compares against." },
+      { ...num(7, "Volume Z", { min: 0.1, step: 0.1 }), tip: "Volume z-score that earns full volume credit." },
+      {
+        ...num(8, "Min Score", { min: 1, max: 100, step: 5 }),
+        tip: ["Score (0 to 100) a sweep needs to flag.", "Wick and close alone reach 60."],
+      },
+      {
+        ...num(9, "Confirm Bars"),
+        suffix: "bars",
+        tip: "Bars without a close back through the level before the sweep confirms.",
+      },
+      {
+        key: "usePrevDay",
+        label: "Previous day levels",
+        type: "boolean",
+        source: "extend",
+        field: "usePrevDay",
+        default: true,
+        tip: ["Also treats the previous day's high and low as levels.", "Days follow the chart timezone. Off on bars longer than a day."],
+      },
+      {
+        key: "useVolume",
+        label: "Volume check",
+        type: "boolean",
+        source: "extend",
+        field: "useVolume",
+        default: false,
+        tip: ["Adds a volume spike to the score.", "Only meaningful with real volume (Yahoo stocks and ETFs).", "CFD feeds report no traded volume."],
+      },
+      {
+        key: "showLabels",
+        label: "Score labels",
+        type: "boolean",
+        source: "extend",
+        field: "showLabels",
+        default: true,
+        tip: "Shows the score and level type over each flagged candle.",
+      },
+    ],
+    title: "Stop Hunt (Liquidity Sweep)",
+    desc: "Flags candles that trade through a swing or previous-day level and close back on the near side, scored by wick, close and range. A sweep confirms when price holds for Confirm Bars. Rule operands: bearSweep, bullSweep, bearConfirmed, bullConfirmed (0/1 events), score, sweptLevel and barsSince.",
+  },
   FVG: {
     inputs: [
       {
