@@ -122,3 +122,22 @@ def test_needs_merge_spellings_of_one_resolution():
     nodes = [parse("EMA(200)@1H > 0 and EMA(5)@HOUR > 0")]
     needs = htf_needs(nodes)
     assert [(n.res, n.need) for n in needs] == [("HOUR", warmup_bars(parse("EMA(200) > 0")) + 1)]
+
+
+def test_fetch_discovered_warms_up_300_bars_and_422s_on_empty(monkeypatch):
+    from fastapi import HTTPException
+
+    from auto_trader.api.htf_source import fetch_discovered
+    calls = []
+
+    async def fake(broker, epic, resolution, bars, from_ts, to_ts, side):
+        calls.append((resolution, bars, from_ts, to_ts))
+        return _weeks(2) if resolution == "WEEK" else []
+
+    monkeypatch.setattr(deps, "_fetch_symbol_candles", fake)
+    out = asyncio.run(fetch_discovered("WEEK", broker="b", epic="E", side="mid",
+                                       from_ts=1000 * WEEK, to_ts=1010 * WEEK))
+    assert len(out) == 2 and calls == [("WEEK", 1000, 700 * WEEK, 1010 * WEEK)]
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(fetch_discovered("DAY", broker="b", epic="E", side="mid", from_ts=0, to_ts=1))
+    assert ei.value.status_code == 422 and ei.value.detail == "no candles for timeframe 'DAY'"

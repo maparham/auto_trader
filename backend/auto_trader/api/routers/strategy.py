@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
-from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.timeframe import canonicalize
 from auto_trader.core.models import Candle, Side
 from auto_trader.engine.risk import stop_level, target_level
@@ -35,6 +34,7 @@ from auto_trader.strategy import loader
 from auto_trader.strategy.loader import StrategyLoadError
 
 from .. import deps
+from ..htf_source import fetch_discovered
 from ..risk_series import AtrWarmupError, build_atr_risk_series
 from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse
 from ..sweep_apply import request_instances
@@ -44,14 +44,6 @@ logger = logging.getLogger(__name__)
 
 # Cap on fetch-retry passes for a coded strategy's ad-hoc tf= calls (Task 15).
 _MAX_TF_PASSES = 5
-
-# Extra HTF bars to fetch BEFORE the base window's start so ad-hoc tf= indicators
-# warm up. The live loop seeds only ~500 base bars, so on a low base TF the raw
-# tf= window can be a handful of HTF bars — an EMA/SMA would seed from those and
-# report a wrong (non-None) value fed straight into a live decision. Matches the
-# backtest route's warm-up; the align step still gates each HTF bar to its close
-# (no lookahead), so older bars only help warm-up.
-_HTF_WARMUP_BARS = 300
 
 
 def _candle(c) -> Candle:
@@ -274,19 +266,13 @@ async def evaluate_strategy(req: EvaluateRequest, request: Request) -> EvaluateR
                 signals = strategy.on_bar(ctx)
                 break
             except NeedTimeframe as need:
-                warmup_from = (
-                    req.candles[0].time
-                    - _HTF_WARMUP_BARS * resolution_seconds(need.timeframe)
+                # The live loop seeds only ~500 base bars, so on a low base TF
+                # the raw window can be a handful of HTF bars; fetch_discovered
+                # adds the warm-up.
+                htf_candles[need.timeframe] = await fetch_discovered(
+                    need.timeframe, broker=req.broker, epic=req.epic, side=req.priceSide,
+                    from_ts=req.candles[0].time, to_ts=req.candles[-1].time,
                 )
-                fetched = await deps._fetch_symbol_candles(
-                    req.broker, req.epic, need.timeframe, 1000,
-                    warmup_from, req.candles[-1].time, req.priceSide,
-                )
-                if not fetched:
-                    raise HTTPException(
-                        422, f"no candles for timeframe '{need.timeframe}'"
-                    )
-                htf_candles[need.timeframe] = fetched
             except StrategyRuntimeError as e:
                 raise HTTPException(422, str(e))
         else:

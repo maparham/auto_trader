@@ -37,6 +37,7 @@ from auto_trader.strategy.base import Strategy
 from auto_trader.strategy.params import resolve_params, validate_params_schema
 
 from .. import deps
+from ..htf_source import fetch_discovered
 from ..deps import current_user
 from . import compute
 from ..schemas import (
@@ -74,14 +75,6 @@ from ..sweep_jobs import JOBS
 from ..wfo_jobs import WFO_JOBS
 from ..wfo_plan import WfoPlanError, parse_span, plan as wfo_plan
 
-# Extra HTF bars to fetch BEFORE the base window's start so ad-hoc tf= indicators
-# warm up. Without it an HTF EMA/SMA seeds from the first in-window bar and reports
-# a wrong (but non-None) value — silently diverging from the chart and from the
-# same strategy in a longer-windowed run. Generous enough to converge any
-# reasonable length; the align step still gates each HTF bar to its close (no
-# lookahead), so over-fetching older bars only helps warm-up, never leaks future.
-_HTF_WARMUP_BARS = 300
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -111,19 +104,10 @@ async def _run_coded(
                 indicator_cache=indicator_cache, on_progress=on_progress,
             )
         except TimeframeNotPrefetched as need:
-            warmup_from = (
-                req.candles[0].time
-                - _HTF_WARMUP_BARS * resolution_seconds(need.timeframe)
+            htf_candles[need.timeframe] = await fetch_discovered(
+                need.timeframe, broker=req.broker, epic=req.epic, side=req.priceSide,
+                from_ts=req.candles[0].time, to_ts=req.candles[-1].time,
             )
-            fetched = await deps._fetch_symbol_candles(
-                req.broker, req.epic, need.timeframe, 1000,
-                warmup_from, req.candles[-1].time, req.priceSide,
-            )
-            if not fetched:
-                raise HTTPException(
-                    422, f"no candles for timeframe '{need.timeframe}'"
-                )
-            htf_candles[need.timeframe] = fetched
     raise HTTPException(422, "strategy needs too many timeframes (max 5)")
 
 

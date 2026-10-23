@@ -175,6 +175,28 @@ async def fetch_htf(need: HtfNeed, *, broker: str, epic: str, side: str,
                                             degraded=degraded)
 
 
+# Extra bars fetched BEFORE the base window for a timeframe a coded strategy
+# discovers at run time (`tf=` calls, NeedTimeframe): its indicators warm up on
+# them instead of seeding from the first in-window bar and reporting a wrong
+# but non-None value. Alignment still gates each bar to its close, so older
+# bars only help warm-up.
+DISCOVERED_WARMUP_BARS = 300
+
+
+async def fetch_discovered(timeframe: str, *, broker: str, epic: str, side: str,
+                           from_ts: int, to_ts: int) -> list[Candle]:
+    """Candles for a timeframe a coded strategy asked for mid-run. Its warm-up
+    is unknown until it runs, so a fixed DISCOVERED_WARMUP_BARS replaces the
+    need-sized window the expression paths get. Empty is a 422."""
+    fetched = await deps._fetch_symbol_candles(
+        broker, epic, timeframe, 1000,
+        from_ts - DISCOVERED_WARMUP_BARS * resolution_seconds(timeframe), to_ts, side,
+    )
+    if not fetched:
+        raise HTTPException(422, f"no candles for timeframe '{timeframe}'")
+    return fetched
+
+
 def closed_before(bars: list[Candle], tf_s: int, cutoff_ts: int) -> int:
     """Bars whose nominal close (open + tf_s) is at or before the cutoff."""
     return sum(1 for c in bars if int(c.time.timestamp()) + tf_s <= cutoff_ts)
