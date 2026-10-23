@@ -158,7 +158,8 @@ bars, so they can differ from the chart.").
 
 ## Out of scope
 
-- Timeframe-pinned instances and `@tf` pins in screens.
+- Timeframe pins: shipped later, see
+  docs/superpowers/specs/2026-10-23-screener-timeframe-pins-design.md.
 - Editing a copied pane's settings inside the screener.
 
 ## Follow-ups shipped 2026-10-22/23

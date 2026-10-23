@@ -269,9 +269,17 @@ every id it holds, the focused chart only supplies ids the copy lacks, Run
 and Save send only the panes the text references and adopt that map as the
 new copy ONLY after the server accepts it (a 422 must not freeze bad
 settings), and "Refresh from chart" is the one way a copied pane changes.
-Timeframe-pinned panes and `@tf` pins are refused with their own 422
-wording; a ref found in neither copy nor chart 422s as "not one of this
-screen's indicators". Pivot-based outputs see only the fetched bars (300 to
+Pins at the screen's timeframe or coarser (`EMA(50)@W`, a pane pinned in
+its settings) are fetched per symbol through `api/htf_source.py`, the one
+service that also feeds the backtest, sweep, WFO, evaluate and closeness
+paths (`htf_needs` + `fetch_htf` + `closed_before`; `source_htf` for
+shipped-or-fetched with a sufficiency cutoff). Finer pins 422 with
+`screen_tf_lower` (run the screen on that timeframe and pin the coarser one
+instead); more than 3 canonical timeframes 422 with `screen_tf_too_many`; a
+symbol with too few closed pinned bars before the judged bar is skipped with
+`not enough @W history`. A pinned term costs no base bars (`warmup_bars`
+gets the base resolution). A ref found in neither copy nor chart 422s as
+"not one of this screen's indicators". Pivot-based outputs see only the fetched bars (300 to
 2000), so results can differ from the chart.
 
 "Pick from chart" is `lib/useIndicatorPick.ts`: a field arms the chart
