@@ -93,9 +93,9 @@ function fmtDivergence(d: ScreenDivergence, withRef: boolean): string {
 export interface ScreenerTab { id: string; epics: string[] }
 
 const SOURCES: { value: ScreenerSource; label: string; tip: string[] }[] = [
-  { value: "list", label: "List", tip: ["Type or pick the symbols"] },
   { value: "allTabs", label: "All tabs", tip: ["Every open chart tab", "Tabs opened later are included"] },
-  { value: "tabs", label: "Some tabs", tip: ["Only the tabs you tick"] },
+  { value: "tabs", label: "Selected tabs", tip: ["Only the tabs you tick"] },
+  { value: "list", label: "List", tip: ["Type or pick the symbols"] },
 ];
 
 interface Props {
@@ -126,8 +126,8 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   const [symbolsText, setSymbolsText] = useState(initial.symbolsText);
   const [source, setSource] = useState<ScreenerSource>(initial.source);
   const [tabIds, setTabIds] = useState<string[]>(initial.tabIds);
-  // ?? false: drafts held in memory from before this option existed.
-  const [includeOpenBar, setIncludeOpenBar] = useState(initial.includeOpenBar ?? false);
+  // ?? true: drafts held in memory from before this option existed.
+  const [includeOpenBar, setIncludeOpenBar] = useState(initial.includeOpenBar ?? true);
   const [expression, setExpression] = useState(initial.expression);
   const [columns, setColumns] = useState<ScreenColumn[]>(initial.columns);
   // ?? {} covers drafts held in memory from before this change, e.g. across a
@@ -173,7 +173,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   }, [source, symbolsText, tabs, tabIds]);
   // Names go out trimmed: the server keys each match's values by them.
   const sentColumns = useMemo(() => columns.map((c) => ({ ...c, name: c.name.trim() })), [columns]);
-  // "Some tabs" is saved as the list it resolved to: tab ids mean nothing in
+  // "Selected tabs" is saved as the list it resolved to: tab ids mean nothing in
   // another browser, and symbols are stored either way.
   const draft = {
     broker: brokerId, resolution, symbols, expression, columns: sentColumns,
@@ -224,8 +224,10 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     setName(s?.name ?? "");
     setResolution(s?.resolution ?? "DAY");
     setSymbolsText(s ? s.symbols.join(", ") : "");
-    setSource(s?.source === "allTabs" ? "allTabs" : "list");
-    setIncludeOpenBar(s?.includeOpenBar ?? false);
+    // A new screen starts on All tabs; a saved row without a source is a list.
+    setSource(!s || s.source === "allTabs" ? "allTabs" : "list");
+    // New screens include the open bar; a saved row keeps what it was saved with.
+    setIncludeOpenBar(s ? s.includeOpenBar ?? false : true);
     setExpression(s?.expression ?? "");
     setColumns(s?.columns ?? []);
     setIndicators(s?.indicators ?? {});
@@ -457,9 +459,9 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
         <section className="sc-section">
           <div className="sc-label">
             <span className="sc-label-name">Symbols<InfoTip title="Symbols" text={[
-              "List: symbols you type or pick.",
               "All tabs: every open chart, new tabs too.",
-              "Some tabs: only the tabs you tick.",
+              "Selected tabs: only the tabs you tick.",
+              "List: symbols you type or pick.",
               "Up to 500 symbols.",
             ]} />{symbols.length > 0 && <span className="sc-count">{symbols.length}</span>}</span>
             <div className="seg sc-source" role="radiogroup" aria-label="Symbol source">

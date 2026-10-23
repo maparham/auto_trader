@@ -250,15 +250,15 @@ where it holds, with optional value columns. Backend: `api/routers/screens.py`
 per-broker semaphore, judging under its own `per_compute=2` semaphore, cancel
 checked before each judge), `core/screen_eval.py` (`compile_screen`,
 `judge`), `core/screen_store.py` (SQLite, path from `screens_db_path`). Caps:
-500 symbols, 2000-character expressions, 8 columns. Symbol sources are a
-typed list, "All tabs" (every open chart tab, resolved at run time) or "Some
-tabs"; a saved screen stores `source` as `list` or `allTabs` only, since tab
+500 symbols, 2000-character expressions, 8 columns. Symbol sources, in panel
+order: "All tabs" (every open chart tab, resolved at run time; the default for
+a new screen), "Selected tabs", or a typed list; a saved screen stores `source` as `list` or `allTabs` only, since tab
 ids are per browser, and always stores the resolved `symbols`. Clicking a
 result row jumps to that epic at the screen's timeframe (App's `onOpen`).
-Screens judge each symbol's last CLOSED bar; "Include the open bar"
-(`includeOpenBar` on the run body and saved row, store column `open_bar`)
-judges the forming bar instead, as the chart draws it, so matches can change
-until it closes.
+"Include the open bar" (`includeOpenBar` on the run body and saved row,
+store column `open_bar`) judges the forming bar, as the chart draws it, so
+matches can change until it closes. A new screen has it on; off, and on every
+row saved before it existed, a screen judges the last CLOSED bar.
 
 ### Chart indicators in screens
 

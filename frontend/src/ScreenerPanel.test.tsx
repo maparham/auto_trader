@@ -103,22 +103,28 @@ const fakeController = () => ({
 }) as never;
 
 function fillAndRun(symbols = "AAPL, ZZZ", expression = "RSI(14) < 30") {
+  // A new screen starts on All tabs; these tests type their own list.
+  fireEvent.click(screen.getByRole("radio", { name: "List" }));
   fireEvent.change(screen.getByLabelText("Symbols"), { target: { value: symbols } });
   fireEvent.change(screen.getByLabelText("Condition"), { target: { value: expression } });
 }
 
 describe("ScreenerPanel", () => {
-  it("sends Include the open bar on Run and restores it from a saved screen", async () => {
-    vi.mocked(listScreens).mockResolvedValue([{ ...SAVED, includeOpenBar: true }]);
+  it("includes the open bar by default, and a saved screen keeps its own choice", async () => {
+    // SAVED predates the option, so it judges closed bars only.
+    vi.mocked(listScreens).mockResolvedValue([SAVED]);
     setup();
     fillAndRun();
-    fireEvent.click(screen.getByLabelText("Include the open bar"));
+    const box = () => screen.getByLabelText("Include the open bar") as HTMLInputElement;
+    expect(box().checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(startScreen).toHaveBeenCalled());
     expect(vi.mocked(startScreen).mock.calls[0][0]).toMatchObject({ includeOpenBar: true });
     const pickScreen = await screen.findByRole("option", { name: "Saved one" });
     fireEvent.change(pickScreen.closest("select")!, { target: { value: "s1" } });
-    await waitFor(() => expect((screen.getByLabelText("Include the open bar") as HTMLInputElement).checked).toBe(true));
+    await waitFor(() => expect(box().checked).toBe(false));
+    fireEvent.change(pickScreen.closest("select")!, { target: { value: "" } });
+    expect(box().checked).toBe(true);
   });
 
   it("shows where a matched divergence's pivot is", async () => {
@@ -262,7 +268,7 @@ describe("ScreenerPanel", () => {
   });
 
   it("Save records the symbol source, and loading an All-tabs screen restores it", async () => {
-    vi.mocked(listScreens).mockResolvedValue([{ ...SAVED, id: "s2", name: "Tabs one", source: "allTabs" }]);
+    vi.mocked(listScreens).mockResolvedValue([SAVED, { ...SAVED, id: "s2", name: "Tabs one", source: "allTabs" }]);
     const tabs = [{ id: "t1", epics: ["AAPL"] }];
     render(<ScreenerPanel brokerId="yfinance" tabs={tabs} controller={null} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
     fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
@@ -270,17 +276,20 @@ describe("ScreenerPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saveScreen).toHaveBeenCalled());
     expect(vi.mocked(saveScreen).mock.calls[0][1]).toMatchObject({ source: "allTabs", symbols: ["AAPL"] });
-    // "Some tabs" is saved as a list: tab ids do not travel.
-    fireEvent.click(screen.getByRole("radio", { name: "Some tabs" }));
+    // "Selected tabs" is saved as a list: tab ids do not travel.
+    fireEvent.click(screen.getByRole("radio", { name: "Selected tabs" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saveScreen).toHaveBeenCalledTimes(2));
     expect(vi.mocked(saveScreen).mock.calls[1][1].source).toBe("list");
-    // Loading restores All tabs; a row without a source is a list.
+    // Loading restores All tabs; a row without a source is a list; a new
+    // screen starts on All tabs.
     await waitFor(() => expect(screen.getByRole("option", { name: "Tabs one" })).toBeTruthy());
     fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s2" } });
     expect(screen.getByRole("radio", { name: "All tabs" }).getAttribute("aria-checked")).toBe("true");
-    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "s1" } });
     expect(screen.getByRole("radio", { name: "List" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.change(screen.getByLabelText("Saved screens"), { target: { value: "" } });
+    expect(screen.getByRole("radio", { name: "All tabs" }).getAttribute("aria-checked")).toBe("true");
   });
 
   it("switching broker resets a loaded screen, so Save creates rather than rewrites it", async () => {
@@ -382,11 +391,11 @@ describe("ScreenerPanel", () => {
     expect(vi.mocked(startScreen).mock.calls[0][0].symbols).toEqual(["AAPL", "MSFT"]);
   });
 
-  it("Some tabs screens only the ticked tabs and drops closed ones", async () => {
+  it("Selected tabs screens only the ticked tabs and drops closed ones", async () => {
     const props = { brokerId: "yfinance", controller: null, priceSide: "mid", onOpen: () => {}, onClose: () => {} };
     const two = [{ id: "t1", epics: ["AAPL"] }, { id: "t2", epics: ["MSFT"] }];
     const { rerender } = render(<ScreenerPanel {...props} tabs={two} />);
-    fireEvent.click(screen.getByRole("radio", { name: "Some tabs" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Selected tabs" }));
     const boxes = screen.getAllByRole("checkbox");
     fireEvent.click(boxes[0]);
     fireEvent.click(boxes[1]);

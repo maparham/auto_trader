@@ -6,7 +6,7 @@ import type { ExprInstancePayload } from "./exprInstances";
 
 export interface ScreenColumn { name: string; expression: string }
 /** Where a saved screen takes its symbols from when loaded again: the stored
- * list, or every chart tab open at that moment. "Some tabs" is not saved
+ * list, or every chart tab open at that moment. "Selected tabs" is not saved
  * (tab ids are per browser), so it is stored as the list it resolved to. */
 export type ScreenSource = "list" | "allTabs";
 export interface ScreenDraft {
