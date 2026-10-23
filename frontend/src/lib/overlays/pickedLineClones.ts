@@ -4,9 +4,11 @@
 // clone per geometry, labelled with every id that holds it. Saved screens that
 // are not open in the screener draw nothing.
 //
-// Drawn only on a chart showing the line's own timeframe: the slope is per bar
-// of that timeframe, so another chart's bars would tilt it. The clone runs from
-// its first anchor to the chart's last bar, like a line alert's ray.
+// Drawn on any timeframe of the line's symbol. On the line's own timeframe it
+// is placed in bars of that timeframe (loadedLinePoints, as a line alert's
+// ray); elsewhere it runs through its two time-anchored points, since the
+// slope is per bar of the line's timeframe and the chart's bars would tilt it.
+// Either way it runs from its first anchor to the chart's last bar.
 //
 // reconcile() re-reads the holders (on pickedLinesChanged and on every bind);
 // refresh() runs every paint and only re-places the held lines against the
@@ -147,9 +149,7 @@ export class PickedLineClones {
   reconcile(): void {
     if (!this.chart) return;
     try {
-      const all = wantedClones(this.epic, this.broker, this.sources());
-      for (const [k, w] of all) if (w.line.timeframe !== this.resolution) all.delete(k);
-      this.want = all;
+      this.want = wantedClones(this.epic, this.broker, this.sources());
     } catch {
       this.want = new Map();
     }
@@ -174,11 +174,13 @@ export class PickedLineClones {
       for (const [k, w] of this.want) {
         const l = w.line;
         const raw: RayPoints =
-          loadedLinePoints(
+          (l.timeframe === this.resolution
+            ? loadedLinePoints(
             { tRef: l.tRef, pRef: l.pRef, slope: l.slope, anchors: { t1: l.t1, p1: l.p1, t2: l.t2, p2: l.p2 } },
-            times,
-            dataList,
-          ) ?? [
+                times,
+                dataList,
+              )
+            : null) ?? [
             { timestamp: l.t1, value: l.p1 },
             { timestamp: l.t2, value: l.p2 },
           ];

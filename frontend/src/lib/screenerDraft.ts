@@ -54,8 +54,10 @@ export function getScreenerDraft(brokerId: string): ScreenerDraftState {
 }
 
 export function setScreenerDraft(brokerId: string, state: ScreenerDraftState): void {
+  const prev = drafts.get(brokerId);
   drafts.set(brokerId, state);
-  pickedLinesChanged.set(pickedLinesChanged.value + 1);
+  // Only a lines change redraws clones; the draft is written per keystroke.
+  if (prev?.lines !== state.lines) pickedLinesChanged.set(pickedLinesChanged.value + 1);
 }
 
 /** Tests only: forget every broker's draft. */

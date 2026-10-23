@@ -61,13 +61,16 @@ describe("PickedLineClones", () => {
     expect(pd).toHaveBeenCalled();
   });
 
-  it("skips a line held on another timeframe than the chart's", () => {
-    src.bt = { lines: { L1: { ...L, timeframe: "HOUR_4" } } };
+  it("draws a line held on another timeframe through its time-anchored points", () => {
+    // Slope 5 per H4 bar: counted in H1 bars it would be wrong, so the anchors
+    // (1,1)-(2,2) carry it to the last bar instead.
+    src.bt = { lines: { L1: { ...L, timeframe: "HOUR_4", slope: 5 } } };
     const { chart, created } = fakeChart();
     const c = new PickedLineClones();
     c.attach(chart as never, "capital", "US100", "HOUR");
     c.reconcile();
-    expect(created).toHaveLength(0);
+    expect(created).toHaveLength(1);
+    expect(created[0].points).toEqual([{ timestamp: 1, value: 1 }, { timestamp: 5, value: 5 }]);
   });
 
   it("refresh does not touch an unchanged clone or re-read the holders", () => {

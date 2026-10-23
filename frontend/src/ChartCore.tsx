@@ -5050,10 +5050,8 @@ export default function ChartCore({
     const unsubIndAlertPanes = controller.indicators.subscribe(() => controller.indicatorAlerts.reconcile());
     const unsubIndAlertRemoved = indicatorRemoved.subscribe(() => controller.indicatorAlerts.reconcile());
     // A rule holder gained or dropped a picked line: re-read the clones.
-    const unsubPickedLines = pickedLinesChanged.subscribe(() => {
-      controller.pickedLineClones.reconcile();
-      handle.redrawRef.current();
-    });
+    // The overlays repaint themselves; the label lives in their template.
+    const unsubPickedLines = pickedLinesChanged.subscribe(() => controller.pickedLineClones.reconcile());
     return () => {
       overlays.setAlertsListener(null);
       unsubAlerts();
