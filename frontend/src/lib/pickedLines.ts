@@ -78,7 +78,7 @@ export function pickedLineFromSeg(args: {
 }): { line: PickedLine } | { reason: string } {
   const gate = lineGate(args.seg, args.ext, args.resolution);
   if (!gate.ok) {
-    const messages: Record<LineGateResult["kind"], string> = {
+    const messages: Record<typeof gate.kind, string> = {
       seconds: "Lines can't be picked on seconds charts",
       unparseable: "Lines can't be picked on this timeframe",
       nonNative: "Lines can't be picked on this timeframe yet",

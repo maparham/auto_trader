@@ -19,7 +19,7 @@ export function buildLineAlertDraft(args: {
       nonNative: "Alerts on this timeframe are coming later",
       noGeometry: "This line can't take an alert yet",
     };
-    return { reason: messages[gate.kind as "nonNative" | "noGeometry"] };
+    return { reason: messages[gate.kind] };
   }
   return {
     draft: {

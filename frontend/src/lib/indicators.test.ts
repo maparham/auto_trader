@@ -41,7 +41,6 @@ const {
   renameIndicatorInstance,
   diffIndicatorSync,
 } = await import("./indicators");
-const { LINE_ID_RE } = await import("./pickedLines");
 
 // In-memory localStorage shim (node env, no DOM) so the persistence-round-trip
 // tests below can read what addIndicatorInstance wrote. Mirrors templates.test.ts.
