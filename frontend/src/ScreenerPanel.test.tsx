@@ -376,7 +376,7 @@ describe("ScreenerPanel", () => {
     expect([nm, id]).toEqual(["Oversold", undefined]);
   });
 
-  it("a loaded screen shows Edited and saves over itself, Save as makes a copy, Rename keeps its settings", async () => {
+  it("a loaded screen marks edits and saves over itself, Save as makes a copy, Rename keeps its settings", async () => {
     vi.mocked(listScreens).mockResolvedValue([SAVED]);
     vi.mocked(saveScreen).mockImplementation(async (nm, d, id) => ({ ...SAVED, ...d, name: nm, id: id ?? "new1" }));
     setup();
@@ -384,9 +384,10 @@ describe("ScreenerPanel", () => {
     fireEvent.change(screen.getByLabelText("Presets"), { target: { value: "s1" } });
     const saveBtn = () => screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
     expect(saveBtn().disabled).toBe(true);
-    expect(screen.queryByText("Edited")).toBeNull();
+    expect(saveBtn().classList.contains("sc-dirty")).toBe(false);
     fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 25" } });
-    expect(screen.getByText("Edited")).toBeTruthy();
+    // A dot on the save icon marks unsaved changes.
+    expect(saveBtn().classList.contains("sc-dirty")).toBe(true);
     // Rename sends the stored settings, not the unsaved edit.
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
     const field = screen.getByLabelText("Preset name") as HTMLInputElement;
@@ -400,7 +401,7 @@ describe("ScreenerPanel", () => {
     fireEvent.click(saveBtn());
     await waitFor(() => expect(saveScreen).toHaveBeenCalledTimes(2));
     expect(vi.mocked(saveScreen).mock.calls[1]).toMatchObject(["Deep oversold", { expression: "RSI(14) < 25" }, "s1"]);
-    await waitFor(() => expect(screen.queryByText("Edited")).toBeNull());
+    await waitFor(() => expect(saveBtn().classList.contains("sc-dirty")).toBe(false));
     // Save as proposes "<name> copy" and creates a new row.
     fireEvent.click(screen.getByRole("button", { name: "Save as" }));
     expect((screen.getByLabelText("Preset name") as HTMLInputElement).value).toBe("Deep oversold copy");

@@ -7267,10 +7267,17 @@ span.bt-leg-short { color: var(--neg); }
 .sc-hint { margin: 0; color: var(--text-faint); }
 .sc-row { display: flex; align-items: center; gap: 6px; }
 .sc-row > input, .sc-row > select { flex: 1 1 0; min-width: 0; }
-.sc-screen-row > select { flex: 1 1 0; }
-.sc-edited { flex: none; color: var(--text-faint); }
-.sc-link:disabled { color: var(--text-faint); cursor: default; background: none; }
-.sc-link-danger { color: var(--danger); }
+/* Preset ⓘ [picker] then icon actions, all on one row. */
+.sc-preset-row { gap: 4px; }
+.sc-preset-row > .sc-label { flex: none; margin-right: 4px; }
+.sc-preset-row > select, .sc-preset-row > input { flex: 1 1 0; min-width: 0; }
+.sc-preset-row .sc-icon-btn { display: inline-flex; align-items: center; padding: 4px; }
+.sc-icon-btn:disabled { color: var(--text-faint); cursor: default; background: none; }
+.sc-icon-danger:hover:not(:disabled) { color: var(--danger); }
+/* Unsaved changes: a dot on the save icon. */
+.sc-dirty { position: relative; color: var(--text); }
+.sc-dirty::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--accent); }
 .sc-col-name { flex: 0 1 34% !important; }
 .sc-col-expr { flex: 1 1 0; font-family: var(--mono, ui-monospace, monospace); }
 .sc-symbols { min-height: 48px; resize: vertical; }

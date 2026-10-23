@@ -7,6 +7,7 @@ import InfoTip from "./components/InfoTip";
 import Tooltip from "./components/Tooltip";
 import RuleExpressionInput from "./components/RuleExpressionInput";
 import { RadarIcon } from "./lib/menuIcons";
+import { CopyAllIcon, TrashIcon } from "./backtestSettings/icons";
 import SymbolSearchModal from "./SymbolSearchModal";
 import { fetchFavorites } from "./lib/feed/instruments";
 import { isImpersonating } from "./lib/impersonation";
@@ -88,6 +89,24 @@ function fmtDivergence(d: ScreenDivergence, withRef: boolean): string {
   const hm = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
   const text = `${t.getDate()} ${MONTHS[t.getMonth()]} ${hm} · ${d.barsAgo} bar${d.barsAgo === 1 ? "" : "s"} ago`;
   return withRef ? `${d.ref}: ${text}` : text;
+}
+
+function SaveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 3h11l4 4v12.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19.5v-15A1.5 1.5 0 0 1 5.5 3Z" />
+      <path d="M8 3v5h7V3M8 21v-7h8v7" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15.5 4.5l4 4L9 19l-5 1 1-5Z" />
+      <path d="M13.5 6.5l4 4" />
+    </svg>
+  );
 }
 
 /** JSON with sorted object keys, so two equal settings maps compare equal
@@ -497,63 +516,73 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
 
       <div className="sc-form">
         <section className="sc-section">
-          <div className="sc-label">
-            <span className="sc-label-name">Preset<InfoTip title="Preset" text={[
+          <div className="sc-row sc-preset-row">
+            <span className="sc-label sc-label-name">Preset<InfoTip title="Preset" text={[
               "A preset keeps the setup: symbols, timeframe, condition, columns.",
               "Results are not saved. Pick a preset and Run it.",
             ]} /></span>
-            {naming === null && (
-              <span className="sc-label-actions">
+            {naming === null ? (
+              <>
+                <select
+                  aria-label="Presets"
+                  value={currentId ?? ""}
+                  onChange={(e) => load(saved.find((s) => s.id === e.target.value) ?? null)}
+                >
+                  <option value="">New preset</option>
+                  {saved.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
                 {loaded ? (
                   <>
-                    <Tooltip content={dirty ? "Save changes to this preset" : "No unsaved changes"}>
+                    <Tooltip content={dirty ? "Save changes" : "No unsaved changes"}>
                       <span>
-                        <button className="sc-link" disabled={readOnly || !dirty || !expression.trim()}
-                          onClick={() => void save(name, loaded.id)}>Save</button>
+                        <button aria-label="Save" className={`sc-icon-btn${dirty ? " sc-dirty" : ""}`}
+                          disabled={readOnly || !dirty || !expression.trim()}
+                          onClick={() => void save(name, loaded.id)}><SaveIcon /></button>
                       </span>
                     </Tooltip>
-                    <button className="sc-link" disabled={readOnly || !expression.trim()} onClick={() => openNaming("copy")}>Save as</button>
-                    <button className="sc-link" disabled={readOnly} onClick={() => openNaming("rename")}>Rename</button>
-                    <button className="sc-link sc-link-danger" disabled={readOnly} onClick={remove}>Delete</button>
+                    <Tooltip content="Save as a new preset">
+                      <button aria-label="Save as" className="sc-icon-btn" disabled={readOnly || !expression.trim()}
+                        onClick={() => openNaming("copy")}><CopyAllIcon /></button>
+                    </Tooltip>
+                    <Tooltip content="Rename">
+                      <button aria-label="Rename" className="sc-icon-btn" disabled={readOnly}
+                        onClick={() => openNaming("rename")}><PencilIcon /></button>
+                    </Tooltip>
+                    <Tooltip content="Delete">
+                      <button aria-label="Delete" className="sc-icon-btn sc-icon-danger" disabled={readOnly}
+                        onClick={remove}><TrashIcon /></button>
+                    </Tooltip>
                   </>
                 ) : (
-                  <button className="sc-link" disabled={readOnly || !expression.trim()} onClick={() => openNaming("new")}>Save</button>
+                  <Tooltip content="Save as a preset">
+                    <span>
+                      <button aria-label="Save" className="sc-icon-btn" disabled={readOnly || !expression.trim()}
+                        onClick={() => openNaming("new")}><SaveIcon /></button>
+                    </span>
+                  </Tooltip>
                 )}
-              </span>
+              </>
+            ) : (
+              <>
+                <input
+                  aria-label="Preset name"
+                  autoFocus
+                  placeholder={naming === "rename" ? "New name" : "Name this preset"}
+                  value={nameDraft}
+                  maxLength={80}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitName();
+                    if (e.key === "Escape") setNaming(null);
+                  }}
+                />
+                <button className="sc-btn" disabled={!nameDraft.trim()} onClick={commitName}>
+                  {naming === "rename" ? "Rename" : "Save"}
+                </button>
+                <button className="sc-btn" onClick={() => setNaming(null)}>Cancel</button>
+              </>
             )}
           </div>
-        {naming === null ? (
-          <div className="sc-row sc-screen-row">
-            <select
-              aria-label="Presets"
-              value={currentId ?? ""}
-              onChange={(e) => load(saved.find((s) => s.id === e.target.value) ?? null)}
-            >
-              <option value="">New preset</option>
-              {saved.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-            {dirty && <span className="sc-edited">Edited</span>}
-          </div>
-        ) : (
-          <div className="sc-row sc-screen-row">
-            <input
-              aria-label="Preset name"
-              autoFocus
-              placeholder={naming === "rename" ? "New name" : "Name this preset"}
-              value={nameDraft}
-              maxLength={80}
-              onChange={(e) => setNameDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitName();
-                if (e.key === "Escape") setNaming(null);
-              }}
-            />
-            <button className="sc-btn" disabled={!nameDraft.trim()} onClick={commitName}>
-              {naming === "rename" ? "Rename" : "Save"}
-            </button>
-            <button className="sc-btn" onClick={() => setNaming(null)}>Cancel</button>
-          </div>
-        )}
         </section>
 
         <section className="sc-section">
