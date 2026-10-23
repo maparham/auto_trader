@@ -190,6 +190,8 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   // (the server 409s it, and that catch used to null out the FIRST job's
   // jobRef/progress, orphaning it uncancelled).
   const [starting, setStarting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const jobRef = useRef<string | null>(null);
   // The run spec actually submitted to the server, snapshotted at Run time.
   // Headers/cells/row-click navigation read from THIS, not the live form
@@ -376,6 +378,11 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
       setError(colErr);
       return;
     }
+    // A second Enter (or Enter then a click) before the first answer would
+    // POST the same preset twice.
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     try {
       const inds = capture();
       // Adopt the copy only once the server has accepted it, same reasoning
@@ -389,6 +396,9 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
       toast(id ? "Preset saved" : `Saved "${row.name}"`);
     } catch (e) {
       explain(e);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -396,7 +406,9 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
    * form since it was loaded are not saved along with the new name. */
   const rename = async (screenName: string) => {
     const row = saved.find((s) => s.id === currentId);
-    if (!row) return;
+    if (!row || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     try {
       const out = await saveScreen(screenName, row, row.id);
       setSaved((all) => all.map((s) => (s.id === out.id ? out : s)));
@@ -405,6 +417,9 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
       toast("Preset renamed");
     } catch (e) {
       explain(e);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -541,16 +556,22 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
                       </span>
                     </Tooltip>
                     <Tooltip content="Save as a new preset">
-                      <button aria-label="Save as" className="sc-icon-btn" disabled={readOnly || !expression.trim()}
-                        onClick={() => openNaming("copy")}><CopyAllIcon /></button>
+                      <span>
+                        <button aria-label="Save as" className="sc-icon-btn" disabled={readOnly || !expression.trim()}
+                          onClick={() => openNaming("copy")}><CopyAllIcon /></button>
+                      </span>
                     </Tooltip>
                     <Tooltip content="Rename">
-                      <button aria-label="Rename" className="sc-icon-btn" disabled={readOnly}
-                        onClick={() => openNaming("rename")}><PencilIcon /></button>
+                      <span>
+                        <button aria-label="Rename" className="sc-icon-btn" disabled={readOnly}
+                          onClick={() => openNaming("rename")}><PencilIcon /></button>
+                      </span>
                     </Tooltip>
                     <Tooltip content="Delete">
-                      <button aria-label="Delete" className="sc-icon-btn sc-icon-danger" disabled={readOnly}
-                        onClick={remove}><TrashIcon /></button>
+                      <span>
+                        <button aria-label="Delete" className="sc-icon-btn sc-icon-danger" disabled={readOnly}
+                          onClick={remove}><TrashIcon /></button>
+                      </span>
                     </Tooltip>
                   </>
                 ) : (
@@ -576,7 +597,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
                     if (e.key === "Escape") setNaming(null);
                   }}
                 />
-                <button className="sc-btn" disabled={!nameDraft.trim()} onClick={commitName}>
+                <button className="sc-btn" disabled={saving || !nameDraft.trim()} onClick={commitName}>
                   {naming === "rename" ? "Rename" : "Save"}
                 </button>
                 <button className="sc-btn" onClick={() => setNaming(null)}>Cancel</button>

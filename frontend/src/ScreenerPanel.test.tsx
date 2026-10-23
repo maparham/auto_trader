@@ -275,6 +275,18 @@ describe("ScreenerPanel", () => {
     expect(screen.queryByText("AAPL")).toBeNull();
   });
 
+  it("a second Enter while the first save is in flight does not save twice", async () => {
+    let resolveSave: (v: Screen) => void = () => {};
+    vi.mocked(saveScreen).mockReturnValue(new Promise((res) => { resolveSave = res; }));
+    render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={null} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "RSI(14) < 30" } });
+    saveNew();
+    fireEvent.keyDown(screen.getByLabelText("Preset name"), { key: "Enter" });
+    expect(saveScreen).toHaveBeenCalledTimes(1);
+    resolveSave({ ...SAVED, id: "new1" });
+    await waitFor(() => expect(screen.queryByLabelText("Preset name")).toBeNull());
+  });
+
   it("Save records the symbol source, and loading an All-tabs screen restores it", async () => {
     vi.mocked(listScreens).mockResolvedValue([SAVED, { ...SAVED, id: "s2", name: "Tabs one", source: "allTabs" }]);
     const tabs = [{ id: "t1", epics: ["AAPL"] }];
