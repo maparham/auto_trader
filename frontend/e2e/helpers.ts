@@ -83,3 +83,21 @@ export async function stubStateApi(page: Page): Promise<void> {
   await page.route("**/api/state", (r) => r.fulfill({ status: 200, body: "{}" }));
   await page.route("**/api/state/**", (r) => r.fulfill({ status: 204, body: "" }));
 }
+
+/** Serve a fixed hourly history in place of the broker, and hold the live
+ * candle stream silent. CI reaches the real upstream (dukascopy), and a slow
+ * or stalled fetch there leaves the chart on "Couldn't load" until the spec
+ * times out; a live tick would also land at the real price, far off the
+ * stubbed one. The bars end at the current hour, so the chart looks live. */
+export async function stubCandles(page: Page, bars = 500): Promise<void> {
+  const hour = 3600_000;
+  const end = Math.floor(Date.now() / hour) * hour;
+  const rows = Array.from({ length: bars }, (_, i) => {
+    const close = 100 + 10 * Math.sin(i / 20);
+    return { timestamp: end - (bars - 1 - i) * hour, open: close, high: close + 0.5, low: close - 0.5, close, volume: 1000 };
+  });
+  await page.route("**/api/candles?**", (r) =>
+    r.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(rows) }),
+  );
+  await page.routeWebSocket(/\/ws\/candles/, () => {});
+}

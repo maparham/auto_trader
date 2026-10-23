@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
+import { seedSingleChartDefault, stubCandles, stubStateApi } from "./helpers";
 
 type ChartLike = {
   getDataList: () => Array<{ close: number }>;
@@ -100,6 +100,7 @@ test.describe("alert pill on price axis", () => {
   test.beforeEach(async ({ page }) => {
     await seedSingleChartDefault(page);
     await stubStateApi(page);
+    await stubCandles(page);
     alerts = await stubAlertsApi(page);
   });
 

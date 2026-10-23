@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
+import { seedSingleChartDefault, stubCandles, stubStateApi } from "./helpers";
 
 // Hovering an alert line must hide the crosshair's HORIZONTAL guide (it would
 // otherwise sit right on the dashed alert line and read as noise) while leaving
@@ -123,6 +123,7 @@ test.describe("crosshair over alert line", () => {
   test.beforeEach(async ({ page }) => {
     await seedSingleChartDefault(page);
     await stubStateApi(page);
+    await stubCandles(page);
     alerts = await stubAlertsApi(page);
   });
 
