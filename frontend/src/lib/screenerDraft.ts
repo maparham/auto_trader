@@ -6,6 +6,7 @@
 // localStorage on purpose; a reload starts clean.
 import type { ScreenColumn, ScreenResult } from "./screens";
 import type { PaneCopy } from "./screenerIndicators";
+import type { Lines } from "./pickedLines";
 
 /** Where a screen's symbols come from: the typed list, every open chart tab
  *  (live, so tabs opened later join the next run), or a picked set of tabs. */
@@ -24,6 +25,8 @@ export interface ScreenerDraftState {
   expression: string;
   columns: ScreenColumn[];
   indicators: PaneCopy;
+  /** Picked trendlines held beside the text (L<n>); undefined when none. */
+  lines?: Lines;
   result: ScreenResult | null;
   ranSpec: ScreenerRanSpec | null;
 }

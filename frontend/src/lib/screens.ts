@@ -3,6 +3,7 @@
 // becomes a ScreenSpecError so the panel can underline the right field.
 import { API_BASE as BASE, apiFetch, errorDetail } from "./http";
 import type { ExprInstancePayload } from "./exprInstances";
+import type { Lines } from "./pickedLines";
 
 export interface ScreenColumn { name: string; expression: string }
 /** Where a saved screen takes its symbols from when loaded again: the stored
@@ -22,6 +23,9 @@ export interface ScreenDraft {
   /** Judge the still-forming bar too, as the chart draws it. Absent on rows
    * saved before it existed, which judge closed bars only. */
   includeOpenBar?: boolean;
+  /** Picked trendlines the expressions reference as bare L<n> ids. Absent
+   * when none are referenced. */
+  lines?: Lines;
 }
 export interface Screen extends ScreenDraft {
   id: string;
