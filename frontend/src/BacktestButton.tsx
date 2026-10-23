@@ -93,6 +93,7 @@ import type { BacktestRequest, ExprBacktestRequest, ExprRow, SweepRow } from "./
 import { collectExprInstances, exprInstancesFor, exprWarmupByRef, missingExprInstances } from "./lib/exprInstances";
 import { liveExprInstances } from "./lib/indicators";
 import { applyPortableInstances } from "./lib/useRuleClipboard";
+import { trimLines } from "./lib/pickedLines";
 
 interface Props {
   controller: ChartController | null;
@@ -563,6 +564,9 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // Both requests carry the map: a coded run still posts THIS panel's exit
       // rules as expressions.
       const exprIndicators = chart ? collectExprInstances(live, runRows) : undefined;
+      // Picked trendlines (L<n>): only the ids the shipped rows still reference.
+      // The config keeps every line it ever picked; trimming happens here.
+      const runLines = trimLines(effCfg.lines, runRows);
       const baseReq: BacktestRequest = {
         epic,
         resolution: runResolution,
@@ -591,6 +595,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // Coded runs post their exits as expression rows, so those rows can
         // reference a chart pane the same way rule mode does.
         indicators: exprIndicators,
+        lines: runLines,
         // `!== false` so a preset predating these flags (undefined) still trades.
         // Coded mode: longEnabled/shortEnabled are rules-mode UI; RuleStrategy
         // gates EXITS on them (rule.py). A coded run must never let a
@@ -650,6 +655,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
         // moment ago runs as it looks. Only referenced panes travel; a reference
         // to a pane that is gone ships nothing (the editor already flags it).
         indicators: exprIndicators,
+        lines: runLines,
       };
 
       // Walk-forward mode: the modal populated wfoRequestSignal (one-shot,
@@ -843,6 +849,7 @@ export default function BacktestButton({ controller, period, epic, brokerId, pri
       // The summary chip is driven by the signal subscription above, so just
       // publish the result (rehydrate uses the same publish path).
       backtestResultSignal.set(res);
+      for (const w of res.warnings ?? []) toast(w);
       // Remember it past any later clear/switch (see lastBacktestResult.ts) so
       // the admin's "capture current result" demo-publishing tool can still
       // find it once the panel itself has moved on.

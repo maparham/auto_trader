@@ -297,3 +297,20 @@ describe("custom timeframe completions", () => {
     }
   });
 });
+
+describe("completionsFor picked lines", () => {
+  it("offers picked lines in their own section", () => {
+    const lines = { L1: { epic: "US100", broker: "capital", timeframe: "HOUR", t1: 1, p1: 1, t2: 2, p2: 2, slope: 1, tRef: 3, pRef: 3 } };
+    const out = completionsFor("candle.close > L", 16, { lines });
+    const c = out.find((x) => x.label === "L1");
+    // tfLabel("HOUR") is "1H", the same spelling the @ timeframe list shows.
+    expect(c?.detail).toBe("line · US100 · 1H");
+    expect(c?.section).toEqual({ name: "Picked lines", rank: 3 });
+  });
+
+  it("filters picked lines by prefix", () => {
+    const l = { epic: "US100", broker: "capital", timeframe: "HOUR", t1: 1, p1: 1, t2: 2, p2: 2, slope: 1, tRef: 3, pRef: 3 };
+    const out = completionsFor("EM", 2, { lines: { L1: l } });
+    expect(out.find((x) => x.label === "L1")).toBeUndefined();
+  });
+});

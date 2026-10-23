@@ -14,6 +14,7 @@ import {
   type HeatmapView,
 } from "../lib/heatmapController";
 import { collectExprInstances } from "../lib/exprInstances";
+import { trimLines } from "../lib/pickedLines";
 import { liveExprInstances } from "../lib/indicators";
 import { overrideExtend } from "../lib/overrideExtend";
 import { backtestConfigLive } from "../lib/signals";
@@ -96,7 +97,8 @@ export function useProximityHeatmap({ chartRef, epic, broker, priceSide, display
     }
     const bars = c.getDataList();
     if (!bars.length) return;
-    const req = buildClosenessRequest(currentConfig(), cur.view, {
+    const cfg = currentConfig();
+    const req = buildClosenessRequest(cfg, cur.view, {
       broker: cur.broker,
       epic: cur.epic,
       priceSide: cur.priceSide,
@@ -117,6 +119,7 @@ export function useProximityHeatmap({ chartRef, epic, broker, priceSide, display
     fetchClosenessHeatmap({
       ...req,
       indicators: collectExprInstances(liveExprInstances(c), req.rows),
+      lines: trimLines(cfg.lines, req.rows),
     })
       .then((resp) => {
         const cc = chartRef.current;

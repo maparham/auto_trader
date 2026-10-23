@@ -6,6 +6,7 @@ import type { ChartController } from "../lib/chartController";
 import type { ExprInstance } from "../lib/expr/catalog";
 import { exprInstancesFromChart } from "../lib/indicators";
 import { useIndicatorPick } from "../lib/useIndicatorPick";
+import { lineGeoKey, mintLineId } from "../lib/pickedLines";
 
 type Group = "longEntry" | "longExit" | "shortEntry" | "shortExit";
 
@@ -14,13 +15,28 @@ export function useExprPick(controller: ChartController | null, setCfg: Dispatch
   // clicks an on-chart indicator, and its expression token (e.g. "EMA(9)") is
   // appended to that row. One armed row at a time; the generic hook owns the
   // arm/consume cycle (lib/useIndicatorPick.ts).
-  const pick = useIndicatorPick<{ group: Group; row: number }>(controller, (target, token) => {
-    setCfg((c) => {
-      const g = c[target.group] as { rules: Array<{ expr?: string }> };
-      const rules = g.rules.map((r, i) => (i === target.row ? { ...r, expr: (r.expr ?? "") + token } : r));
-      return { ...c, [target.group]: { ...g, rules } };
-    });
-  });
+  // A click on a Trendlines line freezes that line into the config as L<n>
+  // (cfg.lines) and appends the bare id. Re-picking a line already held reuses
+  // its id rather than minting a duplicate.
+  const pick = useIndicatorPick<{ group: Group; row: number }>(
+    controller,
+    (target, token) => {
+      setCfg((c) => {
+        const g = c[target.group] as { rules: Array<{ expr?: string }> };
+        const rules = g.rules.map((r, i) => (i === target.row ? { ...r, expr: (r.expr ?? "") + token } : r));
+        return { ...c, [target.group]: { ...g, rules } };
+      });
+    },
+    (target, line) => {
+      setCfg((c) => {
+        const key = lineGeoKey(line);
+        const id = Object.entries(c.lines ?? {}).find(([, l]) => lineGeoKey(l) === key)?.[0] ?? mintLineId(c.lines);
+        const g = c[target.group] as { rules: Array<{ expr?: string }> };
+        const rules = g.rules.map((r, i) => (i === target.row ? { ...r, expr: (r.expr ?? "") + id } : r));
+        return { ...c, [target.group]: { ...g, rules }, lines: { ...(c.lines ?? {}), [id]: line } };
+      });
+    },
+  );
   return pick
     ? { armed: pick.armed, arm: (group: Group, row: number) => pick.arm({ group, row }), disarm: pick.disarm }
     : undefined;

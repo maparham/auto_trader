@@ -228,3 +228,17 @@ describe("backtestConfigEquals", () => {
     expect(backtestConfigEquals({ ...a, longEntry: { combine: "AND", rules } }, b)).toBe(false);
   });
 });
+
+describe("picked lines on the config", () => {
+  const line = { epic: "US100", broker: "capital", timeframe: "HOUR", t1: 1, p1: 1, t2: 2, p2: 2, slope: 1, tRef: 3, pRef: 3 };
+  it("normalize keeps lines", () => {
+    const cfg = { ...defaultBacktestConfig(), lines: { L1: line } };
+    expect(normalizeBacktestConfig(cfg).lines).toEqual({ L1: line });
+  });
+  it("equals compares lines, absent and empty alike", () => {
+    const a = defaultBacktestConfig();
+    expect(backtestConfigEquals(a, { ...a, lines: {} })).toBe(true);
+    expect(backtestConfigEquals(a, { ...a, lines: { L1: line } })).toBe(false);
+    expect(backtestConfigEquals({ ...a, lines: { L1: line } }, { ...a, lines: { L1: { ...line, p2: 9 } } })).toBe(false);
+  });
+});

@@ -140,6 +140,7 @@ export function StrategySection({
                   onCopy={copyRules}
                   onPaste={pasteRules}
                   instances={exprInstances}
+                  lines={cfg.lines}
                   isExit
                 />
                 <RiskSection

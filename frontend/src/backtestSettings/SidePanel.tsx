@@ -92,6 +92,7 @@ export function SidePanel({
           onPaste={onPaste}
           pickIndicator={sidePick(isLong ? "longEntry" : "shortEntry")}
           instances={instances}
+          lines={cfg.lines}
           sweep={sweep && { ...sweep, group: "entry" }}
         />
         <RuleGroupSection
@@ -106,6 +107,7 @@ export function SidePanel({
           onPaste={onPaste}
           pickIndicator={sidePick(isLong ? "longExit" : "shortExit")}
           instances={instances}
+          lines={cfg.lines}
           isExit
           sweep={sweep && { ...sweep, group: "exit" }}
         />

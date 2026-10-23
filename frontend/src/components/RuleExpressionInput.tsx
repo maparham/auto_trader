@@ -27,6 +27,7 @@ import { literalUnderline } from "../lib/expr/literalDeco";
 import { exprHighlight } from "../lib/expr/highlight";
 import { analyze, type LiteralSpan } from "../lib/expr/parser";
 import type { ExprInstance } from "../lib/expr/catalog";
+import type { Lines } from "../lib/pickedLines";
 import "./RuleExpressionInput.css";
 
 export interface RuleExpressionInputProps {
@@ -43,6 +44,10 @@ export interface RuleExpressionInputProps {
    * source of truth, so the editor is told what exists right now. Omitted (Live
    * panel, tests) means "no panes", and any reference reads as unknown. */
   instances?: readonly ExprInstance[];
+  /** Picked trendlines the rule holder keeps (bare `L<n>` ids), for completion
+   * and `unknown_line_ref` lint. Omitted means the holder keeps no lines and
+   * line ids are not checked. */
+  lines?: Lines;
 }
 
 // Reject any transaction whose result spans more than one line: this keeps the
@@ -54,7 +59,7 @@ const singleLine = EditorState.transactionFilter.of((tr) =>
 
 export default function RuleExpressionInput(props: RuleExpressionInputProps) {
   const {
-    value, onChange, isExit, onLiteralsChange, readOnly = false, placeholder, instances,
+    value, onChange, isExit, onLiteralsChange, readOnly = false, placeholder, instances, lines,
   } = props;
 
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -76,6 +81,13 @@ export default function RuleExpressionInput(props: RuleExpressionInputProps) {
   useEffect(() => {
     instancesRef.current = instances;
   }, [instances]);
+  // Same pattern for the picked lines: the editor reads the latest map, and the
+  // lint gets the id set (undefined when the holder keeps no lines at all).
+  const linesRef = useRef(lines);
+  useEffect(() => {
+    linesRef.current = lines;
+  }, [lines]);
+  const lineIds = () => (linesRef.current ? new Set(Object.keys(linesRef.current)) : undefined);
 
   // Identity of the pane list as the editor cares about it (ids + outputs +
   // pinned timeframe). The parent rebuilds the array on every chart poll, so
@@ -83,6 +95,8 @@ export default function RuleExpressionInput(props: RuleExpressionInputProps) {
   const instKey = (instances ?? [])
     .map((i) => `${i.id}:${i.outputs.join(",")}:${i.timeframe ?? ""}`)
     .join("|");
+  // The held line ids, so a newly picked line re-lints at once.
+  const linesKey = lines ? Object.keys(lines).join(",") : "";
 
   const readOnlyComp = useRef(new Compartment());
   const linterComp = useRef(new Compartment());
@@ -116,11 +130,11 @@ export default function RuleExpressionInput(props: RuleExpressionInputProps) {
         // never passes — so wrap it in a closure over the live pane list rather
         // than registering it bare, or chart panes are never offered.
         autocompletion({
-          override: [(ctx) => cmCompletionSource(ctx, { instances: instancesRef.current })],
+          override: [(ctx) => cmCompletionSource(ctx, { instances: instancesRef.current, lines: linesRef.current })],
           activateOnTyping: true,
         }),
         linterComp.current.of(
-          exprLinter(() => isExitRef.current, () => instancesRef.current),
+          exprLinter(() => isExitRef.current, () => instancesRef.current, lineIds),
         ),
         readOnlyComp.current.of([
           EditorState.readOnly.of(readOnly),
@@ -165,10 +179,10 @@ export default function RuleExpressionInput(props: RuleExpressionInputProps) {
     if (!view) return;
     view.dispatch({
       effects: linterComp.current.reconfigure(
-        exprLinter(() => isExitRef.current, () => instancesRef.current),
+        exprLinter(() => isExitRef.current, () => instancesRef.current, lineIds),
       ),
     });
-  }, [isExit, instKey]);
+  }, [isExit, instKey, linesKey]);
 
   // Reconfigure read-only state on prop change.
   useEffect(() => {

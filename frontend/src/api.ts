@@ -4,6 +4,7 @@ import type { Costs, SlippageModel, RiskConfig, ScalingConfig, RecurrenceMask } 
 import { API_BASE as BASE, apiFetch, errorDetail } from "./lib/http";
 import type { EvaluateRequest, EvaluateResult } from "./lib/liveTypes";
 import type { ExprInstancePayload } from "./lib/exprInstances";
+import type { Lines } from "./lib/pickedLines";
 
 export interface Candle {
   time: number; // unix seconds (UTC)
@@ -266,6 +267,8 @@ export interface Baselines {
 }
 
 export interface BacktestResult {
+  // Non-fatal notes from the backend (e.g. a picked line on another epic).
+  warnings?: string[];
   epic: string;
   resolution: string;
   candles: Candle[];
@@ -362,6 +365,8 @@ export interface BacktestRequest {
   // Chart-indicator panes those expression exits reference (see the same field on
   // ExprBacktestRequest for the shape and why the rule can't carry the settings).
   indicators?: Record<string, ExprInstancePayload>;
+  // Picked trendlines the exit rows reference as bare L<n> ids (only those).
+  lines?: Lines;
   // Opt into the reference baselines on the result (BacktestResult.baselines).
   // Single runs only, exactly as on ExprBacktestRequest: sweep and walk-forward
   // submissions share this same body and must not carry it.
@@ -414,6 +419,8 @@ export interface ExprBacktestRequest {
   // Shared by /api/expr/backtest, /api/expr/sweep/jobs and
   // /api/expr/walkforward/jobs, which all post this body.
   indicators?: Record<string, ExprInstancePayload>;
+  // Picked trendlines the rows reference as bare L<n> ids (only those).
+  lines?: Lines;
   // Parameter/literal sweep body: mirrors the structured submitSweepJob body
   // ({ combos, windows }). Set when submitting POST /api/expr/sweep/jobs.
   sweep?: {
@@ -460,6 +467,8 @@ export interface ClosenessRequest {
   // Same instance map as ExprBacktestRequest: the heatmap evaluates the same
   // rows, so a row referencing a chart pane needs that pane's settings here too.
   indicators?: Record<string, ExprInstancePayload>;
+  // Picked trendlines the rows reference as bare L<n> ids (only those).
+  lines?: Lines;
 }
 
 export async function fetchClosenessHeatmap(

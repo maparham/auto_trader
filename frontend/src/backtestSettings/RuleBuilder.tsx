@@ -13,6 +13,7 @@ import { requestConfirm } from "../lib/signals";
 import type { RangeAxis, SweepAxis } from "../lib/sweep";
 import { CheckSmallIcon, CopyAllIcon, KebabIcon, TrashIcon } from "./icons";
 import { Section } from "./Section";
+import type { Lines } from "../lib/pickedLines";
 
 // Per-row actions collapsed into one ⋮ menu (the inline icons were too small to
 // notice). Portaled like the operator dropdown so the panel's overflow can't
@@ -121,6 +122,7 @@ export function RuleGroupSection({
   onPaste,
   pickIndicator,
   instances,
+  lines,
   isExit = false,
   sweep,
 }: {
@@ -148,6 +150,8 @@ export function RuleGroupSection({
   // instance-reference lint + completion in each row's editor. Injected, never
   // imported: the pane's own settings are the source of truth.
   instances?: readonly ExprInstance[];
+  // The holder's picked trendlines (bare L<n> ids), for lint + completion.
+  lines?: Lines;
   // Exit groups gate whether `entry` is a valid reference in the expression.
   isExit?: boolean;
   sweep?: {
@@ -320,6 +324,7 @@ export function RuleGroupSection({
               onChange={(expr) => patchRule(i, { expr })}
               isExit={isExit}
               instances={instances}
+              lines={lines}
               readOnly={off}
               placeholder="e.g. EMA(9) > EMA(21)"
             />

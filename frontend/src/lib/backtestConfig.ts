@@ -4,6 +4,7 @@
 // expressions (`Rule.expr`); the structured operand model is gone.
 
 import { riskSyncOn } from "./riskSync";
+import type { Lines } from "./pickedLines";
 
 export type Combine = "AND" | "OR";
 
@@ -172,6 +173,10 @@ export interface BacktestConfig {
   // unequal, so writing `false` would mark every older preset dirty.
   // Walk-forward keeps its own always-on fold baselines (lib/wfo.ts).
   runBaselines?: boolean;
+  // Picked trendlines the rules reference as bare L<n> ids (lib/pickedLines.ts).
+  // Kept whole on save so a rule cleared mid-edit keeps its line; requests send
+  // only the ids the rows still reference (trimLines).
+  lines?: Lines;
 }
 
 const ATR_KINDS = new Set(["atr", "trailAtr"]);
@@ -283,6 +288,11 @@ function canonical(value: unknown): string {
  * No other optional field is reconciled: for everything else, absent and
  * present-with-the-default-value compare UNEQUAL. */
 export function backtestConfigEquals(a: BacktestConfig, b: BacktestConfig): boolean {
-  const c = (x: BacktestConfig) => canonical({ ...normalizeBacktestConfig(x), riskSynced: riskSyncOn(x) });
+  // An empty lines map and an absent one hold the same strategy.
+  const c = (x: BacktestConfig) => canonical({
+    ...normalizeBacktestConfig(x),
+    riskSynced: riskSyncOn(x),
+    lines: x.lines && Object.keys(x.lines).length ? x.lines : undefined,
+  });
   return c(a) === c(b);
 }

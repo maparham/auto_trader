@@ -16,7 +16,8 @@ import type {
 import type { EditorView } from "@codemirror/view";
 import { loadCustomResolutions } from "../persist";
 import { ALL_PERIODS, customPeriods } from "../feed";
-import { isNativeTf, tfSecondsOf } from "../timeframe";
+import { isNativeTf, tfLabel, tfSecondsOf } from "../timeframe";
+import type { Lines } from "../pickedLines";
 import {
   CANDLE_FIELDS,
   CANDLE_FIELD_DETAILS,
@@ -39,12 +40,16 @@ import {
  * `analyze(src, { instances })` in parser.ts. */
 export interface CompleteOptions {
   instances?: readonly ExprInstance[];
+  /** Picked trendlines the holder keeps (bare `L<n>` ids). */
+  lines?: Lines;
 }
 
 /** Chart-instance refs get their own section, ranked after the (unsectioned)
  * static catalog, and a negative boost so they also sort last within a rank. */
 const CHART_SECTION = { name: "Chart indicators", rank: 2 };
 const CHART_BOOST = -1;
+/** Picked lines rank after the chart panes. */
+const LINE_SECTION = { name: "Picked lines", rank: 3 };
 
 // An instance id may contain "#" (mintInstanceId produces "SLOPE#a1b2c3"), so
 // ref matching needs its own patterns — the plain word regex stops at the "#".
@@ -258,8 +263,18 @@ export function completionsFor(
     .filter((x) => x.rank >= 0)
     .sort((a, b) => (b.rank - a.rank) || a.cand.label.localeCompare(b.cand.label));
 
+  const lineRefs: Completion[] = Object.entries(opts?.lines ?? {})
+    .filter(([id]) => id.toLowerCase().startsWith(lower))
+    .map(([id, l]) => ({
+      label: id,
+      type: "variable",
+      detail: `line · ${l.epic} · ${tfLabel(l.timeframe)}`,
+      section: LINE_SECTION,
+      boost: CHART_BOOST,
+    }));
+
   // Boost mirrors rank so CM6's own ordering agrees with the returned order.
-  return [...ranked.map(({ cand, rank }) => toCompletion(cand, rank)), ...refs];
+  return [...ranked.map(({ cand, rank }) => toCompletion(cand, rank)), ...refs, ...lineRefs];
 }
 
 /**

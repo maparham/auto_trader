@@ -168,4 +168,34 @@ describe("RuleExpressionInput", () => {
       "SLOPE.accel9",
     ]);
   });
+  // --- picked trendlines (L<n>) held by the rule's config ---------------------
+  const LINE = { epic: "US100", broker: "capital", timeframe: "HOUR", t1: 1, p1: 1, t2: 2, p2: 2, slope: 1, tRef: 3, pRef: 3 };
+
+  it("re-lints when a picked line is added to the holder", async () => {
+    const onChange = vi.fn();
+    const { container, rerender } = render(
+      <RuleExpressionInput value="candle.close > L1" onChange={onChange} isExit={false} lines={{}} />,
+    );
+    const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
+    forceLinting(view);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(diagnosticCount(view.state)).toBe(1); // L1 not held yet
+    rerender(
+      <RuleExpressionInput value="candle.close > L1" onChange={onChange} isExit={false} lines={{ L1: LINE }} />,
+    );
+    await new Promise((r) => setTimeout(r, 250));
+    expect(diagnosticCount(view.state)).toBe(0);
+  });
+
+  it("offers the held lines on a bare L prefix", async () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <RuleExpressionInput value="candle.close > L" onChange={onChange} isExit={false} lines={{ L1: LINE }} />,
+    );
+    const view = EditorView.findFromDOM(container.querySelector(".cm-editor") as HTMLElement)!;
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    startCompletion(view);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(currentCompletions(view.state).map((o) => o.label)).toContain("L1");
+  });
 });
