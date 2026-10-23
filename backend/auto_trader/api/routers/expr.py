@@ -41,10 +41,10 @@ from .. import deps
 # sweep/WFO submit paths and the series/closeness fetch loops.
 from ..expr_exec import (
     _ensure_htf,
-    _tf_inner_warmup,
-    _tf_span,
     compiled_run,
 )
+# _tf_inner_warmup is re-exported: tests import it from this module.
+from ..htf_source import _tf_inner_warmup, fetch_htf, htf_needs  # noqa: F401
 from ..schemas import (
     ExprBacktestRequest,
     ExprClosenessRequest,
@@ -62,7 +62,7 @@ from ..sweep_apply import (
     candle_from_dto,
     htf_from_dto,
     request_instances,
-    referenced_tfs as _referenced_tfs,
+    referenced_tfs as _referenced_tfs,  # noqa: F401  tests import it from here
     split_env_combo,
 )
 from ..sweep_jobs import JOBS
@@ -413,13 +413,11 @@ async def expr_series(req: ExprSeriesRequest, request: Request):
     # An @tf term needs its higher-timeframe candles (with warm-up room before
     # the plotted window, or the pinned series is None over the visible span).
     htf: dict[str, list[Candle]] = {}
-    for tf in _referenced_tfs(top, instances):
-        tf_s, res = _tf_span(tf, instances)
-        need = _tf_inner_warmup(top, tf, instances) + 1
-        tf_from = req.fromTime - need * tf_s
-        tf_bars = max(1, (req.toTime - tf_from) // tf_s + 2)
-        htf[res] = await deps._fetch_symbol_candles(
-            req.broker, req.epic, res, tf_bars, tf_from, req.toTime, req.priceSide,
+    for need in htf_needs([top], instances):
+        tf_from = req.fromTime - need.need * need.tf_s
+        htf[need.res] = await fetch_htf(
+            need, broker=req.broker, epic=req.epic, side=req.priceSide,
+            from_ts=tf_from, to_ts=req.toTime,
         )
     values = series_of(top, candles, req.resolution, htf, instances)
     return {
@@ -457,17 +455,13 @@ async def expr_closeness(req: ExprClosenessRequest, request: Request):
         req.broker, req.epic, req.baseResolution, bars, req.fromTime, req.toTime, req.priceSide,
     )
 
-    tfs: set[str] = set()
-    for node in nodes:
-        tfs |= _referenced_tfs(node, instances)
     htf: dict[str, list[Candle]] = {}
-    for tf in tfs:
-        # canonical: '1H' -> 'HOUR' (fetch + dict key); an instance's own pin is
-        # alias-checked here because validate() never saw it.
-        tf_s, res = _tf_span(tf, instances)
-        tf_bars = max(1, (req.toTime - req.fromTime) // tf_s + 2)
-        htf[res] = await deps._fetch_symbol_candles(
-            req.broker, req.epic, res, tf_bars, req.fromTime, req.toTime, req.priceSide,
+    for need in htf_needs(nodes, instances):
+        # canonical key ('1H' -> 'HOUR'); an instance's own pin is alias-checked
+        # by htf_needs because validate() never saw it.
+        htf[need.res] = await fetch_htf(
+            need, broker=req.broker, epic=req.epic, side=req.priceSide,
+            from_ts=req.fromTime, to_ts=req.toTime,
         )
 
     # Display-bar opens for bucketing: at the base timeframe the base bars ARE the
