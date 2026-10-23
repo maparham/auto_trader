@@ -132,7 +132,7 @@ def _tf_inner_warmup(node: N.Node, tf: str, instances=None) -> int:
     return 0
 
 
-def htf_needs(nodes: list[N.Node], instances=None) -> list[HtfNeed]:
+def htf_needs(nodes: list[N.Node], instances=None, *, resolution: str | None = None) -> list[HtfNeed]:
     """One need per canonical resolution the nodes reference, each with the
     deepest warm-up any node needs in that timeframe's own bars, plus one:
     the closed bar whose value the first judged or traded bar reads.
@@ -140,10 +140,14 @@ def htf_needs(nodes: list[N.Node], instances=None) -> list[HtfNeed]:
     Spellings of one resolution merge (`@1H` and `@HOUR`, or a pane pinned
     "1H" beside an `@HOUR` token): they are one fetch, and two needs would let
     a caller's second, shallower fetch overwrite the deeper one under the same
-    canonical key. `tf` keeps the first spelling in sorted order."""
+    canonical key. `tf` keeps the first spelling in sorted order.
+
+    `resolution` (the rule's base timeframe, optional) is forwarded to
+    `referenced_tfs` so a picked line on that SAME timeframe is never reported
+    as a need (it evaluates straight off the base candles)."""
     tfs: set[str] = set()
     for node in nodes:
-        tfs |= _referenced_tfs(node, instances)
+        tfs |= _referenced_tfs(node, instances, resolution=resolution)
     by_res: dict[str, HtfNeed] = {}
     for tf in sorted(tfs):
         tf_s, res = _tf_span(tf, instances)
@@ -204,12 +208,15 @@ def closed_before(bars: list[Candle], tf_s: int, cutoff_ts: int) -> int:
 
 async def source_htf(nodes: list[N.Node], instances, *, broker: str, epic: str, side: str,
                      from_ts: int, to_ts: int, cutoff_ts: int | None,
-                     shipped: dict[str, list[Candle]]) -> dict[str, list[Candle]]:
+                     shipped: dict[str, list[Candle]],
+                     resolution: str | None = None) -> dict[str, list[Candle]]:
     """The shipped map plus a warm-window fetch for every need it lacks, every
     entry checked for `need` closed bars before `cutoff_ts` (None: no check).
-    Keys are canonical; a shipped alias key ("1H") is honoured on read."""
+    Keys are canonical; a shipped alias key ("1H") is honoured on read.
+    `resolution` is passed through to `htf_needs` (a line on the base
+    timeframe is not a need)."""
     out: dict[str, list[Candle]] = dict(shipped)
-    for need in htf_needs(nodes, instances):
+    for need in htf_needs(nodes, instances, resolution=resolution):
         bars = out.get(need.res) or out.get(need.tf)
         if not bars:
             start, end, n = warm_window(need, from_ts, to_ts)

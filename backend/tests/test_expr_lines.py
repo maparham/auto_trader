@@ -67,3 +67,50 @@ def test_parse_lines_round_trip_and_caps():
         parse_lines({"L1": {**raw["L1"], "timeframe": "SECOND"}})
     with pytest.raises(LineSpecError):
         parse_lines({f"L{i}": raw["L1"] for i in range(17)})
+
+
+# --- Task 3: resolving lines into instances + evaluating them -----------------
+
+from auto_trader.strategy.expr.evaluate import compile_row
+from auto_trader.strategy.expr.lines import LineInstance, line_instances, line_key
+from auto_trader.strategy.expr.parser import parse
+
+
+def test_other_symbol_line_is_all_none():
+    inst = line_instances({"L1": _line()}, epic="GOLD", broker="capital", resolution="HOUR")
+    assert inst[line_key("L1")].active is False
+    row = compile_row(parse("candle.close < L1"), _candles(10), "HOUR", {}, inst)
+    assert [row.evaluate(i, None) for i in range(10)] == [False] * 10
+
+
+def test_same_symbol_line_evaluates():
+    inst = line_instances({"L1": _line()}, epic="US100", broker="capital", resolution="HOUR")
+    row = compile_row(parse("candle.close < L1"), _candles(10), "HOUR", {}, inst)
+    assert [row.evaluate(i, None) for i in range(10)] == [False] * 5 + [True] * 5
+
+
+def test_rule_coarser_than_line_refused():
+    with pytest.raises(LineSpecError) as e:
+        line_instances({"L1": _line(timeframe="MINUTE_15")}, epic="US100", broker="capital", resolution="HOUR")
+    assert e.value.code == "line_tf_finer"
+
+
+def test_coarser_line_is_aligned_from_htf_candles():
+    line = _line(timeframe="HOUR_4", t1=_ms(0), t2=_ms(4), p2=10.0, slope=1.0, tRef=_ms(8), pRef=11.0)
+    inst = line_instances({"L1": line}, epic="US100", broker="capital", resolution="HOUR")
+    h4 = [Candle(time=BASE + timedelta(hours=4 * k), open=1, high=1, low=1, close=1, volume=1.0) for k in range(4)]
+    from auto_trader.strategy.expr.evaluate import series_of
+    from auto_trader.strategy.expr import nodes as N
+    vals = series_of(N.LineRef("L1", 0, 2), _candles(16), "HOUR", {"HOUR_4": h4}, inst)
+    assert vals[0] is None and vals[-1] is not None
+
+
+def test_same_tf_line_is_not_an_htf_need():
+    # Ruling 2: a line picked on the rule's OWN resolution evaluates straight off
+    # the base candles (evaluate.py's LineRef branch), so it must never show up
+    # as something the HTF layer has to fetch.
+    from auto_trader.api.htf_source import htf_needs
+
+    inst = line_instances({"L1": _line(timeframe="HOUR")}, epic="US100", broker="capital", resolution="HOUR")
+    needs = htf_needs([parse("candle.close < L1")], inst, resolution="HOUR")
+    assert needs == []

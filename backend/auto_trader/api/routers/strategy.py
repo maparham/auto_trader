@@ -26,6 +26,7 @@ from auto_trader.strategy.coded import (
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.evaluate import compile_row
+from auto_trader.strategy.expr.lines import LineSpecError
 from auto_trader.strategy.expr.parser import parse as parse_expr
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
 from auto_trader.strategy.expr.validate import validate as validate_expr
@@ -150,7 +151,10 @@ async def evaluate_strategy(req: EvaluateRequest, request: Request) -> EvaluateR
         risk_series = req.series
     # Resolved ONCE per request: the coded branch below re-compiles its expr exits
     # on every tf-retry pass, so resolving inside the helper would repeat it.
-    instances = request_instances(req)
+    try:
+        instances = request_instances(req)
+    except LineSpecError as e:
+        raise HTTPException(422, e.message)
 
     # Netted position -> at most one side held.
     pos_long = req.position.quantity if req.position and req.position.side == "buy" else 0.0

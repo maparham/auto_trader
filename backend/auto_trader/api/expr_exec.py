@@ -23,6 +23,7 @@ from auto_trader.engine.metrics import compute_metrics
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.evaluate import compile_row
+from auto_trader.strategy.expr.lines import LineSpecError
 from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
 from auto_trader.strategy.expr.validate import validate
@@ -71,18 +72,21 @@ from .htf_source import HtfShortfall, _tf_inner_warmup, _tf_span, source_htf  # 
 
 async def _ensure_htf(
     nodes: list[N.Node], req: ExprBacktestRequest, htf: dict[str, list[Candle]],
-    instances=None,
+    instances=None, *, resolution: str | None = None,
 ) -> None:
     """Fetch every @tf timeframe the rows reference that the request didn't ship,
     then verify each one is SUFFICIENT to warm its deepest pin before the
     trading window (htf_source.source_htf). Shipped htfCandles win: a
     compute-only host must never reach a broker. `htf` is updated in place
-    because every caller keeps using the dict it passed."""
+    because every caller keeps using the dict it passed.
+
+    `resolution` (the rule's base timeframe) lets a picked line on that SAME
+    timeframe skip the HTF fetch entirely (sweep_apply.referenced_tfs)."""
     try:
         htf.update(await source_htf(
             nodes, instances, broker=req.broker, epic=req.epic, side=req.priceSide,
             from_ts=req.candles[0].time, to_ts=req.candles[-1].time,
-            cutoff_ts=req.tradeFromTime, shipped=htf,
+            cutoff_ts=req.tradeFromTime, shipped=htf, resolution=resolution,
         ))
     except HtfShortfall as e:
         if e.bars == 0:
@@ -142,11 +146,17 @@ async def compiled_run(
         (r.shortEntry, False, "shortEntry"), (r.shortExit, True, "shortExit"),
     ]
     # Resolved ONCE per request, then threaded into validate/compile/warm-up.
-    instances = request_instances(r)
+    try:
+        instances = request_instances(r)
+    except LineSpecError as e:
+        raise HTTPException(422, {
+            "code": e.code, "message": e.message,
+            "start": None, "end": None, "group": None, "row": None,
+        })
     parsed = [_parse_group(rows, is_exit=ex, group=g, instances=instances) for rows, ex, g in groups]
     # @tf rows need their higher-timeframe candles in hand before compile_row
     # precomputes series; fetch whatever the request didn't ship.
-    await _ensure_htf([n for nodes in parsed for n, _ in nodes], r, htf, instances)
+    await _ensure_htf([n for nodes in parsed for n, _ in nodes], r, htf, instances, resolution=r.resolution)
     strategy = ExprRuleStrategy(
         *[[compile_row(n, candles, r.resolution, htf, instances, source=src)
            for n, src in nodes] for nodes in parsed],

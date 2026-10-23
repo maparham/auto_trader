@@ -29,6 +29,7 @@ from auto_trader.strategy.expr.closeness import (
 )
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.evaluate import series_of
+from auto_trader.strategy.expr.lines import LineSpecError
 from auto_trader.strategy.expr.literals import literals as compute_literals
 from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.validate import validate
@@ -283,8 +284,11 @@ async def submit_expr_sweep_job(req: ExprBacktestRequest, request: Request):
     # Pool workers do zero network: fetch the rows' @tf set here so they inherit
     # a complete dict (HTF is combo-invariant — timeframes are name tokens,
     # never sweepable literals). Shipped htfCandles ride along untouched.
-    instances = request_instances(req)
-    await _ensure_htf(_all_row_nodes(req, instances), req, htf_candles, instances)
+    try:
+        instances = request_instances(req)
+    except LineSpecError as e:
+        raise HTTPException(422, {"code": e.code, "message": e.message, "start": 0, "end": 0})
+    await _ensure_htf(_all_row_nodes(req, instances), req, htf_candles, instances, resolution=req.resolution)
     job = JOBS.submit(
         req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
         htf_candles=htf_candles,
@@ -337,8 +341,11 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest, request: Request):
     htf_candles = htf_from_dto(req.htfCandles) if req.htfCandles is not None else {}
     # Same as the sweep submit: workers never fetch, so the @tf set must be
     # complete before dispatch.
-    instances = request_instances(req)
-    await _ensure_htf(_all_row_nodes(req, instances), req, htf_candles, instances)
+    try:
+        instances = request_instances(req)
+    except LineSpecError as e:
+        raise HTTPException(422, {"code": e.code, "message": e.message, "start": 0, "end": 0})
+    await _ensure_htf(_all_row_nodes(req, instances), req, htf_candles, instances, resolution=req.resolution)
     job = WFO_JOBS.submit(
         req_dict=req.model_dump(mode="json", exclude={"htfCandles"}),
         htf_candles=htf_candles,
@@ -372,7 +379,10 @@ async def submit_expr_wfo_job(req: ExprBacktestRequest, request: Request):
 async def expr_series(req: ExprSeriesRequest, request: Request):
     req.resolution = canonicalize(req.resolution)  # TimeframeError -> 422 (app handler)
     req.broker = deps.resolve_broker(request, req.broker)
-    instances = request_instances(req)
+    try:
+        instances = request_instances(req)
+    except LineSpecError as e:
+        raise HTTPException(422, {"code": e.code, "message": e.message, "start": 0, "end": 0})
     try:
         node = parse(req.expr)
         validate(node, is_exit=False, instances=instances)
@@ -413,7 +423,7 @@ async def expr_series(req: ExprSeriesRequest, request: Request):
     # An @tf term needs its higher-timeframe candles (with warm-up room before
     # the plotted window, or the pinned series is None over the visible span).
     htf: dict[str, list[Candle]] = {}
-    for need in htf_needs([top], instances):
+    for need in htf_needs([top], instances, resolution=req.resolution):
         tf_from = req.fromTime - need.need * need.tf_s
         htf[need.res] = await fetch_htf(
             need, broker=req.broker, epic=req.epic, side=req.priceSide,
@@ -434,7 +444,10 @@ async def expr_closeness(req: ExprClosenessRequest, request: Request):
     req.baseResolution = canonicalize(req.baseResolution)
     req.displayResolution = canonicalize(req.displayResolution)
     req.broker = deps.resolve_broker(request, req.broker)
-    instances = request_instances(req)
+    try:
+        instances = request_instances(req)
+    except LineSpecError as e:
+        raise HTTPException(422, {"code": e.code, "message": e.message, "start": 0, "end": 0})
     try:
         nodes = [parse(expr) for expr in req.rows]
         for node in nodes:
@@ -456,7 +469,7 @@ async def expr_closeness(req: ExprClosenessRequest, request: Request):
     )
 
     htf: dict[str, list[Candle]] = {}
-    for need in htf_needs(nodes, instances):
+    for need in htf_needs(nodes, instances, resolution=req.baseResolution):
         # canonical key ('1H' -> 'HOUR'); an instance's own pin is alias-checked
         # by htf_needs because validate() never saw it.
         htf[need.res] = await fetch_htf(

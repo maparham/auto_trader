@@ -13,6 +13,7 @@ from auto_trader.indicators.core import (
 )
 from auto_trader.indicators.mtf import align_htf_to_base, base_interval_ms_of, slope_of
 from auto_trader.strategy.expr import nodes as N
+from auto_trader.strategy.expr.lines import line_key, line_series
 from auto_trader.strategy.expr.registry import FUNCS
 from auto_trader.strategy.expr.tfs import tf_resolution
 from auto_trader.strategy.expr.warmup import warmup_bars
@@ -327,6 +328,26 @@ def series_of(node: N.Node, candles: Sequence[Candle], resolution: str,
                 continue  # window does not fit yet
             out[i] = float(pre[i + 1] - pre[i + 1 - k])
         return out
+    if isinstance(node, N.LineRef):
+        inst = (instances or {}).get(line_key(node.id))
+        if inst is None or not inst.active:
+            # Unknown: validate() rejects this first (defensive). Inactive: the
+            # line belongs to another symbol, so the operand is absent on every
+            # bar rather than an error (a shared rule set run elsewhere).
+            return [None] * n
+        line = inst.line
+        if resolution_seconds(line.timeframe) == resolution_seconds(resolution):
+            return line_series(line, candles)
+        tf_candles = htf.get(line.timeframe) or []
+        if not tf_candles:
+            return [None] * n
+        tf_vals = line_series(line, tf_candles)
+        base_ms = [int(c.time.timestamp() * 1000) for c in candles]
+        return align_htf_to_base(
+            base_ms, tf_candles, tf_vals, resolution_seconds(line.timeframe) * 1000,
+            base_interval_ms=base_interval_ms_of(resolution),
+            htf_resolution=line.timeframe,
+        )
     if isinstance(node, N.IndicatorRef):
         inst = (instances or {}).get(node.instance)
         if inst is None:

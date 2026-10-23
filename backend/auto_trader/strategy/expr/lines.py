@@ -97,3 +97,51 @@ def line_series(line: PickedLine | None, candles: Sequence) -> list[float | None
             return [None] * n                   # no anchor inside: the rebase pre-pass failed
         j, q = jr, line.pRef
     return [None if k < start else q + line.slope * (k - j) for k in range(n)]
+
+
+class _NoPinSpec:
+    """Stands in for a ResolvedInstance's spec so `_pin_owner` and any
+    `inst.spec.timeframe(inst.config)` call stay safe for a LineInstance: a
+    picked line is never "pinned" the way a chart pane is (its own timeframe
+    is handled by evaluate.py's LineRef branch and sweep_apply.referenced_tfs,
+    not by the generic pin machinery)."""
+
+    @staticmethod
+    def timeframe(_cfg) -> None:
+        return None
+
+    @staticmethod
+    def outputs(_cfg) -> list[str]:
+        return []
+
+
+_NO_PIN_SPEC = _NoPinSpec()
+
+
+class LineInstance:
+    """A picked line riding in the `instances` dict under line:L<n>. `active`
+    is False when the line belongs to another symbol: the operand is then
+    absent on every bar, which is not an error (a global backtest config run
+    elsewhere). The geometry stays either way, so a screen compiled before it
+    knows its symbols still fetches the line's timeframe."""
+    type = "LINE"
+    config = None
+    spec = _NO_PIN_SPEC
+
+    def __init__(self, line: PickedLine, active: bool = True):
+        self.line = line
+        self.active = active
+
+
+def line_instances(lines: dict[str, PickedLine], *, epic: str, broker: str,
+                   resolution: str) -> dict[str, "LineInstance"]:
+    rule_s = resolution_seconds(resolution)
+    out: dict[str, LineInstance] = {}
+    for lid, line in lines.items():
+        if resolution_seconds(line.timeframe) < rule_s:
+            raise LineSpecError(
+                "line_tf_finer",
+                f"{lid} was picked on {line.timeframe}; run this rule on {line.timeframe} or a finer timeframe.")
+        same = line.epic == epic and (not broker or not line.broker or line.broker == broker)
+        out[line_key(lid)] = LineInstance(line, active=same)
+    return out

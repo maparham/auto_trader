@@ -15,7 +15,7 @@ from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.engine.backtest import BacktestEngine, BacktestResult
 from auto_trader.engine.metrics import compute_metrics, window_metrics
-from auto_trader.indicators.registry import ResolvedInstance, resolve_instances
+from auto_trader.indicators.registry import resolve_instances
 from auto_trader.strategy.base import Strategy
 from auto_trader.strategy.coded import (
     CodedStrategy,
@@ -25,6 +25,7 @@ from auto_trader.strategy.coded import (
 from auto_trader.strategy.expr import nodes as N
 from auto_trader.strategy.expr.errors import ExprError
 from auto_trader.strategy.expr.evaluate import compile_row
+from auto_trader.strategy.expr.lines import LineSpecError, line_instances, line_key, parse_lines
 from auto_trader.strategy.expr.literals import substitute
 from auto_trader.strategy.expr.parser import parse
 from auto_trader.strategy.expr.strategy import ExprRuleStrategy
@@ -107,49 +108,78 @@ def htf_from_dto(htf: dict[str, list[CandleDTO]]) -> dict[str, list[Candle]]:
     return {tf: [candle_from_dto(c) for c in bars] for tf, bars in htf.items()}
 
 
-def request_instances(req) -> dict[str, ResolvedInstance]:
+def request_instances(req) -> dict:
     """Resolve a request's `indicators` map ONCE. Call this at the top of a
     handler (or, in a pool worker, at the top of the per-combo build) and thread
     the result down — never per row.
 
     A ResolvedInstance holds the spec's callables, so it is NOT picklable and
     must never be put on a job payload: workers rebuild the request from
-    `req_dict` (which carries the raw `indicators` map) and resolve it there."""
-    return resolve_instances(
+    `req_dict` (which carries the raw `indicators` map) and resolve it there.
+    PLUS the request's `lines` map (picked trendlines), resolved into
+    LineInstances under line:L<n> keys and merged into the same dict — a row
+    reads either kind of operand out of this one `instances` map. Raises
+    LineSpecError (the caller's HTTP boundary turns it into a 422)."""
+    out = resolve_instances(
         {k: v.model_dump() for k, v in (req.indicators or {}).items()}
     )
+    raw_lines = {k: v.model_dump() for k, v in (getattr(req, "lines", None) or {}).items()}
+    if raw_lines:
+        resolution = getattr(req, "resolution", None) or getattr(req, "baseResolution")
+        out.update(line_instances(parse_lines(raw_lines), epic=req.epic,
+                                  broker=getattr(req, "broker", "") or "", resolution=resolution))
+    return out
 
 
-def referenced_tfs(node: N.Node, instances=None) -> set[str]:
+def referenced_tfs(node: N.Node, instances=None, *, resolution: str | None = None) -> set[str]:
     """All timeframes a row's tree needs HTF candles for: the @TF tokens in the
-    text, PLUS any referenced instance pinned in its own settings."""
+    text, PLUS any referenced instance pinned in its own settings, PLUS an
+    active picked line's own timeframe.
+
+    `resolution` (the rule's base timeframe) is optional and keyword-only:
+    when given, a line picked on exactly that timeframe is NOT reported — it
+    evaluates straight off the base candles (evaluate.py's LineRef branch
+    bypasses `htf` entirely in that case), so asking the HTF layer to fetch it
+    would be pure waste (and, for a compute-only host, possibly a refused
+    fetch) for something nothing ever reads."""
     if isinstance(node, N.Tf):
-        return {node.tf} | referenced_tfs(node.base, instances)
+        return {node.tf} | referenced_tfs(node.base, instances, resolution=resolution)
     if isinstance(node, N.IndicatorRef):
         # A pane pinned in its own SETTINGS needs HTF candles even though the
         # expression text carries no @tf.
         inst = (instances or {}).get(node.instance)
         pin = inst.spec.timeframe(inst.config) if inst else None
         return {pin} if pin else set()
+    if isinstance(node, N.LineRef):
+        inst = (instances or {}).get(line_key(node.id))
+        if inst is None or not inst.active:
+            return set()
+        tf = inst.line.timeframe
+        if resolution is not None and resolution_seconds(tf) == resolution_seconds(resolution):
+            return set()
+        return {tf}
     if isinstance(node, (N.Chain, N.BoolOp)):
-        return set().union(*(referenced_tfs(p, instances) for p in node.parts))
+        return set().union(*(referenced_tfs(p, instances, resolution=resolution) for p in node.parts))
     if isinstance(node, N.Not):
-        return referenced_tfs(node.operand, instances)
+        return referenced_tfs(node.operand, instances, resolution=resolution)
     if isinstance(node, (N.Field, N.Offset)):
-        return referenced_tfs(node.base, instances)
+        return referenced_tfs(node.base, instances, resolution=resolution)
     if isinstance(node, N.Unary):
-        return referenced_tfs(node.operand, instances)
+        return referenced_tfs(node.operand, instances, resolution=resolution)
     if isinstance(node, N.Call):
-        return (set().union(*(referenced_tfs(a, instances) for a in node.args))
+        return (set().union(*(referenced_tfs(a, instances, resolution=resolution) for a in node.args))
                 if node.args else set())
     if isinstance(node, (N.Binary, N.Compare)):
-        return referenced_tfs(node.left, instances) | referenced_tfs(node.right, instances)
+        return (referenced_tfs(node.left, instances, resolution=resolution)
+                | referenced_tfs(node.right, instances, resolution=resolution))
     if isinstance(node, N.Cross):
-        return referenced_tfs(node.a, instances) | referenced_tfs(node.b, instances)
+        return (referenced_tfs(node.a, instances, resolution=resolution)
+                | referenced_tfs(node.b, instances, resolution=resolution))
     if isinstance(node, N.Predicate):
-        return referenced_tfs(node.base, instances)
+        return referenced_tfs(node.base, instances, resolution=resolution)
     if isinstance(node, N.Count):
-        return referenced_tfs(node.cond, instances) | referenced_tfs(node.window, instances)
+        return (referenced_tfs(node.cond, instances, resolution=resolution)
+                | referenced_tfs(node.window, instances, resolution=resolution))
     return set()
 
 
@@ -183,7 +213,7 @@ def _compile_expr_exits(rows, candles, resolution, htf, instances=None):
         # its HOUR_4 bars from that same loop, and that fetch happens only after
         # this point on the first pass. A timeframe that genuinely cannot be
         # fetched still surfaces as `_run_coded`'s "no candles for timeframe" 422.
-        for tf in sorted(referenced_tfs(node, instances)):
+        for tf in sorted(referenced_tfs(node, instances, resolution=resolution)):
             res = tf_resolution(tf) or tf
             if not (htf.get(res) or htf.get(tf)):
                 raise TimeframeNotPrefetched(res)
@@ -213,7 +243,10 @@ def run_coded_sync(
     )
     # Once per run, not once per tf-retry pass: the coded path's panel exits are
     # expressions and may reference a chart instance.
-    instances = request_instances(req)
+    try:
+        instances = request_instances(req)
+    except LineSpecError as e:
+        raise SweepValidationError(422, e.message)
     for _ in range(_MAX_TF_PASSES):
         strategy: Strategy = CodedStrategy(
             module, candles, quantity=req.costs.quantity,
@@ -302,7 +335,10 @@ def build_expr_engine(
     # Resolved ONCE per combo, above the four compile_group calls: this runs in
     # a pool worker, which rebuilt `req` (and its raw `indicators` map) from the
     # job payload — a ResolvedInstance itself could never have been pickled.
-    instances = request_instances(req)
+    try:
+        instances = request_instances(req)
+    except LineSpecError as e:
+        raise SweepValidationError(422, e.message)
     group_map = {
         ("long", "entry"): req.longEntry,
         ("long", "exit"): req.longExit,

@@ -194,9 +194,9 @@ def test_expr_progress_registered_before_htf_prefetch(monkeypatch):
     # expr_exec, so the patch must land there, not on the router module.
     real_ensure = expr_exec._ensure_htf
 
-    async def spying_ensure(nodes, r, htf, instances):
+    async def spying_ensure(nodes, r, htf, instances, **kwargs):
         seen.append(pr.get_progress("expr-reg") is not None)
-        return await real_ensure(nodes, r, htf, instances)
+        return await real_ensure(nodes, r, htf, instances, **kwargs)
 
     monkeypatch.setattr(expr_exec, "_ensure_htf", spying_ensure)
     asyncio.run(expr_router.expr_backtest(req, _REQ))

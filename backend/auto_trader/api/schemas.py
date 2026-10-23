@@ -392,6 +392,10 @@ class BacktestRequest(BaseModel):
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
+    # Picked trendlines (a chart line frozen into the rule as a bare L<n>),
+    # keyed by line id. Resolved into `instances` under line:L<n> alongside
+    # the indicator panes above (sweep_apply.request_instances).
+    lines: dict[str, PickedLineDTO] = {}
     # Optional client-generated id for GET /api/backtest/progress/{id} polling.
     # Cosmetic: absent means no progress reporting for this run.
     progressId: str | None = None
@@ -763,6 +767,10 @@ class EvaluateRequest(BaseModel):
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
+    # Picked trendlines (a chart line frozen into the rule as a bare L<n>),
+    # keyed by line id. Resolved into `instances` under line:L<n> alongside
+    # the indicator panes above (sweep_apply.request_instances).
+    lines: dict[str, PickedLineDTO] = {}
 
 
 class EvaluateResponse(BaseModel):
@@ -829,6 +837,22 @@ class IndicatorInstanceDTO(BaseModel):
     extendData: dict | None = None
 
 
+class PickedLineDTO(BaseModel):
+    """A trendline frozen off the chart, referenced in a rule as a bare L<n>.
+    Geometry mirrors auto_trader.strategy.expr.lines.PickedLine (the frontend's
+    alertLineOf): slope is price per bar of the line's OWN timeframe."""
+    epic: str
+    broker: str = ""
+    timeframe: str
+    t1: int
+    p1: float
+    t2: int
+    p2: float
+    slope: float
+    tRef: int
+    pRef: float
+
+
 class ExprBacktestRequest(BaseModel):
     epic: str
     resolution: str
@@ -870,6 +894,10 @@ class ExprBacktestRequest(BaseModel):
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
+    # Picked trendlines (a chart line frozen into the rule as a bare L<n>),
+    # keyed by line id. Resolved into `instances` under line:L<n> alongside
+    # the indicator panes above (sweep_apply.request_instances).
+    lines: dict[str, PickedLineDTO] = {}
     # Optional client-generated id for GET /api/backtest/progress/{id} polling.
     # Cosmetic: absent means no progress reporting for this run.
     progressId: str | None = None
@@ -892,6 +920,10 @@ class ExprSeriesRequest(BaseModel):
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
+    # Picked trendlines (a chart line frozen into the rule as a bare L<n>),
+    # keyed by line id. Resolved into `instances` under line:L<n> alongside
+    # the indicator panes above (sweep_apply.request_instances).
+    lines: dict[str, PickedLineDTO] = {}
 
 
 class NormSpec(BaseModel):
@@ -917,6 +949,10 @@ class ExprClosenessRequest(BaseModel):
     # OUTPUT (SLOPE.9) and never restates the pane's parameters, so they
     # travel here. Unregistered pane types are skipped, not rejected.
     indicators: dict[str, IndicatorInstanceDTO] = {}
+    # Picked trendlines (a chart line frozen into the rule as a bare L<n>),
+    # keyed by line id. Resolved into `instances` under line:L<n> alongside
+    # the indicator panes above (sweep_apply.request_instances).
+    lines: dict[str, PickedLineDTO] = {}
 
 
 class ExprLiteralsRequest(BaseModel):
