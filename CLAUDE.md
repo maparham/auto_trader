@@ -305,6 +305,25 @@ under Condition shows `paneLabels`: the id plus the pane's
 `ExprInstance.detail`. Spec:
 docs/superpowers/specs/2026-10-22-screener-chart-indicators-design.md.
 
+### Picked lines
+
+`L<n>` is a frozen Trendlines line: a right-clicked line on the chart becomes
+a bare id a rule can reference, a reserved instance name
+(`validateInstanceName`/`mintInstanceId` refuse it elsewhere). The `lines`
+map (`PickedLine` in `lib/pickedLines.ts`) rides in the backtest config, the
+armed snapshot, the screener draft and saved screens; a request sends only
+the ids its expression text references. The backend resolves them into the
+`instances` map under `line:L<n>` (`strategy/expr/lines.py`: anchoring on
+the first candle at or after `t2`, falling back to `tRef`; a rule coarser
+than the line's own timeframe 422s with `line_tf_finer`). A line that has
+drifted out of the loaded candles is rebased before evaluation, by the
+server pre-pass (`api/line_rebase.py`) and by the live engine
+(`liveEngine.rebaseLines`, rolling `tRef`/`pRef` forward through its window
+and persisting only on a running cycle). `lib/overlays/pickedLineClones.ts`
+draws one dashed clone per distinct geometry, labelled `L1 · L2` when ids
+share it, on every timeframe of the symbol. Spec:
+docs/superpowers/specs/2026-10-23-picked-trendline-operand-design.md.
+
 ## Account history
 
 Capital.com dealing accounts (`capital:demo`, `capital-live:live`) report

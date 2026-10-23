@@ -118,7 +118,7 @@ cycle, while `tRef` is still inside the window and more than 500 bars old,
 move it to the newest closed bar (`pRef += slope * n`, `n` = bars between) and
 write the line back into the armed snapshot. The line then never leaves the
 window however long the rule stays armed. Only lines whose timeframe equals
-the engine's resolution are rebased this way; a pinned (finer-timeframe) line
+the engine's resolution are rebased this way; a higher-timeframe line
 relies on the server rebase below.
 
 ## Backend
@@ -147,8 +147,9 @@ relies on the server rebase below.
   placed on the loaded bars`). This covers screens and backtests run long
   after the pick.
 - Timeframe: a rule whose timeframe is coarser than a line's is a 422 at
-  compile time naming the line's timeframe. The screener, which refuses pins,
-  also refuses a line on a different timeframe than the screen's.
+  compile time naming the line's timeframe. The screener accepts a line at
+  its own timeframe or coarser, like a pin, and refuses a finer line with
+  `screen_tf_lower`.
 - Screener: each symbol is judged with the same rule; only the line's own
   symbol can produce values.
 - Walk-forward needs nothing extra: it runs the full range once and slices
