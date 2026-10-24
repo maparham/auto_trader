@@ -35,6 +35,20 @@ def test_config_round_trips_through_json(t):
     assert config_of(t, raw) == cfg
 
 
+def test_config_of_fills_a_field_added_after_the_config_was_stored():
+    # A SWEEP alert saved before use_prev_bar existed has no such key in its
+    # stored config JSON; config_of must fall back to the dataclass default
+    # (True), matching the chart's own "absent means on" parsing, not raise.
+    cfg = SERIES_INDICATORS["SWEEP"].parse_config(None, None)
+    stored = json.loads(config_json(cfg))
+    assert "use_prev_bar" in stored
+    del stored["use_prev_bar"]
+    raw = json.dumps(stored, sort_keys=True, allow_nan=False)
+    rebuilt = config_of("SWEEP", raw)
+    assert rebuilt.use_prev_bar is True
+    assert rebuilt == cfg
+
+
 @pytest.mark.parametrize("t", sorted(ALERT_SPECS))
 def test_alert_outputs_are_registry_outputs(t):
     cfg = SERIES_INDICATORS[t].parse_config(None, None)

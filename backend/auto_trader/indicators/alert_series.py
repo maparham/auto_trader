@@ -48,9 +48,22 @@ def _tupleize(v: Any) -> Any:
 
 
 def _build(cls: type, data: dict) -> Any:
+    """A stored config dict predates a field added to the dataclass since it
+    was saved (e.g. SWEEP's use_prev_bar): that field falls back to its
+    dataclass default (or default_factory), matching the chart's own
+    "absent means on"/"absent means default" parsing. A field with no
+    default still raises, as before."""
     hints = typing.get_type_hints(cls)
     kw = {}
     for f in dataclasses.fields(cls):
+        if f.name not in data:
+            if f.default is not dataclasses.MISSING:
+                kw[f.name] = f.default
+                continue
+            if f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
+                kw[f.name] = f.default_factory()
+                continue
+            raise KeyError(f.name)
         v, t = data[f.name], hints[f.name]
         kw[f.name] = _build(t, v) if dataclasses.is_dataclass(t) and isinstance(v, dict) else _tupleize(v)
     return cls(**kw)

@@ -497,7 +497,7 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         id: inst.id,
         outputs: [...SWEEP_OUTPUTS],
         timeframe: null, // chart-timeframe only (no MTF pin)
-        detail: `pivot ${cfg.pivotLeft}/${cfg.pivotRight} · min score ${cfg.minScore}${cfg.usePrevDay ? " · prev day" : ""}${cfg.useVolume ? " · volume" : ""}`,
+        detail: `pivot ${cfg.pivotLeft}/${cfg.pivotRight} · min score ${cfg.minScore}${cfg.usePrevDay ? " · prev day" : ""}${cfg.useVolume ? " · volume" : ""}${cfg.usePrevBar ? " · prev bar" : ""}`,
       });
       continue;
     }

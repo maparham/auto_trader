@@ -80,7 +80,7 @@ describe("SWEEP as a rule instance", () => {
   it("is an instance type with fixed outputs and one warmup", () => {
     expect(EXPR_INSTANCE_TYPES.has("SWEEP")).toBe(true);
     expect(exprInstancesFor(live)).toEqual([
-      { id: "SWEEP", outputs: [...SWEEP_OUTPUTS], timeframe: null, detail: "pivot 5/5 · min score 70 · prev day" },
+      { id: "SWEEP", outputs: [...SWEEP_OUTPUTS], timeframe: null, detail: "pivot 5/5 · min score 70 · prev day · prev bar" },
     ]);
     expect(exprWarmupByRef(live)("SWEEP", "bullSweep")).toBe(163);
     expect(exprWarmupByRef(live)("SWEEP", "bogus")).toBe(0);

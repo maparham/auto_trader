@@ -228,6 +228,35 @@ def test_prev_bar_close_not_beyond_opposite_extreme_no_flag():
     assert col(CFG, b, "bearSweep") == [0, 0]
 
 
+def test_prev_bar_doji_gives_no_reversal():
+    # Doji previous candle (close == open): neither reversal, even with
+    # otherwise-valid bull geometry.
+    rows = [
+        (101, 103, 100, 101),  # doji: close == open
+        (101, 105, 99, 104),   # same bull geometry as REV_BULL_ROWS
+    ]
+    b = bars(rows)
+    assert col(CFG, b, "bullSweep") == [0, 0]
+    assert col(CFG, b, "bearSweep") == [0, 0]
+
+
+def test_prev_bar_reversal_yields_to_a_more_extreme_stored_level():
+    # A stored low pivot (90, born bar 2) is more extreme than the
+    # previous-candle level (91, from bearish bar 3) and is also crossed and
+    # reclaimed this bar: the stored level wins the "most extreme" contest.
+    rows = [
+        (100, 101, 99, 100.5),
+        (95, 96, 90, 95.5),    # pivot low at bar 1
+        (95, 95.5, 94, 95),    # confirms the pivot; level (90) born here
+        (93, 94, 91, 92),      # bearish: candle i-1 for bar 4's bull reversal
+        (93, 97, 85, 96),      # crosses both the stored level and prev low
+    ]
+    b = bars(rows)
+    assert col(CFG, b, "bullSweep")[4] == 1
+    assert col(CFG, b, "bearSweep")[4] == 0
+    assert col(CFG, b, "sweptLevel")[4] == 90.0
+
+
 def test_prev_bar_always_flags_even_under_gate():
     cfg = replace(CFG, min_score=100.0, min_range_atr=1000.0)
     b = bars(REV_BULL_ROWS)

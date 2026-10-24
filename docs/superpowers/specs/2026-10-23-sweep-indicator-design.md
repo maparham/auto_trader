@@ -96,7 +96,9 @@ When a reversal holds for a side, its level is a one-bar crossing candidate
 level" contest: a stored level still wins if it is more extreme AND its own
 close-back-inside test holds; the reversal level's close test always passes
 by construction (the close is beyond the opposite extreme, which is further
-than the level itself). A side with a reversal flags regardless of its
+than the level itself). An equal-price tie between a stored level and the
+previous-candle level goes to the previous-candle level. A side with a
+reversal flags regardless of its
 score, the reported `score` output is still the computed sweep_score value,
 and a reversal side beats a non-reversal flag on the other side even when
 that side scored higher. Two non-reversal sides still resolve by score, with

@@ -179,6 +179,34 @@ describe("previous-candle outside-bar reversal (usePrevBar)", () => {
     expect(col(CFG, b, "bearSweep")).toEqual([0, 1]);
     expect(col(CFG, b, "bullSweep")).toEqual([0, 0]);
     expect(col(CFG, b, "sweptLevel")[1]).toBe(103);
+    expect(computeSweep(b, CFG)[1].src).toBe("bar");
+  });
+
+  it("gives no reversal on a doji prev candle", () => {
+    const b = bars([
+      [101, 103, 100, 101], // doji: close === open
+      [101, 105, 99, 104], // same bull geometry as REV_BULL_ROWS
+    ]);
+    expect(col(CFG, b, "bullSweep")).toEqual([0, 0]);
+    expect(col(CFG, b, "bearSweep")).toEqual([0, 0]);
+  });
+
+  it("yields to a more extreme stored level", () => {
+    // A stored low pivot (90, born bar 2) is more extreme than the
+    // previous-candle level (91, from bearish bar 3) and is also crossed
+    // and reclaimed this bar: the stored level wins.
+    const rows: Array<[number, number, number, number]> = [
+      [100, 101, 99, 100.5],
+      [95, 96, 90, 95.5], // pivot low at bar 1
+      [95, 95.5, 94, 95], // confirms the pivot; level (90) born here
+      [93, 94, 91, 92], // bearish: candle i-1 for bar 4's bull reversal
+      [93, 97, 85, 96], // crosses both the stored level and prev low
+    ];
+    const b = bars(rows);
+    expect(col(CFG, b, "bullSweep")[4]).toBe(1);
+    expect(col(CFG, b, "bearSweep")[4]).toBe(0);
+    expect(col(CFG, b, "sweptLevel")[4]).toBe(90);
+    expect(computeSweep(b, CFG)[4].src).toBe("pivot");
   });
 
   it("gives neither reversal on the wrong-coloured prev candle", () => {
