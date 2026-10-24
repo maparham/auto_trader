@@ -15,14 +15,27 @@
 // current bars, touching an overlay only when its points or label changed.
 import type { Chart, KLineData, OverlayFigure, OverlayTemplate } from "klinecharts";
 import { registerOverlay } from "klinecharts";
-import { lineGeoKey, type Lines, type PickedLine } from "../pickedLines";
+import { lineGeoKey, trimLines, type Lines, type PickedLine } from "../pickedLines";
 import { loadBacktestLastUsed } from "../persist/defaults";
 import { loadArmed, loadArmedAccount } from "../liveEngine";
 import { getScreenerDraft } from "../screenerDraft";
+import { loadCodedCfg } from "../codedConfig";
+import type { BacktestConfig, RuleGroup } from "../backtestConfig";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "../indicators/shared";
 import { loadedLinePoints, toLastBar, type RayPoints } from "./indicatorAlerts";
 
 const LABEL_SEP = " · ";
+
+type ExitGroups = { longExit?: RuleGroup; shortExit?: RuleGroup } | undefined;
+
+/** Every rule text a config holds, enabled or not: its four groups plus the
+ *  coded exits when it has them. A held line no text names draws nothing, so
+ *  deleting L1 from a rule removes its clone even though the config keeps it. */
+export function configRuleTexts(cfg: Partial<BacktestConfig> | null | undefined, coded?: ExitGroups): string[] {
+  if (!cfg) return [];
+  const groups = [cfg.longEntry, cfg.longExit, cfg.shortEntry, cfg.shortExit, coded?.longExit, coded?.shortExit];
+  return groups.flatMap((g) => (g?.rules ?? []).map((r) => r.expr ?? ""));
+}
 
 /** The clones a chart on (epic, broker) should draw, keyed by lineGeoKey: one
  *  per geometry, its label every id that holds it in holder order. */
@@ -136,12 +149,18 @@ export class PickedLineClones {
     this.resolution = resolution;
   }
 
+  /** Each holder's lines, trimmed by that holder's own rule text. */
   private sources(): Array<{ lines?: Lines }> {
     const account = loadArmedAccount(this.epic);
+    const bt = loadBacktestLastUsed();
+    const btCoded = bt?.codedStrategy ? loadCodedCfg("backtest", bt.codedStrategy) : undefined;
+    const armed = account ? loadArmed(this.epic, account) : null;
+    const draft = getScreenerDraft(this.broker);
+    const draftTexts = [draft.expression ?? "", ...(draft.columns ?? []).map((c) => c.expression)];
     return [
-      { lines: loadBacktestLastUsed()?.lines },
-      { lines: account ? loadArmed(this.epic, account)?.cfg.lines : undefined },
-      { lines: getScreenerDraft(this.broker).lines },
+      { lines: trimLines(bt?.lines, configRuleTexts(bt, btCoded)) },
+      { lines: trimLines(armed?.cfg.lines, configRuleTexts(armed?.cfg, armed?.coded)) },
+      { lines: trimLines(draft.lines, draftTexts) },
     ];
   }
 

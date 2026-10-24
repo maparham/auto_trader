@@ -8,6 +8,12 @@ import { PickedLineClones, pickedLineCloneTemplate, wantedClones } from "./picke
 import { loadBacktestLastUsed } from "../persist/defaults";
 
 const L = { epic: "US100", broker: "capital", timeframe: "HOUR", t1: 1, p1: 1, t2: 2, p2: 2, slope: 1, tRef: 3, pRef: 3 };
+// A holder whose rule text names each of its lines, as a real holder would.
+const refs = (lines: Record<string, unknown>) => Object.keys(lines).map((id) => `candle.close > ${id}`);
+const holds = (lines: Record<string, unknown>) => ({
+  lines, longEntry: { combine: "AND", rules: refs(lines).map((expr) => ({ expr, enabled: true })) },
+});
+const draftOf = (lines: Record<string, unknown>) => ({ lines, expression: refs(lines).join(" or "), columns: [] });
 
 it("dedupes the same line across holders and joins labels", () => {
   const w = wantedClones("US100", "capital", [{ lines: { L1: L } }, { lines: { L2: { ...L, tRef: 9, pRef: 9 } } }]);
@@ -45,9 +51,9 @@ describe("PickedLineClones", () => {
   });
 
   it("draws one locked dashed clone per held line on the line's own timeframe, cut at the last bar", () => {
-    src.bt = { lines: { L1: L } };
+    src.bt = holds({ L1: L });
     src.account = "capital:demo";
-    src.armed = { cfg: { lines: { L3: L } } };
+    src.armed = { cfg: holds({ L3: L }) };
     const { chart, created } = fakeChart();
     const c = new PickedLineClones();
     c.attach(chart as never, "capital", "US100", "HOUR");
@@ -64,7 +70,7 @@ describe("PickedLineClones", () => {
   it("draws a line held on another timeframe through its time-anchored points", () => {
     // Slope 5 per H4 bar: counted in H1 bars it would be wrong, so the anchors
     // (1,1)-(2,2) carry it to the last bar instead.
-    src.bt = { lines: { L1: { ...L, timeframe: "HOUR_4", slope: 5 } } };
+    src.bt = holds({ L1: { ...L, timeframe: "HOUR_4", slope: 5 } });
     const { chart, created } = fakeChart();
     const c = new PickedLineClones();
     c.attach(chart as never, "capital", "US100", "HOUR");
@@ -74,7 +80,7 @@ describe("PickedLineClones", () => {
   });
 
   it("refresh does not touch an unchanged clone or re-read the holders", () => {
-    src.bt = { lines: { L1: L } };
+    src.bt = holds({ L1: L });
     const { chart } = fakeChart();
     const c = new PickedLineClones();
     c.attach(chart as never, "capital", "US100", "HOUR");
@@ -88,7 +94,7 @@ describe("PickedLineClones", () => {
   });
 
   it("follows a new last bar, relabels, and drops a clone no holder keeps", () => {
-    src.bt = { lines: { L1: L } };
+    src.bt = holds({ L1: L });
     const bars = [1, 2, 3, 4, 5];
     const { chart } = fakeChart(bars);
     chart.getDataList = () => bars.map((timestamp) => ({ timestamp }));
@@ -100,7 +106,7 @@ describe("PickedLineClones", () => {
     expect(chart.overrideOverlay).toHaveBeenLastCalledWith({
       id: expect.stringMatching(/^pickline:/), points: [{ timestamp: 1, value: 1 }, { timestamp: 6, value: 6 }], extendData: "L1",
     });
-    src.draft = { lines: { L2: L } };
+    src.draft = draftOf({ L2: L });
     c.reconcile();
     expect(chart.overrideOverlay).toHaveBeenLastCalledWith(expect.objectContaining({ extendData: "L1 · L2" }));
     src.bt = null; src.draft = {};
@@ -108,8 +114,22 @@ describe("PickedLineClones", () => {
     expect(chart.removeOverlay).toHaveBeenCalledTimes(1);
   });
 
+  it("draws only the lines each holder's own rule text references", () => {
+    // The config keeps L2 after its rule was deleted; only L1 is still named.
+    src.bt = { lines: { L1: L, L2: { ...L, p1: 7 } }, longEntry: { combine: "AND", rules: [{ expr: "candle.close > L1", enabled: false }] } };
+    // The armed snapshot names nothing; the screener names L4 in a column only.
+    src.account = "capital:demo";
+    src.armed = { cfg: { lines: { L3: { ...L, p1: 8 } } } };
+    src.draft = { lines: { L4: { ...L, p1: 9 }, L5: { ...L, p1: 10 } }, expression: "candle.close > 1", columns: [{ name: "d", expression: "candle.close - L4" }] };
+    const { chart, created } = fakeChart();
+    const c = new PickedLineClones();
+    c.attach(chart as never, "capital", "US100", "HOUR");
+    c.reconcile();
+    expect(created.map((o) => o.extendData).sort()).toEqual(["L1", "L4"]);
+  });
+
   it("drops its clones from the old chart when the epic changes", () => {
-    src.bt = { lines: { L1: L } };
+    src.bt = holds({ L1: L });
     const { chart } = fakeChart();
     const c = new PickedLineClones();
     c.attach(chart as never, "capital", "US100", "HOUR");
