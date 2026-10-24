@@ -307,8 +307,8 @@ docs/superpowers/specs/2026-10-22-screener-chart-indicators-design.md.
 
 ### Picked lines
 
-`L<n>` is a frozen Trendlines line: a right-clicked line on the chart becomes
-a bare id a rule can reference, a reserved instance name
+`L<n>` is a frozen Trendlines line: a line clicked on the chart while "Pick
+from chart" is armed becomes a bare id a rule can reference, a reserved instance name
 (`validateInstanceName`/`mintInstanceId` refuse it elsewhere). The `lines`
 map (`PickedLine` in `lib/pickedLines.ts`) rides in the backtest config, the
 armed snapshot, the screener draft and saved screens; a request sends only
