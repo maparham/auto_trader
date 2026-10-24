@@ -42,20 +42,27 @@ function makeCandles(n: number): KLineData[] {
 }
 
 const CASES: Array<{ name: string; calcParams: number[]; extendData: Record<string, unknown> }> = [
-  { name: "defaults", calcParams: [], extendData: { tz: "UTC" } },
+  { name: "defaults", calcParams: [], extendData: { tz: "UTC", usePrevBar: false } },
   {
     name: "loose_ny_volume",
     calcParams: [2, 2, 60, 40, 14, 1, 20, 1.5, 50, 2],
-    extendData: { tz: "America/New_York", useVolume: true },
+    extendData: { tz: "America/New_York", useVolume: true, usePrevBar: false },
   },
-  { name: "no_prev_day", calcParams: [3, 3, 100, 50, 14, 1.2, 20, 2, 60, 3], extendData: { usePrevDay: false } },
+  {
+    name: "no_prev_day",
+    calcParams: [3, 3, 100, 50, 14, 1.2, 20, 2, 60, 3],
+    extendData: { usePrevDay: false, usePrevBar: false },
+  },
+  { name: "prev_bar", calcParams: [], extendData: { tz: "UTC", usePrevBar: true } },
 ];
 
 describe("sweep golden", () => {
   it("writes the fixture", () => {
     const candles = makeCandles(1200);
+    const ptsByName = new Map<string, ReturnType<typeof computeSweep>>();
     const cases = CASES.map((c) => {
       const pts = computeSweep(candles, parseSweepConfig(c.calcParams, c.extendData));
+      ptsByName.set(c.name, pts);
       const series: Record<string, Array<number | null>> = {};
       for (const o of SWEEP_OUTPUTS) series[o] = pts.map((p) => p[o] ?? null);
       return { ...c, series };
@@ -65,6 +72,10 @@ describe("sweep golden", () => {
     expect(loose.bearSweep.some((v) => v === 1)).toBe(true);
     expect(loose.bullSweep.some((v) => v === 1)).toBe(true);
     expect(loose.bearConfirmed.some((v) => v === 1) || loose.bullConfirmed.some((v) => v === 1)).toBe(true);
+    // The prev_bar case must exercise the reversal path at least once, or
+    // the fixture proves nothing about usePrevBar.
+    const prevBarPts = ptsByName.get("prev_bar")!;
+    expect(prevBarPts.some((p) => p.src === "bar")).toBe(true);
     mkdirSync(dirname(OUT), { recursive: true });
     writeFileSync(OUT, JSON.stringify({
       candles: candles.map((k) => [k.timestamp, k.open, k.high, k.low, k.close, k.volume]),

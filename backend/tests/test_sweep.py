@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from auto_trader.core.models import Candle
+from auto_trader.indicators.core import atr_series
 from auto_trader.indicators.sweep import (
     SWEEP_OUTPUTS,
     SweepConfig,
@@ -30,7 +31,7 @@ def bars(rows, step=timedelta(hours=1)):
 CFG = SweepConfig(
     pivot_left=1, pivot_right=1, level_max_age=10, min_wick_pct=50.0, atr_len=2,
     min_range_atr=1.0, vol_len=20, vol_z=2.0, min_score=70.0, confirm_bars=2,
-    use_prev_day=False, use_volume=False, tz="UTC",
+    use_prev_day=False, use_volume=False, use_prev_bar=True, tz="UTC",
 )
 
 
@@ -177,6 +178,93 @@ def test_prev_day_blank_on_weekly_bars():
     assert col(cfg, b, "bearSweep") == [0] * 5
 
 
+# --- Previous-candle outside-bar reversal (use_prev_bar) ---
+
+REV_BULL_ROWS = [
+    (102, 103, 100, 101),  # bearish prev candle
+    (101, 105, 99, 104),   # low below prev low, close above prev high
+]
+
+REV_BEAR_ROWS = [
+    (100, 103, 99, 102),   # bullish prev candle
+    (102, 106, 95, 97),    # high above prev high, close below prev low
+]
+
+
+def test_prev_bar_bull_reversal_flags():
+    b = bars(REV_BULL_ROWS)
+    assert col(CFG, b, "bullSweep") == [0, 1]
+    assert col(CFG, b, "bearSweep") == [0, 0]
+    assert col(CFG, b, "sweptLevel")[1] == 100
+
+
+def test_prev_bar_bear_reversal_flags():
+    b = bars(REV_BEAR_ROWS)
+    assert col(CFG, b, "bearSweep") == [0, 1]
+    assert col(CFG, b, "bullSweep") == [0, 0]
+    assert col(CFG, b, "sweptLevel")[1] == 103
+
+
+def test_prev_bar_wrong_colour_no_reversal():
+    # Bullish prev candle (not bearish), same bull geometry as REV_BULL_ROWS.
+    rows = [
+        (100, 103, 99, 102),
+        (101, 105, 97, 104),
+    ]
+    b = bars(rows)
+    assert col(CFG, b, "bullSweep") == [0, 0]
+    assert col(CFG, b, "bearSweep") == [0, 0]
+
+
+def test_prev_bar_close_not_beyond_opposite_extreme_no_flag():
+    # Low below prev low (crossing part holds), but close only above prev
+    # low, not above prev high: the reversal path never creates a level.
+    rows = [
+        (103, 104, 100, 101),
+        (101, 103, 98, 102),
+    ]
+    b = bars(rows)
+    assert col(CFG, b, "bullSweep") == [0, 0]
+    assert col(CFG, b, "bearSweep") == [0, 0]
+
+
+def test_prev_bar_always_flags_even_under_gate():
+    cfg = replace(CFG, min_score=100.0, min_range_atr=1000.0)
+    b = bars(REV_BULL_ROWS)
+    assert col(cfg, b, "bullSweep") == [0, 1]
+    assert col(cfg, b, "score")[1] < 100.0
+
+
+def test_prev_bar_toggle_off_no_flag():
+    cfg = replace(CFG, use_prev_bar=False)
+    b = bars(REV_BULL_ROWS)
+    assert col(cfg, b, "bullSweep") == [0, 0]
+
+
+def test_prev_bar_reversal_beats_normal_opposite_flag():
+    # Bar 1 is a pivot high (110), born as a stored level at bar 2. Bar 4
+    # crosses that stored level (a normal, gated bear candidate that would
+    # flag on its own) while ALSO satisfying a bull reversal against bearish
+    # bar 3: the reversal must win the side resolution regardless.
+    rows = [
+        (100, 100.5, 99, 99.5),
+        (105, 110, 104, 106),   # pivot high at bar 1 (highs[0]<110, highs[2]<110)
+        (105, 106, 104, 105),   # confirms the pivot; level (110) born here
+        (103, 104, 100, 101),   # bearish: candle i-1 for bar 4's bull reversal
+        (105, 112, 95, 107),    # crosses stored 110 AND satisfies bull reversal
+    ]
+    b = bars(rows)
+    assert col(CFG, b, "bullSweep")[4] == 1
+    assert col(CFG, b, "bearSweep")[4] == 0
+    assert col(CFG, b, "sweptLevel")[4] == 100.0  # the prev-candle (bar 3) low
+    # The normal bear candidate (stored level 110) would have passed the
+    # gate on its own, proving the bull side won on reversal precedence, not
+    # by default.
+    atr_prev = atr_series(b, CFG.atr_len)[3]
+    s = sweep_score(CFG, True, 105, 112, 95, 107, atr_prev, None)
+    assert s >= CFG.min_score
+
+
 def test_score_range_zero_is_zero():
     assert sweep_score(CFG, True, 1.0, 1.0, 1.0, 1.0, 1.0, None) == 0.0
 
@@ -192,12 +280,12 @@ def test_parse_defaults_and_extend():
     d = parse_sweep_config(None, None)
     assert d == SweepConfig()
     assert (d.pivot_left, d.pivot_right, d.level_max_age, d.min_score) == (5, 5, 150, 70.0)
-    assert d.use_prev_day is True and d.use_volume is False and d.tz == "UTC"
+    assert d.use_prev_day is True and d.use_volume is False and d.use_prev_bar is True and d.tz == "UTC"
     cfg = parse_sweep_config(
         [2, 3, 50, 40, 10, 1.2, 30, 1.5, 60, 4],
-        {"usePrevDay": False, "useVolume": True, "tz": "Europe/London"},
+        {"usePrevDay": False, "useVolume": True, "usePrevBar": False, "tz": "Europe/London"},
     )
-    assert cfg == SweepConfig(2, 3, 50, 40.0, 10, 1.2, 30, 1.5, 60.0, 4, False, True, "Europe/London")
+    assert cfg == SweepConfig(2, 3, 50, 40.0, 10, 1.2, 30, 1.5, 60.0, 4, False, True, False, "Europe/London")
     bad = parse_sweep_config(["x", 0, "y", 0, None, -2, 0, 0, -5, 0], {"tz": "Not/AZone"})
     assert bad == SweepConfig()
 

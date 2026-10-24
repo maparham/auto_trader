@@ -2,6 +2,7 @@
 // expectations, per the parity contract in indicators/core.py.
 import { describe, it, expect } from "vitest";
 import type { KLineData } from "klinecharts";
+import { atrSeries } from "../atr";
 import { computeSweep, sweepScore, type SweepPoint } from "./sweepCompute";
 import type { SweepConfig } from "./sweepOutputs";
 
@@ -14,7 +15,8 @@ function bars(rows: Array<[number, number, number, number]>, step = HOUR): KLine
 
 const CFG: SweepConfig = {
   pivotLeft: 1, pivotRight: 1, levelMaxAge: 10, minWickPct: 50, atrLen: 2, minRangeAtr: 1,
-  volLen: 20, volZ: 2, minScore: 70, confirmBars: 2, usePrevDay: false, useVolume: false, tz: "UTC",
+  volLen: 20, volZ: 2, minScore: 70, confirmBars: 2, usePrevDay: false, useVolume: false,
+  usePrevBar: true, tz: "UTC",
 };
 
 const col = (cfg: SweepConfig, data: KLineData[], key: keyof SweepPoint) =>
@@ -151,6 +153,80 @@ describe("computeSweep", () => {
   it("blanks previous-day levels on weekly bars", () => {
     const cfg = { ...CFG, usePrevDay: true };
     expect(col(cfg, bars(PREV_DAY_ROWS, 7 * 24 * HOUR), "bearSweep")).toEqual(zeros(5));
+  });
+});
+
+describe("previous-candle outside-bar reversal (usePrevBar)", () => {
+  const REV_BULL_ROWS: Array<[number, number, number, number]> = [
+    [102, 103, 100, 101], // bearish prev candle
+    [101, 105, 99, 104], // low below prev low, close above prev high
+  ];
+  const REV_BEAR_ROWS: Array<[number, number, number, number]> = [
+    [100, 103, 99, 102], // bullish prev candle
+    [102, 106, 95, 97], // high above prev high, close below prev low
+  ];
+
+  it("flags a bull reversal", () => {
+    const b = bars(REV_BULL_ROWS);
+    expect(col(CFG, b, "bullSweep")).toEqual([0, 1]);
+    expect(col(CFG, b, "bearSweep")).toEqual([0, 0]);
+    expect(col(CFG, b, "sweptLevel")[1]).toBe(100);
+    expect(computeSweep(b, CFG)[1].src).toBe("bar");
+  });
+
+  it("flags a bear reversal", () => {
+    const b = bars(REV_BEAR_ROWS);
+    expect(col(CFG, b, "bearSweep")).toEqual([0, 1]);
+    expect(col(CFG, b, "bullSweep")).toEqual([0, 0]);
+    expect(col(CFG, b, "sweptLevel")[1]).toBe(103);
+  });
+
+  it("gives neither reversal on the wrong-coloured prev candle", () => {
+    const b = bars([
+      [100, 103, 99, 102],
+      [101, 105, 97, 104],
+    ]);
+    expect(col(CFG, b, "bullSweep")).toEqual([0, 0]);
+    expect(col(CFG, b, "bearSweep")).toEqual([0, 0]);
+  });
+
+  it("creates no reversal level when the close is not beyond the opposite extreme", () => {
+    const b = bars([
+      [103, 104, 100, 101],
+      [101, 103, 98, 102],
+    ]);
+    expect(col(CFG, b, "bullSweep")).toEqual([0, 0]);
+    expect(col(CFG, b, "bearSweep")).toEqual([0, 0]);
+  });
+
+  it("always flags, even above the score gate", () => {
+    const cfg = { ...CFG, minScore: 100, minRangeAtr: 1000 };
+    const b = bars(REV_BULL_ROWS);
+    expect(col(cfg, b, "bullSweep")).toEqual([0, 1]);
+    expect((col(cfg, b, "score")[1] as number)).toBeLessThan(100);
+  });
+
+  it("does not flag with the toggle off", () => {
+    const cfg = { ...CFG, usePrevBar: false };
+    const b = bars(REV_BULL_ROWS);
+    expect(col(cfg, b, "bullSweep")).toEqual([0, 0]);
+  });
+
+  it("beats a normal opposite-side flag on the same bar", () => {
+    const rows: Array<[number, number, number, number]> = [
+      [100, 100.5, 99, 99.5],
+      [105, 110, 104, 106], // pivot high at bar 1
+      [105, 106, 104, 105], // confirms the pivot; level (110) born here
+      [103, 104, 100, 101], // bearish: candle i-1 for bar 4's bull reversal
+      [105, 112, 95, 107], // crosses stored 110 AND satisfies bull reversal
+    ];
+    const b = bars(rows);
+    expect(col(CFG, b, "bullSweep")[4]).toBe(1);
+    expect(col(CFG, b, "bearSweep")[4]).toBe(0);
+    expect(col(CFG, b, "sweptLevel")[4]).toBe(100);
+    const atrPrev = atrSeries(b, CFG.atrLen)[3];
+    const s = sweepScore(CFG, true, 105, 112, 95, 107, atrPrev, null);
+    expect(s).toBeGreaterThanOrEqual(CFG.minScore);
   });
 });
 

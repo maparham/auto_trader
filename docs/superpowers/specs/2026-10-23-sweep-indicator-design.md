@@ -43,6 +43,7 @@ under the parity contract in `indicators/core.py`.
 | `volLen` / `volZ` | 20 / 2.0 | volume window and z for full credit |
 | `minScore` | 70 | score at or above which the bar is flagged |
 | `confirmBars` | 3 | bars without a close back through the level to confirm |
+| `usePrevBar` | true | also flag an outside-bar reversal against the previous candle |
 
 `tz` is read from `extendData.tz` with PREV_HL's `_zone` rules (both
 parsers); SWEEP joins `TZ_STAMPED_TYPES` in
@@ -62,17 +63,44 @@ parsers); SWEEP joins `TZ_STAMPED_TYPES` in
   the highest crossed level is a sweep candidate. Low levels mirror this
   with `low < L`.
 - A level also dies once `i - born > levelMaxAge`.
+- With `usePrevBar` on, the previous candle also contributes a one-bar level
+  that is never stored: see "Previous-candle reversal" below.
 
 ## Per-bar detection
 
 Order within bar i: births, then expiry (a level is live while
-`i - born <= levelMaxAge`), then crossings and scoring, then the confirm check
-of the already-pending sweep, then recording this bar's flag.
+`i - born <= levelMaxAge`), then crossings and scoring (the previous-candle
+reversal level, when it applies, joins the crossing step here), then the
+confirm check of the already-pending sweep, then recording this bar's flag.
 
 Bear candidate: the highest live high level L with `high[i] > L`. It is a
 sweep when `close[i] < L`. If the close is not below L it is a breakout: the
 crossed levels die and nothing scores. Bull mirrors this on low levels with
 `low[i] < L` and `close[i] > L`.
+
+### Previous-candle reversal
+
+With `usePrevBar` on (default), bar i >= 1 also tests an outside-bar
+reversal against candle i-1, independent of any stored level:
+
+- Bull reversal: candle i-1 is bearish (`close < open`, strictly),
+  `low[i] < low[i-1]`, and `close[i] > high[i-1]`. Its level is `low[i-1]`.
+- Bear reversal: candle i-1 is bullish (`close > open`, strictly),
+  `high[i] > high[i-1]`, and `close[i] < low[i-1]`. Its level is
+  `high[i-1]`.
+- A doji previous candle (`close == open`) gives neither, and both are
+  mutually exclusive on one bar.
+
+When a reversal holds for a side, its level is a one-bar crossing candidate
+(never stored, never expires) that joins that side's "most extreme crossed
+level" contest: a stored level still wins if it is more extreme AND its own
+close-back-inside test holds; the reversal level's close test always passes
+by construction (the close is beyond the opposite extreme, which is further
+than the level itself). A side with a reversal flags regardless of its
+score, the reported `score` output is still the computed sweep_score value,
+and a reversal side beats a non-reversal flag on the other side even when
+that side scored higher. Two non-reversal sides still resolve by score, with
+an exact tie flagging neither.
 
 Score (0 to 100) is a weighted mean of components clamped to [0, 1]. When
 `range = high - low` is 0 the score is 0.
@@ -91,10 +119,11 @@ Score (0 to 100) is a weighted mean of components clamped to [0, 1]. When
 Weights: volume off gives wick 0.4, close 0.2, range 0.4. Volume on gives
 wick 0.3, close 0.15, range 0.3, volume 0.25.
 
-The bar is flagged when the unrounded score >= `minScore`. If a bar is a
-sweep both ways (an outside bar), the side with the higher unrounded score
-wins and an exact tie flags neither. Both sides' crossed levels die either
-way.
+The bar is flagged when the unrounded score >= `minScore`, unless the side
+holds a previous-candle reversal, which always flags. If a bar is a sweep
+both ways (an outside bar), a reversal side beats a non-reversal side;
+otherwise the side with the higher unrounded score wins and an exact tie
+flags neither. Both sides' crossed levels die either way.
 
 Confirmation: a flagged sweep becomes pending. A bear pending sweep confirms
 at bar i + `confirmBars` if no close in (i, i + `confirmBars`] is above L;
@@ -131,7 +160,8 @@ typed by hand.
   would crush the price axis autoscale, SPIKE's rule), so the legend shows
   the swept level and the "why" is a small chip over each flagged candle when bars are at least 5 px
   wide, reading the rounded score and the level source ("72 pivot",
-  "81 prev day"). A `showLabels` extend toggle (default on) hides the chips.
+  "81 prev day", "65 prev bar"). A `showLabels` extend toggle (default on)
+  hides the chips.
 - Draw culls to the visible range and clips strokes (chart draw perf rules).
 
 ## Registration
@@ -178,7 +208,11 @@ default; its InfoTip says it is only meaningful on brokers with real volume
   - volume weights rescale;
   - range 0 scores 0;
   - one case per default showing that a wick and close without range credit
-    stays under `minScore`.
+    stays under `minScore`;
+  - previous-candle reversal: bull and bear flags, the wrong-coloured
+    previous candle, the close not beyond the opposite extreme (no level at
+    all), always-flags under a high `minScore`/`minRangeAtr`, the toggle
+    off, and a reversal beating a normal opposite-side flag on the same bar.
 - Parity: SWEEP gets its own golden fixture, written by a TS test in the
   style of `indicatorParityGolden.test.ts` and asserted by `test_sweep.py`.
   `test_indicator_parity.py` is left alone.

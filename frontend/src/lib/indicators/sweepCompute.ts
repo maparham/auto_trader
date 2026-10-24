@@ -21,14 +21,14 @@ export interface SweepPoint {
   // Flag bars only, for the draw: where the swept level's dashed segment
   // starts, and what kind of level it was. Not rule operands.
   levelFrom?: number;
-  src?: "pivot" | "day";
+  src?: "pivot" | "day" | "bar";
 }
 
 interface Level {
   price: number;
   born: number;
   start: number;
-  src: "pivot" | "day";
+  src: "pivot" | "day" | "bar";
 }
 
 const DAY_MS = 86_400_000;
@@ -207,21 +207,54 @@ export function computeSweep(dataList: KLineData[], cfg: SweepConfig): SweepPoin
     }
     loLevels = kept;
 
+    // Previous-candle outside-bar reversal: a one-bar crossing candidate,
+    // never stored, that joins the "most extreme crossed level" contest.
+    let bullReversal = false;
+    let bearReversal = false;
+    let prevBullLv: Level | null = null;
+    let prevBearLv: Level | null = null;
+    if (cfg.usePrevBar && i >= 1) {
+      if (closes[i - 1] < opens[i - 1] && lows[i] < lows[i - 1] && closes[i] > highs[i - 1]) {
+        bullReversal = true;
+        prevBullLv = { price: lows[i - 1], born: i, start: i - 1, src: "bar" };
+      } else if (closes[i - 1] > opens[i - 1] && highs[i] > highs[i - 1] && closes[i] < lows[i - 1]) {
+        bearReversal = true;
+        prevBearLv = { price: highs[i - 1], born: i, start: i - 1, src: "bar" };
+      }
+    }
+
     const atrPrev = i >= 1 ? atr[i - 1] : null;
-    const vz = cfg.useVolume && (bearLv || bullLv) ? volZAt(vols, i, cfg.volLen) : null;
+    const vz = cfg.useVolume && (bearLv || bullLv || bearReversal || bullReversal) ? volZAt(vols, i, cfg.volLen) : null;
     let bearS: number | null = null;
     let bullS: number | null = null;
-    if (bearLv !== null && closes[i] < bearLv.price) {
+    let bearWin: Level | null = null;
+    let bullWin: Level | null = null;
+    if (bearReversal) {
+      bearWin = bearLv !== null && closes[i] < bearLv.price && bearLv.price > prevBearLv!.price ? bearLv : prevBearLv;
+      bearS = sweepScore(cfg, true, opens[i], highs[i], lows[i], closes[i], atrPrev, vz);
+    } else if (bearLv !== null && closes[i] < bearLv.price) {
       const s = sweepScore(cfg, true, opens[i], highs[i], lows[i], closes[i], atrPrev, vz);
-      if (s >= cfg.minScore) bearS = s;
+      if (s >= cfg.minScore) {
+        bearS = s;
+        bearWin = bearLv;
+      }
     }
-    if (bullLv !== null && closes[i] > bullLv.price) {
+    if (bullReversal) {
+      bullWin = bullLv !== null && closes[i] > bullLv.price && bullLv.price < prevBullLv!.price ? bullLv : prevBullLv;
+      bullS = sweepScore(cfg, false, opens[i], highs[i], lows[i], closes[i], atrPrev, vz);
+    } else if (bullLv !== null && closes[i] > bullLv.price) {
       const s = sweepScore(cfg, false, opens[i], highs[i], lows[i], closes[i], atrPrev, vz);
-      if (s >= cfg.minScore) bullS = s;
+      if (s >= cfg.minScore) {
+        bullS = s;
+        bullWin = bullLv;
+      }
     }
     let flag = 0;
-    if (bearS !== null && bullS !== null) flag = bearS > bullS ? -1 : bullS > bearS ? 1 : 0;
-    else if (bearS !== null) flag = -1;
+    if (bearS !== null && bullS !== null) {
+      if (bearReversal && !bullReversal) flag = -1;
+      else if (bullReversal && !bearReversal) flag = 1;
+      else flag = bearS > bullS ? -1 : bullS > bearS ? 1 : 0;
+    } else if (bearS !== null) flag = -1;
     else if (bullS !== null) flag = 1;
 
     // Confirm check of the sweep pending from an earlier bar.
@@ -242,7 +275,7 @@ export function computeSweep(dataList: KLineData[], cfg: SweepConfig): SweepPoin
     // This bar's flag: it replaces any pending sweep.
     let flagLv: Level | null = null;
     if (flag !== 0) {
-      flagLv = flag < 0 ? bearLv : bullLv;
+      flagLv = flag < 0 ? bearWin : bullWin;
       pendDir = flag;
       pendLevel = flagLv!.price;
       pendBar = i;

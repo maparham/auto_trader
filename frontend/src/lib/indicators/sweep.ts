@@ -20,6 +20,7 @@ export interface SweepExtend {
   showLabels?: boolean;
   usePrevDay?: boolean;
   useVolume?: boolean;
+  usePrevBar?: boolean;
   tz?: string;
 }
 
@@ -114,7 +115,8 @@ function drawSweep(params: IndicatorDrawParams<SweepPoint, unknown, unknown>): b
       ctx.stroke();
     }
     if (labels) {
-      const text = `${Math.round(p.score ?? 0)} ${p.src === "day" ? "prev day" : "pivot"}`;
+      const label = p.src === "day" ? "prev day" : p.src === "bar" ? "prev bar" : "pivot";
+      const text = `${Math.round(p.score ?? 0)} ${label}`;
       ctx.font = "600 10px ui-monospace, Menlo, monospace";
       const tw = ctx.measureText(text).width + 8;
       const yBase = bear ? yHigh - 14 : yLow + 24;

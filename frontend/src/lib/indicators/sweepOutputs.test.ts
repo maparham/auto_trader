@@ -28,10 +28,11 @@ describe("SWEEP config", () => {
   it("defaults and falls back like the backend parser", () => {
     expect(parseSweepConfig([], {})).toEqual({ ...SWEEP_DEFAULTS, tz: undefined });
     expect(parseSweepConfig(["x", 0, "y", 0, null, -2, 0, 0, -5, 0], {})).toEqual({ ...SWEEP_DEFAULTS, tz: undefined });
-    expect(parseSweepConfig([2, 3, 50, 40, 10, 1.2, 30, 1.5, 60, 4], { usePrevDay: false, useVolume: true, tz: "Europe/London" }))
+    expect(parseSweepConfig([2, 3, 50, 40, 10, 1.2, 30, 1.5, 60, 4], { usePrevDay: false, useVolume: true, usePrevBar: false, tz: "Europe/London" }))
       .toEqual({
         pivotLeft: 2, pivotRight: 3, levelMaxAge: 50, minWickPct: 40, atrLen: 10, minRangeAtr: 1.2,
-        volLen: 30, volZ: 1.5, minScore: 60, confirmBars: 4, usePrevDay: false, useVolume: true, tz: "Europe/London",
+        volLen: 30, volZ: 1.5, minScore: 60, confirmBars: 4, usePrevDay: false, useVolume: true,
+        usePrevBar: false, tz: "Europe/London",
       });
   });
   it("warms up over a level's whole life", () => {

@@ -14,7 +14,21 @@ A high level dies on the first bar whose high trades above it, whatever the
 close; every level crossed on that bar dies and the highest one is the bear
 candidate. It is a sweep when the bar closes back below it, and it flags when
 its score reaches `min_score`. Lows mirror this. A bar that flags both ways
-takes the higher score; an exact tie flags neither.
+takes the higher score, unless one side is a previous-candle reversal (below),
+which always wins; an exact tie between two non-reversal sides flags neither.
+
+With `use_prev_bar` on (default), bar i >= 1 also tests a one-bar reversal
+against candle i-1, never stored: a bull reversal needs i-1 bearish
+(close < open), `low[i] < low[i-1]`, and `close[i] > high[i-1]`, with level
+`low[i-1]`; a bear reversal mirrors it on a bullish i-1 with
+`high[i] > high[i-1]` and `close[i] < low[i-1]`, level `high[i-1]`. A doji
+i-1 (close == open) gives neither, and both are mutually exclusive on one
+bar. The reversal level joins the crossing step's "most extreme crossed
+level" contest for its side (a stored level still wins if it is more extreme
+and its own close test holds; the reversal level's close test always passes
+by construction). A side with a reversal flags regardless of its score, and
+beats a non-reversal flag on the other side even when that side scored
+higher.
 
 A flagged sweep becomes pending and confirms `confirm_bars` later if no close
 went back through its level; a close through drops it, and any new flag
@@ -56,6 +70,7 @@ class SweepConfig:
     confirm_bars: int = 3
     use_prev_day: bool = True
     use_volume: bool = False
+    use_prev_bar: bool = True
     tz: str = "UTC"
 
 
@@ -68,7 +83,8 @@ def parse_sweep_config(calc_params: object, extend_data: object) -> SweepConfig:
     anything non-finite or <= 0. calcParams order: [pivotLeft, pivotRight,
     levelMaxAge, minWickPct, atrLen, minRangeAtr, volLen, volZ, minScore,
     confirmBars]. extendData: usePrevDay (absent means on), useVolume (only
-    `true` turns it on), tz (PREV_HL's _zone rules)."""
+    `true` turns it on), usePrevBar (absent or anything but false means on),
+    tz (PREV_HL's _zone rules)."""
     p = calc_params if isinstance(calc_params, (list, tuple)) else []
     ext = extend_data if isinstance(extend_data, dict) else {}
 
@@ -102,6 +118,7 @@ def parse_sweep_config(calc_params: object, extend_data: object) -> SweepConfig:
         confirm_bars=len_at(9, d.confirm_bars),
         use_prev_day=ext.get("usePrevDay") is not False,
         use_volume=ext.get("useVolume") is True,
+        use_prev_bar=ext.get("usePrevBar") is not False,
         tz=_zone(ext.get("tz")),
     )
 
@@ -242,21 +259,63 @@ def _compute_points(cfg: SweepConfig, candles: Sequence[Candle]) -> list[tuple[f
                 kept.append(lv)
         lo_levels = kept
 
+        # Previous-candle outside-bar reversal: a one-bar crossing candidate,
+        # never stored, that joins the "most extreme crossed level" contest.
+        bull_reversal = False
+        bear_reversal = False
+        prev_bull_lv: _Level | None = None
+        prev_bear_lv: _Level | None = None
+        if cfg.use_prev_bar and i >= 1:
+            if closes[i - 1] < opens[i - 1] and lows[i] < lows[i - 1] and closes[i] > highs[i - 1]:
+                bull_reversal = True
+                prev_bull_lv = _Level(lows[i - 1], i, i - 1)
+            elif closes[i - 1] > opens[i - 1] and highs[i] > highs[i - 1] and closes[i] < lows[i - 1]:
+                bear_reversal = True
+                prev_bear_lv = _Level(highs[i - 1], i, i - 1)
+
         atr_prev = atr[i - 1] if i >= 1 else None
-        vz = _vol_z(vols, i, cfg.vol_len) if cfg.use_volume and (bear_lv or bull_lv) else None
+        vz = (
+            _vol_z(vols, i, cfg.vol_len)
+            if cfg.use_volume and (bear_lv or bull_lv or bear_reversal or bull_reversal)
+            else None
+        )
         bear_s: float | None = None
         bull_s: float | None = None
-        if bear_lv is not None and closes[i] < bear_lv.price:
+        bear_win: _Level | None = None
+        bull_win: _Level | None = None
+        if bear_reversal:
+            assert prev_bear_lv is not None
+            if bear_lv is not None and closes[i] < bear_lv.price and bear_lv.price > prev_bear_lv.price:
+                bear_win = bear_lv
+            else:
+                bear_win = prev_bear_lv
+            bear_s = sweep_score(cfg, True, opens[i], highs[i], lows[i], closes[i], atr_prev, vz)
+        elif bear_lv is not None and closes[i] < bear_lv.price:
             s = sweep_score(cfg, True, opens[i], highs[i], lows[i], closes[i], atr_prev, vz)
             if s >= cfg.min_score:
                 bear_s = s
-        if bull_lv is not None and closes[i] > bull_lv.price:
+                bear_win = bear_lv
+        if bull_reversal:
+            assert prev_bull_lv is not None
+            if bull_lv is not None and closes[i] > bull_lv.price and bull_lv.price < prev_bull_lv.price:
+                bull_win = bull_lv
+            else:
+                bull_win = prev_bull_lv
+            bull_s = sweep_score(cfg, False, opens[i], highs[i], lows[i], closes[i], atr_prev, vz)
+        elif bull_lv is not None and closes[i] > bull_lv.price:
             s = sweep_score(cfg, False, opens[i], highs[i], lows[i], closes[i], atr_prev, vz)
             if s >= cfg.min_score:
                 bull_s = s
+                bull_win = bull_lv
+
         flag = 0
         if bear_s is not None and bull_s is not None:
-            flag = -1 if bear_s > bull_s else 1 if bull_s > bear_s else 0
+            if bear_reversal and not bull_reversal:
+                flag = -1
+            elif bull_reversal and not bear_reversal:
+                flag = 1
+            else:
+                flag = -1 if bear_s > bull_s else 1 if bull_s > bear_s else 0
         elif bear_s is not None:
             flag = -1
         elif bull_s is not None:
@@ -279,7 +338,7 @@ def _compute_points(cfg: SweepConfig, candles: Sequence[Candle]) -> list[tuple[f
 
         # This bar's flag: it replaces any pending sweep.
         if flag != 0:
-            lv = bear_lv if flag < 0 else bull_lv
+            lv = bear_win if flag < 0 else bull_win
             assert lv is not None
             pend_dir = flag
             pend_level = lv.price

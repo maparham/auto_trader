@@ -723,6 +723,19 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: ["Adds a volume spike to the score.", "Only meaningful with real volume (Yahoo stocks and ETFs).", "CFD feeds report no traded volume."],
       },
       {
+        key: "usePrevBar",
+        label: "Previous candle reversal",
+        type: "boolean",
+        source: "extend",
+        field: "usePrevBar",
+        default: true,
+        tip: [
+          "Flags an outside-bar reversal against the previous candle.",
+          "Bull: under a red candle's low, close above its high.",
+          "Always flags, whatever the score.",
+        ],
+      },
+      {
         key: "showLabels",
         label: "Score labels",
         type: "boolean",

@@ -33,6 +33,7 @@ export interface SweepConfig {
   confirmBars: number;
   usePrevDay: boolean;
   useVolume: boolean;
+  usePrevBar: boolean;
   // Raw pane zone; computeSweep resolves "", "chart" or invalid to the chart zone.
   tz?: string;
 }
@@ -50,12 +51,14 @@ export const SWEEP_DEFAULTS: SweepConfig = {
   confirmBars: 3,
   usePrevDay: true,
   useVolume: false,
+  usePrevBar: true,
 };
 
 /** calcParams order: [pivotLeft, pivotRight, levelMaxAge, minWickPct,
  * atrLen, minRangeAtr, volLen, volZ, minScore, confirmBars]. Lengths fall
  * back on anything non-finite or 0, positive reals on anything non-finite or
- * <= 0. Mirrored by backend sweep.parse_sweep_config; keep in sync. */
+ * <= 0. extendData.usePrevBar: absent or anything but `false` means on.
+ * Mirrored by backend sweep.parse_sweep_config; keep in sync. */
 export function parseSweepConfig(calcParams: unknown, extendData?: unknown): SweepConfig {
   const p = Array.isArray(calcParams) ? calcParams : [];
   const ext = (extendData && typeof extendData === "object" ? extendData : {}) as Record<string, unknown>;
@@ -81,6 +84,7 @@ export function parseSweepConfig(calcParams: unknown, extendData?: unknown): Swe
     confirmBars: lenAt(9, d.confirmBars),
     usePrevDay: ext.usePrevDay !== false,
     useVolume: ext.useVolume === true,
+    usePrevBar: ext.usePrevBar !== false,
     tz: typeof ext.tz === "string" ? ext.tz : undefined,
   };
 }
