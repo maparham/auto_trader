@@ -237,3 +237,46 @@ describe("arm() indicator references", () => {
     });
   });
 });
+
+describe("arm() picked lines", () => {
+  const line = (timeframe: string) => ({
+    epic: "EURUSD", broker: "capital", timeframe,
+    t1: 1, p1: 1, t2: 2, p2: 2, slope: 0, tRef: 2, pRef: 2,
+  });
+  const cfgWith = (expr: string, lines: Record<string, ReturnType<typeof line>>) => ({
+    ...defaultBacktestConfig(),
+    longEntry: { combine: "AND" as const, rules: [{ expr, enabled: true }] },
+    lines,
+  });
+
+  async function panel() {
+    const mod = await import("./liveController");
+    mod.disarm();
+    mod.initLive({ epic: "EURUSD", resolution: "MINUTE", brokerId: "capital", account: "capital:demo" });
+    return mod;
+  }
+
+  it("REFUSES to arm when a referenced line was picked on another timeframe", async () => {
+    const { arm, setDraft, liveStateSignal } = await panel();
+    setDraft(cfgWith("candle.close > L1", { L1: line("HOUR_4") }));
+    await arm([]);
+    expect(liveStateSignal.value.status).not.toBe("armed");
+    const text = liveStateSignal.value.log.at(-1)?.text ?? "";
+    expect(text).toContain("L1, which was picked on HOUR_4");
+    expect(text).not.toContain("—");
+  });
+
+  it("arms when the referenced line is on the engine's timeframe", async () => {
+    const { arm, setDraft, liveStateSignal } = await panel();
+    setDraft(cfgWith("candle.close > L1", { L1: line("MINUTE") }));
+    await arm([]);
+    expect(liveStateSignal.value.status).toBe("armed");
+  });
+
+  it("ignores an off-timeframe line no executed row references", async () => {
+    const { arm, setDraft, liveStateSignal } = await panel();
+    setDraft(cfgWith("candle.close > L1", { L1: line("MINUTE"), L2: line("HOUR_4") }));
+    await arm([]);
+    expect(liveStateSignal.value.status).toBe("armed");
+  });
+});

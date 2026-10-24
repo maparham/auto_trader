@@ -17,6 +17,7 @@ import { defaultBacktestConfig, type BacktestConfig } from "./backtestConfig";
 import { loadCodedCfg, resolveParamValues } from "./codedConfig";
 import type { KLineData } from "klinecharts";
 import { collectExprInstances, referencedInstanceIds, type LiveInstance } from "./exprInstances";
+import { trimLines } from "./pickedLines";
 
 type KBar = { timestamp: number; open: number; high: number; low: number; close: number; volume: number };
 
@@ -220,6 +221,21 @@ export async function arm(
       `cannot arm: rule${pinned.length > 1 ? "s reference" : " references"} ` +
       `${pinned.map(([id, tf]) => `${id}, which is pinned to ${tf}`).join("; ")}` +
       ` — the live engine cannot fetch higher-timeframe candles`));
+    return;
+  }
+
+  // Same reason for a picked line on another timeframe: the live evaluate route
+  // has no candles for the line's own timeframe (only req.htfCandles, which the
+  // engine never sends), so a coarser line is all-None and a finer one 422s on
+  // every cycle. Read off the lines the executed rows reference, like `pinned`.
+  const offTf = Object.entries(trimLines(draftCfg.lines, rows) ?? {})
+    .filter(([, l]) => l.timeframe !== target.resolution)
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  if (offTf.length) {
+    set(appendLog(get(), Math.floor(Date.now() / 1000),
+      `cannot arm: rule${offTf.length > 1 ? "s reference" : " references"} ` +
+      `${offTf.map(([id, l]) => `${id}, which was picked on ${l.timeframe}`).join("; ")}. ` +
+      `Live rules can only use lines picked on ${target.resolution}`));
     return;
   }
 

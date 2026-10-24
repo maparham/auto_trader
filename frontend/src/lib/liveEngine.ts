@@ -216,9 +216,10 @@ export async function runOneCycle(
     shortRisk: coded ? effCfg.shortRisk ?? undefined : cfg.shortRisk ?? null,
     position,
     codedStrategy: coded ? cfg.codedStrategy : undefined,
-    // Coded strategies' ad-hoc ctx.ema(tf=...) calls need the backend to fetch
-    // that timeframe itself — same broker/price side the live stream uses (mid).
-    broker: coded ? brokerId : undefined,
+    // Sent in BOTH modes: a coded strategy's ad-hoc ctx.ema(tf=...) calls need
+    // the backend to fetch on this broker, and a picked line is only active on
+    // its own broker (an absent broker resolves to the server default).
+    broker: brokerId,
     priceSide: coded ? "mid" : undefined,
     codedParams: coded ? codedCfg?.params : undefined,
     // Sent in BOTH modes: a coded run posts THIS panel's exit rules as
@@ -231,7 +232,7 @@ export async function runOneCycle(
   };
 
   let actions: EvaluateResult["actions"];
-  let warnings: string[] = [];
+  let warnings: string[];
   try {
     ({ actions, warnings = [] } = await deps.evaluateStrategy(req));
   } catch (e) {

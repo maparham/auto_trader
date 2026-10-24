@@ -412,6 +412,14 @@ describe("picked lines", async () => {
     expect(req.lines).toEqual({ L1: recent });
   });
 
+  it("sends the broker in rules mode, so a line is active on its own broker", async () => {
+    const cfg = rulesCfg({ L1: line }, [{ expr: "candle.close > L1", enabled: true }]);
+    const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
+    const deps = flatDeps();
+    await runOneCycle(s, kbars, 1499 * 3600, "HOUR", "US100", deps as never, "ig");
+    expect(deps.evaluateStrategy.mock.calls[0][0].broker).toBe("ig");
+  });
+
   it("sends no lines when the rows reference none", async () => {
     const cfg = rulesCfg({ L1: line }, [{ expr: "candle.close > candle.open", enabled: true }]);
     const s = armSnapshot(initialLiveState(cfg, "capital:demo", 1), "s1", 1700);
