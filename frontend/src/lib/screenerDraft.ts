@@ -6,7 +6,7 @@
 // localStorage on purpose; a reload starts clean.
 import type { ScreenColumn, ScreenResult } from "./screens";
 import type { PaneCopy } from "./screenerIndicators";
-import type { Lines } from "./pickedLines";
+import { referencedLineIds, type Lines } from "./pickedLines";
 import { pickedLinesChanged } from "./signals";
 
 /** Where a screen's symbols come from: the typed list, every open chart tab
@@ -53,11 +53,21 @@ export function getScreenerDraft(brokerId: string): ScreenerDraftState {
   return drafts.get(brokerId) ?? EMPTY_SCREENER_DRAFT;
 }
 
+/** The held line ids the draft's text names, as one comparable string. */
+function namedLines(d: ScreenerDraftState | undefined): string {
+  if (!d?.lines) return "";
+  const used = referencedLineIds([d.expression, ...d.columns.map((c) => c.expression)]);
+  return Object.keys(d.lines).filter((id) => used.has(id)).sort().join(",");
+}
+
 export function setScreenerDraft(brokerId: string, state: ScreenerDraftState): void {
   const prev = drafts.get(brokerId);
   drafts.set(brokerId, state);
-  // Only a lines change redraws clones; the draft is written per keystroke.
-  if (prev?.lines !== state.lines) pickedLinesChanged.set(pickedLinesChanged.value + 1);
+  // The draft is written per keystroke: only a lines change, or an edit that
+  // changes which held lines the text names, redraws clones.
+  if (prev?.lines !== state.lines || namedLines(prev) !== namedLines(state)) {
+    pickedLinesChanged.set(pickedLinesChanged.value + 1);
+  }
 }
 
 /** Tests only: forget every broker's draft. */
