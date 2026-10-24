@@ -114,3 +114,27 @@ def test_same_tf_line_is_not_an_htf_need():
     inst = line_instances({"L1": _line(timeframe="HOUR")}, epic="US100", broker="capital", resolution="HOUR")
     needs = htf_needs([parse("candle.close < L1")], inst, resolution="HOUR")
     assert needs == []
+
+
+def test_line_inactive_on_broker_mismatch_active_on_match():
+    other = line_instances({"L1": _line()}, epic="US100", broker="ig", resolution="HOUR")
+    assert other[line_key("L1")].active is False
+    same = line_instances({"L1": _line()}, epic="US100", broker="capital", resolution="HOUR")
+    assert same[line_key("L1")].active is True
+
+
+def test_no_anchor_inside_the_range_is_all_none():
+    # t2 (k=5) before the candles, tRef (k=8) after them: nothing to anchor
+    # on without the rebase pre-pass, so the line stays absent.
+    assert line_series(_line(), _candles(2, start_k=6)) == [None, None]
+
+
+def test_parse_lines_canonicalizes_and_refuses_non_native_timeframes():
+    raw = {"epic": "US100", "broker": "capital", "timeframe": "4H", "t1": _ms(2), "p1": 1,
+           "t2": _ms(5), "p2": 2, "slope": 0.5, "tRef": _ms(8), "pRef": 3}
+    assert parse_lines({"L1": raw})["L1"].timeframe == "HOUR_4"
+    with pytest.raises(LineSpecError):
+        parse_lines({"L1": {**raw, "timeframe": "HOUR_6"}})
+    with pytest.raises(LineSpecError):
+        parse_lines({"L1": {**raw, "timeframe": "nonsense"}})
+

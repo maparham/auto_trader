@@ -36,7 +36,7 @@ from auto_trader.strategy.loader import StrategyLoadError
 
 from .. import deps
 from ..htf_source import fetch_discovered
-from ..line_rebase import rebase_lines
+from ..line_rebase import rebase_request_lines
 from ..risk_series import AtrWarmupError, build_atr_risk_series
 from ..schemas import ActionDTO, EvaluateRequest, EvaluateResponse
 from ..sweep_apply import request_instances
@@ -150,19 +150,16 @@ async def evaluate_strategy(req: EvaluateRequest, request: Request) -> EvaluateR
             raise HTTPException(422, e.message)
     else:
         risk_series = req.series
-    # Rebase any picked line whose anchors fall before this evaluation's first
-    # candle, BEFORE request_instances resolves req.lines into the instances
+    # Rebase any picked line with neither anchor in this evaluation's candles
+    # BEFORE request_instances resolves req.lines into the instances
     # map (a line resolved before this would freeze its stale tRef/pRef into
     # the instance, since parse_lines snapshots the DTOs).
-    warnings = await rebase_lines(
-        {k: v for k, v in req.lines.items() if v.epic == req.epic},
-        first_ms=int(candles[0].time.timestamp() * 1000),
-        side=req.priceSide or "mid",
-        loader=deps.load_alert_bars,
-    )
     # Resolved ONCE per request: the coded branch below re-compiles its expr exits
     # on every tf-retry pass, so resolving inside the helper would repeat it.
     try:
+        warnings = await rebase_request_lines(
+            req, first_ms=int(candles[0].time.timestamp() * 1000),
+            last_ms=int(candles[-1].time.timestamp() * 1000))
         instances = request_instances(req)
     except LineSpecError as e:
         raise HTTPException(422, e.message)

@@ -73,7 +73,7 @@ def test_expr_backtest_reports_an_unplaceable_line_warning(monkeypatch):
     monkeypatch.setattr(deps, "load_alert_bars", fake_loader)
     r = client.post("/api/expr/backtest", json=_base_req(lines={"L1": _UNPLACEABLE_LINE}))
     assert r.status_code == 200, r.text
-    assert r.json()["warnings"] == ["L1 could not be placed on the loaded bars."]
+    assert r.json()["warnings"] == ["L1 could not be placed on the loaded bars. Lines older than 5000 bars of their timeframe need picking again."]
 
 
 def test_expr_backtest_parse_error_carries_span_and_location():
@@ -421,7 +421,7 @@ def test_expr_series_reports_an_unplaceable_line_warning(monkeypatch):
         "lines": {"L1": _UNPLACEABLE_LINE},
     })
     assert r.status_code == 200, r.text
-    assert r.json()["warnings"] == ["L1 could not be placed on the loaded bars."]
+    assert r.json()["warnings"] == ["L1 could not be placed on the loaded bars. Lines older than 5000 bars of their timeframe need picking again."]
 
 
 def test_expr_series_parse_error():

@@ -5,12 +5,15 @@ value is counted in bars, never in wall-clock time."""
 from __future__ import annotations
 
 import bisect
+import dataclasses
 import math
 import re
 from dataclasses import dataclass
 from typing import Sequence
 
 from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.timeframe import is_native
+from auto_trader.strategy.expr.tfs import tf_resolution
 
 LINE_ID_RE = re.compile(r"L\d+")
 MAX_LINES = 16
@@ -41,14 +44,11 @@ class PickedLine:
     pRef: float
 
 
-def _native(tf: str) -> bool:
-    if tf.startswith("SECOND"):
-        return False
-    try:
-        resolution_seconds(tf)
-    except ValueError:
-        return False
-    return True
+def _canonical_native(tf: str) -> str | None:
+    """The canonical name of a native, non-seconds timeframe; None otherwise.
+    Canonical so htf candle dicts (keyed by canonical resolution) find it."""
+    res = tf_resolution(tf)
+    return res if res is not None and is_native(res) else None
 
 
 def parse_lines(raw: dict[str, dict] | None) -> dict[str, PickedLine]:
@@ -71,9 +71,10 @@ def parse_lines(raw: dict[str, dict] | None) -> dict[str, PickedLine]:
             raise LineSpecError("bad_line", f"{lid} has a non-finite price or slope.")
         if line.t2 <= line.t1:
             raise LineSpecError("bad_line", f"{lid} has its anchors out of order.")
-        if not _native(line.timeframe):
+        tf = _canonical_native(line.timeframe)
+        if tf is None:
             raise LineSpecError("bad_line", f"{lid} is on an unsupported timeframe.")
-        out[lid] = line
+        out[lid] = dataclasses.replace(line, timeframe=tf) if tf != line.timeframe else line
     return out
 
 
@@ -133,6 +134,13 @@ class LineInstance:
         self.active = active
 
 
+def line_active(line, *, epic: str, broker: str) -> bool:
+    """Whether a line belongs to this symbol. An empty broker on either side
+    (an unresolved request, or a line picked before brokers were stamped)
+    matches any broker."""
+    return line.epic == epic and (not broker or not line.broker or line.broker == broker)
+
+
 def line_instances(lines: dict[str, PickedLine], *, epic: str, broker: str,
                    resolution: str) -> dict[str, "LineInstance"]:
     rule_s = resolution_seconds(resolution)
@@ -142,6 +150,5 @@ def line_instances(lines: dict[str, PickedLine], *, epic: str, broker: str,
             raise LineSpecError(
                 "line_tf_finer",
                 f"{lid} was picked on {line.timeframe}; run this rule on {line.timeframe} or a finer timeframe.")
-        same = line.epic == epic and (not broker or not line.broker or line.broker == broker)
-        out[line_key(lid)] = LineInstance(line, active=same)
+        out[line_key(lid)] = LineInstance(line, active=line_active(line, epic=epic, broker=broker))
     return out

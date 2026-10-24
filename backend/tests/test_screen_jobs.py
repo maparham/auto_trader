@@ -395,7 +395,7 @@ def test_line_skip_when_loader_cannot_reach_its_anchor():
         cs = compile_screen("candle.close > L1 or candle.close > 10", [], resolution="DAY", lines=_LINE_A)
         st = await _finish(jobs, "u1", jobs.start(
             "u1", broker="yfinance", resolution="DAY", side="mid", symbols=["A", "B"], cs=cs))
-        assert st["result"]["skipped"] == [{"epic": "A", "reason": "L1 could not be placed on the loaded bars."}]
+        assert st["result"]["skipped"] == [{"epic": "A", "reason": "L1 could not be placed on the loaded bars. Lines older than 5000 bars of their timeframe need picking again."}]
         assert [m["epic"] for m in st["result"]["matches"]] == ["B"]
     asyncio.run(run())
 

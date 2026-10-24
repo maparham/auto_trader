@@ -69,7 +69,7 @@ def test_expr_evaluate_reports_an_unplaceable_line_warning(monkeypatch):
         "slope": 1.0, "tRef": -5000, "pRef": 3.0,
     }}))
     assert r.status_code == 200, r.text
-    assert r.json()["warnings"] == ["L1 could not be placed on the loaded bars."]
+    assert r.json()["warnings"] == ["L1 could not be placed on the loaded bars. Lines older than 5000 bars of their timeframe need picking again."]
 
 
 def test_expr_evaluate_no_scale_in_when_held():

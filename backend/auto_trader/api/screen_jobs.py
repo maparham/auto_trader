@@ -40,7 +40,7 @@ from auto_trader.api.schemas import PickedLineDTO
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.models import Candle
 from auto_trader.core.screen_eval import CompiledScreen, bars_needed, closed_bars, judge
-from auto_trader.strategy.expr.lines import PickedLine
+from auto_trader.strategy.expr.lines import PickedLine, line_active
 
 from . import deps
 
@@ -180,11 +180,12 @@ class ScreenJobs:
             # rebase them onto the first bar actually judged. Other symbols'
             # lines ride along inactive and need no rebase.
             own_lines = {lid: ln for lid, ln in cs.lines.items()
-                        if ln.epic == epic and (not broker or not ln.broker or ln.broker == broker)}
+                         if line_active(ln, epic=epic, broker=broker)}
             if own_lines:
                 dtos = {lid: PickedLineDTO(**dataclasses.asdict(ln)) for lid, ln in own_lines.items()}
                 warns = await rebase_lines(dtos, first_ms=int(bars[0].time.timestamp() * 1000),
-                                          side=side, loader=self._loader)
+                                           last_ms=int(bars[-1].time.timestamp() * 1000),
+                                           broker=broker, side=side, loader=self._loader)
                 if warns:
                     return None, {"epic": epic, "reason": warns[0]}
                 rebased = {lid: PickedLine(**d.model_dump()) for lid, d in dtos.items()}
