@@ -843,4 +843,12 @@ describe("picked line references", () => {
     const { error } = analyze("candle.close > L3", { isExit: false, lines: new Set(["L1"]) });
     expect(error?.code).toBe("unknown_line_ref");
   });
+  it("refuses an @ pin over a line, which has its own timeframe", () => {
+    for (const expr of ["candle.close > L1@HOUR_4", "candle.close > L1[-1]@4H", "candle.close > (L2 + 1)@D"]) {
+      const { error } = analyze(expr, { isExit: false, lines: new Set(["L1", "L2"]) });
+      expect(error?.code).toBe("line_tf_pin");
+    }
+    expect(analyze("candle.close > L1@HOUR_4", { isExit: false }).error?.message)
+      .toBe("L1 already has its own timeframe; remove the @ pin.");
+  });
 });

@@ -366,5 +366,7 @@
     "literals": [
       {"ordinal":0,"value":1,"from":28,"to":29,"label":"threshold"}
     ] },
-  { "expr": "candle.close > L1", "isExit": false, "error": null, "literals": [] }
+  { "expr": "candle.close > L1", "isExit": false, "error": null, "literals": [] },
+  { "expr": "candle.close > L1@4H", "isExit": false,
+    "error": {"code":"line_tf_pin","from":15,"to":20}, "literals": [] }
 ]

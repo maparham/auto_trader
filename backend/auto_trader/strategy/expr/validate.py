@@ -145,6 +145,35 @@ def _pinned_instance(node: N.Node,
     return None
 
 
+def _line_in(node: N.Node) -> str | None:
+    """The id of a picked line (LineRef) inside `node`, or None. A line already
+    runs on its own timeframe, so an @ pin over it is refused like a nested
+    pin. Same case list as `_pinned_instance`; keep them in step."""
+    if isinstance(node, N.LineRef):
+        return node.id
+    if isinstance(node, (N.Field, N.Offset, N.Tf)):
+        return _line_in(node.base)
+    if isinstance(node, N.Unary):
+        return _line_in(node.operand)
+    if isinstance(node, N.Call):
+        return _first(_line_in(a) for a in node.args)
+    if isinstance(node, (N.Binary, N.Compare)):
+        return _first(_line_in(n) for n in (node.left, node.right))
+    if isinstance(node, N.Cross):
+        return _first(_line_in(n) for n in (node.a, node.b))
+    if isinstance(node, N.Chain):
+        return _first(_line_in(p) for p in node.parts)
+    if isinstance(node, N.Predicate):
+        return _line_in(node.base)
+    if isinstance(node, N.Count):
+        return _first(_line_in(n) for n in (node.cond, node.window))
+    if isinstance(node, N.BoolOp):
+        return _first(_line_in(p) for p in node.parts)
+    if isinstance(node, N.Not):
+        return _line_in(node.operand)
+    return None
+
+
 def _first(results) -> str | None:
     """The first non-None result, or None."""
     for r in results:
@@ -211,6 +240,13 @@ def _walk(node: N.Node, *, is_exit: bool,
             raise ExprError(
                 "nested_tf",
                 "A timeframe pin cannot be nested inside another one.",
+                node.start, node.end,
+            )
+        line_id = _line_in(node.base)
+        if line_id is not None:
+            raise ExprError(
+                "line_tf_pin",
+                f"{line_id} already has its own timeframe; remove the @ pin.",
                 node.start, node.end,
             )
         _walk(node.base, is_exit=is_exit, instances=instances)

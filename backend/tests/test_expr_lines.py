@@ -138,3 +138,14 @@ def test_parse_lines_canonicalizes_and_refuses_non_native_timeframes():
     with pytest.raises(LineSpecError):
         parse_lines({"L1": {**raw, "timeframe": "nonsense"}})
 
+
+@pytest.mark.parametrize("expr", ["candle.close > L1@HOUR_4", "candle.close > L1[-1]@4H",
+                                  "candle.close > (L1 + 1)@D"])
+def test_at_pin_over_a_line_is_refused(expr):
+    from auto_trader.strategy.expr.errors import ExprError
+    from auto_trader.strategy.expr.validate import validate
+    inst = line_instances({"L1": _line()}, epic="US100", broker="capital", resolution="HOUR")
+    with pytest.raises(ExprError) as e:
+        validate(parse(expr), is_exit=False, instances=inst)
+    assert e.value.code == "line_tf_pin"
+    assert e.value.message == "L1 already has its own timeframe; remove the @ pin."

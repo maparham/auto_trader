@@ -693,6 +693,27 @@ function pinnedInstance(node: Node, instances: InstanceMap): string | null {
   return null;
 }
 
+/** The id of a picked line (a bare `L<n>`, parsed as a zero-arg Call) inside
+ * `node`, or null. A line already runs on its own timeframe, so an @ pin over
+ * it is refused like a nested pin. Same case list as `pinnedInstance`
+ * (validate.py::_line_in); keep them in step. */
+function lineIn(node: Node): string | null {
+  if (node.kind === "Field" || node.kind === "Offset" || node.kind === "Tf") return lineIn(node.base);
+  if (node.kind === "Unary") return lineIn(node.operand);
+  if (node.kind === "Call") {
+    if (node.args.length === 0 && LINE_ID_RE.test(node.name)) return node.name;
+    return first(node.args.map(lineIn));
+  }
+  if (node.kind === "Binary" || node.kind === "Compare") return first([lineIn(node.left), lineIn(node.right)]);
+  if (node.kind === "Cross") return first([lineIn(node.a), lineIn(node.b)]);
+  if (node.kind === "Chain") return first(node.parts.map(lineIn));
+  if (node.kind === "Predicate") return lineIn(node.base);
+  if (node.kind === "Count") return first([lineIn(node.cond), lineIn(node.window)]);
+  if (node.kind === "BoolOp") return first(node.parts.map(lineIn));
+  if (node.kind === "Not") return lineIn(node.operand);
+  return null;
+}
+
 /** The first non-null result, or null. */
 function first(results: Array<string | null>): string | null {
   for (const r of results) if (r !== null) return r;
@@ -793,6 +814,16 @@ function walk(node: Node, isExit: boolean, instances: InstanceMap, lines?: Reado
           "A timeframe pin cannot be nested inside another one.",
           node.start, node.end,
         );
+      }
+      {
+        const lineId = lineIn(node.base);
+        if (lineId !== null) {
+          throw new ExprErr(
+            "line_tf_pin",
+            `${lineId} already has its own timeframe; remove the @ pin.`,
+            node.start, node.end,
+          );
+        }
       }
       walk(node.base, isExit, instances, lines);
       return;
