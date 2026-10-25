@@ -51,6 +51,7 @@ import { lazyChunk } from "./components/lazyChunk";
 // bundle. Each is already conditionally rendered below.
 const TradeListPanel = lazyChunk(() => import("./TradeListPanel"));
 const ScreenerPanel = lazyChunk(() => import("./ScreenerPanel"));
+const AssistantPanel = lazyChunk(() => import("./AssistantPanel"));
 const SettingsModal = lazyChunk(() => import("./Settings"));
 const BacktestSettingsModal = lazyChunk(() => import("./BacktestSettingsModal"));
 const LiveTradingPanel = lazyChunk(() => import("./LiveTradingPanel"));
@@ -74,6 +75,7 @@ import {
   tradeListPanelOpen,
   livePanelOpen,
   screenerPanelOpen,
+  assistantPanelOpen,
   alertsChanged,
   alertNavHandler,
   bumpAlerts,
@@ -634,7 +636,7 @@ export default function App() {
     reportCellView(cellId);
   };
 
-  const { panelOpen, tradeListOpen, tradeOpen, screenerOpen, snapGalleryOpen, snapshotTabIds } =
+  const { panelOpen, tradeListOpen, tradeOpen, screenerOpen, assistantOpen, snapGalleryOpen, snapshotTabIds } =
     usePanelOpenStates(tabs);
 
   useEffect(() => {
@@ -1125,6 +1127,9 @@ export default function App() {
               }}
               onClose={() => screenerPanelOpen.set(false)}
             />
+          )}
+          {assistantOpen && !isDemoMode() && (
+            <AssistantPanel onClose={() => assistantPanelOpen.set(false)} />
           )}
         </main>
         {/* Panel is toggled by the toolbar bell; closed = chart uses full width. */}

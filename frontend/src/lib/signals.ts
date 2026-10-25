@@ -143,6 +143,9 @@ export const tradeListPanelOpen = new Signal<boolean>(false);
 // True while the Screener panel is open (toolbar toggle; read by App).
 export const screenerPanelOpen = new Signal<boolean>(false);
 
+// True while the Assistant panel is open (toolbar toggle; read by App).
+export const assistantPanelOpen = new Signal<boolean>(false);
+
 /** Snapshots gallery modal (global, rendered by App). */
 export const snapshotsGalleryOpen = new Signal<boolean>(false);
 
@@ -815,14 +818,16 @@ registerSidePanel("trade", () => tradePanelOpen.set(false));
 registerSidePanel("tradeList", () => tradeListPanelOpen.set(false));
 registerSidePanel("live", () => livePanelOpen.set(false));
 registerSidePanel("screener", () => screenerPanelOpen.set(false));
+registerSidePanel("assistant", () => assistantPanelOpen.set(false));
 
 /** Toolbar toggles: flipping a closed panel open claims the dock from the others. */
-export function toggleSidePanel(id: "alerts" | "trade" | "tradeList" | "live" | "screener"): void {
+export function toggleSidePanel(id: "alerts" | "trade" | "tradeList" | "live" | "screener" | "assistant"): void {
   const sig =
     id === "alerts" ? alertsPanelOpen
     : id === "trade" ? tradePanelOpen
     : id === "tradeList" ? tradeListPanelOpen
     : id === "screener" ? screenerPanelOpen
+    : id === "assistant" ? assistantPanelOpen
     : livePanelOpen;
   if (sig.value) sig.set(false);
   else openSidePanelSignal(sig, id);

@@ -3,6 +3,8 @@
 // requests other components raise, and the side panels' open flags.
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { claimSidePanel, endSidePanelRestore, registerSidePanel } from "../lib/sidePanels";
+import { isDemoMode } from "../lib/demoMode";
+import { fetchAssistantStatus } from "../assistant/api";
 import {
   loadBacktestOpen,
   saveBacktestOpen,
@@ -26,6 +28,7 @@ import {
   tradeListPanelOpen,
   livePanelOpen,
   screenerPanelOpen,
+  assistantPanelOpen,
   backtestSettingsRequest,
   backtestPanelOpenSignal,
   backtestPanelHiddenSignal,
@@ -89,7 +92,10 @@ export function useDockPanels() {
   }, []);
   // Persisted open-states are restored above; from here on, opening one side
   // panel closes the others.
-  useEffect(() => endSidePanelRestore(), []);
+  useEffect(() => {
+    endSidePanelRestore();
+    if (!isDemoMode()) void fetchAssistantStatus();
+  }, []);
   return { showBacktestCfg, openBacktestCfg, showLive };
 }
 
@@ -124,6 +130,8 @@ export function usePanelOpenStates(tabs: ChartTab[]) {
   useEffect(() => tradePanelOpen.subscribe(setTradeOpen), []);
   const [screenerOpen, setScreenerOpen] = useState(screenerPanelOpen.value);
   useEffect(() => screenerPanelOpen.subscribe(setScreenerOpen), []);
+  const [assistantOpen, setAssistantOpen] = useState(assistantPanelOpen.value);
+  useEffect(() => assistantPanelOpen.subscribe(setAssistantOpen), []);
   const [snapGalleryOpen, setSnapGalleryOpen] = useState(snapshotsGalleryOpen.value);
   useEffect(() => snapshotsGalleryOpen.subscribe(setSnapGalleryOpen), []);
   // Unlocking a snapshot view clears the cell controller's readOnly flag;
@@ -146,5 +154,5 @@ export function usePanelOpenStates(tabs: ChartTab[]) {
   useEffect(() => {
     if (!tradeOpen) setTradeSelected(null);
   }, [tradeOpen]);
-  return { panelOpen, tradeListOpen, tradeOpen, screenerOpen, snapGalleryOpen, snapshotTabIds };
+  return { panelOpen, tradeListOpen, tradeOpen, screenerOpen, assistantOpen, snapGalleryOpen, snapshotTabIds };
 }

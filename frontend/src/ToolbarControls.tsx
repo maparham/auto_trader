@@ -22,10 +22,12 @@ import {
   tradePanelOpen,
   livePanelOpen,
   screenerPanelOpen,
+  assistantPanelOpen,
   toggleSidePanel,
 } from "./lib/signals";
 import { loadTriggered, loadTriggeredSeen } from "./lib/alertsApi";
 import { isDemoMode } from "./lib/demoMode";
+import { assistantConfigured } from "./assistant/api";
 import {
   loadFavoriteResolutions,
   saveFavoriteResolutions,
@@ -485,7 +487,7 @@ export function HistoryControls({ controller }: { controller: ChartController | 
 // Tight bars swap the group for a single "Panels" trigger whose face is the
 // open panel's icon (or a generic sidebar glyph); CSS picks which of the two
 // renderings shows, off the toolbar's container width.
-type PanelId = "live" | "tradeList" | "alerts" | "trade" | "screener";
+type PanelId = "live" | "tradeList" | "alerts" | "trade" | "screener" | "assistant";
 
 function LiveIcon() {
   return (
@@ -512,6 +514,15 @@ function TicketIcon() {
       stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
       aria-hidden="true">
       <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
+    </svg>
+  );
+}
+function SparkleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />
+      <path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" />
     </svg>
   );
 }
@@ -551,6 +562,10 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
   useEffect(() => tradeListPanelOpen.subscribe(setTradeListOpen), []);
   const [screenerOpen, setScreenerOpen] = useState(screenerPanelOpen.value);
   useEffect(() => screenerPanelOpen.subscribe(setScreenerOpen), []);
+  const [assistantOpen, setAssistantOpen] = useState(assistantPanelOpen.value);
+  useEffect(() => assistantPanelOpen.subscribe(setAssistantOpen), []);
+  const [aiReady, setAiReady] = useState(assistantConfigured.value);
+  useEffect(() => assistantConfigured.subscribe(setAiReady), []);
   const unseen = useUnseenAlerts();
 
   // Tight-bar menu.
@@ -582,6 +597,10 @@ export function PanelToggles({ dataOnly = false }: { dataOnly?: boolean }) {
     ...(isDemoMode() ? [] : [{
       id: "screener" as const, label: "Screener", tip: "Show screener panel",
       icon: <RadarIcon />, on: screenerOpen, cls: "screener-toggle",
+    }]),
+    ...(isDemoMode() || !aiReady ? [] : [{
+      id: "assistant" as const, label: "Assistant", tip: "Assistant: describe what you want on the chart",
+      icon: <SparkleIcon />, on: assistantOpen, cls: "assistant-toggle",
     }]),
     {
       id: "alerts" as const, label: "Alerts", tip: "Show alerts panel",

@@ -18,7 +18,8 @@ export type SidePanelId =
   | "trade"
   | "backtest"
   | "live"
-  | "screener";
+  | "screener"
+  | "assistant";
 
 const closers = new Map<SidePanelId, () => void>();
 
