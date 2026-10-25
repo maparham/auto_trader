@@ -25,7 +25,7 @@ export function setFocusedDrawingsProvider(fn: Provider): void {
   provider = fn;
 }
 
-function focused(): FocusedDrawings {
+export function focusedDrawings(): FocusedDrawings {
   const cur = provider?.() ?? null;
   if (!cur) {
     throw new ActionError(
@@ -84,7 +84,7 @@ export function registerDrawingActions(): void {
     kind: "read",
     params: { type: "object", properties: {} },
     handler: async () => {
-      const { overlays, epic, cellId } = focused();
+      const { overlays, epic, cellId } = focusedDrawings();
       return { epic, cellId, drawings: overlays.listDrawings() };
     },
   });
@@ -105,7 +105,7 @@ export function registerDrawingActions(): void {
       required: ["tool", "points"],
     },
     handler: async (args) => {
-      const { overlays, epic, cellId } = focused();
+      const { overlays, epic, cellId } = focusedDrawings();
       const tool = args.tool as string;
       if (!TOOL_NAMES.has(tool)) {
         throw new ActionError(
@@ -152,7 +152,7 @@ export function registerDrawingActions(): void {
       required: ["id"],
     },
     handler: async (args) => {
-      const { overlays, cellId } = focused();
+      const { overlays, cellId } = focusedDrawings();
       const id = args.id as string;
       const existing = overlays.getDrawing(id);
       if (!existing) throw new ActionError("NOT_FOUND", `no drawing with id ${id}`);
@@ -167,7 +167,7 @@ export function registerDrawingActions(): void {
     kind: "write",
     params: { type: "object", properties: {} },
     handler: async () => {
-      const { overlays, epic, cellId } = focused();
+      const { overlays, epic, cellId } = focusedDrawings();
       const before = overlays.listDrawings().length;
       overlays.clearDrawings();
       return { cleared: before, epic, cellId };
