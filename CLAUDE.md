@@ -327,6 +327,50 @@ draws one dashed clone per distinct geometry, labelled `L1 · L2` when ids
 share it, on every timeframe of the symbol. Spec:
 docs/superpowers/specs/2026-10-23-picked-trendline-operand-design.md.
 
+## AI assistant
+
+The in-app Assistant (right-docked panel, toolbar sparkle icon, hidden unless
+`assistantConfigured`) is a browser-side agent loop that edits the focused
+chart from a plain-English request. It never places orders.
+
+The backend is a thin proxy, not a second implementation of the loop:
+`api/routers/assistant.py` (`POST /api/assistant/messages`, `GET
+/api/assistant/status`) only adds the gateway key, forces the model and
+applies the retry contract, via `core/assistant_client.py` (raw httpx, not
+the Anthropic SDK, since the gateway's exact headers and one-retry-on-429
+policy need a contract the SDK's own retry loop wouldn't honour). Nothing is
+stored and message bodies are never logged. `_gate` 403s in demo mode and,
+when auth is on, outside admin.
+
+The loop itself runs in the browser: `frontend/src/assistant/session.ts`
+(`createSession`/`assistantSession`, the one conversation per tab, mirrored
+to sessionStorage) drives rounds of `assistant/api.ts` (`postMessages`,
+`assistantConfigured`/`fetchAssistantStatus`) against the tool set built by
+`assistant/tools.ts` and executed by `assistant/undo.ts`. `assistant/prompt.ts`
+builds the system prompt and request; `assistant/describe.ts` backs the
+local `describe_indicator`/`describe_rules`/`validate_rule` tools.
+
+Tool allowlist: the assistant can only call what `tools.ts`'s `TOOL_TO_ACTION`
+maps to an agent-registry action (the same handlers the MCP bridge drives).
+A new registry action is NOT exposed to the model until it is added there.
+`LOCAL_TOOLS` (`ask_user`, `describe_indicator`, `indicator_configure`,
+`describe_rules`, `validate_rule`) run locally instead of through the
+registry; `ask_user` ends the turn with chips.
+
+Undo capture: `undo.ts`'s `executeTool` captures what "Undo this turn" needs
+BEFORE the forward call, keyed by `(cellId, epic)` so a later `market.select`
+on the same cell can't make a stale undo revert the wrong symbol. A `Change`
+with `undoable: false` legitimately has nothing to revert (a read, or a
+market.select with no prior epic); one with no `undo` and `undoable` left
+unset means capture failed on something that SHOULD have been undoable, and
+`undoTurn` treats that as an error rather than skipping it silently.
+`undoableIndex(turns)` is the one place that decides which turn (if any) gets
+an Undo button: the newest not-undone assistant turn with at least one still-
+live change. A turn restored from sessionStorage has no undo functions (they
+don't survive `JSON.stringify`), so it never offers Undo.
+
+Spec: docs/superpowers/specs/2026-10-25-ai-assistant-design.md.
+
 ## Account history
 
 Capital.com dealing accounts (`capital:demo`, `capital-live:live`) report
