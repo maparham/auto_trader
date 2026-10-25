@@ -13,7 +13,7 @@ import { indicatorInfo } from "../lib/indicatorMeta";
 import { toolLabel } from "../lib/drawTools";
 import { tfLabel } from "../lib/timeframe";
 import { actionFor, prepareInput, budgetResult } from "./tools";
-import { describeIndicator, configureParams, describeRules, validateRule } from "./describe";
+import { describeIndicator, configureParams, describeRules, validateRule, inputLabel } from "./describe";
 
 // `epic`: captured alongside `cellId` at the same point, since a cell can be
 // re-pointed at a different symbol (market.select) without its id changing —
@@ -84,6 +84,17 @@ async function run(action: string, args: Record<string, unknown>, ctx: ActionCon
 
 /** Old values of the keys a shallow extendData patch touches; absent keys map
  * to undefined so the undo patch clears them. */
+/** The indicator's display title ("Trendlines", "Relative Strength Index"),
+ * never its registry code. */
+function titleOf(type: string): string {
+  return indicatorInfo(type).title || type;
+}
+
+/** "a ray", "an arrow": the panel collapses repeats of these into "2 rays". */
+function article(noun: string): string {
+  return `${/^[aeiou]/.test(noun) ? "an" : "a"} ${noun}`;
+}
+
 function oldValues(prev: unknown, patch: Record<string, unknown>): Record<string, unknown> {
   const p = (prev && typeof prev === "object" ? prev : {}) as Record<string, unknown>;
   return Object.fromEntries(Object.keys(patch).map((k) => [k, p[k]]));
@@ -140,13 +151,16 @@ async function local(tool: string, input: Record<string, unknown>, ctx: ActionCo
       params: input.params as Record<string, number> | undefined,
     });
     await run("indicator.set", { id, calcParams }, ctx);
-    const bits = [input.preset, input.direction ? `${String(input.direction).toLowerCase()} only` : null, ...(input.params ? Object.keys(input.params as object) : [])]
-      .filter(Boolean).join(", ");
+    const bits = [
+      input.preset ? `${String(input.preset)} preset` : null,
+      input.direction ? `${String(input.direction).toLowerCase()} only` : null,
+      ...(input.params ? Object.keys(input.params as object).map((k) => inputLabel(live.type, k)) : []),
+    ].filter(Boolean).join(", ");
     return {
       content: budgetResult(tool, { id, changed }),
       isError: false,
       change: {
-        label: `${live.type}: ${bits || "settings changed"}`,
+        label: `${titleOf(live.type)}: ${bits || "settings changed"}`,
         cellId: cellNow(),
         epic: epicNow(),
         undo: async () => { await run("indicator.set", { id, calcParams: prev }, NOOP_CTX(new AbortController().signal)); },
@@ -174,13 +188,15 @@ export async function executeTool(
         const beforeIds = new Set(focusedChart().controller.indicators.value.map((i: { id: string }) => i.id));
         const out = (await run(action, args, ctx)) as { id: string; type: string };
         const collided = beforeIds.has(out.id);
-        const title = indicatorInfo(out.type).title;
+        // The id only adds anything when it isn't the bare type (RSI2 next to
+        // an existing RSI); "Added Trendlines (TRENDLINES)" just repeats it.
+        const title = out.id === out.type ? titleOf(out.type) : `${titleOf(out.type)} (${out.id})`;
         return {
           content: budgetResult(tool, out), isError: false,
           change: {
             label: collided
-              ? `Added ${title} (${out.id}); cannot undo (id collided with an existing pane)`
-              : `Added ${title} (${out.id})`,
+              ? `Added ${titleOf(out.type)} (${out.id}); cannot undo (id collided with an existing pane)`
+              : `Added ${title}`,
             cellId: cellNow(), epic: epicNow(),
             // Explicitly non-undoable (the label already says so), not a capture
             // failure: undoTurn must skip it, not block the rest of the turn.
@@ -202,7 +218,7 @@ export async function executeTool(
         if (args.timeframe !== undefined) undoArgs.timeframe = prevPin ?? "chart";
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Changed ${live?.type ?? id} settings`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Changed ${live ? titleOf(live.type) : id} settings`, cellId: cellNow(), epic: epicNow(),
             undo: async () => { await run("indicator.set", undoArgs, undoCtx()); } },
         };
       }
@@ -228,7 +244,7 @@ export async function executeTool(
           content: budgetResult(tool, out), isError: false,
           change: {
             label: canUndo
-              ? `Removed ${type} (undo re-adds it under a new id; alerts and rules on the old id are not restored)`
+              ? `Removed ${titleOf(type as string)} (undo re-adds it under a new id; alerts and rules on the old id are not restored)`
               : `Removed ${type ?? id}; cannot undo (its settings could not be recovered)`,
             cellId: cellNow(), epic: epicNow(),
             // Explicitly non-undoable (the label already says so), not a capture
@@ -252,7 +268,7 @@ export async function executeTool(
         const out = (await run(action, args, ctx)) as { id: string; tool: string };
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Drew ${toolLabel(out.tool).toLowerCase()}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Drew ${article(toolLabel(out.tool).toLowerCase())}`, cellId: cellNow(), epic: epicNow(),
             undo: async () => { await run("drawing.remove", { id: out.id }, undoCtx()); } },
         };
       }
@@ -261,7 +277,7 @@ export async function executeTool(
         const out = await run(action, args, ctx);
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Removed a ${snap ? toolLabel(snap.name).toLowerCase() : "drawing"}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Removed ${article(snap ? toolLabel(snap.name).toLowerCase() : "drawing")}`, cellId: cellNow(), epic: epicNow(),
             undo: snap ? async () => { focusedDrawings().overlays.placeDrawing(snap); } : undefined },
         };
       }

@@ -39,6 +39,7 @@ vi.mock("./assistant/session", async (importOriginal) => {
 });
 
 import AssistantPanel from "./AssistantPanel";
+import { collapseLabels, toBlocks } from "./assistant/format";
 
 beforeEach(() => { send.mockClear(); undoLast.mockClear(); });
 afterEach(cleanup);
@@ -133,5 +134,35 @@ describe("AssistantPanel", () => {
     render(<AssistantPanel onClose={() => {}} />);
     expect(screen.getByRole("button", { name: /^stop$/i })).toBeTruthy();
     expect(screen.getByText(/adding an indicator/i)).toBeTruthy();
+  });
+
+  it("renders bold and bullet lists instead of literal Markdown", () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "assistant", text: "I changed:\n- **Max Trendlines**: 3 to 6\n- `minTouches` 2", changes: [], undone: false },
+    ] });
+    const { container } = render(<AssistantPanel onClose={() => {}} />);
+    expect(container.querySelector("strong")?.textContent).toBe("Max Trendlines");
+    expect(container.querySelectorAll("ul.as-list li")).toHaveLength(2);
+    expect(container.textContent).not.toContain("**");
+  });
+
+  it("collapses repeated change labels", () => {
+    expect(collapseLabels(["Drew a ray", "Drew a ray", "Added RSI", "Added RSI"]))
+      .toEqual(["Drew 2 rays", "Added RSI (×2)"]);
+  });
+
+  it("splits numbered and bulleted lines into separate lists", () => {
+    expect(toBlocks("Intro\n1. one\n2. two\n\n• a").map((b) => b.kind)).toEqual(["p", "ol", "ul"]);
+  });
+
+  it("shows Send only with a draft, and New chat in the head", () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "user", text: "hi" },
+    ] });
+    render(<AssistantPanel onClose={() => {}} />);
+    expect(screen.queryByRole("button", { name: /^send$/i })).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText(/describe what you want/i), { target: { value: "x" } });
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeTruthy();
+    expect((screen.getByRole("button", { name: /new chat/i }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

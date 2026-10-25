@@ -7358,15 +7358,32 @@ span.bt-leg-short { color: var(--neg); }
 .as-picked { color: var(--text-dim); font-size: 11px; margin-bottom: 2px; }
 .as-assistant { display: flex; flex-direction: column; gap: 6px; }
 .as-p { margin: 0; line-height: 1.45; }
-.as-bullet::before { content: "• "; color: var(--text-dim); }
+.as-list { margin: 0; padding-left: 18px; line-height: 1.45; display: flex;
+  flex-direction: column; gap: 2px; }
+.as-list li::marker { color: var(--text-dim); }
+.as-code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px;
+  padding: 0 3px; border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 8%, transparent); }
 .as-muted { color: var(--text-dim); font-size: 11px; }
-.as-changes { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
-.as-changes-title { color: var(--text-dim); font-weight: 500; margin-bottom: 2px; }
-.as-changes ul { margin: 0 0 6px; padding-left: 16px; }
-.as-undo, .as-retry, .as-link { padding: 2px 9px; font-size: 11px; color: var(--text);
+/* Changed card: a quiet aside under the reply, Undo on the title row. */
+.as-changes { border-left: 2px solid var(--border); padding: 2px 0 2px 8px;
+  color: var(--text-dim); font-size: 11px; }
+.as-changes-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; min-height: 20px; }
+.as-changes-title { font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: 10px; }
+.as-changes ul { margin: 2px 0 0; padding-left: 14px; }
+.as-changes-undone ul { text-decoration: line-through; opacity: 0.7; }
+.as-undo, .as-retry { padding: 2px 9px; font-size: 11px; color: var(--text);
   background: color-mix(in srgb, var(--text) 10%, transparent); border: 0; border-radius: 4px; }
+.as-undo:hover:not(:disabled), .as-retry:hover { background: color-mix(in srgb, var(--text) 16%, transparent); }
 .as-undo:disabled { opacity: 0.5; }
-.as-link { background: none; color: var(--text-dim); }
+.as-retry { align-self: flex-start; }
+/* New chat sits beside Close at the right of the head. */
+.assistant-panel .sc-head > .tooltip-trigger:has(> .as-new) { margin-left: auto; }
+.assistant-panel .sc-head > .tooltip-trigger:has(> .as-new) + .tooltip-trigger:has(> .modal-close) { margin-left: 0; }
+.as-new:disabled { opacity: 0.4; cursor: default; }
+.as-new:disabled:hover { background: transparent; color: var(--text-dim); }
 .as-question { font-weight: 500; }
 .as-chips, .as-empty { display: flex; flex-wrap: wrap; gap: 6px; }
 .as-empty { flex-direction: column; align-items: flex-start; }
@@ -7379,13 +7396,14 @@ span.bt-leg-short { color: var(--neg); }
 .as-error-body { margin: 0; max-height: 160px; overflow: auto; white-space: pre-wrap;
   font-family: var(--mono, ui-monospace, monospace); font-size: 11px; }
 .as-working { color: var(--text-dim); font-style: italic; }
-.as-composer { border-top: 1px solid var(--border); padding: 8px; display: flex;
-  flex-direction: column; gap: 6px; }
-.as-composer textarea { width: 100%; resize: vertical; min-height: 54px; box-sizing: border-box;
+/* Composer: the textarea grows with the draft; Send/Stop sit inside its
+   bottom-right corner and only show when there is something to do. */
+.as-composer { position: relative; border-top: 1px solid var(--border); padding: 8px; }
+.as-composer textarea { display: block; width: 100%; resize: none; min-height: 40px;
+  max-height: 160px; box-sizing: border-box; overflow-y: auto;
   background: var(--bg, transparent); color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; padding: 6px; font: inherit; }
-.as-actions { display: flex; justify-content: space-between; align-items: center; }
-.as-send { padding: 3px 14px; }
+  border-radius: 6px; padding: 6px 60px 6px 8px; font: inherit; line-height: 1.4; }
+.as-send { position: absolute; right: 14px; bottom: 14px; padding: 2px 12px; font-size: 11px; }
 
 .tl-resize { position: absolute; top: 0; left: 0; width: 6px; height: 100%;
   cursor: col-resize; z-index: 1; }

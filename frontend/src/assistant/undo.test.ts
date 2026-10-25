@@ -110,6 +110,13 @@ describe("executeTool", () => {
     expect(calls.at(-1)).toEqual(["indicator.set", { id: "R", calcParams: [14] }]);
   });
 
+  it("indicator_configure labels the change with titles, not codes", async () => {
+    liveInstances = [{ id: "R", type: "RSI", calcParams: [14] }];
+    const r = await executeTool("indicator_configure", { id: "R", params: { p0: 21 } }, ctx);
+    expect(r.change!.label).not.toMatch(/\bRSI\b|p0/);
+    expect(r.change!.label).toMatch(/^Relative Strength Index: /);
+  });
+
   it("indicator_configure reports unknown keys", async () => {
     liveInstances = [{ id: "R", type: "RSI", calcParams: [14] }];
     const r = await executeTool("indicator_configure", { id: "R", params: { length: 21 } }, ctx);

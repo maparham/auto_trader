@@ -56,6 +56,17 @@ function stepsAsSets(type: string, p: IndicatorPresets | undefined, inputs: Indi
   });
 }
 
+/** The settings modal's label for one input key ("minSlopeAtr" to its
+ * on-screen title), for the panel's "Changed" lines; the key itself when the
+ * type or key is unknown. */
+export function inputLabel(type: string, key: string): string {
+  try {
+    return inputsOf(type).find((i) => i.key === key)?.label ?? key;
+  } catch {
+    return key;
+  }
+}
+
 export function describeIndicator(type: string) {
   assertType(type);
   const inputs = inputsOf(type);

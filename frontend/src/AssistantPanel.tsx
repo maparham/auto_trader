@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
+import { toBlocks, collapseLabels } from "./assistant/format";
 import { assistantSession, undoableIndex, type Turn, type SessionState } from "./assistant/session";
 
 const EXAMPLES = [
@@ -84,19 +85,42 @@ function useSession(): SessionState {
   return s;
 }
 
-function Paragraphs({ text }: { text: string }) {
+/** Inline Markdown the model actually writes: **bold**, *italic* and
+ * `code`. Anything else stays literal text (never HTML). */
+function Inline({ text }: { text: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*\s][^*]*\*)/g);
   return (
     <>
-      {text.split(/\n{2,}/).map((p, i) => (
-        <p key={i} className="as-p">
-          {p.split("\n").map((line, j) => (
-            <span key={j} className={line.trimStart().startsWith("- ") ? "as-bullet" : undefined}>
-              {line.trimStart().startsWith("- ") ? line.trimStart().slice(2) : line}
-              {j < p.split("\n").length - 1 && <br />}
-            </span>
-          ))}
-        </p>
-      ))}
+      {parts.map((p, i) => {
+        if (p.startsWith("**") && p.endsWith("**") && p.length > 4) return <strong key={i}>{p.slice(2, -2)}</strong>;
+        if (p.startsWith("`") && p.endsWith("`") && p.length > 2) return <code key={i} className="as-code">{p.slice(1, -1)}</code>;
+        if (p.startsWith("*") && p.endsWith("*") && p.length > 2) return <em key={i}>{p.slice(1, -1)}</em>;
+        return p;
+      })}
+    </>
+  );
+}
+
+function Markdown({ text }: { text: string }) {
+  return (
+    <>
+      {toBlocks(text).map((b, i) => {
+        if (b.kind === "p") {
+          return (
+            <p key={i} className="as-p">
+              {b.lines.map((l, j) => (
+                <span key={j}><Inline text={l} />{j < b.lines.length - 1 && <br />}</span>
+              ))}
+            </p>
+          );
+        }
+        const List = b.kind;
+        return (
+          <List key={i} className="as-list">
+            {b.items.map((it, j) => <li key={j}><Inline text={it} /></li>)}
+          </List>
+        );
+      })}
     </>
   );
 }
@@ -110,6 +134,15 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     bodyRef.current?.scrollTo?.({ top: bodyRef.current.scrollHeight });
   }, [s.turns.length, s.working]);
+
+  // The composer grows with the draft (up to a cap, then scrolls) and
+  // shrinks back once it is sent.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [draft]);
 
   const undoIdx = undoableIndex(s.turns);
   const revertibleIdx = newestRevertibleIndex(s.turns);
@@ -133,24 +166,26 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
     return (
       <div key={i} className="as-assistant">
         {t.trimmedBefore && <div className="as-muted">Earlier messages were trimmed from the model's view.</div>}
-        {t.text && <Paragraphs text={t.text} />}
+        {t.text && <Markdown text={t.text} />}
         {t.changes.length > 0 && (
-          <div className="as-changes">
-            <div className="as-changes-title">Changed</div>
-            <ul>{t.changes.map((c, j) => <li key={j}>{c.label}</li>)}</ul>
-            {t.undone ? (
-              <span className="as-muted">Undone</span>
-            ) : i === revertibleIdx ? (
-              i === undoIdx ? (
-                <button className="as-undo" onClick={() => void assistantSession.undoLast()}>
-                  Undo this turn
-                </button>
-              ) : (
-                <Tooltip content="Undo is lost on reload">
-                  <button className="as-undo" disabled>Undo this turn</button>
-                </Tooltip>
-              )
-            ) : null}
+          <div className={`as-changes${t.undone ? " as-changes-undone" : ""}`}>
+            <div className="as-changes-head">
+              <span className="as-changes-title">Changed</span>
+              {t.undone ? (
+                <span className="as-muted">Undone</span>
+              ) : i === revertibleIdx ? (
+                i === undoIdx ? (
+                  <button className="as-undo" onClick={() => void assistantSession.undoLast()}>
+                    Undo this turn
+                  </button>
+                ) : (
+                  <Tooltip content="Undo is lost on reload">
+                    <button className="as-undo" disabled>Undo this turn</button>
+                  </Tooltip>
+                )
+              ) : null}
+            </div>
+            <ul>{collapseLabels(t.changes.map((c) => c.label)).map((l, j) => <li key={j}>{l}</li>)}</ul>
           </div>
         )}
         {t.ask && (
@@ -202,6 +237,16 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
           "It may ask a question first. Undo reverts its last turn.",
           "It never places orders.",
         ]} />
+        <Tooltip content="New chat">
+          <button className="modal-close as-new" aria-label="New chat" disabled={s.busy || s.turns.length === 0}
+            onClick={() => assistantSession.reset()}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M8 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V8" />
+              <path d="M11.5 2.2l2.3 2.3L8.5 9.8 6 10.3l.5-2.5z" />
+            </svg>
+          </button>
+        </Tooltip>
         <Tooltip content="Close">
           <button className="modal-close" aria-label="Close assistant" onClick={onClose}>×</button>
         </Tooltip>
@@ -224,24 +269,21 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
           ref={inputRef}
           value={draft}
           placeholder="Describe what you want…"
-          rows={3}
+          rows={2}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(draft); }
           }}
         />
-        <div className="as-actions">
-          <button className="as-link" onClick={() => assistantSession.reset()} disabled={s.busy}>New chat</button>
-          {s.busy ? (
-            // Undoing isn't abortable (there is no in-flight fetch/action the
-            // Stop button would cancel), so it is hidden rather than shown inert.
-            s.working !== "Undoing" && (
-              <button className="as-send" onClick={() => assistantSession.stop()}>Stop</button>
-            )
-          ) : (
-            <button className="as-send" onClick={() => submit(draft)} disabled={!draft.trim()}>Send</button>
-          )}
-        </div>
+        {s.busy ? (
+          // Undoing isn't abortable (there is no in-flight fetch/action the
+          // Stop button would cancel), so it is hidden rather than shown inert.
+          s.working !== "Undoing" && (
+            <button className="as-send" onClick={() => assistantSession.stop()}>Stop</button>
+          )
+        ) : (
+          draft.trim() && <button className="as-send" onClick={() => submit(draft)}>Send</button>
+        )}
       </div>
     </aside>
   );
