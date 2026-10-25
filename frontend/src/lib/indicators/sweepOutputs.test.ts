@@ -86,6 +86,7 @@ describe("SWEEP as a rule instance", () => {
     ]);
     expect(exprWarmupByRef(live)("SWEEP", "bullSweep")).toBe(163);
     expect(exprWarmupByRef(live)("SWEEP", "bogus")).toBe(0);
+    expect(exprWarmupByRef(live)("SWEEP", "bullReversal")).toBe(1);
   });
   it("re-creates a missing pane with the template defaults", () => {
     expect(synthesizeExprInstances(["SWEEP.bearSweep == 1"], new Set())).toEqual({

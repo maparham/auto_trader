@@ -344,6 +344,7 @@ def test_warmup():
     assert sweep_warmup(SweepConfig(), "bearSweep") == 163
     assert sweep_warmup(replace(SweepConfig(), use_volume=True, vol_len=200), "score") == 201
     assert sweep_warmup(SweepConfig(), "bogus") == 0
+    assert sweep_warmup(SweepConfig(), "bullReversal") == 1
     assert set(SWEEP_OUTPUTS) == {
         "bearSweep", "bullSweep", "bearConfirmed", "bullConfirmed", "score", "sweptLevel", "barsSince",
         "bearReversal", "bullReversal",

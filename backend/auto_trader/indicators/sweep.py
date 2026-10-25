@@ -385,9 +385,11 @@ def sweep_warmup(cfg: SweepConfig, output: str) -> int:
     whole life plus its pivot and confirm delay. Confirm outputs lag their
     flag by confirmBars. Previous-day levels add a calendar dependency no bar
     count bounds, as prev_hl_warmup notes. 0 for an output this config does
-    not expose."""
+    not expose. A reversal reads only the bar before, so it needs 1."""
     if output not in _OUTPUT_INDEX:
         return 0
+    if output in ("bearReversal", "bullReversal"):
+        return 1
     return max(
         cfg.atr_len + 1,
         cfg.vol_len + 1 if cfg.use_volume else 0,

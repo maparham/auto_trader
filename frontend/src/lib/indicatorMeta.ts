@@ -746,7 +746,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
     ],
     title: "Stop Hunt (Liquidity Sweep)",
-    desc: "Flags candles that trade through a swing or previous-day level and close back on the near side, scored by wick, close and range. A sweep confirms when price holds for Confirm Bars. Rule operands: bearSweep, bullSweep, bearConfirmed, bullConfirmed (0/1 events), score, sweptLevel and barsSince.",
+    desc: "Flags candles that trade through a swing or previous-day level and close back on the near side, scored by wick, close and range. A sweep confirms when price holds for Confirm Bars. Rule operands: bearSweep, bullSweep, bearConfirmed, bullConfirmed, bearReversal, bullReversal (0/1 events), score, sweptLevel and barsSince. The reversals mark only previous-candle reversals, drawn with a solid border.",
   },
   FVG: {
     inputs: [

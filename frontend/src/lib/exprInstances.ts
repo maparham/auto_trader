@@ -39,7 +39,7 @@ import {
   srLevelsWarmup,
 } from "./indicators/srLevelsOutputs";
 import { SPIKE_OUTPUTS, parseSpikeConfig, spikeWarmup } from "./indicators/spikeOutputs";
-import { SWEEP_OUTPUTS, parseSweepConfig, sweepWarmup } from "./indicators/sweepOutputs";
+import { SWEEP_OUTPUTS, SWEEP_REVERSAL_OUTPUTS, parseSweepConfig, sweepWarmup } from "./indicators/sweepOutputs";
 import { RSI_OUTPUTS, parseRsiRefConfig, rsiWarmup } from "./indicators/rsiOutputs";
 import { autoFibOutputs, autoFibWarmup, parseAutoFibConfig } from "./indicators/autoFibOutputs";
 import { LR_OUTPUTS, lrWarmup, parseLrConfig } from "./indicators/lrOutputs";
@@ -348,11 +348,14 @@ export function exprWarmupByRef(
         ? spikeWarmup(parseSpikeConfig(inst.calcParams))
         : 0;
     // Every SWEEP output shares one floor (ATR, volume window, a level's
-    // whole life); an output this pane does not expose costs 0.
+    // whole life) except the reversals, which read only the bar before; an
+    // output this pane does not expose costs 0.
     if (inst.type === "SWEEP")
-      return (SWEEP_OUTPUTS as readonly string[]).includes(output)
-        ? sweepWarmup(parseSweepConfig(inst.calcParams, inst.extendData))
-        : 0;
+      return SWEEP_REVERSAL_OUTPUTS.includes(output)
+        ? 1
+        : (SWEEP_OUTPUTS as readonly string[]).includes(output)
+          ? sweepWarmup(parseSweepConfig(inst.calcParams, inst.extendData))
+          : 0;
     // Every AUTO_FIB output shares one floor (ATR(14) warm-up plus a full
     // pivot window); an output the pane's current levels do not expose costs 0.
     if (inst.type === "AUTO_FIB")

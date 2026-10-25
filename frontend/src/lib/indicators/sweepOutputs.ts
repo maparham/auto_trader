@@ -91,6 +91,10 @@ export function parseSweepConfig(calcParams: unknown, extendData?: unknown): Swe
   };
 }
 
+/** The reversal outputs read only the bar before, so they warm up in 1 bar
+ * (backend sweep_warmup agrees); every other output shares sweepWarmup. */
+export const SWEEP_REVERSAL_OUTPUTS: readonly string[] = ["bearReversal", "bullReversal"];
+
 /** ATR (read at i-1), the volume window (read before i), and a level's whole
  * life plus its pivot and confirm delay. Confirm outputs lag their flag by
  * confirmBars. Every output shares it. Mirrors backend sweep_warmup. */
