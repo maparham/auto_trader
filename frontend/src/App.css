@@ -7373,6 +7373,7 @@ span.bt-leg-short { color: var(--neg); }
 .as-changes-title { font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em;
   font-size: 10px; }
 .as-changes ul { margin: 2px 0 0; padding-left: 14px; }
+.as-undone { display: inline-flex; align-items: center; gap: 8px; }
 .as-changes-undone ul { text-decoration: line-through; opacity: 0.7; }
 .as-undo, .as-retry { padding: 2px 9px; font-size: 11px; color: var(--text);
   background: color-mix(in srgb, var(--text) 10%, transparent); border: 0; border-radius: 4px; }

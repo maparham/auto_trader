@@ -369,6 +369,14 @@ an Undo button: the newest not-undone assistant turn with at least one still-
 live change. A turn restored from sessionStorage has no undo functions (they
 don't survive `JSON.stringify`), so it never offers Undo.
 
+Redo: the session stamps each revertible change with `replay` (the tool
+call and its input, plain JSON) and `undo.ts`'s `redoTurn` replays an undone
+turn's calls through `executeTool`, so the model is not asked again and each
+step captures a fresh undo. `redoableIndex` offers it on the newest undone
+turn until the user sends again, also after a reload. Ids are remapped: an
+add that comes back under a new id (`createdId`) renames later calls, and a
+remove whose undo re-created its target (`restoredId`) removes that one.
+
 Spec: docs/superpowers/specs/2026-10-25-ai-assistant-design.md.
 
 ## Account history

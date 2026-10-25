@@ -28,12 +28,23 @@ import { describeIndicator, configureParams, describeRules, validateRule, inputL
 // with no `undo` and `undoable` left unset is different: capture failed on
 // something that SHOULD have been undoable but wasn't anticipated here, so
 // undoTurn treats that as an error rather than silently skipping it.
+// `replay`: the tool call that made this change, stamped by the session when
+// it records the change; plain JSON, so unlike `undo` it survives a reload.
+// "Redo" replays these in order. `createdId`: the id an add handed back, so a
+// redo that gets a NEW id can remap later calls that named the old one.
 export interface Change {
   label: string;
   cellId: string;
   epic?: string;
   undoable?: boolean;
-  undo?: () => Promise<void>;
+  /** May resolve to the id it restored a removed object under (a re-add
+   * never gets the old id back); undoTurn keeps it as `restoredId`. */
+  undo?: () => Promise<void | string>;
+  replay?: { tool: string; input: Record<string, unknown> };
+  createdId?: string;
+  /** Set by undoTurn: the id the undo re-created this change's target under,
+   * so redoing a remove removes THAT object, not the vanished old id. */
+  restoredId?: string;
 }
 export interface ExecResult { content: string; isError: boolean; change?: Change }
 
@@ -197,7 +208,7 @@ export async function executeTool(
             label: collided
               ? `Added ${titleOf(out.type)} (${out.id}); cannot undo (id collided with an existing pane)`
               : `Added ${title}`,
-            cellId: cellNow(), epic: epicNow(),
+            cellId: cellNow(), epic: epicNow(), createdId: out.id,
             // Explicitly non-undoable (the label already says so), not a capture
             // failure: undoTurn must skip it, not block the rest of the turn.
             ...(collided
@@ -259,6 +270,7 @@ export async function executeTool(
                   const pin = pinOf(ext);
                   if (type === "TRENDLINES" && pin) setArgs.timeframe = pin;
                   await run("indicator.set", setArgs, undoCtx());
+                  return added.id;
                 } }
               : { undoable: false }),
           },
@@ -268,7 +280,7 @@ export async function executeTool(
         const out = (await run(action, args, ctx)) as { id: string; tool: string };
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Drew ${article(toolLabel(out.tool).toLowerCase())}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Drew ${article(toolLabel(out.tool).toLowerCase())}`, cellId: cellNow(), epic: epicNow(), createdId: out.id,
             undo: async () => { await run("drawing.remove", { id: out.id }, undoCtx()); } },
         };
       }
@@ -278,7 +290,7 @@ export async function executeTool(
         return {
           content: budgetResult(tool, out), isError: false,
           change: { label: `Removed ${article(snap ? toolLabel(snap.name).toLowerCase() : "drawing")}`, cellId: cellNow(), epic: epicNow(),
-            undo: snap ? async () => { focusedDrawings().overlays.placeDrawing(snap); } : undefined },
+            undo: snap ? async () => focusedDrawings().overlays.placeDrawing(snap) ?? undefined : undefined },
         };
       }
       case "backtest.config.set": {
@@ -368,7 +380,8 @@ export async function undoTurn(changes: Change[]): Promise<boolean> {
       return false;
     }
     try {
-      await c.undo();
+      const restored = await c.undo();
+      if (typeof restored === "string") c.restoredId = restored;
       // Mark reverted so a retried undoTurn (after the user fixes focus for
       // an earlier mismatch) doesn't run this revert a second time.
       c.undo = undefined;
@@ -379,4 +392,50 @@ export async function undoTurn(changes: Change[]): Promise<boolean> {
     }
   }
   return true;
+}
+
+export interface RedoResult {
+  /** Every replayed call ran; false on a focus refusal or a failed call. */
+  ok: boolean;
+  /** The fresh changes (with live undo closures) from the calls that ran. */
+  changes: Change[];
+  /** Old id to new id, for adds that came back under a different id. */
+  ids: Record<string, string>;
+}
+
+/** Replays a reverted turn's recorded calls, in order, through executeTool,
+ * so each one captures a fresh undo. An id an add returns differently from
+ * the first time is remapped in every later call's top-level string args
+ * (indicator_set / indicator_configure / drawing_remove name it as `id`). */
+export async function redoTurn(changes: Change[]): Promise<RedoResult> {
+  const steps = changes.filter((c) => c.replay);
+  const ids: Record<string, string> = {};
+  const out: Change[] = [];
+  if (steps.length === 0) return { ok: false, changes: out, ids };
+  if (cellNow() !== steps[0].cellId || epicNow() !== steps[0].epic) {
+    toast("Focus the chart this change was made on, then redo.");
+    return { ok: false, changes: out, ids };
+  }
+  for (const c of steps) {
+    const { tool } = c.replay!;
+    // A remove whose undo re-created its target under a new id must now
+    // remove that one; this rename is internal, not news for the model.
+    const local: Record<string, string> = { ...ids };
+    const oldId = c.replay!.input.id;
+    if (c.restoredId && typeof oldId === "string") local[oldId] = c.restoredId;
+    const input = Object.fromEntries(
+      Object.entries(c.replay!.input).map(([k, v]) => [k, typeof v === "string" && local[v] ? local[v] : v]),
+    );
+    const r = await executeTool(tool, input, NOOP_CTX(new AbortController().signal));
+    if (r.isError) {
+      toast(`Redo stopped at "${c.label}": ${r.content}`);
+      return { ok: false, changes: out, ids };
+    }
+    if (!r.change) continue;
+    if (c.createdId && r.change.createdId && r.change.createdId !== c.createdId) {
+      ids[c.createdId] = r.change.createdId;
+    }
+    out.push({ ...r.change, replay: { tool, input } });
+  }
+  return { ok: true, changes: out, ids };
 }

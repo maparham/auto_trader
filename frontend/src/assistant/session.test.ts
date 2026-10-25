@@ -8,7 +8,7 @@ import { installMemStorage } from "../lib/testMemStorage";
 
 installMemStorage();
 
-import { createSession, undoableIndex, MAX_ROUNDS, type Turn } from "./session";
+import { createSession, undoableIndex, redoableIndex, MAX_ROUNDS, type Turn } from "./session";
 import type { AssistantMessage, ContentBlock } from "./types";
 import type { PostResult } from "./api";
 
@@ -33,8 +33,12 @@ function setup(replies: Array<PostResult | (() => Promise<PostResult>)>, storage
     change: tool === "indicator_add" ? { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } : undefined,
   }));
   const undo = vi.fn(async () => true);
-  const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage });
-  return { s, post, exec, undo, bodies, storage };
+  const redo = vi.fn(async (changes: Array<{ label: string }>) => ({
+    ok: true, ids: {} as Record<string, string>,
+    changes: changes.map((c) => ({ ...c, cellId: "c1", undo: vi.fn(async () => {}) })),
+  }));
+  const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: redo as never, context: () => "[context] x", storage });
+  return { s, post, exec, undo, redo, bodies, storage };
 }
 const lastUser = (bodies: unknown[]) => {
   const b = bodies.at(-1) as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> };
@@ -167,7 +171,7 @@ describe("session loop", () => {
       ? { content: "ok", isError: false, change: { label: "Opened GOLD (nothing to go back to)", cellId: "c1", undoable: false } }
       : { content: "ok", isError: false, change: { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } });
     const undo = vi.fn(async () => true);
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage });
     await s.send("add rsi and open gold");
     await s.undoLast();
     const note = s.state.value.messages.at(-1)!;
@@ -181,7 +185,7 @@ describe("session loop", () => {
     const undo = vi.fn(async () => false);
     const post = vi.fn(async () => msg([tu("b", "indicator_add")], "tool_use"));
     const exec = vi.fn(async () => ({ content: "ok", isError: false, change: { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } }));
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage });
     await s.send("add");
     await s.undoLast();
     const t = s.state.value.turns.at(-1)!;
@@ -263,7 +267,7 @@ describe("session loop", () => {
         : msg([text("ok")]);
     });
     const undo = vi.fn(async () => true);
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage: mem() });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage: mem() });
     const p = s.send("go");
     await startedPromise;
     s.stop();
@@ -293,7 +297,7 @@ describe("session loop", () => {
     });
     const post = vi.fn(async () => msg([tu("a", "indicator_list"), tu("b", "indicator_list"), tu("c", "indicator_list")], "tool_use"));
     const undo = vi.fn(async () => true);
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage: mem() });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage: mem() });
     const p = s.send("go");
     await startedPromise;
     s.stop();
@@ -314,7 +318,7 @@ describe("session loop", () => {
       return postCalls === 1 ? msg([tu("b", "indicator_add")], "tool_use") : msg([text("ok")]);
     });
     const exec = vi.fn(async () => ({ content: "ok", isError: false, change: { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } }));
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage });
     await s.send("add");
     const p1 = s.undoLast();
     const p2 = s.undoLast();
@@ -353,7 +357,7 @@ describe("session loop", () => {
         : msg([text("done")]);
     });
     const undo = vi.fn(async () => true);
-    ref.current = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage: mem() });
+    ref.current = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage: mem() });
     await ref.current.send("go");
     expect(capturedRef).toBeDefined();
     expect((capturedRef as unknown[]).length).toBe(1);
@@ -384,7 +388,7 @@ describe("session loop", () => {
         : msg([text("ok")]);
     });
     const undo = vi.fn(async () => true);
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage: mem() });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage: mem() });
     const p = s.send("go");
     await startedPromise;
     s.stop();
@@ -425,5 +429,42 @@ describe("session loop", () => {
     expect(afterTurns.some((t) => t.role === "assistant" && t.ask)).toBe(false);
     const undone = afterTurns[idx];
     expect(undone.role === "assistant" && undone.undone).toBe(true);
+  });
+
+  it("redo replays an undone turn, tells the model, and offers Undo again", async () => {
+    const { s, redo } = setup([msg([tu("b", "indicator_add", { type: "RSI" })], "tool_use"), msg([text("ok")])]);
+    await s.send("add");
+    const recorded = (s.state.value.turns.at(-1) as Extract<Turn, { role: "assistant" }>).changes[0];
+    expect(recorded.replay).toEqual({ tool: "indicator_add", input: { type: "RSI" } });
+    await s.undoLast();
+    expect(redoableIndex(s.state.value.turns)).toBe(s.state.value.turns.length - 1);
+    await s.redoLast();
+    expect(redo).toHaveBeenCalledTimes(1);
+    const t = s.state.value.turns.at(-1) as Extract<Turn, { role: "assistant" }>;
+    expect(t.undone).toBe(false);
+    expect(undoableIndex(s.state.value.turns)).toBe(s.state.value.turns.length - 1);
+    expect(JSON.stringify(s.state.value.messages.at(-1)!.content)).toMatch(/redid these changes: Added RSI/);
+    await s.undoLast();
+    expect((s.state.value.turns.at(-1) as Extract<Turn, { role: "assistant" }>).undone).toBe(true);
+  });
+
+  it("redo that runs nothing (wrong chart) leaves the turn undone and the transcript alone", async () => {
+    const { s, redo } = setup([msg([tu("b", "indicator_add")], "tool_use"), msg([text("ok")])]);
+    await s.send("add");
+    await s.undoLast();
+    redo.mockResolvedValueOnce({ ok: false, changes: [], ids: {} });
+    const before = s.state.value.messages.length;
+    await s.redoLast();
+    expect((s.state.value.turns.at(-1) as Extract<Turn, { role: "assistant" }>).undone).toBe(true);
+    expect(s.state.value.messages.length).toBe(before);
+  });
+
+  it("redo is no longer offered once the user sends again", () => {
+    const turns: Turn[] = [
+      { role: "assistant", text: "", undone: true, changes: [{ label: "x", cellId: "c1", replay: { tool: "t", input: {} } }] },
+      { role: "user", text: "next" },
+    ];
+    expect(redoableIndex(turns)).toBe(-1);
+    expect(redoableIndex(turns.slice(0, 1))).toBe(0);
   });
 });

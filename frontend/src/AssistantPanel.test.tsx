@@ -7,7 +7,7 @@ import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 // above the vi.mock call still throws "Cannot access before initialization",
 // since the mock factory runs first once hoisted). A minimal inline
 // Signal-alike avoids importing ./lib/signals here too, for the same reason.
-const { state, send, undoLast } = vi.hoisted(() => {
+const { state, send, undoLast, redoLast } = vi.hoisted(() => {
   class FakeSignal<T> {
     value: T;
     private listeners = new Set<(v: T) => void>();
@@ -25,6 +25,7 @@ const { state, send, undoLast } = vi.hoisted(() => {
     state: new FakeSignal<any>({ turns: [], messages: [], pending: { toolUseIds: [], heldResults: [], askId: null }, busy: false, working: null }),
     send: vi.fn(async () => {}),
     undoLast: vi.fn(async () => {}),
+    redoLast: vi.fn(async () => {}),
   };
 });
 // Only the live session singleton is faked; `undoableIndex` comes through
@@ -34,14 +35,14 @@ vi.mock("./assistant/session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./assistant/session")>();
   return {
     ...actual,
-    assistantSession: { state, send, retry: vi.fn(), stop: vi.fn(), undoLast, reset: vi.fn() },
+    assistantSession: { state, send, retry: vi.fn(), stop: vi.fn(), undoLast, redoLast, reset: vi.fn() },
   };
 });
 
 import AssistantPanel from "./AssistantPanel";
 import { collapseLabels, toBlocks } from "./assistant/format";
 
-beforeEach(() => { send.mockClear(); undoLast.mockClear(); });
+beforeEach(() => { send.mockClear(); undoLast.mockClear(); redoLast.mockClear(); });
 afterEach(cleanup);
 
 describe("AssistantPanel", () => {
@@ -164,5 +165,19 @@ describe("AssistantPanel", () => {
     fireEvent.change(screen.getByPlaceholderText(/describe what you want/i), { target: { value: "x" } });
     expect(screen.getByRole("button", { name: /^send$/i })).toBeTruthy();
     expect((screen.getByRole("button", { name: /new chat/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("offers Redo on an undone turn until the user sends again", () => {
+    const undone = { role: "assistant", text: "a", undone: true,
+      changes: [{ label: "Drew a ray", cellId: "c1", undoable: false, replay: { tool: "drawing_add", input: {} } }] };
+    state.set({ ...state.value, busy: false, working: null, turns: [undone] });
+    const { unmount } = render(<AssistantPanel onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /^redo$/i }));
+    expect(redoLast).toHaveBeenCalled();
+    unmount();
+    state.set({ ...state.value, turns: [undone, { role: "user", text: "next" }] });
+    render(<AssistantPanel onClose={() => {}} />);
+    expect(screen.queryByRole("button", { name: /^redo$/i })).toBeNull();
+    expect(screen.getByText("Undone")).toBeTruthy();
   });
 });

@@ -7,7 +7,7 @@ import { PREFIX } from "../lib/workspaceKeys";
 import { postMessages, type PostResult } from "./api";
 import { buildTools } from "./tools";
 import { buildRequest, contextLine } from "./prompt";
-import { executeTool, undoTurn, type Change } from "./undo";
+import { executeTool, undoTurn, redoTurn, type Change } from "./undo";
 import { focusedChart } from "../agent/actions/chart";
 import {
   isText, isToolUse,
@@ -41,6 +41,7 @@ export interface SessionDeps {
   tools: () => ToolDef[];
   exec: typeof executeTool;
   undo: typeof undoTurn;
+  redo: typeof redoTurn;
   context: () => string;
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 }
@@ -62,6 +63,21 @@ export function undoableIndex(turns: Turn[]): number {
       t.role === "assistant" && !t.undone &&
       t.changes.some((c) => c.undoable !== false && typeof c.undo === "function")
     ) return i;
+  }
+  return -1;
+}
+
+/**
+ * Index of the undone assistant turn "Redo" applies to, or -1: the newest
+ * undone turn with recorded calls, as long as the user has sent nothing
+ * since (a new message makes the redo stale, like any single-level redo).
+ * Works after a reload: `replay` is plain JSON.
+ */
+export function redoableIndex(turns: Turn[]): number {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i];
+    if (t.role === "user") return -1;
+    if (t.undone && t.changes.some((c) => c.replay)) return i;
   }
   return -1;
 }
@@ -207,7 +223,12 @@ export function createSession(deps: SessionDeps) {
           // whether to abandon the rest of the batch, so a completed tool is
           // never reported as "not run" just because it finished late.
           results.push(result(u.id, r.content, r.isError));
-          if (r.change) updateLastTurn((t) => ({ ...t, changes: [...t.changes, r.change!] }));
+          if (r.change) {
+            // Only a change that can be reverted gets its call recorded for
+            // Redo: replaying a read or a refused add would do nothing useful.
+            const change = r.change.undoable === false ? r.change : { ...r.change, replay: { tool: u.name, input: u.input } };
+            updateLastTurn((t) => ({ ...t, changes: [...t.changes, change] }));
+          }
           patch({ pending: { toolUseIds: uses.slice(i + 1).map((x) => x.id), heldResults: [...results], askId: null } });
           if (signal.aborted) throw new DOMException("aborted", "AbortError");
         }
@@ -325,13 +346,45 @@ export function createSession(deps: SessionDeps) {
     }
   }
 
+  async function redoLast() {
+    if (state.value.busy) return;
+    const idx = redoableIndex(state.value.turns);
+    if (idx === -1) return;
+    patch({ busy: true, working: "Redoing" });
+    try {
+      const target = state.value.turns[idx] as Extract<Turn, { role: "assistant" }>;
+      const res = await deps.redo(target.changes);
+      const turnsNow = state.value.turns;
+      const current = turnsNow[idx] as Extract<Turn, { role: "assistant" }> | undefined;
+      // Nothing ran (focus refusal, or the first call failed): the turn stays
+      // undone, Redo stays offered, the model is told nothing.
+      if (!current || res.changes.length === 0) return;
+      // A partial redo still leaves the turn live: what did run carries real
+      // undo closures, so Undo is the way back from it.
+      const nextTurns = [...turnsNow];
+      nextTurns[idx] = { ...current, changes: res.changes, undone: false };
+      const renamed = Object.entries(res.ids).map(([a, b]) => `${a} is now ${b}`);
+      const note = `[the user redid these changes: ${res.changes.map((c) => c.label).join("; ")}` +
+        `${renamed.length ? `; new ids: ${renamed.join(", ")}` : ""}${res.ok ? "" : "; the rest failed and was not redone"}]`;
+      const blocks: ContentBlock[] = [...closePending({ reason: "stopped by the user" }), { type: "text", text: note }];
+      save({
+        ...state.value,
+        turns: nextTurns,
+        pending: { ...EMPTY_PENDING },
+        messages: [...state.value.messages, { role: "user", content: blocks }],
+      });
+    } finally {
+      patch({ busy: false, working: null });
+    }
+  }
+
   function reset() {
     abort?.abort();
     deps.storage.removeItem(KEY);
     state.set(fresh());
   }
 
-  return { state, send, retry, stop, undoLast, reset };
+  return { state, send, retry, stop, undoLast, redoLast, reset };
 }
 
 function liveContext(): string {
@@ -352,6 +405,7 @@ export const assistantSession = createSession({
   tools: buildTools,
   exec: executeTool,
   undo: undoTurn,
+  redo: redoTurn,
   context: liveContext,
   storage: typeof sessionStorage !== "undefined" ? sessionStorage : { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 });

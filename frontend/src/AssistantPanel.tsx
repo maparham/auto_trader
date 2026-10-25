@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
 import { toBlocks, collapseLabels } from "./assistant/format";
-import { assistantSession, undoableIndex, type Turn, type SessionState } from "./assistant/session";
+import { assistantSession, undoableIndex, redoableIndex, type Turn, type SessionState } from "./assistant/session";
 
 const EXAMPLES = [
   "Add rising trendlines on the daily",
@@ -61,6 +61,7 @@ const TOOL_WORKING_LABEL: Record<string, string> = {
 
 function workingLabel(working: string): string {
   if (working === "Undoing") return "undoing the last turn";
+  if (working === "Redoing") return "redoing the last turn";
   return TOOL_WORKING_LABEL[working] ?? working.replace(/_/g, " ");
 }
 
@@ -145,6 +146,7 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
   }, [draft]);
 
   const undoIdx = undoableIndex(s.turns);
+  const redoIdx = redoableIndex(s.turns);
   const revertibleIdx = newestRevertibleIndex(s.turns);
   const submit = (text: string) => {
     const t = text.trim();
@@ -172,7 +174,16 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
             <div className="as-changes-head">
               <span className="as-changes-title">Changed</span>
               {t.undone ? (
-                <span className="as-muted">Undone</span>
+                i === redoIdx ? (
+                  <span className="as-undone">
+                    <span className="as-muted">Undone</span>
+                    <button className="as-undo" disabled={s.busy} onClick={() => void assistantSession.redoLast()}>
+                      Redo
+                    </button>
+                  </span>
+                ) : (
+                  <span className="as-muted">Undone</span>
+                )
               ) : i === revertibleIdx ? (
                 i === undoIdx ? (
                   <button className="as-undo" onClick={() => void assistantSession.undoLast()}>
@@ -276,9 +287,9 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
           }}
         />
         {s.busy ? (
-          // Undoing isn't abortable (there is no in-flight fetch/action the
+          // Undoing and redoing aren't abortable (there is no in-flight fetch/action the
           // Stop button would cancel), so it is hidden rather than shown inert.
-          s.working !== "Undoing" && (
+          s.working !== "Undoing" && s.working !== "Redoing" && (
             <button className="as-send" onClick={() => assistantSession.stop()}>Stop</button>
           )
         ) : (

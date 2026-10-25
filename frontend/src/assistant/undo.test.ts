@@ -33,7 +33,7 @@ const drawings = {
 };
 
 import { clearRegistryForTest, registerAction } from "../agent/registry";
-import { executeTool, undoTurn } from "./undo";
+import { executeTool, undoTurn, redoTurn } from "./undo";
 
 const ctx = { progress: () => {}, signal: new AbortController().signal };
 const calls: Array<[string, unknown]> = [];
@@ -282,5 +282,44 @@ describe("executeTool", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("redoTurn", () => {
+  it("replays recorded calls in order and remaps an id the add hands back differently", async () => {
+    const changes = [
+      { label: "Added RSI", cellId: "c1", epic: "US100", createdId: "RSI7", replay: { tool: "indicator_add", input: { type: "RSI" } } },
+      { label: "Changed RSI settings", cellId: "c1", epic: "US100", replay: { tool: "indicator_set", input: { id: "RSI7", calcParams: [21] } } },
+    ];
+    liveInstances = [...liveInstances, { id: "RSI2", type: "RSI", calcParams: [14] }];
+    calls.length = 0;
+    const r = await redoTurn(changes);
+    expect(r.ok).toBe(true);
+    expect(r.ids).toEqual({ RSI7: "RSI2" });
+    expect(calls.map((c) => c[0])).toEqual(["indicator.add", "indicator.set"]);
+    expect(calls[1][1]).toMatchObject({ id: "RSI2", calcParams: [21] });
+    expect(r.changes).toHaveLength(2);
+    expect(r.changes[1].replay!.input).toMatchObject({ id: "RSI2" });
+    expect(typeof r.changes[0].undo).toBe("function");
+  });
+
+  it("undo then redo of a remove targets the re-created pane, not the vanished id", async () => {
+    const r = await executeTool("indicator_remove", { id: "TL" }, ctx);
+    const change = { ...r.change!, replay: { tool: "indicator_remove", input: { id: "TL" } } };
+    await undoTurn([change]);
+    expect(change.restoredId).toBe("TRENDLINES2");
+    controllerIndicators = [...controllerIndicators, { id: "TRENDLINES2", type: "TRENDLINES", inset: false }];
+    calls.length = 0;
+    const red = await redoTurn([change]);
+    expect(red.ok).toBe(true);
+    expect(red.ids).toEqual({});
+    expect(calls[0]).toEqual(["indicator.remove", { id: "TRENDLINES2" }]);
+  });
+
+  it("refuses on another chart without running anything", async () => {
+    calls.length = 0;
+    const r = await redoTurn([{ label: "Drew a segment", cellId: "c2", epic: "US100", replay: { tool: "drawing_add", input: { tool: "segment" } } }]);
+    expect(r.ok).toBe(false);
+    expect(calls).toHaveLength(0);
   });
 });
