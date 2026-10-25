@@ -10,15 +10,21 @@ installMemStorage();
 
 const focus = { cellId: "c1", epic: "US100", resolution: "HOUR", scope: "s1" };
 let liveInstances: Array<{ id: string; type: string; calcParams: number[]; extendData?: unknown }> = [];
+// Distinct from liveInstances: a pane can be tracked here (persisted
+// bookkeeping, survives even when not drawn) without yet appearing in
+// liveExprInstances (which only sees what klinecharts has actually computed).
+let controllerIndicators: Array<{ id: string; type: string; inset?: boolean }> = [];
+let savedConfigs: Record<string, { calcParams?: number[]; extendData?: unknown }> = {};
 
 vi.mock("../agent/actions/chart", () => ({
-  focusedChart: () => ({ ...focus, chart: {}, controller: { indicators: { value: liveInstances } } }),
+  focusedChart: () => ({ ...focus, chart: {}, controller: { indicators: { value: controllerIndicators } } }),
   agentPeriod: (s: string) => ({ resolution: s === "1D" ? "DAY" : s }),
 }));
 vi.mock("../agent/actions/drawings", () => ({
   focusedDrawings: () => ({ overlays: drawings, epic: focus.epic, cellId: focus.cellId }),
 }));
 vi.mock("../lib/indicators", () => ({ liveExprInstances: () => liveInstances }));
+vi.mock("../lib/persist/artifacts", () => ({ loadIndicatorConfigs: () => savedConfigs }));
 vi.mock("../lib/notify", () => ({ toast: vi.fn() }));
 
 const drawings = {
@@ -48,8 +54,13 @@ function reg(name: string, result: (args: Record<string, unknown>) => unknown) {
 beforeEach(() => {
   clearRegistryForTest();
   calls.length = 0;
+  drawings.getDrawing.mockClear();
+  drawings.placeDrawing.mockClear();
   focus.cellId = "c1";
+  focus.epic = "US100";
   liveInstances = [{ id: "TL", type: "TRENDLINES", calcParams: [5, 0, 2], extendData: { showStats: true } }];
+  controllerIndicators = [{ id: "TL", type: "TRENDLINES", inset: false }];
+  savedConfigs = {};
   reg("indicator.add", (a) => ({ id: `${a.type}2`, type: a.type, cellId: "c1" }));
   reg("indicator.remove", (a) => ({ removed: a.id }));
   reg("indicator.set", (a) => ({ id: a.id }));
@@ -146,5 +157,93 @@ describe("executeTool", () => {
     const r = await executeTool("indicator_add", { type: "RSI" }, ctx);
     clearRegistryForTest();
     expect(await undoTurn([r.change!])).toBe(false);
+  });
+
+  // --- fix round 1 -----------------------------------------------------
+
+  // Finding 1: a partial undo (refused midway) must not re-run reverts that
+  // already succeeded when the user fixes focus and retries.
+  it("marks a reverted change so a retried undo does not re-run it", async () => {
+    const a = await executeTool("indicator_add", { type: "RSI" }, ctx); // captured on c1
+    focus.cellId = "c2";
+    const b = await executeTool("indicator_add", { type: "EMA" }, ctx); // captured on c2
+    calls.length = 0;
+    // Undo attempted while still focused on c2: b (c2) reverts; a (c1) is refused.
+    expect(await undoTurn([a.change!, b.change!])).toBe(false);
+    expect(calls).toEqual([["indicator.remove", { id: "EMA2" }]]);
+    // Fix focus and retry: only a's revert should run now; b must not re-run.
+    focus.cellId = "c1";
+    expect(await undoTurn([a.change!, b.change!])).toBe(true);
+    expect(calls.map((c) => c[0])).toEqual(["indicator.remove", "indicator.remove"]);
+    expect(calls[1]).toEqual(["indicator.remove", { id: "RSI2" }]);
+  });
+
+  // Finding 2: a cellId match alone isn't enough — the same cell can be
+  // re-pointed at a different symbol (drawings/indicators are per epic).
+  it("refuses to undo when the epic changed on the same cell", async () => {
+    const r = await executeTool("drawing_remove", { id: "d1" }, ctx);
+    focus.epic = "GOLD"; // same cellId, different symbol
+    calls.length = 0;
+    expect(await undoTurn([r.change!])).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(drawings.placeDrawing).not.toHaveBeenCalled();
+  });
+
+  // Finding 3: indicator.remove undo falls back to the persisted config when
+  // the pane never computed (liveExprInstances misses it).
+  it("indicator_remove falls back to persisted config when the pane isn't live", async () => {
+    liveInstances = []; // not drawn/computed
+    controllerIndicators = [{ id: "HIDDEN1", type: "SLOPE", inset: true }];
+    savedConfigs = { HIDDEN1: { calcParams: [9], extendData: { foo: 1 } } };
+    const r = await executeTool("indicator_remove", { id: "HIDDEN1" }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.change!.undo).toBeDefined();
+    expect(r.change!.label).not.toMatch(/cannot undo/i);
+    await undoTurn([r.change!]);
+    const addCall = calls.find((c) => c[0] === "indicator.add");
+    expect(addCall).toBeDefined();
+    expect(addCall![1]).toEqual({ type: "SLOPE", calcParams: [9], inset: true });
+  });
+
+  // Finding 3 (continued): when nothing at all can be recovered, the change
+  // is left non-undoable and a later undoTurn surfaces that rather than
+  // silently skipping it.
+  it("indicator_remove cannot undo when nothing can be captured", async () => {
+    liveInstances = [];
+    controllerIndicators = [];
+    savedConfigs = {};
+    const r = await executeTool("indicator_remove", { id: "GHOST" }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.change!.undo).toBeUndefined();
+    expect(r.change!.label).toMatch(/cannot undo/i);
+    expect(await undoTurn([r.change!])).toBe(false);
+  });
+
+  // Finding 4: undo-by-id must never be offered when the new id already
+  // named one of the user's own panes.
+  it("indicator_add gives no undo when the new id collides with an existing pane", async () => {
+    controllerIndicators = [{ id: "RSI2", type: "RSI", inset: false }];
+    const r = await executeTool("indicator_add", { type: "RSI" }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.change!.undo).toBeUndefined();
+    expect(r.change!.label).toMatch(/cannot undo/i);
+    expect(await undoTurn([r.change!])).toBe(false);
+  });
+
+  // Finding 5: a chart that never settles must not fail silently.
+  it("warns in the result content when the chart does not settle in time", async () => {
+    vi.useFakeTimers();
+    try {
+      clearRegistryForTest();
+      reg("market.select", () => ({})); // never updates focus - simulates a stuck UI
+      const p = executeTool("market_select", { epic: "GOLD" }, ctx);
+      await vi.advanceTimersByTimeAsync(2100);
+      const r = await p;
+      expect(r.isError).toBe(false);
+      expect(r.content).toMatch(/did not switch within 2 s/i);
+      expect(focus.epic).toBe("US100");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
