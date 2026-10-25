@@ -155,7 +155,9 @@ function labelFigure(
       paddingTop: 0,
       paddingBottom: 0,
     },
-    ignoreEvent: true,
+    // Hit-testable on purpose: a label can outgrow its drawing (a zone drawn
+    // on daily bars is a sliver on a weekly chart), and then clicking the
+    // text is the only way left to select and delete it.
   };
 }
 
@@ -222,7 +224,7 @@ export const straightLine: OverlayTemplate = {
 // (⊕ defaultStyles.polygon), which is what makes fill/border editable in the
 // settings modal and persisted per-instance. Corner handles come from
 // needDefaultPointFigure.
-const rect: OverlayTemplate = {
+export const rect: OverlayTemplate = {
   name: "rect",
   totalStep: 3,
   needDefaultPointFigure: true,

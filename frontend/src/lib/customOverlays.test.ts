@@ -2,7 +2,7 @@
 // which touches `window` at import time.
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { matchBand, patternGhost } from "./customOverlays";
+import { matchBand, patternGhost, rect } from "./customOverlays";
 
 // The unit that was wrong, driven directly: klinecharts hands createPointFigures
 // the two anchors ALREADY resolved to bar-CENTER pixel x values, so the half-bar
@@ -388,5 +388,18 @@ describe("line drawings keep their stroke geometry near the pane", () => {
       overlay: { extendData: {} },
     }) as Array<{ type: string }>;
     expect(figs.some((f) => f.type === "line")).toBe(false);
+  });
+});
+
+// A label can outgrow its drawing (a zone drawn on daily bars is a few pixels
+// on a weekly chart), so the label itself must select the drawing.
+describe("drawing labels", () => {
+  it("a rect's label is hit-testable", () => {
+    const figs = rect.createPointFigures!({
+      overlay: { extendData: { text: "RSI dipped" } },
+      coordinates: [{ x: 10, y: 10 }, { x: 12, y: 12 }],
+    } as any) as unknown as Array<Record<string, unknown>>;
+    const label = figs.find((f) => f.type === "text")!;
+    expect(label.ignoreEvent).toBeUndefined();
   });
 });
