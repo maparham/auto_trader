@@ -36,6 +36,9 @@ export interface SweepConfig {
   usePrevDay: boolean;
   useVolume: boolean;
   usePrevBar: boolean;
+  // When on, no level (pivot or previous-day) is ever born; the
+  // previous-candle reversal is evaluated as if usePrevBar were on.
+  reversalsOnly: boolean;
   // Raw pane zone; computeSweep resolves "", "chart" or invalid to the chart zone.
   tz?: string;
 }
@@ -54,12 +57,14 @@ export const SWEEP_DEFAULTS: SweepConfig = {
   usePrevDay: true,
   useVolume: false,
   usePrevBar: true,
+  reversalsOnly: false,
 };
 
 /** calcParams order: [pivotLeft, pivotRight, levelMaxAge, minWickPct,
  * atrLen, minRangeAtr, volLen, volZ, minScore, confirmBars]. Lengths fall
  * back on anything non-finite or 0, positive reals on anything non-finite or
  * <= 0. extendData.usePrevBar: absent or anything but `false` means on.
+ * extendData.reversalsOnly: only `true` turns it on, like useVolume.
  * Mirrored by backend sweep.parse_sweep_config; keep in sync. */
 export function parseSweepConfig(calcParams: unknown, extendData?: unknown): SweepConfig {
   const p = Array.isArray(calcParams) ? calcParams : [];
@@ -87,6 +92,7 @@ export function parseSweepConfig(calcParams: unknown, extendData?: unknown): Swe
     usePrevDay: ext.usePrevDay !== false,
     useVolume: ext.useVolume === true,
     usePrevBar: ext.usePrevBar !== false,
+    reversalsOnly: ext.reversalsOnly === true,
     tz: typeof ext.tz === "string" ? ext.tz : undefined,
   };
 }
@@ -97,8 +103,17 @@ export const SWEEP_REVERSAL_OUTPUTS: readonly string[] = ["bearReversal", "bullR
 
 /** ATR (read at i-1), the volume window (read before i), and a level's whole
  * life plus its pivot and confirm delay. Confirm outputs lag their flag by
- * confirmBars. Every output shares it. Mirrors backend sweep_warmup. */
+ * confirmBars. Every output shares it. reversalsOnly never stores a level,
+ * so its floor drops the level-life term for one bar's worth of reversal
+ * lookback plus the confirm delay. Mirrors backend sweep_warmup. */
 export function sweepWarmup(cfg: SweepConfig): number {
+  if (cfg.reversalsOnly) {
+    return Math.max(
+      cfg.atrLen + 1,
+      cfg.useVolume ? cfg.volLen + 1 : 0,
+      1 + cfg.confirmBars,
+    );
+  }
   return Math.max(
     cfg.atrLen + 1,
     cfg.useVolume ? cfg.volLen + 1 : 0,

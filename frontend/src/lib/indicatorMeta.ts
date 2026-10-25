@@ -736,6 +736,15 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        key: "reversalsOnly",
+        label: "Reversals only",
+        type: "boolean",
+        source: "extend",
+        field: "reversalsOnly",
+        default: false,
+        tip: ["Flags only previous-candle reversals.", "Swing and previous-day levels are ignored."],
+      },
+      {
         key: "showLabels",
         label: "Score labels",
         type: "boolean",

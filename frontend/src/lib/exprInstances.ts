@@ -497,11 +497,17 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
     }
     if (inst.type === "SWEEP") {
       const cfg = parseSweepConfig(inst.calcParams, inst.extendData);
+      // reversalsOnly replaces the level-source suffixes (prev day, prev
+      // bar) with one "reversals only" suffix; the volume suffix is
+      // independent of level source and stays either way.
+      const prevDaySuffix = !cfg.reversalsOnly && cfg.usePrevDay ? " · prev day" : "";
+      const prevBarSuffix = !cfg.reversalsOnly && cfg.usePrevBar ? " · prev bar" : "";
+      const reversalsOnlySuffix = cfg.reversalsOnly ? " · reversals only" : "";
       out.push({
         id: inst.id,
         outputs: [...SWEEP_OUTPUTS],
         timeframe: null, // chart-timeframe only (no MTF pin)
-        detail: `pivot ${cfg.pivotLeft}/${cfg.pivotRight} · min score ${cfg.minScore}${cfg.usePrevDay ? " · prev day" : ""}${cfg.useVolume ? " · volume" : ""}${cfg.usePrevBar ? " · prev bar" : ""}`,
+        detail: `pivot ${cfg.pivotLeft}/${cfg.pivotRight} · min score ${cfg.minScore}${prevDaySuffix}${cfg.useVolume ? " · volume" : ""}${prevBarSuffix}${reversalsOnlySuffix}`,
       });
       continue;
     }

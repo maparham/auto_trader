@@ -34,12 +34,21 @@ describe("SWEEP config", () => {
       .toEqual({
         pivotLeft: 2, pivotRight: 3, levelMaxAge: 50, minWickPct: 40, atrLen: 10, minRangeAtr: 1.2,
         volLen: 30, volZ: 1.5, minScore: 60, confirmBars: 4, usePrevDay: false, useVolume: true,
-        usePrevBar: false, tz: "Europe/London",
+        usePrevBar: false, reversalsOnly: false, tz: "Europe/London",
       });
+  });
+  it("parses reversalsOnly: only true turns it on", () => {
+    expect(parseSweepConfig([], { reversalsOnly: true }).reversalsOnly).toBe(true);
+    expect(parseSweepConfig([], {}).reversalsOnly).toBe(false);
+    expect(parseSweepConfig([], { reversalsOnly: "yes" }).reversalsOnly).toBe(false);
   });
   it("warms up over a level's whole life", () => {
     expect(sweepWarmup(SWEEP_DEFAULTS)).toBe(163);
     expect(sweepWarmup({ ...SWEEP_DEFAULTS, useVolume: true, volLen: 200 })).toBe(201);
+  });
+  it("warms up over max(atrLen, volLen, 1 + confirmBars) when reversalsOnly is on", () => {
+    expect(sweepWarmup({ ...SWEEP_DEFAULTS, reversalsOnly: true })).toBe(15);
+    expect(sweepWarmup({ ...SWEEP_DEFAULTS, reversalsOnly: true, useVolume: true, volLen: 200 })).toBe(201);
   });
 });
 
@@ -87,6 +96,14 @@ describe("SWEEP as a rule instance", () => {
     expect(exprWarmupByRef(live)("SWEEP", "bullSweep")).toBe(163);
     expect(exprWarmupByRef(live)("SWEEP", "bogus")).toBe(0);
     expect(exprWarmupByRef(live)("SWEEP", "bullReversal")).toBe(1);
+  });
+  it("formats reversalsOnly in the detail and shares its warmup floor", () => {
+    const liveRO = [{ id: "SWEEP", type: "SWEEP", calcParams: [5, 5, 150, 50, 14, 1.5, 20, 2, 70, 3], extendData: { reversalsOnly: true } }];
+    expect(exprInstancesFor(liveRO)).toEqual([
+      { id: "SWEEP", outputs: [...SWEEP_OUTPUTS], timeframe: null, detail: "pivot 5/5 · min score 70 · reversals only" },
+    ]);
+    expect(exprWarmupByRef(liveRO)("SWEEP", "bearSweep")).toBe(15);
+    expect(exprWarmupByRef(liveRO)("SWEEP", "bullReversal")).toBe(1);
   });
   it("re-creates a missing pane with the template defaults", () => {
     expect(synthesizeExprInstances(["SWEEP.bearSweep == 1"], new Set())).toEqual({

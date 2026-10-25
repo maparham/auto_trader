@@ -54,6 +54,7 @@ const CASES: Array<{ name: string; calcParams: number[]; extendData: Record<stri
     extendData: { usePrevDay: false, usePrevBar: false },
   },
   { name: "prev_bar", calcParams: [], extendData: { tz: "UTC", usePrevBar: true } },
+  { name: "reversals_only", calcParams: [], extendData: { tz: "UTC", reversalsOnly: true } },
 ];
 
 describe("sweep golden", () => {
@@ -76,6 +77,11 @@ describe("sweep golden", () => {
     // the fixture proves nothing about usePrevBar.
     const prevBarPts = ptsByName.get("prev_bar")!;
     expect(prevBarPts.some((p) => p.src === "bar")).toBe(true);
+    // The reversals_only case must exercise the reversal path too, and
+    // never a stored level, or the fixture proves nothing about the option.
+    const reversalsOnlyPts = ptsByName.get("reversals_only")!;
+    expect(reversalsOnlyPts.some((p) => p.src === "bar")).toBe(true);
+    expect(reversalsOnlyPts.every((p) => p.src !== "pivot" && p.src !== "day")).toBe(true);
     mkdirSync(dirname(OUT), { recursive: true });
     writeFileSync(OUT, JSON.stringify({
       candles: candles.map((k) => [k.timestamp, k.open, k.high, k.low, k.close, k.volume]),

@@ -44,6 +44,7 @@ under the parity contract in `indicators/core.py`.
 | `minScore` | 70 | score at or above which the bar is flagged |
 | `confirmBars` | 3 | bars without a close back through the level to confirm |
 | `usePrevBar` | true | also flag an outside-bar reversal against the previous candle |
+| `reversalsOnly` | false | flag only previous-candle reversals; no pivot or previous-day level is ever stored |
 
 `tz` is read from `extendData.tz` with PREV_HL's `_zone` rules (both
 parsers); SWEEP joins `TZ_STAMPED_TYPES` in
@@ -65,6 +66,12 @@ parsers); SWEEP joins `TZ_STAMPED_TYPES` in
 - A level also dies once `i - born > levelMaxAge`.
 - With `usePrevBar` on, the previous candle also contributes a one-bar level
   that is never stored: see "Previous-candle reversal" below.
+- With `reversalsOnly` on, no level is ever born: pivot births and
+  previous-day births are both skipped entirely, so the non-reversal sweep
+  path can never fire. The previous-candle reversal is evaluated as if
+  `usePrevBar` were on, whatever `usePrevBar` says. Everything else (score,
+  confirmation, replacement, outputs, the "prev bar" label, the reversal
+  border) is unchanged.
 
 ## Per-bar detection
 
@@ -196,7 +203,10 @@ Warmup floor:
 `max(atrLen + 1, useVolume ? volLen + 1 : 0, levelMaxAge + pivotLeft + pivotRight + confirmBars)`.
 Confirm outputs lag their flag by confirmBars. Previous-day levels add a
 calendar dependency that no bar count bounds; the warmup note says so, as
-`prev_hl_warmup` does.
+`prev_hl_warmup` does. With `reversalsOnly` on (both sides, other outputs):
+`max(atrLen + 1, useVolume ? volLen + 1 : 0, 1 + confirmBars)`; the
+level-life term drops since no level is ever stored. The reversal outputs
+(`bearReversal` / `bullReversal`) stay 1 either way.
 
 ## Volume caveat
 

@@ -271,6 +271,26 @@ def test_prev_bar_toggle_off_no_flag():
     assert col(cfg, b, "bullReversal") == [0, 0]
 
 
+# --- reversals_only ---
+
+def test_reversals_only_skips_pivot_sweep():
+    # SWEEP_ROWS flags a bear pivot sweep at bar 4 when reversals_only is
+    # off (see test_bear_sweep_flags_and_confirms); with it on, no stored
+    # level is ever born, so the non-reversal path can never fire.
+    cfg = replace(CFG, reversals_only=True)
+    b = bars(SWEEP_ROWS)
+    assert col(cfg, b, "bearSweep") == [0] * 7
+    assert col(cfg, b, "bullSweep") == [0] * 7
+
+
+def test_reversals_only_evaluates_reversal_even_with_use_prev_bar_false():
+    cfg = replace(CFG, reversals_only=True, use_prev_bar=False)
+    b = bars(REV_BULL_ROWS)
+    assert col(cfg, b, "bullSweep") == [0, 1]
+    assert col(cfg, b, "bullReversal") == [0, 1]
+    assert col(cfg, b, "sweptLevel")[1] == 100
+
+
 def test_reversal_outputs_mark_only_reversal_bars():
     assert col(CFG, bars(REV_BULL_ROWS), "bullReversal") == [0, 1]
     assert col(CFG, bars(REV_BULL_ROWS), "bearReversal") == [0, 0]
@@ -331,13 +351,20 @@ def test_parse_defaults_and_extend():
     assert d == SweepConfig()
     assert (d.pivot_left, d.pivot_right, d.level_max_age, d.min_score) == (5, 5, 150, 70.0)
     assert d.use_prev_day is True and d.use_volume is False and d.use_prev_bar is True and d.tz == "UTC"
+    assert d.reversals_only is False
     cfg = parse_sweep_config(
         [2, 3, 50, 40, 10, 1.2, 30, 1.5, 60, 4],
-        {"usePrevDay": False, "useVolume": True, "usePrevBar": False, "tz": "Europe/London"},
+        {"usePrevDay": False, "useVolume": True, "usePrevBar": False, "reversalsOnly": True, "tz": "Europe/London"},
     )
-    assert cfg == SweepConfig(2, 3, 50, 40.0, 10, 1.2, 30, 1.5, 60.0, 4, False, True, False, "Europe/London")
+    assert cfg == SweepConfig(2, 3, 50, 40.0, 10, 1.2, 30, 1.5, 60.0, 4, False, True, False, True, "Europe/London")
     bad = parse_sweep_config(["x", 0, "y", 0, None, -2, 0, 0, -5, 0], {"tz": "Not/AZone"})
     assert bad == SweepConfig()
+
+
+def test_parse_reversals_only():
+    assert parse_sweep_config([], {"reversalsOnly": True}).reversals_only is True
+    assert parse_sweep_config([], {}).reversals_only is False
+    assert parse_sweep_config([], {"reversalsOnly": "yes"}).reversals_only is False
 
 
 def test_warmup():
@@ -349,6 +376,12 @@ def test_warmup():
         "bearSweep", "bullSweep", "bearConfirmed", "bullConfirmed", "score", "sweptLevel", "barsSince",
         "bearReversal", "bullReversal",
     }
+
+
+def test_warmup_reversals_only():
+    assert sweep_warmup(replace(SweepConfig(), reversals_only=True), "bearSweep") == 15
+    assert sweep_warmup(replace(SweepConfig(), reversals_only=True, use_volume=True, vol_len=200), "score") == 201
+    assert sweep_warmup(replace(SweepConfig(), reversals_only=True), "bullReversal") == 1
 
 
 def test_registry_and_alert_spec():

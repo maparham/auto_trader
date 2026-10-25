@@ -150,7 +150,9 @@ export function computeSweep(dataList: KLineData[], cfg: SweepConfig): SweepPoin
   const closes = dataList.map((d) => d.close);
   const vols = dataList.map((d) => d.volume ?? 0);
   const atr = atrSeries(dataList, cfg.atrLen);
-  const zone = cfg.usePrevDay && medianBarMs(dataList) <= DAY_MS ? resolveZone(cfg.tz) : null;
+  // reversalsOnly: no level is ever born, so skip the previous-day
+  // birth/tracking too (pivot births are skipped per-bar below).
+  const zone = cfg.usePrevDay && !cfg.reversalsOnly && medianBarMs(dataList) <= DAY_MS ? resolveZone(cfg.tz) : null;
 
   let hiLevels: Level[] = [];
   let loLevels: Level[] = [];
@@ -166,11 +168,15 @@ export function computeSweep(dataList: KLineData[], cfg: SweepConfig): SweepPoin
 
   const out: SweepPoint[] = new Array(n);
   for (let i = 0; i < n; i++) {
-    // Births: the pivot at p confirms on this bar.
-    const p = i - cfg.pivotRight;
-    if (p - cfg.pivotLeft >= 0) {
-      if (isPivot(highs, p, cfg.pivotLeft, cfg.pivotRight, true)) hiLevels.push({ price: highs[p], born: i, start: p, src: "pivot" });
-      if (isPivot(lows, p, cfg.pivotLeft, cfg.pivotRight, false)) loLevels.push({ price: lows[p], born: i, start: p, src: "pivot" });
+    // Births: the pivot at p confirms on this bar. reversalsOnly skips this
+    // entirely, so no level is ever born (the brief's "no stored levels at
+    // all").
+    if (!cfg.reversalsOnly) {
+      const p = i - cfg.pivotRight;
+      if (p - cfg.pivotLeft >= 0) {
+        if (isPivot(highs, p, cfg.pivotLeft, cfg.pivotRight, true)) hiLevels.push({ price: highs[p], born: i, start: p, src: "pivot" });
+        if (isPivot(lows, p, cfg.pivotLeft, cfg.pivotRight, false)) loLevels.push({ price: lows[p], born: i, start: p, src: "pivot" });
+      }
     }
     if (zone !== null) {
       const key = dayKey(dataList[i].timestamp, zone);
@@ -217,7 +223,9 @@ export function computeSweep(dataList: KLineData[], cfg: SweepConfig): SweepPoin
     let bearReversal = false;
     let prevBullLv: Level | null = null;
     let prevBearLv: Level | null = null;
-    if (cfg.usePrevBar && i >= 1) {
+    // reversalsOnly evaluates this as if usePrevBar were on, whatever
+    // usePrevBar says.
+    if ((cfg.usePrevBar || cfg.reversalsOnly) && i >= 1) {
       if (closes[i - 1] < opens[i - 1] && lows[i] < lows[i - 1] && closes[i] > highs[i - 1]) {
         bullReversal = true;
         prevBullLv = { price: lows[i - 1], born: i, start: i - 1, src: "bar" };

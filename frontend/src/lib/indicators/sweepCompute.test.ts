@@ -16,7 +16,7 @@ function bars(rows: Array<[number, number, number, number]>, step = HOUR): KLine
 const CFG: SweepConfig = {
   pivotLeft: 1, pivotRight: 1, levelMaxAge: 10, minWickPct: 50, atrLen: 2, minRangeAtr: 1,
   volLen: 20, volZ: 2, minScore: 70, confirmBars: 2, usePrevDay: false, useVolume: false,
-  usePrevBar: true, tz: "UTC",
+  usePrevBar: true, reversalsOnly: false, tz: "UTC",
 };
 
 const col = (cfg: SweepConfig, data: KLineData[], key: keyof SweepPoint) =>
@@ -264,6 +264,31 @@ describe("previous-candle outside-bar reversal (usePrevBar)", () => {
     const atrPrev = atrSeries(b, CFG.atrLen)[3];
     const s = sweepScore(CFG, true, 105, 112, 95, 107, atrPrev, null);
     expect(s).toBeGreaterThanOrEqual(CFG.minScore);
+  });
+});
+
+describe("reversalsOnly", () => {
+  const REV_BULL_ROWS: Array<[number, number, number, number]> = [
+    [102, 103, 100, 101], // bearish prev candle
+    [101, 105, 99, 104], // low below prev low, close above prev high
+  ];
+
+  it("skips pivot births entirely, so no stored level ever flags", () => {
+    // SWEEP_ROWS flags a bear pivot sweep at bar 4 off reversalsOnly (see
+    // the top-level "flags and confirms a bear sweep" test); on, no stored
+    // level is ever born.
+    const cfg = { ...CFG, reversalsOnly: true };
+    const b = bars(SWEEP_ROWS);
+    expect(col(cfg, b, "bearSweep")).toEqual(zeros(7));
+    expect(col(cfg, b, "bullSweep")).toEqual(zeros(7));
+  });
+
+  it("evaluates the previous-candle reversal even with usePrevBar off", () => {
+    const cfg = { ...CFG, reversalsOnly: true, usePrevBar: false };
+    const b = bars(REV_BULL_ROWS);
+    expect(col(cfg, b, "bullSweep")).toEqual([0, 1]);
+    expect(col(cfg, b, "bullReversal")).toEqual([0, 1]);
+    expect(col(cfg, b, "sweptLevel")[1]).toBe(100);
   });
 });
 

@@ -22,6 +22,7 @@ export interface SweepExtend {
   usePrevDay?: boolean;
   useVolume?: boolean;
   usePrevBar?: boolean;
+  reversalsOnly?: boolean;
   tz?: string;
 }
 

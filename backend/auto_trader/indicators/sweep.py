@@ -35,7 +35,12 @@ flags its side, so each implies the matching sweep output.
 
 A flagged sweep becomes pending and confirms `confirm_bars` later if no close
 went back through its level; a close through drops it, and any new flag
-replaces it."""
+replaces it.
+
+With `reversals_only` on, no level is ever born (pivot or previous-day), so
+the non-reversal sweep path can never fire; the previous-candle reversal is
+evaluated as if `use_prev_bar` were on, whatever `use_prev_bar` says.
+Everything else (scoring, confirmation, replacement, outputs) is unchanged."""
 
 from __future__ import annotations
 
@@ -75,6 +80,7 @@ class SweepConfig:
     use_prev_day: bool = True
     use_volume: bool = False
     use_prev_bar: bool = True
+    reversals_only: bool = False
     tz: str = "UTC"
 
 
@@ -88,7 +94,7 @@ def parse_sweep_config(calc_params: object, extend_data: object) -> SweepConfig:
     levelMaxAge, minWickPct, atrLen, minRangeAtr, volLen, volZ, minScore,
     confirmBars]. extendData: usePrevDay (absent means on), useVolume (only
     `true` turns it on), usePrevBar (absent or anything but false means on),
-    tz (PREV_HL's _zone rules)."""
+    reversalsOnly (only `true` turns it on), tz (PREV_HL's _zone rules)."""
     p = calc_params if isinstance(calc_params, (list, tuple)) else []
     ext = extend_data if isinstance(extend_data, dict) else {}
 
@@ -123,6 +129,7 @@ def parse_sweep_config(calc_params: object, extend_data: object) -> SweepConfig:
         use_prev_day=ext.get("usePrevDay") is not False,
         use_volume=ext.get("useVolume") is True,
         use_prev_bar=ext.get("usePrevBar") is not False,
+        reversals_only=ext.get("reversalsOnly") is True,
         tz=_zone(ext.get("tz")),
     )
 
@@ -204,7 +211,9 @@ def _compute_points(cfg: SweepConfig, candles: Sequence[Candle]) -> list[tuple[f
     vols = [c.volume for c in candles]
     ts = [int(c.time.timestamp() * 1000) for c in candles]
     atr = atr_series(candles, cfg.atr_len)
-    day_on = cfg.use_prev_day and estimate_bar_ms(ts) <= _DAY_MS
+    # reversals_only: no level is ever born, so skip the previous-day
+    # birth/tracking too (pivot births are skipped per-bar below).
+    day_on = cfg.use_prev_day and not cfg.reversals_only and estimate_bar_ms(ts) <= _DAY_MS
     zone = ZoneInfo(cfg.tz) if day_on else None
 
     hi_levels: list[_Level] = []
@@ -221,13 +230,16 @@ def _compute_points(cfg: SweepConfig, candles: Sequence[Candle]) -> list[tuple[f
 
     out: list[tuple[float | None, ...]] = []
     for i in range(n):
-        # Births: the pivot at p confirms on this bar.
-        p = i - cfg.pivot_right
-        if p - cfg.pivot_left >= 0:
-            if _is_pivot(highs, p, cfg.pivot_left, cfg.pivot_right, True):
-                hi_levels.append(_Level(highs[p], i, p))
-            if _is_pivot(lows, p, cfg.pivot_left, cfg.pivot_right, False):
-                lo_levels.append(_Level(lows[p], i, p))
+        # Births: the pivot at p confirms on this bar. reversals_only skips
+        # this entirely, so no level is ever born (the brief's "no stored
+        # levels at all").
+        if not cfg.reversals_only:
+            p = i - cfg.pivot_right
+            if p - cfg.pivot_left >= 0:
+                if _is_pivot(highs, p, cfg.pivot_left, cfg.pivot_right, True):
+                    hi_levels.append(_Level(highs[p], i, p))
+                if _is_pivot(lows, p, cfg.pivot_left, cfg.pivot_right, False):
+                    lo_levels.append(_Level(lows[p], i, p))
         if zone is not None:
             key = datetime.fromtimestamp(ts[i] / 1000, zone).date()
             if day_key is None:
@@ -269,7 +281,9 @@ def _compute_points(cfg: SweepConfig, candles: Sequence[Candle]) -> list[tuple[f
         bear_reversal = False
         prev_bull_lv: _Level | None = None
         prev_bear_lv: _Level | None = None
-        if cfg.use_prev_bar and i >= 1:
+        # reversals_only evaluates this as if use_prev_bar were on,
+        # whatever use_prev_bar says.
+        if (cfg.use_prev_bar or cfg.reversals_only) and i >= 1:
             if closes[i - 1] < opens[i - 1] and lows[i] < lows[i - 1] and closes[i] > highs[i - 1]:
                 bull_reversal = True
                 prev_bull_lv = _Level(lows[i - 1], i, i - 1)
@@ -385,11 +399,19 @@ def sweep_warmup(cfg: SweepConfig, output: str) -> int:
     whole life plus its pivot and confirm delay. Confirm outputs lag their
     flag by confirmBars. Previous-day levels add a calendar dependency no bar
     count bounds, as prev_hl_warmup notes. 0 for an output this config does
-    not expose. A reversal reads only the bar before, so it needs 1."""
+    not expose. A reversal reads only the bar before, so it needs 1.
+    reversals_only never stores a level, so its floor drops the level-life
+    term for one bar's worth of reversal lookback plus the confirm delay."""
     if output not in _OUTPUT_INDEX:
         return 0
     if output in ("bearReversal", "bullReversal"):
         return 1
+    if cfg.reversals_only:
+        return max(
+            cfg.atr_len + 1,
+            cfg.vol_len + 1 if cfg.use_volume else 0,
+            1 + cfg.confirm_bars,
+        )
     return max(
         cfg.atr_len + 1,
         cfg.vol_len + 1 if cfg.use_volume else 0,
