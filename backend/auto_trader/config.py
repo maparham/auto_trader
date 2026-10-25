@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
+from dataclasses import dataclass
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Capital.com uses different hosts for demo and live. Demo is for development.
@@ -241,3 +245,55 @@ class TelegramSettings(BaseSettings):
 
 
 telegram_settings = TelegramSettings()
+
+
+# In-app AI assistant (api/routers/assistant.py). The key comes from the
+# claude-gateway client file on a dev Mac, or ASSISTANT_API_KEY on a server.
+# Absent key = feature hidden (status reports configured: false), same
+# "half-configured never shows a dead entry" convention as Telegram above.
+DEFAULT_ASSISTANT_BASE_URL = "https://claude.rahkar.pro"
+
+
+@dataclass(frozen=True)
+class AssistantConfig:
+    api_key: str
+    base_url: str
+    model: str
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+
+class AssistantSettings(BaseSettings):
+    """Assistant proxy settings (env-prefixed ASSISTANT_)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="ASSISTANT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    api_key: str = ""
+    base_url: str = ""
+    key_file: str = "~/.config/claude-gateway/client.json"
+    disabled: str = ""
+    model: str = "claude-opus-5-5"
+
+    def resolved(self) -> AssistantConfig:
+        file_key, file_url = "", ""
+        try:
+            with open(os.path.expanduser(self.key_file), encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                file_key = str(data.get("key") or "")
+                file_url = str(data.get("url") or "")
+        except (OSError, ValueError):
+            pass
+        key = "" if self.disabled else (self.api_key or file_key)
+        url = (self.base_url or file_url or DEFAULT_ASSISTANT_BASE_URL).rstrip("/")
+        return AssistantConfig(api_key=key, base_url=url, model=self.model)
+
+
+assistant_settings = AssistantSettings()
