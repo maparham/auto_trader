@@ -467,4 +467,76 @@ describe("session loop", () => {
     expect(redoableIndex(turns)).toBe(-1);
     expect(redoableIndex(turns.slice(0, 1))).toBe(0);
   });
+
+  it("editFrom reverts later turns newest first, cuts both lists, and sends the new text", async () => {
+    const { s, undo, bodies } = setup([
+      msg([tu("a", "indicator_add")], "tool_use"), msg([text("one")]),
+      msg([tu("b", "indicator_add")], "tool_use"), msg([text("two")]),
+      msg([text("again")]),
+    ]);
+    await s.send("first");
+    const cut = s.state.value.messages.length;
+    await s.send("second");
+    const order: string[] = [];
+    undo.mockImplementation((async (changes: Array<{ label: string }>) => { order.push(String(s.state.value.turns.findIndex((t) => t.role === "assistant" && t.changes === changes))); return true; }) as never);
+    const r = await s.editFrom(2, "second, edited");
+    expect(r).toBe("sent");
+    expect(order).toEqual(["3"]); // only the turn after the edited message
+    const turns = s.state.value.turns;
+    expect(turns.map((t) => t.role === "user" ? t.text : "A")).toEqual(["first", "A", "second, edited", "A"]);
+    const sent = (bodies.at(-1) as { messages: Array<{ role: string }> }).messages;
+    expect(sent.length).toBe(cut + 1);
+    expect(JSON.stringify(sent.at(-1))).toMatch(/second, edited/);
+    expect(JSON.stringify(sent)).not.toMatch(/"second"/);
+  });
+
+  it("editFrom answering an ask turns the edit into the new answer", async () => {
+    const { s, bodies } = setup([
+      msg([tu("q", "ask_user", { question: "Which?", options: [{ label: "A" }, { label: "B" }] })], "tool_use"),
+      msg([text("did A")]),
+      msg([text("did B")]),
+    ]);
+    await s.send("go");
+    await s.send("A");
+    const r = await s.editFrom(2, "B");
+    expect(r).toBe("sent");
+    const last = (bodies.at(-1) as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> }).messages.at(-1)!;
+    expect(last.content).toHaveLength(1);
+    expect(last.content[0]).toMatchObject({ type: "tool_result", tool_use_id: "q", content: "B" });
+    expect(s.state.value.turns.at(-2)).toMatchObject({ role: "user", text: "B", pickedFrom: "Which?" });
+  });
+
+  it("editFrom is blocked (nothing cut) when a later change has no live undo, and force cuts anyway", async () => {
+    const { s, undo } = setup([msg([tu("a", "indicator_add")], "tool_use"), msg([text("one")]), msg([text("redo")])]);
+    await s.send("first");
+    const t = s.state.value.turns[1] as Extract<Turn, { role: "assistant" }>;
+    delete t.changes[0].undo; // as after a reload
+    const before = s.state.value.messages.length;
+    expect(await s.editFrom(0, "other")).toBe("blocked");
+    expect(undo).not.toHaveBeenCalled();
+    expect(s.state.value.messages.length).toBe(before);
+    expect(await s.editFrom(0, "other", { force: true })).toBe("sent");
+    expect(s.state.value.turns.map((x) => x.role === "user" ? x.text : "A")).toEqual(["other", "A"]);
+  });
+
+  it("editFrom stops at a refused undo, keeping turns already reverted marked undone", async () => {
+    const { s, undo } = setup([
+      msg([tu("a", "indicator_add")], "tool_use"), msg([text("one")]),
+      msg([tu("b", "indicator_add")], "tool_use"), msg([text("two")]),
+    ]);
+    await s.send("first");
+    await s.send("second");
+    undo.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    expect(await s.editFrom(0, "x")).toBe("blocked");
+    const turns = s.state.value.turns as Array<Extract<Turn, { role: "assistant" }>>;
+    expect(turns[3].undone).toBe(true);
+    expect(turns[1].undone).toBe(false);
+    expect(turns).toHaveLength(4);
+  });
+
+  it("only messages sent with a rewind record can be edited", async () => {
+    const { s } = setup([]);
+    s.state.set({ ...s.state.value, turns: [{ role: "user", text: "old" }] });
+    expect(await s.editFrom(0, "new")).toBe("invalid");
+  });
 });

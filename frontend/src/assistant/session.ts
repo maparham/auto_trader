@@ -23,7 +23,12 @@ export type TurnError = {
   status?: number; body?: string;
 };
 export type Turn =
-  | { role: "user"; text: string; pickedFrom?: string }
+  | {
+      role: "user"; text: string; pickedFrom?: string;
+      // Where this message starts in `messages`, and what was still open
+      // (pending) just before it: editFrom cuts back to exactly this state.
+      rewind?: { msgIndex: number; pending: SessionState["pending"] };
+    }
   | {
       role: "assistant"; text: string; changes: Change[]; undone: boolean;
       ask?: { question: string; options: Array<{ label: string; description?: string }> };
@@ -251,6 +256,7 @@ export function createSession(deps: SessionDeps) {
   async function send(text: string) {
     if (state.value.busy) return;
     const { pending } = state.value;
+    const rewind = { msgIndex: state.value.messages.length, pending };
     const asked = pending.askId;
     const stoppedKind = lastAssistant(state.value.turns)?.error?.kind === "stopped";
     const reason = asked ? ASK_NOT_RUN : stoppedKind ? "stopped by the user" : "turn ended before this ran";
@@ -260,7 +266,7 @@ export function createSession(deps: SessionDeps) {
     save({
       ...state.value,
       pending: { ...EMPTY_PENDING },
-      turns: [...state.value.turns, { role: "user", text, ...(asked && prevAsk ? { pickedFrom: prevAsk } : {}) }],
+      turns: [...state.value.turns, { role: "user", text, rewind, ...(asked && prevAsk ? { pickedFrom: prevAsk } : {}) }],
       messages: [...state.value.messages, { role: "user", content: blocks }],
     });
     await loop();
@@ -378,13 +384,57 @@ export function createSession(deps: SessionDeps) {
     }
   }
 
+  /**
+   * Edit an earlier user message and continue from there: revert every later
+   * turn's live changes (newest first), cut `turns` and `messages` back to
+   * just before that message, restore what was pending then, and send `text`
+   * in its place. "blocked" means a later change could not be reverted (its
+   * undo did not survive a reload, or another chart is focused); nothing is
+   * cut, turns already reverted stay marked undone, and calling again with
+   * `force` cuts and sends without reverting the rest.
+   */
+  async function editFrom(
+    idx: number, text: string, opts: { force?: boolean } = {},
+  ): Promise<"sent" | "blocked" | "invalid"> {
+    const target = state.value.turns[idx];
+    if (state.value.busy || !text.trim() || target?.role !== "user" || !target.rewind) return "invalid";
+    const { rewind } = target;
+    patch({ busy: true, working: "Rewinding" });
+    try {
+      if (!opts.force) {
+        for (let i = state.value.turns.length - 1; i > idx; i--) {
+          const t = state.value.turns[i];
+          if (t.role !== "assistant" || t.undone) continue;
+          const live = t.changes.filter((c) => c.undoable !== false);
+          if (live.length === 0) continue;
+          if (live.some((c) => typeof c.undo !== "function")) return "blocked";
+          const ok = await deps.undo(t.changes);
+          const turns = [...state.value.turns];
+          if (ok) turns[i] = { ...t, undone: true };
+          save({ ...state.value, turns });
+          if (!ok) return "blocked";
+        }
+      }
+      save({
+        ...state.value,
+        turns: state.value.turns.slice(0, idx),
+        messages: state.value.messages.slice(0, rewind.msgIndex),
+        pending: rewind.pending,
+      });
+    } finally {
+      patch({ busy: false, working: null });
+    }
+    await send(text);
+    return "sent";
+  }
+
   function reset() {
     abort?.abort();
     deps.storage.removeItem(KEY);
     state.set(fresh());
   }
 
-  return { state, send, retry, stop, undoLast, redoLast, reset };
+  return { state, send, retry, stop, undoLast, redoLast, editFrom, reset };
 }
 
 function liveContext(): string {

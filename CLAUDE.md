@@ -377,6 +377,15 @@ turn until the user sends again, also after a reload. Ids are remapped: an
 add that comes back under a new id (`createdId`) renames later calls, and a
 remove whose undo re-created its target (`restoredId`) removes that one.
 
+Edit an earlier message: each user turn records `rewind` (its start index in
+`messages` and the `pending` state just before it). `editFrom(idx, text)`
+reverts every later live turn newest first, cuts `turns` and `messages` back
+to that point, restores `pending` (so an edited ask answer becomes the new
+answer) and sends `text`. A later change with no live undo (after a reload)
+or a refused undo returns "blocked" with nothing cut; the panel then offers
+"Continue without reverting", which calls again with `force`. Messages sent
+before `rewind` existed show no edit pencil.
+
 Spec: docs/superpowers/specs/2026-10-25-ai-assistant-design.md.
 
 ## Account history

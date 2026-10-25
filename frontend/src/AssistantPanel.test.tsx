@@ -7,7 +7,7 @@ import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 // above the vi.mock call still throws "Cannot access before initialization",
 // since the mock factory runs first once hoisted). A minimal inline
 // Signal-alike avoids importing ./lib/signals here too, for the same reason.
-const { state, send, undoLast, redoLast } = vi.hoisted(() => {
+const { state, send, undoLast, redoLast, editFrom } = vi.hoisted(() => {
   class FakeSignal<T> {
     value: T;
     private listeners = new Set<(v: T) => void>();
@@ -26,6 +26,7 @@ const { state, send, undoLast, redoLast } = vi.hoisted(() => {
     send: vi.fn(async () => {}),
     undoLast: vi.fn(async () => {}),
     redoLast: vi.fn(async () => {}),
+    editFrom: vi.fn(async (): Promise<string> => "sent"),
   };
 });
 // Only the live session singleton is faked; `undoableIndex` comes through
@@ -35,14 +36,14 @@ vi.mock("./assistant/session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./assistant/session")>();
   return {
     ...actual,
-    assistantSession: { state, send, retry: vi.fn(), stop: vi.fn(), undoLast, redoLast, reset: vi.fn() },
+    assistantSession: { state, send, retry: vi.fn(), stop: vi.fn(), undoLast, redoLast, editFrom, reset: vi.fn() },
   };
 });
 
 import AssistantPanel from "./AssistantPanel";
 import { collapseLabels, toBlocks } from "./assistant/format";
 
-beforeEach(() => { send.mockClear(); undoLast.mockClear(); redoLast.mockClear(); });
+beforeEach(() => { send.mockClear(); undoLast.mockClear(); redoLast.mockClear(); editFrom.mockClear(); });
 afterEach(cleanup);
 
 describe("AssistantPanel", () => {
@@ -179,5 +180,24 @@ describe("AssistantPanel", () => {
     render(<AssistantPanel onClose={() => {}} />);
     expect(screen.queryByRole("button", { name: /^redo$/i })).toBeNull();
     expect(screen.getByText("Undone")).toBeTruthy();
+  });
+
+  it("edits an earlier message, and asks before continuing when later changes can't be undone", async () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "user", text: "first", rewind: { msgIndex: 0, pending: { toolUseIds: [], heldResults: [], askId: null } } },
+      { role: "assistant", text: "ok", changes: [], undone: false },
+      { role: "user", text: "legacy" },
+    ] });
+    render(<AssistantPanel onClose={() => {}} />);
+    expect(screen.getAllByRole("button", { name: /edit message/i })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /edit message/i }));
+    const box = screen.getByDisplayValue("first");
+    fireEvent.change(box, { target: { value: "first, edited" } });
+    editFrom.mockResolvedValueOnce("blocked");
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await screen.findByText(/continue without reverting/i);
+    expect(editFrom).toHaveBeenLastCalledWith(0, "first, edited", { force: false });
+    fireEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    expect(editFrom).toHaveBeenLastCalledWith(0, "first, edited", { force: true });
   });
 });

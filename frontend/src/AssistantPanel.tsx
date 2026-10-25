@@ -62,6 +62,7 @@ const TOOL_WORKING_LABEL: Record<string, string> = {
 function workingLabel(working: string): string {
   if (working === "Undoing") return "undoing the last turn";
   if (working === "Redoing") return "redoing the last turn";
+  if (working === "Rewinding") return "undoing later turns";
   return TOOL_WORKING_LABEL[working] ?? working.replace(/_/g, " ");
 }
 
@@ -129,6 +130,9 @@ function Markdown({ text }: { text: string }) {
 export default function AssistantPanel({ onClose }: { onClose: () => void }) {
   const s = useSession();
   const [draft, setDraft] = useState("");
+  // The earlier message being edited: its turn index, the new text, and
+  // whether a rewind was refused because later changes can't be reverted.
+  const [edit, setEdit] = useState<{ idx: number; text: string; blocked: boolean } | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -145,6 +149,11 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [draft]);
 
+  // New chat (or a rewind) can remove the message being edited.
+  useEffect(() => {
+    if (edit && s.turns[edit.idx]?.role !== "user") setEdit(null);
+  }, [edit, s.turns]);
+
   const undoIdx = undoableIndex(s.turns);
   const redoIdx = redoableIndex(s.turns);
   const revertibleIdx = newestRevertibleIndex(s.turns);
@@ -157,10 +166,57 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
 
   const renderTurn = (t: Turn, i: number) => {
     if (t.role === "user") {
+      if (edit?.idx === i) {
+        const go = async (force: boolean) => {
+          const r = await assistantSession.editFrom(i, edit.text, { force });
+          if (r === "blocked") setEdit({ ...edit, blocked: true });
+          else if (r === "sent") setEdit(null);
+        };
+        return (
+          <div key={i} className="as-edit">
+            <textarea
+              autoFocus
+              value={edit.text}
+              rows={2}
+              onChange={(e) => setEdit({ ...edit, text: e.target.value, blocked: false })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void go(false); }
+                if (e.key === "Escape") setEdit(null);
+              }}
+            />
+            {edit.blocked ? (
+              <div className="as-edit-warn">
+                <span>Some later changes can't be undone (reloaded, or another chart is focused). Continue without reverting them?</span>
+                <div className="as-edit-actions">
+                  <button className="as-link" onClick={() => setEdit(null)}>Cancel</button>
+                  <button className="as-undo" disabled={s.busy} onClick={() => void go(true)}>Continue</button>
+                </div>
+              </div>
+            ) : (
+              <div className="as-edit-actions">
+                <span className="as-muted">Later turns are undone and replaced.</span>
+                <button className="as-link" onClick={() => setEdit(null)}>Cancel</button>
+                <button className="as-undo" disabled={s.busy || !edit.text.trim()} onClick={() => void go(false)}>Send</button>
+              </div>
+            )}
+          </div>
+        );
+      }
       return (
         <div key={i} className="as-user">
           {t.pickedFrom && <div className="as-picked">{t.pickedFrom}</div>}
           {t.text}
+          {t.rewind && !s.busy && !edit && (
+            <Tooltip content="Edit and continue from here">
+              <button className="as-edit-btn" aria-label="Edit message"
+                onClick={() => setEdit({ idx: i, text: t.text, blocked: false })}>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+                  strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M11.5 2.2l2.3 2.3L5.5 12.8 2.5 13.5l.7-3z" />
+                </svg>
+              </button>
+            </Tooltip>
+          )}
         </div>
       );
     }
@@ -287,9 +343,9 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
           }}
         />
         {s.busy ? (
-          // Undoing and redoing aren't abortable (there is no in-flight fetch/action the
+          // Undoing, redoing and rewinding aren't abortable (there is no in-flight fetch/action the
           // Stop button would cancel), so it is hidden rather than shown inert.
-          s.working !== "Undoing" && s.working !== "Redoing" && (
+          s.working !== "Undoing" && s.working !== "Redoing" && s.working !== "Rewinding" && (
             <button className="as-send" onClick={() => assistantSession.stop()}>Stop</button>
           )
         ) : (

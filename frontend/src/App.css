@@ -7355,6 +7355,22 @@ span.bt-leg-short { color: var(--neg); }
   flex-direction: column; gap: 10px; }
 .as-user { align-self: flex-end; max-width: 85%; padding: 6px 9px; border-radius: 8px;
   background: color-mix(in srgb, var(--text) 8%, transparent); white-space: pre-wrap; }
+/* The edit pencil sits outside the bubble's left edge, shown on hover/focus. */
+.as-user { position: relative; }
+.as-user > .tooltip-trigger { position: absolute; left: -24px; top: 50%; transform: translateY(-50%); }
+.as-edit-btn { display: inline-flex; padding: 3px; border: 0; border-radius: 4px; background: none;
+  color: var(--text-dim); cursor: pointer; opacity: 0; }
+.as-user:hover .as-edit-btn, .as-edit-btn:focus-visible { opacity: 1; }
+.as-edit-btn:hover { background: var(--hover); color: var(--text); }
+.as-edit { align-self: stretch; display: flex; flex-direction: column; gap: 6px; }
+.as-edit textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 40px;
+  background: var(--bg, transparent); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font: inherit; line-height: 1.4; }
+.as-edit-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.as-edit-actions .as-muted { margin-right: auto; }
+.as-edit-warn { display: flex; flex-direction: column; gap: 6px; color: var(--text-dim); font-size: 11px; }
+.as-link { padding: 2px 6px; font-size: 11px; border: 0; background: none; color: var(--text-dim); cursor: pointer; }
+.as-link:hover { color: var(--text); }
 .as-picked { color: var(--text-dim); font-size: 11px; margin-bottom: 2px; }
 .as-assistant { display: flex; flex-direction: column; gap: 6px; }
 .as-p { margin: 0; line-height: 1.45; }
