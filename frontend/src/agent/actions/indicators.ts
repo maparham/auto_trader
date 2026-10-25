@@ -25,7 +25,7 @@ import { alertInstanceOf } from "../../lib/indicatorAlertInstance";
 // action. This is NOT the same list the indicator sidebar offers (that UI
 // calls getSupportedIndicators()); it's deliberately narrower.
 const BUILTIN_TYPES = ["MACD", "BOLL", "VOL", "KDJ", "SAR", "BBI"];
-const VALID_TYPES = [...Object.keys(BASE_TEMPLATES), ...BUILTIN_TYPES].sort();
+export const VALID_TYPES = [...Object.keys(BASE_TEMPLATES), ...BUILTIN_TYPES].sort();
 
 export function registerIndicatorActions(): void {
   registerAction({
