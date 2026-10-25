@@ -81,7 +81,7 @@ def _is_broker_paused(exc: BaseException) -> bool:
     """True when `exc` or anything in its cause/context chain is the MT5
     paused-account error: the stream helpers wrap it in a RuntimeError, so the
     original sits one link down the chain. Any other error class can opt in
-    with a truthy `broker_paused` attribute (oanor's spent monthly quota)."""
+    with a truthy `broker_paused` attribute."""
     from auto_trader.brokers.mt5 import MT5PausedError
 
     seen: set[int] = set()

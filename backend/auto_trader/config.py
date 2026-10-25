@@ -220,34 +220,6 @@ class MT5MCPSettings(BaseSettings):
 mt5mcp_settings = MT5MCPSettings()
 
 
-# oanor (oanor.com) serves Iran's free-market (bazaar) rial/gold prices — daily
-# OHLC history (max 365 rows/symbol) and a latest-price endpoint. Registers as
-# the data-only "oanor" broker; only when the API key is set (see `has`), so an
-# absent key never shows a dead entry in the broker selector.
-class OanorSettings(BaseSettings):
-    """oanor API credentials (env-prefixed OANOR_).
-
-    `api_key` comes from https://www.oanor.com/developer/keys (free tier: 2,000
-    calls/month at 2 req/s). `base_url` exists for tests/self-hosted gateways."""
-
-    model_config = SettingsConfigDict(
-        env_prefix="OANOR_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    api_key: str = ""
-    base_url: str = "https://api.oanor.com/irr-api"
-
-    def has(self) -> bool:
-        """True only when the API key is set (gates registration)."""
-        return bool(self.api_key)
-
-
-oanor_settings = OanorSettings()
-
-
 # Telegram bot delivery for price alerts (deep-link account linking + DM
 # notifier). Registers only when a bot token is set (see TelegramNotify.enabled
 # in core/telegram_notify.py) — an absent token just disables the feature

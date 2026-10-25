@@ -26,7 +26,7 @@ from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 # credential-free trio (dukascopy, yfinance, nobitex) stays open to everyone.
 # Keep in sync with the credentialed blocks in build_registry().
 RESTRICTED_BROKER_IDS = frozenset(
-    {"capital", "capital-live", "ig-demo", "ig-live", "mt5", "mt5-self", "oanor"}
+    {"capital", "capital-live", "ig-demo", "ig-live", "mt5", "mt5-self"}
 )
 
 
@@ -152,8 +152,8 @@ class BrokerRegistry:
 def build_registry() -> BrokerRegistry:
     """Wire every broker the app ships with. Adding a broker is one block here:
     register its data broker, then register the executors that price off it."""
-    from auto_trader.brokers import capital, dukascopy, ig, mt5, mt5_mcp, nobitex, oanor, yfinance
-    from auto_trader.config import ig_settings, mt5_settings, mt5mcp_settings, oanor_settings
+    from auto_trader.brokers import capital, dukascopy, ig, mt5, mt5_mcp, nobitex, yfinance
+    from auto_trader.config import ig_settings, mt5_settings, mt5mcp_settings
 
     from auto_trader.config import settings
 
@@ -201,14 +201,5 @@ def build_registry() -> BrokerRegistry:
             url=mt5mcp_settings.url,
             key=mt5mcp_settings.key,
             server_utc_offset_minutes=mt5mcp_settings.server_utc_offset_minutes,
-        )
-    # oanor: Iranian free-market (bazaar) rial/gold daily history + latest price.
-    # Data-only, like dukascopy/yfinance, but needs an API key — registered only
-    # when OANOR_API_KEY is set, so an absent key never shows a dead entry.
-    if oanor_settings.has():
-        oanor.register(
-            registry,
-            api_key=oanor_settings.api_key,
-            base_url=oanor_settings.base_url,
         )
     return registry

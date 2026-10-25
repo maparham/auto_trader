@@ -211,7 +211,7 @@ def base_count_for(rule: BucketRule, n: int) -> int:
 def fold_days_to_weeks(daily: list[Candle], now: datetime | None = None) -> list[Candle]:
     """Ascending daily bars → ISO weeks opening Monday-UTC-midnight, volume
     summed. The still-forming trailing week is dropped — only closed bars may
-    reach the cache. Used by daily-native brokers (oanor, nobitex) to serve
+    reach the cache. Used by daily-native brokers (nobitex) to serve
     WEEK; the "week" BucketRule above can't do this — it groups existing WEEK
     bars into 2W/3W buckets, it doesn't build weeks from days."""
     if now is None:

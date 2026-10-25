@@ -3,8 +3,7 @@ broker for crypto/IRR pairs, USDT/IRR foremost.
 
 USDT/IRR is a live, 24/7, orderbook-traded proxy for the rial-dollar rate
 (tracks the bazaar dollar within ~1%) with real volume and bid/ask — the only
-IRR source in the app with intraday granularity (bazaar feeds like oanor are
-daily-only). Complements, not replaces, oanor: no gold/coin market here.
+IRR source in the app. No gold/coin market here.
 
 Upstream: public TradingView-UDF endpoint, no API key.
   GET /market/udf/history?symbol=USDTIRT&resolution=60&from=..&to=..
@@ -13,8 +12,8 @@ Constraints that shape this module (verified live 2026-08-10):
     over-wide request silently drops the old end, so windows are chunked to
     <=450 bars each.
   - Prices are in TOMAN; /market/stats is in rial (factor exactly 10). We
-    normalize candles x10 to RIAL so Nobitex series compare directly with
-    oanor's IRR series. Volume stays in base-asset units (e.g. USDT).
+    normalize candles x10 to RIAL, the unit IRR quotes use elsewhere.
+    Volume stays in base-asset units (e.g. USDT).
   - Daily bars anchor at Tehran midnight (20:30 UTC); restamped to UTC
     midnight of the Tehran calendar date so weekly/monthly folds bucket
     correctly (same idea as yfinance session-day normalization).

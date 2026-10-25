@@ -17,7 +17,7 @@ the user hasn't linked a chat.
 
 This module owns its own `httpx.AsyncClient` (configured with the bot token
 baked into the base path) rather than taking one as a dependency — same
-choice `nobitex.py`/`oanor.py` make for their API clients.
+choice `nobitex.py` makes for its API client.
 """
 
 from __future__ import annotations

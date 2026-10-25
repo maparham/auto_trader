@@ -90,14 +90,14 @@ echo "==> preflight: broker credentials (if any) must be admin-gated"
 ROOT="$(git rev-parse --show-toplevel)"
 # Broker-credential keys this script owns on the box. Keep in sync with
 # config.py's env_prefix set (and with the cred regex just below).
-CRED_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|OANOR_[A-Z_]*)='
+CRED_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*)='
 # Every key this script pushes to the box. A SUPERSET of CRED_KEYS, and
 # deliberately a separate variable: CRED_KEYS also decides whether the
 # admin-gate check below applies (a deploy that pushes broker creds needs the
 # gate), so folding a non-broker key into it would let a Telegram-only .env
 # waive that gate.
 # PROD_TELEGRAM_BOT_TOKEN, never the plain key: see the Telegram note above.
-SYNC_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|OANOR_[A-Z_]*|PROD_TELEGRAM_BOT_TOKEN|PROD_SNAPSHOT_DISABLED)='
+SYNC_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|PROD_TELEGRAM_BOT_TOKEN|PROD_SNAPSHOT_DISABLED)='
 LOCAL_ENV="$ROOT/backend/.env"
 SYNC_CREDS=0
 if [ "$DO_BACKEND" = 1 ] && [ -f "$LOCAL_ENV" ] \
@@ -111,7 +111,7 @@ if [ "$DO_BACKEND" = 1 ] && [ -f "$LOCAL_ENV" ] \
 fi
 
 rc=0
-"${SSH[@]}" "$HOST" 'sudo grep -Eiq "^[a-z_]*(capital|mt5|metaapi|oanor)[a-z0-9_]*=|^ig_" /etc/auto-trader/demo.env' || rc=$?
+"${SSH[@]}" "$HOST" 'sudo grep -Eiq "^[a-z_]*(capital|mt5|metaapi)[a-z0-9_]*=|^ig_" /etc/auto-trader/demo.env' || rc=$?
 # A deploy that is about to PUSH creds needs the same gate as a box that
 # already holds them — otherwise syncing would quietly bypass this check.
 if [ "$rc" -eq 1 ] && [ "$SYNC_CREDS" = 1 ]; then rc=0; fi

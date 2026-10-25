@@ -15,13 +15,13 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from auto_trader.config import IGSettings, MT5MCPSettings, MTSettings, OanorSettings, Settings, settings
+from auto_trader.config import IGSettings, MT5MCPSettings, MTSettings, Settings, settings
 from auto_trader.brokers.registry import BrokerRegistry, build_registry
 
 
 @pytest.fixture(autouse=True)
 def _no_ig(monkeypatch):
-    """Default: pretend IG, Capital-live, MT5 and oanor are unconfigured — and the
+    """Default: pretend IG, Capital-live, and MT5 are unconfigured — and the
     Capital demo account IS configured — so the base assertions are deterministic
     regardless of the local .env. Tests that want a different mix opt in/out
     explicitly. Capital creds are set via the underlying fields (not a has()
@@ -29,7 +29,6 @@ def _no_ig(monkeypatch):
     monkeypatch.setattr(IGSettings, "has", lambda self, side: False)
     monkeypatch.setattr(MTSettings, "has", lambda self: False)
     monkeypatch.setattr(MT5MCPSettings, "has", lambda self: False)
-    monkeypatch.setattr(OanorSettings, "has", lambda self: False)
     monkeypatch.setattr(settings, "api_key", "k", raising=False)
     monkeypatch.setattr(settings, "identifier", "i", raising=False)
     monkeypatch.setattr(settings, "password", "p", raising=False)

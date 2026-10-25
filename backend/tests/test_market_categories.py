@@ -20,7 +20,6 @@ from auto_trader.brokers.dukascopy import DukascopyBroker
 from auto_trader.brokers.ig import IGBroker
 from auto_trader.brokers.mt5 import MT5Broker, _classify_symbol
 from auto_trader.brokers.nobitex import NobitexBroker
-from auto_trader.brokers.oanor import OanorBroker
 from auto_trader.brokers.yfinance import YFinanceBroker
 
 # Brokers whose all_markets() is a static curated list (no network), so the
@@ -33,7 +32,6 @@ ALL_BROKERS = [
     IGBroker,
     MT5Broker,
     NobitexBroker,
-    OanorBroker,
     YFinanceBroker,
 ]
 

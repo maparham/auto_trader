@@ -38,7 +38,7 @@ import numpy as np
 from auto_trader.core.models import Candle
 
 # Crypto venues: a 3x bar there can be real, so only a listed split repairs.
-NO_THRESHOLD_BROKERS = frozenset({"nobitex", "oanor"})
+NO_THRESHOLD_BROKERS = frozenset({"nobitex"})
 
 # Loose gate for "worth a closer look" (and worth a split-list lookup).
 _SUSPECT_JUMP = 1.4  # open vs previous close

@@ -109,7 +109,7 @@ describe("SymbolSearchModal — broker-declared categories", () => {
   });
 
   it("shows no type chips for a broker that declares none", async () => {
-    renderModal("oanor");
+    renderModal("nobitex");
     await waitFor(() => expect(screen.queryByText("All")).not.toBeNull());
     expect(screen.queryByText("Stocks")).toBeNull();
     expect(screen.queryByText("Forex")).toBeNull();
