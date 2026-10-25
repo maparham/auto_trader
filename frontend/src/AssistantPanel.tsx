@@ -20,6 +20,64 @@ const ERROR_TEXT: Record<string, string> = {
   stopped: "Stopped.",
 };
 
+// The backend's own busy-semaphore 429 carries this exact detail string
+// (api/routers/assistant.py), distinguishing it from an upstream 429 (rate
+// limit) re-wrapped as a 502 with the same `status`.
+const BUSY_BODY = "assistant busy";
+
+function upstreamText(status: number, body?: string): string {
+  if (status === 429 && body === BUSY_BODY) return "The assistant is busy, try again in a moment.";
+  if (status === 429) return "Rate limited, try again shortly.";
+  return `The assistant service answered ${status}.`;
+}
+
+// Friendly phrases for the "Working..." label while a tool round is in
+// flight, keyed by the tool name session.ts records on `working` (the raw
+// snake_case name is not something a user should read). Unlisted tools fall
+// back to the name with underscores turned into spaces.
+const TOOL_WORKING_LABEL: Record<string, string> = {
+  chart_state: "reading the chart",
+  chart_timeframe_set: "changing the timeframe",
+  chart_range_set: "moving the visible range",
+  market_select: "switching symbol",
+  tab_list: "checking open tabs",
+  indicator_list: "checking indicators",
+  indicator_add: "adding an indicator",
+  indicator_set: "changing an indicator",
+  indicator_remove: "removing an indicator",
+  indicator_configure: "configuring an indicator",
+  drawing_list: "checking drawings",
+  drawing_add: "drawing",
+  drawing_remove: "removing a drawing",
+  backtest_config_get: "reading the backtest config",
+  backtest_config_set: "updating the backtest rules",
+  backtest_run: "running the backtest",
+  backtest_result: "reading the backtest result",
+  describe_indicator: "looking up indicator settings",
+  describe_rules: "looking up rule syntax",
+  validate_rule: "checking a rule",
+};
+
+function workingLabel(working: string): string {
+  if (working === "Undoing") return "undoing the last turn";
+  return TOOL_WORKING_LABEL[working] ?? working.replace(/_/g, " ");
+}
+
+/** The newest non-undone assistant turn with at least one change that is
+ * worth reverting (`undoable !== false`), whether or not its undo closure
+ * survived a reload. Used to decide WHEN to show an Undo button at all;
+ * `undoableIndex` (session.ts) decides whether that button is clickable
+ * right now (it also requires a live `undo` function). The two agree in a
+ * fresh session (every undoable change carries a live closure there) and
+ * only diverge after a reload, where closures never survive JSON. */
+function newestRevertibleIndex(turns: Turn[]): number {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i];
+    if (t.role === "assistant" && !t.undone && t.changes.some((c) => c.undoable !== false)) return i;
+  }
+  return -1;
+}
+
 function useSession(): SessionState {
   const [s, setS] = useState(assistantSession.state.value);
   useEffect(() => assistantSession.state.subscribe(setS), []);
@@ -54,6 +112,7 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
   }, [s.turns.length, s.working]);
 
   const undoIdx = undoableIndex(s.turns);
+  const revertibleIdx = newestRevertibleIndex(s.turns);
   const submit = (text: string) => {
     const t = text.trim();
     if (!t || s.busy) return;
@@ -70,7 +129,6 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
         </div>
       );
     }
-    const live = i === undoIdx && t.changes.some((c) => c.undo);
     const pendingAsk = t.ask && i === s.turns.length - 1 && !s.busy;
     return (
       <div key={i} className="as-assistant">
@@ -82,8 +140,8 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
             <ul>{t.changes.map((c, j) => <li key={j}>{c.label}</li>)}</ul>
             {t.undone ? (
               <span className="as-muted">Undone</span>
-            ) : i === undoIdx ? (
-              live ? (
+            ) : i === revertibleIdx ? (
+              i === undoIdx ? (
                 <button className="as-undo" onClick={() => void assistantSession.undoLast()}>
                   Undo this turn
                 </button>
@@ -116,8 +174,10 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
           <div className="as-error">
             {t.error.kind === "upstream" ? (
               <>
-                <div>The assistant service answered {t.error.status}.</div>
-                {t.error.body && <pre className="as-error-body">{t.error.body}</pre>}
+                <div>{upstreamText(t.error.status!, t.error.body)}</div>
+                {!(t.error.status === 429 && t.error.body === BUSY_BODY) && t.error.body && (
+                  <pre className="as-error-body">{t.error.body}</pre>
+                )}
               </>
             ) : (
               <div>{ERROR_TEXT[t.error.kind]}{t.error.body ? ` ${t.error.body}` : ""}</div>
@@ -157,7 +217,7 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
         ) : (
           s.turns.map(renderTurn)
         )}
-        {s.busy && <div className="as-working">Working…{s.working ? ` ${s.working.replace(/_/g, " ")}` : ""}</div>}
+        {s.busy && <div className="as-working">Working…{s.working ? ` ${workingLabel(s.working)}` : ""}</div>}
       </div>
       <div className="as-composer">
         <textarea
@@ -173,7 +233,11 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
         <div className="as-actions">
           <button className="as-link" onClick={() => assistantSession.reset()} disabled={s.busy}>New chat</button>
           {s.busy ? (
-            <button className="as-send" onClick={() => assistantSession.stop()}>Stop</button>
+            // Undoing isn't abortable (there is no in-flight fetch/action the
+            // Stop button would cancel), so it is hidden rather than shown inert.
+            s.working !== "Undoing" && (
+              <button className="as-send" onClick={() => assistantSession.stop()}>Stop</button>
+            )
           ) : (
             <button className="as-send" onClick={() => submit(draft)} disabled={!draft.trim()}>Send</button>
           )}

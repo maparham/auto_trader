@@ -157,9 +157,10 @@ export function describeRules(live: readonly LiveInstance[]): Record<string, unk
 
 export function validateRule(
   expr: string, isExit: boolean, live: readonly LiveInstance[], baseSeconds: number,
+  lines?: ReadonlySet<string>,
 ) {
   const instances = exprInstancesFor(live);
-  const res = analyze(expr, { isExit, instances });
+  const res = analyze(expr, { isExit, instances, lines });
   const errors = res.errors.map((e) => ({ message: e.message, from: e.from, to: e.to }));
   return {
     ok: errors.length === 0,

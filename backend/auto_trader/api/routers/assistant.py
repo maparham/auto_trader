@@ -61,6 +61,9 @@ async def status(request: Request) -> dict:
 async def messages(request: Request):
     _gate(request)
     deps.current_user(request)
+    content_type = request.headers.get("content-type", "")
+    if not content_type.startswith("application/json"):
+        raise HTTPException(415, "content-type must be application/json")
     if not ASSISTANT.enabled:
         raise HTTPException(503, "assistant not configured")
     raw = await _read_capped(request)

@@ -85,6 +85,18 @@ def test_too_many_messages_422(upstream):
     assert client.post("/api/assistant/messages", json=body).status_code == 422
 
 
+def test_wrong_content_type_415_without_reaching_upstream(upstream):
+    _queue, calls = upstream
+    r = client.post(
+        "/api/assistant/messages",
+        content=json.dumps(BODY).encode(),
+        headers={"content-type": "text/plain"},
+    )
+    assert r.status_code == 415
+    assert r.json() == {"detail": "content-type must be application/json"}
+    assert len(calls) == 0  # the key was never spent
+
+
 def test_body_over_cap_413_without_content_length(upstream):
     big = json.dumps({**BODY, "system": "x" * (300 * 1024)}).encode()
 

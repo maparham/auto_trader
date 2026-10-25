@@ -9,6 +9,9 @@ import { liveExprInstances } from "../lib/indicators";
 import { loadIndicatorConfigs } from "../lib/persist/artifacts";
 import { tfSeconds } from "../lib/expr/catalog";
 import { toast } from "../lib/notify";
+import { indicatorInfo } from "../lib/indicatorMeta";
+import { toolLabel } from "../lib/drawTools";
+import { tfLabel } from "../lib/timeframe";
 import { actionFor, prepareInput, budgetResult } from "./tools";
 import { describeIndicator, configureParams, describeRules, validateRule } from "./describe";
 
@@ -16,12 +19,14 @@ import { describeIndicator, configureParams, describeRules, validateRule } from 
 // re-pointed at a different symbol (market.select) without its id changing —
 // drawings and indicators are keyed by (scope, epic), not by cellId alone, so
 // undoTurn must refuse unless BOTH still match.
-// `undoable: false` marks a change that legitimately has nothing to revert
-// (a read like backtest.run/chart.range.set, a market.select with no prior
-// epic to go back to, or one undoTurn already reverted) — undoTurn skips
-// these silently. A change with no `undo` and `undoable` left unset means
-// capture failed on something that SHOULD have been undoable (an id
-// collision, an indicator.remove whose settings couldn't be recovered):
+// `undoable: false` marks a change that is legitimately not revertible, and
+// whose label already says so: a read like backtest.run/chart.range.set, a
+// market.select with no prior epic to go back to, an indicator.add whose id
+// collided with an existing pane, an indicator.remove whose settings
+// couldn't be recovered, or one undoTurn already reverted. undoTurn skips
+// these silently rather than blocking the rest of the turn forever. A change
+// with no `undo` and `undoable` left unset is different: capture failed on
+// something that SHOULD have been undoable but wasn't anticipated here, so
 // undoTurn treats that as an error rather than silently skipping it.
 export interface Change {
   label: string;
@@ -88,6 +93,24 @@ function pinOf(ext: unknown): string | null {
   return (ext as { mtf?: { timeframe?: string | null } } | undefined)?.mtf?.timeframe ?? null;
 }
 
+/** Human labels for BacktestConfig keys, for the "Updated backtest: ..." change
+ * label (lib/backtestConfig.ts has the field list). Unlisted keys fall back to
+ * the raw key name. */
+const BACKTEST_KEY_LABELS: Record<string, string> = {
+  longEntry: "long entry rule", longExit: "long exit rule",
+  shortEntry: "short entry rule", shortExit: "short exit rule",
+  longRisk: "long stop/target", shortRisk: "short stop/target",
+  longScaling: "long scaling", shortScaling: "short scaling",
+  longEnabled: "long side enabled", shortEnabled: "short side enabled",
+  riskSynced: "sync long/short risk", costs: "costs", range: "date range",
+  mode: "strategy mode", codedStrategy: "coded strategy",
+  robustWindows: "robustness windows", runBaselines: "reference baselines",
+  lines: "picked trend lines",
+};
+function backtestKeyLabel(key: string): string {
+  return BACKTEST_KEY_LABELS[key] ?? key;
+}
+
 async function local(tool: string, input: Record<string, unknown>, ctx: ActionContext): Promise<ExecResult> {
   if (tool === "describe_indicator") {
     return { content: budgetResult(tool, describeIndicator(String(input.type))), isError: false };
@@ -98,7 +121,12 @@ async function local(tool: string, input: Record<string, unknown>, ctx: ActionCo
   if (tool === "validate_rule") {
     const { chart, resolution } = focusedChart();
     const secs = tfSeconds(resolution) ?? 3600;
-    const out = validateRule(String(input.expr ?? ""), input.isExit === true, liveExprInstances(chart), secs);
+    // Picked trendlines (bare L<n> ids) the rule may reference, read from the
+    // backtest config the same way the backtest panel does (cfg.lines), so
+    // unknown_line_ref lints correctly instead of flagging every L<n>.
+    const cfg = (await run("backtest.config.get", {}, ctx)) as { lines?: Record<string, unknown> };
+    const lines = cfg.lines ? new Set(Object.keys(cfg.lines)) : undefined;
+    const out = validateRule(String(input.expr ?? ""), input.isExit === true, liveExprInstances(chart), secs, lines);
     return { content: budgetResult(tool, out), isError: false };
   }
   if (tool === "indicator_configure") {
@@ -146,14 +174,19 @@ export async function executeTool(
         const beforeIds = new Set(focusedChart().controller.indicators.value.map((i: { id: string }) => i.id));
         const out = (await run(action, args, ctx)) as { id: string; type: string };
         const collided = beforeIds.has(out.id);
+        const title = indicatorInfo(out.type).title;
         return {
           content: budgetResult(tool, out), isError: false,
           change: {
             label: collided
-              ? `Added ${out.type} (${out.id}); cannot undo (id collided with an existing pane)`
-              : `Added ${out.type} (${out.id})`,
+              ? `Added ${title} (${out.id}); cannot undo (id collided with an existing pane)`
+              : `Added ${title} (${out.id})`,
             cellId: cellNow(), epic: epicNow(),
-            undo: collided ? undefined : async () => { await run("indicator.remove", { id: out.id }, undoCtx()); },
+            // Explicitly non-undoable (the label already says so), not a capture
+            // failure: undoTurn must skip it, not block the rest of the turn.
+            ...(collided
+              ? { undoable: false }
+              : { undo: async () => { await run("indicator.remove", { id: out.id }, undoCtx()); } }),
           },
         };
       }
@@ -198,16 +231,20 @@ export async function executeTool(
               ? `Removed ${type} (undo re-adds it under a new id; alerts and rules on the old id are not restored)`
               : `Removed ${type ?? id}; cannot undo (its settings could not be recovered)`,
             cellId: cellNow(), epic: epicNow(),
-            undo: canUndo ? async () => {
-              const addArgs: Record<string, unknown> = { type, inset: inset === true };
-              if (calcParams !== undefined) addArgs.calcParams = calcParams;
-              const added = (await run("indicator.add", addArgs, undoCtx())) as { id: string };
-              const ext = extendData ?? {};
-              const setArgs: Record<string, unknown> = { id: added.id, extendData: ext };
-              const pin = pinOf(ext);
-              if (type === "TRENDLINES" && pin) setArgs.timeframe = pin;
-              await run("indicator.set", setArgs, undoCtx());
-            } : undefined,
+            // Explicitly non-undoable (the label already says so), not a capture
+            // failure: undoTurn must skip it, not block the rest of the turn.
+            ...(canUndo
+              ? { undo: async () => {
+                  const addArgs: Record<string, unknown> = { type, inset: inset === true };
+                  if (calcParams !== undefined) addArgs.calcParams = calcParams;
+                  const added = (await run("indicator.add", addArgs, undoCtx())) as { id: string };
+                  const ext = extendData ?? {};
+                  const setArgs: Record<string, unknown> = { id: added.id, extendData: ext };
+                  const pin = pinOf(ext);
+                  if (type === "TRENDLINES" && pin) setArgs.timeframe = pin;
+                  await run("indicator.set", setArgs, undoCtx());
+                } }
+              : { undoable: false }),
           },
         };
       }
@@ -215,7 +252,7 @@ export async function executeTool(
         const out = (await run(action, args, ctx)) as { id: string; tool: string };
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Drew ${out.tool}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Drew ${toolLabel(out.tool).toLowerCase()}`, cellId: cellNow(), epic: epicNow(),
             undo: async () => { await run("drawing.remove", { id: out.id }, undoCtx()); } },
         };
       }
@@ -224,7 +261,7 @@ export async function executeTool(
         const out = await run(action, args, ctx);
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Removed a ${snap?.name ?? "drawing"}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Removed a ${snap ? toolLabel(snap.name).toLowerCase() : "drawing"}`, cellId: cellNow(), epic: epicNow(),
             undo: snap ? async () => { focusedDrawings().overlays.placeDrawing(snap); } : undefined },
         };
       }
@@ -235,7 +272,7 @@ export async function executeTool(
         const out = await run(action, args, ctx);
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Updated backtest: ${keys.join(", ")}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Updated backtest: ${keys.map(backtestKeyLabel).join(", ")}`, cellId: cellNow(), epic: epicNow(),
             undo: async () => { await run("backtest.config.set", { patch: restore }, undoCtx()); } },
         };
       }
@@ -246,7 +283,7 @@ export async function executeTool(
         const settled = await settleFocus(() => focusedChart().resolution === target, SETTLE_TIMEOUT_MS, ctx.signal);
         return {
           content: budgetResult(tool, out) + (settled ? "" : SETTLE_WARNING), isError: false,
-          change: { label: `Timeframe ${prev} to ${target ?? args.resolution}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Timeframe ${tfLabel(prev)} to ${tfLabel(String(target ?? args.resolution))}`, cellId: cellNow(), epic: epicNow(),
             undo: async () => {
               await run("chart.timeframe.set", { resolution: prev }, undoCtx());
               await settleFocus(() => focusedChart().resolution === prev, SETTLE_TIMEOUT_MS, undoCtx().signal);

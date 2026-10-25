@@ -88,7 +88,7 @@ describe("executeTool", () => {
 
   it("indicator_add undo removes the new instance", async () => {
     const r = await executeTool("indicator_add", { type: "RSI" }, ctx);
-    expect(r.change!.label).toMatch(/Added RSI/);
+    expect(r.change!.label).toMatch(/Added Relative Strength Index \(RSI2\)/);
     await undoTurn([r.change!]);
     expect(calls.at(-1)).toEqual(["indicator.remove", { id: "RSI2" }]);
   });
@@ -206,8 +206,9 @@ describe("executeTool", () => {
   });
 
   // Finding 3 (continued): when nothing at all can be recovered, the change
-  // is left non-undoable and a later undoTurn surfaces that rather than
-  // silently skipping it.
+  // is explicitly marked non-undoable (its label already says so) so it does
+  // not block the rest of the turn forever — undoTurn skips it rather than
+  // treating it as an unexpected failure.
   it("indicator_remove cannot undo when nothing can be captured", async () => {
     liveInstances = [];
     controllerIndicators = [];
@@ -215,8 +216,9 @@ describe("executeTool", () => {
     const r = await executeTool("indicator_remove", { id: "GHOST" }, ctx);
     expect(r.isError).toBe(false);
     expect(r.change!.undo).toBeUndefined();
+    expect(r.change!.undoable).toBe(false);
     expect(r.change!.label).toMatch(/cannot undo/i);
-    expect(await undoTurn([r.change!])).toBe(false);
+    expect(await undoTurn([r.change!])).toBe(true);
   });
 
   // Finding 4: undo-by-id must never be offered when the new id already
@@ -226,8 +228,36 @@ describe("executeTool", () => {
     const r = await executeTool("indicator_add", { type: "RSI" }, ctx);
     expect(r.isError).toBe(false);
     expect(r.change!.undo).toBeUndefined();
+    expect(r.change!.undoable).toBe(false);
     expect(r.change!.label).toMatch(/cannot undo/i);
-    expect(await undoTurn([r.change!])).toBe(false);
+    expect(await undoTurn([r.change!])).toBe(true);
+  });
+
+  // Finding (M1): a change explicitly marked non-undoable at capture must not
+  // block the rest of the turn from being reverted.
+  it("a cannot-undo change does not block the rest of the turn from being undone", async () => {
+    controllerIndicators = [{ id: "RSI2", type: "RSI", inset: false }];
+    const collided = await executeTool("indicator_add", { type: "RSI" }, ctx); // id collides, undoable: false
+    controllerIndicators = [];
+    const ok = await executeTool("indicator_add", { type: "EMA" }, ctx); // normally undoable
+    calls.length = 0;
+    expect(await undoTurn([collided.change!, ok.change!])).toBe(true);
+    expect(calls).toEqual([["indicator.remove", { id: "EMA2" }]]);
+  });
+
+  // M5: validate_rule reads the backtest config's picked lines (same source
+  // the backtest panel reads from) so a bare L<n> ref is checked rather than
+  // left unchecked.
+  it("validate_rule checks a picked-line ref against the backtest config's lines", async () => {
+    clearRegistryForTest();
+    reg("backtest.config.get", () => ({ lines: { L1: {} } }));
+    const ok = await executeTool("validate_rule", { expr: "candle.close x> L1" }, ctx);
+    expect(ok.isError).toBe(false);
+    expect(JSON.parse(ok.content)).toMatchObject({ ok: true });
+    const bad = await executeTool("validate_rule", { expr: "candle.close x> L2" }, ctx);
+    const parsed = JSON.parse(bad.content);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.errors[0].message).toMatch(/L2 is not one of this rule's lines/);
   });
 
   // Finding 5: a chart that never settles must not fail silently.

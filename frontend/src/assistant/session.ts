@@ -169,11 +169,19 @@ export function createSession(deps: SessionDeps) {
         const uses = m.content.filter(isToolUse) as ToolUseBlock[];
 
         if (m.stop_reason === "refusal" || m.stop_reason === "max_tokens") {
-          patch({ pending: { toolUseIds: uses.map((u) => u.id), heldResults: [], askId: null } });
+          if (uses.length > 0) patch({ pending: { toolUseIds: uses.map((u) => u.id), heldResults: [], askId: null } });
           updateLastTurn((t) => ({ ...t, error: { kind: m.stop_reason as "refusal" | "max_tokens" } }));
           return;
         }
-        if (m.stop_reason !== "tool_use" || uses.length === 0) return;
+        if (m.stop_reason !== "tool_use") {
+          // Any other stop_reason (end_turn, or anything else the API might
+          // send) that still carries tool_use blocks must not leave them
+          // dangling in the transcript: record them as pending so the next
+          // send/retry closes them with a synthesized result.
+          if (uses.length > 0) patch({ pending: { toolUseIds: uses.map((u) => u.id), heldResults: [], askId: null } });
+          return;
+        }
+        if (uses.length === 0) return;
 
         const results: ToolResultBlock[] = [];
         for (let i = 0; i < uses.length; i++) {
@@ -269,6 +277,12 @@ export function createSession(deps: SessionDeps) {
     patch({ busy: true, working: "Undoing" });
     try {
       const target = state.value.turns[idx] as Extract<Turn, { role: "assistant" }>;
+      // Captured BEFORE the call: undoTurn mutates every change it reverts to
+      // `undoable: false` in place (see below), so after a successful call
+      // there is no way to tell a just-reverted change from one that was
+      // already explicitly non-undoable. Only the former actually changed
+      // the chart and belongs in the note sent to the model.
+      const revertedLabels = target.changes.filter((c) => c.undoable !== false).map((c) => c.label);
       const ok = await deps.undo(target.changes);
       // Re-read rather than trust the turns array captured before the await:
       // nothing else can run while busy is set, but defend against reset().
@@ -295,7 +309,7 @@ export function createSession(deps: SessionDeps) {
         const lastTurn = lastIdx !== idx ? nextTurns[lastIdx] : undefined;
         if (lastTurn?.role === "assistant") nextTurns[lastIdx] = { ...lastTurn, ask: undefined };
       }
-      const note = `[the user undid these changes: ${current.changes.map((c) => c.label).join("; ")}]`;
+      const note = `[the user undid these changes: ${revertedLabels.join("; ")}]`;
       // Close any pending ask/tool uses on this turn into the transcript (so
       // it stays a valid tool_use/tool_result pairing) before telling the
       // model what was undone; clearing `ask` above drops the chips too.

@@ -27,16 +27,16 @@ const { state, send, undoLast } = vi.hoisted(() => {
     undoLast: vi.fn(async () => {}),
   };
 });
-vi.mock("./assistant/session", () => ({
-  assistantSession: { state, send, retry: vi.fn(), stop: vi.fn(), undoLast, reset: vi.fn() },
-  undoableIndex: (turns: Array<{ role: string; undone?: boolean; changes?: unknown[] }>) => {
-    for (let i = turns.length - 1; i >= 0; i--) {
-      const t = turns[i];
-      if (t.role === "assistant" && !t.undone && (t.changes?.length ?? 0) > 0) return i;
-    }
-    return -1;
-  },
-}));
+// Only the live session singleton is faked; `undoableIndex` comes through
+// from the real module (importActual) so the panel test exercises the real
+// rule (undoable !== false AND a live undo closure), not a simplified stand-in.
+vi.mock("./assistant/session", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./assistant/session")>();
+  return {
+    ...actual,
+    assistantSession: { state, send, retry: vi.fn(), stop: vi.fn(), undoLast, reset: vi.fn() },
+  };
+});
 
 import AssistantPanel from "./AssistantPanel";
 
@@ -80,5 +80,58 @@ describe("AssistantPanel", () => {
     render(<AssistantPanel onClose={() => {}} />);
     expect(screen.getByText(/403/)).toBeTruthy();
     expect(screen.getByText("{\"error\":\"forbidden\"}")).toBeTruthy();
+  });
+
+  // M3: a turn restored from storage has no live undo closures (functions
+  // don't survive JSON), but the newest turn with changes still shows an
+  // Undo button so the user isn't left wondering - just disabled, with a
+  // tooltip explaining why.
+  it("shows a disabled Undo with a reload tooltip when no undo closure survived a reload", () => {
+    state.set({ ...state.value, turns: [
+      { role: "assistant", text: "a", changes: [{ label: "Added RSI", cellId: "c1" }], undone: false },
+    ] });
+    render(<AssistantPanel onClose={() => {}} />);
+    const btn = screen.getByRole("button", { name: /undo this turn/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.focus(btn.parentElement!);
+    expect(screen.getByRole("tooltip").textContent).toContain("Undo is lost on reload");
+    fireEvent.click(btn);
+    expect(undoLast).not.toHaveBeenCalled();
+  });
+
+  // M10: the proxy's own busy semaphore (429, body "assistant busy") and an
+  // upstream rate limit re-wrapped as a 502 (status 429, a different body)
+  // read as two different, plain-English messages.
+  it("shows the busy wording for the proxy semaphore and hides the raw body", () => {
+    state.set({ ...state.value, turns: [
+      { role: "assistant", text: "", changes: [], undone: false, error: { kind: "upstream", status: 429, body: "assistant busy" } },
+    ] });
+    render(<AssistantPanel onClose={() => {}} />);
+    expect(screen.getByText("The assistant is busy, try again in a moment.")).toBeTruthy();
+    expect(screen.queryByText("assistant busy")).toBeNull();
+  });
+
+  it("shows the rate-limited wording plus body for an upstream 429", () => {
+    state.set({ ...state.value, turns: [
+      { role: "assistant", text: "", changes: [], undone: false, error: { kind: "upstream", status: 429, body: "{\"type\":\"rate_limit_error\"}" } },
+    ] });
+    render(<AssistantPanel onClose={() => {}} />);
+    expect(screen.getByText("Rate limited, try again shortly.")).toBeTruthy();
+    expect(screen.getByText("{\"type\":\"rate_limit_error\"}")).toBeTruthy();
+  });
+
+  // M10: Undo is not abortable, so Stop is hidden while undoLast is running.
+  it("hides Stop while undoing, but shows a readable working label", () => {
+    state.set({ ...state.value, busy: true, working: "Undoing", turns: [] });
+    render(<AssistantPanel onClose={() => {}} />);
+    expect(screen.queryByRole("button", { name: /^stop$/i })).toBeNull();
+    expect(screen.getByText(/undoing the last turn/i)).toBeTruthy();
+  });
+
+  it("shows a readable tool label while a round is in flight", () => {
+    state.set({ ...state.value, busy: true, working: "indicator_add", turns: [] });
+    render(<AssistantPanel onClose={() => {}} />);
+    expect(screen.getByRole("button", { name: /^stop$/i })).toBeTruthy();
+    expect(screen.getByText(/adding an indicator/i)).toBeTruthy();
   });
 });

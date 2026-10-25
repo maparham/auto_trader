@@ -81,4 +81,15 @@ describe("rules", () => {
     expect(bad.ok).toBe(false);
     expect(bad.errors[0].message).toBeTruthy();
   });
+
+  // M5: a picked-line id (bare L<n>) is checked against the held `lines` set,
+  // matching the backtest panel's own analyze(expr, {lines}) call.
+  it("checks picked-line refs against the lines set when given one", () => {
+    expect(validateRule("candle.close x> L1", false, [], 3600, new Set(["L1"]))).toMatchObject({ ok: true });
+    const bad = validateRule("candle.close x> L2", false, [], 3600, new Set(["L1"]));
+    expect(bad.ok).toBe(false);
+    expect(bad.errors[0].message).toMatch(/L2 is not one of this rule's lines/);
+    // Omitting `lines` entirely (no holder) leaves line refs unchecked.
+    expect(validateRule("candle.close x> L2", false, [], 3600)).toMatchObject({ ok: true });
+  });
 });

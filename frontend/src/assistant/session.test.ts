@@ -111,6 +111,20 @@ describe("session loop", () => {
     expect(content[1]).toMatchObject({ type: "text" });
   });
 
+  // M6: a tool_use block under a stop_reason other than "tool_use"/"refusal"/
+  // "max_tokens" (e.g. "end_turn", or anything else the API might send) must
+  // still be recorded as pending, or the next send leaves a dangling
+  // tool_use in the transcript the upstream API would reject.
+  it("records tool_use blocks as pending under any stop_reason that isn't tool_use", async () => {
+    const { s, bodies } = setup([msg([text("ok"), tu("z", "indicator_list")], "end_turn"), msg([text("next")])]);
+    await s.send("a");
+    expect(s.state.value.turns.at(-1)).toMatchObject({ text: "ok" });
+    await s.send("b");
+    const content = lastUser(bodies).content;
+    expect(content[0]).toMatchObject({ tool_use_id: "z", is_error: true, content: "turn ended before this ran" });
+    expect(content[1]).toMatchObject({ type: "text" });
+  });
+
   it("upstream errors become an error turn and retry re-posts the same transcript", async () => {
     const { s, bodies } = setup([{ ok: false, status: 401, body: "bad key" }, msg([text("ok")])]);
     await s.send("a");
@@ -121,7 +135,7 @@ describe("session loop", () => {
 
   it("stop aborts and marks the turn stopped", async () => {
     let release!: () => void;
-    const { s } = setup([() => new Promise((res, rej) => { release = () => rej(new DOMException("aborted", "AbortError")); })]);
+    const { s } = setup([() => new Promise((_res, rej) => { release = () => rej(new DOMException("aborted", "AbortError")); })]);
     const p = s.send("slow");
     await Promise.resolve();
     s.stop();
@@ -140,6 +154,26 @@ describe("session loop", () => {
     const note = s.state.value.messages.at(-1)!;
     expect(note.role).toBe("user");
     expect(JSON.stringify(note.content)).toMatch(/undid these changes: Added RSI/);
+  });
+
+  // M2: the undo note sent to the model lists only the changes that were
+  // actually reverted, not ones the turn marked undoable:false (nothing to
+  // revert there, so telling the model otherwise would be wrong).
+  it("undoLast's note to the model excludes undoable:false changes", async () => {
+    const storage = mem();
+    const replies = [msg([tu("a", "market_select"), tu("b", "indicator_add")], "tool_use"), msg([text("done")])];
+    const post = vi.fn(async () => replies.shift()!);
+    const exec = vi.fn(async (tool: string) => tool === "market_select"
+      ? { content: "ok", isError: false, change: { label: "Opened GOLD (nothing to go back to)", cellId: "c1", undoable: false } }
+      : { content: "ok", isError: false, change: { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } });
+    const undo = vi.fn(async () => true);
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage });
+    await s.send("add rsi and open gold");
+    await s.undoLast();
+    const note = s.state.value.messages.at(-1)!;
+    const serialized = JSON.stringify(note.content);
+    expect(serialized).toMatch(/undid these changes: Added RSI/);
+    expect(serialized).not.toMatch(/Opened GOLD/);
   });
 
   it("undoLast leaves the turn undone:false when deps.undo refuses (bad focus), so retry works", async () => {
