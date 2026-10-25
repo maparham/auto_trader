@@ -1,6 +1,7 @@
 // The assistant's conversation loop. One session per browser tab, mirrored to
 // sessionStorage. Invariant: no new user content is ever appended while the
-// last assistant message holds a tool_use without a result (closeDangling).
+// last assistant message holds a tool_use without a result (closePending is
+// the one place that invariant gets restored, from send/retry/undoLast alike).
 import { Signal } from "../lib/signals";
 import { PREFIX } from "../lib/workspaceKeys";
 import { postMessages, type PostResult } from "./api";
@@ -15,6 +16,7 @@ import {
 
 export const MAX_ROUNDS = 12;
 const KEY = `${PREFIX}.assistant.session`;
+const ASK_NOT_RUN = "not run: the assistant stopped to ask the user";
 
 export type TurnError = {
   kind: "upstream" | "network" | "refusal" | "max_tokens" | "rounds" | "stopped";
@@ -47,13 +49,19 @@ export interface SessionDeps {
  * Index of the newest, not-yet-undone assistant turn that still has at least
  * one change worth reverting, or -1. A turn whose changes are ALL
  * `undoable === false` (e.g. a market.select with no prior epic to go back
- * to) has nothing to revert, so it's skipped rather than offered as the undo
- * target.
+ * to) has nothing to revert. A turn restored from storage has its changes'
+ * `undo` closures stripped by JSON serialization (functions don't survive
+ * `JSON.stringify`) even when `undoable` was never set to false, so a change
+ * only counts when it is BOTH not explicitly non-undoable AND still carries
+ * a live `undo` function.
  */
 export function undoableIndex(turns: Turn[]): number {
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i];
-    if (t.role === "assistant" && !t.undone && t.changes.some((c) => c.undoable !== false)) return i;
+    if (
+      t.role === "assistant" && !t.undone &&
+      t.changes.some((c) => c.undoable !== false && typeof c.undo === "function")
+    ) return i;
   }
   return -1;
 }
@@ -86,13 +94,30 @@ export function createSession(deps: SessionDeps) {
   }
   const patch = (p: Partial<SessionState>) => save({ ...state.value, ...p });
 
-  /** Results that close every unanswered tool_use, plus the held ones. */
-  function closingBlocks(reason: string): ContentBlock[] {
+  /**
+   * The ONE place that restores the transcript invariant: every tool_use in
+   * the last assistant message gets a matching tool_result before any new
+   * content is appended. Closes (in order) the already-finished held
+   * results, the not-yet-run tool uses (as errors, with `reason`), and the
+   * pending ask_user, if any - answered with `askAnswer` when given, else
+   * closed as not run. Used from send (answering or abandoning an ask),
+   * retry and undoLast; all three read `state.value.pending` fresh, so this
+   * is always called before `pending` is reset.
+   */
+  function closePending(opts: { reason: string; askAnswer?: string }): ContentBlock[] {
     const { pending } = state.value;
-    return [
+    const blocks: ContentBlock[] = [
       ...pending.heldResults,
-      ...pending.toolUseIds.map((id) => result(id, reason, true)),
+      ...pending.toolUseIds.map((id) => result(id, opts.reason, true)),
     ];
+    if (pending.askId) {
+      blocks.push(
+        opts.askAnswer !== undefined
+          ? result(pending.askId, opts.askAnswer)
+          : result(pending.askId, ASK_NOT_RUN, true),
+      );
+    }
+    return blocks;
   }
 
   function lastAssistant(turns: Turn[]): Extract<Turn, { role: "assistant" }> | null {
@@ -121,6 +146,7 @@ export function createSession(deps: SessionDeps) {
     let rounds = 0;
     try {
       while (rounds < MAX_ROUNDS) {
+        if (signal.aborted) throw new DOMException("aborted", "AbortError");
         rounds++;
         const { body, trimmed } = buildRequest(state.value.messages, deps.tools());
         if (trimmed) updateLastTurn((t) => ({ ...t, trimmedBefore: true }));
@@ -151,21 +177,23 @@ export function createSession(deps: SessionDeps) {
 
         const results: ToolResultBlock[] = [];
         for (let i = 0; i < uses.length; i++) {
+          if (signal.aborted) throw new DOMException("aborted", "AbortError");
           const u = uses[i];
           if (u.name === "ask_user") {
             const input = u.input as { question?: string; options?: Array<{ label: string; description?: string }> };
             patch({
               pending: {
                 toolUseIds: uses.slice(i + 1).map((x) => x.id),
-                heldResults: results,
+                heldResults: [...results],
                 askId: u.id,
               },
             });
             updateLastTurn((t) => ({ ...t, ask: { question: String(input.question ?? ""), options: input.options ?? [] } }));
             return;
           }
-          patch({ working: u.name, pending: { toolUseIds: uses.slice(i).map((x) => x.id), heldResults: results, askId: null } });
+          patch({ working: u.name, pending: { toolUseIds: uses.slice(i).map((x) => x.id), heldResults: [...results], askId: null } });
           const r = await deps.exec(u.name, u.input, { progress: () => {}, signal });
+          if (signal.aborted) throw new DOMException("aborted", "AbortError");
           results.push(result(u.id, r.content, r.isError));
           if (r.change) updateLastTurn((t) => ({ ...t, changes: [...t.changes, r.change!] }));
         }
@@ -189,14 +217,10 @@ export function createSession(deps: SessionDeps) {
     if (state.value.busy) return;
     const { pending } = state.value;
     const asked = pending.askId;
-    const stopped = lastAssistant(state.value.turns)?.error?.kind === "stopped";
-    const blocks: ContentBlock[] = closingBlocks(
-      asked ? "not run: the assistant stopped to ask the user"
-        : stopped ? "stopped by the user"
-        : "turn ended before this ran",
-    );
-    if (asked) blocks.push(result(asked, text));
-    else blocks.push({ type: "text", text: `${deps.context()}\n\n${text}` });
+    const stoppedKind = lastAssistant(state.value.turns)?.error?.kind === "stopped";
+    const reason = asked ? ASK_NOT_RUN : stoppedKind ? "stopped by the user" : "turn ended before this ran";
+    const blocks = closePending({ reason, askAnswer: asked ? text : undefined });
+    if (!asked) blocks.push({ type: "text", text: `${deps.context()}\n\n${text}` });
     const prevAsk = lastAssistant(state.value.turns)?.ask?.question;
     save({
       ...state.value,
@@ -209,7 +233,22 @@ export function createSession(deps: SessionDeps) {
 
   async function retry() {
     if (state.value.busy) return;
-    updateLastTurn((t) => ({ ...t, error: undefined }));
+    const err = lastAssistant(state.value.turns)?.error;
+    const reason = err?.kind === "stopped" ? "stopped by the user" : "turn ended before this ran";
+    const hadAsk = state.value.pending.askId !== null;
+    // Closing is a no-op (empty blocks) when pending is already empty, which
+    // is exactly the "nothing dangling" case (typically an upstream/network
+    // error that never reached the tool loop): the transcript is untouched
+    // and the retried POST body is byte-identical to the one that failed.
+    const blocks = closePending({ reason });
+    if (blocks.length > 0) {
+      save({
+        ...state.value,
+        pending: { ...EMPTY_PENDING },
+        messages: [...state.value.messages, { role: "user", content: blocks }],
+      });
+    }
+    updateLastTurn((t) => ({ ...t, error: undefined, ...(hadAsk ? { ask: undefined } : {}) }));
     await loop();
   }
 
@@ -219,21 +258,41 @@ export function createSession(deps: SessionDeps) {
 
   async function undoLast() {
     if (state.value.busy) return;
-    const turns = state.value.turns;
-    const idx = undoableIndex(turns);
+    const idx = undoableIndex(state.value.turns);
     if (idx === -1) return;
-    const t = turns[idx] as Extract<Turn, { role: "assistant" }>;
-    if (!(await deps.undo(t.changes))) return;
-    const next = [...turns];
-    next[idx] = { ...t, undone: true };
-    const note = `[the user undid these changes: ${t.changes.map((c) => c.label).join("; ")}]`;
-    const blocks: ContentBlock[] = [...closingBlocks("stopped by the user"), { type: "text", text: note }];
-    save({
-      ...state.value,
-      turns: next,
-      pending: { ...EMPTY_PENDING },
-      messages: [...state.value.messages, { role: "user", content: blocks }],
-    });
+    patch({ busy: true, working: "Undoing" });
+    try {
+      const target = state.value.turns[idx] as Extract<Turn, { role: "assistant" }>;
+      const ok = await deps.undo(target.changes);
+      // Re-read rather than trust the turns array captured before the await:
+      // nothing else can run while busy is set, but defend against reset().
+      const turnsNow = state.value.turns;
+      const current = turnsNow[idx] as Extract<Turn, { role: "assistant" }> | undefined;
+      if (!current) return;
+      if (!ok) {
+        // undoTurn mutates each successfully-reverted Change in place
+        // (clears `undo`, sets `undoable: false`) even when it stops partway
+        // through on a refusal, so a retried undo doesn't replay those.
+        // Persist that partial progress regardless of the overall result.
+        save({ ...state.value, turns: turnsNow });
+        return;
+      }
+      const nextTurns = [...turnsNow];
+      nextTurns[idx] = { ...current, undone: true, ask: undefined };
+      const note = `[the user undid these changes: ${current.changes.map((c) => c.label).join("; ")}]`;
+      // Close any pending ask/tool uses on this turn into the transcript (so
+      // it stays a valid tool_use/tool_result pairing) before telling the
+      // model what was undone; clearing `ask` above drops the chips too.
+      const blocks: ContentBlock[] = [...closePending({ reason: "stopped by the user" }), { type: "text", text: note }];
+      save({
+        ...state.value,
+        turns: nextTurns,
+        pending: { ...EMPTY_PENDING },
+        messages: [...state.value.messages, { role: "user", content: blocks }],
+      });
+    } finally {
+      patch({ busy: false, working: null });
+    }
   }
 
   function reset() {

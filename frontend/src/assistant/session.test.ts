@@ -185,4 +185,143 @@ describe("session loop", () => {
     expect(t.role === "assistant" && t.changes[0]).toMatchObject({ label: "Added RSI", cellId: "c1" });
     expect(t.role === "assistant" && (t.changes[0] as { undo?: unknown }).undo).toBeUndefined();
   });
+
+  // --- fix round 1 (task-8-findings-r1.md) -----------------------------------
+
+  it("[finding 1] undoLast while an ask is pending closes it into the transcript and clears the chips", async () => {
+    const { s, bodies } = setup([
+      msg([tu("b", "indicator_add"), tu("q", "ask_user", { question: "Which way?", options: [{ label: "Up" }, { label: "Down" }] })], "tool_use"),
+      msg([text("ok")]),
+    ]);
+    await s.send("add rsi then ask");
+    let t = s.state.value.turns.at(-1)!;
+    expect(t.role === "assistant" && t.ask?.question).toBe("Which way?");
+    await s.undoLast();
+    t = s.state.value.turns.at(-1)!;
+    expect(t.role === "assistant" && t.undone).toBe(true);
+    expect(t.role === "assistant" && t.ask).toBeUndefined();
+    await s.send("something new");
+    const lastBody = bodies.at(-1) as { messages: Array<{ content: Array<Record<string, unknown>> }> };
+    const allIds = lastBody.messages.flatMap((m) => m.content).filter((b) => b.type === "tool_result").map((b) => b.tool_use_id);
+    expect(allIds).toContain("q");
+  });
+
+  it("[finding 2] stop mid-tool-batch then retry closes every pending tool_use before continuing", async () => {
+    let started!: () => void;
+    const startedPromise = new Promise<void>((res) => { started = res; });
+    let release!: (v: { content: string; isError: boolean }) => void;
+    let execCalls = 0;
+    const exec = vi.fn((tool: string) => {
+      execCalls++;
+      if (execCalls === 1) {
+        started();
+        return new Promise<{ content: string; isError: boolean }>((res) => { release = res; });
+      }
+      return Promise.resolve({ content: `${tool} ok`, isError: false });
+    });
+    const bodies: unknown[] = [];
+    let postCalls = 0;
+    const post = vi.fn(async (body: unknown) => {
+      postCalls++;
+      bodies.push(JSON.parse(JSON.stringify(body)));
+      return postCalls === 1
+        ? msg([tu("a", "indicator_list"), tu("b", "indicator_list"), tu("c", "indicator_list")], "tool_use")
+        : msg([text("ok")]);
+    });
+    const undo = vi.fn(async () => true);
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage: mem() });
+    const p = s.send("go");
+    await startedPromise;
+    s.stop();
+    release({ content: "indicator_list ok", isError: false });
+    await p;
+    expect(s.state.value.turns.at(-1)).toMatchObject({ error: { kind: "stopped" } });
+    await s.retry();
+    const lastBody = bodies.at(-1) as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> };
+    const lastMsg = lastBody.messages.at(-1)!;
+    expect(lastMsg.role).toBe("user");
+    const ids = lastMsg.content.filter((b) => b.type === "tool_result").map((b) => b.tool_use_id);
+    expect(ids).toEqual(["a", "b", "c"]);
+  });
+
+  it("[finding 3] stop halts before the next tool: later tools never run and the turn shows stopped", async () => {
+    let started!: () => void;
+    const startedPromise = new Promise<void>((res) => { started = res; });
+    let release!: (v: { content: string; isError: boolean }) => void;
+    let execCalls = 0;
+    const exec = vi.fn((tool: string) => {
+      execCalls++;
+      if (execCalls === 1) {
+        started();
+        return new Promise<{ content: string; isError: boolean }>((res) => { release = res; });
+      }
+      return Promise.resolve({ content: `${tool} ok`, isError: false });
+    });
+    const post = vi.fn(async () => msg([tu("a", "indicator_list"), tu("b", "indicator_list"), tu("c", "indicator_list")], "tool_use"));
+    const undo = vi.fn(async () => true);
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage: mem() });
+    const p = s.send("go");
+    await startedPromise;
+    s.stop();
+    release({ content: "indicator_list ok", isError: false });
+    await p;
+    expect(execCalls).toBe(1);
+    expect(s.state.value.turns.at(-1)).toMatchObject({ error: { kind: "stopped" } });
+    expect(s.state.value.busy).toBe(false);
+  });
+
+  it("[finding 4] undoLast is exclusive: concurrent calls run deps.undo once; send is ignored meanwhile", async () => {
+    const storage = mem();
+    let releaseUndo!: (v: boolean) => void;
+    const undo = vi.fn(() => new Promise<boolean>((res) => { releaseUndo = res; }));
+    let postCalls = 0;
+    const post = vi.fn(async () => {
+      postCalls++;
+      return postCalls === 1 ? msg([tu("b", "indicator_add")], "tool_use") : msg([text("ok")]);
+    });
+    const exec = vi.fn(async () => ({ content: "ok", isError: false, change: { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } }));
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage });
+    await s.send("add");
+    const p1 = s.undoLast();
+    const p2 = s.undoLast();
+    await s.send("ignored while undoing");
+    expect(s.state.value.turns.some((t) => t.role === "user" && t.text === "ignored while undoing")).toBe(false);
+    releaseUndo(true);
+    await Promise.all([p1, p2]);
+    expect(undo).toHaveBeenCalledTimes(1);
+    const t = s.state.value.turns.at(-1)!;
+    expect(t.role === "assistant" && t.undone).toBe(true);
+  });
+
+  it("[finding 5] undoableIndex skips a restored turn whose change lost its undo function to serialization", () => {
+    const restored: Turn[] = [
+      { role: "assistant", text: "ok", undone: false, changes: [{ label: "Added RSI", cellId: "c1" }] },
+    ];
+    expect(undoableIndex(restored)).toBe(-1);
+  });
+
+  it("[finding 6] pending.heldResults handed out mid-round is a snapshot, not a live alias of the growing results array", async () => {
+    const ref: { current?: ReturnType<typeof createSession> } = {};
+    let capturedRef: unknown[] | undefined;
+    let execCalls = 0;
+    const exec = vi.fn(async (tool: string) => {
+      execCalls++;
+      if (execCalls === 2) {
+        capturedRef = ref.current!.state.value.pending.heldResults as unknown[];
+      }
+      return { content: `${tool} ok`, isError: false };
+    });
+    let postCalls = 0;
+    const post = vi.fn(async () => {
+      postCalls++;
+      return postCalls === 1
+        ? msg([tu("a", "indicator_list"), tu("b", "indicator_list")], "tool_use")
+        : msg([text("done")]);
+    });
+    const undo = vi.fn(async () => true);
+    ref.current = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage: mem() });
+    await ref.current.send("go");
+    expect(capturedRef).toBeDefined();
+    expect((capturedRef as unknown[]).length).toBe(1);
+  });
 });
