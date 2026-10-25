@@ -18,6 +18,10 @@ export interface SweepPoint {
   score?: number;
   sweptLevel?: number;
   barsSince?: number;
+  // 1 on a previous-candle reversal bar (0 while usePrevBar is off). A
+  // reversal always flags its side, so each implies the matching sweep.
+  bearReversal: number;
+  bullReversal: number;
   // Flag bars only, for the draw: where the swept level's dashed segment
   // starts, and what kind of level it was. Not rule operands.
   levelFrom?: number;
@@ -294,6 +298,8 @@ export function computeSweep(dataList: KLineData[], cfg: SweepConfig): SweepPoin
       bullSweep: flag > 0 ? 1 : 0,
       bearConfirmed: bearConf,
       bullConfirmed: bullConf,
+      bearReversal: bearReversal ? 1 : 0,
+      bullReversal: bullReversal ? 1 : 0,
     };
     if (lastBar >= 0) {
       pt.score = lastScore;

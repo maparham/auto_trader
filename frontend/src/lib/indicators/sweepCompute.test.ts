@@ -238,6 +238,14 @@ describe("previous-candle outside-bar reversal (usePrevBar)", () => {
     const cfg = { ...CFG, usePrevBar: false };
     const b = bars(REV_BULL_ROWS);
     expect(col(cfg, b, "bullSweep")).toEqual([0, 0]);
+    expect(col(cfg, b, "bullReversal")).toEqual([0, 0]);
+  });
+
+  it("reversal outputs mark only reversal bars", () => {
+    expect(col(CFG, bars(REV_BULL_ROWS), "bullReversal")).toEqual([0, 1]);
+    expect(col(CFG, bars(REV_BULL_ROWS), "bearReversal")).toEqual([0, 0]);
+    expect(col(CFG, bars(REV_BEAR_ROWS), "bearReversal")).toEqual([0, 1]);
+    expect(col(CFG, bars(REV_BEAR_ROWS), "bullReversal")).toEqual([0, 0]);
   });
 
   it("beats a normal opposite-side flag on the same bar", () => {
@@ -252,6 +260,7 @@ describe("previous-candle outside-bar reversal (usePrevBar)", () => {
     expect(col(CFG, b, "bullSweep")[4]).toBe(1);
     expect(col(CFG, b, "bearSweep")[4]).toBe(0);
     expect(col(CFG, b, "sweptLevel")[4]).toBe(100);
+    expect(col(CFG, b, "bullReversal")[4]).toBe(1);
     const atrPrev = atrSeries(b, CFG.atrLen)[3];
     const s = sweepScore(CFG, true, 105, 112, 95, 107, atrPrev, null);
     expect(s).toBeGreaterThanOrEqual(CFG.minScore);

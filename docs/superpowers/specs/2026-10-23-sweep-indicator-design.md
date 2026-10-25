@@ -143,6 +143,12 @@ on either side, replaces the pending sweep.
 | `score` | value | unrounded score of the last flagged sweep, forward-filled |
 | `sweptLevel` | price | L of the last flagged sweep, forward-filled |
 | `barsSince` | value | bars since the last flagged sweep (0 on the flag bar) |
+| `bearReversal` | event | 1 on a previous-candle bear reversal bar, else 0 |
+| `bullReversal` | event | 1 on a previous-candle bull reversal bar, else 0 |
+
+The reversal outputs are 0 throughout while `usePrevBar` is off. A reversal
+always flags its side, so each implies the matching sweep output, even when
+a more extreme stored level wins the swept level.
 
 Events are 0 from bar 0, including warmup. `score`, `sweptLevel` and
 `barsSince` are None before the first flag. Only `sweptLevel` is a figure,
@@ -154,6 +160,7 @@ typed by hand.
 - Flagged candle: translucent box over its high/low range, red for bear,
   green for bull, alpha scaled by score.
 - Swept level: dashed segment from the level's start bar to the sweep bar.
+- Previous-candle reversal: the flagged box also gets a solid border.
 - The chart redraws SWEEP on a chart-timezone change, as it does PREV_HL
   (ChartCore's zone effect), and resyncs linked alerts.
 - Confirmed: small tick marker above or below the sweep candle.

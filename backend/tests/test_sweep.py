@@ -268,6 +268,27 @@ def test_prev_bar_toggle_off_no_flag():
     cfg = replace(CFG, use_prev_bar=False)
     b = bars(REV_BULL_ROWS)
     assert col(cfg, b, "bullSweep") == [0, 0]
+    assert col(cfg, b, "bullReversal") == [0, 0]
+
+
+def test_reversal_outputs_mark_only_reversal_bars():
+    assert col(CFG, bars(REV_BULL_ROWS), "bullReversal") == [0, 1]
+    assert col(CFG, bars(REV_BULL_ROWS), "bearReversal") == [0, 0]
+    assert col(CFG, bars(REV_BEAR_ROWS), "bearReversal") == [0, 1]
+    assert col(CFG, bars(REV_BEAR_ROWS), "bullReversal") == [0, 0]
+
+
+def test_stored_level_win_still_marks_the_reversal():
+    # The more extreme stored level wins the swept level, but the bar is
+    # still a previous-candle reversal.
+    rows = [
+        (100, 101, 99, 100.5),
+        (95, 96, 90, 95.5),
+        (95, 95.5, 94, 95),
+        (93, 94, 91, 92),
+        (93, 97, 85, 96),
+    ]
+    assert col(CFG, bars(rows), "bullReversal")[4] == 1
 
 
 def test_prev_bar_reversal_beats_normal_opposite_flag():
@@ -325,6 +346,7 @@ def test_warmup():
     assert sweep_warmup(SweepConfig(), "bogus") == 0
     assert set(SWEEP_OUTPUTS) == {
         "bearSweep", "bullSweep", "bearConfirmed", "bullConfirmed", "score", "sweptLevel", "barsSince",
+        "bearReversal", "bullReversal",
     }
 
 
@@ -340,6 +362,7 @@ def test_registry_and_alert_spec():
     outs = alert.outputs(cfg)
     assert outs["bearSweep"] == EVENT and outs["bullConfirmed"] == EVENT
     assert outs["sweptLevel"] == PRICE and outs["score"] == LEVEL and outs["barsSince"] == LEVEL
+    assert outs["bearReversal"] == EVENT and outs["bullReversal"] == EVENT
     assert alert.label(cfg, "bearSweep") == "Stop hunt bear sweep"
     assert alert.heavy and alert.sparse
     assert alert.needs_volume(cfg) is False

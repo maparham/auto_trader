@@ -16,6 +16,8 @@ export const SWEEP_OUTPUTS = [
   "score",
   "sweptLevel",
   "barsSince",
+  "bearReversal",
+  "bullReversal",
 ] as const;
 
 export type SweepOutput = (typeof SWEEP_OUTPUTS)[number];

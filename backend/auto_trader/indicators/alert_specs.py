@@ -185,6 +185,7 @@ _SWEEP_NAMES: dict[str, tuple[str, AlertOutput]] = {
     "bearSweep": ("bear sweep", EVENT), "bullSweep": ("bull sweep", EVENT),
     "bearConfirmed": ("bear confirmed", EVENT), "bullConfirmed": ("bull confirmed", EVENT),
     "score": ("score", LEVEL), "sweptLevel": ("swept level", PRICE), "barsSince": ("bars since", LEVEL),
+    "bearReversal": ("bear reversal", EVENT), "bullReversal": ("bull reversal", EVENT),
 }
 _SWEEP = AlertSpec(
     outputs=lambda cfg: {k: v[1] for k, v in _SWEEP_NAMES.items()},

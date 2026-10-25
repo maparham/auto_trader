@@ -20,6 +20,8 @@ function points(len: number, overrides: Record<number, Partial<SweepPoint>>): Sw
     bullSweep: 0,
     bearConfirmed: 0,
     bullConfirmed: 0,
+    bearReversal: 0,
+    bullReversal: 0,
     ...overrides[i],
   }));
 }

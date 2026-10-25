@@ -2,7 +2,8 @@
 // previous-day level and close back on the near side. The math lives in
 // ./sweepCompute (node-safe, Python-mirrored); this module only registers
 // the template and draws: a tinted box over each flagged candle, a dashed
-// segment along the swept level, a tick once the sweep confirms, and a small
+// segment along the swept level, a solid border on previous-candle reversals,
+// a tick once the sweep confirms, and a small
 // score chip when bars are wide enough to read it.
 import {
   type Indicator,
@@ -103,6 +104,13 @@ function drawSweep(params: IndicatorDrawParams<SweepPoint, unknown, unknown>): b
     const w = Math.max(3, half * 2);
     ctx.fillStyle = hexWithAlpha(color, 0.12 + 0.18 * ((p.score ?? 0) / 100));
     ctx.fillRect(x - w / 2, yHigh - 2, w, Math.max(1, yLow - yHigh) + 4);
+    // A previous-candle reversal gets a solid border, so it reads apart from
+    // a swing or previous-day sweep.
+    if (bear ? p.bearReversal === 1 : p.bullReversal === 1) {
+      ctx.strokeStyle = hexWithAlpha(color, 0.9);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x - w / 2 + 0.5, yHigh - 1.5, w - 1, Math.max(1, yLow - yHigh) + 3);
+    }
     // Confirm tick, on the sweep candle, when THIS sweep confirmed.
     if (sweepConfirmedAt(result, i, cfg.confirmBars)) {
       const yTick = bear ? yHigh - 8 : yLow + 8;

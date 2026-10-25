@@ -1,5 +1,6 @@
 """SWEEP instances (`SWEEP.bearSweep` / `.bullSweep` / `.bearConfirmed` /
-`.bullConfirmed` / `.score` / `.sweptLevel` / `.barsSince`): a causal
+`.bullConfirmed` / `.score` / `.sweptLevel` / `.barsSince` / `.bearReversal` /
+`.bullReversal`): a causal
 liquidity-sweep (stop hunt) detector, mirrored operation-for-operation in
 frontend lib/indicators/sweepCompute.ts per the parity contract in
 indicators/core.py. Chart-timeframe only (no MTF pin).
@@ -28,7 +29,9 @@ level" contest for its side (a stored level still wins if it is more extreme
 and its own close test holds; the reversal level's close test always passes
 by construction). A side with a reversal flags regardless of its score, and
 beats a non-reversal flag on the other side even when that side scored
-higher.
+higher. `bullReversal` / `bearReversal` are 1 on exactly the bars that hold
+the reversal (0 throughout while `use_prev_bar` is off); a reversal always
+flags its side, so each implies the matching sweep output.
 
 A flagged sweep becomes pending and confirms `confirm_bars` later if no close
 went back through its level; a close through drops it, and any new flag
@@ -50,6 +53,7 @@ from auto_trader.indicators.prev_hl import _zone, estimate_bar_ms
 # outputs[0], an event that is usable as a rule at once.
 SWEEP_OUTPUTS: tuple[str, ...] = (
     "bearSweep", "bullSweep", "bearConfirmed", "bullConfirmed", "score", "sweptLevel", "barsSince",
+    "bearReversal", "bullReversal",
 )
 
 _OUTPUT_INDEX = {name: i for i, name in enumerate(SWEEP_OUTPUTS)}
@@ -359,6 +363,8 @@ def _compute_points(cfg: SweepConfig, candles: Sequence[Candle]) -> list[tuple[f
             last_score,
             last_level,
             float(i - last_bar) if last_bar >= 0 else None,
+            1.0 if bear_reversal else 0.0,
+            1.0 if bull_reversal else 0.0,
         ))
     return out
 
