@@ -324,4 +324,72 @@ describe("session loop", () => {
     expect(capturedRef).toBeDefined();
     expect((capturedRef as unknown[]).length).toBe(1);
   });
+
+  // --- fix round 2 (task-8-findings-r2.md) -----------------------------------
+
+  it("[finding r2-1] a tool that completes after Stop keeps its change and real result; later tools close as stopped", async () => {
+    let started!: () => void;
+    const startedPromise = new Promise<void>((res) => { started = res; });
+    let release!: (v: { content: string; isError: boolean; change?: unknown }) => void;
+    let execCalls = 0;
+    const exec = vi.fn((tool: string) => {
+      execCalls++;
+      if (execCalls === 1) {
+        started();
+        return new Promise((res) => { release = res; });
+      }
+      return Promise.resolve({ content: `${tool} ok`, isError: false });
+    });
+    const bodies: unknown[] = [];
+    let postCalls = 0;
+    const post = vi.fn(async (body: unknown) => {
+      postCalls++;
+      bodies.push(JSON.parse(JSON.stringify(body)));
+      return postCalls === 1
+        ? msg([tu("a", "indicator_add"), tu("b", "indicator_list"), tu("c", "indicator_list")], "tool_use")
+        : msg([text("ok")]);
+    });
+    const undo = vi.fn(async () => true);
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, context: () => "[context] x", storage: mem() });
+    const p = s.send("go");
+    await startedPromise;
+    s.stop();
+    release({ content: "a added", isError: false, change: { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } });
+    await p;
+    expect(execCalls).toBe(1);
+    const turns = s.state.value.turns;
+    const t = turns.at(-1)!;
+    expect(t.role === "assistant" && t.error?.kind).toBe("stopped");
+    expect(t.role === "assistant" && t.changes.map((c) => c.label)).toEqual(["Added RSI"]);
+    expect(undoableIndex(turns)).toBe(turns.length - 1);
+    expect(s.state.value.pending.heldResults).toEqual([{ type: "tool_result", tool_use_id: "a", content: "a added" }]);
+
+    await s.retry();
+    const lastBody = bodies.at(-1) as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> };
+    const closing = lastBody.messages.find((m) => m.role === "user" && m.content.some((b) => b.tool_use_id === "a"))!;
+    const byId = Object.fromEntries(closing.content.map((b) => [b.tool_use_id, b]));
+    expect(byId.a).toMatchObject({ content: "a added" });
+    expect(byId.a.is_error).toBeFalsy();
+    expect(byId.b).toMatchObject({ is_error: true });
+    expect(byId.c).toMatchObject({ is_error: true });
+  });
+
+  it("[finding r2-2] undoLast on an earlier turn clears a pending ask living on a later, change-less turn", async () => {
+    const { s } = setup([
+      msg([tu("b", "indicator_add")], "tool_use"),
+      msg([text("ok")]),
+      msg([tu("q", "ask_user", { question: "Which way?", options: [{ label: "Up" }, { label: "Down" }] })], "tool_use"),
+    ]);
+    await s.send("add rsi");
+    await s.send("ask something");
+    const beforeTurns = s.state.value.turns;
+    expect(beforeTurns.some((t) => t.role === "assistant" && t.ask)).toBe(true);
+    const idx = undoableIndex(beforeTurns);
+    expect(idx).toBeLessThan(beforeTurns.length - 1);
+    await s.undoLast();
+    const afterTurns = s.state.value.turns;
+    expect(afterTurns.some((t) => t.role === "assistant" && t.ask)).toBe(false);
+    const undone = afterTurns[idx];
+    expect(undone.role === "assistant" && undone.undone).toBe(true);
+  });
 });

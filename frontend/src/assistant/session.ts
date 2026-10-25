@@ -193,9 +193,15 @@ export function createSession(deps: SessionDeps) {
           }
           patch({ working: u.name, pending: { toolUseIds: uses.slice(i).map((x) => x.id), heldResults: [...results], askId: null } });
           const r = await deps.exec(u.name, u.input, { progress: () => {}, signal });
-          if (signal.aborted) throw new DOMException("aborted", "AbortError");
+          // A tool that completes (normally or with its own error) always
+          // gets its real result recorded and its change kept on the turn,
+          // even if Stop fired while it was running - only THEN do we check
+          // whether to abandon the rest of the batch, so a completed tool is
+          // never reported as "not run" just because it finished late.
           results.push(result(u.id, r.content, r.isError));
           if (r.change) updateLastTurn((t) => ({ ...t, changes: [...t.changes, r.change!] }));
+          patch({ pending: { toolUseIds: uses.slice(i + 1).map((x) => x.id), heldResults: [...results], askId: null } });
+          if (signal.aborted) throw new DOMException("aborted", "AbortError");
         }
         patch({
           working: null,
@@ -279,6 +285,16 @@ export function createSession(deps: SessionDeps) {
       }
       const nextTurns = [...turnsNow];
       nextTurns[idx] = { ...current, undone: true, ask: undefined };
+      // A pending ask lives on whichever turn is CURRENTLY last, which need
+      // not be the turn being undone (undoableIndex finds the newest
+      // UNDOABLE turn - a later, change-less turn can hold the live ask).
+      // Clear its chips there too, or they'd be left stale even though its
+      // ask_user tool_use is about to be closed into the transcript below.
+      if (state.value.pending.askId !== null) {
+        const lastIdx = nextTurns.length - 1;
+        const lastTurn = lastIdx !== idx ? nextTurns[lastIdx] : undefined;
+        if (lastTurn?.role === "assistant") nextTurns[lastIdx] = { ...lastTurn, ask: undefined };
+      }
       const note = `[the user undid these changes: ${current.changes.map((c) => c.label).join("; ")}]`;
       // Close any pending ask/tool uses on this turn into the transcript (so
       // it stays a valid tool_use/tool_result pairing) before telling the
