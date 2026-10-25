@@ -5,14 +5,14 @@
 import { ActionError, invokeAction, type ActionContext } from "../agent/registry";
 import { focusedChart, agentPeriod } from "../agent/actions/chart";
 import { focusedDrawings } from "../agent/actions/drawings";
-import { liveExprInstances } from "../lib/indicators";
+import { liveExprInstances, getIndicatorsByPane } from "../lib/indicators";
 import { loadIndicatorConfigs } from "../lib/persist/artifacts";
 import { tfSeconds } from "../lib/expr/catalog";
 import { toast } from "../lib/notify";
 import { indicatorInfo } from "../lib/indicatorMeta";
 import { toolLabel } from "../lib/drawTools";
 import { tfLabel } from "../lib/timeframe";
-import { actionFor, prepareInput, budgetResult } from "./tools";
+import { actionFor, prepareInput, budgetResult, RESULT_CAP } from "./tools";
 import { describeIndicator, configureParams, describeRules, validateRule, inputLabel } from "./describe";
 
 // `epic`: captured alongside `cellId` at the same point, since a cell can be
@@ -50,7 +50,7 @@ export interface ExecResult { content: string; isError: boolean; change?: Change
 
 const NOOP_CTX = (signal: AbortSignal): ActionContext => ({ progress: () => {}, signal });
 // Local tools executeTool runs itself. ask_user is the session's (it ends the turn).
-const LOCAL_EXEC = new Set(["describe_indicator", "describe_rules", "validate_rule", "indicator_configure"]);
+const LOCAL_EXEC = new Set(["describe_indicator", "describe_rules", "validate_rule", "indicator_configure", "indicator_values"]);
 
 const SETTLE_TIMEOUT_MS = 2000;
 const SETTLE_WARNING = "\nwarning: the chart did not switch within 2 s; check chart_state before editing.";
@@ -133,9 +133,48 @@ function backtestKeyLabel(key: string): string {
   return BACKTEST_KEY_LABELS[key] ?? key;
 }
 
+const VALUES_DEFAULT = 60;
+const VALUES_MAX = 300;
+
+const round = (n: number) => Math.round(n * 1e4) / 1e4;
+
+/** A pane's per-bar results, aligned to the candles klinecharts holds. */
+function indicatorValues(input: Record<string, unknown>): ExecResult {
+  const { chart } = focusedChart();
+  const id = String(input.id);
+  let ind: { result?: unknown[] } | null = null;
+  for (const inds of getIndicatorsByPane(chart).values()) {
+    if (inds.has(id)) { ind = inds.get(id) as { result?: unknown[] }; break; }
+  }
+  if (!ind) return { content: `NOT_FOUND: no indicator with id ${id}`, isError: true };
+  const data = chart.getDataList();
+  const result = ind.result ?? [];
+  const from = Number(input.from), to = Number(input.to);
+  const rows: Array<Record<string, number>> = [];
+  data.forEach((bar, i) => {
+    if (Number.isFinite(from) && bar.timestamp < from) return;
+    if (Number.isFinite(to) && bar.timestamp > to) return;
+    const row: Record<string, number> = { t: bar.timestamp, close: bar.close };
+    const r = result[i];
+    if (r && typeof r === "object") {
+      for (const [k, v] of Object.entries(r)) if (typeof v === "number" && Number.isFinite(v)) row[k] = round(v);
+    }
+    rows.push(row);
+  });
+  const want = Math.min(VALUES_MAX, Math.max(1, Number(input.bars) || VALUES_DEFAULT));
+  let out = rows.slice(-want);
+  const body = () => JSON.stringify({ id, rows: out, omittedOlder: rows.length - out.length });
+  // Drop the oldest rows rather than let the result cap cut the JSON mid-row.
+  while (out.length > 1 && body().length > RESULT_CAP - 64) out = out.slice(Math.ceil(out.length / 10));
+  return { content: body(), isError: false };
+}
+
 async function local(tool: string, input: Record<string, unknown>, ctx: ActionContext): Promise<ExecResult> {
   if (tool === "describe_indicator") {
     return { content: budgetResult(tool, describeIndicator(String(input.type))), isError: false };
+  }
+  if (tool === "indicator_values") {
+    return indicatorValues(input);
   }
   if (tool === "describe_rules") {
     return { content: budgetResult(tool, describeRules(liveExprInstances(focusedChart().chart))), isError: false };

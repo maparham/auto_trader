@@ -14,16 +14,19 @@ let liveInstances: Array<{ id: string; type: string; calcParams: number[]; exten
 // bookkeeping, survives even when not drawn) without yet appearing in
 // liveExprInstances (which only sees what klinecharts has actually computed).
 let controllerIndicators: Array<{ id: string; type: string; inset?: boolean }> = [];
+let dataList: Array<{ timestamp: number; close: number }> = [];
 let savedConfigs: Record<string, { calcParams?: number[]; extendData?: unknown }> = {};
 
 vi.mock("../agent/actions/chart", () => ({
-  focusedChart: () => ({ ...focus, chart: {}, controller: { indicators: { value: controllerIndicators } } }),
+  focusedChart: () => ({ ...focus, chart: { getDataList: () => dataList }, controller: { indicators: { value: controllerIndicators } } }),
   agentPeriod: (s: string) => ({ resolution: s === "1D" ? "DAY" : s }),
 }));
 vi.mock("../agent/actions/drawings", () => ({
   focusedDrawings: () => ({ overlays: drawings, epic: focus.epic, cellId: focus.cellId }),
 }));
-vi.mock("../lib/indicators", () => ({ liveExprInstances: () => liveInstances }));
+// indicator_values reads klinecharts' per-bar results off the pane.
+let panes = new Map<string, Map<string, { result?: unknown[] }>>();
+vi.mock("../lib/indicators", () => ({ liveExprInstances: () => liveInstances, getIndicatorsByPane: () => panes }));
 vi.mock("../lib/persist/artifacts", () => ({ loadIndicatorConfigs: () => savedConfigs }));
 vi.mock("../lib/notify", () => ({ toast: vi.fn() }));
 
@@ -321,5 +324,33 @@ describe("redoTurn", () => {
     const r = await redoTurn([{ label: "Drew a segment", cellId: "c2", epic: "US100", replay: { tool: "drawing_add", input: { tool: "segment" } } }]);
     expect(r.ok).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("indicator_values", () => {
+  it("returns a pane's per-bar numbers aligned to candles, windowed and read-only", async () => {
+    dataList = [1, 2, 3, 4].map((i) => ({ timestamp: i * 1000, close: 100 + i }));
+    panes = new Map([["p1", new Map([["RSI", { result: [{ rsi1: 55.123456 }, { rsi1: 29.5 }, { rsi1: NaN }, { rsi1: 40 }] }]])]]);
+    calls.length = 0;
+    const r = await executeTool("indicator_values", { id: "RSI", from: 2000, to: 3000 }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.change).toBeUndefined();
+    expect(calls).toHaveLength(0);
+    expect(JSON.parse(r.content).rows).toEqual([{ t: 2000, close: 102, rsi1: 29.5 }, { t: 3000, close: 103 }]);
+  });
+
+  it("drops the oldest rows to fit the result cap instead of cutting the JSON", async () => {
+    dataList = Array.from({ length: 300 }, (_, i) => ({ timestamp: 1e12 + i, close: 20000 + i }));
+    panes = new Map([["p1", new Map([["RSI", { result: dataList.map(() => ({ rsi1: 33.3333, rsi2: 44.4444 })) }]])]]);
+    const r = await executeTool("indicator_values", { id: "RSI", bars: 300 }, ctx);
+    const parsed = JSON.parse(r.content);
+    expect(parsed.rows.at(-1).t).toBe(1e12 + 299);
+    expect(parsed.omittedOlder).toBeGreaterThan(0);
+  });
+
+  it("reports an unknown pane", async () => {
+    panes = new Map();
+    const r = await executeTool("indicator_values", { id: "NOPE" }, ctx);
+    expect(r.isError).toBe(true);
   });
 });

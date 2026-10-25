@@ -45,10 +45,10 @@ describe("assistant tools", () => {
     expect(names).not.toContain("drawing_clear");
   });
 
-  it("includes the five local tools", () => {
+  it("includes the six local tools", () => {
     const names = buildTools().map((t) => t.name);
     for (const t of LOCAL_TOOLS) expect(names).toContain(t);
-    expect(LOCAL_TOOLS).toHaveLength(5);
+    expect(LOCAL_TOOLS).toHaveLength(6);
   });
 
   it("closes schemas and keeps required", () => {

@@ -27,6 +27,7 @@ const ACTION_TO_TOOL = Object.fromEntries(Object.entries(TOOL_TO_ACTION).map(([t
 
 export const LOCAL_TOOLS = [
   "ask_user", "describe_indicator", "indicator_configure", "describe_rules", "validate_rule",
+  "indicator_values",
 ] as const;
 
 export function actionFor(tool: string): string | null {
@@ -89,6 +90,20 @@ const LOCAL_DEFS: ToolDef[] = [
         preset: { type: "string" },
         direction: { type: "string" },
         params: { type: "object", additionalProperties: { type: "number" } },
+      },
+    },
+  },
+  {
+    name: "indicator_values",
+    description:
+      "Read-only: an indicator pane's computed values per bar on the focused chart (time in ms, close, and each numeric output), newest last. Use this to answer questions about past values (\"where was RSI oversold\"). from/to (ms) pick a window; otherwise the last `bars` loaded bars.",
+    input_schema: {
+      type: "object", additionalProperties: false, required: ["id"],
+      properties: {
+        id: { type: "string", description: "pane id from indicator_list" },
+        bars: { type: "number", description: "how many bars, newest last (default 60, max 300)" },
+        from: { type: "number", description: "window start, ms" },
+        to: { type: "number", description: "window end, ms" },
       },
     },
   },

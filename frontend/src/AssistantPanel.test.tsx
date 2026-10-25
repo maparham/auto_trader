@@ -26,7 +26,7 @@ const { state, send, undoLast, redoLast, editFrom } = vi.hoisted(() => {
     send: vi.fn(async () => {}),
     undoLast: vi.fn(async () => {}),
     redoLast: vi.fn(async () => {}),
-    editFrom: vi.fn(async (): Promise<string> => "sent"),
+    editFrom: vi.fn(async (_i?: number, _t?: string, _o?: { onCut?: () => void; force?: boolean }): Promise<string> => "sent"),
   };
 });
 // Only the live session singleton is faked; `undoableIndex` comes through
@@ -196,8 +196,25 @@ describe("AssistantPanel", () => {
     editFrom.mockResolvedValueOnce("blocked");
     fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
     await screen.findByText(/continue without reverting/i);
-    expect(editFrom).toHaveBeenLastCalledWith(0, "first, edited", { force: false });
+    expect(editFrom).toHaveBeenLastCalledWith(0, "first, edited", expect.objectContaining({ force: false }));
     fireEvent.click(screen.getByRole("button", { name: /^continue$/i }));
-    expect(editFrom).toHaveBeenLastCalledWith(0, "first, edited", { force: true });
+    expect(editFrom).toHaveBeenLastCalledWith(0, "first, edited", expect.objectContaining({ force: true }));
+  });
+
+  it("closes the editor once the chat is rewound, before the reply arrives", async () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "user", text: "first", rewind: { msgIndex: 0, pending: { toolUseIds: [], heldResults: [], askId: null } } },
+    ] });
+    let finish = () => {};
+    editFrom.mockImplementationOnce(async (_i?: number, _t?: string, opts?: { onCut?: () => void }) => {
+      opts?.onCut?.();
+      await new Promise<void>((r) => { finish = r; });
+      return "sent";
+    });
+    render(<AssistantPanel onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /edit message/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await vi.waitFor(() => expect(screen.queryByDisplayValue("first")).toBeNull());
+    finish();
   });
 });

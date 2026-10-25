@@ -394,7 +394,7 @@ export function createSession(deps: SessionDeps) {
    * `force` cuts and sends without reverting the rest.
    */
   async function editFrom(
-    idx: number, text: string, opts: { force?: boolean } = {},
+    idx: number, text: string, opts: { force?: boolean; onCut?: () => void } = {},
   ): Promise<"sent" | "blocked" | "invalid"> {
     const target = state.value.turns[idx];
     if (state.value.busy || !text.trim() || target?.role !== "user" || !target.rewind) return "invalid";
@@ -424,6 +424,9 @@ export function createSession(deps: SessionDeps) {
     } finally {
       patch({ busy: false, working: null });
     }
+    // The cut is done: the caller can close its editor now rather than after
+    // the whole reply (send resolves only when the model's turn ends).
+    opts.onCut?.();
     await send(text);
     return "sent";
   }

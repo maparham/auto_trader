@@ -47,6 +47,7 @@ const TOOL_WORKING_LABEL: Record<string, string> = {
   indicator_set: "changing an indicator",
   indicator_remove: "removing an indicator",
   indicator_configure: "configuring an indicator",
+  indicator_values: "reading indicator values",
   drawing_list: "checking drawings",
   drawing_add: "drawing",
   drawing_remove: "removing a drawing",
@@ -168,7 +169,7 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
     if (t.role === "user") {
       if (edit?.idx === i) {
         const go = async (force: boolean) => {
-          const r = await assistantSession.editFrom(i, edit.text, { force });
+          const r = await assistantSession.editFrom(i, edit.text, { force, onCut: () => setEdit(null) });
           if (r === "blocked") setEdit({ ...edit, blocked: true });
           else if (r === "sent") setEdit(null);
         };
