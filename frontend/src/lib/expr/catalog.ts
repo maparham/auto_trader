@@ -192,4 +192,7 @@ export interface ExprInstance {
    * injector (lib/exprInstances.ts) because only it knows the concrete
    * indicator; a plain string here keeps this catalog indicator-free. */
   detail?: string;
+  /** Its outputs only mean something on the chart it is drawn on (Trendlines
+   * fit lines to that chart's own pivots), so screens leave it out. */
+  chartOnly?: boolean;
 }

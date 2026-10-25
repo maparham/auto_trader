@@ -43,6 +43,11 @@ describe("screenerIndicators", () => {
     expect(editorInstances({}, chart, "HOUR").map((i) => i.id)).toEqual(["RSI", "ATR", "SLOPE", "FVG"]);
   });
 
+  it("editor list drops chart-only panes (Trendlines)", () => {
+    const chart = [{ id: "TRENDLINES", outputs: ["tl_nearest"], timeframe: null, chartOnly: true }];
+    expect(editorInstances({ TRENDLINES: { type: "TRENDLINES", calcParams: [] } }, chart, "DAY")).toEqual([]);
+  });
+
   it("label shows a pane's pin", () => {
     const fvg = { type: "FVG", calcParams: [0.25, 500, 10], extendData: { mtf: { timeframe: "W" } } };
     expect(paneLabels({ FVG: fvg })[0]).toMatch(/^FVG @W · /);

@@ -276,24 +276,22 @@ def test_a_forming_ref_reports_the_tentative_pivot():
                               "barsAgo": 2}]
 
 
-_LINE = {"L1": {"epic": "AAA", "broker": "b", "timeframe": "HOUR", "t1": 0, "p1": 0.0,
-                "t2": int(T0.timestamp() * 1000), "p2": 10.0, "slope": 0.0,
-                "tRef": int(T0.timestamp() * 1000), "pRef": 10.0}}
 
-
-def test_line_matches_only_its_own_symbol():
-    cs = compile_screen("candle.close > L1", [], resolution="HOUR", lines=_LINE)
-    assert judge(cs, _bars([5, 5, 11]), "HOUR", epic="AAA", broker="b").matched
-    assert not judge(cs, _bars([5, 5, 11]), "HOUR", epic="BBB", broker="b").matched
-
-
-def test_line_finer_than_screen_refused():
+def test_picked_line_refused():
     with pytest.raises(ScreenSpecError) as e:
-        compile_screen("candle.close > L1", [], resolution="DAY", lines=_LINE)
-    assert e.value.err.code == "screen_tf_lower"
-    assert "L1 was picked on" in e.value.err.message
+        compile_screen("candle.close > L1", [], resolution="HOUR")
+    assert e.value.err.code == "screen_no_lines"
+    assert (e.value.err.start, e.value.err.end) == (15, 17)
 
 
-def test_unknown_line_in_screen():
-    with pytest.raises(ScreenSpecError):
-        compile_screen("candle.close > L2", [], resolution="HOUR", lines=_LINE)
+def test_trendlines_pane_refused():
+    with pytest.raises(ScreenSpecError) as e:
+        compile_screen("candle.close > 1", [{"name": "tl", "expression": "TRENDLINES.tl_nearest"}],
+                       {"TRENDLINES": {"type": "TRENDLINES"}}, resolution="HOUR")
+    assert (e.value.err.code, e.value.field, e.value.index) == ("screen_no_trendlines", "columns", 0)
+
+
+def test_trendlines_ref_without_pane_refused():
+    with pytest.raises(ScreenSpecError) as e:
+        compile_screen("candle.close > TRENDLINES.tl_nearest", [], resolution="HOUR")
+    assert e.value.err.code == "screen_no_trendlines"

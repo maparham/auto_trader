@@ -5,7 +5,7 @@
 // token decides who gets the click: arming takes ownership, and a hook whose
 // ownership was taken drops its own armed target.
 import { useEffect, useRef, useState } from "react";
-import type { ChartController } from "./chartController";
+import type { ChartController, SelectedIndicator } from "./chartController";
 import { pickedIndicatorChoices, pickedIndicatorToken } from "./exprPick";
 import { pickChoiceRequest } from "./pickChoice";
 import { toast } from "./notify";
@@ -24,6 +24,8 @@ export function useIndicatorPick<T>(
   controller: ChartController | null,
   onToken: (target: T, token: string) => void,
   onLine?: (target: T, line: PickedLine) => void,
+  // A field that cannot take this pick says why; the toast replaces the insert.
+  refuse?: (sel: SelectedIndicator) => string | null,
 ): IndicatorPick<T> | undefined {
   const [me] = useState(() => Symbol("indicatorPick"));
   const [armed, setArmed] = useState<T | null>(null);
@@ -33,6 +35,8 @@ export function useIndicatorPick<T>(
   onTokenRef.current = onToken;
   const onLineRef = useRef(onLine);
   onLineRef.current = onLine;
+  const refuseRef = useRef(refuse);
+  refuseRef.current = refuse;
 
   useEffect(() => owner.subscribe((o) => { if (o !== me) setArmed(null); }), [me]);
 
@@ -45,6 +49,11 @@ export function useIndicatorPick<T>(
       setArmed(null);
       owner.set(null);
       controller.indicatorPickArmed.set(false);
+      const refusal = refuseRef.current?.(sel);
+      if (refusal) {
+        toast(refusal);
+        return;
+      }
       if (sel.lineRefusal && onLineRef.current) {
         toast(sel.lineRefusal);
         return;

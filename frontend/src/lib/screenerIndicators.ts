@@ -26,12 +26,14 @@ export function copyAsLive(copy: PaneCopy): LiveInstance[] {
  * A pane pinned in its settings stays only when its pin is the screen's
  * timeframe or coarser: screens refuse finer pins, so the editor should
  * flag such a ref as unknown instead of accepting it and failing on Run.
- * A pin tfSeconds cannot read is dropped for the same reason. */
+ * A pin tfSeconds cannot read is dropped for the same reason, and so is a
+ * chart-only pane (Trendlines), which screens refuse. */
 export function editorInstances(copy: PaneCopy, chart: readonly ExprInstance[], resolution: string): ExprInstance[] {
   const own = exprInstancesFor(copyAsLive(copy));
   const ids = new Set(own.map((i) => i.id));
   const baseS = tfSecondsOf(resolution) ?? 0;
   const ok = (i: ExprInstance) => {
+    if (i.chartOnly) return false;
     if (i.timeframe == null) return true;
     const s = tfSeconds(i.timeframe);
     return s != null && s >= baseS;

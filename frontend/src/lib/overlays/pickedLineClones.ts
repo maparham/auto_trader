@@ -1,8 +1,7 @@
 // Dashed clones of picked trendlines. A clone stays while any live rule holder
-// (the backtest config, an armed live snapshot, the open screener draft) keeps
-// that line, the way a line alert's dashed line outlives its trendline. One
-// clone per geometry, labelled with every id that holds it. Saved screens that
-// are not open in the screener draw nothing.
+// (the backtest config, an armed live snapshot) keeps that line, the way a
+// line alert's dashed line outlives its trendline. One clone per geometry,
+// labelled with every id that holds it.
 //
 // Drawn on any timeframe of the line's symbol. On the line's own timeframe it
 // is placed in bars of that timeframe (loadedLinePoints, as a line alert's
@@ -18,7 +17,6 @@ import { registerOverlay } from "klinecharts";
 import { lineGeoKey, trimLines, type Lines, type PickedLine } from "../pickedLines";
 import { loadBacktestLastUsed } from "../persist/defaults";
 import { loadArmed, loadArmedAccount } from "../liveEngine";
-import { getScreenerDraft } from "../screenerDraft";
 import { loadCodedCfg } from "../codedConfig";
 import type { BacktestConfig, RuleGroup } from "../backtestConfig";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "../indicators/shared";
@@ -155,12 +153,9 @@ export class PickedLineClones {
     const bt = loadBacktestLastUsed();
     const btCoded = bt?.codedStrategy ? loadCodedCfg("backtest", bt.codedStrategy) : undefined;
     const armed = account ? loadArmed(this.epic, account) : null;
-    const draft = getScreenerDraft(this.broker);
-    const draftTexts = [draft.expression ?? "", ...(draft.columns ?? []).map((c) => c.expression)];
     return [
       { lines: trimLines(bt?.lines, configRuleTexts(bt, btCoded)) },
       { lines: trimLines(armed?.cfg.lines, configRuleTexts(armed?.cfg, armed?.coded)) },
-      { lines: trimLines(draft.lines, draftTexts) },
     ];
   }
 

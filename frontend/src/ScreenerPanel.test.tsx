@@ -26,13 +26,14 @@ vi.mock("./components/RuleExpressionInput", () => ({
   ),
 }));
 vi.mock("./lib/impersonation", () => ({ isImpersonating: vi.fn(() => false) }));
+vi.mock("./lib/notify", async (orig) => ({ ...(await orig<typeof import("./lib/notify")>()), toast: vi.fn() }));
 vi.mock("./lib/signals", async (orig) => ({
   ...(await orig<typeof import("./lib/signals")>()),
   requestConfirm: vi.fn(),
 }));
 const chartPanes = {
   live: [] as Array<{ id: string; type: string; calcParams: number[]; extendData: unknown }>,
-  editor: [] as Array<{ id: string; outputs: string[]; timeframe: string | null }>,
+  editor: [] as Array<{ id: string; outputs: string[]; timeframe: string | null; chartOnly?: boolean }>,
 };
 vi.mock("./lib/indicators", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/indicators")>()),
@@ -54,8 +55,9 @@ import {
 } from "./lib/screens";
 import { isImpersonating } from "./lib/impersonation";
 import { requestConfirm, Signal, type ConfirmRequest } from "./lib/signals";
-import { EMPTY_SCREENER_DRAFT, getScreenerDraft, resetScreenerDrafts, setScreenerDraft } from "./lib/screenerDraft";
+import { resetScreenerDrafts } from "./lib/screenerDraft";
 import type { PickedLine } from "./lib/pickedLines";
+import { toast } from "./lib/notify";
 
 const DEFAULT_POLL_RESULT = {
   status: "done" as const, done: 2, total: 2,
@@ -581,86 +583,26 @@ describe("ScreenerPanel", () => {
   });
 });
 
-describe("ScreenerPanel picked lines", () => {
+describe("ScreenerPanel trendlines", () => {
   const line: PickedLine = { epic: "AAPL", broker: "yfinance", timeframe: "DAY", t1: 1, p1: 10, t2: 2, p2: 11, slope: 1, tRef: 1, pRef: 10 };
-  const line2: PickedLine = { ...line, p2: 15, slope: 5 };
-  const seed = (expression: string, lines: Record<string, PickedLine>) =>
-    setScreenerDraft("yfinance", { ...EMPTY_SCREENER_DRAFT, source: "list", symbolsText: "AAPL", expression, lines });
-
-  it("sends only the referenced picked lines on Run", async () => {
-    seed("candle.close > L1", { L1: line, L2: line2 });
-    setup();
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
-    await waitFor(() => expect(startScreen).toHaveBeenCalled());
-    expect(vi.mocked(startScreen).mock.calls[0][0].lines).toEqual({ L1: line });
-    // Adopted once the server accepted it.
-    await waitFor(() => expect(getScreenerDraft("yfinance").lines).toEqual({ L1: line }));
-  });
-
-  it("a rejected Run keeps the held lines", async () => {
-    seed("candle.close > L1", { L1: line, L2: line2 });
-    vi.mocked(startScreen).mockRejectedValueOnce(new Error("nope"));
-    setup();
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
-    await waitFor(() => expect(screen.getByText("nope")).toBeTruthy());
-    expect(getScreenerDraft("yfinance").lines).toEqual({ L1: line, L2: line2 });
-  });
-
-  it("Save sends the referenced lines, column refs included", async () => {
-    seed("candle.close > L1", { L1: line, L2: line2, L3: line });
-    setup();
-    fireEvent.click(screen.getByRole("button", { name: "Add column" }));
-    fireEvent.change(screen.getByLabelText("Column 1 expression"), { target: { value: "L2" } });
-    saveNew();
-    await waitFor(() => expect(saveScreen).toHaveBeenCalled());
-    expect(vi.mocked(saveScreen).mock.calls[0][1].lines).toEqual({ L1: line, L2: line2 });
-  });
-
-  it("loading a screen restores its lines; a screen without lines clears them", async () => {
-    vi.mocked(listScreens).mockResolvedValue([
-      { ...SAVED, expression: "candle.close > L1", lines: { L1: line } },
-      { ...SAVED, id: "s2", name: "Plain" },
-    ]);
-    setup();
-    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
-    fireEvent.change(screen.getByLabelText("Presets"), { target: { value: "s1" } });
-    expect(screen.getByLabelText("Condition").getAttribute("data-lines")).toBe("L1");
-    // Loaded and untouched: no unsaved changes.
-    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
-    await waitFor(() => expect(startScreen).toHaveBeenCalled());
-    expect(vi.mocked(startScreen).mock.calls[0][0].lines).toEqual({ L1: line });
-    fireEvent.change(screen.getByLabelText("Presets"), { target: { value: "s2" } });
-    expect(getScreenerDraft("yfinance").lines).toBeUndefined();
-    // The editor still gets a map, so an unknown id is flagged.
-    expect(screen.getByLabelText("Condition").getAttribute("data-lines")).toBe("");
-  });
-
-  it("a saved screen with an empty lines map is not dirty after loading", async () => {
-    vi.mocked(listScreens).mockResolvedValue([{ ...SAVED, lines: {} }]);
-    setup();
-    await waitFor(() => expect(screen.getByRole("option", { name: "Saved one" })).toBeTruthy());
-    fireEvent.change(screen.getByLabelText("Presets"), { target: { value: "s1" } });
-    const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(true);
-    expect(saveBtn.classList.contains("sc-dirty")).toBe(false);
-  });
-
-  it("a picked line appends its id; re-picking the same geometry reuses it", async () => {
+  const pickInto = (sel: unknown) => {
     const c = fakeController() as unknown as { indicatorPickResult: Signal<unknown> };
     render(<ScreenerPanel brokerId="yfinance" tabs={[]} controller={c as never} priceSide="mid" onOpen={() => {}} onClose={() => {}} />);
     fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "candle.close > " } });
-    const pickBtn = () => screen.getAllByRole("button", { name: "Pick an indicator from the chart" })[0];
-    fireEvent.click(pickBtn());
-    act(() => c.indicatorPickResult.set({ id: "TRENDLINES", line }));
-    expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("candle.close > L1");
-    fireEvent.change(screen.getByLabelText("Condition"), { target: { value: "candle.close > L1 or candle.close < " } });
-    fireEvent.click(pickBtn());
-    act(() => c.indicatorPickResult.set({ id: "TRENDLINES", line: { ...line, tRef: 9, pRef: 9 } }));
-    expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("candle.close > L1 or candle.close < L1");
-    fireEvent.click(pickBtn());
-    act(() => c.indicatorPickResult.set({ id: "TRENDLINES", line: line2 }));
-    expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("candle.close > L1 or candle.close < L1L2");
-    expect(Object.keys(getScreenerDraft("yfinance").lines ?? {})).toEqual(["L1", "L2"]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Pick an indicator from the chart" })[0]);
+    act(() => c.indicatorPickResult.set(sel));
+  };
+
+  it("a picked trendline is refused, not inserted", () => {
+    pickInto({ paneId: "p", name: "TRENDLINES", line });
+    expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("candle.close > ");
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("Trendlines can't be used in a screen"));
+  });
+
+  it("a Trendlines legend pick is refused too", () => {
+    chartPanes.editor = [{ id: "TRENDLINES", outputs: ["tl_nearest"], timeframe: null, chartOnly: true }];
+    pickInto({ paneId: "p", name: "TRENDLINES" });
+    expect((screen.getByLabelText("Condition") as HTMLTextAreaElement).value).toBe("candle.close > ");
+    chartPanes.editor = [];
   });
 });

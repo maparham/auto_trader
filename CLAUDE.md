@@ -264,8 +264,12 @@ row saved before it existed, a screen judges the last CLOSED bar.
 ### Chart indicators in screens
 
 A screen's expressions can reference chart panes by instance
-(`RSI.bullDiv`, `TRENDLINES.tl_nearest`), as backtest rules do, and the
-backend computes them on every screened symbol. No chart is changed. The
+(`RSI.bullDiv`, `SLOPE.9`), as backtest rules do, and the backend computes
+them on every screened symbol. No chart is changed. Trendlines and picked
+lines (`L<n>`) are refused: they are fitted to one chart, so they mean
+nothing on another symbol. The editor drops `chartOnly` panes
+(`ExprInstance.chartOnly`), a pick of one toasts instead of inserting, and
+`compile_screen` 422s with `screen_no_trendlines` / `screen_no_lines`. The
 screen holds a COPY of each referenced pane's settings (`indicators`, a
 `{id: {type, calcParams, extendData}}` map on the run body and the saved
 row; at most 16 entries and 32 KB, every type in `SERIES_INDICATORS`, else
@@ -311,7 +315,7 @@ docs/superpowers/specs/2026-10-22-screener-chart-indicators-design.md.
 from chart" is armed becomes a bare id a rule can reference, a reserved instance name
 (`validateInstanceName`/`mintInstanceId` refuse it elsewhere). The `lines`
 map (`PickedLine` in `lib/pickedLines.ts`) rides in the backtest config, the
-armed snapshot, the screener draft and saved screens; a request sends only
+armed snapshot and the live engine (never screens); a request sends only
 the ids its expression text references. The backend resolves them into the
 `instances` map under `line:L<n>` (`strategy/expr/lines.py`: anchoring on
 the first candle at or after `t2`, falling back to `tRef`; a rule coarser

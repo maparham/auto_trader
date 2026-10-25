@@ -424,6 +424,7 @@ export function exprInstancesFor(live: readonly LiveInstance[]): ExprInstance[] 
         // The output names say which rank; what they cannot say is how
         // selective the pane is, the SLOPE/ATR detail convention.
         detail: `pivot ${cfg.pivotLen} · span ${cfg.minSpanBars}+ · touches ${cfg.minTouches}+ · ${cfg.maxLines} ranked`,
+        chartOnly: true,
       });
       continue;
     }

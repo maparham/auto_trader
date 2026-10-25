@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from auto_trader.api import deps
-from auto_trader.api.schemas import IndicatorInstanceDTO, PickedLineDTO
+from auto_trader.api.schemas import IndicatorInstanceDTO
 from auto_trader.api.screen_jobs import SCREEN_JOBS, JobBusy
 from auto_trader.core.models import Resolution
 from auto_trader.core.screen_eval import ScreenSpecError, compile_screen
@@ -42,8 +42,6 @@ class ScreenRunBody(BaseModel):
     columns: list[ColumnBody] = Field(default_factory=list, max_length=8)
     priceSide: Literal["bid", "mid", "ask"] = "mid"
     indicators: dict[str, IndicatorInstanceDTO] = Field(default_factory=dict)
-    # Picked trendlines (L<n>), referenced bare in the expression/columns.
-    lines: dict[str, PickedLineDTO] = Field(default_factory=dict)
     # Judge the still-forming bar too, as the chart draws it: results can
     # change until that bar closes.
     includeOpenBar: bool = False
@@ -85,14 +83,10 @@ def _indicators(body: ScreenRunBody) -> dict[str, dict]:
     return {k: d.model_dump(exclude_none=True) for k, d in body.indicators.items()}
 
 
-def _lines(body: ScreenRunBody) -> dict[str, dict]:
-    return {k: d.model_dump() for k, d in body.lines.items()}
-
-
 def _compile(body: ScreenRunBody):
     try:
         return compile_screen(body.expression, [c.model_dump() for c in body.columns],
-                              _indicators(body), body.resolution.value, lines=_lines(body))
+                              _indicators(body), body.resolution.value)
     except ScreenSpecError as e:
         raise HTTPException(422, {
             "code": e.err.code, "message": e.err.message,
@@ -106,7 +100,7 @@ def _data(body: ScreenBody, broker: str) -> dict:
             "symbols": body.symbols, "expression": body.expression,
             "columns": [c.model_dump() for c in body.columns],
             "indicators": _indicators(body), "source": body.source,
-            "includeOpenBar": body.includeOpenBar, "lines": _lines(body)}
+            "includeOpenBar": body.includeOpenBar}
 
 
 @router.get("/api/screens")

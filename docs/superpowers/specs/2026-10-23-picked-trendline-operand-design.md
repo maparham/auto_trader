@@ -18,7 +18,9 @@ alert's dashed line outlives its trendline.
   time and never follow the indicator's re-detection.
 - Its value starts at its 2nd anchor (t2) and extends right forever. Bars
   before t2 have no value.
-- Usable in backtest rules, live trading rules and the screener.
+- Usable in backtest rules and live trading rules. (Screens were in the
+  first cut and were removed on 2026-10-25: a line, like the Trendlines pane
+  itself, is fitted to one chart, so screens refuse both.)
 - A line belongs to one symbol (epic + broker). On another symbol its value is
   absent everywhere.
 - A line is implicitly pinned to its own timeframe: it is evaluated on that

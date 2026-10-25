@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("klinecharts", () => ({ registerOverlay: () => {}, registerIndicator: () => {}, registerYAxis: () => {}, getSupportedIndicators: () => [] }));
-const src: { bt: unknown; armed: unknown; account: string | null; draft: unknown } = { bt: null, armed: null, account: null, draft: {} };
+const src: { bt: unknown; armed: unknown; account: string | null } = { bt: null, armed: null, account: null };
 vi.mock("../persist/defaults", () => ({ loadBacktestLastUsed: vi.fn(() => src.bt) }));
 vi.mock("../liveEngine", () => ({ loadArmed: vi.fn(() => src.armed), loadArmedAccount: vi.fn(() => src.account) }));
-vi.mock("../screenerDraft", () => ({ getScreenerDraft: vi.fn(() => src.draft) }));
 import { PickedLineClones, pickedLineCloneTemplate, wantedClones } from "./pickedLineClones";
 import { loadBacktestLastUsed } from "../persist/defaults";
 
@@ -13,7 +12,6 @@ const refs = (lines: Record<string, unknown>) => Object.keys(lines).map((id) => 
 const holds = (lines: Record<string, unknown>) => ({
   lines, longEntry: { combine: "AND", rules: refs(lines).map((expr) => ({ expr, enabled: true })) },
 });
-const draftOf = (lines: Record<string, unknown>) => ({ lines, expression: refs(lines).join(" or "), columns: [] });
 
 it("dedupes the same line across holders and joins labels", () => {
   const w = wantedClones("US100", "capital", [{ lines: { L1: L } }, { lines: { L2: { ...L, tRef: 9, pRef: 9 } } }]);
@@ -46,7 +44,7 @@ function fakeChart(bars = [1, 2, 3, 4, 5]) {
 
 describe("PickedLineClones", () => {
   beforeEach(() => {
-    src.bt = null; src.armed = null; src.account = null; src.draft = {};
+    src.bt = null; src.armed = null; src.account = null;
     vi.mocked(loadBacktestLastUsed).mockClear();
   });
 
@@ -106,10 +104,11 @@ describe("PickedLineClones", () => {
     expect(chart.overrideOverlay).toHaveBeenLastCalledWith({
       id: expect.stringMatching(/^pickline:/), points: [{ timestamp: 1, value: 1 }, { timestamp: 6, value: 6 }], extendData: "L1",
     });
-    src.draft = draftOf({ L2: L });
+    src.account = "capital:demo";
+    src.armed = { cfg: holds({ L2: L }) };
     c.reconcile();
     expect(chart.overrideOverlay).toHaveBeenLastCalledWith(expect.objectContaining({ extendData: "L1 · L2" }));
-    src.bt = null; src.draft = {};
+    src.bt = null; src.armed = null;
     c.reconcile();
     expect(chart.removeOverlay).toHaveBeenCalledTimes(1);
   });
@@ -117,15 +116,14 @@ describe("PickedLineClones", () => {
   it("draws only the lines each holder's own rule text references", () => {
     // The config keeps L2 after its rule was deleted; only L1 is still named.
     src.bt = { lines: { L1: L, L2: { ...L, p1: 7 } }, longEntry: { combine: "AND", rules: [{ expr: "candle.close > L1", enabled: false }] } };
-    // The armed snapshot names nothing; the screener names L4 in a column only.
+    // The armed snapshot names nothing.
     src.account = "capital:demo";
     src.armed = { cfg: { lines: { L3: { ...L, p1: 8 } } } };
-    src.draft = { lines: { L4: { ...L, p1: 9 }, L5: { ...L, p1: 10 } }, expression: "candle.close > 1", columns: [{ name: "d", expression: "candle.close - L4" }] };
     const { chart, created } = fakeChart();
     const c = new PickedLineClones();
     c.attach(chart as never, "capital", "US100", "HOUR");
     c.reconcile();
-    expect(created.map((o) => o.extendData).sort()).toEqual(["L1", "L4"]);
+    expect(created.map((o) => o.extendData)).toEqual(["L1"]);
   });
 
   it("drops its clones from the old chart when the epic changes", () => {

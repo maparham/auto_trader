@@ -40,7 +40,6 @@ import {
   type PaneCopy,
 } from "./lib/screenerIndicators";
 import { NO_LINES } from "./lib/backtestConfig";
-import { lineGeoKey, mintLineId, trimLines, type Lines } from "./lib/pickedLines";
 
 const RESOLUTIONS: { value: string; label: string }[] = [
   { value: "MINUTE_15", label: "15m" },
@@ -130,8 +129,6 @@ function screenKey(d: ScreenDraft): string {
     resolution: d.resolution, source, symbols: source === "allTabs" ? null : d.symbols,
     expression: d.expression, columns: d.columns.map((c) => ({ name: c.name, expression: c.expression })),
     indicators: d.indicators, includeOpenBar: d.includeOpenBar ?? false,
-    // The server returns {} for a screen with no lines; treat it as none.
-    lines: d.lines && Object.keys(d.lines).length ? d.lines : null,
   });
 }
 
@@ -183,9 +180,6 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   // ?? {} covers drafts held in memory from before this change, e.g. across a
   // hot reload during development.
   const [indicators, setIndicators] = useState<PaneCopy>(initial.indicators ?? {});
-  // Picked trendlines (L<n>) the text may reference. Run and Save send only the
-  // referenced ones, and adopt that trimmed map only once the server accepts it.
-  const [lines, setLines] = useState<Lines | undefined>(initial.lines);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [result, setResult] = useState<ScreenResult | null>(initial.result);
@@ -236,9 +230,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     includeOpenBar,
   };
   const loaded = currentId ? saved.find((s) => s.id === currentId) ?? null : null;
-  // The picked lines this screen's expressions reference, as Run/Save send them.
-  const sentLines = trimLines(lines, [expression, ...columns.map((c) => c.expression)]);
-  const dirty = loaded != null && screenKey({ ...draft, indicators, lines: sentLines }) !== screenKey(loaded);
+  const dirty = loaded != null && screenKey({ ...draft, indicators }) !== screenKey(loaded);
 
   // The editor's completion/lint list: the copy's own panes first, then
   // whatever the focused chart offers that the copy doesn't already hold.
@@ -255,8 +247,8 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   // Mirror the draft and the last completed result into the per-broker store.
   // A run in flight is not kept: the unmount cleanup cancels it.
   useEffect(() => {
-    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, source, includeOpenBar, tabIds, expression, columns, indicators, lines, result, ranSpec });
-  }, [brokerId, currentId, name, resolution, symbolsText, source, includeOpenBar, tabIds, expression, columns, indicators, lines, result, ranSpec]);
+    setScreenerDraft(brokerId, { currentId, name, resolution, symbolsText, source, includeOpenBar, tabIds, expression, columns, indicators, result, ranSpec });
+  }, [brokerId, currentId, name, resolution, symbolsText, source, includeOpenBar, tabIds, expression, columns, indicators, result, ranSpec]);
 
   useEffect(() => {
     listScreens()
@@ -291,7 +283,6 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     setExpression(s?.expression ?? "");
     setColumns(s?.columns ?? []);
     setIndicators(s?.indicators ?? {});
-    setLines(s?.lines);
     setResult(null);
     setError(null);
     setRanSpec(null);
@@ -320,7 +311,6 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     setResult(null);
     const spec = { columns: sentColumns, resolution };
     const inds = capture();
-    const sentL = sentLines;
     // Sent on every attempt, but only ADOPTED into the copy once the server
     // has accepted it: a 422 (a divergence output turned off, a pinned-pane
     // refusal) must not freeze the bad settings into the copy, or fixing the
@@ -329,7 +319,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     // catch cancels it, or the server would 409 every Run until it ended.
     let heldJob: string | null = null;
     try {
-      const { jobId, total } = await startScreen({ ...draft, indicators: inds, lines: sentL }, priceSide);
+      const { jobId, total } = await startScreen({ ...draft, indicators: inds }, priceSide);
       if (genRef.current !== gen) {
         // Superseded (load/cancel/unmount) while the POST was in flight:
         // jobRef was never set, so nothing else could have cancelled this
@@ -338,7 +328,6 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
         return;
       }
       setIndicators(inds);
-      setLines(sentL);
       heldJob = jobId;
       jobRef.current = jobId;
       setRanSpec(spec);
@@ -397,12 +386,10 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
     setSaving(true);
     try {
       const inds = capture();
-      const sentL = sentLines;
       // Adopt the copy only once the server has accepted it, same reasoning
       // as run(): a rejected save must not freeze bad settings into the copy.
-      const row = await saveScreen(screenName, { ...draft, indicators: inds, lines: sentL }, id);
+      const row = await saveScreen(screenName, { ...draft, indicators: inds }, id);
       setIndicators(inds);
-      setLines(sentL);
       setSaved((all) => [...all.filter((s) => s.id !== row.id), row]);
       setCurrentId(row.id);
       setName(row.name);
@@ -486,20 +473,18 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
   };
 
   // "Pick from chart" (◎): arm either the Condition or one column, click an
-  // on-chart indicator, and its expression token lands in that field. A click
-  // on a Trendlines line holds that line as L<n> and appends the bare id;
-  // re-picking a line already held (same geometry) reuses its id.
+  // on-chart indicator, and its expression token lands in that field.
+  // Trendlines only mean something on their own chart, so a pick of one
+  // (a line or its legend row) is refused rather than inserted.
   type PickTarget = { kind: "condition" } | { kind: "column"; index: number };
   const insertToken = (t: PickTarget, token: string) => {
     if (t.kind === "condition") setExpression((e) => e + token);
     else setColumns((cs) => cs.map((x, j) => (j === t.index ? { ...x, expression: x.expression + token } : x)));
   };
-  const pick = useIndicatorPick<PickTarget>(controller, insertToken, (t, line) => {
-    const key = lineGeoKey(line);
-    const id = Object.entries(lines ?? {}).find(([, l]) => lineGeoKey(l) === key)?.[0] ?? mintLineId(lines);
-    setLines((ls) => ({ ...(ls ?? {}), [id]: line }));
-    insertToken(t, id);
-  });
+  const pick = useIndicatorPick<PickTarget>(controller, insertToken, undefined, (sel) =>
+    sel.line || sel.lineRefusal || chartEditor.find((i) => i.id === sel.name)?.chartOnly
+      ? "Trendlines can't be used in a screen. Its lines belong to the chart they were drawn on."
+      : null);
   const pickToggle = (target: PickTarget, isArmed: boolean) =>
     pick && (
       <Tooltip content={isArmed ? "Click an indicator on the chart, or click here to cancel" : "Pick an indicator from the chart"}>
@@ -728,7 +713,7 @@ function ScreenerForm({ brokerId, tabs, controller, priceSide, onOpen, onClose }
             isExit={false}
             placeholder="RSI(14) < 30 and candle.close > EMA(200)"
             instances={instances}
-            lines={lines ?? NO_LINES}
+            lines={NO_LINES}
           />
           {Object.keys(indicators).length > 0 && (
             <div className="sc-inds">

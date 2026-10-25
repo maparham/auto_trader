@@ -88,18 +88,3 @@ def test_include_open_bar_roundtrip_and_default(store):
     assert row["includeOpenBar"] is True
     assert asyncio.run(store.update("u1", row["id"], DATA))["includeOpenBar"] is False
 
-
-LINES = {"L1": {"epic": "AAA", "broker": "b", "timeframe": "HOUR", "t1": 0, "p1": 0.0,
-                "t2": 1000, "p2": 10.0, "slope": 0.0, "tRef": 1000, "pRef": 10.0}}
-
-
-def test_lines_roundtrip(store):
-    row = asyncio.run(store.create("u1", {**DATA, "lines": LINES}))
-    assert row["lines"] == LINES
-    upd = asyncio.run(store.update("u1", row["id"], {**DATA, "lines": {}}))
-    assert upd["lines"] == {}
-
-
-def test_missing_lines_key_stores_empty(store):
-    row = asyncio.run(store.create("u1", DATA))
-    assert row["lines"] == {}
