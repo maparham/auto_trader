@@ -1,6 +1,6 @@
 # AI assistant: plain-English chart configuration
 
-Date: 2026-10-25
+Date: 2026-10-25. Revised the same day after an independent review.
 
 ## Problem
 
@@ -64,11 +64,14 @@ A singleton `AssistantClient` modelled on `core/telegram_notify.py`:
 only when configured; `enabled` property; `_scrub(text)` replaces the key with
 `***` in any error text before it leaves the module.
 
-`async def create_message(body: dict) -> UpstreamResult`:
+`async def create_message(req: AssistantRequest) -> UpstreamResult`:
 
-1. Forces `body["model"] = settings.model`, caps `body["max_tokens"]` at 4096
-   (sets it when absent), and deletes `stream`, `betas`, `metadata` if the
-   browser sent them. Nothing else in the body is rewritten.
+1. Builds the upstream body explicitly and only from these fields:
+   `{"model": settings.model, "max_tokens": min(req.max_tokens or 4096, 4096),
+   "system": req.system, "messages": req.messages, "tools": req.tools}`.
+   Nothing the browser sent outside those fields reaches upstream, so
+   `stream`, `betas`, `metadata`, `tool_choice` and anything unknown are
+   dropped by construction.
 2. POSTs `/v1/messages` with the three headers.
 3. On 429: reads `retry-after` (seconds; an HTTP date is converted; missing or
    unparsable means 2 s), sleeps `min(value, 30)`, retries exactly once. A
@@ -87,22 +90,29 @@ and from any exception message.
 Registered in the `app.py` router tuple. Both routes use `deps.current_user`
 and refuse the demo principal (`is_demo_request`) with 403
 `assistant unavailable in demo`. In hosted mode (`CLERK_JWKS_URL` set) both
-routes additionally require `request.state.is_admin`; local dev is always
-admin, so nothing changes there.
+routes additionally require `deps.request_is_admin(request)`; local dev is
+always admin, so nothing changes there.
 
 - `GET /api/assistant/status` returns `{"configured": bool, "model": str}`.
   `model` is omitted when not configured.
-- `POST /api/assistant/messages` body (pydantic):
-  - `system: list[dict] | str` (content blocks, so `cache_control` can ride on
-    the last one)
-  - `messages: list[dict]` (1 to 48 entries, roles alternate as the API
-    requires; the server does not re-validate the alternation, upstream does)
-  - `tools: list[dict]` (at most 32)
-  - `max_tokens: int | None`
-  - Request body limit 256 KB, enforced before parsing (413).
+- `POST /api/assistant/messages`:
+  - The raw body is read with `request.stream()` and a running length check;
+    past 256 KB the handler stops reading and answers 413. Content-Length is
+    not trusted.
+  - Pydantic `AssistantRequest`: `system: list[dict] | str`,
+    `messages: list[dict]` (1 to 48), `tools: list[dict]` (at most 32),
+    `max_tokens: int | None`. Every tool must be a client tool: a `type` key
+    on a tool entry (server tools such as web search or code execution would
+    bill against the key) is a 422 `client tools only`.
   - 503 `assistant not configured` when `configured` is false.
-  - 409 `assistant busy` when the same user already has a request in flight
-    (an `asyncio.Lock` per user id, held for the upstream call).
+  - Concurrency: no per-user lock (the browser loop is sequential by
+    construction). A process-wide `asyncio.Semaphore(4)` bounds upstream
+    calls; when it is full the route answers 429 `assistant busy` at once
+    rather than queueing.
+  - Disconnect: the upstream call runs as a task; the handler polls
+    `request.is_disconnected()` every 0.5 s and cancels the task when the
+    browser has gone (Stop in the panel aborts the fetch). Nothing is
+    returned in that case.
   - On `ok` returns the upstream message JSON with status 200.
   - On an upstream error returns 502 with
     `{"detail": {"upstream_status": int, "body": str}}`. The panel shows
@@ -134,22 +144,38 @@ images in v1), `tab.focus`, `tab.title.set`, `panel.backtest.open`,
 execution time, so a tool name the model invents is refused with an
 `is_error` tool result rather than executed.
 
+Naming: an explicit two-way table `TOOL_NAMES: {[toolName]: actionName}`
+(`indicator_add` ↔ `indicator.add`, and so on), since the API restricts tool
+names to `[a-zA-Z0-9_-]{1,64}` and a blind `_`→`.` replace would mangle
+`ask_user`. Unknown tool names are refused.
+
 Conversion: the registry's flat `ParamSchema` becomes the tool's
 `input_schema` (`type: object`, `properties`, `required`,
-`additionalProperties: false`). Tool names replace `.` with `_`
-(`indicator_add`), since the API restricts tool names to `[a-zA-Z0-9_-]`; the
-executor maps back. The action's `description` is used as the tool
-description, with `indicator_add`'s `type` property given an `enum` of the
-valid types.
+`additionalProperties: false`; `validateArgs` already rejects unknown keys,
+so the two agree). Descriptions come from the action, except where
+`DESCRIPTION_OVERRIDES` replaces text written for the MCP bridge:
+`backtest_run` ("runs the backtest and returns a summary of metrics; it can
+take a while"), `chart_state` (drop the screenshot reference), and any other
+action whose description names `ui_wait`, a handle or a screenshot.
+`indicator_add.type` gets an `enum` of the valid types (`VALID_TYPES` is
+exported from `agent/actions/indicators.ts` for this).
 
 Assistant-only tools, executed locally without touching the registry:
 
 | Tool | Input | Result |
 |---|---|---|
 | `ask_user` | `question: string`, `options: [{label, description?}]` (2 to 5) | Ends the turn. The chosen label, or the free text the user typed, is returned as this tool's `tool_result` when the loop resumes. |
-| `describe_indicator` | `type: string` | `indicatorInfo(type)`, `resolveInputs(type, undefined)` serialized as `[{key, label, source, index|field, default, min, max, step, options, tip, group}]`, `presetsFor(type)`, `directionFor(type)`. Unknown type: `is_error`. |
-| `describe_rules` | none | The `expr/catalog.ts` groups (indicators, wrappers, funcs, crosses, cross ops, logic, candle fields with details, timeframes, conditions, pattern names) plus `exprInstancesFor(live)` for the focused chart: `[{id, type, outputs, timeframe, detail}]`. |
-| `validate_rule` | `expr: string`, `isExit?: boolean` | `analyze(expr, {isExit, instances, lines})`: `{ok, errors: [{message, from, to}], warmup}`. |
+| `describe_indicator` | `type: string` | `indicatorInfo(type)`; the inputs from `resolveInputs(type, undefined)` serialized as `[{key, label, source, index or field, default, min, max, step, options, tip, group}]` where `default` is `presets.base[index]` when the type has presets, else the type's template `calcParams[index]` (`BASE_TEMPLATES`), else absent; `presetsFor(type)` as `[{name, values}]`; `directionFor(type)` as `[{name, values}]`; and `startsOn: "Balanced"` for Trendlines (a fresh pane seeds `TRENDLINES_SEED` unless the user saved a type default). Unknown type: `is_error`. |
+| `indicator_configure` | `id: string`, `preset?: string`, `direction?: string`, `params?: {[key]: number}` | Merges onto the instance's LIVE calcParams: the preset first (`withPresetStep`), then the direction slots, then each `params` entry by the `key` returned by `describe_indicator`, and calls `indicator.set` with the full array once. This is how "rising only" or "pivot length 8" is done without rewriting 33 slots. Unknown key, preset or direction: `is_error` naming the valid ones. |
+| `describe_rules` | none | The `expr/catalog.ts` groups (indicators, wrappers, funcs, crosses, cross ops, logic, candle fields with details, timeframes, conditions, pattern names) plus the focused chart's expression instances: `exprInstancesFor(live)` joined with the live indicator list for `type`, as `[{id, type, outputs, timeframe, detail}]`. |
+| `validate_rule` | `expr: string`, `isExit?: boolean` | `analyze(expr, {isExit, instances, lines})` reduced to `{ok: errors.length === 0, errors: [{message, from, to}]}` plus `warmupBars` from `warmupOf(expr, baseSeconds, instances)`. |
+
+Result budget: every tool result is capped at 8 KB of JSON. Two tools get
+summarisers instead of truncation: `backtest_run` and `backtest_result`
+return `{metrics, tradeCount, firstTradeAt, lastTradeAt, analysisKeys}` (the
+full result stays on the chart, where the user sees it); `chart_state`
+defaults `bars` to 60 and caps it at 200. Anything else over the cap is cut
+at 8 KB with a trailing `…[truncated]` marker.
 
 ### System prompt (`assistant/prompt.ts`)
 
@@ -167,11 +193,11 @@ prefix caches. Contents, in order:
    One question per turn, 2 to 5 options, each in plain words. Never ask
    about a parameter the user would not recognise; pick a sensible default
    and mention it.
-4. Indicators: call `describe_indicator` before setting a parameter you have
-   not seen described in this conversation. Prefer presets and directions
-   over raw numbers. Trendlines: `indicator_add` seeds the Balanced preset;
-   adjust with `indicator_set` (calcParams by slot order from the
-   description, extendData for render flags, `timeframe` to pin).
+4. Indicators: call `describe_indicator` before configuring a type you have
+   not seen described in this conversation. Use `indicator_configure` for
+   presets, directions and named parameters; use `indicator_set` only for
+   render flags (`extendData`) and the Trendlines timeframe pin. A fresh
+   Trendlines pane starts on Balanced.
 5. Rules: call `describe_rules` once before writing rules, `validate_rule`
    on every expression before `backtest_config_set`; fix and re-validate on
    errors. `backtest_config_set` shallow-merges at the top level, so send a
@@ -187,8 +213,10 @@ The volatile context (focused epic, resolution, open indicator ids and types,
 chart tab count) is prepended to the user's text in each new user turn as a
 short `[context]` line, after the cached prefix.
 
-The last `system` block and the last tool definition carry
-`cache_control: {type: "ephemeral"}`.
+Cache breakpoints (`cache_control: {type: "ephemeral"}`): the last `system`
+block, the last tool definition, and the last content block of the last
+message in every request, so each round reads the growing history from
+cache instead of re-billing it.
 
 ### Session (`assistant/session.ts`)
 
@@ -204,67 +232,105 @@ type Turn =
   | { role: "user"; text: string; pickedFrom?: string }        // chip pick or typed
   | { role: "assistant"; text: string; changes: Change[]; undone: boolean;
       ask?: { question: string; options: {label; description?}[] };
-      error?: { kind: "upstream" | "network" | "refusal" | "max_tokens" | "rounds";
+      error?: { kind: "upstream" | "network" | "refusal" | "max_tokens" | "rounds" | "stopped";
                 status?: number; body?: string } };
-type Change = { label: string; undo: () => Promise<void> };  // undo not serialized
+type Change = { label: string; cellId: string; undoable: boolean; undo?: () => Promise<void> };
 ```
 
-`messages: MessageParam[]` is the API transcript, kept alongside the display
-turns. Undo closures live in memory only; after a reload the Undo buttons
-for earlier turns are disabled with a tooltip ("undo is lost on reload").
+Persisted alongside the turns: `messages: MessageParam[]` (the API
+transcript) and `pending: {toolUseIds: string[], heldResults: ToolResultBlock[]}`
+(the unanswered `tool_use` blocks of an interrupted round and the results
+already produced in it). Undo closures live in memory only; after a reload
+the Undo buttons for earlier turns are disabled with a tooltip ("undo is
+lost on reload").
+
+**Transcript invariant.** Before any new user content is appended (a sent
+message, an ask answer, an undo note, a retry), every `tool_use` in the last
+assistant message that has no result yet gets a synthesized
+`{type: "tool_result", is_error: true, content: "<reason>"}`, where reason
+is "not run: the assistant stopped to ask the user", "stopped by the user"
+or "turn ended before this ran". Those go in the SAME user message as the new
+content, tool results first. The transcript therefore never carries a
+dangling `tool_use`, whatever interrupted the round.
+
+**Transcript budget.** Before each POST, while `messages.length > 40` or the
+serialized body exceeds 200 KB, drop the oldest complete exchange: the
+oldest user message and everything up to (not including) the next
+user message that carries no `tool_result` blocks, so tool pairs are never
+split. The display turns are untouched; a muted "earlier messages were
+trimmed from the model's view" line marks the point in the transcript.
 
 `send(text)`:
 
-1. If the previous assistant turn ended in `ask_user`, append a user message
-   holding the held `tool_result` blocks from that round plus that tool's
-   `tool_result` with `content: text`. Otherwise append a user message
-   `[context] ...\n\n<text>`.
+1. Build the user message: synthesized results for `pending.toolUseIds`
+   (if any), then `pending.heldResults`, then, if an ask is pending, the
+   `ask_user` result with `content: text`; otherwise a text block
+   `[context] ...\n\n<text>`. Clear `pending`.
 2. Loop, at most 12 rounds:
-   - `POST /api/assistant/messages` with `{system, messages, tools}`.
+   - Trim the transcript, place the three cache breakpoints, POST
+     `/api/assistant/messages` with `{system, messages, tools}`.
    - Append `response.content` as the assistant message (whole array, so
      any thinking blocks round-trip).
-   - `stop_reason === "tool_use"`: run every `tool_use` block (sequentially,
-     in order; write actions must not interleave), collect one
+   - `stop_reason === "tool_use"`: run every `tool_use` block in order,
+     sequentially (write actions must not interleave), collecting one
      `tool_result` per block (`is_error: true` with the `ActionError`
-     message on failure), append them as one user message, continue. If one
-     of the blocks is `ask_user`, do not execute the rest after it, do not
-     send results yet: store the pending `tool_use_id`, render the chips,
-     stop. (The results for blocks before it are held and sent together
-     with the answer.)
+     message on failure). If a block is `ask_user`: stop executing, record
+     the remaining ids as `pending.toolUseIds`, the produced results as
+     `pending.heldResults`, render the chips, return. Otherwise append the
+     results as one user message and continue.
    - `end_turn`: done.
-   - `max_tokens`, `refusal`: done, with the matching error badge.
-   - 12 rounds reached: done, error `rounds`, no further request.
+   - `max_tokens`, `refusal`: done with the matching error badge; any
+     `tool_use` blocks in that message become `pending.toolUseIds`.
+   - 12 rounds reached after a `tool_use` response: the results of that
+     round are appended normally, then the loop ends with error `rounds`.
+   - Stop (abort): the in-flight action is aborted, the ids not yet answered
+     become `pending.toolUseIds`, error `stopped`.
 3. Any text blocks in the final assistant message become the turn's `text`.
    Text blocks from intermediate rounds are concatenated above it so
    progress notes are not lost.
 
 Execution of registry tools goes through `invokeAction(name, args, ctx)`
-with an `AbortController` the panel's Stop button fires. Before each write
-action the session captures what undo needs:
+with `ctx = {progress, signal}`, the signal from an `AbortController` the
+panel's Stop button fires. After `market.select` and `chart.timeframe.set`
+the session waits (polling every 50 ms, at most 2 s) until
+`focusedChart()` reports the requested epic or resolution before running the
+next tool, because the focused-chart provider is re-set on React render.
+
+Before each write action the session captures what undo needs, together
+with the focused `cellId`:
 
 | Action | Captured before | Undo |
 |---|---|---|
 | `indicator.add` | nothing | `indicator.remove {id}` with the returned id |
-| `indicator.set` | the instance's `calcParams`, `extendData`, Trendlines `timeframe` from `indicator.list` + live config | `indicator.set` with the captured values |
-| `indicator.remove` | the instance's type, calcParams, extendData, inset | `indicator.add` then `indicator.set` to restore config (new id; the label says so) |
+| `indicator.set` / `indicator_configure` | the instance's full `calcParams`, `extendData` and Trendlines `timeframe`, read from the live instance list plus `loadIndicatorConfigs(scope)` (not from `indicator.list`, which omits extendData and the pin) | `indicator.set` with the captured calcParams, the captured timeframe, and an extendData patch holding the OLD value of every key the forward call touched (`undefined` for keys that did not exist, since the patch is a shallow merge) |
+| `indicator.remove` | type, calcParams, extendData, inset, timeframe | `indicator.add` then `indicator.set`. The pane comes back under a new id, and alerts or rule references that pointed at the old id stay orphaned; the change label says "Removed RSI (undo re-adds it under a new id; alerts and rules on the old id are not restored)" |
 | `drawing.add` | nothing | `drawing.remove {id}` |
-| `drawing.remove` | the drawing from `drawing.list` | `drawing.add` with its tool, points, text, color |
-| `backtest.config.set` | `backtest.config.get` | `backtest.config.set` with the captured keys |
+| `drawing.remove` | the full overlay snapshot through the `OverlayManager` lookup funnel (`name, points, styles, lock, visible, zLevel, extendData`), not `drawing.list`, which drops widths, dashes, fills and fib levels | `OverlayManager.placeDrawing(snapshot)` |
+| `backtest.config.set` | `backtest.config.get` | `backtest.config.set` with the captured values of the patched keys |
 | `chart.timeframe.set` | current resolution | `chart.timeframe.set` to it |
-| `market.select` | current epic | `market.select` to it |
+| `market.select` | current epic | `market.select` to it (a tab the forward call opened stays open; the label says so) |
 | `chart.range.set` | nothing | none (view-only, listed without undo) |
 | `backtest.run` | nothing | none (listed; the previous result is gone) |
 
-"Undo this turn" runs the turn's changes in reverse, marks the turn `undone`,
-and appends a user message `[the user undid the changes from your last turn]`
-so the model's picture of the chart stays right. Undo failures surface as a
-toast and leave the turn not undone.
+Undo rules:
+
+- Only the newest turn that is not yet undone offers Undo; older turns show
+  their changes without a button, since later turns may have built on them.
+- Undo runs the turn's changes in reverse. Before each one it checks that
+  the focused `cellId` matches the captured one; on a mismatch it stops with
+  a toast "focus the chart this change was made on, then undo" and leaves
+  the turn not undone.
+- On success the turn is marked `undone` and a user message
+  `[the user undid these changes: <labels>]` is appended (after the
+  transcript invariant has closed any pending tool uses), so the model's
+  picture of the chart stays right.
+- An undo step that fails surfaces a toast and leaves the turn not undone.
 
 Labels for the Changed list come from a small formatter in
 `assistant/changeLabels.ts` keyed by action name, for example
 `indicator.add` → "Added Trendlines (TRENDLINES)",
-`indicator.set` with a Trendlines preset match → "Trendlines: Balanced,
-rising only", `backtest.config.set` → "Updated backtest rules: long entry",
+`indicator_configure` → "Trendlines: Balanced, rising only",
+`backtest.config.set` → "Updated backtest rules: long entry",
 `drawing.add` → "Drew trend line". Unknown shapes fall back to the action
 name.
 
@@ -275,7 +341,8 @@ name.
   `toggleSidePanel`, a `usePanelSignals` entry, a lazy chunk in `App.tsx`
   rendered only when open, not in demo mode, and only when
   `GET /api/assistant/status` reported `configured` (fetched once at boot,
-  cached in a signal; the toolbar button is absent otherwise).
+  cached in a signal; a 403 or network failure counts as not configured; the
+  toolbar button is absent otherwise).
 - Toolbar: one button with a sparkle icon in the `panels` array of
   `ToolbarControls.tsx`, tip "Assistant: describe what you want on the chart".
 - Layout: `<aside className="assistant-panel">` with the same head as the
@@ -289,11 +356,13 @@ name.
   one Undo button at its foot (gray, muted style, "Undone" state once used);
   an options row of chips for `ask_user` plus a "Something else…" chip that
   focuses the composer; an error card for upstream errors showing status and
-  body in a monospace block, with a Retry button that re-sends the last
-  user message.
-- A thinking state ("Working…" with the running tool's label) while a round
-  is in flight. Stop aborts the in-flight action and stops the loop; the
-  partial turn is kept with an error badge "stopped".
+  body in a monospace block, with a Retry button.
+- Retry re-POSTs the current transcript unchanged (it does not re-send the
+  user's text), so a failure in the middle of a tool round resumes where it
+  stopped.
+- A working state ("Working…" with the running tool's label) while a round
+  is in flight. Stop aborts the in-flight action and the fetch and stops the
+  loop; the partial turn is kept with the "stopped" badge.
 - Empty state: three example prompts as chips ("Add rising trendlines on
   the daily", "Show me where RSI was oversold last month", "Build a simple
   EMA crossover backtest").
@@ -306,45 +375,62 @@ name.
 | Demo visitor | 403 | Not reachable (button hidden in demo mode too) |
 | Upstream 401/403/503 | 502 with body | Error card with the status and the raw body |
 | Upstream 429 twice | 502 with body | Error card "rate limited, try again" plus body |
+| Proxy busy (semaphore full) | 429 | Error card "assistant busy, try again", Retry |
 | Network failure | fetch rejects | Error card, Retry |
 | `refusal` stop | session | "The model declined this request" |
 | `max_tokens` | session | "The answer was cut short" with the partial text |
 | Tool arg invalid | `ActionError` | Returned to the model as `is_error`; the model corrects itself |
 | 12 rounds | session | "Stopped after too many steps" with what was done, Undo available |
+| Stop pressed | session | "Stopped" badge, changes so far listed, Undo available |
 
 ## Testing
 
 Backend (`backend/tests/test_assistant.py`, `httpx.MockTransport`):
 
-- 200 passes the upstream JSON through unchanged, model forced, `stream`
-  stripped, `max_tokens` capped.
+- 200 passes the upstream JSON through unchanged; the upstream body holds
+  exactly `model, max_tokens, system, messages, tools` with the model forced
+  and `max_tokens` capped; a client-sent `stream`/`tool_choice` never
+  reaches upstream.
+- A tool with a `type` key → 422.
 - 429 with `retry-after: 1` then 200: exactly two upstream calls, the sleep
   is patched and observed with 1 s.
 - 429 twice: two calls, 502 with the second body.
 - 401, 403, 503: one call each, 502 carrying the body verbatim.
 - 500: one call, 502.
 - Key never appears in the 502 detail even when upstream echoes it.
+- Body over 256 KB without Content-Length → 413.
 - No key file and no env: `configured: false`, POST 503.
 - Demo principal: 403 on both routes.
-- Second concurrent request for the same user: 409.
+- Semaphore full → 429 immediately.
 
 Frontend (vitest, run only these files):
 
-- `tools.test.ts`: allowlist excludes dealing/sweep/clear; names are
-  API-safe and round-trip; `indicator_add.type` has the enum; the four
-  assistant tools are present; `describe_indicator("TRENDLINES")` lists 33
-  calcParam slots with labels and `pivotLen` default 5.
+- `tools.test.ts`: allowlist excludes dealing/sweep/clear; the name table
+  round-trips and `ask_user` survives; `indicator_add.type` has the enum;
+  the five assistant tools are present; overridden descriptions contain no
+  `ui_wait`/handle/screenshot text; `describe_indicator("TRENDLINES")` lists
+  33 calcParam slots with labels and `default` for `pivotLen` equal to the
+  Balanced base value; `indicator_configure` with `direction: "Rising"`
+  changes only the direction slots.
 - `session.test.ts` with a fake `fetch` and a fake registry: tool_use →
   action invoked → results batched in one user message → end_turn;
-  `ask_user` pauses, the pick is sent as that tool's result; round cap at
-  12; `refusal` and `max_tokens` badges; abort stops the loop.
-- `undo.test.ts`: changes undone in reverse; `indicator.set` restores the
-  captured config; a failing undo leaves the turn not undone.
+  `ask_user` in the middle of `[A, ask, C]` holds A's result, leaves C
+  pending, and the resume message carries A's result, C's synthesized error
+  and the answer, in that order; abort mid-round synthesizes "stopped by the
+  user"; round cap at 12 still answers the last round's tool uses;
+  `refusal` and `max_tokens` badges; trimming drops whole exchanges and
+  never splits a tool pair; the three cache breakpoints land on the right
+  blocks; backtest results are summarised and oversized results truncated.
+- `undo.test.ts`: changes undone in reverse; `indicator.set` undo restores
+  calcParams and sends the old value of each patched extendData key; a
+  cellId mismatch stops the undo and leaves the turn not undone; only the
+  newest non-undone turn is undoable; a failing undo leaves the turn not
+  undone.
 
-Manual check on a scratch tab (`?demo=preview` is not usable since the
-panel is hidden in demo mode; use a fresh tab with a throwaway symbol):
-"Add rising trendlines on the daily" yields a Trendlines pane pinned to 1D
-with the Rising direction, one summary line and a working Undo.
+Manual check on a fresh tab with a throwaway symbol (`?demo=preview` is not
+usable since the panel is hidden in demo mode): "Add rising trendlines on
+the daily" yields a Trendlines pane pinned to 1D with the Rising direction,
+one summary line and a working Undo.
 
 ## Out of scope (follow-ups)
 
