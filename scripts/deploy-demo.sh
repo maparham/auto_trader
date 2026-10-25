@@ -37,6 +37,11 @@
 # into swap hard enough to freeze the API for ~50s. Any non-empty value
 # disables, so re-enabling means deleting the line on the box as well as here.
 #
+# Assistant: ASSISTANT_API_KEY (the in-app assistant's gateway key) is synced
+# as is. CI runners have no backend/.env, so it reaches the box only from a
+# laptop deploy (`--backend-only` is enough); the box then keeps it. Without it
+# /api/assistant/status answers configured:false and the toolbar hides it.
+#
 # Optional box env: CLERK_SECRET_KEY — backend only, powers the admin console
 # Users panel (/admin). Without it the panel reports "Clerk not configured".
 # It must never reach the browser; the frontend build below fails closed if a
@@ -97,7 +102,7 @@ CRED_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*)='
 # gate), so folding a non-broker key into it would let a Telegram-only .env
 # waive that gate.
 # PROD_TELEGRAM_BOT_TOKEN, never the plain key: see the Telegram note above.
-SYNC_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|PROD_TELEGRAM_BOT_TOKEN|PROD_SNAPSHOT_DISABLED)='
+SYNC_KEYS='^(CAPITAL_[A-Z_]*|IG_[A-Z_]*|METAAPI_[A-Z_]*|MT5MCP_[A-Z_]*|PROD_TELEGRAM_BOT_TOKEN|PROD_SNAPSHOT_DISABLED|ASSISTANT_API_KEY)='
 LOCAL_ENV="$ROOT/backend/.env"
 SYNC_CREDS=0
 if [ "$DO_BACKEND" = 1 ] && [ -f "$LOCAL_ENV" ] \
