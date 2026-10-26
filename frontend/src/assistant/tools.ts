@@ -27,7 +27,7 @@ const ACTION_TO_TOOL = Object.fromEntries(Object.entries(TOOL_TO_ACTION).map(([t
 
 export const LOCAL_TOOLS = [
   "ask_user", "describe_indicator", "indicator_configure", "describe_rules", "validate_rule",
-  "indicator_values",
+  "indicator_values", "symbol_search",
 ] as const;
 
 export function actionFor(tool: string): string | null {
@@ -105,6 +105,15 @@ const LOCAL_DEFS: ToolDef[] = [
         from: { type: "number", description: "window start, ms" },
         to: { type: "number", description: "window end, ms" },
       },
+    },
+  },
+  {
+    name: "symbol_search",
+    description:
+      "Search the focused chart's broker for markets by name or ticker (\"10 year\", \"treasury\", \"gold\", \"AAPL\"). Returns up to 15 {epic, name, type, status}. Epics differ per broker: always find one here before market_select.",
+    input_schema: {
+      type: "object", additionalProperties: false, required: ["query"],
+      properties: { query: { type: "string", description: "a name or ticker; try a shorter or different word if nothing matches" } },
     },
   },
   {

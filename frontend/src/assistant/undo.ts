@@ -12,6 +12,8 @@ import { toast } from "../lib/notify";
 import { indicatorInfo } from "../lib/indicatorMeta";
 import { toolLabel } from "../lib/drawTools";
 import { tfLabel } from "../lib/timeframe";
+import { searchInstruments } from "../lib/feed/instruments";
+import { DEFAULT_BROKER } from "../lib/feed/common";
 import { actionFor, prepareInput, budgetResult, RESULT_CAP } from "./tools";
 import { describeIndicator, configureParams, describeRules, validateRule } from "./describe";
 
@@ -50,10 +52,14 @@ export interface ExecResult { content: string; isError: boolean; change?: Change
 
 const NOOP_CTX = (signal: AbortSignal): ActionContext => ({ progress: () => {}, signal });
 // Local tools executeTool runs itself. ask_user is the session's (it ends the turn).
-const LOCAL_EXEC = new Set(["describe_indicator", "describe_rules", "validate_rule", "indicator_configure", "indicator_values"]);
+const LOCAL_EXEC = new Set(["describe_indicator", "describe_rules", "validate_rule", "indicator_configure", "indicator_values", "symbol_search"]);
 
 const SETTLE_TIMEOUT_MS = 2000;
 const SETTLE_WARNING = "\nwarning: the chart did not switch within 2 s; check chart_state before editing.";
+
+function brokerNow(): string {
+  try { return focusedChart().broker || DEFAULT_BROKER; } catch { return DEFAULT_BROKER; }
+}
 
 function cellNow(): string {
   try { return focusedChart().cellId; } catch { return ""; }
@@ -172,6 +178,12 @@ function indicatorValues(input: Record<string, unknown>): ExecResult {
 async function local(tool: string, input: Record<string, unknown>, ctx: ActionContext): Promise<ExecResult> {
   if (tool === "describe_indicator") {
     return { content: budgetResult(tool, describeIndicator(String(input.type))), isError: false };
+  }
+  if (tool === "symbol_search") {
+    const broker = brokerNow();
+    const found = await searchInstruments(String(input.query ?? ""), broker);
+    const rows = found.slice(0, 15).map((m) => ({ epic: m.epic, name: m.name, type: m.type, status: m.status }));
+    return { content: budgetResult(tool, { broker, results: rows }), isError: false };
   }
   if (tool === "indicator_values") {
     return indicatorValues(input);
@@ -360,6 +372,18 @@ export async function executeTool(
       case "market.select": {
         let prev = "";
         try { prev = focusedChart().epic; } catch { /* nothing focused */ }
+        // A guessed epic opens a tab that never loads (US10Y on Capital), so
+        // only an epic the broker's own search returns is opened.
+        const broker = brokerNow();
+        const wanted = String(args.epic);
+        const hit = (await searchInstruments(wanted, broker)).find((m) => m.epic.toUpperCase() === wanted.toUpperCase());
+        if (!hit) {
+          return {
+            content: `NOT_FOUND: ${wanted} is not a market on ${broker}. Find the epic with symbol_search first; nothing was opened.`,
+            isError: true,
+          };
+        }
+        args.epic = hit.epic;
         const out = await run(action, args, ctx);
         const settled = await settleFocus(() => focusedChart().epic === String(args.epic), SETTLE_TIMEOUT_MS, ctx.signal);
         return {

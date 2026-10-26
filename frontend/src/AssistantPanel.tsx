@@ -48,6 +48,7 @@ const TOOL_WORKING_LABEL: Record<string, string> = {
   indicator_remove: "removing an indicator",
   indicator_configure: "configuring an indicator",
   indicator_values: "reading indicator values",
+  symbol_search: "searching symbols",
   drawing_list: "checking drawings",
   drawing_add: "drawing",
   drawing_remove: "removing a drawing",

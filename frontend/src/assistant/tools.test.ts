@@ -48,7 +48,7 @@ describe("assistant tools", () => {
   it("includes the six local tools", () => {
     const names = buildTools().map((t) => t.name);
     for (const t of LOCAL_TOOLS) expect(names).toContain(t);
-    expect(LOCAL_TOOLS).toHaveLength(6);
+    expect(LOCAL_TOOLS).toHaveLength(7);
   });
 
   it("closes schemas and keeps required", () => {

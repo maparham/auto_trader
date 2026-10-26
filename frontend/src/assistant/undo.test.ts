@@ -29,6 +29,11 @@ let panes = new Map<string, Map<string, { result?: unknown[] }>>();
 vi.mock("../lib/indicators", () => ({ liveExprInstances: () => liveInstances, getIndicatorsByPane: () => panes }));
 vi.mock("../lib/persist/artifacts", () => ({ loadIndicatorConfigs: () => savedConfigs }));
 vi.mock("../lib/notify", () => ({ toast: vi.fn() }));
+// The broker's symbol search: market_select only opens epics it returns.
+const searchInstruments = vi.fn(async (q: string, _broker?: string) =>
+  [{ epic: q.toUpperCase(), name: q, status: "TRADEABLE", type: "COMMODITIES", pricePrecision: 2 }]);
+vi.mock("../lib/feed/instruments", () => ({ searchInstruments: (q: string, b?: string) => searchInstruments(q, b) }));
+vi.mock("../lib/feed/common", () => ({ DEFAULT_BROKER: "capital" }));
 
 const drawings = {
   getDrawing: vi.fn((id: string) => (id === "d1" ? { name: "segment", points: [], styles: { line: { size: 3 } }, lock: false, visible: true, zLevel: 0, extendData: {} } : null)),
@@ -163,6 +168,25 @@ describe("executeTool", () => {
     expect(r.isError).toBe(false);
     expect(focus.epic).toBe("GOLD");
     expect(r.change!.cellId).toBe("c9");
+  });
+
+  it("market_select refuses an epic the broker's search does not return", async () => {
+    focus.epic = "US100";
+    searchInstruments.mockResolvedValueOnce([{ epic: "US10YR", name: "US 10-Year", status: "TRADEABLE", type: "RATES", pricePrecision: 3 }]);
+    const n = calls.length;
+    const r = await executeTool("market_select", { epic: "US10Y" }, ctx);
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/NOT_FOUND.*symbol_search/);
+    expect(calls.length).toBe(n);
+    expect(focus.epic).toBe("US100");
+  });
+
+  it("symbol_search returns the broker's matches", async () => {
+    searchInstruments.mockResolvedValueOnce([{ epic: "US10YR", name: "US 10-Year", status: "TRADEABLE", type: "RATES", pricePrecision: 3 }]);
+    const r = await executeTool("symbol_search", { query: "10 year" }, ctx);
+    expect(r.isError).toBe(false);
+    expect(JSON.parse(r.content).results[0]).toMatchObject({ epic: "US10YR", name: "US 10-Year" });
+    expect(r.change).toBeUndefined();
   });
 
   it("a failing undo step reports false", async () => {
