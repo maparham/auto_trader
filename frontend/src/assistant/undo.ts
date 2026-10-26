@@ -13,7 +13,7 @@ import { indicatorInfo } from "../lib/indicatorMeta";
 import { toolLabel } from "../lib/drawTools";
 import { tfLabel } from "../lib/timeframe";
 import { actionFor, prepareInput, budgetResult, RESULT_CAP } from "./tools";
-import { describeIndicator, configureParams, describeRules, validateRule, inputLabel } from "./describe";
+import { describeIndicator, configureParams, describeRules, validateRule } from "./describe";
 
 // `epic`: captured alongside `cellId` at the same point, since a cell can be
 // re-pointed at a different symbol (market.select) without its id changing —
@@ -195,7 +195,7 @@ async function local(tool: string, input: Record<string, unknown>, ctx: ActionCo
     const live = liveById(id);
     if (!live) return { content: `NOT_FOUND: no indicator with id ${id}`, isError: true };
     const prev = [...(live.calcParams ?? [])];
-    const { calcParams, changed } = configureParams(live.type, prev, {
+    const { calcParams, changed, edits } = configureParams(live.type, prev, {
       preset: input.preset as string | undefined,
       direction: input.direction as string | undefined,
       params: input.params as Record<string, number> | undefined,
@@ -204,7 +204,7 @@ async function local(tool: string, input: Record<string, unknown>, ctx: ActionCo
     const bits = [
       input.preset ? `${String(input.preset)} preset` : null,
       input.direction ? `${String(input.direction).toLowerCase()} only` : null,
-      ...(input.params ? Object.keys(input.params as object).map((k) => inputLabel(live.type, k)) : []),
+      ...edits,
     ].filter(Boolean).join(", ");
     return {
       content: budgetResult(tool, { id, changed }),

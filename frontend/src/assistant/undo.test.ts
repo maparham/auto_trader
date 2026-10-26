@@ -118,6 +118,8 @@ describe("executeTool", () => {
     const r = await executeTool("indicator_configure", { id: "R", params: { p0: 21 } }, ctx);
     expect(r.change!.label).not.toMatch(/\bRSI\b|p0/);
     expect(r.change!.label).toMatch(/^Relative Strength Index: /);
+    // The card shows the value, not just the setting's name.
+    expect(r.change!.label).toMatch(/ 14 to 21$/);
   });
 
   it("indicator_configure reports unknown keys", async () => {

@@ -56,17 +56,6 @@ function stepsAsSets(type: string, p: IndicatorPresets | undefined, inputs: Indi
   });
 }
 
-/** The settings modal's label for one input key ("minSlopeAtr" to its
- * on-screen title), for the panel's "Changed" lines; the key itself when the
- * type or key is unknown. */
-export function inputLabel(type: string, key: string): string {
-  try {
-    return inputsOf(type).find((i) => i.key === key)?.label ?? key;
-  } catch {
-    return key;
-  }
-}
-
 export function describeIndicator(type: string) {
   assertType(type);
   const inputs = inputsOf(type);
@@ -113,13 +102,15 @@ export function configureParams(
   type: string,
   live: number[],
   opts: { preset?: string; direction?: string; params?: Record<string, number> },
-): { calcParams: number[]; changed: string[] } {
+): { calcParams: number[]; changed: string[]; edits: string[] } {
   assertType(type);
   const inputs = inputsOf(type).filter((i) => i.source === "calcParam" && i.index !== undefined);
   const presets = presetsFor(type);
   const base = presets?.base ?? live;
   let next = base.map((d, k) => (Number.isFinite(live[k]) ? live[k] : d));
   const before = [...next];
+  // "Lookback 120 to 255" per explicit param, for the Changed card.
+  const edits: string[] = [];
   if (opts.preset) next = withPresetStep(presets!, next, pickStep(presets, opts.preset, "preset"));
   if (opts.direction) {
     const dir = directionFor(type);
@@ -137,11 +128,13 @@ export function configureParams(
     if (inp.min !== undefined && v < inp.min) throw new Error(`${label}: at least ${inp.min}`);
     if (inp.max !== undefined && v > inp.max) throw new Error(`${label}: at most ${inp.max}`);
     next[inp.index!] = v;
+    const from = before[inp.index!];
+    edits.push(from === v ? `${inp.label} ${v}` : `${inp.label} ${from} to ${v}`);
   }
   const changed = next
     .map((v, i) => (v !== before[i] ? slotName(type, i) ?? `p${i}` : null))
     .filter((x): x is string => x !== null);
-  return { calcParams: next, changed };
+  return { calcParams: next, changed, edits };
 }
 
 export function describeRules(live: readonly LiveInstance[]): Record<string, unknown> {
