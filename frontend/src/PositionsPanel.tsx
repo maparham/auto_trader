@@ -28,6 +28,7 @@ import {
   isDataOnlyBroker,
   isRealMoneyAccount,
   isCapital,
+  tradeLabel,
   type TradeView,
   type TradeAccount,
   type BrokerAccount,
@@ -44,6 +45,7 @@ import {
   setTradeSelected,
   draggingLineSignal,
   mt5DeployStateSignal,
+  requestConfirm,
   type PendingEdit,
 } from "./lib/signals";
 import { accountStats, enrichTrade, type EnrichedTrade } from "./lib/accountStats";
@@ -433,17 +435,28 @@ export default function PositionsPanel({
     }
   }
 
-  async function act(t: TradeView) {
-    setBusy(t.id);
-    try {
-      if (t.kind === "position") await closePosition(t.id, account);
-      else await cancelWorkingOrder(t.id, account);
-      refreshTrades();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Action failed.");
-    } finally {
-      setBusy(null);
-    }
+  function act(t: TradeView) {
+    const isOrder = t.kind === "order";
+    const label = tradeLabel(t.kind, t.side);
+    requestConfirm({
+      title: isOrder ? "Cancel order" : "Close position",
+      message: isOrder
+        ? `Cancel this ${label} order on ${t.epic}?`
+        : `Close this ${label} position on ${t.epic} at market${isLive ? " (real money)" : ""}?`,
+      confirmLabel: isOrder ? "Cancel order" : "Close position",
+      onConfirm: async () => {
+        setBusy(t.id);
+        try {
+          if (isOrder) await cancelWorkingOrder(t.id, account);
+          else await closePosition(t.id, account);
+          refreshTrades();
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Action failed.");
+        } finally {
+          setBusy(null);
+        }
+      },
+    });
   }
 
   // A data-only source (Dukascopy history) has no account, positions or orders. Show
