@@ -51,7 +51,6 @@ import { registerPatternTarget, takePendingPatternJump } from "./lib/patternTarg
 import { anyCellInReadout, setCellReadout, subscribeReplayingCells } from "./lib/replayingCells";
 import { toast } from "./lib/notify";
 import { capturePattern, MIN_GHOST_BARS } from "./lib/patternGhost";
-import { useTrendlinePins } from "./chart/useTrendlinePins";
 import { emphasizeTrendlines, useTrendlineMenu } from "./chart/useTrendlineMenu";
 import { useTrendlineDebug } from "./chart/useTrendlineDebug";
 import { chartPaints } from "./chart/seriesStamp";
@@ -1825,9 +1824,6 @@ export default function ChartCore({
   // where the session state exists, so that one value stays the single owner of
   // the availability signal.
   const patternCapable = !isSynthetic(symbol.epic) && !period.liveOnly && !snapView;
-  // Click a trendline's end handle to run it on to the pane edge (and again to
-  // release). Capture-phase, so it claims the press before the chart pans.
-  useTrendlinePins({ chartRef, containerRef, overlays });
   // Pick a trendline, then Highlight / Hide / To drawing from its menu. The
   // right-click entry is read through a ref by the once-mounted contextmenu
   // handler below.

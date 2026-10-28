@@ -39,7 +39,7 @@ import type { PivotBandsExtend } from "./indicators/pivotBands"; // erased at bu
 import { INSET_CAPABLE, insetTemplate } from "./indicators/inset";
 import { hiddenAware } from "./indicators/hiddenCalc";
 import { maFigures, maLegendLabel, templateMaKind, type MaExtend } from "./indicators/ma";
-import { dropTrendlineHandles } from "./indicators/trendlines";
+import { dropTrendlineTargets } from "./indicators/trendlines";
 import { TRENDLINES_SEED } from "./indicators/trendlinesOutputs";
 import { dropPaintedLines } from "./indicators/paintedLines";
 import { noteDebugOn } from "./indicators/trendlinesDebugStore";
@@ -620,11 +620,8 @@ export function applyIndicator(
   // Deleted rather than set false so non-inset payloads stay byte-identical.
   if (inset) (extendData as { inset?: boolean }).inset = true;
   else delete (extendData as { inset?: boolean }).inset;
-  // Trendline pins are SESSION-ONLY: clicking an end handle holds that line open
-  // for as long as the chart lives, and no longer. Nothing writes `pinned` to the
-  // saved config any more, but an older snapshot (or a template / paste copied
-  // from one) can still carry it, so drop it here rather than resurrect pins the
-  // user cannot remember making.
+  // Trendline pins (the retired end-handle gesture) are dead keys: an older
+  // snapshot, template or paste can still carry `pinned`, so drop it here.
   delete (extendData as { pinned?: unknown }).pinned;
   // Same for a picked or glowing line: a selection is a live gesture, not config.
   for (const k of SESSION_GESTURE_KEYS) delete (extendData as Record<string, unknown>)[k];
@@ -1275,9 +1272,9 @@ export function removeIndicatorById(chart: Chart, scope: string, id: string): vo
       }
     }
   }
-  // A removed pane never draws again, so its recorded TRENDLINES pin handles
-  // would stay clickable-looking (the cursor turns to a pointer) forever.
-  dropTrendlineHandles(chart, id);
+  // A removed pane never draws again, so its recorded TRENDLINES hit targets
+  // (line bodies, end tags) would outlive it.
+  dropTrendlineTargets(chart, id);
   dropPaintedLines(chart, id);
   noteDebugOn(chart, id, false);
   deleteIndicatorConfig(scope, id);

@@ -3268,7 +3268,7 @@ function IndicatorSettingsForm({
                   </div>
                 </>
               )}
-              {/* Trendlines: one colour for every line, touch ring, pin handle
+              {/* Trendlines: one colour for every line, touch ring
                   and ×N tag (draw-only, extendData.lineColor). No opacity row:
                   dimming is already a separate control (Dim opacity, Inputs tab). */}
               {isTrendlines && (

@@ -48,7 +48,6 @@ import {
 import { first } from "./chartPainters";
 import { subscribeCrosshairWrites } from "./crosshairWrites";
 import { fmtPrice } from "../lib/priceFormat";
-import { hitAnyTrendlineHandle } from "../lib/indicators/trendlines";
 import { hitTrendline, TL_LINE_HIT } from "../lib/indicators/trendlineMarks";
 import { hitPaintedLine } from "../lib/indicators/paintedLines";
 import { hoverTrendline } from "./useTrendlineMenu";
@@ -268,20 +267,11 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // highlight agree with the cursor across the whole pill.
       const pillHit = avwapAnchorMode.value ? null : tradePillHitTest(clientX, clientY);
       const overTradePillNow = pillHit != null;
-      // Over a trendline's pin handle: a hand, same as the other click targets.
-      // The cursor MUST be decided here rather than by the pin hook writing an
-      // inline style — klinecharts paints its own cursor on the canvas, and only
-      // `.chart-wrap.cur-* canvas` (with !important) beats it.
-      const overTlHandle =
-        !avwapAnchorMode.value &&
-        !overlays.getHoveredDrawingId() &&
-        !!c &&
-        hitAnyTrendlineHandle(c, lx, ly);
       const nextCursor = avwapAnchorMode.value
         ? ""
         : overAnchor
           ? "cur-grab"
-          : overTradePillNow || overLine || overTlHandle
+          : overTradePillNow || overLine
             ? "cur-pointer"
             : "";
       if (nextCursor !== cursorModeRef.current) {

@@ -2,8 +2,9 @@
 // drawing from its context menu.
 //
 //  - Pick: a click (mouse) or tap (touch) on a line's body selects it, drawn
-//    with a soft glow; a click or tap anywhere else clears it. Session-only,
-//    carried on the instance's extendData.selectedLine so the draw path sees it.
+//    with a soft glow and a dashed run on to the pane's right edge; a click or
+//    tap anywhere else clears it. Session-only, carried on the instance's
+//    extendData.selectedLine so the draw path sees it.
 //  - Menu: a right-click on any line (desktop, from ChartCore's contextmenu
 //    handler), or a hold on the SELECTED line (touch: tap to pick, then hold,
 //    the same rule the drawing menu follows).
@@ -13,8 +14,8 @@
 //    the source of truth: every toggle reads it, not the live instance, so a
 //    change pushed from another device is never stomped by a stale live copy.
 //
-// Hit targets come from the draw (trendlineMarks' segment registry), the same
-// capture-don't-recompute rule the end-handle pins follow.
+// Hit targets come from the draw (trendlineMarks' segment registry): what was
+// painted, never a recomputation.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Chart } from "klinecharts";
 import ContextMenu, { type MenuItem } from "../ContextMenu";
@@ -231,7 +232,7 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
   // Pick on click / tap, and the touch hold on the picked line. Pointer
   // events, not mouse ones: on a phone the canvas swallows the synthetic
   // mouse sequence (see touchTap.ts). Capture phase and never prevented, so
-  // panning, drawings and the end-handle pins all see the press as before.
+  // panning and drawings both see the press as before.
   const holdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const el = containerRef.current;

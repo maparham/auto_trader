@@ -1584,12 +1584,6 @@ export interface TrendlinesExtend {
    * than `maxCrossings` in exactly the way `dimTouches` is softer than
    * `maxTouches`. */
   dimCrossings?: number;
-  /** Lines the user pinned open by clicking their end handle, as lineKey()
-   * strings. A pinned line ignores `extend` and runs to the right edge of the
-   * pane, re-measured every render so it stays "indefinite" through scroll and
-   * zoom instead of baking in a bar count. SESSION-ONLY: never persisted, and
-   * applyIndicator strips it off a saved snapshot / template / paste. */
-  pinned?: string[];
   /** Multi-timeframe: lines and operand series detected on a higher timeframe
    * and aligned onto the chart bars inside calc (no lookahead). THE ONE KEY ON
    * THIS INTERFACE THAT CALC READS: everything else here is render-only, and a
@@ -1597,13 +1591,13 @@ export interface TrendlinesExtend {
    * indicator runs on, which is how the Python twin treats it too. */
   mtf?: TrendlinesMtf;
   /** Render-only override for TL_LINE_COLOR: every stroke and fill this
-   * instance paints (lines, touch rings, pin handles, ×N tags, pivot marks)
+   * instance paints (lines, touch rings, ×N tags, pivot marks)
    * uses this colour instead. Absent keeps TL_LINE_COLOR, the shared default.
    * Like the rest of this block it never reaches calc, so it has no Python
    * twin and no calcParams entry. */
   lineColor?: string;
   /** Render-only stroke width of the LINE itself, in pixels (1 = default).
-   * Rings, handles, tags and pivot marks keep their own fixed weights, so a
+   * Rings, tags and pivot marks keep their own fixed weights, so a
    * thick line does not swell its furniture. */
   lineWidth?: number;
   /** Render-only dash pattern of the LINE itself; absent or "solid" keeps a
@@ -1615,7 +1609,7 @@ export interface TrendlinesExtend {
   /** Render-only look of a HIGHLIGHTED line (the line menu's Highlight mark).
    * Each key absent follows the line's own style, except width, which
    * defaults to the line width plus TL_BOLD_EXTRA. Colour also tints that
-   * line's rings, dots, handle and tag. */
+   * line's rings, dots and tag. */
   highlightColor?: string;
   highlightWidth?: number;
   highlightStyle?: TrendlineStyleOpt;
@@ -1624,8 +1618,10 @@ export interface TrendlinesExtend {
    * Render-only and PERSISTED: it rides the saved config like the style keys
    * above, so it survives reloads and reaches the user's other devices. */
   lineMarks?: LineMarksByEpic;
-  /** lineKey of the line the user last picked (click or menu). SESSION-ONLY
-   * like `pinned`: never saved, and applyIndicator strips it. */
+  /** lineKey of the line the user last picked (click or menu). The draw runs
+   * it on to the pane's right edge as a dashed extension, so the user sees
+   * where it leads and what it meets. SESSION-ONLY: never saved, and
+   * applyIndicator strips it. */
   selectedLine?: string;
   /** lineKey of the line under the mouse. SESSION-ONLY, like selectedLine. */
   hoveredLine?: string;
@@ -1763,11 +1759,8 @@ export { TL_DEDUPE_ATR };
 
 /** The dedup pass's inputs. `tol` is a price distance (0 or NaN turns merging
  * off, which is what an unwarmed ATR gives on the first TL_ATR_LEN bars).
- * `keep` names the PINNED lines. They take no part in selection: they are
- * never grouped, capped or cut, and are appended to the drawn set afterwards.
- * A pin is stored by lineKey and its only control is the handle painted at the
- * line's end, so a pin that selection could drop would leave nothing to click,
- * exactly the dead state the `stops` gate exists to prevent. */
+ * `keep` names lines exempt from selection: they are never grouped, capped
+ * or cut, and are appended to the drawn set afterwards. The chart passes none. */
 export interface TrendlineDedupe {
   tol: number;
   keep: ReadonlySet<TrendLine>;
@@ -1784,7 +1777,7 @@ export interface TrendlineDedupe {
   depthsOut?: Map<number, number>;
 }
 
-/** No pins: the emit step draws nothing and pins nothing. */
+/** Nothing kept past selection: the drawn set is the emitted set. */
 const NO_PINS: ReadonlySet<TrendLine> = new Set<TrendLine>();
 
 /** The dedup tolerance for a bar's ATR, or 0 when merging is off or the ATR
@@ -2074,7 +2067,7 @@ export function pivotDepths(
 }
 /** STAGE 3 of selection: lines against each other. `ranked` is the lines
  * that passed stage 2 (poolable plus trendlineGate), in walk order (nearest
- * first, nearestFirst); pins are
+ * first, nearestFirst); `keep` lines are
  * never in it. Ported to Python as select_levels. Three steps, in one walk:
  *
  *   1. MERGE. Each line joins the first level whose leader shows the same
@@ -2106,9 +2099,9 @@ export function pivotDepths(
  * of 3 and 4 (same level to the merge, a different line to the eye); leaders
  * fixed before the cap runs are what stop that.
  *
- * PINS ARE NOT GROUPED. selectDrawnLines appends them after this walk, so a
- * pin that fails the gate can never lead a level and swallow a member the emit
- * step (which knows nothing of pins) would emit.
+ * `keep` LINES ARE NOT GROUPED. selectDrawnLines appends them after this walk,
+ * so a kept line that fails the gate can never lead a level and swallow a
+ * member the emit step (which knows nothing of them) would emit.
  *
  * TWO LINES ARE ONE WHEN THEY SHOW THE SAME TREND: close to each other, and
  * close the whole time they both exist (sameTrend), whether or not they share
@@ -2419,11 +2412,8 @@ export function fanMerge(
  *
  * SO THE DRAWN SET IS THE EMITTED SET. Same lines, same levels, same gate:
  * every `tl_k` on the last bar has its line on the chart, and a line that is
- * not on the chart reports nothing to a rule. The ONE exception is a PINNED
- * line, which is appended whatever selection decided, because its handle is
- * the only control that can release the pin; a pin is session UI the calc
- * cannot see, so such a line is visible without emitting. Never the other way
- * round.
+ * not on the chart reports nothing to a rule. (`keep` can append lines past
+ * selection, visible without emitting, but the chart passes none.)
  *
  * The drawn set is INDEPENDENT OF THE EXTEND MODE on purpose: the nearest
  * first order and the merge pass never look at how far a line is drawn, only at its projection
@@ -2431,7 +2421,7 @@ export function fanMerge(
  * nothing else, so which lines appear, like which values emit, must not move.
  *
  * Mirrored in Python by the emit step (trendline_gate, nearest_first,
- * select_levels); the pin append is draw-time only. */
+ * select_levels); the `keep` append is draw-time only. */
 export function selectDrawnLines(
   lines: readonly TrendLine[],
   atIdx: number,
@@ -2461,8 +2451,8 @@ export function selectDrawnLines(
     const ranked = nearestFirst(passing, atIdx, close);
     shown = maxLines > 0 ? ranked.slice(0, maxLines) : ranked;
   }
-  // Pins take no part in the selection: they draw IN ADDITION, so the drawn
-  // set minus pins is exactly the emitted set.
+  // Kept lines take no part in the selection: they draw IN ADDITION, so the
+  // drawn set minus them is exactly the emitted set.
   const keep = dedupe?.keep;
   if (!keep?.size) return shown;
   const out = new Set(shown);
@@ -2471,9 +2461,11 @@ export function selectDrawnLines(
 }
 
 
-/** Drawn radius of the end handle. The click target is deliberately larger
- * (TL_HANDLE_HIT), because a 3px mark is not a mouse target. */
-export const TL_HANDLE_RADIUS = 3;
+/** Gap between a line's newest-bar point and its ×N tag. */
+const TL_TAG_GAP = 8;
+/** The selected line's extension to the pane edge. Its own pattern, so it
+ * reads as a projection even on a line styled dashed. */
+export const TL_EXTEND_DASH = [6, 4];
 /** The hollow ring at a touch: a touch is price respecting the line, and this
  * marks each bar that earned the ×N tag. */
 export const TL_TOUCH_RADIUS = 2;
@@ -2483,7 +2475,6 @@ export const TL_TOUCH_RADIUS = 2;
  * (the close crossed here), so it is larger than the 1px touch ring: a thin
  * × vanished against the body. */
 export const TL_CROSS_RADIUS = 3;
-export const TL_HANDLE_HIT = 8;
 /** The pivot mark: an arrow pointing AT price (UP under a low, DOWN over a
  * high), sitting this many pixels clear of the wick with arms this long. An
  * arrow rather than a circle, since the touch ring already owns that shape, and a
@@ -2518,28 +2509,6 @@ export const TL_PIVOT_STEM_HALF = 1;
  * line rests on, so they carry no ring, and only one bar in view ever carries
  * the price label. */
 export const TL_PIVOT_USED_GAP = 16;
-/** Handles stroke heavier than the 1px line they cap, so a 3px mark reads at
- * all. It is also what tells a handle stroke from a line stroke. */
-export const TL_HANDLE_STROKE = 1.5;
-
-/** Where to centre the end ring: pushed one radius past the line's tip, along
- * the line's own direction, so the ring TOUCHES the tip instead of swallowing
- * it. Degenerate (zero-length) segments keep the tip itself. */
-function ringCentre(
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-): [number, number] {
-  const dx = x1 - x0;
-  const dy = y1 - y0;
-  const len = Math.hypot(dx, dy);
-  if (!(len > 0)) return [x1, y1];
-  const out = TL_HANDLE_RADIUS + 0.5;
-  return [x1 + (dx * out) / len, y1 + (dy * out) / len];
-}
-
-
 /** One colour for every line, whatever kind of pivot anchors it: a sideless
  * line has no support/resistance role to colour by, so painting one drops the
  * green/red split the old detector's two sides used to carry. */
@@ -2594,19 +2563,19 @@ export const KNOWN_EXTEND_MODES: ReadonlySet<string> = new Set([
 /** The bar-index span a line is drawn across: the ONE source of truth for
  * where a line starts and ends.
  *
- * Extracted because the click hit-test has to land on the same right end the
- * draw path paints. Two copies of this arithmetic would drift the moment
- * either side changed, and the handle would stop matching its line. */
+ * Extracted so the selected line's dashed extension starts exactly where the
+ * solid stroke ends: both come out of this one function. */
 export function lineExtent(
   line: TrendLine,
   mode: NonNullable<TrendlinesExtend["extend"]>,
   cfg: TrendlinesConfig,
   drawn: TrendLine[],
   lastIdx: number,
-  /** Bar index at the pane's right edge when this line is pinned, else null.
-   * Passed in rather than derived: only the caller holds the axis, and pinning
-   * means "to the edge", which is a viewport fact that changes with zoom. */
-  pinnedEdge: number | null,
+  /** Bar index at the pane's right edge when this line runs on to it (the
+   * selected line's extension), else null. Passed in rather than derived: only
+   * the caller holds the axis, and "to the edge" is a viewport fact that
+   * changes with zoom. */
+  runToEdge: number | null,
   /** When true (pinned HTF with "Wait for timeframe closes" off), even
    * "segment" must run to the live edge — otherwise a line whose last touch
    * was a day ago leaves a full HTF period gap before the newest candle,
@@ -2621,9 +2590,9 @@ export function lineExtent(
   const jLeft = mode === "extended" ? s - cfg.maxProjBars : s;
   const jEnd = line.lastTouchIdx;
   const horizon = line.lastTouchIdx + cfg.maxProjBars;
-  // Pinned beats the mode: the user clicked THIS line open, so it runs to the
-  // edge whatever the dropdown says.
-  if (pinnedEdge !== null) return { jLeft, jRight: Math.max(jEnd, pinnedEdge) };
+  // The edge beats the mode: the user picked THIS line, so it runs on whatever
+  // the dropdown says.
+  if (runToEdge !== null) return { jLeft, jRight: Math.max(jEnd, runToEdge) };
   if (mode === "segment") {
     if (extendSegmentToLastBar) return { jLeft, jRight: Math.max(jEnd, lastIdx) };
     return { jLeft, jRight: jEnd };
@@ -2675,25 +2644,6 @@ export function trendlineDrawEdge(
   return lastIdx;
 }
 
-export interface TrendlineHandle {
-  key: string;
-  x: number;
-  y: number;
-}
-
-/** Handle pixels recorded BY THE DRAW, per indicator instance, for the click
- * hit-test to read back.
- *
- * Captured rather than recomputed on purpose. The alternative is a second copy
- * of the extent-to-pixel arithmetic (clamping, y interpolation, the y-axis
- * strip), which would drift from the paint the moment either side changed and
- * leave handles that do not sit where they are drawn. The canvas repaints on
- * every scroll and zoom, so these stay current. */
-// Keyed by CHART FIRST: paneId+name alone collide across charts in a
-// multi-chart layout, and pane-relative pixels from one chart would then answer
-// hit-tests for another.
-const HANDLES = new WeakMap<object, Map<string, TrendlineHandle[]>>();
-
 /** An end tag (×N / #rank) as painted: left x, middle y (textBaseline is
  * "middle"), width, in pane pixels. */
 export interface TrendlineTagBox {
@@ -2702,9 +2652,9 @@ export interface TrendlineTagBox {
   w: number;
 }
 
-// The end tags each instance painted, recorded beside its handles and cleared
-// with them, so DOM furniture placed at a line's end (the trendline alert
-// bell) can step around them. Same keying as HANDLES.
+// The end tags each instance painted, so DOM furniture placed at a line's end
+// (the trendline alert bell) can step around them. Keyed by CHART FIRST:
+// paneId+name alone collide across charts in a multi-chart layout.
 const TAGS = new WeakMap<object, Map<string, TrendlineTagBox[]>>();
 
 /** Every end tag painted on one pane of this chart, across instances. */
@@ -2716,82 +2666,32 @@ export function getTrendlineTags(chart: object, paneId: string): TrendlineTagBox
   return out;
 }
 
-export function getTrendlineHandles(
-  chart: object,
-  paneId: string,
-  name: string,
-): TrendlineHandle[] {
-  return HANDLES.get(chart)?.get(`${paneId}:${name}`) ?? [];
-}
-
-/** Any handle on this chart under (px, py), across every pane and instance.
- * The cursor decision needs "is the pointer over one" without enumerating
- * indicators itself. */
-export function hitAnyTrendlineHandle(
-  chart: object,
-  px: number,
-  py: number,
-): boolean {
-  const byPane = HANDLES.get(chart);
-  if (!byPane) return false;
-  for (const handles of byPane.values()) {
-    if (hitHandle(handles, px, py) !== null) return true;
-  }
-  return false;
-}
-
-/** Forget every pane's handles for one indicator instance, on removal.
- *
- * The draw path is the only thing that clears this map, and a removed
- * indicator never draws again, so its last painted handles would sit here for
- * the life of the chart: hitAnyTrendlineHandle kept flipping the cursor to a
- * pointer over dots that are no longer on screen. (Clicks were already inert,
- * since the pin hook walks live instances.) */
-export function dropTrendlineHandles(chart: object, name: string): void {
-  // The line-body targets die with the handles, for the same reason.
+/** Forget every pane's hit targets (line bodies, end tags) for one indicator
+ * instance, on removal. The draw path is the only thing that clears them, and
+ * a removed indicator never draws again, so its last painted targets would sit
+ * here for the life of the chart. */
+export function dropTrendlineTargets(chart: object, name: string): void {
   dropTrendlineSegments(chart, name);
-  for (const byPane of [HANDLES.get(chart), TAGS.get(chart)]) {
-    if (!byPane) continue;
-    for (const key of [...byPane.keys()])
-      if (key.slice(key.indexOf(":") + 1) === name) byPane.delete(key);
-  }
+  const byPane = TAGS.get(chart);
+  if (!byPane) return;
+  for (const key of [...byPane.keys()])
+    if (key.slice(key.indexOf(":") + 1) === name) byPane.delete(key);
 }
 
-function setTrendlineHandles(
+function setTrendlineTags(
   chart: object,
   paneId: string,
   name: string,
-  handles: TrendlineHandle[] | null,
-  tags: TrendlineTagBox[] = [],
+  tags: TrendlineTagBox[],
 ): void {
-  const tagsByPane = TAGS.get(chart) ?? new Map<string, TrendlineTagBox[]>();
-  if (handles === null || tags.length === 0) tagsByPane.delete(`${paneId}:${name}`);
-  else tagsByPane.set(`${paneId}:${name}`, tags);
-  if (tagsByPane.size && !TAGS.has(chart)) TAGS.set(chart, tagsByPane);
-  let byPane = HANDLES.get(chart);
+  let byPane = TAGS.get(chart);
   if (!byPane) {
-    if (handles === null) return;
+    if (!tags.length) return;
     byPane = new Map();
-    HANDLES.set(chart, byPane);
+    TAGS.set(chart, byPane);
   }
-  if (handles === null) byPane.delete(`${paneId}:${name}`);
-  else byPane.set(`${paneId}:${name}`, handles);
-}
-
-/** Nearest handle to a point, or null when nothing is within TL_HANDLE_HIT.
- * `handles` come from the same lineExtent the draw path used. */
-export function hitHandle(
-  handles: Array<{ key: string; x: number; y: number }>,
-  px: number,
-  py: number,
-): string | null {
-  let best: { key: string; d: number } | null = null;
-  for (const h of handles) {
-    const d = Math.hypot(h.x - px, h.y - py);
-    if (d > TL_HANDLE_HIT) continue;
-    if (best === null || d < best.d) best = { key: h.key, d };
-  }
-  return best?.key ?? null;
+  if (!tags.length) byPane.delete(`${paneId}:${name}`);
+  else byPane.set(`${paneId}:${name}`, tags);
 }
 
 /**
@@ -3395,16 +3295,15 @@ function drawTrendlines(
   // Line-body targets: cleared up front and re-set at the one full-draw exit,
   // so every early return leaves nothing clickable.
   setTrendlineSegments(chart, indicator.paneId, indicator.name, null);
-  // Clear on the empty paths too, or the last frame's handles stay clickable
-  // over a chart that no longer draws them.
+  // Clear on the empty paths too, or the last frame's tags outlive it.
   if (dataList.length === 0) {
-    setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    setTrendlineTags(chart, indicator.paneId, indicator.name, []);
     return true;
   }
   const cfg = parseTrendlinesConfig(indicator.calcParams, indicator.extendData);
   const ext = indicator.extendData as TrendlinesExtend | undefined;
   // Resolved ONCE per draw: every stroke and fill below (lines, rings,
-  // handles, tags, pivot marks) reads this instead of the shared default, so
+  // tags, pivot marks) reads this instead of the shared default, so
   // one pane's colour choice never bleeds into another's.
   const lineStyle = trendlineStyleOf(ext);
   const lineColor = lineStyle.color;
@@ -3414,8 +3313,8 @@ function drawTrendlines(
   // NORMALISED, not merely defaulted. A pane saved under a spelling this pane
   // no longer offers ("apex") would otherwise reach lineExtent as an unknown
   // string, fall through every branch and draw the full projection horizon
-  // while `stops` below read it as a stopping mode and painted end handles on
-  // rays. An unknown mode is a ray, which is the file's standing default.
+  // while `stops` below read it as a stopping mode and extended rays past
+  // their own horizon. An unknown mode is a ray, which is the file's standing default.
   const mode = KNOWN_EXTEND_MODES.has(ext?.extend as string) ? ext!.extend! : "ray";
   // MULTI-TIMEFRAME: the lines carry HTF bar indices, so every bar-denominated
   // measurement below (isMajor's spans, lineExtent's projection horizon, the
@@ -3557,7 +3456,7 @@ function drawTrendlines(
   }
   if (!last?.lines?.length) {
     paintMarks(NO_PIVOTS_USED, null);
-    setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    setTrendlineTags(chart, indicator.paneId, indicator.name, []);
     if (debugSegs.length) setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs);
     return true;
   }
@@ -3566,7 +3465,7 @@ function drawTrendlines(
   // nothing to measure the lines at, so draw none rather than measure at -1.
   if (lastIdx < 0) {
     paintMarks(NO_PIVOTS_USED, null);
-    setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    setTrendlineTags(chart, indicator.paneId, indicator.name, []);
     if (debugSegs.length) setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs);
     return true;
   }
@@ -3585,14 +3484,10 @@ function drawTrendlines(
     dataList.length,
     forceToLastBar,
   );
-  // A pin means "run past where you stopped", so it is only meaningful in the
-  // modes that STOP a line. "ray" and "extended" already run to the horizon:
-  // there is nothing to release, and their end sits ~maxProjBars into the
-  // future, off the pane, where the handle was being culled and left nothing to
-  // click. No handle, and stored pins stay dormant rather than silently
-  // extending a line with no control to undo it.
+  // The selected line's dashed extension means "where does this lead", so it
+  // only exists in the modes that STOP a line. "ray" and "extended" already
+  // run to the horizon, ~maxProjBars into the future and off the pane.
   const stops = mode !== "ray" && mode !== "extended";
-  const pins = new Set(stops ? (ext?.pinned ?? []) : []);
   // ONE GATE FOR BOTH SURFACES: the chart draws exactly what an operand could
   // read. Every bound in the panel therefore means the same thing wherever the
   // user meets it, which is what the tips promise ("counts as a real
@@ -3611,13 +3506,8 @@ function drawTrendlines(
   // same one selectDrawnLines projects to), not a per-line bar.
   // Max Distance first, exactly as the emit step gates it, so a far line is
   // off the chart on the same bars it reports nothing.
-  // Resolved to line objects so selectDrawnLines can append them after
-  // selection. Pins take no part in the merge, the cap or the filters.
-  const pinnedLines = new Set(
-    pins.size ? last.lines.filter((l) => pins.has(lineKey(l, dataList, starts))) : [],
-  );
   // The same call, lines, tolerance, cap and gate the emit step used on this
-  // bar, so the drawn set is the emitted set (plus pins). The debug depths
+  // bar, so the drawn set is the emitted set. The debug depths
   // come out of the same selection but not the same walk: depthsOut disables
   // the early stop, so the number counts every gate-passing level that
   // reaches this bar, beyond what the cap and Max Trendlines let through to
@@ -3629,7 +3519,7 @@ function drawTrendlines(
   const gate = trendlineGate(lastIdx, lastClose, last.atr, cfg);
   const drawn = selectDrawnLines(pool, lastIdx, lastClose, cfg.maxLines, {
     tol: mergeTolerance(cfg, last.atr, lastClose),
-    keep: pinnedLines,
+    keep: NO_PINS,
     perPivot: cfg.maxPerPivot,
     pass: gate,
     fan: fanTolerance(cfg, last.atr),
@@ -3637,16 +3527,14 @@ function drawTrendlines(
     depthsOut: depths ?? undefined,
   });
   // Ranked against every line passing the filters, not just the drawn ones,
-  // so "#5" means the same as in the debug popup. A pin outside that set
-  // gets no rank.
+  // so "#5" means the same as in the debug popup.
   const rankPool = showStrength ? pool.filter(gate) : null;
   if (!drawn.length) {
     paintMarks(NO_PIVOTS_USED, depths);
-    setTrendlineHandles(chart, indicator.paneId, indicator.name, null);
+    setTrendlineTags(chart, indicator.paneId, indicator.name, []);
     if (debugSegs.length) setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs);
     return true;
   }
-  const handles: TrendlineHandle[] = [];
   const segments: TrendlineSegment[] = [];
   // Per-line user marks (Hide / Highlight) for THIS symbol, and the picked
   // line. Render-only: they restyle lines already chosen above, never choose.
@@ -3655,7 +3543,8 @@ function drawTrendlines(
   const hoveredKey = ext?.hoveredLine;
   const emphasized = ext?.emphasized === true;
   let timestamps: number[] | null = null;
-  // The bar index sitting at the pane's right edge, so a pinned line reaches it
+  // The bar index sitting at the pane's right edge, so the selected line's
+  // extension reaches it
   // at any zoom. The index-to-pixel map is linear (klinecharts multiplies by a
   // constant bar space), so one bar's width inverts it exactly.
   const barPx = xAxis.convertToPixel(1) - xAxis.convertToPixel(0);
@@ -3664,8 +3553,8 @@ function drawTrendlines(
     barPx > 0
       ? lastChartIdx + (tagRight - xAxis.convertToPixel(lastChartIdx)) / barPx
       : lastChartIdx;
-  // Back into the lines' own space: lineExtent runs the pinned line out to a
-  // BAR, and under a pin that bar is an HTF one.
+  // Back into the lines' own space: lineExtent runs the line out to a BAR, and
+  // under a timeframe pin that bar is an HTF one.
   const edgeIdx = toLine(edgeChartIdx);
 
   ctx.save();
@@ -3684,7 +3573,7 @@ function drawTrendlines(
   const halo = tagHalo();
   // The shared canvas context arrives with whatever dash pattern the previous
   // drawer left behind (price lines and alert lines are dashed), so every
-  // trendline stroke, ring, handle and tag below needs a solid line reset
+  // trendline stroke, ring and tag below needs a solid line reset
   // explicitly rather than inheriting it.
   ctx.setLineDash([]);
   ctx.lineDashOffset = 0;
@@ -3694,13 +3583,12 @@ function drawTrendlines(
   for (const line of drawn) {
     if (hideDrawn) continue;
     // ONE alpha for the whole line and everything it carries (rings, crossing
-    // dots, pin handle, ×N tag), computed once before the stroke. Recomputing
+    // dots, ×N tag, extension), computed once before the stroke. Recomputing
     // the dim test per site is how the touch rings and the ×N tag once
     // snapped back to full opacity while the stroke itself faded correctly.
     const alpha =
       (trendlineDimmed(line, lastIdx, ext) || fanInner?.has(line) ? trendlineDimAlpha(ext) : 1) * lineStyle.opacity;
     const key = lineKey(line, dataList, starts);
-    const isPinned = pins.has(key);
     const isBold = marks.bold.has(key) && !marks.hidden.has(key);
     const look = markedLineStyle(
       { width: lineStyle.width, alpha, opacity: lineStyle.opacity },
@@ -3709,14 +3597,7 @@ function drawTrendlines(
     );
     // A highlighted line and everything it carries take the highlight colour.
     const color = isBold ? hlStyle.color : lineColor;
-    // The line's end under the MODE alone: what the stroke reverts to when a
-    // pin is released. (The handle no longer rides it — see below — it sits at
-    // the newest bar, which likewise never travels to the pane edge with a
-    // pinned line, so there is always something to click to undo the pin.)
-    const natural = lineExtent(line, mode, cfg, drawn, drawEdge, null, forceToLastBar);
-    const { jLeft, jRight } = isPinned
-      ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx, forceToLastBar)
-      : natural;
+    const { jLeft, jRight } = lineExtent(line, mode, cfg, drawn, drawEdge, null, forceToLastBar);
     // A line endpoint that is one of the line's own touch bars (the anchors
     // always are) snaps to the extreme's candle; a projected end (a ray's
     // horizon, a meeting) keeps the plain time mapping. Snapped by whatever
@@ -3731,11 +3612,22 @@ function drawTrendlines(
     };
     const x0 = xAtLine(jLeft);
     const x1 = xAtLine(jRight);
-    if (x1 <= 0 || x0 >= bounding.width) continue;
+    // The selected line runs on to the pane's right edge as a dashed
+    // extension: a visual cue for where it leads and what it meets, never
+    // saved and never read by calc. Same lineExtent, so it starts exactly
+    // where the solid stroke stops.
+    const jExt =
+      stops && key === selectedKey
+        ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx, forceToLastBar).jRight
+        : jRight;
+    const xExt = jExt > jRight ? xAt(jExt) : x1;
+    if (Math.max(x1, xExt) <= 0 || x0 >= bounding.width) continue;
     const yPx = (price: number) => yAxis.convertToPixel(price);
-    const { y0, y1 } = mtf
-      ? pinnedEndY(line, jLeft, jRight, x0, x1, toLine(0), toLine(lastChartIdx), xAt, yPx)
-      : { y0: yPx(projectAt(line, jLeft)), y1: yPx(projectAt(line, jRight)) };
+    const endY = (jR: number, xR: number) =>
+      mtf
+        ? pinnedEndY(line, jLeft, jR, x0, xR, toLine(0), toLine(lastChartIdx), xAt, yPx)
+        : { y0: yPx(projectAt(line, jLeft)), y1: yPx(projectAt(line, jR)) };
+    const { y0, y1 } = endY(jRight, x1);
     // Marks (the touch rings) ride the SEGMENT AS DRAWN rather
     // than projecting themselves: under a timeframe pin the index map is only
     // piecewise linear (a weekend compresses on the chart but not in time), so
@@ -3763,7 +3655,7 @@ function drawTrendlines(
     }
     ctx.globalAlpha = look.alpha;
     // Width and dash belong to the LINE alone: both go back to solid, 1px
-    // right after the stroke so the rings, handle and tag keep their shape.
+    // right after the stroke so the rings and tag keep their shape.
     ctx.lineWidth = look.width;
     ctx.setLineDash(isBold ? hlDash : lineDash);
     // Stroke only the near-pane portion (see clipSegmentToRect: an unclipped
@@ -3780,6 +3672,20 @@ function drawTrendlines(
       ctx.lineTo(seg[2], seg[3]);
       ctx.stroke();
     }
+    if (xExt > x1) {
+      const extSeg = clipSegmentToRect(
+        x1, y1, xExt, endY(jExt, xExt).y1,
+        -DRAW_CLIP_PAD, -DRAW_CLIP_PAD,
+        bounding.width + DRAW_CLIP_PAD, bounding.height + DRAW_CLIP_PAD,
+      );
+      if (extSeg) {
+        ctx.setLineDash(TL_EXTEND_DASH);
+        ctx.beginPath();
+        ctx.moveTo(extSeg[0], extSeg[1]);
+        ctx.lineTo(extSeg[2], extSeg[3]);
+        ctx.stroke();
+      }
+    }
     ctx.setLineDash([]);
     // Line-body hit target: the stroke's on-pane part only, so a click can
     // never land on a stretch of line nobody can see.
@@ -3792,7 +3698,7 @@ function drawTrendlines(
         const value = yAxis.convertFromPixel(onSegment(xAxis.convertToPixel(idx)));
         return timestamp === null || !Number.isFinite(value) ? null : { timestamp, value };
       };
-      const tool = isPinned ? "segment" : cloneToolFor(mode);
+      const tool = cloneToolFor(mode);
       segments.push({
         key,
         x0: hitSeg[0], y0: hitSeg[1], x1: hitSeg[2], y1: hitSeg[3],
@@ -3823,7 +3729,7 @@ function drawTrendlines(
       });
     }
     // A hidden line is the stroke and nothing else: no rings, crossing dots,
-    // pin handle or ×N tag, so it claims no tag slot either.
+    // or ×N tag, so it claims no tag slot either.
     if (!look.furniture) continue;
     // The touches themselves, one hollow ring each, so the ×N tag can be read
     // back against the bars that earned it: which swings agreed on this line is
@@ -3906,81 +3812,21 @@ function drawTrendlines(
     // landed outside the pane entirely and the two that stayed sat ~75px off
     // their line. The segment is straight, so interpolating at xTag puts the
     // tag back on it.
-    // The pin handle, AT THE NEWEST BAR always, on the line's projection
-    // there — not at the line's natural end. The natural end moves with the
-    // mode (last touch in segment, a meeting in cross), which scattered the
-    // handles across the chart; the newest bar lines them up in one column
-    // beside price where every line is being read anyway, and it is the same
-    // spot whether or not the line is pinned, so the click that made the pin
-    // is the click that undoes it. In segment mode the stroke can stop short
-    // of it: the handle then sits on the line's invisible projection, which is
-    // the price of "always". ABSOLUTE, unlike the tag: no clamp to the pane
-    // edge, so panning back through history moves the handle off-screen with
-    // its bar instead of leaving it clinging to the edge — the culling guard
-    // below drops it (undrawn AND unclickable) until the newest bar scrolls
-    // back into view, the same deal an off-pane-vertically handle gets.
-    const xHandle = xAt(drawEdge);
-    const yHandle = yAxis.convertToPixel(projectAt(line, drawEdge));
-    // The ring sits just BEYOND the end, tangent to it, rather than centred on
-    // it. Centred, a hollow ring has the line running through its middle, which
-    // reads as a bead threaded on the line instead of a cap at its tip. Pushed
-    // out by its own radius (plus half the 1px stroke) along the line's own
-    // direction, it touches the tip and nothing more. A pinned line runs on past
-    // it, so the offset dot still lands on the line there.
-    const [xRing, yRing] = ringCentre(x0, y0, xHandle, yHandle);
-    // Culled on the BAR's x, not the ring's: at the live edge the newest bar
-    // sits flush against the axis strip and the ring pokes a radius past it —
-    // dropping the handle there would hide it in exactly the resting state a
-    // chart spends its life in. The ring overlapping the 4px axis gap by that
-    // much is the lesser evil.
-    if (
-      stops &&
-      xRing >= 0 &&
-      xHandle <= tagRight &&
-      yRing >= 0 &&
-      yRing <= bounding.height
-    ) {
-      // Registered where it is DRAWN: the hit test and the ring must be the
-      // same object or the click target drifts off the dot.
-      handles.push({ key: lineKey(line, dataList, starts), x: xRing, y: yRing });
-      // The two states are OPPOSITE ACTIONS, so they get opposite shapes rather
-      // than two shades of one dot. Free: a chevron pointing the way the line
-      // would run, "click to run me on". Pinned: a bar across the line, an end
-      // stop the line has already passed, "click to cut me back".
-      const ang = Math.atan2(yRing - y0, xRing - x0);
-      // At the line's own alpha, like the rings and the tag: a dimmed line
-      // dims everything it carries.
-      ctx.lineWidth = TL_HANDLE_STROKE;
-      ctx.beginPath();
-      if (isPinned) {
-        const nx = Math.sin(ang);
-        const ny = -Math.cos(ang);
-        ctx.moveTo(xRing - nx * TL_HANDLE_RADIUS, yRing - ny * TL_HANDLE_RADIUS);
-        ctx.lineTo(xRing + nx * TL_HANDLE_RADIUS, yRing + ny * TL_HANDLE_RADIUS);
-      } else {
-        // Tip one radius ahead of centre, arms swept back 135 degrees, so the
-        // chevron's mouth faces the line and its point faces the extension.
-        const tx = xRing + Math.cos(ang) * TL_HANDLE_RADIUS;
-        const ty = yRing + Math.sin(ang) * TL_HANDLE_RADIUS;
-        const arm = TL_HANDLE_RADIUS * 1.6;
-        const a1 = ang + Math.PI * 0.75;
-        const a2 = ang - Math.PI * 0.75;
-        ctx.moveTo(tx + Math.cos(a1) * arm, ty + Math.sin(a1) * arm);
-        ctx.lineTo(tx, ty);
-        ctx.lineTo(tx + Math.cos(a2) * arm, ty + Math.sin(a2) * arm);
-      }
-      ctx.stroke();
-      ctx.lineWidth = 1;
-    }
+    // Anchored AT THE NEWEST BAR, on the line's projection there, not at the
+    // line's natural end: that moves with the mode (last touch in segment, a
+    // meeting in cross) and scattered the tags across the chart, while the
+    // newest bar lines them up in one column beside price.
+    const xEnd = xAt(drawEdge);
+    const yEnd = yAxis.convertToPixel(projectAt(line, drawEdge));
     const rank = rankPool?.includes(line) ? strengthRank(rankPool, line) : undefined;
     if (!showStats && rank === undefined) continue;
     const label = showStats ? trendlineStatsLabel(line.touches, line.crossings, rank) : `#${rank}`;
     const wTag = ctx.measureText(label).width;
-    const xTag = Math.min(xRing + TL_HANDLE_RADIUS + 5, tagRight - wTag);
+    const xTag = Math.min(xEnd + TL_TAG_GAP, tagRight - wTag);
     let yTag =
-      xHandle === x0
-        ? yHandle
-        : y0 + ((yHandle - y0) * (xTag - x0)) / (xHandle - x0);
+      xEnd === x0
+        ? yEnd
+        : y0 + ((yEnd - y0) * (xTag - x0)) / (xEnd - x0);
     yTag = clearTagRow(placedTags, xTag, yTag, wTag, bounding.height);
     placedTags.push({ x: xTag, y: yTag, w: wTag });
     myTags.push({ x: xTag, y: yTag, w: wTag });
@@ -4002,7 +3848,7 @@ function drawTrendlines(
     drawnPivotIdxs(marks.hidden.size ? drawn.filter((l) => !marks.hidden.has(lineKey(l, dataList, starts))) : drawn),
     depths,
   );
-  setTrendlineHandles(chart, indicator.paneId, indicator.name, handles, myTags);
+  setTrendlineTags(chart, indicator.paneId, indicator.name, myTags);
   // Drawn segments first: hitTrendline keeps the first at equal distance, so
   // a tie resolves to the drawn line, not the debug candidate under it.
   setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs.length ? [...segments, ...debugSegs] : segments);

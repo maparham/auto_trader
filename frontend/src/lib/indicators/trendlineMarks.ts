@@ -67,7 +67,7 @@ export function toggleMark(
 }
 
 /** How one drawn line paints given its marks. Hidden wins over bold. A hidden
- * line drops its furniture (rings, crossing dots, pin handle, ×N tag, pivot
+ * line drops its furniture (rings, crossing dots, ×N tag, pivot
  * stems) so it takes no tag slot and nothing about it competes for attention;
  * a bold line ignores the dim fade so it stands at the highlight opacity
  * (the instance's own when no highlight style is given). */
@@ -94,8 +94,7 @@ export interface TrendlineClone {
 }
 
 /** The drawing tool that reproduces an extend mode: a ray keeps running right,
- * "extended" runs both ways, every stopping mode (and a pinned line, which the
- * caller passes as "segment") is a plain segment. */
+ * "extended" runs both ways, every stopping mode is a plain segment. */
 export function cloneToolFor(mode: string | undefined): TrendlineClone["tool"] {
   if (mode === "extended") return "straightLine";
   if (mode === "ray" || mode === undefined) return "rayLine";
@@ -103,7 +102,7 @@ export function cloneToolFor(mode: string | undefined): TrendlineClone["tool"] {
 }
 
 /** Bar-open timestamp of a chart bar index. Past the newest bar (a meeting or
- * a pinned edge in the future) it extrapolates at the last bar spacing, which
+ * a projection in the future) it extrapolates at the last bar spacing, which
  * is what klinecharts does with a future overlay point too. */
 export function tsAtIndex(timestamps: readonly number[], idx: number): number | null {
   const n = timestamps.length;
@@ -165,8 +164,8 @@ export function alertLineOf(
   return { slope: (line.p2 - line.p1) / (line.i2 - line.i1), tRef, pRef, t1, p1: line.p1, t2, p2: line.p2 };
 }
 
-/** Recorded by the draw, per chart then "paneId:name", like the end-handle
- * map beside it: hit targets are what was painted, never a recomputation. */
+/** Recorded by the draw, per chart then "paneId:name": hit targets are what
+ * was painted, never a recomputation. */
 const SEGMENTS = new WeakMap<object, Map<string, readonly TrendlineSegment[]>>();
 
 export function setTrendlineSegments(
@@ -230,7 +229,7 @@ export interface TrendlineHit {
 /** Nearest drawn trendline body within `slop` of (px, py), across every
  * instance on the chart. Candle pane only: the recorded pixels are pane-
  * relative and callers hand in container-relative points, which agree only
- * for the topmost pane (the end-handle click has the same convention). */
+ * for the topmost pane. */
 export function hitTrendline(
   chart: object,
   px: number,

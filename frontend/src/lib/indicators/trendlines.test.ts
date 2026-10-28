@@ -5,10 +5,8 @@ import {
   buildTlState,
   computeTrendlines,
   createTrendlinesSession,
-  dropTrendlineHandles,
-  getTrendlineHandles,
-  hitAnyTrendlineHandle,
-  hitHandle,
+  dropTrendlineTargets,
+  getTrendlineTags,
   touchWeight,
   TL_TAG_ROW,
   withinSlope,
@@ -27,9 +25,7 @@ import {
   stepCrossing,
   hasBackClearance,
   touchGaps,
-  TL_HANDLE_HIT,
-  TL_HANDLE_RADIUS,
-  TL_HANDLE_STROKE,
+  TL_EXTEND_DASH,
   TL_TOUCH_RADIUS,
   TL_PIVOT_ARM,
   TL_PIVOT_GAP,
@@ -1817,6 +1813,8 @@ interface Segment {
   x1: number;
   y1: number;
   dashed: boolean;
+  /** The dash pattern the stroke was painted with ([] = solid). */
+  dash?: number[];
   /** The opacity the stroke was painted at: full for a live line, the dim
    * alpha for a stale or well-touched one. */
   alpha: number;
@@ -1844,10 +1842,8 @@ interface Painted {
   tags: Tag[];
   marks: Mark[];
   touchMarks: Mark[];
-  /** Handle strokes (chevron arms, or the pinned end bar). */
-  handleStrokes: Segment[];
-  /** ctx.strokeStyle read back at every stroke() call: the line itself, its
-   * touch rings, and its handle. One colour for the whole pane now, so every
+  /** ctx.strokeStyle read back at every stroke() call: the line itself and
+   * its touch rings. One colour for the whole pane now, so every
    * entry should read TL_LINE_COLOR. */
   strokeColors: string[];
 }
@@ -1903,7 +1899,9 @@ function record(
   calcParams: number[],
   extend?: string,
   view: View = IDENTITY_VIEW,
-  pinned?: string[],
+  // extendData.selectedLine: the picked line, which runs on to the pane's
+  // right edge as a dashed extension.
+  selected?: string,
   // OFF by default here, unlike the app: nearly every draw test below counts
   // segments, and merging would quietly change those counts into assertions
   // about the dedup pass instead of about what they were written to check.
@@ -1955,17 +1953,14 @@ function record(
   const marks: Mark[] = [];
   // Touch rings, apart from break dots for the same reason: the tests that
   // count break marks would otherwise be counting touches too. The RADIUS is
-  // the discriminator, and like the handle's heavier stroke it is a real
-  // visual difference, not a test-only flag.
+  // the discriminator, and it is a real visual difference, not a test-only
+  // flag.
   const touchMarks: Mark[] = [];
-  // Same reason for the handle glyphs, which are strokes rather than arcs now.
-  // lineWidth is the discriminator, and it is not a test-only flag: the handle
-  // really is drawn heavier than the line it caps.
-  const handleStrokes: Segment[] = [];
   const strokeColors: string[] = [];
   let cur = { x: 0, y: 0 };
   let start = { x: 0, y: 0 };
   let dashed = false;
+  let dash: number[] = [];
   const ctx = {
     font: "",
     textBaseline: "",
@@ -1982,24 +1977,21 @@ function record(
     },
     setLineDash: (d: number[]) => {
       dashed = d.length > 0;
+      dash = d;
     },
     moveTo: (x: number, y: number) => {
       cur = { x, y };
       start = { x, y };
     },
     lineTo: (x: number, y: number) => {
-      const seg = { x0: cur.x, y0: cur.y, x1: x, y1: y, dashed, alpha: ctx.globalAlpha, width: ctx.lineWidth };
-      if (ctx.lineWidth === TL_HANDLE_STROKE) handleStrokes.push(seg);
-      else segments.push(seg);
+      segments.push({ x0: cur.x, y0: cur.y, x1: x, y1: y, dashed, ...(dash.length ? { dash } : {}), alpha: ctx.globalAlpha, width: ctx.lineWidth });
       cur = { x, y };
     },
     // The pivot marks are FILLED triangles, so their closing edge exists only
     // as a closePath. Recorded like any other edge, or a caret would read as
     // two edges here and three on the canvas.
     closePath: () => {
-      const seg = { x0: cur.x, y0: cur.y, x1: start.x, y1: start.y, dashed, alpha: ctx.globalAlpha };
-      if (ctx.lineWidth === TL_HANDLE_STROKE) handleStrokes.push(seg);
-      else segments.push(seg);
+      segments.push({ x0: cur.x, y0: cur.y, x1: start.x, y1: start.y, dashed, ...(dash.length ? { dash } : {}), alpha: ctx.globalAlpha });
       cur = { ...start };
     },
     rect: () => {},
@@ -2031,7 +2023,7 @@ function record(
   if (arriveDashed) ctx.setLineDash([4, 3]);
   const ext = {
     extend,
-    pinned,
+    selectedLine: selected,
     ...(dedupe === "default" ? {} : { dedupe }),
     ...(nearPrice === "default" ? {} : { nearPrice }),
     ...(declutter ? { declutter } : {}),
@@ -2062,7 +2054,7 @@ function record(
   // isCover: klinecharts must skip its own figure loop, or the empty `figures`
   // list is not the whole story.
   expect(drew).toBe(true);
-  return { segments, tags, marks, touchMarks, handleStrokes, strokeColors };
+  return { segments, tags, marks, touchMarks, strokeColors };
 }
 
 describe("TRENDLINES_TEMPLATE.draw", () => {
@@ -2159,17 +2151,12 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     });
     expect(dimmed.segments.length).toBe(live.segments.length);
     expect(dimmed.segments.every((sg) => sg.alpha === TL_DIM_ALPHA)).toBe(true);
-    // THE RINGS TOO. The alpha is restored at the pin-handle site in the draw
-    // loop, and a stroke that fades while its touch rings stay opaque is the
+    // THE RINGS TOO. A stroke that fades while its touch rings stay opaque is the
     // failure this pins: it looks right on the line and wrong everywhere
     // else. Every drawn line here meets the threshold, so no ring is left
     // opaque.
     expect(dimmed.touchMarks.length).toBeGreaterThan(0);
     expect(dimmed.touchMarks.every((m) => m.alpha === TL_DIM_ALPHA)).toBe(true);
-    // And the pin handle: an opaque chevron at the end of a faded line reads
-    // as a live line's marker.
-    expect(dimmed.handleStrokes.length).toBeGreaterThan(0);
-    expect(dimmed.handleStrokes.every((s) => s.alpha === TL_DIM_ALPHA)).toBe(true);
   });
 
   it("paints the dim at the pane's own opacity, clamped", () => {
@@ -2297,12 +2284,11 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
       tags: [],
       marks: [],
       touchMarks: [],
-      handleStrokes: [],
       strokeColors: [],
     });
   });
 
-  it("strokes every line, ring and handle in the one line colour", () => {
+  it("strokes every line and ring in the one line colour", () => {
     const b = bars();
     const { strokeColors } = record(b, params(3), "lastbar");
     expect(strokeColors.length).toBeGreaterThan(0);
@@ -2310,9 +2296,9 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
   });
 
   // extendData.lineColor is a render-only override: it recolours every stroke
-  // and fill this instance paints (lines, rings, handles, tags, pivot marks)
+  // and fill this instance paints (lines, rings, tags, pivot marks)
   // without touching calc or the Python twin.
-  it("recolours every stroke, ring and handle when extendData.lineColor is set", () => {
+  it("recolours every stroke and ring when extendData.lineColor is set", () => {
     const b = bars();
     const { strokeColors } = record(
       b,
@@ -2340,21 +2326,18 @@ describe("TRENDLINES_TEMPLATE.draw", () => {
     expect(strokeColors.every((c) => c === TL_LINE_COLOR)).toBe(true);
   });
 
-  // The rest of the Style tab: width and dash are the LINE's alone (the
-  // handle keeps its own weight and stays undashed), opacity fades the group.
+  // The rest of the Style tab: width and dash are the LINE's alone, opacity
+  // fades the group.
   const styled = (styleExt: Record<string, unknown>) =>
     record(bars(), params(3), "lastbar", undefined, undefined, false, false, undefined, undefined, false, false, false, undefined, styleExt);
-  it("strokes the line at extendData.lineWidth and the handle at its own weight", () => {
-    const { segments, handleStrokes } = styled({ lineWidth: 3 });
+  it("strokes the line at extendData.lineWidth", () => {
+    const { segments } = styled({ lineWidth: 3 });
     const lines = segments.filter((s) => s.width === 3);
     expect(lines.length).toBeGreaterThan(0);
-    expect(handleStrokes.length).toBeGreaterThan(0);
-    expect(handleStrokes.every((s) => s.width === TL_HANDLE_STROKE)).toBe(true);
   });
-  it("dashes the line under extendData.lineStyle and leaves the handle solid", () => {
-    const { segments, handleStrokes } = styled({ lineStyle: "dashed" });
+  it("dashes the line under extendData.lineStyle", () => {
+    const { segments } = styled({ lineStyle: "dashed" });
     expect(segments.some((s) => s.dashed)).toBe(true);
-    expect(handleStrokes.every((s) => !s.dashed)).toBe(true);
     const plain = styled({});
     expect(plain.segments.some((s) => s.dashed)).toBe(false);
   });
@@ -2557,7 +2540,7 @@ describe("lineExtent", () => {
   const c = (over: Partial<TrendlinesConfig> = {}): TrendlinesConfig =>
     cfg(over);
 
-  it("lets a pin outrun whatever the mode says", () => {
+  it("lets the edge outrun whatever the mode says", () => {
     for (const mode of [
       "ray",
       "segment",
@@ -2569,12 +2552,12 @@ describe("lineExtent", () => {
     }
   });
 
-  it("never pulls a line back behind its own end when pinned", () => {
-    // A pin edge BEHIND the line's last touch must not shorten it.
+  it("never pulls a line back behind its own end", () => {
+    // An edge BEHIND the line's last touch must not shorten it.
     expect(lineExtent(line, "ray", c(), [line], 40, 5).jRight).toBe(10);
   });
 
-  it("keeps the left edge under the mode even when pinned", () => {
+  it("keeps the left edge under the mode when run to the edge", () => {
     expect(lineExtent(line, "extended", c(), [line], 40, 500).jLeft).toBe(
       0 - 250,
     );
@@ -2582,28 +2565,7 @@ describe("lineExtent", () => {
   });
 });
 
-describe("hitHandle", () => {
-  const handles = [
-    { key: "a", x: 100, y: 100 },
-    { key: "b", x: 110, y: 100 },
-  ];
-
-  it("misses beyond the grab radius and hits inside it", () => {
-    expect(hitHandle(handles, 100, 100 + TL_HANDLE_HIT + 1)).toBeNull();
-    expect(hitHandle(handles, 100, 100 + TL_HANDLE_HIT - 1)).toBe("a");
-  });
-
-  it("takes the nearest when two overlap", () => {
-    expect(hitHandle(handles, 104, 100)).toBe("a");
-    expect(hitHandle(handles, 107, 100)).toBe("b");
-  });
-
-  it("returns null with no handles", () => {
-    expect(hitHandle([], 100, 100)).toBeNull();
-  });
-});
-
-describe("TRENDLINES draw handles", () => {
+describe("TRENDLINES selected-line extension", () => {
   const params = (maxLines: number): number[] => [2, 0.75, 2, 5, 250, maxLines];
   const dips = (): KLineData[] => {
     const out = flat(80);
@@ -2612,238 +2574,63 @@ describe("TRENDLINES draw handles", () => {
     out[60] = bar(60, 96, 100.5);
     return out;
   };
-
-  it("puts a clickable handle on the right end of every drawn line", () => {
-    // lastbar mode, so the ends land ON the pane. Under a ray the ends sit 250
-    // bars out, where the identity view puts them far above the pane and the
-    // bounds guard correctly drops their handles.
-    const b = dips();
-    const { segments } = record(b, params(3), "lastbar");
-    const handles = getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES");
-    // One per drawn line whose end is actually on the pane. Even at the newest
-    // bar a steep line can project above the top, and that handle is dropped
-    // rather than drawn into a neighbouring pane.
-    const onPane = segments.filter(
-      (s) => s.y1 >= 0 && s.y1 <= IDENTITY_VIEW.height,
-    );
-    expect(onPane.length).toBeGreaterThan(0);
-    expect(handles).toHaveLength(onPane.length);
-    // Each handle sits JUST PAST its segment's right end, along the segment's
-    // own direction: the ring is tangent to the tip rather than centred on it,
-    // and the hit test has to follow the ring or a click lands off the dot.
-    const OUT = TL_HANDLE_RADIUS + 0.5;
-    for (const seg of onPane) {
-      const len = Math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0);
-      const ex = seg.x1 + ((seg.x1 - seg.x0) * OUT) / len;
-      const ey = seg.y1 + ((seg.y1 - seg.y0) * OUT) / len;
-      expect(
-        handles.some(
-          (h) => Math.abs(h.x - ex) < 1e-6 && Math.abs(h.y - ey) < 1e-6,
-        ),
-      ).toBe(true);
-    }
-  });
-
-  it("anchors every handle at the newest bar, whatever the mode", () => {
-    // The natural end moves with the mode (last touch in segment, a meeting
-    // in cross), but the handle must not: it sits on the line's projection at
-    // the newest bar, one column beside price. In segment mode that is PAST
-    // the drawn stroke, on the line's invisible extension.
-    const b = dips();
-    const lastIdx = b.length - 1;
-    const OUT = TL_HANDLE_RADIUS + 0.5;
-    for (const mode of ["segment", "lastbar", "cross"] as const) {
-      const { segments } = record(b, params(3), mode);
-      const handles = getTrendlineHandles(
-        lastChart,
-        "candle_pane",
-        "TRENDLINES",
-      );
-      expect(handles.length).toBeGreaterThan(0);
-      for (const h of handles) {
-        // At the newest bar, pushed out at most one ring past it along the
-        // line's own direction.
-        expect(h.x).toBeGreaterThanOrEqual(lastIdx);
-        expect(h.x).toBeLessThanOrEqual(lastIdx + OUT);
-        // On its line's projection: collinear with one drawn segment.
-        expect(
-          segments.some((s) => {
-            const slope = (s.y1 - s.y0) / (s.x1 - s.x0);
-            return Math.abs(h.y - (s.y0 + slope * (h.x - s.x0))) < 1e-6;
-          }),
-        ).toBe(true);
-      }
-    }
-  });
-
-  it("drops the handle when the newest bar is scrolled off the pane", () => {
-    // ABSOLUTE anchoring: panning back through history takes the handle
-    // off-screen with its bar. Clamping it to the pane edge instead is exactly
-    // what the anchor exists to prevent — a handle that moves to stay in view.
-    const b = dips();
-    // The identity view, cut down so the newest bar (79) sits past the plot
-    // area's right edge (width 50, axis 10): lines still draw, handles do not.
-    const scrolledBack: typeof IDENTITY_VIEW = { ...IDENTITY_VIEW, width: 50, axis: 10 };
-    const { segments } = record(b, params(3), "lastbar", scrolledBack);
-    expect(segments.length).toBeGreaterThan(0);
-    expect(
-      getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES"),
-    ).toHaveLength(0);
-  });
-
-  it("offers no handle in the modes that already run right", () => {
-    // A pin means "run past where you stopped". Ray and Extended never stop, so
-    // there is nothing to pin, and their end sits maxProjBars into the future
-    // where a handle would be off the pane and unclickable anyway.
-    const b = dips();
-    for (const mode of ["ray", "extended"] as const) {
-      const { segments } = record(b, params(3), mode);
-      expect(segments.length).toBeGreaterThan(0);
-      expect(
-        getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES"),
-      ).toHaveLength(0);
-    }
-  });
-
-  it("ignores a stored pin in those modes rather than extending with no undo", () => {
-    const b = dips();
-    const res = computeTrendlines(b, cfg());
-    const drawn = selectDrawnLines(
-      res.lines,
-      b.length - 1,
-      b[b.length - 1].close,
-      3,
-      null,
-    );
-    const key = lineKey(drawn[0], b);
-    const free = record(b, params(3), "ray").segments;
-    const held = record(b, params(3), "ray", IDENTITY_VIEW, [key]).segments;
-    expect(held).toEqual(free);
-  });
-
-  it("clears the handles when nothing is drawn", () => {
-    record(dips(), params(3), "lastbar");
-    expect(
-      getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES").length,
-    ).toBeGreaterThan(0);
-    // A flat corridor forms no lines at all.
-    record(flat(30), params(3));
-    expect(
-      getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES"),
-    ).toHaveLength(0);
-  });
-});
-
-describe("TRENDLINES pinning", () => {
-  const params = (maxLines: number): number[] => [2, 0.75, 2, 5, 250, maxLines];
-  const dips = (): KLineData[] => {
-    const out = flat(80);
-    out[20] = bar(20, 90, 100.5);
-    out[40] = bar(40, 94, 100.5);
-    out[60] = bar(60, 96, 100.5);
-    return out;
-  };
-
-  /** The key of the drawn line whose end is on the pane in lastbar mode. */
   const firstDrawnKey = (b: KLineData[]): string => {
     const res = computeTrendlines(b, cfg());
-    const drawn = selectDrawnLines(
-      res.lines,
-      b.length - 1,
-      b[b.length - 1].close,
-      3,
-      null,
-    );
+    const drawn = selectDrawnLines(res.lines, b.length - 1, b[b.length - 1].close, 3, null);
     return lineKey(drawn[0], b);
   };
+  const extensions = (segs: Segment[]) =>
+    segs.filter((sg) => sg.dash?.join() === TL_EXTEND_DASH.join());
 
-  it("runs a pinned line past where its mode would have stopped", () => {
+  it("runs the selected line on to the pane edge as a dashed extension", () => {
     const b = dips();
     const key = firstDrawnKey(b);
     const free = record(b, params(3), "lastbar").segments;
-    const held = record(b, params(3), "lastbar", IDENTITY_VIEW, [key]).segments;
-    expect(held).toHaveLength(free.length);
-    // Exactly one line moved, and it moved to the RIGHT.
-    const moved = held.filter((h, i) => h.x1 !== free[i].x1);
-    expect(moved).toHaveLength(1);
-    expect(moved[0].x1).toBeGreaterThan(free[held.indexOf(moved[0])].x1);
+    expect(extensions(free)).toHaveLength(0);
+    const picked = record(b, params(3), "lastbar", IDENTITY_VIEW, key).segments;
+    const ext = extensions(picked);
+    expect(ext).toHaveLength(1);
+    // It starts where one solid stroke stops and carries on along it.
+    const solid = free.find((sg) => sg.x1 === ext[0].x0 && sg.y1 === ext[0].y0);
+    expect(solid).toBeDefined();
+    expect(ext[0].x1).toBeGreaterThan(ext[0].x0);
+    const slope = (solid!.y1 - solid!.y0) / (solid!.x1 - solid!.x0);
+    expect(ext[0].y1).toBeCloseTo(ext[0].y0 + slope * (ext[0].x1 - ext[0].x0), 6);
   });
 
-  it("leaves the handle where it was so the same click undoes the pin", () => {
-    // THE point of anchoring the handle to the newest bar: a handle that
-    // travelled to the pane edge with the line would leave nothing to click.
+  it("adds nothing in the modes that already run right", () => {
     const b = dips();
     const key = firstDrawnKey(b);
-    record(b, params(3), "lastbar");
-    const free = getTrendlineHandles(
-      lastChart,
-      "candle_pane",
-      "TRENDLINES",
-    ).map((h) => ({ ...h }));
-    record(b, params(3), "lastbar", IDENTITY_VIEW, [key]);
-    const held = getTrendlineHandles(lastChart, "candle_pane", "TRENDLINES");
-    expect(held).toHaveLength(free.length);
-    for (let i = 0; i < free.length; i += 1) {
-      expect(held[i].key).toBe(free[i].key);
-      expect(held[i].x).toBeCloseTo(free[i].x, 9);
-      expect(held[i].y).toBeCloseTo(free[i].y, 9);
+    for (const mode of ["ray", "extended"] as const) {
+      const picked = record(b, params(3), mode, IDENTITY_VIEW, key).segments;
+      expect(picked.length).toBeGreaterThan(0);
+      expect(extensions(picked)).toHaveLength(0);
     }
-    // ...and the pinned line really is one of them, so this is not vacuous.
-    expect(held.some((h) => h.key === key)).toBe(true);
   });
 
-  it("ignores a pin key that matches no drawn line", () => {
+  it("ignores a selection that matches no drawn line", () => {
     const b = dips();
     const free = record(b, params(3), "lastbar").segments;
-    const held = record(b, params(3), "lastbar", IDENTITY_VIEW, [
-      "1:2",
-    ]).segments;
-    expect(held).toEqual(free);
+    const picked = record(b, params(3), "lastbar", IDENTITY_VIEW, "1:2").segments;
+    expect(picked).toEqual(free);
   });
 });
 
-describe("hitAnyTrendlineHandle", () => {
-  const params = (maxLines: number): number[] => [2, 0.75, 2, 5, 250, maxLines];
-  const dips = (): KLineData[] => {
-    const out = flat(80);
-    out[20] = bar(20, 90, 100.5);
-    out[40] = bar(40, 94, 100.5);
-    out[60] = bar(60, 96, 100.5);
-    return out;
-  };
-
-  it("answers only for the chart that drew the handles", () => {
-    record(dips(), params(3), "lastbar");
-    const drew = lastChart;
-    const h = getTrendlineHandles(drew, "candle_pane", "TRENDLINES")[0];
-    expect(h).toBeDefined();
-    expect(hitAnyTrendlineHandle(drew, h.x, h.y)).toBe(true);
-    // A DIFFERENT chart with the same pane and instance names must not inherit
-    // them: pane-relative pixels from one chart would otherwise light up the
-    // cursor over another in a multi-chart layout.
-    expect(hitAnyTrendlineHandle({}, h.x, h.y)).toBe(false);
-  });
-
-  it("misses a point away from every handle", () => {
-    record(dips(), params(3), "lastbar");
-    expect(hitAnyTrendlineHandle(lastChart, -500, -500)).toBe(false);
-  });
-
+describe("dropTrendlineTargets", () => {
   // A removed pane never draws again, and the draw is the only thing that
-  // clears the registry, so its last handles would answer the cursor test for
-  // the life of the chart: a pointer cursor over dots that are gone.
-  it("forgets an instance's handles when it is removed", () => {
-    record(dips(), params(3), "lastbar");
+  // clears the registry, so its last tags would outlive it.
+  it("forgets an instance's end tags when it is removed", () => {
+    const b = flat(80);
+    b[20] = bar(20, 90, 100.5);
+    b[40] = bar(40, 94, 100.5);
+    b[60] = bar(60, 96, 100.5);
+    record(b, [2, 0.75, 2, 5, 250, 3], "lastbar", paneView(b));
     const drew = lastChart;
-    const h = getTrendlineHandles(drew, "candle_pane", "TRENDLINES")[0];
-    expect(h).toBeDefined();
-    dropTrendlineHandles(drew, "TRENDLINES2");
-    expect(hitAnyTrendlineHandle(drew, h.x, h.y)).toBe(true);
-    dropTrendlineHandles(drew, "TRENDLINES");
-    expect(getTrendlineHandles(drew, "candle_pane", "TRENDLINES")).toHaveLength(
-      0,
-    );
-    expect(hitAnyTrendlineHandle(drew, h.x, h.y)).toBe(false);
+    expect(getTrendlineTags(drew, "candle_pane").length).toBeGreaterThan(0);
+    dropTrendlineTargets(drew, "TRENDLINES2");
+    expect(getTrendlineTags(drew, "candle_pane").length).toBeGreaterThan(0);
+    dropTrendlineTargets(drew, "TRENDLINES");
+    expect(getTrendlineTags(drew, "candle_pane")).toHaveLength(0);
   });
 });
 
