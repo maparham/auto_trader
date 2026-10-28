@@ -298,13 +298,15 @@ describe("patternPanelStore", () => {
     expect(getPatternPanelState().loading).toBe(false);
   });
 
+  it("defaults to this-chart scope", () => {
+    expect(getPatternPanelState().scope).toBe("cell");
+  });
+
   describe("all scope: searching every chart in every tab", () => {
     const workspace = (...extra: MatchSource[]) =>
       setPatternSeriesProvider(() => [SELF, ...extra]);
 
-    it("defaults to all-charts scope", () => {
-      expect(getPatternPanelState().scope).toBe("all");
-    });
+    beforeEach(() => setPatternScope("all"));
 
     it("fans out one search per workspace chart, same query bars, each chart's own series", async () => {
       const spy = vi.spyOn(api, "searchPatterns").mockResolvedValue(result(1));

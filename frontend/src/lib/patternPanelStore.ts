@@ -40,7 +40,7 @@ const MAX_CONCURRENT_SEARCHES = 4;
 /** What the search covers: the dragged chart's series alone, or every chart in
  *  every open tab (the workspace series App enumerates via the provider). */
 export type PatternScope = "cell" | "all";
-const DEFAULT_SCOPE: PatternScope = "all";
+const DEFAULT_SCOPE: PatternScope = "cell";
 
 /** Which half of the panel is showing: the drag-driven Similar search, or the
  *  preset family scan. Both halves of state live in this one store — the
