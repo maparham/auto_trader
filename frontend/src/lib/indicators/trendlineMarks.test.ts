@@ -221,8 +221,7 @@ describe("drawTrendlines with marks", () => {
     expect(d.strokes[0].width).toBeGreaterThan(d.strokes[1].width);
     const both = draw({ hoveredLine: hit.seg.key, selectedLine: hit.seg.key });
     expect(both.strokes[0].alpha).toBe(TL_SELECT_GLOW_ALPHA);
-    // Glow and line as before, plus the picked line's dashed run to the edge.
-    expect(both.strokes).toHaveLength(d.strokes.length + 1);
+    expect(both.strokes).toHaveLength(d.strokes.length);
   });
 
   it("emphasized: every line gets the hover glow, a picked one the stronger", () => {

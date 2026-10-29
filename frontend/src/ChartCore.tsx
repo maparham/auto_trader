@@ -51,7 +51,7 @@ import { registerPatternTarget, takePendingPatternJump } from "./lib/patternTarg
 import { anyCellInReadout, setCellReadout, subscribeReplayingCells } from "./lib/replayingCells";
 import { toast } from "./lib/notify";
 import { capturePattern, MIN_GHOST_BARS } from "./lib/patternGhost";
-import { emphasizeTrendlines, useTrendlineMenu } from "./chart/useTrendlineMenu";
+import { emphasizeTrendlines, toggleTrendlineExtension, useTrendlineMenu } from "./chart/useTrendlineMenu";
 import { useTrendlineDebug } from "./chart/useTrendlineDebug";
 import { chartPaints } from "./chart/seriesStamp";
 import { hitTrendline, TL_LINE_HIT, TL_LINE_HIT_TOUCH } from "./lib/indicators/trendlineMarks";
@@ -2447,11 +2447,17 @@ export default function ChartCore({
         if (!snapViewRef.current) drawingSettingsRequest.set({ id: drawingId });
         return;
       }
-      // Double-click an indicator's curve -> open its settings (TradingView-style).
-      // A trendline counts as its instance's curve.
+      // Double-click a trendline -> run it on to the pane edge as a dashed
+      // extension (again to take it away), not the settings: one line is
+      // what the user is looking at.
       const touch = (e as Partial<PointerEvent>).pointerType === "touch";
+      const tl = hitTrendline(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
+      if (tl) {
+        toggleTrendlineExtension(c, { paneId: tl.paneId, name: tl.name, key: tl.seg.key });
+        return;
+      }
+      // Double-click an indicator's curve -> open its settings (TradingView-style).
       const hit = hitTestCache(lineCacheRef.current, x, y)
-        ?? hitTrendline(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT)
         ?? hitPaintedLine(c, x, y, touch ? TL_LINE_HIT_TOUCH : TL_LINE_HIT);
       if (hit) {
         if (!snapViewRef.current) indicatorSettingsRequest.set({ paneId: hit.paneId, name: hit.name });

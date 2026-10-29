@@ -2,9 +2,11 @@
 // drawing from its context menu.
 //
 //  - Pick: a click (mouse) or tap (touch) on a line's body selects it, drawn
-//    with a soft glow and a dashed run on to the pane's right edge; a click or
-//    tap anywhere else clears it. Session-only, carried on the instance's
-//    extendData.selectedLine so the draw path sees it.
+//    with a soft glow; a click or tap anywhere else clears it. Session-only,
+//    carried on the instance's extendData.selectedLine so the draw path sees it.
+//  - Extend: a double click (double tap) on a line runs it on to the pane's
+//    right edge as a dashed extension (extendData.extendedLine), and again
+//    takes it away. Picking any other line, or nothing, clears it too.
 //  - Menu: a right-click on any line (desktop, from ChartCore's contextmenu
 //    handler), or a hold on the SELECTED line (touch: tap to pick, then hold,
 //    the same rule the drawing menu follows).
@@ -51,10 +53,11 @@ interface Picked {
  * repaints) when it changes. */
 const PICKED = new WeakMap<object, Picked | null>();
 const HOVERED = new WeakMap<object, Picked | null>();
+const EXTENDED = new WeakMap<object, Picked | null>();
 
 function markLine(
   map: WeakMap<object, Picked | null>,
-  field: "selectedLine" | "hoveredLine",
+  field: "selectedLine" | "hoveredLine" | "extendedLine",
   chart: Chart,
   next: Picked | null,
 ): void {
@@ -72,9 +75,23 @@ function markLine(
   map.set(chart, next);
 }
 
+const samePick = (a: Picked | null | undefined, b: Picked | null | undefined) =>
+  !!a && !!b && a.key === b.key && a.paneId === b.paneId && a.name === b.name;
+
 export function pickTrendline(chart: Chart, next: Picked | null): void {
   markLine(PICKED, "selectedLine", chart, next);
+  // The extension is a look at ONE line: picking another, or clicking away,
+  // takes it down.
+  if (!samePick(EXTENDED.get(chart), next)) markLine(EXTENDED, "extendedLine", chart, null);
   applyEmphasis(chart);
+}
+
+/** Double click (double tap) on a line: pick it and toggle its dashed run
+ * to the pane's right edge. */
+export function toggleTrendlineExtension(chart: Chart, line: Picked): void {
+  const on = samePick(EXTENDED.get(chart), line);
+  pickTrendline(chart, line);
+  markLine(EXTENDED, "extendedLine", chart, on ? null : line);
 }
 
 /** The line under the mouse, from the crosshair's move handler. */

@@ -1618,11 +1618,13 @@ export interface TrendlinesExtend {
    * Render-only and PERSISTED: it rides the saved config like the style keys
    * above, so it survives reloads and reaches the user's other devices. */
   lineMarks?: LineMarksByEpic;
-  /** lineKey of the line the user last picked (click or menu). The draw runs
-   * it on to the pane's right edge as a dashed extension, so the user sees
-   * where it leads and what it meets. SESSION-ONLY: never saved, and
-   * applyIndicator strips it. */
+  /** lineKey of the line the user last picked (click or menu). SESSION-ONLY:
+   * never saved, and applyIndicator strips it. */
   selectedLine?: string;
+  /** lineKey of the line the user double-clicked (double-tapped). The draw
+   * runs it on to the pane's right edge as a dashed extension, so the user
+   * sees where it leads and what it meets. SESSION-ONLY, like selectedLine. */
+  extendedLine?: string;
   /** lineKey of the line under the mouse. SESSION-ONLY, like selectedLine. */
   hoveredLine?: string;
   /** The whole instance is selected or its legend row hovered: every line
@@ -2463,7 +2465,7 @@ export function selectDrawnLines(
 
 /** Gap between a line's newest-bar point and its ×N tag. */
 const TL_TAG_GAP = 8;
-/** The selected line's extension to the pane edge. Its own pattern, so it
+/** The double-clicked line's extension to the pane edge. Its own pattern, so it
  * reads as a projection even on a line styled dashed. */
 export const TL_EXTEND_DASH = [6, 4];
 /** The hollow ring at a touch: a touch is price respecting the line, and this
@@ -3484,7 +3486,7 @@ function drawTrendlines(
     dataList.length,
     forceToLastBar,
   );
-  // The selected line's dashed extension means "where does this lead", so it
+  // The double-clicked line's dashed extension means "where does this lead", so it
   // only exists in the modes that STOP a line. "ray" and "extended" already
   // run to the horizon, ~maxProjBars into the future and off the pane.
   const stops = mode !== "ray" && mode !== "extended";
@@ -3543,8 +3545,8 @@ function drawTrendlines(
   const hoveredKey = ext?.hoveredLine;
   const emphasized = ext?.emphasized === true;
   let timestamps: number[] | null = null;
-  // The bar index sitting at the pane's right edge, so the selected line's
-  // extension reaches it
+  // The bar index sitting at the pane's right edge, so the double-clicked
+  // line's extension reaches it
   // at any zoom. The index-to-pixel map is linear (klinecharts multiplies by a
   // constant bar space), so one bar's width inverts it exactly.
   const barPx = xAxis.convertToPixel(1) - xAxis.convertToPixel(0);
@@ -3612,12 +3614,12 @@ function drawTrendlines(
     };
     const x0 = xAtLine(jLeft);
     const x1 = xAtLine(jRight);
-    // The selected line runs on to the pane's right edge as a dashed
+    // The double-clicked line runs on to the pane's right edge as a dashed
     // extension: a visual cue for where it leads and what it meets, never
     // saved and never read by calc. Same lineExtent, so it starts exactly
     // where the solid stroke stops.
     const jExt =
-      stops && key === selectedKey
+      stops && key === ext?.extendedLine
         ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx, forceToLastBar).jRight
         : jRight;
     const xExt = jExt > jRight ? xAt(jExt) : x1;

@@ -1899,9 +1899,9 @@ function record(
   calcParams: number[],
   extend?: string,
   view: View = IDENTITY_VIEW,
-  // extendData.selectedLine: the picked line, which runs on to the pane's
-  // right edge as a dashed extension.
-  selected?: string,
+  // extendData.extendedLine: the double-clicked line, which runs on to the
+  // pane's right edge as a dashed extension.
+  extended?: string,
   // OFF by default here, unlike the app: nearly every draw test below counts
   // segments, and merging would quietly change those counts into assertions
   // about the dedup pass instead of about what they were written to check.
@@ -2023,7 +2023,7 @@ function record(
   if (arriveDashed) ctx.setLineDash([4, 3]);
   const ext = {
     extend,
-    selectedLine: selected,
+    extendedLine: extended,
     ...(dedupe === "default" ? {} : { dedupe }),
     ...(nearPrice === "default" ? {} : { nearPrice }),
     ...(declutter ? { declutter } : {}),
@@ -2565,7 +2565,7 @@ describe("lineExtent", () => {
   });
 });
 
-describe("TRENDLINES selected-line extension", () => {
+describe("TRENDLINES double-clicked line extension", () => {
   const params = (maxLines: number): number[] => [2, 0.75, 2, 5, 250, maxLines];
   const dips = (): KLineData[] => {
     const out = flat(80);
@@ -2582,7 +2582,7 @@ describe("TRENDLINES selected-line extension", () => {
   const extensions = (segs: Segment[]) =>
     segs.filter((sg) => sg.dash?.join() === TL_EXTEND_DASH.join());
 
-  it("runs the selected line on to the pane edge as a dashed extension", () => {
+  it("runs the double-clicked line on to the pane edge as a dashed extension", () => {
     const b = dips();
     const key = firstDrawnKey(b);
     const free = record(b, params(3), "lastbar").segments;
@@ -2608,7 +2608,7 @@ describe("TRENDLINES selected-line extension", () => {
     }
   });
 
-  it("ignores a selection that matches no drawn line", () => {
+  it("ignores a key that matches no drawn line", () => {
     const b = dips();
     const free = record(b, params(3), "lastbar").segments;
     const picked = record(b, params(3), "lastbar", IDENTITY_VIEW, "1:2").segments;
