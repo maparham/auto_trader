@@ -1,5 +1,7 @@
+import time
 from datetime import datetime, timedelta, timezone
 
+import anyio.from_thread
 import pytest
 from fastapi.testclient import TestClient
 
@@ -43,15 +45,30 @@ def test_save_bad_expression_422():
     assert r.status_code == 422 and r.json()["detail"]["field"] == "expression"
 
 
-def test_run_and_poll():
+@pytest.fixture
+def one_loop():
+    """Every request of the test on ONE event loop. The job runs as a
+    background task, and a bare module-level TestClient gives each request a
+    loop of its own that is torn down when the response returns, cancelling
+    the task unless it happened to finish first (CI: "cancelled")."""
+    with anyio.from_thread.start_blocking_portal() as portal:
+        client.portal = portal
+        try:
+            yield
+        finally:
+            client.portal = None
+
+
+def test_run_and_poll(one_loop):
     body = {k: v for k, v in BODY.items() if k != "name"}
     r = client.post("/api/screens/run", json=body)
     assert r.status_code == 200
     jid = r.json()["jobId"]
-    for _ in range(100):
+    for _ in range(200):
         st = client.get(f"/api/screens/jobs/{jid}").json()
         if st["status"] != "running":
             break
+        time.sleep(0.01)
     assert st["status"] == "done"
     assert [m["epic"] for m in st["result"]["matches"]] == ["A"]
     assert st["result"]["matches"][0]["columns"] == {"C": 11.0}
