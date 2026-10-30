@@ -2264,6 +2264,11 @@
 }
 .bt-past-sweeps-del:hover { color: var(--danger, #e5484d); background: var(--hover-bg, rgba(127,127,127,0.12)); }
 .al-note { color: var(--text-faint); font-size: 12px; }
+/* Account alert tiers: one row per tier (level, label, remove), and the
+   Notify channel checkboxes share the same row layout. */
+.al-tier { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.al-tier input.al-value { flex: 0 0 110px; }
+.al-error { color: var(--neg); font-size: 12px; }
 .bt-range-chip-row { align-items: center; }
 /* Mask enable toggle: a plain checkbox + label, not the value-input row layout
    (which stretches the checkbox via flex:1 and clamps the label to 90px). */
