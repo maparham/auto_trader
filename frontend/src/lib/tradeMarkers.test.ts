@@ -373,3 +373,25 @@ describe("broker history markers", () => {
     expect(historyEntrySpecs([closed()], { ...base, trades: [], journal: [], replaying: true })).toEqual([]);
   });
 });
+
+describe("TradeMarkers z-order", () => {
+  it("creates markers in a band above every drawing so they take the click first", async () => {
+    const { TradeMarkers, TRADE_MARKER_Z_LEVEL } = await import("./tradeMarkers");
+    const created: Array<{ zLevel?: number }> = [];
+    const chart = {
+      getDataList: () => [{ timestamp: 1000, open: 1, high: 2, low: 0.5, close: 1.5 }],
+      createOverlay: (o: { zLevel?: number }) => {
+        created.push(o);
+        return `ov${created.length}`;
+      },
+      overrideOverlay: () => {},
+      removeOverlay: () => {},
+    };
+    const tm = new TradeMarkers(chart as never);
+    tm.render([
+      { key: "entry:d1", timestamp: 1000, price: 1, label: "Buy", win: null, placement: "below", tradeId: "d1" },
+    ]);
+    expect(created).toHaveLength(1);
+    expect(created[0].zLevel).toBe(TRADE_MARKER_Z_LEVEL);
+  });
+});

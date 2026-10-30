@@ -285,6 +285,13 @@ interface DrawnMarker {
   closed?: ClosedTradeView;
 }
 
+// klinecharts paints and hit-tests overlays by zLevel, highest first, and an
+// overlay created without one takes the pane's overlay count at that moment, so
+// a drawing added after the markers would sit on top and swallow their clicks.
+// Markers take a fixed band far above any drawing (bringToFront only climbs by
+// one per call).
+export const TRADE_MARKER_Z_LEVEL = 1_000_000;
+
 /** Per-cell drawer for live trade markers. Reconciles a flat TradeMarkerSpec[] by
  * `key` (reusing the backtest MARKER_OVERLAY) so an update only adds/moves/removes
  * what changed — no redraw-all flicker. Timestamp-anchored overlays reproject
@@ -363,6 +370,7 @@ export class TradeMarkers {
         name: MARKER_OVERLAY,
         points: [{ timestamp: anchorTs, value: anchorValue }],
         lock: true, // read-only live artifact, never a user drawing
+        zLevel: TRADE_MARKER_Z_LEVEL,
         extendData,
         onMouseEnter: (e) => {
           tradeMarkerHoverSignal.set({
