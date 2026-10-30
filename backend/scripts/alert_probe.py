@@ -7,6 +7,15 @@ own broker feed, independent of any open UI. Run:
     cd backend && python3 -m scripts.alert_probe
     cd backend && python3 -m scripts.alert_probe --epic BTCUSD --broker capital-live
     cd backend && python3 -m scripts.alert_probe --indicator --epic BTCUSD --broker capital-live
+    cd backend && python3 -m scripts.alert_probe --account capital:demo --timeout 60
+
+--account KEY probes an account alert on a dealing account (admin only, a
+Capital or IG account the monitor can poll). It reads the account's equity
+from GET /api/alerts/account-metrics, creates an equity alert with one tier at
+50% of it (not yet past), waits for the monitor's first poll to seed the alert,
+then raises the tier to 101% of equity so the next poll fires it. Polls run
+5 to 30 s apart, so use --timeout 60 or more. It needs real broker credentials,
+so run it only against a backend that is already up.
 
 Flow: (1) fetch the current quote for --epic via GET /api/market/{epic}/details
 (the broker-provided snapshot's bid/offer — same route the chart's instrument
@@ -69,12 +78,40 @@ def _quote(client: httpx.Client, epic: str, broker: str) -> float:
     return bid
 
 
-def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = False) -> int:
+def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = False,
+         account: str | None = None) -> int:
     alert_id = f"al-probe-{uuid.uuid4()}"
     with httpx.Client(base_url=url, timeout=10.0) as client:
         print(f"connecting to {url}")
 
-        if indicator:
+        equity = None
+        if account:
+            try:
+                r = client.get("/api/alerts/account-metrics", params={"account": account})
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                print(f"FAIL: account-metrics failed: {e}\n{r.text}")
+                return 1
+            except httpx.HTTPError as e:
+                print(f"FAIL: could not reach account-metrics: {e}")
+                return 1
+            equity = r.json()["metrics"].get("equity")
+            if equity is None:
+                print("FAIL: no equity figure for this account")
+                return 1
+            if equity <= 0:
+                # A tier at 50% of a non-positive equity sits above it, so it
+                # would be seeded as already past and never fire.
+                print(f"FAIL: equity {equity} is not positive; the probe needs a funded account")
+                return 1
+            # Create NOT yet crossed (a tier already past the value is seeded
+            # silently), then raise the tier above equity once the monitor has
+            # seeded the alert, so the next poll crosses it.
+            body = {"id": alert_id, "broker": account, "epic": "", "kind": "account",
+                    "params": {"metric": "equity", "tiers": [{"level": equity * 0.5, "label": "warn"}]},
+                    "message": "alert_probe e2e check"}
+            print(f"{account} equity={equity} -> tier at 50%, then raised above equity")
+        elif indicator:
             body = {
                 "id": alert_id, "broker": broker, "epic": epic, "kind": "indicator",
                 "params": {
@@ -112,6 +149,36 @@ def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = Fal
         result = "TIMEOUT"
         deadline = time.monotonic() + timeout
         try:
+            if account:
+                # The monitor's first poll for a new alert seeds it silently:
+                # a tier already past at that poll is marked fired, never
+                # notified. Wait until the monitor holds a figure for the
+                # alert (the list row's `current` goes non-null on that same
+                # poll), then a short grace for the seed write, and only then
+                # raise the tier. Raising it earlier would be seeded away.
+                seed_deadline = time.monotonic() + 30.0
+                current = None
+                while current is None and time.monotonic() < seed_deadline:
+                    time.sleep(1.0)
+                    listed = client.get("/api/alerts")
+                    listed.raise_for_status()
+                    row = next((a for a in listed.json()["alerts"] if a["id"] == alert_id), {})
+                    current = row.get("current")
+                if current is None:
+                    print("FAIL: the monitor never reported a figure for this alert")
+                    return 1
+                time.sleep(2.0)
+                pr = client.patch(f"/api/alerts/{alert_id}",
+                                  json={"params": {"tiers": [{"level": equity * 1.01, "label": "warn"}]}})
+                try:
+                    pr.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    print(f"FAIL: raising the tier failed: {e}\n{pr.text}")
+                    return 1
+                print("raised tier above equity; waiting for the fire")
+                # The seed wait ate into the budget; the --timeout window
+                # is for the fire itself.
+                deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 resp = client.get("/api/alerts/triggered")
                 resp.raise_for_status()
@@ -162,5 +229,10 @@ if __name__ == "__main__":
     ap.add_argument("--indicator", action="store_true",
                      help="probe an indicator alert (SMA 2 value greater than -1e12 on 1m, intrabar) "
                           "instead of a price-level alert")
+    ap.add_argument("--account", default=None, metavar="KEY",
+                     help="probe an account alert on this dealing account key (e.g. capital:demo), "
+                          "instead of a price-level alert; admin only")
     ns = ap.parse_args()
-    sys.exit(main(ns.url, ns.epic, ns.broker, ns.timeout, ns.indicator))
+    if ns.account and ns.indicator:
+        ap.error("--account and --indicator are mutually exclusive")
+    sys.exit(main(ns.url, ns.epic, ns.broker, ns.timeout, ns.indicator, account=ns.account))
