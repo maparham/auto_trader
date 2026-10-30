@@ -87,3 +87,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* CodeMirror styles only the keyboard-selected row; give the rest a hover. */
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  cursor: pointer;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li:not([aria-selected]):hover {
+  background: var(--hover);
+}
