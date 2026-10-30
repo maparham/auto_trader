@@ -14,6 +14,8 @@
 // half-edited line back. Apply writes them to the broker.
 
 import { useEffect, useRef, useState } from "react";
+import { useSignalValue } from "./lib/signalHooks";
+import { isAccountMonitorable, loadAccountAlerts, METRIC_LABELS, type AccountMetric } from "./lib/alertsApi";
 import {
   applyLevels,
   cancelWorkingOrder,
@@ -27,6 +29,7 @@ import {
   historyAccountsSignal,
   isDataOnlyBroker,
   isRealMoneyAccount,
+  isAdminAccount,
   isCapital,
   tradeLabel,
   type TradeView,
@@ -45,6 +48,8 @@ import {
   setTradeSelected,
   draggingLineSignal,
   mt5DeployStateSignal,
+  accountAlertRequest,
+  alertsChanged,
   requestConfirm,
   type PendingEdit,
 } from "./lib/signals";
@@ -228,6 +233,24 @@ export default function PositionsPanel({
     positions, orders, summary: accountSummary, trading, broker: activeBroker, isLive,
   });
   const { pnl, balance, available, accountMargin, ordersMargin, equity, marginBuffer, marginLevel, noBrokerData } = stats;
+  // Account alerts: a bell on the figures the server can watch. Only real
+  // Capital/IG accounts are monitorable (paper has no broker summary; MT5 is
+  // excluded so polling never keeps the MetaApi account deployed).
+  useSignalValue(alertsChanged);
+  const canAlert = isAccountMonitorable(account) && isAdminAccount();
+  const acctAlerts = canAlert ? loadAccountAlerts(account) : [];
+  const bell = (metric: AccountMetric) => {
+    if (!canAlert) return {};
+    const existing = acctAlerts.find((a) => a.metric === metric);
+    return {
+      hasAlert: !!existing,
+      alertLabel: `Alert on ${METRIC_LABELS[metric].toLowerCase()}`,
+      onAlert: () =>
+        accountAlertRequest.set(
+          existing ? { mode: "edit", id: existing.id } : { mode: "create", account, metric },
+        ),
+    };
+  };
   // The broker's margin-call / close-out thresholds on the margin level above (a tooltip
   // note so a trader knows how far the % can fall). Capital.com publishes these; other
   // brokers omit the note until their levels are known.
@@ -650,15 +673,13 @@ export default function PositionsPanel({
           </div>
         ) : (
           <div className="pp-acct">
-            <Tooltip content="Open profit / loss across all positions, marked to live prices (broker-reported for live accounts)">
-              <div className="pp-stat">
-                <span className="pp-stat-label">Unrealized P&amp;L</span>
-                <span className={`pp-stat-val num ${pnlTone}`}>
-                  {pnl >= 0 ? "" : "−"}
-                  {cash(Math.abs(pnl))} {cur}
-                </span>
-              </div>
-            </Tooltip>
+            <Stat
+              label="Unrealized P&L"
+              value={`${pnl >= 0 ? "" : "−"}${cash(Math.abs(pnl))} ${cur}`}
+              tone={pnl > 0 ? "pos" : pnl < 0 ? "neg" : undefined}
+              title="Open profit / loss across all positions, marked to live prices (broker-reported for live accounts)"
+              {...bell("openPnl")}
+            />
             <Stat
               label="Balance"
               value={money(balance)}
@@ -672,6 +693,7 @@ export default function PositionsPanel({
               label="Equity"
               value={money(equity)}
               title="Account value = available margin + margin in use (cash plus open P&L). What the account is worth right now."
+              {...bell("equity")}
             />
             <Stat
               label="Account margin"
@@ -682,6 +704,7 @@ export default function PositionsPanel({
               label="Available"
               value={money(available)}
               title="Free margin available to open new positions (broker-reported for live accounts)"
+              {...bell("available")}
             />
             <Stat
               label="Orders margin"
@@ -697,6 +720,7 @@ export default function PositionsPanel({
               label="Margin level"
               value={pct(marginLevel)}
               title={`Equity as a share of margin in use (equity ÷ account margin): Capital's 'CFD Margin %'. Falls toward 100% as risk rises.${marginCallNote}`}
+              {...bell("marginLevel")}
             />
           </div>
         )}
@@ -710,19 +734,61 @@ export function Stat({
   value,
   tone,
   title,
+  onAlert,
+  hasAlert,
+  alertLabel,
 }: {
   label: string;
   value: string;
   tone?: "pos" | "neg";
   title?: string;
+  onAlert?: () => void;
+  hasAlert?: boolean;
+  alertLabel?: string;
 }) {
   return (
     <Tooltip content={title}>
       <div className="pp-stat">
-        <span className="pp-stat-label">{label}</span>
+        <span className="pp-stat-label">
+          {label}
+          {onAlert && (
+            <Tooltip content={hasAlert ? "Edit account alert" : "Add account alert"}>
+              <button
+                type="button"
+                className={`pp-stat-bell${hasAlert ? " on" : ""}`}
+                aria-label={alertLabel ?? `Alert on ${label.toLowerCase()}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAlert();
+                }}
+              >
+                <BellIcon />
+              </button>
+            </Tooltip>
+          )}
+        </span>
         <span className={`pp-stat-val num${tone ? ` pp-${tone}` : ""}`}>{value}</span>
       </div>
     </Tooltip>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </svg>
   );
 }
 

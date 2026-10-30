@@ -29,6 +29,7 @@ import {
   brokerLabel,
   brokerOf,
   historyAccountsSignal,
+  isAdminAccount,
   isRealMoneyAccount,
   cachedBrokers,
   fetchBrokers,
@@ -40,7 +41,9 @@ import { accountStats, enrichTrade, type EnrichedTrade } from "../lib/accountSta
 import { groupPositions, type PositionGroup } from "../lib/positionGroups";
 import { loadSettings } from "../theme";
 import { mobileAccount, mobileSettingsVersion, setMobileAccount, showMobileEpic } from "./mobileChartState";
-import { requestConfirm } from "../lib/signals";
+import { accountAlertRequest, alertsChanged, requestConfirm } from "../lib/signals";
+import { useSignalValue } from "../lib/signalHooks";
+import { isAccountMonitorable, loadAccountAlerts, METRIC_LABELS, type AccountMetric } from "../lib/alertsApi";
 import { toast } from "../lib/notify";
 import Sheet from "./Sheet";
 import HistoryPane from "../HistoryPane";
@@ -106,10 +109,51 @@ function acctTier(a: BrokerAccount): "paper" | "demo" | "live" {
   return a.env === "paper" ? "paper" : "demo";
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+// Same bell as the desktop dock's Stat (PositionsPanel.tsx). Copied rather than
+// imported so the mobile bundle does not pull in the desktop panel module.
+function Stat({
+  label,
+  value,
+  tone,
+  onAlert,
+  hasAlert,
+  alertLabel,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  onAlert?: () => void;
+  hasAlert?: boolean;
+  alertLabel?: string;
+}) {
   return (
     <div className="pp-stat">
-      <span className="pp-stat-label">{label}</span>
+      <span className="pp-stat-label">
+        {label}
+        {onAlert && (
+          <button
+            type="button"
+            className={`pp-stat-bell${hasAlert ? " on" : ""}`}
+            aria-label={alertLabel ?? `Alert on ${label.toLowerCase()}`}
+            onClick={onAlert}
+          >
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+            </svg>
+          </button>
+        )}
+      </span>
       <span className={`pp-stat-val num${tone ? ` ${tone}` : ""}`}>{value}</span>
     </div>
   );
@@ -198,6 +242,22 @@ export default function MobilePositionsView() {
   const money = (n: number) => (noBrokerData ? "—" : `${cash(n)} ${cur}`);
   const pct = (n: number | null) => (noBrokerData || n == null ? "—" : `${n.toFixed(2)}%`);
   const pnlTone = pnl > 0 ? "pp-pos" : pnl < 0 ? "pp-neg" : "";
+  // Account alerts: the bell on the figures the server can watch (see PositionsPanel).
+  useSignalValue(alertsChanged);
+  const canAlert = isAccountMonitorable(account) && isAdminAccount();
+  const acctAlerts = canAlert ? loadAccountAlerts(account) : [];
+  const bell = (metric: AccountMetric) => {
+    if (!canAlert) return {};
+    const existing = acctAlerts.find((a) => a.metric === metric);
+    return {
+      hasAlert: !!existing,
+      alertLabel: `Alert on ${METRIC_LABELS[metric].toLowerCase()}`,
+      onAlert: () =>
+        accountAlertRequest.set(
+          existing ? { mode: "edit", id: existing.id } : { mode: "create", account, metric },
+        ),
+    };
+  };
   const enrich = (t: TradeView): EnrichedTrade => enrichTrade(t, stats, live);
 
   // Sorted as in the dock (positions by their own value, groups by their
@@ -366,14 +426,15 @@ export default function MobilePositionsView() {
             label="Unrealized P&L"
             value={`${pnl < 0 ? "−" : ""}${cash(Math.abs(pnl))} ${cur}`}
             tone={pnlTone}
+            {...bell("openPnl")}
           />
           <Stat label="Balance" value={money(balance)} />
-          <Stat label="Equity" value={money(equity)} />
+          <Stat label="Equity" value={money(equity)} {...bell("equity")} />
           <Stat label="Account margin" value={money(accountMargin)} />
-          <Stat label="Available" value={money(available)} />
+          <Stat label="Available" value={money(available)} {...bell("available")} />
           <Stat label="Orders margin" value={money(ordersMargin)} />
           <Stat label="Margin buffer" value={pct(marginBuffer)} />
-          <Stat label="Margin level" value={pct(marginLevel)} />
+          <Stat label="Margin level" value={pct(marginLevel)} {...bell("marginLevel")} />
         </div>
       </div>
 
