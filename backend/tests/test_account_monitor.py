@@ -103,6 +103,17 @@ def test_fires_most_severe_tier_once_and_rearms(tmp_path):
     run(main())
 
 
+def test_status_carries_latest_account_currency(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.add()
+        assert h.mon.statuses("u1")["al-1"]["currency"] is None   # no poll yet
+        await h.mon.poll_once(ACCT)
+        assert h.mon.statuses("u1")["al-1"]["currency"] == "EUR"
+    run(main())
+
+
 def test_created_past_a_tier_does_not_fire(tmp_path):
     async def main():
         h = Harness(tmp_path)

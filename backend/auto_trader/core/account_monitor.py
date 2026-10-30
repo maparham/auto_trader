@@ -234,11 +234,14 @@ class AccountMonitor:
                 if u != user_id:
                     continue
                 st = self._state.get((u, row["id"]), {})
+                latest = self._latest.get(acct)
                 out[row["id"]] = {
                     "current": self._current(acct, row, st),
                     "firedTiers": list(st.get("fired", [])),
                     "monitored": reason is None,
                     "unmonitoredReason": reason,
+                    # The account's currency, so the panel can label amount metrics.
+                    "currency": latest.currency if latest else None,
                 }
         return out
 

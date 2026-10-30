@@ -147,6 +147,8 @@ export interface AccountAlert {
   firedTiers?: number[];
   monitored?: boolean;
   unmonitoredReason?: string | null;
+  // The account's currency (null until its first poll), labels amount metrics.
+  currency?: string | null;
 }
 
 export const METRIC_LABELS: Record<AccountMetric, string> = {
@@ -308,6 +310,7 @@ interface AlertRow {
   firedTiers?: number[];
   monitored?: boolean;
   unmonitoredReason?: string | null;
+  currency?: string | null;
 }
 
 interface TriggeredRow {
@@ -451,6 +454,7 @@ function rowToAccountAlert(row: AlertRow): AccountAlert {
     firedTiers: row.firedTiers,
     monitored: row.monitored,
     unmonitoredReason: row.unmonitoredReason,
+    currency: row.currency,
   };
 }
 

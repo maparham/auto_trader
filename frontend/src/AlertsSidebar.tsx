@@ -233,7 +233,7 @@ function AccountAlertRow({ a }: { a: AccountAlert }) {
         <span className="ap-sym">{accountLabel(a.account)}</span>
         <span className="ap-cond">
           {METRIC_LABELS[a.metric]}
-          {a.current != null && <> · now {fmtMetric(a.metric, a.current, null)}</>}
+          {a.current != null && <> · now {fmtMetric(a.metric, a.current, a.currency ?? null)}</>}
         </span>
       </div>
       {a.message && <div className="ap-msg">{a.message}</div>}
@@ -242,7 +242,7 @@ function AccountAlertRow({ a }: { a: AccountAlert }) {
           {a.tiers.map((t) => (
             <Tooltip key={t.level} content={`${t.label}${fired.has(t.level) ? " · fired" : ""}`}>
               <span className={`ap-badge ap-tier${fired.has(t.level) ? " fired" : ""}`}>
-                {fmtMetric(a.metric, t.level, null)}
+                {fmtMetric(a.metric, t.level, a.currency ?? null)}
               </span>
             </Tooltip>
           ))}
