@@ -577,12 +577,26 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // screen moments ago. Paint the last-known bars now, positioned where the
       // fresh load will land, and let that load merge over them when it
       // arrives. Live/native series only: replay owns its own bars, detached
-      // paints a deep window, and a re-run with bars already painted (retry,
-      // TF switch) has nothing to buy.
+      // paints a deep window, and a retry re-run has this series painted already.
+      // A timeframe switch pre-paints too: the bars on screen are the OLD
+      // timeframe's, and switching back to one seen this session would
+      // otherwise wait out the whole round trip for bars already in memory.
       let prePainted = false;
-      if (!replaying && !detachedMode && chart.getDataList().length === 0) {
+      if (
+        !replaying &&
+        !detachedMode &&
+        (chart.getDataList().length === 0 || (isResChange && !isEpicChange))
+      ) {
         const cached = getCachedBars(seriesKey);
-        if (cached && cached.length > 0) {
+        // On a TF switch whose held center lies before the cached bars, the
+        // pre-paint would clamp and then jump once the cover below pages the
+        // center in, the two-stage switch that cover exists to avoid. Keep the
+        // old timeframe's bars on screen instead, as before.
+        const coversCenter =
+          centerTargetTs == null ||
+          chart.getDataList().length === 0 ||
+          (cached?.[0]?.timestamp ?? Infinity) <= centerTargetTs;
+        if (cached && cached.length > 0 && coversCenter) {
           handle.cursorSecRef.current = Math.floor(cached[0].timestamp / 1000);
           dataFacade.setBars(cached, !period.liveOnly);
           stampChartSeries(chart, { epic: symbol.epic, resolution: period.resolution, live: true });
