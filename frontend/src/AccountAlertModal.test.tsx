@@ -5,8 +5,8 @@ import { installMemStorage } from "./lib/testMemStorage";
 installMemStorage();
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const add = vi.fn(async () => true);
-const patch = vi.fn(async () => true);
+const add = vi.fn(async (..._a: unknown[]) => true);
+const patch = vi.fn(async (..._a: unknown[]) => true);
 vi.mock("./lib/alertsApi", async (orig) => ({
   ...(await orig<typeof import("./lib/alertsApi")>()),
   fetchAccountMetrics: async () => ({ account: "capital-live:live", monitored: true, unmonitoredReason: null,

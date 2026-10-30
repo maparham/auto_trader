@@ -419,7 +419,7 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
     target: (row.alert?.params?.target as AlertTarget | undefined) ?? undefined,
     kind: row.kind,
     headline: row.kind === "account" && row.alert?.params
-      ? `${METRIC_LABELS[(row.alert.params.metric as AccountMetric)] ?? "Account"} ${row.condition === "above" ? ">" : "<"} ${row.level}`
+      ? `${METRIC_LABELS[(row.alert.params.metric as AccountMetric)] ?? "Account"} ${(row.condition as string) === "above" ? ">" : "<"} ${row.level}`
       : undefined,
   };
 }
