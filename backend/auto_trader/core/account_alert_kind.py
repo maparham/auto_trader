@@ -71,7 +71,9 @@ ACCOUNT_KIND = AccountAlertKind()
 
 
 def hysteresis(metric: str, level: float) -> float:
-    return 3.0 if metric in PCT_METRICS else abs(level) * 0.02
+    # Amount metrics re-arm 2% past the level, with a one-unit floor so a
+    # tier at (or near) 0 (open P/L crossing into loss) cannot flap on noise.
+    return 3.0 if metric in PCT_METRICS else max(abs(level) * 0.02, 1.0)
 
 
 def _past(metric: str, value: float, level: float) -> bool:

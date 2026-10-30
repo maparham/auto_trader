@@ -58,3 +58,14 @@ def test_missing_summary_entirely():
 
 def test_value_of_unknown_metric_is_none():
     assert account_metrics(CAPITAL, [], cash_balance=False).value_of("drawdown") is None
+
+
+def test_non_finite_figures_are_missing_not_numbers():
+    # M2: NaN/inf from a broker can never fire or re-arm a tier; they must go
+    # through the watchdog as a missing figure instead.
+    s = {**CAPITAL, "available": float("nan")}
+    m = account_metrics(s, [pos(-40, 700.0)], cash_balance=False)
+    assert "available" in m.missing and m.available is None
+    s = {**CAPITAL, "balance": float("inf")}
+    m = account_metrics(s, [pos(-40, 700.0)], cash_balance=False)
+    assert "balance" in m.missing and m.balance is None

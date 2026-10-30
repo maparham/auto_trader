@@ -5,6 +5,7 @@ balance); those are left out on purpose, so a margin level here can differ
 slightly from the dock's when resting orders reserve margin."""
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -38,7 +39,12 @@ class AccountMetrics:
 
 
 def _num(v) -> float | None:
-    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    # NaN and inf are not figures: treat them as missing so they go through
+    # the watchdog ("missing available") rather than into a comparison that
+    # can never fire or re-arm.
+    if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v):
+        return None
+    return float(v)
 
 
 def account_metrics(

@@ -15,6 +15,7 @@ import logging
 
 from auto_trader.api import deps
 from auto_trader.api.auth import auth_enabled
+from auto_trader.core.account_monitor import ACCOUNT_MONITOR
 from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_kinds import upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
@@ -94,9 +95,16 @@ async def _rearm(user_id: str, row: dict) -> dict | None:
             log.warning("rearm: alert %s indicator params could not be upgraded, skipping", row.get("id"))
             return None
     created = await ALERT_STORE.create(user_id, row)  # ValueError if id exists
-    ALERT_ENGINE.on_alert_changed(user_id, created, created["id"])
+    _registry_for(created.get("kind")).on_alert_changed(user_id, created, created["id"])
     await _changed_broadcast(user_id, created["broker"], created["epic"])
     return created
+
+
+def _registry_for(kind: str | None):
+    """Account alerts belong to the monitor; the price engine must never see
+    them (it would open a feed for ("capital-live:live", "")). Mirrors the
+    router's `_notify` dispatch."""
+    return ACCOUNT_MONITOR if kind == "account" else ALERT_ENGINE
 
 
 def _snooze(user_id: str, alert_id: str, seconds: float) -> None:
@@ -111,7 +119,7 @@ async def _delete(user_id: str, alert_id: str) -> bool:
         return False
     deleted = await ALERT_STORE.delete(user_id, alert_id)
     if deleted:
-        ALERT_ENGINE.on_alert_changed(user_id, None, alert_id)
+        _registry_for(row.get("kind")).on_alert_changed(user_id, None, alert_id)
         await _changed_broadcast(user_id, row["broker"], row["epic"])
     return deleted
 

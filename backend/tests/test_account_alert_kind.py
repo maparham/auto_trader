@@ -123,3 +123,13 @@ def test_headline():
         "DRAWDOWN 6.2% > 5% (warn) · IG live"
     assert headline("equity", 4980.5, 5000, "warn", "capital:demo", "EUR", 4980.5) == \
         "EQUITY 4,980.50 EUR < 5,000 EUR (warn) · Capital demo"
+
+
+def test_hysteresis_amount_floor_keeps_a_level_zero_tier_from_flapping():
+    # M6: 2% of a level at or near 0 is (almost) nothing, so an open P/L
+    # tier at 0 would fire and re-arm on every tick of noise. One unit floor.
+    assert hysteresis("openPnl", 0) == 1.0
+    assert hysteresis("openPnl", -20) == 1.0
+    assert hysteresis("available", 10) == 1.0
+    # Percent metrics keep their fixed 3-point band.
+    assert hysteresis("openPnlPct", 0) == 3

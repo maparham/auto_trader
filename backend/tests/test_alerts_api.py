@@ -768,3 +768,43 @@ def test_account_metrics_endpoint(admin, account_registry):
     assert r.status_code == 422
     r = client.get("/api/alerts/account-metrics", params={"account": "capital-live:live"}, headers=_auth("alice"))
     assert r.status_code == 403
+
+
+def test_telegram_hooks_route_account_rows_to_the_monitor(monkeypatch, clerk, account_registry):
+    """M1: the Telegram re-arm and delete hooks dispatch on kind like the
+    router's _notify does, so an account row never reaches the price engine
+    (it would open a feed for ("capital-live:live", ""))."""
+    import asyncio
+    from auto_trader.api import alert_hooks
+
+    seen: list[tuple] = []
+
+    class _Rec:
+        def __init__(self, name): self.name = name
+        def on_alert_changed(self, user_id, row, alert_id): seen.append((self.name, user_id, alert_id, row is None))
+
+    monkeypatch.setattr(alert_hooks, "ACCOUNT_MONITOR", _Rec("monitor"))
+    monkeypatch.setattr(alert_hooks, "ALERT_ENGINE", _Rec("engine"))
+
+    async def _noop(*a, **kw): pass
+    monkeypatch.setattr(alert_hooks, "_changed_broadcast", _noop)
+
+    acct_row = {**_acct_body(id="al-hook"), "message": "", "expires_at": None,
+                "notify": {"telegram": True}, "precision": 2}
+    price_row = {"id": "al-price", "broker": "capital", "epic": "US100", "kind": "price_level",
+                 "params": {"level": 100.0, "condition": "crossing", "trigger": "once"},
+                 "message": "", "expires_at": None, "notify": {}, "precision": 2}
+
+    async def main():
+        await alert_hooks._rearm("alice", acct_row)
+        await alert_hooks._rearm("alice", price_row)
+        assert await alert_hooks._delete("alice", "al-hook")
+        assert await alert_hooks._delete("alice", "al-price")
+
+    asyncio.run(main())
+    assert seen == [
+        ("monitor", "alice", "al-hook", False),
+        ("engine", "alice", "al-price", False),
+        ("monitor", "alice", "al-hook", True),
+        ("engine", "alice", "al-price", True),
+    ]

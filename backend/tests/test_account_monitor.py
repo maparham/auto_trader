@@ -470,3 +470,249 @@ def test_hung_notifier_does_not_block_the_loop(tmp_path, monkeypatch):
         h.exec.set_margin_level(110)
         await asyncio.wait_for(h.mon.poll_once(ACCT), timeout=2.0)
     run(main())
+
+
+# ---- fix round 2 (final whole-branch review) ----
+
+
+def _changed_msgs(h: Harness):
+    return [m for _, m in h.sent if m["key"] == "__alerts__:changed"]
+
+
+def test_store_failure_during_fire_cycle_still_notifies_once(tmp_path):
+    """C1: a one-off set_meta failure in the fire cycle must not swallow the
+    warning for good. Notify first, persist second: the notification goes
+    out, and the next (healthy) cycle does not repeat it."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.add()
+        await h.mon.poll_once(ACCT)
+        orig = h.store.set_meta
+        calls = {"n": 0}
+
+        async def flaky(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("disk full")
+            return await orig(*a, **kw)
+
+        h.store.set_meta = flaky  # type: ignore[method-assign]
+        h.exec.set_margin_level(110)
+        await h.mon.poll_once(ACCT)
+        assert [p["level"] for p in h.fired()] == [120]
+        await h.mon.poll_once(ACCT)
+        assert [p["level"] for p in h.fired()] == [120]
+        assert h.mon.statuses("u1")["al-1"]["firedTiers"] == [150, 120]
+    run(main())
+
+
+def test_add_triggered_failure_still_notifies_once(tmp_path):
+    """C1: a history-row failure must not stop the broadcast and notifier
+    fan-out, and must not leave the tier silently marked fired."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.add()
+        await h.mon.poll_once(ACCT)
+        orig = h.store.add_triggered
+        calls = {"n": 0}
+
+        async def flaky(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("locked")
+            return await orig(*a, **kw)
+
+        h.store.add_triggered = flaky  # type: ignore[method-assign]
+        h.exec.set_margin_level(110)
+        await h.mon.poll_once(ACCT)
+        assert len(h.fired()) == 1 and h.fired()[0]["triggered_id"] is None
+        assert [m for _, m in h.sent if m["key"] == "__alerts__:fired"]
+        await h.mon.poll_once(ACCT)
+        assert len(h.fired()) == 1
+    run(main())
+
+
+def test_fire_and_status_change_broadcast_changed(tmp_path):
+    """I2: the panel's "now" value, fired-tier chips and Unmonitored badge
+    all come from GET /api/alerts, so a fire and a status change each ask
+    the tab to resync with __alerts__:changed."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.add()
+        await h.mon.poll_once(ACCT)
+        assert _changed_msgs(h) == []
+        h.exec.set_margin_level(110)
+        await h.mon.poll_once(ACCT)
+        changed = _changed_msgs(h)
+        assert len(changed) == 1
+        assert changed[0]["value"] == {"broker": ACCT, "epic": "", "origin": "engine"}
+        h.exec.summary["available"] = None
+        await h.mon.poll_once(ACCT)                      # unmonitored
+        assert len(_changed_msgs(h)) == 2
+        h.exec.summary["available"] = 100.0
+        await h.mon.poll_once(ACCT)                      # resumed
+        assert len(_changed_msgs(h)) == 3
+        assert len(h.status_msgs()) == 2
+    run(main())
+
+
+def test_metrics_for_refreshes_stale_figures_and_never_fires(tmp_path):
+    """I3: metrics_for only fetches figures. It refreshes when no loop watches
+    the account or the cached figures are older than one cycle, and it never
+    evaluates tiers (an API call must not race the loop over the same tiers)."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.add()
+        await h.mon.poll_once(ACCT)                      # seeded, no loop running
+        h.exec.set_margin_level(110)                     # past "danger"
+        m = await h.mon.metrics_for(ACCT)                # no loop: fetches
+        assert m["marginLevel"] == pytest.approx(110)
+        assert h.fired() == []                           # never judged
+        assert h.mon.statuses("u1")["al-1"]["firedTiers"] == []
+
+        dummy = asyncio.get_running_loop().create_task(asyncio.sleep(100))
+        h.mon._tasks[ACCT] = dummy
+        try:
+            h.exec.set_margin_level(130)
+            m = await h.mon.metrics_for(ACCT)            # loop running, fresh: cached
+            assert m["marginLevel"] == pytest.approx(110)
+            h.now += NORMAL_S + 1
+            m = await h.mon.metrics_for(ACCT)            # stale: refreshed
+            assert m["marginLevel"] == pytest.approx(130)
+            assert h.fired() == []
+        finally:
+            h.mon._tasks.pop(ACCT, None)
+            dummy.cancel()
+        await h.mon.poll_once(ACCT)                      # the loop's own cycle judges
+        assert [p["level"] for p in h.fired()] == [150]
+    run(main())
+
+
+def test_metrics_for_after_loop_stopped_refetches(tmp_path):
+    """I3: once an account's loop has stopped, its cached figures are stale by
+    definition; metrics_for must fetch again rather than serve them."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.mon.metrics_for(ACCT)
+        h.exec.set_margin_level(150)
+        assert (await h.mon.metrics_for(ACCT))["marginLevel"] == pytest.approx(150)
+    run(main())
+
+
+def test_four_raising_cycles_report_unmonitored_once_then_resume(tmp_path):
+    """I4: a cycle that keeps raising is a stopped monitor in all but name.
+    After MAX_CYCLE_ERRORS in a row the account is reported unmonitored
+    (once); the first good cycle sends "resumed"."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.add()
+        calls = {"n": 0}
+        orig = h.mon.poll_once
+
+        async def boom(acct):
+            calls["n"] += 1
+            if calls["n"] <= 6:
+                raise RuntimeError("bug")
+            return await orig(acct)
+
+        h.mon.poll_once = boom  # type: ignore[method-assign]
+        await h.mon.start()
+        try:
+            await asyncio.sleep(0.05)
+            assert calls["n"] > 6
+            msgs = h.status_msgs()
+            assert [m["status"] for m in msgs] == ["unmonitored", "resumed"]
+            assert "monitor error: bug" in msgs[0]["reason"]
+        finally:
+            await h.mon.stop()
+    run(main())
+
+
+def test_bad_alert_row_does_not_block_others_on_the_account(tmp_path):
+    """I4: one alert with malformed params must not keep the other alerts on
+    the same account from being judged and fired."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.add(id="al-bad", params={"metric": "marginLevel", "tiers": [{"level": "abc", "label": "warn"}]})
+        await h.add(id="al-good")
+        await h.mon.poll_once(ACCT)                      # seeds al-good; al-bad raises, is logged
+        h.exec.set_margin_level(110)
+        await h.mon.poll_once(ACCT)
+        assert [p["id"] for p in h.fired()] == ["al-good"]
+    run(main())
+
+
+def test_corrupt_meta_row_resets_state_instead_of_crashing_start(tmp_path):
+    """M3: a corrupt alert_meta row falls back to the default state with a
+    warning; it must not take start() (and the backend boot) down."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.add()
+        await h.store.set_meta("u1", "account:al-1", "{not json")
+        await h.mon.start()
+        try:
+            await asyncio.sleep(0.02)
+            assert h.mon.statuses("u1")["al-1"]["firedTiers"] == []
+            assert h.mon.statuses("u1")["al-1"]["monitored"]
+        finally:
+            await h.mon.stop()
+        h2 = Harness(tmp_path)
+        await h2.store.set_meta("u1", "account:al-1", json.dumps(["not", "a", "dict"]))
+        await h2.mon.start()
+        try:
+            await asyncio.sleep(0.02)
+            assert h2.mon.statuses("u1")["al-1"]["firedTiers"] == []
+        finally:
+            await h2.mon.stop()
+    run(main())
+
+
+def test_stopped_loop_forgets_unmonitored_mark(tmp_path):
+    """M4: when the last alert on an account goes, the account's watchdog
+    state goes with it, so an alert created later does not announce a
+    spurious "resumed"."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.summary["available"] = None               # missing figure: unmonitored at once
+        await h.add()
+        await h.mon.start()
+        try:
+            await asyncio.sleep(0.02)
+            assert [m["status"] for m in h.status_msgs()] == ["unmonitored"]
+            await h.store.delete("u1", "al-1")
+            h.mon.on_alert_changed("u1", None, "al-1")
+            await asyncio.sleep(0.02)
+            assert ACCT not in h.mon._tasks
+            assert ACCT not in h.mon._unmonitored and ACCT not in h.mon._latest
+            h.exec.summary["available"] = 1000.0
+            await h.add()
+            await asyncio.sleep(0.02)
+            assert ACCT in h.mon._tasks
+            assert [m["status"] for m in h.status_msgs()] == ["unmonitored"]
+        finally:
+            await h.mon.stop()
+    run(main())
+
+
+def test_stop_awaits_pending_meta_delete(tmp_path):
+    """M5: the fire-and-forget meta delete from on_alert_changed is tracked
+    so stop() waits for it rather than orphaning it past shutdown."""
+    async def main():
+        h = Harness(tmp_path)
+        await h.add()
+        await h.mon.start()
+        await asyncio.sleep(0.02)
+        assert await h.store.get_meta("u1", "account:al-1") is not None
+        await h.store.delete("u1", "al-1")
+        h.mon.on_alert_changed("u1", None, "al-1")
+        await h.mon.stop()                               # no sleep in between
+        assert await h.store.get_meta("u1", "account:al-1") is None
+    run(main())
