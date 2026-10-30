@@ -20,6 +20,7 @@ import {
   alertsPanelOpen,
   alertEditRequest,
   alertGlobalEditRequest,
+  accountAlertRequest,
   bumpAlerts,
   requestConfirm,
 } from "./lib/signals";
@@ -43,6 +44,12 @@ import {
   loadServerAlerts,
   loadAllServerAlerts,
   deleteIndicatorAlert,
+  loadAccountAlerts,
+  deleteAccountAlert,
+  accountLabel,
+  fmtMetric,
+  METRIC_LABELS,
+  type AccountAlert,
   type ServerAlert,
 } from "./lib/alertsApi";
 
@@ -203,6 +210,68 @@ function IndicatorAlertRow({
               requestConfirm({
                 message: `Delete this alert on ${epic}?`,
                 onConfirm: () => deleteIndicatorAlert(a.id),
+              });
+            }}
+          >
+            <TrashIcon />
+          </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One account alert row (balance-level metric with tiers). Shown above the
+// per-symbol list on the live tab; double-click or the edit icon opens the modal.
+function AccountAlertRow({ a }: { a: AccountAlert }) {
+  const edit = () => accountAlertRequest.set({ mode: "edit", id: a.id });
+  const fired = new Set(a.firedTiers ?? []);
+  return (
+    <div className="ap-row" onDoubleClick={edit}>
+      <div className="ap-row-main">
+        <span className="ap-sym">{accountLabel(a.account)}</span>
+        <span className="ap-cond">
+          {METRIC_LABELS[a.metric]}
+          {a.current != null && <> · now {fmtMetric(a.metric, a.current, null)}</>}
+        </span>
+      </div>
+      {a.message && <div className="ap-msg">{a.message}</div>}
+      <div className="ap-row-meta">
+        <span className="ap-row-badges">
+          {a.tiers.map((t) => (
+            <Tooltip key={t.level} content={`${t.label}${fired.has(t.level) ? " · fired" : ""}`}>
+              <span className={`ap-badge ap-tier${fired.has(t.level) ? " fired" : ""}`}>
+                {fmtMetric(a.metric, t.level, null)}
+              </span>
+            </Tooltip>
+          ))}
+          {a.monitored === false && (
+            <Tooltip content={a.unmonitoredReason ?? "Not monitored"}>
+              <span className="ap-badge ap-badge-wait">Unmonitored</span>
+            </Tooltip>
+          )}
+        </span>
+        <div className="ap-row-actions">
+          <Tooltip content="Edit alert">
+          <button
+            className="ap-icon-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              edit();
+            }}
+          >
+            <EditIcon />
+          </button>
+          </Tooltip>
+          <Tooltip content="Delete alert">
+          <button
+            className="ap-icon-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              requestConfirm({
+                message: `Delete this ${METRIC_LABELS[a.metric]} alert on ${accountLabel(a.account)}?`,
+                onConfirm: () => deleteAccountAlert(a.id),
               });
             }}
           >
@@ -471,6 +540,10 @@ export default function AlertsSidebar({
 
   const totalAll = allGroups.reduce((s, g) => s + g.alerts.length + g.indicators.length, 0);
   const liveCount = live.length + liveInd.length;
+  // Account alerts (balance metrics) sit above both lists on the live tab, whatever
+  // the symbol scope. Re-read on every alertsChanged bump, like the rest.
+  const accountAlerts = loadAccountAlerts();
+  const accountCount = accountAlerts.length;
   // History is persisted; re-read on every firing (alertsChanged) and on mount.
   const [historyState, setHistoryState] = useState<TriggeredAlert[]>(loadTriggered);
   useEffect(
@@ -502,8 +575,8 @@ export default function AlertsSidebar({
             onClick={() => setTab("live")}
           >
             Alerts{showAll
-              ? (totalAll ? ` (${totalAll})` : "")
-              : (liveCount ? ` (${liveCount})` : "")}
+              ? (totalAll + accountCount ? ` (${totalAll + accountCount})` : "")
+              : (liveCount + accountCount ? ` (${liveCount + accountCount})` : "")}
           </button>
           <button
             className={tab === "history" ? "on" : ""}
@@ -602,11 +675,17 @@ export default function AlertsSidebar({
 
       {tab === "live" ? (
         <div className="ap-list">
+          {accountCount > 0 && (
+            <div>
+              <div className="ap-group-header">Account</div>
+              {accountAlerts.map((a) => <AccountAlertRow key={a.id} a={a} />)}
+            </div>
+          )}
           {showAll ? (
             // All-symbols mode: grouped by epic, read from persisted store. Rows whose
             // symbol is on a visible chart support inline hover/select (fanned out to
             // every matching cell); the go-to icon opens/reuses the chart for any row.
-            allGroups.length === 0 ? (
+            allGroups.length === 0 && accountCount === 0 ? (
               <div className="ap-empty">No active alerts across any symbol.</div>
             ) : (
               allGroups.map((g) => (
@@ -725,7 +804,7 @@ export default function AlertsSidebar({
             )
           ) : (
             // Current-chart mode: live overlay levels, supports hover/select.
-            liveCount === 0 ? (
+            liveCount === 0 && accountCount === 0 ? (
               <div className="ap-empty">
                 No active alerts on <strong>{epic}</strong>.
                 <br />

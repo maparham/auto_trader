@@ -38,10 +38,19 @@ const indAlert = {
   },
 };
 
+const acctAlert = {
+  kind: "account" as const, id: "al-a1", account: "capital-live:live", metric: "marginLevel" as const,
+  tiers: [{ level: 150, label: "warn" as const }, { level: 120, label: "danger" as const }],
+  message: "", expiresAt: null, precision: 2,
+  notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+  current: 118.4, firedTiers: [150, 120], monitored: false, unmonitoredReason: "session dropped",
+};
+
 vi.mock("./lib/alertsApi", async (orig) => ({
   ...(await orig<typeof import("./lib/alertsApi")>()),
   loadServerAlerts: () => [indAlert],
   loadAllServerAlerts: () => [indAlert],
+  loadAccountAlerts: () => [acctAlert],
 }));
 
 const { default: AlertsSidebar } = await import("./AlertsSidebar");
@@ -75,5 +84,35 @@ describe("AlertsSidebar trigger badge", () => {
     );
     expect(screen.getAllByText("Once per bar")).toHaveLength(2);
     expect(screen.queryByText("Every time")).toBeNull();
+  });
+});
+
+describe("AlertsSidebar account group", () => {
+  it("lists account alerts with value, fired tiers and an unmonitored badge", () => {
+    const controller = {
+      overlays: {
+        getAlerts: () => [],
+        getSelectedAlertId: () => null,
+        getHoveredAlertId: () => null,
+      },
+    };
+    render(
+      <AlertsSidebar
+        controller={controller as any}
+        epic="US100"
+        precision={2}
+        tabs={[]}
+        visibleCells={[]}
+        brokerId="capital"
+        onOpenAlert={() => {}}
+      />,
+    );
+    expect(screen.getByText("Account")).toBeTruthy();
+    expect(screen.getByText("Capital live")).toBeTruthy();
+    expect(screen.getByText(/Margin level/)).toBeTruthy();
+    expect(screen.getByText(/now 118\.4%/)).toBeTruthy();
+    expect(screen.getByText("Unmonitored")).toBeTruthy();
+    const danger = screen.getByText("120%");
+    expect(danger.className).toContain("fired");
   });
 });

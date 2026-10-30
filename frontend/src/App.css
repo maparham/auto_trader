@@ -806,6 +806,8 @@
 /* Indicator alert still warming up (or its feed is down): dashed, so it reads
    as a state rather than another setting. */
 .ap-badge-wait { border-style: dashed; }
+/* Account alert tier whose level has been crossed: the negative tone, as a state. */
+.ap-tier.fired { border-color: var(--neg); color: var(--neg); }
 .ap-badge-btn {
   background: transparent; font: inherit; font-size: 11px; line-height: inherit;
   cursor: pointer;
