@@ -135,13 +135,16 @@ function Stat({
             type="button"
             className={`pp-stat-bell${hasAlert ? " on" : ""}`}
             aria-label={alertLabel ?? `Alert on ${label.toLowerCase()}`}
-            onClick={onAlert}
+            onClick={(e) => {
+              e.stopPropagation();
+              onAlert();
+            }}
           >
             <svg
               width="11"
               height="11"
               viewBox="0 0 24 24"
-              fill="none"
+              fill={hasAlert ? "currentColor" : "none"}
               stroke="currentColor"
               strokeWidth="2"
               strokeLinecap="round"

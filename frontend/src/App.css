@@ -5322,23 +5322,30 @@
 .pp-caret { font-size: 0.7em; line-height: 1; }
 .pp-stat { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .pp-stat-label {
+  position: relative;
   font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint);
 }
 .pp-stat-val {
   font-family: var(--mono); font-variant-numeric: tabular-nums;
   font-size: 12px; font-weight: 500; color: var(--text);
 }
-/* Account-alert bell on a dock stat: hidden until the stat is hovered (or the bell
-   is focused); a stat with an alert keeps it shown in full text colour. */
-.pp-stat-label { display: inline-flex; align-items: center; gap: 4px; }
+/* Account-alert bell on a dock stat. It is out of the label's flow: absolutely
+   positioned just left of the label's leading edge, so the label keeps its place
+   with or without a bell. Hidden until the stat is hovered (or the bell is
+   focused); a stat with an alert keeps it shown in full text colour, filled. */
 .pp-stat-bell {
+  position: absolute; top: 50%; right: calc(100% + 4px); transform: translateY(-50%);
   background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
   color: var(--text-dim); opacity: 0; display: inline-flex; line-height: 0;
 }
 .pp-stat:hover .pp-stat-bell, .pp-stat-bell:focus-visible, .pp-stat-bell.on { opacity: 1; }
 .pp-stat-bell.on { color: var(--text); }
-/* Mobile has no hover: the bell is always shown. */
-.m-pos-view .pp-stat-bell { opacity: 1; }
+/* Mobile has no hover and touch needs a bigger target: a 24px hit area with the
+   11px icon centred in it, its right edge still 4px left of the label. */
+.m-pos-view .pp-stat-bell {
+  opacity: 1; width: 24px; height: 24px; justify-content: center; align-items: center;
+  right: calc(100% - 2.5px);
+}
 
 /* Collapsed: the same facts as one live ticker line. */
 .pp-ticker {

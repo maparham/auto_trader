@@ -752,7 +752,7 @@ export function Stat({
         <span className="pp-stat-label">
           {label}
           {onAlert && (
-            <Tooltip content={hasAlert ? "Edit account alert" : "Add account alert"}>
+            <Tooltip content={hasAlert ? "Edit account alert" : "Add account alert"} asChild>
               <button
                 type="button"
                 className={`pp-stat-bell${hasAlert ? " on" : ""}`}
@@ -762,7 +762,7 @@ export function Stat({
                   onAlert();
                 }}
               >
-                <BellIcon />
+                <BellIcon filled={!!hasAlert} />
               </button>
             </Tooltip>
           )}
@@ -773,13 +773,13 @@ export function Stat({
   );
 }
 
-function BellIcon() {
+function BellIcon({ filled }: { filled: boolean }) {
   return (
     <svg
       width="11"
       height="11"
       viewBox="0 0 24 24"
-      fill="none"
+      fill={filled ? "currentColor" : "none"}
       stroke="currentColor"
       strokeWidth="2"
       strokeLinecap="round"
