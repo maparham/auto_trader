@@ -550,10 +550,12 @@ export function hydrateAlerts(): Promise<void> {
           }
         }
         alertsCache = next;
-        accountCache = nextAcct;
         if (indWritesInFlight > 0) resyncWhenSettled = true;
         else if (gen !== indWriteGen) refetch = true;
-        else indicatorCache = nextInd;
+        else {
+          indicatorCache = nextInd;
+          accountCache = nextAcct;
+        }
       }
       if (triggeredRes.ok) {
         const body = (await triggeredRes.json()) as { entries: TriggeredRow[]; seen: number };
@@ -1028,10 +1030,12 @@ export async function addAccountAlert(a: AccountAlert): Promise<boolean> {
   if (accountCache.has(a.id)) return true; // idempotent
   accountCache.set(a.id, a);
   bumpAlerts();
+  indWriteStart();
   const res = await sendJson("/api/alerts", "POST", {
     id: a.id, broker: a.account, epic: "", kind: "account", params: accountWire(a),
     message: a.message, expires_at: a.expiresAt, notify: a.notify, precision: a.precision,
   });
+  indWriteSettled();
   if (res?.ok) {
     try {
       accountCache.set(a.id, rowToAccountAlert((await res.json()) as AlertRow));
@@ -1054,9 +1058,11 @@ export async function patchAccountAlert(
   const params = patch.tiers || patch.baseline
     ? accountWire({ metric: prev.metric, tiers: patch.tiers ?? prev.tiers, baseline: patch.baseline ?? prev.baseline })
     : undefined;
+  indWriteStart();
   const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "PATCH", {
     params, message: patch.message, expires_at: patch.expiresAt, notify: patch.notify,
   });
+  indWriteSettled();
   if (res?.ok) {
     try {
       accountCache.set(id, rowToAccountAlert((await res.json()) as AlertRow));
@@ -1071,7 +1077,9 @@ export async function patchAccountAlert(
 export function deleteAccountAlert(id: string): void {
   if (!accountCache.delete(id)) return;
   bumpAlerts();
+  indWriteStart();
   void sendJson(`/api/alerts/${encodeURIComponent(id)}`, "DELETE", undefined).then((res) => {
+    indWriteSettled();
     if (res && !res.ok && res.status !== 404) void resyncAlerts();
   });
 }
@@ -1155,8 +1163,8 @@ export function applyAlertEvent(key: string, value: unknown): boolean {
         broker: payload.broker,
         label: payload.label,
         target: payload.target,
-        kind: payload.kind,
-        headline: payload.headline,
+        ...(payload.kind !== undefined ? { kind: payload.kind } : {}),
+        ...(payload.headline !== undefined ? { headline: payload.headline } : {}),
       },
       ...triggeredCache,
     ].slice(0, TRIGGERED_CAP);

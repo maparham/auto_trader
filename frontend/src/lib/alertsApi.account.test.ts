@@ -81,4 +81,30 @@ describe("account alerts client", () => {
     expect(api.applyAlertEvent("__alerts__:monitor", { broker: "capital-live:live", status: "unmonitored", reason: "x", headline: "h" })).toBe(true);
     expect(seen).toHaveLength(1);
   });
+
+  it("a hydrate that overlaps an in-flight account add keeps the new alert", async () => {
+    // The server has no account rows until the POST lands, so a hydrate that
+    // runs during the POST sees an empty list and must not overwrite the cache.
+    const row3 = { ...row, id: "al-a3" };
+    const serverRows: unknown[] = [];
+    let finishPost!: () => void;
+    fetchMock.mockImplementation((u: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          finishPost = () => { serverRows.push(row3); resolve(ok(row3)); };
+        });
+      }
+      return Promise.resolve(u.includes("/triggered") ? ok({ entries: [], seen: 0 }) : ok({ alerts: serverRows }));
+    });
+    const added = api.addAccountAlert({
+      kind: "account", id: "al-a3", account: "capital-live:live", metric: "marginLevel",
+      tiers: [{ level: 150, label: "warn" }], message: "", expiresAt: null, precision: 2,
+      notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+    });
+    await api.hydrateAlerts();
+    expect(api.findAccountAlert("al-a3")).toBeDefined();
+    finishPost();
+    expect(await added).toBe(true);
+    await vi.waitFor(() => expect(api.findAccountAlert("al-a3")).toBeDefined());
+  });
 });
