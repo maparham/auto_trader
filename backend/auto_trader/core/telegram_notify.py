@@ -90,6 +90,20 @@ def _headline(payload: dict, precision: int) -> str:
     return " ".join(p for p in parts if p)
 
 
+def _account_text(payload: dict) -> str:
+    """Text-only message for an account alert fire or an account_status
+    (monitored/unmonitored) notice: no chart, no epic, no buttons."""
+    head = payload.get("headline") or ""
+    if payload.get("kind") == "account_status":
+        icon = "⚠️" if payload.get("status") == "unmonitored" else "✅"
+        return f"{icon} {head}"
+    icon = "🚨" if payload.get("critical") else "🔔"
+    lines = [f"{icon} {head}", f"🕒 {_format_fired_time(payload)}"]
+    if payload.get("message"):
+        lines.append(str(payload["message"]))
+    return "\n".join(lines)
+
+
 # Broker `side` -> (icon, word) for the open-position caption lines.
 _SIDE_LABELS = {
     "BUY": ("🟢", "Long"),
@@ -275,6 +289,10 @@ class TelegramNotify:
             return
         chat_id = await self._store.get_telegram(user_id)
         if chat_id is None:
+            return
+        if payload.get("kind") in ("account", "account_status"):
+            # Account alerts have no chart and no epic: text only, no buttons.
+            await self.send(chat_id, _account_text(payload))
             return
         caption = await self._build_caption(payload)
         markup = self._buttons_for(payload)

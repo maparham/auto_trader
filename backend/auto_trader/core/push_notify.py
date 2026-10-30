@@ -117,6 +117,12 @@ class PushNotify:
                 "label": payload.get("label"),
                 "target": payload.get("target"),
                 "subject": payload.get("subject"),
+                "headline": payload.get("headline"),
+                "account": payload.get("account") or (
+                    payload.get("broker") if payload.get("kind") in ("account", "account_status") else None
+                ),
+                "critical": bool(payload.get("critical")),
+                "status": payload.get("status"),
             }
         )
         for sub in subs:

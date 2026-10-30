@@ -158,6 +158,13 @@ async def lifespan(app: FastAPI):
         notifiers=[TELEGRAM.notifier, PUSH.notifier],
         load_bars=deps.load_alert_bars,
     )
+    from auto_trader.core.account_monitor import ACCOUNT_MONITOR
+    ACCOUNT_MONITOR.configure(
+        store=ALERT_STORE,
+        get_exec=deps.get_exec,
+        broadcast=state_router.broadcast_to_user,
+        notifiers=[TELEGRAM.notifier, PUSH.notifier],
+    )
     telegram_poller = asyncio.create_task(TELEGRAM.run_poller())
     try:
         # One-shot lift of legacy localStorage alert blobs (mirrored into
@@ -180,6 +187,7 @@ async def lifespan(app: FastAPI):
         # still tears down flusher/triggers/mt5_watchdog below rather than
         # leaking them.
         await ALERT_ENGINE.start()
+        await ACCOUNT_MONITOR.start()
         # The MCP endpoint is mounted, so its own lifespan never runs — drive its
         # streamable-HTTP session manager from here for the app's lifetime.
         async with mcp_server.mcp_session() if AGENT_BRIDGE else nullcontext():
@@ -189,6 +197,8 @@ async def lifespan(app: FastAPI):
         # below (flusher/triggers/watchdog cancel + the registry close) —
         # same "one broken cleanup step can't block the rest" convention as
         # the suppress()s a few lines down.
+        with suppress(Exception):
+            await ACCOUNT_MONITOR.stop()
         with suppress(Exception):
             await ALERT_ENGINE.stop()
         telegram_poller.cancel()
