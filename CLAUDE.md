@@ -239,6 +239,47 @@ Chromium; `SNAPSHOT_DISABLED=1` turns it off. Probe:
 `cd backend && python3 -m scripts.snapshot_probe --epic EPIC`.
 `SNAPSHOT_DISABLED` with any non-empty value disables the feature.
 
+### Account alerts
+
+`kind: "account"` rows (`broker` = exec key such as `capital-live:live`,
+`epic` = `""`) watch an account figure (`marginLevel`, `openPnl`,
+`openPnlPct`, `equity`, `available`, `drawdown`) with 1 to 3 tiers
+(warn/danger/critical) that fire once when crossed and re-arm after a
+hysteresis band. They are NOT in `alert_kinds.KINDS` and the price engine
+skips them: `core/account_alert_kind.py` validates and signs them,
+`core/account_monitor.py` (`ACCOUNT_MONITOR`) polls each account's
+`get_account_summary` + `get_positions` (30 s, 5 s within 20% of the next
+tier), computes figures with `core/account_metrics.py` (broker figures
+only, so the value can differ from the dock when resting orders reserve
+margin), owns their expiry and fires through the same broadcast/notifiers.
+Per-alert state (fired tiers, drawdown peak) lives in `alert_meta` under
+`account:<id>`. The monitor seeds an alert on its first successful poll,
+even when the value is None, and a tier already past at that poll is marked
+fired silently. While the account is flat, `marginLevel` alerts clear their
+fired tiers, so a position opened past a tier notifies. The drawdown peak
+and its day are persisted whenever they change, and the `daily` baseline
+resets at server-local midnight. Each notifier call is bounded by
+`NOTIFIER_TIMEOUT_S` (30 s); broadcast and notifier failures are logged and
+never skip the other channels.
+
+Only Capital and IG non-paper accounts are monitorable; MT5 is excluded so
+polling never keeps the MetaApi account deployed. Create and patch are
+admin-only. A poll failure older than 120 s or a missing figure reports the
+account unmonitored once (push + Telegram + `__alerts__:monitor`) and
+"resumed" once. `GET /api/alerts` decorates account rows with `current`,
+`firedTiers`, `monitored`, `unmonitoredReason` and `currency`, and
+`GET /api/alerts/account-metrics?account=` serves the dialog's current
+value. The create dialog shows the server's value, except drawdown on
+create, which reads "starts at 0% on the next check". Frontend: bell on the
+dock stats (`PositionsPanel.Stat`), `AccountAlertModal.tsx`, the "Account"
+group in `AlertsSidebar.tsx`, `loadAccountAlerts` and friends in
+`lib/alertsApi.ts`. Clicking an account toast opens the trade list
+(`openTradeListPanel`, open-only).
+
+Probe: `python3 -m scripts.alert_probe --account capital:demo`. The timeout
+defaults to 90 s with `--account`, and the probe waits 35 s for the seed
+poll before raising the tier.
+
 ## Screener
 
 The screener (`ScreenerPanel.tsx`, right-docked side panel) runs one
