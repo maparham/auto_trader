@@ -1,7 +1,7 @@
 import pytest
 
 from auto_trader.core.account_alert_kind import (
-    ACCOUNT_KIND, account_label, crossed_now, evaluate_tiers, headline, hysteresis,
+    ACCOUNT_KIND, account_label, crossed_now, evaluate_tiers, fmt_value, headline, hysteresis,
     is_monitorable, near_tier,
 )
 
@@ -106,6 +106,14 @@ def test_near_tier():
     assert near_tier("marginLevel", TIERS, 130.0, {150})          # next unfired is 120
     assert not near_tier("marginLevel", TIERS, 90.0, {150, 120, 100})  # none left
     assert near_tier("openPnl", [{"level": -500, "label": "warn"}], -420.0, set())
+
+
+def test_fmt_value_rounds_before_deciding_whether_to_show_a_fraction():
+    # Float noise from the equity/margin arithmetic (1100.0/1000.0*100) must
+    # not force a spurious ".0" onto what is really a whole number.
+    assert fmt_value("marginLevel", 110.00000000000001, None) == "110%"
+    # 99.97 rounds to 100.0 at one decimal place, which then strips to "100".
+    assert fmt_value("marginLevel", 99.97, None) == "100%"
 
 
 def test_headline():

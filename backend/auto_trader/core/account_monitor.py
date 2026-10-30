@@ -26,6 +26,7 @@ NORMAL_S = 30.0
 FAST_S = 5.0
 UNMONITORED_AFTER_S = 120.0
 FETCH_TIMEOUT_S = 15.0
+NOTIFIER_TIMEOUT_S = 30.0
 ALL_CHANNELS = {"toast": True, "browser": True, "sound": True, "push": True, "telegram": True}
 
 Notifier = Callable[[str, dict], Awaitable[None]]
@@ -33,13 +34,6 @@ Notifier = Callable[[str, dict], Awaitable[None]]
 
 def _meta_key(alert_id: str) -> str:
     return f"account:{alert_id}"
-
-
-def _clean(value: float) -> float:
-    """Collapse float noise from the equity/margin arithmetic (e.g.
-    1100.0/1000.0*100 == 110.00000000000001) before a value is judged or
-    displayed; real account figures never carry sub-micro-percent precision."""
-    return round(value, 6)
 
 
 class AccountMonitor:
@@ -66,6 +60,9 @@ class AccountMonitor:
         # delete was supposed to drop. The lock makes the two run strictly
         # one-after-the-other from this process's point of view.
         self._meta_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # Shielded save tasks in flight (see _save_state): tracked so stop()
+        # can wait for them instead of leaving them orphaned past shutdown.
+        self._save_tasks: set[asyncio.Task] = set()
         self._latest: dict[str, AccountMetrics] = {}
         self._last_ok: dict[str, float] = {}
         self._first_fail: dict[str, float] = {}
@@ -112,6 +109,11 @@ class AccountMonitor:
             t.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        # Shielded saves survive the cancellation above by design; wait for
+        # them here instead of leaving them to finish orphaned after stop().
+        save_tasks = list(self._save_tasks)
+        if save_tasks:
+            await asyncio.gather(*save_tasks, return_exceptions=True)
 
     def _reconcile(self) -> None:
         needed = {acct for acct, rows in self._alerts.items() if any(r.get("active", 1) for _, r in rows)}
@@ -191,8 +193,12 @@ class AccountMonitor:
         # await would release the lock mid-write while the underlying DB
         # write (an orphaned background thread; asyncio cannot actually abort
         # it) keeps running and can commit after a same-key delete, resurrecting
-        # a row the delete was supposed to drop.
-        await asyncio.shield(self._save_state_locked(user_id, alert_id))
+        # a row the delete was supposed to drop. The task is tracked in
+        # _save_tasks so stop() can wait for it instead of orphaning it.
+        task = asyncio.ensure_future(self._save_state_locked(user_id, alert_id))
+        self._save_tasks.add(task)
+        task.add_done_callback(self._save_tasks.discard)
+        await asyncio.shield(task)
 
     async def _save_state_locked(self, user_id: str, alert_id: str) -> None:
         key = (user_id, alert_id)
@@ -206,8 +212,12 @@ class AccountMonitor:
             await self._store.set_meta(user_id, _meta_key(alert_id), json.dumps(st))  # type: ignore[union-attr]
 
     async def _delete_meta(self, user_id: str, alert_id: str) -> None:
+        key = (user_id, alert_id)
         async with self._lock_for(user_id, alert_id):
             await self._store.delete_meta(user_id, _meta_key(alert_id))  # type: ignore[union-attr]
+        # The lock is free again now; drop it so a deleted alert's lock does
+        # not linger in _meta_locks forever (one per alert ever created).
+        self._meta_locks.pop(key, None)
 
     # ---- status for the API ----
 
@@ -239,9 +249,8 @@ class AccountMonitor:
         metric = row["params"]["metric"]
         if metric == "drawdown":
             peak = st.get("peak")
-            return None if not peak or m.equity is None else _clean((peak - m.equity) / peak * 100)
-        value = m.value_of(metric)
-        return None if value is None else _clean(value)
+            return None if not peak or m.equity is None else (peak - m.equity) / peak * 100
+        return m.value_of(metric)
 
     async def metrics_for(self, account: str) -> dict:
         if account not in self._latest:
@@ -280,7 +289,20 @@ class AccountMonitor:
             await self._status_message(account, "resumed", "")
 
         fast = False
-        for user_id, row in list(self._alerts.get(account, [])):
+        for user_id, snapshot_row in list(self._alerts.get(account, [])):
+            alert_id = snapshot_row["id"]
+            # Re-look up the row from the CURRENT registry rather than trusting
+            # the snapshot: a notifier invoked earlier in THIS same cycle (for
+            # an earlier alert on this account) can synchronously delete or
+            # patch a later alert via on_alert_changed before we get to it.
+            # Using a stale snapshot there would let a deleted alert still
+            # fire and resurrect its already-deleted meta, or judge a patched
+            # alert against its old tiers.
+            row = next(
+                (r for (u, r) in self._alerts.get(account, []) if u == user_id and r["id"] == alert_id), None
+            )
+            if row is None:
+                continue
             if not row.get("active", 1):
                 continue
             expires_at = row.get("expires_at")
@@ -290,10 +312,32 @@ class AccountMonitor:
             st = await self._load_state(user_id, row["id"])
             params = row["params"]
             metric, tiers = params["metric"], params["tiers"]
+            old_peak, old_peak_day = st.get("peak"), st.get("peakDay")
             value = self._value(metric, params, metrics, st)
+            if metric == "drawdown" and (st.get("peak") != old_peak or st.get("peakDay") != old_peak_day):
+                # Persist the rising peak/baseline-day as it moves, not only
+                # when a fired tier also changes in the same cycle - otherwise
+                # a restart loads a stale, lower peak and understates drawdown.
+                await self._save_state(user_id, row["id"])
             if value is None:
+                if not st.get("seeded"):
+                    # First-ever poll for this alert found no figure (e.g. the
+                    # account was flat at creation): seed with an empty fired
+                    # set rather than leaving it unseeded. Leaving it unseeded
+                    # would make the FIRST poll that later finds a value act
+                    # as the "seed" poll, silently marking any tier already
+                    # breached as fired without ever notifying.
+                    st.update(seeded=True, fired=[])
+                    await self._save_state(user_id, row["id"])
+                elif metric == "marginLevel" and st.get("fired"):
+                    # marginLevel is undefined while flat (no positions, no
+                    # margin to divide by). Nothing stays "fired" through a
+                    # flat stretch: clear it so a later position reopened
+                    # past the same tier notifies again instead of staying
+                    # silently armed from before the account went flat.
+                    st["fired"] = []
+                    await self._save_state(user_id, row["id"])
                 continue
-            value = _clean(value)
             fired = set(st["fired"])
             if not st.get("seeded"):
                 fired = crossed_now(metric, tiers, value)
@@ -347,10 +391,13 @@ class AccountMonitor:
             "time": int(self._clock() * 1000),
         }
         for user_id in {u for u, _ in self._alerts.get(account, [])}:
-            await self._broadcast(user_id, {"key": "__alerts__:monitor", "value": payload})  # type: ignore[misc]
+            try:
+                await self._broadcast(user_id, {"key": "__alerts__:monitor", "value": payload})  # type: ignore[misc]
+            except Exception:
+                log.warning("account monitor: broadcast failed for %s", account, exc_info=True)
             for n in self._notifiers:
                 try:
-                    await n(user_id, payload)
+                    await asyncio.wait_for(n(user_id, payload), timeout=NOTIFIER_TIMEOUT_S)
                 except Exception:
                     log.warning("account monitor: notifier failed for %s", account, exc_info=True)
 
@@ -377,10 +424,13 @@ class AccountMonitor:
             "account": row["broker"], "headline": text, "currency": m.currency, "equity": m.equity,
             "critical": label == "critical",
         }
-        await self._broadcast(user_id, {"key": "__alerts__:fired", "value": payload})
+        try:
+            await self._broadcast(user_id, {"key": "__alerts__:fired", "value": payload})
+        except Exception:
+            log.warning("account alert broadcast failed user=%s alert=%s", user_id, row["id"], exc_info=True)
         for n in self._notifiers:
             try:
-                await n(user_id, payload)
+                await asyncio.wait_for(n(user_id, payload), timeout=NOTIFIER_TIMEOUT_S)
             except Exception:
                 log.warning("account alert notifier failed user=%s alert=%s", user_id, row["id"], exc_info=True)
 
@@ -394,8 +444,11 @@ class AccountMonitor:
             self._alerts[row["broker"]] = entries
         else:
             self._alerts.pop(row["broker"], None)
-        await self._broadcast(user_id, {"key": "__alerts__:changed",
-                                        "value": {"broker": row["broker"], "epic": "", "origin": "engine"}})
+        try:
+            await self._broadcast(user_id, {"key": "__alerts__:changed",
+                                            "value": {"broker": row["broker"], "epic": "", "origin": "engine"}})
+        except Exception:
+            log.warning("account monitor: expiry broadcast failed user=%s alert=%s", user_id, row["id"], exc_info=True)
         if self._started:
             self._reconcile()
 

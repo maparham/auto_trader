@@ -118,9 +118,19 @@ def tier_label(tiers: list[dict], level: float) -> str:
 
 
 def fmt_value(metric: str, value: float, currency: str | None) -> str:
+    # Round to the display precision FIRST, then decide whether to show a
+    # fraction: deciding from the raw value (`value != int(value)`) treats
+    # float noise from the equity/margin arithmetic (e.g. 1100.0/1000.0*100
+    # == 110.00000000000001) as a real fraction, and also leaves a value
+    # that rounds up to the next whole unit (99.97 -> "100.0") unstripped.
     if metric in PCT_METRICS:
-        return f"{value:.1f}%" if value != int(value) else f"{int(value)}%"
-    amount = f"{value:,.2f}" if value != int(value) else f"{int(value):,}"
+        s = f"{value:.1f}"
+        if s.endswith(".0"):
+            s = s[:-2]
+        return f"{s}%"
+    amount = f"{value:,.2f}"
+    if amount.endswith(".00"):
+        amount = amount[:-3]
     return f"{amount} {currency}" if currency else amount
 
 

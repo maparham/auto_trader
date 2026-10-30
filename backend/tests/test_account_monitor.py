@@ -134,7 +134,9 @@ def test_no_positions_holds_state_and_stays_monitored(tmp_path):
         h.exec.positions = []
         await h.mon.poll_once(ACCT)
         st = h.mon.statuses("u1")["al-1"]
-        assert st["firedTiers"] == [150, 120] and st["monitored"] and st["current"] is None
+        # R9: marginLevel is undefined while flat, so its fired set clears
+        # rather than staying armed from before the account went flat.
+        assert st["firedTiers"] == [] and st["monitored"] and st["current"] is None
         assert h.status_msgs() == []
     run(main())
 
@@ -317,4 +319,143 @@ def test_metrics_for_polls_once(tmp_path):
         h.exec.set_margin_level(150)
         m = await h.mon.metrics_for(ACCT)
         assert m["marginLevel"] == pytest.approx(150) and m["currency"] == "EUR"
+    run(main())
+
+
+# ---- fix round 1 (reviewer findings on top of the brief) ----
+
+
+def test_flat_at_creation_seeds_empty_then_fires_on_open(tmp_path):
+    """R8 + R9: creating a marginLevel alert while flat must not let the
+    account's FIRST figure (once a position opens) be silently treated as a
+    "seed" that swallows a tier already breached."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.positions = []  # flat: marginLevel is undefined (None)
+        await h.add()
+        await h.mon.poll_once(ACCT)          # seeds empty (R8), nothing fires
+        assert h.fired() == []
+        assert h.mon.statuses("u1")["al-1"]["firedTiers"] == []
+        h.exec.positions = [Position(epic="US100", side=Side.BUY, quantity=1, open_level=1, deal_id="d", upnl=0.0, margin=1000.0)]
+        h.exec.set_margin_level(90)          # past all three tiers
+        await h.mon.poll_once(ACCT)
+        assert [p["tierLabel"] for p in h.fired()] == ["critical"]
+    run(main())
+
+
+def test_going_flat_clears_marginlevel_fired_then_rearms_on_reopen(tmp_path):
+    """R9: fired tiers must not stay armed through a flat stretch, or
+    reopening a position past the same tier would notify once (seeding) but
+    never notify about the SAME breach again."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(110)
+        await h.add()
+        await h.mon.poll_once(ACCT)          # silently seeds past 150, 120
+        assert h.mon.statuses("u1")["al-1"]["firedTiers"] == [150, 120]
+        h.exec.positions = []
+        await h.mon.poll_once(ACCT)
+        assert h.mon.statuses("u1")["al-1"]["firedTiers"] == []
+        h.exec.positions = [Position(epic="US100", side=Side.BUY, quantity=1, open_level=1, deal_id="d", upnl=0.0, margin=1000.0)]
+        h.exec.set_margin_level(110)
+        await h.mon.poll_once(ACCT)
+        assert [p["tierLabel"] for p in h.fired()] == ["danger"]
+    run(main())
+
+
+def test_drawdown_peak_persists_across_restart(tmp_path):
+    """R10: the peak must be saved as it rises, not only when a fired tier
+    or a patch also changes state in the same cycle, or a restart loads a
+    stale (lower) peak and understates drawdown."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)         # equity 2000
+        await h.add(id="al-s", params={"metric": "drawdown", "baseline": "sinceCreated",
+                                        "tiers": [{"level": 5, "label": "warn"}]})
+        await h.mon.poll_once(ACCT)          # peak seeds at 2000
+        h.exec.set_margin_level(220)         # equity 2200: new peak
+        await h.mon.poll_once(ACCT)
+        h2 = Harness(tmp_path)               # restart: new monitor, same store
+        h2.exec.set_margin_level(200)        # equity back down to 2000
+        await h2.mon.start()
+        try:
+            await asyncio.sleep(0.05)
+            current = h2.mon.statuses("u1")["al-s"]["current"]
+            assert current == pytest.approx(200 / 2200 * 100)
+        finally:
+            await h2.mon.stop()
+    run(main())
+
+
+def test_alert_deleted_mid_cycle_does_not_fire_or_resurrect_meta(tmp_path):
+    """A notifier for an earlier alert's fire can synchronously delete a
+    LATER alert on the same account before poll_once's loop reaches it. The
+    stale snapshot must not let that later alert fire or write its meta
+    back after the delete."""
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.set_margin_level(200)
+        await h.add(id="al-1")
+        await h.add(id="al-2")
+        await h.mon.poll_once(ACCT)          # seeds both past nothing
+
+        deleted = {"done": False}
+
+        async def notify_and_delete(uid, payload):
+            h.notified.append((uid, payload))
+            if payload.get("kind") == "account" and payload["id"] == "al-1" and not deleted["done"]:
+                deleted["done"] = True
+                await h.store.delete("u1", "al-2")
+                h.mon.on_alert_changed("u1", None, "al-2")
+
+        h.mon._notifiers = [notify_and_delete]
+        h.exec.set_margin_level(110)         # breaches danger for both al-1, al-2
+        await h.mon.poll_once(ACCT)
+        await asyncio.sleep(0.1)             # let the fire-and-forget delete_meta land
+
+        fired_ids = [p["id"] for p in h.fired()]
+        assert "al-1" in fired_ids
+        assert "al-2" not in fired_ids
+        assert await h.store.get_meta("u1", "account:al-2") is None
+    run(main())
+
+
+def test_broadcast_failure_still_notifies_unmonitored(tmp_path):
+    """R12: an unguarded broadcast failure must not skip the notifier
+    fan-out (push/Telegram), since the broadcast and notifiers both carry
+    the same unmonitored warning independently."""
+    async def main():
+        h = Harness(tmp_path)
+
+        async def bad_bcast(uid, msg):
+            raise RuntimeError("ws down")
+
+        h.mon._broadcast = bad_bcast
+        await h.add()
+        h.exec.summary["available"] = None
+        await h.mon.poll_once(ACCT)
+        msgs = h.status_msgs()
+        assert len(msgs) == 1 and msgs[0]["status"] == "unmonitored"
+    run(main())
+
+
+def test_hung_notifier_does_not_block_the_loop(tmp_path, monkeypatch):
+    """R12: a notifier awaited with no timeout could stall the account loop
+    (and with it the watchdog). Patch the timeout constant small so the
+    test doesn't have to wait the real 30s."""
+    import auto_trader.core.account_monitor as account_monitor_module
+    monkeypatch.setattr(account_monitor_module, "NOTIFIER_TIMEOUT_S", 0.05)
+
+    async def main():
+        h = Harness(tmp_path)
+
+        async def hang(uid, payload):
+            await asyncio.sleep(10)
+
+        h.mon._notifiers = [hang]
+        h.exec.set_margin_level(200)
+        await h.add()
+        await h.mon.poll_once(ACCT)
+        h.exec.set_margin_level(110)
+        await asyncio.wait_for(h.mon.poll_once(ACCT), timeout=2.0)
     run(main())
