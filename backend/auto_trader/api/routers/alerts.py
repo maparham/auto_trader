@@ -20,6 +20,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from auto_trader.core import timeframe as _tf
+from auto_trader.core.account_alert_kind import ACCOUNT_KIND, is_monitorable
+from auto_trader.core.account_monitor import ACCOUNT_MONITOR
 from auto_trader.core.alert_bars import candle_ms
 from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_kinds import INDICATOR, KINDS, carry_output, upgrade_params
@@ -59,8 +61,17 @@ def _validate_id(alert_id: str) -> None:
 
 
 def _validate_kind(kind: str) -> None:
-    if kind not in KINDS:
+    if kind not in KINDS and kind != "account":
         raise HTTPException(422, f"unknown alert kind: {kind!r}")
+
+
+def _check_account(account: str) -> None:
+    """An account alert's `broker` is an exec key the monitor can poll: a
+    registered Capital/IG dealing account (never paper, never MT5)."""
+    registry = deps._registry
+    exec_broker = registry.exec.get(account) if registry is not None else None
+    if exec_broker is None or not is_monitorable(account, exec_broker.env):
+        raise HTTPException(422, "account_not_monitorable")
 
 
 def _streams(broker: str) -> Callable[[], bool]:
@@ -95,9 +106,17 @@ def _validate_expires_at(expires_at: int | None) -> None:
 
 def _validate_params(kind: str, params: dict[str, Any], broker: str) -> None:
     try:
-        KINDS[kind].validate(params, _streams(broker))
+        if kind == "account":
+            ACCOUNT_KIND.validate(params)
+            _check_account(broker)
+        else:
+            KINDS[kind].validate(params, _streams(broker))
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
+
+
+def _sig(kind: str, params: dict[str, Any]) -> str:
+    return ACCOUNT_KIND.sig(params) if kind == "account" else KINDS[kind].sig(params)
 
 
 async def _check_duplicate(
@@ -109,13 +128,13 @@ async def _check_duplicate(
     trigger) is a duplicate regardless of message/notify/expiry, which don't
     affect what fires. `skip_id` excludes the row a PATCH is editing, so
     saving an alert's own unchanged params never 409s against itself."""
-    sig = KINDS[kind].sig(params)
+    sig = _sig(kind, params)
     existing = await ALERT_STORE.list_user(user)
     for row in existing:
         if row["id"] == skip_id:
             continue
         if row["broker"] == broker and row["epic"] == epic and row["kind"] == kind:
-            if KINDS[kind].sig(row["params"]) == sig:
+            if _sig(kind, row["params"]) == sig:
                 raise HTTPException(409, "An identical alert already exists")
 
 
@@ -174,9 +193,15 @@ class DescribeBody(BaseModel):
     alertId: str | None = None
 
 
-async def _notify(request: Request, row: dict | None, alert_id: str, broker: str, epic: str, origin: str) -> None:
+async def _notify(
+    request: Request, row: dict | None, alert_id: str, broker: str, epic: str, origin: str, kind: str,
+) -> None:
     user = current_user(request)
-    ALERT_ENGINE.on_alert_changed(user, row, alert_id)
+    # Account alerts belong to the monitor; the price engine must never see them.
+    if kind == "account":
+        ACCOUNT_MONITOR.on_alert_changed(user, row, alert_id)
+    else:
+        ALERT_ENGINE.on_alert_changed(user, row, alert_id)
     await broadcast_to_user(
         user, {"key": "__alerts__:changed", "value": {"broker": broker, "epic": epic, "origin": origin}}
     )
@@ -193,6 +218,11 @@ async def list_alerts(request: Request) -> dict[str, Any]:
             st = "waiting_for_data"  # not registered with the engine yet
         if st is not None:
             r["status"] = st
+    acct = ACCOUNT_MONITOR.statuses(user)
+    for r in rows:
+        if r.get("kind") == "account":
+            r.update(acct.get(r["id"], {"current": None, "firedTiers": [], "monitored": False,
+                                        "unmonitoredReason": "not started"}))
     return {"alerts": [_decorate(r) for r in rows]}
 
 
@@ -200,6 +230,8 @@ async def list_alerts(request: Request) -> dict[str, Any]:
 async def create_alert(request: Request, body: CreateAlertBody, origin: str = Query("")) -> dict[str, Any]:
     _validate_id(body.id)
     _validate_kind(body.kind)
+    if body.kind == "account":
+        deps.require_admin(request)
     _validate_params(body.kind, body.params, body.broker)
     _validate_precision(body.precision)
     _validate_expires_at(body.expires_at)
@@ -232,7 +264,7 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
     except ValueError:
         raise HTTPException(409, f"alert id already exists: {body.id}") from None
 
-    await _notify(request, saved, saved["id"], saved["broker"], saved["epic"], origin)
+    await _notify(request, saved, saved["id"], saved["broker"], saved["epic"], origin, saved["kind"])
     return _decorate(saved)
 
 
@@ -256,6 +288,18 @@ async def get_triggered(request: Request) -> dict[str, Any]:
     seen_raw = await ALERT_STORE.get_meta(user, "triggered_seen")
     seen = int(seen_raw) if seen_raw is not None else 0
     return {"entries": entries, "seen": seen}
+
+
+@router.get("/api/alerts/account-metrics")
+async def account_metrics_route(request: Request, account: str = Query(...)) -> dict[str, Any]:
+    """The server's current figures for the create dialog: the value the
+    monitor will actually judge, which can differ from the dock's estimate."""
+    deps.require_admin(request)
+    _check_account(account)
+    metrics = await ACCOUNT_MONITOR.metrics_for(account)
+    status = ACCOUNT_MONITOR.account_status(account)
+    return {"account": account, "monitored": status["monitored"],
+            "unmonitoredReason": status["unmonitoredReason"], "metrics": metrics}
 
 
 @router.post("/api/alerts/triggered/seen", status_code=204)
@@ -398,11 +442,13 @@ async def patch_alert(
         k: v for k, v in body.model_dump(exclude_unset=True).items()
         if v is not None or k == "expires_at"
     }
+    existing = await ALERT_STORE.list_user(user)
+    current = next((r for r in existing if r["id"] == alert_id), None)
+    if current is None:
+        raise HTTPException(404, f"alert not found: {alert_id}")
+    if current.get("kind") == "account":
+        deps.require_admin(request)
     if "params" in patch:
-        existing = await ALERT_STORE.list_user(user)
-        current = next((r for r in existing if r["id"] == alert_id), None)
-        if current is None:
-            raise HTTPException(404, f"alert not found: {alert_id}")
         if current.get("kind") == "line" and _LINE_GEOMETRY.intersection(patch["params"]):
             # The line is frozen at creation and tRef/pRef belong to the
             # server (the engine's rebase writes through AlertStore.update
@@ -423,7 +469,7 @@ async def patch_alert(
     if saved is None:
         raise HTTPException(404, f"alert not found: {alert_id}")
 
-    await _notify(request, saved, saved["id"], saved["broker"], saved["epic"], origin)
+    await _notify(request, saved, saved["id"], saved["broker"], saved["epic"], origin, saved["kind"])
     return _decorate(saved)
 
 
@@ -441,4 +487,4 @@ async def delete_alert(request: Request, alert_id: str, origin: str = Query(""))
     if not deleted:
         raise HTTPException(404, f"alert not found: {alert_id}")
 
-    await _notify(request, None, alert_id, row["broker"], row["epic"], origin)
+    await _notify(request, None, alert_id, row["broker"], row["epic"], origin, row["kind"])

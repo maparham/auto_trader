@@ -678,3 +678,93 @@ def test_line_rows_report_a_status(clerk, bars, monkeypatch):
     monkeypatch.setattr(alerts_router.ALERT_ENGINE, "statuses", lambda u: {})
     rows = client.get("/api/alerts", headers=_auth("alice")).json()["alerts"]
     assert rows[0]["status"] == "waiting_for_data"
+
+
+# ---- account alerts -------------------------------------------------------
+
+class _FakeExec:
+    env = "live"
+    is_real_money = True
+
+    async def get_account_summary(self):
+        return {"balance": 2000.0, "available": 500.0, "deposit": 0, "profitLoss": 0.0, "currency": "EUR"}
+
+    async def get_positions(self, epic=None):
+        from auto_trader.core.models import Position, Side
+        return [Position(epic="US100", side=Side.BUY, quantity=1, open_level=1, deal_id="d", upnl=0.0, margin=1500.0)]
+
+
+@pytest.fixture
+def account_monitor(monkeypatch):
+    from auto_trader.api.routers import alerts as alerts_router
+    from auto_trader.core.account_monitor import ACCOUNT_MONITOR
+    async def _noop(uid, msg): pass
+    ACCOUNT_MONITOR.configure(store=alerts_router.ALERT_STORE, get_exec=deps_mod.get_exec, broadcast=_noop, notifiers=[])
+    ACCOUNT_MONITOR._alerts.clear(); ACCOUNT_MONITOR._state.clear(); ACCOUNT_MONITOR._latest.clear(); ACCOUNT_MONITOR._unmonitored.clear()
+    yield ACCOUNT_MONITOR
+    ACCOUNT_MONITOR._alerts.clear(); ACCOUNT_MONITOR._state.clear(); ACCOUNT_MONITOR._latest.clear(); ACCOUNT_MONITOR._unmonitored.clear()
+
+
+@pytest.fixture
+def account_registry(monkeypatch, account_monitor):
+    from auto_trader.brokers.registry import BrokerRegistry
+    reg = BrokerRegistry()
+    reg.exec["capital-live:live"] = _FakeExec()
+    paper = _FakeExec(); paper.env = "paper"
+    reg.exec["capital:paper"] = paper
+    monkeypatch.setattr(deps_mod, "_registry", reg)
+    return reg
+
+
+@pytest.fixture
+def admin(monkeypatch, clerk):
+    from auto_trader.api import auth
+    monkeypatch.setenv(auth.ADMIN_USER_IDS_ENV, "root")
+    return _auth("root")
+
+
+def _acct_body(**over):
+    body = {"id": "al-acct", "broker": "capital-live:live", "epic": "", "kind": "account",
+            "params": {"metric": "marginLevel", "tiers": [{"level": 150, "label": "warn"}, {"level": 120, "label": "danger"}]}}
+    body.update(over)
+    return body
+
+
+def test_account_alert_requires_admin(clerk, account_registry):
+    r = client.post("/api/alerts", json=_acct_body(), headers=_auth("alice"))
+    assert r.status_code == 403
+
+
+def test_account_alert_create_patch_list_delete(admin, account_registry):
+    r = client.post("/api/alerts", json=_acct_body(), headers=admin)
+    assert r.status_code == 200, r.text
+    r = client.post("/api/alerts", json=_acct_body(id="al-dup"), headers=admin)
+    assert r.status_code == 409
+    r = client.get("/api/alerts", headers=admin)
+    row = next(a for a in r.json()["alerts"] if a["id"] == "al-acct")
+    assert row["monitored"] is True and row["firedTiers"] == [] and "current" in row
+    r = client.patch("/api/alerts/al-acct", json={"params": {"tiers": [{"level": 110, "label": "critical"}]}}, headers=admin)
+    assert r.status_code == 200 and r.json()["params"]["tiers"][0]["level"] == 110
+    r = client.patch("/api/alerts/al-acct", json={"params": {"tiers": []}}, headers=admin)
+    assert r.status_code == 422
+    r = client.delete("/api/alerts/al-acct", headers=admin)
+    assert r.status_code == 204
+
+
+def test_account_alert_refuses_paper_and_unknown(admin, account_registry):
+    r = client.post("/api/alerts", json=_acct_body(broker="capital:paper"), headers=admin)
+    assert r.status_code == 422 and "account_not_monitorable" in r.text
+    r = client.post("/api/alerts", json=_acct_body(broker="mt5:live"), headers=admin)
+    assert r.status_code == 422
+
+
+def test_account_metrics_endpoint(admin, account_registry):
+    r = client.get("/api/alerts/account-metrics", params={"account": "capital-live:live"}, headers=admin)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["metrics"]["marginLevel"] == pytest.approx(2000 / 1500 * 100)
+    assert body["metrics"]["currency"] == "EUR" and body["monitored"] is True
+    r = client.get("/api/alerts/account-metrics", params={"account": "capital:paper"}, headers=admin)
+    assert r.status_code == 422
+    r = client.get("/api/alerts/account-metrics", params={"account": "capital-live:live"}, headers=_auth("alice"))
+    assert r.status_code == 403
