@@ -97,7 +97,11 @@ depend on browser-only settings (working-order margin from
 Outcomes:
 
 - No open positions: `marginLevel` is `None` legitimately (nothing to
-  liquidate); tiers neither fire nor re-arm and the row is "monitored".
+  liquidate) and the row stays "monitored". While flat, a `marginLevel`
+  alert CLEARS its fired tiers (ruling R9): nothing stays armed through a
+  flat stretch, so a position opened later past a tier notifies instead of
+  staying silent from before the account went flat. The other metrics hold
+  their fired set, since their values keep existing while flat.
 - Positions open but a required figure missing (e.g. no `available`): the
   metric is `None` and the account is reported UNMONITORED with reason
   `missing <field>`, going through the watchdog, never holding silently.
@@ -137,6 +141,12 @@ Each poll cycle for an account:
 - An alert created while already past a tier marks it fired WITHOUT
   notifying on its first poll, so creation never fires instantly; the create
   dialog shows the current value so this is visible.
+- Notify BEFORE persisting. A cycle sends the notification first and only
+  then writes the new fired set to `alert_meta`; a failed history-row write
+  inside the fire is logged and skipped, never raised. Persisting first would
+  let a one-off store error leave the tier marked fired with no notification
+  ever sent, and the next cycle would then hold it silently for good. A
+  repeated notification after a failed save is the lesser evil.
 
 ### Drawdown
 
