@@ -15,6 +15,19 @@ import { requestConfirm, type AccountAlertRequest } from "./lib/signals";
 const TIER_LABELS: TierLabel[] = ["warn", "danger", "critical"];
 // Metrics where a tier is hit by the value FALLING (levels step down).
 const FALLING: ReadonlySet<AccountMetric> = new Set(["marginLevel", "equity", "available", "openPnl", "openPnlPct"]);
+// Metrics whose levels are percentages: the added-tier step is a fixed 10 points.
+const PCT: ReadonlySet<AccountMetric> = new Set(["marginLevel", "openPnlPct", "drawdown"]);
+
+/** The tier "Add tier" appends: one step past the last tier, in the direction
+ *  the metric fires, labelled with the next severity (capped at critical). */
+function nextTier(metric: AccountMetric, tiers: AccountTier[]): AccountTier {
+  const last = tiers.at(-1);
+  if (!last) return { level: 0, label: "warn" };
+  const step = PCT.has(metric) ? 10 : Math.max(Math.abs(last.level) * 0.1, 1);
+  const level = Number((FALLING.has(metric) ? last.level - step : last.level + step).toFixed(2));
+  const label = TIER_LABELS[Math.min(TIER_LABELS.indexOf(last.label) + 1, TIER_LABELS.length - 1)];
+  return { level, label };
+}
 
 /** Default tiers: margin level gets Capital's three steps; drawdown one 5%
  *  step; anything else one tier 10% worse than the current value. */
@@ -112,9 +125,11 @@ function Body({ account, metric, existing, onClose }: {
         <div className="al-field">
           <span>{METRIC_LABELS[metric]}</span>
           <span>
-            {current == null
-              ? (loaded ? "no value yet" : "loading")
-              : `now ${fmtMetric(metric, current, currency)}`}
+            {metric === "drawdown" && !isEdit
+              ? "starts at 0% on the next check"
+              : current == null
+                ? (loaded ? "no value yet" : "loading")
+                : `now ${fmtMetric(metric, current, currency)}`}
             <InfoTip title="Server value" text={["This is the figure the alert is judged on.", "It can differ a little from the dock when resting orders reserve margin."]} />
           </span>
         </div>
@@ -144,7 +159,7 @@ function Body({ account, metric, existing, onClose }: {
             </div>
           ))}
           {tiers.length < 3 && (
-            <button className="ghost" style={{ alignSelf: "flex-start" }} onClick={() => setTiers((x) => [...x, { level: x.at(-1)?.level ?? 0, label: TIER_LABELS[Math.min(x.length, 2)] }])}>Add tier</button>
+            <button className="ghost" style={{ alignSelf: "flex-start" }} onClick={() => setTiers((x) => [...x, nextTier(metric, x)])}>Add tier</button>
           )}
           {error && <div className="al-error">{error}</div>}
         </div>

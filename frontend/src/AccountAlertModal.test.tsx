@@ -49,6 +49,22 @@ describe("AccountAlertModal", () => {
     expect(screen.getByText(/must fall from one tier to the next/)).toBeTruthy();
   });
 
+  it("adds a tier one step past the last one and keeps Create enabled", async () => {
+    render(<AccountAlertModal request={{ mode: "create", account: "capital-live:live", metric: "marginLevel" }} now={0} onClose={() => {}} />);
+    await screen.findByText(/now 177\.2%/);
+    fireEvent.click(screen.getByLabelText("Remove tier 3"));
+    fireEvent.click(screen.getByText("Add tier"));
+    expect((screen.getByLabelText("Tier 3 level") as HTMLInputElement).value).toBe("110");
+    expect((screen.getByLabelText("Tier 3 label") as HTMLSelectElement).value).toBe("critical");
+    expect((screen.getByText("Create") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("shows the drawdown starting point instead of a value on create", async () => {
+    render(<AccountAlertModal request={{ mode: "create", account: "capital-live:live", metric: "drawdown" }} now={0} onClose={() => {}} />);
+    expect(await screen.findByText("starts at 0% on the next check")).toBeTruthy();
+    expect(screen.queryByText(/^now /)).toBeNull();
+  });
+
   it("edits a drawdown alert and sends the baseline", async () => {
     render(<AccountAlertModal request={{ mode: "edit", id: "al-e" }} now={0} onClose={() => {}} />);
     await screen.findByText(/Drawdown/);
