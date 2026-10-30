@@ -319,6 +319,9 @@ body.m-mobile {
 .m-pos-view .pp-acct {
   flex-basis: 100%; margin-left: 0; flex-wrap: nowrap; justify-content: flex-start;
   overflow-x: auto; padding-bottom: 2px; -webkit-overflow-scrolling: touch;
+  /* Room above the stats for the bell's 24px hit area (7px overhang each side).
+     The negative margin cancels the padding, so the strip's layout is unchanged. */
+  padding-top: 7px; margin-top: -7px;
 }
 .m-pos-view .pp-stat { align-items: flex-start; flex: 0 0 auto; }
 .m-pos-detail { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }

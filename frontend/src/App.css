@@ -5340,11 +5340,15 @@
 }
 .pp-stat:hover .pp-stat-bell, .pp-stat-bell:focus-visible, .pp-stat-bell.on { opacity: 1; }
 .pp-stat-bell.on { color: var(--text); }
-/* Mobile has no hover and touch needs a bigger target: a 24px hit area with the
-   11px icon centred in it, its right edge still 4px left of the label. */
+/* Mobile has no hover, so the bell is always shown and sits IN FLOW right after the
+   label text: the strip scrolls sideways (overflow-x), which would clip an
+   absolutely positioned bell. The 24px hit area is cut back by negative margins
+   so the line box and stat height do not grow; the strip makes room for its top
+   overhang (mobile.css .m-pos-view .pp-acct). */
 .m-pos-view .pp-stat-bell {
-  opacity: 1; width: 24px; height: 24px; justify-content: center; align-items: center;
-  right: calc(100% - 2.5px);
+  position: static; top: auto; right: auto; transform: none;
+  opacity: 1; width: 24px; height: 24px; margin: -7px -6px -7px -2px;
+  vertical-align: middle; justify-content: center; align-items: center;
 }
 
 /* Collapsed: the same facts as one live ticker line. */
