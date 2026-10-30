@@ -208,14 +208,19 @@ def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = Fal
                 if any(e.get("alert_id") == alert_id for e in entries):
                     result = "PASS"
         finally:
-            # Read the monitor's view before the row is deleted, but never let
-            # the read stand between the alert and its cleanup DELETE.
-            status = _alert_status(client, alert_id) if account and result != "PASS" else None
-            del_resp = client.delete(f"/api/alerts/{alert_id}")
-            if del_resp.status_code not in (204, 404):
-                print(f"warning: cleanup delete returned {del_resp.status_code}: {del_resp.text}")
-            else:
-                print(f"cleaned up alert {alert_id}")
+            # Read the monitor's view before the row is deleted. The read sits
+            # in its own try so that even a BaseException (a second Ctrl-C)
+            # reaches the cleanup DELETE below.
+            status = None
+            try:
+                if account and result != "PASS":
+                    status = _alert_status(client, alert_id)
+            finally:
+                del_resp = client.delete(f"/api/alerts/{alert_id}")
+                if del_resp.status_code not in (204, 404):
+                    print(f"warning: cleanup delete returned {del_resp.status_code}: {del_resp.text}")
+                else:
+                    print(f"cleaned up alert {alert_id}")
             if status is not None:
                 print(status)
 
