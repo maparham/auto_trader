@@ -4,7 +4,7 @@
 import { useEffect } from "react";
 import { fmtPrice } from "../lib/priceFormat";
 import { notify, playPing, toast } from "../lib/notify";
-import { alertFired, alertNavHandler, bumpAlerts, toggleSidePanel } from "../lib/signals";
+import { alertFired, alertNavHandler, bumpAlerts, openTradeListPanel } from "../lib/signals";
 import { setOnAlertFired } from "../lib/persist";
 import {
   accountLabel,
@@ -34,7 +34,7 @@ export function useAlertFiredNotices() {
         // No epic and no chart: the headline IS the message; click opens the
         // trade list, where the account strip shows the live figures.
         const text = p.message ? `${p.headline} \u00b7 ${p.message}` : p.headline ?? "Account alert";
-        const open = () => toggleSidePanel("tradeList");
+        const open = () => openTradeListPanel();
         const key = `account|${p.id}`;
         const icon = p.critical ? "\u{1F6A8}" : "\u{1F514}";
         if (p.notify?.toast ?? true) toast(`${icon} ${text}`, { onClick: open, duration: null, key });

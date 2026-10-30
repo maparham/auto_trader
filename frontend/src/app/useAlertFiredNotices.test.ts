@@ -11,10 +11,10 @@ vi.mock("../lib/notify", async (orig) => ({
   notify: (...a: unknown[]) => notify(...a),
   playPing: () => {},
 }));
-const toggleSidePanel = vi.fn();
+const openTradeListPanel = vi.fn();
 vi.mock("../lib/signals", async (orig) => ({
   ...(await orig<typeof import("../lib/signals")>()),
-  toggleSidePanel: (...a: unknown[]) => toggleSidePanel(...a),
+  openTradeListPanel: (...a: unknown[]) => openTradeListPanel(...a),
 }));
 
 let fired: ((p: unknown) => void) | null = null;
@@ -53,7 +53,7 @@ describe("account alert notices", () => {
   beforeEach(() => {
     toast.mockClear();
     notify.mockClear();
-    toggleSidePanel.mockClear();
+    openTradeListPanel.mockClear();
   });
 
   it("toasts the headline, opens the trade list on click, never navigates to a chart", () => {
@@ -64,7 +64,7 @@ describe("account alert notices", () => {
     const [text, opts] = toast.mock.calls[0] as [string, { onClick?: () => void }];
     expect(text).toContain("MARGIN LEVEL 118.4%");
     opts.onClick?.();
-    expect(toggleSidePanel).toHaveBeenCalledWith("tradeList");
+    expect(openTradeListPanel).toHaveBeenCalledTimes(1);
   });
 
   it("monitor events toast without channel gates", () => {

@@ -829,6 +829,11 @@ registerSidePanel("live", () => livePanelOpen.set(false));
 registerSidePanel("screener", () => screenerPanelOpen.set(false));
 registerSidePanel("assistant", () => assistantPanelOpen.set(false));
 
+/** Open-only: opens the trade list (the positions dock) and never closes it. */
+export function openTradeListPanel(): void {
+  openSidePanelSignal(tradeListPanelOpen, "tradeList");
+}
+
 /** Toolbar toggles: flipping a closed panel open claims the dock from the others. */
 export function toggleSidePanel(id: "alerts" | "trade" | "tradeList" | "live" | "screener" | "assistant"): void {
   const sig =
