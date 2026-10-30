@@ -1032,3 +1032,18 @@ def test_readded_trendlines_need_on_a_warm_series_does_not_evaluate_the_previous
         from auto_trader.core.alert_kinds import kind_of
         assert eng._hub.ready(skey, kind_of(t3).indicator_key(t3["params"]))
     asyncio.run(main())
+
+
+def test_start_ignores_account_rows(tmp_path):
+    async def main():
+        eng, store, sent, notified = make_engine(tmp_path)
+        await store.create("u1", row(id="al-acct", broker="capital-live:live", epic="", kind="account",
+                                     params={"metric": "marginLevel", "tiers": [{"level": 120, "label": "warn"}]}))
+        await store.create("u1", row())
+        await eng.start()
+        try:
+            assert eng.feeds_needed() == {("capital", "US100")}
+            assert "al-acct" not in eng.statuses("u1")
+        finally:
+            await eng.stop()
+    asyncio.run(main())

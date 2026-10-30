@@ -396,6 +396,17 @@ class AlertStore:
         finally:
             conn.close()
 
+    async def delete_meta(self, user_id: str, key: str) -> None:
+        await asyncio.to_thread(self._delete_meta_sync, user_id, key)
+
+    def _delete_meta_sync(self, user_id: str, key: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM alert_meta WHERE user_id = ? AND key = ?", (user_id, key))
+            conn.commit()
+        finally:
+            conn.close()
+
     # ---- web-push subscriptions ----
 
     async def add_push_sub(self, user_id: str, endpoint: str, keys: dict) -> None:

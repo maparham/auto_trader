@@ -338,3 +338,11 @@ def test_last_fired_times_and_alert_json(tmp_path):
     assert sorted(asyncio.run(store.last_fired_times())) == [("u1", "al-1", 20), ("u2", "al-2", 15)]
     rows = asyncio.run(store.list_triggered("u1"))
     assert json.loads(rows[1]["alert_json"]) == {"id": "al-1"}
+
+
+def test_delete_meta(tmp_path):
+    store = AlertStore(str(tmp_path / "a.db"))
+    asyncio.run(store.set_meta(USER, "account:al-1", "{}"))
+    asyncio.run(store.delete_meta(USER, "account:al-1"))
+    assert asyncio.run(store.get_meta(USER, "account:al-1")) is None
+    asyncio.run(store.delete_meta(USER, "account:never"))  # no raise

@@ -198,6 +198,11 @@ class AlertEngine:
         self._line_rescue_at.clear()
         all_rows = await self._store.list_all()
         for user_id, row in all_rows:
+            # Account alerts have no price feed; AccountMonitor owns them. Letting
+            # one in here would spawn a feed loop for ("capital-live:live", "")
+            # that 404s on get_data forever.
+            if row.get("kind") == "account":
+                continue
             key = (row["broker"], row["epic"])
             self._registry.setdefault(key, []).append((user_id, row))
         await self._rebuild_last_fired()
