@@ -79,17 +79,20 @@ def _quote(client: httpx.Client, epic: str, broker: str) -> float:
 
 
 def _alert_status(client: httpx.Client, alert_id: str) -> str:
-    """One-line monitor view of an account alert (monitored, unmonitoredReason)."""
+    """One-line monitor view of an account alert (monitored, unmonitoredReason).
+
+    Total: any failure, including an unexpected body shape, comes back as an
+    "unavailable" string, so the caller's cleanup never depends on it."""
     try:
         resp = client.get("/api/alerts")
         resp.raise_for_status()
-    except httpx.HTTPError as e:
-        return f"alert status unavailable: {e}"
-    row = next((a for a in resp.json().get("alerts", []) if a.get("id") == alert_id), None)
-    if row is None:
-        return "alert status: row not found"
-    return (f"alert status: monitored={row.get('monitored')} "
-            f"unmonitoredReason={row.get('unmonitoredReason')!r}")
+        row = next((a for a in resp.json().get("alerts", []) if a.get("id") == alert_id), None)
+        if row is None:
+            return "alert status: row not found"
+        return (f"alert status: monitored={row.get('monitored')} "
+                f"unmonitoredReason={row.get('unmonitoredReason')!r}")
+    except Exception as e:
+        return f"alert status unavailable: {e!r}"
 
 
 def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = False,
@@ -205,14 +208,16 @@ def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = Fal
                 if any(e.get("alert_id") == alert_id for e in entries):
                     result = "PASS"
         finally:
-            if account and result != "PASS":
-                # Read the monitor's view before the row is deleted.
-                print(_alert_status(client, alert_id))
+            # Read the monitor's view before the row is deleted, but never let
+            # the read stand between the alert and its cleanup DELETE.
+            status = _alert_status(client, alert_id) if account and result != "PASS" else None
             del_resp = client.delete(f"/api/alerts/{alert_id}")
             if del_resp.status_code not in (204, 404):
                 print(f"warning: cleanup delete returned {del_resp.status_code}: {del_resp.text}")
             else:
                 print(f"cleaned up alert {alert_id}")
+            if status is not None:
+                print(status)
 
         if result == "PASS":
             print(f"PASS: alert {alert_id} triggered within {timeout:.0f}s")
