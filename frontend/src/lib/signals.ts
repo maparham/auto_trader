@@ -13,6 +13,7 @@ import { claimSidePanel, registerSidePanel } from "./sidePanels";
 import type { SidePanelId } from "./sidePanels";
 import type { AlertInstance } from "./indicatorAlertInstance";
 import type { TrendlineAlertLine } from "./indicators/trendlineMarks";
+import type { AccountMetric } from "./alertsApi";
 
 type Listener<T> = (value: T) => void;
 
@@ -77,6 +78,14 @@ export type IndicatorAlertRequest =
   | { mode: "create"; draft: IndicatorAlertDraft }
   | { mode: "edit"; id: string };
 export const indicatorAlertRequest = new Signal<IndicatorAlertRequest | null>(null);
+
+// Request to open the account alert modal: create (from an account's balance
+// panel) or edit (from the alerts panel). App renders it. Type-only import of
+// AccountMetric below so this module adds no edge into alertsApi's module-init.
+export type AccountAlertRequest =
+  | { mode: "create"; account: string; metric: AccountMetric }
+  | { mode: "edit"; id: string };
+export const accountAlertRequest = new Signal<AccountAlertRequest | null>(null);
 
 // Request to open the line alert modal: create (from a trendline's menu) or
 // edit (from the alerts panel). App renders it.

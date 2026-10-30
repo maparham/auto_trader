@@ -123,6 +123,70 @@ export interface LineAlert extends Omit<IndicatorAlert, "kind" | "params"> {
 /** Server-evaluated alerts that share one cache: indicator and line. */
 export type ServerAlert = IndicatorAlert | LineAlert;
 
+export type AccountMetric = "marginLevel" | "openPnl" | "openPnlPct" | "equity" | "available" | "drawdown";
+export type TierLabel = "warn" | "danger" | "critical";
+export interface AccountTier {
+  level: number;
+  label: TierLabel;
+}
+
+/** A server-evaluated alert on an account figure; `account` is the exec key. */
+export interface AccountAlert {
+  kind: "account";
+  id: string;
+  account: string;
+  metric: AccountMetric;
+  tiers: AccountTier[];
+  baseline?: "daily" | "sinceCreated";
+  message: string;
+  expiresAt: number | null;
+  notify: AlertNotifyChannels;
+  createdAt?: number;
+  precision: number;
+  current?: number | null;
+  firedTiers?: number[];
+  monitored?: boolean;
+  unmonitoredReason?: string | null;
+}
+
+export const METRIC_LABELS: Record<AccountMetric, string> = {
+  marginLevel: "Margin level",
+  openPnl: "Open P/L",
+  openPnlPct: "Open P/L %",
+  equity: "Equity",
+  available: "Available",
+  drawdown: "Drawdown",
+};
+
+export const MONITORABLE_BROKERS: ReadonlySet<string> = new Set(["capital", "capital-live", "ig-demo", "ig-live"]);
+
+const ACCOUNT_LABELS: Record<string, string> = {
+  capital: "Capital demo",
+  "capital-live": "Capital live",
+  "ig-demo": "IG demo",
+  "ig-live": "IG live",
+};
+
+export function isAccountMonitorable(account: string): boolean {
+  const [broker, env] = account.split(":");
+  return MONITORABLE_BROKERS.has(broker) && env !== "paper";
+}
+
+export function accountLabel(account: string): string {
+  return ACCOUNT_LABELS[account.split(":")[0]] ?? account;
+}
+
+const PCT_METRICS: ReadonlySet<AccountMetric> = new Set(["marginLevel", "openPnlPct", "drawdown"]);
+
+export function fmtMetric(metric: AccountMetric, v: number, currency: string | null): string {
+  if (PCT_METRICS.has(metric)) return `${Number.isInteger(v) ? v : v.toFixed(1)}%`;
+  const amount = v.toLocaleString("en-US", {
+    minimumFractionDigits: Number.isInteger(v) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+  return currency ? `${amount} ${currency}` : amount;
+}
+
 const isIndicator = (a: ServerAlert): a is IndicatorAlert => a.kind === "indicator";
 const isLine = (a: ServerAlert): a is LineAlert => a.kind === "line";
 
@@ -193,6 +257,9 @@ export interface TriggeredAlert {
   broker?: string;
   label?: string;
   target?: AlertTarget;
+  /** Present on an account-alert history row (`kind: "account"`). */
+  kind?: string;
+  headline?: string;
 }
 
 export interface FiredPayload {
@@ -211,6 +278,13 @@ export interface FiredPayload {
   target?: AlertTarget;
   evalOn?: EvalOn;
   trigger?: AlertTrigger;
+  /** Present on an account-alert firing (`kind: "account"`). */
+  kind?: string;
+  headline?: string;
+  account?: string;
+  metric?: AccountMetric;
+  tierLabel?: TierLabel;
+  critical?: boolean;
 }
 
 // --- wire shape (server) ------------------------------------------------------
@@ -230,6 +304,10 @@ interface AlertRow {
   updated_at: number;
   status?: "ok" | "waiting_for_data";
   label?: string;
+  current?: number | null;
+  firedTiers?: number[];
+  monitored?: boolean;
+  unmonitoredReason?: string | null;
 }
 
 interface TriggeredRow {
@@ -336,6 +414,10 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
       ? lineAlertLabel(row.alert.params.timeframe as string)
       : undefined),
     target: (row.alert?.params?.target as AlertTarget | undefined) ?? undefined,
+    kind: row.kind,
+    headline: row.kind === "account" && row.alert?.params
+      ? `${METRIC_LABELS[(row.alert.params.metric as AccountMetric)] ?? "Account"} ${row.condition === "above" ? ">" : "<"} ${row.level}`
+      : undefined,
   };
 }
 
@@ -345,8 +427,32 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
 let alertsCache = new Map<string, Map<string, SavedAlert[]>>();
 // Map<id, ServerAlert>: indicator and line alerts, both server-evaluated.
 let indicatorCache = new Map<string, ServerAlert>();
+// Map<id, AccountAlert>: account alerts live apart from the price/indicator/line
+// caches since they key off `account` (an exec key), not an epic.
+let accountCache = new Map<string, AccountAlert>();
 let triggeredCache: TriggeredAlert[] = [];
 let triggeredSeenCache = 0;
+
+function rowToAccountAlert(row: AlertRow): AccountAlert {
+  const p = row.params as { metric: AccountMetric; tiers: AccountTier[]; baseline?: "daily" | "sinceCreated" };
+  return {
+    kind: "account",
+    id: row.id,
+    account: row.broker,
+    metric: p.metric,
+    tiers: p.tiers,
+    baseline: p.baseline,
+    message: row.message,
+    expiresAt: row.expires_at,
+    notify: { ...ALL_CHANNELS, ...(row.notify ?? {}) },
+    createdAt: row.created_at,
+    precision: row.precision,
+    current: row.current,
+    firedTiers: row.firedTiers,
+    monitored: row.monitored,
+    unmonitoredReason: row.unmonitoredReason,
+  };
+}
 
 // The broker/epic each cached alert lives under (id -> location), so a PATCH/
 // DELETE/update-cache call keyed only by (epic, id) can find its row without a
@@ -427,8 +533,11 @@ export function hydrateAlerts(): Promise<void> {
         const body = (await alertsRes.json()) as { alerts: AlertRow[] };
         const next = new Map<string, Map<string, SavedAlert[]>>();
         const nextInd = new Map<string, ServerAlert>();
+        const nextAcct = new Map<string, AccountAlert>();
         for (const row of body.alerts) {
-          if (row.kind === "indicator") {
+          if (row.kind === "account") {
+            nextAcct.set(row.id, rowToAccountAlert(row));
+          } else if (row.kind === "indicator") {
             nextInd.set(row.id, rowToIndicatorAlert(row));
           } else if (row.kind === "line") {
             nextInd.set(row.id, rowToLineAlert(row));
@@ -441,6 +550,7 @@ export function hydrateAlerts(): Promise<void> {
           }
         }
         alertsCache = next;
+        accountCache = nextAcct;
         if (indWritesInFlight > 0) resyncWhenSettled = true;
         else if (gen !== indWriteGen) refetch = true;
         else indicatorCache = nextInd;
@@ -543,6 +653,15 @@ export function linkedLineAlerts(scope: string, instanceId: string): LineAlert[]
 export function scopeLinkedLineAlerts(scope: string, broker: string = getPersistBroker()): LineAlert[] {
   return [...indicatorCache.values()].filter(isLine)
     .filter((a) => a.broker === broker && a.params.link?.scope === scope);
+}
+
+export function loadAccountAlerts(account?: string): AccountAlert[] {
+  const all = [...accountCache.values()];
+  return account ? all.filter((a) => a.account === account) : all;
+}
+
+export function findAccountAlert(id: string): AccountAlert | undefined {
+  return accountCache.get(id);
 }
 
 // --- optimistic writes -------------------------------------------------------
@@ -899,6 +1018,80 @@ export function deleteIndicatorAlert(id: string): void {
     .finally(indWriteSettled);
 }
 
+function accountWire(a: Pick<AccountAlert, "metric" | "tiers" | "baseline">) {
+  return a.metric === "drawdown"
+    ? { metric: a.metric, tiers: a.tiers, baseline: a.baseline ?? "daily" }
+    : { metric: a.metric, tiers: a.tiers };
+}
+
+export async function addAccountAlert(a: AccountAlert): Promise<boolean> {
+  if (accountCache.has(a.id)) return true; // idempotent
+  accountCache.set(a.id, a);
+  bumpAlerts();
+  const res = await sendJson("/api/alerts", "POST", {
+    id: a.id, broker: a.account, epic: "", kind: "account", params: accountWire(a),
+    message: a.message, expires_at: a.expiresAt, notify: a.notify, precision: a.precision,
+  });
+  if (res?.ok) {
+    try {
+      accountCache.set(a.id, rowToAccountAlert((await res.json()) as AlertRow));
+      bumpAlerts();
+    } catch { /* keep the optimistic row */ }
+    return true;
+  }
+  accountCache.delete(a.id);
+  bumpAlerts();
+  await reportFailure(res, "Alert save failed");
+  return false;
+}
+
+export async function patchAccountAlert(
+  id: string,
+  patch: { tiers?: AccountTier[]; baseline?: "daily" | "sinceCreated"; message?: string; expiresAt?: number | null; notify?: AlertNotifyChannels },
+): Promise<boolean> {
+  const prev = accountCache.get(id);
+  if (!prev) return false;
+  const params = patch.tiers || patch.baseline
+    ? accountWire({ metric: prev.metric, tiers: patch.tiers ?? prev.tiers, baseline: patch.baseline ?? prev.baseline })
+    : undefined;
+  const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "PATCH", {
+    params, message: patch.message, expires_at: patch.expiresAt, notify: patch.notify,
+  });
+  if (res?.ok) {
+    try {
+      accountCache.set(id, rowToAccountAlert((await res.json()) as AlertRow));
+    } catch { /* resync will fix */ }
+    bumpAlerts();
+    return true;
+  }
+  await reportFailure(res, "Alert update failed");
+  return false;
+}
+
+export function deleteAccountAlert(id: string): void {
+  if (!accountCache.delete(id)) return;
+  bumpAlerts();
+  void sendJson(`/api/alerts/${encodeURIComponent(id)}`, "DELETE", undefined).then((res) => {
+    if (res && !res.ok && res.status !== 404) void resyncAlerts();
+  });
+}
+
+export interface AccountMetricsResponse {
+  account: string;
+  monitored: boolean;
+  unmonitoredReason: string | null;
+  metrics: Record<string, number | string | null>;
+}
+
+export async function fetchAccountMetrics(account: string): Promise<AccountMetricsResponse | null> {
+  try {
+    const res = await apiFetch(url(`/api/alerts/account-metrics?account=${encodeURIComponent(account)}`));
+    return res.ok ? ((await res.json()) as AccountMetricsResponse) : null;
+  } catch {
+    return null;
+  }
+}
+
 // --- live event application (from /ws/state pushes, another tab/device or
 // the backend engine) --------------------------------------------------------
 
@@ -908,6 +1101,19 @@ let onFired: ((p: FiredPayload) => void) | null = null;
 
 export function setOnAlertFired(cb: ((p: FiredPayload) => void) | null): void {
   onFired = cb;
+}
+
+export interface MonitorPayload {
+  broker: string;
+  status: "unmonitored" | "resumed";
+  reason: string;
+  headline: string;
+}
+
+let onMonitor: ((p: MonitorPayload) => void) | null = null;
+
+export function setOnAccountMonitor(fn: ((p: MonitorPayload) => void) | null): void {
+  onMonitor = fn;
 }
 
 interface ChangedValue {
@@ -949,10 +1155,17 @@ export function applyAlertEvent(key: string, value: unknown): boolean {
         broker: payload.broker,
         label: payload.label,
         target: payload.target,
+        kind: payload.kind,
+        headline: payload.headline,
       },
       ...triggeredCache,
     ].slice(0, TRIGGERED_CAP);
     onFired?.(payload);
+    return true;
+  }
+
+  if (kind === "monitor") {
+    onMonitor?.(value as MonitorPayload);
     return true;
   }
 
