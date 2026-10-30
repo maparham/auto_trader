@@ -75,6 +75,38 @@ describe("account alerts client", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("a fired account payload with its metric rebuilds the History headline from the figures", () => {
+    api.applyAlertEvent("__alerts__:fired", {
+      id: "al-a1", broker: "capital-live:live", epic: "", kind: "account", price: 118.4, level: 120,
+      condition: "below", message: "", precision: 2, notify: {}, metric: "marginLevel", tierLabel: "danger",
+      currency: "EUR", headline: "MARGIN LEVEL 118.4% < 120% (danger) · Capital live · equity 4,210 EUR",
+    });
+    expect(api.loadTriggered()[0].headline).toBe("Margin level 118.4% < 120% (danger)");
+  });
+
+  it("a hydrated account history row gets the same headline, with the live alert's currency", async () => {
+    const eqRow = {
+      ...row, id: "al-e9", params: { metric: "equity", tiers: [{ level: 5000, label: "warn" }] },
+      current: 4210, currency: "EUR",
+    };
+    const entries = [
+      { time: 2, alert_id: "al-e9", broker: "capital:demo", epic: "", kind: "account", price: 4210, level: 5000,
+        condition: "below", message: "", precision: 2,
+        alert: { params: { metric: "equity", tiers: [{ level: 5000, label: "warn" }] } } },
+      { time: 1, alert_id: "al-gone", broker: "capital-live:live", epic: "", kind: "account", price: 7.25, level: 5,
+        condition: "above", message: "", precision: 2,
+        alert: { params: { metric: "drawdown", baseline: "daily", tiers: [{ level: 5, label: "warn" }] } } },
+    ];
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes("/triggered") ? ok({ entries, seen: 0 }) : ok({ alerts: [eqRow] }));
+    await api.hydrateAlerts();
+    const [eq, dd] = api.loadTriggered();
+    expect(eq).toMatchObject({ kind: "account", headline: "Equity 4,210 EUR < 5,000 EUR (warn)" });
+    expect(api.triggeredLabel(eq, 2)).toBe("Equity 4,210 EUR < 5,000 EUR (warn)");
+    // The alert is gone: no currency to borrow, the text still reads.
+    expect(dd.headline).toBe("Drawdown 7.3% > 5% (warn)");
+  });
+
   it("a monitor event reaches the monitor hook", () => {
     const seen: unknown[] = [];
     api.setOnAccountMonitor((p) => seen.push(p));

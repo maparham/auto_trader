@@ -189,6 +189,27 @@ export function fmtMetric(metric: AccountMetric, v: number, currency: string | n
   return currency ? `${amount} ${currency}` : amount;
 }
 
+/**
+ * The one-line text for an account firing, as the History tab shows it:
+ * `Margin level 118.4% < 120% (danger)`. Built the same way for a live
+ * firing and for a row hydrated from the server, so a reload does not
+ * change what a row says. The tier label is omitted when not known.
+ */
+export function accountHeadline(a: {
+  metric: AccountMetric;
+  price: number;
+  level: number;
+  condition: string;
+  tierLabel?: string | null;
+  currency?: string | null;
+}): string {
+  const cur = a.currency ?? null;
+  const op = a.condition === "above" ? ">" : "<";
+  const label = METRIC_LABELS[a.metric] ?? "Account";
+  const tier = a.tierLabel ? ` (${a.tierLabel})` : "";
+  return `${label} ${fmtMetric(a.metric, a.price, cur)} ${op} ${fmtMetric(a.metric, a.level, cur)}${tier}`;
+}
+
 const isIndicator = (a: ServerAlert): a is IndicatorAlert => a.kind === "indicator";
 const isLine = (a: ServerAlert): a is LineAlert => a.kind === "line";
 
@@ -287,6 +308,8 @@ export interface FiredPayload {
   metric?: AccountMetric;
   tierLabel?: TierLabel;
   critical?: boolean;
+  /** The account's currency at firing time, labels amount metrics. */
+  currency?: string | null;
 }
 
 // --- wire shape (server) ------------------------------------------------------
@@ -418,10 +441,26 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
       : undefined),
     target: (row.alert?.params?.target as AlertTarget | undefined) ?? undefined,
     kind: row.kind,
-    headline: row.kind === "account" && row.alert?.params
-      ? `${METRIC_LABELS[(row.alert.params.metric as AccountMetric)] ?? "Account"} ${(row.condition as string) === "above" ? ">" : "<"} ${row.level}`
-      : undefined,
+    headline: row.kind === "account" ? accountTriggeredHeadline(row) : undefined,
   };
+}
+
+// Rebuild an account firing's text from the stored row: the alert_json params
+// name the metric and tiers, the row carries the value, level and direction,
+// and the (still live) alert's cache entry supplies the currency when it can.
+function accountTriggeredHeadline(row: TriggeredRow): string {
+  const p = (row.alert?.params ?? {}) as { metric?: AccountMetric; tiers?: AccountTier[] };
+  const metric = p.metric ?? "equity";
+  const tier = Array.isArray(p.tiers) ? p.tiers.find((t) => Number(t.level) === row.level) : undefined;
+  const live = row.alert_id ? accountCache.get(row.alert_id) : undefined;
+  return accountHeadline({
+    metric,
+    price: row.price,
+    level: row.level,
+    condition: row.condition,
+    tierLabel: tier?.label ?? null,
+    currency: live?.currency ?? null,
+  });
 }
 
 // --- module caches -------------------------------------------------------------
@@ -1168,7 +1207,16 @@ export function applyAlertEvent(key: string, value: unknown): boolean {
         label: payload.label,
         target: payload.target,
         ...(payload.kind !== undefined ? { kind: payload.kind } : {}),
-        ...(payload.headline !== undefined ? { headline: payload.headline } : {}),
+        // An account row's text is rebuilt the same way a hydrated row's is
+        // (accountHeadline), so History reads the same before and after a
+        // reload; the server's own headline is the fallback.
+        ...(payload.kind === "account" && payload.metric
+          ? { headline: accountHeadline({
+              metric: payload.metric, price: payload.price, level: payload.level,
+              condition: payload.condition, tierLabel: payload.tierLabel ?? null,
+              currency: payload.currency ?? null,
+            }) }
+          : payload.headline !== undefined ? { headline: payload.headline } : {}),
       },
       ...triggeredCache,
     ].slice(0, TRIGGERED_CAP);
@@ -1248,6 +1296,8 @@ export function alertLabel(a: AnyAlert, precision: number): string {
 }
 
 export function triggeredLabel(t: TriggeredAlert, hp: number): string {
+  // An account firing has no price axis: its text is the metric headline.
+  if (t.kind === "account") return t.headline ?? "Account alert";
   const level = levelText(t.target ?? "price", t.level, hp);
   return `${conditionPhrase(t.label, t.condition, t.target, level)} @ ${fmtPrice(t.price, hp)}`;
 }

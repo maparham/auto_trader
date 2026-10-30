@@ -46,6 +46,7 @@ import {
   deleteIndicatorAlert,
   loadAccountAlerts,
   deleteAccountAlert,
+  resyncAlerts,
   accountLabel,
   fmtMetric,
   METRIC_LABELS,
@@ -430,12 +431,18 @@ export default function AlertsSidebar({
   // `now` doubles as the re-render trigger: bumped on every alertsChanged so the
   // live list re-pulls overlays AND the history "x ago" labels refresh. Computed
   // in an effect (not during render) to stay pure. Also ticks every 30s so the
-  // relative times don't go stale while the panel sits open.
+  // relative times don't go stale while the panel sits open. While account
+  // alerts exist, the same tick re-pulls /api/alerts: their "now" value, fired
+  // tiers and monitored flag only live on that response (the monitor polls
+  // every 30 s too), so the panel would otherwise show the boot-time figures.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const bump = () => setNow(Date.now());
     const unsub = alertsChanged.subscribe(bump);
-    const id = setInterval(bump, 30_000);
+    const id = setInterval(() => {
+      bump();
+      if (loadAccountAlerts().length > 0) void resyncAlerts();
+    }, 30_000);
     return () => {
       unsub();
       clearInterval(id);
@@ -902,6 +909,20 @@ export default function AlertsSidebar({
                 // older rows match by condition+level. The alert may be gone (a fired
                 // "once") — then onChart is false and we just open the chart unselected.
                 const hp = t.precision ?? precision;
+                // An account firing has no symbol and no chart: name the
+                // account, print the metric headline, offer no Go-to.
+                if (t.kind === "account") {
+                  return (
+                    <div key={`${t.time}-${i}`} className="ap-row ap-row-hist">
+                      <div className="ap-row-main">
+                        <span className="ap-sym">{accountLabel(t.broker ?? "")}</span>
+                        <span className="ap-time">{ago(t.time, now)}</span>
+                      </div>
+                      <div className="ap-cond">{triggeredLabel(t, hp)}</div>
+                      {t.message && <div className="ap-msg">{t.message}</div>}
+                    </div>
+                  );
+                }
                 const target: AlertNavTarget = t.alertId
                   ? { savedId: t.alertId }
                   : { hint: { condition: t.condition, level: t.level, precision: hp } };
