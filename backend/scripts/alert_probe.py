@@ -7,15 +7,15 @@ own broker feed, independent of any open UI. Run:
     cd backend && python3 -m scripts.alert_probe
     cd backend && python3 -m scripts.alert_probe --epic BTCUSD --broker capital-live
     cd backend && python3 -m scripts.alert_probe --indicator --epic BTCUSD --broker capital-live
-    cd backend && python3 -m scripts.alert_probe --account capital:demo --timeout 60
+    cd backend && python3 -m scripts.alert_probe --account capital:demo
 
 --account KEY probes an account alert on a dealing account (admin only, a
 Capital or IG account the monitor can poll). It reads the account's equity
 from GET /api/alerts/account-metrics, creates an equity alert with one tier at
-50% of it (not yet past), waits for the monitor's first poll to seed the alert,
-then raises the tier to 101% of equity so the next poll fires it. Polls run
-5 to 30 s apart, so use --timeout 60 or more. It needs real broker credentials,
-so run it only against a backend that is already up.
+50% of it (not yet past), waits a fixed 35 s for the monitor's first poll to
+seed the alert, then raises the tier to 101% of equity so the next poll fires
+it. The default --timeout is 90 s with --account (30 s otherwise). It needs
+real broker credentials, so run it only against a backend that is already up.
 
 Flow: (1) fetch the current quote for --epic via GET /api/market/{epic}/details
 (the broker-provided snapshot's bid/offer — same route the chart's instrument
@@ -76,6 +76,20 @@ def _quote(client: httpx.Client, epic: str, broker: str) -> float:
             f"(marketStatus={snapshot.get('marketStatus')!r}) — market likely closed"
         )
     return bid
+
+
+def _alert_status(client: httpx.Client, alert_id: str) -> str:
+    """One-line monitor view of an account alert (monitored, unmonitoredReason)."""
+    try:
+        resp = client.get("/api/alerts")
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        return f"alert status unavailable: {e}"
+    row = next((a for a in resp.json().get("alerts", []) if a.get("id") == alert_id), None)
+    if row is None:
+        return "alert status: row not found"
+    return (f"alert status: monitored={row.get('monitored')} "
+            f"unmonitoredReason={row.get('unmonitoredReason')!r}")
 
 
 def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = False,
@@ -150,24 +164,13 @@ def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = Fal
         deadline = time.monotonic() + timeout
         try:
             if account:
-                # The monitor's first poll for a new alert seeds it silently:
-                # a tier already past at that poll is marked fired, never
-                # notified. Wait until the monitor holds a figure for the
-                # alert (the list row's `current` goes non-null on that same
-                # poll), then a short grace for the seed write, and only then
-                # raise the tier. Raising it earlier would be seeded away.
-                seed_deadline = time.monotonic() + 30.0
-                current = None
-                while current is None and time.monotonic() < seed_deadline:
-                    time.sleep(1.0)
-                    listed = client.get("/api/alerts")
-                    listed.raise_for_status()
-                    row = next((a for a in listed.json()["alerts"] if a["id"] == alert_id), {})
-                    current = row.get("current")
-                if current is None:
-                    print("FAIL: the monitor never reported a figure for this alert")
-                    return 1
-                time.sleep(2.0)
+                # The monitor's first poll for this alert seeds it silently: a
+                # tier already past at that poll is marked fired, never
+                # notified. Holding a figure is no signal for that (the probe's
+                # own account-metrics call fills it before the alert exists),
+                # so wait a fixed 35 s: one NORMAL 30 s poll plus 5 s grace.
+                print("waiting 35 s for the monitor's first poll to seed the alert")
+                time.sleep(35.0)
                 pr = client.patch(f"/api/alerts/{alert_id}",
                                   json={"params": {"tiers": [{"level": equity * 1.01, "label": "warn"}]}})
                 try:
@@ -202,6 +205,9 @@ def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = Fal
                 if any(e.get("alert_id") == alert_id for e in entries):
                     result = "PASS"
         finally:
+            if account and result != "PASS":
+                # Read the monitor's view before the row is deleted.
+                print(_alert_status(client, alert_id))
             del_resp = client.delete(f"/api/alerts/{alert_id}")
             if del_resp.status_code not in (204, 404):
                 print(f"warning: cleanup delete returned {del_resp.status_code}: {del_resp.text}")
@@ -225,7 +231,8 @@ if __name__ == "__main__":
     ap.add_argument("--url", default=DEFAULT_URL, help=f"backend base URL (default {DEFAULT_URL})")
     ap.add_argument("--epic", default="US100", help="epic to alert on (default US100)")
     ap.add_argument("--broker", default="capital", help="data broker id (default capital)")
-    ap.add_argument("--timeout", type=float, default=30.0, help="seconds to wait for the trigger (default 30)")
+    ap.add_argument("--timeout", type=float, default=None,
+                     help="seconds to wait for the trigger (default 30, or 90 with --account)")
     ap.add_argument("--indicator", action="store_true",
                      help="probe an indicator alert (SMA 2 value greater than -1e12 on 1m, intrabar) "
                           "instead of a price-level alert")
@@ -235,4 +242,5 @@ if __name__ == "__main__":
     ns = ap.parse_args()
     if ns.account and ns.indicator:
         ap.error("--account and --indicator are mutually exclusive")
-    sys.exit(main(ns.url, ns.epic, ns.broker, ns.timeout, ns.indicator, account=ns.account))
+    timeout = ns.timeout if ns.timeout is not None else (90.0 if ns.account else 30.0)
+    sys.exit(main(ns.url, ns.epic, ns.broker, timeout, ns.indicator, account=ns.account))
