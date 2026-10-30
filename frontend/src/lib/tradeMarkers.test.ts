@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { tradeMarkerSpecs, journalKey, aggregateExitsByBar, exitsCollide } from "./tradeMarkers";
 import { historyAsJournal, historyEntrySpecs, exitMarkerSpecs } from "./tradeMarkers";
+import { TradeMarkers, TRADE_MARKER_Z_LEVEL } from "./tradeMarkers";
 import type { TradeView } from "./trading";
 import type { JournalTrade } from "./liveJournal";
 import type { ClosedTradeView } from "./accountHistory";
@@ -375,8 +376,7 @@ describe("broker history markers", () => {
 });
 
 describe("TradeMarkers z-order", () => {
-  it("creates markers in a band above every drawing so they take the click first", async () => {
-    const { TradeMarkers, TRADE_MARKER_Z_LEVEL } = await import("./tradeMarkers");
+  it("creates markers above every drawing, even a hovered one, so they take the click first", () => {
     const created: Array<{ zLevel?: number }> = [];
     const chart = {
       getDataList: () => [{ timestamp: 1000, open: 1, high: 2, low: 0.5, close: 1.5 }],
@@ -393,5 +393,6 @@ describe("TradeMarkers z-order", () => {
     ]);
     expect(created).toHaveLength(1);
     expect(created[0].zLevel).toBe(TRADE_MARKER_Z_LEVEL);
+    expect(TRADE_MARKER_Z_LEVEL).toBeGreaterThan(Number.MAX_SAFE_INTEGER); // klinecharts' hover lift
   });
 });

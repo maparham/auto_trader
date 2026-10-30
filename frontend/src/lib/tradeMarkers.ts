@@ -288,9 +288,11 @@ interface DrawnMarker {
 // klinecharts paints and hit-tests overlays by zLevel, highest first, and an
 // overlay created without one takes the pane's overlay count at that moment, so
 // a drawing added after the markers would sit on top and swallow their clicks.
-// Markers take a fixed band far above any drawing (bringToFront only climbs by
-// one per call).
-export const TRADE_MARKER_Z_LEVEL = 1_000_000;
+// It also lifts the HOVERED overlay to Number.MAX_SAFE_INTEGER, so a band like
+// 1e6 still loses when the cursor slides onto a marker from inside a drawing.
+// MAX_VALUE sits above that lift (and MAX_VALUE - MAX_VALUE is 0, not NaN, in
+// its sort comparator).
+export const TRADE_MARKER_Z_LEVEL = Number.MAX_VALUE;
 
 /** Per-cell drawer for live trade markers. Reconciles a flat TradeMarkerSpec[] by
  * `key` (reusing the backtest MARKER_OVERLAY) so an update only adds/moves/removes
