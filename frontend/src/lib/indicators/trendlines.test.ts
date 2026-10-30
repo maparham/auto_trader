@@ -1899,7 +1899,7 @@ function record(
   calcParams: number[],
   extend?: string,
   view: View = IDENTITY_VIEW,
-  // extendData.extendedLine: the double-clicked line, which runs on to the
+  // extendData.extendedLines: a double-clicked line, which runs on to the
   // pane's right edge as a dashed extension.
   extended?: string,
   // OFF by default here, unlike the app: nearly every draw test below counts
@@ -2023,7 +2023,7 @@ function record(
   if (arriveDashed) ctx.setLineDash([4, 3]);
   const ext = {
     extend,
-    extendedLine: extended,
+    extendedLines: extended ? [extended] : undefined,
     ...(dedupe === "default" ? {} : { dedupe }),
     ...(nearPrice === "default" ? {} : { nearPrice }),
     ...(declutter ? { declutter } : {}),

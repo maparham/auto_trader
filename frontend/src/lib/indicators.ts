@@ -68,7 +68,7 @@ export { overrideExtend };
 /** extendData keys a live gesture writes (a picked, hovered or glowing line)
  * and nothing may save, restore or copy: a stale one would leave a line lit
  * with nothing left to clear it. */
-export const SESSION_GESTURE_KEYS = ["selectedLine", "hoveredLine", "extendedLine", "emphasized", "emphasis"] as const;
+export const SESSION_GESTURE_KEYS = ["selectedLine", "hoveredLine", "extendedLines", "emphasized", "emphasis"] as const;
 
 // v10 replaced v9's chart.getIndicatorByPaneId(paneId, name) with a flat
 // filter-based getIndicators({ paneId, name }). This helper restores the single

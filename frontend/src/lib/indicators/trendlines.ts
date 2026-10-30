@@ -1621,10 +1621,10 @@ export interface TrendlinesExtend {
   /** lineKey of the line the user last picked (click or menu). SESSION-ONLY:
    * never saved, and applyIndicator strips it. */
   selectedLine?: string;
-  /** lineKey of the line the user double-clicked (double-tapped). The draw
-   * runs it on to the pane's right edge as a dashed extension, so the user
+  /** lineKeys of the lines the user double-clicked (double-tapped). The draw
+   * runs each on to the pane's right edge as a dashed extension, so the user
    * sees where it leads and what it meets. SESSION-ONLY, like selectedLine. */
-  extendedLine?: string;
+  extendedLines?: string[];
   /** lineKey of the line under the mouse. SESSION-ONLY, like selectedLine. */
   hoveredLine?: string;
   /** The whole instance is selected or its legend row hovered: every line
@@ -3619,7 +3619,7 @@ function drawTrendlines(
     // saved and never read by calc. Same lineExtent, so it starts exactly
     // where the solid stroke stops.
     const jExt =
-      stops && key === ext?.extendedLine
+      stops && ext?.extendedLines?.includes(key)
         ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx, forceToLastBar).jRight
         : jRight;
     const xExt = jExt > jRight ? xAt(jExt) : x1;
