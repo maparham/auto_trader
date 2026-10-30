@@ -77,3 +77,13 @@
   text-decoration: underline dotted var(--accent);
   text-underline-offset: 3px;
 }
+
+/* The completion list is portaled to <body> (tooltips({parent})), so it is no
+   longer clipped by the panel; keep it on screen and truncate long details. */
+.cm-tooltip.cm-tooltip-autocomplete > ul {
+  max-width: min(560px, calc(100vw - 32px));
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

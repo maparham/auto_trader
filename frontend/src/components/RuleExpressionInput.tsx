@@ -13,7 +13,7 @@
 import { useEffect, useRef } from "react";
 import { autocompletion } from "@codemirror/autocomplete";
 import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
+import { EditorView, keymap, placeholder as cmPlaceholder, tooltips } from "@codemirror/view";
 import {
   defaultKeymap,
   history,
@@ -129,6 +129,10 @@ export default function RuleExpressionInput(props: RuleExpressionInputProps) {
         // cmCompletionSource takes its options as a SECOND argument, which CM6
         // never passes — so wrap it in a closure over the live pane list rather
         // than registering it bare, or chart panes are never offered.
+        // Tooltips (the completion list, lint messages) live on <body>: the
+        // editor sits in narrow side panels that clip overflow, and a list wider
+        // than the panel was cut off on both sides.
+        tooltips({ parent: document.body }),
         autocompletion({
           override: [(ctx) => cmCompletionSource(ctx, { instances: instancesRef.current, lines: linesRef.current })],
           activateOnTyping: true,
