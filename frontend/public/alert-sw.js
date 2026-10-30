@@ -5,6 +5,20 @@ self.addEventListener("push", (event) => {
   event.waitUntil((async () => {
     const clients = await self.clients.matchAll({ type: "window" });
     if (clients.some((c) => c.focused)) return;
+    if (p.kind === "account" || p.kind === "account_status") {
+      // Account alerts carry no epic: title by account, body is the headline.
+      const icon =
+        p.kind === "account_status"
+          ? p.status === "unmonitored" ? "\u26A0\uFE0F" : "\u2705"
+          : p.critical ? "\u{1F6A8}" : "\u{1F514}";
+      await self.registration.showNotification(`${icon} ${p.account ?? p.broker ?? "Account"}`, {
+        body: p.message ? `${p.headline} \u00b7 ${p.message}` : p.headline,
+        tag: `account|${p.id}`,
+        requireInteraction: !!p.critical,
+        data: { id: p.id },
+      });
+      return;
+    }
     const prec = p.precision ?? 2;
     const conds = {
       crossing: "crossed",
