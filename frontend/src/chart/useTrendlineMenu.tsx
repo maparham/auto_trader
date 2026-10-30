@@ -7,8 +7,8 @@
 //  - Extend: a double click (double tap) on a line runs it on to the pane's
 //    right edge as a dashed extension (extendData.extendedLines), and again
 //    takes it away. Double clicking another line extends it as well, so the
-//    two can be read where they meet; a single click on a line that is not
-//    extended, or on nothing, clears them all.
+//    two can be read where they meet, and clicking any line keeps them; only
+//    a click on nothing clears them all.
 //  - Menu: a right-click on any line (desktop, from ChartCore's contextmenu
 //    handler), or a hold on the SELECTED line (touch: tap to pick, then hold,
 //    the same rule the drawing menu follows).
@@ -57,12 +57,6 @@ const PICKED = new WeakMap<object, Picked | null>();
 const HOVERED = new WeakMap<object, Picked | null>();
 /** The double-clicked lines per chart, each run on to the pane's edge. */
 const EXTENDED = new WeakMap<object, Picked[]>();
-/** The extensions the last pick of a line took down, that line, and when. A
- * double click on another line begins with a click that picks it, and that
- * click must not cost the lines already extended. */
-const DROPPED = new WeakMap<object, { lines: Picked[]; by: Picked; at: number }>();
-/** How soon after that pick the double click must land to bring them back. */
-const DOUBLE_CLICK_MS = 600;
 
 function markLine(
   map: WeakMap<object, Picked | null>,
@@ -110,35 +104,19 @@ function setExtended(chart: Chart, next: Picked[]): void {
 
 export function pickTrendline(chart: Chart, next: Picked | null): void {
   markLine(PICKED, "selectedLine", chart, next);
-  // Picking a line that is not extended, or clicking away, takes the
-  // extensions down; a toggle right after can bring them back.
-  const ext = EXTENDED.get(chart) ?? [];
-  // Only a pick of the same line may still be the start of that double click.
-  if (!samePick(DROPPED.get(chart)?.by, next)) DROPPED.delete(chart);
-  if (ext.length && !ext.some((l) => samePick(l, next))) {
-    if (next) DROPPED.set(chart, { lines: ext, by: next, at: Date.now() });
-    setExtended(chart, []);
-  }
+  // A click on any line keeps the extensions, so several can be studied
+  // together; only clicking away takes them down.
+  if (!next) setExtended(chart, []);
   applyEmphasis(chart);
 }
 
 /** Double click (double tap) on a line: pick it and toggle its dashed run
  * to the pane's right edge, keeping the other extended lines. */
 export function toggleTrendlineExtension(chart: Chart, line: Picked): void {
-  // This double click's own first click picked the line and dropped the
-  // others: restore them.
-  const dropped = DROPPED.get(chart);
-  DROPPED.delete(chart);
-  const kept =
-    dropped && samePick(dropped.by, line) && Date.now() - dropped.at < DOUBLE_CLICK_MS
-      ? dropped.lines
-      : [];
   pickTrendline(chart, line);
-  const base = [...kept, ...(EXTENDED.get(chart) ?? [])].filter(
-    (l, i, all) => all.findIndex((o) => samePick(o, l)) === i,
-  );
-  const on = base.some((l) => samePick(l, line));
-  setExtended(chart, on ? base.filter((l) => !samePick(l, line)) : [...base, line]);
+  const cur = EXTENDED.get(chart) ?? [];
+  const on = cur.some((l) => samePick(l, line));
+  setExtended(chart, on ? cur.filter((l) => !samePick(l, line)) : [...cur, line]);
 }
 
 /** The line under the mouse, from the crosshair's move handler. */

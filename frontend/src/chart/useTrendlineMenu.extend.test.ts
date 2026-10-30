@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Chart } from "klinecharts";
 import { overrideExtend } from "../lib/overrideExtend";
 import { pickTrendline, toggleTrendlineExtension } from "./useTrendlineMenu";
@@ -30,8 +30,6 @@ function doubleClick(chart: Chart, line: typeof a) {
   toggleTrendlineExtension(chart, line);
 }
 
-afterEach(() => vi.useRealTimers());
-
 describe("toggleTrendlineExtension", () => {
   it("extends on a double click and takes it away on the next", () => {
     const { chart, extended } = liveChart();
@@ -55,29 +53,15 @@ describe("toggleTrendlineExtension", () => {
     expect(extended("TL2")).toEqual(["c"]);
   });
 
-  it("survives clicks on an extended line, clears on a click away or another line", () => {
-    vi.useFakeTimers();
+  it("a click on any line keeps them, a click away clears them all", () => {
     const { chart, extended } = liveChart();
     doubleClick(chart, a);
-    doubleClick(chart, b);
-    pickTrendline(chart, a);
-    expect(extended()).toEqual(["a", "b"]);
+    pickTrendline(chart, b);
     pickTrendline(chart, c);
-    expect(extended()).toBeNull();
-    // A later double click elsewhere does not bring the dropped ones back.
-    vi.advanceTimersByTime(1000);
+    expect(extended()).toEqual(["a"]);
     doubleClick(chart, c);
+    pickTrendline(chart, null);
     expect(extended()).toBeNull();
-    expect(extended("TL2")).toEqual(["c"]);
-    pickTrendline(chart, null);
     expect(extended("TL2")).toBeNull();
-  });
-
-  it("a click away right before a double click still clears", () => {
-    const { chart, extended } = liveChart();
-    doubleClick(chart, a);
-    pickTrendline(chart, null);
-    doubleClick(chart, b);
-    expect(extended()).toEqual(["b"]);
   });
 });
