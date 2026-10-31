@@ -1038,6 +1038,13 @@
 .ctxmenu .ctx-item kbd { font-family: inherit; font-size: 11px; color: var(--text-dim); background: transparent; }
 .ctxmenu .ctx-item:hover:not(:disabled):not(.disabled) kbd { color: var(--accent-text); }
 .ctx-sep { height: 1px; margin: 6px 4px; background: var(--border); }
+/* A Trendlines line's note box, opened where the line menu stood. */
+.tl-note-input {
+  position: fixed; z-index: 1000; width: 220px; padding: 6px 8px;
+  background: var(--surface-2); color: var(--text); font-size: 13px;
+  border: 1px solid var(--border); border-radius: 6px; outline: none;
+}
+.tl-note-input:focus { border-color: var(--accent); }
 
 /* Merge-tabs checklist (tab-chip context menu → "Merge into this tab"). */
 .merge-menu { min-width: 220px; }

@@ -16,9 +16,14 @@
 export interface LineMarks {
   hidden?: string[];
   bold?: string[];
+  /** A short user note per lineKey, painted after the line's end tag. */
+  notes?: Record<string, string>;
 }
 export type LineMarksByEpic = Record<string, LineMarks>;
-export type LineMarkKind = keyof LineMarks;
+export type LineMarkKind = "hidden" | "bold";
+
+/** Longest note a line keeps, in characters. */
+export const TL_NOTE_MAX = 60;
 
 /** Opacity of a hidden line: there, but barely. */
 export const TL_HIDDEN_ALPHA = 0.15;
@@ -36,12 +41,43 @@ export const TL_LINE_HIT_TOUCH = 14;
 export function marksFor(
   all: LineMarksByEpic | null | undefined,
   epic: string | undefined,
-): { hidden: Set<string>; bold: Set<string> } {
+): { hidden: Set<string>; bold: Set<string>; notes: Map<string, string> } {
   const m = epic && all && typeof all === "object" ? all[epic] : undefined;
+  const notes = new Map<string, string>();
+  if (m?.notes && typeof m.notes === "object")
+    for (const [k, v] of Object.entries(m.notes)) if (typeof v === "string" && v) notes.set(k, v);
   return {
     hidden: new Set(Array.isArray(m?.hidden) ? m.hidden : []),
     bold: new Set(Array.isArray(m?.bold) ? m.bold : []),
+    notes,
   };
+}
+
+/** A note as stored: one line, trimmed, at most TL_NOTE_MAX characters. */
+export function cleanNote(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, TL_NOTE_MAX).trim();
+}
+
+/** Set (or, with empty text, clear) one line's note for one epic. Pure, and
+ * drops what it empties the way toggleMark does. */
+export function setNote(
+  all: LineMarksByEpic | null | undefined,
+  epic: string,
+  key: string,
+  text: string,
+): LineMarksByEpic | undefined {
+  const out: LineMarksByEpic = {};
+  for (const [e, m] of Object.entries(all ?? {})) out[e] = { ...m };
+  const cur = out[epic] ?? {};
+  const notes = { ...(cur.notes ?? {}) };
+  const note = cleanNote(text);
+  if (note) notes[key] = note;
+  else delete notes[key];
+  const next: LineMarks = { ...cur, notes };
+  if (!Object.keys(notes).length) delete next.notes;
+  if (Object.keys(next).length) out[epic] = next;
+  else delete out[epic];
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Flip one key in one mark list for one epic. Pure; empty lists and empty

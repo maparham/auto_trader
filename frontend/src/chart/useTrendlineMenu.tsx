@@ -12,7 +12,9 @@
 //  - Menu: a right-click on any line (desktop, from ChartCore's contextmenu
 //    handler), or a hold on the SELECTED line (touch: tap to pick, then hold,
 //    the same rule the drawing menu follows).
-//  - Highlight / Hide persist in the saved indicator config
+//  - Note: a short text the user leaves on one line, painted after its end
+//    tag. Edited in a small box where the menu stood; saved like the marks.
+//  - Highlight / Hide / Note persist in the saved indicator config
 //    (extendData.lineMarks, per epic), which the backend mirrors, so they
 //    survive reloads and reach the user's other devices. The saved config is
 //    the source of truth: every toggle reads it, not the live instance, so a
@@ -34,6 +36,7 @@ import type { OverlayManager } from "../lib/overlays";
 import {
   hitTrendline,
   marksFor,
+  setNote,
   toggleMark,
   TL_LINE_HIT,
   TL_LINE_HIT_TOUCH,
@@ -43,6 +46,7 @@ import {
   type TrendlineSegment,
 } from "../lib/indicators/trendlineMarks";
 import { DBG_KEY_PREFIX } from "../lib/indicators/trendlinesDebugDraw";
+import TrendlineNoteEditor from "./TrendlineNoteEditor";
 import { LONG_PRESS_MS, TAP_MOVE_PX, TAP_MS } from "./touchTap";
 
 interface Picked {
@@ -185,6 +189,30 @@ export function toggleTrendlineMark(
   return next;
 }
 
+/** Set (empty text clears) one line's note, in the saved config and on the
+ * live instance, the way toggleTrendlineMark writes a mark. */
+export function setTrendlineNote(
+  chart: Chart,
+  scope: string,
+  epic: string,
+  paneId: string,
+  name: string,
+  key: string,
+  text: string,
+): LineMarksByEpic | undefined {
+  const saved = loadIndicatorConfigs(scope)[name] ?? {};
+  const ext = { ...(saved.extendData ?? {}) } as Record<string, unknown>;
+  const next = setNote(ext.lineMarks as LineMarksByEpic | undefined, epic, key, text);
+  if (next) ext.lineMarks = next;
+  else delete ext.lineMarks;
+  saveIndicatorConfig(scope, name, {
+    ...saved,
+    extendData: Object.keys(ext).length ? ext : undefined,
+  });
+  overrideExtend(chart, paneId, name, { lineMarks: next ?? null });
+  return next;
+}
+
 /** Place a drawing that reproduces the line's shape (same tool and points),
  * styled like one the user drew by hand: their saved default for that tool,
  * not the indicator's line style. Returns the new drawing id, or null when the
@@ -233,6 +261,8 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
   menu: ReactNode;
 } {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [noteEdit, setNoteEdit] = useState<(MenuState & { initial: string }) | null>(null);
+  const closeNote = useCallback(() => setNoteEdit(null), []);
   const onDebugPickRef = useRef(onDebugPick);
   onDebugPickRef.current = onDebugPick;
   const lineAlertRef = useRef(lineAlert);
@@ -378,6 +408,7 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
       const chart = chartRef.current;
       if (chart) toggleTrendlineMark(chart, scope, epic, hit.paneId, hit.name, kind, key);
     };
+    const note = marks.notes.get(key) ?? "";
     const bold = marks.bold.has(key);
     const hidden = marks.hidden.has(key);
     const alertItems = ((): MenuItem[] => {
@@ -398,10 +429,34 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
     const items: MenuItem[] = [
       { label: bold ? "Unhighlight" : "Highlight", icon: MenuIcons.highlight, onClick: () => toggle("bold") },
       { label: hidden ? "Unhide" : "Hide", icon: hidden ? MenuIcons.show : MenuIcons.hide, onClick: () => toggle("hidden") },
+      {
+        label: note ? "Edit note" : "Add note",
+        icon: MenuIcons.note,
+        onClick: () => setNoteEdit({ ...menu, initial: note }),
+      },
       { label: "To drawing", icon: MenuIcons.pencil, onClick: () => void trendlineToDrawing(overlays, hit.seg) },
       ...alertItems,
     ];
     node = <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />;
+  }
+  if (noteEdit) {
+    const { hit } = noteEdit;
+    const epic = epicRef.current;
+    node = (
+      <>
+        {node}
+        <TrendlineNoteEditor
+          x={noteEdit.x}
+          y={noteEdit.y}
+          initial={noteEdit.initial}
+          onClose={closeNote}
+          onSave={(text) => {
+            const chart = chartRef.current;
+            if (chart) setTrendlineNote(chart, scope, epic, hit.paneId, hit.name, hit.seg.key, text);
+          }}
+        />
+      </>
+    );
   }
   return { openAt, menu: node };
 }

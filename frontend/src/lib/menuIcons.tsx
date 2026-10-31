@@ -382,6 +382,13 @@ export const MenuIcons = {
   highlight: svg(<path d="M4 19L20 5" strokeWidth="4" />),
   // Pencil — "drawings" (the eye menu's Hide drawings row).
   pencil: svg(<path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />),
+  // Speech bubble with text rows: "note" (a trendline's Add note row).
+  note: svg(
+    <>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      <path d="M8 8h8M8 12h5" />
+    </>,
+  ),
   // Pulse line — "indicators" (the eye menu's Hide indicators row).
   indicator: svg(<path d="M22 12h-4l-3 9L9 3l-3 9H2" />),
   // Briefcase — "positions" (the eye menu's Hide positions row).

@@ -3821,9 +3821,20 @@ function drawTrendlines(
     const xEnd = xAt(drawEdge);
     const yEnd = yAxis.convertToPixel(projectAt(line, drawEdge));
     const rank = rankPool?.includes(line) ? strengthRank(rankPool, line) : undefined;
-    if (!showStats && rank === undefined) continue;
-    const label = showStats ? trendlineStatsLabel(line.touches, line.crossings, rank) : `#${rank}`;
-    const wTag = ctx.measureText(label).width;
+    // The user's note rides after the tag, on the same row, or takes the
+    // tag's place when there is none. Hidden lines never get here.
+    const note = marks.notes.get(key);
+    if (!showStats && rank === undefined && !note) continue;
+    const label = showStats ? trendlineStatsLabel(line.touches, line.crossings, rank) : rank !== undefined ? `#${rank}` : "";
+    const wLabel = label ? ctx.measureText(label).width : 0;
+    // The room right of the tag, but never under TL_NOTE_MIN_W: near the
+    // pane's edge the row shifts left (the clamp below), as the tag alone does.
+    const wLead = label ? wLabel + TL_NOTE_GAP : 0;
+    const noteRoom = Math.min(tagRight - wLead, Math.max(TL_NOTE_MIN_W, tagRight - xEnd - TL_TAG_GAP - wLead));
+    const noteText = note ? fitNote(ctx, note, noteRoom) : "";
+    const wNote = noteText ? ctx.measureText(noteText).width : 0;
+    if (!label && !noteText) continue;
+    const wTag = label && noteText ? wLabel + TL_NOTE_GAP + wNote : wLabel || wNote;
     const xTag = Math.min(xEnd + TL_TAG_GAP, tagRight - wTag);
     let yTag =
       xEnd === x0
@@ -3833,13 +3844,17 @@ function drawTrendlines(
     placedTags.push({ x: xTag, y: yTag, w: wTag });
     myTags.push({ x: xTag, y: yTag, w: wTag });
     ctx.fillStyle = ctx.strokeStyle;
-    ctx.save();
-    ctx.strokeStyle = halo;
-    ctx.lineWidth = 3;
-    ctx.lineJoin = "round";
-    ctx.strokeText(label, xTag, yTag);
-    ctx.restore();
-    ctx.fillText(label, xTag, yTag);
+    const paint = (text: string, x: number) => {
+      ctx.save();
+      ctx.strokeStyle = halo;
+      ctx.lineWidth = 3;
+      ctx.lineJoin = "round";
+      ctx.strokeText(text, x, yTag);
+      ctx.restore();
+      ctx.fillText(text, x, yTag);
+    };
+    if (label) paint(label, xTag);
+    if (noteText) paint(noteText, label ? xTag + wLabel + TL_NOTE_GAP : xTag);
   }
   ctx.restore();
   // Last, so the marks sit over the strokes, and keyed on the set the pane
@@ -3855,6 +3870,22 @@ function drawTrendlines(
   // a tie resolves to the drawn line, not the debug candidate under it.
   setTrendlineSegments(chart, indicator.paneId, indicator.name, debugSegs.length ? [...segments, ...debugSegs] : segments);
   return true;
+}
+
+/** Pixels between a line's end tag and its note. */
+const TL_NOTE_GAP = 6;
+/** Width a note always gets, shifting its row left near the pane's edge. */
+const TL_NOTE_MIN_W = 90;
+
+/** The note cut to fit `maxW` pixels, with an ellipsis when cut; "" when not
+ * even a few letters fit. Exported for the unit test. */
+export function fitNote(ctx: Pick<CanvasRenderingContext2D, "measureText">, note: string, maxW: number): string {
+  if (ctx.measureText(note).width <= maxW) return note;
+  for (let n = note.length - 1; n >= 3; n--) {
+    const t = `${note.slice(0, n).trimEnd()}\u2026`;
+    if (ctx.measureText(t).width <= maxW) return t;
+  }
+  return "";
 }
 
 /** Tag row height: 10px text plus a little air. */

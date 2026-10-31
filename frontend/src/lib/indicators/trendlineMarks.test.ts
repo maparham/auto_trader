@@ -1,6 +1,6 @@
 import type { KLineData } from "klinecharts";
 import { describe, expect, it } from "vitest";
-import { TRENDLINES_TEMPLATE } from "./trendlines";
+import { fitNote, TRENDLINES_TEMPLATE } from "./trendlines";
 import {
   alertLineOf,
   cloneToolFor,
@@ -8,7 +8,9 @@ import {
   hitTrendline,
   marksFor,
   markedLineStyle,
+  setNote,
   toggleMark,
+  TL_NOTE_MAX,
   tsAtIndex,
   TL_BOLD_EXTRA,
   TL_HIDDEN_ALPHA,
@@ -35,6 +37,41 @@ describe("toggleMark", () => {
     expect(marksFor(m, "US100").hidden.has("1:2")).toBe(true);
     expect(marksFor(m, "OIL").hidden.size).toBe(0);
     expect(marksFor(null, "US100").bold.size).toBe(0);
+  });
+});
+
+describe("setNote", () => {
+  it("sets, replaces and clears a note, dropping what it empties", () => {
+    const a = setNote({ US100: { bold: ["3:4"] } }, "US100", "1:2", "  break  retest ");
+    expect(a).toEqual({ US100: { bold: ["3:4"], notes: { "1:2": "break retest" } } });
+    expect(marksFor(a, "US100").notes.get("1:2")).toBe("break retest");
+    const b = setNote(a, "US100", "1:2", "   ");
+    expect(b).toEqual({ US100: { bold: ["3:4"] } });
+    expect(setNote({ US100: { notes: { "1:2": "x" } } }, "US100", "1:2", "")).toBeUndefined();
+    // Never mutates its input.
+    expect(a!.US100.notes).toEqual({ "1:2": "break retest" });
+  });
+
+  it("keeps notes per epic, one line, capped", () => {
+    const m = setNote(undefined, "GOLD", "1:2", "a\nb".padEnd(200, "z"));
+    expect(marksFor(m, "US100").notes.size).toBe(0);
+    const n = marksFor(m, "GOLD").notes.get("1:2")!;
+    expect(n.startsWith("a b")).toBe(true);
+    expect(n.length).toBe(TL_NOTE_MAX);
+  });
+
+  it("toggling a mark keeps the notes", () => {
+    const m = toggleMark({ US100: { notes: { "1:2": "x" } } }, "US100", "hidden", "1:2");
+    expect(m).toEqual({ US100: { notes: { "1:2": "x" }, hidden: ["1:2"] } });
+  });
+});
+
+describe("fitNote", () => {
+  const ctx = { measureText: (t: string) => ({ width: t.length * 6 }) } as never;
+  it("keeps a note that fits, cuts one that does not, drops one with no room", () => {
+    expect(fitNote(ctx, "retest", 36)).toBe("retest");
+    expect(fitNote(ctx, "break and retest", 36)).toBe("break\u2026");
+    expect(fitNote(ctx, "break and retest", 10)).toBe("");
   });
 });
 
@@ -112,6 +149,7 @@ function draw(ext: Record<string, unknown>, epic = "US100") {
   const strokes: Stroke[] = [];
   let arcs = 0;
   let texts = 0;
+  const textList: Array<{ text: string; x: number; y: number }> = [];
   let cur = { x: 0, y: 0 };
   const ctx = {
     font: "", textBaseline: "", textAlign: "", strokeStyle: "", fillStyle: "",
@@ -126,7 +164,7 @@ function draw(ext: Record<string, unknown>, epic = "US100") {
     },
     arc() { arcs++; },
     measureText: (t: string) => ({ width: t.length * 6 }),
-    fillText() { texts++; },
+    fillText(text: string, x: number, y: number) { texts++; textList.push({ text, x, y }); },
   };
   const chart = {
     getDataList: () => bars,
@@ -147,7 +185,7 @@ function draw(ext: Record<string, unknown>, epic = "US100") {
     xAxis: { convertToPixel: (i: number) => i, convertFromPixel: (x: number) => x },
     yAxis: { convertToPixel: toY, convertFromPixel: fromY },
   } as never);
-  return { chart, strokes, arcs, texts, bars, result };
+  return { chart, strokes, arcs, texts, textList, bars, result };
 }
 
 /** The one line's hit target and key, from an unmarked draw. */
@@ -191,6 +229,27 @@ describe("drawTrendlines with marks", () => {
     // Still clickable, so it can be unhidden.
     const s = d.strokes[0];
     expect(hitTrendline(d.chart, (s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2, 6)?.seg.key).toBe(hit.seg.key);
+  });
+
+  it("note: painted after the stats tag on the same row", () => {
+    const { hit } = theLine();
+    const d = draw({ showStats: true, lineMarks: { US100: { notes: { [hit.seg.key]: "retest" } } } });
+    const i = d.textList.findIndex((t) => t.text === "retest");
+    expect(i).toBeGreaterThan(0);
+    const tag = d.textList[i - 1];
+    expect(d.textList[i].y).toBe(tag.y);
+    expect(d.textList[i].x).toBeGreaterThan(tag.x + tag.text.length * 6);
+  });
+
+  it("note: drawn without a tag, and not on a hidden line", () => {
+    const { hit } = theLine();
+    const notes = { [hit.seg.key]: "retest" };
+    const d = draw({ showStats: false, lineMarks: { US100: { notes } } });
+    expect(d.textList.map((t) => t.text)).toContain("retest");
+    const h = draw({ showStats: false, lineMarks: { US100: { notes, hidden: [hit.seg.key] } } });
+    expect(h.textList.map((t) => t.text)).not.toContain("retest");
+    const other = draw({ showStats: false, lineMarks: { GOLD: { notes } } });
+    expect(other.textList.map((t) => t.text)).not.toContain("retest");
   });
 
   it("bold: thicker than the instance's own width", () => {
